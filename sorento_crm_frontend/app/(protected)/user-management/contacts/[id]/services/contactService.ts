@@ -25,8 +25,9 @@ export async function getContact(contactId: string): Promise<RespondContact> {
 
 export async function getContacts(
   params: DataGridParamsInput,
+  filters: Record<string, string> = {},
 ): Promise<RespondContactListResponse> {
-  const query = buildDataGridParams(params);
+  const query = buildDataGridParams(params, filters);
   const response = await apiFetch(`/api/user-management/contacts?${query.toString()}`);
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load contacts'));

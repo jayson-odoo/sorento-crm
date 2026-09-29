@@ -1,5 +1,4 @@
-"""S0 - `respond_contacts.chatbot_profile` + `chatbot_recall_enabled` (AC-1503,
-PLAN-chatbot-turn-rearch.md).
+"""S0 - `respond_contacts.chatbot_profile` (AC-1503, PLAN-chatbot-turn-rearch.md).
 
 Column additions to an existing model, not migration-seeded reference DATA, so this
 runs on the ordinary blank scratch schema (`Base.metadata.create_all`) like every other
@@ -8,10 +7,13 @@ runs on the ordinary blank scratch schema (`Base.metadata.create_all`) like ever
 `test_rearch_s0_entity_kinds_seed.py`, which need the real migrated DB because their
 rows are seeded inside a migration body.
 
-RIGHT NOW every test here is RED: the columns do not exist on `RespondContact`, and
-`RespondContactResponse` / `RespondContactUpdate` do not declare the two fields, so the
-API never emits or accepts them (`response_model` silently drops anything undeclared -
-LESSONS-LEARNT).
+Chatbot memory lane A round 3 (AC-MEM054, merged 5b110df8) DROPS the
+`chatbot_recall_enabled` column outright (model, DB, every reader/writer/schema) - the
+recall re-parse it gated is deleted. The tests that used to pin its default and its PUT
+acceptance here are SUPERSEDED and updated in place rather than removed, so this file
+still proves `chatbot_profile` on its own; `chatbot_recall_enabled`'s retirement itself
+is pinned by `tests/chatbot/test_memory_level_and_settings.py::
+TestChatbotMemoryLevelCheckConstraint::test_chatbot_recall_enabled_column_is_gone`.
 """
 from __future__ import annotations
 
@@ -88,43 +90,50 @@ def test_chatbot_profile_column_defaults_to_empty_dict(db):
     assert value == {}
 
 
-def test_chatbot_recall_enabled_column_defaults_to_false(db):
+def test_chatbot_memory_level_column_defaults_to_null(db):
+    """Superseded (round 3, AC-MEM054) from `test_chatbot_recall_enabled_column_
+    defaults_to_false`: the recall column this pinned is dropped outright, and
+    `chatbot_memory_level` - its replacement - defaults to NULL (follow the system
+    default), not a boolean."""
     contact_id = _seed_contact(db)
     value = db.execute(
-        text("SELECT chatbot_recall_enabled FROM respond_contacts WHERE id = :i"),
+        text("SELECT chatbot_memory_level FROM respond_contacts WHERE id = :i"),
         {"i": contact_id},
     ).scalar()
-    assert value is False
+    assert value is None
 
 
-def test_get_contact_detail_returns_chatbot_profile_and_recall_enabled(db, client):
+def test_get_contact_detail_returns_chatbot_profile_and_memory_level(db, client):
+    """Superseded (round 3, AC-MEM054) from `test_get_contact_detail_returns_
+    chatbot_profile_and_recall_enabled`: the response no longer carries
+    `chatbot_recall_enabled` at all."""
     contact_id = _seed_contact(db)
     resp = client.get(f"{BASE}/{contact_id}")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert "chatbot_profile" in body, body
-    assert "chatbot_recall_enabled" in body, body
+    assert "chatbot_recall_enabled" not in body, body
     assert body["chatbot_profile"] == {}
-    assert body["chatbot_recall_enabled"] is False
+    assert body.get("chatbot_memory_level") is None
 
 
-def test_put_contact_accepts_chatbot_recall_enabled_and_profile(db, client):
+def test_put_contact_accepts_chatbot_profile(db, client):
+    """Superseded (round 3, AC-MEM054) from `test_put_contact_accepts_chatbot_
+    recall_enabled_and_profile`: the recall field is gone from the body too.
+    The route needs `user_management.contacts.edit` since the reviewer pass at
+    d89110c0 (S8)."""
+    _GRANTS.add("user_management.contacts.edit")
     contact_id = _seed_contact(db)
     resp = client.put(
         f"{BASE}/{contact_id}",
-        json={
-            "chatbot_recall_enabled": True,
-            "chatbot_profile": {"tier": "dealer", "language": "en"},
-        },
+        json={"chatbot_profile": {"tier": "dealer", "language": "en"}},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["chatbot_recall_enabled"] is True
     assert body["chatbot_profile"] == {"tier": "dealer", "language": "en"}
 
     stored = db.execute(
-        text("SELECT chatbot_recall_enabled, chatbot_profile FROM respond_contacts WHERE id = :i"),
+        text("SELECT chatbot_profile FROM respond_contacts WHERE id = :i"),
         {"i": contact_id},
-    ).one()
-    assert stored[0] is True
-    assert stored[1] == {"tier": "dealer", "language": "en"}
+    ).scalar()
+    assert stored == {"tier": "dealer", "language": "en"}

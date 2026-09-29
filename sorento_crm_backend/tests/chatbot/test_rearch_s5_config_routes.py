@@ -320,20 +320,25 @@ class TestContactChatbotProfilePut:
         ).first()
         return row.id
 
-    def test_put_chatbot_profile_and_recall_toggle(self, client, pg_db) -> None:
+    def test_put_chatbot_profile_and_memory_level(self, client, pg_db) -> None:
+        """Superseded by chatbot memory lane A (contract section 5): the PUT body
+        drops `chatbot_recall_enabled` and gains `chatbot_memory_level` - updated
+        rather than dropped, so this route's happy path stays covered. Round 3
+        (AC-MEM055, merged 5b110df8) renames the BODY key again, to `memory_level`
+        - the response field itself keeps the `chatbot_memory_level` name."""
         contact_id = self._seed_contact(pg_db)
 
         resp = client.put(
             f"{CONTACT_CHATBOT_BASE}/{contact_id}/chatbot",
             json={
-                "chatbot_profile": {"tier": "dealer", "language": "en", "default_ledgers": []},
-                "chatbot_recall_enabled": True,
+                "chatbot_profile": {"tier": "dealer", "default_ledgers": []},
+                "memory_level": "full",
             },
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body.get("chatbot_profile", {}).get("tier") == "dealer", body
-        assert body.get("chatbot_recall_enabled") is True, body
+        assert body.get("chatbot_memory_level") == "full", body
 
 
 class TestSettingsCarryTierOrderAndMemory:
@@ -362,13 +367,16 @@ class TestSettingsCarryTierOrderAndMemory:
         assert "chatbot_memory" in settings, settings.keys()
 
     def test_put_round_trips_tier_order_and_memory_sub_keys(self, client) -> None:
+        """`chatbot_memory`'s sub-keys are superseded by chatbot memory lane A
+        (contract section 2/5): `enabled` + `default_level` replace the four dead
+        keys this test used to round-trip. Updated rather than dropped, so the
+        settings PUT's tier-order + memory round trip stays covered."""
         payload = {
             "chatbot_tier_order": ["dealer", "office", "end_user"],
             "chatbot_memory": {
-                "recall_default": False,
-                "episode_retention_days": 90,
-                "profile_fields": ["tier", "language"],
-                "focus_reset_events": ["topic_switch"],
+                "enabled": True,
+                # Round 3 (AC-MEM051) renames the stored level "past" -> "episodes".
+                "default_level": "episodes",
             },
         }
         resp = client.put(SETTINGS_PUT_GENERAL, json=payload)
@@ -483,6 +491,10 @@ class TestContactChatbotProfilePutDenial:
         return row.id
 
     def test_put_without_contacts_edit_is_403(self, client, pg_db) -> None:
+        """`chatbot_recall_enabled` in the body is retired (round 3, AC-MEM054) - a
+        body naming it now 422s in its own right (`TestContactChatbotMemoryLevel::
+        test_chatbot_recall_enabled_in_the_body_is_rejected`), so this test's body
+        is updated to `memory_level` to keep proving the PERMISSION gate alone."""
         contact_id = self._seed_contact(pg_db)
         _GRANTS.discard(CONTACT_EDIT)
 
@@ -490,7 +502,7 @@ class TestContactChatbotProfilePutDenial:
             f"{CONTACT_CHATBOT_BASE}/{contact_id}/chatbot",
             json={
                 "chatbot_profile": {"tier": "dealer", "language": "en", "default_ledgers": []},
-                "chatbot_recall_enabled": True,
+                "memory_level": "full",
             },
         )
         assert resp.status_code == 403, resp.text

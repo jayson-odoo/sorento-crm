@@ -1,0 +1,30 @@
+{
+  "name": "11-first-time-contact-small-talk",
+  "about": "AC-MEM091: Full memory, nothing held yet: a human greeting and a concrete offer (the domain menu), never an empty memory_line placeholder.",
+  "needs_memory": false,
+  "given": {
+    "memory_level": "full"
+  },
+  "turn": {
+    "message": "hello",
+    "verdict": {
+      "message_type": "casual"
+    },
+    "clarifier": {
+      "ack": "Hello!",
+      "language": "en"
+    }
+  },
+  "expected": {
+    "branch_kind": "low_signal",
+    "reply_starts_with": "Hello!",
+    "reply_contains": [
+      "What can I check for you?"
+    ],
+    "reply_not_contains": [
+      "Last time:",
+      "{{",
+      "None"
+    ]
+  }
+}

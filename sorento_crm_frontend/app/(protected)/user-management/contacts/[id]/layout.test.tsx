@@ -2,12 +2,16 @@
  * Contact detail shell - pins the tabbed structure required by the
  * "View and Edit are the same layout (binding)" contract in CLAUDE.md.
  *
- * The shell must offer exactly four tabs, in order, each pointing at its own route:
+ * The shell must offer exactly five tabs, in order, each pointing at its own route:
  *
  *   Profile : /user-management/contacts/{id}
  *   Access  : /user-management/contacts/{id}/access
  *   Routing : /user-management/contacts/{id}/routing
  *   Chat    : /user-management/contacts/{id}/chat
+ *   Chatbot : /user-management/contacts/{id}/chatbot
+ *
+ * Chatbot memory lane A round 3 (plan 4.5 / mockup) moves the memory cards off
+ * Access onto this dedicated tab.
  *
  * Plus the rules the single-page version broke:
  * - Created / Updated are read-only metadata: header strip, never a tab body.
@@ -111,9 +115,9 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('Contact detail shell - tabs', () => {
-  it('renders exactly four tabs: Profile, Access, Routing, Chat', async () => {
+  it('renders exactly five tabs: Profile, Access, Routing, Chat, Chatbot', async () => {
     await renderLayout(`/user-management/contacts/${CURRENT_ID}`);
-    expect(tabNames()).toEqual(['Profile', 'Access', 'Routing', 'Chat']);
+    expect(tabNames()).toEqual(['Profile', 'Access', 'Routing', 'Chat', 'Chatbot']);
   });
 
   it('sends each tab to its own route', async () => {
@@ -125,6 +129,7 @@ describe('Contact detail shell - tabs', () => {
       ['Access', `${base}/access`],
       ['Routing', `${base}/routing`],
       ['Chat', `${base}/chat`],
+      ['Chatbot', `${base}/chatbot`],
     ];
 
     for (const [name, path] of expected) {

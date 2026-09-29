@@ -198,6 +198,18 @@ export default function ChatHistoryPage() {
         size: 110,
       },
       {
+        accessorKey: 'queue_ticket',
+        id: 'queue_ticket',
+        enableSorting: false,
+        header: ({ column }) => <DataGridColumnHeader title="Queue" column={column} />,
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">
+            {row.original.queue_ticket != null ? `#${row.original.queue_ticket}` : '-'}
+          </span>
+        ),
+        size: 80,
+      },
+      {
         accessorKey: 'message',
         id: 'message',
         enableSorting: false,

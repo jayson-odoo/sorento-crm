@@ -1651,7 +1651,10 @@ def _reconcile_step(
 
 
 # The message types that carry no business question of their own (contract 49, 51).
-_CASUAL_TYPES = frozenset({"casual", "unknown", "confirmation"})
+# `history_question` joins them here (chatbot memory lane A, contract section 6.5):
+# a question about the dealer's own past with the bot routes to the SAME lane a
+# casual/unknown message does (`low_signal`) until S4's own history composer lands.
+_CASUAL_TYPES = frozenset({"casual", "unknown", "confirmation", "history_question"})
 #: The ideation domain's own name - the same literal `route._domain_branch` and
 #: `_HELP_EXEMPT_DOMAINS` already key on.
 IDEATE_DOMAIN = "ideate"
@@ -1896,6 +1899,12 @@ def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | 
         if not domains and _names_an_unresolved_product(verdict):
             return "clarification"
         return "escalation"
+    if message_type == "history_question":
+        # S4 (plan 7.1, AC-MEM082): a question about the dealer's own past is answered
+        # in the `low_signal` lane from memory, whatever domain or code it mentions
+        # ("what stock did I check last week") - the parser's hint names the past ask,
+        # not a live one, so it never narrows into a fetch.
+        return "casual"
     if (
         message_type == "request_for_help"
         and verdict.get("domain_hint") not in _HELP_EXEMPT_DOMAINS

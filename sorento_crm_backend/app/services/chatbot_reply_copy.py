@@ -119,6 +119,159 @@ CHATBOT_REPLY_OFFER_HOLD_NO_COMPANIES = (
 )
 
 
+# --------------------------------------------------------------------------- #
+# S4 graceful fallback (PLAN-chatbot-memory-26sep.md section 7.2, AC-MEM089). NEW
+# templates only: every string above stays byte-identical. A reply is
+# `ack + memory_line + offer`; the ack is the clarifier's, these are the other two
+# halves plus the canned ack the guard falls back to. Each has an English base key
+# and `.ms` / `.zh` variants, picked by the contact's saved language, else the
+# clarifier's, else English (`chatbot/copy.py::CannedCopy.render_in`). The
+# escalation offer wording is NOT among them: the accepted-offer regex still reads
+# it (module docstring).
+# --------------------------------------------------------------------------- #
+
+#: What replaces an ack the guard refused (it named a figure, code, price or date
+#: its own input never had), and what a history reply opens with when the
+#: clarifier could not be reached.
+CHATBOT_REPLY_FALLBACK_ACK = {"en": "Noted.", "ms": "Baik.", "zh": "好的。"}
+#: The offer when memory holds nothing to build on (Off, or a first-time contact):
+#: a concrete next step, the domain menu in one line (AC-MEM091).
+CHATBOT_REPLY_FALLBACK_OFFER = {
+    "en": "What can I check for you? Stock, incoming, delivery orders, promotions or product details.",
+    "ms": "Apa yang saya boleh semak untuk anda? Stok, barang masuk, pesanan penghantaran, promosi atau butiran produk.",
+    "zh": "需要我帮您查什么？库存、到货、送货单、促销或产品资料。",
+}
+#: The memory line naming the newest conversation, then the re-run offer.
+CHATBOT_REPLY_FALLBACK_LAST_TIME = {
+    "en": "Last time: {{summary}}.",
+    "ms": "Kali terakhir: {{summary}}.",
+    "zh": "上次：{{summary}}。",
+}
+CHATBOT_REPLY_FALLBACK_OFFER_RERUN = {
+    "en": "Want me to check any of that again, or something new?",
+    "ms": "Mahu saya semak semula, atau perkara lain?",
+    "zh": "要我再查一次，还是查别的？",
+}
+#: The offer from the contact's usual products (and usual site), Full memory only.
+CHATBOT_REPLY_FALLBACK_OFFER_USUAL = {
+    "en": "Want me to check stock for {{products}}, or something new?",
+    "ms": "Mahu saya semak stok {{products}}, atau perkara lain?",
+    "zh": "要我查一下{{products}}的库存，还是查别的？",
+}
+CHATBOT_REPLY_FALLBACK_OFFER_USUAL_SITE = {
+    "en": "Want me to check {{site}} stock for {{products}}, or something new?",
+    "ms": "Mahu saya semak stok {{site}} untuk {{products}}, atau perkara lain?",
+    "zh": "要我查一下{{site}}的{{products}}库存，还是查别的？",
+}
+#: A message the bot cannot place (`unknown`) from a contact linked to a customer:
+#: the live CRM link names the customer, two numbered options (plan 7.3 example 6).
+CHATBOT_REPLY_FALLBACK_OFFER_CUSTOMER = {
+    "en": (
+        "Want me to check the outstanding DOs for {{customer}} now, or pass this to the "
+        "{{team}} team?\n1. Check outstanding DOs\n2. {{team}} team"
+    ),
+    "ms": (
+        "Mahu saya semak DO tertunggak untuk {{customer}} sekarang, atau serahkan kepada "
+        "pasukan {{team}}?\n1. Semak DO tertunggak\n2. Pasukan {{team}}"
+    ),
+    "zh": "要我现在查{{customer}}未完成的送货单，还是转给{{team}}团队？\n1. 查未完成的送货单\n2. {{team}}团队",
+}
+#: A fact the dealer just stated, confirmed back (plan 7.3 examples 7 and 9).
+CHATBOT_REPLY_FALLBACK_NOTED_ROLE = {
+    "en": "I've noted you're the {{role}} at {{customer}}.",
+    "ms": "Saya sudah catat anda {{role}} di {{customer}}.",
+    "zh": "已记下您是{{customer}}的{{role}}。",
+}
+CHATBOT_REPLY_FALLBACK_NOTED_ROLE_NO_CUSTOMER = {
+    "en": "I've noted you're the {{role}}.",
+    "ms": "Saya sudah catat anda {{role}}.",
+    "zh": "已记下您是{{role}}。",
+}
+CHATBOT_REPLY_FALLBACK_NOTED_LANGUAGE = {
+    "en": "From now on I'll reply in English.",
+    "ms": "Lepas ni saya balas dalam Bahasa Melayu.",
+    "zh": "以后我会用中文回复。",
+}
+CHATBOT_REPLY_FALLBACK_NOTED = {
+    "en": "I've noted that.",
+    "ms": "Saya sudah catat.",
+    "zh": "已记下。",
+}
+#: The history reply (AC-MEM082): the lead, the numbered list (built in code), the
+#: re-run offer; or the one line saying memory holds nothing yet.
+CHATBOT_REPLY_HISTORY_LEAD = {
+    "en": "Here's what you checked with me recently:",
+    "ms": "Ini yang anda semak dengan saya baru-baru ini:",
+    "zh": "这是您最近向我查询的内容：",
+}
+CHATBOT_REPLY_HISTORY_OFFER = {
+    "en": "Reply with a number and I'll run it again with today's figures.",
+    "ms": "Balas dengan nombor dan saya akan semak semula dengan angka hari ini.",
+    "zh": "回复编号，我会用今天的数据重新查询。",
+}
+CHATBOT_REPLY_HISTORY_NOTHING = {
+    "en": "I don't have an earlier conversation with you on record yet.",
+    "ms": "Saya belum ada rekod perbualan kita sebelum ini.",
+    "zh": "我这里还没有我们之前的对话记录。",
+}
+#: A follow-up the parser resolved from memory opens its answer with what it
+#: carried (AC-MEM083): from a closed conversation, or from the usual products.
+CHATBOT_REPLY_CARRIED_EPISODE = {
+    "en": "Carrying on from {{day}}: {{subject}}.",
+    "ms": "Sambungan dari {{day}}: {{subject}}.",
+    "zh": "接着{{day}}的：{{subject}}。",
+}
+CHATBOT_REPLY_CARRIED_USUAL = {
+    "en": "Your usual: {{products}}.",
+    "ms": "Biasa anda: {{products}}.",
+    "zh": "您常查的：{{products}}。",
+}
+#: A commercial ask handed over with the linked salesperson named (AC-MEM087).
+#: Sent in place of the lane's "routed to the respective person-in-charge" line;
+#: routing, assignment, the comment and the SLA row are the lane's, unchanged.
+CHATBOT_REPLY_HANDOVER_SALESPERSON = {
+    "en": (
+        "{{salesperson}} looks after your account. I've passed your request to the "
+        "{{team}} team for {{salesperson}}. We will get back to you soon."
+    ),
+    "ms": (
+        "{{salesperson}} menguruskan akaun anda. Saya sudah serahkan permintaan anda kepada "
+        "pasukan {{team}} untuk {{salesperson}}. Kami akan hubungi anda nanti."
+    ),
+    "zh": "{{salesperson}}负责您的账户。我已把您的请求转给{{team}}团队交给{{salesperson}}，我们会尽快回复您。",
+}
+
+#: `short name -> (per-language text, declared {{tokens}})`, expanded below into one
+#: registry key per language: `chatbot_reply_<name>` (English) and
+#: `chatbot_reply_<name>.ms` / `.zh`.
+FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
+    "fallback_ack": (CHATBOT_REPLY_FALLBACK_ACK, ()),
+    "fallback_offer": (CHATBOT_REPLY_FALLBACK_OFFER, ()),
+    "fallback_last_time": (CHATBOT_REPLY_FALLBACK_LAST_TIME, ("summary",)),
+    "fallback_offer_rerun": (CHATBOT_REPLY_FALLBACK_OFFER_RERUN, ()),
+    "fallback_offer_usual": (CHATBOT_REPLY_FALLBACK_OFFER_USUAL, ("products",)),
+    "fallback_offer_usual_site": (CHATBOT_REPLY_FALLBACK_OFFER_USUAL_SITE, ("site", "products")),
+    "fallback_offer_customer": (CHATBOT_REPLY_FALLBACK_OFFER_CUSTOMER, ("customer", "team")),
+    "fallback_noted_role": (CHATBOT_REPLY_FALLBACK_NOTED_ROLE, ("role", "customer")),
+    "fallback_noted_role_no_customer": (CHATBOT_REPLY_FALLBACK_NOTED_ROLE_NO_CUSTOMER, ("role",)),
+    "fallback_noted_language": (CHATBOT_REPLY_FALLBACK_NOTED_LANGUAGE, ()),
+    "fallback_noted": (CHATBOT_REPLY_FALLBACK_NOTED, ()),
+    "history_lead": (CHATBOT_REPLY_HISTORY_LEAD, ()),
+    "history_offer": (CHATBOT_REPLY_HISTORY_OFFER, ()),
+    "history_nothing": (CHATBOT_REPLY_HISTORY_NOTHING, ()),
+    "carried_episode": (CHATBOT_REPLY_CARRIED_EPISODE, ("day", "subject")),
+    "carried_usual": (CHATBOT_REPLY_CARRIED_USUAL, ("products",)),
+    "handover_salesperson": (CHATBOT_REPLY_HANDOVER_SALESPERSON, ("salesperson", "team")),
+}
+
+#: The languages the new templates carry (plan 7.2). English is the bare key.
+FALLBACK_LANGUAGES: tuple[str, ...] = ("en", "ms", "zh")
+
+
+def language_suffix(language: str) -> str:
+    """`""` for English (the bare key), `".ms"` / `".zh"` otherwise."""
+    return "" if language == "en" else f".{language}"
+
 # `short name -> (registry key, template, declared {{tokens}})`. ONE table: the registry
 # builds `PROMPT_KEYS` from it, the seed migration seeds from it, and the package's
 # `copy.py` resolves against it, so the three can never list different keys (H28's
@@ -185,3 +338,8 @@ CHATBOT_REPLY_COPY: dict[str, tuple[str, str, tuple[str, ...]]] = {
         (),
     ),
 }
+
+for _name, (_texts, _tokens) in FALLBACK_REPLY_COPY.items():
+    for _lang in FALLBACK_LANGUAGES:
+        _suffix = language_suffix(_lang)
+        CHATBOT_REPLY_COPY[f"{_name}{_suffix}"] = (f"chatbot_reply_{_name}{_suffix}", _texts[_lang], _tokens)

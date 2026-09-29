@@ -259,11 +259,14 @@ class RespondContact(Base):
     # Chatbot turn re-architecture (AC-1503): the Profile shelf, one JSONB blob
     # (tier, language, default ledgers - PLAN "Design > State"), written by explicit
     # picks (a WhatsApp pick, or the Contact > Access "Chatbot" card) and read as a
-    # `Profile:` hint block on every parse (S3, AC-1548). Recall is a separate bool
-    # column, not a profile key, because it gates a DIFFERENT thing (whether TAIL may
-    # re-parse with an `Episodes:` block, AC-1547) and defaults OFF per contact.
+    # `Profile:` hint block on every parse (S3, AC-1548).
     chatbot_profile = Column(JSONB(astext_type=Text()), nullable=False, server_default=text("'{}'::jsonb"))
-    chatbot_recall_enabled = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    # Chatbot memory lane A (contract section 2, round 3 AC-MEM054): the contact's
+    # OWN context level, one of "off" | "conversation" | "episodes" | "full". NULL =
+    # follow the system default (`system_settings.chatbot_memory.default_level`).
+    # DROPS `chatbot_recall_enabled` (the recall re-parse it gated is deleted, round
+    # 3): this column, and the CHECK constraint below, are its full replacement.
+    chatbot_memory_level = Column(String(16), nullable=True)
     # S6 (owner ruling, 16 Sep 2026): whether this contact may ask for stock is a CRM
     # fact, default ON; the respond.io `is_allowed_stock` custom field is not read.
     chatbot_stock_allowed = Column(Boolean, nullable=False, server_default=text("true"), default=True)
@@ -304,6 +307,14 @@ class RespondContact(Base):
         Index("ix_respond_contacts_phone_number", "phone_number"),
         Index("ix_respond_contacts_respond_io_id", "respond_io_id"),
         Index("ix_respond_contacts_workspace_id", "workspace_id"),
+        # Round 3 (AC-MEM054): the level lives in the DATABASE, not only in the
+        # route's Pydantic Literal - a raw UPDATE bypassing the API can never write
+        # a retired or bogus value either.
+        CheckConstraint(
+            "chatbot_memory_level IS NULL OR chatbot_memory_level IN "
+            "('off', 'conversation', 'episodes', 'full')",
+            name="ck_respond_contacts_chatbot_memory_level",
+        ),
     )
 
 

@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chatbot memory alignment</title>
+<style>
+:root{--bg:#ffffff;--fg:#0a0a0a;--muted:#f4f4f5;--muted-fg:#71717a;--border:#e4e4e7;
+--primary:#1b84ff;--primary-fg:#fff;--primary-soft:#eef5ff;--danger:#f8285a;--danger-soft:#ffeef3;
+--ok:#17c653;--ok-soft:#eafff1;--warn:#f6b100;--warn-soft:#fff8dd;--violet:#7239ea;--violet-soft:#f8f5ff;
+--pin:#f8285a;--note-bg:#fffbe6;--radius:8px;--shadow:0 8px 24px rgba(0,0,0,.12)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b0b0d;--fg:#f4f4f5;--muted:#18181b;
+--muted-fg:#a1a1aa;--border:#2e2e33;--primary-soft:#0f2742;--danger-soft:#3a0f1a;--ok-soft:#0d2d1a;--warn-soft:#332600;
+--violet-soft:#23163f;--note-bg:#2a2410;--shadow:0 8px 24px rgba(0,0,0,.5)}}
+:root[data-theme="dark"]{--bg:#0b0b0d;--fg:#f4f4f5;--muted:#18181b;--muted-fg:#a1a1aa;--border:#2e2e33;
+--primary-soft:#0f2742;--danger-soft:#3a0f1a;--ok-soft:#0d2d1a;--warn-soft:#332600;--violet-soft:#23163f;
+--note-bg:#2a2410;--shadow:0 8px 24px rgba(0,0,0,.5)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:400 14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.mk{container-type:inline-size;background:var(--bg);color:var(--fg);font-size:14px;line-height:1.45}
+.mk .app{display:grid;grid-template-columns:210px minmax(0,1fr)}
+.mk .side{border-right:1px solid var(--border);background:var(--muted);padding:14px 10px;font-size:13px}
+.mk .brand{font-weight:700;padding:4px 8px 12px}
+.mk .nav div{padding:6px 8px;border-radius:6px;color:var(--muted-fg)}
+.mk .nav .grp{font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding-top:12px}
+.mk .nav .on{background:var(--bg);color:var(--fg);font-weight:600}
+.mk .top{display:none;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);font-weight:600}
+.mk .burger{width:18px;height:12px;border-top:2px solid var(--fg);border-bottom:2px solid var(--fg);position:relative}
+.mk .burger:after{content:"";position:absolute;left:0;right:0;top:3px;border-top:2px solid var(--fg)}
+.mk .main{padding:20px 24px;min-width:0}
+.mk .crumbs{font-size:12px;color:var(--muted-fg)}
+.mk .ph{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:4px 0 14px;flex-wrap:wrap}
+.mk .ph h1{margin:0;font-size:20px;font-weight:600}
+.mk .sub{color:var(--muted-fg);font-size:13px}
+.mk .tabs{display:flex;gap:18px;border-bottom:1px solid var(--border);margin-bottom:16px;overflow-x:auto;white-space:nowrap}
+.mk .tabs span{padding:8px 0;color:var(--muted-fg);font-size:13px}
+.mk .tabs .on{color:var(--fg);font-weight:600;border-bottom:2px solid var(--primary)}
+.mk .card{border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);margin-bottom:16px}
+.mk .card-h{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.mk .card-h h3{margin:0;font-size:15px;font-weight:600}
+.mk .card-b{padding:14px 16px}
+.mk .cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.mk .row{display:grid;grid-template-columns:220px minmax(0,1fr);gap:12px;align-items:center;padding:9px 0;border-bottom:1px dashed var(--border)}
+.mk .row:last-child{border-bottom:0}
+.mk .row label{font-size:13px}
+.mk .val{font-size:13px}
+.mk .muted{color:var(--muted-fg)}
+.mk .sw{display:inline-block;width:36px;height:20px;border-radius:10px;background:var(--border);position:relative;vertical-align:middle}
+.mk .sw:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.mk .sw.on{background:var(--primary)}
+.mk .sw.on:after{left:18px}
+.mk .swrow{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.mk .sel{display:flex;align-items:center;gap:6px;min-height:34px;border:1px solid var(--border);border-radius:6px;padding:4px 8px 4px 10px;background:var(--bg);font-size:13px;flex-wrap:wrap;position:relative}
+.mk .sel .v{flex:1;min-width:60px}
+.mk .sel .ph2{flex:1;color:var(--muted-fg)}
+.mk .sel .x{color:var(--muted-fg);font-size:14px;padding:0 2px}
+.mk .sel .chev{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--muted-fg)}
+.mk .sel.focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+.mk .menu{border:1px solid var(--border);border-radius:6px;background:var(--bg);box-shadow:var(--shadow);margin-top:4px;padding:4px;font-size:13px}
+.mk .menu .search{border:1px solid var(--border);border-radius:4px;padding:5px 8px;color:var(--muted-fg);margin-bottom:4px}
+.mk .menu .opt{padding:6px 8px;border-radius:4px;display:flex;justify-content:space-between;gap:8px}
+.mk .menu .opt.hl{background:var(--muted)}
+.mk .menu .opt .tick{color:var(--primary);font-weight:700}
+.mk .comp{display:inline-block;font:500 10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--violet);background:var(--violet-soft);border-radius:4px;padding:3px 5px;margin-left:6px;vertical-align:middle}
+.mk .chip{display:inline-flex;align-items:center;gap:4px;background:var(--muted);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:12px}
+.mk .badge{display:inline-block;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:600;white-space:nowrap}
+.mk .b-crm{background:var(--muted);color:var(--muted-fg);border:1px solid var(--border)}
+.mk .b-learned{background:var(--primary-soft);color:var(--primary)}
+.mk .b-said{background:var(--ok-soft);color:#0f8a3a}
+.mk .b-staff{background:var(--violet-soft);color:var(--violet)}
+.mk .b-warn{background:var(--warn-soft);color:#a06c00}
+.mk .b-over{background:var(--warn-soft);color:#a06c00}
+.mk .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--bg);border-radius:6px;padding:5px 10px;font-size:13px;white-space:nowrap}
+.mk .btn.pr{background:var(--primary);border-color:var(--primary);color:var(--primary-fg)}
+.mk .btn.cd{background:var(--danger-soft);border-color:var(--danger);color:var(--danger)}
+.mk .ib{display:inline-flex;width:26px;height:26px;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--muted-fg)}
+.mk .dg{border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:13px}
+.mk .dg-h,.mk .dg-r{display:grid;grid-template-columns:var(--cols);gap:10px;padding:8px 12px;align-items:center}
+.mk .dg-h{background:var(--muted);font-size:12px;color:var(--muted-fg);font-weight:600}
+.mk .dg-r{border-top:1px solid var(--border)}
+.mk .dg-r.live{background:var(--primary-soft)}
+.mk .dg-r.del{background:var(--danger-soft)}
+.mk .dg-r>div{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mk .dg-r>div.wr{white-space:normal}
+.mk .row.inl{grid-template-columns:minmax(0,1fr) auto}
+.mk .empty{border:1px dashed var(--border);border-radius:6px;padding:18px;text-align:center;color:var(--muted-fg);font-size:13px}
+.mk .pin{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:var(--pin);color:#fff;font:700 11px/1 system-ui,sans-serif;margin:0 4px;vertical-align:middle;flex:none}
+.mk .modal-wrap{background:rgba(10,10,10,.35);padding:28px 16px;border-radius:var(--radius);margin-top:16px}
+.mk .modal{max-width:460px;margin:0 auto;background:var(--bg);border-radius:10px;box-shadow:var(--shadow);border:1px solid var(--border)}
+.mk .modal .mh{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:600;display:flex;justify-content:space-between}
+.mk .modal .mb{padding:14px 16px;display:grid;gap:12px}
+.mk .modal .mf{padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.mk .fl{display:grid;gap:6px}
+.mk .fl label{font-size:13px;font-weight:500}
+.mk .input{border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:13px}
+.mk .drawer-wrap{display:grid;grid-template-columns:minmax(0,1fr) 520px;gap:0;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.mk .drawer-bg{background:var(--muted);padding:12px;opacity:.75}
+.mk .drawer{border-left:1px solid var(--border);background:var(--bg);box-shadow:var(--shadow)}
+.mk .dr-h{padding:14px 16px;border-bottom:1px solid var(--border)}
+.mk .dr-b{padding:14px 16px;display:grid;gap:14px}
+.mk .sec h4{margin:0 0 8px;font-size:13px;font-weight:600}
+.mk .kv{display:grid;grid-template-columns:150px minmax(0,1fr);gap:6px 12px;font-size:13px}
+.mk .kv>div:nth-child(odd){color:var(--muted-fg)}
+.mk .stage{display:grid;grid-template-columns:18px 110px minmax(0,1fr) 60px;gap:8px;align-items:start;font-size:13px;padding:6px 0;border-bottom:1px dashed var(--border)}
+.mk .dot{width:10px;height:10px;border-radius:50%;background:var(--ok);margin-top:4px}
+.mk .dot.q{background:var(--warn)}
+.mk .bar{height:8px;border-radius:4px;background:var(--muted);overflow:hidden}
+.mk .bar i{display:block;height:100%;background:var(--primary)}
+.mk .layer{display:grid;grid-template-columns:170px minmax(0,1fr) 70px;gap:10px;align-items:center;font-size:12px;padding:3px 0}
+.mk .r{text-align:right}
+.mk .notes{margin:10px 0 0;padding:12px 14px;background:var(--note-bg);border-radius:var(--radius);font-size:13px;display:grid;gap:6px}
+.mk .notes div{display:flex;gap:6px;align-items:flex-start}
+.mk .hide-n{display:inline}
+.mk .only-n{display:none}
+@container (max-width:760px){
+ .mk .app{grid-template-columns:1fr}
+ .mk .side{display:none}
+ .mk .top{display:flex}
+ .mk .main{padding:14px 16px}
+ .mk .cols{grid-template-columns:1fr}
+ .mk .row{grid-template-columns:1fr;gap:6px}
+ .mk .row.inl{grid-template-columns:minmax(0,1fr) auto}
+ .mk .dg-h{display:none}
+ .mk .dg-r{grid-template-columns:1fr;gap:3px;padding:10px 12px}
+ .mk .dg-r>div{white-space:normal}
+ .mk .dg-r>div[data-l]:before{content:attr(data-l) ": ";color:var(--muted-fg);font-size:12px}
+ .mk .drawer-wrap{grid-template-columns:1fr}
+ .mk .drawer-bg{display:none}
+ .mk .drawer{border-left:0}
+ .mk .stage{grid-template-columns:18px minmax(0,1fr) 50px}
+ .mk .stage .sn{grid-column:2}
+ .mk .stage .sd{grid-column:2 / 4}
+ .mk .layer{grid-template-columns:minmax(0,1fr) 60px}
+ .mk .layer .bar{grid-column:1 / 3;grid-row:2}
+ .mk .kv{grid-template-columns:1fr}
+ .mk .kv>div:nth-child(odd){margin-top:6px}
+ .mk .hide-n{display:none}
+ .mk .only-n{display:inline}
+}
+/* illustrations */
+.il{container-type:inline-size;font-size:14px;line-height:1.45;color:var(--fg)}
+.il *{box-sizing:border-box}
+.il .flow{display:grid;gap:10px}
+.il .step{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--bg)}
+.il .step h5{margin:0 0 4px;font-size:14px}
+.il .step p{margin:0;font-size:13px;color:var(--muted-fg)}
+.il .arrow{text-align:center;color:var(--muted-fg);font-size:20px;line-height:1}
+.il .three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.il .L1{border-color:var(--violet);background:var(--violet-soft)}
+.il .L2{border-color:var(--primary);background:var(--primary-soft)}
+.il .L3{border-color:var(--ok);background:var(--ok-soft)}
+.il .gate{border:2px dashed var(--warn);background:var(--warn-soft)}
+.il .core{border:2px solid var(--fg)}
+.il .tag{display:inline-block;font-size:11px;font-weight:700;border-radius:999px;padding:1px 8px;background:var(--bg);border:1px solid var(--border);margin-bottom:6px}
+.il .ex{margin-top:8px;font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px}
+.il .two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.il .bubble{background:#dcf8c6;color:#111;border-radius:10px 10px 10px 2px;padding:8px 10px;max-width:420px;font-size:13px}
+.il .bubble.bot{background:var(--muted);color:var(--fg);border-radius:10px 10px 2px 10px;margin-left:auto}
+.il .chat{display:grid;gap:6px;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg)}
+.il .who{font-size:11px;color:var(--muted-fg)}
+.il .pull{display:flex;flex-wrap:wrap;gap:6px}
+.il .kvp{display:inline-flex;gap:4px;align-items:center;border:1px solid var(--ok);background:var(--ok-soft);border-radius:6px;padding:3px 8px;font-size:13px}
+.il .kvp b{font-weight:600}
+.il .seen{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--muted);border-radius:6px;padding:8px 10px;white-space:pre-wrap;word-break:break-word}
+.il .no{border:1px solid var(--danger);background:var(--danger-soft);border-radius:6px;padding:6px 10px;font-size:13px}
+.il .ladder{display:grid;gap:6px}
+.il .rung{display:grid;grid-template-columns:170px minmax(0,1fr) 90px;gap:10px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px}
+.il .rung .blocks{display:flex;gap:4px;flex-wrap:wrap}
+.il .blk{font-size:11px;border-radius:4px;padding:2px 6px}
+.il .blk.l1{background:var(--violet-soft);color:var(--violet)}
+.il .blk.l2{background:var(--primary-soft);color:var(--primary)}
+.il .blk.l3{background:var(--ok-soft);color:#0f8a3a}
+.il .blk.l0{background:var(--muted);color:var(--muted-fg)}
+.il .scale{display:grid;gap:8px}
+.il .sbar{display:flex;height:26px;border-radius:6px;overflow:hidden;font-size:11px;color:#fff;font-weight:600}
+.il .sbar span{display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden}
+.il .r{text-align:right}
+@container (max-width:640px){
+ .il .three,.il .two{grid-template-columns:1fr}
+ .il .rung{grid-template-columns:1fr}
+}
+
+.pg{max-width:1320px;margin:0 auto;padding:24px 16px 64px}
+.pg h1{font-size:26px;margin:0 0 6px;letter-spacing:-.01em}
+.pg .lead{color:var(--muted-fg);margin:0 0 20px;font-size:15px}
+.pg h2{font-size:20px;margin:40px 0 12px;padding-top:16px;border-top:1px solid var(--border)}
+.pg h3{font-size:16px;margin:24px 0 8px}
+.pg p{margin:0 0 10px}
+.pg blockquote{margin:0 0 12px;padding:10px 14px;border-left:4px solid var(--primary);background:var(--primary-soft);border-radius:0 8px 8px 0}
+.pg .toc{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 8px;padding:0;list-style:none}
+.pg .toc li{background:var(--muted);border-radius:999px;padding:4px 12px;font-size:13px}
+.pg .dec{display:grid;gap:10px}
+.pg .d{border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:grid;grid-template-columns:150px minmax(0,1fr);gap:4px 16px}
+.pg .d .when{font-size:12px;color:var(--muted-fg)}
+.pg .d .when b{display:block;color:var(--fg);font-size:14px}
+.pg .d q{font-style:italic}
+.pg .d .so{font-size:13px;color:var(--muted-fg);margin-top:4px}
+.pg .d .so b{color:var(--fg)}
+.pg .sl{border:1px solid var(--border);border-radius:10px;margin-bottom:12px;overflow:hidden}
+.pg .sl-h{display:flex;gap:10px;align-items:center;padding:10px 14px;background:var(--muted);flex-wrap:wrap}
+.pg .sl-h .n{font-weight:700;background:var(--fg);color:var(--bg);border-radius:6px;padding:1px 8px;font-size:13px}
+.pg .sl-h .t{font-weight:600}
+.pg .hand{margin-left:auto;font-size:12px;font-weight:700;border-radius:999px;padding:2px 10px;background:var(--warn-soft);color:#a06c00}
+.pg .nohand{margin-left:auto;font-size:12px;color:var(--muted-fg)}
+.pg .sl-b{padding:10px 14px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.pg .sl-b .what{grid-column:1 / 3;font-size:14px}
+.pg .ba{border-radius:8px;padding:8px 10px;font-size:13px}
+.pg .ba.b{background:var(--danger-soft)}
+.pg .ba.a{background:var(--ok-soft)}
+.pg .ba .l{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:2px}
+.pg ol.qs{padding-left:0;list-style:none;display:grid;gap:10px;counter-reset:q}
+.pg ol.qs li{border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.pg ol.qs .qn{font-weight:700;margin-right:6px}
+.pg ol.qs .rec{margin:6px 0 4px}
+.pg ol.qs .else{font-size:13px;color:var(--muted-fg)}
+.pg .shot{margin:10px 0 26px}
+.pg .shot .cap{font-size:13px;font-weight:600;margin:12px 0 6px;display:flex;gap:8px;align-items:center}
+.pg .shot .w{font-size:11px;font-weight:700;background:var(--muted);border-radius:4px;padding:1px 6px}
+.pg .f1280{overflow-x:auto;border:1px solid var(--border);border-radius:8px}
+.pg .f1280>.inner{width:1280px}
+.pg .f375{width:377px;max-width:100%;overflow-x:auto;border:1px solid var(--border);border-radius:14px}
+.pg .f375>.inner{width:375px}
+.pg .pic{border:1px solid var(--border);border-radius:10px;padding:14px;margin:8px 0 20px}
+.pg ul.plain{margin:0 0 10px;padding-left:20px}
+.pg ul.plain li{margin-bottom:4px}
+.pg .two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+@media (max-width:760px){
+ .pg .d{grid-template-columns:1fr}
+ .pg .sl-b{grid-template-columns:1fr}
+ .pg .sl-b .what{grid-column:1}
+ .pg .two{grid-template-columns:1fr}
+ .pg h1{font-size:22px}
+}
+</style>
+</head>
+<body>
+<div class="pg">
+<h1>Chatbot memory: contact profile, episodes, current conversation</h1>
+<p class="lead">Alignment page, round 3, 27 Sep 2026. For your review before any build starts. It follows the plan and its acceptance criteria and does not replace them.</p>
+<ul class="toc"><li>1 The ask</li><li>2 Decisions so far</li><li>3 What each slice ships</li><li>4 Open questions</li><li>5 Mockups and pictures</li><li>6 Out of scope and risks</li></ul>
+
+<h2>1. The ask, in your words</h2>
+<blockquote>"I believe our chatbot plan includes things like episodes and even user profile. Because I think now we are using focus only to survive multiple turns. But I think we have episode as well and profile so that, like Claude, you got a user profile that is a memory that stores everything about that user, and also episode, for some context management so that it feels more human and conversational when you are talking with the chatbot. Because now our chatbot fails constantly in a human conversation: when things are asked out of the boundary the chatbot struggles to understand because it's a one-dimensional reply chatbot. So I think we need to look into that and I'm also interested to discuss how to implement this so that we can be an enterprise version of Claude Code."</blockquote>
+<p>And the constraint in the same issue:</p>
+<blockquote>"Token budget matters: the parser prompt is already ~22.8k tokens against a 200k tokens/min org limit."</blockquote>
+<p>What we found: the profile and episodes were promised on 15 Sep and were built, but they do almost nothing. Every conversation summary reads "Closed the stock topic.", nothing a dealer says is ever saved, and the one part that handles out-of-scope messages is the one part told nothing about who the dealer is. So most of this is a repair.</p>
+
+<h2>2. Decisions made so far</h2>
+<div class="dec">
+<div class="d"><div class="when"><b>Q1 Memory on by default?</b>26 Sep, 23:45</div><div><q>hmm off first i need to test how it looks like to make sure no regression and carry forward of unnecessary memory</q><div class="so"><b>So:</b> memory ships Off for everyone. You test it on one contact first (slice S3T). Switching it on for everyone is a later decision you make after that test.</div></div></div>
+<div class="d"><div class="when"><b>Q2 When does a conversation end?</b>26 Sep, 23:45</div><div><q>i don't like time gap, it can be topic switch</q><div class="so"><b>So:</b> a conversation ends only when the dealer switches topic. No clock, no minutes setting.</div></div></div>
+<div class="d"><div class="when"><b>Q7 How long is memory kept?</b>26 Sep, 23:45</div><div><q>again i don't like time based, very uncertain</q><div class="so"><b>So:</b> kept by count, never by date: the newest 20 conversations per contact; facts until replaced, removed by staff, or the contact is deleted.</div></div></div>
+<div class="d"><div class="when"><b>Q10 Can the bot stay silent?</b>26 Sep, 23:45</div><div><q>okay</q><div class="so"><b>So:</b> every message the bot handles gets exactly one visible reply, and never an error text.</div></div></div>
+<div class="d"><div class="when"><b>Q3 Who writes the summary?</b>27 Sep, 00:10</div><div><q>okay</q><div class="so"><b>So:</b> code writes each conversation's one-line summary from what happened. No AI call, never a stock figure or price.</div></div></div>
+<div class="d"><div class="when"><b>Q6 Save what the dealer says?</b>27 Sep, 00:10</div><div><q>hmm ok but i doubt they will introduce themselves, i mean if they say, this can be part of the memory also</q><div class="so"><b>So:</b> anything the dealer says about themselves, in any message and alongside any question, is saved as a &quot;Said&quot; fact. The bot never asks them to introduce themselves.</div></div></div>
+<div class="d"><div class="when"><b>Q8 How much context?</b>27 Sep, 00:10</div><div><q>yeah okay we can make this configurable per contact with a system default with contact override to grant different level of context to each contact</q><div class="so"><b>So:</b> four memory context levels (Off, This conversation, Past conversations, Full memory). A system default in Settings, and a per-contact override on the contact page.</div></div></div>
+<div class="d"><div class="when"><b>Q9 A proper term</b>27 Sep, 00:10</div><div><q>there should be a proper saying semantically for something like this la</q><div class="so"><b>So:</b> the term is <b>graceful fallback</b>: the reply to an out-of-scope message that acknowledges it, keeps the context, and offers a way forward instead of a dead end. Used everywhere in the plan.</div></div></div>
+<div class="d"><div class="when"><b>Token budget principle</b>27 Sep, 00:45</div><div><q>yes agree</q><div class="so"><b>So:</b> every token memory adds to the fixed instructions is paid for by a cut in the same slice (picture below).</div></div></div>
+<div class="d"><div class="when"><b>Visuals</b>27 Sep, 00:45</div><div><q>need UI mockup for settings and view the profile, memory, episode for each contact ... need UI ... can we have like flowchart for this ... i am a visual person so please visualize for me</q><div class="so"><b>So:</b> every screen has a mockup and the flagged explanations are now pictures (section 5).</div></div></div>
+<div class="d"><div class="when"><b>Final mockups</b>27 Sep, 00:50</div><div><q>chatbot memory, product specs also need a final mockup to align, cost price yeah need final mockup ya</q><div class="so"><b>So:</b> the mockups in section 5 are final: the build matches them. Every dropdown on them is the system dropdown, single or multi.</div></div></div>
+</div>
+<h3>The token budget, as agreed</h3>
+<div class="pic">
+<div class="il"><div class="scale">
+ <div class="step core"><h5>Every token memory adds is paid for by a cut in the same slice.</h5>
+  <p>Owner, 27 Sep: "yes agree".</p></div>
+ <div class="step"><span class="tag">The fixed instructions the AI reads on every message</span>
+  <div class="sbar"><span style="flex:94;background:#71717a">today 22,100 tokens (ceiling, checked by an automatic test)</span><span style="flex:6;background:#17c653">+400</span></div>
+  <div class="sbar" style="margin-top:4px"><span style="flex:94;background:#71717a">after: still at most 22,100</span><span style="flex:6;background:#f8285a">&minus;400</span></div>
+  <p style="margin-top:6px">Green: the new memory instructions (at most 400). Red: dead text cut in the same slice to pay for them. Net zero; the test fails the build if it grows.</p></div>
+ <div class="step"><span class="tag">The memory blocks, per message, by context level</span>
+  <p>Capped by the level each contact gets (the ladder in section 5). Worst case +600 at Full memory: 8.06 to 7.87 messages a minute at the account limit (&minus;2.4%). A contact at Off costs +0, and Off is the default.</p></div>
+</div></div>
+</div>
+
+<h2>3. What each slice ships, in order</h2>
+<p>Lane A is slices S0 to S3 plus your test S3T; lane B is S4. Memory stays Off for everyone through all of them.</p>
+<div class="sl"><div class="sl-h"><span class="n">S0</span><span class="t">Conversations recorded properly</span><span class="nohand">we verify it in the browser</span></div><div class="sl-b"><div class="what">Each conversation closes on a topic switch and keeps every message it contained. The ordering ticket becomes visible in Chat History. The broken memory panel in Chat History is fixed. Dealers see no change.</div><div class="ba b"><span class="l">Before</span>Chat History's memory panel breaks on real messages; you cannot see which message waited for which.</div><div class="ba a"><span class="l">After</span>Open a message in Chat History: it shows its place in the contact's line (#14, waited 0.4 s, ran after &quot;stock SRTWB1455&quot;) and a working memory panel.</div></div></div>
+<div class="sl"><div class="sl-h"><span class="n">S1</span><span class="t">Real conversation summaries</span><span class="nohand">we verify it in the browser</span></div><div class="sl-b"><div class="what">Code writes one line per finished conversation, and all past chats are summarised once so every dealer already has history on day one.</div><div class="ba b"><span class="l">Before</span>Every saved conversation reads &quot;Closed the stock topic.&quot;</div><div class="ba a"><span class="l">After</span>&quot;Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.&quot;</div></div></div>
+<div class="sl"><div class="sl-h"><span class="n">S2</span><span class="t">Contact profile and the staff screen</span><span class="nohand">we verify it in the browser</span></div><div class="sl-b"><div class="what">What the bot knows about each contact: from the CRM, learned from their conversations, said by them, or typed by staff. Staff see and edit it on the contact page.</div><div class="ba b"><span class="l">Before</span>A dealer says &quot;I'm the new purchaser&quot;; it is forgotten after the topic changes. Staff cannot see what the bot knows.</div><div class="ba a"><span class="l">After</span>The contact page shows Role: Purchaser, Said, 26 Sep, with Edit and Delete, plus the conversations and live open orders.</div></div></div>
+<div class="sl"><div class="sl-h"><span class="n">S3</span><span class="t">Memory reaches the chatbot, by level</span><span class="nohand">we verify it in the browser</span></div><div class="sl-b"><div class="what">The context level decides which layers ride on each message. The Memory card in Settings and the level on each contact. The old double understanding pass is removed. Memory is still Off for everyone.</div><div class="ba b"><span class="l">Before</span>&quot;and in kuching?&quot; after &quot;stock SRTWB1455&quot; is answered with &quot;Which product?&quot; when the subject was reset.</div><div class="ba a"><span class="l">After</span>For a contact at a level above Off, &quot;and in kuching?&quot; gives SRTWB1455 in Kuching. Everyone else: exactly today's bot.</div></div></div>
+<div class="sl"><div class="sl-h"><span class="n">S3T</span><span class="t">Your memory test</span><span class="hand">Your hand test</span></div><div class="sl-b"><div class="what">On a local copy you give one test contact its own level and run the prepared conversations: nothing regresses, nothing old is dragged in where it should not be, and memory helps where it should. Your verdict is recorded.</div><div class="ba b"><span class="l">Before</span>You cannot see what memory would do before it is on.</div><div class="ba a"><span class="l">After</span>You see it on one contact, at each level, and decide.</div></div></div>
+<div class="sl"><div class="sl-h"><span class="n">S4</span><span class="t">Graceful fallback replies</span><span class="hand">Your hand test</span></div><div class="sl-b"><div class="what">Out-of-scope messages (small talk, &quot;what did I ask&quot;, &quot;can give discount&quot;) get a human reply: one opening sentence, what memory knows, and a concrete next step or a named person.</div><div class="ba b"><span class="l">Before</span>&quot;can give 10% discount for SO-2409-0112?&quot; gets an internal note and nothing sent to the dealer.</div><div class="ba a"><span class="l">After</span>&quot;I can't approve discounts myself, but Aina can. Shall I send her SO-2409-0112 with your request? 1. Yes 2. No&quot;</div></div></div>
+
+<h2>4. Open questions</h2>
+<ol class="qs">
+<li><span class="qn">Q4.</span>How much history rides on every message?<div class="rec"><b>Recommendation: the last 3 conversation summaries plus the dealer's last 3 messages in this conversation (at the levels that include them).</b></div><div class="else">If not: more lines cost more tokens on every message; fewer lines and &quot;any update on that DO?&quot; from two conversations ago is answered with &quot;Which customer?&quot;.</div></li>
+<li><span class="qn">Q5.</span>Delete the old double understanding pass (&quot;why we delete?&quot;, answered in the PR comment of round 3)?<div class="rec"><b>Recommendation: yes, delete it and stop saving the search data only it uses.</b></div><div class="else">If not: each referring-back message of a contact with memory costs a second full pass (about 22.8k tokens and 2.6 seconds) to add one line that today says nothing.</div></li>
+<li><span class="qn">Q9.</span>Who writes the graceful fallback?<div class="rec"><b>Recommendation: the AI writes only the opening sentence; every name, number and document comes from CRM data, and a guard swaps out an opening sentence that invents a number or a code.</b></div><div class="else">If not: the AI writes the whole reply: more natural, but it can invent a price or a date. Or it stays canned and robotic.</div></li>
+<li><span class="qn">Q12.</span>Where do staff see the memory?<div class="rec"><b>Recommendation: the contact page's Chatbot tab, as the mockup in section 5 shows.</b></div><div class="else">If not: a separate page or tab: one more place to look.</div></li>
+<li><span class="qn">Q13.</span>Who gets a handover?<div class="rec"><b>Recommendation: a commercial ask (discount, credit, price exception) goes to the dealer's own salesperson by name; everything else to the domain's team.</b></div><div class="else">If not: everything goes to the team, and the dealer's own salesperson may not hear about a discount request.</div></li>
+<li><span class="qn">Q14.</span>The &quot;enterprise Claude Code&quot; direction: the bot doing things (quotes, complaints, orders)?<div class="rec"><b>Recommendation: its own ideation issue; this plan builds the memory half only.</b></div><div class="else">If not: it joins this plan, which then also carries a riskier class of change (the bot writing to the CRM).</div></li>
+<li><span class="qn">Q15.</span>May a test console message save a test-only conversation?<div class="rec"><b>Recommendation: yes, a test-only conversation row, never a fact.</b></div><div class="else">If not: memory across conversations can be tested only in automated tests and your hand test, not on the console.</div></li>
+<li><span class="qn">Q16.</span>Malay and Chinese?<div class="rec"><b>Recommendation: only the new memory lines get English, Malay and Chinese now; the opening sentence follows the dealer's language; translating the existing replies is its own lane.</b></div><div class="else">If not: this lane also translates every existing reply and report, and becomes much bigger.</div></li>
+<li><span class="qn">Q17.</span>One lane or two?<div class="rec"><b>Recommendation: two: A = S0 to S3 plus your test, B = S4 after your verdict.</b></div><div class="else">If not: one lane: S4 ships before you have tested memory.</div></li>
+<li><span class="qn">Q18.</span>Build the rarer pieces (&quot;the usual&quot;, self-statements, &quot;what did I ask&quot;) before measuring them?<div class="rec"><b>Recommendation: build them, and record today's counts as the baseline.</b></div><div class="else">If not: wait for evidence first; they stay missing until then.</div></li>
+<li><span class="qn">Q19.</span>Which level does everyone get when you later switch memory on for all?<div class="rec"><b>Recommendation: Full memory, the level your test runs at.</b></div><div class="else">If not: at Past conversations nobody's profile reaches the bot unless staff give them Full memory, so &quot;the usual&quot; and the language preference stop working for them.</div></li>
+</ol>
+
+<h2>5. Mockups and pictures</h2>
+<h3>How the three layers feed one chatbot turn</h3>
+<div class="pic">
+<div class="il"><div class="flow">
+ <div class="step"><span class="tag">1. A message arrives</span><h5>Tan Wei Liang: "and in kuching?"</h5>
+  <p>Thursday 10:03, one minute after he asked "stock SRTWB1455".</p></div>
+ <div class="arrow">&darr;</div>
+ <div class="step gate"><span class="tag">2. Which memory does this contact get?</span>
+  <h5>His context level: his own level if staff set one, otherwise the system default</h5>
+  <p>Off &middot; This conversation &middot; Past conversations &middot; Full memory. Off = exactly today's chatbot.</p></div>
+ <div class="arrow">&darr;</div>
+ <div class="three">
+  <div class="step L1"><span class="tag">Layer 1 &middot; Full memory only</span><h5>Contact profile</h5>
+   <p>Who he is and what he usually asks about.</p>
+   <div class="ex">Chin Chun Trading (dealer); role purchaser; usual SRTWB1455, M486-75-BL; site Kuching</div>
+   <p style="margin-top:6px">up to 150 tokens</p></div>
+  <div class="step L2"><span class="tag">Layer 2 &middot; Past conversations and up</span><h5>Episodes</h5>
+   <p>His last 3 finished conversations, one line each, written by code.</p>
+   <div class="ex">Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).</div>
+   <p style="margin-top:6px">up to 250 tokens</p></div>
+  <div class="step L3"><span class="tag">Layer 3 &middot; every level except Off</span><h5>Current conversation</h5>
+   <p>His last 3 messages in this conversation and the bot's last reply.</p>
+   <div class="ex">Thu 10:02 you: stock SRTWB1455</div>
+   <p style="margin-top:6px">up to 450 tokens</p></div>
+ </div>
+ <div class="arrow">&darr;</div>
+ <div class="step core"><span class="tag">3. One assembler</span><h5>Stacks the blocks in a fixed order and cuts each one to its cap</h5>
+  <p>The current message always goes in whole. Everything together never passes 1,800 tokens.</p></div>
+ <div class="arrow">&darr;</div>
+ <div class="step core"><span class="tag">4. ONE AI call understands the message</span><h5>"and in kuching?" = stock of SRTWB1455, warehouse Kuching</h5>
+  <p>No second call. The old "recall" pass that ran the whole understanding step twice is gone.</p></div>
+ <div class="arrow">&darr;</div>
+ <div class="step"><span class="tag">5. Fresh CRM data, one reply</span><h5>Bot: "SRTWB1455 in Kuching: ..." (figures fetched now, never from memory)</h5></div>
+ <div class="arrow">&darr;</div>
+ <div class="two">
+  <div class="step L2"><span class="tag">6a. After the reply, if the topic switched</span>
+   <h5>The finished conversation becomes one summary line (feeds Layer 2)</h5>
+   <p>Then his "usual" products and sites are re-counted from his last 10 conversations (feeds Layer 1).</p></div>
+  <div class="step L1"><span class="tag">6b. After the reply, if he said something about himself</span>
+   <h5>Saved as a "Said" fact on his profile (feeds Layer 1)</h5>
+   <p>In any message, whenever it comes up. He never has to introduce himself.</p></div>
+ </div>
+</div></div>
+</div>
+<h3>The profile statement: what the dealer says, what staff see, what the chatbot sees</h3>
+<div class="pic">
+<div class="il"><div class="flow">
+ <div class="chat">
+  <div class="who">Tan Wei Liang, WhatsApp, Fri 10:15</div>
+  <div class="bubble">stock SRTWB1455 for my Aurora project. btw boleh reply dalam Bahasa Melayu lepas ni?</div>
+  <div class="who" style="text-align:right">Chatbot</div>
+  <div class="bubble bot">Boleh. Stok SRTWB1455: (the normal stock answer, fetched now)</div>
+ </div>
+ <div class="arrow">&darr;</div>
+ <div class="step"><span class="tag">What the AI pulls out of that message (the profile statement)</span>
+  <div class="pull" style="margin-top:4px"><span class="kvp"><b>project</b> = "Aurora project"</span><span class="kvp"><b>language</b> = Malay</span></div>
+  <p style="margin-top:6px">He asked about stock; the stock answer still happens. The facts ride along from the same single AI call, no extra call.</p></div>
+ <div class="arrow">&darr;</div>
+ <div class="two">
+  <div class="step"><span class="tag">What staff see on his contact page</span>
+   <div class="ex" style="display:grid;grid-template-columns:90px 1fr auto;gap:4px 8px">
+    <span>Project</span><span>Aurora project</span><span class="blk l3">Said</span>
+    <span>Language</span><span>Malay</span><span class="blk l3">Said</span></div>
+   <p style="margin-top:6px">Staff can correct it (it becomes Staff) or delete it.</p></div>
+  <div class="step"><span class="tag">What the chatbot sees on his next message</span>
+   <div class="seen">About this contact: Chin Chun Trading (dealer); role purchaser; language Malay; usual products SRTWB1455, M486-75-BL; usual site Kuching; project "Aurora project"</div>
+   <p style="margin-top:6px">Only at Full memory. Replies stay in Malay next week.</p></div>
+ </div>
+ <div class="no"><b>Never a permission.</b> "I'm the owner of Iborn" saves role = owner as a hint. He still sees only Chin Chun Trading's data, exactly as before.</div>
+</div></div>
+</div>
+<h3>Memory context levels (system default, per-contact override)</h3>
+<div class="pic">
+<div class="il"><div class="ladder">
+ <div class="rung"><b>Off</b><div class="blocks"><span class="blk l0">today's chatbot: last reply + current subject</span></div><div class="r">+0 tokens</div></div>
+ <div class="rung"><b>This conversation</b><div class="blocks"><span class="blk l3">Layer 3 current conversation</span></div><div class="r">up to +200</div></div>
+ <div class="rung"><b>Past conversations</b><div class="blocks"><span class="blk l3">Layer 3</span><span class="blk l2">Layer 2 episodes</span></div><div class="r">up to +450</div></div>
+ <div class="rung"><b>Full memory</b><div class="blocks"><span class="blk l3">Layer 3</span><span class="blk l2">Layer 2</span><span class="blk l1">Layer 1 contact profile</span></div><div class="r">up to +600</div></div>
+</div></div>
+</div>
+<h3>Settings, Chatbot, Memory card</h3>
+<div class="shot"><div class="cap">Memory card <span class="w">1280</span></div><div class="f1280"><div class="inner">
+<div class="mk">
+<div class="top"><span class="burger"></span>Chatbot settings</div>
+<div class="app"><aside class="side"><div class="brand">Sorento CRM</div><div class="nav"><div class="grp">Sales</div><div>Orders</div><div>Customers</div><div class="grp">User Management</div><div>Contacts</div><div class="on">Settings</div><div class="grp">System Management</div><div>Chat History</div><div>Prompts</div></div></aside>
+<main class="main">
+<div class="crumbs">User Management / Settings / Chatbot</div>
+<div class="ph"><div><h1>Chatbot settings</h1></div></div>
+<div class="tabs"><span>General</span><span>Notifications</span><span class="on">Chatbot</span><span>Documents</span></div>
+<div class="cols">
+<div>
+ <div class="card">
+  <div class="card-h"><h3>Memory</h3><span class="badge b-warn">Off for contacts on the default</span></div>
+  <div class="card-b">
+   <div class="row inl"><label><span class="pin">1</span>Memory for all contacts</label>
+    <div class="swrow"><span class="val muted">Off</span><span class="sw"></span></div></div>
+   <div class="row"><label><span class="pin">2</span>Default context level</label>
+    <div><div class="sel"><span class="v">Full memory</span><span class="chev"></span></div><span class="comp">SearchableSelect</span></div></div>
+   <div class="row"><label><span class="pin">3</span>Contacts with their own level</label>
+    <div class="val"><span style="color:var(--primary)">1 contact</span> <span class="muted">(Tan Wei Liang, Full memory)</span></div></div>
+   <div class="row"><label><span class="pin">4</span>Conversations kept</label>
+    <div class="val">Newest 20 per contact</div></div>
+   <div class="row"><label>Facts kept</label>
+    <div class="val">Until replaced, removed by staff, or the contact is deleted</div></div>
+  </div>
+ </div>
+ <div class="card">
+  <div class="card-h"><h3>Default context level <span class="muted" style="font-weight:400">(dropdown open)</span></h3></div>
+  <div class="card-b">
+   <div><div class="sel focus"><span class="v">Full memory</span><span class="chev"></span></div><span class="comp">SearchableSelect</span></div>
+   <div class="menu">
+    <div class="search">Search...</div>
+    <div class="opt">This conversation</div>
+    <div class="opt">Past conversations</div>
+    <div class="opt hl">Full memory <span class="tick">&#10003;</span></div>
+   </div>
+  </div>
+ </div>
+</div>
+<div>
+ <div class="card"><div class="card-h"><h3>Tier order</h3><span class="muted">unchanged</span></div>
+  <div class="card-b muted">Dealer, Project, End user</div></div>
+ <div class="card"><div class="card-h"><h3>Cross-domain ladder</h3><span class="muted">unchanged</span></div>
+  <div class="card-b muted">Stock, Incoming, Orders, Sales</div></div>
+</div>
+</div>
+<div class="notes">
+ <div><span class="pin">1</span><span><b>Memory switch, default Off</b> (owner ruling 26 Sep, Q1). Off: every contact on the system default gets no memory. A contact with its own level (3) still gets that level, which is how you test one contact first.</span></div>
+ <div><span class="pin">2</span><span><b>System default context level</b> (owner ruling 27 Sep, Q8): the level every contact without its own level gets once the switch is On. System single-select dropdown; always has a value, so no clear button.</span></div>
+ <div><span class="pin">3</span><span><b>Read-only count</b> of contacts with their own level; opens Contacts filtered to them.</span></div>
+ <div><span class="pin">4</span><span><b>Retention rule, read-only</b> (owner ruling 26 Sep, Q7): a count, never a date. The four old settings nothing read (recall default, keep episodes for, profile fields, focus reset on) are gone.</span></div>
+</div>
+</main></div></div>
+</div></div><div class="cap">Memory card <span class="w">375</span></div><div class="f375"><div class="inner">
+<div class="mk">
+<div class="top"><span class="burger"></span>Chatbot settings</div>
+<div class="app"><aside class="side"><div class="brand">Sorento CRM</div><div class="nav"><div class="grp">Sales</div><div>Orders</div><div>Customers</div><div class="grp">User Management</div><div>Contacts</div><div class="on">Settings</div><div class="grp">System Management</div><div>Chat History</div><div>Prompts</div></div></aside>
+<main class="main">
+<div class="crumbs">User Management / Settings / Chatbot</div>
+<div class="ph"><div><h1>Chatbot settings</h1></div></div>
+<div class="tabs"><span>General</span><span>Notifications</span><span class="on">Chatbot</span><span>Documents</span></div>
+<div class="cols">
+<div>
+ <div class="card">
+  <div class="card-h"><h3>Memory</h3><span class="badge b-warn">Off for contacts on the default</span></div>
+  <div class="card-b">
+   <div class="row inl"><label><span class="pin">1</span>Memory for all contacts</label>
+    <div class="swrow"><span class="val muted">Off</span><span class="sw"></span></div></div>
+   <div class="row"><label><span class="pin">2</span>Default context level</label>
+    <div><div class="sel"><span class="v">Full memory</span><span class="chev"></span></div><span class="comp">SearchableSelect</span></div></div>
+   <div class="row"><label><span class="pin">3</span>Contacts with their own level</label>
+    <div class="val"><span style="color:var(--primary)">1 contact</span> <span class="muted">(Tan Wei Liang, Full memory)</span></div></div>
+   <div class="row"><label><span class="pin">4</span>Conversations kept</label>
+    <div class="val">Newest 20 per contact</div></div>
+   <div class="row"><label>Facts kept</label>
+    <div class="val">Until replaced, removed by staff, or the contact is deleted</div></div>
+  </div>
+ </div>
+ <div class="card">
+  <div class="card-h"><h3>Default context level <span class="muted" style="font-weight:400">(dropdown open)</span></h3></div>
+  <div class="card-b">
+   <div><div class="sel focus"><span class="v">Full memory</span><span class="chev"></span></div><span class="comp">SearchableSelect</span></div>
+   <div class="menu">
+    <div class="search">Search...</div>
+    <div class="opt">This conversation</div>
+    <div class="opt">Past conversations</div>
+    <div class="opt hl">Full memory <span class="tick">&#10003;</span></div>
+   </div>
+  </div>
+ </div>
+</div>
+<div>
+ <div class="card"><div class="card-h"><h3>Tier order</h3><span class="muted">unchanged</span></div>
+  <div class="card-b muted">Dealer, Project, End user</div></div>
+ <div class="card"><div class="card-h"><h3>Cross-domain ladder</h3><span class="muted">unchanged</span></div>
+  <div class="card-b muted">Stock, Incoming, Orders, Sales</div></div>
+</div>
+</div>
+<div class="notes">
+ <div><span class="pin">1</span><span><b>Memory switch, default Off</b> (owner ruling 26 Sep, Q1). Off: every contact on the system default gets no memory. A contact with its own level (3) still gets that level, which is how you test one contact first.</span></div>
+ <div><span class="pin">2</span><span><b>System default context level</b> (owner ruling 27 Sep, Q8): the level every contact without its own level gets once the switch is On. System single-select dropdown; always has a value, so no clear button.</span></div>
+ <div><span class="pin">3</span><span><b>Read-only count</b> of contacts with their own level; opens Contacts filtered to them.</span></div>
+ <div><span class="pin">4</span><span><b>Retention rule, read-only</b> (owner ruling 26 Sep, Q7): a count, never a date. The four old settings nothing read (recall default, keep episodes for, profile fields, focus reset on) are gone.</span></div>
+</div>
+</main></div></div>
+</div></div></div>
+<h3>Contact page: profile, memory, conversations, level override</h3>
+<div class="shot"><div class="cap">Contact, Chatbot tab <span class="w">1280</span></div><div class="f1280"><div class="inner">
+<div class="mk">
+<div class="top"><span class="burger"></span>Contacts</div>
+<div class="app"><aside class="side"><div class="brand">Sorento CRM</div><div class="nav"><div class="grp">Sales</div><div>Orders</div><div>Customers</div><div class="grp">User Management</div><div class="on">Contacts</div><div>Settings</div><div class="grp">System Management</div><div>Chat History</div><div>Prompts</div></div></aside>
+<main class="main">
+<div class="crumbs">User Management / Contacts / Tan Wei Liang</div>
+<div class="ph"><div><h1>Tan Wei Liang</h1><div class="sub">Chin Chun Trading (CC001) &middot; WhatsApp &middot; Dealer</div></div>
+ <div style="display:flex;gap:6px"><span class="btn">&lsaquo; Prev</span><span class="btn">Next &rsaquo;</span></div></div>
+<div class="tabs"><span>Details</span><span>Customers</span><span class="on">Chatbot</span><span>Activity</span></div>
+
+<div class="card"><div class="card-h"><h3>Chatbot settings</h3></div>
+<div class="card-b"><div class="cols">
+ <div>
+  <div class="row"><label><span class="pin">1</span>Memory context level</label>
+   <div><div><div class="sel"><span class="v">Full memory</span><span class="x" title="Clear">&times;</span><span class="chev"></span></div><span class="comp">SearchableSelect</span></div><div class="muted" style="font-size:12px;margin-top:4px">Own level &middot; system default: Off</div></div></div>
+  <div class="row"><label>Tier</label><div><div class="sel"><span class="v">Dealer</span><span class="x" title="Clear">&times;</span><span class="chev"></span></div><span class="comp">SearchableSelect</span></div></div>
+ </div>
+ <div>
+  <div class="row inl"><label>Stock checks</label><div class="swrow"><span class="sw on"></span></div></div>
+  <div class="row inl"><label>Notify salesman</label><div class="swrow"><span class="sw on"></span></div></div>
+  <div class="row inl"><label>Packing list allowed</label><div class="swrow"><span class="sw"></span></div></div>
+ </div>
+</div></div></div>
+
+<div class="card"><div class="card-h"><h3><span class="pin">2</span>What the bot knows</h3><span class="btn pr">+ Add</span></div>
+<div class="card-b">
+ <div class="dg" style="--cols:130px minmax(0,1fr) 80px 70px 150px">
+  <div class="dg-h"><div>Fact</div><div>Value</div><div>Source</div><div>Last seen</div><div></div></div>
+  <div class="dg-r"><div data-l="Fact">Customer</div><div data-l="Value" title="Chin Chun Trading (CC001)"><span style="color:var(--primary)">Chin Chun Trading (CC001)</span></div><div><span class="badge b-crm">CRM</span></div><div data-l="Last seen">live</div><div><span class="muted">read-only</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Segment</div><div data-l="Value" title="Dealer">Dealer</div><div><span class="badge b-crm">CRM</span></div><div data-l="Last seen">live</div><div><span class="muted">read-only</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Salesperson</div><div data-l="Value" title="Aina Rahman">Aina Rahman</div><div><span class="badge b-crm">CRM</span></div><div data-l="Last seen">live</div><div><span class="muted">read-only</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Role</div><div data-l="Value" title="Purchaser">Purchaser</div><div><span class="badge b-said">Said</span></div><div data-l="Last seen">26 Sep</div><div><span class="ib" title="Edit">&#9998;</span> <span class="ib" title="Delete">&#128465;</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Language</div><div data-l="Value" title="Malay">Malay</div><div><span class="badge b-said">Said</span></div><div data-l="Last seen">26 Sep</div><div><span class="ib" title="Edit">&#9998;</span> <span class="ib" title="Delete">&#128465;</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Usual products</div><div data-l="Value" title="SRTWB1455, M486-75-BL">SRTWB1455, M486-75-BL</div><div><span class="badge b-learned">Learned</span></div><div data-l="Last seen">25 Sep</div><div><span class="ib" title="Edit">&#9998;</span> <span class="ib" title="Delete">&#128465;</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Usual sites</div><div data-l="Value" title="Kuching">Kuching</div><div><span class="badge b-learned">Learned</span></div><div data-l="Last seen">25 Sep</div><div><span class="ib" title="Edit">&#9998;</span> <span class="ib" title="Delete">&#128465;</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Project</div><div data-l="Value" title="Aurora Residences block B">Aurora Residences block B</div><div><span class="badge b-said">Said</span></div><div data-l="Last seen">24 Sep</div><div><span class="ib" title="Edit">&#9998;</span> <span class="ib" title="Delete">&#128465;</span></div></div>
+  <div class="dg-r del"><div data-l="Fact">About him</div><div data-l="Value" title="Runs 3 shops in Kuching and Sibu">Runs 3 shops in Kuching and Sibu</div><div><span class="badge b-said">Said</span></div><div data-l="Last seen">22 Sep</div><div><span class="btn cd">Deleting 7s &middot; Cancel</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Note</div><div data-l="Value" title="Prefers PDF quotes">Prefers PDF quotes</div><div><span class="badge b-staff">Staff</span></div><div data-l="Last seen">20 Sep</div><div><span class="ib" title="Edit">&#9998;</span> <span class="ib" title="Delete">&#128465;</span></div></div>
+ </div>
+ <div style="margin-top:6px;font-size:12px" class="muted"><span class="pin">3</span>Delete: the button counts down with Cancel; no dialog.</div>
+</div></div>
+
+<div class="card"><div class="card-h"><h3><span class="pin">4</span>Conversations</h3><span class="muted" style="font-size:12px">14 kept of 20</span></div>
+<div class="card-b">
+ <div class="dg" style="--cols:100px 110px minmax(0,1fr) 50px 100px">
+  <div class="dg-h"><div>When</div><div>Topic</div><div>Summary</div><div>Turns</div><div>Ended by</div></div>
+  <div class="dg-r live"><div data-l="When">Now</div><div data-l="Topic">Stock</div><div data-l="Summary" class="wr">stock SRTWB1455; and in kuching?</div><div data-l="Turns">2</div><div data-l="Ended by"><span class="badge b-learned">Open</span></div></div>
+  <div class="dg-r"><div data-l="When">Thu 25 Sep</div><div data-l="Topic">Stock, Incoming</div><div data-l="Summary" class="wr">stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.</div><div data-l="Turns">5</div><div data-l="Ended by">Topic switch</div></div>
+  <div class="dg-r"><div data-l="When">Tue 23 Sep</div><div data-l="Topic">Orders</div><div data-l="Summary" class="wr">outstanding DO for CC001 Chin Chun Trading (answered).</div><div data-l="Turns">3</div><div data-l="Ended by">Topic switch</div></div>
+  <div class="dg-r"><div data-l="When">Fri 19 Sep</div><div data-l="Topic">Stock</div><div data-l="Summary" class="wr">stock M483-BL (answered); small talk.</div><div data-l="Turns">4</div><div data-l="Ended by">Topic switch</div></div>
+ </div>
+</div></div>
+
+<div class="card"><div class="card-h"><h3><span class="pin">5</span>Open orders</h3><span class="muted" style="font-size:12px">live from Chin Chun Trading</span></div>
+<div class="card-b">
+ <div class="dg" style="--cols:130px 110px minmax(0,1fr) 90px">
+  <div class="dg-h"><div>Document</div><div>Status</div><div>Summary</div><div>Date</div></div>
+  <div class="dg-r"><div data-l="Document" style="color:var(--primary)">SO-2409-0112</div><div><span class="badge b-learned">Confirmed</span></div><div data-l="Summary">3 lines</div><div data-l="Date">18 Sep</div></div>
+  <div class="dg-r"><div data-l="Document" style="color:var(--primary)">DO-2409-0087</div><div><span class="badge b-warn">Outstanding</span></div><div data-l="Summary">2 lines to Kuching</div><div data-l="Date">20 Sep</div></div>
+ </div>
+</div></div>
+
+<div class="cols">
+ <div class="card"><div class="card-h"><h3>Memory context level <span class="muted" style="font-weight:400">(dropdown open)</span></h3></div>
+ <div class="card-b">
+  <div><div class="sel focus"><span class="v">Full memory</span><span class="x" title="Clear">&times;</span><span class="chev"></span></div><span class="comp">SearchableSelect</span></div>
+  <div class="menu">
+   <div class="search">Search...</div>
+   <div class="opt">Off</div>
+   <div class="opt">This conversation</div>
+   <div class="opt">Past conversations</div>
+   <div class="opt hl">Full memory <span class="tick">&#10003;</span></div>
+  </div>
+  <div class="muted" style="font-size:12px;margin-top:6px">Clear (&times;) = follow the system default.</div>
+ </div></div>
+ <div class="modal-wrap"><div class="modal">
+  <div class="mh"><span><span class="pin">6</span>Add fact</span><span class="muted">&times;</span></div>
+  <div class="mb">
+   <div class="fl"><label>Fact</label><div><div class="sel"><span class="v">Usual products</span><span class="chev"></span></div><span class="comp">SearchableSelect</span></div></div>
+   <div class="fl"><label>Value</label>
+    <div><div class="sel focus"><span class="chip">SRTWB1455 &times;</span><span class="chip">M483-BL &times;</span><span class="ph2">Search products...</span><span class="chev"></span></div><span class="comp">SearchableMultiSelect</span></div></div>
+  </div>
+  <div class="mf"><span class="btn">Cancel</span><span class="btn pr">Save</span></div>
+ </div></div>
+</div>
+
+<div class="notes">
+ <div><span class="pin">1</span><span><b>Per-contact context level</b> (owner ruling 27 Sep, Q8). System single-select dropdown, clearable: cleared means this contact follows the system default. Replaces the old "Episode recall" switch.</span></div>
+ <div><span class="pin">2</span><span><b>The contact profile.</b> Every fact shows where it came from: <b>CRM</b> (read live from the customer, read-only), <b>Learned</b> (counted from his last 10 conversations), <b>Said</b> (he said it about himself in any message, owner ruling 27 Sep, Q6), <b>Staff</b> (typed by staff). Edit swaps the value for an input in place; editing a Learned or Said fact makes it Staff. Language now lives here as one fact, not a separate select.</span></div>
+ <div><span class="pin">3</span><span><b>Delete</b> is the standard countdown button, no confirm dialog.</span></div>
+ <div><span class="pin">4</span><span><b>Conversations (episodes).</b> One line per finished conversation, written by code with no AI and no figures (owner ruling 27 Sep, Q3), newest first; the top row is the one still open. A row opens Chat History at that conversation.</span></div>
+ <div><span class="pin">5</span><span><b>Open orders</b>, live from the linked customer: never stored, never sent to the AI.</span></div>
+ <div><span class="pin">6</span><span><b>Add fact:</b> the fact is the system single-select; list facts (products, brands, sites) use the system multi-select.</span></div>
+</div>
+</main></div></div>
+</div></div><div class="cap">Contact, Chatbot tab <span class="w">375</span></div><div class="f375"><div class="inner">
+<div class="mk">
+<div class="top"><span class="burger"></span>Contacts</div>
+<div class="app"><aside class="side"><div class="brand">Sorento CRM</div><div class="nav"><div class="grp">Sales</div><div>Orders</div><div>Customers</div><div class="grp">User Management</div><div class="on">Contacts</div><div>Settings</div><div class="grp">System Management</div><div>Chat History</div><div>Prompts</div></div></aside>
+<main class="main">
+<div class="crumbs">User Management / Contacts / Tan Wei Liang</div>
+<div class="ph"><div><h1>Tan Wei Liang</h1><div class="sub">Chin Chun Trading (CC001) &middot; WhatsApp &middot; Dealer</div></div>
+ <div style="display:flex;gap:6px"><span class="btn">&lsaquo; Prev</span><span class="btn">Next &rsaquo;</span></div></div>
+<div class="tabs"><span>Details</span><span>Customers</span><span class="on">Chatbot</span><span>Activity</span></div>
+
+<div class="card"><div class="card-h"><h3>Chatbot settings</h3></div>
+<div class="card-b"><div class="cols">
+ <div>
+  <div class="row"><label><span class="pin">1</span>Memory context level</label>
+   <div><div><div class="sel"><span class="v">Full memory</span><span class="x" title="Clear">&times;</span><span class="chev"></span></div><span class="comp">SearchableSelect</span></div><div class="muted" style="font-size:12px;margin-top:4px">Own level &middot; system default: Off</div></div></div>
+  <div class="row"><label>Tier</label><div><div class="sel"><span class="v">Dealer</span><span class="x" title="Clear">&times;</span><span class="chev"></span></div><span class="comp">SearchableSelect</span></div></div>
+ </div>
+ <div>
+  <div class="row inl"><label>Stock checks</label><div class="swrow"><span class="sw on"></span></div></div>
+  <div class="row inl"><label>Notify salesman</label><div class="swrow"><span class="sw on"></span></div></div>
+  <div class="row inl"><label>Packing list allowed</label><div class="swrow"><span class="sw"></span></div></div>
+ </div>
+</div></div></div>
+
+<div class="card"><div class="card-h"><h3><span class="pin">2</span>What the bot knows</h3><span class="btn pr">+ Add</span></div>
+<div class="card-b">
+ <div class="dg" style="--cols:130px minmax(0,1fr) 80px 70px 150px">
+  <div class="dg-h"><div>Fact</div><div>Value</div><div>Source</div><div>Last seen</div><div></div></div>
+  <div class="dg-r"><div data-l="Fact">Customer</div><div data-l="Value" title="Chin Chun Trading (CC001)"><span style="color:var(--primary)">Chin Chun Trading (CC001)</span></div><div><span class="badge b-crm">CRM</span></div><div data-l="Last seen">live</div><div><span class="muted">read-only</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Segment</div><div data-l="Value" title="Dealer">Dealer</div><div><span class="badge b-crm">CRM</span></div><div data-l="Last seen">live</div><div><span class="muted">read-only</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Salesperson</div><div data-l="Value" title="Aina Rahman">Aina Rahman</div><div><span class="badge b-crm">CRM</span></div><div data-l="Last seen">live</div><div><span class="muted">read-only</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Role</div><div data-l="Value" title="Purchaser">Purchaser</div><div><span class="badge b-said">Said</span></div><div data-l="Last seen">26 Sep</div><div><span class="ib" title="Edit">&#9998;</span> <span class="ib" title="Delete">&#128465;</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Language</div><div data-l="Value" title="Malay">Malay</div><div><span class="badge b-said">Said</span></div><div data-l="Last seen">26 Sep</div><div><span class="ib" title="Edit">&#9998;</span> <span class="ib" title="Delete">&#128465;</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Usual products</div><div data-l="Value" title="SRTWB1455, M486-75-BL">SRTWB1455, M486-75-BL</div><div><span class="badge b-learned">Learned</span></div><div data-l="Last seen">25 Sep</div><div><span class="ib" title="Edit">&#9998;</span> <span class="ib" title="Delete">&#128465;</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Usual sites</div><div data-l="Value" title="Kuching">Kuching</div><div><span class="badge b-learned">Learned</span></div><div data-l="Last seen">25 Sep</div><div><span class="ib" title="Edit">&#9998;</span> <span class="ib" title="Delete">&#128465;</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Project</div><div data-l="Value" title="Aurora Residences block B">Aurora Residences block B</div><div><span class="badge b-said">Said</span></div><div data-l="Last seen">24 Sep</div><div><span class="ib" title="Edit">&#9998;</span> <span class="ib" title="Delete">&#128465;</span></div></div>
+  <div class="dg-r del"><div data-l="Fact">About him</div><div data-l="Value" title="Runs 3 shops in Kuching and Sibu">Runs 3 shops in Kuching and Sibu</div><div><span class="badge b-said">Said</span></div><div data-l="Last seen">22 Sep</div><div><span class="btn cd">Deleting 7s &middot; Cancel</span></div></div>
+  <div class="dg-r"><div data-l="Fact">Note</div><div data-l="Value" title="Prefers PDF quotes">Prefers PDF quotes</div><div><span class="badge b-staff">Staff</span></div><div data-l="Last seen">20 Sep</div><div><span class="ib" title="Edit">&#9998;</span> <span class="ib" title="Delete">&#128465;</span></div></div>
+ </div>
+ <div style="margin-top:6px;font-size:12px" class="muted"><span class="pin">3</span>Delete: the button counts down with Cancel; no dialog.</div>
+</div></div>
+
+<div class="card"><div class="card-h"><h3><span class="pin">4</span>Conversations</h3><span class="muted" style="font-size:12px">14 kept of 20</span></div>
+<div class="card-b">
+ <div class="dg" style="--cols:100px 110px minmax(0,1fr) 50px 100px">
+  <div class="dg-h"><div>When</div><div>Topic</div><div>Summary</div><div>Turns</div><div>Ended by</div></div>
+  <div class="dg-r live"><div data-l="When">Now</div><div data-l="Topic">Stock</div><div data-l="Summary" class="wr">stock SRTWB1455; and in kuching?</div><div data-l="Turns">2</div><div data-l="Ended by"><span class="badge b-learned">Open</span></div></div>
+  <div class="dg-r"><div data-l="When">Thu 25 Sep</div><div data-l="Topic">Stock, Incoming</div><div data-l="Summary" class="wr">stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.</div><div data-l="Turns">5</div><div data-l="Ended by">Topic switch</div></div>
+  <div class="dg-r"><div data-l="When">Tue 23 Sep</div><div data-l="Topic">Orders</div><div data-l="Summary" class="wr">outstanding DO for CC001 Chin Chun Trading (answered).</div><div data-l="Turns">3</div><div data-l="Ended by">Topic switch</div></div>
+  <div class="dg-r"><div data-l="When">Fri 19 Sep</div><div data-l="Topic">Stock</div><div data-l="Summary" class="wr">stock M483-BL (answered); small talk.</div><div data-l="Turns">4</div><div data-l="Ended by">Topic switch</div></div>
+ </div>
+</div></div>
+
+<div class="card"><div class="card-h"><h3><span class="pin">5</span>Open orders</h3><span class="muted" style="font-size:12px">live from Chin Chun Trading</span></div>
+<div class="card-b">
+ <div class="dg" style="--cols:130px 110px minmax(0,1fr) 90px">
+  <div class="dg-h"><div>Document</div><div>Status</div><div>Summary</div><div>Date</div></div>
+  <div class="dg-r"><div data-l="Document" style="color:var(--primary)">SO-2409-0112</div><div><span class="badge b-learned">Confirmed</span></div><div data-l="Summary">3 lines</div><div data-l="Date">18 Sep</div></div>
+  <div class="dg-r"><div data-l="Document" style="color:var(--primary)">DO-2409-0087</div><div><span class="badge b-warn">Outstanding</span></div><div data-l="Summary">2 lines to Kuching</div><div data-l="Date">20 Sep</div></div>
+ </div>
+</div></div>
+
+<div class="cols">
+ <div class="card"><div class="card-h"><h3>Memory context level <span class="muted" style="font-weight:400">(dropdown open)</span></h3></div>
+ <div class="card-b">
+  <div><div class="sel focus"><span class="v">Full memory</span><span class="x" title="Clear">&times;</span><span class="chev"></span></div><span class="comp">SearchableSelect</span></div>
+  <div class="menu">
+   <div class="search">Search...</div>
+   <div class="opt">Off</div>
+   <div class="opt">This conversation</div>
+   <div class="opt">Past conversations</div>
+   <div class="opt hl">Full memory <span class="tick">&#10003;</span></div>
+  </div>
+  <div class="muted" style="font-size:12px;margin-top:6px">Clear (&times;) = follow the system default.</div>
+ </div></div>
+ <div class="modal-wrap"><div class="modal">
+  <div class="mh"><span><span class="pin">6</span>Add fact</span><span class="muted">&times;</span></div>
+  <div class="mb">
+   <div class="fl"><label>Fact</label><div><div class="sel"><span class="v">Usual products</span><span class="chev"></span></div><span class="comp">SearchableSelect</span></div></div>
+   <div class="fl"><label>Value</label>
+    <div><div class="sel focus"><span class="chip">SRTWB1455 &times;</span><span class="chip">M483-BL &times;</span><span class="ph2">Search products...</span><span class="chev"></span></div><span class="comp">SearchableMultiSelect</span></div></div>
+  </div>
+  <div class="mf"><span class="btn">Cancel</span><span class="btn pr">Save</span></div>
+ </div></div>
+</div>
+
+<div class="notes">
+ <div><span class="pin">1</span><span><b>Per-contact context level</b> (owner ruling 27 Sep, Q8). System single-select dropdown, clearable: cleared means this contact follows the system default. Replaces the old "Episode recall" switch.</span></div>
+ <div><span class="pin">2</span><span><b>The contact profile.</b> Every fact shows where it came from: <b>CRM</b> (read live from the customer, read-only), <b>Learned</b> (counted from his last 10 conversations), <b>Said</b> (he said it about himself in any message, owner ruling 27 Sep, Q6), <b>Staff</b> (typed by staff). Edit swaps the value for an input in place; editing a Learned or Said fact makes it Staff. Language now lives here as one fact, not a separate select.</span></div>
+ <div><span class="pin">3</span><span><b>Delete</b> is the standard countdown button, no confirm dialog.</span></div>
+ <div><span class="pin">4</span><span><b>Conversations (episodes).</b> One line per finished conversation, written by code with no AI and no figures (owner ruling 27 Sep, Q3), newest first; the top row is the one still open. A row opens Chat History at that conversation.</span></div>
+ <div><span class="pin">5</span><span><b>Open orders</b>, live from the linked customer: never stored, never sent to the AI.</span></div>
+ <div><span class="pin">6</span><span><b>Add fact:</b> the fact is the system single-select; list facts (products, brands, sites) use the system multi-select.</span></div>
+</div>
+</main></div></div>
+</div></div></div>
+<h3>The per-contact ordering ticket, in Chat History</h3>
+<div class="shot"><div class="cap">Chat History, message detail <span class="w">1280</span></div><div class="f1280"><div class="inner">
+<div class="mk">
+<div class="top"><span class="burger"></span>Chat History</div>
+<div class="app"><aside class="side"><div class="brand">Sorento CRM</div><div class="nav"><div class="grp">Sales</div><div>Orders</div><div>Customers</div><div class="grp">User Management</div><div>Contacts</div><div>Settings</div><div class="grp">System Management</div><div class="on">Chat History</div><div>Prompts</div></div></aside>
+<main class="main">
+<div class="crumbs">System Management / Chat History</div>
+<div class="ph"><div><h1>Chat History</h1></div></div>
+<div class="drawer-wrap">
+ <div class="drawer-bg">
+  <div class="dg" style="--cols:80px minmax(0,1fr) 70px">
+   <div class="dg-h"><div>Time</div><div>Message</div><div>Queue</div></div>
+   <div class="dg-r"><div>10:02:58</div><div>stock SRTWB1455</div><div>#13</div></div>
+   <div class="dg-r live"><div>10:03:12</div><div>and in kuching?</div><div>#14</div></div>
+   <div class="dg-r"><div>10:03:40</div><div>ok thanks</div><div>#15</div></div>
+  </div>
+ </div>
+ <div class="drawer">
+  <div class="dr-h"><div style="font-weight:600">Turn &middot; Fri 26 Sep, 10:03:12</div>
+   <div class="sub">Tan Wei Liang (Chin Chun Trading) &middot; "and in kuching?"</div></div>
+  <div class="dr-b">
+   <div class="sec"><h4><span class="pin">1</span>Order</h4>
+    <div class="kv">
+     <div>Place in line</div><div>#14 for this contact</div>
+     <div>Waited</div><div>0.4 s</div>
+     <div>Ran after</div><div><span style="color:var(--primary)">#13 &middot; 10:02:58 "stock SRTWB1455"</span></div>
+     <div>Next</div><div><span style="color:var(--primary)">#15 &middot; 10:03:40 "ok thanks"</span></div>
+    </div></div>
+   <div class="sec"><h4>Stages</h4>
+    <div class="stage"><span class="dot q"></span><div class="sn"><b>Queued</b></div><div class="sd muted">waited for #13 to finish</div><div class="r">0.4 s</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Received</b></div><div class="sd muted">memory reads 18 ms</div><div class="r">22 ms</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Understood</b></div><div class="sd muted">one AI call &middot; prompt 23,412 tokens &middot; output 311</div><div class="r">2.71 s</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Fetched</b></div><div class="sd muted">stock, Kuching</div><div class="r">0.38 s</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Replied</b></div><div class="sd muted">1 message sent</div><div class="r">0.21 s</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Remembered</b></div><div class="sd muted">no topic switch, nothing closed</div><div class="r">96 ms</div></div>
+   </div>
+   <div class="sec"><h4><span class="pin">2</span>Memory</h4>
+    <div class="kv">
+     <div>Context level</div><div>Full memory <span class="badge b-over">own level</span></div>
+     <div>Current subject</div><div>stock &middot; SRTWB1455 &middot; Kuching</div>
+     <div>Conversation closed</div><div class="muted">none this turn</div>
+     <div>Facts saved</div><div class="muted">none this turn</div>
+    </div></div>
+   <div class="sec"><h4><span class="pin">3</span>Context sent to the AI</h4>
+    <div class="layer"><div>About this contact</div><div class="bar"><i style="width:59%"></i></div><div class="r">88 / 150</div></div>
+    <div class="layer"><div>Past conversations</div><div class="bar"><i style="width:70%"></i></div><div class="r">176 / 250</div></div>
+    <div class="layer"><div>This conversation</div><div class="bar"><i style="width:48%"></i></div><div class="r">214 / 450</div></div>
+    <div class="layer"><div>Current subject</div><div class="bar"><i style="width:12%"></i></div><div class="r">42 / 350</div></div>
+    <div class="layer"><div>Current message</div><div class="bar"><i style="width:2%"></i></div><div class="r">9 / 600</div></div>
+    <div class="layer" style="font-weight:600"><div>Total memory + message</div><div></div><div class="r">529 / 1,800</div></div>
+    <div class="muted" style="font-size:12px">Dropped: nothing</div>
+   </div>
+   <div class="sec"><h4>When the line is stuck</h4>
+    <div class="dg-r del" style="border:1px solid var(--danger);border-radius:6px;display:block">
+     <b>Timed out in line</b> &middot; waited 45 s for #13, which never finished. This message was not answered; #13 is shown as failed.</div>
+   </div>
+  </div>
+ </div>
+</div>
+<div class="notes">
+ <div><span class="pin">1</span><span><b>The per-contact ordering ticket, made visible.</b> Every message from one contact takes the next number in that contact's line, and waits until the one before it has finished, so two quick messages are never answered out of order. The drawer shows its number, how long it waited and which message it waited for. Read-only; nothing to set.</span></div>
+ <div><span class="pin">2</span><span><b>Memory panel</b>, repaired (today it expects a different shape and breaks on real turns): the contact's level and what this turn closed or saved.</span></div>
+ <div><span class="pin">3</span><span><b>What memory cost on this message</b>, each block against its cap, and anything cut to fit.</span></div>
+</div>
+</main></div></div>
+</div></div><div class="cap">Chat History, message detail <span class="w">375</span></div><div class="f375"><div class="inner">
+<div class="mk">
+<div class="top"><span class="burger"></span>Chat History</div>
+<div class="app"><aside class="side"><div class="brand">Sorento CRM</div><div class="nav"><div class="grp">Sales</div><div>Orders</div><div>Customers</div><div class="grp">User Management</div><div>Contacts</div><div>Settings</div><div class="grp">System Management</div><div class="on">Chat History</div><div>Prompts</div></div></aside>
+<main class="main">
+<div class="crumbs">System Management / Chat History</div>
+<div class="ph"><div><h1>Chat History</h1></div></div>
+<div class="drawer-wrap">
+ <div class="drawer-bg">
+  <div class="dg" style="--cols:80px minmax(0,1fr) 70px">
+   <div class="dg-h"><div>Time</div><div>Message</div><div>Queue</div></div>
+   <div class="dg-r"><div>10:02:58</div><div>stock SRTWB1455</div><div>#13</div></div>
+   <div class="dg-r live"><div>10:03:12</div><div>and in kuching?</div><div>#14</div></div>
+   <div class="dg-r"><div>10:03:40</div><div>ok thanks</div><div>#15</div></div>
+  </div>
+ </div>
+ <div class="drawer">
+  <div class="dr-h"><div style="font-weight:600">Turn &middot; Fri 26 Sep, 10:03:12</div>
+   <div class="sub">Tan Wei Liang (Chin Chun Trading) &middot; "and in kuching?"</div></div>
+  <div class="dr-b">
+   <div class="sec"><h4><span class="pin">1</span>Order</h4>
+    <div class="kv">
+     <div>Place in line</div><div>#14 for this contact</div>
+     <div>Waited</div><div>0.4 s</div>
+     <div>Ran after</div><div><span style="color:var(--primary)">#13 &middot; 10:02:58 "stock SRTWB1455"</span></div>
+     <div>Next</div><div><span style="color:var(--primary)">#15 &middot; 10:03:40 "ok thanks"</span></div>
+    </div></div>
+   <div class="sec"><h4>Stages</h4>
+    <div class="stage"><span class="dot q"></span><div class="sn"><b>Queued</b></div><div class="sd muted">waited for #13 to finish</div><div class="r">0.4 s</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Received</b></div><div class="sd muted">memory reads 18 ms</div><div class="r">22 ms</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Understood</b></div><div class="sd muted">one AI call &middot; prompt 23,412 tokens &middot; output 311</div><div class="r">2.71 s</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Fetched</b></div><div class="sd muted">stock, Kuching</div><div class="r">0.38 s</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Replied</b></div><div class="sd muted">1 message sent</div><div class="r">0.21 s</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Remembered</b></div><div class="sd muted">no topic switch, nothing closed</div><div class="r">96 ms</div></div>
+   </div>
+   <div class="sec"><h4><span class="pin">2</span>Memory</h4>
+    <div class="kv">
+     <div>Context level</div><div>Full memory <span class="badge b-over">own level</span></div>
+     <div>Current subject</div><div>stock &middot; SRTWB1455 &middot; Kuching</div>
+     <div>Conversation closed</div><div class="muted">none this turn</div>
+     <div>Facts saved</div><div class="muted">none this turn</div>
+    </div></div>
+   <div class="sec"><h4><span class="pin">3</span>Context sent to the AI</h4>
+    <div class="layer"><div>About this contact</div><div class="bar"><i style="width:59%"></i></div><div class="r">88 / 150</div></div>
+    <div class="layer"><div>Past conversations</div><div class="bar"><i style="width:70%"></i></div><div class="r">176 / 250</div></div>
+    <div class="layer"><div>This conversation</div><div class="bar"><i style="width:48%"></i></div><div class="r">214 / 450</div></div>
+    <div class="layer"><div>Current subject</div><div class="bar"><i style="width:12%"></i></div><div class="r">42 / 350</div></div>
+    <div class="layer"><div>Current message</div><div class="bar"><i style="width:2%"></i></div><div class="r">9 / 600</div></div>
+    <div class="layer" style="font-weight:600"><div>Total memory + message</div><div></div><div class="r">529 / 1,800</div></div>
+    <div class="muted" style="font-size:12px">Dropped: nothing</div>
+   </div>
+   <div class="sec"><h4>When the line is stuck</h4>
+    <div class="dg-r del" style="border:1px solid var(--danger);border-radius:6px;display:block">
+     <b>Timed out in line</b> &middot; waited 45 s for #13, which never finished. This message was not answered; #13 is shown as failed.</div>
+   </div>
+  </div>
+ </div>
+</div>
+<div class="notes">
+ <div><span class="pin">1</span><span><b>The per-contact ordering ticket, made visible.</b> Every message from one contact takes the next number in that contact's line, and waits until the one before it has finished, so two quick messages are never answered out of order. The drawer shows its number, how long it waited and which message it waited for. Read-only; nothing to set.</span></div>
+ <div><span class="pin">2</span><span><b>Memory panel</b>, repaired (today it expects a different shape and breaks on real turns): the contact's level and what this turn closed or saved.</span></div>
+ <div><span class="pin">3</span><span><b>What memory cost on this message</b>, each block against its cap, and anything cut to fit.</span></div>
+</div>
+</main></div></div>
+</div></div></div>
+
+<h2>6. Out of scope and risks</h2>
+<div class="two">
+<div><h3>Out of scope</h3><ul class="plain">
+<li>The bot doing things in the CRM (quotes, complaints, orders): proposed as its own issue (Q14).</li>
+<li>Translating existing replies and reports (Q16).</li>
+<li>Memory shared between two contacts of the same dealer.</li>
+<li>The bot messaging first ("I'll tell you when the ETA changes").</li>
+<li>Switching memory on for everyone: your later decision after S3T.</li>
+</ul></div>
+<div><h3>Risks</h3><ul class="plain">
+<li><b>Old memory misleads.</b> Summaries never carry figures, the current message always wins, and your S3T test looks for exactly this.</li>
+<li><b>A conversation that never ends</b> (no topic switch): bounded by the 3-message cap, caught in S3T.</li>
+<li><b>The understanding step regresses</b> from the new instructions: checked against the existing test set before shipping.</li>
+<li><b>Cost creep:</b> an automatic test stops the fixed instructions from growing; the level caps what each contact adds.</li>
+<li><b>Privacy:</b> nothing new is collected; staff see and can delete every fact; deleting a contact deletes its memory.</li>
+</ul></div>
+</div>
+</div>
+</body>
+</html>
