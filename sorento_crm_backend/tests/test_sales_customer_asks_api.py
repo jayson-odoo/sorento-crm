@@ -446,3 +446,36 @@ def test_conversation_route_without_view_all_is_404_outside_the_agents_own(w):
     other = _call(w, [VIEW], "me", "get", f"/{w['z_old'].id}/conversation")
     assert other.status_code == 404, other.text
     assert _call(w, [VIEW, VIEW_ALL], "me", "get", f"/{w['z_old'].id}/conversation").status_code == 200
+
+
+# ---- AC-ST105c: the customer-less rule never crosses a company ---------------------------
+
+
+def test_customerless_ask_in_another_company_is_out_of_reach(w):
+    db = w["db"]
+    cw = seed.cross_company_world(db, w)
+    db.commit()
+    both = frozenset({SORENTO, cw["mocha"].id})
+    client, originals = _client(db, [VIEW, EDIT], w["me"])
+    try:
+        with company_scope(db, both):
+            todo = client.get(f"{BASE}/todo").json()
+            patched = client.patch(f"{BASE}/{cw['foreign'].id}", json={"state": "done"})
+            conv = client.get(f"{BASE}/{cw['foreign'].id}/conversation")
+            control_conv = client.get(f"{BASE}/{cw['loose'].id}/conversation")
+            agents = client.get(f"{BASE}/agents")
+    finally:
+        _restore(originals)
+    ids = {r["id"] for r in todo["open"]}
+    assert cw["loose"].id in ids and cw["foreign"].id not in ids
+    assert patched.status_code == 404, patched.text
+    assert control_conv.status_code == 200, control_conv.text  # the route exists
+    assert conv.status_code == 404, conv.text
+    assert agents.status_code == 200
+    client, originals = _client(db, [VIEW, VIEW_ALL], w["me"])
+    try:
+        with company_scope(db, both):
+            counts = {r["code"]: r for r in client.get(f"{BASE}/agents").json()}
+    finally:
+        _restore(originals)
+    assert counts[w["a"].sales_agent]["open"] == 5  # the fixture's 4 + `loose`, never `foreign`

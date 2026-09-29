@@ -159,3 +159,26 @@ def test_portal_todo_and_patch_follow_the_customerless_contact_link(w):
 
     assert client.patch(f"{BASE}/{loose.id}", json={"state": "done"}).status_code == 200
     assert client.patch(f"{BASE}/{orphan.id}", json={"state": "done"}).status_code == 404
+
+
+# ---- AC-ST105c, the portal half ---------------------------------------------------------
+
+
+def test_portal_customerless_ask_in_another_company_is_out_of_reach(w):
+    from app.database import get_db  # noqa: F401
+    from app.services.company_scope_resolver import apply_company_scope
+
+    db = w["db"]
+    cw = seed.cross_company_world(db, w)
+    db.commit()
+    client = _client(w, w["ca"])
+
+    async def _both():
+        set_company_scope(db, frozenset({SORENTO, cw["mocha"].id}))
+        return frozenset({SORENTO, cw["mocha"].id})
+
+    app.dependency_overrides[apply_company_scope] = _both
+    ids = {r["id"] for r in client.get(f"{BASE}/todo").json()["open"]}
+    assert cw["loose"].id in ids and cw["foreign"].id not in ids
+    assert client.patch(f"{BASE}/{cw['foreign'].id}", json={"state": "done"}).status_code == 404
+    assert client.patch(f"{BASE}/{cw['loose'].id}", json={"state": "done"}).status_code == 200  # control

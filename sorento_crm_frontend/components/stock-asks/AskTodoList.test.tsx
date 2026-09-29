@@ -144,8 +144,12 @@ describe('AskTodoList cards: what the S3 reshape removed (AC-ST305)', () => {
     expect(text).toContain('Answered: Yes, we have stock, please refer to your salesman to proceed.');
   });
 
-  it('does not put the agent code on a card (it is in the Agent column and the opened card)', () => {
-    setup(payload({ open: [{ ...NEW, agent_code: 'SEAN I' }], done_today: [] }), { showAgent: true });
+  it('puts the agent code on the card date line only when showAgent is set', () => {
+    const withCode = payload({ open: [{ ...NEW, agent_code: 'SEAN I' }], done_today: [] });
+    const { unmount } = setup(withCode, { showAgent: true });
+    expect(screen.getByText('SEAN I')).toBeInTheDocument();
+    unmount();
+    setup(withCode);
     expect(screen.queryByText('SEAN I')).toBeNull();
   });
 });
@@ -234,6 +238,13 @@ describe('AskTodoList states (AC-ST308, AC-ST116)', () => {
     setup(payload({ open: [] }));
     expect(screen.getByText('Nothing waiting')).toBeInTheDocument();
     expect(screen.getByText('Finished Customer')).toBeInTheDocument();
+  });
+
+  it('with a filter active and no rows reads "No asks match", not "Nothing waiting"', () => {
+    setup(payload({ open: [], done_today: [] }), { filtered: true } as never);
+    expect(screen.getByText('No asks match')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing waiting')).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
   });
 
   it('shows the truncated notice only when the payload is truncated', () => {

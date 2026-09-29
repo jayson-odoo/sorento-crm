@@ -102,20 +102,28 @@ describe('AskTodoGrid columns (AC-ST306)', () => {
   it('orders Asked at, Customer, Contact, Asked, Answered and ends with the action column', () => {
     setup();
     const h = headers();
-    expect(h.slice(0, 5)).toEqual(['Asked at', 'Customer', 'Contact', 'Asked', 'Answered']);
-    expect(h.at(-1)).toBe(''); // the action column carries no title and is rightmost
-    expect(h).not.toContain('Agent');
-    const doneBy = h.indexOf('Done by');
-    if (doneBy !== -1) expect(doneBy).toBeLessThan(h.length - 1);
+    expect(h).toEqual(['Asked at', 'Customer', 'Contact', 'Asked', 'Answered', '']);
   });
 
-  it('adds the Agent column before the action column when showAgent is set', () => {
-    setup({ showAgent: true });
-    const h = headers();
-    expect(h).toContain('Agent');
-    expect(h.indexOf('Agent')).toBeLessThan(h.length - 1);
-    expect(h.at(-1)).toBe('');
+  it('puts the Agent column SECOND, after Asked at, and only when showAgent is set', () => {
+    const { unmount } = setup({ showAgent: true });
+    expect(headers()).toEqual(['Asked at', 'Agent', 'Customer', 'Contact', 'Asked', 'Answered', '']);
     expect(screen.getByText('SEAN I')).toBeInTheDocument();
+    unmount();
+    setup({ showAgent: false });
+    expect(headers()).not.toContain('Agent');
+  });
+
+  it('renders Done by only when showDoneBy is set, before the action column', () => {
+    const { unmount } = setup({ showDoneBy: true } as never);
+    const h = headers();
+    expect(h.at(-1)).toBe('');
+    expect(h.indexOf('Done by')).toBe(h.length - 2);
+    const row = bodyRows().find((r) => rowText(r).includes('Customer done1'))!;
+    expect(rowText(row)).toContain('Sean Ibrahim');
+    unmount();
+    setup();
+    expect(headers()).not.toContain('Done by');
   });
 
   it('renders the cell values: datetime, product x quantity, the answer sentence', () => {

@@ -54,7 +54,7 @@ describe('AskCard content (AC-ST305)', () => {
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.queryByText('Open')).toBeNull();
-    expect(screen.getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['Done']);
+    expect(screen.getAllByRole('button').filter((b) => b.tagName === 'BUTTON').map((b) => b.textContent?.trim())).toEqual(['Done']);
   });
 
   it('a done card offers Reopen (not Done) and names who cleared it', () => {
@@ -62,6 +62,29 @@ describe('AskCard content (AC-ST305)', () => {
     expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Reopen' })).toBeInTheDocument();
     expect(screen.getByText(/Done by Sean Ibrahim/)).toBeInTheDocument();
+  });
+});
+
+describe('AskCard shell and agent code (AC-ST305)', () => {
+  it('the card itself is a focusable role="button"', () => {
+    setup();
+    const shell = screen.getByText('Hock Lee Trading').closest('[role="button"]') as HTMLElement;
+    expect(shell).not.toBeNull();
+    expect(shell.tagName).not.toBe('BUTTON'); // the Done button is nested inside, never a button in a button
+    expect(shell.getAttribute('tabindex')).toBe('0');
+  });
+
+  it('renders the agent code on the date line only when the ask has one AND showAgent is true', () => {
+    const withCode = { ...ASK, agent_code: 'SEAN I' };
+    const { unmount } = setup(withCode, { showAgent: true } as never);
+    const line = screen.getByText('SEAN I').parentElement as HTMLElement;
+    expect(line.textContent).toContain(formatDateTimeInMalaysia(ASK.created_at));
+    unmount();
+    const off = setup(withCode, { showAgent: false } as never);
+    expect(off.container.textContent).not.toContain('SEAN I');
+    off.unmount();
+    const none = setup(ASK, { showAgent: true } as never);
+    expect(none.container.textContent).not.toContain('SEAN I');
   });
 });
 

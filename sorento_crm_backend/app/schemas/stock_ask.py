@@ -11,6 +11,8 @@ class StockAskResponse(BaseModel):
     id: str
     customer_name: Optional[str] = None
     contact_name: Optional[str] = None
+    #: The contact's phone number, for the opened card's header.
+    contact_phone: Optional[str] = None
     product_code: str
     product_name: Optional[str] = None
     quantity: int

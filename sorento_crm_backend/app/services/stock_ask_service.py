@@ -482,11 +482,12 @@ def serialize(db: Session, rows: list[Any], *, with_agent: bool = False) -> list
     contact_ids = {r.contact_id for r in rows if r.contact_id}
     customer_ids = {r.customer_id for r in rows if r.customer_id}
     product_ids = {r.product_id for r in rows if r.product_id}
-    contacts = (
-        {c.id: _contact_label(c) for c in db.query(RespondContact).filter(RespondContact.id.in_(contact_ids))}
+    contact_rows = (
+        {c.id: c for c in db.query(RespondContact).filter(RespondContact.id.in_(contact_ids))}
         if contact_ids
         else {}
     )
+    contacts = {cid: _contact_label(c) for cid, c in contact_rows.items()}
     customers = (
         {
             c.id: c.customer_name
@@ -542,6 +543,7 @@ def serialize(db: Session, rows: list[Any], *, with_agent: bool = False) -> list
             id=str(r.id),
             customer_name=customers.get(r.customer_id),
             contact_name=contacts.get(r.contact_id),
+            contact_phone=getattr(contact_rows.get(r.contact_id), "phone_number", None),
             product_code=r.product_code,
             product_name=products.get(r.product_id),
             quantity=r.quantity,
@@ -684,16 +686,23 @@ def _agent_scope(db: Session, agent_id: Optional[str | Iterable[str]]) -> Any:
             return column == agent_id
         return column.in_(list(agent_id))
 
+    # Every joined row is tied to the ask's own company: a link or a customer of another company
+    # never puts an ask on an agent's list (security review, AC-ST105c).
     via_contact = and_(
         StockAsk.customer_id.is_(None),
         exists()
         .where(RespondContactCustomer.contact_id == StockAsk.contact_id)
+        .where(RespondContactCustomer.company_id == StockAsk.company_id)
         .where(linked.id == RespondContactCustomer.customer_id)
+        .where(linked.company_id == StockAsk.company_id)
         .where(matches(linked_owner)),
     )
     return (
         db.query(StockAsk)
-        .outerjoin(Customer, Customer.id == StockAsk.customer_id)
+        .outerjoin(
+            Customer,
+            and_(Customer.id == StockAsk.customer_id, Customer.company_id == StockAsk.company_id),
+        )
         .filter(or_(matches(owner), via_contact))
     )
 
@@ -924,13 +933,14 @@ def conversation_for_ask(db: Session, ask: Any, *, whole_day: bool = False) -> d
         for r in rows
     ]
 
-    after = (
-        db.query(ChatHistory.id, ChatHistory.message)
-        .filter(*in_window, ChatHistory.type == "outgoing", ChatHistory.sent_at >= created)
-        .order_by(ChatHistory.sent_at, ChatHistory.id)
-        .all()
+    # Chosen among the RETURNED messages only, so it is never an id the caller cannot see. The
+    # search starts a minute before `created_at`: the ask row and the chat row are stamped by
+    # different clocks.
+    floor = created - timedelta(seconds=60)
+    after = [m for m in messages if m["direction"] == "out" and m["at"] >= floor]
+    ask_message_id = next(
+        (m["id"] for m in after if ask.answer_summary and ask.answer_summary in (m["text"] or "")), None
     )
-    ask_message_id = next((r.id for r in after if ask.answer_summary and ask.answer_summary in (r.message or "")), None)
     if ask_message_id is None and after:
-        ask_message_id = after[0].id
+        ask_message_id = after[0]["id"]
     return {"messages": messages, "ask_message_id": ask_message_id, "contact_id": ask.contact_id}

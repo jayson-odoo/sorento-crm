@@ -59,7 +59,7 @@ def customer(db, name: str, sales_agent, company_id: str = SORENTO) -> Customer:
 def ask(db, cust, contact_id, code="SRT1", *, created_at=None, branch="in_stock", state="open", **over) -> StockAsk:
     row = StockAsk(
         id=over.pop("id", uid()),
-        company_id=SORENTO,
+        company_id=over.pop("company_id", SORENTO),
         customer_id=cust.id if cust else None,
         contact_id=contact_id,
         product_code=code,
@@ -98,6 +98,7 @@ def world(db) -> dict:
 # ---- conversation seeding (S3, AC-ST309 to 311) -------------------------------------------
 #: `chat_histories.contact_id` carries `respond_contacts.respond_io_id`, NOT `respond_contacts.id`
 #: (conversation_thread_service.py: `ChatHistory.contact_id == contact.respond_io_id`).
+ASK_AT_OPEN = datetime(2026, 9, 29, 2, 0, 0)
 ASK_AT = datetime(2026, 9, 29, 3, 0, 0)  # 11:00 Malaysia; the Malaysia day is 09-28T16:00Z .. 09-29T16:00Z
 
 
@@ -143,4 +144,21 @@ def conversation_world(db) -> dict:
         other_contact_row=chat(db, respond_io_id(db, other), ASK_AT, "incoming", "someone else's chat"),
         uuid_keyed_row=chat(db, w["dealer"], ASK_AT, "incoming", "keyed by the respond_contacts.id"),
     )
+    return w
+
+
+def cross_company_world(db, w: dict | None = None) -> dict:
+    """AC-ST105c: contact P is linked (Sorento link row) to X, a Sorento customer of agent A. `loose`
+    is a customer-less Sorento ask from P (the positive control); `foreign` is a customer-less ask
+    from P that lives in Mocha. The caller's scope must include both companies."""
+    from ._mc_lookup_seed import seed_mocha
+    from app.models.access import RespondContactCustomer
+
+    w = w if w is not None else world(db)
+    mocha = seed_mocha(db)
+    db.add(RespondContactCustomer(id=uid(), contact_id=w["dealer"], customer_id=w["x"].id, company_id=SORENTO))
+    db.flush()
+    w["mocha"] = mocha
+    w["loose"] = ask(db, None, w["dealer"], "SRT-LOOSE", created_at=ASK_AT_OPEN)
+    w["foreign"] = ask(db, None, w["dealer"], "SRT-FOREIGN", created_at=ASK_AT_OPEN, company_id=mocha.id)
     return w

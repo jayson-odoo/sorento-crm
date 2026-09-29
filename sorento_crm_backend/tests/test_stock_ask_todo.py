@@ -289,3 +289,21 @@ def test_customerless_ask_is_patchable_by_both_linked_agents_and_by_nobody_else(
         with pytest.raises(Exception) as exc:
             svc.update_for_agent(db, agent.id, orphan.id, {"state": "done"}, actor_contact_id=contact_id)
         assert getattr(exc.value, "status_code", None) == 404
+
+
+# ---- AC-ST105c: the customer-less rule never crosses a company ---------------------------
+
+
+def test_customerless_ask_in_another_company_is_not_the_agents(w):
+    svc, db = _svc(), w["db"]
+    cw = seed.cross_company_world(db)
+    with company_scope(db, frozenset({SORENTO, cw["mocha"].id})):
+        out = svc.todo_for_agent(db, cw["a"].id, now=NOW)
+        ids = {r.id for r in out["open"]}
+        assert cw["loose"].id in ids  # positive control: same-company customer-less ask
+        assert cw["foreign"].id not in ids
+        with pytest.raises(Exception) as exc:
+            svc.update_for_agent(db, cw["a"].id, cw["foreign"].id, {"state": "done"}, actor_contact_id=cw["ca"])
+        assert getattr(exc.value, "status_code", None) == 404
+        counts = {c["agent_id"]: c for c in svc.agent_counts(db, now=NOW)}
+        assert counts[cw["a"].id]["open"] == 1  # only `loose`

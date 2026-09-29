@@ -21,10 +21,17 @@ vi.mock('next/link', () => ({
   ),
 }));
 
-const ASK: StockAsk = {
+const motion = vi.hoisted(() => ({ reduced: false }));
+vi.mock('@/lib/motion', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/motion')>();
+  return { ...actual, useReducedMotion: () => motion.reduced };
+});
+
+const ASK: StockAsk & { contact_phone?: string | null } = {
   id: 'ask-1',
   customer_name: 'Hock Lee Trading',
   contact_name: 'Ah Seng',
+  contact_phone: '+60 12-000 0002',
   product_code: 'SRT5674',
   product_name: 'Wiper Blade 24in',
   quantity: 50,
@@ -36,7 +43,6 @@ const ASK: StockAsk = {
   note: 'Called Ah Seng',
   created_at: '2026-09-27T03:00:00Z',
   updated_at: null,
-  agent_code: 'SEAN I',
 };
 const DONE: StockAsk = { ...ASK, state: 'done', done_by: 'Sean Ibrahim', done_at: '2026-09-29T02:00:00Z' };
 
@@ -51,11 +57,15 @@ const CONVERSATION = {
 };
 
 const scrolled: Element[] = [];
+const scrollArgs: unknown[] = [];
 
 beforeEach(() => {
   scrolled.length = 0;
-  Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+  scrollArgs.length = 0;
+  motion.reduced = false;
+  Element.prototype.scrollIntoView = vi.fn(function (this: Element, arg?: unknown) {
     scrolled.push(this);
+    scrollArgs.push(arg);
   }) as never;
 });
 afterEach(() => {
@@ -85,12 +95,21 @@ function setup(over: Partial<React.ComponentProps<typeof AskConversationPanel>> 
 const bubbles = () => screen.getAllByTestId('conversation-bubble');
 
 describe('AskConversationPanel header and block (AC-ST307)', () => {
-  it('shows customer, contact, the asked-at time and the agent code', () => {
+  it('shows customer, contact with its phone, and "Asked <datetime>"', () => {
     const { container } = setup();
+    const text = (container.textContent ?? '').replace(/\s+/g, ' ');
     expect(screen.getByText('Hock Lee Trading')).toBeInTheDocument();
-    expect(container.textContent).toContain('Ah Seng');
-    expect(container.textContent).toContain(formatDateTimeInMalaysia(ASK.created_at));
-    expect(container.textContent).toContain('SEAN I');
+    expect(text).toContain('Ah Seng');
+    expect(text).toContain('+60 12-000 0002');
+    expect(text).toContain(`Asked ${formatDateTimeInMalaysia(ASK.created_at)}`);
+  });
+
+  it('shows the agent code only when agentCode is passed', () => {
+    const { unmount } = setup({ agentCode: 'SEAN I' } as never);
+    expect(screen.getByText(/SEAN I/)).toBeInTheDocument();
+    unmount();
+    const { container } = setup();
+    expect(container.textContent).not.toContain('SEAN I');
   });
 
   it('shows the Asked / Answered block with a Jump to message button', () => {
@@ -101,6 +120,15 @@ describe('AskConversationPanel header and block (AC-ST307)', () => {
     expect(text).toContain('Answered');
     expect(text).toContain('Yes, we have stock, please refer to your salesman to proceed.');
     expect(screen.getByRole('button', { name: /Jump to message/ })).toBeInTheDocument();
+  });
+
+  it('puts the product name in brackets after the code when there is one, and nothing when there is not', () => {
+    const { container, unmount } = setup();
+    expect((container.textContent ?? '').replace(/\s+/g, ' ')).toContain('SRT5674 x 50 (Wiper Blade 24in)');
+    unmount();
+    const bare = setup({ ask: { ...ASK, product_name: null } });
+    expect(bare.container.textContent).not.toMatch(/\(\s*\)|\(null\)/);
+    expect(bare.container.textContent).not.toContain('Wiper Blade');
   });
 });
 
@@ -145,11 +173,24 @@ describe('AskConversationPanel conversation (AC-ST307)', () => {
     const tagged = bubbles().find((b) => (b.textContent ?? '').includes('This ask'))!;
     const before = tagged.className;
     expect(before).not.toMatch(/flash/i);
-    fireEvent.click(screen.getByRole('button', { name: /Jump to message/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Jump to message/ }), { detail: 1 });
     expect(scrolled).toEqual([tagged]);
     expect(tagged.className).toMatch(/flash/i);
     const others = bubbles().filter((b) => b !== tagged);
     for (const b of others) expect(b.className).not.toMatch(/flash/i);
+  });
+
+  it('scrolls smoothly for a pointer click, and with behavior auto for a keyboard click or reduced motion', () => {
+    const { unmount } = setup();
+    fireEvent.click(screen.getByRole('button', { name: /Jump to message/ }), { detail: 1 });
+    expect(scrollArgs.at(-1)).toMatchObject({ behavior: 'smooth' });
+    fireEvent.click(screen.getByRole('button', { name: /Jump to message/ }), { detail: 0 }); // Enter / Space
+    expect(scrollArgs.at(-1)).toMatchObject({ behavior: 'auto' });
+    unmount();
+    motion.reduced = true;
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /Jump to message/ }), { detail: 1 });
+    expect(scrollArgs.at(-1)).toMatchObject({ behavior: 'auto' });
   });
 
   it('Show the whole day calls onWholeDay', () => {
@@ -186,7 +227,8 @@ describe('AskConversationPanel note (AC-ST307)', () => {
     fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'Called Ah Seng, delivery Thursday' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
     expect(onNote).toHaveBeenCalledWith('ask-1', 'Called Ah Seng, delivery Thursday');
-    expect(await screen.findByText(/Saved\s+\S+/)).toBeInTheDocument();
+    const saved = await screen.findByText(/Saved\s+\S+/);
+    expect(saved.textContent).toMatch(/Saved\s+\d{2}\/\d{2}\/\d{4},?\s+\d{1,2}:\d{2}/); // date and time
   });
 });
 

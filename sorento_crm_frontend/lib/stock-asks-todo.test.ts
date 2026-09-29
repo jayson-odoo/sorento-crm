@@ -188,15 +188,18 @@ describe('askToSummary (AC-ST301)', () => {
 // ---- AC-ST302 -----------------------------------------------------------------------------
 
 describe('ASK_LANDING_FIELDS (AC-ST302)', () => {
-  it('is Customer (text), Answer (text), Asked (date), State (status)', () => {
+  it('is Customer, Product, Answer, Created, State in that order, with their types and keys', () => {
     expect(ASK_LANDING_FIELDS.map((f) => [f.label, f.type])).toEqual([
       ['Customer', 'text'],
+      ['Product', 'text'],
       ['Answer', 'text'],
       ['Created', 'date'],
       ['State', 'status'],
     ]);
-    expect(ASK_LANDING_FIELDS.find((f) => f.label === 'Customer')!.key).toBe('customer_name');
-    expect(ASK_LANDING_FIELDS.find((f) => f.label === 'Created')!.key).toBe('created_at');
+    const key = (label: string) => ASK_LANDING_FIELDS.find((f) => f.label === label)!.key;
+    expect(key('Customer')).toBe('customer_name');
+    expect(key('Product')).toBe('title');
+    expect(key('Created')).toBe('created_at');
   });
 
   const rowsOf = () => [
@@ -209,6 +212,14 @@ describe('ASK_LANDING_FIELDS (AC-ST302)', () => {
   it('a Customer filter keeps only that customer', () => {
     const kept = applyLandingFilters(rowsOf(), ASK_LANDING_FIELDS, { customer_name: 'Hock Lee Trading' });
     expect(kept.map((r) => r.id).sort()).toEqual(['f1', 'f4']);
+  });
+
+  it('sorts by Product (the CODE x Q title) A to Z', () => {
+    const rows = [
+      ask('p1', '2026-09-29T03:00:00Z', { product_code: 'SRT9', quantity: 1 }),
+      ask('p2', '2026-09-29T03:00:00Z', { product_code: 'BLT2', quantity: 1 }),
+    ].map((a) => askToSummary(a));
+    expect(sortLandingItems(rows, ASK_LANDING_FIELDS, { key: 'title', dir: 'asc' }).map((r) => r.id)).toEqual(['p2', 'p1']);
   });
 
   it('sorts by Created oldest first and by Customer A to Z', () => {

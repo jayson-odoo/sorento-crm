@@ -85,7 +85,9 @@ def portal_customer_ask_conversation(
     agent_id = _agent_id(db, token)
     validate_uuid_path(ask_id, resource="Stock ask")
     ask = stock_ask_service.get_ask_in_scope(db, agent_id, ask_id)
-    return stock_ask_service.conversation_for_ask(db, ask, whole_day=whole_day)
+    payload = stock_ask_service.conversation_for_ask(db, ask, whole_day=whole_day)
+    payload.pop("contact_id", None)  # the CRM's "Open in Conversations" link only
+    return payload
 
 
 @router.patch("/customer-asks/{ask_id}", response_model=StockAskResponse)

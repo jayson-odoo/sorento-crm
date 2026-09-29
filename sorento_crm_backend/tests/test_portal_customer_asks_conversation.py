@@ -186,3 +186,35 @@ def test_whole_day_is_capped_at_200_rows(w):
         seed.chat(w["db"], w["rid"], ASK_AT - timedelta(seconds=i + 1), "incoming", f"bulk {i}")
     w["db"].commit()
     assert len(_get(w, w["ask"].id, query="?whole_day=true").json()["messages"]) == 200
+
+
+def test_ask_message_id_is_never_an_id_absent_from_messages(w):
+    """70 outgoing rows fill the window; the matching answer row can fall outside the 60 returned."""
+    db = w["db"]
+    db.execute(text("DELETE FROM chat_histories WHERE id = :i"), {"i": w["out_answer"].id})
+    for i in range(70):
+        seed.chat(db, w["rid"], ASK_AT + timedelta(seconds=10 + i), "outgoing", f"filler {i}")
+    late_answer = seed.chat(db, w["rid"], ASK_AT + timedelta(minutes=25), "outgoing", w["ask"].answer_summary)
+    db.commit()
+    body = _get(w, w["ask"].id).json()
+    ids = [m["id"] for m in body["messages"]]
+    assert len(ids) == 60
+    assert body["ask_message_id"] is None or body["ask_message_id"] in ids
+    assert late_answer.id not in ids or body["ask_message_id"] in (None, late_answer.id)
+
+
+def test_customerless_ask_in_another_company_has_no_conversation(w):
+    from app.services.company_scope_resolver import apply_company_scope
+
+    db = w["db"]
+    cw = seed.cross_company_world(db, w)
+    db.commit()
+    client = _client(w, w["ca"])
+
+    async def _both():
+        set_company_scope(db, frozenset({SORENTO, cw["mocha"].id}))
+        return frozenset({SORENTO, cw["mocha"].id})
+
+    app.dependency_overrides[apply_company_scope] = _both
+    assert client.get(f"{BASE}/{cw['loose'].id}/conversation").status_code == 200  # control
+    assert client.get(f"{BASE}/{cw['foreign'].id}/conversation").status_code == 404
