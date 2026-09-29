@@ -17,7 +17,7 @@ live when the owner moves the `production` label onto the new version in the adm
 rolling back is the reverse move.
 
 Revision ID: chatbot_self_reference_vocab
-Revises: mem_0003_parser_history
+Revises: merge_29sep_batch7
 """
 import logging
 
@@ -28,7 +28,7 @@ from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 
 revision = "chatbot_self_reference_vocab"
-down_revision = "mem_0003_parser_history"
+down_revision = "merge_29sep_batch7"
 branch_labels = None
 depends_on = None
 
