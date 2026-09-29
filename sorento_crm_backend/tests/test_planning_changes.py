@@ -2331,19 +2331,23 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_is_cancelled_and_un
     assert links == [], "the PO link is removed - purchasing's own PO history is untouched"
     assert "the book left nothing to buy" in (all_rows[0].note or "")
 
-    # D2 (review round, blocker): rule 6 says a freed document quantity always follows
-    # the linking engine, on THIS line's own row or not - unlinking it here must not leave
-    # it unclaimed forever. It should land on a pool-location row (not hot-selling, nobody
-    # needs it) or a raised row of another order.
+    # Owner ruling 29 Sep 2026 (PR #1369, option (c)): the freed document quantity is NOT
+    # re-dealt by the planning side (was D2: a pool row or a raised row of another order).
+    # The PO line reads unclaimed until purchasing moves it in AutoCount, and the batch
+    # row records that intent.
     from app.models.project_so import OrderInquiryLink
 
     all_links_on_po_line = (
         db.query(OrderInquiryLink).filter(OrderInquiryLink.po_line_id == po_line.id).all()
     )
-    linked_total = sum(Decimal(str(l.qty)) for l in all_links_on_po_line)
-    assert po_line.qty_ordered - linked_total == Decimal("0"), (
-        po_line.qty_ordered, linked_total, all_links_on_po_line
-    )
+    assert all_links_on_po_line == [], all_links_on_po_line
+    applied = planning_change_service.get_batch(db, str(batch.id))
+    said = applied["orders"][0]["rows"][0]["result"] or {}
+    assert not (said.get("executed_reallocations") or []), said
+    assert any(
+        po.po_number in text and "5" in text and "AutoCount" in text
+        for text in (said.get("released_documents") or [])
+    ), said
 
 
 def test_apply_advance_with_pool_available_records_the_freed_placed_qty_for_purchasing(api):

@@ -13,6 +13,10 @@ FK seeded, never a borrowed row.
   no `planning_change_reallocation_no_document`.
 - AC-S1-2 Same row but the line still holds part of the frozen quantity (0 < available < freed):
   Confirm still raises 409 `planning_change_reallocation_no_document` (unchanged).
+  SUPERSEDED 29 Sep 2026 (owner ruling, PR #1369, `PLAN-redeal-closed-po-line.md`): the
+  planning side re-deals nothing, so there is no re-deal to refuse. Confirm succeeds; the
+  row's `released_documents` records the intent for the part still on the line and says the
+  rest "is no longer on the line, nothing to move". The 409 is retired.
 - AC-S1-3 A pending batch row whose core line `line_status` is `closed`: at apply it is marked
   superseded with reason "the sales-order line is closed" and the rest of the order applies.
 

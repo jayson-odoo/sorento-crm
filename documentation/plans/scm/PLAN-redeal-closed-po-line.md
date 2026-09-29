@@ -1,4 +1,4 @@
-# PLAN: a closed purchase-order line in a re-deal share never fails the order's Confirm
+# PLAN: the planning-change Confirm records the intent, purchasing moves the PO link
 
 Status: in review, small fix track (owner ruling 29 Sep 2026), on
 `crew/redeal-closed-po` (PR #1369). Lane REDEAL-CLOSED-PO. Move to `_archive/scm/` once
@@ -15,67 +15,82 @@ SO396347, prod (54c3b4047), 29 Sep 2026: Fulfilment planning Confirm answers
   SRTSA-SS 67 to SO399381 and SRTSH22712 22 to SO394121.
 - Between the upload and the Confirm, both purchase orders were received line by line; the
   sync marks a fully received line `line_status = 'closed'`.
-- `planning_change_service._document_links_by_row` (:3081) snapshots the order's PO links
-  before the confirm without reading whether each line is still open.
-- `_redeal_document` (:3364) draws the freed quantity off those shares and re-links it through
-  `ProjectOrderInquiryService.place_on_po_allocations` (:3356 pool row, :3457 waiting row).
-  `_refuse_absent_target` (`project_order_inquiry_service.py:8862`) refuses any line whose
-  `line_status != 'open'` with `order_inquiry_po_line_closed`.
-- `apply` runs each order under a savepoint (:5043); the refusal rolls the whole order back
-  and `failed_orders` names it.
+- `planning_change_service._document_links_by_row` snapshots the order's PO links before
+  the confirm without reading whether each line is still open.
+- `_redeal_document` drew the freed quantity off those shares and re-linked it through
+  `ProjectOrderInquiryService.place_on_po_allocations` (a pool row, or a waiting row of
+  another order). `_refuse_absent_target` (`project_order_inquiry_service.py:8862`) refuses
+  any line whose `line_status != 'open'` with `order_inquiry_po_line_closed`.
+- `apply` runs each order under a savepoint; the refusal rolls the whole order back and
+  `failed_orders` names it.
 
 ## Ruling
 
 Owner, 29 Sep 2026 (same theme as #1363): the fulfilment confirm is too restrictive. One
-line's stale or conflicting source must not refuse the whole order: the order confirms, the
-affected line is skipped with a clear notice naming the AutoCount line. Process note, same
-day: from fulfilment planning the confirm records the intent while the link stays intact;
-purchasing does the adjustment in the linkage.
+line's stale or conflicting source must not refuse the whole order.
 
-Options put to the owner (crew-ask on PR #1369): (a) skip the closed share inside
-`_redeal_document` with a notice; (b) gate the whole reallocate on
-`_redirect_row_if_received`, which would also stop the open shares moving; (c) stop
-re-linking PO places from the planning side altogether, a lane of its own. Built (a); it
-is a strict subset of (c) for the closed-line case.
+Options put to the owner (crew-ask on PR #1369): (a) skip the closed share with a notice,
+still re-deal the open ones; (b) gate the whole reallocate on `_redirect_row_if_received`;
+(c) stop re-linking PO places from the planning side altogether. The owner chose (c),
+verbatim: "yes you are right, confirm only records the intent, and purchasing makes every
+link change in AutoCount, then synced back to order inquiries". Process note the same day:
+"from fulfilment planning, [it] is kind of requesting it to be delayed while the link is
+intact, then only purchasing will do the adjustment in the linkage".
 
 ## The change
 
 Backend, `app/services/planning_change_service.py`:
 
-- `_document_links_by_row` outer-joins `PurchaseOrderLine` and carries `line_status` and
-  `qty_received` on every share.
-- `_split_closed_shares` takes every share on a non-open line out of the row's share list
-  in place (the one list every component of the row consumes), so it is never drawn on,
-  never unclaimed and never re-linked.
-- `_redeal_document`: when the open shares cannot carry the freed quantity, the shortfall
-  is recorded through `_closed_share_notices` on `result_json.released_documents` and the
-  freed quantity is capped to what the open shares hold. Zero left means the row returns
-  its notices and moves nothing. The `cancelled` / AC-S1-1 / AC-S1-2 branches are unchanged
-  for a row with no closed share.
-- Notice wording: `<SO> line <n>: <qty> of <PO> received in full, goods are stock now,
-  nothing to move; purchasing adjusts the link at Order Inquiries` (a line closed with no
-  receipt reads `<status> without a receipt` instead of the received clause).
-- The link on the received line stays where it is: the confirm's own settle already treats
-  a received link as history (AC-RL-10), and purchasing adjusts it at Order Inquiries.
+- `_redeal_document`, `_pool_row_for`, `_take_document_shares`, `_unclaim_shares` and
+  `_share_words` are deleted. No planning-change apply path calls
+  `place_on_po_allocations` any more.
+- `_record_redeal_intent` replaces them. For a `reallocate` of purchase-order quantity it
+  touches no link and writes one notice per document on
+  `result_json["released_documents"]`, walked off the row's shares in linked order:
+  - an open line: `<SO> line <n>: <qty> of <PO> is for purchasing to move in AutoCount
+    (<composed label>); nothing was re-linked here, the next sync brings the new link to
+    Order Inquiries`;
+  - a line the sync closed since compose: `<SO> line <n>: <qty> of <PO> received in full,
+    goods are stock now, nothing to move; purchasing adjusts the link at Order Inquiries`
+    (a line closed with no receipt reads `is <status> without a receipt` instead);
+  - quantity no longer on the line: AC-S1-1's `nothing to move` sentence when nothing is
+    left, `<qty> of <PO> is no longer on the line, nothing to move` when part is. The 409
+    `planning_change_reallocation_no_document` (AC-S1-2) is retired.
+- `_document_links_by_row` outer-joins `PurchaseOrderLine` so every share carries the live
+  `line_status` and `qty_received` the wording needs.
+- `_execute_reallocations` still executes a reserve move (`_move_reserve`, AC-D4, a stock
+  hold) and an SPO give-back (`_release_spo_share`, D7, a CRM-side allocation); its
+  `pool_cache` parameter and the hot-selling read are gone with the re-deal.
+- The link on the giving line stays exactly as the confirm's own settle left it. The
+  same-order survivor shift (`_shift_links_off_retired_lines`, AC-P3-6) and the confirm's
+  settle (AC-P3-8 over-cover trim, a zeroed row's unlink) are unchanged: they are the
+  order's own placement, not a re-deal to a stranger. Raised to the owner as a follow-up
+  question on the PR, not decided in this lane.
 
 Frontend, `project-sales/_shared/lib/boardChangeAnnotations.ts`: `whereItWentFrom` prints a
-released entry that is already a sentence verbatim; a bare document number keeps its
-`Released <doc> for purchasing` wrapper. Both the board's change column and the sales-order
-detail read through this one function.
+released entry that is already a sentence verbatim; a bare document number (an SPO given
+back) keeps its `Released <doc> for purchasing` wrapper. Both the board's change column and
+the sales-order detail read through this one function.
 
 ## Tests
 
-`tests/scm/test_planning_change_redeal_closed_po_line.py` (red first, then green):
+Red first, then green:
 
-- the SO396347 shape: the whole placed share on one line, received and closed after the
-  batch was built;
-- an open sibling too small to carry the freed quantity, so the closed line is genuinely
-  reached: the open share still moves to the pool, the closed one is skipped with its notice.
-
-`boardChangeAnnotations.test.ts`: a bare document is wrapped, a sentence prints verbatim.
+- `tests/scm/test_planning_change_reallocation.py`: every Slice D test that asserted a pool
+  row, a waiting-row link or an unclaim now asserts the intact link, no pool row, the
+  untouched waiting row and the notice; `test_the_planning_side_never_calls_place_on_po_allocations_at_apply`
+  plants the SO396347 refusal at that seam and proves it is never reached.
+- `tests/scm/test_board_received_stock_s1_apply.py`: AC-S1-2 records what is left instead
+  of failing.
+- `tests/test_planning_changes.py`: the SO397450 advance shape records two notices and
+  writes no pool row.
+- `tests/scm/test_planning_change_redeal_closed_po_line.py`: the SO396347 shape (whole
+  share received and closed) and a mixed open/closed shape.
+- `boardChangeAnnotations.test.ts`: a bare document is wrapped, a sentence prints verbatim.
 
 ## Out of scope
 
-Retiring the planning side's PO re-link altogether (option (c)) and the cancelled-row link
-shift (`_shift_links_off_retired_lines`) on a closed line, which repoints a link directly
-rather than through `place_on_po_allocations` and was not part of the reported failure.
+Whether the confirm's own settle trim (AC-P3-8), the zeroed row's unlink and the same-order
+survivor shift (AC-P3-6) should also become intent-only under the same ruling; and the
+confirm-time cascade (`auto_place_for_confirmed_products`), which drafts links for rows
+this confirm raised. Asked on the PR; a separate lane if the owner says yes.

@@ -10046,8 +10046,8 @@ class ProjectOrderInquiryService:
             # document - a row linked to two lines of one purchase order lost both claims
             # when one line was given back. The link records which claim it wrote, so this
             # removes exactly that one and nothing else (S3, review round: the shared
-            # guard lives in `order_link_service.free_claim_if_orphaned`, alongside
-            # `_unclaim_shares` [`planning_change_service.py`]'s own call).
+            # guard lives in `order_link_service.free_claim_if_orphaned`; the
+            # planning-change re-deal that also called it was retired 29 Sep 2026).
             order_link_service.free_claim_if_orphaned(
                 self.db, link.claim_id, excluding=going
             )
