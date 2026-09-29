@@ -5,12 +5,15 @@ hand to n8n"). The sorento side of this contract is in production: `POST /api/v1
 `media_selection` and `is_new_idea` (`app/schemas/external/ideation.py`), `app/services/ideation_turn_service.py`
 owns the lookback / menu / `pending_media` / `seen_media_ids` / restart state machine, and the same call is exposed
 as the MCP tool `crm_ideation_turn` (`sorento_crm_mcp/sorento_crm_mcp/ideation.py`, catalog entry). The n8n nodes
-this spec describes (`ideate-turn-http`, `build-ideate-reply.js`) were built and then ported verbatim into the
-sorento chatbot's own `app/services/chatbot/lanes/ideate.py` by the turn-engine re-architecture (0a335146,
-2026-09-22, #952), so the chatbot no longer routes this flow through n8n; voice transcription moved into sorento
-as well (`_archive/ideation/PLAN-chatbot-media-endpoint.md`). Git evidence: endpoint, schema, service and MCP tool
-are all in the tree at the oldest commit this clone carries (4ee8fa1f, 2026-09-20, #1051). The sections below
-remain the field-level reference for the request and response shapes. Archived to
+this spec describes (`ideate-turn-http`, `build-ideate-reply.js`) were built and then ported into the sorento
+chatbot's own `app/services/chatbot/lanes/ideate.py` with the turn-engine tail (2465e2e14, 2026-09-05, #672),
+reworked by the turn-engine re-architecture (0a335146, 2026-09-22, #952), so the chatbot no longer routes this
+flow through n8n; voice transcription moved into sorento as well (`_archive/ideation/PLAN-chatbot-media-endpoint.md`).
+Git evidence (re-checked against main 2026-09-29): the endpoint, schema and service landed in 08dc17391
+(2026-07-19), the MCP tool in 2465e2e14 (#672). The contract grew after this snapshot: the request gained
+`is_test` (e27692331, #1182; shown in section 1) and the response gained `offered_media` (a5e123aeb, #1279;
+`IdeationOfferedMedia` in `app/schemas/external/ideation.py`, not shown below). The sections below remain the
+field-level reference for the rest of the request and response shapes. Archived to
 `documentation/plans/_archive/ideation/`.
 
 **Governing decisions:** `PLAN-ideation-ideate-intent.md` DC-1..DC-10 + UAC Group F. Program spine

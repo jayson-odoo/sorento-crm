@@ -8,11 +8,16 @@ Every sorento-side item in section 1 exists in the tree: the `ideate` intent in 
 the `/ideas` + `/ideas/{id}` iframe host (`app/(protected)/ideas/`, `components/ideas/IdeationEmbed.tsx`), and the
 MCP tool `crm_ideation_turn` (`sorento_crm_mcp/sorento_crm_mcp/ideation.py`), which the chatbot now calls through
 `app/services/chatbot/lanes/ideate.py`. Multi-modal capture (DC-1..DC-10, UAC Group F) shipped with it.
-Tests: `tests/test_ideation_*.py` (8 files), `tests/chatbot/test_s3_canned_and_ideate.py`,
+Tests: `tests/test_ideation_*.py` (11 files), `tests/chatbot/test_s3_canned_and_ideate.py`,
 `sorento_crm_mcp/tests/test_ideation_tool.py`, vitest under `app/(protected)/ideas/` and `components/ideas/`.
-Git evidence: all of the above is already in the tree at the oldest commit this clone carries (4ee8fa1f,
-2026-09-20, #1051); the ideate lane was reworked by the chatbot turn-engine re-architecture (0a335146,
-2026-09-22, #952); the live flow was walked in `REVIEW-ideation-flow-ux-24sep.md` (2026-09-24, PR #1176).
+Git evidence (re-checked against main 2026-09-29): the intent, the turn endpoint and service, and the Ideas
+iframe host landed in 08dc17391 (2026-07-19); the MCP tool and `lanes/ideate.py` in 2465e2e14 (2026-09-05,
+#672); the lane was reworked by the chatbot turn-engine re-architecture (0a335146, 2026-09-22, #952); the live
+flow was walked in `REVIEW-ideation-flow-ux-24sep.md` (2026-09-24, PR #1176). Later work builds on this plan
+rather than reopening it: `is_test` turns (e27692331, #1182), the intake redesign (0dd443732, 2026-09-25, #1222,
+which reworked `ideation_turn_service.py` and `ideation_extractor.py` and added `test_ideation_extractor.py`,
+`test_ideation_idle_sweep.py`, `test_ideation_reply.py`), the draft-pointer fix (df83f8ac8, #1230) and the chat
+reply format (a5e123aeb, #1279); their plans stay in `documentation/plans/ideation/` and `plans/chatbot/`.
 The plan's own build note (Phase 2f, 2026-07-20) stands in section 5. Still unmet, per
 `ideation-ideate-intent-test-report.md`: the live-LLM and Playwright rows were DEFERRED, never run deterministically.
 Archived to `documentation/plans/_archive/ideation/` with its UAC.
