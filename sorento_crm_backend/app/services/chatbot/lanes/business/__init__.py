@@ -1831,25 +1831,6 @@ def run_fetch(
         )
 
     envelope = fetch_mod.parse_mcp_content(raw)
-    if (
-        tool_name == "crm_outstanding_report"
-        and db is not None
-        and isinstance(envelope, dict)
-        and isinstance(envelope.get("response"), str)
-        and args.get("customer_ids")
-        and "\nCustomer: all\n" in "\n" + envelope["response"]
-    ):
-        # A report run on customer ids never says "Customer: all" (customer scope,
-        # PLAN-chatbot-customer-scope-29sep.md D3): the route names the ids it ran on, and
-        # a body that did not is named here from the same rows, `outstanding_customer_echo`.
-        named = outstanding_customer_echo(db, args.get("customer_ids"))
-        if named:
-            envelope = {
-                **envelope,
-                "response": ("\n" + envelope["response"]).replace(
-                    "\nCustomer: all\n", f"\nCustomer: {named}\n", 1
-                )[1:],
-            }
     if trace is not None:
         # A9: ONE call, ONE tool, ONE envelope this turn - the same "the read" this
         # whole function is named for. `envelope` rides through `trace.add`'s own
