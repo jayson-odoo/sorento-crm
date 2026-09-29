@@ -89,6 +89,10 @@ const EXPANDED_CONTENT_SITES = new Map<string, string>([
     'app/(protected)/project-sales/order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx',
     'NESTED GRID: OrderInquiryStockGrid, a thin wrapper over CellStockTable (the hand-rolled <table> carve-out) whose rows open StockDocumentsPanel (PanelDataGrid). The expansion sits inside the OI detail lines grid\'s own provider, so the context default covers it, AND StockDocumentsPanel passes scrollerMaxHeight={false} itself (S3, PLAN-oi-request-cs-reserve.md, stock grid on the OI page)',
   ],
+  [
+    'app/(protected)/master-data-management/products/[id]/components/ProductSuppliersTab.tsx',
+    'NESTED GRID: SupplierCostPrices (PanelDataGrid) under a supplier row, #1305 round 9. Covered by the context default (it names no scrollerMaxHeight of its own)',
+  ],
   // The primitives themselves: the prop declaration, the renderer, and the
   // wrapper that forwards `expanded`. Not nesting sites.
   ['components/ui/data-grid.tsx', 'declares the ColumnMeta field'],

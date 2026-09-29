@@ -40,7 +40,9 @@ class AuditLog(Base):
     # production currently types this column `uuid`, which silently rejects those
     # rows, so market-segment changes have never been audited. See migration 297.
     entity_id = Column(String(100), nullable=False, index=True)
-    action = Column(String(20), nullable=False)  # INSERT | UPDATE | DELETE
+    # INSERT | UPDATE | DELETE, or a named event (e.g. SUPPLIER_COST_LIST_EDIT,
+    # COST_VERIFICATION_SETTING - #1288 - the longest named events need 40, not 20).
+    action = Column(String(40), nullable=False)
     user_id = Column(UUID(as_uuid=False), nullable=True)  # system, or user id when available
     # Acting contact (respond_contacts.id) for portal/public-link writes where there is
     # no staff user_id. NULL for staff writes and the `system` automation principal.

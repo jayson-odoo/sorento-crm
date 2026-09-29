@@ -78,6 +78,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   );
   const { data: product, isLoading } = useProduct(productId);
   const canViewChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.view');
+  const canViewSuppliers = useHasPermission('procurement.product_suppliers.view');
 
   // Tab badge counts - same hooks the tab content components use, so React
   // Query dedupes the request when the user opens the tab.
@@ -308,10 +309,12 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 <Paperclip />
                 <span>Attachments{attachmentsCount ? ` (${attachmentsCount})` : ''}</span>
               </TabsTrigger>
-              <TabsTrigger value="suppliers">
-                <Truck />
-                <span>Suppliers</span>
-              </TabsTrigger>
+              {canViewSuppliers ? (
+                <TabsTrigger value="suppliers">
+                  <Truck />
+                  <span>Suppliers</span>
+                </TabsTrigger>
+              ) : null}
               <TabsTrigger value="promotions">
                 <Tag />
                 <span>Promotions{promotionsCount ? ` (${promotionsCount})` : ''}</span>
@@ -590,9 +593,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             </TabsContent>
 
             {/* Tab: Suppliers */}
-            <TabsContent value="suppliers">
-              <ProductSuppliersTab productId={productId} />
-            </TabsContent>
+            {canViewSuppliers ? (
+              <TabsContent value="suppliers">
+                <ProductSuppliersTab productId={productId} />
+              </TabsContent>
+            ) : null}
 
             {/* Tab: Promotions */}
             <TabsContent value="promotions">

@@ -173,9 +173,37 @@ class ProductSupplierUpdate(ProductSupplierSourcingTerms):
     standard_lead_time_days: Optional[int] = None
 
 
+class ProductSupplierCostCreate(BaseModel):
+    """A hand-added cost list row (#1288, AC-CL-06). Typed so a missing currency or a text
+    price is a 422, not a 500 from the database (Should fix 2 of the review at 232e5706)."""
+    unit_cost: Decimal = Field(ge=0)
+    currency: str = Field(min_length=3, max_length=3)
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    # Round 8: the packaging this cost is for, free text; empty or absent is `standard`.
+    packaging_method: Optional[str] = Field(default=None, max_length=255)
+
+
+class ProductSupplierCostUpdate(BaseModel):
+    """A partial edit: only the fields sent change; a date sent as null clears it."""
+    unit_cost: Optional[Decimal] = Field(default=None, ge=0)
+    currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+
+    @model_validator(mode="after")
+    def _price_and_currency_not_null(self):
+        for name in ("unit_cost", "currency"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be empty")
+        return self
+
+
 class ProductSupplierResponse(ProductSupplierBase):
     id: str
     created_at: datetime
+    # A link the cost upload created may have no lead time (#1288 round 6, R3).
+    standard_lead_time_days: Optional[int] = None
     # Read off `scm.supplier_product_code_alias` (product + supplier, non-dismissed), not a
     # column on this table (S4, AC-D2): the alias is the single writer, so a manual match and
     # this field can never drift apart. Declared on the RESPONSE only - a create or update

@@ -563,6 +563,13 @@ def test_every_company_id_table_is_registered():
     # `sales.team_members` are one company's own teams and its agents' dated places in
     # them; the team routes load a team BY ID, so the mixin's filter is what hides another
     # company's team (UAC S6-8).
+    # PLAN-cost-price-supplier-26sep.md (#1288, Lane A) adds 3: `product_supplier_costs`
+    # is one company's own dated cost list for its own product-supplier link,
+    # `cost_price_change_sets` is one company's upload of a supplier price list, and
+    # `supplier_price_links` is one company's link for a supplier (plan 4.1, 4.3, 4.5).
+    # The routes load a set, a line's set and a cost row BY ID, so the mixin's filter is
+    # what hides another company's prices; `cost_price_change_lines` reaches its scope
+    # through its set and is deliberately not owned.
     # PLAN-sales-targets-opportunities-26sep.md (S1) adds 3: `sales.targets`,
     # `sales.target_periods` and `sales.target_scope` are one company's own targets, their
     # per-period figures and their product scope rows; every target route loads BY ID, so the
@@ -579,7 +586,8 @@ def test_every_company_id_table_is_registered():
     # PLAN-finance-billing-documents-27sep.md (S0, #1309) adds 2: `finance.billing_documents`
     # and `finance.billing_document_lines` are one company's own AutoCount billing documents,
     # pushed under that company's anchor; the read-back loads a document BY ID.
-    expected_owned = 148
+    # Merge of both lanes: main's 148 + 3 (cost price, #1288) = 151.
+    expected_owned = 151
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
