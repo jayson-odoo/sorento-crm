@@ -407,3 +407,84 @@ class TestComplaintsListScope:
         anonymous = client.get(COMPLAINTS)
         assert anonymous.status_code == 200, anonymous.text
         assert both <= self._numbers(anonymous)
+
+
+# --------------------------------------------------------------------------- #
+# Review round 1 (reviewer R-*, security S-*)
+# --------------------------------------------------------------------------- #
+
+
+def _same_named_dup(db, w: World):
+    """A second customer with the SAME name as `w.own`, and one order of its own."""
+    dup = customer(db, company_id=DEFAULT_COMPANY_ID, name=OWN_NAME)
+    row = order(db, company_id=DEFAULT_COMPANY_ID, customer_id=dup.id, number=unique_code("DO-DUP"))
+    row.debtor_name = OWN_NAME
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    order_line(db, company_id=DEFAULT_COMPANY_ID, order_id=row.id, product_id=w.product.id, warehouse_id=wh.id, quantity=3)
+    db.commit()
+    return dup, row
+
+
+def test_same_named_ledger_orders_do_not_leak_on_the_orders_list(client, db) -> None:
+    """S-B2: another customer sharing the linked customer's NAME must not be reachable
+    through the legacy `debtor_name = customer_name` fallback: its order is not in `data`."""
+    w = World(db)
+    _dup, row = _same_named_dup(db, w)
+    resp = client.get(ORDERS, params=w.me)
+    assert resp.status_code == 200, resp.text
+    assert row.order_number not in _numbers(resp), resp.text
+    assert w.own_order.order_number in _numbers(resp)
+
+
+def test_same_named_ledger_orders_do_not_leak_on_analytics(client, db) -> None:
+    """S-B2: analytics counts only the linked customer's own order, not the same-named one."""
+    w = World(db)
+    _same_named_dup(db, w)
+    resp = client.get(ANALYTICS, params={"metric": "count", **w.me})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total"]["value"] == 1, resp.text
+
+
+def test_same_named_ledger_orders_do_not_leak_on_by_product(client, db) -> None:
+    """S-B2: by-product lists only the linked customer's own DO."""
+    w = World(db)
+    _dup, row = _same_named_dup(db, w)
+    resp = client.get(BY_PRODUCT, params={"product_ids": w.product.id, **w.me})
+    assert resp.status_code == 200, resp.text
+    assert row.order_number not in resp.text, resp.text
+    assert w.own_order.order_number in resp.text, resp.text
+
+
+@pytest.mark.parametrize("pad", [" {id}", "{id} ", " {id} "])
+def test_padded_contact_id_still_scopes(client, db, pad) -> None:
+    """S-S1: a padded `contact_id` must not fall through to "no contact" (unscoped)."""
+    w = World(db)
+    contact_id = pad.format(id=w.contact.id)
+    resp = client.get(ORDERS, params={"customer_ids": w.rival.id, "contact_id": contact_id, "space_id": "zzt-space"})
+    assert resp.status_code == 403, resp.text
+
+
+def test_bare_sales_report_from_a_scoped_contact_runs_on_the_links(client, db) -> None:
+    """R-S1: no product_code / customer_ids / customer_query from a scoped contact is not
+    `subject_required`: the links are the subject, and the body echoes the customer."""
+    w = World(db)
+    resp = client.get(SALES, params=w.me)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["customer_name"] == OWN_NAME, resp.text
+
+
+def test_own_customer_code_as_customer_query_returns_rows_on_outstanding_and_sales(client, db) -> None:
+    """Nit: the customer's own CODE as `customer_query` matches inside the links, so the
+    reports echo the linked customer (today 200 with the name-only ILIKE matching nothing)."""
+    w = World(db)
+    for path in (OUTSTANDING, SALES):
+        resp = client.get(path, params={"customer_query": w.own.customer_code, **w.me})
+        assert resp.status_code == 200, (path, resp.text)
+        assert resp.json()["customer_name"] == OWN_NAME, (path, resp.text)
+
+
+def test_orders_list_entities_echo_hides_foreign_names_for_a_scoped_contact(client, db) -> None:
+    """S-N2: the deprecated `entities` bag must not echo another customer's name back."""
+    w = World(db)
+    resp = client.get(ORDERS, params={"entities": "ZZT RIVAL", **w.me})
+    assert RIVAL_NAME not in resp.text, resp.text

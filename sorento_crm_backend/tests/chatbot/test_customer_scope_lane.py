@@ -525,3 +525,111 @@ class TestForcedToTheLinks:
         calls = [args for name, args in captured if name in (REPORT, ORDERS, SALES)]
         assert calls, (captured, reply)
         assert all(args.get("customer_ids") == [own_id] for args in calls), calls
+
+
+# --------------------------------------------------------------------------- #
+# Review round 1 (reviewer R-*, security S-*)
+# --------------------------------------------------------------------------- #
+
+HANLIM_NAMES = ("HANLIM TRADING", "HANLIM HARDWARE")
+
+
+class TestReviewRound1:
+    def test_refusal_does_not_lock_the_next_turn(self, session_factory, monkeypatch) -> None:
+        """R-B1: a refused turn must not poison the next one. Turn 2 from the same contact,
+        `self_reference: true`, runs the report on the links and is not refused."""
+        _seed_contact(session_factory, variables={})
+        (own_id,) = _link_customers(session_factory, OWN_A)
+        first, first_calls = _turn(
+            session_factory, monkeypatch, _ask([_ent("hanlim")]), resolve_services=_hanlim_services(),
+        )
+        assert first.strip() == refusal(OWN_A), first
+        reply, captured = _turn(
+            session_factory, monkeypatch, _ask(self_reference=True), "what's my outstanding",
+            mcp_response=REPORT_HIT,
+        )
+        assert "under your account" not in reply, reply
+        (args,) = _calls(captured, REPORT)
+        assert args["customer_ids"] == [own_id], args
+
+    def test_refusal_then_bare_order_ask_runs_on_the_links(self, session_factory, monkeypatch) -> None:
+        """R-B1: the same, with a bare ask (no `self_reference`, no entities) on turn 2."""
+        _seed_contact(session_factory, variables={})
+        (own_id,) = _link_customers(session_factory, OWN_A)
+        _turn(session_factory, monkeypatch, _ask([_ent("hanlim")]), resolve_services=_hanlim_services())
+        reply, captured = _turn(
+            session_factory, monkeypatch, _ask(), "outstanding", mcp_response=REPORT_HIT,
+        )
+        assert "under your account" not in reply, reply
+        (args,) = _calls(captured, REPORT)
+        assert args["customer_ids"] == [own_id], args
+
+    @pytest.mark.parametrize("hint", ["brand", "category", "order", "customer_order", "product"])
+    def test_foreign_customer_word_with_other_hints_is_refused(self, session_factory, monkeypatch, hint) -> None:
+        """R-B2 / S-B1: the parser may hint a customer's name as anything; the resolver
+        answers customers for that token whatever the hint. A scoped contact's word that
+        matches none of its links is refused, so no HANLIM name and no picker."""
+        _seed_contact(session_factory, variables={})
+        _link_customers(session_factory, OWN_A)
+        reply, captured = _turn(
+            session_factory, monkeypatch, _ask([_ent("hanlim", hint)]), resolve_services=_hanlim_services(),
+        )
+        assert reply.strip() == refusal(OWN_A), reply
+        assert "Which customer" not in reply
+        assert not any(name in reply for name in HANLIM_NAMES), reply
+        assert captured == []
+
+    def test_foreign_customer_word_under_purchase_order_domain_is_refused(self, session_factory, monkeypatch) -> None:
+        """R-B2 / S-B1: the gate must not be limited to the order domain. Under
+        `purchase_order` a foreign customer word shows no HANLIM name and no picker."""
+        _seed_contact(session_factory, variables={})
+        _link_customers(session_factory, OWN_A)
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _parser_output(
+                domain_hint="purchase_order", intent_hint="check_order", order_status=None,
+                entities=[_ent("hanlim")],
+            ),
+            "purchase orders for hanlim", attributes=(), resolve_services=_hanlim_services(),
+        )
+        assert not any(name in reply for name in HANLIM_NAMES), reply
+        assert "Which customer" not in reply, reply
+
+    def test_foreign_do_number_miss_never_prints_the_other_customers_name(self, session_factory, monkeypatch) -> None:
+        """R-S3: as AC-CS-15, but the resolver's match carries the owning customer's name in
+        its display. The miss reply must not echo it."""
+        _seed_contact(session_factory, variables={})
+        _link_customers(session_factory, OWN_A)
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _parser_output(
+                domain_hint="order", intent_hint="check_order", order_status=None,
+                entities=[_ent("DO-ZZT-1", "order")],
+            ),
+            "status of DO-ZZT-1", attributes=(),
+            matches={
+                "DO-ZZT-1": {
+                    "uuid": ORDER_UUID, "entity_type": "customer_order", "canonical_code": "DO-ZZT-1",
+                    "display": {"customer_name": "FOREIGN CUST SDN BHD"},
+                }
+            },
+            mcp_response={"has_result": False},
+        )
+        assert "FOREIGN CUST" not in reply, reply
+
+    def test_fanout_refusal_is_said_once(self, session_factory, monkeypatch) -> None:
+        """R-S4: a multi-ask turn fans out to several lanes; the refusal is said once."""
+        _seed_contact(session_factory, variables={})
+        _link_customers(session_factory, OWN_A)
+        reply, _captured = _turn(
+            session_factory, monkeypatch,
+            _parser_output(
+                domain_hint=None, intent_hint=None, order_status=None, entities=[_ent("hanlim")],
+                asks=[
+                    {"domain": "incoming", "intent": "check_incoming"},
+                    {"domain": "order", "intent": "check_order"},
+                ],
+            ),
+            "incoming stock and orders for hanlim", attributes=(), resolve_services=_hanlim_services(),
+        )
+        assert reply.count("Sorry, that isn't under your account") == 1, reply
