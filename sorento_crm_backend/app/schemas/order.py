@@ -76,6 +76,9 @@ class CustomerResponse(CustomerBase):
     sales_agent_id: Optional[str] = None
     sales_agent_code: Optional[str] = None
     sales_agent_name: Optional[str] = None
+    # Shown as columns on a sales agent's Customers tab.
+    region: Optional[str] = None
+    market_segment_code: Optional[str] = None
 
     class Config:
         from_attributes = True

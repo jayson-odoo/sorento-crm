@@ -53,6 +53,13 @@ AI assistant, not gated behind a resolved product - and one row per product acro
 whole table is thousands of rows. With no `product_ids`, `top_n` is instead a plain cap
 over the same ordering, across every product, so an unscoped call costs exactly `top_n`
 rows regardless of how many products exist.
+
+Sort (PLAN-po-spo-warehouse-29sep O2): `sort` picks the ordering column (`spo_date`, the
+default, is the key above; `spo_quantity`, `gr_date`, `gr_quantity`), `dir` its direction.
+NULLS LAST either way, `created_at DESC` still the tiebreak, and the per-product window
+orders by the same key, so "top_n per product" honours the sort. A zero `gr_quantity` is
+absence and sorts with the nulls. Warehouse (W4): a line matches by `warehouse_id` OR the
+book's `location_code`, and the row's `warehouse` falls back to `location_code`.
 """
 from __future__ import annotations
 
@@ -66,6 +73,7 @@ from app.models.inventory import Warehouse
 from app.models.procurement import PickingHeader, PickingLine, SPOAllocation
 from app.models.product import Product
 from app.services.company_scope import build_company_predicate
+from app.services.purchase_order_service import spo_warehouse_predicate, warehouse_codes_for
 from app.services.scm.spo_supply import visible_line_clauses
 
 
@@ -127,12 +135,29 @@ def _gr_date_subquery(db: Session):
     return q.group_by(PickingLine.spo_allocation_id).subquery()
 
 
+#: PLAN-po-spo-warehouse-29sep O2: the sort keys and directions the route accepts.
+SPO_SORT_KEYS: frozenset[str] = frozenset({"spo_date", "spo_quantity", "gr_date", "gr_quantity"})
+SPO_SORT_DIRS: frozenset[str] = frozenset({"asc", "desc"})
+
+
+def _sort_expr(sort: str, gr):
+    if sort == "spo_quantity":
+        return SPOAllocation.allocated_quantity
+    if sort == "gr_date":
+        return gr.c.gr_date
+    if sort == "gr_quantity":
+        return func.nullif(SPOAllocation.quantity_received, 0)
+    return _key_expr()
+
+
 def last_receipt_rows(
     db: Session,
     *,
     product_ids: Optional[list[str]] = None,
     warehouse_ids: Optional[list[str]] = None,
     top_n: int = 1,
+    sort: str = "spo_date",
+    dir: str = "desc",
 ) -> list[dict]:
     """The last `top_n` SPO lines PER PRODUCT (default 1) when `product_ids` is given.
     With NO `product_ids`, `top_n` is instead a plain cap over ALL products - the same
@@ -159,13 +184,21 @@ def last_receipt_rows(
     key_expr = _key_expr()
     source_expr = _source_expr()
     gr = _gr_date_subquery(db)
+    sort_col = _sort_expr(sort, gr)
+    sort_order = (
+        (sort_col.desc() if dir == "desc" else sort_col.asc()).nulls_last(),
+        SPOAllocation.created_at.desc(),
+    )
+    warehouse_clause = None
+    if warehouse_ids:
+        warehouse_clause = spo_warehouse_predicate(warehouse_ids, warehouse_codes_for(db, warehouse_ids))
 
     if product_ids:
         rn = (
             func.row_number()
             .over(
                 partition_by=SPOAllocation.product_id,
-                order_by=(key_expr.desc().nulls_last(), SPOAllocation.created_at.desc()),
+                order_by=sort_order,
             )
             .label("rn")
         )
@@ -176,14 +209,20 @@ def last_receipt_rows(
             SPOAllocation.container_number,
             SPOAllocation.product_id,
             SPOAllocation.warehouse_id,
+            SPOAllocation.location_code,
             SPOAllocation.allocated_quantity,
             SPOAllocation.quantity_received,
             key_expr.label("spo_date"),
             source_expr.label("spo_date_source"),
+            # Joined HERE, inside the window, so `gr_date` can order it; the outer query
+            # reads it back off the subquery rather than joining the same grouped read twice.
+            gr.c.gr_date.label("gr_date"),
             rn,
-        ).filter(SPOAllocation.product_id.in_(product_ids), *visible_line_clauses())
-        if warehouse_ids:
-            numbered = numbered.filter(SPOAllocation.warehouse_id.in_(warehouse_ids))
+        ).outerjoin(gr, gr.c.allocation_id == SPOAllocation.id).filter(
+            SPOAllocation.product_id.in_(product_ids), *visible_line_clauses()
+        )
+        if warehouse_clause is not None:
+            numbered = numbered.filter(warehouse_clause)
         # COMPANY SCOPE, EXPLICITLY. `.subquery()` loses the `with_loader_criteria` the
         # session's `do_orm_execute` listener injects, and the outer query below names
         # only `Product` / `Warehouse` - so nothing else in this branch scopes the LINES.
@@ -204,7 +243,8 @@ def last_receipt_rows(
                 sub.c.quantity_received,
                 sub.c.spo_date,
                 sub.c.spo_date_source,
-                gr.c.gr_date,
+                sub.c.location_code,
+                sub.c.gr_date,
                 Product.id.label("product_id"),
                 Product.product_code,
                 Product.product_name,
@@ -212,7 +252,6 @@ def last_receipt_rows(
             )
             .join(Product, Product.id == sub.c.product_id)
             .outerjoin(Warehouse, Warehouse.id == sub.c.warehouse_id)
-            .outerjoin(gr, gr.c.allocation_id == sub.c.allocation_id)
             .filter(sub.c.rn <= top_n)
             .order_by(Product.product_code.asc(), sub.c.rn.asc())
             .all()
@@ -227,6 +266,7 @@ def last_receipt_rows(
                 SPOAllocation.quantity_received,
                 key_expr.label("spo_date"),
                 source_expr.label("spo_date_source"),
+                SPOAllocation.location_code,
                 gr.c.gr_date,
                 Product.id.label("product_id"),
                 Product.product_code,
@@ -238,13 +278,9 @@ def last_receipt_rows(
             .outerjoin(gr, gr.c.allocation_id == SPOAllocation.id)
             .filter(*visible_line_clauses())
         )
-        if warehouse_ids:
-            q = q.filter(SPOAllocation.warehouse_id.in_(warehouse_ids))
-        rows = (
-            q.order_by(key_expr.desc().nulls_last(), SPOAllocation.created_at.desc())
-            .limit(top_n)
-            .all()
-        )
+        if warehouse_clause is not None:
+            q = q.filter(warehouse_clause)
+        rows = q.order_by(*sort_order).limit(top_n).all()
 
     out: list[dict] = []
     for row in rows:
@@ -263,7 +299,7 @@ def last_receipt_rows(
                 "spo_date": row.spo_date.isoformat() if row.spo_date else None,
                 "spo_date_source": row.spo_date_source,
                 "gr_date": row.gr_date.isoformat() if row.gr_date else None,
-                "warehouse": row.warehouse_code,
+                "warehouse": row.warehouse_code or row.location_code,
             }
         )
     return out

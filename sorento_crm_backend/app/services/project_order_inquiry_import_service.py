@@ -14,10 +14,14 @@ not hold is the operator's own Excel: which sales-order line is owed where, and 
 or shipping order it is waiting on. So this importer:
 
   * creates NO sales order and NO sales-order line, and writes no `warehouse_id` (D4);
-  * RAISES one order inquiry row against an OPEN sales order line of the sheet's own order
-    (D8's "closed and fully delivered lines migrate too" is SUPERSEDED by R4, 21 Sep 2026,
-    `PLAN-board-received-stock-own-arrival.md` S4: a closed or cancelled line is never a
-    candidate any more, not even as a last resort - AC-S4-3);
+  * RAISES one order inquiry row against any NOT-CANCELLED sales order line of the
+    sheet's own order - a closed or fully delivered line is a candidate again (R1, 23 Sep
+    2026, `PLAN-oi-order-rows-uncapped.md`, SO421985: the row is owed in full until it
+    is linked, whatever the line's own delivered column says, so a delivered line is
+    replenishment, not history). Only CANCELLED is refused (AC-S4-3, narrowed from R4's
+    21 Sep "closed or cancelled" reading); an OPEN line still keeps PRIORITY over a
+    closed one (R4, captain, 23 Sep 2026) - a pre-existing open line is never skipped
+    in favour of a delivered one;
   * PAIRS that row to the document AutoCount's own ingest already states for the line (D9),
     following a purchase order through to the shipping order it became (D10). The sheet's
     remark pairs NOTHING and picks no line (section 8 of the pairing-repair plan, owner
@@ -38,12 +42,16 @@ August `po_history` extract already held the claim key for 28,397 pairings the c
 exactly, which is why `po_history` pairs nothing any more.
 
 **WHICH line of the order a row lands on** is R4 (owner, 21 Sep 2026,
-`PLAN-board-received-stock-own-arrival.md` S4, `_pick_lines_by_date_order`), and it is one
-rule for the whole order: its OPEN lines sorted by `required_date`, this upload's own rows for
-that order sorted by `delivery_date`, paired one to one in that order; a row beyond the last
-open line lands on the LAST one as a second row. A closed or cancelled line is never a
-candidate (AC-S4-3). An order with no open line at all refuses its rows with their own reason,
-`order_fully_delivered` (R9, AC-S4-6), never the genuine-item-mismatch `no_line_for_item`.
+`PLAN-board-received-stock-own-arrival.md` S4, `_pick_lines_by_date_order`), narrowed by
+R1 (23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`): its NOT-CANCELLED lines, OPEN ones
+sorted ahead of closed ones (R4, captain, 23 Sep 2026 - a closed line never outranks an
+open one, so a row pairs onto a closed line only when no open line of that item remains
+on the order), each group by `required_date`; this upload's own rows for that order
+sorted by `delivery_date`, paired one to one in that order; a row beyond the last
+candidate line lands on the LAST one as a second row. Only a CANCELLED line is never a
+candidate (AC-S4-3). An order with no candidate line at all (every line cancelled, or
+none exist) refuses its rows with their own reason, `order_fully_delivered` (R9,
+AC-S4-6), never the genuine-item-mismatch `no_line_for_item`.
 Item and location still gate a candidate as they always have (`_match_row`); **quantity gates
 the ORDER, not the line** (R10, AC-S4-7): a row bigger than the line its date order gives it
 still lands there, with a "Was {qty} on {date}" note recording what the book holds, and only a
@@ -108,7 +116,7 @@ from app.services.project_label_rules import apply_project_label, label_from_inq
 from app.services.project_order_inquiry_reader import OrderInquiryResult, read_order_inquiry
 from app.services.scm import order_link_service, spo_supply
 from app.services.scm import upload_validation as val
-from app.services.scm.demand import COVERED, PROJECT_CLASS, qty_of
+from app.services.scm.demand import PROJECT_CLASS
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
 logger = logging.getLogger(__name__)
@@ -385,20 +393,6 @@ def _lines_of(db: Session, order_ids: set) -> Dict[str, List[tuple]]:
     return held
 
 
-def _is_open_demand(line: SalesOrderLine) -> bool:
-    """`is_open_demand()` against a line already fetched (AC-S1-29).
-
-    The SQL predicate every demand reader shares, restated over the object rather than the
-    column, because the answer is needed for a line this service is holding. Both columns
-    are NOT NULL with defaults, so the two readings cannot diverge on a NULL.
-    """
-    return (
-        line.line_status == "open"
-        and line.purchasing_status != COVERED
-        and qty_of(line) > 0
-    )
-
-
 def _restates(row) -> tuple:
     """What makes two sheet rows the SAME instruction (D7, AC-S1-38 as amended by AC-R-11).
 
@@ -515,8 +509,8 @@ def _match_row(
 ) -> Tuple[Optional[tuple], Optional[str]]:
     """The line for one sheet row, against `candidates` exactly as given, or the FIRST filter
     that refused it. `candidates` and `rank` are the caller's to narrow;
-    `_pick_lines_by_date_order` is the only caller, and hands over the order's OPEN lines
-    with the date-order rank it built for this row.
+    `_pick_lines_by_date_order` is the only caller, and hands over the order's NOT-CANCELLED
+    lines (R1, 23 Sep 2026) with the date-order rank it built for this row.
 
     Item, then location, then quantity - reported in that order because that is the order a
     person checks them in, and "no line for this item" and "location differs" send them to
@@ -588,11 +582,13 @@ def _match_row(
 
 
 def _line_pick_key(candidate: tuple) -> tuple:
-    """R4's own tie-break once a candidate line has been placed in date order: undated
-    last, the earliest required date, the oldest line, the id - so two runs of the same
-    sheet still land the same way."""
+    """R4's own tie-break once a candidate line has been placed in date order: OPEN
+    before CLOSED (R4, captain, 23 Sep 2026 - a closed line never outranks an open one),
+    then undated last, the earliest required date, the oldest line, the id - so two runs
+    of the same sheet still land the same way."""
     line = candidate[0]
     return (
+        0 if (line.line_status or "open") == "open" else 1,
         line.required_date is None,
         line.required_date or date.max,
         line.created_at or datetime.min,
@@ -671,9 +667,28 @@ def _pick_lines_by_date_order(
     along with every helper only they read - the review round of the same day). D8 ("closed
     and fully delivered lines migrate too") and R7's "a cancelled line may still be taken by
     the fallback, when it is the only line that fits" are BOTH superseded for this pick: a
-    closed or cancelled line is never a candidate here, not even as a last resort (AC-S4-3).
+    CANCELLED line is never a candidate here, not even as a last resort (AC-S4-3).
 
-    One sales order at a time: its OPEN lines, sorted by `required_date`; this upload's own
+    R1 (23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`, SO421985) narrows AC-S4-3's OWN
+    21 Sep reading in the other direction: a CLOSED or delivered-in-full line is a
+    candidate again - an ORDER row against it is replenishment, owed in full until it is
+    linked, whatever the line's own delivered column says. `_close_history` used to be
+    what stopped such a row counting as live demand forever; R1 retired the need for that
+    trick along with the cap it was compensating for, and the function is gone with it -
+    a cancelled line is refused right here, before `raise_row` is ever called, so nothing
+    is left to close after the fact.
+
+    R4 (captain, 23 Sep 2026, same plan): admitting a closed line does NOT let it outrank
+    an open one, ABSOLUTE - not merely a preference that yields once the open line is
+    "full". Both `_line_pick_key` (below, feeds `candidates.sort()` and `last_id`) and
+    `_rank` (inside the per-row loop) sort OPEN before CLOSED as their own dominant tier,
+    ahead of free/room/last-resort: with one open line still a same-item candidate, every
+    row for that item lands there - as a second, third, ... row if it must - and a row
+    reaches a closed line only once the item's own candidate set on the order holds no
+    open line at all. Only CANCELLED is still refused outright.
+
+    One sales order at a time: its NOT-CANCELLED lines, OPEN ones ahead of closed ones,
+    each group sorted by `required_date`; this upload's own
     pending rows for that order, sorted by `delivery_date` (undated last, file order
     breaking a tie), paired one to one in that order onto whichever candidate line is not
     yet taken - by an earlier import (`raised_already`) or by an earlier row of this SAME
@@ -727,10 +742,24 @@ def _pick_lines_by_date_order(
 
     for order_id, indexed in by_order.items():
         order_lines = lines.get(order_id, [])
-        candidates = [c for c in order_lines if (c[0].line_status or "open") == "open"]
+        # R1/R2 (owner, 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`): a delivered/closed
+        # line is a CANDIDATE now - an ORDER row against it is replenishment, owed in
+        # full until it is linked, not history the moment it is uploaded. Only CANCELLED
+        # is refused (AC-S4-3 narrows from "open lines only" to "not cancelled"). R4
+        # (captain, 23 Sep 2026): open lines still keep PRIORITY over closed ones, ABSOLUTE
+        # - a pre-existing open line is never skipped for a delivered one, whatever the
+        # date order or how many rows already sit on it - so both `_line_pick_key` below
+        # and `_rank` inside the per-row pick sort open before closed as their own
+        # dominant tier.
+        candidates = [c for c in order_lines if (c[0].line_status or "open") != "cancelled"]
         candidates.sort(key=_line_pick_key)
         candidate_ids = {str(c[0].id) for c in candidates}
-        last_id = str(candidates[-1][0].id) if candidates else None
+        # R4: the "last open line takes the overflow row" tier only matters inside the
+        # dominant OPEN tier - `candidates[-1]` is the last CLOSED line whenever one
+        # exists (open sorts first), which would point the overflow preference at nothing
+        # an open row could ever match.
+        open_candidates = [c for c in candidates if (c[0].line_status or "open") == "open"]
+        last_id = str((open_candidates or candidates)[-1][0].id) if candidates else None
         used_this_walk: set = set()
 
         ordered = sorted(
@@ -805,7 +834,19 @@ def _pick_lines_by_date_order(
                 # filled (AC-LP-12 "bumped"), and where none has room the last open line
                 # takes it as a second row (AC-S4-2).
                 room = _dec(line.qty_ordered) - taken.get(line_id, _ZERO) >= want
+                # R4 (captain, 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`): R1 admits a
+                # closed (delivered) line as a candidate for replenishment, but an OPEN
+                # line still keeps PRIORITY over it, ABSOLUTE - not merely a preference
+                # that yields once the open line is "full". A closed line only wins when
+                # the item's own candidate set holds NO open line at all; room/free-ness
+                # only order candidates WITHIN a tier (R10: "room is a preference ...
+                # never a filter"), so with one open line still a same-item candidate,
+                # every row for that item lands there - as a second, third, ... row if it
+                # must - and the closed line is never touched while any open one remains
+                # in the running. Dominant tier, ahead of free/room/last-resort.
+                closed = (line.line_status or "open") != "open"
                 return (
+                    0 if not closed else 1,
                     0 if free else 1,
                     0 if (free or room) else 1,
                     0 if (free or line_id == last_id) else 1,
@@ -2746,12 +2787,12 @@ class _Raiser:
         row = match.row
         location = (row.location or "").strip().upper() or None
         # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-8/13, C1/C3): a row raised AS a
-        # used sibling, or onto a line already cancelled (the fallback pass - R7's own
-        # rule, only the fallback may take a cancelled line), is fresh news for
-        # purchasing - `awaiting`, not the migration's ordinary `acknowledged`.
-        born_awaiting = bool(match.used_sibling_id) or (
-            match.core_line is not None and match.core_line.line_status == "cancelled"
-        )
+        # used sibling is fresh news for purchasing - `awaiting`, not the migration's
+        # ordinary `acknowledged`. The sibling "or onto a line already cancelled" branch
+        # this used to carry is dead (R4, `_pick_lines_by_date_order`'s candidate gate
+        # refuses a cancelled line before a row is ever raised against it, so
+        # `match.core_line` can never read `cancelled` here) and is removed.
+        born_awaiting = bool(match.used_sibling_id)
         entry = OrderInquiryRow(
             company_id=order.company_id,
             order_inquiry_id=record["inquiry"].id,
@@ -2807,35 +2848,6 @@ def _matched_lines_by_order(plan: _Plan) -> Dict[str, List[str]]:
         if str(match.core_line.id) not in ids:
             ids.append(str(match.core_line.id))
     return held
-
-
-def _close_history(rows: Sequence[Any], actor: Optional[str], now: datetime) -> None:
-    """A row against a line that is no longer owed is HISTORY, so it is actioned (AC-S1-29).
-
-    `scm.committed_v`'s project leg counts every `raised` / `partly_linked` inquiry row that
-    carries no supply decision, and it does NOT look at the line's status (migration 424
-    removed that condition on purpose). So a migrated row against a delivered line would be
-    counted as live project demand and the plan would buy the goods again.
-
-    `actioned` is the truthful state rather than a trick to dodge the view: purchasing dealt
-    with this instruction, and the goods went out. It is set AFTER `refresh_link_state` so
-    `po_ref` / `spo_ref` / `po_line_id` are derived from the links first - that function
-    leaves an actioned row's state alone, which is exactly why the order matters - and the
-    links stay visible on the worklist through `links_for_rows`.
-
-    A row on a still-open line keeps whatever its links make it.
-
-    ORDER_BACK is never passed in here (the caller filters it out, owner ruling R3, 22 Sep
-    2026): a delivered borrowing line is the normal case for an order back, not history.
-    """
-    from app.models.project_so import INQUIRY_ACTIONED
-
-    for row in rows:
-        row.state = INQUIRY_ACTIONED
-        # The uploader, when a person queued this. Never blanked: `_write_link` may already
-        # have written the act-as principal on an unattended run, and NULL says less.
-        row.actioned_by = actor or row.actioned_by
-        row.actioned_at = now
 
 
 def _apply_settle_recovery(entry: Any, match: _Match, now: datetime) -> None:
@@ -3018,7 +3030,6 @@ def apply(
     raiser = _Raiser(db, actor, now, _matched_lines_by_order(plan))
     service = None
     linked: List[Any] = []
-    history: List[Any] = []
     raised = 0
     #: Mirrors touched by a repair this run, resynced once each (S5) after the loop -
     #: never inline, since a line's second dated row can still repair a sibling migrated
@@ -3176,12 +3187,10 @@ def apply(
         outcome.success(row=row.source_row, code=oc.CREATED, identity=identity,
                         value=row.so_number, entity_type="order_inquiry_row",
                         entity_id=entry.id)
-        # ORDER_BACK is never history-closed here (owner ruling R3, 22 Sep 2026): the whole
-        # point of an order back is that the borrowing line is delivered, so testing
-        # `_is_open_demand` against it would close every one. An ORDER row on a delivered
-        # line still closes as today (AC-S1-29 stands for ORDER).
-        if entry.verb != IV_ORDER_BACK and not _is_open_demand(match.core_line):
-            history.append(entry)
+        # R2 (owner, 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`): nothing closes on
+        # upload any more - `_pick_lines_by_date_order`'s own candidate gate now refuses
+        # a CANCELLED line before a row ever reaches `raise_row`, so a row that gets here
+        # always has a live core line and is left `raised` like any other.
 
         held = links.get(index)
         if held or match.used_sibling_id:
@@ -3227,7 +3236,6 @@ def apply(
         old_earliest, old_total_qty = before_repair.get(mirror_id, (None, None))
         _resync_sibling_was_now(db, mirror_id, old_earliest, old_total_qty)
 
-    _close_history(history, actor, now)
     db.flush()
     return _result(plan, links, not_linkable, rows_raised=raised,
                    orders_adopted=raiser.adopted, orders_stamped=stamped)

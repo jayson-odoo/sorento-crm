@@ -259,6 +259,23 @@ def _build_json_schema() -> dict[str, Any]:
             # Fix lane round 4 (owner retest, 27 Sep 2026): "cold selling", "least sold"
             # rank ascending. Same shape and same exemption as the three above.
             "rank_direction": {"type": ["string", "null"], "enum": ["top", "bottom", None]},
+            # PLAN-po-spo-warehouse-29sep S4: the PO/SPO sort axis. Same shape and same
+            # reason as `rank_direction`: an enum, required for strict mode, tolerated absent.
+            "sort_by": {
+                "type": ["string", "null"],
+                "enum": [
+                    "date",
+                    "expected_date",
+                    "quantity",
+                    "outstanding",
+                    "received_date",
+                    "received_quantity",
+                    "product",
+                    "supplier",
+                    None,
+                ],
+            },
+            "sort_dir": {"type": ["string", "null"], "enum": ["asc", "desc", None]},
             # PLAN-retail-sales-reports-26sep S1: the sales analysis's basis and the
             # company named. Required for strict mode and tolerated absent, exactly as
             # `sales_channel` above (no recorded emission carries them).
@@ -483,6 +500,8 @@ def _build_json_schema() -> dict[str, Any]:
             "basis",
             "rank_group",
             "rank_direction",
+            "sort_by",
+            "sort_dir",
             "sales_basis",
             "sales_company",
             "correction",
@@ -540,6 +559,8 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
         "basis",
         "rank_group",
         "rank_direction",
+        "sort_by",
+        "sort_dir",
         "sales_basis",
         "sales_company",
         "proceed_anyway",

@@ -191,8 +191,12 @@ describe('ScenariosGrid - changed row', () => {
     const table = within(screen.getByRole('table'));
     expect(table.getByText('Changed')).toBeTruthy();
     expect(table.getByText('(was 1,000)')).toBeTruthy();
-    expect(table.getByText('quantity suggestion')).toBeTruthy();
-    expect(table.getByText('cover composition')).toBeTruthy();
+    // The changed groups fold into the shared `PillOverflow`: jsdom lays the row out at
+    // width 0, so only the first pill is visible and the rest sits behind "+1". Scoped to
+    // the VISIBLE row - the hidden measuring row repeats every label off-screen.
+    const groups = within(screen.getByTestId('scenario-changed-groups-SIM-P001'));
+    expect(groups.getByText('quantity suggestion')).toBeTruthy();
+    expect(groups.getByText('+1')).toBeTruthy();
   });
 
   it('renders "None" and an em-dash placeholder for a scenario with no recommendation', () => {

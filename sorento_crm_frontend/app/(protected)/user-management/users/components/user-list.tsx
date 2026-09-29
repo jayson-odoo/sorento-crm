@@ -28,6 +28,7 @@ import {
 import { formatDateSafe, formatDateTimeInMalaysia, getInitials } from '@/lib/helpers';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { PillOverflow, PillOverflowList } from '@/components/common/PillOverflow';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -554,15 +555,18 @@ const UserList = () => {
           />
         ),
         size: 180,
+        // One row line (owner rule, 29 Sep 2026): as many roles as the column fits, the
+        // rest behind "+N", every role in the popover (`PillOverflow`).
         cell: ({ row }) => {
-          const roles = row.original.roles ?? [];
+          const roles: { id: string; name: string }[] = row.original.roles ?? [];
           if (!roles.length) return <span className="text-muted-foreground"> - </span>;
           return (
-            <span className="inline-flex flex-wrap gap-1">
-              {roles.map((r: { id: string; name: string }) => (
-                <Badge key={r.id} variant="secondary">{r.name}</Badge>
-              ))}
-            </span>
+            <PillOverflow
+              ariaLabel={`Roles of ${row.original.name || row.original.email}`}
+              testId={`user-roles-${row.original.id}`}
+              items={roles.map((r) => ({ key: r.id, label: r.name }))}
+              renderPopover={(items) => <PillOverflowList items={items} />}
+            />
           );
         },
         meta: {

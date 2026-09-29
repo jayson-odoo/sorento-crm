@@ -9,6 +9,7 @@ import {
   createCustomer,
   updateCustomer,
   deleteCustomer,
+  getCustomerLinkedContacts,
 } from '../services/customerService';
 import type { CustomerFormData } from '../types/customer.types';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
@@ -109,5 +110,14 @@ export function useDeleteCustomer() {
       toast.success('Customer deleted successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete customer'),
+  });
+}
+
+export function useCustomerLinkedContacts(customerId: string) {
+  return useQuery({
+    queryKey: ['customer-linked-contacts', customerId],
+    queryFn: () => getCustomerLinkedContacts(customerId),
+    enabled: !!customerId,
+    retry: 1,
   });
 }

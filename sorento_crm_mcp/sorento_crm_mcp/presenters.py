@@ -371,8 +371,14 @@ class _Builder:
 # per-tool builders
 # --------------------------------------------------------------------------
 def _wh_alloc(allocs: Any) -> str:
+    # Issue #1328: a contact denied the quantity gets the allocation with
+    # `allocated_quantity` ABSENT (`field_access.STRIP_WITH`) - the warehouse alone,
+    # never "BRW (None)".
     return ", ".join(
-        f"{a.get('warehouse_code')} ({a.get('allocated_quantity')})" for a in (allocs or [])
+        f"{a.get('warehouse_code')} ({a['allocated_quantity']})"
+        if a.get("allocated_quantity") is not None
+        else f"{a.get('warehouse_code')}"
+        for a in (allocs or [])
     )
 
 
@@ -835,6 +841,7 @@ _CLEARANCE_PAIRS = (
 
 
 def _incoming_list(rows: list[dict], b: _Builder) -> None:
+    start = len(b.items)
     for s in rows:
         for l in s.get("lines") or []:
             unallocated, partial, gap = _alloc_state(l)
@@ -867,9 +874,11 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
             )
         if s.get("attachment"):
             b.attach(s["attachment"])
+    _without_repeats(b, start)
 
 
 def _incoming_by_product(rows: list[dict], b: _Builder) -> None:
+    start = len(b.items)
     for p in rows:
         for s in p.get("shipments") or []:
             unallocated, partial, gap = _alloc_state(s)
@@ -911,6 +920,51 @@ def _incoming_by_product(rows: list[dict], b: _Builder) -> None:
             )
             if s.get("attachment"):
                 b.attach(s["attachment"])
+    _without_repeats(b, start)
+
+
+#: The incoming tools a dealer's answer can come back from (PR #1329 fix round).
+_INCOMING_TOOLS = frozenset(
+    {"crm_incoming_stock_list", "crm_incoming_stock_by_product", "crm_incoming_stock_shipments"}
+)
+
+
+def _refer_to_salesperson(name: Any) -> str:
+    return (
+        f"Please refer to your salesperson, {name.strip()}."
+        if isinstance(name, str) and name.strip()
+        else "Please refer to your salesperson."
+    )
+
+
+def _incoming_dealer(rows: list[dict], b: _Builder) -> None:
+    """The backend's dealer view (`eta_policy.dealer_view`): per product, the code once
+    and its distinct ETAs, already sorted and padded. The whole line is the item's TITLE
+    and `fields` stays empty, the shape the `availability` stock answer uses, so nothing
+    of ours (a container, a quantity, an allocation) has a field to ride in on."""
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        etas = [e for e in row.get("etas") or [] if _filled(e)]
+        when = f"ETA: {', '.join(etas)}" if etas else "ETA: not confirmed yet"
+        code = row.get("product_code")
+        # `dealer_view` tells the engine's zero-stock ladder this line is a whole answer.
+        b.raw_item(f"{code}\n{when}" if _filled(code) else when, [], {"dealer_view": True})
+
+
+def _without_repeats(b: _Builder, start: int) -> None:
+    """Drop the items from `start` on that read exactly like an earlier one. Two
+    shipment lines on one ETA, told apart only by the container and quantities the
+    contact is not shown, are one line to the reader (the owner's product printed twice,
+    PR #1329 hand test)."""
+    seen: list[dict[str, Any]] = []
+    kept = []
+    for item in b.items[start:]:
+        if item in seen:
+            continue
+        seen.append(item)
+        kept.append(item)
+    b.items[start:] = kept
 
 
 def _incoming_shipments(rows: list[dict], b: _Builder) -> None:
@@ -1680,8 +1734,11 @@ def present_response(tool_name: str, raw: str) -> str:
     # (A3, AC-905/AC-906) so a grouped section renders identically to the flat
     # list - one mapping, never a second one that could drift from it.
     row_builder = _orders_so_outstanding if so_outstanding else _BUILDERS.get(tool_name, _generic)
+    dealer = tool_name in _INCOMING_TOOLS and data.get("dealer_view") is True
     if tool_name == "crm_portal_link_get":
         _portal_link(data, b)
+    elif dealer:
+        _incoming_dealer(rows, b)
     elif stock_mode == "compact":
         _stock_compact(data, b)
     elif stock_mode == "availability":
@@ -1719,6 +1776,9 @@ def present_response(tool_name: str, raw: str) -> str:
             if searched
             else "No matching results found."
         )
+    elif dealer:
+        # The per-product lines and the salesperson line are the whole reply.
+        intro = ""
     elif stock_mode == "compact":
         intro = _STOCK_COMPACT_INTRO
     elif stock_mode == "availability":
@@ -1730,7 +1790,9 @@ def present_response(tool_name: str, raw: str) -> str:
 
     envelope: dict[str, Any] = {
         "result_type": (
-            "so_outstanding"
+            "incoming_dealer"
+            if dealer
+            else "so_outstanding"
             if so_outstanding
             else _STOCK_MODE_RESULT_TYPE.get(stock_mode) or _RESULT_TYPE.get(tool_name, "result")
         ),
@@ -1741,6 +1803,10 @@ def present_response(tool_name: str, raw: str) -> str:
         "last_updated_at": _latest_updated(data),
         "has_result": has_result,
     }
+    if dealer and has_result:
+        # Printed after the product lines (`output_structurer`): a dealer's contact
+        # point is their salesperson, never a team offer.
+        envelope["closing"] = _refer_to_salesperson(data.get("salesperson_name"))
     for k in _PASSTHROUGH_KEYS:
         if k in data and _filled(data.get(k)):
             envelope[k] = data[k]

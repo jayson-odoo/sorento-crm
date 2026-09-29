@@ -12,6 +12,7 @@ import {
 } from '@tanstack/react-table';
 import { AlertCircle, Search, ShieldQuestion, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { PillOverflow, PillOverflowList } from '@/components/common/PillOverflow';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -240,17 +241,15 @@ export function ScenariosGrid({
         cell: ({ row }) => {
           const groups = row.original.changed_groups;
           if (!groups.length) return <span className="text-muted-foreground">{EM_DASH}</span>;
+          // One row line (owner rule, 29 Sep 2026): as many groups as the column fits,
+          // the rest behind "+N", every group in the popover (`PillOverflow`).
           return (
-            <div className="flex flex-wrap gap-1">
-              {groups.map((g) => (
-                <span
-                  key={g}
-                  className="rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground"
-                >
-                  {g}
-                </span>
-              ))}
-            </div>
+            <PillOverflow
+              ariaLabel={`Changed groups of ${row.original.code}`}
+              testId={`scenario-changed-groups-${row.original.code}`}
+              items={groups.map((g) => ({ key: g, label: g }))}
+              renderPopover={(items) => <PillOverflowList items={items} />}
+            />
           );
         },
         enableSorting: false,

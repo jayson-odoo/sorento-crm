@@ -1,0 +1,126 @@
+{
+  "note": "Corpus samples for PLAN-po-spo-warehouse-29sep.md section S3 (AC-4). Each row is a phrasing staff use on a PO or SPO ask, the cue the PO_SPO_WAREHOUSE_ADDENDUM teaches it by, and the parse keys it must produce. Graded by sorento_crm_backend/tests/chatbot/test_parser_po_spo_warehouse_words.py, which asserts (a) every cue is present verbatim in chatbot_parser_prompt.PO_SPO_WAREHOUSE_ADDENDUM and (b) every expected value is inside the declared vocabulary (contracts.DOMAIN_HINTS / INTENT_HINTS, the parser schema's sort_by / sort_dir enums). NOTHING HERE CALLS AN LLM: whether the model obeys is the console case's job (tests/chatbot/console_cases/2026-09-29-po-spo-warehouse.yaml). Same shape as parser_low_stock_phrases.json.",
+  "phrases": [
+    {
+      "phrase": "PO to BRW",
+      "language": "en",
+      "cue": "PO to BRW",
+      "expect": {
+        "domain_hint": "purchase_order",
+        "intent_hint": "check_po",
+        "entities": [{"raw": "BRW", "hint": "warehouse"}]
+      }
+    },
+    {
+      "phrase": "SPO for BRW-BB",
+      "language": "en",
+      "cue": "SPO for BRW-BB",
+      "expect": {
+        "domain_hint": "spo_allocation",
+        "intent_hint": "check_spo",
+        "entities": [{"raw": "BRW-BB", "hint": "warehouse"}]
+      }
+    },
+    {
+      "phrase": "SPO SRT79-SS",
+      "language": "en",
+      "cue": "SPO SRT79-SS",
+      "expect": {
+        "domain_hint": "spo_allocation",
+        "intent_hint": "check_spo",
+        "entities": [{"raw": "SRT79-SS", "hint": "product"}]
+      }
+    },
+    {
+      "phrase": "last in SRTWC286 at BRW",
+      "language": "en",
+      "cue": "last in SRTWC286 at BRW",
+      "expect": {
+        "domain_hint": "spo_allocation",
+        "intent_hint": "check_spo",
+        "entities": [
+          {"raw": "SRTWC286", "hint": "product"},
+          {"raw": "BRW", "hint": "warehouse"}
+        ]
+      }
+    },
+    {
+      "phrase": "latest PO for SRT79-SS",
+      "language": "en",
+      "cue": "latest PO",
+      "expect": {
+        "domain_hint": "purchase_order",
+        "intent_hint": "check_po",
+        "entities": [{"raw": "SRT79-SS", "hint": "product"}],
+        "sort_by": "date",
+        "sort_dir": "desc"
+      }
+    },
+    {
+      "phrase": "SPO biggest quantity first at BRW",
+      "language": "en",
+      "cue": "biggest quantity first",
+      "expect": {
+        "domain_hint": "spo_allocation",
+        "intent_hint": "check_spo",
+        "entities": [{"raw": "BRW", "hint": "warehouse"}],
+        "sort_by": "quantity",
+        "sort_dir": "desc"
+      }
+    },
+    {
+      "phrase": "oldest PO first",
+      "language": "en",
+      "cue": "oldest first",
+      "expect": {
+        "domain_hint": "purchase_order",
+        "intent_hint": "check_po",
+        "sort_by": "date",
+        "sort_dir": "asc"
+      }
+    },
+    {
+      "phrase": "SPO by GR date",
+      "language": "en",
+      "cue": "by GR date",
+      "expect": {
+        "domain_hint": "spo_allocation",
+        "intent_hint": "check_spo",
+        "sort_by": "received_date"
+      }
+    },
+    {
+      "phrase": "PO by supplier",
+      "language": "en",
+      "cue": "by supplier",
+      "expect": {
+        "domain_hint": "purchase_order",
+        "intent_hint": "check_po",
+        "sort_by": "supplier"
+      }
+    },
+    {
+      "phrase": "SPO by amount",
+      "language": "en",
+      "cue": "by amount",
+      "expect": {
+        "domain_hint": "spo_allocation",
+        "intent_hint": "check_spo",
+        "sort_by": null
+      }
+    },
+    {
+      "phrase": "biggest quantity first",
+      "language": "en",
+      "cue": "biggest quantity first",
+      "refinement": true,
+      "expect": {
+        "domain_hint": null,
+        "intent_hint": null,
+        "entities": [],
+        "sort_by": "quantity",
+        "sort_dir": "desc"
+      }
+    }
+  ]
+}

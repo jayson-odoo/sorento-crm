@@ -12,8 +12,9 @@ from app.services.queue_service import enqueue_job
 from app.schemas.order import CustomerCreate, CustomerUpdate, CustomerResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.stock_ask import StockAskResponse, StockAskUpdate
-from app.services import stock_ask_service
-from app.services.error_handler import handle_internal_error
+from app.services import contact_customer_service, stock_ask_service
+from app.schemas.contact_customer import CustomerLinkedContactsResponse
+from app.services.error_handler import handle_internal_error, handle_not_found
 
 router = APIRouter()
 
@@ -136,6 +137,25 @@ async def get_customer(
         service = CustomerService(db)
         customer = service.get_customer(customer_id)
         return customer
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{customer_id}/linked-contacts", response_model=CustomerLinkedContactsResponse)
+async def list_customer_linked_contacts(
+    customer_id: str,
+    current_user: dict = Depends(require_permission("order_management.customers.view")),
+    db: Session = Depends(get_db),
+):
+    """The WhatsApp contacts linked to this customer, read-only."""
+    try:
+        validate_uuid_path(customer_id, resource="Customer")
+        # Read under the caller's scope: hidden and unknown are the same 404.
+        if contact_customer_service.get_customer_in_scope(db, customer_id) is None:
+            raise handle_not_found("Customer", customer_id)
+        return {"data": contact_customer_service.links_for_customer(db, customer_id)}
     except HTTPException:
         raise
     except Exception as e:

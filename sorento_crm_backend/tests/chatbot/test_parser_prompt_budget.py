@@ -66,6 +66,15 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # message's own domain": one DOMAIN IN MESSAGE rule plus the open numbered question and
 # stock task edits) measures 41,163 (+564); this lane merged over it without the addendum
 # measures 40,984 (still 179 under main).
+# Re-pinned 29 Sep 2026 (PLAN-po-spo-warehouse-29sep M3): PO_SPO_WAREHOUSE_ADDENDUM (the SPO
+# routing rule, the warehouse cue under PO/SPO, the sort_by/sort_dir vocabulary) and the
+# "SPO" -> spo_allocation in-body edit take the prompt without MEMORY_ADDENDUM to 42,356 est.
+# tokens and the whole prompt to the 42,872 this test prints; CEILING is 42,872 - 512 = 42,360
+# so both assertions hold (+1,197 over 41,163).
+# Review round (same PR, reviewer items 3 and 4): the DOCUMENT section's second in-body edit
+# ("shipment"/"container" name no paper) and the "last in names no sort" line take the
+# prompt without MEMORY_ADDENDUM to 42,424 and the whole prompt to 42,939; CEILING is
+# 42,939 - 512 = 42,427 so both assertions hold.
 # Third re-pin, 29 Sep 2026 (PR #1365, CHATBOT-CUSTOMER-SCOPE, PLAN-chatbot-customer-scope-
 # 29sep D2): `SELF_REFERENCE_ADDENDUM` teaches the boolean `self_reference` ("my" / "me" /
 # "our" as the asker's own account, Malay and Chinese forms included) and is a genuine new
@@ -74,7 +83,11 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # with it (the estimator rounds per text, so the two do not add up exactly); the pin is
 # the combined figure minus the addendum's own 512 bound, so both assertions below hold
 # on the measured prompt. The memory lane's rendered body measures 41,390 on the same text.
-CEILING = 41_469
+# Fourth re-pin, 29 Sep 2026 (PR #1365 merged over #1373): both addenda in the constant
+# (SELF_REFERENCE beneath ESCALATION_CONFIRMATION, PO_SPO_WAREHOUSE beneath that, MEMORY the
+# tail) measure 42,906 without the memory addendum and 43,421 with it; CEILING is
+# 43,421 - 512 = 42,909 so both assertions hold on the combined prompt.
+CEILING = 42_909
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is
