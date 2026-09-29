@@ -385,12 +385,16 @@ class TestUpstreamBlock:
 class TestSelfReference:
     def test_my_outstanding_with_one_link(self, session_factory, monkeypatch) -> None:
         """AC-CS-22: `self_reference: true`, outstanding, no entities -> the report runs on
-        the link, no scope question, and the Customer line names the linked customer."""
+        the link, no scope question. The Customer header line is the ROUTE's echo of
+        `customer_name` for the ids it ran on (`orders._customer_echo`), which the presenter
+        prints; the harness does not reproduce the echo, so the body handed back here carries
+        it, and the echo itself is asserted on the route in
+        `tests/test_customer_scope_routes.py`. `customer_ids == [own_id]` is the real guard."""
         _seed_contact(session_factory, variables={})
         (own_id,) = _link_customers(session_factory, OWN_A)
         reply, captured = _turn(
             session_factory, monkeypatch, _ask(self_reference=True), "what's my outstanding",
-            mcp_response=REPORT_HIT,
+            mcp_response={**REPORT_HIT, "customer_name": OWN_A},
         )
         (args,) = _calls(captured, REPORT)
         assert args["customer_ids"] == [own_id], args

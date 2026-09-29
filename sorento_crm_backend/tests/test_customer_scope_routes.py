@@ -166,6 +166,16 @@ def test_outstanding_customer_query_matches_inside_the_links_only(client, db) ->
     assert mine.status_code == 200, mine.text
 
 
+def test_outstanding_no_customer_arg_echoes_the_linked_customer(client, db) -> None:
+    """AC-CS-22 (route half): a scoped contact sending no customer argument gets the report
+    forced to its link, and the body's `customer_name` echo names it (the presenter prints
+    the `Customer:` header from this field)."""
+    w = World(db)
+    resp = client.get(OUTSTANDING, params={"product_code": w.product.product_code, **w.me})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["customer_name"] == OWN_NAME, resp.text
+
+
 def test_outstanding_own_customer_runs(client, db) -> None:
     """AC-CS-41: the contact's own customer is answered."""
     w = World(db)
