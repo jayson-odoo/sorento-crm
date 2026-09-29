@@ -229,6 +229,7 @@ class TestR1TheSoldWords:
             ESCALATION_CONFIRMATION_ADDENDUM,
             MEMORY_ADDENDUM,
             PO_SPO_WAREHOUSE_ADDENDUM,
+            SELF_REFERENCE_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
             TOP_SELLING_ADDENDUM,
         )
@@ -241,7 +242,7 @@ class TestR1TheSoldWords:
             assert words in TOP_SELLING_ADDENDUM, words
         assert SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM).removesuffix(PO_SPO_WAREHOUSE_ADDENDUM).removesuffix(
             ESCALATION_CONFIRMATION_ADDENDUM
-        ).endswith(
+        ).removesuffix(SELF_REFERENCE_ADDENDUM).endswith(
             TOP_SELLING_ADDENDUM
         )
 

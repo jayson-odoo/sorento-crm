@@ -75,7 +75,19 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # ("shipment"/"container" name no paper) and the "last in names no sort" line take the
 # prompt without MEMORY_ADDENDUM to 42,424 and the whole prompt to 42,939; CEILING is
 # 42,939 - 512 = 42,427 so both assertions hold.
-CEILING = 42_427
+# Third re-pin, 29 Sep 2026 (PR #1365, CHATBOT-CUSTOMER-SCOPE, PLAN-chatbot-customer-scope-
+# 29sep D2): `SELF_REFERENCE_ADDENDUM` teaches the boolean `self_reference` ("my" / "me" /
+# "our" as the asker's own account, Malay and Chinese forms included) and is a genuine new
+# addendum the owner ruled must land (grill Q5), so per the rule above CEILING rises in the
+# same commit to the new measured value: 41,466 without the memory addendum, and 41,981
+# with it (the estimator rounds per text, so the two do not add up exactly); the pin is
+# the combined figure minus the addendum's own 512 bound, so both assertions below hold
+# on the measured prompt. The memory lane's rendered body measures 41,390 on the same text.
+# Fourth re-pin, 29 Sep 2026 (PR #1365 merged over #1373): both addenda in the constant
+# (SELF_REFERENCE beneath ESCALATION_CONFIRMATION, PO_SPO_WAREHOUSE beneath that, MEMORY the
+# tail) measure 42,906 without the memory addendum and 43,421 with it; CEILING is
+# 43,421 - 512 = 42,909 so both assertions hold on the combined prompt.
+CEILING = 42_909
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is

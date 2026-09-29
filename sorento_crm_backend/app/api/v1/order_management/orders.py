@@ -296,6 +296,7 @@ from app.schemas.order_management import (
     TopSellingResponse,
 )
 from app.services.error_handler import handle_internal_error
+from app.api.v1.order_management._contact_scope import enforce_customer_scope
 
 router = APIRouter()
 
@@ -453,6 +454,18 @@ async def get_orders(
     ),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "Respond.io contact id. Both-or-neither with space_id (one alone is 422). A "
+            "contact linked to customers and holding no office access type is scoped to "
+            "them: another customer's id is 403 `customer_not_permitted`, and no customer "
+            "argument means its own customers."
+        ),
+    ),
+    space_id: Optional[str] = Query(
+        None, description="Respond.io workspace id, required together with contact_id.",
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -479,6 +492,17 @@ async def get_orders(
 
     try:
         _resolved_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
+        # PLAN-chatbot-customer-scope-29sep.md D5: a scoped contact's customers. The legacy
+        # singular `customer_id` counts as a requested customer too.
+        _scoped_ids = enforce_customer_scope(
+            db,
+            contact_id=contact_id,
+            space_id=space_id,
+            customer_ids=[*(_resolved_customer_ids or []), *([customer_id] if customer_id else [])],
+            customer_query=customer_query,
+        )
+        if _scoped_ids is not None:
+            _resolved_customer_ids = _scoped_ids
         _resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
         # Review round (26 Sep 2026): the SAME cap `get_outstanding_report` already
         # applies to its own `brand_ids` - an unbounded IN (...) from an external
@@ -561,7 +585,7 @@ async def get_orders(
             product_ids=_resolved_product_ids,
             transporter_ids=parse_uuid_list(transporter_ids, param_name="transporter_ids"),
             warehouse_codes=_normalize_entities(warehouse_codes),
-            customer_query=customer_query,
+            customer_query=None if _scoped_ids is not None else customer_query,
             product_query=product_query,
             transporter_query=transporter_query,
             customer_id=customer_id,
@@ -577,6 +601,10 @@ async def get_orders(
             sort_field=sort or "created_at",
             sort_dir=dir or "asc"
         )
+        if _scoped_ids is not None and isinstance(result, dict):
+            # A scoped contact never sees how a free-text `entities` word resolved: the
+            # echo would say whether another customer's name exists (a name oracle).
+            result.pop("resolved_entities", None)
         # #1262 fix lane round 6: a brand ask lists only that brand's lines inside
         # each document it keeps. No brand, no change.
         if _resolved_brand_ids and isinstance(result, dict) and result.get("data"):
@@ -665,6 +693,18 @@ async def list_distinct_debtors(
     ),
     sort: str = Query("debtor_name", description="One of: debtor_name, debtor_code, order_count."),
     dir: str = Query("asc", description="asc | desc."),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "Respond.io contact id. Both-or-neither with space_id (one alone is 422). A "
+            "contact linked to customers and holding no office access type is scoped to "
+            "them: another customer's id is 403 `customer_not_permitted`, and no customer "
+            "argument means its own customers."
+        ),
+    ),
+    space_id: Optional[str] = Query(
+        None, description="Respond.io workspace id, required together with contact_id.",
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -698,6 +738,11 @@ async def list_distinct_debtors(
     )
 
     parsed_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
+    scoped_ids = enforce_customer_scope(
+        db, contact_id=contact_id, space_id=space_id, customer_ids=parsed_customer_ids, customer_query=None
+    )
+    if scoped_ids is not None:
+        parsed_customer_ids = scoped_ids
     if parsed_customer_ids is not None:
         base = base.filter(_Order.customer_id.in_(parsed_customer_ids))
 
@@ -856,6 +901,18 @@ async def get_orders_by_product(
     ),
     sort: Optional[str] = Query("order_date"),
     dir: Optional[str] = Query("desc"),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "Respond.io contact id. Both-or-neither with space_id (one alone is 422). A "
+            "contact linked to customers and holding no office access type is scoped to "
+            "them: another customer's id is 403 `customer_not_permitted`, and no customer "
+            "argument means its own customers."
+        ),
+    ),
+    space_id: Optional[str] = Query(
+        None, description="Respond.io workspace id, required together with contact_id.",
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -872,6 +929,17 @@ async def get_orders_by_product(
             request, limit, cap=_EXTERNAL_ORDERS_AGG_LIMIT_CAP, date_scoped=_date_scoped
         )
         norm_entities = _normalize_entities(entities)
+        requested_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
+        scoped_customer_ids = enforce_customer_scope(
+            db,
+            contact_id=contact_id,
+            space_id=space_id,
+            customer_ids=requested_customer_ids,
+            customer_query=customer_query,
+        )
+        is_scoped = scoped_customer_ids is not None
+        if scoped_customer_ids is None:
+            scoped_customer_ids = requested_customer_ids
         resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
         # Review round (26 Sep 2026): the SAME cap `get_outstanding_report` already
         # applies to its own `brand_ids` - an unbounded IN (...) from an external
@@ -910,16 +978,16 @@ async def get_orders_by_product(
                 "empty": True,
             }
         service = OrderService(db)
-        return service.list_orders_by_product(
+        by_product = service.list_orders_by_product(
             page=page,
             limit=limit,
             query=query,
             entities=norm_entities,
             product_ids=parsed_product_ids,
-            customer_ids=parse_uuid_list(customer_ids, param_name="customer_ids"),
+            customer_ids=scoped_customer_ids,
             transporter_ids=parse_uuid_list(transporter_ids, param_name="transporter_ids"),
             warehouse_codes=_normalize_entities(warehouse_codes),
-            customer_query=customer_query,
+            customer_query=None if is_scoped else customer_query,
             product_query=product_query,
             product_id=product_id,
             has_actual_delivery_date=has_actual_delivery_date,
@@ -933,6 +1001,11 @@ async def get_orders_by_product(
             sort_field=sort or "order_date",
             sort_dir=dir or "desc",
         )
+        if is_scoped and isinstance(by_product, dict):
+            # Same rule as the orders list: a scoped contact gets no `resolved_entities`
+            # echo (a name oracle).
+            by_product.pop("resolved_entities", None)
+        return by_product
     except HTTPException:
         raise
     except Exception as e:
@@ -982,6 +1055,18 @@ async def get_order_analytics(
         description="Order date to (inclusive). Same flexible formats as date_from.",
     ),
     limit: int = Query(50, ge=1, le=500, description="Max number of ranked group rows to return."),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "Respond.io contact id. Both-or-neither with space_id (one alone is 422). A "
+            "contact linked to customers and holding no office access type is scoped to "
+            "them: another customer's id is 403 `customer_not_permitted`, and no customer "
+            "argument means its own customers."
+        ),
+    ),
+    space_id: Optional[str] = Query(
+        None, description="Respond.io workspace id, required together with contact_id.",
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -991,6 +1076,12 @@ async def get_order_analytics(
     computed aggregates - never per-order cost/invoice pricing.
     """
     try:
+        requested_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
+        scoped_customer_ids = enforce_customer_scope(
+            db, contact_id=contact_id, space_id=space_id, customer_ids=requested_customer_ids, customer_query=None
+        )
+        if scoped_customer_ids is None:
+            scoped_customer_ids = requested_customer_ids
         service = OrderService(db)
         # Accept a bare 4-digit year ("2026") for a whole-year window.
         _df = re.fullmatch(r"\s*(\d{4})\s*", date_from or "")
@@ -1000,7 +1091,7 @@ async def get_order_analytics(
         return service.order_analytics(
             metric=metric,
             group_by=group_by,
-            customer_ids=parse_uuid_list(customer_ids, param_name="customer_ids"),
+            customer_ids=scoped_customer_ids,
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
             product_code=product_code,
             date_from=_parse_flex_date(date_from_s),
@@ -1540,6 +1631,18 @@ async def get_outstanding_report(
             "the DO block. Filtering is unaffected - the caller sends scope=do."
         ),
     ),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "Respond.io contact id. Both-or-neither with space_id (one alone is 422). A "
+            "contact linked to customers and holding no office access type is scoped to "
+            "them: another customer's id is 403 `customer_not_permitted`, and no customer "
+            "argument means its own customers."
+        ),
+    ),
+    space_id: Optional[str] = Query(
+        None, description="Respond.io workspace id, required together with contact_id.",
+    ),
     current_user: dict = Depends(require_permission_with_api_key("order_management.orders.view")),
     db: Session = Depends(get_db),
 ):
@@ -1563,6 +1666,16 @@ async def get_outstanding_report(
     # alone (AC-S9-4).
     resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
 
+    # PLAN-chatbot-customer-scope-29sep.md D5: a scoped contact's customers. The scope
+    # itself is a subject (a bare ask from a scoped contact is its own customers).
+    scoped_customer_ids = enforce_customer_scope(
+        db,
+        contact_id=contact_id,
+        space_id=space_id,
+        customer_ids=parse_uuid_list(customer_ids, param_name="customer_ids"),
+        customer_query=customer_query,
+    )
+
     # R13: the SUBJECT is a product, a customer, a brand, or any combination - but never
     # nothing. An unfiltered report would sum every open sales order line in the
     # company, which is not an answer to any question a customer can ask.
@@ -1571,6 +1684,7 @@ async def get_outstanding_report(
         not (product_code or "").strip()
         and not resolved_product_codes
         and not customer_ids
+        and not scoped_customer_ids
         and not (customer_query or "").strip()
         and not resolved_brand_ids
     ):
@@ -1598,7 +1712,11 @@ async def get_outstanding_report(
     # would then filter on it and just find nothing, rather than 400 on the caller's
     # own malformed input. Both lists are capped at 50 - an unbounded IN (...) from an
     # external caller is an easy way to make this route's own two base queries slow.
-    resolved_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
+    resolved_customer_ids = (
+        scoped_customer_ids
+        if scoped_customer_ids is not None
+        else parse_uuid_list(customer_ids, param_name="customer_ids")
+    )
     resolved_warehouse_codes = _normalize_entities(warehouse_codes)
     for values, name in (
         (resolved_customer_ids, "customer_ids"),
@@ -1619,7 +1737,8 @@ async def get_outstanding_report(
         product_code=product_code,
         product_codes=resolved_product_codes,
         scope=scope,
-        customer_query=customer_query,
+        # The scope helper already matched a scoped contact's query (name or code) into ids.
+        customer_query=None if scoped_customer_ids is not None else customer_query,
         customer_ids=resolved_customer_ids,
         warehouse_codes=resolved_warehouse_codes,
         brand_ids=resolved_brand_ids,
@@ -1744,14 +1863,22 @@ async def get_sales_report(
     from app.services.sales_report_service import sales_report
 
     # S7: the SUBJECT is a product, a customer, or both - but never nothing.
-    if not (product_code or "").strip() and not customer_ids and not (customer_query or "").strip():
-        raise AppException(
+    # A contact identity defers this check until the customer scope is known below: a
+    # scoped contact's own customers ARE the subject (the outstanding route's rule).
+    def _needs_subject() -> AppException:
+        return AppException(
             422,
             "This report needs a subject: give at least one of product_code, customer_ids "
             "or customer_query",
             detail="product_code, customer_ids, customer_query",
             code="subject_required",
         )
+
+    _no_subject = (
+        not (product_code or "").strip() and not customer_ids and not (customer_query or "").strip()
+    )
+    if _no_subject and not (contact_id and space_id):
+        raise _needs_subject()
 
     # SEC-B2 (security review, Phase 3 fix round, ruling S17): a customer_query given
     # (non-blank - blank already 422s above as subject_required) needs at least 3
@@ -1818,6 +1945,19 @@ async def get_sales_report(
         )
 
     resolved_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
+    # PLAN-chatbot-customer-scope-29sep.md D5: a scoped contact's customers (the reveal
+    # key above is the first gate, this is the second).
+    scoped_customer_ids = enforce_customer_scope(
+        db,
+        contact_id=contact_id,
+        space_id=space_id,
+        customer_ids=resolved_customer_ids,
+        customer_query=customer_query,
+    )
+    if scoped_customer_ids is not None:
+        resolved_customer_ids = scoped_customer_ids
+    if _no_subject and not scoped_customer_ids:
+        raise _needs_subject()
     resolved_warehouse_codes = _normalize_entities(warehouse_codes)
     for values, name in (
         (resolved_customer_ids, "customer_ids"),
@@ -1834,7 +1974,7 @@ async def get_sales_report(
     data = sales_report(
         db,
         product_code=product_code,
-        customer_query=customer_query,
+        customer_query=None if scoped_customer_ids is not None else customer_query,
         customer_ids=resolved_customer_ids,
         channel=channel_norm,
         warehouse_codes=resolved_warehouse_codes,
@@ -1884,32 +2024,11 @@ async def get_sales_report(
 
 _TOP_SELLING_N_MAX = 100
 
-#: The office tier's access type names ("Sorento Office"), matched the way the
-#: chatbot's `tier_gate.parse_level` reads them. Restated here, not imported:
-#: core never imports the chatbot package (tests/chatbot/test_import_boundary.py).
-_OFFICE_ACCESS_TYPE_RE = re.compile(r"^(sorento|cabana|mocha) office\Z")
-
-
 def _top_selling_is_staff(db: Session, contact_id: str) -> bool:
-    """True when the contact holds at least one ACTIVE office access type
-    (`_OFFICE_ACCESS_TYPE_RE`, e.g. "Sorento Office"), whatever other types it
-    holds. The chatbot lane asks the same question
-    (`business_services.top_selling_dealer_ledgers`)."""
-    from app.models.access import ContactAccessType, respond_contact_access_types
+    """Alias of `contact_customer_scope.is_office_staff` (the one shared rule)."""
+    from app.services.contact_customer_scope import is_office_staff
 
-    held = (
-        db.query(ContactAccessType.name)
-        .join(
-            respond_contact_access_types,
-            respond_contact_access_types.c.access_type_code == ContactAccessType.code,
-        )
-        .filter(
-            respond_contact_access_types.c.contact_id == contact_id,
-            ContactAccessType.is_active.is_(True),
-        )
-        .all()
-    )
-    return any(_OFFICE_ACCESS_TYPE_RE.match(" ".join((name or "").split()).lower()) for (name,) in held)
+    return is_office_staff(db, contact_id)
 
 
 def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str]]:
@@ -1923,17 +2042,14 @@ def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str
     ledgers. Anyone else (no type, end user, dealer with no link, an inactive
     office type, a type nobody classified) is refused (fail closed). The Sales
     report reveal is checked by the caller before this, for everyone."""
-    from app.services.contact_customer_service import list_links
+    from app.services import contact_customer_scope as scope_mod
     from app.services.error_handler import AppException
 
-    if _top_selling_is_staff(db, contact_id):
+    scope = scope_mod.contact_customer_scope(db, contact_id)
+    if scope.staff:
         return None
-    own = []
-    for link in list_links(db, contact_id):
-        if link.customer_id not in own:
-            own.append(link.customer_id)
-    if own:
-        return own
+    if scope.linked:
+        return scope.customer_ids
     raise AppException(
         403,
         "You can only see sales for your own account.",
