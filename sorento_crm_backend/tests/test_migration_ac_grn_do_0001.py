@@ -92,7 +92,7 @@ def test_revision_fits_and_chains_onto_the_main_head():
     module = _load()
     assert module.revision == REVISION
     assert len(module.revision) <= 32
-    assert module.down_revision == "merge_29sep_batch8"
+    assert module.down_revision == "sat_0001_stock_ask_done"
 
 
 def test_up_down_up():
