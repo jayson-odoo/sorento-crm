@@ -1,17 +1,82 @@
 """Audit logs API routes."""
 from datetime import datetime
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
+from app.services.audit_actor_label import actor_label as _actor_label
 from app.services.audit_service import list_audit_logs
 from app.schemas.audit import AuditLogResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.models.user import User
 from app.models.access import RespondContact
+from app.services.user_service import UserPermissionService
+from app.services.error_handler import AppException
+from app.models.base import get_company_scope
 
 router = APIRouter()
+
+# The audit log holds every audited change, its before/after values and the actor's
+# IP address, so reading it is a superadmin/admin act (#1281): the menu entries were
+# superadmin-only, the routes were open to any login or API key. The one exception is
+# a detail page's history panel, which reads ONE record's history and takes the
+# same view permission as the record's own page. Every FE reader of
+# `getAuditLogs({ entity_type, entity_id })` needs its entity type here.
+_PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
+    "complaint": "complaint_management.complaints.view",
+    "stock_inquiry": "procurement.stock_inquiries.view",
+    "purchase_request": "procurement.purchase_requests.view",
+    "product": "master_data.products.view",
+    # Packing List detail, Timeline tab (usePackingLists.ts, R17).
+    "inbound_shipments": "procurement.packing_lists.view",
+}
+
+
+def _is_audit_admin(db: Session, user_id: str) -> bool:
+    slugs = UserPermissionService(db).get_user_role_slugs(user_id)
+    return bool(slugs & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"})
+
+
+def _forbidden() -> AppException:
+    return AppException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        message="Superadmin access is required to read the audit log.",
+        code="audit_admin_required",
+    )
+
+
+def require_audit_admin(
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Superadmin/admin only, whether the caller is a login or an API key's act-as user."""
+    if not _is_audit_admin(db, str(current_user["id"])):
+        raise _forbidden()
+    return current_user
+
+
+def _authorize_log_read(
+    db: Session, current_user: dict, entity_type: Optional[str], entity_id: Optional[str]
+) -> None:
+    user_id = str(current_user["id"])
+    if _is_audit_admin(db, user_id):
+        return
+    slug = _PER_RECORD_VIEW_PERMISSION.get(entity_type or "")
+    if not (slug and entity_id and UserPermissionService(db).check_user_has_permission(user_id, slug)):
+        raise _forbidden()
+    # The only company check downstream is admin_listing_company_filter, which is not
+    # fail-closed: UNSET or an empty set means "every company", safe only for an admin.
+    # A non-admin with no active company (no grant left after offboarding, a deleted
+    # company) must not read another company's record through this branch. None stays
+    # open: it is the deliberate all-companies principal (an X-API-Key, AC-F1).
+    scope = get_company_scope(db)
+    if scope is not None and (not isinstance(scope, frozenset) or not scope):
+        raise AppException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message="An active company is required to read this record's history.",
+            code="audit_company_required",
+        )
 
 
 def _user_display_names(db: Session, user_ids: list[str]) -> dict[str, str]:
@@ -20,8 +85,9 @@ def _user_display_names(db: Session, user_ids: list[str]) -> dict[str, str]:
     if not ids:
         return {}
     users = db.query(User.id, User.name, User.email).filter(User.id.in_(ids)).all()
+    # Name, else email, else nothing: never the id (a phone-only user has no email).
     return {
-        str(u.id): (u.name.strip() if u.name and u.name.strip() else u.email or str(u.id))
+        str(u.id): (u.name.strip() if u.name and u.name.strip() else (u.email or ""))
         for u in users
     }
 
@@ -43,6 +109,26 @@ def _contact_display_names(db: Session, contact_ids: list[str]) -> dict[str, str
             name = " ".join(p for p in ((r.first_name or "").strip(), (r.last_name or "").strip()) if p).strip()
         out[str(r.id)] = name or (r.phone_number or str(r.id))
     return out
+
+
+def _scheduled_task_names(db: Session, keys: list[str]) -> dict[str, str]:
+    keys = [k for k in keys if k]
+    if not keys:
+        return {}
+    from app.models.scheduled_task import ScheduledTask
+
+    rows = db.query(ScheduledTask.key, ScheduledTask.name).filter(ScheduledTask.key.in_(keys)).all()
+    return {r.key: r.name for r in rows if r.name}
+
+
+def _integration_names(db: Session, integration_ids: list[str]) -> dict[str, str]:
+    ids = [i for i in integration_ids if i]
+    if not ids:
+        return {}
+    from app.models.integration import Integration
+
+    rows = db.query(Integration.id, Integration.name).filter(Integration.id.in_(ids)).all()
+    return {str(r.id): r.name for r in rows}
 
 
 # Human-readable one-liner for a status transition, e.g. "status: pending → approved".
@@ -88,6 +174,7 @@ async def get_audit_logs(
     db: Session = Depends(get_db),
 ):
     """List audit log entries, optionally filtered by entity_type and entity_id (for per-record history)."""
+    _authorize_log_read(db, current_user, entity_type, entity_id)
     items, total = list_audit_logs(
         db,
         entity_type=entity_type,
@@ -100,21 +187,43 @@ async def get_audit_logs(
         page=page,
         limit=limit,
     )
-    user_ids = list({str(it.user_id) for it in items if it.user_id is not None})
+    user_ids = list(
+        {str(it.user_id) for it in items if it.user_id is not None}
+        | {str(it.real_user_id) for it in items if getattr(it, "real_user_id", None) is not None}
+    )
     contact_ids = list({str(it.contact_id) for it in items if getattr(it, "contact_id", None) is not None})
+    integration_ids = list(
+        {str(it.integration_id) for it in items if getattr(it, "integration_id", None) is not None}
+    )
+    scheduled_keys = list(
+        {it.job_id for it in items if getattr(it, "actor_type", None) == "scheduler" and getattr(it, "job_id", None)}
+    )
     user_names = _user_display_names(db, user_ids)
     contact_names = _contact_display_names(db, contact_ids)
+    integration_names = _integration_names(db, integration_ids)
+    scheduled_names = _scheduled_task_names(db, scheduled_keys)
+    from app.services.activity_service import entity_labels
+
+    record_labels = entity_labels(db, items)
     data = []
     for it in items:
         payload = AuditLogResponse.model_validate(it).model_dump()
-        # Attribution precedence: acting contact -> staff user -> "System".
-        if getattr(it, "contact_id", None) is not None and contact_names.get(str(it.contact_id)):
+        # Attribution precedence: acting contact -> staff user -> "System". Contact
+        # first only on a contact or legacy row: a staff row also carries the user's
+        # linked WhatsApp contact (plan 8.1), and there the user is the name.
+        contact_first = (getattr(it, "actor_type", None) or "legacy") in ("contact", "legacy")
+        if contact_first and getattr(it, "contact_id", None) is not None and contact_names.get(str(it.contact_id)):
             payload["user_display_name"] = contact_names[str(it.contact_id)]
         elif it.user_id is not None:
             payload["user_display_name"] = user_names.get(str(it.user_id)) or "System"
         else:
             payload["user_display_name"] = "System"
+        payload["actor_label"] = _actor_label(
+            it, user_names, contact_names, integration_names, payload["user_display_name"],
+            scheduled_names=scheduled_names,
+        )
         payload["description"] = _derive_description(it)
+        payload["entity_label"] = record_labels.get(str(it.id))
         data.append(AuditLogResponse(**payload))
     return {
         "data": data,

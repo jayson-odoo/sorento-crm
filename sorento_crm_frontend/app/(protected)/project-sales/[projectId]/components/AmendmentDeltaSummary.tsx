@@ -18,8 +18,8 @@ const FIELD_LABEL: Record<string, string> = {
   amount: 'amount',
   product_code: 'product',
   product_id: 'product',
-  phase_label: 'phase',
-  phase_id: 'phase',
+  phase_label: 'area',
+  phase_id: 'area',
   area_group: 'sales order',
   uom: 'unit of measure',
 };

@@ -68,6 +68,7 @@ from ..test_order_inquiry_handshake import (
     api,
     world,
 )
+from ..test_order_inquiry_suggested_links import _suggested_of
 from ..test_planning_changes import MARKER, _uid
 
 __all__ = ["api", "world"]  # re-exported fixtures; keeps linters from calling them unused
@@ -272,7 +273,7 @@ def test_ac_cf_1b_borrow_asker_row_is_born_awaiting(api):
 def test_ac_cf_4_cascade_still_auto_links_an_awaiting_row_on_raise(api):
     """AC-CF-4. `ProjectSupplyService._draft_links_for_decision` always calls
     `auto_place_for_products(..., include_awaiting=True)` at raise time, so an open PO
-    line links to a fresh row whatever its ack_state - and under S1 the row IS
+    line still reaches a fresh row whatever its ack_state - and under S1 the row IS
     genuinely awaiting the instant it is raised, so this now holds for the real reason
     (the cascade never waits for confirm), not by pre-S1 coincidence."""
     _client, world = api
@@ -282,7 +283,12 @@ def test_ac_cf_4_cascade_still_auto_links_an_awaiting_row_on_raise(api):
     row = fixture["row"]
 
     assert row.ack_state == ACK_AWAITING
-    assert [link.document for link in _links_of(world, row)] == [po.po_number]
+    # S3 reversal: the cascade walk at raise time suggests here (no book match), it no
+    # longer writes a real link - the row's own linkless state stands beside it.
+    assert _links_of(world, row) == []
+    assert [suggestion.document for suggestion in _suggested_of(world.db, row.id)] == [
+        po.po_number
+    ]
 
 
 # ---------------------------------------------------------------------------

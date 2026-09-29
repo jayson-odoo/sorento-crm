@@ -117,6 +117,26 @@ class OrderInquiryLinkOut(BaseModel):
     #: WHO linked it, by name. Null on a cascade link, which nobody did by hand.
     linked_by_name: Optional[str] = None
     po_id: Optional[str] = None
+    #: Issue #1215 point 2 - `links_for_rows` has always computed this (the candidate
+    #: walk's own target id), but `response_model` silently drops a field it has not
+    #: been told about (same lesson as `ack_state` elsewhere) and this one never was.
+    #: Needed so the Lines tab / PO lightbox can highlight the exact line this link
+    #: sits on. Null on an SPO link.
+    po_line_id: Optional[str] = None
+    #: R15 (owner rulings, 25 Sep 2026, hand test on stack C): the same gap as
+    #: `po_line_id` above, mirrored for the other book - `links_for_rows` has always
+    #: computed this (the link's own target), but it never reached the wire. Needed so
+    #: the SPO lightbox can highlight the exact allocation line this link sits on, the
+    #: same way `po_line_id` already does for the PO lightbox. Null on a PO-kind link.
+    spo_allocation_id: Optional[str] = None
+    #: R17 (owner rulings, 25 Sep 2026): the purchase order an SPO link's allocation
+    #: draws down (`SPOAllocation.po_line_id` traced to its own PO header), so the Lines
+    #: tab's "<number> via SPO" cell can open that PO directly rather than guessing by
+    #: number. A different question from `po_id` above, which addresses THIS link's own
+    #: document. Null on a PO-kind link and on an SPO allocation with no resolved supply
+    #: PO line (`links_for_rows`' own `purchase_order_id`, review round 1's L4 item,
+    #: which never reached the wire either).
+    purchase_order_id: Optional[str] = None
     #: The purchase order an SPO link's allocation was raised FROM, per AutoCount's own
     #: statement (`SPOAllocation.from_po_number`, migration 493 / contract 2.2) - a
     #: different question from `po_id` above, which addresses this link's OWN document.
@@ -141,6 +161,30 @@ class OrderInquiryLinkOut(BaseModel):
     #: inside the product's lead-time window. Nothing is written from it - purchasing
     #: acts in AutoCount, S5 follows.
     suggestion: Optional[Dict[str, Any]] = None
+
+
+class OrderInquirySuggestedLinkOut(BaseModel):
+    """One guess the cascade walk made, never a placement
+    (`PLAN-oi-links-autocount-truth-24sep.md` 3.5, AC-LT-33) - kept off `links` above,
+    which carries real links only. Same vocabulary as `OrderInquiryLinkOut` where the
+    two overlap, minus everything only a real link has (no `id` to unlink by, no
+    `linked_by_name`, no `received`): a suggestion is not purchasing's word and there
+    is nothing on it to act on directly."""
+
+    #: `po` or `spo`.
+    kind: str
+    document: Optional[str] = None
+    po_id: Optional[str] = None
+    po_line_id: Optional[str] = None
+    spo_allocation_id: Optional[str] = None
+    location: Optional[str] = None
+    qty: str
+    expected_date: Optional[date] = None
+    late_days: Optional[int] = None
+    #: Why the walk offered this - `raise`, `worklist`, `link_now`, `acknowledge`,
+    #: `po_confirm`, `decision_confirm` - the same trigger vocabulary a real link's
+    #: `auto` note already carries.
+    trigger: Optional[str] = None
 
 
 class OrderInquiryRowOut(BaseModel):
@@ -187,6 +231,9 @@ class OrderInquiryRowOut(BaseModel):
     cited_document: Optional[str] = None
     #: Every document this row's quantity sits on, oldest link first (AC-I5).
     links: List[OrderInquiryLinkOut] = []
+    #: AC-LT-33: the cascade's own guesses, never a placement - kept off `links`
+    #: above, which carries nothing suggested.
+    suggested_links: List[OrderInquirySuggestedLinkOut] = []
     #: The sum of `links[].qty` for the REAL links only - `links` also carries synthetic
     #: "via PO" entries (`derived: true`) for a linked PO's own open SPO allocations,
     #: which never wrote an `order_inquiry_links` row and are excluded from this sum.
@@ -372,6 +419,16 @@ class OrderInquiryWorklistRow(BaseModel):
     # sibling row is a second live instruction, not history (review round 1, blocker
     # B1). `[]` on a row with no SO line, or nothing prior. Never on the Excel export.
     raise_history: List[OrderInquiryRaiseHistoryEntry] = []
+    # AC-DT-3 (`PLAN-oi-decision-trail-ui.md`): the actual `order_inquiry_raises` EVENT
+    # this row traces to - the confirm or reconfirm that raised it, matched by timing
+    # (the same inquiry's earliest event at or after this row's own `created_at`, minus
+    # a one-second grace). Distinct from `raised_by_name`/`raised_at` above, which name
+    # WHO currently owns the row rather than what raised it. `raise_event_kind` is
+    # `"raised"` or `"reconfirmed"` (`OI_RAISE_RAISED`/`OI_RAISE_RECONFIRMED`), or null
+    # when nothing matches - a row migrated before raises were recorded.
+    raise_event_kind: Optional[str] = None
+    raise_event_by_name: Optional[str] = None
+    raise_event_at: Optional[datetime] = None
     verb: str
     note: Optional[str] = None
 
@@ -391,6 +448,16 @@ class OrderInquiryWorklistRow(BaseModel):
     # cell's own `SO402757 · L5` label (`orderInquirySoLineLabel`) reads this. Null when
     # the mirror has no core line (same as `core_line_id`).
     line_no: Optional[int] = None
+    # `PLAN-oi-no-double-count-25sep.md` S1 (AC-ND-21): the sales order line's own Qty and
+    # No., the numbers the sales order's Lines grid shows for that line - the OI detail's
+    # SO Qty column. The core line's `qty_ordered` / `line_no`, else the mirror's own when
+    # it has no core line; both null when the row names no sales order line at all.
+    so_line_qty: Optional[str] = None
+    so_line_no: Optional[int] = None
+    # PR #1266 review S1: the row's mirror sales order line, the OI detail's fold key and
+    # the header Lines count's own (G10). Unlike `core_line_id` it is there before
+    # AutoCount reconciles the line. Null when the row names no sales order line.
+    so_line_id: Optional[str] = None
     is_adopted: bool = False
     # The placed purchase order this row traces to (same coalesce the PO NO column reads),
     # so the "PO no" cell's popup can address `GET .../order-inquiries/po/{po_id}` without
@@ -399,6 +466,9 @@ class OrderInquiryWorklistRow(BaseModel):
     #: Every document this row's quantity sits on (AC-I5), the SAME reader the per-project
     #: list and the SCM sales-order detail use. Empty on a row nobody has linked.
     links: List[OrderInquiryLinkOut] = []
+    #: AC-LT-33: the cascade's own guesses, never a placement - kept off `links`
+    #: above, which carries nothing suggested.
+    suggested_links: List[OrderInquirySuggestedLinkOut] = []
     linked_qty: str = "0"
     #: The document CS cited on an order back, so the screen can say the walk honoured it.
     cited_document: Optional[str] = None
@@ -444,13 +514,20 @@ class OrderInquiryWorklistRow(BaseModel):
     line_cancelled: bool = False
     #: PLAN-oi-request-cs-reserve.md 3.5 (AC-RS-20): `requested` while an open reserve
     #: request row exists, `reserved` once something has actually been reserved (and no
-    #: open request), else null. Declared here because `response_model` silently drops a
+    #: open request), `declined` when the latest answer was 0 (6e.4, AC-RS-78c), else
+    #: null. Declared here because `response_model` silently drops a
     #: field it has not been told about.
     reserve_state: Optional[str] = None
     #: 3.4 (AC-RS-12): the sum of the row's reserve links - a THIRD figure beside
     #: `taken_from_po`/`remaining_open`, both of which already include it (they sum by
     #: `row_id` with no target filter).
     reserved_qty: str = "0"
+    #: Round 4 (`PLAN-oi-request-cs-reserve.md` 6e.2): the OPEN reserve request row's
+    #: own `qty_requested` for this row - "0" when `reserve_state` is not `requested`.
+    #: The Lines grid's `Request to reserve N` pill and the tick's default stage both
+    #: read N off this, not off a second lookup. Declared here because `response_model`
+    #: silently drops a field it has not been told about.
+    requested_qty: str = "0"
 
 
 class OrderInquiryMonthTotal(BaseModel):
@@ -964,9 +1041,10 @@ class AutoPlaceInquiryFilter(BaseModel):
 class AutoPlaceRequest(BaseModel):
     """Run the cascade now - the worklist's own "Auto-link". Omitted `product_ids` means
     every product that currently has a raised or partly linked ORDER / RESERVE & ORDER /
-    ORDER BACK row. `row_ids` names the rows and nothing else (the worklist's "Link
-    selected"), and wins over `product_ids`. `filter.inquiry_id` (S3) scopes the whole
-    cascade to one header's own rows, on top of whichever of the other two is also given.
+    ORDER BACK row. `row_ids` names the rows and nothing else (the worklist's and the OI
+    detail's "Link selected", R18 - there is no separate route for it any more), and
+    wins over `product_ids`. `filter.inquiry_id` (S3) scopes the whole cascade to one
+    header's own rows, on top of whichever of the other two is also given.
 
     `extra="forbid"` (S3, security review round 1 precedent on `AcknowledgeFilter`): an
     unknown `filter` key used to be silently dropped by Pydantic's own default, which let
@@ -1002,6 +1080,13 @@ class AutoPlaceResult(BaseModel):
     placed_rows: int = 0
     allocations: int = 0
     products_touched: int = 0
+    #: AC-LT-37 (G4): the book step's own count, real links, distinct from the
+    #: cascade's own guesses below.
+    book_linked_rows: int = 0
+    #: AC-LT-37: rows the cascade walk offered a suggested link to this pass - never
+    #: a placement, and `placed_rows` above already counts them for backward
+    #: compatibility (the walk's own terminal write is a suggestion since S3).
+    suggested_rows: int = 0
     #: Rows still owed but due after `link_up_to`, left Not linked on purpose (AC-LH2).
     after_horizon: int = 0
     #: The horizon the pass ran under - the caller's own date, or the plan's own when they
@@ -1009,6 +1094,13 @@ class AutoPlaceResult(BaseModel):
     link_up_to: Optional[date] = None
     #: WHETHER a horizon was in force at all (S1). See `AcknowledgeResult.link_horizon`.
     link_horizon: Literal["date", "none"] = "none"
+    #: R18 (`PLAN-oi-links-autocount-truth-24sep.md` 3.6): how many rows this pass
+    #: actually moved - book-linked this pass, or given a different suggestion than
+    #: the one they held coming in. "Link selected" reports this so recalculating
+    #: against AutoCount can say whether it caught anything, distinct from
+    #: `book_linked_rows` / `suggested_rows`, which count the OUTCOME rather than
+    #: whether that outcome is new.
+    changed_rows: int = 0
 
 
 class UnplaceAllRequest(BaseModel):
@@ -1096,11 +1188,20 @@ class OrderInquiryPoDetailLine(BaseModel):
     against other rows' claims - that reading belongs to the "Place on PO" candidates,
     not to a plain look at what was ordered."""
 
+    #: Issue #1215 point 2 - the line's own identity, so the FE can highlight the line
+    #: an opening row's link actually sits on. The SKU alone is ambiguous the moment a
+    #: PO carries two lines of the same item.
+    id: Optional[str] = None
     sku: Optional[str] = None
     product_name: Optional[str] = None
     qty_ordered: str
     qty_received: str
     remaining: str
+    #: Every order inquiry row's own placement on THIS line, summed (never netted
+    #: against anything else - that reading belongs to the "Place on PO" candidates).
+    #: Optional only for a caller that predates this field; `get_po_detail` always
+    #: sends it.
+    allocated: Optional[str] = None
     location: Optional[str] = None
     #: The book's own linkage for this line - the SAME fact and the SAME shape the SCM
     #: purchase-order detail's Lines tab prints (`PurchaseOrderLine.book_so_number` /
@@ -1138,6 +1239,9 @@ class OrderInquiryDocumentAllocation(BaseModel):
     qty: str
     ack_state: Optional[str] = None
     linked_at: Optional[datetime] = None
+    #: Issue #1215 point 2 - which PO line this allocation sits on, so the FE can
+    #: highlight it on the lines grid. Null on an SPO allocation.
+    po_line_id: Optional[str] = None
 
 
 class OrderInquiryPoDetail(BaseModel):
@@ -1152,6 +1256,7 @@ class OrderInquiryPoDetail(BaseModel):
     status: str
     lines: List[OrderInquiryPoDetailLine] = []
     #: Who this purchase order's quantity is spoken for by, drafts included (AC-D18).
+    #: Real links only - a suggested link never appears here (AC-LT-34).
     allocations: List[OrderInquiryDocumentAllocation] = []
 
 
@@ -1164,8 +1269,16 @@ class OrderInquirySpoDetailLine(BaseModel):
     never take (R11): showing it is how a buyer learns why nothing was drafted onto it.
     """
 
+    #: R15 (owner rulings, 25 Sep 2026, hand test on stack C): the line's own identity
+    #: (`spo_allocations.id`), the same reason `OrderInquiryPoDetailLine.id` exists
+    #: (issue #1215 point 2) - without it the SPO lightbox has no field to highlight a
+    #: line by, unlike the PO lightbox next door.
+    id: Optional[str] = None
     sku: Optional[str] = None
     product_name: Optional[str] = None
+    #: R31b (stock debt lane): this line's own `spo_allocations.spo_line_number`, so a
+    #: caller opening the dialog off a linked demand line can mark and jump to the row.
+    spo_line_number: Optional[int] = None
     allocated: str
     received: str
     remaining: str
@@ -1194,6 +1307,7 @@ class OrderInquirySpoDetail(BaseModel):
     shipment_ref: Optional[str] = None
     container_no: Optional[str] = None
     lines: List[OrderInquirySpoDetailLine] = []
+    #: Real links only - a suggested link never appears here (AC-LT-34).
     allocations: List[OrderInquiryDocumentAllocation] = []
 
 
@@ -1292,6 +1406,18 @@ def _finite_qty(value: str) -> str:
         raise ValueError("must be a valid number") from None
     if not parsed.is_finite():
         raise ValueError("must be a finite number")
+    # Security re-review: the columns are `Numeric(15,4)` - more than 4 decimals would be
+    # rounded (a misleading 409 once 0.00001 reads 0) and more than 11 integer digits
+    # overflows (a `NumericValueOutOfRange` 500).
+    if parsed.adjusted() > 10 or parsed != parsed.quantize(Decimal("0.0001")):
+        raise ValueError("must have at most 11 digits before and 4 after the decimal point")
+    return value
+
+
+def _no_nul(value: Optional[str]) -> Optional[str]:
+    """Postgres text cannot hold NUL; psycopg raises a ValueError (a 500) on one."""
+    if value is not None and "\x00" in value:
+        raise ValueError("must not contain a NUL character")
     return value
 
 
@@ -1332,28 +1458,50 @@ class CreateReserveRequestIn(BaseModel):
         return self
 
 
-# --------------------------------------------------------- request CS to reserve, round 2
+# ------------------------------------------------- request CS to reserve, round 4 (6e.1)
 
 
-class ReserveRowIn(BaseModel):
-    """`POST .../reserve-requests/{request_id}/rows/{row_id}/reserve` (F2): answers ONE
-    request row. `row_id` is on the PATH (`OrderInquiryRow.id`, the id every other route
-    on this row already keys by), never repeated in the body."""
+class CommitReserveRowIn(BaseModel):
+    """One OPEN request row answered inside a commit call (6e.1's own `reserves` list).
+    `row_id` is `OrderInquiryRow.id`, the same id `ReserveRequestRowIn` already keys by;
+    `warehouse_id` omitted falls back to the request row's own default (R3)."""
 
-    warehouse_id: str = Field(..., pattern=UUID_PATTERN)
+    row_id: str = Field(..., pattern=UUID_PATTERN)
+    warehouse_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
     qty_reserved: str
     reason: Optional[str] = Field(None, max_length=2000)
 
     _qty_reserved_finite = field_validator("qty_reserved")(_finite_qty)
+    _reason_no_nul = field_validator("reason")(_no_nul)
 
 
-class UnreserveRowIn(BaseModel):
-    """`POST .../reserve-requests/{request_id}/rows/{row_id}/unreserve` (F5)."""
+class CommitAmendRowIn(BaseModel):
+    """One ALREADY-ANSWERED request row amended inside a commit call (6e.1's own
+    `amendments` list, R4-3). `warehouse_id` is never accepted here - the location is
+    locked to whatever the row was already answered with."""
 
-    qty: str
-    note: Optional[str] = Field(None, max_length=5000)
+    row_id: str = Field(..., pattern=UUID_PATTERN)
+    qty_reserved: str
+    reason: Optional[str] = Field(None, max_length=2000)
 
-    _qty_finite = field_validator("qty")(_finite_qty)
+    _qty_reserved_finite = field_validator("qty_reserved")(_finite_qty)
+    _reason_no_nul = field_validator("reason")(_no_nul)
+
+
+class CommitReserveRequestIn(BaseModel):
+    """`POST .../order-inquiries/{inquiry_id}/reserve-commit` (6e.1, re-keyed by 6e.4):
+    one transaction, `reserves` for rows with an open request row and `amendments` for
+    rows already answered - at least one entry across the two lists. Duplicates are the
+    service's own 422 (`reserve_commit_duplicate_row`)."""
+
+    reserves: List[CommitReserveRowIn] = []
+    amendments: List[CommitAmendRowIn] = []
+
+    @model_validator(mode="after")
+    def _at_least_one_row(self) -> "CommitReserveRequestIn":
+        if not self.reserves and not self.amendments:
+            raise ValueError("Select at least one line to reserve or amend.")
+        return self
 
 
 class ReserveHistoryEntryOut(BaseModel):

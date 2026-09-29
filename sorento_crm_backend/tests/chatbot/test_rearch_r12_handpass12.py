@@ -518,15 +518,19 @@ class TestGroupARememberedOrderFacetsNotUsedOutsideOrderDomain:
             f"{stock_calls[0]!r}"
         )
 
-    def test_order_status_survives_a_domain_detour_and_is_used_again_on_return(
+    def test_order_status_does_not_survive_a_domain_detour(
         self, session_factory, monkeypatch
     ) -> None:
-        """Round-trip pin (owner ruling, mid-task): order ask (status delivered) ->
-        "INCOMING <code>" (a domain detour) -> a bare order-domain follow-up naming no
-        document/status word of its own. The carried "delivered"/DO must be
-        REMEMBERED across the detour (turn 2 asserts it) AND USED again once back on
-        the order domain (turn 3 asserts the header AND the order tool's own
-        order_status arg) - "remembering is one thing, whether I use it is another"."""
+        """Round trip: order ask (status delivered) -> "INCOMING <code>" (a domain
+        detour) -> an order-domain follow-up naming no document/status word of its own.
+
+        Superseded ruling. Hand pass 12 pinned the carried "delivered"/DO as REMEMBERED
+        across the detour and USED again on the return. The owner's hand test of 27 Sep
+        2026 (#1262 fix lane round 5, R2) reverses it: status and document come from the
+        current message, and a message with its own intent or domain (a check stock, an
+        incoming ask) drops them, "so a later DO ask starts clean" - the carry this test
+        used to pin is what kept the outstanding bucket on every later DO ask. Turn 2
+        still must not use it; turn 3 now runs the plain order list, no status filter."""
         _seed_contact_and_get(session_factory)
         code = unique_code("A3PROD")
         _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=code)
@@ -628,15 +632,14 @@ class TestGroupARememberedOrderFacetsNotUsedOutsideOrderDomain:
         assert result_3.status == "done", result_3.error
         said_3 = _said(result_3)
 
-        assert "delivered orders" in said_3.lower(), (
-            "back on the order domain the carried status must be REMEMBERED AND USED "
-            f"again (owner ruling): {said_3!r}"
+        assert "delivered orders" not in said_3.lower(), (
+            "the detour dropped the carried status; the follow-up names none of its own "
+            f"(owner ruling 27 Sep 2026, R2): {said_3!r}"
         )
         order_calls_3 = [args for name, args in calls_3 if name in ORDER_TOOLS_LOCAL]
         assert order_calls_3, f"no order tool was ever called on turn 3: {calls_3!r}"
-        assert order_calls_3[0].get("order_status") == "delivered", (
-            f"the order tool's own order_status arg must be re-derived from the "
-            f"carried focus on this bare follow-up: {order_calls_3[0]!r}"
+        assert not order_calls_3[0].get("order_status"), (
+            f"a status from before the detour must not reach the order tool: {order_calls_3[0]!r}"
         )
 
 

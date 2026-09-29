@@ -144,7 +144,10 @@ class ProductSpecRegistry(Base):
     # Optional "source": "any" (default) | "description" | "flyer". These were Python
     # lists, which meant a key created in the UI could never be populated - the form
     # made a promise the engine could not keep.
-    derivation_rules = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # NULL: this key reads with the shipped rules. A list, even an empty one, is this
+    # business's own: [] means the key has no rules (review B-1, #1286). Read it through
+    # `product_spec_derivation.stored_or_shipped_rules`, never `or`.
+    derivation_rules = Column(JSONB, nullable=True)
     # value -> display label ("pp" -> "PP"), purely cosmetic (#423). Editable on seed
     # AND user rows, like user_synonyms: staff-owned, never seed-repaired (nothing in
     # `_seed_values` names this column, so the repair loop cannot touch it).
@@ -213,6 +216,7 @@ class ProductSpecifications(Base):
     """
 
     __tablename__ = "product_specifications"
+    __audit_skip__ = "derived from products by derive_product_specs, 513 to 5,220 rows a day (measured 27 Sep 2026, review B3)"
 
     # Surrogate uuid PK, per ADR-PRODUCT-STANDARDS: the polymorphic key columns can
     # only be typed uuid if every id is one. `product_id` stays the key people use - it is
@@ -289,6 +293,7 @@ class ProductFindabilityRun(Base):
     """
 
     __tablename__ = "product_findability_runs"
+    __audit_skip__ = "findability test run, recomputed"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     source_id = Column(String(64), nullable=True)
@@ -312,6 +317,7 @@ class ProductFindabilityResult(Base):
     """One card, and every way of asking for it."""
 
     __tablename__ = "product_findability_results"
+    __audit_skip__ = "findability test result, recomputed"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     run_id = Column(

@@ -372,14 +372,17 @@ def _capture_sla(monkeypatch) -> list[Any]:
 
 
 def _yes_verdict(**overrides: Any) -> dict[str, Any]:
-    """The bare "yes" acceptance turn: no domain, no entities, no routing of its own -
-    `decide()`'s generic `is_affirmative` arm is the only door this answers through."""
+    """The bare "yes" acceptance turn: no domain, no entities, no routing of its own.
+    #1323: over an escalation offer `decide()` accepts on the parser's semantic
+    `is_escalation_confirmation` only, which the published prompt sets for a "yes"
+    alongside `is_affirmative`; a roster's attached offer still reads `is_affirmative`."""
     base = verdict(
         message_type="casual",
         domain_hint=None,
         intent_hint=None,
         entities=[],
         is_affirmative=True,
+        escalation={"is_escalation_confirmation": True, "escalation_declined": None, "company_pick": None},
         routing={"suggested_team": None, "suggested_agent": None},
     )
     base.update(overrides)

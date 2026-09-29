@@ -410,7 +410,6 @@ export default function PackingListsList() {
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsVisibility: true, columnsResizable: true }}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

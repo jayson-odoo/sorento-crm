@@ -1,6 +1,7 @@
 """Products API routes."""
 import logging
 import time
+from datetime import date
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -22,6 +23,7 @@ from app.schemas.product import (
 )
 from app.schemas.common import ListResponse, ErrorResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
+from app.services.stock_ask_limits import guard_chatbot_limits_edit, NULL_LIMITS
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -129,6 +131,14 @@ def get_products(
         None,
         description="Filter to products reported in one 'products discontinued' notification batch.",
     ),
+    discontinued_from: Optional[date] = Query(
+        None,
+        description="Discontinued-at range start (YYYY-MM-DD), inclusive by Malaysia calendar day.",
+    ),
+    discontinued_to: Optional[date] = Query(
+        None,
+        description="Discontinued-at range end (YYYY-MM-DD), inclusive by Malaysia calendar day.",
+    ),
     price_min: Optional[float] = Query(None),
     price_max: Optional[float] = Query(None),
     item_type: Optional[str] = Query(None),
@@ -199,6 +209,8 @@ def get_products(
             brand_id=brand_id,
             status=status,
             discontinued_batch_id=discontinued_batch_id,
+            discontinued_from=discontinued_from,
+            discontinued_to=discontinued_to,
             price_min=price_min,
             price_max=price_max,
             item_type=item_type,
@@ -294,6 +306,9 @@ async def create_product(
 ):
     """Create a new product."""
     try:
+        guard_chatbot_limits_edit(
+            db, current_user["id"], NULL_LIMITS, product_data.model_dump(exclude_unset=True)
+        )
         service = ProductService(db)
         product = service.create_product(product_data, current_user["id"])
         return product
@@ -332,6 +347,10 @@ async def update_product(
     """Update a product."""
     try:
         service = ProductService(db)
+        existing = service.get_product(product_id)
+        guard_chatbot_limits_edit(
+            db, current_user["id"], existing, product_data.model_dump(exclude_unset=True)
+        )
         product = service.update_product(product_id, product_data, current_user["id"])
         return product
     except HTTPException:

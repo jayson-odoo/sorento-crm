@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confirm banner mockup</title>
+<!-- Issue #1217. Annotated mockup, not shipped code. Plain inline CSS so it opens from a file.
+     Plan: documentation/plans/scm/PLAN-fp-decide-and-one-reason-24sep.md, D2.
+     Drawn after the owner grill, 24 Sep 2026. -->
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --line-soft:#f1f2f4;
+  --primary:#1b84ff; --primary-soft:#e9f3ff;
+  --red:#dc2626; --red-soft:#fef2f2; --red-line:#fecaca;
+  --amber:#b45309; --amber-soft:#fffbeb; --amber-line:#fde68a;
+  --green:#15803d; --green-soft:#f0fdf4;
+  --grey-soft:#f3f4f6; --violet:#6d28d9;
+  --callout:#e11d74; --radius:8px;
+  --font:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px;letter-spacing:-.01em}
+.doc>.sub{color:var(--muted);margin:0 0 20px;max-width:900px}
+.doc h2.frame-title{font-size:15px;margin:28px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%;border-radius:12px}
+.frame{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);position:relative;overflow:hidden}
+.w1280{width:1280px}
+.w375{width:375px;flex:none}
+.notes{flex:1 1 360px;min-width:300px;max-width:560px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.notes .ref{display:block;color:var(--muted);font-size:12px;margin-top:4px}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
+.pin{position:absolute;z-index:5}
+/* app shell */
+.shell{display:flex;min-height:100%}
+.side{width:232px;flex:none;border-right:1px solid var(--line);padding:16px 12px;background:#fcfcfd;font-size:13px}
+.side .brand{font-weight:700;font-size:16px;margin:0 8px 18px}
+.side .grp{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:14px 8px 6px}
+.side .it{padding:6px 8px;border-radius:6px;color:#374151;position:relative}
+.side .it.sub{padding-left:26px}
+.side .it.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+.topbar{height:52px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:0 20px;color:var(--muted);font-size:13px}
+.main{flex:1;min-width:0}
+.content{padding:20px 28px 28px}
+.ph h1{font-size:20px;margin:0;letter-spacing:-.01em}
+.crumbs{color:var(--muted);font-size:13px;margin-top:2px}
+.phrow{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:flex-start;margin-bottom:16px;position:relative}
+.meta{color:var(--muted);font-size:13px;margin-top:4px}
+.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 12px;font:500 13px var(--font);color:var(--fg);white-space:nowrap}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.sm{padding:3px 9px;font-size:12px}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--primary)}
+.btn.icon{padding:6px 8px}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;margin-bottom:14px;position:relative}
+.card>.hd{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line-soft);font-weight:600}
+.card>.bd{padding:12px 16px}
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px}
+.facts .k{color:var(--muted);font-size:12px}
+.facts .v{font-weight:500}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:1px 9px 1px 7px;font-size:12px;font-weight:500;white-space:nowrap;background:var(--grey-soft);color:#374151}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.8}
+.pill.red{background:var(--red-soft);color:var(--red)}
+.pill.amber{background:var(--amber-soft);color:var(--amber)}
+.pill.green{background:var(--green-soft);color:var(--green)}
+.pill.blue{background:var(--primary-soft);color:var(--primary)}
+.pill.violet{background:#f5f3ff;color:var(--violet)}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin:0 0 14px;overflow-x:auto;white-space:nowrap;position:relative}
+.tabs span{padding:8px 0;color:var(--muted);font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs span.on{color:var(--fg);border-bottom-color:var(--primary)}
+.tabs .n{display:inline-block;margin-left:4px;font-size:11px;background:var(--grey-soft);border-radius:999px;padding:0 6px;color:var(--muted)}
+.tabs .n.red{background:var(--red-soft);color:var(--red)}
+.toggle{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;font-size:12px}
+.toggle span{padding:4px 10px;background:#fff}
+.toggle span.on{background:var(--grey-soft);font-weight:600}
+/* DataGrid look */
+.grid{border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:13px}
+.grid .scroller{overflow-x:auto}
+.grid table{border-collapse:collapse;width:100%;table-layout:fixed}
+.grid th{background:#fafafa;color:var(--muted);font-weight:500;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grid td{padding:8px 10px;border-bottom:1px solid var(--line-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.grid tr.hl td{background:var(--primary-soft)}
+.grid td.num,.grid th.num{text-align:right;font-variant-numeric:tabular-nums}
+.grid .second{display:block;color:var(--muted);font-size:11px}
+.pager{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;color:var(--muted);font-size:12px;background:#fff;flex-wrap:wrap;gap:6px}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.search{border:1px solid var(--line);border-radius:6px;padding:6px 10px;color:var(--muted);min-width:220px;background:#fff}
+.chip{border:1px dashed var(--line);border-radius:6px;padding:5px 10px;color:#374151;font-size:12px;background:#fff}
+.chip.on{border-style:solid;background:var(--primary-soft);border-color:#bfdbfe;color:var(--primary)}
+.muted{color:var(--muted)}
+.small{font-size:12px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+/* phone */
+.phone .top{height:48px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 16px;font-weight:700}
+.phone .content{padding:14px 16px 20px}
+.rcard{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:#fff;position:relative}
+.rcard .row1{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.dialog{position:absolute;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:6}
+.dialog .panel{background:#fff;border-radius:12px;width:480px;max-width:calc(100% - 32px);box-shadow:0 20px 40px rgba(0,0,0,.2)}
+.dialog .panel .hd{padding:14px 18px;border-bottom:1px solid var(--line-soft);font-weight:600;display:flex;justify-content:space-between}
+.dialog .panel .bd{padding:14px 18px}
+.dialog .panel .ft{padding:12px 18px;border-top:1px solid var(--line-soft);display:flex;justify-content:flex-end;gap:8px}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:12px;font-weight:500;margin-bottom:4px}
+.select{border:1px solid var(--line);border-radius:6px;padding:7px 10px;display:flex;justify-content:space-between;align-items:center;gap:8px;color:var(--fg);background:#fff}
+.select .clr{color:var(--muted);font-size:14px;line-height:1}
+.drop{border:1.5px dashed #cbd5e1;border-radius:8px;padding:22px;text-align:center;color:var(--muted);background:#fafafa}
+/* start menu */
+.menu{position:absolute;z-index:5;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);min-width:210px;padding:4px}
+.menu .mi{padding:8px 10px;border-radius:6px;font-size:13px;color:var(--fg)}
+.menu .mi:hover{background:var(--grey-soft)}
+
+/* fulfilment planning extras, same tokens */
+.btn[aria-disabled=true]{opacity:.5;cursor:not-allowed}
+.btn.primary[aria-disabled=true]{background:var(--primary);border-color:var(--primary)}
+.badge{display:inline-flex;align-items:center;border-radius:6px;padding:1px 8px;font-size:12px;font-weight:500;background:var(--grey-soft);color:#374151;white-space:nowrap}
+.badge.amber{background:var(--amber-soft);color:var(--amber);border:1px solid var(--amber-line)}
+.cb{display:inline-block;width:15px;height:15px;border:1.5px solid #cbd5e1;border-radius:4px;vertical-align:middle;background:#fff;position:relative}
+.cb.on{background:var(--primary);border-color:var(--primary)}
+.cb.on::after{content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.cb.off{background:var(--grey-soft);border-color:var(--line)}
+.sw{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:8px;vertical-align:middle}
+.sw.own{background:#10b981}.sw.borrow{background:#f59e0b}.sw.brw{background:#0ea5e9}.sw.buy{background:#f43f5e}.sw.inc{background:#8b5cf6}
+.menu .sep{height:1px;background:var(--line-soft);margin:4px 2px}
+.menu .mi.hot{background:var(--grey-soft)}
+.tip{position:absolute;z-index:5;background:#111827;color:#fff;font-size:12px;border-radius:6px;padding:5px 9px;white-space:nowrap}
+.textarea{border:1px solid var(--line);border-radius:6px;padding:8px 10px;min-height:64px;background:#fff;color:var(--fg);font-size:13px}
+.textarea.empty{color:var(--muted)}
+.opts{border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);background:#fff;margin-top:4px;padding:4px}
+.opts .o{padding:7px 10px;border-radius:6px;display:flex;justify-content:space-between;gap:8px;font-size:13px}
+.opts .o.on{background:var(--primary-soft)}
+.opts .o .k{color:var(--muted);font-size:12px}
+.toast{position:absolute;z-index:6;background:#fff;border:1px solid var(--line);border-left:3px solid var(--green);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:10px 14px;width:440px;font-size:13px}
+.toast b{display:block;margin-bottom:2px}
+.xrow td{background:#fbfbfc;white-space:normal}
+.xpanel{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;padding:6px 4px}
+.blk{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#fff;margin-bottom:10px}
+.blk .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px;font-weight:600}
+.num-in{display:inline-block;border:1px solid var(--line);border-radius:6px;padding:4px 8px;width:72px;text-align:right;font-variant-numeric:tabular-nums;background:#fff}
+.switch{display:inline-block;width:30px;height:17px;border-radius:999px;background:var(--primary);position:relative;vertical-align:middle}
+.switch::after{content:"";position:absolute;right:2px;top:2px;width:13px;height:13px;border-radius:50%;background:#fff}
+.switch.off{background:#d1d5db}.switch.off::after{right:auto;left:2px}
+.gone{border:1.5px dashed var(--red-line);background:var(--red-soft);border-radius:6px;padding:6px 10px;color:var(--red);font-size:12px;text-decoration:line-through}
+.alert{display:flex;gap:10px;border:1px solid var(--amber-line);background:var(--amber-soft);border-radius:8px;padding:10px 14px;color:#78350f;font-size:13px;position:relative}
+.alert .ic{flex:none;font-weight:700;color:var(--amber)}
+.alert .lnk{color:var(--primary);text-decoration:underline;text-underline-offset:2px}
+.x{color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Mockup 4 of 4: The left-out banner without the discontinued gate</h1>
+<p class="sub">Issue #1217. The amber banner above Every contributing line, before and after the discontinued gate is removed. Banner sentences are the ones unpostableNotices.ts writes today. Illustrative data.</p>
+<h2 class="frame-title">1280 wide, before (today)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280" style="padding:20px 28px">
+  <div class="alert" style="opacity:.75"><span class="ic">!</span><div>
+    <div><span class="lnk">CB6602 line 416</span>, <span class="lnk">CKS7847 line 144</span>, <span class="lnk">SRT385-10 line 224</span> buy a discontinued product with no reason given, so this confirmation leaves them out. Amend them to give one.</div>
+    <div style="margin-top:6px"><span class="lnk">CB6630 line 12</span> is not on the planning record yet, so this confirmation leaves it out. Re-sync the sales order to add it.</div>
+  </div><span class="pin co" style="right:-10px;top:-10px">1</span></div>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co">1</span><div><b>Today the banner has a discontinued sentence.</b> Three lines the planner meant to buy are left out of Confirm until a reason is typed into each.<span class="ref">Issue #1217 screenshot.</span></div></li>
+
+</ol></div>
+</div>
+
+<h2 class="frame-title">1280 wide, after</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="shell">
+  <div class="side">
+    <div class="brand">Sorento</div>
+    <div class="grp">Sales</div>
+    <div class="it on">Project Sales</div>
+    <div class="it sub">Pipeline</div>
+    <div class="it sub on">Sales Orders</div>
+    <div class="it sub">My Tasks</div>
+    <div class="it sub">Stock Claims</div>
+    <div class="it sub">Configuration</div>
+    <div class="it">Delivery Orders</div>
+    <div class="it">Marketing</div>
+  </div>
+  <div class="main">
+    <div class="topbar">Search menu... &nbsp; Sorento SRT</div>
+    <div class="content">
+      <div class="phrow">
+        <div class="ph"><h1>Planning 3 sales orders together</h1><div class="crumbs">Project Sales &rsaquo; Sales Orders &rsaquo; Plan together</div></div>
+        <div class="actions"><span class="toggle"><span class="on">List</span><span>Grid</span></span><span class="btn primary" style="position:relative">Confirm (7)<span class="pin co" style="right:-10px;top:-10px">3</span></span><span class="btn icon">&#9881;</span></div>
+      </div>
+      <div class="alert" style="margin-bottom:14px"><span class="ic">!</span><div>
+        <div><span class="lnk">CB6630 line 12</span> is not on the planning record yet, so this confirmation leaves it out. Re-sync the sales order to add it.</div>
+        <div style="margin-top:6px"><span class="lnk">CB6641 line 3</span> reserves at a warehouse the board cannot address, so this confirmation leaves it out. Amend it to place the Reserve.</div>
+      </div><span class="pin co" style="right:-10px;top:-10px">2</span></div>
+      <div class="card"><div class="hd"><span>Every contributing line</span><div class="actions" style="font-weight:400"><span class="btn icon">&#8615;</span><span class="btn icon">&#8613;</span><span class="btn primary" aria-disabled="true">Decide &#9662;</span></div></div>
+      <div class="bd"><div class="grid"><div class="scroller"><table>
+          <colgroup><col style="width:44px"><col style="width:140px"><col style="width:240px"><col style="width:80px"><col style="width:200px"><col></colgroup>
+          <thead><tr><th></th><th>Sales order</th><th>Item</th><th class="num">Open</th><th>Suggestion</th><th>Verdict</th></tr></thead>
+          <tbody>
+<tr><td><span class="cb"></span></td><td>SO324132<span class="second">line 416</span></td><td>CB6602 <span class="badge amber">Discontinued</span></td><td class="num">12</td><td><span class="pill">Buy 12</span></td><td><span class="pill blue">Saved</span></td></tr>
+<tr><td><span class="cb"></span></td><td>SO324140<span class="second">line 144</span></td><td>CKS7847 <span class="badge amber">Discontinued</span></td><td class="num">20</td><td><span class="pill">Buy 20</span></td><td><span class="pill blue">Saved</span></td></tr>
+<tr><td><span class="cb"></span></td><td>SO324151<span class="second">line 224</span></td><td>SRT385-10 <span class="badge amber">Discontinued</span></td><td class="num">30</td><td><span class="pill">Buy 30</span></td><td><span class="pill blue">Saved</span></td></tr>
+          </tbody></table></div></div></div></div>
+    </div>
+  </div>
+</div></div></div>
+<div class="notes"><ol>
+  <li><span class="co">2</span><div><b>The discontinued sentence is gone; only the other two causes remain.</b> A line not on the planning record yet, and a Reserve at a warehouse the board cannot address. Each named line is still a link that opens that row. When neither applies, the banner does not render at all.<span class="ref">Issue #1217: "remove that gate". D2. UAC AC-21.</span></div></li>
+
+  <li><span class="co">3</span><div><b>Discontinued lines confirm like any other.</b> The three lines from the screenshot are counted in Confirm (7) and confirm with or without a reason. The Discontinued badge still marks them; the product stays flagged in the trail.<span class="ref">D2, BE _check_line refusal removed. UAC AC-20, AC-39.</span></div></li>
+
+</ol></div>
+</div>
+
+<h2 class="frame-title">375 wide, after</h2>
+<div class="layout">
+<div class="frame w375 phone">
+  <div class="top">Sorento <span class="muted" style="font-weight:400">&#9776;</span></div>
+  <div class="content">
+    <div class="ph"><h1>Planning 3 sales orders together</h1></div>
+    <div class="actions" style="margin:10px 0"><span class="btn primary" style="flex:1;justify-content:center">Confirm (7)</span><span class="btn icon">&#9881;</span></div>
+    <div class="alert" style="position:relative"><span class="ic">!</span><div><span class="lnk">CB6630 line 12</span> is not on the planning record yet, so this confirmation leaves it out. Re-sync the sales order to add it.</div><span class="pin co" style="right:-8px;top:-10px">4</span></div>
+  </div>
+</div>
+<div class="notes"><ol>
+  <li><span class="co">4</span><div><b>Same banner, wrapped.</b> Shorter than today, since one of its three causes no longer exists.<span class="ref">DESIGN-LANGUAGE (375px).</span></div></li>
+
+</ol></div>
+</div>
+
+</div>
+</body>
+</html>

@@ -13,6 +13,12 @@ import { SlaExtensionBanner } from './SlaExtensionBanner';
  * Both banners read the active (unresolved) tracker only, so they vanish the moment
  * the stage resolves (approve / reject / close). Renders nothing when there is no
  * active tracker.
+ *
+ * The extension banner states the LIVE clock (#1326): "until" is the tracker's own
+ * `due_at_resolution`, the date the escalation job acts on, never the date stored on
+ * the extend event. Tier and assignee are the ones recorded on the extend event, i.e.
+ * who held the stage when it was extended, not who holds it now. An extension that a
+ * later escalation replaced no longer governs the clock, so it is not shown.
  */
 export function SlaActiveTrackerControls({
   activeTracker,
@@ -25,9 +31,14 @@ export function SlaActiveTrackerControls({
   if (!activeTracker) return null;
   // Latest `extend` event of the current stage (the extend reason is not
   // denormalized onto the tracker row, unlike escalation_reason). event_at desc.
-  const latestExtend = (activeTracker.event_logs ?? [])
+  const logs = activeTracker.event_logs ?? [];
+  const at = (e: { event_at: Date | string }) => new Date(e.event_at).getTime();
+  const latestExtend = logs
     .filter((e) => e.event_type === 'extend')
-    .sort((a, b) => new Date(b.event_at).getTime() - new Date(a.event_at).getTime())[0];
+    .sort((a, b) => at(b) - at(a))[0];
+  const extensionLive =
+    !!latestExtend &&
+    !logs.some((e) => e.event_type === 'escalation' && at(e) > at(latestExtend));
   return (
     <div className="flex flex-col gap-2">
       <SlaEscalationBanner
@@ -39,13 +50,12 @@ export function SlaActiveTrackerControls({
         escalatedFromWaPhone={activeTracker.escalated_from_wa_phone}
         escalatedAt={activeTracker.escalated_at}
       />
-      {latestExtend && (
+      {extensionLive && (
         <SlaExtensionBanner
           reason={latestExtend.reason}
-          newDue={latestExtend.due_at ?? activeTracker.due_at_resolution}
-          tier={activeTracker.current_tier}
-          assignee={activeTracker.assigned_user_name}
-          assigneeWaPhone={activeTracker.assigned_user_wa_phone}
+          newDue={activeTracker.due_at_resolution}
+          tier={latestExtend.to_tier}
+          assignee={latestExtend.assigned_user_name}
           eventAt={latestExtend.event_at}
         />
       )}

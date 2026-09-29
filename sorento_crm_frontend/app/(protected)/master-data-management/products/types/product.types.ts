@@ -66,12 +66,22 @@ export interface Product {
   has_batch_tracking: boolean;
   reorder_level: number;
   reorder_quantity: number;
+  // Chatbot stock ask v2 (PLAN-chatbot-stock-ask-v2-24sep.md S1): X, the highest
+  // quantity the assistant may confirm for this product; overrides the category
+  // value when set. Unset = falls back to the category (then 0, R2).
+  chatbot_max_qty?: number | null;
+  // Same plan, Y: days added to a shipment's ETA when the assistant answers
+  // "no stock, ETA ...". Unset = falls back to the category (then 0, R2).
+  chatbot_eta_offset_days?: number | null;
   item_type?: ProductItemType | null;
   is_active: boolean;
   // Whether the chatbot may answer with this product. Independent of is_active:
   // an order placeholder stays active and is still not a chat answer.
   is_searchable: boolean;
   is_discontinued: boolean;
+  // When the discontinue-notify scheduler last noticed this product (issue #1287).
+  // Null while available or before the first tick after discontinuing.
+  discontinued_at?: string | null;
   // S5 (reorder-feedback-9sep.md, 9 Sep 2026): never appears in a reorder run, even
   // when named directly at Start Plan. Optional - absent on a cached response
   // predating the field, and the reader treats that as false.
@@ -132,10 +142,18 @@ export interface ProductCategory {
   // product in them is hidden from the chatbot whatever its own flag says.
   is_searchable?: boolean;
   display_order: number;
+  // Chatbot stock ask v2 (PLAN-chatbot-stock-ask-v2-24sep.md S1): X, the highest
+  // quantity the assistant may confirm for a product in this category unless the
+  // product itself overrides it. Unset = the assistant cannot answer a quantity
+  // for this category at all (opt-in per category, R2).
+  chatbot_max_qty?: number | null;
+  // Same plan, Y: days added to a shipment's ETA for this category unless the
+  // product overrides it. Unset = 0 days.
+  chatbot_eta_offset_days?: number | null;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;
-  
+
   // Relations
   parent_category?: ProductCategory;
   children?: ProductCategory[];
@@ -156,6 +174,14 @@ export interface Brand {
   // A brand marked false is bought locally by CS and never raises an Order
   // Inquiry - PLAN-brand-flows-to-purchasing.md.
   flows_to_purchasing: boolean;
+  // The chatbot's brand preference: when a customer names no brand, the highest
+  // weighted brand is answered first and the others follow by weight (0 = none).
+  // Owner ruling R1 on PR #833, replacing round 2's default-brand switch.
+  chatbot_weight?: number;
+  // Default true; false for the placeholder brands OTHERS and NO LOGO (S0,
+  // PLAN-product-specs-non-technical-26sep.md D3). Search and the understanding
+  // prompt skip a brand where this is false - nobody ever names OTHERS.
+  is_searchable?: boolean;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;
@@ -215,6 +241,8 @@ export interface ProductFormData {
   has_batch_tracking: boolean;
   reorder_level: number;
   reorder_quantity: number;
+  chatbot_max_qty?: number | null;
+  chatbot_eta_offset_days?: number | null;
   item_type?: ProductItemType | null;
   is_active: boolean;
   is_searchable: boolean;
@@ -391,6 +419,9 @@ export interface ProductListItem {
   is_active: boolean;
   // Discontinued flag (independent of is_active). Surfaced by ProductResponse.
   is_discontinued?: boolean;
+  // When the discontinue-notify scheduler last noticed this product (issue #1287).
+  // Null while available or before the first tick after discontinuing.
+  discontinued_at?: string | null;
   // Chat-search flag (independent of is_active). Surfaced by ProductResponse.
   is_searchable?: boolean;
   // S5: never appears in a reorder run, even when named directly. Optional -

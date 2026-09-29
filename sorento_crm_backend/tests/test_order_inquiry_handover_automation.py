@@ -32,7 +32,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,6 +56,9 @@ from app.models.project_so import (
     IV_ORDER_BACK,
     IV_PRE_ORDERED,
     IV_RESERVE_AND_ORDER,
+    SO_STATUS_ADOPTED,
+    SO_STATUS_DRAFT,
+    SO_STATUS_PUBLISHED,
     OrderInquiry,
     OrderInquiryLink,
     OrderInquiryRow,
@@ -83,6 +86,7 @@ from .test_order_inquiry_handshake import (
     _core_so,
     _line_payload,
     _open_po_line,
+    _product,
     _project_line,
     _project_so,
     _raise_one_row,
@@ -1279,6 +1283,17 @@ def test_purchasing_actions_do_not_dispatch(api, monkeypatch):
     assert _handover_calls(calls) == [], "link now / place on PO must not dispatch the handover"
 
     # unplace
+    # S3 reversal: the PO line above carries no book match, so `link_now`'s cascade
+    # only SUGGESTED it (no real link to unplace) - seeded directly here, the same
+    # manual-link path a buyer's own press takes, so unplace's own non-dispatch is
+    # still exercised against a genuine placement.
+    _po, po_line = _open_po_line(world, qty=50)
+    ProjectOrderInquiryService(world.db).place_on_po_allocations(
+        str(link_fixture["row"].id),
+        [{"po_line_id": str(po_line.id), "qty": "10"}],
+        actor_user_id=world.buyer,
+    )
+    world.db.commit()
     calls.clear()
     ProjectOrderInquiryService(world.db).unplace(
         str(link_fixture["row"].id), actor_user_id=world.buyer
@@ -1442,6 +1457,96 @@ def test_context_shape_and_formats(api, monkeypatch):
     assert handover["link"].endswith(f"/project-sales/order-inquiries/{header_id}")
     order = handover["orders"][0]
     assert order["so_number"] == fixture["core_so"].so_number
+
+
+# --------------------------------------------------------------------------- #
+# AC-SD-1..4 (`PLAN-oi-handover-so-date-autocount-25sep.md`): SO DATE is the   #
+# AutoCount document date, not the day the CRM pulled the order                #
+# --------------------------------------------------------------------------- #
+
+
+def test_handover_so_date_adopted_order_uses_core_order_date(api):
+    """AC-SD-1: an adopted order (`published_at` NULL by design) prints the core SO's
+    own `order_date`, not the project SO's own `created_at` - the day the CRM pulled
+    the order."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_so.order_date = date(2026, 9, 18)
+    db.flush()
+    order = _project_so(
+        db, world.project, status=SO_STATUS_ADOPTED, so_id=core_so.id,
+        autocount_doc_no=core_so.so_number,
+    )
+    order.created_at = datetime(2026, 9, 23)
+    db.flush()
+    assert order.published_at is None
+
+    facts = ProjectOrderInquiryService(db)._handover_order_facts(order.id)
+
+    assert facts["so_date"] == date(2026, 9, 18)
+
+
+def test_handover_so_date_published_order_prefers_core_order_date(api):
+    """AC-SD-2: a published (authored) order with `order_date` set on its core SO
+    prints the core `order_date`, not `published_at`."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_so.order_date = date(2026, 9, 18)
+    db.flush()
+    order = _project_so(
+        db, world.project, status=SO_STATUS_PUBLISHED, so_id=core_so.id,
+        autocount_doc_no=core_so.so_number,
+    )
+    order.published_at = datetime(2026, 9, 20)
+    db.flush()
+
+    facts = ProjectOrderInquiryService(db)._handover_order_facts(order.id)
+
+    assert facts["so_date"] == date(2026, 9, 18)
+
+
+def test_handover_so_date_falls_back_when_core_order_date_is_null(api):
+    """AC-SD-3: an order whose core SO has `order_date` NULL falls back to
+    `published_at`, then `created_at` - today's behaviour preserved."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)  # order_date left NULL
+    db.flush()
+    order = _project_so(
+        db, world.project, status=SO_STATUS_PUBLISHED, so_id=core_so.id,
+        autocount_doc_no=core_so.so_number,
+    )
+    order.published_at = datetime(2026, 9, 20)
+    db.flush()
+
+    facts = ProjectOrderInquiryService(db)._handover_order_facts(order.id)
+    assert facts["so_date"] == datetime(2026, 9, 20)
+
+    order.published_at = None
+    order.created_at = datetime(2026, 9, 21)
+    db.flush()
+
+    # A fresh service instance: `_handover_order_facts` memoises per instance.
+    facts_no_publish = ProjectOrderInquiryService(db)._handover_order_facts(order.id)
+    assert facts_no_publish["so_date"] == datetime(2026, 9, 21)
+
+
+def test_handover_so_date_no_core_so_falls_back_and_never_raises(api):
+    """AC-SD-4: an order with no core SO (`so_id` NULL, a draft) still prints
+    `published_at or created_at`; nothing raises."""
+    client, world = api
+    db = world.db
+    order = _project_so(db, world.project, status=SO_STATUS_DRAFT)
+    order.created_at = datetime(2026, 9, 22)
+    db.flush()
+    assert order.so_id is None
+    assert order.published_at is None
+
+    facts = ProjectOrderInquiryService(db)._handover_order_facts(order.id)
+
+    assert facts["so_date"] == datetime(2026, 9, 22)
 
 
 # --------------------------------------------------------------------------- #
@@ -1986,6 +2091,156 @@ def test_handover_sends_one_email_with_actor_in_cc(monkeypatch):
         )
 
 
+def test_handover_email_attachments_forwarded_via_one_email(monkeypatch):
+    """#1312 fix round 1, blocker 2 (AC-E2): the automation hop was unguarded - a
+    reviewer round replaced the forward with `{}` and every other test (88 of them)
+    stayed green, because none of them actually drove
+    `AutomationService._send_per_match`'s ONE_EMAIL branch with a context carrying
+    `email_attachments`. This one does, the same real-dispatch shape
+    `test_handover_sends_one_email_with_actor_in_cc` above uses (minus the
+    multi-recipient bit that AC is not about), and asserts the one thing that broke:
+    `Notification.data["extra_attachments"]`.
+    """
+    import uuid as _uuid
+
+    from app.models.automation import Automation
+    from app.models.email_template import EmailTemplate
+    from app.models.notification import Notification
+    from app.models.user import User
+    from app.services import notification_email
+    from app.services.automation_service import AutomationService
+
+    monkeypatch.setattr(notification_email, "send_notification_email", lambda *a, **kw: None)
+    monkeypatch.setattr(notification_email, "send_notification_email_multi", lambda *a, **kw: None)
+
+    with blank_session() as db:
+        creator = User(
+            id=str(_uuid.uuid4()),
+            email=f"zzt-oihe-ea-creator-{_uuid.uuid4().hex[:6]}@test.local",
+            name="ZZT OIHE EA Creator",
+            status="ACTIVE",
+            is_trashed=False,
+        )
+        buyer = User(
+            id=str(_uuid.uuid4()),
+            email=f"zzt-oihe-ea-buyer-{_uuid.uuid4().hex[:6]}@test.local",
+            name="Purchasing",
+            status="ACTIVE",
+            is_trashed=False,
+        )
+        db.add_all([creator, buyer])
+        db.flush()
+
+        template = EmailTemplate(
+            id=str(_uuid.uuid4()),
+            code=f"zzt-oihe-ea-tpl-{_uuid.uuid4().hex[:6]}",
+            name="ZZT OIHE EA test template",
+            subject="OI: {{ handover.subject_scope }}",
+            body_html="<p>Hi {{ recipient.name }}</p>",
+            body_text=None,
+            is_active=True,
+        )
+        db.add(template)
+        db.flush()
+
+        automation = Automation(
+            id=str(_uuid.uuid4()),
+            name="ZZT OIHE EA handover",
+            enabled=True,
+            trigger_type="order_inquiry_handover",
+            trigger_config={},
+            action_type="send_email",
+            email_template_id=str(template.id),
+            recipient_config={
+                "user_ids": [str(buyer.id)],
+                "role_ids": [],
+                "extra_emails": [],
+                "include_actor": False,
+                # AC-H26: the opt-in that routes this through `_send_per_match`'s
+                # ONE_EMAIL branch - the ONLY branch that forwards `email_attachments`
+                # (see that method's own comment).
+                "one_email": True,
+            },
+            group_matches=False,
+            schedule_type="manual",
+            timezone="Asia/Kuala_Lumpur",
+            created_by_user_id=str(creator.id),
+        )
+        db.add(automation)
+        db.commit()
+
+        extra_attachments = [
+            {
+                "filename": "SO423136-L3-a.png",
+                "storage_provider": "r2",
+                "storage_key": "k1",
+                "optional": True,
+            },
+        ]
+        context = {
+            "handover": {
+                "subject_scope": "SO423136",
+                "verbs": ["ORDER"],
+                "headline": "ORDER",
+                "orders": [],
+                "lines": [],
+                "line_count": 0,
+                "link": "https://crm.test/project-sales/order-inquiries?query=SO423136",
+            },
+            "actor": {"name": "Raiser", "email": "raiser@test.local"},
+            "today": "2026-09-27",
+            "email_attachments": extra_attachments,
+        }
+
+        result = AutomationService(db).dispatch_event(
+            "order_inquiry_handover",
+            context=context,
+            source_kind="order_inquiry_handover",
+            source_id=str(_uuid.uuid4()),
+        )
+        assert result["fired"] == 1, result
+        run_id = result["results"][0]["run_id"]
+
+        notif = (
+            db.query(Notification)
+            .filter(
+                Notification.source_entity_type == "automation_run",
+                Notification.source_entity_id == run_id,
+            )
+            .one()
+        )
+        data = dict(notif.data or {})
+        assert data.get("extra_attachments") == extra_attachments
+
+
+def test_record_handover_queues_core_line_id(api, monkeypatch):
+    """#1312 fix round 1, blocker 2: `_record_handover` must queue `core_line_id` -
+    the id `so_line_attachments.handover_attachments` keys attachments on - alongside
+    `line_no`. Captured at `_build_handover_context`'s own INPUT (the raw pending
+    queue) rather than its output: a line with no files never prints `core_line_id`
+    anywhere in the built CONTEXT, so asserting against the context would not catch
+    a regression here.
+    """
+    client, world = api
+    _register(world)
+    from app.services import project_order_inquiry_service as svc
+
+    captured: list[list[dict]] = []
+    real_build = svc._build_handover_context
+
+    def _capture(pending, *args, **kwargs):
+        captured.append([dict(item) for item in pending])
+        return real_build(pending, *args, **kwargs)
+
+    monkeypatch.setattr(svc, "_build_handover_context", _capture)
+
+    fixture = _raise_one_row(api, qty="10")
+
+    assert captured, "expected _build_handover_context to have been called"
+    queued = captured[-1][0]
+    assert queued.get("core_line_id") == str(fixture["core_line"].id)
+
+
 # =============================================================================== #
 # `PLAN-scm-oi-handover-r2-undo.md` - S1 email layout, S2 named-path equality gate #
 # (S2's own new tests live above, beside the rewritten AC-H23 test), S3 subject,   #
@@ -2017,6 +2272,29 @@ def _load_r2_migration():
     return module
 
 
+def _find_r3_migration_path() -> Path | None:
+    """Locate the coder's LOCATION-column migration by name (`PLAN-oi-handover-email-
+    location-and-line-order-24sep.md`, issue #1166: "named `oihr_0003_location_
+    column`"). `None` until the migration exists."""
+    versions_dir = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+    for path in versions_dir.glob("oihr_0003_location_column*.py"):
+        return path
+    return None
+
+
+def _load_r3_migration():
+    path = _find_r3_migration_path()
+    assert path is not None, (
+        "no alembic migration named oihr_0003_location_column was found under "
+        "alembic/versions/ - the coder must add it (issue #1166), down_revision the "
+        "current alembic head."
+    )
+    spec = importlib.util.spec_from_file_location("zzt_oihr_r3_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _table_rows(html: str) -> list[list[str]]:
     """Every `<tr>...</tr>`'s `<td>` cell texts, tags stripped, in document order."""
     rows = []
@@ -2028,10 +2306,14 @@ def _table_rows(html: str) -> list[list[str]]:
 
 
 def _r2_template(db):
+    """The handover template as it looks TODAY - r2's layout migration, then #1166's
+    LOCATION-column migration on top (same chain a real DB runs), not r2's body alone.
+    Kept this name (many tests already call it): what changed is which migrations feed
+    it, not what the returned row means to a caller - "the current live template"."""
     from app.models.email_template import EmailTemplate
 
-    module = _load_r2_migration()
-    _run_upgrade(module, db)
+    _run_upgrade(_load_r2_migration(), db)
+    _run_upgrade(_load_r3_migration(), db)
     return (
         db.query(EmailTemplate)
         .filter(EmailTemplate.code == "order_inquiry_handover_default")
@@ -2122,6 +2404,49 @@ def test_r2_migration_inserts_when_row_absent():
         assert count == 1
 
 
+def test_r3_migration_downgrade_restores_r2_body_byte_for_byte():
+    """Nit (reviewer pass 1): the reviewer verified this by hand (loading both modules
+    and comparing `_R2_BODY_HTML`/`_R2_BODY_TEXT`/`_SUBJECT`/`_COLUMNS_IN_USE` against
+    `oihr_0001_handover_r2_layout`'s own strings); pinned here so a later edit to
+    `oihr_0003_location_column`'s copied-byte-for-byte r2 body cannot drift unnoticed."""
+    r2 = _load_r2_migration()
+    r3 = _load_r3_migration()
+    with blank_session() as db:
+        _run_upgrade(r2, db)
+        r2_row = db.execute(
+            sa.text(
+                "SELECT subject, body_html, body_text FROM email_templates WHERE code = "
+                "'order_inquiry_handover_default'"
+            )
+        ).mappings().one()
+
+        _run_upgrade(r3, db)
+        r3_row = db.execute(
+            sa.text(
+                "SELECT subject, body_html, body_text FROM email_templates WHERE code = "
+                "'order_inquiry_handover_default'"
+            )
+        ).mappings().one()
+        assert "LOCATION" in r3_row["body_html"] and "LOCATION" in r3_row["body_text"], (
+            "sanity: r3 must actually add LOCATION before this test compares downgrade"
+        )
+
+        _run_downgrade(r3, db)
+        restored = db.execute(
+            sa.text(
+                "SELECT subject, body_html, body_text FROM email_templates WHERE code = "
+                "'order_inquiry_handover_default'"
+            )
+        ).mappings().one()
+        assert restored["subject"] == r2_row["subject"]
+        assert restored["body_html"] == r2_row["body_html"], (
+            "r3's downgrade must restore the r2 body_html byte for byte"
+        )
+        assert restored["body_text"] == r2_row["body_text"], (
+            "r3's downgrade must restore the r2 body_text byte for byte"
+        )
+
+
 # --------------------------------------------------------------------------- #
 # AC-R2-01..05, 09: the r2 line table's own cells, per kind.                  #
 # --------------------------------------------------------------------------- #
@@ -2131,9 +2456,13 @@ def _expected_r2_line_headers(was: dict | None) -> list[str]:
     """AC-R2-18: a CHANGE TO column is a property of the EMAIL, not of the line - but
     each of these test cases is a ONE-line email, so the email's own answer is exactly
     this line's own `was` keys. QTY CHANGE TO only when `was.qty` is set; DELIVERY DATE
-    CHANGE TO only when `was.delivery_date` is set; neither for a plain raise."""
+    CHANGE TO only when `was.delivery_date` is set; neither for a plain raise.
+
+    AC-1 (24 Sep, issue #1166): LOCATION sits right after S/O NO, unconditionally -
+    unlike the two CHANGE TO columns, it is not a property of what moved.
+    """
     was = was or {}
-    headers = ["SO DATE", "S/O NO", "ITEM CODE", "QTY"]
+    headers = ["SO DATE", "S/O NO", "LOCATION", "ITEM CODE", "QTY"]
     if was.get("qty") is not None:
         headers.append("QTY CHANGE TO")
     headers.append("DELIVERY DATE")
@@ -2149,45 +2478,53 @@ def _expected_r2_line_headers(was: dict | None) -> list[str]:
         (
             # AC-R2-18: QTY CHANGE TO present (`was.qty` set), DELIVERY DATE CHANGE TO
             # absent - so `expected_cells` carries no trailing "" for the absent column.
+            # AC-1: a named location renders as itself.
             "settled qty (182 -> 214)",
             {
                 "so_date": "01/09/2026", "so_number": "SO314594",
                 "item_code": "SRTWCX8605-S-RL-PJ", "qty": "214",
                 "delivery_date": "01/09/2026", "remark": "ORDER 32",
+                "location": "SRT-MAIN",
                 "was": {"qty": "182"},
             },
-            ["01/09/2026", "SO314594", "SRTWCX8605-S-RL-PJ", "182", "214",
+            ["01/09/2026", "SO314594", "SRT-MAIN", "SRTWCX8605-S-RL-PJ", "182", "214",
              "01/09/2026", "ORDER 32"],
         ),
         (
             # AC-R2-18: DELIVERY DATE CHANGE TO present (`was.delivery_date` set), QTY
             # CHANGE TO absent - no "" cell for the absent column.
+            # AC-1: `location: None` (a row with no stock location) renders blank,
+            # never the word "None".
             "settled date (01/09/2026 -> 01/04/2027)",
             {
                 "so_date": "01/09/2026", "so_number": "SO314594",
                 "item_code": "CB2806A", "qty": "280",
                 "delivery_date": "01/04/2027", "remark": "DELAY",
+                "location": None,
                 "was": {"delivery_date": "01/09/2026"},
             },
-            ["01/09/2026", "SO314594", "CB2806A", "280",
+            ["01/09/2026", "SO314594", "", "CB2806A", "280",
              "01/09/2026", "01/04/2027", "DELAY"],
         ),
         (
             # AC-R2-18: QTY CHANGE TO present (`was.qty` set), DELIVERY DATE CHANGE TO
-            # absent.
+            # absent. AC-1: an already-blank `location` ("", what `_record_handover`
+            # itself writes for a row with no stock location) renders blank too.
             "cancelled (old qty 280)",
             {
                 "so_date": "01/09/2026", "so_number": "SO314594",
                 "item_code": "CB2807", "qty": "0",
                 "delivery_date": "01/09/2026", "remark": "CANCEL BALANCE 280 NOS",
+                "location": "",
                 "was": {"qty": "280"},
             },
-            ["01/09/2026", "SO314594", "CB2807", "280", "0",
+            ["01/09/2026", "SO314594", "", "CB2807", "280", "0",
              "01/09/2026", "CANCEL BALANCE 280 NOS"],
         ),
         (
-            # AC-R2-18: a plain raise carries no `was` at all - neither column, six
-            # headers, six cells.
+            # AC-R2-18: a plain raise carries no `was` at all - neither column, seven
+            # headers, seven cells. AC-1: no `location` key at all (a context built
+            # before this lane) must still render blank, not raise or print "None".
             "plain raised",
             {
                 "so_date": "01/09/2026", "so_number": "SO314594",
@@ -2195,13 +2532,13 @@ def _expected_r2_line_headers(was: dict | None) -> list[str]:
                 "delivery_date": "01/09/2026", "remark": "ORDER",
                 "was": None,
             },
-            ["01/09/2026", "SO314594", "CSH2072", "214",
+            ["01/09/2026", "SO314594", "", "CSH2072", "214",
              "01/09/2026", "ORDER"],
         ),
     ],
 )
 def test_handover_r2_template_cells(kind_label, line_ctx, expected_cells):
-    """AC-R2-01..05, 09, 18."""
+    """AC-R2-01..05, 09, 18. AC-1 (issue #1166): LOCATION column, right after S/O NO."""
     from app.services.email_template_service import EmailTemplateService
 
     with blank_session() as db:
@@ -2248,6 +2585,56 @@ def test_handover_r2_template_cells(kind_label, line_ctx, expected_cells):
         )
 
 
+def test_handover_r2_template_text_body_shows_location():
+    """AC-1 (reviewer pass 1, blocking K5): the plan's own test list says "LOCATION in
+    both html and text", but every other cell-shape test in this file renders
+    `body_html` only - `_BODY_TEXT` losing its LOCATION header or its per-line cell
+    would pass every one of them. Pinned here against `body_text` directly."""
+    from app.services.email_template_service import EmailTemplateService
+
+    with blank_session() as db:
+        template = _r2_template(db)
+        context = {
+            "handover": {
+                "subject_scope": "SO314594", "verbs": ["ORDER"], "headline": "ORDER",
+                "orders": [
+                    {"so_number": "SO314594", "customer": "BUIMACO", "project": "TUJU RESIDENCE"}
+                ],
+                "lines": [
+                    {
+                        "so_date": "01/09/2026", "so_number": "SO314594",
+                        "item_code": "CB9999", "qty": "214",
+                        "delivery_date": "01/09/2026", "remark": "ORDER 214",
+                        "location": "SRT-MAIN", "was": None,
+                    }
+                ],
+                "line_count": 1,
+                "link": "https://crm.test/project-sales/order-inquiries?query=SO314594",
+            },
+            "actor": {"name": "Eling", "email": "eling@sorento.com.my"},
+            "today": "18/09/2026",
+        }
+        rendered = EmailTemplateService(db).render(template, context)
+        text = rendered["body_text"]
+
+        header_line = next(
+            (line for line in text.splitlines() if line.startswith("SO DATE |")), None
+        )
+        assert header_line is not None, f"no line table header found in body_text: {text!r}"
+        assert "LOCATION" in header_line, (
+            f"AC-1: LOCATION header missing from body_text, got {header_line!r}"
+        )
+
+        line_row = next(
+            (line for line in text.splitlines() if line.startswith("01/09/2026 |")), None
+        )
+        assert line_row is not None, f"no line row found in body_text: {text!r}"
+        cells = [cell.strip() for cell in line_row.split("|")]
+        assert "SRT-MAIN" in cells, (
+            f"AC-1: LOCATION cell missing from body_text line, got {line_row!r}"
+        )
+
+
 # --------------------------------------------------------------------------- #
 # AC-R2-18: the QTY CHANGE TO / DELIVERY DATE CHANGE TO columns are each      #
 # absent (header AND every row) unless at least one line in THAT email       #
@@ -2258,14 +2645,17 @@ def test_handover_r2_template_cells(kind_label, line_ctx, expected_cells):
 # (Owner ruling Q5, 18 Sep.)                                                  #
 # --------------------------------------------------------------------------- #
 
+# AC-1 (issue #1166): LOCATION sits right after S/O NO in every one of these shapes -
+# it is not a CHANGE TO column, so AC-R2-18's per-email visibility rule does not touch it.
 _PLAIN_LINE_HEADERS = [
-    "SO DATE", "S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "REMARK",
+    "SO DATE", "S/O NO", "LOCATION", "ITEM CODE", "QTY", "DELIVERY DATE", "REMARK",
 ]
 _QTY_CHANGE_LINE_HEADERS = [
-    "SO DATE", "S/O NO", "ITEM CODE", "QTY", "QTY CHANGE TO", "DELIVERY DATE", "REMARK",
+    "SO DATE", "S/O NO", "LOCATION", "ITEM CODE", "QTY", "QTY CHANGE TO",
+    "DELIVERY DATE", "REMARK",
 ]
 _DATE_CHANGE_LINE_HEADERS = [
-    "SO DATE", "S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE",
+    "SO DATE", "S/O NO", "LOCATION", "ITEM CODE", "QTY", "DELIVERY DATE",
     "DELIVERY DATE CHANGE TO", "REMARK",
 ]
 
@@ -2505,7 +2895,9 @@ def test_subject_ignores_blank_locations(locations, expected_subject):
 
 # --------------------------------------------------------------------------- #
 # AC-R2-16/17: still-raised amendment rows ride along on the next Confirm's   #
-# own email, appended once after the confirm's own lines.                    #
+# own email, queued once - AC-2 (24 Sep, issue #1166) then sorts the WHOLE    #
+# queue by AutoCount line_no, so being a carried-forward amendment row rather #
+# than the confirm's own new line no longer decides where it PRINTS.         #
 # --------------------------------------------------------------------------- #
 
 
@@ -2574,8 +2966,12 @@ def test_confirm_email_appends_still_raised_amendment_rows_once(api, monkeypatch
         f"AC-R2-16: the still-raised amendment row must ride along exactly once, got {lines}"
     )
     assert delay_lines[0]["was"]["delivery_date"] == "01/09/2026"
-    assert lines.index(delay_lines[0]) > lines.index(own_lines[0]), (
-        "AC-R2-16: the amendment row must be appended AFTER the confirm's own lines"
+    # AC-2 (24 Sep, issue #1166): the amendment row names line 1, the confirm's own
+    # new line is line 2 - print order follows AutoCount line_no, so the amendment row
+    # (queued AFTER the confirm's own line, AC-R2-16's own append order) prints FIRST.
+    assert lines.index(delay_lines[0]) < lines.index(own_lines[0]), (
+        "AC-2: within one S/O, lines print in AutoCount line_no order regardless of "
+        "queue order"
     )
 
 
@@ -2857,8 +3253,297 @@ def test_handover_r2_template_cell_was_qty_zero_prints_0_and_change_to():
         rows = _table_rows(rendered["body_html"])
         line_row = rows[-1]
         # AC-R2-18: DELIVERY DATE CHANGE TO is absent (no line carries `was.delivery_
-        # date`), so there is no trailing "" cell for it.
+        # date`), so there is no trailing "" cell for it. AC-1: `line_ctx` above carries
+        # no `location` key at all, so LOCATION prints blank.
         assert line_row == [
-            "01/09/2026", "SO314594", "CB9999", "0", "214",
+            "01/09/2026", "SO314594", "", "CB9999", "0", "214",
             "01/09/2026", "ORDER 214",
         ], f"nit: was.qty='0' must print '0 | 214', got {line_row}"
+
+
+# =============================================================================== #
+# `PLAN-oi-handover-email-location-and-line-order-24sep.md` (issue #1166, owner    #
+# ruling 24 Sep): AC-1 the stock location per line, AC-2/AC-3 the AutoCount SO     #
+# line sequence sort.                                                              #
+# =============================================================================== #
+
+
+def test_record_handover_carries_row_location_blank_when_none(api, monkeypatch):
+    """AC-1: `_record_handover` copies `row.stock_location` onto the per-line dict's
+    `location` key - a value when the row carries one, blank string (never the word
+    "None") when it does not."""
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    fixture = _raise_one_row(api, qty="10")
+    row = fixture["row"]
+    # A row with no location, set explicitly rather than assumed off the raise - the
+    # real confirm flow already stamps `world.warehouse`'s own code onto it (D17).
+    row.stock_location = None
+    world.db.flush()
+    calls.clear()
+
+    service = ProjectOrderInquiryService(world.db)
+    service._record_handover(row, kind="settled", was={"qty": Decimal("10")})
+    world.db.commit()
+
+    matches = _handover_calls(calls)
+    assert matches
+    line = matches[-1]["context"]["handover"]["lines"][0]
+    assert line["location"] == "", (
+        f"AC-1: a row with no stock_location must print blank, never None, got {line['location']!r}"
+    )
+    calls.clear()
+
+    row.stock_location = "SRT-MAIN"
+    world.db.flush()
+    service._record_handover(row, kind="settled", was={"qty": Decimal("10")})
+    world.db.commit()
+
+    matches = _handover_calls(calls)
+    assert matches
+    line = matches[-1]["context"]["handover"]["lines"][0]
+    assert line["location"] == "SRT-MAIN"
+
+
+def test_confirm_payload_order_is_ignored_lines_print_in_autocount_line_no_order(
+    api, monkeypatch
+):
+    """AC-2: a three-line order confirmed with the payload naming line 3, then line 1,
+    then line 2 must still print lines 1, 2, 3 - the order CS ticked them in has no
+    effect on the printed order."""
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    db = world.db
+
+    core_so = _core_so(db, world.company_id)
+    product_1, product_2, product_3 = _product(db), _product(db), _product(db)
+    core_line_1 = _core_line(
+        db, core_so, product_1, world.warehouse, qty_ordered="10", required_date=WAS
+    )
+    core_line_2 = _core_line(
+        db, core_so, product_2, world.warehouse, qty_ordered="6", required_date=WAS
+    )
+    core_line_3 = _core_line(
+        db, core_so, product_3, world.warehouse, qty_ordered="4", required_date=WAS
+    )
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line_1 = _project_line(db, order, line_no=1, product=product_1, core_line=core_line_1)
+    line_2 = _project_line(db, order, line_no=2, product=product_2, core_line=core_line_2)
+    line_3 = _project_line(db, order, line_no=3, product=product_3, core_line=core_line_3)
+    db.commit()
+
+    # Payload order: line 3, line 1, line 2 - deliberately not the AutoCount order.
+    payload = [
+        _line_payload(line_3.id, buy_qty="4"),
+        _line_payload(line_1.id, buy_qty="10"),
+        _line_payload(line_2.id, buy_qty="6"),
+    ]
+    response = _confirm(client, order.id, payload)
+    assert response.status_code == 200, response.text
+    db.commit()
+
+    matches = _handover_calls(calls)
+    assert matches
+    lines = matches[-1]["context"]["handover"]["lines"]
+    item_codes = [l["item_code"] for l in lines]
+    assert item_codes == [
+        product_1.product_code, product_2.product_code, product_3.product_code,
+    ], f"AC-2: lines must print in AutoCount line_no order, got {item_codes}"
+
+
+def test_two_orders_confirmed_together_group_by_so_number_each_in_line_no_order(
+    api, monkeypatch
+):
+    """AC-2: two orders confirmed inside the same commit print grouped by S/O no
+    (ascending), each group in its own AutoCount line_no order - regardless of which
+    order was confirmed first or which line inside it was named first."""
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    db = world.db
+    supply = ProjectSupplyService(db)
+
+    # N1 (reviewer round 2): fixed, ordering-discriminating S/O numbers - queued in
+    # REVERSE S/O order (B confirmed first, A confirmed second) - so the summary
+    # table's own sort has something to prove, the same reasoning the AC-3 test's
+    # fixed item codes already carry.
+    core_so_a = _core_so(db, world.company_id)
+    core_so_a.so_number = f"ZZT-A-{_uid()[:8]}"
+    db.flush()
+    product_a1, product_a2 = _product(db), _product(db)
+    core_line_a1 = _core_line(
+        db, core_so_a, product_a1, world.warehouse, qty_ordered="5", required_date=WAS
+    )
+    core_line_a2 = _core_line(
+        db, core_so_a, product_a2, world.warehouse, qty_ordered="3", required_date=WAS
+    )
+    order_a = _project_so(
+        db, world.project, so_id=core_so_a.id, autocount_doc_no=core_so_a.so_number
+    )
+    line_a1 = _project_line(db, order_a, line_no=1, product=product_a1, core_line=core_line_a1)
+    line_a2 = _project_line(db, order_a, line_no=2, product=product_a2, core_line=core_line_a2)
+
+    core_so_b = _core_so(db, world.company_id)
+    core_so_b.so_number = f"ZZT-B-{_uid()[:8]}"
+    db.flush()
+    product_b1, product_b2 = _product(db), _product(db)
+    core_line_b1 = _core_line(
+        db, core_so_b, product_b1, world.warehouse, qty_ordered="7", required_date=WAS
+    )
+    core_line_b2 = _core_line(
+        db, core_so_b, product_b2, world.warehouse, qty_ordered="2", required_date=WAS
+    )
+    order_b = _project_so(
+        db, world.project, so_id=core_so_b.id, autocount_doc_no=core_so_b.so_number
+    )
+    line_b1 = _project_line(db, order_b, line_no=1, product=product_b1, core_line=core_line_b1)
+    line_b2 = _project_line(db, order_b, line_no=2, product=product_b2, core_line=core_line_b2)
+    db.commit()
+
+    # Order B confirmed FIRST, its own lines scrambled; order A confirmed SECOND, its
+    # own lines scrambled too - one commit, one dispatch.
+    supply.confirm(
+        order_b,
+        ConfirmSupplyBody(lines=[
+            ConfirmLine(project_line_id=str(line_b2.id), buy_qty="2"),
+            ConfirmLine(project_line_id=str(line_b1.id), buy_qty="7"),
+        ]),
+        actor_user_id=world.cs_user,
+    )
+    supply.confirm(
+        order_a,
+        ConfirmSupplyBody(lines=[
+            ConfirmLine(project_line_id=str(line_a2.id), buy_qty="3"),
+            ConfirmLine(project_line_id=str(line_a1.id), buy_qty="5"),
+        ]),
+        actor_user_id=world.cs_user,
+    )
+    db.commit()
+
+    matches = _handover_calls(calls)
+    assert matches
+    lines = matches[-1]["context"]["handover"]["lines"]
+    assert len(lines) == 4
+
+    so_number_by_item_code = {
+        product_a1.product_code: core_so_a.so_number,
+        product_a2.product_code: core_so_a.so_number,
+        product_b1.product_code: core_so_b.so_number,
+        product_b2.product_code: core_so_b.so_number,
+    }
+    line_no_by_item_code = {
+        product_a1.product_code: 1, product_a2.product_code: 2,
+        product_b1.product_code: 1, product_b2.product_code: 2,
+    }
+    printed_so_numbers = [so_number_by_item_code[l["item_code"]] for l in lines]
+
+    # Contiguous, ascending S/O groups (never interleaved).
+    so_groups: list[str] = []
+    for so_number in printed_so_numbers:
+        if not so_groups or so_groups[-1] != so_number:
+            so_groups.append(so_number)
+    assert so_groups == sorted({core_so_a.so_number, core_so_b.so_number}), (
+        f"AC-2: S/O groups must be contiguous and ascending, got {printed_so_numbers}"
+    )
+
+    # Within each group, line_no ascending.
+    for so_number in so_groups:
+        group_line_nos = [
+            line_no_by_item_code[l["item_code"]]
+            for l in lines if so_number_by_item_code[l["item_code"]] == so_number
+        ]
+        assert group_line_nos == sorted(group_line_nos), (
+            f"AC-2: within S/O {so_number}, lines must be in line_no order, got {group_line_nos}"
+        )
+
+    # N1 (reviewer round 2): the SO summary table agrees with the line table above -
+    # confirmed in REVERSE S/O order (B, then A), so a dropped sort would print the
+    # summary as queued (B, A) instead of ascending (A, B).
+    summary_so_numbers = [o["so_number"] for o in matches[-1]["context"]["handover"]["orders"]]
+    assert summary_so_numbers == sorted([core_so_a.so_number, core_so_b.so_number]), (
+        f"AC-2 nit: the SO summary table must be sorted by S/O no like the line table, "
+        f"got {summary_so_numbers}"
+    )
+
+
+def test_amendment_row_without_so_line_id_sorts_after_rows_with_one(api, monkeypatch):
+    """AC-3: a still-raised amendment row that names no line (no `so_line_id`) prints
+    AFTER every row of its own S/O that has one, in item code order among themselves."""
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    db = world.db
+
+    fixture = _raise_one_row(api, qty="10")
+    db.commit()
+
+    core_line_b = _core_line(
+        db, fixture["core_so"], world.product, world.warehouse,
+        qty_ordered="6", required_date=WAS,
+    )
+    line_b = _project_line(
+        db, fixture["order"], line_no=2, product=world.product, core_line=core_line_b
+    )
+    db.commit()
+
+    # Should fix 1 (reviewer pass 1): fixed, ordering-discriminating codes, not
+    # `_product`'s own random `ZZT-<uuid>` ones - a random pair only fails this test
+    # when the coin flip happens to land against it (measured: K1's mutation, dropping
+    # the sort entirely, went red only 2 of 6 runs). Queued in the OPPOSITE of
+    # alphabetical order (B first, at row_key "0"; A second, at row_key "1") so queue
+    # order and item-code order can never coincide by chance - only a correct sort
+    # can produce A before B here.
+    other_product_b, other_product_a = _product(db), _product(db)
+    other_product_b.product_code = f"ZZT-B-{_uid()[:8]}"
+    other_product_a.product_code = f"ZZT-A-{_uid()[:8]}"
+    db.flush()
+    amendment = SOAmendment(
+        company_id=world.company_id, project_sales_order_id=fixture["order"].id,
+        from_version_kind="schedule", status=AMENDMENT_PUBLISHED,
+        delta_json={
+            "rows": [
+                {
+                    # No "so_line_id" at all: the product this DELAY names is not one
+                    # of the order's own lines (AC-3's own case).
+                    "row_key": "0", "verb": "DELAY",
+                    "product_id": str(other_product_b.id),
+                    "product_code": other_product_b.product_code,
+                    "qty": "5", "from_value": "2026-09-01", "to_value": "2026-10-01",
+                },
+                {
+                    "row_key": "1", "verb": "DELAY",
+                    "product_id": str(other_product_a.id),
+                    "product_code": other_product_a.product_code,
+                    "qty": "3", "from_value": "2026-09-01", "to_value": "2026-10-01",
+                },
+            ]
+        },
+    )
+    db.add(amendment)
+    db.flush()
+    ProjectOrderInquiryService(db).derive_for_amendment(amendment, actor_user_id=world.cs_user)
+    db.commit()
+    calls.clear()
+
+    response = _confirm(client, fixture["order"].id, [_line_payload(line_b.id, buy_qty="6")])
+    assert response.status_code == 200, response.text
+    db.commit()
+
+    matches = _handover_calls(calls)
+    assert matches
+    lines = matches[-1]["context"]["handover"]["lines"]
+    item_codes = [l["item_code"] for l in lines]
+
+    with_line_no = item_codes[:1]
+    without_line_no = item_codes[1:]
+    assert with_line_no == [world.product.product_code], (
+        f"AC-3: the row that has a so_line_id must print first, got {item_codes}"
+    )
+    # Deterministic expectation, A before B - a dropped item-code tiebreak would print
+    # the queue's own B-then-A order instead.
+    assert without_line_no == [other_product_a.product_code, other_product_b.product_code], (
+        f"AC-3: rows with no so_line_id must sort after, in item code order, "
+        f"got {item_codes}"
+    )

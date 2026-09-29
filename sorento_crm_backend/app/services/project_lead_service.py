@@ -1010,17 +1010,129 @@ def qualify_lead(
         owner_user_id=payload.pop("owner_user_id", None) or lead.owner_user_id,
     )
     project.lead_id = lead.id
+    _mark_qualified(db, lead)
+    return project
 
-    # Qualified is terminal and the lead may qualify again (AC-O5): a masterplan
-    # sighting yields one project per phase. `qualified_at` marks the FIRST conversion,
-    # which is what the conversion-rate metric measures.
+
+def _mark_qualified(db: Session, lead: ProjectLead) -> None:
+    """What converting a lead MEANS, shared by Qualify and the project form's link.
+
+    Qualified is terminal and the lead may qualify again (AC-O5): a masterplan
+    sighting yields one project per phase. `qualified_at` marks the FIRST conversion,
+    which is what the conversion-rate metric measures.
+    """
     lead.outcome = OUTCOME_QUALIFIED
     lead.qualified_at = lead.qualified_at or datetime.utcnow()
     qualified_status = _status_id_by_key(db, "qualified")
     if qualified_status:
         lead.status_id = qualified_status
     db.flush()
-    return project
+
+
+def _release_lead(
+    db: Session, lead_id: str, *, actor_user_id: str, permissions: Set[str]
+) -> None:
+    """Undo `_mark_qualified` once no project carries the lead any more (#1339, Q1).
+
+    Only a qualified lead is touched: the conversion was undone, so the lead is open
+    again on its first rung and pickable in the project form, and the conversion
+    metric stops counting it. A lead qualified into several projects stays qualified
+    while any of them still carries it.
+
+    Reopening is a change to the LEAD, so it needs the same right as linking it: a
+    project collaborator who unlinks somebody else's lead detaches it from the project
+    but leaves the lead's own state, and its owner's conversion, alone.
+    """
+    still_carried = (
+        db.query(Project.id).filter(Project.lead_id == lead_id).first() is not None
+    )
+    if still_carried:
+        return
+    lead = db.query(ProjectLead).filter(ProjectLead.id == lead_id).first()
+    if lead is None or lead.outcome != OUTCOME_QUALIFIED:
+        return
+    if not can_edit_lead(lead, actor_user_id, permissions):
+        return
+    lead.outcome = OUTCOME_OPEN
+    lead.qualified_at = None
+    initial = _status_id_by_key(db, "new")
+    if initial:
+        lead.status_id = initial
+    db.flush()
+
+
+def set_project_lead(
+    db: Session,
+    project: Project,
+    lead_id: Optional[str],
+    *,
+    actor_user_id: str,
+    permissions: Set[str],
+) -> None:
+    """Link, swap or unlink the lead a project came from (the project form, #1339).
+
+    Linking marks the lead exactly as Qualify does and needs the same right on the
+    lead. Unlike Qualify, a lead another project already carries is refused: picking
+    it in a form is far more likely a mis-pick than a second phase, and Qualify stays
+    the way to derive several projects from one lead.
+
+    Re-sending the current lead is a no-op, so a collaborator saving other fields on a
+    project that carries somebody else's lead is never asked for rights on that lead.
+    """
+    from app.services.uuid_path_param import validate_uuid_path
+
+    previous = project.lead_id
+    new = validate_uuid_path(lead_id, resource="Lead") if lead_id else None
+    if new == previous:
+        return
+
+    lead = None
+    if new:
+        # Locked, so two saves racing to link the same lead cannot both pass the
+        # already-linked check below.
+        lead = (
+            db.query(ProjectLead)
+            .filter(ProjectLead.id == new)
+            .with_for_update()
+            .first()
+        )
+        if lead is None:
+            raise AppException(
+                status_code=404, message="Lead not found.", code="lead_not_found"
+            )
+        assert_can_edit_lead(lead, actor_user_id, permissions)
+        other = (
+            db.query(Project)
+            .filter(Project.lead_id == lead.id, Project.id != project.id)
+            .first()
+        )
+        if other is not None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{lead.lead_code} is already linked to {other.project_code} "
+                    f'"{other.title}". Unlink it there first, or pick another lead.'
+                ),
+                code="lead_already_linked",
+            )
+        if lead.outcome == OUTCOME_DISQUALIFIED:
+            raise AppException(
+                status_code=422,
+                message=(
+                    f"{lead.lead_code} is disqualified. Reopen it before linking it "
+                    "to a project."
+                ),
+                code="lead_not_linkable",
+            )
+
+    project.lead_id = new
+    db.flush()
+    if previous:
+        _release_lead(
+            db, previous, actor_user_id=actor_user_id, permissions=permissions
+        )
+    if lead is not None:
+        _mark_qualified(db, lead)
 
 
 def preview_qualify_clashes(

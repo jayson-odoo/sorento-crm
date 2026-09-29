@@ -119,3 +119,103 @@ describe('mapFormToUpdateBody - company scope', () => {
     expect(body.metadata).toMatchObject({ company_ids: ['co-a'], grace_percent: 50 });
   });
 });
+
+// #1340: the scheduled reorder run's configurable scope. These seven keys only ride the
+// PATCH body for the `scm_reorder_run` task - every other task key must carry none of them,
+// exactly like `company_ids`/`grace_percent` scope everything else.
+describe('mapFormToUpdateBody - scm reorder run scope', () => {
+  const scmTask: ScheduledTask = { ...task, key: 'scm_reorder_run' };
+
+  it('maps every scope key onto metadata for the scm_reorder_run task', () => {
+    const body = mapFormToUpdateBody(
+      {
+        ...values,
+        warehouse_codes: ['WH1', 'WH2'],
+        product_codes: ['P1'],
+        demand_class: 'retail',
+        horizon_start_days: -7,
+        horizon_end_days: 30,
+        budget: 5000,
+        include_market: true,
+      },
+      scmTask,
+    );
+    expect(body.metadata).toMatchObject({
+      warehouse_codes: ['WH1', 'WH2'],
+      product_codes: ['P1'],
+      demand_class: 'retail',
+      horizon_start_days: -7,
+      horizon_end_days: 30,
+      budget: 5000,
+      include_market: true,
+    });
+  });
+
+  it('clears every scope key to null when the field is emptied', () => {
+    const body = mapFormToUpdateBody(
+      {
+        ...values,
+        warehouse_codes: [],
+        product_codes: [],
+        demand_class: '',
+        horizon_start_days: '',
+        horizon_end_days: '',
+        budget: '',
+        include_market: false,
+      },
+      scmTask,
+    );
+    expect(body.metadata).toMatchObject({
+      warehouse_codes: null,
+      product_codes: null,
+      demand_class: null,
+      horizon_start_days: null,
+      horizon_end_days: null,
+      budget: null,
+    });
+    // include_market is a plain boolean field (like send_in_app/send_email), not a
+    // blank-means-clear one - false is a real value, not the delete sentinel.
+    expect(body.metadata).toHaveProperty('include_market', false);
+  });
+
+  it('omitting the scope fields entirely still clears them (undefined reads as blank)', () => {
+    const body = mapFormToUpdateBody(values, scmTask);
+    expect(body.metadata).toMatchObject({
+      warehouse_codes: null,
+      product_codes: null,
+      demand_class: null,
+      horizon_start_days: null,
+      horizon_end_days: null,
+      budget: null,
+      include_market: false,
+    });
+  });
+
+  it('never sends any of the seven scope keys for a different task key', () => {
+    const body = mapFormToUpdateBody(
+      {
+        ...values,
+        warehouse_codes: ['WH1'],
+        product_codes: ['P1'],
+        demand_class: 'project',
+        horizon_start_days: 1,
+        horizon_end_days: 2,
+        budget: 100,
+        include_market: true,
+      },
+      task,
+    );
+    const scopeKeys = [
+      'warehouse_codes',
+      'product_codes',
+      'demand_class',
+      'horizon_start_days',
+      'horizon_end_days',
+      'budget',
+      'include_market',
+    ];
+    for (const key of scopeKeys) {
+      expect(body.metadata).not.toHaveProperty(key);
+    }
+  });
+});

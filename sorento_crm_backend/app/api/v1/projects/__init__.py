@@ -18,6 +18,7 @@ from app.api.v1.projects import (
     sales_orders,
     samples_pos,
     schedules,
+    so_line_attachments,
     stock_debt,
     tasks,
     types,
@@ -77,6 +78,9 @@ router.include_router(planning_changes.router, tags=["project-planning-changes"]
 # so it is root-mounted for the same reason planning changes is - and ahead of the projects
 # router, or `/project-sales/stock-debt` is captured by `/projects/{project_id}`.
 router.include_router(stock_debt.router, tags=["project-stock-debt"])
+# Sales-order-line attachments (#1312) address the CORE line directly, never nested
+# under a project, so it is root-mounted for the same reason stock debt is.
+router.include_router(so_line_attachments.router, tags=["project-so-line-attachments"])
 router.include_router(parties.router, prefix="/parties", tags=["project-parties"])
 # Leads before projects for the same reason config is: /leads/{id}/qualify returns a
 # PROJECT, but the route itself lives under the leads prefix.

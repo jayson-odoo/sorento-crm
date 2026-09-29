@@ -274,6 +274,16 @@ def _enqueue_email_for_delivery(db, notification: Notification, user, delivery: 
                     "notification_id": str(notification.id),
                     "notification_delivery_id": str(delivery.id),
                     "recipients": recipients,
+                    # #1312: the OI handover's own per-line files, carried on
+                    # `Notification.data["extra_attachments"]` by
+                    # `AutomationService._send_per_match`'s one_email branch -
+                    # forwarded onto the outbox row's own metadata, which the drainer
+                    # already knows how to read (`email_outbox_tasks._attachments_for`).
+                    **(
+                        {"extra_attachments": data["extra_attachments"]}
+                        if data.get("extra_attachments")
+                        else {}
+                    ),
                 },
             )
             delivery.status = "queued"

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Monorepo. Four siblings:
 
-- `sorento_crm_frontend/` - Next.js 15, React 19, Tailwind 4, Prisma (NextAuth + user/session DB only), Metronic 9 + ReUI shell. Calls FastAPI for all business logic.
+- `sorento_crm_frontend/` - Next.js 15, React 19, Tailwind 4, NextAuth, Metronic 9 + ReUI shell. No database of its own (Prisma is gone); calls FastAPI for all business logic, users and sessions included.
 - `sorento_crm_backend/` - FastAPI + SQLAlchemy + Alembic. All `/api/v1/*` business logic, RBAC, RQ workers, embedding pipeline.
 - `sorento_crm_mcp/` - Read-only Streamable HTTP MCP server. Wraps backend GETs as MCP tools for n8n.
 - `sorento_crm/` - Top-level `docker-compose.yml` + `deploy.sh` for the full stack.
@@ -62,10 +62,6 @@ npm run test:watch
 npm run test:e2e             # playwright (e2e/, chromium, baseURL :3000)
 npm run format               # prettier --write .
 npm run format:check         # prettier --check . (currently red: 1743 files predate the config, see BL-008)
-
-npx prisma db push           # apply schema
-npx prisma generate          # regenerate client
-node prisma/seed.js          # seed (also: npm run prisma:seed via "prisma":{"seed"})
 ```
 
 Vitest: jsdom env, `@/` aliases repo root. Single test: `npx vitest run path/to/file.test.ts`.
@@ -89,6 +85,8 @@ docker compose up -d            # from sorento_crm/ (root compose at sorento_crm
 
 For any development task, Claude boots and owns the local stack as **background Bash sessions** so the user can test immediately. Boot all four at session start (or on first dev task):
 
+For a lane that goes to a Claude Code cloud environment instead of a local worktree, see `documentation/agents/cloud-lanes.md`.
+
 | Service  | Command (run from its own dir)                                                                 | Port | Reload behavior |
 |----------|------------------------------------------------------------------------------------------------|------|-----------------|
 | Backend  | `venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` (in `sorento_crm_backend/`) | 8000 | `--reload` - backend file edits auto-restart uvicorn; nothing to do |
@@ -108,9 +106,9 @@ For any development task, Claude boots and owns the local stack as **background 
 
 ### Auth boundary between FE and BE
 
-NextAuth (frontend) issues the JWT. FastAPI validates it with the **same** `JWT_SECRET` / `JWT_ALGORITHM`. Tokens travel as `Authorization: Bearer <token>`.
+Staff tokens are opaque sessions, not JWTs. NextAuth's Credentials provider posts to FastAPI `/api/v1/auth/login`, which mints a `user_sessions` row (`app/services/user_session_service.py`, 30-day rolling or 8-hour, `auth_method` recorded) and returns its opaque token as `apiToken`; NextAuth keeps it inside its own httpOnly cookie and hands it to the browser through `/api/auth/token`. Every `/api/v1/*` call sends `Authorization: Bearer <token>`, and `get_current_user` (`app/dependencies.py`) resolves the row on each request, so revocation and role or status changes apply at once. `JWT_SECRET` still signs the few short-lived link tokens (dealer-kit render, SLA summary, ticket draft), not staff sessions.
 
-Alternative principal: `X-API-Key` matching `EXTERNAL_API_KEY`. The legacy `system` principal has **no RBAC grants**, so for any non-trivial route also set `EXTERNAL_API_KEY_ACT_AS_USER_ID` to a real `users.id` whose role has the needed view permissions. The MCP server depends on this.
+Alternative principal: `X-API-Key`, resolved through `integration_api_keys` to an `integrations` row and that integration's `act_as_user_id` (a real user; `app/services/integration_auth.py`). There is no `system` principal any more: RBAC and audit apply to the act-as user, and audit rows name the integration (`actor_type = integration`, plan `documentation/plans/identity/PLAN-unified-identity-26sep.md` section 8). The legacy shared `EXTERNAL_API_KEY` keeps working because its hash was seeded as an integration; `EXTERNAL_API_KEY_ACT_AS_USER_ID` is still read by a few in-process callers (chatbot business lane, order inquiry import) that act without a request. The MCP server sends the key.
 
 NextAuth routes (`/api/auth/*`) stay in Next.js. Everything else is FastAPI under `/api/v1/*`.
 
@@ -153,7 +151,8 @@ cannot drift:
 
 - List = DataGrid + search/filters + Add. Create/edit = **modal by default**; dedicated page only
   for complex/multi-tab/file-centric flows. View = `/{module}/{id}` detail page rendering **every**
-  section, with an explicit empty state + next-step CTA.
+  section, with an explicit empty state (heading + hint, no button: one CTA per page, in the
+  header, and no subtitle; `DESIGN-LANGUAGE.md` section 6).
 - **Delete = hard delete, no confirmation dialog** (D7, Apple Alignment S6). A destructive or
   detach action - Delete, Archive-as-delete, Unlink - is a server-deferred pending action: the
   button becomes a countdown (10s hard delete / 5s reversible, both from System Settings) with a
@@ -161,8 +160,8 @@ cannot drift:
   cancel it. Never `confirm()`; `ConfirmDeleteDialog` is retired - a new importer of it or of a
   destructive `AlertDialog` is a defect. A soft-delete endpoint is called Archive, never "delete".
 - **View and Edit are the SAME layout** - same tabs in the same order, same fields in the same
-  order; editing swaps a read-only value for an input in place. Read-only metadata lives in the
-  page header, never in a tab body.
+  order; editing swaps a read-only value for an input in place. Read-only metadata sits directly
+  under the page header, never in a tab body.
 - Detail pages carry prev/next record navigation (`components/common/RecordNavigation`).
 - Every optional select is `clearable`. Every dropdown is `SearchableSelect`/`SearchableMultiSelect`.
 - Usable and non-clipped at **375px AND 1280px**.
@@ -187,7 +186,7 @@ Backend (`sorento_crm_backend/.env`): `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`
 
 Storage routing: each `attachments` row carries a `storage_provider` (`s3` or `r2`). New uploads use `STORAGE_DEFAULT_PROVIDER` (defaults to `s3`); reads (preview, download, presigned URL, webhooks) dispatch through `app/services/storage_router.py` so traffic for already-migrated rows is served via Cloudflare R2 + CDN while remaining rows continue to hit S3 + CloudFront. Use `scripts/migrate_attachments_to_r2.py` to copy bytes and flip provider per row.
 
-Frontend (`sorento_crm_frontend/.env` or `.env.local`): `DATABASE_URL` (Prisma - NextAuth/user data only), `NEXTAUTH_SECRET` (must align with backend `JWT_SECRET` if sharing tokens), `NEXTAUTH_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_BASE_PATH`, `GOOGLE_CLIENT_*`, `EXTERNAL_API_KEY`, `SMTP_*`, `STORAGE_*`, `RECAPTCHA_*`, `FRONTEND_BASE_URL`.
+Frontend (`sorento_crm_frontend/.env` or `.env.local`): `NEXTAUTH_SECRET` (must align with backend `JWT_SECRET` if sharing tokens), `NEXTAUTH_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_BASE_PATH`, `GOOGLE_CLIENT_*`, `EXTERNAL_API_KEY`, `SMTP_*`, `STORAGE_*`, `RECAPTCHA_*`, `FRONTEND_BASE_URL`.
 
 MCP (`sorento_crm_mcp/`): `CRM_BASE_URL`, `EXTERNAL_API_KEY`, optional `CRM_MCP_HOST/PORT/TIMEOUT/MAX_RESPONSE_BYTES/LOG_LEVEL`.
 
@@ -220,16 +219,20 @@ The shape: journey → grill → UAC → plan → tickets → **Phase 1** fronte
 backend, no tests yet) → **Phase 2** tester-first backend wiring, test-FIRST (the `tester` agent
 writes the red tests from the UAC + captain's test list BEFORE the `coder` agent, one instance
 kept alive for the whole lane, makes them green; pytest + vitest land here, never deferred) →
-**Phase 3** `reviewer` + `security-reviewer` + browser verification in parallel, once per lane →
-`guide-writer` → DoD gate → PR.
+**Phase 3** `reviewer` + browser verification in parallel, once per lane (`security-reviewer`
+joins only when the diff touches auth, RBAC, external ingest, uploads or multi-company scoping;
+otherwise it is skipped and the PR body says so) → DoD gate → PR. `guide-writer` no longer runs
+per lane (owner ruling, 24 Sep 2026): it runs on-request or as a weekly batch over merged lanes -
+see `.claude/agents/guide-writer.md`.
 
 Skipping or reordering a phase is a process violation; if a phase genuinely cannot be done, say so
 in the PR description.
 
-**Small fix track** (`PRINCIPLES.md` "Small fix track", owner ruling 18 Sep 2026): one seam,
-under ~50 lines, no migration, no auth change - no DB clone, one coder writing tests + fix,
-one reviewer, browser pass only for a changed screen. Name the track in the plan's Status
-line.
+**Track is chosen by the diff, not by feel** (`PRINCIPLES.md` "Small fix track", owner rulings
+18 Sep 2026 + 24 Sep 2026): a lane whose expected diff is under ~300 changed lines, with no
+migration, no auth/RBAC/permission change, and no new external ingest surface, is the small fix
+track - no DB clone, one coder writing tests + fix, one reviewer, browser pass only for a
+changed screen. Name the track in the plan's Status line.
 
 ## Lane merge discipline (standing rule, 2026-09-02)
 
@@ -299,6 +302,11 @@ spawn a build "for handoff" on your own initiative.
   also drop clean worktrees already in `origin/main`, `--deep` for `node_modules`
   and `venv`), then `git worktree prune`. The script skips any worktree running
   `next dev` and never kills a process. This is `/feature` Step 11.
+- **Post-merge cleanup is pre-authorised, not owner-run** (`PRINCIPLES.md` "Post-merge cleanup",
+  owner ruling 24 Sep 2026): once a lane's PR merges, the captain removes the worktree, drops its
+  `.next`, and drops that lane's private `*_ci` DB + redis index without asking, subject to the
+  two standing guards there (grep every remaining worktree's `.env*` before any `DROP DATABASE`;
+  never touch a worktree that is a live process's cwd the captain did not start).
 - **Never `npm run build` while a `next start` serves that same `.next`** - the build replaces chunk
   files under the running server, which keeps its old manifests, so pages come back half-rendered.
   The tell looks like a code defect elsewhere: `tests/test_dealer_kit_pdf_render.py` failed 5 of 7
@@ -350,7 +358,10 @@ The main session (Fable) plans and briefs; execution subagents run on **Sonnet**
 `coder`, `tester`, `guide-writer` and `triage` declare `model: sonnet` in `.claude/agents/`;
 `reviewer`, `security-reviewer` and `planner` stay `model: opus` (the review is the quality gate
 before a PR, and it has caught merge-blocking defects the cheaper pass would risk missing -
-captain's call, 30 Aug 2026). The captain's job is to make the brief precise enough that Sonnet
+captain's call, 30 Aug 2026). This routing stands as of 24 Sep 2026: the `opus` alias currently
+resolves to Opus 5.5, whose default effort is `medium` (one step below Opus 5), but the review
+seat is still the quality gate, so neither this default nor the per-spawn escalation rules below
+change. The captain's job is to make the brief precise enough that Sonnet
 can execute it mechanically: measured facts, exact file paths, the test list, the contract
 shapes. A vague brief is the captain's defect, not a reason to upgrade the model.
 

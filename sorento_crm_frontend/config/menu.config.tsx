@@ -77,6 +77,47 @@ export const MENU_SIDEBAR: MenuConfig = [
 
   { heading: 'SALES' },
   {
+    // Sales module (plan 3.7, UAC S1-17, owner rulings 26 Sep (Lavish) L1 and
+    // 26 Sep 06:01 (Lavish) N1). No group-level moduleKey: each child carries the module
+    // that owns its route, so Sales Agents (module `product`, path unchanged) stays visible
+    // when `sales` is switched off.
+    title: 'Sales',
+    icon: TrendingUp,
+    children: [
+      {
+        title: 'Targets',
+        path: '/sales/targets',
+        permission: 'sales.targets.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Opportunities',
+        path: '/sales/opportunities',
+        permission: 'sales.opportunities.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Sales Teams',
+        path: '/sales/teams',
+        permission: 'sales.teams.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
+        moduleKey: 'product',
+      },
+      {
+        // PLAN-retail-sales-reports-26sep 5.4. The Sales report item lands with S2.
+        title: 'Yearly comparison',
+        path: '/sales/yearly-comparison',
+        permission: 'sales.reports.view',
+        moduleKey: 'sales',
+      },
+    ],
+  },
+  {
     title: 'Project Sales',
     icon: Building2,
     moduleKey: 'projects',
@@ -233,13 +274,6 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'projects.projects.view',
           },
           {
-            // Directly under the board (R15): the board decides, this shows what the
-            // decisions leave outstanding, month by month.
-            title: 'Stock Debt',
-            path: '/project-sales/stock-debt',
-            permission: 'projects.stock_debt.view',
-          },
-          {
             title: 'Plans',
             path: '/project-sales/plans',
             permission: 'projects.projects.view',
@@ -274,6 +308,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'procurement.product_suppliers.view',
       },
       {
+        title: 'Cost Price Uploads',
+        path: '/procurement-management/cost-price-uploads',
+        permission: 'procurement.cost_price_changes.view',
+      },
+      {
         title: 'Packing Lists',
         path: '/procurement-management/packing-lists',
         permission: 'procurement.packing_lists.view',
@@ -306,6 +345,13 @@ export const MENU_SIDEBAR: MenuConfig = [
             path: '/scm/reorder',
             permission: 'scm.reorder.run',
             moduleKey: 'scm',
+          },
+          {
+            // Moved from Supply Chain > Project Demand (R6, 24 Sep 2026): beside the
+            // rest of purchasing's own worklists, not under the board that decides.
+            title: 'Stock Debt',
+            path: '/project-sales/stock-debt',
+            permission: 'projects.stock_debt.view',
           },
           {
             title: 'Loading Plan',
@@ -690,11 +736,6 @@ export const MENU_SIDEBAR: MenuConfig = [
             title: 'Teams',
             path: '/user-management/teams',
             permission: 'user_management.teams.view',
-          },
-          {
-            title: 'Sales Agents',
-            path: '/master-data-management/sales-agents',
-            permission: 'master_data.sales_agents.view',
           },
           {
             title: 'Onboarding Requests',
@@ -1559,11 +1600,6 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/user-management/market-segments',
       },
       {
-        title: 'Sales Agents',
-        path: '/master-data-management/sales-agents',
-        permission: 'master_data.sales_agents.view',
-      },
-      {
         title: 'Account',
         path: '/user-management/account',
       },
@@ -1746,6 +1782,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         permission: 'procurement.product_suppliers.view',
       },
       {
+        title: 'Cost Price Uploads',
+        path: '/procurement-management/cost-price-uploads',
+        permission: 'procurement.cost_price_changes.view',
+      },
+      {
         title: 'Packing Lists',
         path: '/procurement-management/packing-lists',
         permission: 'procurement.packing_lists.view',
@@ -1828,6 +1869,40 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Stock Transfers',
         path: '/inventory-management/stock-transfers',
         permission: 'inventory.stock_transfers.view',
+      },
+    ],
+  },
+  {
+    // Sales module (plan 3.7, UAC S1-17, owner rulings 26 Sep (Lavish) L1 and
+    // 26 Sep 06:01 (Lavish) N1). No group-level moduleKey: each child carries the module
+    // that owns its route, so Sales Agents (module `product`, path unchanged) stays visible
+    // when `sales` is switched off.
+    title: 'Sales',
+    icon: TrendingUp,
+    children: [
+      {
+        title: 'Targets',
+        path: '/sales/targets',
+        permission: 'sales.targets.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Opportunities',
+        path: '/sales/opportunities',
+        permission: 'sales.opportunities.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Sales Teams',
+        path: '/sales/teams',
+        permission: 'sales.teams.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
+        moduleKey: 'product',
       },
     ],
   },

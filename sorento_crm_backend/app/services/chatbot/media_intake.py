@@ -242,6 +242,22 @@ def _poll(job_id: str, timeout_seconds: float, session_factory) -> dict[str, Any
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
+def await_existing_job(job_id: str, *, timeout_seconds: float, session_factory) -> str | None:
+    """The same bounded wait `run` takes, on a job that already exists: its terminal
+    status, or None when it outlived the wait (or every wait slot is taken).
+
+    For the send-order pre-step (issue #1262): a photo n8n is still extracting is only
+    answered ahead once it has actually been read.
+    """
+    if not _wait_slots.acquire(blocking=False):
+        return None
+    try:
+        snapshot = _poll(job_id, timeout_seconds, session_factory)
+    finally:
+        _wait_slots.release()
+    return snapshot["status"] if snapshot is not None else None
+
+
 def run(
     *,
     respond_io_id: str,

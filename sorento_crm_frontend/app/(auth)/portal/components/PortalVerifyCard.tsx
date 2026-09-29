@@ -21,8 +21,7 @@ import { toast } from '@/lib/toast';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { OtpCodeField, useResendCooldown } from '@/components/auth/OtpCodeField';
 import {
   clearPortalToken,
   fetchSlugInfo,
@@ -92,16 +91,8 @@ export function PortalVerifyCard({ slug }: Props) {
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [cooldown, setCooldown] = useState(0);
+  const [cooldown, setCooldown] = useResendCooldown();
   const otpFiredRef = useRef(false);
-  const lastAutoVerifiedRef = useRef<string | null>(null);
-
-  // Resend cooldown ticker.
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const t = window.setTimeout(() => setCooldown((c) => c - 1), 1000);
-    return () => window.clearTimeout(t);
-  }, [cooldown]);
 
   const sendCode = useCallback(
     async (cid: string, sid: string, opts: { silent?: boolean } = {}): Promise<boolean> => {
@@ -128,7 +119,7 @@ export function PortalVerifyCard({ slug }: Props) {
         setPending(false);
       }
     },
-    [],
+    [setCooldown],
   );
 
   // Bootstrap: resolve identity from slug (slug tree) or token (legacy),
@@ -273,16 +264,6 @@ export function PortalVerifyCard({ slug }: Props) {
       setPending(false);
     }
   }, [code, contactId, router, searchParams, slug, spaceId]);
-
-  useEffect(() => {
-    const trimmed = code.trim();
-    if (trimmed.length !== 6) return;
-    if (pending || state !== 'otp') return;
-    if (!contactId || !spaceId || !sentTo) return;
-    if (lastAutoVerifiedRef.current === trimmed) return;
-    lastAutoVerifiedRef.current = trimmed;
-    void handleVerify();
-  }, [code, pending, state, contactId, spaceId, sentTo, handleVerify]);
 
   if (state === 'loading') {
     return (
@@ -442,35 +423,17 @@ export function PortalVerifyCard({ slug }: Props) {
         </button>
       )}
 
-      <div className="space-y-1.5">
-        <Label htmlFor="code">Verification code</Label>
-        <Input
-          variant="lg"
-          id="code"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          inputMode="numeric"
-          maxLength={6}
-          placeholder="6-digit code"
-          autoComplete="one-time-code"
-          disabled={!contactId || !spaceId}
-          className="text-center tracking-[0.4em] text-lg font-medium"
-        />
-      </div>
-
-      <Button
-        type="button"
-        variant="outline"
-        onClick={handleResend}
-        disabled={pending || !contactId || !spaceId || cooldown > 0}
-        className="h-11 w-full"
-      >
-        {cooldown > 0
-          ? `Resend in ${cooldown}s`
-          : sentTo
-            ? 'Resend code'
-            : 'Send code'}
-      </Button>
+      <OtpCodeField
+        id="code"
+        value={code}
+        onChange={setCode}
+        onComplete={() => void handleVerify()}
+        cooldown={cooldown}
+        sent={Boolean(sentTo)}
+        pending={pending}
+        disabled={!contactId || !spaceId}
+        onResend={handleResend}
+      />
 
       {error && (
         <Alert variant="destructive">

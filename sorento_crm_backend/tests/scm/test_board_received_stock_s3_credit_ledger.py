@@ -708,7 +708,8 @@ def test_ac_s3_15_board_confirm_refuses_a_buy_over_own_arrival():
     NO Reserve at the credited bin at all must be refused the same way
     `_refuse_buy_over_own_arrival` refuses an amend of the identical shape - reused
     code `planning_change_buy_over_own_arrival`, 409, message naming the credited
-    quantity (20) and the PO.
+    quantity (20) and the document goods landed on (the SPO, per the R7 follow-up
+    `PLAN-r7-landed-reads-spo-received.md`, R3 - never the PO).
 
     RED today: `_check_line`'s buy handling (`project_supply_service.py`) never reads
     the line's own-arrival credit at all - `ProjectSupplyService(db).confirm(...)`
@@ -731,7 +732,7 @@ def test_ac_s3_15_board_confirm_refuses_a_buy_over_own_arrival():
         core_line.source_ref = f"ZZT-S315-{_uid()[:8]}"
         db.flush()
         po = supplier_and_po(db, po_number=f"ZZT-PO-S315-{_uid()[:8]}")
-        po_line_bought_for(
+        _po_line, spo = po_line_bought_for(
             db, po, product, own, from_so_line_ref=core_line.source_ref,
             qty_received=40, qty_ordered=40,
         )
@@ -755,7 +756,7 @@ def test_ac_s3_15_board_confirm_refuses_a_buy_over_own_arrival():
             refused.value.detail
         )
         message = refused.value.detail.get("message") or ""
-        assert "20" in message and po.po_number in message, message
+        assert "20" in message and spo.spo_number in message, message
 
 
 def test_ac_s3_15_control_buy_beside_a_fully_reserved_credit_is_accepted():
@@ -823,19 +824,20 @@ def test_ac_s3_15_refusal_names_the_credited_quantity_not_the_uncovered_part():
     """S-1: AC-S3-15's own refusal message must name the CREDITED quantity, the same
     wording `_refuse_buy_over_own_arrival` (`planning_change_service.py`, the amend-path
     sibling of this same rule) already states for its own seam - "N landed for this line
-    on PO ...", N being what landed for the line, not whatever a partial Reserve happened
+    on ...", N being what landed for the line, not whatever a partial Reserve happened
     to leave uncovered of it.
 
     Line needs 20, its own PO line received 40, 40 on hand (the credit is a clean 20 -
     the line's own open qty caps the theoretical credit before on hand ever does). A
     confirm posts Reserve 8 at the credited bin plus Buy 12 (8 + 12 = 20, the whole
     line): refused as `planning_change_buy_over_own_arrival`, and the message must read
-    "20 landed for this line on PO ...", not "12 landed for this line on PO ...".
+    "20 landed for this line on ...", not "12 landed for this line on ...".
 
     RED today: `_check_line`'s message names `uncovered` (`credit_qty -
     reserved_at_credit_bin` = 20 - 8 = 12) rather than `credit_qty` (20) itself, so the
-    message reads "12 landed for this line on PO ..." - the part the posted Reserve left
-    short, not what actually landed.
+    message reads "12 landed for this line on ..." - the part the posted Reserve left
+    short, not what actually landed. Document name updated by the R7 follow-up
+    (`PLAN-r7-landed-reads-spo-received.md`): the message names the SPO, never the PO.
     """
     within_window = date.today() + timedelta(days=10)
     with blank_session() as db:
@@ -850,7 +852,7 @@ def test_ac_s3_15_refusal_names_the_credited_quantity_not_the_uncovered_part():
         core_line.source_ref = f"ZZT-S315-NAME-{_uid()[:8]}"
         db.flush()
         po = supplier_and_po(db, po_number=f"ZZT-PO-S315-NAME-{_uid()[:8]}")
-        po_line_bought_for(
+        _po_line, spo = po_line_bought_for(
             db, po, product, own, from_so_line_ref=core_line.source_ref,
             qty_received=40, qty_ordered=40,
         )
@@ -882,7 +884,7 @@ def test_ac_s3_15_refusal_names_the_credited_quantity_not_the_uncovered_part():
             refused.value.detail
         )
         message = refused.value.detail.get("message") or ""
-        assert "20 landed for this line on PO" in message and po.po_number in message, (
+        assert "20 landed for this line on" in message and spo.spo_number in message, (
             f"the message must name the credited quantity (20), not the uncovered part "
             f"(12) the posted Reserve happened to leave: message={message!r}"
         )

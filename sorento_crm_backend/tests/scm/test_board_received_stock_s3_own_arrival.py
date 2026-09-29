@@ -97,7 +97,12 @@ def test_ac_s3_1_own_arrival_credit_draws_first_as_a_reserve_despite_a_negative_
     """AC-S3-1: "Ladder for L2 (needs 20; 40 received on its own PO line; group net
     negative because of the other order): step "Can we use our locations?" answers yes
     with `took = 20`, the component is `RESERVE` on `RUNG_GROUP_TAKE` with `source =
-    own_arrival`, and the trail `why` names the PO ("20 landed for this line on PO ...")."
+    own_arrival`, and the trail `why` names the document goods landed on ("20 landed for
+    this line on ...").
+
+    Document name updated by the R7 follow-up (`PLAN-r7-landed-reads-spo-received.md`):
+    what "landed" now means is `spo_allocations.quantity_received`, so the trail names the
+    SPO the PO line's own transfer was received onto, never the PO number itself.
 
     Measured directly first (the un-implemented state): with a huge competing order at the
     same location, the group nets far below zero and step 1 answers "no", took "0" - own
@@ -113,7 +118,7 @@ def test_ac_s3_1_own_arrival_credit_draws_first_as_a_reserve_despite_a_negative_
             lines=[{"qty": "20", "required_date": L2_REQUIRED, "source_ref": "L2"}],
         )
         po = supplier_and_po(db, po_number="ZZT-PO-OWNARR")
-        po_line_bought_for(
+        _po_line, spo = po_line_bought_for(
             db, po, product, own, from_so_line_ref="L2", qty_received=40, qty_ordered=40,
         )
         order_with_lines(
@@ -128,11 +133,17 @@ def test_ac_s3_1_own_arrival_credit_draws_first_as_a_reserve_despite_a_negative_
         own_step = _own_step(contribution)
         assert own_step["answer"] == "yes", own_step
         assert own_step["took"] == "20", own_step
-        assert "20 landed for this line on PO" in own_step["why"], own_step["why"]
-        assert po.po_number in own_step["why"], own_step["why"]
+        assert "20 landed for this line on" in own_step["why"], own_step["why"]
+        assert spo.spo_number in own_step["why"], own_step["why"]
 
         reserves = _reserve_sources(contribution)
         assert reserves and reserves[0]["kind"] == "reserve", contribution["sources"]
+        # Fix-round S1: `front_planning_engine._own_arrival_reason` builds this
+        # component's own `reason` independently of the trail's `why` above - both must
+        # name the SPO, never say "PO" of it.
+        reserve_reason = str(reserves[0].get("reason") or "")
+        assert spo.spo_number in reserve_reason, reserve_reason
+        assert "on PO" not in reserve_reason, reserve_reason
         assert reserves[0].get("source") == "own_arrival", reserves[0]
 
 

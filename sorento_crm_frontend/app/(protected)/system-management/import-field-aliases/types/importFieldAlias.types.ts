@@ -4,11 +4,13 @@
 export type ImportFieldAliasDocType =
   | 'proforma_invoice'
   | 'packing_list'
+  | 'supplier_inventory'
   | 'supplier_inventory_word';
 
 export const IMPORT_FIELD_ALIAS_DOC_TYPES: { value: ImportFieldAliasDocType; label: string }[] = [
   { value: 'proforma_invoice', label: 'Proforma invoice' },
   { value: 'packing_list', label: 'Packing list' },
+  { value: 'supplier_inventory', label: 'Stock list' },
   { value: 'supplier_inventory_word', label: 'Stock list words' },
 ];
 

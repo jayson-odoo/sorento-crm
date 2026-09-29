@@ -503,7 +503,6 @@ export default function RespondWorkspacesAdmin() {
           isLoading={isLoading}
           emptyMessage="No Respond.io workspaces configured. Add one to start syncing contacts."
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-          emptyAction={listPrimaryAction}
         >
           <CardHeader className="block">
             <DataGridListToolbar

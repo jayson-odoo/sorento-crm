@@ -4,22 +4,21 @@
 R1-R11 (owner, 22 Sep 2026). Purchasing asks CS to cover part of a raised row from own or
 pool stock before buying the balance: `create_request` (3.2) writes one
 `OrderInquiryReserveRequest` plus one row per named order-inquiry row and dispatches ONE
-`order_inquiry_reserve_requested` email (R9); `reserve` (3.3) is Eling's own Confirm - it
-writes one `OrderInquiryLink` per row reserved above zero, naming the reserve request row
-as its target (the THIRD leg the widened `ck_order_inquiry_links_one_target` CHECK now
+`order_inquiry_reserve_requested` email (R9); `commit_request` (6e.1, re-keyed by 6e.4) is
+Eling's own Confirm, one call per `Reserve` click across the whole inquiry - it writes one
+`OrderInquiryLink` per row reserved above zero, naming the reserve request row as its target (the THIRD leg the widened `ck_order_inquiry_links_one_target` CHECK now
 allows), refreshes the row's own coverage state through the SAME writer every other link
-uses (`ProjectOrderInquiryService.refresh_link_state`), and dispatches ONE
-`order_inquiry_reserved` email. `cancel_request` (3.2) is the requester's own undo while
-nothing has been reserved yet - no email, R5's "no amend after confirm" applies once
-`reserved`, and reversal from there is the existing Unlink (AC-RS-14), never a fresh
-writer here.
+uses (`ProjectOrderInquiryService.refresh_link_state`), amends already-answered rows
+(R4-3), and dispatches one `order_inquiry_reserved` email per request touched.
+`cancel_request` (3.2, 6e.4) withdraws a request's still-open rows - no email; rows
+already answered keep their links and stay amendable.
 
 **Post-commit dispatch** mirrors `_dispatch_changed_with_links` /
 `register_order_inquiry_post_commit_dispatch` in `project_order_inquiry_service.py`
 (9355), the SIMPLER of that file's two shapes - not `_fire_pending_handover`'s
 transaction-chain bookkeeping, which exists there because ONE write can give several
 sibling orders their own savepoint and a failing one must not discard an already-earned
-sibling's queued item. Neither `create_request` nor `reserve` ever opens a savepoint of
+sibling's queued item. Neither `create_request` nor `commit_request` opens a savepoint of
 its own, so there is no sibling to protect and the plain queue-on-`Session.info` /
 drain-`after_commit` / discard-`after_soft_rollback` shape is the whole of what "simplest
 thing that works" asks for here. Context is built EAGERLY, before the commit that queues
@@ -31,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -57,6 +56,7 @@ from app.models.project_so import (
     RESERVE_REQUESTED,
     RESERVE_RESERVED,
 )
+from app.services.certificate_service import today_malaysia
 from app.services.error_handler import AppException
 
 logger = logging.getLogger(__name__)
@@ -86,16 +86,32 @@ def _dec(value: Any) -> Decimal:
     return parsed if parsed.is_finite() else _ZERO
 
 
+def as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """The reserve tables' timestamps are `TIMESTAMP` without time zone and hold naive
+    UTC (`datetime.utcnow()`; no migration wanted to change the columns). Tagging them
+    UTC on the way out makes the wire carry an offset, so the browser converts to local
+    time instead of printing UTC as if it were local - rows stored before this fix
+    included."""
+    if value is None or not isinstance(value, datetime):
+        return value
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
 def _qty_str(value: Any) -> str:
     """`50`, never `50.0000` - `_qty_str` everywhere else in this domain."""
     return format(_dec(value).normalize(), "f")
 
 
 def _fmt_date(value) -> Optional[str]:
+    """dd/mm/yyyy as the Malaysia calendar has it: a stored timestamp is naive UTC, so
+    it moves to Malaysia time first (`pdf_render.in_malaysia`, the shared reader); a
+    plain `date` (a delivery date) carries no instant and prints as written."""
+    from app.services.pdf_render import in_malaysia
+
     if value is None:
         return None
     if isinstance(value, datetime):
-        value = value.date()
+        value = in_malaysia(value).date()
     return value.strftime("%d/%m/%Y")
 
 
@@ -182,6 +198,61 @@ def _actor_name(db: Session, user_id: Optional[str]) -> Optional[str]:
     return user.name or user.email
 
 
+def _strict_qty(value: Any, row: OrderInquiryRow) -> Decimal:
+    """A commit's own quantity, strictly: `_dec` reads a non-finite or malformed value
+    as 0, which would pass as a legal "Reserve 0" here - so this refuses it instead
+    (the schema's `_finite_qty` is the route's gate; this is the service's own)."""
+    try:
+        parsed = value if isinstance(value, Decimal) else Decimal(str(value))
+    except Exception:  # noqa: BLE001 - a malformed number is a 422, not a crash
+        parsed = None
+    # Security re-review: `Numeric(15,4)` holds at most 11 integer digits and 4
+    # decimals; outside that the write would round (0.00001 reads 0) or overflow (a 500).
+    # `adjusted()` is checked first so `quantize` never sees a value it cannot hold.
+    if (
+        parsed is None
+        or not parsed.is_finite()
+        or parsed.adjusted() > 10
+        or parsed != parsed.quantize(Decimal("0.0001"))
+    ):
+        raise AppException(
+            422,
+            f"{_row_label(row)}: enter a quantity with at most 4 decimal places.",
+            code="reserve_qty_invalid",
+        )
+    return parsed
+
+
+def _checked_answer(
+    row: OrderInquiryRow,
+    entry: Dict[str, Any],
+    *,
+    cap: Decimal,
+    reason_below: Decimal,
+    out_of_range_code: str,
+    noun: str,
+) -> tuple:
+    """The ONE validator both `commit_request` lists share (6e.4, reviewer S9): the
+    quantity sits in `0..cap`, and a reason is required whenever it is short of
+    `reason_below`. Returns `(qty, reason_clean)`."""
+    qty = _strict_qty(entry.get("qty_reserved"), row)
+    if qty < _ZERO or qty > cap:
+        raise AppException(
+            422,
+            f"{_row_label(row)}: {noun} quantity must be between 0 and {_qty_str(cap)}.",
+            code=out_of_range_code,
+        )
+    reason_clean = (entry.get("reason") or "").strip() or None
+    if qty < reason_below and not reason_clean:
+        raise AppException(
+            422,
+            f"{_row_label(row)}: a reason is required when the {noun} quantity is short "
+            "of requested.",
+            code="reserve_reason_required",
+        )
+    return qty, reason_clean
+
+
 def _open_request_row_ids(db: Session, row_ids: Sequence[str]) -> set:
     if not row_ids:
         return set()
@@ -193,6 +264,9 @@ def _open_request_row_ids(db: Session, row_ids: Sequence[str]) -> set:
         )
         .filter(
             OrderInquiryReserveRequestRow.row_id.in_(list(row_ids)),
+            # 6e.4 (reviewer S4): an ANSWERED row of a request still open for its
+            # siblings is not open itself - its balance may be requested again.
+            OrderInquiryReserveRequestRow.qty_reserved.is_(None),
             OrderInquiryReserveRequest.state == RESERVE_REQUESTED,
         )
         .all()
@@ -262,7 +336,80 @@ def _build_context(
         "actor": _person(db, actor_user_id),
         "raiser": _person(db, inquiry.raised_by) if inquiry is not None else None,
         "requester": _person(db, request.requested_by),
-        "today": date.today().strftime("%d/%m/%Y"),
+        "today": today_malaysia().strftime("%d/%m/%Y"),
+    }
+
+
+def _build_commit_context(
+    db: Session,
+    request: OrderInquiryReserveRequest,
+    touched: Sequence[Dict[str, Any]],
+    *,
+    open_row_count: int,
+    row_count: int,
+    actor_user_id: Optional[str],
+) -> Dict[str, Any]:
+    """`commit_request`'s own dispatch context (6e.1) - `reserve.rows` is ONLY the rows
+    THIS call touched (reserved or amended), never the whole request (`_build_context`'s
+    own shape, which the request/completion-era dispatches still use). Each row entry
+    carries `balance` (the plan's own word - what is left to buy AFTER this call, read
+    fresh off the row/links once every write above has landed) rather than `_row_context`'s
+    `remaining` (read at a different moment for the other two dispatches); `remaining` is
+    ALSO carried, same value, so the one seeded reserved-mail template's existing
+    `row.remaining` (its BALANCE column) keeps rendering unchanged."""
+    from app.services.automation_triggers import build_order_inquiry_link
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    inquiry = (
+        db.query(OrderInquiry).filter(OrderInquiry.id == request.order_inquiry_id).first()
+    )
+    facts: Dict[str, Any] = {}
+    if inquiry is not None:
+        facts = ProjectOrderInquiryService(db)._handover_order_facts(
+            inquiry.project_sales_order_id
+        )
+
+    rows_ctx = []
+    for item in touched:
+        rr = item["rr"]
+        row = item["row"]
+        balance = _qty_str(_remaining(db, row))
+        rows_ctx.append(
+            {
+                "item_code": row.item_code,
+                "delivery_date": _fmt_date(row.delivery_date),
+                "qty": _qty_str(row.qty),
+                "qty_requested": _qty_str(rr.qty_requested),
+                "location": _warehouse_code(db, rr.warehouse_id),
+                "qty_reserved": _qty_str(rr.qty_reserved) if rr.qty_reserved is not None else None,
+                "balance": balance,
+                "remaining": balance,
+                "reason": rr.reason,
+            }
+        )
+
+    link = f"{build_order_inquiry_link(request.order_inquiry_id)}?reserve={request.id}"
+    reserve = {
+        "inquiry_no": inquiry.inquiry_no if inquiry is not None else None,
+        "ordinal": request.ordinal,
+        "so_number": facts.get("so_number"),
+        "customer": facts.get("customer"),
+        "project": facts.get("project"),
+        "requested_by": _person(db, request.requested_by),
+        "requested_at": _fmt_date(request.requested_at),
+        "note": request.note,
+        "rows": rows_ctx,
+        "row_count": row_count,
+        "open_row_count": open_row_count,
+        "state": request.state,
+        "link": link,
+    }
+    return {
+        "reserve": reserve,
+        "actor": _person(db, actor_user_id),
+        "raiser": _person(db, inquiry.raised_by) if inquiry is not None else None,
+        "requester": _person(db, request.requested_by),
+        "today": today_malaysia().strftime("%d/%m/%Y"),
     }
 
 
@@ -431,9 +578,12 @@ class OrderInquiryReserveService:
         computed at the route for an immediate cancel, and recomputed at commit time for
         the deferred one (`record_actions.py`) - never re-derived here, so this method
         stays a pure permission-free ownership check."""
+        # 6e.4 (security S2): locked, so a cancel and a commit on the same request
+        # serialize - the commit re-reads the state under its own lock.
         request = (
             self.db.query(OrderInquiryReserveRequest)
             .filter(OrderInquiryReserveRequest.id == request_id)
+            .with_for_update()
             .first()
         )
         if request is None:
@@ -442,6 +592,8 @@ class OrderInquiryReserveService:
                 "This reserve request no longer exists.",
                 code="reserve_request_not_found",
             )
+        # 6e.4 (security S3): allowed while partly answered - only the still-open rows
+        # are withdrawn; answered rows keep their links and may still be amended.
         if request.state != RESERVE_REQUESTED:
             raise AppException(
                 409,
@@ -463,346 +615,398 @@ class OrderInquiryReserveService:
         self.db.flush()
         return request
 
-    # -------------------------------------------------- 3.3 / 6c F2: reserve, per row
+    # --------------------------------------------------- 6e.1 / 6e.4: commit, one call
 
-    def reserve_row(
+    def commit_request(
         self,
         *,
-        request_id: str,
-        row_id: str,
-        warehouse_id: Optional[str],
-        qty_reserved: Any,
-        reason: Optional[str],
+        inquiry_id: str,
+        reserves: Sequence[Dict[str, Any]],
+        amendments: Sequence[Dict[str, Any]],
         actor_user_id: Optional[str],
-    ) -> OrderInquiryReserveRequestRow:
-        """Eling answers ONE row of a request (`PLAN-oi-request-cs-reserve.md` section
-        6c, F2 - supersedes the old all-rows 3.3). The request stays `requested` while
-        any row is unanswered and becomes `reserved` - with exactly ONE
-        `order_inquiry_reserved` dispatch, naming every row of the request - on the
-        answer that completes it. `row_id` is `OrderInquiryRow.id`, never the request
-        row's own id (module docstring, NAMED ASSUMPTION 1)."""
+    ) -> List[OrderInquiryReserveRequest]:
+        """CS commits every staged line of ONE order inquiry in ONE call, ONE
+        transaction (`PLAN-oi-request-cs-reserve.md` 6e.1, re-keyed by 6e.4). The caller
+        names order-inquiry rows only; each is resolved HERE, inside `inquiry_id`:
+        a `reserves` row to its OPEN request row, an `amendments` row to its LATEST
+        answered request row (which may sit on a finished or cancelled request, 6e.4
+        cancel semantics). Everything is validated before anything is written; one
+        `order_inquiry_reserved` dispatch is queued per request touched, naming only
+        that request's own touched rows. Returns the touched requests, ordinal order."""
         from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
-        request = (
-            self.db.query(OrderInquiryReserveRequest)
-            .filter(OrderInquiryReserveRequest.id == request_id)
-            .first()
-        )
-        if request is None:
+        reserves = list(reserves or [])
+        amendments = list(amendments or [])
+        if not reserves and not amendments:
             raise AppException(
-                404,
-                "This reserve request no longer exists.",
-                code="reserve_request_not_found",
+                422,
+                "Select at least one line to reserve or amend.",
+                code="reserve_commit_empty",
             )
-        if request.state == RESERVE_CANCELLED:
-            raise AppException(
-                409,
-                "This reserve request is no longer open.",
-                code="reserve_request_not_open",
-            )
+        # 6e.4 (AC-RS-76c): a row named twice is refused before anything is read.
+        row_ids = [str(entry["row_id"]) for entry in reserves] + [
+            str(entry["row_id"]) for entry in amendments
+        ]
+        seen: set = set()
+        for row_id in row_ids:
+            if row_id in seen:
+                # Named by item code when the row loads (6e.4 re-review); a ghost id
+                # still reads as itself.
+                named = (
+                    self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).first()
+                )
+                label = _row_label(named) if named is not None else f"Row {row_id}"
+                raise AppException(
+                    422,
+                    f"{label} is named more than once in this commit.",
+                    code="reserve_commit_duplicate_row",
+                )
+            seen.add(row_id)
 
-        # SF-9 (security review): `.with_for_update()` closes the lost-update race - two
-        # concurrent reserves on the SAME request row used to both read `qty_reserved is
-        # None`, both pass, and both insert their own link. This lock serializes the two
-        # transactions on this row, so the loser re-reads it already answered and 409s on
-        # the guard below, the same shape `create_request`'s ordinal race already used.
-        rr = (
-            self.db.query(OrderInquiryReserveRequestRow)
-            .filter(
-                OrderInquiryReserveRequestRow.request_id == request.id,
-                OrderInquiryReserveRequestRow.row_id == row_id,
+        inquiry = self.db.query(OrderInquiry).filter(OrderInquiry.id == inquiry_id).first()
+        if inquiry is None:
+            raise AppException(
+                404, "This order inquiry no longer exists.", code="order_inquiry_not_found"
             )
+        rows_by_id = {
+            row.id: row
+            for row in self.db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.id.in_(row_ids))
+            .all()
+        }
+        for row_id in row_ids:
+            row = rows_by_id.get(row_id)
+            if row is None or str(row.order_inquiry_id) != str(inquiry.id):
+                raise AppException(
+                    404,
+                    "That line is not part of this order inquiry.",
+                    code="reserve_commit_row_not_found",
+                )
+
+        # ---- resolve each row to its request row (unlocked read; re-checked below) ----
+        reserve_rr_ids: Dict[str, str] = {}
+        for entry in reserves:
+            row = rows_by_id[str(entry["row_id"])]
+            open_rr = (
+                self.db.query(OrderInquiryReserveRequestRow)
+                .join(
+                    OrderInquiryReserveRequest,
+                    OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+                )
+                .filter(
+                    OrderInquiryReserveRequestRow.row_id == row.id,
+                    OrderInquiryReserveRequestRow.qty_reserved.is_(None),
+                    OrderInquiryReserveRequest.state == RESERVE_REQUESTED,
+                )
+                .order_by(OrderInquiryReserveRequest.ordinal.desc())
+                .first()
+            )
+            if open_rr is None:
+                raise AppException(
+                    409,
+                    f"{_row_label(row)} has no open reserve request to answer.",
+                    code="reserve_commit_no_open_request",
+                )
+            reserve_rr_ids[row.id] = open_rr.id
+        # 6e.4 "Amend edits the LINE's net": every answered request row of the line,
+        # newest request first - a decrease releases in this order, an increase lands
+        # on the first (the latest answered).
+        amend_rr_ids: Dict[str, List[str]] = {}
+        for entry in amendments:
+            row = rows_by_id[str(entry["row_id"])]
+            answered = (
+                self.db.query(OrderInquiryReserveRequestRow.id)
+                .join(
+                    OrderInquiryReserveRequest,
+                    OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+                )
+                .filter(
+                    OrderInquiryReserveRequestRow.row_id == row.id,
+                    OrderInquiryReserveRequestRow.qty_reserved.isnot(None),
+                )
+                .order_by(OrderInquiryReserveRequest.ordinal.desc())
+                .all()
+            )
+            if not answered:
+                raise AppException(
+                    422,
+                    f"{_row_label(row)} has not been reserved yet - answer it first.",
+                    code="reserve_amend_not_reserved",
+                )
+            amend_rr_ids[row.id] = [rr_id for (rr_id,) in answered]
+
+        # ---- lock: requests first, then request rows, each ordered by id (6e.4) ----
+        all_rr_ids = sorted(
+            set(reserve_rr_ids.values())
+            | {rr_id for rr_ids in amend_rr_ids.values() for rr_id in rr_ids}
+        )
+        request_ids = sorted(
+            {
+                request_id
+                for (request_id,) in self.db.query(OrderInquiryReserveRequestRow.request_id)
+                .filter(OrderInquiryReserveRequestRow.id.in_(all_rr_ids))
+                .all()
+            }
+        )
+        requests_by_id = {
+            request.id: request
+            for request in self.db.query(OrderInquiryReserveRequest)
+            .filter(OrderInquiryReserveRequest.id.in_(request_ids))
+            .order_by(OrderInquiryReserveRequest.id.asc())
             .with_for_update()
-            .first()
-        )
-        if rr is None:
-            raise AppException(
-                404,
-                "That row is not part of this reserve request.",
-                code="reserve_request_row_not_found",
-            )
-        if rr.qty_reserved is not None:
-            raise AppException(
-                409,
-                "This row has already been answered.",
-                code="reserve_request_row_already_answered",
-            )
+            .populate_existing()
+            .all()
+        }
+        rr_by_id = {
+            rr.id: rr
+            for rr in self.db.query(OrderInquiryReserveRequestRow)
+            .filter(OrderInquiryReserveRequestRow.id.in_(all_rr_ids))
+            .order_by(OrderInquiryReserveRequestRow.id.asc())
+            .with_for_update()
+            .populate_existing()
+            .all()
+        }
 
-        row = self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == rr.row_id).first()
-        if row is None:
-            raise AppException(
-                409,
-                "This request's row no longer exists.",
-                code="reserve_request_row_missing",
-            )
-
-        # SF-5 (round 1, carried over): `qty_requested` is frozen at REQUEST time - a
-        # PO/SPO link placed on the row afterwards, before Eling answers, lowers what
-        # is actually left. The cap is the SMALLER of the two.
-        live_remaining = _remaining(self.db, row)
-        cap = min(_dec(rr.qty_requested), live_remaining)
-        qty_reserved_dec = _dec(qty_reserved)
-        if qty_reserved_dec < _ZERO or qty_reserved_dec > cap:
-            raise AppException(
-                422,
-                f"{_row_label(row)}: reserved quantity must be between 0 and "
-                f"{_qty_str(cap)}.",
-                code="reserve_qty_out_of_range",
-            )
-        reason_clean = (reason or "").strip() or None
-        # R2's "short of the request" reads against the row's own LIVE cap, not the
-        # frozen `qty_requested`: reserving everything that is actually still left is
-        # not a choice Eling made to explain, even though it reads short of what was
-        # first asked.
-        if qty_reserved_dec < cap and not reason_clean:
-            raise AppException(
-                422,
-                f"{_row_label(row)}: a reason is required when reserving less than "
-                "requested.",
-                code="reserve_reason_required",
-            )
-        warehouse_id_final = warehouse_id or rr.warehouse_id
-        warehouse_id_final = _validated_warehouse_id(
-            self.db, warehouse_id_final, _row_label(row)
-        )
-
-        rr.qty_reserved = qty_reserved_dec
-        rr.reason = reason_clean
-        rr.warehouse_id = warehouse_id_final
-        if qty_reserved_dec > _ZERO:
-            code = _warehouse_code(self.db, warehouse_id_final) or ""
-            self.db.add(
-                OrderInquiryLink(
-                    id=str(uuid.uuid4()),
-                    company_id=row.company_id,
-                    row_id=row.id,
-                    reserve_request_row_id=rr.id,
-                    document=f"Reserved @ {code}",
-                    qty=qty_reserved_dec,
-                    linked_by=actor_user_id,
-                    auto=False,
+        # ---- validate everything; write nothing until every entry passes ----
+        prepared_reserves: List[tuple] = []
+        for entry in reserves:
+            row = rows_by_id[str(entry["row_id"])]
+            rr = rr_by_id[reserve_rr_ids[row.id]]
+            request = requests_by_id[rr.request_id]
+            # Re-checked under the lock: another commit or a cancel may have landed
+            # between the resolving read above and the lock.
+            if request.state != RESERVE_REQUESTED or rr.qty_reserved is not None:
+                raise AppException(
+                    409,
+                    f"{_row_label(row)} has no open reserve request to answer.",
+                    code="reserve_commit_no_open_request",
                 )
+            cap = min(_dec(rr.qty_requested), _remaining(self.db, row))
+            qty, reason_clean = _checked_answer(
+                row,
+                entry,
+                cap=cap,
+                reason_below=cap,
+                out_of_range_code="reserve_qty_out_of_range",
+                noun="reserved",
             )
-            self.db.add(
-                OrderInquiryReserveEvent(
-                    id=str(uuid.uuid4()),
-                    company_id=row.company_id,
-                    reserve_request_row_id=rr.id,
-                    kind=RESERVE_EVENT_RESERVED,
-                    qty=qty_reserved_dec,
-                    warehouse_id=warehouse_id_final,
-                    note=reason_clean,
-                    actor_id=actor_user_id,
-                    # Explicit - see `create_request`'s own note on `requested_at`.
-                    created_at=datetime.utcnow(),
+            warehouse_id = entry.get("warehouse_id") or rr.warehouse_id
+            warehouse_id = _validated_warehouse_id(self.db, warehouse_id, _row_label(row))
+            prepared_reserves.append((rr, row, qty, reason_clean, warehouse_id))
+
+        prepared_amendments: List[tuple] = []
+        for entry in amendments:
+            row = rows_by_id[str(entry["row_id"])]
+            answered = [
+                rr_by_id[rr_id]
+                for rr_id in amend_rr_ids[row.id]
+                if rr_by_id[rr_id].qty_reserved is not None
+            ]
+            if not answered:
+                raise AppException(
+                    422,
+                    f"{_row_label(row)} has not been reserved yet - answer it first.",
+                    code="reserve_amend_not_reserved",
                 )
+            links_by_rr = {
+                link.reserve_request_row_id: link
+                for link in self.db.query(OrderInquiryLink)
+                .filter(OrderInquiryLink.reserve_request_row_id.in_([rr.id for rr in answered]))
+                .all()
+            }
+            current_net = sum((_dec(link.qty) for link in links_by_rr.values()), _ZERO)
+            new_net = _strict_qty(entry.get("qty_reserved"), row)
+            # 6e.4 (security N2): a no-op is skipped outright - no event, no mail, and
+            # the reason on file is left as it was.
+            if new_net == current_net:
+                continue
+            # The line may grow by what it still has open, never past its own qty.
+            cap = current_net + _remaining(self.db, row)
+            # What the line has asked for, counting a later balance request once: the
+            # net kept on every earlier answered row plus the latest row's own ask,
+            # capped at the line's qty (36 asked / 10 got, then 26 asked = 36, not 62).
+            total_requested = min(
+                sum((_dec(rr.qty_reserved) for rr in answered[1:]), _ZERO)
+                + _dec(answered[0].qty_requested),
+                _dec(row.qty),
             )
+            new_net, reason_clean = _checked_answer(
+                row,
+                entry,
+                cap=cap,
+                reason_below=total_requested,
+                out_of_range_code="reserve_amend_qty_out_of_range",
+                noun="amended",
+            )
+            prepared_amendments.append((row, answered, links_by_rr, current_net, new_net, reason_clean))
+
+        # ---- everything validated - now write ----
+        # Nit N-a: row id order, so two concurrent commits on one inquiry take the row
+        # locks `refresh_link_state` needs in the same order (no deadlock).
+        prepared_reserves.sort(key=lambda item: str(item[1].id))
+        prepared_amendments.sort(key=lambda item: str(item[0].id))
+        refresher = ProjectOrderInquiryService(self.db)
+        touched_by_request: Dict[str, List[Dict[str, Any]]] = {}
+
+        for rr, row, qty, reason_clean, warehouse_id in prepared_reserves:
+            rr.qty_reserved = qty
+            rr.reason = reason_clean
+            rr.warehouse_id = warehouse_id
+            if qty > _ZERO:
+                code = _warehouse_code(self.db, warehouse_id) or ""
+                self.db.add(
+                    OrderInquiryLink(
+                        id=str(uuid.uuid4()),
+                        company_id=row.company_id,
+                        row_id=row.id,
+                        reserve_request_row_id=rr.id,
+                        document=f"Reserved @ {code}",
+                        qty=qty,
+                        linked_by=actor_user_id,
+                        auto=False,
+                    )
+                )
+            # 6e.4 (security N3): Reserve 0 writes its event too, so History shows it.
+            self._add_event(row, rr, RESERVE_EVENT_RESERVED, qty, warehouse_id, reason_clean, actor_user_id)
+            self._flush_link()
+            refresher.refresh_link_state([row])
+            touched_by_request.setdefault(rr.request_id, []).append({"rr": rr, "row": row})
+
+        for row, answered, links_by_rr, current_net, new_net, reason_clean in prepared_amendments:
+            touched_rrs: List[OrderInquiryReserveRequestRow] = []
+            if new_net < current_net:
+                # Release newest request first, one `unreserved` event per link touched.
+                release = current_net - new_net
+                for rr in answered:
+                    if release <= _ZERO:
+                        break
+                    link = links_by_rr.get(rr.id)
+                    if link is None or _dec(link.qty) <= _ZERO:
+                        continue
+                    take = min(_dec(link.qty), release)
+                    left = _dec(link.qty) - take
+                    if left > _ZERO:
+                        link.qty = left
+                    else:
+                        self.db.delete(link)
+                    rr.qty_reserved = _dec(rr.qty_reserved) - take
+                    self._add_event(
+                        row, rr, RESERVE_EVENT_UNRESERVED, take, rr.warehouse_id, reason_clean, actor_user_id
+                    )
+                    release -= take
+                    touched_rrs.append(rr)
+                # The reason lands on the row whose link was touched last.
+                touched_rrs[-1].reason = reason_clean
+            else:
+                # Raise the latest answered request row's link (re-created from 0).
+                rr = answered[0]
+                delta = new_net - current_net
+                link = links_by_rr.get(rr.id)
+                if link is not None:
+                    link.qty = _dec(link.qty) + delta
+                else:
+                    code = _warehouse_code(self.db, rr.warehouse_id) or ""
+                    self.db.add(
+                        OrderInquiryLink(
+                            id=str(uuid.uuid4()),
+                            company_id=row.company_id,
+                            row_id=row.id,
+                            reserve_request_row_id=rr.id,
+                            document=f"Reserved @ {code}",
+                            qty=delta,
+                            linked_by=actor_user_id,
+                            auto=False,
+                        )
+                    )
+                rr.qty_reserved = _dec(rr.qty_reserved) + delta
+                rr.reason = reason_clean
+                self._add_event(
+                    row, rr, RESERVE_EVENT_RESERVED, delta, rr.warehouse_id, reason_clean, actor_user_id
+                )
+                touched_rrs.append(rr)
+            self._flush_link()
+            refresher.refresh_link_state([row])
+            for rr in touched_rrs:
+                touched_by_request.setdefault(rr.request_id, []).append({"rr": rr, "row": row})
+
+        # ---- per request touched: complete it when its last row is answered, queue
+        # its own dispatch ----
+        touched_requests = sorted(
+            (requests_by_id[request_id] for request_id in touched_by_request),
+            key=lambda request: request.ordinal,
+        )
+        for request in touched_requests:
+            still_open = (
+                self.db.query(OrderInquiryReserveRequestRow)
+                .filter(
+                    OrderInquiryReserveRequestRow.request_id == request.id,
+                    OrderInquiryReserveRequestRow.qty_reserved.is_(None),
+                )
+                .count()
+            )
+            if request.state == RESERVE_REQUESTED and still_open == 0:
+                request.state = RESERVE_RESERVED
+                request.reserved_by = actor_user_id
+                request.reserved_at = datetime.utcnow()
+                self.db.flush()
+            total_row_count = (
+                self.db.query(OrderInquiryReserveRequestRow)
+                .filter(OrderInquiryReserveRequestRow.request_id == request.id)
+                .count()
+            )
+            context = _build_commit_context(
+                self.db,
+                request,
+                touched_by_request[request.id],
+                # A cancelled request's open rows were withdrawn, not left to reserve.
+                open_row_count=still_open if request.state == RESERVE_REQUESTED else 0,
+                row_count=total_row_count,
+                actor_user_id=actor_user_id,
+            )
+            self.db.info.setdefault(_RESERVED_PENDING_KEY, []).append(
+                {"context": context, "source_id": str(request.id)}
+            )
+        # Empty when every entry was a no-op: the page reads that as "Nothing to change".
+        return touched_requests
+
+    def _add_event(
+        self,
+        row: OrderInquiryRow,
+        rr: OrderInquiryReserveRequestRow,
+        kind: str,
+        qty: Decimal,
+        warehouse_id: Optional[str],
+        note: Optional[str],
+        actor_user_id: Optional[str],
+    ) -> None:
+        self.db.add(
+            OrderInquiryReserveEvent(
+                id=str(uuid.uuid4()),
+                company_id=row.company_id,
+                reserve_request_row_id=rr.id,
+                kind=kind,
+                qty=qty,
+                warehouse_id=warehouse_id,
+                note=note,
+                actor_id=actor_user_id,
+                # Explicit - see `create_request`'s own note on `requested_at`.
+                created_at=datetime.utcnow(),
+            )
+        )
+
+    def _flush_link(self) -> None:
+        """SF-9: the row lock closes the race for two real concurrent commits;
+        `uq_order_inquiry_links_reserve_request_row` is the backstop for a request row
+        read stale past the guard - a 409, never an unhandled 500."""
         try:
             self.db.flush()
         except IntegrityError:
-            # SF-9: the `.with_for_update()` lock above closes the race for two real
-            # concurrent requests, but this partial unique index
-            # (`uq_order_inquiry_links_reserve_request_row`) is the backstop for a
-            # request row read stale (the ORM guard already passed on a snapshot that
-            # predates another writer's link) - same shape as `create_request`'s own
-            # ordinal collision.
             self.db.rollback()
             raise AppException(
                 409,
                 "This row has already been answered.",
                 code="reserve_request_row_already_answered",
             )
-        if qty_reserved_dec > _ZERO:
-            ProjectOrderInquiryService(self.db).refresh_link_state([row])
-            self.db.flush()
-
-        # F2: the request completes the moment its LAST row is answered - never a
-        # count taken before this row's own answer landed.
-        still_open = (
-            self.db.query(OrderInquiryReserveRequestRow)
-            .filter(
-                OrderInquiryReserveRequestRow.request_id == request.id,
-                OrderInquiryReserveRequestRow.qty_reserved.is_(None),
-            )
-            .count()
-        )
-        if still_open == 0:
-            request.state = RESERVE_RESERVED
-            request.reserved_by = actor_user_id
-            request.reserved_at = datetime.utcnow()
-            self.db.flush()
-
-            all_request_rows = (
-                self.db.query(OrderInquiryReserveRequestRow)
-                .filter(OrderInquiryReserveRequestRow.request_id == request.id)
-                .order_by(OrderInquiryReserveRequestRow.id.asc())
-                .all()
-            )
-            rows_by_id = {
-                order_row.id: order_row
-                for order_row in self.db.query(OrderInquiryRow)
-                .filter(
-                    OrderInquiryRow.id.in_([arr.row_id for arr in all_request_rows])
-                )
-                .all()
-            }
-            pairs = [
-                (arr, rows_by_id[arr.row_id])
-                for arr in all_request_rows
-                if arr.row_id in rows_by_id
-            ]
-            context = _build_context(self.db, request, pairs, actor_user_id=actor_user_id)
-            self.db.info.setdefault(_RESERVED_PENDING_KEY, []).append(
-                {"context": context, "source_id": str(request.id)}
-            )
-        return rr
-
-    # ------------------------------------------------------- 6c F5: unreserve, per row
-
-    def unreserve_row(
-        self,
-        *,
-        request_id: str,
-        row_id: str,
-        qty: Any,
-        note: Optional[str],
-        actor_user_id: Optional[str],
-    ) -> OrderInquiryReserveRequestRow:
-        """Reduces what was reserved on an OI ROW (`PLAN-oi-request-cs-reserve.md`
-        section 6c, F5; re-review finding 1, captain ruling 23 Sep). Its own action,
-        never Unlink (F5's own words: "unlink is unlink, unreserve is unreserve").
-
-        **Scoped to the LINE, not to the one request row named in the URL.** A row
-        can hold reserve links from several requests (R5: reserved then requested
-        again on the balance) - `request_id`/`row_id` are the ACCESS anchor only
-        (the same 404 guard as before, proving the caller may act on this row at
-        all), never the release's own scope. The release itself walks EVERY link
-        the row still carries, across every request that has ever answered it,
-        newest request first then newest link first - releasing "the last thing put
-        on" before reaching further back - reducing each link and deleting it at
-        net 0, writing one `unreserved` event per link touched (its own qty, tied to
-        the request row whose own link it came off) and recomputing `qty_reserved`
-        on each touched request row so it keeps reading its own link's remaining
-        qty rather than a frozen answer. The bound a 422 names is the row's own
-        AGGREGATE net across every link, not the one link tied to the URL's own
-        request. No email either way."""
-        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
-
-        request = (
-            self.db.query(OrderInquiryReserveRequest)
-            .filter(OrderInquiryReserveRequest.id == request_id)
-            .first()
-        )
-        if request is None:
-            raise AppException(
-                404,
-                "This reserve request no longer exists.",
-                code="reserve_request_not_found",
-            )
-
-        # SF-9: the same lost-update race as `reserve_row` (a lock, not a rewrite of the
-        # unreserve arithmetic) - two concurrent unreserves on this row would otherwise
-        # both read the same `net_reserved` and both write `net - qty` off it. This is
-        # the ACCESS anchor only now - it proves `request_id`/`row_id` is a legitimate,
-        # company-scoped pair to act on, never the release's own scope (below).
-        anchor = (
-            self.db.query(OrderInquiryReserveRequestRow)
-            .filter(
-                OrderInquiryReserveRequestRow.request_id == request.id,
-                OrderInquiryReserveRequestRow.row_id == row_id,
-            )
-            .with_for_update()
-            .first()
-        )
-        if anchor is None:
-            raise AppException(
-                404,
-                "That row is not part of this reserve request.",
-                code="reserve_request_row_not_found",
-            )
-
-        row = self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).first()
-        if row is None:
-            raise AppException(
-                409,
-                "This request's row no longer exists.",
-                code="reserve_request_row_missing",
-            )
-
-        # Line scope: every (request row, link, request) this OI ROW still carries,
-        # across EVERY request that has ever answered it - not only the anchor's
-        # own. Newest request first (ordinal desc), then newest link first
-        # (created_at desc). `.with_for_update()` locks every row this query joins,
-        # the same SF-9 backstop as before, now widened to the whole set a release
-        # may touch.
-        pairs = (
-            self.db.query(OrderInquiryReserveRequestRow, OrderInquiryLink, OrderInquiryReserveRequest)
-            .join(
-                OrderInquiryLink,
-                OrderInquiryLink.reserve_request_row_id == OrderInquiryReserveRequestRow.id,
-            )
-            .join(
-                OrderInquiryReserveRequest,
-                OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
-            )
-            .filter(OrderInquiryReserveRequestRow.row_id == row_id)
-            .order_by(
-                OrderInquiryReserveRequest.ordinal.desc(),
-                OrderInquiryLink.created_at.desc(),
-            )
-            .with_for_update()
-            .all()
-        )
-        net_reserved_total = sum((_dec(link.qty) for _, link, _ in pairs), _ZERO)
-        qty_dec = _dec(qty)
-        if qty_dec <= _ZERO or qty_dec > net_reserved_total:
-            raise AppException(
-                422,
-                f"{_row_label(row)}: unreserve quantity must be between 0 and "
-                f"{_qty_str(net_reserved_total)} (the net reserved).",
-                code="reserve_unreserve_qty_out_of_range",
-            )
-        note_clean = (note or "").strip() or None
-
-        remaining_to_release = qty_dec
-        for rr, link, _req in pairs:
-            if remaining_to_release <= _ZERO:
-                break
-            link_qty = _dec(link.qty)
-            release_amount = min(link_qty, remaining_to_release)
-            remaining_link_qty = link_qty - release_amount
-            # `OrderInquiryLink` carries no `warehouse_id` of its own (`document` is
-            # its only place-name); the ANSWERING request row's own `warehouse_id`
-            # is Eling's answer and is what this event's own "@ pool" reads.
-            warehouse_id_for_event = rr.warehouse_id
-            if remaining_link_qty > _ZERO:
-                link.qty = remaining_link_qty
-            else:
-                self.db.delete(link)
-            # Recomputed to the link's own remaining qty: once a LATER unreserve
-            # call (anchored anywhere on the row) has eaten into this request row's
-            # own answer, `qty_reserved` must stop reading the frozen original.
-            rr.qty_reserved = remaining_link_qty
-            self.db.add(
-                OrderInquiryReserveEvent(
-                    id=str(uuid.uuid4()),
-                    company_id=row.company_id,
-                    reserve_request_row_id=rr.id,
-                    kind=RESERVE_EVENT_UNRESERVED,
-                    qty=release_amount,
-                    warehouse_id=warehouse_id_for_event,
-                    note=note_clean,
-                    actor_id=actor_user_id,
-                    # Explicit - see `create_request`'s own note on `requested_at`.
-                    created_at=datetime.utcnow(),
-                )
-            )
-            remaining_to_release -= release_amount
-
-        self.db.flush()
-        ProjectOrderInquiryService(self.db).refresh_link_state([row])
-        self.db.flush()
-        return anchor
 
     # ----------------------------------------------------------- 6c F3: per-row history
 
@@ -901,6 +1105,8 @@ class OrderInquiryReserveService:
         entries.sort(
             key=lambda entry: entry["created_at"] or datetime.min, reverse=True
         )
+        for entry in entries:
+            entry["created_at"] = as_utc(entry["created_at"])
         return entries
 
     # --------------------------------------------------------------- toast-only read

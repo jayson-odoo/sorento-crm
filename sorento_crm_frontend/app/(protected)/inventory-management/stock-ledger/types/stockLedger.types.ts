@@ -22,3 +22,17 @@ export interface StockLedgerEntry {
     warehouse_name: string;
   };
 }
+
+/** Every `transaction_type` the backend writes, as the Type filter offers them. */
+export const STOCK_LEDGER_TRANSACTION_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'AUTOCOUNT_PUSH', label: 'AutoCount push' },
+  { value: 'BULK_IMPORT', label: 'Bulk import' },
+  { value: 'SYSTEM_ADJUSTMENT', label: 'System adjustment' },
+];
+
+const TYPE_LABELS = new Map(STOCK_LEDGER_TRANSACTION_TYPE_OPTIONS.map((o) => [o.value, o.label]));
+
+/** The label for a `transaction_type`; an unknown code reads as itself. */
+export function stockLedgerTypeLabel(type: string): string {
+  return TYPE_LABELS.get(type) ?? type;
+}

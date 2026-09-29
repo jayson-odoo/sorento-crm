@@ -1182,8 +1182,10 @@ def test_re_confirming_the_same_borrow_does_not_stack_a_second_shortfall_row(api
 # --------------------------------------------------------------------------- discontinued
 
 
-def test_a_discontinued_buy_without_a_reason_is_refused(api):
-    """AC-B11/AC-C03: Buy on a discontinued product needs a reason before it may confirm."""
+def test_a_discontinued_buy_without_a_reason_confirms_and_raises_the_oi_row(api):
+    """AC-39: the discontinued-buy-needs-a-reason gate is removed. A Buy on a discontinued
+    product confirms with no `buy_reason`, same as any other Buy, and still raises its
+    Order Inquiry row and an active decision revision."""
     client, world = api
     db = world.db
     discontinued = _product(db, discontinued=True)
@@ -1197,9 +1199,52 @@ def test_a_discontinued_buy_without_a_reason_is_refused(api):
         f"{BASE}/sales-orders/{order.id}/confirm",
         json={"lines": [_line_payload(line.id, buy_qty="15")]},
     )
-    assert response.status_code == 422, response.text
+    assert response.status_code == 200, response.text
     body = response.json()
-    assert any(row["line_no"] == 10 for row in body["failing_lines"])
+    assert body["inquiry_rows_created"] == 1
+
+    from app.models.project_so import SOSupplyDecision
+
+    decisions = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .all()
+    )
+    assert len(decisions) == 1
+    assert decisions[0].revision_no == 1
+    assert decisions[0].state == "active"
+
+
+def test_a_discontinued_buy_without_a_reason_freezes_the_warning_and_a_null_reason(api):
+    """AC-40: the frozen line snapshot still carries the lifecycle warning (it is informational,
+    not a gate), and `buy_reason` freezes as null rather than an empty string when none was
+    given."""
+    client, world = api
+    db = world.db
+    discontinued = _product(db, discontinued=True)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, discontinued, world.own_wh, qty_ordered="15")
+    line = _project_line(db, order, line_no=10, product=discontinued, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="15")]},
+    )
+    assert response.status_code == 200, response.text
+
+    from app.models.project_so import SOSupplyDecision
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .one()
+    )
+    assert len(decision.line_snapshots) == 1
+    snapshot = decision.line_snapshots[0]
+    assert snapshot["lifecycle_warning"] == "This product is discontinued."
+    assert snapshot["buy_reason"] is None
 
 
 def test_a_discontinued_buy_with_a_reason_confirms(api):

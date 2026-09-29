@@ -40,4 +40,4 @@ No migration. No new table, flag, or setting.
 
 ## Out of scope
 
-Undo of a whole confirmation (PR #985), rejected-on-covered as a carried verdict (would need a revision semantics decision), inquiry-covered lines.
+Undo of a whole confirmation (PR #985), rejected-on-covered as a carried verdict (would need a revision semantics decision - decided 22 Sep 2026, see `PLAN-board-reject-on-confirmed-line.md` R3(b): not a carried verdict, an uncover-and-reject in one step), inquiry-covered lines.

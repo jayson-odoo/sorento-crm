@@ -162,6 +162,7 @@ class SupplierNoticeLine(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "supplier_notice_lines"
+    __audit_parent__ = "notice_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     notice_id = Column(

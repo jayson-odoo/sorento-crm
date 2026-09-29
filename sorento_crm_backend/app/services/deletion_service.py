@@ -38,6 +38,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.models.base import company_scope
+from app.models.finance import BillingDocument
 from app.models.inventory import Warehouse
 from app.models.order import Customer
 from app.models.procurement import SPOAllocation, Supplier
@@ -45,6 +47,7 @@ from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
 from app.services.dependent_probe import is_referenced, referrers_of, relation_name
 from app.services.document_ingest_service import CANCELLED, DOCUMENT_SPECS
+from app.services.finance.billing_document_ingest_service import BILLING_DOCUMENTS_ENTITY
 from app.services.integration_reference_service import (
     IntegrationReferenceService,
     is_unclaimed_or_same_source,
@@ -208,11 +211,25 @@ class DeletionService:
                     self.db.rollback()
             return result
 
+        # Billing documents (finance S0): their table is in the `finance` schema, which the
+        # raw-SQL probe and anchor check below address by bare name, and the one thing that
+        # can point at one is another billing document - so a path of their own, sharing
+        # only the batch loop and the dry-run rollback.
+        if entity_type == BILLING_DOCUMENTS_ENTITY:
+            result = DeletionResult(dry_run=dry_run)
+            try:
+                for source_ref in source_refs:
+                    result.records.append(self._delete_billing_document(source_ref))
+            finally:
+                if dry_run:
+                    self.db.rollback()
+            return result
+
         if entity_type not in ENTITY_MODELS:
             raise UnsupportedIngestEntity(
                 f"Unsupported deletion entity {entity_type!r}. "
                 f"Expected one of: {', '.join(sorted(ENTITY_MODELS))}, "
-                f"{SHIPPING_ORDERS_ENTITY}"
+                f"{SHIPPING_ORDERS_ENTITY}, {BILLING_DOCUMENTS_ENTITY}"
             )
 
         result = DeletionResult(dry_run=dry_run)
@@ -285,6 +302,63 @@ class DeletionService:
             )
             return DeletionRecordResult(
                 source_ref=ref, outcome=DeletionOutcome.FAILED, errors={"_": INTERNAL_ERROR_MESSAGE}
+            )
+
+    # ---------------------------------------------------- billing documents
+    def _delete_billing_document(self, source_ref: Any) -> DeletionRecordResult:
+        """Hard delete a billing document with its lines, or cancel it when a credit or debit
+        note still points at it (UAC S0-10, plan 3.3.4).
+
+        A cancelled document stays visible and out of every total, and keeps its reference,
+        so a later re-push finds it rather than creating a second one.
+        """
+        ref = source_ref if isinstance(source_ref, str) else str(source_ref)
+        entity_id: Optional[str] = None
+        savepoint = self.db.begin_nested()
+        try:
+            with company_scope(self.db, frozenset({self.company_id})):
+                entity_id = self.refs.resolve(
+                    entity_type=BILLING_DOCUMENTS_ENTITY, source_ref=ref
+                )
+                doc = self.db.get(BillingDocument, entity_id) if entity_id else None
+                if doc is None or str(doc.company_id) != str(self.company_id):
+                    savepoint.commit()
+                    return DeletionRecordResult(source_ref=ref, outcome=DeletionOutcome.NOT_FOUND)
+
+                referenced = (
+                    self.db.query(BillingDocument.id)
+                    .filter(
+                        BillingDocument.company_id == self.company_id,
+                        BillingDocument.against_document_id == doc.id,
+                    )
+                    .first()
+                    is not None
+                )
+                if referenced:
+                    doc.status = CANCELLED
+                    self.db.flush()
+                    outcome = DeletionOutcome.DEACTIVATED
+                else:
+                    self.db.delete(doc)
+                    self.db.flush()
+                    self.refs.unlink(entity_type=BILLING_DOCUMENTS_ENTITY, entity_id=str(entity_id))
+                    outcome = DeletionOutcome.DELETED
+            savepoint.commit()
+            return DeletionRecordResult(source_ref=ref, outcome=outcome, entity_id=str(entity_id))
+        except Exception:  # noqa: BLE001 - one record's failure, not the batch's
+            if savepoint.is_active:
+                savepoint.rollback()
+            logger.warning(
+                "deletion.record_failed entity=%s source_ref=%s",
+                BILLING_DOCUMENTS_ENTITY,
+                ref,
+                exc_info=True,
+            )
+            return DeletionRecordResult(
+                source_ref=ref,
+                outcome=DeletionOutcome.FAILED,
+                entity_id=str(entity_id) if entity_id else None,
+                errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
     # ------------------------------------------------------------- one record

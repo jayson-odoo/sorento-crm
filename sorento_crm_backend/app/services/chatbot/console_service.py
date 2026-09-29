@@ -11,6 +11,10 @@ process here. The ad-hoc script instead posts to a URL, because ITS whole point 
 whichever backend PROCESS is actually serving traffic, local or remote - an in-process call
 there would silently stop testing the thing it exists to test.
 
+Two named exceptions to the "zero writes outside `chatbot.turns`" claim above exist, each
+stated at its own site rather than folded into this summary: media (below) and the
+`ideate` lane's test turns (#1179, below the media block).
+
 **Deliberately NOT shared code with `scripts/chatbot_console_check.py`.** The two modules'
 shapes look alike - both borrow an envelope, both force the two lane switches on for one
 call and restore them in a `finally`, both honour `previous_conversation_state` /
@@ -47,6 +51,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.models.user import SystemSetting
 from app.services.chatbot import run_turn
 from app.services.chatbot.contracts import BRANCH_KINDS, TurnRequest
+from app.services.chatbot.lanes.escalation import routing_line
 from app.services.error_handler import AppException
 
 # S8a's own key (`ai_prompt_versions.name` for the chatbot's semantic parser), restated
@@ -305,13 +310,25 @@ def _trace_summary(db: Session, turn_id: str | None) -> dict[str, Any]:
         "args_short": None,
         "crossdomain_rungs": [],
         "reveals_dropped": [],
+        "routing_line": None,
     }
     if not turn_id:
         return empty
     # Through the ORM model, not raw SQL - see `_borrow_envelope`'s docstring for why a
     # schema-qualified `chatbot.turns` string is wrong under a test's translated schema.
     row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
-    events = [e for e in ((row.trace if row else None) or []) if isinstance(e, dict) and e.get("kind")]
+    records = [e for e in ((row.trace if row else None) or []) if isinstance(e, dict)]
+    events = [e for e in records if e.get("kind")]
+    # Fix round 3 (the owner's 27 Sep retest): an escalation's draw, one readable line off
+    # its `looked_up` stage, so the console turn says where it went without the trace.
+    routing = next(
+        (
+            (r.get("facts") or {}).get("routing")
+            for r in reversed(records)
+            if r.get("stage") == "looked_up" and isinstance(r.get("facts"), dict)
+        ),
+        None,
+    )
     tool: str | None = None
     args_short: dict[str, Any] | None = None
     crossdomain_rungs: list[str] = []
@@ -332,11 +349,18 @@ def _trace_summary(db: Session, turn_id: str | None) -> dict[str, Any]:
         "args_short": args_short,
         "crossdomain_rungs": [r for r in crossdomain_rungs if r],
         "reveals_dropped": reveals_dropped,
+        "routing_line": routing_line(routing),
     }
 
 
 def _empty_trace_summary() -> dict[str, Any]:
-    return {"tool": None, "args_short": None, "crossdomain_rungs": [], "reveals_dropped": []}
+    return {
+        "tool": None,
+        "args_short": None,
+        "crossdomain_rungs": [],
+        "reveals_dropped": [],
+        "routing_line": None,
+    }
 
 
 def trace_prompt_version(trace: Any) -> int | None:
@@ -481,6 +505,21 @@ def run_console_turn(
 # monthly quota and writes a real ledger row, the same as a WhatsApp photo would.
 # Acceptable for a manual testing tool used sparingly; stated here so it is a known
 # trade-off, not a surprise.
+# --------------------------------------------------------------------------- #
+
+# **Deviation from D14, added #1179 (PR #1182).** A console turn that routes to the
+# `ideate` lane is not a zero-write dry run either, for the same reason media is not:
+# `crm_ideation_turn` is a real business tool, called with `is_test=True` rather than
+# stood in with a placeholder, so ideation is exercisable anywhere but live WhatsApp.
+# One console ideate turn writes: an idea row in the shared service (flagged `is_test`,
+# hidden from the board by default), an `integration_log` row from the
+# `/external/ideation/turn` endpoint, a storage upload when the turn is a media-selection
+# answer (`snapshot_and_caption`, the same real upload a WhatsApp photo pick makes), and
+# spends one real LLM extraction (`extract_ideate_turn`, never stubbed here). Unlike
+# media, the CONTACT's own `respond_contacts.session_vars` stays untouched on a test turn
+# (`ideation_turn_service.handle_turn`'s `is_test` guard) - only the shared-service side
+# writes. Acceptable for the same reason media's exception is: a manual testing tool used
+# sparingly, stated here so it is a known trade-off, not a surprise.
 # --------------------------------------------------------------------------- #
 
 # Console media never claims to BE a respond.io modality string. The real ledger's

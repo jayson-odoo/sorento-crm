@@ -444,9 +444,23 @@ function AuditActivityCard({ data }: { data: AuditActivityHealth | null }) {
       <CardHeader>
         <CardTitle>Audit Activity</CardTitle>
         {data && (
-          <Badge variant="info" appearance="light" size="sm">
-            {data.count_last_24h} / 24h
-          </Badge>
+          <div className="flex items-center gap-2">
+            {(data.missing_trail ?? 0) > 0 && (
+              <Link
+                href={integrationFailedHref('audit', {})}
+                data-testid="health-audit-missing-trail"
+                title={`${data.missing_trail} record(s) saved without their audit trail - view the failures`}
+                className="cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Badge variant="destructive" appearance="light" size="sm">
+                  {data.missing_trail} missing trail
+                </Badge>
+              </Link>
+            )}
+            <Badge variant="info" appearance="light" size="sm">
+              {data.count_last_24h} / 24h
+            </Badge>
+          </div>
         )}
       </CardHeader>
       <CardContent>

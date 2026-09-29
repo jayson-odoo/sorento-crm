@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from decimal import Decimal
 from typing import Annotated, Optional
 
 from fastapi import (
@@ -54,6 +55,7 @@ from app.services.error_handler import (
     handle_validation_error,
 )
 from app.services.uuid_path_param import validate_uuid_path
+from app.services.dealer_kit.pricing import flyer_price
 from app.services.portal_service import (
     PORTAL_ATTACHMENT_TYPE_CODE,
     PortalAuthError,
@@ -86,22 +88,79 @@ def _resolve_portal_token(
         ) from e
 
 
+def _portal_actor(db: Session, resolved: PortalToken, request: Optional[Request]):
+    """The audit actor of a portal token (identity S0, plan 8.1, AC-11, AC-14).
+
+    - a contact with no user: `contact`, no user;
+    - a contact that has a user: `user`, that user;
+    - an admin "view as contact" token: `user`, the contact's user (or none), with the
+      admin as real_user_id and auth_method `impersonation`.
+    """
+    from app.audit_context import AuditActor
+    from app.models.impersonation import ContactImpersonationSession
+    from app.models.user import User
+
+    contact_id = str(resolved.contact_id) if resolved.contact_id else None
+    contact_user_id = None
+    if contact_id:
+        contact_user_id = (
+            db.query(User.id)
+            .filter(User.respond_contact_id == contact_id, User.is_trashed.is_(False))
+            .scalar()
+        )
+    ip = request.client.host if request is not None and request.client else None
+    user_agent = request.headers.get("user-agent") if request is not None else None
+
+    if getattr(resolved, "is_impersonation", False):
+        admin_id = (
+            db.query(ContactImpersonationSession.admin_user_id)
+            .filter(ContactImpersonationSession.portal_token_id == resolved.id)
+            .scalar()
+        )
+        return AuditActor(
+            actor_type="user",
+            user_id=str(contact_user_id) if contact_user_id else None,
+            real_user_id=str(admin_id) if admin_id else None,
+            auth_method="impersonation",
+            contact_id=contact_id,
+            ip_address=ip,
+            user_agent=user_agent,
+        )
+    if contact_user_id:
+        return AuditActor(
+            actor_type="user",
+            user_id=str(contact_user_id),
+            real_user_id=str(contact_user_id),
+            auth_method="portal_token",
+            contact_id=contact_id,
+            ip_address=ip,
+            user_agent=user_agent,
+        )
+    return AuditActor(
+        actor_type="contact",
+        auth_method="portal_token",
+        contact_id=contact_id,
+        ip_address=ip,
+        user_agent=user_agent,
+    )
+
+
 def get_portal_token(
+    request: Request,
     x_portal_token: Annotated[Optional[str], Header(alias="X-Portal-Token")] = None,
     token: Annotated[Optional[str], Query()] = None,
     db: Session = Depends(get_db),
 ) -> PortalToken:
     resolved = _resolve_portal_token(db, x_portal_token, token)
-    # Attribute any audited write in this request to the acting contact (WS2a),
-    # so portal submissions read as the contact's name instead of "System".
-    # Stash on the SHARED db.info (not a contextvar): FastAPI runs this sync
-    # dependency in a different threadpool thread than the path op + flush, so a
-    # contextvar set here wouldn't be visible at flush time. db.info lives on the
-    # Session object (same instance via Depends(get_db)) and survives the thread hop.
-    if resolved.contact_id:
-        db.info["actor_contact_id"] = str(resolved.contact_id)
-    from app.audit_context import set_actor_contact_id
-    set_actor_contact_id(str(resolved.contact_id) if resolved.contact_id else None)
+    # Attribute any audited write in this request to the acting contact / user.
+    # Stamped on the SHARED db.info as well as the contextvar: FastAPI runs this sync
+    # dependency in a different threadpool thread than the path op + flush, so the
+    # contextvar alone would not be visible at flush time (see app.audit_context).
+    from app.audit_context import set_source, stamp_actor
+
+    stamp_actor(_portal_actor(db, resolved, request), db=db, request=request)
+    # The channel, whoever the actor is (an admin viewing as the contact too): #1281 S0.
+    set_source("portal")
     return resolved
 
 
@@ -383,11 +442,18 @@ def portal_impersonation_stop(
 
 
 class ProductLookupItem(BaseModel):
+    # Additive (plan section 16, S2-16): the portal opportunity form's product lines need
+    # the real id (`sales_opportunity_lines.product_id`), not just the printed code the
+    # complaint form's free-text line uses. Named `product_id`, not `id` - this schema's
+    # "id" would read as the lookup ROW's own id, which nothing here has any use for.
+    product_id: Optional[str] = None
     product_code: str
     product_name: Optional[str] = None
     category_id: Optional[str] = None
     category_code: Optional[str] = None
     category_name: Optional[str] = None
+    #: The price the dealer flyer prints; null when the product has none (F7, PR #1296).
+    list_price: Optional[Decimal] = None
 
 
 @router.get("/lookups/products", response_model=list[ProductLookupItem])
@@ -410,11 +476,13 @@ def lookup_products(
     rows = query.order_by(Product.product_code).limit(limit).all()
     return [
         ProductLookupItem(
+            product_id=str(p.id) if p.id else None,
             product_code=p.product_code,
             product_name=p.product_name,
             category_id=str(p.category_id) if p.category_id else None,
             category_code=c.category_code if c else None,
             category_name=c.category_name if c else None,
+            list_price=flyer_price(p.list_price),
         )
         for (p, c) in rows
     ]

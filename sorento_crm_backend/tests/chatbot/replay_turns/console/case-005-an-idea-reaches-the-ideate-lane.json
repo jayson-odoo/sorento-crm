@@ -79,8 +79,19 @@
         "entity_ids": [],
         "focus_after": null,
         "pending": null,
-        "text": "[dry-run: ideation reply not generated]",
-        "tools": []
+        "text": "Here's what I've got so far: Proposed solution - add a dark mode to the dealer portal. Still need: problem statement, impact, department.",
+        "tools": [
+          {
+            "tool": "crm_ideation_turn",
+            "args_keys": [
+              "is_test",
+              "message_text",
+              "respond_io_id",
+              "session_vars",
+              "submitter_name"
+            ]
+          }
+        ]
       },
       "resolutions": {
         "resolutions": [],
@@ -89,12 +100,42 @@
       },
       "source": {
         "db": "sorento_ai_automation_focus_full",
-        "expected_from": "recorded",
+        "expected_from": "hand_built",
         "prompt_version": 20,
         "recorded_at": "2026-09-15T20:47:16.328006+09:00",
-        "turn_id": "a6f77573-444d-4215-a267-8e94211684a5"
+        "turn_id": "a6f77573-444d-4215-a267-8e94211684a5",
+        "note": "#1179 fix round 1 (PR #1182): the ORIGINAL recorded turn ran under the old D14 placeholder and never called crm_ideation_turn at all, so there is no real tool_results to replay - the placeholder-pinned case is exactly what broke CI once the placeholder was removed. This tool_results/envelope pair is hand-built to match what the CURRENT ideate lane actually sends and the shape crm_ideation_turn actually returns (status/reply_text/session_vars), not a literal DB recording; verified green against the current engine."
       },
-      "tool_results": [],
+      "tool_results": [
+        {
+          "tool": "crm_ideation_turn",
+          "args": {
+            "respond_io_id": "437264483",
+            "message_text": "I have an idea for you - please add a dark mode to the dealer portal",
+            "session_vars": {
+              "ideation": null
+            },
+            "submitter_name": "ZZT-437264483",
+            "is_test": true
+          },
+          "envelope": {
+            "status": "collecting",
+            "reply_text": "Here's what I've got so far: Proposed solution - add a dark mode to the dealer portal. Still need: problem statement, impact, department.",
+            "session_vars": {
+              "ideation": {
+                "draft_id": "ZZT-replay-case-005-draft-1",
+                "status": "collecting",
+                "missing": [
+                  "problem",
+                  "impact",
+                  "department"
+                ],
+                "is_test": true
+              }
+            }
+          }
+        }
+      ],
       "verdict": {
         "access_levels": [],
         "broaden_axis": null,

@@ -85,6 +85,11 @@ export function usePull(jobId: string, enabled = true) {
     staleTime: 1000 * 5,
     retry: 1,
     refetchInterval: pullRefetchInterval,
+    // D27: a hidden tab must not freeze progress on screen (23 Sep 2026 incident -
+    // switching tabs stopped this poll, so a build that finished at 07:43 sat idle
+    // until the owner came back at 08:17). React Query skips interval refetches on a
+    // hidden tab by default; this keeps the same 10s cadence regardless.
+    refetchIntervalInBackground: true,
   });
 }
 

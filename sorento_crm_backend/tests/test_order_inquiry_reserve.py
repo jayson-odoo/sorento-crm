@@ -116,6 +116,11 @@ ROW_UNRESERVE_URL = lambda request_id, row_id: (  # noqa: E731
 ROW_HISTORY_URL = lambda request_id, row_id: (  # noqa: E731
     f"{LIST}/reserve-requests/{request_id}/rows/{row_id}/history"
 )
+#: Round 4 (`PLAN-oi-request-cs-reserve.md` 6e.1): the per-row `/reserve` route above
+#: is retired (`test_order_inquiry_reserve_commit.py::test_AC_RS_79_...` pins the 404).
+#: Every test below that used to answer a row through it now goes through the commit
+#: route instead - the same underlying validation, batched.
+COMMIT_URL = lambda inquiry_id: f"{LIST}/{inquiry_id}/reserve-commit"  # noqa: E731
 
 
 # --------------------------------------------------------------------------------- #
@@ -450,11 +455,16 @@ def test_second_request_after_reserved_allowed(api):
         .one()
     )
     reserve_resp = client.post(
-        ROW_RESERVE_URL(request_id, row.id),
+        COMMIT_URL(world.inquiry.id),
         json={
-            "warehouse_id": world.site.id,
-            "qty_reserved": "50",
-            "reason": "BRW only has 50 in stock",
+            "reserves": [
+                {
+                    "row_id": row.id,
+                    "warehouse_id": world.site.id,
+                    "qty_reserved": "50",
+                    "reason": "BRW only has 50 in stock",
+                }
+            ]
         },
     )
     assert reserve_resp.status_code == 200, reserve_resp.text
@@ -469,277 +479,17 @@ def test_second_request_after_reserved_allowed(api):
 
 
 # --------------------------------------------------------------------------------- #
-# RS-6                                                                               #
+# RS-6 to RS-11 - RETIRED. Each pinned the per-row `.../rows/{row_id}/reserve` route's  #
+# OWN request/response contract directly (link write + `refresh_link_state` + one       #
+# dispatch on completion; 0/short/full + reason; over-requested; permission; answering  #
+# the same row twice). `PLAN-oi-request-cs-reserve.md` section 6e.1 (owner round 4, 24  #
+# Sep) retires that route outright - AC-RS-79 pins its own 404 - in favour of the       #
+# batched `POST .../reserve-requests/{id}/commit`, which                                #
+# `test_order_inquiry_reserve_commit.py` covers end to end: link write + refresh_link_  #
+# state + single dispatch (AC-RS-76), completion/conflict/404/empty/atomicity (AC-RS-   #
+# 77), permission (AC-RS-79). RS-9 was already retired the same way, one round earlier  #
+# (F2's per-row answer superseding the even older all-rows 3.3).                        #
 # --------------------------------------------------------------------------------- #
-
-
-def test_reserve_writes_links_and_refreshes_state(api, monkeypatch):
-    client, world = api
-    _register()
-    calls = _captured_dispatches(monkeypatch)
-
-    row = _open_row(world, qty="139")
-    request = client.post(
-        REQUEST_URL(world.inquiry.id),
-        json={"rows": [{"row_id": row.id, "qty_requested": "139"}]},
-    ).json()
-    world.db.commit()
-
-    from app.models.project_so import OrderInquiryReserveRequestRow
-
-    request_row = (
-        world.db.query(OrderInquiryReserveRequestRow)
-        .filter(OrderInquiryReserveRequestRow.row_id == row.id)
-        .one()
-    )
-    response = client.post(
-        ROW_RESERVE_URL(request["id"], row.id),
-        json={
-            "warehouse_id": world.site.id,
-            "qty_reserved": "50",
-            "reason": "BRW only has 50 in stock",
-        },
-    )
-    assert response.status_code == 200, response.text
-    world.db.commit()
-
-    world.db.expire_all()
-    link = (
-        world.db.query(OrderInquiryLink)
-        .filter(OrderInquiryLink.reserve_request_row_id == request_row.id)
-        .one()
-    )
-    assert link.qty == Decimal("50")
-    assert link.document == f"Reserved @ {world.site.warehouse_code}"
-
-    refreshed_row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row.id).one()
-    assert refreshed_row.state == INQUIRY_PARTLY_LINKED
-
-    from app.models.project_so import OrderInquiryReserveRequest
-
-    reloaded_request = (
-        world.db.query(OrderInquiryReserveRequest).filter(OrderInquiryReserveRequest.id == request["id"]).one()
-    )
-    assert reloaded_request.state == "reserved"
-    assert reloaded_request.reserved_by == world.reserver or reloaded_request.reserved_by is not None
-    assert reloaded_request.reserved_at is not None
-
-    matches = _reserved_calls(calls)
-    assert len(matches) == 1, f"expected exactly one dispatch, got {len(matches)}"
-
-    # A SECOND row, reserved for the FULL requested amount with nothing else linked ->
-    # `placed`.
-    full_row = _open_row(world, qty="20")
-    full_request = client.post(
-        REQUEST_URL(world.inquiry.id),
-        json={"rows": [{"row_id": full_row.id, "qty_requested": "20"}]},
-    ).json()
-    world.db.commit()
-    full_request_row = (
-        world.db.query(OrderInquiryReserveRequestRow)
-        .filter(OrderInquiryReserveRequestRow.row_id == full_row.id)
-        .one()
-    )
-    full_response = client.post(
-        ROW_RESERVE_URL(full_request["id"], full_row.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "20"},
-    )
-    assert full_response.status_code == 200, full_response.text
-    world.db.commit()
-    world.db.expire_all()
-    refreshed_full_row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == full_row.id).one()
-    assert refreshed_full_row.state == INQUIRY_PLACED
-
-
-# --------------------------------------------------------------------------------- #
-# RS-7                                                                               #
-# --------------------------------------------------------------------------------- #
-
-
-def test_reserve_zero_needs_reason(api):
-    client, world = api
-    row = _open_row(world, qty="50")
-    request = client.post(
-        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "50"}]}
-    ).json()
-    world.db.commit()
-
-    from app.models.project_so import OrderInquiryReserveRequestRow
-
-    request_row = (
-        world.db.query(OrderInquiryReserveRequestRow)
-        .filter(OrderInquiryReserveRequestRow.row_id == row.id)
-        .one()
-    )
-
-    no_reason = client.post(
-        ROW_RESERVE_URL(request["id"], row.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "0"},
-    )
-    assert no_reason.status_code == 422, no_reason.text
-
-    with_reason = client.post(
-        ROW_RESERVE_URL(request["id"], row.id),
-        json={
-            "warehouse_id": world.site.id,
-            "qty_reserved": "0",
-            "reason": "BRW has none in stock",
-        },
-    )
-    assert with_reason.status_code == 200, with_reason.text
-    world.db.commit()
-
-    assert (
-        world.db.query(OrderInquiryLink)
-        .filter(OrderInquiryLink.reserve_request_row_id == request_row.id)
-        .count()
-        == 0
-    ), "a 0-reserved row writes no link"
-
-
-# --------------------------------------------------------------------------------- #
-# RS-8                                                                               #
-# --------------------------------------------------------------------------------- #
-
-
-def test_reserve_short_needs_reason_full_does_not(api):
-    client, world = api
-    row = _open_row(world, qty="50")
-    request = client.post(
-        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "50"}]}
-    ).json()
-    world.db.commit()
-
-    from app.models.project_so import OrderInquiryReserveRequestRow
-
-    request_row = (
-        world.db.query(OrderInquiryReserveRequestRow)
-        .filter(OrderInquiryReserveRequestRow.row_id == row.id)
-        .one()
-    )
-
-    short_no_reason = client.post(
-        ROW_RESERVE_URL(request["id"], row.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "30"},
-    )
-    assert short_no_reason.status_code == 422, short_no_reason.text
-
-    full_no_reason = client.post(
-        ROW_RESERVE_URL(request["id"], row.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "50"},
-    )
-    assert full_no_reason.status_code == 200, full_no_reason.text
-
-
-def test_reserve_over_requested_is_422(api):
-    """AC-RS-8's other half ("51 of 50 is 422") - its own test, since RS-8's own name in
-    the captain's list covers the short/full pair; over-requested is folded in here
-    rather than invented as a 22nd test name not on the list."""
-    client, world = api
-    row = _open_row(world, qty="50")
-    request = client.post(
-        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "50"}]}
-    ).json()
-    world.db.commit()
-
-    from app.models.project_so import OrderInquiryReserveRequestRow
-
-    request_row = (
-        world.db.query(OrderInquiryReserveRequestRow)
-        .filter(OrderInquiryReserveRequestRow.row_id == row.id)
-        .one()
-    )
-    over = client.post(
-        ROW_RESERVE_URL(request["id"], row.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "51"},
-    )
-    assert over.status_code == 422, over.text
-
-
-# --------------------------------------------------------------------------------- #
-# RS-9 - RETIRED. AC-RS-9 pinned the old all-or-nothing single-call answer: a          #
-# request with two rows had to be answered together, or nothing was written.           #
-# `PLAN-oi-request-cs-reserve.md` section 6c F2 supersedes it outright ("Section 7      #
-# 'partial answers' is superseded by this ruling") - the per-row route answers ONE row  #
-# per call BY DESIGN, so "a partial answer is rejected" is no longer a rule this        #
-# feature holds; a request now stays `requested` while any row of it is still           #
-# unanswered (`test_order_inquiry_reserve_round2.py::                                  #
-# test_reserve_one_row_endpoint_answers_row_by_row` pins the replacement behaviour).    #
-# There is no equivalent call to port: the new endpoint's body cannot even NAME two     #
-# rows in one request.                                                                  #
-# --------------------------------------------------------------------------------- #
-
-
-# --------------------------------------------------------------------------------- #
-# RS-10                                                                              #
-# --------------------------------------------------------------------------------- #
-
-
-def test_reserve_requires_permission(api):
-    client, world = api
-    row = _open_row(world, qty="50")
-    request = client.post(
-        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "50"}]}
-    ).json()
-    world.db.commit()
-
-    from app.models.project_so import OrderInquiryReserveRequestRow
-
-    request_row = (
-        world.db.query(OrderInquiryReserveRequestRow)
-        .filter(OrderInquiryReserveRequestRow.row_id == row.id)
-        .one()
-    )
-
-    # A user with none of the reserve permission (also covers "the requester without it").
-    with _as(world.db, world.requester, REQUESTER_PERMISSIONS) as stranger:
-        response = stranger.post(
-            ROW_RESERVE_URL(request["id"], row.id),
-            json={"warehouse_id": world.site.id, "qty_reserved": "50"},
-        )
-    assert response.status_code == 403, response.text
-
-    from app.rbac.permission_registry import PERMISSION_REGISTRY
-
-    slugs = {entry["slug"] for entry in PERMISSION_REGISTRY}
-    assert RESERVE_PERMISSION in slugs
-
-
-# --------------------------------------------------------------------------------- #
-# RS-11                                                                              #
-# --------------------------------------------------------------------------------- #
-
-
-def test_reserve_only_once(api):
-    client, world = api
-    row = _open_row(world, qty="50")
-    request = client.post(
-        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "50"}]}
-    ).json()
-    world.db.commit()
-
-    from app.models.project_so import OrderInquiryReserveRequestRow
-
-    request_row = (
-        world.db.query(OrderInquiryReserveRequestRow)
-        .filter(OrderInquiryReserveRequestRow.row_id == row.id)
-        .one()
-    )
-    first = client.post(
-        ROW_RESERVE_URL(request["id"], row.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "50"},
-    )
-    assert first.status_code == 200, first.text
-    world.db.commit()
-
-    second = client.post(
-        ROW_RESERVE_URL(request["id"], row.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "0", "reason": "again"},
-    )
-    assert second.status_code == 409, second.text
-
-    cancel = client.post(CANCEL_URL(request["id"]))
-    assert cancel.status_code == 409, cancel.text
 
 
 # --------------------------------------------------------------------------------- #
@@ -786,12 +536,17 @@ def test_taken_remaining_include_reserved(worklist_api):
         .one()
     )
     reserver_id = _user(db, f"{WL_MARKER} reserver")
-    service.reserve_row(
-        request_id=request.id,
-        row_id=row.id,
-        warehouse_id=warehouse.id,
-        qty_reserved=Decimal("50"),
-        reason="BRW only has 50 in stock",
+    service.commit_request(
+        inquiry_id=inquiry.id,
+        reserves=[
+            {
+                "row_id": row.id,
+                "warehouse_id": warehouse.id,
+                "qty_reserved": Decimal("50"),
+                "reason": "BRW only has 50 in stock",
+            }
+        ],
+        amendments=[],
         actor_user_id=reserver_id,
     )
     db.commit()
@@ -895,12 +650,12 @@ def test_committed_v_owed_nets_reserved_link(handshake_world):
         .filter(OrderInquiryReserveRequestRow.request_id == request.id)
         .one()
     )
-    service.reserve_row(
-        request_id=request.id,
-        row_id=row.id,
-        warehouse_id=world.warehouse.id,
-        qty_reserved=Decimal("50"),
-        reason=None,
+    service.commit_request(
+        inquiry_id=row.order_inquiry_id,
+        reserves=[
+            {"row_id": row.id, "warehouse_id": world.warehouse.id, "qty_reserved": Decimal("50")}
+        ],
+        amendments=[],
         actor_user_id=world.cs_user,
     )
     db.commit()
@@ -1049,6 +804,19 @@ def _find_reserve_seed_migration_path() -> Path | None:
 
 
 def _load_reserve_seed_migration():
+    """oirs_0001's own module, its `upgrade` WRAPPED to chain forward onto every later
+    sibling in this migration family that exists on disk (`oirs_0002_reserve_round2`,
+    `oirs_0003_reserve_commit_tmpl`, ...) - "upgrade the seed migration" reaching
+    HEAD, the same thing a real `alembic upgrade head` against a fresh database does,
+    and the same reasoning `_load_round2_migration`'s own docstring gives for chaining
+    oirs_0002 onto oirs_0001 rather than amending oirs_0001 in place (round 4, AC-RS-80:
+    a shipped migration's own SEED TEXT is never edited - the round-4 body fix is its
+    own file, `oirs_0003_reserve_commit_tmpl.py`, an UPDATE chained on top). Every
+    sibling's own `upgrade()` is idempotent (`IF NOT EXISTS` / `_set_template`'s own
+    UPDATE), so `test_seed_migration_idempotent`'s own `module.upgrade()` twice, and its
+    own explicit `_load_round2_migration().downgrade()` + `module.downgrade()` sequence
+    (oirs_0001's own `.downgrade`, left untouched here), both stay exactly as they were.
+    """
     path = _find_reserve_seed_migration_path()
     assert path is not None, (
         "no alembic migration under alembic/versions/ creates "
@@ -1061,6 +829,24 @@ def _load_reserve_seed_migration():
     spec = importlib.util.spec_from_file_location("zzt_reserve_seed_migration", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+
+    original_upgrade = module.upgrade
+    versions_dir = path.parent
+
+    def _upgrade_to_head():
+        original_upgrade()
+        for name in ("oirs_0002_reserve_round2", "oirs_0003_reserve_commit_tmpl"):
+            sibling_path = versions_dir / f"{name}.py"
+            if not sibling_path.exists():
+                continue
+            sibling_spec = importlib.util.spec_from_file_location(
+                f"zzt_{name}", sibling_path
+            )
+            sibling_module = importlib.util.module_from_spec(sibling_spec)
+            sibling_spec.loader.exec_module(sibling_module)
+            sibling_module.upgrade()
+
+    module.upgrade = _upgrade_to_head
     return module
 
 
@@ -1275,8 +1061,8 @@ def test_cancel_request_only_while_requested(api, monkeypatch):
         .one()
     )
     client.post(
-        ROW_RESERVE_URL(request_b["id"], row_b.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "20"},
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row_b.id, "warehouse_id": world.site.id, "qty_reserved": "20"}]},
     )
     world.db.commit()
 
@@ -1337,12 +1123,17 @@ def test_reserve_state_derived(worklist_api):
     # 40 remaining - the fixture this test's own next step needs to prove "reserved then
     # requested again reads requested" ON THE SAME ROW, rather than reaching for a fresh
     # one with nothing to do with the transition being pinned.
-    service.reserve_row(
-        request_id=request.id,
-        row_id=row.id,
-        warehouse_id=warehouse.id,
-        qty_reserved=Decimal("50"),
-        reason="BRW only has 50",
+    service.commit_request(
+        inquiry_id=inquiry.id,
+        reserves=[
+            {
+                "row_id": row.id,
+                "warehouse_id": warehouse.id,
+                "qty_reserved": Decimal("50"),
+                "reason": "BRW only has 50",
+            }
+        ],
+        amendments=[],
         actor_user_id=reserver_id,
     )
     db.commit()
@@ -1544,8 +1335,12 @@ def test_request_and_reserve_reject_bad_warehouse(api):
     world.db.commit()
 
     bad_reserve = client.post(
-        ROW_RESERVE_URL(req["id"], row_reserve.id),
-        json={"warehouse_id": inactive.id, "qty_reserved": "50"},
+        COMMIT_URL(world.inquiry.id),
+        json={
+            "reserves": [
+                {"row_id": row_reserve.id, "warehouse_id": inactive.id, "qty_reserved": "50"}
+            ]
+        },
     )
     assert bad_reserve.status_code == 422, bad_reserve.text
 
@@ -1632,16 +1427,16 @@ def test_reserve_recheck_remaining_after_new_po_link(api):
     )
 
     over = client.post(
-        ROW_RESERVE_URL(request["id"], row.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "100"},
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": "100"}]},
     )
     assert over.status_code == 422, over.text
     assert "40" in over.text, over.text
     world.db.commit()
 
     ok = client.post(
-        ROW_RESERVE_URL(request["id"], row.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "40"},
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": "40"}]},
     )
     assert ok.status_code == 200, ok.text
     world.db.commit()
@@ -1680,16 +1475,18 @@ def test_body_ids_malformed_are_422(api):
     assert created.status_code == 201, created.text
     world.db.commit()
 
+    # Round 4 (6e.1): `row_id` moved back into the BODY (the commit route answers many
+    # rows in one call), so a malformed one is `CommitReserveRowIn.row_id`'s own
+    # `pattern=UUID_PATTERN` field validator, 422, never a 500.
     bad_reserve = client.post(
-        ROW_RESERVE_URL(created.json()["id"], "not-a-uuid"),
-        json={"warehouse_id": world.site.id, "qty_reserved": "50"},
+        COMMIT_URL(world.inquiry.id),
+        json={
+            "reserves": [
+                {"row_id": "not-a-uuid", "warehouse_id": world.site.id, "qty_reserved": "50"}
+            ]
+        },
     )
-    # `row_id` moved onto the PATH (section 6c F2) - a malformed PATH id is guarded by
-    # `validate_uuid_path`, whose own convention (`uuid_path_param.py`) is 404, not 422,
-    # for a detail route: "a bad-format id is just a guaranteed-missing row", the same
-    # answer every other `{row_id}` route in this file gives (`place_order_inquiry_row_
-    # on_po` etc). Never a 500, which is the defect N-2 actually guards against.
-    assert bad_reserve.status_code == 404, bad_reserve.text
+    assert bad_reserve.status_code == 422, bad_reserve.text
 
     row_dup = _open_row(world, qty="30")
     dup_row_create = client.post(
@@ -1745,15 +1542,33 @@ def test_note_and_reason_length_capped(api):
 
     too_long_reason = "y" * 2001
     resp_reason = client.post(
-        ROW_RESERVE_URL(request["id"], row_reason.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "5", "reason": too_long_reason},
+        COMMIT_URL(world.inquiry.id),
+        json={
+            "reserves": [
+                {
+                    "row_id": row_reason.id,
+                    "warehouse_id": world.site.id,
+                    "qty_reserved": "5",
+                    "reason": too_long_reason,
+                }
+            ]
+        },
     )
     assert resp_reason.status_code == 422, resp_reason.text
 
     ok_reason = "y" * 2000
     resp_reason_ok = client.post(
-        ROW_RESERVE_URL(request["id"], row_reason.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "5", "reason": ok_reason},
+        COMMIT_URL(world.inquiry.id),
+        json={
+            "reserves": [
+                {
+                    "row_id": row_reason.id,
+                    "warehouse_id": world.site.id,
+                    "qty_reserved": "5",
+                    "reason": ok_reason,
+                }
+            ]
+        },
     )
     assert resp_reason_ok.status_code == 200, resp_reason_ok.text
 
@@ -1789,8 +1604,8 @@ def test_po_ref_skips_reserve_link(api):
         .one()
     )
     reserve_resp = client.post(
-        ROW_RESERVE_URL(request["id"], row.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "50"},
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": "50"}]},
     )
     assert reserve_resp.status_code == 200, reserve_resp.text
     world.db.commit()

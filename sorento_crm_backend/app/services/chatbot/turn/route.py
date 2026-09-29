@@ -27,6 +27,9 @@ _LANE_BRANCH: dict[str, str] = {
     # wire concept, so this is a copy-key choice inside one existing arm, not new scope.
     "offer_declined": "escalation_declined",
     "not_supported": "not_supported",
+    # #865 round 6 (R5): junk over an open multi-company escalation offer re-asks the
+    # company (`apply._holds_the_offer`), on the canned lane n8n named `offer_hold`.
+    "offer_hold": "offer_hold",
     "clarification": "clarify_menu",
     "casual": "low_signal",
     # S3 (chatbot media-into-turn): bare entities with no domain and no carried
@@ -90,6 +93,13 @@ def route(plan: Plan) -> str:
         return "ideate"
 
     if plan.fetch:
+        return _domain_branch(plan.domains)
+
+    if plan.trace.task_question:
+        # Ported from PR #1118 (not merged) for chatbot-stock-ask-v2 S3: a task
+        # RESUMED with nothing new fetches nothing and asks no roster - the task's own
+        # question is the whole turn - but it is still a question about that task's
+        # domain, not a low-signal aside.
         return _domain_branch(plan.domains)
 
     return "low_signal"

@@ -1,0 +1,107 @@
+# Console cases for the owner's retest of top selling (27 Sep 2026, PR #1273, fix lane
+# round 4). The owner's own messages, in the order of the retest transcript; each
+# expectation is what the bot must do now (F1 to F8 in
+# `documentation/plans/chatbot/PLAN-chatbot-top-x-hot-selling-24sep.md`, "As built (fix
+# lane round 4)"). `tests/chatbot/test_top_selling_round4.py` pins the same turns with
+# the parser faked; this file grades the LIVE parser on them.
+#
+# NOT collected by pytest. Run against the lane stack with the REAL parser:
+#
+#   cd sorento_crm_backend
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-27-top-selling-retest.yaml \
+#       --base-url http://127.0.0.1:<lane backend port> --sleep-seconds 8 \
+#       --prompt-version <id of the chatbot_semantic_parser version migration
+#                         chatbot_top_selling_vocab_r4 published>
+#
+# PREREQUISITES: the same as `2026-09-26-top-selling.yaml` (contact 437264483 holds the
+# Sales report key and an active office access type), plus a sales agent FANNY, the
+# brand Sorento, and product categories whose class label is Water Closet and Tap on the
+# prod copy. Migrations up to `chatbot_top_selling_vocab_r4` have run and the MCP server
+# was restarted (the catalog gains `brand_ids` and `direction`).
+
+contact: "437264483"
+
+cases:
+  - name: Retest items 1 to 3 - no chips, the agent, the correction
+    cold: true
+    turns:
+      - text: "top 100 hot selling item"
+        expect:
+          parser: {order_status: top_selling, top_n: 100}
+          reply_contains: ["By quantity or by amount?"]
+      - text: "qty"
+        expect:
+          parser: {rank_by: quantity}
+          reply_contains: ["*Top 100 selling items*", "Reply with a rank number to see that item's customers and months."]
+          pending_kind: top_selling_pick
+      - text: "sold by fanny"
+        expect:
+          reply_contains: ["\nCustomer: all\n", "\nSales agent: FANNY"]
+          reply_not_contains: ["Could not find", "Which customer do you mean?"]
+      - text: "hmm no, customer is everyone, but saless agent is fanny"
+        expect:
+          reply_contains: ["\nCustomer: all\n", "\nSales agent: FANNY"]
+
+  - name: Retest item 4 - water closet, "2", "amt"
+    cold: true
+    turns:
+      - text: "top 100 hot selling item which is water closet"
+        expect:
+          reply_contains: ["By quantity or by amount?"]
+      - text: "2"
+        expect:
+          reply_contains: ["Ranked by: Amount", "\nCategory: Water Closet\n"]
+          reply_not_contains: ["By quantity or by amount?", "Could not find", "escalate"]
+      - text: "amt"
+        expect:
+          reply_contains: ["Ranked by: Amount", "\nCategory: Water Closet\n"]
+          reply_not_contains: ["Could not find", "escalate"]
+      - text: "water closet only"
+        expect:
+          reply_contains: ["\nCategory: Water Closet\n"]
+          reply_not_contains: ["Could not find", "escalate"]
+      - text: "i mean product category is water closet"
+        expect:
+          reply_contains: ["\nCategory: Water Closet\n"]
+          reply_not_contains: ["Could not find", "escalate"]
+      - text: "amount, top 100, water closet"
+        expect:
+          reply_contains: ["*Top 100 selling items*", "Ranked by: Amount", "\nCategory: Water Closet\n"]
+          reply_not_contains: ["Could not find", "escalate"]
+      - text: "top 100 hot selling item for water tap"
+        expect:
+          reply_contains: ["By quantity or by amount?"]
+      - text: "amount"
+        expect:
+          reply_contains: ["\nCategory: Tap\n"]
+          reply_not_contains: ["Could not find", "escalate"]
+
+  - name: Retest item 5 - the brand
+    cold: true
+    turns:
+      - text: "top 100 hot selling item for sorento brand"
+        expect:
+          reply_contains: ["By quantity or by amount?"]
+          reply_not_contains: ["Which customer do you mean?", "Could not find"]
+      - text: "amount"
+        expect:
+          reply_contains: ["\nBrand: Sorento\n", "\nCustomer: all\n"]
+
+  - name: Retest item 6 - least sold
+    cold: true
+    turns:
+      - text: "how about top 10 cold selling item"
+        expect:
+          parser: {order_status: top_selling, top_n: 10, rank_direction: bottom}
+          reply_contains: ["By quantity or by amount?"]
+      - text: "amount"
+        expect:
+          reply_contains: ["*Bottom 10 selling items*", "Items with no sale in this period are not ranked."]
+      - text: "least sold item"
+        expect:
+          parser: {order_status: top_selling, rank_direction: bottom}
+          reply_contains: ["By quantity or by amount?"]
+      - text: "amount"
+        expect:
+          reply_contains: ["*Least sold items*", "How many items do you want to see?"]

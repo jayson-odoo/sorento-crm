@@ -37,9 +37,16 @@ from app.services.chatbot.lanes.business.fetch import (
 )
 from app.services.chatbot_parser_prompt import (
     GROWTH_R1_ADDENDUM,
+    KNOWN_BRANDS_ADDENDUM,
     LAST_COST_ADDENDUM,
     LOW_STOCK_ADDENDUM,
+    ESCALATION_CONFIRMATION_ADDENDUM,
+    QUANTITY_ADDENDUM,
+    SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
+    SPECIFICATION_ADDENDUM,
+    STOCK_TASK_ADDENDUM,
+    TOP_SELLING_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
 )
 
@@ -117,9 +124,13 @@ class TestTheSchemaDeclaresTheTwoNewKeys:
                 "`None` the schema exists to prevent"
             )
 
-    def test_group_by_is_the_six_axes_and_null(self) -> None:
+    def test_group_by_is_the_six_axes_the_sales_axes_and_null(self) -> None:
+        # PLAN-retail-sales-reports-26sep S1 (#1267) adds `month` and `year`, the sales
+        # analysis's own axes, after the six growth axes.
         assert parser_mod.PARSE_OUTPUT_JSON_SCHEMA["properties"]["group_by"]["enum"] == [
             *GROUP_BY_AXES,
+            "month",
+            "year",
             None,
         ]
 
@@ -149,14 +160,29 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         FULL body and dev's is on the SLIM one.
 
         The strong `.endswith` form is restored (review S4, 12 Sep 2026) by stripping the
-        LATER addenda first, newest outermost: `SALES_REPORT_ADDENDUM`
+        LATER addenda first, outermost first: `ESCALATION_CONFIRMATION_ADDENDUM` (#1323,
+        the tail), `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4),
+        then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026), then
+        `QUANTITY_ADDENDUM` (issue #1262 slice 5, 26 Sep 2026), then
+        `SALES_ANALYSIS_ADDENDUM` (#1267 S1), then `STOCK_TASK_ADDENDUM`
+        (chatbot-stock-ask-v2 S3), then `SALES_REPORT_ADDENDUM`
         (PLAN-chatbot-sales-report.md S4 wiring point 1), then `LOW_STOCK_ADDENDUM`
         (PLAN-low-stock-report.md S7, 14 Sep 2026), then `LAST_COST_ADDENDUM`. Each stacks
         AFTER `GROWTH_R1_ADDENDUM` on both bodies, the same way this addendum itself
         stacked after the live text, so `GROWTH_R1_ADDENDUM` is still exactly the tail
         once the later ones are off."""
         for body in (SEMANTIC_PARSER_PROMPT,):
-            assert body.removesuffix(SALES_REPORT_ADDENDUM).removesuffix(
+            assert body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(
+                TOP_SELLING_ADDENDUM
+            ).removesuffix(KNOWN_BRANDS_ADDENDUM).removesuffix(QUANTITY_ADDENDUM).removesuffix(
+                SPECIFICATION_ADDENDUM
+            ).removesuffix(
+                SALES_ANALYSIS_ADDENDUM
+            ).removesuffix(
+                STOCK_TASK_ADDENDUM
+            ).removesuffix(
+                SALES_REPORT_ADDENDUM
+            ).removesuffix(
                 LOW_STOCK_ADDENDUM
             ).removesuffix(
                 LAST_COST_ADDENDUM
@@ -509,15 +535,24 @@ def test_after_sync_every_domain_spec_tool_has_its_domain_stamped() -> None:
     the next migration that touches `mcp_tools` carries its drop, and so does this
     assertion, which is what keeps the two data copies from drifting while it does.
 
-    Runs a real sync against the shared database and rolls it back; skipped when
-    `mcp_tools` is empty (CI's database has no seed data - LESSONS-LEARNT).
+    Runs a real sync against `tests._pg_fixture.blank_session`'s scratch schema, not the
+    shared database (issue #1241): `sync_catalog`'s "deactivate tools missing from the code
+    catalog" step is an unfiltered, table-wide UPDATE by design - every stale row, not just
+    this test's own - so this test raced `tests/test_mcp_tool_registry_service.py` (same
+    real `sync_catalog`, same shared `mcp_tools`) whenever both landed on different xdist
+    workers at once: CI saw `DeadlockDetected`, and locally the same race silently
+    overwrote a freshly-synced row's `is_active` back to False. A scratch schema per test
+    removes the shared table entirely instead of serializing around it - the same fix
+    `test_mcp_catalog_ideation.py` already uses for this exact function - and it also
+    means this test never needs its own catalog data to already exist, so it no longer
+    skips when the shared database has none (CI's never did).
     """
     import sys
     from pathlib import Path
 
-    from app.database import SessionLocal
     from app.models.access import McpTool
     from app.services.mcp_tool_registry_service import sync_catalog
+    from tests._pg_fixture import blank_session
 
     # The SIBLING tree first when this is the monorepo: the venv's editable install of
     # `sorento_crm_mcp` (which `sync_catalog` imports) can point at another checkout (it
@@ -531,10 +566,7 @@ def test_after_sync_every_domain_spec_tool_has_its_domain_stamped() -> None:
         for mod in ("sorento_crm_mcp", "sorento_crm_mcp.catalog", "sorento_crm_mcp.module_loader"):
             sys.modules.pop(mod, None)
 
-    db = SessionLocal()
-    try:
-        if db.query(McpTool).count() == 0:
-            pytest.skip("mcp_tools is empty (CI has no data)")
+    with blank_session() as db:
         sync_catalog(db)
         db.flush()
         for domain, tools in DOMAIN_TOOLS.items():
@@ -546,6 +578,3 @@ def test_after_sync_every_domain_spec_tool_has_its_domain_stamped() -> None:
                     f"{tool!r} synced with chatbot_domain={row.chatbot_domain!r}, "
                     f"expected {domain!r}"
                 )
-    finally:
-        db.rollback()
-        db.close()

@@ -114,6 +114,7 @@ class StorageZone(Base, CompanyScopedMixin):
 
 class Stock(Base, CompanyScopedMixin):
     __tablename__ = "stock"
+    __audit_skip__ = "stock balance mirror (its movements are stock_ledger), 526 to 6,879 rows a day (measured 27 Sep 2026, review B3)"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
@@ -163,6 +164,7 @@ class Stock(Base, CompanyScopedMixin):
 
 class StockLedger(Base, CompanyScopedMixin):
     __tablename__ = "stock_ledger"
+    __audit_skip__ = "stock ledger, itself a trail"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)

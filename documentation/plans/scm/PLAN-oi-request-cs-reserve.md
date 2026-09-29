@@ -1,6 +1,6 @@
 # PLAN - Order inquiry: Request CS to reserve stock (+ stock grid on OI lines and board list)
 
-Status: **APPROVED 22 Sep 2026 ("ok cool, go" in Lavish), building.** UAC: `oi-request-cs-reserve-acceptance-criteria.md`.
+Status: **SHIPPED #1120 (9fc93c90a, 23 Sep 2026); round 3 (6d) built on PR #1149; round 4 (section 6e, AC-RS-76..90, line-by-line staging) BUILDING on the same branch.** UAC: `oi-request-cs-reserve-acceptance-criteria.md`.
 Track: full three-phase lane (migration, new permission, email). One lane, one PR (R-E).
 Lavish marks folded: same `CellStockTable` component; reserved mail carries BALANCE; board list view
 opens the grid view's dialog from the row (Q3 accepted with the go). Branch `feat/oi-request-cs-reserve`.
@@ -374,6 +374,191 @@ the reserve link qty by `qty` (deletes the link at 0), `refresh_link_state`, one
 event, no email. Unlink (bulk deferred action and per-row) SKIPS reserve links: the per-row Unlink
 is not offered on a reserve link and the bulk action ignores them; 3.3 "Reversal" is superseded.
 Section 7 "amend a reserved qty" is superseded: top-up = new request, reduce = Unreserve.
+
+## 6d. Round 3 (owner hand test after #1120 shipped, 23 Sep): five asks, one fix lane
+
+Branch `fix/oi-reserve-round3` off main 7c2c8e342 (no migration, no auth change). Owner words:
+"the link only opens 1 popup ... can't it open all the items here?"; "after reserved it is called
+On PO/SPO which is kinda sus, it should be called reserved"; "combine the reserve icon with the
+state ... adding too many columns also not good"; "after confirmed the product should have a
+ticked icon"; the grip on the expand header; "the location column too big, can we resize this and
+make it remembered"; "I can't scroll horizontally when I place my cursor here and shift scroll".
+
+**G1 Email link opens every row of the request.** `?reserve=<request_id>` opens ONE
+`ReserveRowDialog` carrying every still-open row of that request (`rows: [...]`, one section per
+row: item code, Location, Reserved, Reason-when-short, its own **Confirm reserved**), not the first
+open row alone. Each Confirm still calls the per-row endpoint (AC-RS-56 unchanged); a confirmed
+section flips to a read-only `Reserved N` line with the tick; the dialog closes itself once the
+last section is confirmed. The line-click path passes ONE row and keeps the History tab; the
+multi-row path has no History tab (history lives on the line). One component, `rows` length 1..N.
+
+**G2 State column carries the reserve state; the Reserve column goes.** In
+`orderInquiryHeaderLinesColumns.tsx` the `state` cell renders, in this order: `reserve_state ===
+'requested'` -> amber pill `Request to reserve`; `reserve_state === 'reserved'` -> green pill
+`Reserved N` with a lucide `Check` icon (the owner's tick); else `OrderInquiryStatePill` as today.
+Both reserve pills are the click target (`role=button`, aria-label `Reserve`) opening the dialog
+for that row, replacing the `reserve` column, which is deleted. `ReservePill` in
+`OrderInquiryVerbPill.tsx` gains `onClick?` (rendered as a button when set) and the tick on
+`reserved`; the worklist keeps its read-only usage. `STATE_LABEL` untouched (one map, AC-B5-2).
+
+**G3 No grip on fixed utility headers.** `DataGridTableDndHeader` renders no `GripVertical` and
+passes `disabled: true` to `useSortable` when `columnDef.meta?.draggable === false` OR the column
+carries `meta.expandedContent`; the shared select column (`data-grid-select-column.tsx`) sets
+`meta.draggable = false`. `ColumnMeta` gains `draggable?: boolean`. Not keyed on `enableHiding`
+(real data columns use it in 12 grids).
+
+**G4 Expanded content stays inside the viewport and the page scrolls sideways over it.** Two
+causes, both measured on origin/main. (a) `DataGridTableBodyRowExpandded` puts the content in a
+`<td colSpan=all>` as wide as the whole fixed-layout table, so on a grid wider than its scroll
+container the inner `CellStockTable` (Location = `w-full` slack column) stretches past the right
+edge and its number columns sit off-screen: fix = the expanded `<td>` wraps content in a
+`sticky left-0` div whose `max-width` is the DataGrid scroll container's clientWidth (a CSS
+variable set by one `ResizeObserver` on the container; every `expandedContent` site benefits, the
+nested-inventory tests enumerate them). (b) `CellStockTable`'s wrapper is `overflow-x-auto
+overscroll-x-contain`: an `overflow:auto` box is a scroll container even without overflow, and
+`overscroll-behavior: contain` on it stops wheel / trackpad chaining to the parent grid's
+scroller, so shift-wheel and two-finger swipes over the stock table do nothing (the same trap
+`data-grid-table.tsx:171` records for the grid itself). Fix = drop `overscroll-x-contain` there.
+
+**G5 Location column resizable, remembered per browser.** `CellStockTable` Location `<th>` gets a
+drag handle (same `cursor-col-resize` affordance as `DataGridTableHeadRowCellResize`); the width
+(px, floor 120) is held in component state, applied to the Location cells (`truncate` + `title`
+on the code), and remembered in `localStorage` key `cellStockTable.locationWidth` (read/write in
+try/catch; absent = today's slack behaviour). One column, one key: no column-config API row.
+
+**G6 Multi-row dialogs are tables, not stacked cards (owner, 23 Sep on :3080: "more tabulated to
+save space, later I got 10 products to request to reserve, then gg, we should use standard
+datagrid table in the system").** Both multi-row dialogs render one DataGrid row per product
+(`tableLayout: { width: 'fixed', columnsResizable: true }`, `columnResizeMode: 'onChange'`,
+explicit `size` per column, no pagination, no sort, no column config):
+
+- `ReserveRowDialog` (CS acting, `rows.length > 1`): columns Product | Requested | Location
+  (`SearchableSelect`) | Reserved (number `Input`) | Reason (`Input`, enabled the moment Reserved <
+  Requested) | action (`Confirm reserved` per row). A confirmed row's Reserved cell reads
+  `Reserved N` with the tick and its inputs are gone. Footer: `Confirm all` (enabled when every
+  still-open row is valid, i.e. reason present wherever short) posting the per-row endpoint row by
+  row, top to bottom, stopping on the first failure (rows already confirmed stay confirmed; the
+  failed row shows the error toast). Dialog width `sm:max-w-4xl`; at 375px the grid scrolls
+  sideways inside the dialog body.
+- `ReserveRequestDialog` (purchasing raising): columns Product | Delivery date | Remaining | Requested
+  (number `Input`) | Location (`SearchableSelect`). Note stays below the grid. Same width.
+- The single-row `ReserveRowDialog` keeps its form + History tabs (one row, nothing to tabulate).
+- `AC-RS-74`, `AC-RS-75`. Existing behavioural tests (AC-RS-22, 65..67, 66b, R1/R2, N1/N2) stay
+  green: same props, same callbacks, same endpoint calls; only the layout changes.
+
+Coder verifies G4 live on :3080 before writing the fix (a screenshot of the expanded row on a
+grid wider than the viewport, then the same after) and reports if either cause is not the one
+measured. Tests: AC-RS-65..72 below, tester-first.
+
+**Fix round 1 (23 Sep, per-row pool resolution).** G1's first pass resolved Location options /
+availability / default off the PRIMARY row alone and shared that one set across every section of
+a multi-row dialog - wrong the moment two rows name different products. `useReserveRowOptions`
+already resolves N entries through `useQueries` (`useReserveRowOptions.ts` L90), so this is
+wiring only: `ReserveRowDialogRow` gains optional per-row `locationOptions` /
+`availableQtyByLocation` / `defaultLocationId` (falling back to the dialog's own top-level prop
+when absent); `OrderInquiryDetail.tsx`'s `reserveRowOptionsEntries` covers every id in
+`reserveDialogRowIds` (not just the primary), and each row's own resolved entry is threaded into
+its own `ReserveRowDialogRow`. History / Cancel request / Unreserve stay off the primary row only
+(single-row mode). AC-RS-65b/AC-RS-66b.
+
+## 6e. Round 4 (owner hand test of round 3 on :3080, 24 Sep): CS reserves line by line, like the board
+
+Owner words: "I shouldn't need to confirm line by line, just enter the quantity I want to reserve and
+confirm all ... the decision is not committed until I click confirm at the bottom, and I can always
+revise my decision, be it unreserve or change quantity ... can our experience be similar to
+fulfilment planning because the one doing is CS ... at each line it writes request to reserve, then
+once I click a tick icon it pops up the location and quantity ... I can undo also before I click the
+CTA ... when CS clicks the link it just sees those that require reserving, so we should have a
+filter ... for CS they see 'Reserve' ... after clicking Reserve the button should be grayed out."
+
+**Rulings (owner, 24 Sep):** R4-1 the reserved mail goes out on every `Reserve` click, naming the
+lines committed in that click; the request stays open for untouched lines. R4-2 icons on a
+requested line: **tick** = reserve the full requested qty at the default pool (no form); **pencil**
+= form (Location, Reserved 0..requested, Reason required when short; 0 = no reserving at all);
+**undo** drops the staged decision. R4-3 amend after commit is allowed: pencil on a reserved line
+stages a new qty (0..requested, location locked), committed by the same CTA. R4-4 no header
+badge, no multi-row dialog, no `Confirm all`: the Lines grid is the surface.
+
+### 6e.1 Backend: one commit call per `Reserve` click
+
+`POST /api/v1/project-sales/order-inquiries/{inquiry_id}/reserve-requests/{request_id}/commit`
+(permission `projects.order_inquiries.reserve`), payload
+
+```
+{ "reserves":   [{ "row_id", "warehouse_id", "qty_reserved", "reason" }],   // open rows
+  "amendments": [{ "row_id", "qty_reserved", "reason" }] }                   // answered rows
+```
+
+One transaction. `reserves` reuse `reserve_row` (validation per 3.3 / AC-RS-56, `dispatch=False`);
+`amendments` set the row's net reserved to `qty_reserved` (0..qty_requested; location locked to
+the answered row's `warehouse_id`): a decrease reuses `unreserve_row` for the delta, an increase
+raises the reserve link qty by the delta (re-creating the link when it was deleted at 0) and writes
+one `reserved` event for the delta; `reason` required whenever the new qty is short of requested.
+Empty payload = 422. Any invalid row = 422 naming it, nothing written. After the batch: request
+`state = reserved` when every row is answered, else stays `requested`; ONE
+`order_inquiry_reserved` dispatch per call whose `reserve.rows` are the rows touched in this call
+(reserved / amended, each with `qty_reserved`, `balance`, `reason`), plus `reserve.row_count` for
+the request and `reserve.open_row_count` remaining. The per-row `.../rows/{row_id}/reserve` and
+`.../unreserve` routes are retired (404); the deferred action `order_inquiry_reserve_row.unreserve`
+is removed from the registry; `history` and the request GET stay. The reserved-mail template gets
+a line `N line(s) still to reserve` when `open_row_count > 0`.
+
+### 6e.2 Frontend: staged decisions on the Lines grid, one `Reserve` CTA
+
+- `ReserveRowDialog.tsx` (multi-row grid, `Confirm all`, single-row tabs) is deleted. Two small
+  pieces replace it: `ReserveLineForm` (dialog: item code title, Location `SearchableSelect`,
+  Reserved number, Reason shown when short; primary **Stage**, nothing posted) and
+  `ReserveLineHistoryDialog` (the former History tab content, read-only).
+- Lines grid State cell (AC-RS-68 kept): `Request to reserve N` (N = qty_requested) amber,
+  `Reserved N` + tick green. The pill is no longer a button.
+- New `reserve` action cell (after State; only rendered when the viewer holds the reserve
+  permission AND the inquiry has an open request or a reserved line; icon buttons with
+  aria-labels): requested line -> **Reserve** (tick: stages `{qty: requested, warehouse: default
+  pool}`) and **Edit reserve** (pencil: opens `ReserveLineForm`); reserved line -> **Amend reserve**
+  (pencil: form with location locked, qty prefilled net) and **History** (info). A staged line
+  shows a dashed outline chip `Reserve N @ BRW` (or `Reserve 0`, or `Amend to N`) in place of the
+  icons plus **Undo** (drops it). Staged state lives in `OrderInquiryDetail` (`Record<rowId,
+  StagedReserve>`), cleared on commit; a reload loses it (trigger for server drafts: CS asks to
+  stage across sessions).
+- Header CTA: beside `Confirm`, a **Reserve** button (visible with the reserve permission while a
+  request is open or anything is staged; enabled only when staged count > 0; label `Reserve (N)`).
+  Click -> POST commit with the staged rows split into `reserves` / `amendments`; toast
+  `Reserved, <requester> notified`; invalidate lines + requests; staged cleared; button greys.
+  `Cancel request` (deferred countdown, requester or permission holder) moves to the Actions menu.
+- Filter: a `SearchableMultiSelect` **State** filter beside the product search on the Lines tab
+  (options = `STATE_LABEL` values + `Request to reserve` + `Reserved`, clearable). `?reserve=<id>`
+  no longer opens anything: it preselects `Request to reserve` in the filter and is removed from
+  the URL on the first filter change; the header badge is gone.
+- Purchasing `ReserveRequestDialog` grid (G6) stays; it gets `columnsDraggable: false`, loses the
+  inert outer `overflow-x-auto` wrapper, and the `data` identity comment is corrected (review 24 Sep).
+- Deleted with the dialog: `useReserveOrderInquiryRow`, `unreserveOrderInquiryRow`,
+  `reserveRequestCompletes` (the server decides), the `?reserve=` latch, AC-RS-65..67, 73, 74 and
+  the round-2/3 dialog tests (superseded rows marked in the UAC).
+
+### 6e.3 Tests (tester-first)
+
+Backend `tests/test_order_inquiry_reserve_commit.py`: AC-RS-76..82. Frontend: AC-RS-83..90 in
+`OrderInquiryDetail.reserveStaging.test.tsx`, `ReserveLineForm.test.tsx`,
+`orderInquiryHeaderLinesColumns.test.tsx`, `OrderInquiryLinesTab.test.tsx`.
+
+
+### 6e.4 Review round (24 Sep, reviewer + security-reviewer on Opus): NOT READY, one fix round
+
+Rulings folded (captain):
+
+- **Route keyed by inquiry, rows resolved server-side.** `POST /api/v1/project-sales/order-inquiries/{inquiry_id}/reserve-commit` replaces `.../reserve-requests/{request_id}/commit`. `reserves[].row_id` resolves to the OI row's OPEN request row (unique by the partial index), `amendments[].row_id` to its LATEST answered request row, both within `inquiry_id` (404 otherwise). One transaction; one `order_inquiry_reserved` dispatch per REQUEST touched (normally one), each naming only its own touched rows. Reason: a line from a finished request is amended while another request is open (reviewer B2), and the URL's `inquiry_id` was validated then ignored (security S1).
+- **Amend-up cap** = `min(qty_requested, current_link_qty + live remaining of the row)`; 422 naming the row (reviewer B1 / security B2: links exceeded row qty with a PO covering the balance).
+- **Duplicate `row_id`** across `reserves + amendments` = 422 before any read; the reserve link insert keeps its IntegrityError -> 409 wrapper (security B1 / reviewer S3).
+- **Locks**: `with_for_update()` on the request(s) in commit and in `cancel_request`; row locks ordered by id (security S2 / reviewer S6).
+- **Cancel semantics** (security S3): cancel stays allowed on a partly answered request and withdraws only the still-open rows; answered rows keep their links and may still be amended (`amendments` accepted on a cancelled request, `reserves` 409).
+- **Declined lines**: a row whose latest answered request row has `qty_reserved = 0` reads `reserve_state = declined`; pill `Not reserved` (neutral), actions Amend + History, so the "0 -> up" path is reachable (reviewer S5). Reserve 0 writes a `reserved` event with qty 0 so History shows the decision (security N3).
+- **No-op amendment** (delta 0) is skipped: not touched, no event, no mail, reason untouched (security N2).
+- `_open_request_row_ids` gains `qty_reserved IS NULL` (reviewer S4); `_OPEN_REQUEST_QTY` takes `.limit(1)`.
+- `reserve_row` is deleted; `commit_request` owns validation through one shared validator; tests that called it move to `commit_request` (reviewer S9).
+- Frontend: amend prefill = the anchor request row's own qty, clamped to its requested (B3); form reason rule = `qty < requested`, in both modes (S1); the form renders after the pool options load so the prefill is never 0 (S2); a staged reserve without a warehouse is sent without one (server defaults) (S8); the action column only renders when the inquiry has an open request or a reserved / declined line, and its header carries no grip (nit); the State filter drops `Cancelled` and its empty state reads `No line matches the filter.`; `?reserve=` removal gets its own test (B5).
+- Measured while building (coder, 24 Sep): the events table's `ck_order_inquiry_reserve_events_qty_positive` was `qty > 0`, so the Reserve 0 event needed one migration, `oirs_0004_reserve_event_zero` (`qty >= 0`). There is no DB constraint behind "one open request row per line" (the parent state lives on another table); `create_request`'s `_open_request_row_ids` is the rule, and the readers take the newest open row.
+- **Amend edits the LINE's net (re-review S1, captain ruling 24 Sep).** The pill shows the line's net reserved across every request; the Amend form edits that same number. `amendments[].qty_reserved` = the new net for the line: a decrease releases reserve links newest first (the old `unreserve_row` order), one `unreserved` event per link touched; an increase raises the latest answered request row's link (re-created at 0), one `reserved` event; cap = `current net + live remaining of the row`; a reason is required whenever the new net is below T = net held by every answered request row except the latest + the latest answered row's `qty_requested`, capped at the line qty (a balance request is counted once, not on top of the shortfall it re-asks). The form prefills the net and states `Requested T across N requests` when N > 1. The State filter gains `Not reserved`. The duplicate-row 422 names the item code.
+- Evidence rerun of the AC-RS-90 script in full (request three lines, follow the link, preselect shown); the Next dev "1 Issue" badge in two captures is explained or fixed; outbox rows are never sent from the lane (`ENABLE_SCHEDULER=false`, 0 sent, captain-verified 24 Sep).
 
 ## 7. Out of scope (recorded, not built)
 

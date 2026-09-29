@@ -30,9 +30,11 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from '@/lib/toast';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { useCreateProduct, useUpdateProduct, useProduct } from '../hooks/useProducts';
 import { ProductSchema, type ProductSchemaType } from '../forms/product-schema';
 import type { Product, ProductFormData } from '../types/product.types';
+import { useCategory } from '../../product-categories/hooks/useProductCategories';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
 import { useUOMSelectQuery } from '../../shared/hooks/use-uom-select-query';
@@ -72,6 +74,9 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
   const { data: uoms } = useUOMSelectQuery();
   const createMutation = useCreateProduct();
   const updateMutation = useUpdateProduct();
+  const canViewChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.view');
+  const canEditChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.edit');
+  const canViewSuppliers = useHasPermission('procurement.product_suppliers.view');
 
   const navigationBasePath = '/master-data-management/products';
 
@@ -100,10 +105,18 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       has_batch_tracking: false,
       reorder_level: 10,
       reorder_quantity: 50,
+      chatbot_max_qty: null,
+      chatbot_eta_offset_days: null,
       base_uom_id: '',
     },
     mode: 'onTouched',
   });
+
+  // The category the form currently has selected, refetched in full (the select
+  // list only carries code/name) so the two chatbot fields below can show its
+  // X / Y as a placeholder when the product's own value is empty.
+  const watchedCategoryId = form.watch('category_id');
+  const { data: selectedCategoryForChatbotLimits } = useCategory(watchedCategoryId || null);
 
   // Track which product we've initialized so we don't reset on every render.
   // Using a ref instead of state avoids Strict Mode timing issues (state updates can be
@@ -159,6 +172,8 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       has_batch_tracking: product.has_batch_tracking,
       reorder_level: product.reorder_level,
       reorder_quantity: product.reorder_quantity,
+      chatbot_max_qty: product.chatbot_max_qty ?? null,
+      chatbot_eta_offset_days: product.chatbot_eta_offset_days ?? null,
       base_uom_id: uomId,
     });
     lastInitializedProductIdRef.current = product.id;
@@ -208,6 +223,8 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         has_batch_tracking: data.has_batch_tracking,
         reorder_level: data.reorder_level,
         reorder_quantity: data.reorder_quantity,
+        chatbot_max_qty: toOptionalNumber(data.chatbot_max_qty, isEditMode),
+        chatbot_eta_offset_days: toOptionalNumber(data.chatbot_eta_offset_days, isEditMode),
         item_type: data.item_type ?? (isEditMode ? null : undefined),
         is_active: data.is_active,
         is_searchable: data.is_searchable,
@@ -287,10 +304,12 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
               <ListChecks />
               <span>Specifications</span>
             </TabsTrigger>
-            <TabsTrigger value="suppliers">
-              <Factory />
-              <span>Suppliers</span>
-            </TabsTrigger>
+            {canViewSuppliers ? (
+              <TabsTrigger value="suppliers">
+                <Factory />
+                <span>Suppliers</span>
+              </TabsTrigger>
+            ) : null}
             <TabsTrigger value="attachments">
               <Paperclip />
               <span>Attachments</span>
@@ -883,17 +902,79 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                     )}
                   />
                 </div>
+
+                {canViewChatbotLimits && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="chatbot_max_qty"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Max quantity (assistant)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={0}
+                              placeholder={
+                                selectedCategoryForChatbotLimits?.chatbot_max_qty != null
+                                  ? String(selectedCategoryForChatbotLimits.chatbot_max_qty)
+                                  : undefined
+                              }
+                              disabled={!canEditChatbotLimits}
+                              {...field}
+                              value={field.value ?? ''}
+                              onChange={(e) =>
+                                field.onChange(e.target.value ? parseInt(e.target.value, 10) : null)
+                              }
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="chatbot_eta_offset_days"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>ETA offset (days)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={0}
+                              placeholder={
+                                selectedCategoryForChatbotLimits?.chatbot_eta_offset_days != null
+                                  ? String(selectedCategoryForChatbotLimits.chatbot_eta_offset_days)
+                                  : undefined
+                              }
+                              disabled={!canEditChatbotLimits}
+                              {...field}
+                              value={field.value ?? ''}
+                              onChange={(e) =>
+                                field.onChange(e.target.value ? parseInt(e.target.value, 10) : null)
+                              }
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
 
           {/* Tab 4: Suppliers */}
-          <TabsContent value="suppliers">
-            <ProductSuppliersSection
-              productId={productId}
-              isEditMode={isEditMode}
-            />
-          </TabsContent>
+          {canViewSuppliers ? (
+            <TabsContent value="suppliers">
+              <ProductSuppliersSection
+                productId={productId}
+                isEditMode={isEditMode}
+              />
+            </TabsContent>
+          ) : null}
 
           {/* Tab 5: Attachments */}
           <TabsContent value="attachments">
