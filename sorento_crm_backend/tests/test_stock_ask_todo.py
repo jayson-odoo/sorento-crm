@@ -34,37 +34,78 @@ def _svc():
 # ---- AC-ST103 ---------------------------------------------------------------------------
 
 
+def _user(db, name, contact_id=None):
+    from app.models.user import User
+
+    uid = seed.uid()
+    row = User(id=uid, email=f"{uid}@zzt.test", name=name, status="ACTIVE", respond_contact_id=contact_id)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _stamp(row):
+    return (row.done_at, row.done_by_user_id, row.done_by_contact_id)
+
+
 def test_apply_update_stamps_done_and_clears_on_reopen(w):
     svc, db = _svc(), w["db"]
     row = seed.ask(db, w["x"], w["dealer"], "SRT-103")
+    sean = _user(db, "Sean")
+    other = _user(db, "Someone Else")
 
-    svc._apply_update(db, row, {"note": "x"}, actor="Sean", now=NOW)
-    assert (row.done_at, row.done_by) == (None, None)
+    svc._apply_update(db, row, {"note": "x"}, actor_user_id=sean.id, now=NOW)
+    assert _stamp(row) == (None, None, None)
 
-    svc._apply_update(db, row, {"state": "done"}, actor="Sean", now=NOW)
-    assert row.done_at == NOW
-    assert row.done_by == "Sean"
+    svc._apply_update(db, row, {"state": "done"}, actor_user_id=sean.id, actor_contact_id=w["ca"], now=NOW)
+    assert _stamp(row) == (NOW, sean.id, w["ca"])
 
     later = NOW + timedelta(hours=2)
-    svc._apply_update(db, row, {"state": "done"}, actor="Someone Else", now=later)
-    assert (row.done_at, row.done_by) == (NOW, "Sean")
+    svc._apply_update(db, row, {"state": "done"}, actor_user_id=other.id, actor_contact_id=w["cb"], now=later)
+    assert _stamp(row) == (NOW, sean.id, w["ca"])
 
-    svc._apply_update(db, row, {"note": "y"}, actor="Someone Else", now=later)
-    assert (row.done_at, row.done_by) == (NOW, "Sean")
+    svc._apply_update(db, row, {"note": "y"}, actor_user_id=other.id, now=later)
+    assert _stamp(row) == (NOW, sean.id, w["ca"])
     assert row.note == "y"
 
-    svc._apply_update(db, row, {"state": "open"}, actor="Sean", now=later)
-    assert (row.state, row.done_at, row.done_by) == ("open", None, None)
+    svc._apply_update(db, row, {"state": "open"}, actor_user_id=sean.id, now=later)
+    assert (row.state, *_stamp(row)) == ("open", None, None, None)
+
+
+def test_apply_update_contact_only_and_user_only_actors(w):
+    svc, db = _svc(), w["db"]
+    by_contact = seed.ask(db, w["x"], w["dealer"], "SRT-CO")
+    by_user = seed.ask(db, w["x"], w["dealer"], "SRT-US")
+    sean = _user(db, "Sean")
+    svc._apply_update(db, by_contact, {"state": "done"}, actor_contact_id=w["ca"], now=NOW)
+    svc._apply_update(db, by_user, {"state": "done"}, actor_user_id=sean.id, now=NOW)
+    assert _stamp(by_contact) == (NOW, None, w["ca"])
+    assert _stamp(by_user) == (NOW, sean.id, None)
 
 
 def test_public_update_functions_take_an_actor_and_stamp(w):
     svc, db = _svc(), w["db"]
+    olive = _user(db, "Office Olive")
     a1 = seed.ask(db, w["x"], w["dealer"], "SRT-C")
     a2 = seed.ask(db, w["x"], w["dealer"], "SRT-A")
-    by_customer = svc.update_for_customer(db, w["x"].id, a1.id, {"state": "done"}, actor="Office Olive")
-    by_agent = svc.update_for_agent(db, w["a"].id, a2.id, {"state": "done"}, actor="Agent Alpha")
+    by_customer = svc.update_for_customer(db, w["x"].id, a1.id, {"state": "done"}, actor_user_id=olive.id)
+    by_agent = svc.update_for_agent(db, w["a"].id, a2.id, {"state": "done"}, actor_contact_id=w["ca"])
     assert by_customer.done_by == "Office Olive" and by_customer.done_at is not None
     assert by_agent.done_by == "Agent Alpha" and by_agent.done_at is not None
+    db.expire_all()
+    assert db.get(seed.StockAsk, a1.id).done_by_user_id == olive.id
+    assert db.get(seed.StockAsk, a2.id).done_by_contact_id == w["ca"]
+
+
+def test_update_for_agent_with_a_linked_user_prefers_the_user_name(w):
+    svc, db = _svc(), w["db"]
+    sean = _user(db, "Sean Ibrahim", w["ca"])
+    row = seed.ask(db, w["x"], w["dealer"], "SRT-BOTH")
+    out = svc.update_for_agent(
+        db, w["a"].id, row.id, {"state": "done"}, actor_contact_id=w["ca"], actor_user_id=sean.id
+    )
+    assert out.done_by == "Sean Ibrahim"
+    assert (row.done_by_user_id, row.done_by_contact_id) == (sean.id, w["ca"])
 
 
 # ---- AC-ST104 ---------------------------------------------------------------------------
@@ -72,13 +113,20 @@ def test_public_update_functions_take_an_actor_and_stamp(w):
 
 def test_response_carries_done_fields(w):
     svc, db = _svc(), w["db"]
-    row = seed.ask(db, w["x"], w["dealer"], "SRT-104")
-    svc._apply_update(db, row, {"state": "done"}, actor="Sean", now=NOW)
-    dumped = svc.serialize(db, [row])[0].model_dump()
-    assert "done_at" in dumped and "done_by" in dumped
-    assert dumped["done_by"] == "Sean"
-    assert dumped["done_at"] == NOW
-    assert dumped.get("agent_code", "missing") is None
+    sean = _user(db, "Sean")
+    by_user = seed.ask(db, w["x"], w["dealer"], "SRT-104U")
+    by_contact = seed.ask(db, w["x"], w["dealer"], "SRT-104C")
+    open_row = seed.ask(db, w["x"], w["dealer"], "SRT-104O")
+    svc._apply_update(db, by_user, {"state": "done"}, actor_user_id=sean.id, actor_contact_id=w["ca"], now=NOW)
+    svc._apply_update(db, by_contact, {"state": "done"}, actor_contact_id=w["ca"], now=NOW)
+    u, c, o = (d.model_dump() for d in svc.serialize(db, [by_user, by_contact, open_row]))
+    for dumped in (u, c, o):
+        assert "done_at" in dumped and "done_by" in dumped
+        assert not [k for k in dumped if k.endswith("_id") and k != "id"], dumped.keys()
+        assert dumped.get("agent_code", "missing") is None
+    assert (u["done_by"], u["done_at"]) == ("Sean", NOW)
+    assert c["done_by"] == "Agent Alpha"
+    assert (o["done_by"], o["done_at"]) == (None, None)
 
 
 # ---- AC-ST105 / 106 ---------------------------------------------------------------------

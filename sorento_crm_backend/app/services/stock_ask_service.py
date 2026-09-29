@@ -31,6 +31,11 @@ USE_CASE = "stock_ask_salesman"
 #: R6: B1, B2 and B4 notify the agent; B3 (`incoming`) never does.
 NOTIFIED_BRANCHES = frozenset({"too_big", "in_stock", "no_incoming"})
 ANSWERED_BRANCHES = frozenset({"too_big", "in_stock", "incoming", "no_incoming"})
+#: Sales-asks-todo (plan 3.2, Q5): the to-do holds the branches the agent is notified about;
+#: an `incoming` answer is not theirs to chase.
+TODO_BRANCHES = NOTIFIED_BRANCHES
+#: A to-do is not paged: a salesperson's open asks are tens. The cap and `truncated` are the guard.
+TODO_CAP = 500
 
 _OUTCOME = {
     "in_stock": "in stock",
@@ -287,6 +292,10 @@ def _contact_label(contact: Any) -> str:
     return _CONTROL_CHARS.sub(" ", str(raw)).strip()[:100] or "-"
 
 
+#: Public name for the routers that stamp `done_by` with a portal contact's label.
+contact_label = _contact_label
+
+
 def _recipient(
     db: Session, contact_id: Optional[str], customer_id: Optional[str] = None
 ) -> tuple[Any, Any, Any, Optional[str]]:
@@ -468,8 +477,9 @@ def notify_salesman(db: Session, facts: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------- #
 
 
-def serialize(db: Session, rows: list[Any]) -> list[Any]:
-    """Rows as `StockAskResponse`: the contact, customer and product NAMED, never their ids."""
+def serialize(db: Session, rows: list[Any], *, with_agent: bool = False) -> list[Any]:
+    """Rows as `StockAskResponse`: the contact, customer and product NAMED, never their ids.
+    `with_agent` also names the customer's sales agent (`agent_code`), for the CRM manager view."""
     from app.models.access import RespondContact
     from app.models.order import Customer
     from app.models.product import Product
@@ -500,6 +510,17 @@ def serialize(db: Session, rows: list[Any]) -> list[Any]:
         if product_ids
         else {}
     )
+    agent_codes: dict[Any, str] = {}
+    if with_agent and customer_ids:
+        from app.models.order import Customer as _Customer
+        from app.models.sales_agent import SalesAgent
+
+        agent_codes = {
+            cid: code
+            for cid, code in db.query(_Customer.id, SalesAgent.sales_agent)
+            .join(SalesAgent, SalesAgent.id == _Customer.sales_agent_id)
+            .filter(_Customer.id.in_(customer_ids))
+        }
     return [
         StockAskResponse(
             id=str(r.id),
@@ -517,6 +538,9 @@ def serialize(db: Session, rows: list[Any]) -> list[Any]:
             note=r.note,
             created_at=r.created_at,
             updated_at=r.updated_at,
+            done_at=r.done_at,
+            done_by=r.done_by,
+            agent_code=agent_codes.get(r.customer_id),
         )
         for r in rows
     ]
@@ -535,9 +559,22 @@ def _page(query: Any, page: int, limit: int) -> tuple[list[Any], int]:
     return rows, total
 
 
-def _apply_update(db: Session, ask: Any, data: dict[str, Any]) -> Any:
-    if "state" in data and data["state"] is not None:
-        ask.state = data["state"]
+def _apply_update(
+    db: Session, ask: Any, data: dict[str, Any], *, actor: str, now: Optional[datetime] = None
+) -> Any:
+    """The ONE place `done_at` and `done_by` are written (plan 3.1): a transition to done stamps
+    both, a transition to open clears both, a repeat of the same state or a note-only change
+    touches neither. `actor` is a name snapshot (the portal contact's label or the CRM user's
+    name)."""
+    new_state = data.get("state")
+    if new_state is not None and new_state != ask.state:
+        if new_state == "done":
+            ask.done_at = now or datetime.utcnow()
+            ask.done_by = (actor or "").strip()[:150] or None
+        else:
+            ask.done_at = None
+            ask.done_by = None
+        ask.state = new_state
     if "note" in data:
         note = (data["note"] or "").strip()
         ask.note = note or None
@@ -570,7 +607,9 @@ def list_for_customer(db: Session, customer_id: str, *, page: int, limit: int) -
     }
 
 
-def update_for_customer(db: Session, customer_id: str, ask_id: str, data: dict[str, Any]) -> Any:
+def update_for_customer(
+    db: Session, customer_id: str, ask_id: str, data: dict[str, Any], *, actor: str
+) -> Any:
     from app.models.stock_ask import StockAsk
     from app.services.error_handler import handle_not_found
 
@@ -582,18 +621,21 @@ def update_for_customer(db: Session, customer_id: str, ask_id: str, data: dict[s
     )
     if ask is None:
         raise handle_not_found("Stock ask", ask_id)
-    return serialize(db, [_apply_update(db, ask, data)])[0]
+    return serialize(db, [_apply_update(db, ask, data, actor=actor)])[0]
 
 
-def _agent_scope(db: Session, agent_id: str) -> Any:
+def _agent_scope(db: Session, agent_id: Optional[str]) -> Any:
     """S6 (R9): asks of customers assigned to this agent NOW (`customers.sales_agent_id`).
-    An ask with no customer belongs to nobody's list."""
+    An ask with no customer belongs to nobody's list. `agent_id=None` is every agent's asks
+    (the CRM manager's "All agents": customers that have an agent). The ONE place the
+    agent -> customers relation lives (plan section 4)."""
     from app.models.order import Customer
     from app.models.stock_ask import StockAsk
 
-    return db.query(StockAsk).join(Customer, Customer.id == StockAsk.customer_id).filter(
-        Customer.sales_agent_id == agent_id
-    )
+    query = db.query(StockAsk).join(Customer, Customer.id == StockAsk.customer_id)
+    if agent_id is None:
+        return query.filter(Customer.sales_agent_id.isnot(None))
+    return query.filter(Customer.sales_agent_id == agent_id)
 
 
 def list_for_agent(
@@ -634,11 +676,101 @@ def list_for_agent(
     }
 
 
-def update_for_agent(db: Session, agent_id: str, ask_id: str, data: dict[str, Any]) -> Any:
+def update_for_agent(db: Session, agent_id: str, ask_id: str, data: dict[str, Any], *, actor: str) -> Any:
     from app.models.stock_ask import StockAsk
     from app.services.error_handler import handle_not_found
 
     ask = _agent_scope(db, agent_id).filter(StockAsk.id == ask_id).first()
     if ask is None:
         raise handle_not_found("Stock ask", ask_id)
-    return serialize(db, [_apply_update(db, ask, data)])[0]
+    return serialize(db, [_apply_update(db, ask, data, actor=actor)])[0]
+
+
+def update_for_sales(
+    db: Session, ask_id: str, data: dict[str, Any], *, agent_id: Optional[str], actor: str
+) -> Any:
+    """The CRM to-do's PATCH: `agent_id` is my agent (my customers' asks only), or None for a
+    caller with view_all (any ask that belongs to some agent's customer). Out of scope is a 404."""
+    from app.models.stock_ask import StockAsk
+    from app.services.error_handler import handle_not_found
+
+    ask = _agent_scope(db, agent_id).filter(StockAsk.id == ask_id).first()
+    if ask is None:
+        raise handle_not_found("Stock ask", ask_id)
+    return serialize(db, [_apply_update(db, ask, data, actor=actor)], with_agent=agent_id is None)[0]
+
+
+def today_start_utc(now: datetime) -> datetime:
+    """Malaysia midnight of `now`, as a naive UTC datetime. The server owns the day boundary."""
+    if now.tzinfo is not None:
+        now = now.astimezone(timezone.utc).replace(tzinfo=None)
+    local = (now + timedelta(hours=8)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return local - timedelta(hours=8)
+
+
+def todo_for_agent(
+    db: Session, agent_id: Optional[str], *, now: Optional[datetime] = None, with_agent: bool = False
+) -> dict[str, Any]:
+    """The to-do read (plan 3.2): open asks oldest first (capped), and what was cleared today.
+    `agent_id=None` is every agent (view_all). Grouping happens on the client from `today_start`."""
+    from app.models.stock_ask import StockAsk
+
+    start = today_start_utc(now or datetime.utcnow())
+    open_rows = (
+        _agent_scope(db, agent_id)
+        .filter(StockAsk.state == "open", StockAsk.branch.in_(TODO_BRANCHES))
+        .order_by(StockAsk.created_at.asc(), StockAsk.id.asc())
+        .limit(TODO_CAP + 1)
+        .all()
+    )
+    truncated = len(open_rows) > TODO_CAP
+    done_rows = (
+        _agent_scope(db, agent_id)
+        .filter(StockAsk.state == "done", StockAsk.done_at >= start)
+        .order_by(StockAsk.done_at.desc(), StockAsk.id.asc())
+        .all()
+    )
+    return {
+        "today_start": start,
+        "open": serialize(db, open_rows[:TODO_CAP], with_agent=with_agent),
+        "done_today": serialize(db, done_rows, with_agent=with_agent),
+        "truncated": truncated,
+    }
+
+
+def agent_counts(db: Session, *, now: Optional[datetime] = None) -> list[dict[str, Any]]:
+    """The manager's Agent select: every agent with at least one open ask, counted by the
+    to-do's rules (same branches, needs attention = asked before today)."""
+    from sqlalchemy import case, func
+
+    from app.models.order import Customer
+    from app.models.sales_agent import SalesAgent
+    from app.models.stock_ask import StockAsk
+
+    start = today_start_utc(now or datetime.utcnow())
+    rows = (
+        db.query(
+            SalesAgent.id,
+            SalesAgent.sales_agent,
+            SalesAgent.person_label,
+            func.count(StockAsk.id),
+            func.sum(case((StockAsk.created_at < start, 1), else_=0)),
+        )
+        .select_from(StockAsk)
+        .join(Customer, Customer.id == StockAsk.customer_id)
+        .join(SalesAgent, SalesAgent.id == Customer.sales_agent_id)
+        .filter(StockAsk.state == "open", StockAsk.branch.in_(TODO_BRANCHES))
+        .group_by(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.person_label)
+        .order_by(SalesAgent.sales_agent)
+        .all()
+    )
+    return [
+        {
+            "agent_id": str(agent_id),
+            "code": code,
+            "name": person or code,
+            "open": int(opened),
+            "needs_attention": int(attention or 0),
+        }
+        for agent_id, code, person, opened, attention in rows
+    ]

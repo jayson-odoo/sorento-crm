@@ -42,7 +42,25 @@ def _run(conn, fn):
 
 
 def _drop_columns(conn):
-    conn.execute(sa.text("ALTER TABLE stock_asks DROP COLUMN IF EXISTS done_at, DROP COLUMN IF EXISTS done_by"))
+    conn.execute(
+        sa.text(
+            "ALTER TABLE stock_asks DROP COLUMN IF EXISTS done_at, "
+            "DROP COLUMN IF EXISTS done_by_user_id, DROP COLUMN IF EXISTS done_by_contact_id"
+        )
+    )
+
+
+def _fk(conn, column: str):
+    """(referred table, ON DELETE action) of the FK on stock_asks.<column>, by constraint lookup."""
+    row = conn.execute(
+        sa.text(
+            "SELECT c.confrelid::regclass::text, c.confdeltype FROM pg_constraint c "
+            "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey) "
+            "WHERE c.contype = 'f' AND c.conrelid = 'stock_asks'::regclass AND a.attname = :col"
+        ),
+        {"col": column},
+    ).first()
+    return None if row is None else (row[0], row[1])
 
 
 def _columns(conn) -> dict:
@@ -82,9 +100,13 @@ def test_columns_exist_and_rerun_is_noop():
             assert cols["done_at"]["nullable"] is True
             assert isinstance(cols["done_at"]["type"], sa.TIMESTAMP)
             assert cols["done_at"]["type"].timezone is False
-            assert cols["done_by"]["nullable"] is True
-            assert isinstance(cols["done_by"]["type"], sa.String)
-            assert cols["done_by"]["type"].length == 150
+            assert "done_by" not in cols  # a name is a label, never a column
+            assert cols["done_by_user_id"]["nullable"] is True
+            assert isinstance(cols["done_by_user_id"]["type"], sa.String)
+            assert cols["done_by_contact_id"]["nullable"] is True
+            assert isinstance(cols["done_by_contact_id"]["type"], sa.Text)
+            assert _fk(conn, "done_by_user_id") == ("users", "n")  # ON DELETE SET NULL
+            assert _fk(conn, "done_by_contact_id") == ("respond_contacts", "n")
         finally:
             outer.rollback()
 
@@ -101,14 +123,15 @@ def test_backfill_stamps_done_rows():
             rows = {
                 r.id: r
                 for r in conn.execute(
-                    sa.text("SELECT id::text AS id, done_at, done_by, updated_at FROM stock_asks WHERE id = ANY(CAST(:ids AS uuid[]))"),
+                    sa.text("SELECT id::text AS id, done_at, done_by_user_id, done_by_contact_id, updated_at FROM stock_asks WHERE id = ANY(CAST(:ids AS uuid[]))"),
                     {"ids": [done_id, open_id]},
                 )
             }
             done, opened = rows[done_id], rows[open_id]
             assert done.done_at == done.updated_at
-            assert done.done_by is None
-            assert opened.done_at is None and opened.done_by is None
+            assert done.done_by_user_id is None and done.done_by_contact_id is None
+            assert opened.done_at is None
+            assert opened.done_by_user_id is None and opened.done_by_contact_id is None
         finally:
             outer.rollback()
 

@@ -36,7 +36,8 @@ def w():
         world["x_open"] = seed.ask(db, world["x"], world["dealer"], "SRT-X", created_at=now - timedelta(minutes=5))
         world["z_open"] = seed.ask(db, world["z"], world["dealer"], "SRT-Z", created_at=now - timedelta(minutes=5))
         world["done"] = seed.ask(
-            db, world["y"], world["dealer"], "SRT-DONE", state="done", done_at=now, done_by="Agent Alpha"
+            db, world["y"], world["dealer"], "SRT-DONE", state="done", done_at=now,
+            done_by_contact_id=world["ca"]
         )
         world["db"] = db
         db.commit()
@@ -95,6 +96,13 @@ def test_todo_route_gate_and_shape(w):
     assert off.json().get("code") == "FORM_TYPE_NOT_VISIBLE", off.text
 
 
+def _row(w, ask_id):
+    from app.models.stock_ask import StockAsk
+
+    w["db"].expire_all()
+    return w["db"].get(StockAsk, ask_id)
+
+
 def test_portal_patch_done_stamps_contact_label(w):
     client = _client(w, w["ca"])
     resp = client.patch(f"{BASE}/{w['x_open'].id}", json={"state": "done"})
@@ -102,8 +110,28 @@ def test_portal_patch_done_stamps_contact_label(w):
     body = resp.json()
     assert body["done_by"] == "Agent Alpha"
     assert body["done_at"]
+    assert not [k for k in body if k.endswith("_id") and k != "id"], body.keys()
+    row = _row(w, w["x_open"].id)
+    assert row.done_by_contact_id == w["ca"]
+    assert row.done_by_user_id is None
 
     reopened = client.patch(f"{BASE}/{w['x_open'].id}", json={"state": "open"}).json()
     assert reopened["done_at"] is None and reopened["done_by"] is None
+    row = _row(w, w["x_open"].id)
+    assert (row.done_at, row.done_by_user_id, row.done_by_contact_id) == (None, None, None)
 
     assert client.patch(f"{BASE}/{w['z_open'].id}", json={"state": "done"}).status_code == 404
+
+
+def test_portal_patch_with_a_user_linked_to_the_contact_stamps_the_user_too(w):
+    from app.models.user import User
+
+    db = w["db"]
+    uid = seed.uid()
+    db.add(User(id=uid, email=f"{uid}@zzt.test", name="Alpha Person", status="ACTIVE", respond_contact_id=w["ca"]))
+    db.commit()
+    resp = _client(w, w["ca"]).patch(f"{BASE}/{w['x_open'].id}", json={"state": "done"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["done_by"] == "Alpha Person"
+    row = _row(w, w["x_open"].id)
+    assert (row.done_by_user_id, row.done_by_contact_id) == (uid, w["ca"])

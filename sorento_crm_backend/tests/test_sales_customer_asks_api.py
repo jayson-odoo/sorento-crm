@@ -87,7 +87,7 @@ def w():
                 x_incoming=seed.ask(db, world["x"], world["dealer"], "SRT-XINC", created_at=old, branch="incoming"),
                 x_done=seed.ask(
                     db, world["x"], world["dealer"], "SRT-XDONE", created_at=old, state="done",
-                    done_at=datetime.utcnow(), done_by="Someone",
+                    done_at=datetime.utcnow(), done_by_contact_id=world["dealer"],
                 ),
                 z_old=seed.ask(db, world["z"], world["dealer"], "SRT-ZOLD", created_at=old),
                 z_today=seed.ask(db, world["z"], world["dealer"], "SRT-ZTODAY", created_at=start + timedelta(seconds=1)),
@@ -194,12 +194,17 @@ def test_patch_scope_and_stamps(w):
     assert resp.status_code == 200, resp.text
     assert resp.json()["done_by"] == "Alpha Person"
     assert resp.json()["done_at"]
+    assert "done_by_user_id" not in resp.json()
+    w["db"].expire_all()
+    assert w["db"].get(seed.StockAsk, w["x_old"].id).done_by_user_id == w["me"].id
 
     assert _call(w, [VIEW, EDIT], "me", "patch", f"/{w['z_old'].id}", json={"state": "done"}).status_code == 404
 
     office = _call(w, [VIEW, EDIT, VIEW_ALL], "me", "patch", f"/{w['z_old'].id}", json={"state": "done"})
     assert office.status_code == 200, office.text
     assert office.json()["done_by"] == "Alpha Person"
+    w["db"].expire_all()
+    assert w["db"].get(seed.StockAsk, w["z_old"].id).done_by_user_id == w["me"].id
 
     assert _call(w, [VIEW], "me", "patch", f"/{w['y_yday'].id}", json={"state": "done"}).status_code == 403
     assert _call(w, [VIEW, EDIT], "me", "patch", f"/{w['y_yday'].id}", json={"state": "closed"}).status_code == 422
