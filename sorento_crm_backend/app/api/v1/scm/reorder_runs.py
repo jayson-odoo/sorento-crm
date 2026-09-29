@@ -582,7 +582,6 @@ def get_candidate_orders(
             JOIN projects.order_inquiries oi ON oi.id = oir.order_inquiry_id
             JOIN projects.sales_orders spso ON spso.id = oi.project_sales_order_id
             JOIN sales_orders so ON so.id = spso.so_id AND so.company_id = oir.company_id
-            {demand._FORM_CORE_LINE_JOIN_SQL}
             LEFT JOIN LATERAL (
                 SELECT COALESCE(SUM(l.qty), 0) AS linked
                 FROM projects.order_inquiry_links l
