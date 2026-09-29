@@ -1,6 +1,6 @@
 # PLAN: sales asks as a salesperson's to-do list, date-first (lane SALES-ASKS-TODO)
 
-Status: built to the Lavish-approved mockup (round 3, 168e1e2e) 29 Sep 2026; S3 reshape green, Phase 3 reviewed (security B1 + reviewer items fixed), browser-verified (7d); awaiting the owner's hand test. Track: full. The plan was first written
+Status: built to the Lavish-approved mockup (round 3, 168e1e2e) 29 Sep 2026; S3 reshape green, Phase 3 reviewed (security B1 + reviewer items fixed), browser-verified (7d); owner hand test PASSED 29 Sep 2026 on 192fc7bc; permissions re-granted by explicit role list (3.4) after the dev-DB gap; awaiting CI and merge. Track: full. The plan was first written
 under the recommendations and each pending question is marked `[Q<n> pending]` where its answer
 changes the design. Track: full (one migration, two new routes under RBAC, one portal route).
 Plan created: 2026-09-29T08:20:00Z
