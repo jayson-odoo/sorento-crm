@@ -347,6 +347,10 @@ class SystemSetting(Base):
     social_linkedin = Column(String, nullable=True)
     social_pinterest = Column(String, nullable=True)
     social_youtube = Column(String, nullable=True)
+    # #1349: the email theme (brand colour, logo, button, font, footer) as ONE object,
+    # validated by app.services.email_layout.EmailTheme and served by its own endpoint
+    # (/api/v1/system/email-theme), so it is deliberately NOT in the settings dict builders.
+    email_theme = Column(JSONB, nullable=True)
     
     notify_stock_email = Column(Boolean, default=True, nullable=False)
     notify_stock_web = Column(Boolean, default=True, nullable=False)

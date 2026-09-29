@@ -2745,3 +2745,69 @@ describe('a delivered line composes against its plan quantity', () => {
     expect(suggestionDraftFrom(delivered).open_qty).toBe('3');
   });
 });
+
+describe('#1362 item 5: soLineLabel / soLineNoText', () => {
+  it('names the AutoCount line number, never the planning row index', async () => {
+    const { soLineLabel, soLineNoText } = await import('./fulfilmentBoard');
+    expect(soLineLabel({ so_line_no: 2912, line_no: 110 })).toBe('Line 2912');
+    expect(soLineNoText({ so_line_no: 2912, line_no: 110 })).toBe('2912');
+    // AutoCount number 0 is a real number, not "absent".
+    expect(soLineLabel({ so_line_no: 0, line_no: 4 })).toBe('Line 0');
+  });
+
+  it('falls back to "row N" only when AutoCount gave the line no number', async () => {
+    const { soLineLabel, soLineNoText } = await import('./fulfilmentBoard');
+    expect(soLineLabel({ so_line_no: null, line_no: 110 })).toBe('row 110');
+    expect(soLineNoText({ so_line_no: null, line_no: 3 })).toBe('row 3');
+    // A payload with no so_line_no key at all predates the field: its number is bare.
+    expect(soLineNoText({ line_no: 3 })).toBe('3');
+  });
+});
+
+describe('#1362 item 5: failingLineText', () => {
+  it('names a refused line by its AutoCount number, not the positional one', async () => {
+    const { failingLineText } = await import('./fulfilmentBoard');
+    expect(
+      failingLineText({
+        line_no: 110,
+        so_line_no: 2912,
+        item_code: 'B2154-NL',
+        reason: '100 landed for this line on SPO-2026/09-0036; nothing to buy for it',
+      }),
+    ).toBe('Line 2912, B2154-NL: 100 landed for this line on SPO-2026/09-0036; nothing to buy for it');
+    expect(failingLineText({ line_no: null, reason: 'Nothing is mapped yet.' })).toBe(
+      'Nothing is mapped yet.',
+    );
+  });
+});
+
+describe('#1362 (owner, 29 Sep 2026): confirmNoticeLines', () => {
+  it('names a held-back line and a Buy kept over landed goods, each by its line', async () => {
+    const { confirmNoticeLines } = await import('./fulfilmentBoard');
+    expect(
+      confirmNoticeLines({
+        lines_held_back: [
+          {
+            line_no: 29,
+            so_line_no: null,
+            item_code: 'B2154-NL',
+            reason: 'The components add up to 50 and the line is open for 100.',
+          },
+        ],
+        landed_buy_notices: [
+          {
+            line_no: 110,
+            so_line_no: 2912,
+            item_code: 'B2154-NL',
+            reason:
+              'Buy 100 confirmed as decided; 100 landed for this line on SPO-2026/06-0131 stay linked to it, for purchasing to adjust',
+          },
+        ],
+      }),
+    ).toEqual([
+      'row 29, B2154-NL: held back, decision kept: The components add up to 50 and the line is open for 100.',
+      'Line 2912, B2154-NL: Buy 100 confirmed as decided; 100 landed for this line on SPO-2026/06-0131 stay linked to it, for purchasing to adjust',
+    ]);
+    expect(confirmNoticeLines({})).toEqual([]);
+  });
+});

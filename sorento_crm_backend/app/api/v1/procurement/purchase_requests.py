@@ -1,5 +1,4 @@
 """Purchase requests / sponsorship forms API routes."""
-import html
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -739,36 +738,30 @@ async def send_approval_link(
                 email_error = "No approver email available to send to."
             else:
                 from app.services.email_outbox_service import enqueue as enqueue_email
+                from app.services.email_template_service import EmailTemplateService
 
                 header = service.get_request(request_id)
                 type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
-                subject = f"{type_label} - Approval link"
                 full_url = approval_url if approval_url.startswith("http") else f"{base_url.rstrip('/')}{approval_url if approval_url.startswith('/') else '/' + approval_url}"
-                body_text = (
-                    f"You have been sent a one-time approval link for a {type_label.lower()}.\n\n"
-                    f"Form number: {display_document_number(header) or 'N/A'}\n"
-                    f"Project: {getattr(header, 'project_title', None) or 'N/A'}\n\n"
-                    f"Open this link to approve or reject (link expires after use or after the expiry time):\n{full_url}\n"
-                )
-                form_num = html.escape(str(display_document_number(header) or "N/A"))
-                project = html.escape(str(getattr(header, "project_title", None) or "N/A"))
-                url_escaped = html.escape(full_url, quote=True)
-                body_html = (
-                    f"<p>You have been sent a one-time approval link for a {html.escape(type_label.lower())}.</p>"
-                    f"<p><strong>Form number:</strong> {form_num}<br>"
-                    f"<strong>Project:</strong> {project}</p>"
-                    f"<p>Open the link below to approve or reject (link expires after use or after the expiry time):</p>"
-                    f'<p><a href="{url_escaped}" style="color: #2563eb; text-decoration: underline;">{url_escaped}</a></p>'
-                    f"<p>Or copy and paste into your browser if the link does not work.</p>"
+                rendered = EmailTemplateService(db).render_code(
+                    "purchase_request_approval_link",
+                    {
+                        "purchase_request": {
+                            "type_label": type_label,
+                            "request_number": display_document_number(header) or "N/A",
+                            "project_title": getattr(header, "project_title", None) or "N/A",
+                        },
+                        "approval_url": full_url,
+                    },
                 )
                 try:
                     enqueue_email(
                         db,
                         event_key="purchase_request_approval_link",
                         to=to_email,
-                        subject=subject,
-                        body_text=body_text,
-                        body_html=body_html,
+                        subject=rendered["subject"],
+                        body_text=rendered["body_text"],
+                        body_html=rendered["body_html"],
                         metadata={
                             "request_id": request_id,
                             "approval_token_id": str(approval_token.id),

@@ -1,5 +1,8 @@
 # UAC - Sorento `ideate` intent + Ideas iframe host
 
+**Status:** Fulfilled by the shipped code (2026-09-24); the evidence is in the Status line of
+`PLAN-ideation-ideate-intent.md`, and the rows that stayed DEFERRED (live LLM, Playwright) are listed in
+`documentation/plans/ideation/ideation-ideate-intent-test-report.md`. Archived alongside the plan.
 **Feature slug:** `ideation-ideate-intent`
 **Program spine:** `foundryx-shared-service/documentation/plans/ideation/PLAN-ideation-to-delivery-program.md`
 (this UAC keys back to the **Cross-Repo Contracts** §5.1 / §5.2 / §5.3, and decisions D6, D7, D8, D19).

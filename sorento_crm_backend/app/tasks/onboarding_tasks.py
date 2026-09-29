@@ -205,38 +205,30 @@ def provision_onboarding_request(request_id: str) -> dict:
 def _notify_requester_complete(db, request: OnboardingRequest, summary: dict) -> None:
     """One email when the batch finishes, in the requester's own terms."""
     from app.services import email_outbox_service
+    from app.services.email_template_service import EmailTemplateService
 
     created = summary["created"]
     skipped = summary["skipped"]
     failed = summary["failed"]
 
-    lines = [
-        f"Hello {request.requester_name},",
-        "",
-        f"Your onboarding submission '{request.title}' has been processed.",
-        "",
-        f"  Accounts created: {created}",
-        f"  Already existed:  {skipped}",
-    ]
-    if failed:
-        lines.append(f"  Could not be created: {failed}")
-        lines.append("")
-        lines.append("Somebody from the team will be in touch about the ones that failed.")
-    lines += [
-        "",
-        "Anybody who received an account has been emailed a link to set their password.",
-        "",
-        "This is a system-generated email. Please do not reply.",
-    ]
-    body_text = "\n".join(lines)
+    rendered = EmailTemplateService(db).render_code(
+        "onboarding_completed",
+        {
+            "requester_name": request.requester_name,
+            "request_title": request.title,
+            "created": created,
+            "skipped": skipped,
+            "failed": failed,
+        },
+    )
 
     email_outbox_service.enqueue(
         db,
         event_key="onboarding_completed",
         to=request.requester_email,
-        subject=f"Onboarding complete: {request.title}",
-        body_text=body_text,
-        body_html="<p>" + "</p><p>".join(l for l in lines if l) + "</p>",
+        subject=rendered["subject"],
+        body_text=rendered["body_text"],
+        body_html=rendered["body_html"],
         from_name="Sorento AI System",
         metadata={"onboarding_request_id": str(request.id), **summary},
     )

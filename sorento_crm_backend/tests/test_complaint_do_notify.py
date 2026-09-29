@@ -191,8 +191,12 @@ def test_N3_N6_team_in_app_and_email(db: Session, monkeypatch) -> None:
     assert "fulfilled" not in (notif.body or "").lower()
     # structured email/in-app body: one item per line
     assert "\n- SKU-1 x 2\n- SKU-2 x 1" in (notif.body or "")
-    # email HTML uses a <ul> list
-    assert "<li>SKU-1 x 2</li>" in ((notif.data or {}).get("body_html") or "")
+    # email HTML uses a <ul> list. Moved for #1349 (PLAN-email-layout-28sep.md): the mail
+    # now renders through the branded layout, whose `inline_defaults()` (AC-EM008) adds a
+    # `style` attribute to every admin-authored `<li>`, so the element is no longer the
+    # exact `<li>SKU-1 x 2</li>` byte string - the same fact (one list item per delivered
+    # code) still holds, asserted tolerant of that attribute.
+    assert "SKU-1 x 2</li>" in ((notif.data or {}).get("body_html") or "")
     # staff email links to the INTERNAL detail page, never the public /view token URL
     assert f"/complaint-management/complaints/{c.id}" in (notif.body or "")
     assert "/view/complaint?token=" not in (notif.body or "")

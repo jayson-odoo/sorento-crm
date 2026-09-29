@@ -17,11 +17,9 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 
-import pytest
 
 from app.models.procurement import PurchaseOrderLine
 from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
-from app.services.error_handler import AppException
 from app.services.project_supply_service import ProjectSupplyService, _LineFacts
 
 from tests._pg_fixture import blank_session
@@ -92,6 +90,9 @@ def test_t2_spo_received_refusal_names_the_spo_number_never_the_po():
     hand 7 - the credit is a clean 7. Confirming a Buy for the whole line, with no
     Reserve at the credited bin, is refused, and the message names the SPO number - never
     the PO number (R3).
+
+    #1362 (owner ruling, 29 Sep 2026): no longer refused - the Buy is confirmed as decided
+    and the confirm's notice names what landed. The SPO-never-PO rule is pinned there.
     """
     within_window = date.today() + timedelta(days=10)
     with blank_session() as db:
@@ -119,20 +120,16 @@ def test_t2_spo_received_refusal_names_the_spo_number_never_the_po():
         line = _project_line(db, order, line_no=1, product=product, core_line=core_line)
         db.commit()
 
-        with pytest.raises(AppException) as refused:
-            ProjectSupplyService(db).confirm(
-                order,
-                ConfirmSupplyBody(
-                    lines=[ConfirmLine(project_line_id=str(line.id), buy_qty="7")]
-                ),
-                actor_user_id=actor,
-            )
+        result = ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[ConfirmLine(project_line_id=str(line.id), buy_qty="7")]
+            ),
+            actor_user_id=actor,
+        )
 
-    assert refused.value.status_code == 409, refused.value.detail
-    assert refused.value.detail.get("code") == "planning_change_buy_over_own_arrival", (
-        refused.value.detail
-    )
-    message = refused.value.detail.get("message") or ""
+    (notice,) = result["landed_buy_notices"]
+    message = notice["reason"]
     assert "7" in message and spo_number in message, message
     assert po_number not in message, (
         f"the refusal must name the document goods landed on (the SPO), never the PO: "
