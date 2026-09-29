@@ -161,5 +161,10 @@ to A, customer Z assigned to B, asks with `created_at` set explicitly around a f
 - **AC-ST213 [BE][T]** `test_schema_uuid_id_principle.py` passes with no exemption; no response
   carries a bare `sales_agent_id` or `customer_id` beyond the ask's own `id` and `agent_id` in the
   agents list (the filter key, never shown).
-- **AC-ST214 [E2E]** The office marks an ask done on customer X's Asks tab: the portal to-do (CA)
-  and the CRM to-do show it under `Done today` with the office user's name.
+- **AC-ST214 [E2E][FE]** The office marks an ask done on customer X's Asks tab: the portal to-do
+  (CA) and the CRM to-do show it under `Done today` with the office user's name. [FE] The office
+  Asks tab and the portal `Show done` history carry a `Done by` column: "Done by <name>, <time>"
+  for a done row, "Done" when no name, `-` when open (journey step 6; reviewer blocker, 29 Sep).
+- **AC-ST217 [FE]** `Done` and `Reopen` are disabled for the ask whose PATCH is in flight
+  (`pendingAskId`); the CRM unlinked state is a heading "Not linked to a sales agent" plus one
+  hint line, no button (reviewer nits, 29 Sep).

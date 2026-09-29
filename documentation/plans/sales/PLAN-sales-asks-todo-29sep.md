@@ -305,6 +305,10 @@ Ruled (crew, 29 Sep 2026): (a), build on `customers.sales_agent_id` now; swap wh
 - No new preference table for the sort (Q3): the existing view-preference row for the CRM, the
   portal's per-contact local storage for the portal. Trigger: a two-device salesperson.
 - No team hierarchy beyond one level: a leader sees current members, not members' teams (Q7 (c)).
+- No `Show done` on the CRM mount (reviewer should-fix 2, ruled 29 Sep 2026): it would need a
+  cross-customer done-list endpoint, while the CRM already has the customer's Asks tab for
+  history and the to-do shows `Done today`. The portal keeps its `Show done` (the salesperson has
+  no other history there). Trigger: a CRM salesperson asks for history beyond today.
 - No paging on the to-do (cap 500 + flag). Trigger: an agent whose open asks exceed the cap.
 - No new table: two columns on the row that exists. No registry for the day buckets: one pure
   function.
