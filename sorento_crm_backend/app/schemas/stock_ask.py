@@ -72,6 +72,8 @@ class StockAskMessage(BaseModel):
 class StockAskConversationResponse(BaseModel):
     messages: list[StockAskMessage]
     ask_message_id: Optional[int] = None
+    #: The contact's `respond_contacts.id`, only for the CRM's "Open in Conversations" link.
+    contact_id: Optional[str] = None
 
 
 class StockAskUpdate(BaseModel):

@@ -196,7 +196,7 @@ describe('ASK_LANDING_FIELDS (AC-ST302)', () => {
       ['State', 'status'],
     ]);
     expect(ASK_LANDING_FIELDS.find((f) => f.label === 'Customer')!.key).toBe('customer_name');
-    expect(ASK_LANDING_FIELDS.find((f) => f.label === 'Asked')!.key).toBe('created_at');
+    expect(ASK_LANDING_FIELDS.find((f) => f.label === 'Created')!.key).toBe('created_at');
   });
 
   const rowsOf = () => [

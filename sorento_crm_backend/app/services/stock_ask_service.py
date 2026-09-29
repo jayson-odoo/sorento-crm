@@ -816,56 +816,43 @@ def agent_counts(
     include_idle: bool = False,
     now: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
-    """The Agent select's lines, counted by the to-do's rules (every branch; needs attention =
-    asked before today). `agent_ids` None is every agent. Agents with no open ask are left out,
-    unless `include_idle` (a team leader sees every current member, 0 allowed)."""
+    """The Agent select's lines, counted over the SAME rows the to-do shows: each agent's
+    `_agent_scope` (so a customer-less ask reached through a contact link counts for every agent
+    it belongs to), open, every branch; needs attention = asked before today. `agent_ids` None is
+    every agent. Agents with no open ask are left out, unless `include_idle` (a team leader sees
+    every current member, 0 allowed). One small query per agent: an agent list is tens."""
     from sqlalchemy import case, func
 
-    from app.models.order import Customer
     from app.models.sales_agent import SalesAgent
     from app.models.stock_ask import StockAsk
 
     start = today_start_utc(now or datetime.utcnow())
-    ids = None if agent_ids is None else list(agent_ids)
-    query = (
-        db.query(
-            SalesAgent.id,
-            SalesAgent.sales_agent,
-            SalesAgent.person_label,
-            func.count(StockAsk.id),
-            func.sum(case((StockAsk.created_at < start, 1), else_=0)),
-        )
-        .select_from(StockAsk)
-        .join(Customer, Customer.id == StockAsk.customer_id)
-        .join(SalesAgent, SalesAgent.id == _owning_agent_column())
-        .filter(StockAsk.state == "open")
-    )
-    if ids is not None:
-        query = query.filter(SalesAgent.id.in_(ids))
-    rows = query.group_by(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.person_label).all()
-    out = {
-        str(agent_id): {
-            "agent_id": str(agent_id),
-            "code": code,
-            "name": person or code,
-            "open": int(opened),
-            "needs_attention": int(attention or 0),
-        }
-        for agent_id, code, person, opened, attention in rows
-    }
-    if include_idle and ids:
-        for agent in db.query(SalesAgent).filter(SalesAgent.id.in_(ids)):
-            out.setdefault(
-                str(agent.id),
-                {
-                    "agent_id": str(agent.id),
-                    "code": agent.sales_agent,
-                    "name": agent.person_label or agent.sales_agent,
-                    "open": 0,
-                    "needs_attention": 0,
-                },
+    query = db.query(SalesAgent)
+    if agent_ids is not None:
+        query = query.filter(SalesAgent.id.in_(list(agent_ids)))
+    out = []
+    for agent in query.all():
+        opened, attention = (
+            _agent_scope(db, agent.id)
+            .filter(StockAsk.state == "open")
+            .with_entities(
+                func.count(StockAsk.id),
+                func.coalesce(func.sum(case((StockAsk.created_at < start, 1), else_=0)), 0),
             )
-    return sorted(out.values(), key=lambda r: r["code"])
+            .one()
+        )
+        if not opened and not include_idle:
+            continue
+        out.append(
+            {
+                "agent_id": str(agent.id),
+                "code": agent.sales_agent,
+                "name": agent.person_label or agent.sales_agent,
+                "open": int(opened),
+                "needs_attention": int(attention),
+            }
+        )
+    return sorted(out, key=lambda r: r["code"])
 
 
 #: The window either side of the ask, and the row caps (plan 3.6).
@@ -893,7 +880,8 @@ def conversation_for_ask(db: Session, ask: Any, *, whole_day: bool = False) -> d
     (`respond_contacts.id`) is resolved to its `respond_io_id` first. Only id, direction, text and
     time leave here. When the cap bites, the rows nearest the ask are kept, oldest first.
     `ask_message_id` is the outgoing row after the ask that carries its answer line, else the
-    nearest outgoing row after it, else None."""
+    nearest outgoing row after it, else None. `contact_id` (the `respond_contacts.id`) is for the
+    CRM's "Open in Conversations" link only, and is left out of an empty answer (no chat to open)."""
     from sqlalchemy import func
 
     from app.models.access import RespondContact
@@ -945,4 +933,4 @@ def conversation_for_ask(db: Session, ask: Any, *, whole_day: bool = False) -> d
     ask_message_id = next((r.id for r in after if ask.answer_summary and ask.answer_summary in (r.message or "")), None)
     if ask_message_id is None and after:
         ask_message_id = after[0].id
-    return {"messages": messages, "ask_message_id": ask_message_id}
+    return {"messages": messages, "ask_message_id": ask_message_id, "contact_id": ask.contact_id}

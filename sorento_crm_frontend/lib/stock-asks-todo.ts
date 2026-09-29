@@ -53,7 +53,7 @@ export interface AskConversation {
   messages: AskConversationMessage[];
   /** The outgoing message that carries the ask's answer, when there is one. */
   ask_message_id: number | null;
-  /** The contact's row id, only for the CRM's "Open in Conversations" link; absent on the wire today. */
+  /** The contact's row id (respond_contacts.id), only for the CRM's "Open in Conversations" link (`?contact=` on the conversations page); absent on an empty answer. */
   contact_id?: string | null;
 }
 
@@ -123,7 +123,7 @@ export function askToSummary(ask: StockAsk): AskSummary {
 export const ASK_LANDING_FIELDS: LandingField[] = [
   { key: 'customer_name', label: 'Customer', type: 'text' },
   { key: 'answer', label: 'Answer', type: 'text' },
-  { key: 'created_at', label: 'Asked', type: 'date' },
+  { key: 'created_at', label: 'Created', type: 'date' },
   { key: 'status', label: 'State', type: 'status' },
 ];
 

@@ -74,7 +74,7 @@ def portal_customer_asks_todo(
     return stock_ask_service.todo_for_agent(db, _agent_id(db, token))
 
 
-@router.get("/customer-asks/{ask_id}/conversation", response_model=StockAskConversationResponse)
+@router.get("/customer-asks/{ask_id}/conversation", response_model=StockAskConversationResponse, response_model_exclude_unset=True)
 def portal_customer_ask_conversation(
     ask_id: str,
     whole_day: bool = Query(False),

@@ -144,7 +144,7 @@ def _patch_scope(db: Session, user: dict, ask_id: str) -> Optional[set[str]]:
     return _led_agent_ids(db, mine.id) | {mine.id}
 
 
-@router.get("/{ask_id}/conversation", response_model=StockAskConversationResponse)
+@router.get("/{ask_id}/conversation", response_model=StockAskConversationResponse, response_model_exclude_unset=True)
 def customer_asks_conversation(
     ask_id: str,
     whole_day: bool = Query(False),
