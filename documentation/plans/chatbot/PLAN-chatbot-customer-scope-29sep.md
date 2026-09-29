@@ -329,6 +329,10 @@ Known limitations, recorded and not built:
 - **Complaints are joined on name.** Complaints carry `customer_name` text only, so a
   complaint filed under another customer sharing the linked name is shown; a name that differs
   by spelling is hidden (fails closed). Needs a customer id on complaints to do better.
+- **Legacy orders (no `customer_id`) still match by `debtor_name`.** That is the fallback's
+  documented purpose; for a contact whose request scope spans two companies, a legacy row in
+  company A carrying the same debtor name as its link in company B would show. Closed by the
+  customer_id backfill, not by this lane.
 - **A lone `contact_id` or `space_id` is 422** on orders list, by-product, debtors, analytics
   and the outstanding report (the sales report's shipped rule, now shared). The lane always
   sends both, non-blank.
