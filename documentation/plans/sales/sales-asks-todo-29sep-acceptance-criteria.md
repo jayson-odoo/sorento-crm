@@ -100,9 +100,13 @@ to A, customer Z assigned to B, asks with `created_at` set explicitly around a f
   read `Open 2 · Needs attention 1 · Done today 1`; reload: persisted; the CRM customer X Asks tab
   shows the row `Done` with the same name. 375px: one column, `Done` reachable without horizontal
   scroll; 1280px: actions on the right. Recorded agent-browser evidence.
-- **AC-ST119 [UX]** The done row leaves its group with the `motion.ts` fade preset (under 200 ms)
-  and renders instantly under `prefers-reduced-motion`; nothing else on the page animates;
-  `Done` shows the pressed state token.
+- **AC-ST119 [UX]** The done row leaves its group with the `motion.ts` fade preset
+  (`surfaceExitTransition`, `visualDuration` 0.2 s: the visible fade settles in 150 to 200 ms,
+  the spring tail reaches opacity 0 at about 280 ms, measured 29 Sep 2026 on both mounts) and
+  renders instantly under `prefers-reduced-motion` (`duration 0.01`; the sandbox could not flip
+  the media query, so that path is verified by the preset, not in a browser); nothing else on the
+  page animates (`document.getAnimations()` empty; the Sonner toast region is the app's toast,
+  not the page); `Done` carries the pressed-state token (`active:scale-[0.97]`).
 
 ## S2: the CRM mount, mine and every agent
 
