@@ -65,8 +65,10 @@ CLASS_SUFFIXES: dict[str, str] = {
 # class label itself. Malay terms included because the corpus is bilingual.
 CLASS_SYNONYMS: dict[str, list[str]] = {
     "Kitchen Sink": ["kitchen sink", "sink", "sinki", "dapur"],
-    "Tap": ["tap", "faucet", "mixer", "paip", "kepala paip"],
-    "Wash Basin": ["wash basin", "basin", "washbasin", "sink basin", "besen"],
+    # "water tap" / "water basin": the owner's own words for the two (26 Sep 2026, "which
+    # water tap got stock"). Migration 511 appends them to the categories already on file.
+    "Tap": ["tap", "faucet", "mixer", "paip", "kepala paip", "water tap"],
+    "Wash Basin": ["wash basin", "basin", "washbasin", "sink basin", "besen", "water basin"],
     "Water Closet": ["water closet", "wc", "toilet", "toilet bowl", "closet", "tandas"],
     "Shower": ["shower", "shower head", "rain shower", "hand shower", "pancuran"],
     "Bathroom Furniture": ["cabinet", "mirror", "vanity", "bathroom cabinet", "kabinet"],
@@ -278,6 +280,16 @@ def resolve_classes_for_term(db: Session, term: str) -> list[str]:
         for value, words in merged_synonyms(registry_row).items():
             if any(str(w).strip().lower() == needle for w in words):
                 found.add(value)
+
+    # 4. The customer words this module itself ships (`CLASS_SYNONYMS`), for a class the
+    # catalogue has. A database that converges through `create_all` never ran the
+    # migration that appended "water basin" to its categories, and the owner's "which
+    # water basin has stock" answered a clarify there (hand test round 2, W6).
+    if not found:
+        known = {r.class_label for r in rows if r.class_label}
+        for label, words in CLASS_SYNONYMS.items():
+            if label in known and any(str(w).strip().lower() == needle for w in words):
+                found.add(label)
 
     return sorted(found)
 

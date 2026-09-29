@@ -1,0 +1,54 @@
+{
+  "source": "PR #833 comment 'Owner console test of round 3 (27 Sep 00:03 to 00:07 MYT, :3084, head 1683cb2f1, contact 487555417)'",
+  "note": "The parser is stubbed as each turn's reply shows it answered: a counted-set reply means the stock / incoming intent with the class word as its entity; a product-search reply means check_product with the message's words as one product entity. No stored trace was attached to the comment, so these readings are inferred from the replies.",
+  "exchanges": [
+    {
+      "n": 1,
+      "text": "any basin has stock",
+      "verdict": {"ask": "stock", "class_word": "basin"},
+      "before": "Brand: Sorento, Product type: Wash basin. 276 wash basins have stock. That is too many to list in one message. How many should I show (up to 50)? Or ask again naming a brand or size. Other brands with stock: Bravat 79, Cabana 57, Mocha 25, Infinity 8, Others 8, No Logo 2. Name one to see them."
+    },
+    {
+      "n": 2,
+      "text": "10",
+      "verdict": {"bare": {"top_n": 10}},
+      "before": "the header again, then 10 products, each a block of 5 to 8 lines (name, *Product Code:*, *Length:*, *Width:*, *Total:*, per-warehouse lines, DISCONTINUED flags)"
+    },
+    {
+      "n": 3,
+      "text": "any water closet p trap got stock",
+      "verdict": {"ask": "stock", "class_word": "water closet p trap"},
+      "before": "Brand: Sorento, Trap: P trap. 62 water closets have stock. ..."
+    },
+    {
+      "n": 4,
+      "text": "5",
+      "verdict": {"bare": {"top_n": 5}},
+      "before": "5 blocks, each 6 to 8 lines"
+    },
+    {
+      "n": 5,
+      "text": "any gunmetal wash basin has incoming",
+      "verdict": {"ask": "incoming", "class_word": "gunmetal wash basin"},
+      "before": "Couldn't find a gunmetal wash basin with incoming stock. Would you like me to escalate to purchasing team?"
+    },
+    {
+      "n": 6,
+      "text": "any water tap basin",
+      "verdict": {"ask": "stock", "class_word": "water tap basin"},
+      "before": "I don't know 'water tap basin' as a product type. Did you mean tap or wash basin?"
+    },
+    {
+      "n": 7,
+      "text": "tap",
+      "verdict": {"product": "tap"},
+      "before": "Here are the matching products. 1. *Product Code:* SRTWT5906-COLD TAP-NL *Description:* ... *List Price:* MYR 0.00 *Dimensions:* Not defined *Specs:* Product class: Tap, Water supply: cold_only, Brand: NO LOGO, Finish or colour: nickel 2. ..."
+    },
+    {
+      "n": 8,
+      "text": "any water clost t trap?",
+      "verdict": {"product": "water clost t trap"},
+      "before": "Here are the matching products. 1. SRTWC192 ... Trap: s_trap, Type: toilet_seat, ... Mounting: free_standing ..."
+    }
+  ]
+}

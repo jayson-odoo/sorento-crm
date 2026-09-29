@@ -94,6 +94,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
             QUANTITY_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
+            SPECIFICATION_ADDENDUM,
             STOCK_TASK_ADDENDUM,
             TOP_SELLING_ADDENDUM,
         )
@@ -108,6 +109,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
                 .removesuffix(TOP_SELLING_ADDENDUM)
                 .removesuffix(KNOWN_BRANDS_ADDENDUM)
                 .removesuffix(QUANTITY_ADDENDUM)
+                .removesuffix(SPECIFICATION_ADDENDUM)
                 .removesuffix(SALES_ANALYSIS_ADDENDUM)
                 .removesuffix(STOCK_TASK_ADDENDUM)
                 .removesuffix(SALES_REPORT_ADDENDUM)
@@ -132,6 +134,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
             QUANTITY_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
+            SPECIFICATION_ADDENDUM,
             STOCK_TASK_ADDENDUM,
             TOP_SELLING_ADDENDUM,
         )
@@ -143,6 +146,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
                 .removesuffix(TOP_SELLING_ADDENDUM)
                 .removesuffix(KNOWN_BRANDS_ADDENDUM)
                 .removesuffix(QUANTITY_ADDENDUM)
+                .removesuffix(SPECIFICATION_ADDENDUM)
                 .removesuffix(SALES_ANALYSIS_ADDENDUM)
                 .removesuffix(STOCK_TASK_ADDENDUM)
                 .removesuffix(SALES_REPORT_ADDENDUM)

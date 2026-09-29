@@ -1,6 +1,6 @@
 # PLAN - Borrow ladder v7 and the Stock Debt view
 
-Status: **APPROVED 2026-08-29** (captain: "the logic is robust, let's proceed"; scenario table on SRTWB242 signed off). Grilled in session (R1-R23), lavish review rounds 1-6 (R24-R36). Tickets: S1 #385, S2 #386, S3 #387, S4 #388 (jayson-odoo/sorento-crm). Lane: `feat/scm-borrow-ladder-v7-stock-debt`. S1 = PR #389 (29 Aug, CI green). S2 = PR #391 (30 Aug, stacked on #389: `supply_assignment`, `_po_rows`, the stock-debt service + routes, the page). S4 = PR #409 (30 Aug, stacked on #400; all four slices delivered). S3 = PR #400 (30 Aug, stacked on #391; R37-R40 landed during captain testing; `tests/scm/test_ladder_v7_borrow.py` + 3.2's own notes). S4 built 30 Aug on `feat/scm-supply-borrow`, stacked on S3: step 3 + the placement moves + `tests/scm/test_ladder_v7_supply_borrow.py`; three deviations recorded in 3.2 step 3 and one in AC-S4-5. UAC: `scm-borrow-ladder-v7-stock-debt-acceptance-criteria.md`. R42 (28 Sep 2026, #1331, purchase orders as Stock Debt supply, section 3.4b): built on PR #1332, small fix track. R43 (28 Sep 2026, #1346, a pinned PO line fulfils its sales order, section 3.4b): built on PR #1347, small fix track. Sits on `PLAN-scm-order-unit-ladder-v6.md` (units, donor ledger), `PLAN-demo-followups-19aug-ladder-v2.md` section E (ownership groups, window, coverage date), `PLAN-scm-planning-inline-decisions.md` (board editor, one Confirm), ADR-0011 (no bucketed arithmetic).
+Status: **APPROVED 2026-08-29** (captain: "the logic is robust, let's proceed"; scenario table on SRTWB242 signed off). Grilled in session (R1-R23), lavish review rounds 1-6 (R24-R36). Tickets: S1 #385, S2 #386, S3 #387, S4 #388 (jayson-odoo/sorento-crm). Lane: `feat/scm-borrow-ladder-v7-stock-debt`. S1 = PR #389 (29 Aug, CI green). S2 = PR #391 (30 Aug, stacked on #389: `supply_assignment`, `_po_rows`, the stock-debt service + routes, the page). S4 = PR #409 (30 Aug, stacked on #400; all four slices delivered). S3 = PR #400 (30 Aug, stacked on #391; R37-R40 landed during captain testing; `tests/scm/test_ladder_v7_borrow.py` + 3.2's own notes). S4 built 30 Aug on `feat/scm-supply-borrow`, stacked on S3: step 3 + the placement moves + `tests/scm/test_ladder_v7_supply_borrow.py`; three deviations recorded in 3.2 step 3 and one in AC-S4-5. UAC: `scm-borrow-ladder-v7-stock-debt-acceptance-criteria.md`. R42 (28 Sep 2026, #1331, purchase orders as Stock Debt supply, section 3.4b): built on PR #1332, small fix track. R43 (28 Sep 2026, #1346, a pinned PO line fulfils its sales order, section 3.4b): built on PR #1347, small fix track. R44 (29 Sep 2026, #1359, the overdue rule does not apply on the Stock Debt page, section 3.4b): built on branch `fix/stock-debt-overdue-not-applied`, small fix track. Sits on `PLAN-scm-order-unit-ladder-v6.md` (units, donor ledger), `PLAN-demo-followups-19aug-ladder-v2.md` section E (ownership groups, window, coverage date), `PLAN-scm-planning-inline-decisions.md` (board editor, one Confirm), ADR-0011 (no bucketed arithmetic).
 
 ## 0. The captain's ask (29 Aug 2026, after the client demo)
 
@@ -192,7 +192,8 @@ VIEW. The board and the ladder do not change.
    PO line). The Supply tab lists PO lines (kind `po`) beside on hand and SPO: Document is the
    PO link, the date column is the delivery date the walk used, Qty = ordered, Received,
    Outstanding = what the walk counts, Assigned to and Free as for an SPO.
-5. **Overdue is the SPO rule, unchanged (R-O).** A PO line whose delivery date has passed counts
+5. **~~Overdue is the SPO rule, unchanged (R-O).~~ Withdrawn for the view by R44 (29 Sep 2026,
+   below): the page walks no overdue rule; the board keeps it.** A PO line whose delivery date has passed counts
    on `as_of + overdue_grace_days`, and past `overdue_dead_days` it counts as nothing and is
    listed as `overdue, not counted`. R43 amends the rest of this sentence: a dead PO still
    pins through its S/O, and in the view a pin on a PO line (book S/O or placement) books no
@@ -263,6 +264,39 @@ them):
 4. **The Supply tab** of a bucket lists every PO line pinned to a row of that bucket, with its
    Assigned to, even when its own date files it in another month. Listed there with Free 0: any
    spare quantity is credited to its own month, which lists it as before.
+
+#### R44: the overdue rule does not apply on the Stock Debt page (owner, 29 Sep 2026, issue #1359)
+
+Status: built on branch `fix/stock-debt-overdue-not-applied`. Small fix track (no migration, no
+auth/RBAC change, no new ingest surface).
+
+**The owner's words, verbatim (29 Sep 2026):** "actually nothing received is okay you know, the
+supply here doesn't care about anything received, same like SO, nothing delivered also is fine, I
+just need to know what's my sold quantity (demand) and purchased quantity (supply), so I don't
+really care about the fulfilment".
+
+The case: CSK14A-NL, SO419208 1,309 outstanding on two lines pinned to PO 202609-S0029 lines 2 (4)
+and 3 (1,305); line 1 (41) has no S/O; delivery 10 and 14 Sep 2026, nothing received. Under the
+shipped 0 / 0 rule the 41 was "overdue, not counted", Free 0, and the Sep 26 cell read 0.
+
+**R44.** On the Stock Debt page (board cells, row totals, the Demand and Supply tabs, the export;
+all of them read `_assignments(view=True)`):
+1. **Every outstanding document is supply in its arrival month, whatever its date.** A PO (or
+   SPO) line counts at its outstanding quantity (ordered less received) whether it is on time,
+   late or years late, exactly as an SO line counts as demand whether delivered or not. A late
+   line lands today (grace 0 on the view, `VIEW_OVERDUE_GRACE_DAYS`), which is its arrival month
+   on an axis that starts today; nothing is ever dead (`VIEW_OVERDUE_DEAD_DAYS`). The policy's
+   grace and dead numbers are not read by the page.
+2. **Late is information, never exclusion.** The Supply tab still carries the paperwork's own date
+   (`stated_date`) and `days_late`; `overdue` ("overdue, not counted") no longer occurs on this
+   page. An undated document still has no month to sit in and stays listed uncounted.
+3. **Unchanged:** R43's pins (a pinned PO line fulfils its SO line; Short = outstanding less
+   assigned), the TBA, undated and unlocated buckets, the ownership-group rules, and the overdue
+   grace and dead rules everywhere else: `assignments_for` (board, ladder), coverage, reorder
+   planning and front planning never pass `view`.
+
+Pinned by `tests/scm/test_stock_debt_overdue_not_applied.py` (the issue's case: cell +41, row
+total +41, the 41 line Free 41, at 0 / 0, 14 / 90 and 45 / 45, and the export).
 
 ### 3.5 Flag and policy (S1, R17, R20)
 

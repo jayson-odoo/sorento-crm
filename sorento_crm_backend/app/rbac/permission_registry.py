@@ -226,6 +226,14 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_resolutions", "Compla
 PERMISSION_REGISTRY.extend(_crud("procurement", "suppliers", "Suppliers"))
 PERMISSION_REGISTRY.append({"slug": "procurement.suppliers.export", "name": "Export Suppliers", "description": "Permission to export suppliers with dynamic fields."})
 PERMISSION_REGISTRY.extend(_crud("procurement", "product_suppliers", "Product-Suppliers"))
+# Cost price from the supplier (#1288, Lane A, plan section 10). Verify is Sorento-staff
+# only - never an integration role, never reachable from a public route - and a migration
+# sweep grants all four to every "purchasing role" (whoever holds `scm.proforma_invoice.
+# upload` today), plus admin/superadmin by name.
+PERMISSION_REGISTRY.append({"slug": "procurement.cost_price_changes.upload", "name": "Upload Cost Price Changes", "description": "Upload a supplier price list, map/skip its codes, discard a draft, and apply it while verification is off."})
+PERMISSION_REGISTRY.append({"slug": "procurement.cost_price_changes.view", "name": "View Cost Price Changes", "description": "View cost-price change sets, their lines, history and source file."})
+PERMISSION_REGISTRY.append({"slug": "procurement.cost_price_changes.verify", "name": "Verify Cost Price Changes", "description": "Decide lines, return or apply a cost-price change set pending verification."})
+PERMISSION_REGISTRY.append({"slug": "procurement.suppliers.price_link", "name": "Share Supplier Price Page", "description": "Issue, view and revoke a supplier's own price-page link."})
 PERMISSION_REGISTRY.extend(_crud("procurement", "packing_lists", "Packing Lists"))
 PERMISSION_REGISTRY.append({"slug": "procurement.packing_lists.import_container_status", "name": "Import Container Status", "description": "Permission to import the Container Status workbook onto packing lists."})
 PERMISSION_REGISTRY.append({"slug": "procurement.packing_lists.view_clearance", "name": "View Container Clearance Dates", "description": "See ETA delay, CIDB inspection/approval and gatepass dates. Without it these keys are absent from API responses, not null."})

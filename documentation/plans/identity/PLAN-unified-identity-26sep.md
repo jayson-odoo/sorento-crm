@@ -15,7 +15,15 @@ of 27 Sep 01:04 MYT to build without further alignment); the orchestrator's revi
 13 in the PR body. The plan rides in that PR. Main 52b0ac24 merged into it (27 Sep 2026):
 `identity_0001_s0_model` now chains on main's single head `sales_s1_reports_module` instead of
 merging 527 and spec_0003 itself. Main af86bcfd merged into it (27 Sep 2026, round 2): it now
-chains on main's single head `sales_0005_commission_tiers`. S0 merged to main (#1303).
+chains on main's single head `sales_0005_commission_tiers`. S0 merged to main (#1303). S1 built on
+PR #1307 (branch `claude/identity-s1-phone-signin-w6akca`, full track); the reviewer pass at 56daafae
+(needs work) is addressed by S1 fix lane round 2 on the same PR; main 9d150067 merged into it and the
+PR retargeted to main (28 Sep 2026, retarget round), with the owner ruling of 27 Sep applied: sign-in
+reuses the approved `portal_otp` WhatsApp template; main cd220251 merged in (28 Sep 2026, merge-main
+round, clean merge, single alembic head `fin_0001_billing_documents`); main 2e894c4c merged in
+(28 Sep 2026, merge round 4, single alembic head `merge_28sep_esc_fin`); S1 fix round 2 (29 Sep
+2026, owner rulings): the shared `PhoneInput` on the sign-in phone step, and the OTP kept readable
+in the Respond outbox (B1 overruled). S2 not started.
 S3 built on PR #1306 (stacked on S0; no migration); the reviewer pass at 6a7f0bcd (needs work:
 B1, S1 to S5, N1 to N6) is addressed by S3 fix lane round 2 on the same PR (27 Sep 2026), ready
 for the orchestrator's review; the retarget round (28 Sep 2026) merged main 9d150067 into it and
@@ -461,17 +469,27 @@ of the current sign in page". So: no new page and no one-field guesser (the roun
 withdrawn); the existing page gains a two-way toggle, and every other element is the one it
 already has (section 3.2).
 
-- **Layout, top to bottom, in the same narrow card:** the wordmark; "Sign in to Sorento"; a
-  two-option toggle **Email | Phone** (the existing `Tabs` primitive, full width of the card,
-  Email selected by default); the error `Alert` slot; then the fields of the chosen mode. No
-  extra heading, no explanatory copy.
+- **Layout, top to bottom, in the same narrow card** (fix round 1, owner hand test 29 Sep 2026:
+  "the UI of togggling between email and phone not so nice, do something like this, 'or Log in
+  with' then the phone number icon", replacing the round 4 `Tabs` toggle): the wordmark; "Sign in
+  to Sorento"; the error `Alert` slot; the email form; then a divider (`Separator` either side of
+  "or Log in with") and one round outline icon `Button` with the `Smartphone` icon (tooltip and
+  accessible name "Phone number"). Pressing it swaps the card body to the phone flow, which
+  carries a small "Back to email" link under it. No Email | Phone toggle, no Facebook or Google
+  button, no Sign Up line. No extra heading, no explanatory copy.
 - **Email mode** is today's page exactly: Email, Password with "Forgot Password?", the eye
-  toggle, Remember me, Continue. Nothing moves.
-- **Phone mode, step 1:** "Phone number" `Input` (`inputMode="tel"`, `autoComplete="tel"`,
-  placeholder "e.g. 012-345 6789"), then the full-width "Continue" button. No Remember me: a phone
-  sign-in is always the 30-day rolling session (Q15). The FE sends the number as typed; the
-  backend normalises it with `normalize_msisdn`.
-- **Phone mode, step 2 (same card, the toggle stays):** the line "We'll send a code to your
+  toggle, Remember me, Continue. Nothing moves; the divider and phone button sit below it.
+- **Phone mode, step 1:** "Phone number" through the shared system `PhoneInput`
+  (`components/common/PhoneInput.tsx`; fix round 2, owner ruling 29 Sep 2026: "i think our phone
+  number input needs to use a proper phone number input ... default to malaysia so all phone
+  number is cleansed"): a flag + dial-code country picker (the standard `SearchableSelect`),
+  Malaysia (+60) by default, the number in national format as it is typed, placeholder
+  "012-345 6789", then the full-width "Continue" button. "0166753328", "60166753328" and
+  "+60 16-675 3328" all become `+60166753328`; the FE sends that E.164 value, and an incomplete
+  number stops at the field's error state ("Enter a complete phone number.") without a request.
+  The backend still normalises what it receives with `normalize_msisdn` (the second line). No
+  Remember me: a phone sign-in is always the 30-day rolling session (Q15).
+- **Phone mode, step 2 (same card, "Back to email" stays):** the line "We'll send a code to your
   WhatsApp <masked number>" with "Change number" beside it, one "Verification code" `Input`
   styled exactly as the portal's (`variant="lg"`, numeric, `one-time-code`, placeholder "6-digit
   code", centred, letter-spaced), and the outline "Resend in 60s" / "Resend code" button under it.
@@ -481,6 +499,14 @@ already has (section 3.2).
   `send_portal_otp_respond_message` job on the `respond_io` queue, the same limits); only the
   entry differs (section 4.2). The FE shares the portal card's code input and countdown, lifted
   into one component both pages import, not copied.
+- **The code is readable in the Respond outbox** (owner ruling 29 Sep 2026, "show the code in the
+  outbox", overruling security round B1 of #1280): the `integration_logs` row for the sign-in code
+  send, and for the portal OTP send that shares `_send_and_log`, keeps the real code in
+  `request_payload`, `response_payload` and `error_message`. Why: the operator reads the code from
+  the outbox on a test copy. B1 had replaced it with `******` because `GET
+  /api/v1/integrations/logs` has no permission gate of its own; that exposure is accepted by the
+  owner. Every other read of a contact's WhatsApp messages still masks the code (reviewer B2,
+  `app/services/otp_redaction.py`), which this ruling does not change.
 - **Errors in words, in the existing `Alert`:** wrong code "That code is not right. 4 tries
   left."; expired "That code has expired. Send a new one."; limit "Too many tries. Try again in 12
   minutes." (from the 429's seconds); no WhatsApp contact or unknown number: nothing distinguishes
@@ -887,7 +913,8 @@ Every slice runs the full track and `security-reviewer` (AC-62).
 - UAC: AC-20 to AC-29.
 - First task: read the approved `portal_otp` WhatsApp template's text; if it names the portal, ask
   the owner whether it may be reused for CRM sign-in or a `login_otp` template must be approved
-  first (Meta approval lead time is the slice's longest pole).
+  first (Meta approval lead time is the slice's longest pole). Answered (owner ruling 27 Sep 2026,
+  on PR #1307): reuse `portal_otp`; no `login_otp` template goes to Meta.
 - Done when: a staff user, an admin (Q10) and a phone-only user each sign in by code through the
   real worker and a real WhatsApp send on the lane stack; a user whose phone differs from its
   linked contact's is refused; enumeration tests green; Email mode is pixel-for-pixel today's page

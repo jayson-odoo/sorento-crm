@@ -53,10 +53,10 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
 
 ### J-B A staff member signs in on the existing sign-in page
 
-1. Staff open the same `/signin` they use today. Under "Sign in to Sorento" there is now a toggle,
-   Email | Phone, with Email selected: the page below it is exactly today's (Email, Password,
-   Forgot Password?, Remember me, Continue).
-2. A staff member who prefers the phone taps Phone, types their number (any common form:
+1. Staff open the same `/signin` they use today. The form is exactly today's (Email, Password,
+   Forgot Password?, Remember me, Continue); under it a divider reads "or Log in with" above one
+   round phone button.
+2. A staff member who prefers the phone taps the phone button, types their number (any common form:
    `012-345 6789`, `+60123456789`, `60123456789`), taps Continue, gets a WhatsApp code, types it in
    the one "Verification code" box, and is in on the sixth digit.
 
@@ -163,9 +163,11 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
 ## S1 Phone sign-in
 
 - **AC-20 [FE][E2E]** One sign-in page, the existing `/signin` (Q7, Q16, owner ruling 27 Sep 2026
-  00:45 MYT), with a two-option toggle "Email | Phone" under "Sign in to Sorento", Email selected
-  by default. Email mode shows today's fields, in today's order, unchanged. Phone mode shows
-  "Phone number" and Continue; Continue requests the code and swaps in the code step in the same
+  00:45 MYT). The email form shows first, today's fields in today's order, unchanged; under its
+  Continue a divider reads "or Log in with" above one round phone icon button (tooltip "Phone
+  number"), with no Email | Phone toggle and no Facebook, Google or Sign Up entry (fix round 1,
+  owner hand test 29 Sep 2026). The phone button swaps the card body to the phone flow, which
+  carries a "Back to email" link. The phone flow shows "Phone number" and Continue; Continue requests the code and swaps in the code step in the same
   card. No new route is added for sign-in. Usable at 375px with the keyboard open (code input and
   resend button reachable without scrolling) and at 1280px.
 - **AC-21 [BE][T]** `POST /api/v1/auth/phone/request-code` with a phone number always answers
@@ -195,10 +197,10 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
   23:45 MYT): a `callbackUrl` the user may open wins; otherwise a user holding the `salesperson`
   role lands on its portal home even if it also holds CRM permissions; any other user with a CRM
   permission (or admin) lands on the CRM home; a user with none lands on its portal home.
-- **AC-29 [FE][E2E]** The toggle obeys the current sign-in design (Q16): the same card, wordmark,
+- **AC-29 [FE][E2E]** The phone entry obeys the current sign-in design (Q16): the same card, wordmark,
   heading, `Input`, `Button`, `Checkbox` and destructive `Alert` as today, no new colours, fonts
   or illustrations, no explanatory copy. The S1 PR carries a before/after screenshot pair of Email
-  mode at 375px and 1280px showing no change beyond the toggle row.
+  mode at 375px and 1280px showing no change beyond the divider and phone button below the form.
 
 ## S2 Portal on the unified session
 
