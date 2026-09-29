@@ -701,3 +701,24 @@ def test_the_sort_constants_are_published_by_the_service():
         "expected_date", "product", "supplier", "outstanding_qty", "po_date", "ordered_qty",
     }
     assert set(svc.PO_SORT_DIRS) == {"asc", "desc"}
+
+
+def test_a_warehouse_id_outside_the_scope_matches_nothing(db):
+    """Security review on PR #1373 (finding 4): a warehouse uuid from another company
+    resolves to no code (the column-only read ANDs the company predicate by hand), so a
+    line carrying that code in `location_code` is not matched through it either."""
+    from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
+
+    seed_mocha(db)
+    wh = _warehouse(db, code="KL-X")
+    sorento_product = product(db, company_id=DEFAULT_COMPANY_ID, code="SRT-WH-SCOPE")
+    _spo(db, product_id=sorento_product.id, allocated=4, number="SPO-KLX", location_code="KL-X")
+    db.commit()
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    assert [r["po_number"] for r in purchase_orders_placed_rows(db, warehouse_ids=[wh.id])] == ["SPO-KLX"]
+
+    set_company_scope(db, frozenset({MOCHA_ID}))
+    assert purchase_orders_placed_rows(db, warehouse_ids=[wh.id]) == []
+    summary = purchase_orders_placed_summary(db, warehouse_ids=[wh.id])
+    assert summary == {"po_placed_qty": 0, "po_placed_count": 0}

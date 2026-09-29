@@ -578,7 +578,7 @@ message_type "business_query", domain_hint null, intent_hint null, domain_in_mes
 entities [], only sort_by / sort_dir set.
   - "biggest quantity first" -> {"domain_hint": null, "entities": [], "sort_by": "quantity",
     "sort_dir": "desc"}
-""".replace("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+"""
 
 # Main's literal now carries ESCALATION_CONFIRMATION_ADDENDUM as its tail (#1323), so it
 # is peeled off, TOP_SELLING_ADDENDUM goes on beneath it, and it is put back as the tail.

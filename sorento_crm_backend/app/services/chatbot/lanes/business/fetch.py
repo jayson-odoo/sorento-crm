@@ -522,6 +522,12 @@ SORT_KEY_BY_TOOL: dict[str, dict[str, str]] = {
         "received_quantity": "gr_quantity",
     },
 }
+#: A tool's sort key that orders by a RESTRICTED field, and the field-reveal key that
+#: permits it (the same key the presenter's `restrict()` names for that field). Without
+#: the grant the sort is not sent (security review, PR #1373, finding 1).
+RESTRICTED_SORT_KEYS: dict[str, dict[str, str]] = {
+    "crm_procurement_po_placed_list": {"supplier": "purchase_orders.supplier"},
+}
 SORT_DEFAULT_DIR: dict[str, str] = {
     "date": "desc",
     "expected_date": "asc",
@@ -1108,6 +1114,17 @@ def entity_ids_transformer(
     # PLAN-po-spo-warehouse-29sep S6: the sort axis, for the two PO/SPO tools only.
     sort_by = jsc.get(semantic_input, "sort_by")
     mapped = SORT_KEY_BY_TOOL.get(tool_name, {}).get(sort_by) if isinstance(sort_by, str) else None
+    # Security review (PR #1373, finding 1): a sort on a RESTRICTED field orders the rows
+    # by a value the contact may not see - the same side channel the restricted-field
+    # drop below refuses for `group_by=supplier` (rows clustered by supplier with the
+    # names blanked still say which lines share one). Refused HERE, before the call, so
+    # the tool's own default order answers; the drop cannot re-order rows after the fact.
+    sort_perm = RESTRICTED_SORT_KEYS.get(tool_name, {}).get(mapped) if mapped else None
+    if sort_perm is not None:
+        access = trig.get("access") if isinstance(trig.get("access"), dict) else {}
+        attributes = access.get("attributes") if isinstance(access.get("attributes"), list) else []
+        if sort_perm not in attributes:
+            mapped = None
     if mapped:
         out["sort"] = mapped
         sort_dir = jsc.get(semantic_input, "sort_dir")

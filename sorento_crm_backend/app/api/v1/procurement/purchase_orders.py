@@ -2,7 +2,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -185,7 +185,8 @@ def get_purchase_orders_placed(
                 ),
             }
         return JSONResponse(content=jsonable_encoder(payload))
-    except AppException:
+    except (AppException, HTTPException):
+        # `parse_uuid_list`'s own 400 (a malformed uuid) is the caller's answer, not a 500.
         raise
     except Exception as e:  # noqa: BLE001
         raise handle_internal_error(str(e))

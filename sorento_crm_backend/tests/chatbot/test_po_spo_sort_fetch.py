@@ -44,7 +44,7 @@ class TestSortMapsPerTool:
             ("quantity", "ordered_qty", "desc"),
             ("outstanding", "outstanding_qty", "desc"),
             ("product", "product", "asc"),
-            ("supplier", "supplier", "asc"),
+            # "supplier" is a RESTRICTED sort: `TestARestrictedSortNeedsTheGrant` below.
         ],
     )
     def test_po_tool_key_and_default_direction(self, sort_by: str, sort: str, dir_: str) -> None:
@@ -123,3 +123,34 @@ class TestWarehouseAndListDefault:
     def test_a_product_and_warehouse_ask_adds_no_default_either(self) -> None:
         out = _args(SPO_TOOL, entities=[_product(), _warehouse()])
         assert "top_n" not in out, out
+
+
+class TestARestrictedSortNeedsTheGrant:
+    """Security review on PR #1373, finding 1: `sort_by "supplier"` orders a dealer's PO rows
+    by a field they may not see (the same side channel the restricted-field drop refuses
+    for `group_by=supplier`), so the sort is not sent without `purchase_orders.supplier`."""
+
+    def _trigger(self, attributes: list[str]) -> dict[str, Any]:
+        return {
+            "entities": [],
+            "tool": PO_TOOL,
+            "semantic_input": {"contact_id": "1", "space_id": "s", "sort_by": "supplier"},
+            "access": {"attributes": attributes},
+        }
+
+    def test_without_the_grant_no_sort_is_sent(self) -> None:
+        out = fetch.entity_ids_transformer(self._trigger([]))
+        assert "sort" not in out and "dir" not in out, out
+
+    def test_with_the_grant_the_supplier_sort_is_sent(self) -> None:
+        out = fetch.entity_ids_transformer(self._trigger(["purchase_orders.supplier"]))
+        assert out.get("sort") == "supplier" and out.get("dir") == "asc", out
+
+    def test_an_unrestricted_sort_needs_no_grant(self) -> None:
+        trigger = self._trigger([])
+        trigger["semantic_input"]["sort_by"] = "date"
+        out = fetch.entity_ids_transformer(trigger)
+        assert out.get("sort") == "po_date", out
+
+    def test_the_map_names_the_presenters_own_key(self) -> None:
+        assert fetch.RESTRICTED_SORT_KEYS == {PO_TOOL: {"supplier": "purchase_orders.supplier"}}

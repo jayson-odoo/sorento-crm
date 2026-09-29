@@ -54,11 +54,16 @@ PO_SORT_DIRS: frozenset[str] = frozenset({"asc", "desc"})
 
 def warehouse_codes_for(db: Session, warehouse_ids: Optional[list[str]]) -> list[str]:
     """The `warehouse_code`s of these warehouse ids (PLAN-po-spo-warehouse-29sep W3).
-    One read; the session's company scope applies to it."""
+    One COLUMN-ONLY read, so the company predicate is ANDed in by hand (the same reason
+    `purchase_orders_placed_summary` gives): a warehouse id from outside the caller's
+    scope resolves to no code."""
     if not warehouse_ids:
         return []
-    rows = db.query(Warehouse.warehouse_code).filter(Warehouse.id.in_(warehouse_ids)).all()
-    return [code for (code,) in rows if code]
+    q = db.query(Warehouse.warehouse_code).filter(Warehouse.id.in_(warehouse_ids))
+    predicate = build_company_predicate(Warehouse, get_company_scope(db))
+    if predicate is not None:
+        q = q.filter(predicate)
+    return [code for (code,) in q.all() if code]
 
 
 def spo_warehouse_predicate(warehouse_ids: list[str], codes: list[str]):

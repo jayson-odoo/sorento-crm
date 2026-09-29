@@ -214,6 +214,9 @@ def last_receipt_rows(
             SPOAllocation.quantity_received,
             key_expr.label("spo_date"),
             source_expr.label("spo_date_source"),
+            # Joined HERE, inside the window, so `gr_date` can order it; the outer query
+            # reads it back off the subquery rather than joining the same grouped read twice.
+            gr.c.gr_date.label("gr_date"),
             rn,
         ).outerjoin(gr, gr.c.allocation_id == SPOAllocation.id).filter(
             SPOAllocation.product_id.in_(product_ids), *visible_line_clauses()
@@ -241,7 +244,7 @@ def last_receipt_rows(
                 sub.c.spo_date,
                 sub.c.spo_date_source,
                 sub.c.location_code,
-                gr.c.gr_date,
+                sub.c.gr_date,
                 Product.id.label("product_id"),
                 Product.product_code,
                 Product.product_name,
@@ -249,7 +252,6 @@ def last_receipt_rows(
             )
             .join(Product, Product.id == sub.c.product_id)
             .outerjoin(Warehouse, Warehouse.id == sub.c.warehouse_id)
-            .outerjoin(gr, gr.c.allocation_id == sub.c.allocation_id)
             .filter(sub.c.rn <= top_n)
             .order_by(Product.product_code.asc(), sub.c.rn.asc())
             .all()

@@ -110,7 +110,8 @@ async def get_spo_last_receipt(
                 }
             )
         )
-    except AppException:
+    except (AppException, HTTPException):
+        # `parse_uuid_list`'s own 400 (a malformed uuid) is the caller's answer, not a 500.
         raise
     except Exception as e:  # noqa: BLE001
         raise handle_internal_error(str(e))
