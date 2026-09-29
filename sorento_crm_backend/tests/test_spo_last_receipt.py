@@ -646,3 +646,142 @@ def test_last_in_map_one_row_per_product_newest_any_status(db):
     )
     assert result[str(p3.id)]["spo_number"] == "P3-OPEN-ONLY"
     assert result[str(p3.id)]["qty"] == 10
+
+
+# ---------------------------------------------------------------------------
+# PLAN-po-spo-warehouse-29sep.md W4 / O2; UAC AC-13 (RED until the lane lands)
+# ---------------------------------------------------------------------------
+
+
+def _spo_numbers(rows):
+    return [r["spo_number"] for r in rows]
+
+
+def test_sort_spo_quantity_desc_puts_the_largest_line_first_unscoped(db):
+    p1 = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    p2 = product(db, company_id=DEFAULT_COMPANY_ID, code="P2")
+    p3 = product(db, company_id=DEFAULT_COMPANY_ID, code="P3")
+    _allocation(db, product_id=p1.id, expected_date=date(2026, 6, 20), quantity=5, spo_number="Q5")
+    _allocation(db, product_id=p2.id, expected_date=date(2026, 6, 10), quantity=50, spo_number="Q50")
+    _allocation(db, product_id=p3.id, expected_date=date(2026, 6, 15), quantity=20, spo_number="Q20")
+    db.commit()
+
+    desc = last_receipt_rows(db, top_n=3, sort="spo_quantity", dir="desc")
+    assert _spo_numbers(desc) == ["Q50", "Q20", "Q5"]
+    asc = last_receipt_rows(db, top_n=3, sort="spo_quantity", dir="asc")
+    assert _spo_numbers(asc) == ["Q5", "Q20", "Q50"]
+
+
+def test_sort_spo_quantity_is_honoured_by_the_per_product_window(db):
+    """`top_n` per product must keep the two LARGEST lines, not the two newest."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    _allocation(db, product_id=prod.id, expected_date=date(2026, 6, 30), quantity=5, spo_number="NEW-SMALL")
+    _allocation(db, product_id=prod.id, expected_date=date(2026, 6, 20), quantity=20, spo_number="MID-MID")
+    _allocation(db, product_id=prod.id, expected_date=date(2026, 6, 1), quantity=50, spo_number="OLD-BIG")
+    db.commit()
+
+    rows = last_receipt_rows(
+        db, product_ids=[prod.id], top_n=2, sort="spo_quantity", dir="desc",
+    )
+    assert _spo_numbers(rows) == ["OLD-BIG", "MID-MID"]
+
+
+def test_sort_gr_quantity_orders_by_the_received_quantity(db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    _allocation(db, product_id=prod.id, expected_date=date(2026, 6, 30), quantity=60, qty_received=5, spo_number="GR5")
+    _allocation(db, product_id=prod.id, expected_date=date(2026, 6, 1), quantity=60, qty_received=50, spo_number="GR50")
+    db.commit()
+
+    desc = last_receipt_rows(db, product_ids=[prod.id], top_n=2, sort="gr_quantity", dir="desc")
+    assert _spo_numbers(desc) == ["GR50", "GR5"]
+    asc = last_receipt_rows(db, product_ids=[prod.id], top_n=2, sort="gr_quantity", dir="asc")
+    assert _spo_numbers(asc) == ["GR5", "GR50"]
+
+
+def test_sort_gr_date_orders_by_the_approved_grn_date_with_nulls_last(db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    early = _allocation(db, product_id=prod.id, expected_date=date(2026, 6, 30), quantity=10, qty_received=10, spo_number="GR-EARLY")
+    late = _allocation(db, product_id=prod.id, expected_date=date(2026, 6, 1), quantity=10, qty_received=10, spo_number="GR-LATE")
+    _allocation(db, product_id=prod.id, expected_date=date(2026, 7, 15), quantity=10, spo_number="NO-GRN")
+    _approved_grn(db, allocation=early, product_id=prod.id, picking_date=date(2026, 6, 18))
+    _approved_grn(db, allocation=late, product_id=prod.id, picking_date=date(2026, 6, 25))
+    db.commit()
+
+    desc = last_receipt_rows(db, product_ids=[prod.id], top_n=3, sort="gr_date", dir="desc")
+    assert _spo_numbers(desc) == ["GR-LATE", "GR-EARLY", "NO-GRN"]
+    asc = last_receipt_rows(db, product_ids=[prod.id], top_n=3, sort="gr_date", dir="asc")
+    assert _spo_numbers(asc) == ["GR-EARLY", "GR-LATE", "NO-GRN"]
+
+
+def test_sort_spo_date_asc_puts_the_oldest_line_first(db):
+    p1 = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    p2 = product(db, company_id=DEFAULT_COMPANY_ID, code="P2")
+    _allocation(db, product_id=p1.id, expected_date=date(2026, 6, 20), spo_number="NEWER")
+    _allocation(db, product_id=p2.id, expected_date=date(2026, 6, 1), spo_number="OLDER")
+    db.commit()
+
+    rows = last_receipt_rows(db, top_n=2, sort="spo_date", dir="asc")
+    assert _spo_numbers(rows) == ["OLDER", "NEWER"]
+
+
+def test_sort_default_is_unchanged_spo_date_desc(db):
+    p1 = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    p2 = product(db, company_id=DEFAULT_COMPANY_ID, code="P2")
+    _allocation(db, product_id=p1.id, expected_date=date(2026, 6, 1), quantity=99, spo_number="OLDER")
+    _allocation(db, product_id=p2.id, expected_date=date(2026, 6, 20), quantity=1, spo_number="NEWER")
+    db.commit()
+
+    assert _spo_numbers(last_receipt_rows(db, top_n=2)) == ["NEWER", "OLDER"]
+
+
+def test_sort_constants_are_published_by_the_service():
+    from app.services import spo_last_receipt_service as svc
+
+    assert set(svc.SPO_SORT_KEYS) == {"spo_date", "spo_quantity", "gr_date", "gr_quantity"}
+    assert set(svc.SPO_SORT_DIRS) == {"asc", "desc"}
+
+
+def test_sort_route_rejects_unknown_sort_and_dir(client, db):
+    bad_sort = client.get(f"{BASE}/last-receipt", params={"sort": "bogus"})
+    assert bad_sort.status_code == 422, bad_sort.text
+    assert bad_sort.json()["code"] == "invalid_sort"
+
+    bad_dir = client.get(f"{BASE}/last-receipt", params={"dir": "bogus"})
+    assert bad_dir.status_code == 422, bad_dir.text
+    assert bad_dir.json()["code"] == "invalid_dir"
+
+
+def test_sort_route_passes_sort_and_dir_through(client, db):
+    p1 = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    p2 = product(db, company_id=DEFAULT_COMPANY_ID, code="P2")
+    _allocation(db, product_id=p1.id, expected_date=date(2026, 6, 20), quantity=5, spo_number="Q5")
+    _allocation(db, product_id=p2.id, expected_date=date(2026, 6, 1), quantity=50, spo_number="Q50")
+    db.commit()
+
+    resp = client.get(
+        f"{BASE}/last-receipt", params={"top_n": 2, "sort": "spo_quantity", "dir": "desc"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert _spo_numbers(resp.json()["data"]) == ["Q50", "Q5"]
+
+
+def test_warehouse_filter_matches_location_code(db):
+    """W4: a line with no warehouse row but the warehouse's own code in `location_code`
+    matches the filter, on both branches, and its `warehouse` reads the code."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    brw = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="BRW")
+    other = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="KLG")
+    by_code = _allocation(db, product_id=prod.id, expected_date=date(2026, 6, 1), spo_number="BY-CODE")
+    by_code.location_code = "BRW"
+    elsewhere = _allocation(db, product_id=prod.id, expected_date=date(2026, 6, 20), spo_number="ELSEWHERE", warehouse_id=other.id)
+    elsewhere.location_code = "KLG"
+    db.flush()
+    db.commit()
+
+    per_product = last_receipt_rows(db, product_ids=[prod.id], warehouse_ids=[brw.id], top_n=5)
+    assert _spo_numbers(per_product) == ["BY-CODE"]
+    assert per_product[0]["warehouse"] == "BRW"
+
+    unscoped = last_receipt_rows(db, warehouse_ids=[brw.id], top_n=5)
+    assert _spo_numbers(unscoped) == ["BY-CODE"]
+    assert unscoped[0]["warehouse"] == "BRW"
