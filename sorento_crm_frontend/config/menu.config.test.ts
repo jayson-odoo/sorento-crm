@@ -401,6 +401,9 @@ describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
     expect(titles).toEqual([
       'Suppliers',
       'Product-Suppliers',
+      // Cost Price Uploads (#1288, Lane A): the supplier's price list, reviewed and applied
+      // as dated cost lists - right after Product-Suppliers, the entity it writes to.
+      'Cost Price Uploads',
       'Packing Lists',
       'SPO Allocations',
       'GRN',

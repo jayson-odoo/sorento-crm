@@ -308,6 +308,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'procurement.product_suppliers.view',
       },
       {
+        title: 'Cost Price Uploads',
+        path: '/procurement-management/cost-price-uploads',
+        permission: 'procurement.cost_price_changes.view',
+      },
+      {
         title: 'Packing Lists',
         path: '/procurement-management/packing-lists',
         permission: 'procurement.packing_lists.view',
@@ -1780,6 +1785,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Product-Suppliers',
         path: '/procurement-management/product-suppliers',
         permission: 'procurement.product_suppliers.view',
+      },
+      {
+        title: 'Cost Price Uploads',
+        path: '/procurement-management/cost-price-uploads',
+        permission: 'procurement.cost_price_changes.view',
       },
       {
         title: 'Packing Lists',

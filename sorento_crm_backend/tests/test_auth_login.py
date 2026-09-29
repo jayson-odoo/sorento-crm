@@ -147,9 +147,62 @@ def test_wrong_password_is_rejected(client):
 
 
 def test_unknown_email_is_rejected(client):
+    """identity S1, AC-26: an unknown email must no longer answer 404 (that
+    enumerates which emails exist) - it answers the same 401 a wrong password
+    gets. This assertion is the defect AC-26 fixes; it used to read
+    `assert res.status_code == 404`."""
     res = _login(client, f"nobody-{uuid.uuid4().hex[:8]}@example.com", PASSWORD)
 
-    assert res.status_code == 404
+    assert res.status_code == 401
+    assert res.json().get("detail") == "Invalid credentials."
+
+
+def test_ac26_unknown_email_and_wrong_password_get_identical_401_body(client):
+    email = f"knownuser-{uuid.uuid4().hex[:8]}@example.com"
+    _make_user(client, email=email)
+
+    unknown_resp = _login(client, f"nobody-{uuid.uuid4().hex[:8]}@example.com", PASSWORD)
+    wrong_pw_resp = _login(client, email, "not-the-password")
+
+    assert unknown_resp.status_code == wrong_pw_resp.status_code == 401
+    assert unknown_resp.json() == wrong_pw_resp.json() == {"detail": "Invalid credentials."}
+
+
+def test_ac26_trashed_user_with_right_password_is_401():
+    """A trashed user must not be able to log in even with the correct
+    password - login() today has no is_trashed check at all, so this fails
+    with a 200 until AC-26 adds one."""
+    from app.database import get_db as _get_db
+
+    with blank_session() as db:
+        email = f"trashed-{uuid.uuid4().hex[:8]}@example.com"
+        user = User(
+            id=str(uuid.uuid4()),
+            email=email,
+            name="Trashed User",
+            password=_hash(PASSWORD),
+            status="ACTIVE",
+            is_trashed=True,
+        )
+        db.add(user)
+        db.commit()
+
+        def _override():
+            yield db
+
+        app.dependency_overrides[_get_db] = _override
+        try:
+            with TestClient(app) as c:
+                res = c.post(
+                    "/api/v1/auth/login",
+                    json={"email": email, "password": PASSWORD},
+                    headers={"X-Forwarded-For": f"10.0.9.{uuid.uuid4().int % 250 + 1}"},
+                )
+        finally:
+            app.dependency_overrides.pop(_get_db, None)
+
+    assert res.status_code == 401, res.text
+    assert res.json().get("detail") == "Invalid credentials."
 
 
 def test_user_without_a_password_cannot_log_in(client):
