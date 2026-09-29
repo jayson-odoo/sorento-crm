@@ -387,6 +387,35 @@ describe('fix round 4: feedback from the sixth digit to the destination (#1307)'
     expect(screen.getByRole('button', { name: 'Back to email' })).not.toBeDisabled();
   });
 
+  it('fix round 5: "Back to email" unlocks in the same commit that brings the field back', async () => {
+    await toPhoneCodeStep();
+    mockSignIn.mockResolvedValue({
+      error: JSON.stringify({ code: 401, message: 'That code is not right. 4 tries left.' }),
+    } as Awaited<ReturnType<typeof signIn>>);
+
+    // Read the page at the first DOM commit that shows the error, before any
+    // later commit could catch "Back to email" up. waitFor would retry past a
+    // one-commit lag; this does not.
+    let firstSeen: { field: boolean; back: boolean } | null = null;
+    const observer = new MutationObserver(() => {
+      if (firstSeen || !screen.queryByText('That code is not right. 4 tries left.')) return;
+      const back = screen.getByRole('button', { name: 'Back to email' }) as HTMLButtonElement;
+      firstSeen = { field: codeInput().disabled, back: back.disabled };
+    });
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+    });
+
+    fireEvent.change(codeInput(), { target: { value: '000000' } });
+
+    await waitFor(() => expect(firstSeen).not.toBeNull());
+    observer.disconnect();
+    expect(firstSeen).toEqual({ field: false, back: false });
+  });
+
   it('email Continue reads "Signing you in" and stays locked through the navigation', async () => {
     mockSignIn.mockResolvedValue({ error: null, ok: true } as Awaited<ReturnType<typeof signIn>>);
     renderSignin();

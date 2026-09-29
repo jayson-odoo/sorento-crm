@@ -24,7 +24,7 @@
  * the field, cleared and focused for the retry.
  */
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { LoaderCircleIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -61,9 +61,13 @@ export function PhoneSignIn({ onError, onSignedIn, onBusyChange }: Props) {
 
   const requestCode = useRequestSigninCode();
 
-  useEffect(() => {
-    onBusyChange?.(verifying);
-  }, [verifying, onBusyChange]);
+  // The page's copy is set in the same batch as ours, never from an effect:
+  // an effect lands one commit later, so for that commit the field is back
+  // but "Back to email" is still locked (fix round 5, #1307).
+  const setBusy = (busy: boolean) => {
+    setVerifying(busy);
+    onBusyChange?.(busy);
+  };
 
   const sendCode = () => {
     onError(null);
@@ -91,7 +95,7 @@ export function PhoneSignIn({ onError, onSignedIn, onBusyChange }: Props) {
 
   const handleVerify = async (typedCode: string) => {
     onError(null);
-    setVerifying(true);
+    setBusy(true);
     try {
       const response = await signIn('phone-otp', {
         redirect: false,
@@ -109,7 +113,7 @@ export function PhoneSignIn({ onError, onSignedIn, onBusyChange }: Props) {
         }
         onError(message);
         setCode('');
-        setVerifying(false);
+        setBusy(false);
         return;
       }
 
@@ -123,7 +127,7 @@ export function PhoneSignIn({ onError, onSignedIn, onBusyChange }: Props) {
           : 'An unexpected error occurred. Please try again.',
       );
       setCode('');
-      setVerifying(false);
+      setBusy(false);
     }
   };
 
