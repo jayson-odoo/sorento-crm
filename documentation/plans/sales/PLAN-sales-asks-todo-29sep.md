@@ -15,9 +15,10 @@ Sibling: lane CONTACT-CUSTOMERS (contact <-> customers, agent -> customers), PR 
 `_agent_scope` function; swap to #1366's relation when it lands. Section 4.
 Main note (29 Sep 2026): origin/main f4f70531 carries TWO alembic heads,
 `chatbot_picker_domain_1352` (#1353) and `sa2_0005_stock_ask_source` (#1333), both chained on
-`cpc4_cost_packaging_method`. This lane's migration `sat_0001_stock_ask_done` is written as the
-merge point (`down_revision` = both) unless main is joined first, in which case it re-parents onto
-that join with `./scripts/alembic-reparent.sh`.
+`cpc4_cost_packaging_method`. Crew ruling (29 Sep 2026): lane ALEMBIC-JOIN adds the merge revision
+`merge_29sep_batch6`; this lane adds no join of its own. `sat_0001_stock_ask_done` chains on
+`sa2_0005_stock_ask_source` until that join merges, then re-chains onto `merge_29sep_batch6`
+(`./scripts/alembic-reparent.sh`); a red "Single alembic head" gate until then is expected.
 
 ## 0. Owner words (29 Sep 2026, follow-up from PR #1333, verbatim and binding)
 
