@@ -1,6 +1,6 @@
 # PLAN: R7 own-arrival credit reads what LANDED on the SPO, not what the PO transferred
 
-Status: in review, PR open (24 Sep 2026); coder green (38 pass across the five s3 files), reviewer round 1 folded (B1 kill tests, S1 planning-engine sentence, S2 company equality on the batched join, N2 docstrings). Open ruling S3 below. Merge needs owner go. Track: small fix track, stretched - one seam, no migration, no auth change, but the R7 test fixture seeds the wrong document so four existing test files move with it. One coder writes tests + fix, one reviewer, no browser pass (no UI code changes; the refusal message is asserted in pytest). Lane `fix/r7-landed-reads-spo-received`, worktree `sorento_crm-r7-spo`. Follow-up to `PLAN-board-received-stock-own-arrival.md` (R7, PR #1092, merged as 2280975f9).
+Status: in review, PR open (24 Sep 2026); #1362 rounds 4 and 5 on PR #1363 (29 Sep 2026); coder green (38 pass across the five s3 files), reviewer round 1 folded (B1 kill tests, S1 planning-engine sentence, S2 company equality on the batched join, N2 docstrings). Open ruling S3 below. Merge needs owner go. Track: small fix track, stretched - one seam, no migration, no auth change, but the R7 test fixture seeds the wrong document so four existing test files move with it. One coder writes tests + fix, one reviewer, no browser pass (no UI code changes; the refusal message is asserted in pytest). Lane `fix/r7-landed-reads-spo-received`, worktree `sorento_crm-r7-spo`. Follow-up to `PLAN-board-received-stock-own-arrival.md` (R7, PR #1092, merged as 2280975f9).
 
 ## The problem, measured (SO399639 line 58 / core line 2120, C-FHSS18, prod 24 Sep 2026)
 
@@ -119,8 +119,7 @@ Measured cause of the 40 (reproduction, 29 Sep): the credit ledger is already pe
 bin) (`compose_lines`, `_check_line`, the order-inquiry picker), so no other product is
 involved. An EARLIER-due line of the SAME product at the same bin, with no PO of its own,
 drew 221 of the 261 through the ordinary group take, and AC-S3-11 charges that draw to the
-same ledger. Whether landed-for-a-line goods should outrank an earlier line's ordinary draw
-is an open owner ruling on #1362. It is not changed here.
+same ledger. Ruled 29 Sep 2026, built in round 5 below.
 
 ## Follow-up: #1362 items 2 and 3 (owner, 29 Sep 2026)
 
@@ -142,6 +141,36 @@ returns early for such a row. The cell drawer states "Fulfilled, N delivered, du
 place of the suggestion. The stock drawer lists the drawer's own fulfilled line at zero, so
 "My line" finds it. There is no delivered-date column on `sales_order_lines`, so the date said
 is the line's due date.
+
+## Follow-up: #1362 round 4 (owner evidence, 29 Sep 2026)
+
+Item 4, a tier-2 spare says whose purchase it was. SO382618's PO 202607-S0077 bought 200
+B2154-NL for line 1648 (100 pieces) and landed all 200 on SPO-2026/09-0036. Line 1648 reads
+"100 landed for this line on SPO-2026/09-0036"; line 2912 reads "100 spare from line 1648's
+purchase (200 bought for 100) landed on SPO-2026/09-0036", never "landed for this line"
+(`ProjectSupplyService.own_arrival_landed_text`). The board trail, the component reason, the
+amend refusal and the confirm refusal all use it.
+
+Item 5, AutoCount line numbers. Board contributions and confirm failing lines carry
+`so_line_no` (`sales_order_lines.line_no`). The Line column, the drawer's line labels and the
+confirm messages print it; "row N" only where AutoCount gave the line no number. `line_no`
+stays the planning address (the draft key).
+
+Item 6, a same-date unit member read the unit's first core line for tier 1, so a line with no
+purchase of its own was credited its sibling's receipt (100 landed, 160 credited). Each member
+now reads its own core line.
+
+## Follow-up: #1362 round 5, landed goods stay with their line (owner ruling 29 Sep 2026)
+
+Owner: "we cannot snatch, what's ordered against the SO should stay belonged to it, we cannot
+simply say it belongs to another order, this is not the right process". Built in the ONE
+assignment every reader shares (R21): `StockDebtService._landed_holds` pins what landed for a
+line (tier 1, `min(landed, open)`, less the line's own decision and placement holds) to the
+line's own bin floor, before the walk. Only a floor already in the read is pinned, and
+`assign()` caps a pin at what the floor holds, so no stock is invented. The pin is marked
+`landed`, and `_drawn_at_own_date` offers it to its own line only, never to another member
+of the same planning unit. AC-S3-11 is amended accordingly (see the UAC). The Stock Debt view
+reads the same assignment, so a line whose goods landed reads `pinned` there too.
 
 ## Out of scope
 

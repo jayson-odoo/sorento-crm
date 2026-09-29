@@ -2639,6 +2639,7 @@ class ProjectSupplyService:
         out: List[
             Tuple[str, Decimal, Optional[date], str, Optional[str], Optional[str]]
         ] = []
+        own_line = self._core_id_of(fact)
         for line_id in self._unit_line_ids(fact):
             row = self._assignment_line(fact, line_id, as_of=as_of)
             if row is None:
@@ -2649,6 +2650,12 @@ class ProjectSupplyService:
                     break
                 take = min(left, max(_dec(item.qty), _ZERO))
                 if take <= _ZERO:
+                    continue
+                if getattr(item, "landed", False) and str(line_id) != str(own_line):
+                    # #1362 round 5 (owner ruling): goods that landed for ANOTHER member
+                    # of this unit are that member's, never offered to this one. They
+                    # still absorb that member's own `left`.
+                    left -= take
                     continue
                 event = item.event
                 if not event.warehouse or event.is_pool:

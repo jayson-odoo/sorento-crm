@@ -603,3 +603,174 @@ def test_1362_item6_same_date_lines_do_not_both_read_the_first_lines_purchase():
         assert _own_arrival_reserved(a) == Decimal("100"), a["sources"]
         assert _own_arrival_reserved(b) == Decimal("0"), b["sources"]
         assert _buy_qty(b) == Decimal("60"), b["sources"]
+
+
+# ============================================================================
+# #1362 round 5, owner ruling (29 Sep 2026): "we cannot snatch, what's ordered against the
+# SO should stay belonged to it". Goods that landed on a PO bought for an SO line belong to
+# that line: an earlier-due line of the same product at the same bin may NOT draw them,
+# and every other line draws only the truly free stock (on hand less what landed for other
+# lines and is still owed to them). AC-S3-11 changes accordingly.
+#
+# The SRT357 shape: 261 on hand at the bin, 100 landed for the later line on its own
+# purchase, an earlier line of the same product with no purchase of its own asking 250.
+# The earlier line used to take 250 through the ordinary queue, leaving the later line 11
+# of its own 100 (the owner saw 40 of 100 on the live book, with 221 taken).
+# ============================================================================
+
+from app.models.project_so import IV_ORDER  # noqa: E402
+from app.schemas.project_supply import ConfirmReserveComponent  # noqa: E402
+from app.services.project_order_inquiry_service import (  # noqa: E402
+    ProjectOrderInquiryService,
+)
+
+
+def _reserved_at(contribution: dict, code: str) -> Decimal:
+    return sum(
+        (
+            Decimal(s["qty"])
+            for s in contribution["sources"]
+            if s.get("kind") == "reserve" and s.get("location") == code
+            and s.get("source") != "own_arrival"
+        ),
+        Decimal("0"),
+    )
+
+
+def test_1362_round5_an_earlier_line_may_not_draw_goods_landed_for_a_later_line():
+    """Board walk: the earlier line may draw only the 161 truly free, which cannot meet its
+    250 whole, so it buys; it no longer takes the later line's goods. The later line keeps
+    all 100 that landed for it, taken first, and buys nothing."""
+    with blank_session() as db:
+        group, product = own_arrival_group(db)
+        own = own_arrival_warehouse(db, group)
+        _board_stock(db, product, own, on_hand=261)
+        order, (_early, _later) = order_with_lines(
+            db, product=product, warehouse=own,
+            lines=[
+                {"qty": "250", "required_date": FIRST_REQUIRED, "source_ref": "R5E"},
+                {"qty": "100", "required_date": SECOND_REQUIRED, "source_ref": "R5L"},
+            ],
+        )
+        po = supplier_and_po(db, po_number="ZZT-PO-1362-R5")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref="R5L", qty_received=100,
+            spo_number="SPO-2026/06-0152",
+        )
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        later = _cell(board, product.product_code, "2026-08-24")["contributions"][0]
+        assert _own_arrival_reserved(later) == Decimal("100"), later["sources"]
+        assert _buy_qty(later) == Decimal("0"), later["sources"]
+        assert (
+            f"100 landed for this line on SPO-2026/06-0152; 100 free at "
+            f"{own.warehouse_code}, taken first." in _own_step(later)["why"]
+        ), _own_step(later)["why"]
+
+        early = _cell(board, product.product_code, "2026-08-17")["contributions"][0]
+        assert _reserved_at(early, own.warehouse_code) == Decimal("0"), early["sources"]
+        assert _buy_qty(early) == Decimal("250"), early["sources"]
+
+
+def _ruling_confirm_world(db):
+    within_window = date.today() + timedelta(days=10)
+    company_id, actor, project, product = _world(db)
+    own = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}")
+    _stock(db, product, own, on_hand=261)
+    core_so = _core_so(db, company_id)
+    early_core = _core_line(
+        db, core_so, product, own, qty_ordered="250", required_date=within_window,
+    )
+    early_core.source_ref = f"ZZT-R5E-{_uid()[:8]}"
+    later_core = _core_line(
+        db, core_so, product, own, qty_ordered="100",
+        required_date=within_window + timedelta(days=7),
+    )
+    later_core.source_ref = f"ZZT-R5L-{_uid()[:8]}"
+    db.flush()
+    order = _project_so(db, project, so_id=core_so.id)
+    early = _project_line(db, order, line_no=1, product=product, core_line=early_core)
+    later = _project_line(db, order, line_no=2, product=product, core_line=later_core)
+    po = supplier_and_po(db, po_number=f"ZZT-PO-1362-R5C-{_uid()[:6]}")
+    po_line_bought_for(
+        db, po, product, own, from_so_line_ref=later_core.source_ref,
+        qty_received=100, qty_ordered=100, spo_number="SPO-2026/06-0152",
+    )
+    db.commit()
+    return actor, company_id, project, product, own, order, early, later
+
+
+def test_1362_round5_the_confirm_recheck_refuses_an_earlier_line_reserving_landed_goods():
+    """Confirm recheck: the earlier line reserving 250 (what the old walk proposed) would
+    take 89 of the 100 that landed for the later line. Refused."""
+    with blank_session() as db:
+        actor, _c, _p, _product, own, order, early, _later = _ruling_confirm_world(db)
+
+        with pytest.raises(AppException):
+            ProjectSupplyService(db).confirm(
+                order,
+                ConfirmSupplyBody(
+                    lines=[
+                        ConfirmLine(
+                            project_line_id=str(early.id),
+                            reserve=[
+                                ConfirmReserveComponent(warehouse_id=str(own.id), qty="250")
+                            ],
+                        )
+                    ]
+                ),
+                actor_user_id=actor,
+            )
+
+
+def test_1362_round5_the_confirm_recheck_accepts_the_free_part_and_the_landed_line_in_full():
+    """The ruling's answer confirms: the earlier line buys its 250 whole (161 free cannot
+    meet it), the later line reserves all 100 that landed for it."""
+    with blank_session() as db:
+        actor, _c, _p, _product, own, order, early, later = _ruling_confirm_world(db)
+
+        result = ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(
+                        project_line_id=str(early.id),
+                        buy_qty="250",
+                    ),
+                    ConfirmLine(
+                        project_line_id=str(later.id),
+                        reserve=[ConfirmReserveComponent(warehouse_id=str(own.id), qty="100")],
+                    ),
+                ]
+            ),
+            actor_user_id=actor,
+        )
+        assert result["revision_no"] is not None, result
+
+
+def test_1362_round5_the_order_inquiry_credits_the_landed_line_in_full():
+    """Order inquiry: the path picker's credit for the later line's row is the whole 100,
+    whatever the earlier line of the same product at the same bin asks. Its ledger is
+    spent by credits only, never by an ordinary draw, so this reader already honoured the
+    ruling; pinned so it keeps doing so."""
+    with blank_session() as db:
+        actor, company_id, _p, _product, own, order, _early, later = _ruling_confirm_world(db)
+        inquiry = OrderInquiry(
+            id=_uid(), company_id=company_id, project_sales_order_id=order.id,
+            amendment_id=None, state="raised", raised_by=actor,
+        )
+        db.add(inquiry)
+        db.flush()
+        row = OrderInquiryRow(
+            id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id,
+            so_line_id=later.id, qty=Decimal("100"), verb=IV_ORDER, state=INQUIRY_PLACED,
+            stock_location=own.warehouse_code,
+        )
+        db.add(row)
+        db.commit()
+
+        credit = ProjectOrderInquiryService(db)._own_arrival_credit_for_row(
+            row, need=Decimal("100")
+        )
+        assert credit == Decimal("100"), credit

@@ -65,6 +65,18 @@ FK seeded, never a borrowed row.
   ladder (compose) and the confirm-time recheck. (measured: the line served first by the
   ordinary rung takes the bin; the credit finds nothing left)
   (seams guarded: single-line floor, confirm ledger)
+  AMENDED by the owner ruling of 29 Sep 2026 (#1362, "we cannot snatch, what's ordered
+  against the SO should stay belonged to it"): goods that landed on a PO bought for an SO line
+  belong to THAT line. They are pinned to it in the shared assignment before anybody queues
+  (`StockDebtService._landed_holds`), so an ordinary draw by any other line, an earlier-due
+  line of the same product at the same bin included, reaches only the truly free stock: on
+  hand less what landed for other lines and is still owed to them. The ordinary-draw charge
+  above still spends the physical ledger, but it can no longer spend another line's landed
+  goods, so the credited line keeps them. Example (SRT357 shape): on hand 261, 100 landed for
+  the later line, an earlier line asking 250: the earlier line may draw 161 (it buys, since
+  161 cannot meet 250 whole), the later line is credited all 100. Board walk, confirm recheck
+  and order inquiry read the same rule. A sibling's tier-2 SPARE is not pinned: it is not owed
+  to the line it was bought for.
 - AC-S3-12 (second review round, 21 Sep) Owner ruling R2: a mixed row (a received link and a
   still-open purchase-order link) that settles in place because its own-arrival credit covers the
   row's whole linked total keeps BOTH links - the received link as history, and the still-open PO
