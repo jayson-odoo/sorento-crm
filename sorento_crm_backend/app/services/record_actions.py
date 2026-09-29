@@ -2102,3 +2102,35 @@ register(
         label="Undo confirm",
     )
 )
+
+
+def _delete_contact_chatbot_fact(db: Session, payload: dict):
+    from app.services.contact_service import ContactService
+    from app.services.error_handler import handle_unprocessable
+
+    # Chatbot memory lane A (contract section 5): `entity_id` is `"<contactId>:<key>"`
+    # - one fact of one contact, so a composite id rather than a payload key, the same
+    # shape `ContactAccessAgentsTable.tsx` already builds for this action.
+    # N1 (security review 26 Sep 2026): a composite id missing its `:` is 422, the
+    # same as an unknown key - not a 404 against whatever the whole string happens
+    # to look like as a contact id.
+    entity_id = _entity_id(payload)
+    contact_id, sep, key = entity_id.partition(":")
+    if not sep or not key:
+        raise handle_unprocessable(f"{entity_id!r} is not a valid contact fact id.")
+    return ContactService(db).delete_contact_fact(contact_id, key)
+
+
+register(
+    FormAction(
+        key="contact_chatbot_fact.delete",
+        entity_types=("contact_chatbot_fact",),
+        execute=_delete_contact_chatbot_fact,
+        # Hard delete (contract section 4): a learned or said fact leaves a
+        # tombstone, a staff fact leaves nothing - either way there is no
+        # "undo" a reversible window could restore, so this is the destructive one.
+        window=WINDOW_DESTRUCTIVE,
+        permission="user_management.contacts.edit",
+        label="Delete fact",
+    )
+)

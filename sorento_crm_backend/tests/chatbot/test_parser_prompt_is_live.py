@@ -31,6 +31,7 @@ from app.services.chatbot_parser_prompt import (
     LAST_COST_ADDENDUM,
     LIVE_SYSTEM_MESSAGE_SHA256,
     LOW_STOCK_ADDENDUM,
+    MEMORY_ADDENDUM,
     QUANTITY_ADDENDUM,
     SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
@@ -172,7 +173,20 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # remove"): the n8n `{{ (() => ...)() }}` expression after "Companies OFFERED" is cut. The
 # CRM registry never evaluated it, so it reached the model as literal JavaScript. See
 # `COMPANIES_OFFERED_CUT` for the same edit applied to the live file in the derivation.
+# 63055 -> 62668 (27 Sep 2026, chatbot memory lane A S3, merged over PR #1247, migration
+# `mem_0002_parser_memory`): two cuts go with `MEMORY_ADDENDUM` (contract section
+# 6.4) - the `previous_conversation_state` input-description bullet (never sent, -127),
+# (the "Companies OFFERED" IIFE cut the lane also made is main's round 8 cut above, so
+# it is counted once, there), and the `CURRENT DATE` section moved out of the base body entirely,
+# to the end of `MEMORY_ADDENDUM` (AC-MEM071, -260). `MEMORY_ADDENDUM` itself now
+# stacks AFTER `SALES_REPORT_ADDENDUM` (`_without_growth_r1_addendum` peels it first),
+# so it is not part of this number. Net -387. Measured via `_without_growth_r1_
+# addendum(SEMANTIC_PARSER_PROMPT)`, not derived.
 #
+# Merge of main b299bf6e (#1301) into chatbot memory lane A (integration round 5, 28 Sep
+# 2026): main's +54 (the brand bullet now points at the Known brands line, 63055 -> 63109)
+# and this lane's -387 above touch different spans of the body and both stand:
+# 62668 + 54 = 62722. Measured, not derived.
 # Merge of main into the #1262 lane (fix lane round 5, 27 Sep 2026): main's -602
 # (63657 -> 63055) and this lane's +54 (63657 -> 63711) touch different spans of the
 # body and both stand: 63055 + 54 = 63109.
@@ -181,7 +195,10 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # domain_hint is never null" with its one example (+249). The open numbered question
 # block and the stock task block also changed, but both sit in addenda this measure
 # subtracts. Measured via `_without_growth_r1_addendum(SEMANTIC_PARSER_PROMPT)`.
-CONSTANT_CHARS = 63358
+# Merge of main bc75eb96 (#1353) into chatbot memory lane A (fix round 7, 29 Sep 2026):
+# main's +249 and this lane's -387 touch different spans and both stand:
+# 62722 + 249 = 62971.
+CONSTANT_CHARS = 62971
 
 #: The line the round 8 cut rewrote, as the live file carries it and as the constant does.
 COMPANIES_OFFERED_LIVE = (
@@ -201,21 +218,27 @@ def _without_growth_r1_addendum(text: str) -> str:
     (PLAN-low-stock-report.md S7, 14 Sep 2026), then `SALES_REPORT_ADDENDUM`
     (PLAN-chatbot-sales-report.md S4 wiring point 1, migration
     `519_chatbot_sales_report_vocab`), then `QUANTITY_ADDENDUM` (issue #1262 slice 5,
-    26 Sep 2026), then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026) now
-    stack AFTER `GROWTH_R1_ADDENDUM` on both bodies, the same way
-    this one stacked after the live text - so they come off FIRST, newest
-    outermost, before the `removesuffix` this function has always done. Each addendum is an APPENDED block, so both come off by suffix rather than by
-    the index slice the warehouse-arrival edit needs (that one sits INSIDE the
-    requested-attributes section). The assertion that `GROWTH_R1_ADDENDUM` really is the
-    tail once `LAST_COST_ADDENDUM` is off lives in
+    26 Sep 2026), then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026),
+    then `ESCALATION_CONFIRMATION_ADDENDUM` (#1323), then `MEMORY_ADDENDUM` (chatbot memory lane A,
+    migration `mem_0002_parser_memory`, which also folds the moved CURRENT DATE
+    section into this same trailing block - AC-MEM071) now stack AFTER
+    `GROWTH_R1_ADDENDUM` on both bodies, the same way this one stacked after the live
+    text - so they come off FIRST, newest outermost, before the `removesuffix` this
+    function has always done. Each addendum is an APPENDED block, so both come off by
+    suffix rather than by the index slice the warehouse-arrival edit needs (that one
+    sits INSIDE the requested-attributes section). The assertion that
+    `GROWTH_R1_ADDENDUM` really is the tail once `LAST_COST_ADDENDUM` is off lives in
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
-    # ESCALATION_CONFIRMATION_ADDENDUM (#1323) is the prompt's tail, so it is peeled
-    # first; `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4) sits
-    # beneath it, then the #1262 pair (KNOWN_BRANDS_ADDENDUM, QUANTITY_ADDENDUM), then
+    # MEMORY_ADDENDUM (chatbot memory lane A) is the newest addendum and the prompt's
+    # tail, so it is peeled first; ESCALATION_CONFIRMATION_ADDENDUM (#1323) sits beneath
+    # it, then `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4), then
+    # the #1262 pair (KNOWN_BRANDS_ADDENDUM, QUANTITY_ADDENDUM), then
     # SPECIFICATION_ADDENDUM (fix round 8 on PR #833), then SALES_ANALYSIS_ADDENDUM
     # (#1267 S1), then STOCK_TASK_ADDENDUM (ported from PR #1118, not merged,
     # chatbot-stock-ask-v2 S3).
+    if text.endswith(MEMORY_ADDENDUM):
+        text = text[: -len(MEMORY_ADDENDUM)]
     if text.endswith(ESCALATION_CONFIRMATION_ADDENDUM):
         text = text[: -len(ESCALATION_CONFIRMATION_ADDENDUM)]
     if text.endswith(TOP_SELLING_ADDENDUM):

@@ -43,7 +43,7 @@ import { useRespondContactOutboundMutations } from '@/hooks/useRespondContactOut
 
 
 import { buildDetailSearch } from '@/lib/listNavQuery';
-import { contactsListQueryKey, fetchContactsPage } from '../lib/listQuery';
+import { contactsListFilters, contactsListQueryKey, fetchContactsPage } from '../lib/listQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
@@ -66,6 +66,10 @@ export default function ContactsList() {
     isSettling: searchSettling,
     reset: resetSearch,
   } = useDebouncedSearch();
+  // `chatbot_memory_level=own` (Settings > Chatbot > Memory's "N contacts" link,
+  // review finding S13 / AC-MEM028) - the only filter this list reads from the URL
+  // today, no filter UI of its own beyond the deep link that sets it.
+  const [chatbotMemoryLevel, setChatbotMemoryLevel] = useState<string | null>(null);
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -73,11 +77,12 @@ export default function ContactsList() {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
     resetSearch(state.searchQuery);
+    setChatbotMemoryLevel(state.filters.chatbot_memory_level ?? null);
   });
 
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
   // page 1 over the page `useListStateFromUrl` had just restored from the URL.
-  useResetPageOnFilterChange(setPagination, [searchQuery]);
+  useResetPageOnFilterChange(setPagination, [searchQuery, chatbotMemoryLevel]);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [contactToDelete, setContactToDelete] = useState<RespondContact | null>(null);
@@ -95,9 +100,9 @@ export default function ContactsList() {
       pageSize: pagination.pageSize,
       sorting,
       searchQuery,
-      filters: {},
+      filters: contactsListFilters({ chatbotMemoryLevel }),
     }),
-    [pagination, sorting, searchQuery],
+    [pagination, sorting, searchQuery, chatbotMemoryLevel],
   );
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching } = useQuery({
@@ -189,7 +194,7 @@ export default function ContactsList() {
   // The whole row opens the record, carrying the list query the pager rebuilds
   // its key from.
   const rowHref = (contact: RespondContact) => {
-    const search = buildDetailSearch(listParams);
+    const search = buildDetailSearch(listParams, listParams.filters);
     return `/user-management/contacts/${contact.id}${search ? `?${search}` : ''}`;
   };
 

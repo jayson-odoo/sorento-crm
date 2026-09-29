@@ -899,7 +899,12 @@ def test_removing_a_line_placed_on_a_po_is_accepted_and_cancelled(api):
     ), "removal must not touch the claim before apply"
 
 
-def test_applying_the_cancelled_row_frees_the_po_link(api):
+def test_applying_the_cancelled_row_keeps_the_po_link_and_records_the_intent(api):
+    """Was `..._frees_the_po_link`. Owner ruling 29 Sep 2026 (PR #1369, option (c)): the
+    planning side re-deals nothing, so a removed line's placement stays on its cancelled
+    row, claim included, until purchasing moves it in AutoCount and the sync brings the
+    new link to Order Inquiries. What the apply writes is the intent, on the row's own
+    `result_json`."""
     world, _project = api
     db = world.db
     core_so, core_line, product, order, mirror_line = _adopted_line(world, qty_ordered=72)
@@ -927,23 +932,25 @@ def test_applying_the_cancelled_row_frees_the_po_link(api):
     planning_change_service.apply(db, str(batch.id), world.actor)
     db.commit()
 
-    # The line's PO link (and the claim it wrote) are gone - the freed quantity has been
-    # given up, not left dangling on a line that no longer exists.
+    # The line's PO link and the claim it wrote STAY (option (c)): the link is intact on the
+    # cancelled row until purchasing adjusts it in AutoCount.
     db.expire_all()
     assert (
-        db.query(OrderLinkClaim).filter(OrderLinkClaim.so_line_id == core_line.id).count() == 0
-    ), "apply must free the claim the removed line's placement wrote"
+        db.query(OrderLinkClaim).filter(OrderLinkClaim.so_line_id == core_line.id).count() == 1
+    ), "the claim stays with the link until purchasing moves it in AutoCount"
+    kept = ProjectOrderInquiryService(db)._links_of(placed_row.id)
+    assert sum(Decimal(str(l.qty)) for l in kept) == Decimal("72"), kept
 
-    # Rule 6: the freed quantity follows a pool row or a raised row - Slice D's own
-    # `_execute_reallocations` (already built for qty_down/product_changed) records what it
-    # did on the row's own `result_json` (`executed_reallocations` / `released_documents`,
-    # planning_change_service.py ~3485) - never silently swallowed.
+    # `_execute_reallocations` records the intent on the row's own `result_json`
+    # (`released_documents`), naming the AutoCount line - never silently swallowed, and
+    # never executed from the planning side.
     reloaded_row = db.get(PlanningChangeRow, row.id)
     result_json = reloaded_row.result_json or {}
-    moved = (result_json.get("executed_reallocations") or []) + (
-        result_json.get("released_documents") or []
-    )
-    assert moved, f"expected the freed PO quantity's move recorded on the row: {result_json}"
+    assert not (result_json.get("executed_reallocations") or []), result_json
+    assert any(
+        po.po_number in text and "72" in text and "AutoCount" in text
+        for text in (result_json.get("released_documents") or [])
+    ), f"expected the freed PO quantity's intent recorded on the row: {result_json}"
 
 
 # --------------------------------------------------------------------------- #

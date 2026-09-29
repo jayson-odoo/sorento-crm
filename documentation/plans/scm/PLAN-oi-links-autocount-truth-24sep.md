@@ -175,7 +175,8 @@ Lines tab's `firstLinkOf` / `DocumentCell` (`orderInquiryHeaderLinesColumns.tsx:
   `follow_book_for_rows` (`:2724`).
 * **Other `auto = false` writers that are not a person's pick:** the board borrow
   (`place_supply_borrow`), planning-change reallocations (`_redeal_document`,
-  `planning_change_service.py:3403`, `_pool_row_for` `:3302`), the planning-change link shift
+  `planning_change_service.py:3403`, `_pool_row_for` `:3302`; both retired 29 Sep 2026 by
+  PR #1369, the apply now records the intent for purchasing instead of linking), the planning-change link shift
   (`_shift_links_off_retired_lines` `:4009`, copies the old link's `auto`), the container
   planner's ticks (`spo_conversion_service._link_ticked_demand` `:2334`), the importer's
   `_move_received_links` (`:2954`). Because they write `auto = false`, no script can tell them
