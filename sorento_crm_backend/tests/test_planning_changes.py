@@ -2346,23 +2346,22 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_is_cancelled_and_un
     )
 
 
-def test_apply_advance_with_pool_available_redirects_the_freed_placed_qty_to_a_pool_row(api):
-    """The SO397450 / SRT382-6-DIY shape, end-to-end, under Slice D (issue #859), measured
-    after the coder's landing: an ADVANCE whose fresh proposal draws 432 from the pool at
-    BRW while the line already has 432 on TWO real purchase orders (300 + 132). Confirming
-    as proposed keeps the pool's Reserve 432 whole - no relabel onto Buy.
+def test_apply_advance_with_pool_available_records_the_freed_placed_qty_for_purchasing(api):
+    """The SO397450 / SRT382-6-DIY shape, end-to-end: an ADVANCE whose fresh proposal draws
+    432 from the pool at BRW while the line already has 432 on TWO real purchase orders
+    (300 + 132). Confirming as proposed keeps the pool's Reserve 432 whole - no relabel
+    onto Buy.
 
-    Under Slice D the redirect is no longer a flag on the SAME row (`redirected_to_pool`
-    is retired from being set at all): the line's own ORDER row is CANCELLED and unlinked
-    from both purchase orders (their own PO history is untouched - only this line's claim
-    on them is), and the freed 432 lands on a fresh POOL-LOCATION ORDER row instead
-    (`so_line_id` null, `stock_location` the pool warehouse code), carrying the SAME
-    `order_inquiry_id` as the row it replaced - the same document, read differently - so it
-    counts as cover for the pool's own book. No CANCEL_BALANCE, no duplicate, and no
-    informational ADVANCE row either: the pool covers the whole need before the ladder logs
-    a date-change instruction. Was
-    "...redirects_both_placed_rows_to_the_pool", asserting the pre-Slice-D
-    same-row-flag mechanism."""
+    The line's own ORDER row is CANCELLED and unlinked from both purchase orders by the
+    confirm's own settle (the book left nothing to buy; their own PO history is untouched -
+    only this line's claim on them is). Owner ruling 29 Sep 2026 (PR #1369, option (c)):
+    the freed 432 is NOT re-dealt by the planning side - no pool-location row, no fresh
+    link; the batch row records the intent for purchasing to carry out in AutoCount, one
+    notice per purchase order, and the next sync brings the new links to Order Inquiries.
+    No CANCEL_BALANCE, no duplicate, and no informational ADVANCE row either: the pool
+    covers the whole need before the ladder logs a date-change instruction. Was
+    "...redirects_the_freed_placed_qty_to_a_pool_row" (Slice D), before that
+    "...redirects_both_placed_rows_to_the_pool" (the pre-Slice-D same-row flag)."""
     client, world = api
     db = world.db
     # 1000, not 500: ladder v8 lends a project HALF the pool (R-B), and these cases are
@@ -2496,29 +2495,37 @@ def test_apply_advance_with_pool_available_redirects_the_freed_placed_qty_to_a_p
         "claim on them is"
     )
 
-    # The freed 432 lands on a fresh pool-location ORDER row instead: no so_line_id (it is
-    # not any one line's row any more), stock_location the pool warehouse, the SAME
-    # order_inquiry_id as the row it replaced (the same document, read differently).
+    # Option (c): no pool-location row is written for the freed 432 and nothing is linked
+    # by the planning side. Both purchase-order lines read unclaimed until purchasing
+    # moves them in AutoCount.
     pool_rows = (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
-                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code,
-                OrderInquiryRow.order_inquiry_id == original.order_inquiry_id)
+                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
         .all()
     )
-    assert len(pool_rows) == 1, pool_rows
-    assert pool_rows[0].qty == Decimal("432")
-    assert pool_rows[0].redirected_to_pool is not True
-    assert pool_rows[0].state != INQUIRY_CANCELLED
+    assert pool_rows == [], pool_rows
+    from app.models.project_so import OrderInquiryLink
 
-    # D1 (review round): a pool row carries the links it was created for, or it is not
-    # created at all - a row that exists but claims nothing is a silent orphan, and the
-    # two PO lines it was meant to cover would read unclaimed forever.
-    pool_links = ProjectOrderInquiryService(db)._links_of(pool_rows[0].id)
-    assert sum(Decimal(str(l.qty)) for l in pool_links) == Decimal("432"), pool_links
-    linked_by_po_line = {str(l.po_line_id): Decimal(str(l.qty)) for l in pool_links}
-    assert po_line_a.qty_ordered - linked_by_po_line.get(str(po_line_a.id), Decimal("0")) == Decimal("0")
-    assert po_line_b.qty_ordered - linked_by_po_line.get(str(po_line_b.id), Decimal("0")) == Decimal("0")
+    for po_line in (po_line_a, po_line_b):
+        assert (
+            db.query(OrderInquiryLink).filter(OrderInquiryLink.po_line_id == po_line.id).all()
+            == []
+        )
+
+    # The batch row records the intent, one notice per purchase order, naming the
+    # AutoCount line and the quantity, for purchasing to carry out in AutoCount.
+    applied = planning_change_service.get_batch(db, str(batch.id))
+    result = applied["orders"][0]["rows"][0]["result"]
+    assert result is not None, applied
+    assert not (result.get("executed_reallocations") or []), result
+    notices = result.get("released_documents") or []
+    for po_doc, qty in ((po_a, "300"), (po_b, "132")):
+        assert any(
+            po_doc.po_number in text and qty in text and "AutoCount" in text
+            and f"{core_so.so_number} line 1" in text
+            for text in notices
+        ), (po_doc.po_number, qty, notices)
 
     # No informational ADVANCE row: the pool covers the whole need before the ladder logs
     # a date-change instruction that has nothing left to say.

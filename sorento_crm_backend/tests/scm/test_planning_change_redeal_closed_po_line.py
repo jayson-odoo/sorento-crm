@@ -192,13 +192,14 @@ def _placed_on_two_pos_world(api):
     return world, core_so, order, line, raised_row, po_a, po_line_a, po_b, po_line_b, batch
 
 
-def test_the_open_share_still_moves_when_a_sibling_po_line_closed(api):
+def test_an_open_share_is_recorded_for_purchasing_and_a_closed_sibling_is_named_received(api):
     """Two purchase-order lines under one placed row, one of them received and closed by
     apply time, and the open one too small to carry the whole freed quantity. Today the
-    re-deal reaches the closed line and the order fails. Expected: the closed share is
-    skipped with its notice; the OPEN share is still re-dealt exactly as before (here:
-    nobody else needs it, so it lands on a pool row linked to PO A only). Nothing is ever
-    written onto PO B, and PO A is never over-linked."""
+    re-deal reaches the closed line and the order fails. Under option (c) (owner, 29 Sep):
+    nothing is re-linked by the planning side at all. The open share's part of the freed
+    quantity is recorded as intent for purchasing (AutoCount), the closed share's part is
+    named received, goods are stock now. Nothing is written onto either line; every link
+    they carry afterwards is the line's own row's."""
     world, core_so, order, line, own_row, po_a, po_line_a, po_b, po_line_b, batch = (
         _placed_on_two_pos_world(api)
     )
@@ -220,20 +221,28 @@ def test_the_open_share_still_moves_when_a_sibling_po_line_closed(api):
     fresh = db.get(PlanningChangeRow, row.id)
     assert fresh.applied_state == "applied", (fresh.applied_state, fresh.applied_reason)
     said = fresh.result_json or {}
+    assert not (said.get("executed_reallocations") or []), said
     released = said.get("released_documents") or []
-    assert any(po_b.po_number in text and "received" in text for text in released), said
-    executed = said.get("executed_reallocations") or []
-    assert any(po_a.po_number in text for text in executed), said
-    assert not any(po_b.po_number in text for text in executed), said
+    where = f"{core_so.so_number} line {line.line_no}"
+    assert any(
+        po_a.po_number in text and "100" in text and "AutoCount" in text and where in text
+        for text in released
+    ), said
+    assert any(
+        po_b.po_number in text and "34" in text and "received" in text and where in text
+        for text in released
+    ), said
 
-    # PO B: only the line's own row ever sat on it.
-    for link in _links_on_po_line(db, po_line_b.id):
-        assert str(link.row_id) == str(own_row.id), (link.row_id, own_row.id)
-    # PO A: the freed open share found a pool row, and the line is never over-linked.
+    # Neither line gained a link: every link is still the line's own row's.
+    for po_line in (po_line_a, po_line_b):
+        for link in _links_on_po_line(db, po_line.id):
+            assert str(link.row_id) == str(own_row.id), (link.row_id, own_row.id)
     links_a = _links_on_po_line(db, po_line_a.id)
     assert sum((Decimal(str(l.qty)) for l in links_a), Decimal("0")) <= Decimal("100"), links_a
-    pool_links = [l for l in links_a if str(l.row_id) != str(own_row.id)]
-    assert pool_links, links_a
-    pool_row = db.get(OrderInquiryRow, pool_links[0].row_id)
-    assert pool_row.so_line_id is None, "the freed open share belongs to the pool now"
-    assert pool_row.stock_location == world.pool_wh.warehouse_code
+    assert (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
+        .all()
+        == []
+    ), "the planning side never writes a pool row"
