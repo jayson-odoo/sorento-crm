@@ -106,23 +106,32 @@ rows come in, whether a `Done` needs a reason.
 
 ```
 stock_asks
-  done_at   TIMESTAMP NULL      when state last became done (naive UTC, like created_at)
-  done_by   VARCHAR(150) NULL   who set it: the portal contact's name or the CRM user's name
+  done_at             TIMESTAMP NULL   when state last became done (naive UTC, like created_at)
+  done_by_user_id     VARCHAR NULL     FK users.id ON DELETE SET NULL: the CRM user, or the user
+                                       linked to the portal contact (users.respond_contact_id)
+  done_by_contact_id  TEXT NULL        FK respond_contacts.id ON DELETE SET NULL: the portal
+                                       contact, when the write came through the portal
 ```
 
-Set in ONE place, `_apply_update` (`stock_ask_service.py:538`): a transition to `done` stamps
-`done_at = now()` and `done_by = <actor label>`; a transition to `open` clears both; a `note`-only
-PATCH touches neither. Every existing route (portal cells, CRM Asks tab, the new to-do buttons)
-goes through it, so the office and the agent always see the same "Done by Sean, 29/09/2026
-14:02". `done_by` is a name snapshot, not an id: the reader is a human, the row never needs to
-join back, and a portal contact and a CRM user are two different tables (one text column beats
-two nullable FKs for a label). Trigger for ids: an audit question "which user" that a name cannot
-answer. Backfill: rows already `done` get `done_at = updated_at`, `done_by = NULL` (shown as
-"Done", no name). `[Q2 pending: (b) adds a `contacted` state to the CHECK; (c) makes the note
-required on done]`
+The audit actor contract (`PLAN-unified-identity-26sep.md` section 8.3, PR checklist "Who did
+this") rules the shape: a "who did this" column is `<verb>_by_user_id`, never a name; a column a
+portal route writes also gets `<verb>_by_contact_id`, and a contact who holds a user is recorded
+as both. (An earlier draft of this plan proposed a name snapshot; retired 29 Sep 2026 before any
+code.)
 
-`StockAskResponse` gains `done_at`, `done_by` (asserted in a test: `response_model` drops
-undeclared fields).
+Set in ONE place, `_apply_update(db, ask, data, *, actor_user_id=None, actor_contact_id=None,
+now=None)` (`stock_ask_service.py:538`): a transition to `done` stamps `done_at = now` and the
+two actor ids as given; a second `done` leaves them; a transition to `open` clears all three; a
+`note`-only PATCH touches none. Every route (portal cells, CRM Asks tab, the new to-do buttons)
+goes through it. The portal route passes `actor_contact_id = token.contact_id` and, when a user
+is linked to that contact, `actor_user_id` too (one query on `users.respond_contact_id`); the CRM
+routes pass `actor_user_id = current_user["id"]`. Backfill: rows already `done` get `done_at =
+updated_at`, both ids NULL (shown as "Done", no name). `[Q2 pending: (b) adds a `contacted` state
+to the CHECK; (c) makes the note required on done]`
+
+`StockAskResponse` gains `done_at` and `done_by`, a LABEL resolved by `serialize` (the user's
+name when `done_by_user_id` is set, else the contact label, else None); no actor id is on the
+wire (no UUIDs in the UI). Asserted in a test: `response_model` drops undeclared fields.
 
 ### 3.2 The to-do read: one payload, grouped on the client from one server boundary
 

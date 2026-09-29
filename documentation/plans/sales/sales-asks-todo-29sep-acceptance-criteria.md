@@ -28,16 +28,22 @@ Fixture for every S1 test: agent A (contact CA), agent B (contact CB), customers
 to A, customer Z assigned to B, asks with `created_at` set explicitly around a fixed `now`
 (`2026-09-29T03:00:00Z`, i.e. 11:00 Malaysia; `today_start = 2026-09-28T16:00:00Z`).
 
-- **AC-ST101 [BE]** After `sat_0001_stock_ask_done`, `stock_asks` has `done_at TIMESTAMP NULL`
-  and `done_by VARCHAR(150) NULL`; re-running the migration is a no-op.
+- **AC-ST101 [BE]** After `sat_0001_stock_ask_done`, `stock_asks` has `done_at TIMESTAMP NULL`,
+  `done_by_user_id VARCHAR NULL` (FK `users.id` ON DELETE SET NULL) and `done_by_contact_id TEXT
+  NULL` (FK `respond_contacts.id` ON DELETE SET NULL); re-running the migration is a no-op.
+  (Audit actor contract, identity plan 8.3: ids, never a name.)
 - **AC-ST102 [BE]** Backfill: a row already `done` before the migration reads `done_at =
-  updated_at`, `done_by NULL`; an `open` row reads both NULL.
-- **AC-ST103 [BE][T]** `_apply_update` with `{state: done}` sets `done_at = now` and `done_by =
-  <actor label>`; a second `{state: done}` on a done row leaves both as they were; `{state:
-  open}` clears both; `{note: "x"}` alone changes neither. Applies through the portal PATCH
-  (actor = the contact's label) and the CRM customers PATCH (actor = the user's full name).
-- **AC-ST104 [BE]** `StockAskResponse` carries `done_at` and `done_by` (asserted field by field on
-  the portal list, the CRM customers list and the to-do payload).
+  updated_at` with both actor ids NULL; an `open` row reads all three NULL.
+- **AC-ST103 [BE][T]** `_apply_update(..., actor_user_id=, actor_contact_id=, now=)` with
+  `{state: done}` sets `done_at = now` and the actor ids as given; a second `{state: done}` on a
+  done row leaves all three as they were; `{state: open}` clears all three; `{note: "x"}` alone
+  changes none. Applies through the portal PATCH (`actor_contact_id` = the token's contact, plus
+  `actor_user_id` when a user is linked to that contact) and the CRM customers PATCH
+  (`actor_user_id` = the current user).
+- **AC-ST104 [BE]** `StockAskResponse` carries `done_at` and `done_by`, the LABEL `serialize`
+  resolves (the user's `name` when `done_by_user_id` is set, else the contact label, else None);
+  no actor id is on the wire. Asserted field by field on the portal list, the CRM customers list
+  and the to-do payload.
 - **AC-ST105 [BE]** `todo_for_agent(A, now)`: `open` holds only asks of X and Y with `state =
   open`; Z's asks and customer-less asks are absent.
 - **AC-ST106 [BE]** `open` holds branches `too_big`, `in_stock`, `no_incoming` only; an open
@@ -55,7 +61,8 @@ to A, customer Z assigned to B, asks with `created_at` set explicitly around a f
   AC-ST105's payload; as a contact with no agent 403 `NOT_A_SALES_AGENT`; as CA with the
   `customer_asks` switch off 403 `FORM_TYPE_NOT_VISIBLE`.
 - **AC-ST112 [BE]** `PATCH /api/v1/public/portal/customer-asks/{id}` `{state: done}` as CA on X's
-  ask returns `done_by` = CA's contact label and a `done_at`; the same on Z's ask is 404.
+  ask stamps `done_by_contact_id = CA` (and `done_by_user_id` = the user linked to CA when one
+  exists), returns `done_by` = CA's contact label and a `done_at`; the same on Z's ask is 404.
 - **AC-ST113 [FE][T]** `bucketTodo(payload)` with `today_start = 2026-09-28T16:00Z`: an open ask
   at `2026-09-28T15:59Z` is in `Needs attention`; one at `2026-09-28T16:00Z` is in `Today`; one at
   `2026-09-27T20:00Z` is in `Needs attention` and its group label for the day list is
@@ -100,7 +107,8 @@ to A, customer Z assigned to B, asks with `created_at` set explicitly around a f
   that has at least one open ask with `{agent_id, code, name, open, needs_attention}` computed
   with the same rules as the payload; without `view_all` 403. [Q7]
 - **AC-ST206 [BE]** `PATCH /api/v1/sales/customer-asks/{id}` `{state: done}` as the A-linked
-  user on X's ask stamps `done_by` = the user's full name; on Z's ask 404; with `view_all` on Z's
+  user on X's ask stamps `done_by_user_id` = that user and returns `done_by` = the user's name;
+  on Z's ask 404; with `view_all` on Z's
   ask 200; without `.edit` 403; a bad state 422.
 - **AC-ST207 [BE]** A user scoped to another company sees none of A's asks (company scope holds
   on the new routes).
