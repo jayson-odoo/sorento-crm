@@ -115,7 +115,7 @@ Preview endpoints: `POST /api/v1/system/email-theme/preview {theme}` -> `{subjec
 
 ## Migrations
 
-- `eml_0001_layout_columns` (down_revision `cpc4_cost_packaging_method` after re-parenting onto main 54c3b4047; earlier `merge_29sep_batch5`, `sales_agent_aliases_r7`, originally `merge_28sep_batch3`): add `email_templates.preheader varchar(255) NULL`, `email_templates.layout_json jsonb NULL`, `system_settings.email_theme jsonb NULL`. Additive; downgrade drops them.
+- `eml_0001_layout_columns` (down_revision `merge_29sep_batch6` after re-parenting onto main 7c2e4ee6b; earlier `cpc4_cost_packaging_method`, `merge_29sep_batch5`, `sales_agent_aliases_r7`, originally `merge_28sep_batch3`): add `email_templates.preheader varchar(255) NULL`, `email_templates.layout_json jsonb NULL`, `system_settings.email_theme jsonb NULL`. Additive; downgrade drops them.
 - `eml_0002_seed_layouts` (down_revision `eml_0001_layout_columns`): (a) for each of the 6 seeded codes, `UPDATE ... SET layout_json, preheader WHERE code = :code AND layout_json IS NULL` only when `sha256(body_html)` equals the fully migrated seeded body (hashes computed on 445cb1eb by replaying 212, oihe_0001, undo_0002, oihr_0001, oihr_0002, oirs_0001, oirs_0003, oihr_0003, soatt_0001); an admin-edited row is left alone and still renders through the implicit layout. `body_html`/`body_text` are NOT touched, so a downgrade (which nulls `layout_json` again) restores the exact prior rendering. (b) insert one row per system code when the code is absent, never overwriting. The two purchase request codes also match the body migration 212 wrote before #287 (long dashes), which is what production carries.
 - Never touches `alembic_version`. One head.
 

@@ -10,7 +10,7 @@ All three nullable, no backfill: NULL means "the default", and the defaults live
 Additive; downgrade drops them.
 
 Revision ID: eml_0001_layout_columns
-Revises: cpc4_cost_packaging_method
+Revises: merge_29sep_batch6
 Create Date: 2026-09-28
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "eml_0001_layout_columns"
-down_revision = "cpc4_cost_packaging_method"
+down_revision = "merge_29sep_batch6"
 branch_labels = None
 depends_on = None
 
