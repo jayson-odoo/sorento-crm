@@ -3526,6 +3526,7 @@ def _run_stages(  # noqa: PLR0915
                         # HIT arm below.
                         profile=state_out.profile,
                         dealer_stock_ask=_dealer_stock_ask(state_out, plan),
+                        dealer_incoming_ask=_dealer_incoming_ask(state_out, plan),
                     )
                     if answer is not None:
                         bridge_answered = True
@@ -3905,9 +3906,11 @@ def _run_stages(  # noqa: PLR0915
             answer = turn_compose.Answer(text=SALES_REPORT_NOT_ENABLED_MESSAGE)
 
     if answer is not None and lane_error_text is None:
-        if _dealer_stock_ask(state_out, plan):
+        if _dealer_stock_ask(state_out, plan) or _dealer_incoming_ask(state_out, plan):
             # Owner ruling 26 Sep 2026 (hand test F1): whatever composed this stock
             # reply, a dealer is referred to their salesman, never offered a team.
+            # PR #1329 (ETA policy): a dealer's incoming reply is the same, so an
+            # incoming miss no longer offers the purchasing team.
             answer = _dealer_refers_to_salesman(answer)
         elif in_ranking_conversation:
             answer = _without_escalation_offer(answer)
@@ -4127,13 +4130,24 @@ def _contact_block(envelope: Envelope, known_phone: str | None) -> dict[str, Any
 
 def _dealer_stock_ask(state_out: Any, plan: Any) -> bool:
     """Is this turn a stock ask by a dealer (an availability-only contact, hand test F1)?"""
+    return _dealer_asks(state_out, plan, "inventory")
+
+
+def _dealer_incoming_ask(state_out: Any, plan: Any) -> bool:
+    """Is this turn an incoming ask by a dealer? The backend gives the same contact the
+    dealer view on every incoming route (`eta_policy.is_dealer`: the same availability
+    policy), so the reply is the ETA and the salesperson, never our stock or a team."""
+    return _dealer_asks(state_out, plan, "incoming")
+
+
+def _dealer_asks(state_out: Any, plan: Any, domain: str) -> bool:
     profile = getattr(state_out, "profile", None)
     if not getattr(profile, "stock_availability_only", False):
         return False
     domains = list(getattr(plan, "domains", None) or []) or list(
         getattr(state_out.focus, "domains", None) or []
     )
-    return "inventory" in domains
+    return domain in domains
 
 
 def _in_ranking_conversation(focus: Any) -> bool:

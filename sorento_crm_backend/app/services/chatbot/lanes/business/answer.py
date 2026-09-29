@@ -496,7 +496,10 @@ def crossdomain_zeroset(
     # its ETAs are the whole answer, and a dealer is referred to their salesperson. Its
     # lines carry the code in the title, never a field, so the probe below would read
     # every code as missing; the presenter flags each line instead.
-    if any(
+    # An EMPTY dealer reply has no line to carry the flag, so the envelope's own
+    # `result_type` says it (fix round 2: "No incoming, no stock and nothing on order"
+    # and a purchasing offer reached a dealer's miss).
+    if jsc.get(env_probe, "result_type") == "incoming_dealer" or any(
         jsc.get(jsc.get(it, "flags"), "dealer_view") is True
         for it in _envelope_items(env_probe)
     ):
