@@ -45,7 +45,7 @@ window open or not") and pinned by AC-IS050. That decision is what the owner rev
 | Stock ask answers | `app/services/stock_ask_service.py:414` | yes | none |
 | Procurement (supplier / PO messages) | `app/services/procurement_service.py:7223`, `:9319` | yes | none |
 | **Ideation status update** | `app/services/ideation_status_update_service.py:275` | **no: template always** | **this lane: move onto `send_text_or_template`** |
-| Manual chat template send (staff picks a template in the chat panel) | `app/services/respond_chat_template_service.py:468`, `:540` | yes, its own branch on `get_window_state` (raw typed text in-window by UAC) | none: staff-driven, behaviour is a product decision |
+| Manual chat template send (staff picks a template in the chat panel) | `app/services/respond_chat_template_service.py:170`, `:468`, `:540` | yes, its own branch on `get_window_state` (raw typed text in-window by UAC) | none: staff-driven, behaviour is a product decision |
 | Ticket status updates to the submitter | `app/services/ticket_notification_service.py:197`, `:279` | **no** (`send_message` always; a closed window drops the message silently) | follow-up: needs a `ticket_update` template use case first, so behaviour would change |
 | Conversation SLA reply (staff-typed) | `app/services/sla_service.py:6099` | no (composer shows the window state and offers the template chooser) | follow-up, staff-driven |
 | Activity send (staff-typed) | `app/services/activities_service.py:617` | no | follow-up, staff-driven |
@@ -78,9 +78,14 @@ they stay follow-ups per the brief ("move only where behaviour stays identical")
 4. Log row: `request_payload` is `result["request_payload"]` (a `text` block inside the window, a
    `whatsapp_template` block outside), and the `event` metadata gains `sent_as` and `window`
    (`open`, `last_incoming_at`, `source`) so the outbox proves which path ran.
-5. Idempotency unchanged: one `integration_logs` row per `event_id`, committed with the cursor
+5. The template payload `send_text_or_template` returns now carries `body_text`, the same field
+   `build_template_request` already stamps on a failed send, so the Respond outbox renders the
+   filled message for every template caller instead of the piped parameter list. Guarded by
+   `test_outbox_renders_a_sent_row`. Side effect: the outbox text search also matches words from
+   a template's body on every row sent with that template.
+6. Idempotency unchanged: one `integration_logs` row per `event_id`, committed with the cursor
    move; the partial unique index still refuses a second row.
-6. Docs: the service docstring, `PLAN-ideation-status-update-29sep.md` step 7 and AC-IS050 are
+7. Docs: the service docstring, `PLAN-ideation-status-update-29sep.md` step 7 and AC-IS050 are
    updated to the new behaviour.
 
 ## Tests (pytest, `tests/test_ideation_status_update.py`)

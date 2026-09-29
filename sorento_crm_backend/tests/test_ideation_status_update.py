@@ -426,6 +426,36 @@ def test_ac_uw004_first_and_last_name_greet(db, monkeypatch):
     assert FakeRespondClient.sent[0]["text"].startswith("Hi Siti Rahman, ")
 
 
+def test_ac_uw010_phone_stored_as_name_gets_no_greeting(db, monkeypatch):
+    """A Respond.io contact created from a bare number can carry the number as its name."""
+    _map_template(db)
+    _window(monkeypatch, True)
+    phone = f"+601{uuid.uuid4().int % 10**8:08d}"
+    c = _contact(db, phone=phone, name=phone)
+    ev = _event(10, phone=c.phone_number)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    text = FakeRespondClient.sent[0]["text"]
+    assert not text.startswith("Hi")
+    assert phone not in text
+
+
+def test_ac_uw010_session_text_row_names_no_template(db, monkeypatch):
+    tpl = _map_template(db)
+    _window(monkeypatch, True)
+    c = _contact(db, name="Ali")
+    ev = _event(10, phone=c.phone_number)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    (row,) = _rows(db, ev["event_id"])
+    p = _payload(row)
+    assert p["event"]["sent_as"] == "text"
+    assert p["event"]["template"] is None
+    assert tpl.name not in row.request_payload
+
+
 def test_ac_uw004_contact_name_reaches_the_template(db):
     tpl = _map_template(db, params=1)
     db.query(RespondTemplateDefault).filter_by(use_case="ideation_status_update").update(

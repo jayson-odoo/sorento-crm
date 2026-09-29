@@ -21,3 +21,8 @@ Plan: `PLAN-ideation-update-24h-window-29sep.md`. `[BE][T]` = backend, covered b
   per `event_id`.
 - **AC-UW008** `[BE][T]` Every other caller of `send_text_or_template` behaves exactly as before
   (the new keyword defaults to the current rendering).
+- **AC-UW009** `[BE][T]` A template sent through `send_text_or_template` leaves an outbox row whose
+  payload carries `body_text`, so the Respond outbox renders the filled message
+  (`test_outbox_renders_a_sent_row`).
+- **AC-UW010** `[BE][T]` A session text row's event meta names no template; a contact whose
+  stored name is its phone number gets no greeting.

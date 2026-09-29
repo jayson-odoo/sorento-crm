@@ -69,7 +69,7 @@ one integration log row per event, send or skip, with the reason.
 - **AC-IS043** `[BE][T]` `requester_phone` matches a contact by digits when the formatting differs.
 - **AC-IS044** `[BE][T]` No `requester_phone`: logged `skipped` / `NO_REQUESTER_PHONE`.
 
-## Template only, never free text
+## Send path
 
 - **AC-IS050** `[BE][T]` The send goes through `send_text_or_template`: window open ->
   `RespondClient.send_message` with the session text, window closed or unknown ->

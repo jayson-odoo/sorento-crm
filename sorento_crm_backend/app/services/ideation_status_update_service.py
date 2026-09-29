@@ -169,14 +169,17 @@ def _idea_label(event: dict[str, Any]) -> str:
 
 
 def _contact_name(contact: RespondContact) -> str | None:
-    """The contact's display name, or None. Never the phone number."""
+    """The contact's display name, or None. Never the phone number: a Respond.io
+    contact created from a bare number can carry the number as its name."""
+    phone = (contact.phone_number or "").strip()
     name = (contact.name or "").strip()
-    if name:
-        return name
-    full = " ".join(
-        part for part in ((contact.first_name or "").strip(), (contact.last_name or "").strip()) if part
-    )
-    return full or None
+    if not name:
+        name = " ".join(
+            part for part in ((contact.first_name or "").strip(), (contact.last_name or "").strip()) if part
+        )
+    if not name or name == phone:
+        return None
+    return name
 
 
 def build_context_vars(event: dict[str, Any], *, contact_name: str | None = None) -> dict[str, Any]:
@@ -329,6 +332,8 @@ def _handle_event(db: Session, event: dict[str, Any], template_name: str | None)
             "error_code": "SEND_FAILED",
             "error_message": str(exc)[:2000],
             "template": template_name,
+            # Defensive: the shared sender stamps a payload on every send error, so this
+            # fallback only runs when the error came before the send (the window lookup).
             "request_payload": attempted if isinstance(attempted, dict) else _rendered_request(db, event, name),
             "respond_io_id": contact.respond_io_id,
             "sent_as": getattr(exc, "sent_as", None),
@@ -336,7 +341,9 @@ def _handle_event(db: Session, event: dict[str, Any], template_name: str | None)
         }
     return {
         "status": _SUCCESS,
-        "template": result.get("template_name"),
+        # A session text went out with no template; the meta says so instead of
+        # naming the mapped template that was not used.
+        "template": result.get("template_name") if result.get("sent_as") == "template" else None,
         "request_payload": result.get("request_payload"),
         "response": result.get("response"),
         "respond_io_id": contact.respond_io_id,
