@@ -227,6 +227,8 @@ def _scoped_customer_names(db: Session, contact_id: Optional[str], space_id: Opt
     from app.services import contact_customer_scope as scope_mod
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
 
+    contact_id = (contact_id or "").strip() or None
+    space_id = (space_id or "").strip() or None
     require_contact_identity_pair(contact_id, space_id)
     if not (contact_id and space_id):
         return None

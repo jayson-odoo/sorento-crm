@@ -585,7 +585,7 @@ async def get_orders(
             product_ids=_resolved_product_ids,
             transporter_ids=parse_uuid_list(transporter_ids, param_name="transporter_ids"),
             warehouse_codes=_normalize_entities(warehouse_codes),
-            customer_query=customer_query,
+            customer_query=None if _scoped_ids is not None else customer_query,
             product_query=product_query,
             transporter_query=transporter_query,
             customer_id=customer_id,
@@ -601,6 +601,10 @@ async def get_orders(
             sort_field=sort or "created_at",
             sort_dir=dir or "asc"
         )
+        if _scoped_ids is not None and isinstance(result, dict):
+            # A scoped contact never sees how a free-text `entities` word resolved: the
+            # echo would say whether another customer's name exists (a name oracle).
+            result.pop("resolved_entities", None)
         # #1262 fix lane round 6: a brand ask lists only that brand's lines inside
         # each document it keeps. No brand, no change.
         if _resolved_brand_ids and isinstance(result, dict) and result.get("data"):
@@ -933,6 +937,7 @@ async def get_orders_by_product(
             customer_ids=requested_customer_ids,
             customer_query=customer_query,
         )
+        is_scoped = scoped_customer_ids is not None
         if scoped_customer_ids is None:
             scoped_customer_ids = requested_customer_ids
         resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
@@ -973,7 +978,7 @@ async def get_orders_by_product(
                 "empty": True,
             }
         service = OrderService(db)
-        return service.list_orders_by_product(
+        by_product = service.list_orders_by_product(
             page=page,
             limit=limit,
             query=query,
@@ -982,7 +987,7 @@ async def get_orders_by_product(
             customer_ids=scoped_customer_ids,
             transporter_ids=parse_uuid_list(transporter_ids, param_name="transporter_ids"),
             warehouse_codes=_normalize_entities(warehouse_codes),
-            customer_query=customer_query,
+            customer_query=None if is_scoped else customer_query,
             product_query=product_query,
             product_id=product_id,
             has_actual_delivery_date=has_actual_delivery_date,
@@ -996,6 +1001,11 @@ async def get_orders_by_product(
             sort_field=sort or "order_date",
             sort_dir=dir or "desc",
         )
+        if is_scoped and isinstance(by_product, dict):
+            # Same rule as the orders list: a scoped contact gets no `resolved_entities`
+            # echo (a name oracle).
+            by_product.pop("resolved_entities", None)
+        return by_product
     except HTTPException:
         raise
     except Exception as e:
@@ -1727,7 +1737,8 @@ async def get_outstanding_report(
         product_code=product_code,
         product_codes=resolved_product_codes,
         scope=scope,
-        customer_query=customer_query,
+        # The scope helper already matched a scoped contact's query (name or code) into ids.
+        customer_query=None if scoped_customer_ids is not None else customer_query,
         customer_ids=resolved_customer_ids,
         warehouse_codes=resolved_warehouse_codes,
         brand_ids=resolved_brand_ids,
@@ -1852,14 +1863,22 @@ async def get_sales_report(
     from app.services.sales_report_service import sales_report
 
     # S7: the SUBJECT is a product, a customer, or both - but never nothing.
-    if not (product_code or "").strip() and not customer_ids and not (customer_query or "").strip():
-        raise AppException(
+    # A contact identity defers this check until the customer scope is known below: a
+    # scoped contact's own customers ARE the subject (the outstanding route's rule).
+    def _needs_subject() -> AppException:
+        return AppException(
             422,
             "This report needs a subject: give at least one of product_code, customer_ids "
             "or customer_query",
             detail="product_code, customer_ids, customer_query",
             code="subject_required",
         )
+
+    _no_subject = (
+        not (product_code or "").strip() and not customer_ids and not (customer_query or "").strip()
+    )
+    if _no_subject and not (contact_id and space_id):
+        raise _needs_subject()
 
     # SEC-B2 (security review, Phase 3 fix round, ruling S17): a customer_query given
     # (non-blank - blank already 422s above as subject_required) needs at least 3
@@ -1937,6 +1956,8 @@ async def get_sales_report(
     )
     if scoped_customer_ids is not None:
         resolved_customer_ids = scoped_customer_ids
+    if _no_subject and not scoped_customer_ids:
+        raise _needs_subject()
     resolved_warehouse_codes = _normalize_entities(warehouse_codes)
     for values, name in (
         (resolved_customer_ids, "customer_ids"),
@@ -1953,7 +1974,7 @@ async def get_sales_report(
     data = sales_report(
         db,
         product_code=product_code,
-        customer_query=customer_query,
+        customer_query=None if scoped_customer_ids is not None else customer_query,
         customer_ids=resolved_customer_ids,
         channel=channel_norm,
         warehouse_codes=resolved_warehouse_codes,

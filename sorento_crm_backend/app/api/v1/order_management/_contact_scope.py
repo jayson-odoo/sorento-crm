@@ -48,6 +48,10 @@ def enforce_customer_scope(
     whether a name exists in the book. Returns the requested ids, else the query's
     matches, else the links.
     """
+    # Stripped like `_resolve_api_key_scope` does: a padded id resolves the company scope
+    # there, so it must resolve the contact here too or the scope fails open.
+    contact_id = (contact_id or "").strip() or None
+    space_id = (space_id or "").strip() or None
     require_contact_identity_pair(contact_id, space_id)
     if not (contact_id and space_id):
         return None

@@ -10,8 +10,11 @@ ONE body: the slim body was retired by the turn re-architecture S0 (AC-1506), so
 helper, repeated here rather than imported because a migration module must not depend
 on another migration's module staying importable.
 
-Nothing a customer sees changes until the owner moves the `production` label onto the
-new version in the admin UI; rolling back is the reverse move.
+The live parser's strict schema already makes it emit `self_reference`, even under the old
+prompt (the key is then only guessed); the engine reads it solely to narrow a turn to the
+contact's own linked customers, never to widen. The prompt text that TEACHES the key goes
+live when the owner moves the `production` label onto the new version in the admin UI;
+rolling back is the reverse move.
 
 Revision ID: chatbot_self_reference_vocab
 Revises: merge_29sep_batch6
