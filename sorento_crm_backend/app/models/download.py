@@ -25,6 +25,7 @@ class DownloadStatus(str, enum.Enum):
 
 class UserDownload(Base):
     __tablename__ = "user_downloads"
+    __audit_skip__ = "download job rows purged at 30 days; download events come in S1"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, nullable=False, index=True)
@@ -63,3 +64,10 @@ class UserDownload(Base):
     # the request thread. NULL for every other kind.
     row_count_low = Column(Integer, nullable=True)
     row_count_all = Column(Integer, nullable=True)
+    # Generic counts (PLAN-stock-debt-filters-totals-export-24sep.md, AC-12b): unlike the
+    # low stock report's fixed two-sheet shape above, this export's sheet count varies with
+    # its own `split` choice (1, or one per supplier/category/pair), so it is not a third
+    # named pair - `stock_debt_xlsx` is the first writer, and any later export kind whose
+    # count is just "rows" and "sheets" reuses these rather than growing a fourth pair.
+    row_count = Column(Integer, nullable=True)
+    sheet_count = Column(Integer, nullable=True)

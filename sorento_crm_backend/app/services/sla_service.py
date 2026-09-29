@@ -3076,6 +3076,16 @@ class ConversationSLATrackingService:
                 "extend event log failed for %s: %s", getattr(tracking, "id", "?"), e
             )
 
+        self._audit_form_extension(
+            tracking,
+            actor_user_id=actor_user_id,
+            old_due=old_due,
+            new_due=new_due,
+            added_days=added_days,
+            tier=tier,
+            reason=reason,
+        )
+
         # Best-effort: notify the NEXT escalation tier only (notify-only - no tier /
         # clock mutation). Never raise (must not 500 a successful extend).
         self._notify_next_tier_deadline_extended(tracking, reason=reason)
@@ -3087,6 +3097,57 @@ class ConversationSLATrackingService:
             user_ids=[getattr(tracking, "assigned_to_id", None)],
         )
         return tracking
+
+    def _audit_form_extension(
+        self,
+        tracking: ConversationSLATracking,
+        *,
+        actor_user_id: str,
+        old_due: Optional[datetime],
+        new_due: datetime,
+        added_days: int,
+        tier: int,
+        reason: str,
+    ) -> None:
+        """One audit row on the FORM for a form-SLA extension (#1326).
+
+        The extension lives on the tracker, so the form's audit trail never showed it
+        and the owner looked for it there. Same shape as the form-action audit
+        (`form_action_service._audit`): an UPDATE against the form whose description
+        is what the AuditTrail renders. Conversation SLA rows have no form to audit.
+        Best-effort: the extension is already committed.
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES, _fmt_due
+
+        s_type = str(getattr(tracking, "source_entity_type", "") or "")
+        s_id = getattr(tracking, "source_entity_id", None)
+        if s_type not in FORM_SLA_TYPES or s_id is None:
+            return
+        try:
+            from app.services.audit_service import log_audit
+
+            tier_part = f", tier {tier}" if tier >= 1 else ""
+            log_audit(
+                self.db,
+                entity_type=s_type,
+                entity_id=str(s_id),
+                action="UPDATE",
+                user_id=str(actor_user_id),
+                description=(
+                    f"SLA deadline extended to {_fmt_due(new_due)} "
+                    f"(+{added_days} working days{tier_part}): {reason}"
+                ),
+                old_values={"sla_due_at_resolution": _fmt_due(old_due)},
+                new_values={"sla_due_at_resolution": _fmt_due(new_due)},
+            )
+            self.db.commit()
+        except Exception as e:  # noqa: BLE001 - mutation already committed
+            self.db.rollback()
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "extend audit failed for %s: %s", getattr(tracking, "id", "?"), e
+            )
 
     def _notify_next_tier_deadline_extended(
         self, tracking: ConversationSLATracking, *, reason: str

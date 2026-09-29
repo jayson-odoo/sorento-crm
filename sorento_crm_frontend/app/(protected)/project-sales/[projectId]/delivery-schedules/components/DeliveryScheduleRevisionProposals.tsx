@@ -71,7 +71,7 @@ export function DeliveryScheduleRevisionProposals({
               {confirmingProposal &&
                 `Re-date ${confirmingProposal.item_code ?? 'this product'}'s ${
                   confirmingProposal.cells.length
-                } phase${confirmingProposal.cells.length === 1 ? '' : 's'}? The amendment will ` +
+                } area${confirmingProposal.cells.length === 1 ? '' : 's'}? The amendment will ` +
                   'propose ADVANCE per line.'}
             </DialogDescription>
           </DialogHeader>
@@ -112,10 +112,10 @@ function ProposalCard({
   const firstDate = proposal.cells[0]?.new_date;
   const cadence = proposalCadenceLabel(proposal.cells);
   const title = firstDate
-    ? `${label} - re-date ${proposal.cells.length} phase${
+    ? `${label} - re-date ${proposal.cells.length} area${
         proposal.cells.length === 1 ? '' : 's'
       } from ${formatDateInMalaysia(firstDate)}, ${cadence}`
-    : `${label} - re-date ${proposal.cells.length} phase${proposal.cells.length === 1 ? '' : 's'}`;
+    : `${label} - re-date ${proposal.cells.length} area${proposal.cells.length === 1 ? '' : 's'}`;
 
   return (
     <div className="rounded-lg border border-border p-3">
@@ -133,7 +133,7 @@ function ProposalCard({
         <table className="w-full text-xs">
           <thead>
             <tr className="text-muted-foreground">
-              <th className="px-1.5 py-1 text-start font-medium">Phase</th>
+              <th className="px-1.5 py-1 text-start font-medium">Area</th>
               <th className="px-1.5 py-1 text-start font-medium">Qty</th>
               <th className="px-1.5 py-1 text-start font-medium">Delivery date</th>
             </tr>
@@ -141,7 +141,7 @@ function ProposalCard({
           <tbody>
             {proposal.cells.map((cell, index) => (
               <tr key={`${cell.phase_id ?? index}`} className="border-t border-border/60">
-                <td className="px-1.5 py-1">{cell.phase_label ?? 'Unlabeled phase'}</td>
+                <td className="px-1.5 py-1">{cell.phase_label ?? 'Unlabeled area'}</td>
                 <td className="px-1.5 py-1 tabular-nums">
                   {cell.qty ? formatQty(cell.qty) : '-'}
                 </td>

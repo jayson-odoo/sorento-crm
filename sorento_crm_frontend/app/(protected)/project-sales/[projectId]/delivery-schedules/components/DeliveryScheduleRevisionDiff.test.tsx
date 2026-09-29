@@ -92,7 +92,7 @@ describe('DeliveryScheduleRevisionDiff', () => {
     );
 
     expect(
-      screen.getByText('1 phase moved · 1 quantity changed · 0 unchanged'),
+      screen.getByText('1 area moved · 1 quantity changed · 0 unchanged'),
     ).toBeInTheDocument();
     expect(screen.getByText('SRTWC8613-RL qty:')).toBeInTheDocument();
     expect(screen.getByText('72')).toBeInTheDocument();
@@ -126,7 +126,7 @@ describe('DeliveryScheduleRevisionDiff', () => {
     );
 
     expect(
-      screen.getByText('0 phases moved · 0 quantities changed · 1 unchanged'),
+      screen.getByText('0 areas moved · 0 quantities changed · 1 unchanged'),
     ).toBeInTheDocument();
     expect(
       screen.getByText('Nothing moved between this version and the one before it.'),

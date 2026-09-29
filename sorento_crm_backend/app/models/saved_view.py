@@ -35,6 +35,7 @@ from app.models.base import CompanyScopedMixin
 
 class SavedView(Base, CompanyScopedMixin):
     __tablename__ = "saved_views"
+    __audit_skip__ = "per-user UI preference"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     # e.g. "scm.dashboard.view::reorder-plan-lines" - the same key the DataGrid's own

@@ -17,6 +17,7 @@ import {
   DeliveryScheduleProductPicker,
   poProductOptions,
   productSearchSeed,
+  productShortName,
 } from './DeliveryScheduleProductPicker';
 
 if (!window.matchMedia) {
@@ -101,6 +102,26 @@ describe('poProductOptions', () => {
       line({ resolved_product_code: null, stock_code_raw: 'WC-8613' }),
     ]);
     expect(options[0].label).toBe('WC-8613');
+  });
+});
+
+/** The description the owner's hand test showed, five lines tall per option (26 Sep). */
+const LONG_DESCRIPTION =
+  'SORENTO SRTW8613-RL ONE PIECE WC - SET- Washdown One-Piece WC - Dual Flush : 6/3L- Soft Close Seat & Cover- Size : 700 x 380 x 730mm- S-Trap, 250mm Roughing-in';
+
+describe('productShortName (W1)', () => {
+  it('keeps the first phrase and the size, without the brand or the code', () => {
+    expect(productShortName(LONG_DESCRIPTION)).toBe('One piece WC 700 x 380 x 730');
+  });
+
+  it('leaves a short description as it reads', () => {
+    expect(productShortName('ONE-PIECE WC')).toBe('One-piece WC');
+    expect(productShortName('Counter-Top Basin')).toBe('Counter-Top Basin');
+  });
+
+  it('says nothing when there is no description', () => {
+    expect(productShortName(undefined)).toBe('');
+    expect(productShortName('   ')).toBe('');
   });
 });
 
@@ -216,5 +237,40 @@ describe('DeliveryScheduleProductPicker', () => {
     await waitFor(() =>
       expect(getProductsForVariantSelect).toHaveBeenCalledWith('SRTWB7055'),
     );
+  });
+
+  it('shows each option on one line: the code, then a short name clipped with an ellipsis (W1)', async () => {
+    renderPicker({
+      poOptions: [{ value: 'p1', label: 'SRTWC8613-RL', description: LONG_DESCRIPTION }],
+    });
+    open();
+
+    const row = await screen.findByTitle(LONG_DESCRIPTION);
+    expect(row).toHaveTextContent('SRTWC8613-RL');
+    expect(row).toHaveTextContent('One piece WC 700 x 380 x 730');
+    // The five-line description is on hover only, never printed into the option.
+    expect(row).not.toHaveTextContent('Roughing-in');
+    expect(screen.queryByText(LONG_DESCRIPTION)).toBeNull();
+    const name = screen.getByText('One piece WC 700 x 380 x 730');
+    expect(name).toHaveClass('truncate');
+    expect(row).toHaveClass('min-w-0');
+  });
+
+  it('still finds an option by a word only its full description holds (W1)', async () => {
+    renderPicker({
+      poOptions: [
+        { value: 'p1', label: 'SRTWC8613-RL', description: LONG_DESCRIPTION },
+        { value: 'p2', label: 'SRTFV1001', description: 'SENSOR URINAL FLUSH VALVE' },
+      ],
+    });
+    open();
+    await screen.findByText('SRTWC8613-RL');
+
+    fireEvent.change(screen.getByPlaceholderText('Search...'), {
+      target: { value: 'roughing' },
+    });
+
+    await waitFor(() => expect(screen.queryByText('SRTFV1001')).toBeNull());
+    expect(screen.getByText('SRTWC8613-RL')).toBeInTheDocument();
   });
 });

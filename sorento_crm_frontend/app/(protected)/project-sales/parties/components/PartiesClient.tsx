@@ -257,11 +257,7 @@ export function PartiesClient() {
             Add party
           </Button>
         }
-      >
-        <p className="text-sm text-muted-foreground">
-          Developers, architects, contractors and consultants, reused across projects.
-        </p>
-      </PageHeader>
+      />
 
       <DataGrid
         table={table}
@@ -285,12 +281,6 @@ export function PartiesClient() {
                 ? 'Clear the filters to see everything.'
                 : 'Add the developer you are about to register a project with. Every project references one.'}
             </p>
-            {!filtered && (
-              <Button type="button" className="mt-4" onClick={() => setCreating(true)}>
-                <Plus className="size-4" aria-hidden />
-                Add the first party
-              </Button>
-            )}
           </div>
         }
       >

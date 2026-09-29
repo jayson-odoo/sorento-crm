@@ -39,6 +39,9 @@ export interface ProductSupplier extends ProductSupplierSourcingTerms {
     supplier_code: string;
     supplier_name: string;
   };
+  /** Dated cost-list rows behind this link's price in force (#1288, AC-CL-08), from the
+   *  by-product route only - `getProductSuppliers` (the plain list) does not carry it. */
+  costs?: import('@/app/(protected)/procurement-management/cost-price-uploads/types/costPrice.types').ProductSupplierCostRow[];
 }
 
 export interface ProductSupplierFormData extends ProductSupplierSourcingTerms {

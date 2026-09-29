@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -33,11 +33,7 @@ import {
   useUnlocatedDemand,
 } from '../hooks/useReorderRun';
 import { resetRunDecisions } from '../services/reorderRunService';
-import {
-  useExportLowStockReport,
-  useExportOiWorksheet,
-  useExportOrderSheet,
-} from '../hooks/useSummaryOrder';
+import { useExportOiWorksheet, useExportOrderSheet } from '../hooks/useSummaryOrder';
 import type { PlanTotals } from '../lib/planDecisions';
 import { PlanExceptionsView } from './PlanExceptionsView';
 import { PlanHeaderTab } from './PlanHeaderTab';
@@ -66,7 +62,8 @@ export function ReorderPlanView({ runId }: { runId: string }) {
     null,
   );
   const [unsavedCount, setUnsavedCount] = useState(0);
-  const [leaveOpen, setLeaveOpen] = useState(false);
+  // Where "Leave anyway" goes: the plans list, or this run's low stock report.
+  const [leaveTo, setLeaveTo] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
   // S5: Header (Plan until, warehouse/product scope, cut-off, status, counts) + Lines
@@ -98,15 +95,6 @@ export function ReorderPlanView({ runId }: { runId: string }) {
    */
   const exportOrderSheet = useExportOrderSheet(runId);
   /**
-   * The low stock report (PLAN-low-stock-report S4, AC-1/AC-2): the same run, printed with
-   * the client's own cut - every planned product below its raw reorder level on one sheet,
-   * the whole plan on the other. It sits directly under the two order sheet items because
-   * it is the third thing this run can be printed as, and it runs through the same async
-   * My Downloads pipeline. One pending flag covers all three (AC-1: "disabled while any
-   * export is pending"), so a second click while one render is queued starts nothing.
-   */
-  const exportLowStock = useExportLowStockReport(runId);
-  /**
    * The OI worksheet (Lane C, PLAN-order-sheet-oi-reports-22sep.md, AC-C1/AC-C2): the
    * run's own Start Plan scope of live OI Buy rows, in the worklist export's own layout -
    * the sheet purchasing downloads BEFORE the engine decides. Sits directly under the low
@@ -114,10 +102,24 @@ export function ReorderPlanView({ runId }: { runId: string }) {
    * four disable while any export is pending").
    */
   const exportOiWorksheet = useExportOiWorksheet(runId);
+  // Shared by every export item's `disabled`, hoisted above the memo so each item reads the
+  // exact same flag.
+  const exportPending = exportOrderSheet.isPending || exportOiWorksheet.isPending;
+
+  const leaveFor = useCallback(
+    (href: string) => {
+      // `beforeunload` (in `usePlanEdits`) covers a refresh or a close; Next's app router
+      // gives no cancellable navigation event, so an in-app exit asks here.
+      if (unsavedCount > 0) {
+        setLeaveTo(href);
+        return;
+      }
+      router.push(href);
+    },
+    [unsavedCount, router],
+  );
 
   const actions = useMemo<ToolbarAction[]>(() => {
-    const exportPending =
-      exportOrderSheet.isPending || exportLowStock.isPending || exportOiWorksheet.isPending;
     return [
       {
         key: 'order_sheet_pdf',
@@ -134,11 +136,14 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         disabled: exportPending,
       },
       {
+        // The low stock report (PLAN-low-stock-report S4) is its own page now
+        // (PLAN-excel-preview-26sep S1, owner ruling 26 Sep Q3): the buyer previews this
+        // run's workbook there, picks the split and filters, and downloads exactly that.
+        // The split dialog that used to open here is gone.
         key: 'low_stock_xlsx',
         label: 'Low stock report Excel',
         icon: FileSpreadsheet,
-        onClick: () => exportLowStock.mutate(),
-        disabled: exportPending,
+        onClick: () => leaveFor(`/scm/low-stock-report/${runId}`),
       },
       {
         key: 'oi_worksheet_xlsx',
@@ -167,14 +172,7 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         onClick: () => setResetOpen(true),
       },
     ];
-  }, [
-    exportOrderSheet.mutate,
-    exportOrderSheet.isPending,
-    exportLowStock.mutate,
-    exportLowStock.isPending,
-    exportOiWorksheet.mutate,
-    exportOiWorksheet.isPending,
-  ]);
+  }, [exportOrderSheet.mutate, exportOiWorksheet.mutate, exportPending, leaveFor, runId]);
 
   const doReset = async () => {
     setResetting(true);
@@ -197,15 +195,7 @@ export function ReorderPlanView({ runId }: { runId: string }) {
     }
   };
 
-  const goToPlans = () => {
-    // The one exit inside the app. `beforeunload` (in `usePlanEdits`) covers a refresh or a
-    // close; Next's app router gives no cancellable navigation event, so the link asks here.
-    if (unsavedCount > 0) {
-      setLeaveOpen(true);
-      return;
-    }
-    router.push('/scm/reorder');
-  };
+  const goToPlans = () => leaveFor('/scm/reorder');
 
   if (run.isLoading) {
     return (
@@ -371,15 +361,18 @@ export function ReorderPlanView({ runId }: { runId: string }) {
       </Tabs>
 
       <ConfirmActionDialog
-        open={leaveOpen}
-        onOpenChange={setLeaveOpen}
+        open={leaveTo !== null}
+        onOpenChange={(open) => {
+          if (!open) setLeaveTo(null);
+        }}
         title="Leave with unsaved changes?"
         description={`${fmtInt(unsavedCount)} product${unsavedCount === 1 ? '' : 's'} carry changes nobody has saved. Leaving this plan drops them.`}
         confirmLabel="Leave anyway"
         isBusy={false}
         onConfirm={() => {
-          setLeaveOpen(false);
-          router.push('/scm/reorder');
+          const href = leaveTo ?? '/scm/reorder';
+          setLeaveTo(null);
+          router.push(href);
         }}
       />
 

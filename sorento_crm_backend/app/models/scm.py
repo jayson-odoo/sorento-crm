@@ -149,6 +149,7 @@ class ReorderLevel(Base, CompanyScopedMixin):
 class ItemClassification(Base):
     """ABC/XYZ classification per SKU×warehouse (network rollup = null warehouse)."""
     __tablename__ = "item_classification"
+    __audit_skip__ = "SCM analytics, recomputed per run"
     __table_args__ = (
         UniqueConstraint("product_id", "warehouse_id", name="uq_scm_item_classification_product_warehouse"),
         {"schema": "scm"},
@@ -214,6 +215,7 @@ class SupplierScoringPolicy(Base):
 class SupplierPerformance(Base):
     """Computed supplier scorecard per supplier×product (product null = supplier-level fallback)."""
     __tablename__ = "supplier_performance"
+    __audit_skip__ = "SCM analytics, recomputed per run"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False)
@@ -263,6 +265,7 @@ class PurchasingBudget(Base, CompanyScopedMixin):
 class ReorderRun(Base, CompanyScopedMixin):
     """One planning run; recommendations freeze their inputs against it."""
     __tablename__ = "reorder_run"
+    __audit_skip__ = "SCM reorder run progress"
     __table_args__ = (
         CheckConstraint(check_constraint_sql("demand_class"), name="ck_scm_reorder_run_demand_class"),
         {"schema": "scm"},
@@ -359,6 +362,7 @@ class ReorderRun(Base, CompanyScopedMixin):
 class ReorderRecommendation(Base, CompanyScopedMixin):
     """A frozen buy/disposition recommendation produced by a run."""
     __tablename__ = "reorder_recommendation"
+    __audit_skip__ = "regenerated per reorder run (thousands of rows); planner decisions get @audit_event in S1"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     run_id = Column(UUID(as_uuid=False), ForeignKey("scm.reorder_run.id", ondelete="CASCADE"), nullable=False)
@@ -639,6 +643,7 @@ class DemandNatureMap(Base):
 class DemandStat(Base):
     """Stored demand rate per SKU×warehouse (written by the M2 analytics job; empty at M0)."""
     __tablename__ = "demand_stat"
+    __audit_skip__ = "SCM analytics, recomputed per run"
     __table_args__ = (
         UniqueConstraint("product_id", "warehouse_id", name="uq_scm_demand_stat_product_warehouse"),
         {"schema": "scm"},
@@ -683,6 +688,7 @@ class MarketResearchTopic(Base):
 class MarketSignal(Base):
     """Cached advisory-only market signal captured for a topic (M5)."""
     __tablename__ = "market_signal"
+    __audit_skip__ = "SCM market research output, recomputed per run"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     topic_id = Column(UUID(as_uuid=False), ForeignKey("scm.market_research_topic.id", ondelete="CASCADE"), nullable=True)
@@ -711,6 +717,7 @@ class MarketSignal(Base):
 class ScmAnalyticsRun(Base, CompanyScopedMixin):
     """Observability log for the M2 demand/classification/supplier analytics job."""
     __tablename__ = "scm_analytics_run"
+    __audit_skip__ = "SCM analytics run progress"
     __table_args__ = {"schema": "scm"}
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
@@ -731,6 +738,7 @@ class MarketResearchRun(Base, CompanyScopedMixin):
     """Observability log for the M5 web-search market research job (mirrors
     ``scm_analytics_run``): one row per run, status running → completed | failed."""
     __tablename__ = "market_research_run"
+    __audit_skip__ = "SCM market research run progress"
     __table_args__ = {"schema": "scm"}
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
@@ -864,6 +872,7 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
     stock" and "no space needed" - decisions taken on a figure nobody measured.
     """
     __tablename__ = "order_summary_row"
+    __audit_skip__ = "frozen per-run report row (thousands per run); the decision gets @audit_event in S1"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     run_id = Column(
@@ -1050,6 +1059,7 @@ class OrderSummaryLocationAllocation(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "order_summary_location_allocation"
+    __audit_skip__ = "regenerated per run with its summary row"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str,
                 server_default=text("gen_random_uuid()"))
@@ -1099,6 +1109,7 @@ class PlanExceptionBatch(Base, CompanyScopedMixin):
     purchase order can be placed without a plan.
     """
     __tablename__ = "plan_exception_batch"
+    __audit_skip__ = "plan exception run progress"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     run_id = Column(
@@ -1139,6 +1150,7 @@ class PlanException(Base, CompanyScopedMixin):
     a surplus and a shortfall be told apart two different ways, which is one too many.
     """
     __tablename__ = "plan_exception"
+    __audit_skip__ = "regenerated per plan exception run"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     batch_id = Column(
@@ -1222,6 +1234,7 @@ class OrderLinkClaim(Base, CompanyScopedMixin):
     another customer's order.
     """
     __tablename__ = "order_link_claim"
+    __audit_skip__ = "sync link table, 907 to 21,551 rows a day (measured 27 Sep 2026, review B3)"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     so_number = Column(String(100), nullable=False)
@@ -1723,15 +1736,23 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     currency = Column(String(3), nullable=True)
 
     container_ref = Column(String(100), nullable=True)
+    #: The forwarder's own bill of lading number, when the supplier states one distinctly
+    #: from the SO/booking number below. Carried onto the draft's `bill_of_lading_number`
+    #: (R-E, 25 Sep - a column that existed already but nothing had ever written to).
     bl_ref = Column(String(100), nullable=True)
+    #: The forwarder's booking/SO reference (R-E, owner ruling 25 Sep) - a header field OF
+    #: ITS OWN now, distinct from `bl_ref`: some suppliers' `提单号` genuinely is a bill of
+    #: lading, others' is the SO number, and which is which is a per-supplier mapper pick
+    #: (F1/F2), never a shared alias. Superseded the 6 Sep rule that carried `bl_ref` into
+    #: the draft's SO field unconditionally - carries onto `forwarder_order_ref` instead.
+    so_ref = Column(String(100), nullable=True)
     #: The container's seal number (S2/S4 standing ruling, captain 9 Sep) - filled from the
     #: packing document when the PI itself stated none, same convention `container_ref`/
     #: `bl_ref` already follow. Read by convert's header carry-over (AC-D2c) alongside them.
     seal_ref = Column(String(100), nullable=True)
     #: Who the document bills (`客户名` / `Customer Name` / `客户`, ruling 28) - the fourth
     #: header fact the supplier states and the packing list needs, carried onto the draft
-    #: with the other three. `bl_ref` holds `提单号`, which is the forwarder's SO, not a
-    #: bill of lading (6 Sep ruling) - the name is historical.
+    #: with the other three.
     consignee_ref = Column(String(150), nullable=True)
 
     #: What the document totals ITSELF to when it states a total, else the sum of its lines.
@@ -1842,6 +1863,7 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
     lines and indexed anyway, because the verification task reads it across invoices.
     """
     __tablename__ = "proforma_invoice_line"
+    __audit_parent__ = "invoice_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     invoice_id = Column(

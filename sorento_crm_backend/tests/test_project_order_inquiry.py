@@ -889,6 +889,91 @@ def test_the_list_filters_by_verb_and_by_state(seeded):
     }
 
 
+# ---------------------------------------------------- AC-SD-5/6, so_date (list_rows)
+# `PLAN-oi-handover-so-date-autocount-25sep.md`: `list_rows`' own `so_date` follows
+# the same rule the handover email does - the AutoCount SO DOCUMENT date
+# (`sales_orders.order_date`) wins, never the day the CRM pulled the order.
+
+
+def test_list_rows_so_date_prefers_the_core_sos_order_date(seeded):
+    """AC-SD-5: an adopted order's rows carry `so_date` = the core SO's own
+    `order_date`, not the project SO's own `created_at` - the day the CRM pulled it."""
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+    core = SalesOrder(
+        id=_uid(), company_id=company_id, so_number=f"ZZTSO{_uid()[:8]}",
+        order_date=date(2026, 9, 18),
+    )
+    db.add(core)
+    db.flush()
+    order = _sales_order(db, project, status="adopted", doc_no=core.so_number)
+    order.so_id = core.id
+    order.created_at = datetime(2026, 9, 23)
+    db.flush()
+    _line(db, order, _product(db, "CB7001"), "10", date(2026, 9, 30))
+
+    service = ProjectOrderInquiryService(db)
+    _confirmed_inquiry(db, order, actor_user_id=owner)
+    rows, total = service.list_rows(project.id)
+
+    assert total == 1
+    assert rows[0]["so_date"] == date(2026, 9, 18)
+
+
+def test_list_rows_so_date_falls_back_like_the_handover_email(seeded):
+    """AC-SD-6: the same fallback the handover email uses (AC-SD-3/AC-SD-4) - a core
+    SO with no `order_date` falls back to `published_at`, a core SO with neither
+    `order_date` nor the project SO's own `published_at` falls back to the project
+    SO's `created_at`, and an order with no core SO at all falls back to
+    `created_at` too."""
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+
+    core = SalesOrder(id=_uid(), company_id=company_id, so_number=f"ZZTSO{_uid()[:8]}")
+    db.add(core)
+    db.flush()
+    with_core = _sales_order(
+        db, project, status=SO_STATUS_PUBLISHED, doc_no=core.so_number
+    )
+    with_core.so_id = core.id
+    with_core.published_at = datetime(2026, 9, 20)
+    db.flush()
+    _line(db, with_core, _product(db, "CB7002"), "10", date(2026, 9, 30))
+
+    # Core SO present but `order_date` NULL, and the project SO's own
+    # `published_at` NULL too - the review round 1 rung (AC-SD-6): falls all the
+    # way back to the project SO's `created_at`.
+    unpublished_core = SalesOrder(
+        id=_uid(), company_id=company_id, so_number=f"ZZTSO{_uid()[:8]}"
+    )
+    db.add(unpublished_core)
+    db.flush()
+    with_core_no_publish = _sales_order(
+        db, project, status=SO_STATUS_DRAFT, doc_no=unpublished_core.so_number
+    )
+    with_core_no_publish.so_id = unpublished_core.id
+    with_core_no_publish.created_at = datetime(2026, 9, 24)
+    db.flush()
+    _line(db, with_core_no_publish, _product(db, "CB7004"), "3", date(2026, 9, 29))
+
+    no_core = _sales_order(db, project, status=SO_STATUS_DRAFT)
+    no_core.created_at = datetime(2026, 9, 22)
+    db.flush()
+    _line(db, no_core, _product(db, "CB7003"), "5", date(2026, 9, 28))
+
+    service = ProjectOrderInquiryService(db)
+    _confirmed_inquiry(db, with_core, actor_user_id=owner)
+    _confirmed_inquiry(db, with_core_no_publish, actor_user_id=owner)
+    _confirmed_inquiry(db, no_core, actor_user_id=owner)
+    rows, total = service.list_rows(project.id)
+
+    assert total == 3
+    by_item = {row["item_code"]: row for row in rows}
+    assert by_item["CB7002"]["so_date"] == datetime(2026, 9, 20)
+    assert by_item["CB7004"]["so_date"] == datetime(2026, 9, 24)
+    assert by_item["CB7003"]["so_date"] == datetime(2026, 9, 22)
+
+
 def test_the_sales_order_view_carries_its_purchasing_task(seeded):
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)

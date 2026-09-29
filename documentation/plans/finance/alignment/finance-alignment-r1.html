@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Finance billing alignment</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#18181b;--muted:#5f5f69;--line:#e4e4e7;--accent:#2563eb;--accent-soft:#eff6ff;
+--ok:#065f46;--ok-soft:#d1fae5;--warn:#92400e;--warn-soft:#fef3c7;--bad:#9f1239;--bad-soft:#ffe4e6;--quote:#f4f4f5;
+--app:#fbfbfc;--side:#f4f4f5;
+--font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f0f12;--card:#18181b;--fg:#f4f4f5;--muted:#a1a1aa;--line:#2e2e33;
+--accent:#60a5fa;--accent-soft:#172554;--ok:#6ee7b7;--ok-soft:#064e3b;--warn:#fcd34d;--warn-soft:#451a03;--bad:#fda4af;--bad-soft:#4c0519;--quote:#232327;
+--app:#141417;--side:#1c1c20}}
+:root[data-theme="dark"]{--bg:#0f0f12;--card:#18181b;--fg:#f4f4f5;--muted:#a1a1aa;--line:#2e2e33;--accent:#60a5fa;--accent-soft:#172554;
+--ok:#6ee7b7;--ok-soft:#064e3b;--warn:#fcd34d;--warn-soft:#451a03;--bad:#fda4af;--bad-soft:#4c0519;--quote:#232327;--app:#141417;--side:#1c1c20}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 var(--font)}
+main{max-width:1040px;margin:0 auto;padding:32px 16px 80px}
+header h1{font-size:28px;line-height:1.2;margin:0 0 8px;letter-spacing:-.01em}
+header p{color:var(--muted);margin:0 0 6px}
+nav{margin:20px 0 8px;display:flex;flex-wrap:wrap;gap:8px}
+nav a{font-size:14px;color:var(--accent);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:3px 12px;background:var(--card)}
+section{margin-top:44px}
+h2{font-size:21px;margin:0 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+h2 .n{color:var(--muted);font-weight:500;margin-right:6px}
+h3{font-size:17px;margin:0 0 10px}
+blockquote{margin:0;background:var(--quote);border-left:3px solid var(--accent);border-radius:6px;padding:14px 16px;font-size:15px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:12px}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.ba{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:8px 0 10px}
+.ba div{border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:15px}
+.lbl{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px}
+.meta{font-size:14px;color:var(--muted)}
+.tag{display:inline-block;font-size:12px;font-weight:600;border-radius:999px;padding:1px 10px;vertical-align:middle;margin-left:6px;background:var(--accent-soft);color:var(--accent)}
+ul.plain{margin:0;padding-left:20px}ul.plain li{margin-bottom:6px}
+.q{counter-increment:q}
+.q h3::before{content:"Q" counter(q) ". ";color:var(--muted)}
+.q .opts{margin:0 0 8px;color:var(--muted);font-size:15px}
+.q .rec{margin:0}
+#questions{counter-reset:q}
+figure{margin:0}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:14px;color:var(--muted);margin-top:8px}
+svg text{fill:var(--fg);font-family:var(--font)}
+svg .mut{fill:var(--muted)}
+svg .box{fill:var(--card);stroke:var(--line);stroke-width:1.5}
+svg .boxa{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.5}
+svg .boxo{fill:var(--quote);stroke:var(--line);stroke-width:1.5;stroke-dasharray:5 4}
+svg .ln{stroke:var(--muted);stroke-width:1.5;fill:none}
+svg .lna{stroke:var(--accent);stroke-width:2;fill:none}
+svg .ah{fill:var(--muted)}svg .aha{fill:var(--accent)}
+.scroll{overflow-x:auto}
+/* mock app */
+.frame{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--app);font-size:13px}
+.frame .bar{display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--card)}
+.frame .bar i{width:9px;height:9px;border-radius:50%;background:var(--line);display:block}
+.app{display:grid;grid-template-columns:190px minmax(0,1fr);min-height:420px}
+.side{background:var(--side);border-right:1px solid var(--line);padding:12px 10px}
+.side .h{font-size:11px;letter-spacing:.06em;color:var(--muted);margin:12px 6px 4px;text-transform:uppercase}
+.side a{display:block;padding:5px 8px;border-radius:6px;color:var(--fg);text-decoration:none}
+.side a.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.pg{padding:16px 18px;min-width:0}
+.crumb{font-size:12px;color:var(--muted)}
+.ph{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin:4px 0 12px}
+.ph .t{font-size:19px;font-weight:600}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.sel{border:1px solid var(--line);background:var(--card);border-radius:7px;padding:5px 10px;color:var(--muted);white-space:nowrap}
+.sel b{color:var(--fg);font-weight:500}
+.search{flex:1 1 200px;border:1px solid var(--line);background:var(--card);border-radius:7px;padding:5px 10px;color:var(--muted)}
+table.g{width:100%;border-collapse:collapse;table-layout:fixed;background:var(--card);border:1px solid var(--line);border-radius:8px}
+table.g th{font-size:12px;text-align:left;color:var(--muted);font-weight:600;padding:7px 8px;border-bottom:1px solid var(--line)}
+table.g td{padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.g td.r,table.g th.r{text-align:right}
+.b{display:inline-block;border-radius:999px;padding:0 8px;font-size:11.5px;font-weight:600;background:var(--quote);color:var(--fg)}
+.b.iv{background:var(--accent-soft);color:var(--accent)}
+.b.cn{background:var(--bad-soft);color:var(--bad)}
+.b.cs{background:var(--ok-soft);color:var(--ok)}
+.b.dn{background:var(--warn-soft);color:var(--warn)}
+.b.x{background:var(--quote);color:var(--muted)}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin:12px 0}
+.tabs span{padding:6px 0;color:var(--muted)}
+.tabs span.on{color:var(--fg);border-bottom:2px solid var(--accent);font-weight:600}
+.strip{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--muted)}
+.nav2{display:flex;gap:6px}
+.nav2 span{border:1px solid var(--line);border-radius:6px;padding:2px 8px;background:var(--card)}
+.kv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 16px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}
+.kv div span{display:block;font-size:11.5px;color:var(--muted)}
+.tot{margin-left:auto;width:240px;margin-top:10px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+.tot div{display:flex;justify-content:space-between}
+.tot div.g{font-weight:700;border-top:1px solid var(--line);margin-top:4px;padding-top:4px}
+.phone{width:375px;max-width:100%;margin:0 auto;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--app);font-size:13px}
+.phone .top{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--card)}
+.phone .pg{padding:14px 16px}
+.rowc{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:8px}
+.rowc .l1{display:flex;justify-content:space-between;gap:8px}
+.rowc .l2{color:var(--muted);font-size:12px;margin-top:2px}
+.empty{border:1px dashed var(--line);border-radius:8px;padding:18px;text-align:center;color:var(--muted)}
+.basis{font-size:12px;color:var(--muted);margin:4px 0 10px}
+table.p{border-collapse:collapse;width:100%;background:var(--card);border:1px solid var(--line)}
+table.p th,table.p td{padding:5px 7px;border-bottom:1px solid var(--line);text-align:right;font-size:12px}
+table.p th:first-child,table.p td:first-child{text-align:left}
+footer{margin-top:48px;color:var(--muted);font-size:13px}
+@media (max-width:640px){
+ header h1{font-size:23px}
+ .ba,.two{grid-template-columns:minmax(0,1fr)}
+ .app{grid-template-columns:1fr}.side{display:none}
+ .kv{grid-template-columns:1fr 1fr}
+}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>Finance: billing documents from AutoCount</h1>
+<p>Round 1 of the plan for issue #1309, 27 Sep 2026. Nothing is built. This page is for you to read, mark up and answer the 13 questions in section 5.</p>
+<p>Plan: <code>documentation/plans/finance/PLAN-finance-billing-documents-27sep.md</code>. Acceptance criteria: <code>finance-billing-documents-27sep-acceptance-criteria.md</code>. One lane, five slices, S0 to S4.</p>
+</header>
+<nav><a href="#ask">1 The ask</a><a href="#plain">2 In plain words</a><a href="#design">3 Design in pictures</a><a href="#slices">4 Slices</a><a href="#questions">5 Open questions</a><a href="#mockups">6 Mockups</a><a href="#scope">7 Not built</a></nav>
+
+<section id="ask"><h2><span class="n">1</span>The ask, in your words</h2>
+<blockquote>we need to start working on the financial module in our system as we will ingest the invoices, CN and any billing documents (in ERP i think the best practice is to have billing documents of differne types like invoices, Cn, DN, etc.) cause we are gonna ingeest that from shared service, we will let autocount open that for us after signing NDA with the relevant parties, so let's start planning and executing that</blockquote>
+<p class="meta">27 Sep 15:20 MYT, from chat, on PR #1269, straight after the ruling that the Yearly comparison ships on sales orders because it cannot tally with the AutoCount PDF.</p>
+</section>
+
+<section id="plain"><h2><span class="n">2</span>In plain words</h2>
+<div class="two">
+<div class="card"><h3>What a billing document is</h3>
+<p>Any AutoCount document that bills or un-bills a customer:</p>
+<ul class="plain">
+<li><span class="b iv">Invoice</span> IV</li>
+<li><span class="b cs">Cash sale</span> CS: paid on the spot, often with no sales order</li>
+<li><span class="b cn">Credit note</span> CN: money given back</li>
+<li><span class="b dn">Debit note</span> DN: an extra charge after the invoice</li>
+</ul>
+<p>All four have the same shape. The header holds number, date, customer, agent, currency, subtotal, tax and total. Each line holds item, quantity, price, discount, tax code and line total.</p></div>
+<div class="card"><h3>Why one table with a type</h3>
+<p>Every question you will ask crosses the types. "Sales this month" is IV + CS + DN - CN, and "which credit notes hit this invoice" joins two of them. With one table, each of those is one query with a filter. With four tables, every report, list and permission is written four times, and the four drift apart. ERPs such as Odoo keep them together for the same reason.</p></div>
+<div class="card"><h3>What AutoCount will send</h3>
+<p>After the NDA, the shared service pushes each document whole, to the same CRM door that already takes your sales orders every day, for Sorento or Mocha.</p>
+<ul class="plain">
+<li>Pushing the same document twice changes nothing.</li>
+<li>An edited document replaces the old one.</li>
+<li>A cancelled document stays visible but stops counting.</li>
+<li>History comes in through the same door.</li>
+</ul></div>
+<div class="card"><h3>What the CRM will show</h3>
+<ul class="plain">
+<li><b>Invoiced</b> as a third basis on the Yearly comparison and the Sales report.</li>
+<li>FINANCE &gt; Billing Documents: a list and a record page, both read only.</li>
+<li>On a sales order and on a customer, the billing documents that belong to them.</li>
+</ul></div>
+</div>
+</section>
+
+<section id="design"><h2><span class="n">3</span>The design in pictures</h2>
+<div class="card">
+<h3>What is stored (schema <code>finance</code>, linked to what the CRM already holds)</h3>
+<div class="scroll">
+<figure>
+<svg viewBox="0 0 960 470" role="img" aria-label="Entity diagram: billing_documents with lines, linked to customers, sales agents, companies, products, sales order lines and itself">
+<defs>
+<marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="aha" d="M0,0 L10,5 L0,10 z"/></marker>
+</defs>
+<rect class="boxa" x="300" y="20" width="330" height="250" rx="10"/>
+<text x="316" y="46" font-weight="700" font-size="15">finance.billing_documents</text>
+<text x="316" y="70" font-size="12">document_type  invoice | cash_sale |</text>
+<text x="316" y="87" font-size="12">                credit_note | debit_note</text>
+<text x="316" y="106" font-size="12">doc_no, doc_date, status (posted | cancelled)</text>
+<text x="316" y="125" font-size="12">currency_code, currency_rate</text>
+<text x="316" y="144" font-size="12">net_total, tax_total, total, local_net_total</text>
+<text x="316" y="163" font-size="12">debtor_code, against_doc_no, ref</text>
+<text x="316" y="182" font-size="12">source_ref (db:type:DocKey), source_modified_at</text>
+<text x="316" y="208" class="mut" font-size="12">unique (company, type, source_ref)</text>
+<text x="316" y="226" class="mut" font-size="12">sign applied only in the sales query: CN = minus</text>
+<text x="316" y="252" class="mut" font-size="12">company_id NOT NULL</text>
+<rect class="boxa" x="300" y="320" width="330" height="130" rx="10"/>
+<text x="316" y="346" font-weight="700" font-size="15">finance.billing_document_lines</text>
+<text x="316" y="370" font-size="12">item_code, description, uom, quantity, unit_price</text>
+<text x="316" y="389" font-size="12">discount_amount, net_amount, tax_code, tax_rate</text>
+<text x="316" y="408" font-size="12">tax_amount, line_total</text>
+<text x="316" y="427" font-size="12">from_doc_type, from_doc_no, from_line_ref, source_ref</text>
+<path class="lna" d="M465 270 L465 318" marker-end="url(#m2)"/>
+<text x="474" y="300" class="mut" font-size="12">1 to many</text>
+<rect class="box" x="30" y="30" width="200" height="44" rx="8"/><text x="46" y="57" font-size="14">companies</text>
+<rect class="box" x="30" y="110" width="200" height="44" rx="8"/><text x="46" y="137" font-size="14">customers</text>
+<rect class="box" x="30" y="190" width="200" height="44" rx="8"/><text x="46" y="217" font-size="14">sales_agents</text>
+<path class="ln" d="M298 60 L232 52" marker-end="url(#m1)"/>
+<path class="ln" d="M298 130 L232 132" marker-end="url(#m1)"/>
+<path class="ln" d="M298 200 L232 212" marker-end="url(#m1)"/>
+<rect class="box" x="30" y="330" width="200" height="44" rx="8"/><text x="46" y="357" font-size="14">products</text>
+<path class="ln" d="M298 370 L232 354" marker-end="url(#m1)"/>
+<rect class="box" x="720" y="330" width="210" height="44" rx="8"/><text x="736" y="357" font-size="14">sales_order_lines</text>
+<path class="ln" d="M632 380 L718 354" marker-end="url(#m1)"/>
+<text x="728" y="318" class="mut" font-size="12">where the line came from an SO</text>
+<rect class="boxo" x="720" y="410" width="210" height="44" rx="8"/><text x="736" y="437" font-size="14" class="mut">DO: number kept as text</text>
+<path class="ln" d="M698 62 L634 78" marker-end="url(#m1)"/>
+<rect class="box" x="700" y="30" width="230" height="60" rx="8"/>
+<text x="716" y="54" font-size="14">against_document_id (self)</text>
+<text x="716" y="74" class="mut" font-size="12">a CN or DN points at its invoice</text>
+<rect class="boxo" x="700" y="180" width="230" height="84" rx="8"/>
+<text x="716" y="204" font-size="14" class="mut">Not stored (named triggers)</text>
+<text x="716" y="224" font-size="12" class="mut">receipts, payments, ageing,</text>
+<text x="716" y="242" font-size="12" class="mut">ledgers, tax master, AR docs</text>
+</svg>
+<figcaption>One header table with a type and one lines table. Links to masters are set NULL when the master cannot be found, and the code is kept, so a document is never held back.</figcaption>
+</figure>
+</div>
+</div>
+
+<div class="card">
+<h3>How a document arrives</h3>
+<div class="scroll">
+<figure>
+<svg viewBox="0 0 960 330" role="img" aria-label="Ingest flow from AutoCount through the shared service to the CRM endpoint, verdicts and the pages that read it">
+<defs>
+<marker id="m3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="aha" d="M0,0 L10,5 L0,10 z"/></marker>
+</defs>
+<rect class="box" x="10" y="40" width="160" height="80" rx="10"/>
+<text x="26" y="70" font-weight="700" font-size="14">AutoCount</text>
+<text x="26" y="92" font-size="12" class="mut">IV, CS, CN, DN</text>
+<text x="26" y="108" font-size="12" class="mut">opened after the NDA</text>
+<rect class="box" x="215" y="40" width="180" height="80" rx="10"/>
+<text x="231" y="70" font-weight="700" font-size="14">Shared service</text>
+<text x="231" y="92" font-size="12" class="mut">ETL, watermark on</text>
+<text x="231" y="108" font-size="12" class="mut">last modified</text>
+<rect class="boxa" x="440" y="20" width="270" height="120" rx="10"/>
+<text x="456" y="46" font-weight="700" font-size="14">CRM: existing ingest door</text>
+<text x="456" y="68" font-size="12">POST .../ingest/billing_documents</text>
+<text x="456" y="86" font-size="12">companyCode: SRT or MOCHA</text>
+<text x="456" y="104" font-size="12">1000 per batch, one savepoint each</text>
+<text x="456" y="122" font-size="12" class="mut">/deletions and /read alongside</text>
+<rect class="box" x="755" y="20" width="195" height="120" rx="10"/>
+<text x="771" y="46" font-weight="700" font-size="14">Verdict per document</text>
+<text x="771" y="68" font-size="12">created, updated,</text>
+<text x="771" y="86" font-size="12">unchanged, failed</text>
+<text x="771" y="104" font-size="12" class="mut">plus warnings, such as</text>
+<text x="771" y="122" font-size="12" class="mut">stale_ignored</text>
+<path class="lna" d="M172 80 L213 80" marker-end="url(#m3)"/>
+<path class="lna" d="M397 80 L438 80" marker-end="url(#m3)"/>
+<path class="lna" d="M712 80 L753 80" marker-end="url(#m3)"/>
+<rect class="box" x="440" y="190" width="270" height="120" rx="10"/>
+<text x="456" y="216" font-weight="700" font-size="14">Rules inside</text>
+<text x="456" y="238" font-size="12">same ref again: replace whole document</text>
+<text x="456" y="256" font-size="12">older last-modified: ignored</text>
+<text x="456" y="274" font-size="12">cancelled: kept, not counted</text>
+<text x="456" y="292" font-size="12">unknown customer: stored, code kept</text>
+<path class="ln" d="M575 142 L575 188" marker-end="url(#m3)"/>
+<rect class="box" x="30" y="200" width="340" height="100" rx="10"/>
+<text x="46" y="226" font-weight="700" font-size="14">Who reads it</text>
+<text x="46" y="248" font-size="12">Sales reports: Basis = Invoiced (S1)</text>
+<text x="46" y="266" font-size="12">Finance &gt; Billing Documents (S2)</text>
+<text x="46" y="284" font-size="12">Sales order and customer records (S3)</text>
+<path class="lna" d="M438 250 L372 250" marker-end="url(#m3)"/>
+</svg>
+<figcaption>The CRM plans its side from its own code. The shared service's AutoCount plans could not be reached from this lane, so the AutoCount field names are assumptions A1 to A9 in plan 3.3.6, for that team to confirm.</figcaption>
+</figure>
+</div>
+</div>
+
+<div class="card">
+<h3>The invoiced basis</h3>
+<p><b>Invoiced = invoices + cash sales + debit notes - credit notes</b>, excluding tax, in ringgit, filed by each document's own date. A cancelled document is not counted. A credit note reduces the month it is dated in, never the invoice's month. Debit notes are in the sum only if you answer yes to Q7.</p>
+<p class="meta">Why this basis: the scout on #1269 found the gap comes from order month vs invoice month, tax, credit notes, cash sales with no order, and project billing lag. Only an invoiced basis removes all five.</p>
+</div>
+</section>
+
+<section id="slices"><h2><span class="n">4</span>Slices, each with a before and after</h2>
+<div class="card"><h3>S0 Model and ingest contract, with a replayable fixture <span class="tag">UAC S0-1 to S0-21</span></h3>
+<div class="ba"><div><span class="lbl">Before</span>The CRM cannot receive any billing document. The shared service has nowhere to send one.</div>
+<div><span class="lbl">After</span>The <code>finance</code> schema, both tables, the module (off until you switch it on in App Store), permissions, contract 2.6, read-back and deletions. A fixture of six documents (IV, CS, CN, DN, a cancelled IV and a USD IV) proves create, replay, update, cancel and delete.</div></div>
+<p class="meta">Backend only. It does not need the NDA, because the fixture stands in for AutoCount.</p></div>
+<div class="card"><h3>S1 Invoiced basis on the sales reports <span class="tag">UAC S1-1 to S1-8</span></h3>
+<div class="ba"><div><span class="lbl">Before</span>Yearly comparison and Sales report count sales orders only. They cannot tally with the AutoCount PDF.</div>
+<div><span class="lbl">After</span>The Basis filter offers Ordered, Delivered and <b>Invoiced</b>, and the chatbot answers from the same query. Grouping follows Q8. Until you answer Q8, it shows one "All sales" block.</div></div>
+<p class="meta">Needs PR #1269 merged.</p></div>
+<div class="card"><h3>S2 Finance menu, list and record <span class="tag">UAC S2-1 to S2-10</span></h3>
+<div class="ba"><div><span class="lbl">Before</span>Billing documents are invisible in the CRM.</div>
+<div><span class="lbl">After</span>A FINANCE heading with Billing Documents. The list can be filtered and searched. The record page has Details, Lines and Related tabs, plus prev and next.</div></div></div>
+<div class="card"><h3>S3 Billing on the records people already open <span class="tag">UAC S3-1 to S3-3</span></h3>
+<div class="ba"><div><span class="lbl">Before</span>To find an order's invoice, you leave the order.</div>
+<div><span class="lbl">After</span>A sales order shows its invoices, and a customer shows its billing documents.</div></div></div>
+<div class="card"><h3>S4 History backfill and the tally <span class="tag">UAC S4-1 to S4-3</span></h3>
+<div class="ba"><div><span class="lbl">Before</span>Only new documents are in the CRM.</div>
+<div><span class="lbl">After</span>History from the date you pick in Q2 is loaded. Three months are checked against the AutoCount counts and the PDF.</div></div>
+<p class="meta">Needs the NDA and the shared service's sink.</p></div>
+</section>
+
+<section id="questions"><h2><span class="n">5</span>Open questions (answer on issue #1309)</h2>
+<p class="meta">Each can be answered yes, no, or with one pick. The recommendation is in bold.</p>
+<div class="card q"><h3>Which document types on day one?</h3><p class="opts">(a) IV, CS, CN and DN. (b) IV, CS and CN only. (c) IV only.</p><p class="rec"><b>(a) All four. They are one shape, and leaving debit notes out would make the invoiced figure short by every extra charge.</b></p></div>
+<div class="card q"><h3>Is history backfilled, and from when?</h3><p class="opts">(a) From 1 Jan 2024. (b) From 1 Jan 2025. (c) No, new documents only.</p><p class="rec"><b>(a) 1 Jan 2024, because the Yearly comparison shows 2024, 2025 and 2026.</b></p></div>
+<div class="card q"><h3>How is tax stored?</h3><p class="opts">(a) Net (excluding tax), tax and total, all three as AutoCount sends them. (b) Tax-inclusive total only. (c) Net only.</p><p class="rec"><b>(a). The report sums the net, the record page shows all three, and nothing is recomputed.</b></p></div>
+<div class="card q"><h3>How does a credit note reference its invoice?</h3><p class="opts">(a) One invoice on the credit note's header, keeping the invoice number even when that invoice is not in the CRM. (b) Per line. (c) Not at all.</p><p class="rec"><b>(a), unless the shared service reports that AutoCount only allocates by knock-off.</b></p></div>
+<div class="card q"><h3>Do dealers see amounts (their invoices) on the portal?</h3><p class="opts">Yes or no.</p><p class="rec"><b>No. Staff only for now. The portal shows no orders today.</b></p></div>
+<div class="card q"><h3>What does the NDA allow the shared service to send?</h3><p class="opts">(a) Document headers and lines, with customer, agent, product and tax fields. (b) Headers only. (c) Something narrower, which you name.</p><p class="rec"><b>(a). It is everything this plan uses, and it includes no bank, general ledger or payment details.</b></p></div>
+<div class="card q"><h3>Does the invoiced basis add debit notes?</h3><p class="opts">Yes or no.</p><p class="rec"><b>Yes, giving IV + CS + DN - CN. Please confirm this against the AutoCount report's options.</b></p></div>
+<div class="card q"><h3>Channel grouping on the invoiced basis (left open)</h3><p class="opts">(a) The agent's current dealer or project class. (b) The PDF's people grouping: the agent's sales team as of the document date, from the dated teams of #1260. (c) Debtor type.</p><p class="rec"><b>Provisionally (b), because the PDF's "16pax" footnote says it groups people. Please confirm from the AutoCount report's options before S1 builds it.</b></p></div>
+<div class="card q"><h3>Who sees Finance &gt; Billing Documents?</h3><p class="opts">(a) Admin and superadmin now, with others granted on the Roles screen. (b) Also every sales role.</p><p class="rec"><b>(a).</b></p></div>
+<div class="card q"><h3>Include AutoCount's AR-module documents now (AR Invoice, AR CN, AR DN, which have no item lines)?</h3><p class="opts">Yes or no.</p><p class="rec"><b>No. Add them only if the tally shows they are part of the PDF.</b></p></div>
+<div class="card q"><h3>Plan receipts and payments now?</h3><p class="opts">Yes or no.</p><p class="rec"><b>No. The plan names what would start them: you asking for collections or a customer's balance in the CRM.</b></p></div>
+<div class="card q"><h3>Report foreign-currency documents in ringgit, using AutoCount's own converted amount?</h3><p class="opts">Yes or no.</p><p class="rec"><b>Yes.</b></p></div>
+<div class="card q"><h3>Keep a cancelled document visible with a Cancelled badge, and leave it out of every total?</h3><p class="opts">Yes or no.</p><p class="rec"><b>Yes.</b></p></div>
+</section>
+
+<section id="mockups"><h2><span class="n">6</span>Mockups</h2>
+
+<h3>S2 Billing Documents list, 1280</h3>
+<div class="frame"><div class="bar"><i></i><i></i><i></i></div>
+<div class="app">
+<div class="side"><div class="h">Sales</div><a>Sales Teams</a><a>Sales report</a><a>Yearly comparison</a>
+<div class="h">Finance</div><a class="on">Billing Documents</a></div>
+<div class="pg">
+<div class="crumb">Finance / Billing Documents</div>
+<div class="ph"><span class="t">Billing Documents</span><span class="sel">Export</span></div>
+<div class="filters"><span class="search">Search number or customer</span><span class="sel">Type: <b>All</b></span><span class="sel">Status: <b>Posted</b></span><span class="sel">Customer</span><span class="sel">Agent</span><span class="sel">Date: <b>Sep 2026</b></span></div>
+<div class="scroll"><table class="g" style="min-width:760px">
+<colgroup><col style="width:104px"><col style="width:120px"><col style="width:92px"><col><col style="width:110px"><col style="width:120px"><col style="width:96px"></colgroup>
+<thead><tr><th>Type</th><th>Number</th><th>Date</th><th>Customer</th><th>Agent</th><th class="r">Total</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td><span class="b iv">Invoice</span></td><td>IV-2609/0142</td><td>26/09/2026</td><td title="Kedai Jubin Maju Sdn Bhd">Kedai Jubin Maju Sdn Bhd</td><td>Sean</td><td class="r">1,100.00</td><td><span class="b">Posted</span></td></tr>
+<tr><td><span class="b cn">Credit note</span></td><td>CN-2609/0019</td><td>26/09/2026</td><td>Kedai Jubin Maju Sdn Bhd</td><td>Sean</td><td class="r">220.00</td><td><span class="b">Posted</span></td></tr>
+<tr><td><span class="b cs">Cash sale</span></td><td>CS-2609/0311</td><td>25/09/2026</td><td>Cash customer</td><td>Aina</td><td class="r">486.40</td><td><span class="b">Posted</span></td></tr>
+<tr><td><span class="b dn">Debit note</span></td><td>DN-2609/0004</td><td>24/09/2026</td><td>Hanlim Tiles Trading</td><td>Kelvin</td><td class="r">150.00</td><td><span class="b">Posted</span></td></tr>
+<tr><td><span class="b iv">Invoice</span></td><td>IV-2609/0137</td><td>24/09/2026</td><td>Metro Build Contractors</td><td>Project team</td><td class="r">USD 3,200.00</td><td><span class="b">Posted</span></td></tr>
+<tr><td><span class="b iv">Invoice</span></td><td>IV-2609/0131</td><td>23/09/2026</td><td>Kedai Jubin Maju Sdn Bhd</td><td>Sean</td><td class="r">980.00</td><td><span class="b x">Cancelled</span></td></tr>
+</tbody></table></div>
+<p class="meta">No Add or Delete: AutoCount is the book of record. Every dropdown is searchable, and each optional one can be cleared.</p>
+</div></div></div>
+
+<h3 style="margin-top:28px">S2 Billing document record, 1280 (Details, then Lines and Related)</h3>
+<div class="frame"><div class="bar"><i></i><i></i><i></i></div>
+<div class="app">
+<div class="side"><div class="h">Finance</div><a class="on">Billing Documents</a></div>
+<div class="pg">
+<div class="crumb">Finance / Billing Documents / IV-2609/0142</div>
+<div class="ph"><span class="t">IV-2609/0142 <span class="b iv">Invoice</span> <span class="b">Posted</span></span><span class="nav2"><span>&lsaquo; Prev</span><span>3 of 214</span><span>Next &rsaquo;</span></span></div>
+<div class="strip"><span>From AutoCount (Sorento)</span><span>Document date 26/09/2026</span><span>Last synced 27/09/2026 09:14</span></div>
+<div class="tabs"><span class="on">Details</span><span>Lines (2)</span><span>Related (3)</span></div>
+<div class="kv">
+<div><span>Customer</span>Kedai Jubin Maju Sdn Bhd</div><div><span>Debtor code</span>300-K014</div><div><span>Agent</span>Sean (SEAN I)</div>
+<div><span>Currency</span>MYR, rate 1.0000</div><div><span>Reference</span>THE MET KL</div><div><span>Description</span>Tiles, block B</div>
+</div>
+<div class="tot"><div><span>Net</span><span>1,000.00</span></div><div><span>Tax</span><span>100.00</span></div><div class="g"><span>Total</span><span>1,100.00</span></div></div>
+<div class="tabs" style="margin-top:18px"><span>Details</span><span class="on">Lines (2)</span><span>Related (3)</span></div>
+<div class="scroll"><table class="g" style="min-width:720px">
+<colgroup><col style="width:90px"><col><col style="width:60px"><col style="width:90px"><col style="width:90px"><col style="width:70px"><col style="width:80px"><col style="width:90px"></colgroup>
+<thead><tr><th>Item</th><th>Description</th><th class="r">Qty</th><th class="r">Price</th><th class="r">Net</th><th>Tax code</th><th class="r">Tax</th><th class="r">Total</th></tr></thead>
+<tbody><tr><td>ABC-1</td><td>Porcelain 600x600 matt</td><td class="r">8</td><td class="r">100.00</td><td class="r">800.00</td><td>SV-10</td><td class="r">80.00</td><td class="r">880.00</td></tr>
+<tr><td>ABC-7</td><td>Skirting 80mm</td><td class="r">4</td><td class="r">50.00</td><td class="r">200.00</td><td>SV-10</td><td class="r">20.00</td><td class="r">220.00</td></tr></tbody></table></div>
+<div class="tabs" style="margin-top:18px"><span>Details</span><span>Lines (2)</span><span class="on">Related (3)</span></div>
+<table class="g"><colgroup><col style="width:140px"><col style="width:140px"><col></colgroup><tbody>
+<tr><td>Sales order</td><td style="color:var(--accent)">SO-2608/0551</td><td>both lines came from it</td></tr>
+<tr><td>Delivery order</td><td>DO-2609/0077</td><td>as AutoCount sent it</td></tr>
+<tr><td>Credit note</td><td style="color:var(--accent)">CN-2609/0019</td><td>220.00, against this invoice</td></tr>
+</tbody></table>
+</div></div></div>
+
+<h3 style="margin-top:28px">S2 at 375: list and record</h3>
+<div class="two">
+<div class="phone"><div class="top"><b>Billing Documents</b><span class="meta">&#9776;</span></div><div class="pg">
+<div class="filters"><span class="search">Search</span><span class="sel">Filters (2)</span></div>
+<div class="rowc"><div class="l1"><b>IV-2609/0142</b><span>1,100.00</span></div><div class="l2"><span class="b iv">Invoice</span> 26/09 Kedai Jubin Maju</div></div>
+<div class="rowc"><div class="l1"><b>CN-2609/0019</b><span>220.00</span></div><div class="l2"><span class="b cn">Credit note</span> 26/09 Kedai Jubin Maju</div></div>
+<div class="rowc"><div class="l1"><b>CS-2609/0311</b><span>486.40</span></div><div class="l2"><span class="b cs">Cash sale</span> 25/09 Cash customer</div></div>
+<div class="rowc"><div class="l1"><b>IV-2609/0131</b><span>980.00</span></div><div class="l2"><span class="b x">Cancelled</span> 23/09 Kedai Jubin Maju</div></div>
+</div></div>
+<div class="phone"><div class="top"><b>IV-2609/0142</b><span class="meta">&lsaquo; &rsaquo;</span></div><div class="pg">
+<div><span class="b iv">Invoice</span> <span class="b">Posted</span></div>
+<div class="strip" style="margin-top:6px"><span>26/09/2026</span><span>Synced 27/09 09:14</span></div>
+<div class="tabs"><span>Details</span><span>Lines</span><span class="on">Related</span></div>
+<div class="empty">Nothing is linked to this document yet.</div>
+<p class="meta" style="margin-top:8px">The empty state of the Related tab. The tab is never hidden.</p>
+</div></div>
+</div>
+
+<h3 style="margin-top:28px">S1 Yearly comparison, Basis = Invoiced (until Q8 is answered)</h3>
+<div class="frame"><div class="pg">
+<div class="filters"><span class="sel">Company: <b>Sorento</b></span><span class="sel">Basis: <b>Invoiced</b></span><span class="sel" style="opacity:.55">Channel: one block until Q8</span><span class="sel">Period: <b>2024 to 2026</b></span></div>
+<div class="basis">Basis: Invoiced (invoices, cash sales and debit notes less credit notes, excluding tax), by document date.</div>
+<div class="scroll"><table class="p" style="min-width:640px"><thead><tr><th>SORENTO - ALL SALES</th><th>JAN</th><th>FEB</th><th>MAR</th><th>...</th><th>SEP</th><th>Total</th></tr></thead>
+<tbody><tr><td>2024</td><td>figure</td><td>figure</td><td>figure</td><td>...</td><td>figure</td><td>figure</td></tr>
+<tr><td>2025</td><td>figure</td><td>figure</td><td>figure</td><td>...</td><td>figure</td><td>figure</td></tr>
+<tr><td>2026</td><td>figure</td><td>figure</td><td>figure</td><td>...</td><td></td><td>figure</td></tr>
+<tr><td style="color:var(--muted)">VARIANCE</td><td>...</td><td>...</td><td>...</td><td>...</td><td></td><td>...</td></tr></tbody></table></div>
+<p class="meta">The cells read "figure" on purpose. No invoiced number exists until the backfill runs, and S4 records the tally against the PDF.</p>
+</div></div>
+
+<h3 style="margin-top:28px">S3 Sales order record: the Invoices section</h3>
+<div class="frame"><div class="pg">
+<div class="ph"><span class="t">SO-2608/0551</span></div>
+<div class="tabs"><span>Details</span><span>Lines</span><span class="on">Invoices (2)</span></div>
+<div class="scroll"><table class="g" style="min-width:560px"><colgroup><col style="width:110px"><col style="width:130px"><col style="width:100px"><col><col style="width:110px"></colgroup>
+<tbody><tr><td><span class="b iv">Invoice</span></td><td>IV-2609/0142</td><td>26/09/2026</td><td>2 of 5 lines</td><td style="text-align:right">1,100.00</td></tr>
+<tr><td><span class="b cn">Credit note</span></td><td>CN-2609/0019</td><td>26/09/2026</td><td>against IV-2609/0142</td><td style="text-align:right">220.00</td></tr></tbody></table></div>
+</div></div>
+</section>
+
+<section id="scope"><h2><span class="n">7</span>Not built, and what would start each</h2>
+<ul class="plain">
+<li><b>Receipts, payments, paid or outstanding per invoice:</b> you ask to see collections or a customer's balance in the CRM.</li>
+<li><b>Accounting ledgers:</b> never without a ruling from you, because AutoCount is the ledger.</li>
+<li><b>Ageing and statements:</b> these follow receipts.</li>
+<li><b>AR-module documents:</b> the tally shows they are part of the PDF.</li>
+<li><b>A tax master:</b> a screen needs a tax code's name beyond what the line carries.</li>
+<li><b>A delivery order link:</b> delivery orders arrive through the shared service with trustworthy amounts.</li>
+<li><b>Credit notes split across several invoices:</b> AutoCount allocates that way, and you need to see the split.</li>
+<li><b>Dealer invoices on the portal:</b> you answer yes to Q5.</li>
+</ul>
+</section>
+
+<footer>Plan lane for #1309, round 1, 27 Sep 2026. Built by Claude Code from the repo at 9751e55d. Self-contained: no external scripts or fonts.</footer>
+</main>
+</body>
+</html>

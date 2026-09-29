@@ -24,6 +24,7 @@ class ActivityEvent(Base):
     """
 
     __tablename__ = "activity_events"
+    __audit_skip__ = "activity feed, itself a trail"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     entity_type = Column(String(50), nullable=False)
@@ -65,6 +66,7 @@ class ActivityMention(Base):
     """@-mention from an ActivityEvent.user_update; drives notifications."""
 
     __tablename__ = "activity_mentions"
+    __audit_skip__ = "derived from activity events"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     activity_event_id = Column(

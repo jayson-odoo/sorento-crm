@@ -1,21 +1,23 @@
 """Audit contact attribution + display resolution (System Health WS2a).
 
 - log_audit(..., contact_id=X) persists contact_id.
-- The auto-flush path (_session_before_flush) stamps set_actor_contact_id() from
-  request context onto AuditLog.contact_id.
-- GET /api/v1/audit/logs/ resolves user_display_name: contact name (contact_id) >
-  staff name (user_id) > "System" (neither); changed_from/changed_to narrows.
+- The auto-flush path (_session_before_flush) copies the stamped actor's contact_id
+  onto AuditLog.contact_id.
+- GET /api/v1/audit/logs/ resolves user_display_name: on a contact or legacy row,
+  contact name (contact_id) > staff name (user_id) > "System" (neither); on any other
+  row the staff name wins; changed_from/changed_to narrows.
 - _derive_description turns a status-change UPDATE into "status: old → new".
 """
 import uuid
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy import text
 from fastapi.testclient import TestClient
 
 from app.main import app  # noqa: E402 (import first to settle app wiring)
 import app.database as app_database
-from app.audit_context import set_actor_contact_id
+from app.audit_context import AuditActor, clear_actor, stamp_actor
 from app.dependencies import get_current_user_or_api_key
 from app.models.access import RespondContact
 from app.models.audit import AuditLog
@@ -56,19 +58,21 @@ def test_auto_flush_stamps_actor_contact_from_context(db):
     db.commit()
 
     cid = str(uuid.uuid4())
-    set_actor_contact_id(cid)
+    stamp_actor(AuditActor(actor_type="contact", contact_id=cid))
     try:
         user.name = "Staff Renamed"  # tracked UPDATE (User.__audit_track__)
         # Invoke the exact function the SQLAlchemy before_flush listener calls.
         audit_service._session_before_flush(db, None, None)
-        audit_rows = [o for o in db.new if isinstance(o, AuditLog)]
+        # Built for after_flush, which inserts them in a savepoint (best-effort capture,
+        # owner ruling 28 Sep 2026), rather than added to the business flush.
+        audit_rows = db.info.get("audit_rows") or []
         stamped = [
             r for r in audit_rows
-            if r.entity_type == "users" and r.action == "UPDATE" and r.contact_id == cid
+            if r["entity_type"] == "users" and r["action"] == "UPDATE" and r["contact_id"] == cid
         ]
         assert stamped, "auto-flush audit row was not stamped with the actor contact id"
     finally:
-        set_actor_contact_id(None)
+        clear_actor()
 
 
 # --------------------------------------------------------------------------- #
@@ -121,8 +125,25 @@ def client(db):
     def _override_db():
         yield db
 
+    # The audit read API is superadmin/admin only (#1281): call as a real superadmin.
+    from app.models.user import UserRole, UserRoleAssignment
+
+    reader_id = str(uuid.uuid4())
+    role = UserRole(id=str(uuid.uuid4()), slug="superadmin", name="Super Admin",
+                    description="", is_protected=False, is_default=False)
+    db.add_all([role, User(id=reader_id, email=f"zz-reader-{reader_id[:8]}@example.com",
+                           status=UserStatus.ACTIVE.value)])
+    db.flush()
+    db.add(UserRoleAssignment(user_id=reader_id, role_id=role.id))
+    db.commit()
+    # The reader's own CREATE row would join the listing; the tests count their own rows.
+    # audit_logs is append-only (#1281 S0), so the wipe runs under the maintenance flag.
+    db.execute(text("SET LOCAL sorento.audit_maintenance = 'on'"))
+    db.query(AuditLog).delete()
+    db.commit()
+
     app.dependency_overrides[app_database.get_db] = _override_db
-    app.dependency_overrides[get_current_user_or_api_key] = lambda: {"id": "admin"}
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: {"id": reader_id}
     yield TestClient(app)
     app.dependency_overrides.clear()
 

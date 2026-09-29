@@ -91,11 +91,43 @@ describe('sendInterventionTicketMessage', () => {
     expect(init.headers).toBeUndefined();
     const fd = init.body as FormData;
     expect(fd.get('text')).toBe('see attached');
-    // The outbound reply-to emulation was removed on 2026-08-16: nothing here
-    // carries a quote any more, on either lane.
+    // No reply target on this send (#1317): the audit fields stay absent.
     expect(fd.get('reply_to_message_id')).toBeNull();
     expect(fd.get('reply_to_excerpt')).toBeNull();
     expect(fd.getAll('files')).toHaveLength(1);
+  });
+
+  it('#1317 AC-RT-17: a quoted reply carries the audit fields on the JSON lane', async () => {
+    mockApiFetch.mockResolvedValue(
+      jsonResponse({ sent_as: 'text', rendered_text: '', flattened: false, window: { open: true, expires_at: null } }),
+    );
+    await sendInterventionTicketMessage('t1', {
+      text: '> Is the sink in stock?\nYes.',
+      reply_to_message_id: '11',
+      reply_to_excerpt: 'Is the sink in stock?',
+    });
+    const [, init] = mockApiFetch.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({
+      text: '> Is the sink in stock?\nYes.',
+      reply_to_message_id: '11',
+      reply_to_excerpt: 'Is the sink in stock?',
+    });
+  });
+
+  it('#1317 AC-RT-17: a quoted reply carries the audit fields on the multipart lane', async () => {
+    mockApiFetch.mockResolvedValue(
+      jsonResponse({ sent_as: 'attachment', rendered_text: '', flattened: false, window: { open: true, expires_at: null } }),
+    );
+    await sendInterventionTicketMessage('t1', {
+      text: '> q\nsee attached',
+      attachments: [new File(['x'], 'photo.jpg', { type: 'image/jpeg' })],
+      reply_to_message_id: '11',
+      reply_to_excerpt: 'q',
+    });
+    const fd = mockApiFetch.mock.calls[0][1].body as FormData;
+    expect(fd.get('text')).toBe('> q\nsee attached');
+    expect(fd.get('reply_to_message_id')).toBe('11');
+    expect(fd.get('reply_to_excerpt')).toBe('q');
   });
 
   it('throws the extracted error message on failure', async () => {

@@ -70,6 +70,16 @@ arrives - see the file's own "Materials" comment for the precedent.
   responses under the ONE shared `transition` prop that otherwise governs both.
 - `surfaceVariants(prefersReducedMotion)`: fade + scale 0.96 -> 1 in (never scale 0); reduced
   motion drops the scale and keeps only the fade.
+- **`NOOP_ON_UPDATE`: pass it as `onUpdate` on every `motion.div` inside an `AnimatePresence` that
+  animates `opacity`.** A live `onUpdate` is the only thing that disqualifies motion-dom's WAAPI
+  hand-off (`supportsBrowserAnimation`'s `!onUpdate` check); without it, opacity runs on the
+  browser's native Web Animations API, whose `onfinish` cancels the effect one render tick before
+  its settled value reaches the inline style - a real, one-frame flicker to the pre-phase value
+  (`0` on enter, `1` on exit) that jsdom cannot reproduce (no `Element.prototype.animate` there).
+  Every opacity-animating surface in `components/ui` (Dialog, AlertDialog, Sheet's overlay and its
+  reduced-motion fallback, Popover, DropdownMenu, ContextMenu, HoverCard, Menubar) carries it; a
+  new one needs it too, guarded by a per-surface wiring test in the shape of
+  `dialog.animation-boundary.test.tsx`.
 - `useOpenState()`: mirrors a Radix root's open state into plain React state so a sibling
   `Content` can gate an `<AnimatePresence>` - Radix's own Presence unmounts on a CSS animation
   it can detect, which a JS spring is not. A primitive with no controlled `open` prop of its own
@@ -188,8 +198,13 @@ coarse-pointer `::after` hit area supplies the 44px target invisibly.
 - No UUIDs in the UI - resolve to human-readable identifiers.
 - Datetimes render via `formatDateTimeInMalaysia`, never `formatDateTime(new Date())`.
 - Empty value rendering follows `ADR-PRODUCT-STANDARDS.md` section 1e.
-- Every detail section renders, including when empty, with an explicit empty state + CTA -
-  never hide a section on missing data.
+- Every detail section renders, including when empty, with an explicit empty state - never
+  hide a section on missing data.
+- **One CTA, no subtitle (owner ruling, PR #1336, CRM-wide):** a page has exactly one primary
+  CTA, in its `PageHeader` actions, and no subtitle or description line under a page or dialog
+  title. An empty state is heading and hint text only, never a button or link, and the typecheck
+  enforces both: `PageHeader` has no `children` slot and `DataGrid` / `PanelDataGrid` have no
+  `emptyAction`.
 
 ## 7. Responsive
 

@@ -248,7 +248,6 @@ export default function FormsList() {
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true, columnsResizable: true }}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

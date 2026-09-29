@@ -156,7 +156,7 @@ export function QuotationApprovalPanel({
             )}
             {statusKey === 'approved' && (
               <BlockLine>
-                {`${priced}, and a manager has approved it. It can be issued.`}
+                {`${priced}, and a manager has approved it. It can be sent to the customer.`}
               </BlockLine>
             )}
             {blocked && statusKey !== 'pending_approval' && statusKey !== 'rejected' && (

@@ -16,6 +16,9 @@ function Progress({
     <ProgressPrimitive.Root
       data-slot="progress"
       className={cn('relative h-1.5 w-full overflow-hidden rounded-full bg-secondary', className)}
+      // Handed on, not only drawn: without it Radix renders an indeterminate progressbar
+      // with no aria-valuenow, so a screen reader never hears how far it has got.
+      value={value}
       {...props}
     >
       <ProgressPrimitive.Indicator

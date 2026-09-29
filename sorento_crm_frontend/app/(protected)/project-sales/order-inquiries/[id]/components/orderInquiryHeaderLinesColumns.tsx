@@ -1,27 +1,50 @@
 'use client';
 
 import * as React from 'react';
-import { Check, ChevronDown, ChevronRight, History as HistoryIcon, Pencil } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  CircleCheck,
+  CircleDashed,
+  ChevronRight,
+  History as HistoryIcon,
+  Pencil,
+} from 'lucide-react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
-import { OrderInquiryStatePill, ReservePill } from '../../../_shared/components/OrderInquiryVerbPill';
+import { formatDateInMalaysia } from '@/lib/helpers';
+import {
+  OrderInquiryLineStatePill,
+  OrderInquiryVerbPill,
+  ReservePill,
+} from '../../../_shared/components/OrderInquiryVerbPill';
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
-import { formatInquiryQty, inquiryFooterTotals } from '../../../_shared/lib/orderInquiryWorklist';
+import { formatInquiryQty, raisedKindLabel } from '../../../_shared/lib/orderInquiryWorklist';
+import {
+  lineConfirmationOf,
+  lineFooterTotals,
+  lineOf,
+  type OrderInquiryLine,
+  type OrderInquiryLineRow,
+} from '../../../_shared/lib/orderInquiryLineFold';
 import {
   DeliveryDateCell,
-  InstructionCell,
+  documentsOf,
   ItemCodeCell,
   LocationCell,
-  orderInquirySoLineColumn,
-  orderInquiryTakenRemainingColumns,
-  QtyCell,
+  orderInquirySuggestedColumn,
+  RaisedCell,
   SupplierCell,
+  WorklistPill,
 } from '../../components/orderInquiryWorklistColumns';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
-import { OrderInquiryDocumentLink } from '../../components/OrderInquiryDocumentDialog';
+import { OrderInquiryDocumentLink, ViaSpoPoNumber } from '../../components/OrderInquiryDocumentDialog';
+import { SoLineAttachmentsButton } from '../../../_shared/components/SoLineAttachmentsButton';
+import type { SoLineAttachmentsByLine } from '../../../_shared/services/soLineAttachmentService';
 
 /**
  * The Lines tab's own columns (AC-DP-03): Expand, Product, SO line, Qty, Taken,
@@ -41,6 +64,14 @@ import { OrderInquiryDocumentLink } from '../../components/OrderInquiryDocumentD
  * cell (AC-RS-83c), gated by `canReserve` and driven by the
  * caller's own staged-decision map (`OrderInquiryDetail.tsx` owns that state; this
  * column is a pure renderer over it).
+ *
+ * `PLAN-oi-no-double-count-25sep.md` S0 (issue #1248, owner rulings 26 Sep 2026): each
+ * grid row is ONE sales order line (`OrderInquiryLineRow`: the line's primary row plus the
+ * line, `orderInquiryLineFold.ts`). No. replaces the SO line column; SO Qty, Requested,
+ * Taken, Remaining replace Qty / Taken / Remaining (G4) and carry no Was / now annotation
+ * (G1); PO / SPO list every document of the line's live rows as first + "+N" (G5); the
+ * State cell carries ONE History icon for the line (G3), replacing the reserve History
+ * icon and the decision trail icon.
  */
 
 /** One line's staged decision (6e.2) - not yet posted, held in `OrderInquiryDetail`'s
@@ -55,17 +86,109 @@ export interface StagedReserveEntry {
   reason?: string | null;
 }
 
-/** The first PO (or SPO) link this line carries, for a document trigger. `null` when the
+/** The first PO (or SPO) document this line carries, for a document trigger - reusing the
+ * worklist's OWN derivation (`documentsOf`, issue #1215 point 5) rather than a bare
+ * `kind === 'po'` link. An SPO-only link naming its source PO (`source_po_number`) used
+ * to read a plain dash here even though the worklist already printed it "via SPO" - the
+ * two screens now agree about what counts as a document on this row. `null` when the
  * line names none of that kind - the cell then reads a plain dash, same as the worklist. */
 function firstLinkOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo') {
-  return (row.links ?? []).find((link) => link.kind === kind) ?? null;
+  return documentsOf(row, kind)[0] ?? null;
 }
 
-function DocumentCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' | 'spo' }) {
-  const link = firstLinkOf(row, kind);
-  if (!link) return <span className="text-muted-foreground">-</span>;
+/** Every document of `kind` across the line's live rows, first-seen order, each with the
+ * row that carries it (the link lookup below needs that row). */
+function lineDocumentsOf(line: OrderInquiryLine, kind: 'po' | 'spo') {
+  const seen = new Set<string>();
+  const entries: { row: OrderInquiryWorklistRow; document: string }[] = [];
+  for (const row of line.liveRows) {
+    for (const entry of documentsOf(row, kind)) {
+      if (seen.has(entry.document)) continue;
+      seen.add(entry.document);
+      entries.push({ row, document: entry.document });
+    }
+  }
+  return entries;
+}
+
+function LineDocumentsCell({ line, kind }: { line: OrderInquiryLine; kind: 'po' | 'spo' }) {
+  const entries = lineDocumentsOf(line, kind);
+  if (entries.length === 0) return <span className="text-muted-foreground">-</span>;
+  const [first, ...rest] = entries;
   return (
-    <OrderInquiryDocumentLink kind={kind} document={link.document} poId={link.po_id} />
+    <span className="flex min-w-0 items-center gap-1">
+      <DocumentCell row={first.row} kind={kind} document={first.document} />
+      {rest.length > 0 ? (
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-5 shrink-0 rounded-full px-1.5 text-xs text-muted-foreground"
+              aria-label={`${rest.length} more ${kind.toUpperCase()}`}
+            >
+              +{rest.length}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-auto max-w-xs space-y-1 p-2">
+            {entries.map((entry) => (
+              <div key={entry.document}>
+                <DocumentCell row={entry.row} kind={kind} document={entry.document} />
+              </div>
+            ))}
+          </PopoverContent>
+        </Popover>
+      ) : null}
+    </span>
+  );
+}
+
+function DocumentCell({
+  row,
+  kind,
+  document,
+}: {
+  row: OrderInquiryWorklistRow;
+  kind: 'po' | 'spo';
+  document?: string;
+}) {
+  const entry = document
+    ? (documentsOf(row, kind).find((candidate) => candidate.document === document) ?? null)
+    : firstLinkOf(row, kind);
+  if (!entry) return <span className="text-muted-foreground">-</span>;
+  // The REAL link behind this entry, for the PO/SPO popover's own id and (#1215 point 2,
+  // R15) the line it sits on - `documentsOf` states the document, not the link's
+  // identity.
+  const link = (row.links ?? []).find(
+    (candidate) => candidate.kind === kind && candidate.document === entry.document,
+  );
+  // R17 (owner rulings, 25 Sep 2026, "I also need here to be clickable"): a PO entry
+  // read off an SPO link's own `source_po_number` (`entry.via === 'spo'`) has no real
+  // po-kind link behind it, so `link` above is always undefined - `entry.poId` is the
+  // resolved identity instead (review round 1's should-fix 4 plain-text fix reversed
+  // by this ruling; the dead-lightbox bug is fixed by resolving the PO, not by
+  // removing the trigger).
+  const derived = kind === 'po' && entry.via === 'spo';
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      {derived ? (
+        <ViaSpoPoNumber poNumber={entry.document} purchaseOrderId={entry.poId} />
+      ) : (
+        <OrderInquiryDocumentLink
+          kind={kind}
+          document={entry.document}
+          poId={link?.po_id}
+          poLineId={link?.po_line_id}
+          spoLineId={link?.spo_allocation_id}
+        />
+      )}
+      {entry.via ? (
+        <WorklistPill testId={`lines-${kind}-via-${row.id}`}>
+          via {entry.via === 'po' ? 'PO' : 'SPO'}
+        </WorklistPill>
+      ) : null}
+    </span>
   );
 }
 
@@ -82,7 +205,6 @@ function ReserveActionsCell({
   onTickReserve,
   onEditReserve,
   onAmendReserve,
-  onHistoryClick,
   onUndoStaged,
 }: {
   row: OrderInquiryWorklistRow;
@@ -90,7 +212,6 @@ function ReserveActionsCell({
   onTickReserve?: (row: OrderInquiryWorklistRow) => void;
   onEditReserve?: (row: OrderInquiryWorklistRow) => void;
   onAmendReserve?: (row: OrderInquiryWorklistRow) => void;
-  onHistoryClick?: (row: OrderInquiryWorklistRow) => void;
   onUndoStaged?: (rowId: string) => void;
 }) {
   if (staged) {
@@ -145,8 +266,9 @@ function ReserveActionsCell({
       </div>
     );
   }
-  // 6e.4 (AC-RS-83b): a declined line (CS answered 0) gets the same Amend + History
-  // as a reserved one, so "0 -> up" stays reachable.
+  // 6e.4 (AC-RS-83b): a declined line (CS answered 0) gets the same Amend as a reserved
+  // one, so "0 -> up" stays reachable. Its reserve history is the Reserve tab of the
+  // line's one History dialog now (owner ruling 26 Sep, G3), not an icon of its own.
   if (row.reserve_state === 'reserved' || row.reserve_state === 'declined') {
     return (
       <div className="flex items-center gap-1">
@@ -162,23 +284,73 @@ function ReserveActionsCell({
         >
           <Pencil className="size-3.5" aria-hidden />
         </Button>
-        <Button
-          type="button"
-          mode="icon"
-          variant="ghost"
-          size="sm"
-          className="size-6"
-          aria-label="History"
-          title="History"
-          onClick={() => onHistoryClick?.(row)}
-        >
-          <HistoryIcon className="size-3.5" aria-hidden />
-        </Button>
       </div>
     );
   }
   return null;
 }
+
+/**
+ * W1: the worklist PO cell's own confirmed / proposed marks (`DraftMark` in
+ * `orderInquiryWorklistColumns.tsx`): `CircleCheck` emerald once purchasing confirmed,
+ * `CircleDashed` muted while part of the line still waits.
+ */
+function LineConfirmationMark({ line }: { line: OrderInquiryLine }) {
+  const confirmation = lineConfirmationOf(line);
+  if (confirmation.kind === 'none') return null;
+  if (confirmation.kind === 'confirmed') {
+    const when = confirmation.at ? ` on ${formatDateInMalaysia(confirmation.at)}` : '';
+    const label = `Confirmed by ${confirmation.by ?? 'Purchasing'}${when}`;
+    return (
+      <span
+        data-testid="line-confirmed-mark"
+        role="img"
+        title={label}
+        aria-label={label}
+        className="inline-flex"
+      >
+        <CircleCheck className="size-3.5 shrink-0 text-emerald-600" aria-hidden />
+      </span>
+    );
+  }
+  const label = `${confirmation.confirmed} of ${confirmation.total} rows confirmed`;
+  return (
+    <span
+      data-testid="line-partly-confirmed-mark"
+      role="img"
+      title={label}
+      aria-label={label}
+      className="inline-flex"
+    >
+      <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+    </span>
+  );
+}
+
+/** AC-ND-17: a footer total over every loaded line (the tab loads the whole set at once,
+ * so there is no server page this could disagree with). */
+function LineFooter({
+  rows,
+  field,
+}: {
+  rows: OrderInquiryLineRow[];
+  field: 'soQty' | 'requested' | 'taken' | 'remaining';
+}) {
+  const totals = lineFooterTotals(rows.map(lineOf));
+  return <span className="tabular-nums">{formatInquiryQty(String(totals[field]))}</span>;
+}
+
+const QUANTITY_COLUMNS: {
+  id: string;
+  title: string;
+  field: 'soQty' | 'requested' | 'taken' | 'remaining';
+}[] = [
+  // S2: `soQty` is the server's `so_line_qty`, the sales order grid's own Qty.
+  { id: 'so_qty', title: 'SO Qty', field: 'soQty' },
+  { id: 'requested', title: 'Requested', field: 'requested' },
+  { id: 'taken', title: 'Taken', field: 'taken' },
+  { id: 'remaining', title: 'Remaining', field: 'remaining' },
+];
 
 export function useOrderInquiryHeaderLinesColumns({
   canReserve,
@@ -186,8 +358,10 @@ export function useOrderInquiryHeaderLinesColumns({
   onTickReserve,
   onEditReserve,
   onAmendReserve,
-  onHistoryClick,
+  onLineHistoryClick,
   onUndoStaged,
+  attachmentsByLine,
+  canEditAttachments = false,
 }: {
   /** AC-RS-83/83c: gates the reserve icons inside the State cell - a viewer without
    * `projects.order_inquiries.reserve` sees the pills only. */
@@ -201,13 +375,25 @@ export function useOrderInquiryHeaderLinesColumns({
   onEditReserve?: (row: OrderInquiryWorklistRow) => void;
   /** AC-RS-86: the pencil on a reserved line - opens `ReserveLineForm` in amend mode. */
   onAmendReserve?: (row: OrderInquiryWorklistRow) => void;
-  /** AC-RS-89: opens `ReserveLineHistoryDialog` for this row. */
-  onHistoryClick?: (row: OrderInquiryWorklistRow) => void;
+  /** AC-ND-13/14 (owner ruling 26 Sep, G3): opens the line's one History dialog. */
+  onLineHistoryClick?: (line: OrderInquiryLine) => void;
   /** Drops a staged decision, restoring the two icons. */
   onUndoStaged?: (rowId: string) => void;
-} = {}): ColumnDef<OrderInquiryWorklistRow>[] {
-  return React.useMemo<ColumnDef<OrderInquiryWorklistRow>[]>(() => {
-    const columns: ColumnDef<OrderInquiryWorklistRow>[] = [
+  /**
+   * #1312 (AC-U6): every line's own clarification files, keyed by CORE sales-order
+   * line id - `OrderInquiryLinesTab` owns the ONE lookup call this reads over
+   * (`useSoLineAttachmentLookup`), the same shape the fulfilment board's own list
+   * view passes into its columns. This is a pure renderer over it, like every other
+   * prop here - no hook call of its own, since a cell function is invoked directly
+   * by this file's own unit test (`orderInquiryHeaderLinesColumns.test.tsx`), outside
+   * a real React render pass, where a hook call would break the Rules of Hooks.
+   */
+  attachmentsByLine?: SoLineAttachmentsByLine;
+  /** #1312 (Q6): `projects.projects.edit` - gates the lightbox's own upload/remove. */
+  canEditAttachments?: boolean;
+} = {}): ColumnDef<OrderInquiryLineRow>[] {
+  return React.useMemo<ColumnDef<OrderInquiryLineRow>[]>(() => {
+    const columns: ColumnDef<OrderInquiryLineRow>[] = [
       // `PLAN-oi-request-cs-reserve.md` 3.9 (AC-RS-40): the board's own stock grid, a
       // chevron away - purchasing used to open the fulfilment board just to check BRW.
       {
@@ -243,7 +429,7 @@ export function useOrderInquiryHeaderLinesColumns({
         enableHiding: false,
         meta: {
           headerTitle: 'Expand',
-          expandedContent: (line: OrderInquiryWorklistRow) => (
+          expandedContent: (line: OrderInquiryLineRow) => (
             <div className="px-3 py-2">
               {line.product_id ? (
                 <OrderInquiryStockGrid
@@ -259,9 +445,26 @@ export function useOrderInquiryHeaderLinesColumns({
           ),
         },
       },
-      buildSelectColumn<OrderInquiryWorklistRow>({
+      buildSelectColumn<OrderInquiryLineRow>({
         rowLabel: (row) => `Select ${row.original.item_code ?? 'line'}`,
       }),
+      // AC-ND-3 (owner ruling 26 Sep, G4): the sales order's own line No., replacing the
+      // SO line column - the header already names the sales order.
+      {
+        id: 'line_no',
+        accessorFn: (row) => lineOf(row).lineNo ?? Number.POSITIVE_INFINITY,
+        header: ({ column }) => <DataGridColumnHeader title="No." column={column} />,
+        size: 72,
+        meta: { headerTitle: 'No.', skeleton: <Skeleton className="h-4 w-6" /> },
+        cell: ({ row }) => {
+          const lineNo = lineOf(row.original).lineNo;
+          return lineNo == null ? (
+            <span className="text-muted-foreground">-</span>
+          ) : (
+            <span className="tabular-nums">{lineNo}</span>
+          );
+        },
+      },
       {
         accessorKey: 'item_code',
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
@@ -271,31 +474,46 @@ export function useOrderInquiryHeaderLinesColumns({
         // `product_name` line the worklist's own cell prints for a real row.
         cell: ({ row }) => <ItemCodeCell row={row.original} codeOnly />,
       },
-      // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1): the exact sales-order line this
-      // row belongs to, linking straight there - the same shared column the worklist uses.
-      orderInquirySoLineColumn(),
+      // W1 (PR #1266, owner hand test 26 Sep): the line's own confirmed mark, in the gap
+      // the owner boxed between Product and SO Qty. Not sortable: no other icon column on
+      // this grid sorts.
       {
-        accessorKey: 'qty',
-        header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-        size: 160,
-        meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
-        cell: ({ row }) => <QtyCell row={row.original} />,
-        // AC-DP-03/AC-B3-5: a footer total under Qty, over the rows actually loaded (this
-        // tab's whole set - Phase 1 and Phase 2 both hand this table every non-cancelled
-        // line at once, so there is no server page this total could disagree with) - buy
-        // rows only, the same gate Taken/Remaining's own footers read, so the three
-        // numbers beside each other can never disagree about which rows they total.
-        footer: ({ table }) => {
-          const totals = inquiryFooterTotals(
-            table.getPrePaginationRowModel().rows.map((r) => r.original),
-          );
-          return <span className="tabular-nums">{formatInquiryQty(String(totals.qty))}</span>;
-        },
+        id: 'confirmation',
+        header: () => <span className="sr-only">Confirmed</span>,
+        size: 44,
+        minSize: 44,
+        enableSorting: false,
+        enableResizing: false,
+        // Review N4: a blank header with a lone drag grip reads as stray chrome.
+        meta: { headerTitle: 'Confirmed', draggable: false },
+        cell: ({ row }) => <LineConfirmationMark line={lineOf(row.original)} />,
       },
-      // S3 (AC-B3-1..5): Taken / Remaining, right after Qty - the same shared columns the
-      // worklist uses (`orderInquiryWorklistColumns.tsx`), so the two screens read one row
-      // the same way.
-      ...orderInquiryTakenRemainingColumns(),
+      // AC-ND-3..5b (owner ruling 26 Sep, G4): SO Qty, Requested, Taken, Remaining - the
+      // line's own sums (`orderInquiryLineFold.ts`), no Was / now annotation (G1).
+      ...QUANTITY_COLUMNS.map(
+        ({ id, title, field }): ColumnDef<OrderInquiryLineRow> => ({
+          id,
+          accessorFn: (row) => lineOf(row)[field],
+          header: ({ column }) => <DataGridColumnHeader title={title} column={column} />,
+          size: id === 'requested' || id === 'remaining' ? 120 : 100,
+          meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-10" /> },
+          cell: ({ row }) => {
+            // A row that names no sales order line has no SO Qty (L17).
+            const value = lineOf(row.original)[field];
+            return (
+              <span className="tabular-nums">
+                {value == null ? '-' : formatInquiryQty(String(value))}
+              </span>
+            );
+          },
+          footer: ({ table }) => (
+            <LineFooter
+              rows={table.getPrePaginationRowModel().rows.map((r) => r.original)}
+              field={field}
+            />
+          ),
+        }),
+      ),
       {
         accessorKey: 'delivery_date',
         header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
@@ -312,20 +530,23 @@ export function useOrderInquiryHeaderLinesColumns({
       },
       {
         id: 'po_number',
-        accessorFn: (row) => firstLinkOf(row, 'po')?.document ?? '',
+        accessorFn: (row) => lineDocumentsOf(lineOf(row), 'po')[0]?.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
-        size: 170,
+        size: 200,
         meta: { headerTitle: 'PO' },
-        cell: ({ row }) => <DocumentCell row={row.original} kind="po" />,
+        cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="po" />,
       },
       {
         id: 'spo_number',
-        accessorFn: (row) => firstLinkOf(row, 'spo')?.document ?? '',
+        accessorFn: (row) => lineDocumentsOf(lineOf(row), 'spo')[0]?.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
-        size: 170,
+        size: 200,
         meta: { headerTitle: 'SPO' },
-        cell: ({ row }) => <DocumentCell row={row.original} kind="spo" />,
+        cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="spo" />,
       },
+      // AC-LT-07: the SAME Suggested column the worklist carries, right after SPO. It
+      // reads the primary row's suggestions (S2 wires a line-level read).
+      orderInquirySuggestedColumn() as ColumnDef<OrderInquiryLineRow>,
       {
         accessorKey: 'location',
         header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
@@ -338,45 +559,123 @@ export function useOrderInquiryHeaderLinesColumns({
         header: ({ column }) => <DataGridColumnHeader title="Instruction" column={column} />,
         size: 200,
         meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
-        cell: ({ row }) => <InstructionCell row={row.original} />,
+        // G5: the line's most urgent instruction (CANCEL_BALANCE > CHANGE_SO > DELAY >
+        // ADVANCE > the primary row's own verb). The pill only, never the shared cell's
+        // note (i): G1 moves the note ("Replaces 2 used ...") to History's Why (review
+        // B2). A cancelled line has nothing to instruct, so it reads "-" (review N1).
+        cell: ({ row }) => {
+          const line = lineOf(row.original);
+          if (line.lineCancelled) return <span className="text-muted-foreground">-</span>;
+          return <OrderInquiryVerbPill verb={line.instructionRow.verb} />;
+        },
+      },
+      {
+        // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the same Raised column the worklist
+        // carries - `RaisedCell` is shared so the same row reads the same way on both
+        // screens. Hidden by default on BOTH now (round 2 ruling); `accessorFn` is what
+        // the column picker keys "can this be listed" on
+        // (`data-grid-column-visibility.tsx`), so a bare `id` + `cell` made this column
+        // impossible to ever turn back on.
+        id: 'raise_event',
+        accessorFn: (row) => raisedKindLabel(row) ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Raised via" column={column} />,
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Raised via', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => <RaisedCell row={row.original} />,
       },
       // `PLAN-oi-request-cs-reserve.md` 6e.2 (AC-RS-83): the pill is plain text.
       {
-        accessorKey: 'state',
+        // PR #1266 review nit: sorts on the line's own State, what the cell shows, not
+        // the primary row's raw state (To confirm, Line cancelled and Nothing to buy
+        // sorted as raised / placed). Same id, so saved column preferences still apply.
+        id: 'state',
+        accessorFn: (row) => lineOf(row).state,
         header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
         // AC-RS-83c (owner, 24 Sep: "this pen can put right next to state?"): the
         // reserve icons sit in this cell, right of the pill - no separate column, which
         // saved column preferences appended after Location. Wide enough for the pill
-        // plus a staged chip and Undo. `minSize` too: a saved column width (190 from
-        // before) would otherwise keep clipping the icons for every user who has one.
-        size: canReserve ? 380 : 190,
-        minSize: canReserve ? 380 : undefined,
+        // plus a staged chip and Undo. No `minSize`: a user who drags it narrower than
+        // the icons is choosing that, and can drag it back out again (owner, 24 Sep).
+        size: canReserve ? 410 : 220,
         meta: { headerTitle: 'State' },
         cell: ({ row }) => {
-          const reserveState = row.original.reserve_state;
+          const line = lineOf(row.original);
+          const primary = line.primary;
+          const reserveState = line.liveRows.length > 0 ? primary.reserve_state : null;
           const pill =
             reserveState === 'requested' ||
             reserveState === 'reserved' ||
             reserveState === 'declined' ? (
               <ReservePill
                 reserveState={reserveState}
-                reservedQty={row.original.reserved_qty}
-                requestedQty={row.original.requested_qty}
+                reservedQty={primary.reserved_qty}
+                requestedQty={primary.requested_qty}
               />
             ) : (
-              <OrderInquiryStatePill state={row.original.state} />
+              <OrderInquiryLineStatePill state={line.state} />
             );
-          if (!canReserve) return pill;
+          // AC-ND-13 (owner ruling 26 Sep, G3): ONE History icon on every line - rows,
+          // decisions and reserve history behind one dialog - never gated on a core line
+          // or on `canReserve`.
+          const history = (
+            <Button
+              type="button"
+              mode="icon"
+              variant="ghost"
+              size="sm"
+              className="size-6 shrink-0"
+              aria-label="History"
+              title="History"
+              onClick={(event) => {
+                event.stopPropagation();
+                onLineHistoryClick?.(line);
+              }}
+            >
+              <HistoryIcon className="size-3.5" aria-hidden />
+            </Button>
+          );
+          // #1312 (AC-U6): the same paperclip the fulfilment board carries, on every
+          // line that names a core sales-order line - a row raised before AutoCount
+          // reconciled it (`core_line_id` null) has nowhere to file a clarification
+          // against, same rule the board's own list view follows.
+          const coreLineId = row.original.core_line_id;
+          const attachments = coreLineId ? (attachmentsByLine?.[coreLineId] ?? []) : null;
+
+          if (!canReserve || line.liveRows.length === 0) {
+            return (
+              <div className="flex min-w-0 items-center gap-1">
+                <span className="shrink-0">{pill}</span>
+                {history}
+                {coreLineId ? (
+                  <SoLineAttachmentsButton
+                    lineId={coreLineId}
+                    label={`${row.original.so_number ?? ''} L${line.lineNo ?? ''} ${row.original.item_code ?? ''}`}
+                    attachments={attachments ?? []}
+                    canEdit={canEditAttachments}
+                  />
+                ) : null}
+              </div>
+            );
+          }
           return (
             <div className="flex min-w-0 items-center gap-1">
               <span className="shrink-0">{pill}</span>
+              {history}
+              {coreLineId ? (
+                <SoLineAttachmentsButton
+                  lineId={coreLineId}
+                  label={`${row.original.so_number ?? ''} L${line.lineNo ?? ''} ${row.original.item_code ?? ''}`}
+                  attachments={attachments ?? []}
+                  canEdit={canEditAttachments}
+                />
+              ) : null}
               <ReserveActionsCell
-                row={row.original}
-                staged={stagedByRowId?.[row.original.id]}
+                row={primary}
+                staged={stagedByRowId?.[primary.id]}
                 onTickReserve={onTickReserve}
                 onEditReserve={onEditReserve}
                 onAmendReserve={onAmendReserve}
-                onHistoryClick={onHistoryClick}
                 onUndoStaged={onUndoStaged}
               />
             </div>
@@ -392,7 +691,9 @@ export function useOrderInquiryHeaderLinesColumns({
     onTickReserve,
     onEditReserve,
     onAmendReserve,
-    onHistoryClick,
+    onLineHistoryClick,
     onUndoStaged,
+    attachmentsByLine,
+    canEditAttachments,
   ]);
 }

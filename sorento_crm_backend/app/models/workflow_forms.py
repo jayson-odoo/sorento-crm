@@ -131,6 +131,7 @@ class WorkflowSubmissionLine(Base):
     """Repeating line rows (e.g. line items) for a submission."""
 
     __tablename__ = "workflow_submission_lines"
+    __audit_parent__ = "submission_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     submission_id = Column(

@@ -419,6 +419,7 @@ export function annotationsByCell(
 
   for (const order of batch.orders ?? []) {
     for (const row of order.rows ?? []) {
+      if (isRetiredChangeRow(row)) continue;
       const proposal = (row.proposal ?? null) as BoardContribution | null;
       // The ROW's own line first, exactly as `annotationOf` and `proposalsByLine` read it.
       // A row the engine could compose nothing for carries no proposal, so reading the
@@ -456,6 +457,7 @@ export function annotationsByLine(
   const out = new Map<string, BoardChangeAnnotation[]>();
   for (const order of batch?.orders ?? []) {
     for (const row of order.rows ?? []) {
+      if (isRetiredChangeRow(row)) continue;
       const proposal = (row.proposal ?? null) as BoardContribution | null;
       const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;
       // NO PLANNING LINE, STILL A CHANGE (R3). An order nobody has adopted has no mirror
@@ -478,6 +480,28 @@ export function lineKeyOf(soNumber: string, lineNo: number | null | undefined): 
 }
 
 /**
+ * A row another, later row in the same batch has already replaced (S1/S4,
+ * `PLAN-esb-change-row-refresh.md`, issue #1240) - never worth drawing on the board a second
+ * time, whatever the batch itself has been applied or not. `get_batch` returns every row a
+ * batch ever carried, superseded and applied included, the append-only record, by design, so
+ * the batch lightbox and history still show them; only the LIVE overlay (this file) drops one.
+ *
+ * ONE predicate, used everywhere a row feeds the board overlay - `proposalsByLine` (and
+ * through it `uncoverChangedLines`, `changedLineIds`, `preMarkedKeys`), `annotationsByLine`
+ * and `annotationsByCell` (review round 1, B1 ruling: the S2 list-vs-grid split this used to
+ * carry was a defect, not a feature). An APPLIED row is deliberately NOT retired here: a
+ * row's own `applied_state` must never gate the overlay, pre-mark or Confirm on its own - only
+ * the BATCH's own `applied_at` does, which none of these functions receive (they take
+ * `Pick<PlanningChangeBatch, 'orders'>`) - pinned by `FulfilmentBoardPanel.change.test.tsx`'s
+ * "does not block Confirm ... even if a row says it was" (R3, review round 3) and "AC-F7: the
+ * pill still reads Confirmed ..." (the latter via `preMarkedKeys`'s own separate `covered`
+ * guard below, which stays).
+ */
+function isRetiredChangeRow(row: PlanningChangeRow): boolean {
+  return row.applied_state === 'superseded';
+}
+
+/**
  * A line the BOOK has moved is no longer covered by the decision that was taken for it.
  *
  * The board's own rule is that a covered line offers Amend and nothing else, and that its
@@ -494,6 +518,41 @@ export function lineKeyOf(soNumber: string, lineNo: number | null | undefined): 
  * the previews and Approve all read the top-level list while the grid reads the cells - a
  * change on one copy only is invisible to half the screen.
  */
+
+/**
+ * Composition-only fields a batch's own proposal may override on a contribution (S3,
+ * `PLAN-esb-change-row-refresh.md`, AC-9; review round 1 widened it to the whole ladder-walk
+ * shape). Everything else about the line - `required_date`, `qty`, `qty_outstanding`,
+ * `is_past`, `order_inquiry`, whatever else the board states about it - is the LIVE fact and
+ * stays the live contribution's own value: `proposal_json` is a SNAPSHOT frozen the moment the
+ * batch was built, and a re-push that moved the line again (SO419122) left the board printing
+ * that frozen snapshot's copies of fields the live row had long since moved past.
+ *
+ * `trail`, `rank_factors`, `rank_score`, `contested`, `available_to_this_line`,
+ * `so_qty_ahead` and `lines_ahead` describe HOW the proposal's own composition was arrived at
+ * - the ladder walked at the batch's new date, not a fact about the line itself - so they
+ * belong here beside `sources`, not left to leak the live board's own (stale, pre-change) walk.
+ */
+function compositionOf(proposal: BoardContribution): Partial<BoardContribution> {
+  return {
+    sources: proposal.sources,
+    qty_proposed_reserve: proposal.qty_proposed_reserve,
+    qty_proposed_incoming: proposal.qty_proposed_incoming,
+    qty_proposed_buy: proposal.qty_proposed_buy,
+    proposed: proposal.proposed,
+    options: proposal.options,
+    locations: proposal.locations,
+    buy_origin: proposal.buy_origin,
+    trail: proposal.trail,
+    rank_factors: proposal.rank_factors,
+    rank_score: proposal.rank_score,
+    contested: proposal.contested,
+    available_to_this_line: proposal.available_to_this_line,
+    so_qty_ahead: proposal.so_qty_ahead,
+    lines_ahead: proposal.lines_ahead,
+  };
+}
+
 export function uncoverChangedLines<
   T extends { cells: BoardCell[]; contributions: BoardContribution[] },
 >(board: T, batch: Pick<PlanningChangeBatch, 'orders'> | null | undefined): T {
@@ -509,28 +568,15 @@ export function uncoverChangedLines<
     // line the book has opened for 25, which the server refuses (measured live on
     // SO381895, 26 August 2026). The batch walked the ladder at the new date when it was
     // built (AC-R07, "the row and the board show one proposal, not two"), and this is
-    // that walk. Identity stays the LIVE board's: the key is what the draft is keyed by.
+    // that walk. Built from the LIVE contribution first, not the proposal - S3
+    // (`PLAN-esb-change-row-refresh.md`, AC-9): only the composition below comes from the
+    // proposal, everything else (identity, `required_date`, `qty`, `qty_outstanding`,
+    // `is_past`, `order_inquiry` - AC-RL-06 - and anything else the board states about the
+    // line) is the live board's own fact, never the batch's frozen snapshot of it.
     const proposal = entry.proposal;
-    const merged = proposal ? { ...contribution, ...proposal } : contribution;
     return {
-      ...merged,
-      key: contribution.key,
-      sales_order_id: contribution.sales_order_id,
-      project_line_id: contribution.project_line_id,
-      so_number: contribution.so_number,
-      line_no: contribution.line_no,
-      item_code: contribution.item_code,
-      // AND THE LIVE INSTRUCTION, for the same reason identity is kept (AC-RL-06, measured
-      // on SO314594 line 5, 17 September 2026). `proposal` is a SNAPSHOT of the whole
-      // contribution as it stood when the batch was raised, so it carries that moment's
-      // `order_inquiry` too - and a batch raised before the documents behind an instruction
-      // were read at all (or before the SPO landed) then overwrote the live row's own
-      // `documents` / `redirected` with a stale copy, and the `received` word beside the
-      // product vanished on every line of an order with a pending change. The proposal is
-      // about the COMPOSITION - quantity, sources, the date it was walked at. What
-      // purchasing was told and what has landed against it is read fresh off
-      // `order_inquiry_rows` on every board build, so the live row is the current fact.
-      order_inquiry: contribution.order_inquiry,
+      ...contribution,
+      ...(proposal ? compositionOf(proposal) : {}),
       covered: false,
       decision: null,
     };
@@ -545,13 +591,15 @@ export function uncoverChangedLines<
   };
 }
 
-/** The planning lines a batch names, and the fresh proposal it holds for each. */
+/** The planning lines a batch names, and the fresh proposal it holds for each. A superseded
+ * row is skipped (S4/B1) - another row in the same batch already replaced it. */
 function proposalsByLine(
   batch: Pick<PlanningChangeBatch, 'orders'> | null | undefined,
 ): Map<string, { proposal: BoardContribution | null }> {
   const out = new Map<string, { proposal: BoardContribution | null }>();
   for (const order of batch?.orders ?? []) {
     for (const row of order.rows ?? []) {
+      if (isRetiredChangeRow(row)) continue;
       const proposal = (row.proposal ?? null) as BoardContribution | null;
       const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;
       if (lineId) out.set(lineId, { proposal });
@@ -572,14 +620,29 @@ function changedLineIds(
  *
  * A row whose suggestion leaves the line's own supply alone is approved as it stands; a row
  * carrying a fresh proposal is approved against that proposal, which is exactly what the
- * board's own Approve does to an undecided cell. Confirm (AC-C7) is this pre-marked path.
- * Nothing is written here: this seeds the board's DRAFT, and Confirm is still the only write.
+ * board's own Approve does to an undecided cell. Nothing is written here: this seeds the
+ * board's DRAFT, and Confirm is still the only write.
+ *
+ * Confirm does NOT count or post a bare pre-mark on its own any more (S5, owner ruling 25 Sep
+ * 2026, `PLAN-esb-change-row-refresh.md`, issue #1245 - supersedes the AC-C7 line of
+ * `PLAN-board-change-proposed-pill`, 18 Sep 2026): SO419122 read "Confirm (119)" with nothing
+ * ticked and one press handed 49 rows to purchasing. The pill, the icons and this seeding
+ * still fire unchanged - only the count, and what Confirm actually sends, changed, in
+ * `FulfilmentBoardPanel.tsx`'s `draftWithoutPreMarks`.
  */
 export function preMarkedKeys(
   batch: Pick<PlanningChangeBatch, 'orders'> | null | undefined,
   contributions: BoardContribution[],
 ): string[] {
   if (!batch) return [];
+  // `changed` drops a SUPERSEDED row's line only (S4/B1, `isRetiredChangeRow`) - an applied
+  // row's own `applied_state` is not a signal this function acts on (see that predicate's own
+  // doc). The `covered` check below is a SEPARATE guard this function still needs: it takes
+  // `Pick<PlanningChangeBatch, 'orders'>`, never the
+  // batch's own `applied_at`, so a batch that resolves APPLIED after the board's contributions
+  // are already on screen (AC-F7, `FulfilmentBoardPanel.change.test.tsx`) is indistinguishable
+  // here from one still pending by row shape alone - `contribution.covered` (already current,
+  // read straight off the live board) is what actually tells the two apart.
   const changed = changedLineIds(batch);
   return contributions
     .filter(

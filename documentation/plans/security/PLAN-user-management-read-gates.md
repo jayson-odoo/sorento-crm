@@ -104,8 +104,9 @@ projection that keeps the procurement consumers working once row 22 is gated.
 
 No new slug and no migration: `user_management.logs.view` is already in
 `permission_registry.py` and is already the `permission:` on the `/user-management/logs` menu entry,
-so the dependency simply makes the menu's claim true. `POST /system-logs/` in the same file is left
-alone - writes are issue #174.
+so the dependency simply makes the menu's claim true. `POST /system-logs/` in the same file was left
+alone here (writes were issue #174); it has since been removed outright (#1281), because it trusted
+a body-supplied `user_id` and `ip_address` behind no permission and nothing called it.
 
 Two tabs front these two routes and both are now hidden for a role without `logs.view`: the user
 detail page's Activity Logs tab (row 26) and the My account Logs tab (row 25, via

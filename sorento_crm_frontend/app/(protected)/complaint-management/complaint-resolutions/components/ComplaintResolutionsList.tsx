@@ -204,7 +204,6 @@ export default function ComplaintResolutionsList() {
           router.push(`/complaint-management/complaint-resolutions/${row.id}`)
         }
         tableLayout={{ width: 'fixed', columnsResizable: true }}
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">

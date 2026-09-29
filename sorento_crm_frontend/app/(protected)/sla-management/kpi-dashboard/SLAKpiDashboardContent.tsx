@@ -421,7 +421,7 @@ function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter
 
 // Body of the KPI dashboard WITHOUT the outer <Container>, so it can be embedded
 // both on its own route (/sla-management/kpi-dashboard) and on the home dashboard
-// (app/(protected)/page.tsx) under "My pending tasks".
+// (app/(protected)/(home)/page.tsx) under "My pending tasks".
 export function SLAKpiDashboardContent({
   defaultWindowDays,
   embedded = false,

@@ -7,8 +7,12 @@
  * it. Board view has no grid toolbar to host them, so it carries the same search box
  * and the same Filters button in one row instead.
  *
- * The view toggle and "Register project" deliberately stay in the page header: they
- * change what the whole screen IS, which is not a list-toolbar job.
+ * The view toggle and Start deliberately stay in the page header: they change what the
+ * whole screen IS, which is not a list-toolbar job.
+ *
+ * Start replaces the old standalone "Register project" button (S2, R21): one page-level
+ * button, top right, opening Register a project / Upload PO / Upload delivery schedule.
+ * Rows carry no Start of their own.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -30,10 +34,11 @@ const listProjects = vi.fn();
 const listParties = vi.fn();
 const listProjectTypes = vi.fn();
 const listingKeys: (string | null | undefined)[] = [];
+const push = vi.fn();
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/pipeline',
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push, replace: vi.fn() }),
   // The list restores its page, sort and filters from the query string Back hands
   // it (S3-01), so it reads the URL on every render.
   useSearchParams: () => new URLSearchParams(''),
@@ -141,6 +146,13 @@ function openFilters() {
   });
 }
 
+function openStart() {
+  fireEvent.pointerDown(screen.getByRole('button', { name: /^start/i }), {
+    button: 0,
+    ctrlKey: false,
+  });
+}
+
 function switchToGrid() {
   fireEvent.click(screen.getByRole('button', { name: /grid/i }));
 }
@@ -163,7 +175,7 @@ beforeEach(() => {
 });
 
 describe('PipelineClient', () => {
-  it('keeps the view toggle and Register project in the page header', async () => {
+  it('keeps the view toggle and Start in the page header', async () => {
     renderClient();
 
     // The page header's action group (S5-01): the hand-rolled <header> that used
@@ -173,11 +185,27 @@ describe('PipelineClient', () => {
     ) as HTMLElement;
     expect(within(header).getByRole('button', { name: /board/i })).toBeInTheDocument();
     expect(within(header).getByRole('button', { name: /grid/i })).toBeInTheDocument();
+    expect(within(header).getByRole('button', { name: /^start/i })).toBeInTheDocument();
+    // The old standalone button is gone, folded into the Start menu (R21).
     expect(
-      within(header).getByRole('button', { name: /register project/i }),
-    ).toBeInTheDocument();
+      within(header).queryByRole('button', { name: /^register project$/i }),
+    ).toBeNull();
 
     await waitFor(() => expect(listProjects).toHaveBeenCalled());
+  });
+
+  // #1335: no subtitle under the title, and the empty board offers no second
+  // CTA beside the header's Start menu.
+  it('carries no subtitle, and the empty board repeats no header CTA', async () => {
+    renderClient();
+
+    const empty = (await screen.findByText('No projects registered yet'))
+      .parentElement as HTMLElement;
+    expect(within(empty).queryByRole('button')).toBeNull();
+    expect(within(empty).queryByRole('link')).toBeNull();
+    expect(
+      screen.queryByText(/so nobody works a development twice/i),
+    ).not.toBeInTheDocument();
   });
 
   it('carries no separate filter card above the grid', async () => {
@@ -278,5 +306,72 @@ describe('PipelineClient', () => {
       await screen.findByPlaceholderText(/Search title or code/i),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /filters/i })).toBeInTheDocument();
+  });
+});
+
+/**
+ * S2 - one Start button, top right, replacing the per-project entry points (R21). The
+ * menu order is Register a project, then Upload PO, then Upload delivery schedule.
+ */
+describe('PipelineClient, Start menu (S2)', () => {
+  it('opens a menu with the three items in order (S2-2)', async () => {
+    renderClient();
+    openStart();
+
+    const items = await screen.findAllByRole('menuitem');
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Register a project',
+      'Upload PO',
+      'Upload delivery schedule',
+    ]);
+  });
+
+  it('Register a project navigates to the create page, opening no dialog (AC-PF003)', async () => {
+    renderClient();
+    openStart();
+
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Register a project' }));
+
+    expect(push).toHaveBeenCalledWith('/project-sales/new');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('Upload PO opens the PO upload dialog with a required project field first (S2-4)', async () => {
+    renderClient();
+    openStart();
+
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Upload PO' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Upload a customer PO')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Search a project')).toBeInTheDocument();
+    // Nothing chosen yet, so the upload is refused.
+    expect(within(dialog).getByRole('button', { name: /^Upload$/ })).toBeDisabled();
+  });
+
+  it('Upload delivery schedule opens the schedule upload dialog with the project field first (S2-5)', async () => {
+    renderClient();
+    openStart();
+
+    fireEvent.click(
+      await screen.findByRole('menuitem', { name: 'Upload delivery schedule' }),
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Upload a delivery schedule')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Search a project')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /^Upload$/ })).toBeDisabled();
+  });
+
+  it('shows no Start action on a project row', async () => {
+    listProjects.mockResolvedValue({
+      data: [project({ title: 'Setia Alam Phase 3B' })],
+      pagination: { total: 1, page: 1, limit: 50 },
+    });
+    renderClient();
+    switchToGrid();
+
+    const row = (await screen.findByText('Setia Alam Phase 3B')).closest('tr') as HTMLElement;
+    expect(within(row).queryByRole('button', { name: /^start/i })).toBeNull();
   });
 });

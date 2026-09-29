@@ -1350,6 +1350,30 @@ class DocumentIngestService(MasterRefResolver):
             )
         return values
 
+    def _sync_mirror_line(self, core_line: SalesOrderLine, values: dict[str, Any]) -> None:
+        """S2, `PLAN-esb-change-row-refresh.md`: the mirror `projects.sales_order_lines`
+        row (`ProjectSalesOrderLine`) follows the core line's `required_date`/
+        `qty_ordered` on every re-push, not just at creation - a later ESB push that moves
+        or resizes an already-mirrored line otherwise leaves the mirror the board actually
+        reads drifting behind the book (SO419122). A line with no mirror yet (the order
+        was never adopted) is left alone, no error (AC-8).
+        """
+        if "required_date" not in values and "qty_ordered" not in values:
+            return
+        from app.models.project_so import ProjectSalesOrderLine
+
+        mirror = (
+            self.db.query(ProjectSalesOrderLine)
+            .filter(ProjectSalesOrderLine.core_sales_order_line_id == str(core_line.id))
+            .one_or_none()
+        )
+        if mirror is None:
+            return
+        if "required_date" in values:
+            mirror.delivery_date = core_line.required_date
+        if "qty_ordered" in values:
+            mirror.qty = core_line.qty_ordered
+
     def _sync_lines(
         self,
         spec: DocumentSpec,
@@ -1483,6 +1507,8 @@ class DocumentIngestService(MasterRefResolver):
                 for column, value in values.items():
                     setattr(row, column, value)
                 counts["updated"] += 1
+                if spec.entity_type == "sales_orders":
+                    self._sync_mirror_line(row, values)
                 if (
                     spec.entity_type == "sales_orders"
                     and prior_line_status != CANCELLED

@@ -341,7 +341,6 @@ const RoleList = () => {
         tableClassNames={{
           edgeCell: 'px-5',
         }}
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">

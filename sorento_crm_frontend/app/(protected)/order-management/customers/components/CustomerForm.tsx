@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -18,7 +18,9 @@ import {
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useCreateCustomer, useUpdateCustomer, useCustomer } from '../hooks/useCustomers';
+import { useCustomerSalesAgentOptions } from '../hooks/useCustomerSalesAgentOptions';
 import { CustomerSchema, type CustomerSchemaType } from '../forms/customer-schema';
 import type { CustomerFormData } from '../types/customer.types';
 import ListPager from '@/components/common/ListPager';
@@ -35,6 +37,30 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
   const { data: customer, isLoading: isLoadingCustomer } = useCustomer(customerId || null);
   const createMutation = useCreateCustomer();
   const updateMutation = useUpdateCustomer();
+  const agentOptions = useCustomerSalesAgentOptions();
+
+  // The select only offers ACTIVE agents (the backend rejects a fresh pick of an inactive
+  // one), but a customer already carrying one - assigned before it was deactivated - must
+  // still show it, or the trigger falls back to the placeholder and the next save silently
+  // clears the assignment (review PR #1177, should-fix item 2). Shown disabled: visible,
+  // not re-selectable once cleared.
+  //
+  // Gated on `agentOptions.isSuccess`: while the options query is still loading, or after
+  // it errors (or 403s - PUT is ungated today, review round 2 security item 2), `options`
+  // reads as an empty array too, which is indistinguishable from "this id really is
+  // inactive" - and would label an ACTIVE agent "(inactive)" for the whole time the list
+  // has not loaded (review round 2, new finding 1).
+  const agentSelectOptions = useMemo(() => {
+    const base = agentOptions.options;
+    const currentId = customer?.sales_agent_id;
+    if (!agentOptions.isSuccess || !currentId || base.some((o) => o.value === currentId)) {
+      return base;
+    }
+    const label = customer?.sales_agent_name
+      ? `${customer.sales_agent_code} - ${customer.sales_agent_name} (inactive)`
+      : `${customer?.sales_agent_code ?? ''} (inactive)`;
+    return [...base, { value: currentId, label, disabled: true }];
+  }, [agentOptions.options, agentOptions.isSuccess, customer]);
 
   const form = useForm<CustomerSchemaType>({
     resolver: zodResolver(CustomerSchema),
@@ -44,6 +70,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
       email: '',
       phone_number: '',
       is_active: true,
+      sales_agent_id: null,
     },
     mode: 'onTouched',
   });
@@ -60,6 +87,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
         email: customer.email || '',
         phone_number: customer.phone_number || '',
         is_active: customer.is_active,
+        sales_agent_id: customer.sales_agent_id || null,
       });
       setFormInitialized(true);
     }
@@ -79,6 +107,9 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
         email: data.email || undefined,
         phone_number: data.phone_number || undefined,
         is_active: data.is_active,
+        // Already null or a real id - `field.onChange` normalizes '' to null on every
+        // change, so there is nothing left here for `|| null` to catch.
+        sales_agent_id: data.sales_agent_id ?? null,
       };
 
       if (isEditMode && customerId) {
@@ -197,6 +228,26 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
                   )}
                 />
               </div>
+
+              <FormField
+                control={form.control}
+                name="sales_agent_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Sales Agent</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        value={field.value || ''}
+                        onChange={(v) => field.onChange(v || null)}
+                        options={agentSelectOptions}
+                        placeholder="No sales agent"
+                        clearable
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
 
             {/* Status */}

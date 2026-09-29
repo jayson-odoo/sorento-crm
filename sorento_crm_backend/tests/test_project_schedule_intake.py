@@ -511,6 +511,71 @@ def test_run_extraction_commits_progress_once_per_page(scenario, monkeypatch):
     assert commit_count["n"] >= 5
 
 
+def test_the_polled_detail_reports_each_page_as_it_is_read(scenario, monkeypatch):
+    """W3 (PR #1265 round 3): the schedule screen's progress bar is the pages read of the
+    total, and it only moves if the detail the screen polls says so WHILE the version is
+    still RUNNING. Read through ``get_version_detail`` (the route's own read) after every
+    commit, so a progress key the poller never sees fails here even if the commits happen.
+    """
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    version = scenario["version"]
+    version.extracted_json = {"page_count": 3}
+    db.flush()
+
+    monkeypatch.setattr(
+        ProjectScheduleService, "_document_bytes",
+        lambda self, version: (b"ZZT", "application/pdf"),
+    )
+    monkeypatch.setattr(project_schedule_service, "parse_text_matrix", lambda *a, **k: {})
+    monkeypatch.setattr(
+        document_extraction, "_render_pages_rich",
+        lambda *a, **k: [RenderedPage(image_b64="i", image_mime="image/jpeg") for _ in range(3)],
+    )
+
+    class _StubProvider:
+        name = "stub"
+
+        def chat(self, messages, **kwargs):
+            return ChatResult(content="{}", prompt_tokens=1, completion_tokens=1, total_tokens=2)
+
+    monkeypatch.setattr(document_extraction, "get_provider", lambda *a, **k: _StubProvider())
+    monkeypatch.setattr(app_settings, "document_ai_provider", "gemini", raising=False)
+    monkeypatch.setattr(app_settings, "gemini_api_key", "ZZT-key", raising=False)
+    monkeypatch.setattr(app_settings, "document_ai_page_concurrency", 1, raising=False)
+
+    polled: list[tuple[str, int, int]] = []
+    original_commit = db.commit
+
+    polling = {"now": False}
+
+    def polling_commit(*args, **kwargs):
+        result = original_commit(*args, **kwargs)
+        if version.extraction_state == "running" and not polling["now"]:
+            polling["now"] = True
+            try:
+                detail = service.get_version_detail(version.id)
+            finally:
+                polling["now"] = False
+            polled.append(
+                (detail["extraction_state"], detail["pages_extracted"], detail["page_count"])
+            )
+        return result
+
+    db.commit = polling_commit
+
+    result = service.run_extraction(version.id)
+    db.commit = original_commit
+
+    assert result["status"] in ("done", "partial")
+    assert polled == [
+        ("running", 0, 3),
+        ("running", 1, 3),
+        ("running", 2, 3),
+        ("running", 3, 3),
+    ]
+
+
 def test_a_retry_after_a_failed_read_does_not_pin_progress_to_the_old_page_count(scenario, monkeypatch):
     """Same defect as the PO reader's sibling test: a retry runs `run_extraction` again
     on the SAME version row, and a failed attempt can leave stale entries in
@@ -624,6 +689,112 @@ def test_a_dismissal_survives_the_read_path_recompute(scenario):
     assert column["reconciled"] is True
     # Still a genuine disagreement underneath, still reported.
     assert "own total" in (column["reason"] or "")
+
+
+def test_document_url_is_none_when_the_schedule_file_cannot_be_shown(scenario, monkeypatch):
+    """S2 (review of #1265, R13): the Documents tab shows "This PDF is not available yet" only
+    on a falsy document_url. An attachment ROW can outlive its OBJECT, and a URL signed for
+    a missing object (or the raw path handed back when signing fails) lands in an iframe as
+    the storage error page. Same gate as the PO screen (#1237 B1): the object must exist and
+    the URL must actually be signed."""
+    from app.models.resources import Attachment
+    from app.services import storage_router
+
+    db = scenario["db"]
+    version = scenario["version"]
+    attachment = Attachment(
+        original_filename="schedule.pdf",
+        stored_filename="schedule.pdf",
+        file_path=f"project-schedule/{version.id}/schedule.pdf",
+        entity_type="delivery_schedule_version",
+        entity_id=version.id,
+        storage_provider="s3",
+    )
+    db.add(attachment)
+    db.flush()
+    version.attachment_id = attachment.id
+    db.flush()
+
+    class _FakeBackend:
+        def __init__(self, exists: bool, signs: bool = True):
+            self._exists = exists
+            self._signs = signs
+
+        def file_exists(self, key):
+            return self._exists
+
+        def get_signed_url(self, key, expires_in=3600):
+            if not self._signs:
+                raise RuntimeError("no credentials")
+            return f"https://signed.example/{key}"
+
+    service = ProjectScheduleService(db)
+
+    storage_router.clear_signed_url_cache()
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _FakeBackend(False))
+    assert service.document_url(version) is None
+
+    storage_router.clear_signed_url_cache()
+    monkeypatch.setattr(
+        storage_router, "get_backend", lambda provider: _FakeBackend(True, signs=False)
+    )
+    assert service.document_url(version) is None
+
+    storage_router.clear_signed_url_cache()
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _FakeBackend(True))
+    assert service.document_url(version) == (
+        f"https://signed.example/project-schedule/{version.id}/schedule.pdf"
+    )
+
+
+def test_the_schedule_version_names_its_attachment_for_the_in_app_pdf_viewer(
+    scenario, monkeypatch
+):
+    """Merge of #1256: every in-app PDF draws through PdfViewer, which reads the bytes with a
+    script. The signed document_url is cross-origin with no CORS headers, so the viewer
+    reads them through /resource-management/attachments/{id}/download instead, the same way
+    the PO screen does. The id rides along only when there is a file to show."""
+    from app.models.resources import Attachment
+    from app.schemas.project_schedule import DeliveryScheduleVersionResponse
+    from app.services import storage_router
+
+    db = scenario["db"]
+    version = scenario["version"]
+    service = ProjectScheduleService(db)
+
+    body = service.get_version_detail(version.id)
+    assert body["attachment_id"] is None
+    assert body["document_url"] is None
+
+    attachment = Attachment(
+        original_filename="schedule.pdf",
+        stored_filename="schedule.pdf",
+        file_path=f"project-schedule/{version.id}/schedule.pdf",
+        entity_type="delivery_schedule_version",
+        entity_id=version.id,
+        storage_provider="s3",
+    )
+    db.add(attachment)
+    db.flush()
+    version.attachment_id = attachment.id
+    db.flush()
+
+    class _FakeBackend:
+        def file_exists(self, key):
+            return True
+
+        def get_signed_url(self, key, expires_in=3600):
+            return f"https://signed.example/{key}"
+
+    storage_router.clear_signed_url_cache()
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _FakeBackend())
+
+    body = service.get_version_detail(version.id)
+    assert body["document_url"]
+    assert body["attachment_id"] == str(attachment.id)
+    assert DeliveryScheduleVersionResponse.model_validate(body).attachment_id == str(
+        attachment.id
+    )
 
 
 def test_a_schedule_asking_for_more_than_the_po_ordered_still_blocks(scenario):

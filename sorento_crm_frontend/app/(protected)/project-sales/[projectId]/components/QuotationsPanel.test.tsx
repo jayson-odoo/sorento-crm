@@ -289,4 +289,17 @@ describe('QuotationsPanel', () => {
     expect(await screen.findByText('SRT/Q/2026/0141 (R2)')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Add a quotation/i })).toBeNull();
   });
+
+  it('AC-QF001: Add a quotation opens the form page and creates nothing', async () => {
+    listQuotationDocuments.mockResolvedValue([]);
+
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Add a quotation/i }));
+
+    // The owner: "I should be able to add product straight away and save when I am
+    // satisfied". The press is a navigation, never a write.
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/new');
+    expect(createQuotationDocument).not.toHaveBeenCalled();
+  });
 });

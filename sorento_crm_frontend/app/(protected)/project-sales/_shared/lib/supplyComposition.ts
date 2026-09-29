@@ -373,10 +373,6 @@ export function lineBlockers(
     }
   }
 
-  if (draft.is_discontinued && balance.buyMinor > 0 && !draft.buy_reason.trim()) {
-    blockers.push(`${subject}: buying a discontinued product needs a reason.`);
-  }
-
   return blockers;
 }
 

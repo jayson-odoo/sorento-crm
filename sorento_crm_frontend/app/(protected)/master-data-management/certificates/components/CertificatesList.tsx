@@ -375,7 +375,6 @@ export default function CertificatesList() {
       // as a permission slug, and a pathname is not one.
       listingKey="master_data.certificates.view"
       tableLayout={{ width: 'fixed', columnsVisibility: true, columnsResizable: true }}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

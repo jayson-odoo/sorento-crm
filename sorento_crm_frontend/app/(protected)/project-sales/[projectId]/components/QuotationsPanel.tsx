@@ -11,10 +11,7 @@ import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { quotationStanding } from '../../_shared/lib/quotationDecision';
 import { useQuotations } from '../../_shared/hooks/useProjects';
-import {
-  useQuotationDocumentMutations,
-  useQuotationDocuments,
-} from '../../_shared/hooks/useQuotationDocuments';
+import { useQuotationDocuments } from '../../_shared/hooks/useQuotationDocuments';
 import type { QuotationDocument } from '../../_shared/services/quotationDocumentService';
 import type { Project } from '../../_shared/types/project.types';
 import { formatMyrExact, sumMoney } from '../../_shared/lib/money';
@@ -35,7 +32,6 @@ export function QuotationsPanel({ project }: { project: Project }) {
   const router = useRouter();
   const documents = useQuotationDocuments(project.id);
   const scopes = useQuotations(project.id);
-  const { create } = useQuotationDocumentMutations(project.id);
 
   const rows = React.useMemo(() => documents.data ?? [], [documents.data]);
 
@@ -185,20 +181,12 @@ export function QuotationsPanel({ project }: { project: Project }) {
             <Button
               type="button"
               size="sm"
-              disabled={create.isPending}
-              // Nothing is asked for: the reference, the recipient and the subject are all
-              // derived from the project, so creating one is a single press and the salesperson
-              // lands on it to price it.
-              onClick={async () => {
-                try {
-                  const created = await create.mutateAsync({});
-                  router.push(
-                    `/project-sales/${project.id}/quotation-documents/${created.id}`,
-                  );
-                } catch {
-                  // The mutation already toasted the reason; the list stays as it was.
-                }
-              }}
+              // A navigation, never a write (#1341). The owner: "I should be able to add product
+              // straight away and save when I am satisfied". The form page holds the letterhead
+              // and the scopes with their lines, and nothing exists until its Save.
+              onClick={() =>
+                router.push(`/project-sales/${project.id}/quotation-documents/new`)
+              }
             >
               <Plus className="size-4" aria-hidden />
               Add a quotation

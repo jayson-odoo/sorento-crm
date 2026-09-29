@@ -13,7 +13,24 @@
 import { FileText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import type { PortalAttachment } from '../lib/portal-client';
+import { PdfViewer } from '@/components/common/PdfViewer';
+import {
+  fetchPortalAttachmentBytes,
+  portalAttachmentDownloadUrl,
+  type PortalAttachment,
+} from '../lib/portal-client';
+
+/**
+ * A PDF's bytes through the portal token route. The signed `url` is cross-origin with no
+ * CORS headers, so the viewer cannot read it from a script.
+ */
+function portalPdfLoader(attachmentId: string) {
+  return async () => {
+    const response = await fetchPortalAttachmentBytes(portalAttachmentDownloadUrl(attachmentId));
+    if (!response.ok) throw new Error('The file could not be read');
+    return response.arrayBuffer();
+  };
+}
 
 // Same idiom as AttachmentDropzone's isImageAttachment/isVideoAttachment: a
 // row uploaded before the portal upload route carried content_type through
@@ -85,10 +102,13 @@ export default function POCrossCheckViewer({
                       className="rounded-lg border overflow-hidden"
                     >
                       {att.url && isPdf ? (
-                        <iframe
-                          src={att.url}
-                          className="w-full h-[400px]"
+                        <PdfViewer
+                          url={att.url}
+                          loadData={portalPdfLoader(att.attachment_id)}
+                          documentKey={att.attachment_id}
+                          fileName={filename}
                           title={filename}
+                          className="h-[400px]"
                         />
                       ) : att.url && isImage ? (
                         <img

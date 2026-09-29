@@ -783,11 +783,15 @@ class TestCodeWinsDeletions:
 # =================================================================== contract
 class TestContractV24:
     def test_ct1_contract_reports_2_4_with_codes_and_notes(self, env):
+        """Bumped again (ingest-stock-balances-2-5, Foundryx SR5) to "2.5" -
+        unrelated to the products code-wins `codes` shape this test pins,
+        only the version literal needed to move."""
         res = env.client.get("/api/v1/external/contract")
 
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["version"] == "2.4", body["version"]
+        # Bumped again (finance S0, #1309): "2.6" adds `billing_documents`.
+        assert body["version"] == "2.6", body["version"]
 
         fields_added = body.get("fields_added", {})
         products_deletion_fields = fields_added.get("products_deletions") or fields_added.get(

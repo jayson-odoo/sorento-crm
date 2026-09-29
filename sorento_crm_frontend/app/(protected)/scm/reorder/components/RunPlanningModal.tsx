@@ -73,7 +73,7 @@ export interface ManualPlanInputs {
 
 /** Demand = Project / Dealer / All (R4). "Dealer" is retail - the vocabulary a buyer
  *  reads is not the closed `demand_class` one on the wire. */
-const DEMAND_OPTIONS = [
+export const DEMAND_OPTIONS = [
   { value: 'project', label: 'Project' },
   { value: 'retail', label: 'Dealer' },
 ];

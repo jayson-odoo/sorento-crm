@@ -400,7 +400,6 @@ export default function ComplaintsList() {
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -431,7 +430,7 @@ export default function ComplaintsList() {
                         { value: '__unassigned__', label: 'Unassigned' },
                         ...assigneeOptions.map((u) => ({
                           value: u.respond_user_id!,
-                          label: u.name || u.email,
+                          label: u.name || u.email || 'Unnamed user',
                         })),
                       ]}
                       placeholder="All assignees"

@@ -19,6 +19,7 @@ import uuid
 
 class AttachmentFieldLink(Base):
     __tablename__ = "attachment_field_links"
+    __audit_skip__ = "link table, 55 to 5,278 rows a day (measured 27 Sep 2026, review B3)"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     entity_type = Column(String(50), nullable=False)

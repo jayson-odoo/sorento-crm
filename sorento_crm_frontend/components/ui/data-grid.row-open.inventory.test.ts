@@ -27,6 +27,12 @@ const ROW_HREF = [
   // page could only be typed. The record now reads and edits in one layout, and
   // the row opens it; Add is still a lightbox.
   'app/(protected)/master-data-management/brands/components/BrandsList.tsx',
+  // S2 (plan section 16, UAC S2-12): the Opportunities grid links each row to
+  // `/sales/opportunities/[id]`, with RecordNavigation on the detail page.
+  'app/(protected)/sales/opportunities/components/SalesOpportunitiesView.tsx',
+  // Targets folds every subject's rows into one line and opens the subject's own page
+  // (S1-21, S1-22): the team page, or the agent's first target.
+  'app/(protected)/sales/targets/components/SalesTargetsView.tsx',
 ];
 
 /**

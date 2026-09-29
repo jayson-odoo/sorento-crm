@@ -25,6 +25,7 @@ import {
   within,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { toast } from '@/lib/toast';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const routerState = {
@@ -125,9 +126,15 @@ vi.mock('@/app/(protected)/resource-management/attachments/services/attachmentSe
 }));
 
 const downloadWorkbook = vi.fn<(id: string, fallback?: string | null) => Promise<void>>();
+// E1/E2 (PLAN-pi-header-fields-convert-fixes-24sep.md): the gear's "Download packing list"
+// enqueues an async export now (`enqueuePackingListExport`), never the old synchronous
+// blob download - `downloadPackingListExport` stays mocked (kept for the GET route, E1)
+// but nothing in this suite calls it any more.
+const enqueueExport = vi.fn<(id: string) => Promise<void>>(async () => undefined);
 vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
   downloadPackingListExport: (id: string, fallback?: string | null) =>
     downloadWorkbook(id, fallback),
+  enqueuePackingListExport: (id: string) => enqueueExport(id),
 }));
 
 vi.mock('@/app/(protected)/scm/hooks/useFulfilment', () => ({
@@ -356,16 +363,27 @@ describe('the toolbar over the tabs', () => {
     expect(screen.getByRole('button', { name: 'Save packing list' })).toBeInTheDocument();
   });
 
-  it('downloads the container workbook from the gear', async () => {
+  it('enqueues the container workbook export from the gear and toasts My Downloads', async () => {
+    // E1/E2: "Download packing list" no longer downloads a blob straight from the click -
+    // it enqueues an async export (same shape as a complaint's PDF export) and the file
+    // shows up in My Downloads.
     await renderTab(<DetailsPage />);
     const menu = await openGear();
 
     fireEvent.click(within(menu).getByText('Download packing list'));
 
-    await waitFor(() => expect(downloadWorkbook).toHaveBeenCalledTimes(1));
-    // Named after the container, never the id: a workbook in a downloads folder called
-    // after a UUID cannot be told from any other one.
-    expect(downloadWorkbook).toHaveBeenCalledWith('pl-1', 'FSCU8103365');
+    await waitFor(() => expect(enqueueExport).toHaveBeenCalledTimes(1));
+    expect(enqueueExport).toHaveBeenCalledWith('pl-1');
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Added to My Downloads'));
+    expect(downloadWorkbook).not.toHaveBeenCalled();
+  });
+
+  it('offers a Download history gear item alongside Download packing list', async () => {
+    await renderTab(<DetailsPage />);
+    const menu = await openGear();
+
+    expect(within(menu).getByText('Download packing list')).toBeInTheDocument();
+    expect(within(menu).getByText('Download history')).toBeInTheDocument();
   });
 
   it('keeps the occasional actions behind the gear', async () => {

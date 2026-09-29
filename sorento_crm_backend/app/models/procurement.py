@@ -95,15 +95,17 @@ class Supplier(Base, CompanyScopedMixin):
 
 class ProductSupplier(Base, CompanyScopedMixin):
     __tablename__ = "product_suppliers"
-    
+    # Owner ruling on #1305 (28 Sep 2026, "ok keep skip now"): the skip wins over AC-AU-01's
+    # tracking. A cost change is still traced through product_supplier_costs.
+    __audit_skip__ = "product to supplier link from the master sync, 264 to 4,865 rows a day (measured 27 Sep 2026, review B3)"
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False)
-    # NOT NULL in the database, with no default. The model said nullable and the API let
-    # the field be omitted, so creating a link without a lead time raised an IntegrityError
-    # and the caller got a 500 for what is really a missing required field. The column is
-    # the truth; the model is corrected to match it rather than the other way round.
-    standard_lead_time_days = Column(Integer, nullable=False)
+    # Nullable since `cpc3_lead_time_nullable` (#1288 round 6, R3): a link the cost upload
+    # creates takes the supplier's most common lead time, else stays empty. A hand-created
+    # link still has to give one (`ProductSupplierCreate` requires it).
+    standard_lead_time_days = Column(Integer, nullable=True)
     # SCM (M0): sourcing parameters used by the reorder engine.
     moq = Column(Integer, nullable=True)
     order_multiple = Column(Integer, nullable=True)
@@ -301,6 +303,7 @@ class ShipmentTrackingObservation(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "shipment_tracking_observations"
+    __audit_skip__ = "tracking observation log, itself a trail"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     shipment_id = Column(
@@ -342,6 +345,7 @@ class ShipmentTrackingObservation(Base, CompanyScopedMixin):
 
 class InboundShipmentLine(Base, CompanyScopedMixin):
     __tablename__ = "inbound_shipment_lines"
+    __audit_parent__ = "shipment_id"  # history rolls up to the header
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     shipment_id = Column(UUID(as_uuid=False), ForeignKey("inbound_shipments.id", ondelete="CASCADE"), nullable=False)
@@ -456,6 +460,7 @@ class SPOAllocation(Base, CompanyScopedMixin):
         a warehouse); a location we cannot place cannot cover a line standing at one.
     """
     __tablename__ = "spo_allocations"
+    __audit_skip__ = "shipping order allocation lines from the sync, 2,602 to 29,343 rows a day (measured 27 Sep 2026, review B3)"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     spo_number = Column(String(50), nullable=True)
@@ -696,6 +701,8 @@ class PickingHeader(Base, CompanyScopedMixin):
 
 class PickingLine(Base, CompanyScopedMixin):
     __tablename__ = "picking_lines"
+    __audit_skip__ = "line table, 268 to 4,047 rows a day (measured 27 Sep 2026, review B3)"
+    __audit_parent__ = "picking_header_id"  # history rolls up to the header
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     picking_header_id = Column(UUID(as_uuid=False), ForeignKey("picking_headers.id", ondelete="CASCADE"), nullable=False)
@@ -812,6 +819,8 @@ class PurchaseOrder(Base, CompanyScopedMixin):
 class PurchaseOrderLine(Base, CompanyScopedMixin):
     """Open PO line - feeds on-order / net-position views by product×warehouse."""
     __tablename__ = "purchase_order_lines"
+    __audit_skip__ = "sync line table, 5,224 to 51,107 rows a day (measured 27 Sep 2026, review B3)"
+    __audit_parent__ = "purchase_order_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     purchase_order_id = Column(UUID(as_uuid=False), ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False)
@@ -1076,6 +1085,7 @@ class PurchaseRequestHeader(Base):
 
 class PurchaseRequestLine(Base):
     __tablename__ = "purchase_request_lines"
+    __audit_parent__ = "purchase_request_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     purchase_request_id = Column(

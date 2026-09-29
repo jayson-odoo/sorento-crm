@@ -187,9 +187,12 @@ let session: QuotationEditSession | null = null;
 function Harness({
   projectOverrides,
   editing,
+  unsaved = false,
 }: {
   projectOverrides: Partial<Project>;
   editing: boolean;
+  /** A scope added on the quotation form and not saved yet (#1341, round 3). */
+  unsaved?: boolean;
 }) {
   const held = useQuotationEditSession();
   session = held;
@@ -217,19 +220,19 @@ function Harness({
   return (
     <QuotationVersionEditor
       project={project(projectOverrides)}
-      quotation={QUOTATION}
+      quotation={unsaved ? null : QUOTATION}
       edit={edit}
     />
   );
 }
 
-function renderEditor(overrides: Partial<Project> = {}, editing = false) {
+function renderEditor(overrides: Partial<Project> = {}, editing = false, unsaved = false) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <Harness projectOverrides={overrides} editing={editing} />
+      <Harness projectOverrides={overrides} editing={editing} unsaved={unsaved} />
     </QueryClientProvider>,
   );
 }
@@ -360,7 +363,7 @@ describe('QuotationVersionEditor', () => {
     renderEditor();
 
     expect(
-      await screen.findByText(/The customer holds v2\. Edit opens v3/i),
+      await screen.findByText(/The customer holds v2\. Edit quotation opens v3/i),
     ).toBeInTheDocument();
   });
 
@@ -1175,5 +1178,38 @@ describe('describeRecompute', () => {
     expect(describeRecompute({ ...base, changed_count: 2, floor_changed: 2 })).toBe(
       '2 lines picked up a different floor.',
     );
+  });
+});
+
+/**
+ * #1341 round 3: the quotation form's Lines tab reuses this editor, and a scope added on the form
+ * has no saved record yet. The one adaptation: it starts seeded with no lines and edits exactly
+ * like a saved scope, asking the server for nothing it cannot answer.
+ */
+describe('QuotationVersionEditor on a scope not saved yet (AC-QF073)', () => {
+  it('starts with no lines, stages an added line, and reads no version or verdict', async () => {
+    renderEditor({}, true, true);
+
+    await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines).toEqual([]));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add a line' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Description on line 1' }), {
+      target: { value: 'Grab bar' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on line 1' }), {
+      target: { value: '80.00' },
+    });
+
+    await waitFor(() =>
+      expect(stagedBody()).toEqual([
+        expect.objectContaining({ description_snapshot: 'Grab bar', unit_price: '80.00' }),
+      ]),
+    );
+    expect(screen.getByText('Off-catalog')).toBeInTheDocument();
+    expect(listQuotationVersions).not.toHaveBeenCalled();
+    expect(listQuotationLines).not.toHaveBeenCalled();
+    expect(judgeQuotationLine).not.toHaveBeenCalled();
+    // A revise would write at once; the form never offers it.
+    expect(screen.queryByRole('button', { name: /Revise to/ })).toBeNull();
+    expectNothingWritten();
   });
 });
