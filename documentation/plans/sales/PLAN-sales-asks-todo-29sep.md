@@ -1,6 +1,6 @@
 # PLAN: sales asks as a salesperson's to-do list, date-first (lane SALES-ASKS-TODO)
 
-Status: mockup APPROVED by the owner in Lavish 29 Sep 2026 (round 3, 168e1e2e, `documentation/mockups/sales-asks-todo/index.html`, verbatim "ok"); reshape round in progress, tester-first (section 0c + 3.6; the code built before the pause, section 7c, is reshaped, not rewritten). Track: full. The plan was first written
+Status: built to the Lavish-approved mockup (round 3, 168e1e2e) 29 Sep 2026; S3 reshape green, Phase 3 reviewed (security B1 + reviewer items fixed), browser-verified (7d); awaiting the owner's hand test. Track: full. The plan was first written
 under the recommendations and each pending question is marked `[Q<n> pending]` where its answer
 changes the design. Track: full (one migration, two new routes under RBAC, one portal route).
 Plan created: 2026-09-29T08:20:00Z
@@ -519,6 +519,37 @@ asks (two before today, four today across all four branches incl. one `console`,
   20 / 194, `app/(protected)/order-management` 14 / 59, `components/stock-asks` 1 / 19,
   `lib/stock-asks-todo` + `lib/list-query` 3 / 56, `services` 86 / 614, `config` 9 / 50, all
   green (the whole suite in one run exceeds the sandbox's 25-minute window, so it ran by area).
+
+## 7d. S3 evidence run (29 Sep 2026, agent-browser, sandbox rebuilt from the current models on `sat_0001`, real backend, seeded chat rows)
+
+- CRM, 1280x800: sidebar Sales -> Customer asks; admin (no agent) reads "Not linked to a sales
+  agent" + hint with the Agent select (view_all) listing `All agents`, `LCL · 1 open`, `SEAN I ·
+  5 open · 2 need attention`. SEAN I picked: toolbar `Filter`, `Sort` (Created), list / cards
+  toggle, no New button, no counts line; sections `Needs attention`, `Today`, `Done today`; cards
+  read customer + contact, `Asked: CODE x Q`, `Answered: <sentence>`, the datetime, `Done`
+  top-right; no age label, no badge. Card body click opens the right Sheet "Customer ask":
+  customer, contact, "Asked 27/09/2026, 6:51 pm · SEAN I", the Asked / Answered block with
+  `Jump to message`, the conversation (5 seeded bubbles, the answer tagged `This ask`), `Show
+  the whole day`, `Open in Conversations`, `Note` + `Save note`, `Done` at the foot (an open
+  ask; the earlier `Reopen` sighting was a stale row from an accidental click, not reproduced).
+  `Jump to message`: the tagged bubble carries the flash class. `Done` at the foot: the sheet
+  closes, the card lands under `Done today` reading "Done by Sandbox Admin, 29/09/2026, 9:10 pm";
+  `Reopen` restores it. List view: `Asked at | Customer | Contact | Asked | Answered | Done by |
+  (action)` with `Done` in the LAST cell, section rows `Needs attention`, `Today`, `Done today`.
+  `All agents`: `Asked at | Agent | Customer | Contact | Asked | Answered | Done by | (action)`.
+  375: `scrollWidth == clientWidth`. `errors`: none.
+- Portal, 375x812: `/portal/c/sean`, selector `Customer asks 4`; the same toolbar and sections,
+  cards identical, no sideways scroll. Card body click opens the bottom Drawer: customer, "Asked
+  28/09/2026, 6:51 pm", the block with `Jump to message`, the conversation with `This ask`, `Show
+  the whole day`, no `Open in Conversations`, `Note` + `Save note` ("Saved" line, `PATCH
+  /api/v1/public/portal/customer-asks/{id}` 200), `Done` at the foot: the card lands under `Done
+  today` reading "Done by Sean Tan, 29/09/2026, 9:12 pm"; `Reopen` restores it. List view (the
+  DataGrid at phone width, sideways scroll inside the grid): `Asked at | Customer | Contact |
+  Asked | Answered | (action)` with `Done` last, the three section rows; no `Done by` on the
+  portal.
+- Suites after the fix round: backend 117 on the lane set (four lane files + conversation, #1333,
+  uuid principle, company scope); vitest 713 across the portal, the sales page, the stock-asks
+  components, the customers tab, config and list-query; type-check clean.
 
 ## 8. Risks
 
