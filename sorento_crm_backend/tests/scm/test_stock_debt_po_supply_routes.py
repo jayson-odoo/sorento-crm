@@ -3,7 +3,8 @@
 The arithmetic is `test_stock_debt_po_supply_walk.py`'s. What is proved here is the READ:
 the S/O column's own reference (`purchase_order_lines.from_so_line_ref`, resolved against
 `sales_orders.source_ref`) turned into a pin, the placement read beside it without double
-counting, the overdue policy applied to a PO exactly as to an SPO, the drill's PO fields
+counting, the overdue rule kept out of the page for a PO exactly as for an SPO (R44, owner,
+29 Sep 2026, #1359), the drill's PO fields
 by name (`response_model` drops what it does not declare), and the board's own path left
 exactly as it was.
 
@@ -123,11 +124,11 @@ def test_a_po_line_naming_a_sales_order_covers_it_first_at_14_90(scm_app):
     """AC-PO-3 + AC-PO-5 + AC-PO-6 (recommended policy). The book S/O pins 1,305 and the
     placement 4 to SO419208 - 1,309 in all, never counted twice - even though another
     order is due earlier and would take the PO first-come; the 41 with no S/O is free and
-    covers that earlier order. All three are late but alive, so they sit at `as_of + 14`
-    with the paperwork's own date beside it."""
+    covers that earlier order. All three are late; R44 (#1359) lands them today on this
+    page whatever the policy's grace, with the paperwork's own date beside it."""
     app, db = _client(scm_app)
     seed = _csk14a(db, grace=14, dead=90)
-    assumed = TODAY + timedelta(days=14)
+    assumed = TODAY
 
     with TestClient(app) as c:
         cell = c.get(
@@ -172,7 +173,7 @@ def test_a_po_line_naming_a_sales_order_covers_it_first_at_14_90(scm_app):
 
     other = _by_so(earlier, "SO-OTHER")
     assert other["assigned_qty"] == 41
-    assert other["short_qty"] == 59, "the free 41 lands on as_of + 14, a day before it is due"
+    assert other["short_qty"] == 59, "the free 41 lands today, before it is due"
     assert [entry["po_line_id"] for entry in other["assigned_from"]] == [
         str(seed["free"].id)
     ]
@@ -190,11 +191,11 @@ def test_a_po_line_naming_a_sales_order_covers_it_first_at_14_90(scm_app):
 
 
 def test_at_the_shipped_0_0_a_late_po_naming_the_order_still_fulfils_it(scm_app):
-    """AC-PO-6 as R43 (#1346) amends it: 14 and 18 days late are past a dead line of 0, so
-    all three PO lines are listed in the CURRENT month as overdue and count as nothing as
-    SUPPLY. The S/O pin no longer depends on the rule: SO419208 is pinned 1,305 from the
-    book and 4 from the placement, short nothing. The 41 with no S/O is still counted as
-    nothing, so the earlier order stays short its 100."""
+    """AC-PO-6 as R43 (#1346) and R44 (#1359) amend it: 14 and 18 days late are past a
+    dead line of 0, which the stock debt page no longer applies, so all three PO lines are
+    listed in the CURRENT month, not overdue, and count as supply. SO419208 is pinned
+    1,305 from the book and 4 from the placement, short nothing. The 41 with no S/O is
+    free supply, so the earlier order (due today) takes it and is short 59."""
     app, db = _client(scm_app)
     seed = _csk14a(db, grace=0, dead=0)
 
@@ -216,11 +217,12 @@ def test_at_the_shipped_0_0_a_late_po_naming_the_order_still_fulfils_it(scm_app)
 
     other = _by_so(today, "SO-OTHER")
     assert other["status"] == "short"
-    assert other["short_qty"] == 100
+    assert other["assigned_qty"] == 41
+    assert other["short_qty"] == 59
 
     rows = [row for row in today["supply"] if row["kind"] == "po"]
     assert len(rows) == 3
-    assert all(row["overdue"] is True and row["free_qty"] == 0 for row in rows)
+    assert all(row["overdue"] is False and row["free_qty"] == 0 for row in rows)
 
 
 def test_an_s_o_that_names_no_sales_order_held_here_leaves_the_po_free(scm_app):

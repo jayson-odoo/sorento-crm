@@ -83,6 +83,24 @@ def register_handler(key: str, handler: TaskHandler) -> None:
     TASK_HANDLERS[key] = handler
 
 
+def _handler_cost_price_daily_tick(db: Session, task: ScheduledTask) -> dict[str, Any]:
+    """The daily tick (#1288, AC-CL-05): every product-supplier link with cost list rows
+    gets its `unit_cost`/`currency` recomputed from `price_in_force(link, today)`, today being
+    the Malaysia day: the tick fires at 00:05 MYT, which is still yesterday on a UTC host."""
+    from app.services.pdf_render import today_in_malaysia
+    from app.services.procurement.supplier_cost_service import refresh_prices_in_force
+
+    changed = refresh_prices_in_force(db, today_in_malaysia())
+    return {"changed": changed}
+
+
+# Registered at IMPORT TIME, not inside `app.scheduler.task_scheduler.register_task_handlers`
+# (which only runs when `start_scheduler()` fires): this module - unlike that one - is
+# imported unconditionally by anything that touches `TASK_HANDLERS`, so registering here is
+# what makes the key present regardless of whether the scheduler has started yet.
+register_handler("cost_price_daily_tick", _handler_cost_price_daily_tick)
+
+
 def _interval_delta(interval_unit: str, interval_value: int) -> timedelta:
     if interval_unit == "seconds":
         return timedelta(seconds=interval_value)
