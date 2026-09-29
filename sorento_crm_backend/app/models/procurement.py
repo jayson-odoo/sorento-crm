@@ -469,7 +469,14 @@ class SPOAllocation(Base, CompanyScopedMixin):
         a warehouse); a location we cannot place cannot cover a line standing at one.
     """
     __tablename__ = "spo_allocations"
-    __audit_skip__ = "shipping order allocation lines from the sync, 2,602 to 29,343 rows a day (measured 27 Sep 2026, review B3)"
+    # Audited by default since SPO-CASCADE (28 Sep 2026): 18 synced lines disappeared with
+    # no row saying who or when. The skip was measured against the SYNC's churn (2,602 to
+    # 29,343 rows a day, review B3), and the sync never reached the default-on hooks anyway:
+    # the ESB ingest, the imports queue and the scheduler are sync writers
+    # (`audit_context.sync_writer_for`), which `_audited_here` excludes unless a model opts
+    # in with `__audit_track__`. This table does not, so what gets a row now is only the
+    # staff-driven write: an operator's delete or edit, a GRN approval's receipt recompute,
+    # an SPO raised from a draft shipment, and the unlink when a packing list is deleted.
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     spo_number = Column(String(50), nullable=True)
