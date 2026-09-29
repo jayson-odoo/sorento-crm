@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Loader2, Mic, Paperclip, RotateCcw, SendHorizonal, Square } from 'lucide-react';
 import { TurnAttachments } from '@/components/chatbot/TurnAttachments';
+import { WhatsAppText } from '@/components/chatbot/WhatsAppText';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -78,7 +79,7 @@ function MessageBubble({
           )}
         >
           {isMediaPending ? <Loader2 className="mr-1 inline size-3.5 animate-spin" /> : null}
-          {message.text}
+          {isUser ? message.text : <WhatsAppText text={message.text} />}
         </p>
         {message.attachments && message.attachments.length > 0 ? (
           <TurnAttachments attachments={message.attachments} />
@@ -122,6 +123,14 @@ function MessageBubble({
             ) : null}
           </div>
         ) : null}
+        {!isUser && message.routingLine ? (
+          <p
+            className="mt-1 break-words text-xs text-muted-foreground"
+            data-testid="chatbot-console-routing-line"
+          >
+            {message.routingLine}
+          </p>
+        ) : null}
         {message.quickReplies && message.quickReplies.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-2">
             {message.quickReplies.map((chip, index) => (
@@ -164,6 +173,7 @@ export default function ChatbotConsole() {
     promptVersionId,
     setPromptVersionId,
     promptVersions,
+    promptVersionsLoading,
     messages,
     sending,
     sendText,
@@ -189,6 +199,19 @@ export default function ChatbotConsole() {
       })),
     [promptVersions],
   );
+
+  // The version actually in effect, spelled out next to the composer - "Parser v38", never
+  // the raw id. `promptVersionId === null` after the versions have loaded is an explicit
+  // in-session pick of the live production label (the select's "clear" option), not a
+  // loading state.
+  const activePromptVersion = promptVersions.find((v) => v.id === promptVersionId);
+  const activePromptLabel = promptVersionsLoading
+    ? null
+    : activePromptVersion
+      ? `Parser v${activePromptVersion.version}`
+      : promptVersions.length > 0
+        ? 'Parser live (production)'
+        : null;
 
   const handleSend = () => {
     if (!draft.trim() || sending) return;
@@ -264,6 +287,15 @@ export default function ChatbotConsole() {
 
       {/* Composer - pinned at the bottom. */}
       <div className="border-t pt-3">
+        {activePromptLabel ? (
+          <div
+            className="mb-1.5 text-2xs text-muted-foreground"
+            title="The parser prompt version this turn will run"
+            data-testid="chatbot-console-active-prompt"
+          >
+            {activePromptLabel}
+          </div>
+        ) : null}
         <input
           ref={fileInputRef}
           type="file"

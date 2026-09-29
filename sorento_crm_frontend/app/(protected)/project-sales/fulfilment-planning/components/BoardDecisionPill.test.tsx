@@ -3,7 +3,7 @@
  * warning flag the draft OR the frozen decision can carry.
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { BoardDecisionPill } from './BoardDecisionPill';
@@ -112,6 +112,64 @@ describe('BoardDecisionPill: no "rev" (R6)', () => {
     const pill = screen.getByTestId(`decision-pill-${KEY}`);
     expect(pill.textContent).toBe('Confirmed');
     expect(pill.textContent).not.toContain('rev');
+  });
+});
+
+describe('BoardDecisionPill: no popover on the Confirmed chip (round 2, PLAN-oi-decision-trail-ui.md, owner ruling after hand-testing round 1)', () => {
+  const FROZEN = { revision_no: 1, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '10' };
+  const CONFIRMED = {
+    covered: true,
+    decision: FROZEN,
+    decided_by_name: 'Nurain',
+    decided_at: '2026-09-25T01:20:34',
+    decision_revision: 1,
+  };
+  // What the backend actually sends when a draft exists: the `draft` object AND the
+  // flattened pair, together.
+  const DRAFT = {
+    draft: {
+      decision: { verdict: 'approved' as const },
+      saved_by: 'Farah',
+      saved_at: '2026-09-25T02:00:00',
+    },
+    draft_saved_by_name: 'Farah',
+    draft_saved_at: '2026-09-25T02:00:00',
+  };
+
+  it('renders the Confirmed chip as plain text - no popover trigger, even when a draft also sits on the covered line', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({ ...CONFIRMED, ...DRAFT })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Confirmed');
+    // Round 1's own trigger is retired - the History icon (`DecisionTrailButton`, wired
+    // in the caller's own Verdict/Decision cell, not this component) opens the trail now.
+    expect(screen.queryByTestId(`decision-confirmed-trail-${KEY}`)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Confirmed by/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Saved by/)).not.toBeInTheDocument();
+  });
+
+  it('leaves the Saved-by popover on a non-confirmed draft line unchanged', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          ...DRAFT,
+          decided_by_name: 'Nurain',
+          decided_at: '2026-09-25T01:20:34',
+          decision_revision: 1,
+        })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Saved');
+    const trigger = screen.getByTestId(`decision-saved-by-${KEY}`);
+    expect(trigger.tagName).toBe('BUTTON');
+    fireEvent.click(trigger);
+    expect(screen.getByText(/^Saved by Farah/)).toBeInTheDocument();
+    expect(screen.queryByText(/^Confirmed by/)).not.toBeInTheDocument();
   });
 });
 

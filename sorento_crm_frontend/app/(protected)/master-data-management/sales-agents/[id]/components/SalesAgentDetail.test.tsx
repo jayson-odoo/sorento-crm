@@ -199,6 +199,7 @@ function agent(over: Partial<SalesAgent> = {}): SalesAgent {
     internal_note: null,
     follow_up: false,
     person_label: 'Sean',
+    aliases: null,
     demand_class: 'project',
     location_group: 'BB',
     contact_id: null,
@@ -394,6 +395,7 @@ describe('SalesAgentDetail - view and edit are the same layout', () => {
     expect(reading).toEqual([
       'Agent code',
       'Person',
+      'Also known as',
       'Demand class',
       'Location group',
       'Linked portal contact',
@@ -450,6 +452,7 @@ describe('SalesAgentDetail - saving', () => {
         id: 'agent-1',
         data: {
           person_label: 'Sean Lim',
+          aliases: null,
           demand_class: 'project',
           location_group: 'HP',
           is_active: true,
@@ -459,6 +462,26 @@ describe('SalesAgentDetail - saving', () => {
           // leaving the field out: the PATCH treats an omitted key as "leave it alone".
           contact_id: null,
         },
+      }),
+    );
+  });
+
+  it('shows the "Also known as" names and saves them as typed, trimmed', async () => {
+    withAgent(agent({ sales_agent: 'WT I', person_label: null, aliases: 'William' }));
+    renderDetail();
+
+    expect(screen.getByText('William')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(screen.getByLabelText('Also known as')).toHaveValue('William');
+    fireEvent.change(screen.getByLabelText('Also known as'), {
+      target: { value: '  William, Will ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith({
+        id: 'agent-1',
+        data: expect.objectContaining({ aliases: 'William, Will' }),
       }),
     );
   });

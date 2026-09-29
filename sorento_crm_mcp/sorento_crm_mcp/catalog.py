@@ -471,6 +471,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "'50' after being asked how many), pass that number as `requested_qty`. Some contacts are "
             "answered yes/no against it instead of with quantities, and without it the reply can only "
             "ask how many units they need.\n\n"
+            "QUANTITY PER PRODUCT: when the user named a DIFFERENT quantity for MORE THAN ONE product "
+            "in the same ask ('MWT5727SS-CR 5, MHS1028 60'), pass `requested_quantities` - a JSON object "
+            "mapping each product's UUID to ITS OWN quantity - instead of, or alongside, `requested_qty`. "
+            "Per product the map wins; `requested_qty` only fills a product the map does not name.\n\n"
             "OUTSTANDING SO: pass `include_sellable=true` to add `Outstanding` (that warehouse row's "
             "own open sales-order quantity, not yet a delivery order) to every stock row, and an "
             "`(O/S: n)` suffix on the compact block's Total and warehouse lines. Default false. "
@@ -483,7 +487,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "page", "limit", "product_ids", "sort", "dir", "warehouse_ids", "quantity_operator",
-            "quantity_value", "status", "requested_qty", "include_sellable", "contact_id", "space_id",
+            "quantity_value", "status", "requested_qty", "requested_quantities", "include_sellable",
+            "contact_id", "space_id",
         ),
         domain="inventory",
         related_tools=("crm_inventory_warehouses_list",),
@@ -569,6 +574,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • `order_ids` - specific orders\n"
             "  • `customer_ids` - customers (Order.customer_id, falls back to debtor_name for legacy rows)\n"
             "  • `product_ids` - orders containing any of these products\n"
+            "  • `brand_ids` - orders containing a product of this brand (Product.brand_id via order "
+            "lines); intersects with `product_ids` when both are given\n"
             "  • `transporter_ids` - transporters (Order.transporter_id, text fallback for legacy rows)\n"
             "Date window: actual_delivery_date_from / actual_delivery_date_to.\n"
             "DELIVERY BUCKET: `order_status` = 'outstanding' | 'delivered' | 'so_outstanding' (omit for "
@@ -604,7 +611,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/order-management/orders",
         (),
         (
-            "page", "limit", "order_ids", "customer_ids", "product_ids", "transporter_ids",
+            "page", "limit", "order_ids", "customer_ids", "product_ids", "brand_ids", "transporter_ids",
             "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary",
             "include_pipeline", "group_by", "sort", "dir",
             "customer_query", "warehouse_codes",
@@ -629,7 +636,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "/ repeated) or the tool returns an empty page.\n\n"
             "External/AI callers are HARD-CAPPED at limit=20 server-side - narrow via UUID + date filters "
             "and paginate via `page` when more results are needed.\n\n"
-            "OPTIONAL UUID FILTERS: `customer_ids`, `transporter_ids` (canonical UUIDs). "
+            "OPTIONAL UUID FILTERS: `customer_ids`, `transporter_ids` (canonical UUIDs). `brand_ids` - "
+            "narrows to that brand's own products (Product.brand_id); counts as the product narrower "
+            "this endpoint requires, alone or intersected with `product_ids`. "
             "Date window: actual_delivery_date_from / actual_delivery_date_to (YYYY-MM-DD). "
             "For 'any incoming for product X' use crm_incoming_stock_by_product instead.\n\n"
             "QUANTITY ASK: pass `include_summary=true` when the user asks HOW MANY / how much a customer "
@@ -649,7 +658,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/order-management/orders/by-product",
         (),
         (
-            "page", "limit", "product_ids", "customer_ids", "transporter_ids",
+            "page", "limit", "product_ids", "brand_ids", "customer_ids", "transporter_ids",
             "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary",
             "include_pipeline", "sort", "dir",
             "customer_query", "warehouse_codes",
@@ -680,8 +689,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`so_by_location`/`so_by_customer`/`do_by_location`/`do_by_customer` (code/customer_name + "
             "that block's own quantities - the DO side carries `pending_qty` only), and as "
             "`so_rows`/`do_rows` (one row per SO / per PENDING DO, lines rolled up).\n\n"
-            "SUBJECT: a product, a customer, or both - at least one of `product_code` / "
-            "`customer_ids` / `customer_query` is REQUIRED (422 otherwise). The breakdown "
+            "SUBJECT: a product, a customer, a brand, or any combination - at least one of "
+            "`product_code` / `customer_ids` / `customer_query` / `brand_ids` is REQUIRED (422 "
+            "otherwise). The breakdown "
             "groups follow the subject: a product subject returns `so_by_location` + "
             "`so_by_customer` (and the DO pair), a CUSTOMER subject returns `so_by_location` + "
             "`so_by_product` (what that customer is waiting for, per product), and naming both "
@@ -693,6 +703,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`customer_query` - partial match on customer NAME only (never debtor/customer code). "
             "`customer_ids` - canonical customer UUIDs (csv/JSON/repeated); intersects with "
             "`customer_query` when both are given. "
+            "`brand_ids` - canonical brand UUIDs (csv/JSON/repeated), a FILTER never a breakdown axis "
+            "(Product.brand_id); the response echoes `brand_name` so the header can say "
+            "'Brand: Sorento'. "
             "`warehouse_codes` - exact warehouse codes (csv/JSON/repeated); resolve a location TOKEN "
             "(e.g. an 'IB' suffix matching several codes) to exact codes yourself before calling - this "
             "tool does not do suffix matching. `order_date_from`/`order_date_to` filter SO rows on "
@@ -713,7 +726,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "product_code", "product_codes", "scope", "customer_query", "customer_ids",
-            "warehouse_codes",
+            "warehouse_codes", "brand_ids",
             "order_date_from", "order_date_to", "detail", "location_token", "so_refused",
             "contact_id", "space_id",
         ),
@@ -759,6 +772,85 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         domain="orders",
         related_tools=("crm_outstanding_report",),
+        escalation_team="sales",
+        restricted_fields=(("sales_orders.sales_report", "Sales report"),),
+    ),
+    ToolSpec(
+        "crm_top_selling_report",
+        (
+            "Top selling ITEMS (or CATEGORIES) over a date window, ranked by quantity or by "
+            "amount - the same sales_order_lines source, exclusions and bucket date as "
+            "crm_sales_report. Returns `rows[]` (rank, code, quantity, amount - code alone, "
+            "no name, owner ruling 26 Sep), "
+            "`total_count` (every ranked row, always the full count), `totals` over the whole "
+            "set, the resolved `date_from`/`date_to`, `basis`, the applied `filters`, and "
+            "`sales_agent_fill_rate` when a sales agent filter was used.\n\n"
+            "`rank_by` - quantity | amount, REQUIRED (422 `rank_by_required`): never guess, ask "
+            "the customer which one. `basis` - delivered (default: transferred to DO, capped at "
+            "ordered) | ordered. `group` - item (default) | category (rank categories). `n` - how "
+            "many rows, 1 to 100, exactly the number the customer named (no paging, no 'more'). "
+            "When the customer named no number, send `count_only=true`: it returns the full "
+            "`total_count` and NO rows (a single ranked row is still returned), so you can say "
+            "the count and ask how many; never omit `n` to pull every row.\n\n"
+            "FILTERS (all optional, ANDed): `customer_ids` (csv/JSON/repeated UUIDs), "
+            "`customer_query` (partial customer NAME, min 3 chars), `category_ids`, "
+            "`sales_agent_ids` (sales_orders.sales_agent_id), `brand_ids` (products.brand_id), "
+            "`channel` dealer | project, "
+            "`date_from`/`date_to` on the bucket date (required_date, else order_date); both "
+            "omitted = the current calendar year.\n\n"
+            "DIRECTION: `direction` top (default, most sold first) | bottom (least sold first, "
+            "for 'cold selling', 'least sold'). Only items with a sale in the window are ranked "
+            "either way.\n\n"
+            "DETAIL: `detail_code` = one row's code (a product code, or a category code under "
+            "group=category) answers the detail offer: `rows`/`totals` narrow to that code and "
+            "`detail` carries its `by_customer` and `by_month`, same filters and basis.\n\n"
+            "ACCESS: pass `contact_id` + `space_id` (both or neither). The contact needs the "
+            "Sales report reveal (403 `sales_report_not_enabled`). A contact holding any active "
+            "office access type is staff and sees every customer, whatever else it holds. "
+            "Otherwise a contact linked to customers is forced to them and naming another is "
+            "403 `customer_not_permitted`, the same 403 any other contact gets."
+        ),
+        "/api/v1/order-management/top-selling",
+        (),
+        (
+            "rank_by", "basis", "group", "n", "customer_ids", "customer_query",
+            "category_ids", "sales_agent_ids", "brand_ids", "channel", "date_from", "date_to",
+            "contact_id", "space_id", "detail_code", "count_only", "direction",
+        ),
+        domain="orders",
+        related_tools=("crm_sales_report",),
+        escalation_team="sales",
+        restricted_fields=(("sales_orders.sales_report", "Sales report"),),
+    ),
+    ToolSpec(
+        "crm_sales_analysis",
+        (
+            "A COMPANY'S OWN SALES TOTALS - by month, by year or in total, dealer or project "
+            "or both, on the ordered, the delivered (transferred to DO) or the invoiced "
+            "(invoices, cash sales and debit notes less credit notes) basis - with NO "
+            "product or customer subject (use crm_sales_report for those). The same query as "
+            "the Yearly comparison screen. Answers the WHOLE table as text AND the same query "
+            "as an Excel file (attached when ready, else 'The Excel follows here.' and the "
+            "file is pushed to the chat).\n\n"
+            "AXES: `rows` and `cols` are month | year | channel (never equal); 'by month' is "
+            "rows=month, cols=year. `channel` dealer | project, absent = all. `basis` ordered "
+            "| delivered | invoiced (REQUIRED; delivered unless the person said ordered or "
+            "invoiced). `company` - the "
+            "company NAME the person named (Sorento, Mocha); absent = the contact's only "
+            "company, or the bot is asked 'Sorento or Mocha?'. `date_from`/`date_to` on the "
+            "sales order date (the document date on invoiced); absent = this calendar year to today. `n` (1 to 100) - the top "
+            "N rows by total, after the full count and totals.\n\n"
+            "REQUIRED: pass BOTH `contact_id` (Respond.io contact id) and `space_id` - the "
+            "answer is per contact (their company, their reveal key, their chat for the file)."
+        ),
+        "/api/v1/sales/analysis",
+        (),
+        (
+            "rows", "cols", "channel", "basis", "company", "date_from", "date_to", "n",
+            "contact_id", "space_id",
+        ),
+        domain="orders",
+        related_tools=("crm_sales_report",),
         escalation_team="sales",
         restricted_fields=(("sales_orders.sales_report", "Sales report"),),
     ),
@@ -1445,7 +1537,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "respond.io contact id) and `message_text` (what they just said), plus `session_vars` "
             "carrying the `ideation` pointer from the previous turn (null on the first). Optionally "
             "`submitter_name`, `media_selection` when a photo menu is open (comma-joined positions, "
-            "or 'all'), and `is_new_idea` to start a fresh draft over an open one. RETURNS "
+            "or 'all'), `is_new_idea` to start a fresh draft over an open one, and `is_test` "
+            "for a test turn (the idea is stored hidden from the board, no session state is "
+            "persisted). RETURNS "
             "`{status, reply_text, link?, session_vars}` - `reply_text` is what to "
             "send the customer, `session_vars.ideation` is the pointer to carry into the next turn, and "
             "`link` is the deep link once `status` is 'complete'. WRITE action: it creates and updates a "
@@ -1465,6 +1559,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "submitter_name",
             "media_selection",
             "is_new_idea",
+            "is_test",
         ),
         module="chatbot",
         external=True,

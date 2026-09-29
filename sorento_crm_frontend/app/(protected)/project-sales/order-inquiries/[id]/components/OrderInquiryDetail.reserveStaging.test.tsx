@@ -348,7 +348,10 @@ describe('AC-RS-83: pills + per-row icon buttons, gated by the reserve permissio
     const plainRow = gridRowFor('ZZT-PLAIN');
     expect(within(plainRow).queryByLabelText('Edit reserve')).not.toBeInTheDocument();
     expect(within(plainRow).queryByLabelText('Amend reserve')).not.toBeInTheDocument();
-    expect(within(plainRow).queryByLabelText('History')).not.toBeInTheDocument();
+    // `PLAN-oi-no-double-count-25sep.md` AC-ND-13 (owner ruling 26 Sep, G3): every line
+    // carries exactly ONE History icon, the reserved line included - never a second one.
+    expect(within(plainRow).getAllByLabelText('History')).toHaveLength(1);
+    expect(within(reservedRow).getAllByLabelText('History')).toHaveLength(1);
   });
 
   it('AC-RS-83c: the icons sit in the same cell as the State pill; no Reserve actions column', async () => {
@@ -383,7 +386,11 @@ describe('AC-RS-83: pills + per-row icon buttons, gated by the reserve permissio
 
     expect(screen.queryByLabelText('Edit reserve')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Amend reserve')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('History')).not.toBeInTheDocument();
+    // AC-ND-13 (owner ruling 26 Sep, G3): the line's one History icon is not a reserve
+    // action, so it stays without the permission - one per line, never more.
+    for (const code of ['ZZT-PLAIN', 'ZZT-REQUESTED', 'ZZT-RESERVED', 'ZZT-DECLINED']) {
+      expect(within(gridRowFor(code)).getAllByLabelText('History')).toHaveLength(1);
+    }
     const requestedRow = gridRowFor('ZZT-REQUESTED');
     expect(within(requestedRow).getByText(/request to reserve 107/i)).toBeInTheDocument();
   });
@@ -592,6 +599,11 @@ describe('AC-RS-89: History opens a read-only events dialog; Cancel request sits
     fireEvent.click(within(gridRowFor('ZZT-RESERVED')).getByLabelText('History'));
 
     const historyDialog = await screen.findByRole('dialog', { name: /history/i });
+    // `PLAN-oi-no-double-count-25sep.md` S0 (owner ruling 26 Sep, G3): the reserve
+    // history is the Reserve tab of the line's one History dialog now.
+    const reserveTab = within(historyDialog).getByRole('tab', { name: 'Reserve' });
+    fireEvent.mouseDown(reserveTab);
+    fireEvent.click(reserveTab);
     // Anchored on the finished request that answered this line.
     await waitFor(() => expect(historyMock).toHaveBeenCalledWith('rr-0', 'row-reserved'));
     const unreserved = await within(historyDialog).findByText('Unreserved 20 @ DC1');

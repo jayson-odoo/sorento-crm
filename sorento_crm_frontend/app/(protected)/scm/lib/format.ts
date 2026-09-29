@@ -229,6 +229,23 @@ export function fmtDateTime(iso: string | null | undefined): string {
   return `${d.toLocaleDateString(DATE_LOCALE, DATE_PARTS)}, ${d.toLocaleTimeString(DATE_LOCALE, TIME_PARTS)}`;
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * A Malaysia WALL-TIME stamp with no zone (`2026-09-26T07:40:12`, or a bare `2026-09-26`) as
+ * `26 Sep 2026 07:40` / `26 Sep 2026`: the low stock report's "Daily plan, ..." subtitle, as
+ * its approved mockup reads (PLAN-excel-preview-26sep, review N3 of #1270). Read off the
+ * string's own digits rather than through `Date`, which would shift a zoneless stamp by the
+ * browser's offset.
+ */
+export function fmtWallStamp(stamp: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(stamp ?? '');
+  if (!m) return EM_DASH;
+  const [, year, month, day, hour, minute] = m;
+  const date = `${Number(day)} ${MONTHS[Number(month) - 1]} ${year}`;
+  return hour ? `${date} ${hour}:${minute}` : date;
+}
+
 /**
  * A quantity rendered at its own precision: never padded, never truncated. `dp` is the
  * frozen `uom_decimal_places` of the row (0-4). Lives here, not next to its callers,

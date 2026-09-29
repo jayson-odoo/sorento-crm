@@ -164,11 +164,10 @@ describe('RespondChatList - WhatsApp-style render', () => {
     expect(screen.queryByText('(no text)')).toBeNull();
   });
 
-  // The outbound ">"-prefix emulation was removed on 2026-08-16: Respond's send
-  // API has no reply-to, so the block dressed ordinary text up as a real quote.
-  // A historical message that carries a ">" line now renders it verbatim, which
-  // is exactly what the contact received.
-  it('an outgoing ">" line renders verbatim, with no quote block', () => {
+  // #1317 restored the outbound ">" reply-to convention (removed 2026-08-16):
+  // an outgoing ">" line is our quote again and renders as a quote block
+  // above the body, never as raw ">" text.
+  it('an outgoing ">" line renders as a quote block above the body', () => {
     const outgoingQuoteLike: RespondMessageRenderable[] = [
       {
         messageId: 2,
@@ -178,9 +177,10 @@ describe('RespondChatList - WhatsApp-style render', () => {
         sender: { source: 'user' },
       },
     ];
-    const { container } = render(<RespondChatList items={outgoingQuoteLike} contactName="X" />);
-    expect(screen.getByText('> short by 2 boxes Checking now.')).toBeDefined();
-    expect(container.querySelector('.border-emerald-500')).toBeNull();
+    render(<RespondChatList items={outgoingQuoteLike} contactName="X" />);
+    expect(screen.getByTestId('quoted-context')).toHaveTextContent('short by 2 boxes');
+    expect(screen.getByText('Checking now.')).toBeDefined();
+    expect(screen.queryByText(/^> short/)).toBeNull();
   });
 
   it('offers no per-bubble Reply affordance anywhere', () => {

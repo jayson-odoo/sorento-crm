@@ -60,10 +60,14 @@ function controller(overrides: Partial<ScheduleGridController> = {}): ScheduleGr
     valueFor: () => '',
     setDraft: vi.fn(),
     commit: vi.fn(),
-    resolveProduct: vi.fn(),
-    poOptions: [],
     canEdit: true,
-    learnedColumns: [],
+    flagActions: {
+      canEdit: overrides.canEdit ?? true,
+      poOptions: [],
+      resolveProduct: vi.fn(),
+      fixQuantities: vi.fn(),
+      dismissing: false,
+    },
     registerColumnRef: vi.fn(),
     focusRequest: null,
     metaFor: (phaseId, columnKey) =>
@@ -84,7 +88,8 @@ describe('DeliveryScheduleByDateMatrix', () => {
     expect(within(newColumn).getByText('Level 2 & 7')).toBeInTheDocument();
 
     const rows = grid.getAllByRole('row').filter((row) => row.querySelector('td'));
-    const movedCell = within(rows[0]).getAllByRole('cell')[0];
+    // Cell 0 is the Flag, pinned beside the product; the dates start after it.
+    const movedCell = within(rows[0]).getAllByRole('cell')[1];
     expect(within(movedCell).getByText('135')).toBeInTheDocument();
     expect(within(movedCell).getByText('07/01/2027')).toBeInTheDocument(); // struck "was"
     expect(within(movedCell).getByText('23/07/2026')).toBeInTheDocument(); // "now"
@@ -148,7 +153,29 @@ describe('DeliveryScheduleByDateMatrix', () => {
     // cell is empty.
     const p2Row = rows.find((row) => within(row).queryByText('OTHER'));
     expect(p2Row).toBeTruthy();
-    const firstCell = within(p2Row as HTMLElement).getAllByRole('cell')[0];
+    const firstCell = within(p2Row as HTMLElement).getAllByRole('cell')[1];
     expect(firstCell.textContent?.trim()).toBe('');
+  });
+
+  /**
+   * By date renders on every width, so at 375 the columns pinned to the left must leave the
+   * dates room to scroll into. The scroller is 341px wide there (375 less the page gutters);
+   * Product (240) plus a pinned Flag (190) was 430px and no date ever came into view.
+   * jsdom lays nothing out, so this reads the classes a phone width applies: an unprefixed
+   * `sticky` with an unprefixed `left-*` is pinned sideways at every width.
+   */
+  it('pins less than a 375 scroller is wide below md, so the dates can scroll into view', () => {
+    const columns = dateColumns({ phases, cells });
+    render(<DeliveryScheduleByDateMatrix controller={controller()} dateColumns={columns} />);
+
+    const grid = screen.getByTestId('schedule-by-date-matrix');
+    for (const row of Array.from(grid.querySelectorAll('tr'))) {
+      const pinnedWidth = Array.from(row.children)
+        .map((cell) => cell.className.split(/\s+/))
+        .filter((tokens) => tokens.includes('sticky') && tokens.some((t) => /^left-/.test(t)))
+        .map((tokens) => Number(tokens.find((t) => /^w-\[\d+px\]$/.test(t))?.slice(3, -3) ?? 0))
+        .reduce((sum, width) => sum + width, 0);
+      expect(pinnedWidth).toBeLessThanOrEqual(341);
+    }
   });
 });

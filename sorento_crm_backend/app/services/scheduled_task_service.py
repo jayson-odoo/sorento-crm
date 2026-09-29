@@ -6,9 +6,13 @@ from typing import Callable, Optional, Any, Dict
 
 from sqlalchemy.orm import Session
 
+from pydantic import ValidationError
+
 from app.database import SessionLocal
 from app.models.base import set_company_scope
 from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
+from app.schemas.scheduled_task import ScmReorderRunTaskMetadata
+from app.services.error_handler import AppException
 
 # Module-level UTC handle: update_task() shadows the imported `timezone` with its
 # `timezone: str` parameter, so reference UTC through this instead.
@@ -77,6 +81,24 @@ def task_company_scope(task: ScheduledTask):
 def register_handler(key: str, handler: TaskHandler) -> None:
     """Register a handler for a scheduled task key."""
     TASK_HANDLERS[key] = handler
+
+
+def _handler_cost_price_daily_tick(db: Session, task: ScheduledTask) -> dict[str, Any]:
+    """The daily tick (#1288, AC-CL-05): every product-supplier link with cost list rows
+    gets its `unit_cost`/`currency` recomputed from `price_in_force(link, today)`, today being
+    the Malaysia day: the tick fires at 00:05 MYT, which is still yesterday on a UTC host."""
+    from app.services.pdf_render import today_in_malaysia
+    from app.services.procurement.supplier_cost_service import refresh_prices_in_force
+
+    changed = refresh_prices_in_force(db, today_in_malaysia())
+    return {"changed": changed}
+
+
+# Registered at IMPORT TIME, not inside `app.scheduler.task_scheduler.register_task_handlers`
+# (which only runs when `start_scheduler()` fires): this module - unlike that one - is
+# imported unconditionally by anything that touches `TASK_HANDLERS`, so registering here is
+# what makes the key present regardless of whether the scheduler has started yet.
+register_handler("cost_price_daily_tick", _handler_cost_price_daily_tick)
 
 
 def _interval_delta(interval_unit: str, interval_value: int) -> timedelta:
@@ -297,6 +319,34 @@ def update_task(
     task = get_task(db, task_id)
     if not task:
         return None
+
+    metadata_map: Optional[Dict[str, Any]] = None
+    if metadata is not None:
+        task_metadata = getattr(task, "metadata_", None)
+        metadata_map = dict(task_metadata) if isinstance(task_metadata, dict) else {}
+        for k, v in metadata.items():
+            if v is None:
+                metadata_map.pop(k, None)
+            else:
+                metadata_map[k] = v
+        # Validated against the MERGED map, not just the patch, so a patch that only
+        # touches one key still gets refused when it conflicts with a value already
+        # stored (e.g. a new start_days pushed past a stored end_days). Nothing on the
+        # task is written until this passes - a refused PATCH stores nothing.
+        if _task_key(task) == "scm_reorder_run":
+            try:
+                ScmReorderRunTaskMetadata(**metadata_map)
+            except ValidationError as exc:
+                first = exc.errors()[0]
+                field = ".".join(str(p) for p in first.get("loc", ()))
+                # A model_validator's own sentence arrives as "Value error, <sentence>".
+                msg = str(first.get("msg", "Invalid metadata")).removeprefix("Value error, ")
+                raise AppException(
+                    status_code=422,
+                    message=f"{field}: {msg}" if field else msg,
+                    code="invalid_task_metadata",
+                )
+
     if name is not None:
         setattr(task, "name", name)
     if description is not None:
@@ -316,15 +366,6 @@ def update_task(
             start_at = start_at.astimezone(_UTC).replace(tzinfo=None)
         setattr(task, "start_at", start_at)
     if metadata is not None:
-        task_metadata = getattr(task, "metadata_", None)
-        metadata_map: Dict[str, Any] = (
-            dict(task_metadata) if isinstance(task_metadata, dict) else {}
-        )
-        for k, v in metadata.items():
-            if v is None:
-                metadata_map.pop(k, None)
-            else:
-                metadata_map[k] = v
         setattr(task, "metadata_", metadata_map or None)
     # Recompute next_run_at from current schedule
     now = datetime.utcnow()
@@ -431,8 +472,23 @@ def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] 
     task_key = _task_key(task)
     task_id_str = _task_id(task)
 
+    def _run_as_requester(*args):
+        # A new thread starts with an empty context: the `scheduler` actor names its task
+        # (identity plan 8.1) and, for Run now, the user who pressed it (#1281 S0).
+        from app.audit_context import AuditActor, actor_scope, audit_context_scope
+
+        with actor_scope(
+            AuditActor(
+                actor_type="scheduler",
+                user_id=requested_by_user_id,
+                real_user_id=requested_by_user_id,
+                job_id=task_key,
+            )
+        ), audit_context_scope(correlation_id=run_id):
+            _execute_task_run(*args)
+
     thread = threading.Thread(
-        target=_execute_task_run,
+        target=_run_as_requester,
         args=(task_id_str, run_id, task_key, requested_by_user_id),
         name=f"scheduled-task-run-{task_key}-{run_id[:8]}",
         daemon=True,
@@ -563,11 +619,16 @@ def run_due_tasks(db: Session) -> None:
                     )
                 continue
             run = create_run(db, _task_id(task), status="started")
+            from app.audit_context import AuditActor, actor_scope
+
             try:
                 # Per-task company scope. Restored to None afterwards so a narrowed
                 # task cannot leak its scope into the next task in the same sweep.
                 set_company_scope(db, task_company_scope(task))
-                summary = handler(db, task)
+                # Per-task audit actor (identity S0, AC-10): `scheduler`, job_id = the
+                # task key, restored after so the next task names itself.
+                with actor_scope(AuditActor(actor_type="scheduler", job_id=_task_key(task)), db=db):
+                    summary = handler(db, task)
             finally:
                 set_company_scope(db, None)
             duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)

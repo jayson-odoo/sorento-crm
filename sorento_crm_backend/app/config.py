@@ -183,6 +183,11 @@ class Settings(BaseSettings):
     # Ops kill switch for external-request telemetry. On by default; exists so a
     # write-path problem can be shut off without a deploy.
     api_call_log_enabled: bool = True           # API_CALL_LOG_ENABLED
+    # Emergency off switch for audit capture (PLAN-audit-standard-26sep.md "Best-effort
+    # capture"). Read on every write, never cached by the listeners; the env value itself is
+    # loaded at process start, so set it and restart the API and worker, no deploy needed.
+    # False means NO trail and no gap row for any write while it is off.
+    audit_capture_enabled: bool = True          # AUDIT_CAPTURE_ENABLED
     idempotency_mode: str = "enforce"           # IDEMPOTENCY_MODE: "enforce" | "observe"
     idempotency_result_ttl: int = 10            # dedupe window seconds (a repeat within this is collapsed)
     idempotency_lock_ttl: int = 60              # in-flight lock seconds (must exceed max handler duration)
@@ -198,6 +203,14 @@ class Settings(BaseSettings):
     rate_limit_reset_window_seconds: int = 900
     rate_limit_portal_otp_max: int = 30        # portal OTP requests per window per IP
     rate_limit_portal_otp_window_seconds: int = 60
+
+    # identity S1 (#1280): an optional override for the WhatsApp template use
+    # case a phone sign-in code sends under. Ships empty: owner ruling of
+    # 27 Sep 2026 reuses the approved portal_otp template for CRM sign-in, so
+    # no new template goes to Meta. Set it (e.g. "login_otp") only once an
+    # approved template is mapped for that use case; an unmapped override
+    # still falls back to "portal_otp" (send_login_otp_respond_message).
+    phone_signin_otp_use_case: str = ""
 
     # Presigned-URL hardening (external API) - see PLAN-fix-security-cluster Sub-plan B.
     # When True, /external/presigned-url only signs a file_path that resolves to a

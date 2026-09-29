@@ -70,7 +70,9 @@ from app.models.project_so import (
     OrderInquiryReserveRequest,
     OrderInquiryReserveRequestRow,
 )
+from app.schemas.decision_trail import DecisionTrailResponse
 from app.services import project_service as projects
+from app.services.decision_trail_service import DecisionTrailService
 from app.services.download_service import DownloadService
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.order_inquiry_header_service import OrderInquiryHeaderService
@@ -382,6 +384,14 @@ def list_order_inquiry_worklist(
             "by `order_inquiries.id`."
         ),
     ),
+    include_history: bool = Query(
+        False,
+        description=(
+            "`PLAN-oi-no-double-count-25sep.md` S1 (AC-ND-20): cancelled rows too, "
+            "so the OI detail's Lines tab reads a line's whole history in its one "
+            "fetch. An explicit `state` still wins. Off, the response is unchanged."
+        ),
+    ),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -401,6 +411,7 @@ def list_order_inquiry_worklist(
             limit=limit,
             sort=sort,
             direction=direction,
+            include_cancelled=include_history,
             **_worklist_filters(
                 query,
                 delivery_month,
@@ -1325,6 +1336,30 @@ def order_inquiry_reserve_request_row_history(
 
 
 @router.get(
+    "/sales-order-lines/{core_line_id}/decision-trail",
+    response_model=DecisionTrailResponse,
+)
+def sales_order_line_decision_trail(
+    core_line_id: str,
+    _user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
+    db: Session = Depends(get_db),
+):
+    """The History icon's own read (`PLAN-oi-decision-trail-ui.md`, round 2, AC-DT-10):
+    who confirmed, saved or raised something against this CORE sales-order line - the id
+    an OI row and a fulfilment-board line both point at (`OrderInquiryRow.so_line_id` ->
+    the project mirror -> `core_sales_order_line_id`; `BoardContribution.line_id` names it
+    directly, no lookup needed). Same read gate as the reserve history route above:
+    `VIEW`/`ACKNOWLEDGE`/`RESERVE` are the three ways to already be allowed to see this
+    line's own inquiry or board."""
+    try:
+        validate_uuid_path(core_line_id, resource="Sales order line")
+        entries = DecisionTrailService(db).for_core_line(core_line_id)
+        return DecisionTrailResponse(entries=entries)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
     "/order-inquiries/{inquiry_id}/reserve-requests",
     response_model=List[OrderInquiryReserveRequestOut],
 )
@@ -1483,7 +1518,14 @@ async def auto_place_order_inquiries(
 
     `filter.inquiry_id` (S3, `PLAN-oi-header-list-detail.md`) is the OI detail page's
     own gear > Auto link: scopes the whole cascade to that header's rows, on top of
-    whichever of `product_ids` / `row_ids` is also given."""
+    whichever of `product_ids` / `row_ids` is also given.
+
+    R18 (`PLAN-oi-links-autocount-truth-24sep.md` 3.6): this is also the worklist's and
+    the OI detail's own "Link selected" - `row_ids` naming exactly the ticked rows, and
+    nothing else. There is no separate route for it: the book step above already writes
+    only what AutoCount names, in AutoCount's own name, and the cascade below only ever
+    suggests, so "Link selected" is this same call, scoped to the ticked rows - it can
+    never turn a suggestion into a link on its own."""
     try:
         for product_id in payload.product_ids or []:
             validate_uuid_path(product_id, resource="Product")

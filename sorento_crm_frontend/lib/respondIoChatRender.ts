@@ -48,7 +48,7 @@ export type RespondMessageRenderable = {
    * its message objects carry `replyTo` when the contact quoted an earlier
    * message; the local `chat_histories` lane reconstructs the same shape from
    * `reply_to_message_id` / `reply_to_message`. Outbound quoting has no API
-   * support at all, so this is inbound-only: a READ-side field.
+   * support at all (ours is the ">" text convention), so this is a READ-side field.
    */
   replyTo?: {
     /**
@@ -306,6 +306,112 @@ export function describeMessageAttachments(
   return out;
 }
 
+/** Quote line prefix of an outgoing reply-to (#1317, recovered from e91b225ce). */
+export const QUOTE_LINE_PREFIX = '> ';
+
+/** Longest quoted excerpt carried in an outgoing reply before it is elided. */
+export const QUOTE_EXCERPT_MAX_CHARS = 160;
+
+/** The message a staff reply answers, as the composer carries it. */
+export type ReplyTarget = {
+  /** Respond message id of the quoted message, for the audit trail only. */
+  messageId: string | null;
+  /** What gets quoted. Never empty. */
+  excerpt: string;
+  /** Who wrote the quoted message, as the preview names them. */
+  senderLabel: string;
+};
+
+/**
+ * Build the outgoing text for a "reply to this message" send.
+ *
+ * Respond.io's send API has NO reply-to/context parameter, so a reply is
+ * emulated: the quoted excerpt is carried as a ">"-prefixed line above the body,
+ * which WhatsApp renders as quoted text and which `splitQuotedPrefix` turns back
+ * into a quote block in our own chat list. Shipped 12 Aug, dropped 16 Aug
+ * (e313ac690), restored as-is for #1317.
+ */
+export function buildQuotedReplyText(quotedText: string, body: string): string {
+  const excerpt = (quotedText ?? '').replace(/\s+/g, ' ').trim();
+  if (!excerpt) return body;
+  const clipped =
+    excerpt.length > QUOTE_EXCERPT_MAX_CHARS
+      ? `${excerpt.slice(0, QUOTE_EXCERPT_MAX_CHARS).trimEnd()}…`
+      : excerpt;
+  return `${QUOTE_LINE_PREFIX}${clipped}\n${body}`;
+}
+
+/**
+ * Split a message body into its leading ">"-quoted excerpt (if any) and the
+ * reply itself.
+ *
+ * ONLY valid on OUTGOING text: the ">" prefix is a convention WE write in
+ * `buildQuotedReplyText`, so it is only ours to read back. Render inbound
+ * traffic through `splitMessageQuote` (or verbatim) - a contact may legitimately
+ * start their own message with ">" and those lines are their message.
+ */
+export function splitQuotedPrefix(text: string): { quoted: string | null; body: string } {
+  const raw = text ?? '';
+  if (!raw.startsWith(QUOTE_LINE_PREFIX.trimEnd())) return { quoted: null, body: raw };
+  const lines = raw.split('\n');
+  const quoted: string[] = [];
+  let i = 0;
+  for (; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line.startsWith('>')) break;
+    quoted.push(line.replace(/^>\s?/, ''));
+  }
+  if (quoted.length === 0) return { quoted: null, body: raw };
+  return { quoted: quoted.join('\n').trim(), body: lines.slice(i).join('\n').replace(/^\n+/, '') };
+}
+
+/**
+ * The quote + body to render for ONE message, direction aware (7b18bbb72):
+ * outgoing is ours, so a leading ">" block is the reply-to emulation; inbound
+ * is the contact's own words and is returned verbatim.
+ */
+export function splitMessageQuote(
+  item: RespondMessageRenderable,
+): { quoted: string | null; body: string } {
+  const raw = getMessageBodyText(item);
+  if (item.traffic !== 'outgoing') return { quoted: null, body: raw };
+  return splitQuotedPrefix(raw);
+}
+
+/**
+ * The text a Reply on this message quotes: what its bubble shows (an earlier
+ * quote line of ours is not re-quoted), else the attachment placeholder, else
+ * the bare type. Never empty.
+ */
+export function quoteExcerptOf(item: RespondMessageRenderable): string {
+  const body = splitMessageQuote(item).body.replace(/\s+/g, ' ').trim();
+  if (body) return body;
+  const attachment = describeMessageAttachments(item)[0];
+  if (attachment) {
+    return attachment.fileName ? `[${attachment.kind}] ${attachment.fileName}` : `[${attachment.kind}]`;
+  }
+  const type = String(item.message?.type ?? '').trim();
+  return type ? `[${type}]` : '[message]';
+}
+
+/**
+ * The message an outgoing ">" quote was cut from, among the ones loaded before
+ * it. The wire text carries no id, so the match is on the text itself: the
+ * newest earlier message whose quotable text starts with the excerpt (minus the
+ * ellipsis `buildQuotedReplyText` adds when it clips).
+ */
+export function findQuotedOriginal(
+  excerpt: string,
+  earlier: RespondMessageRenderable[],
+): RespondMessageRenderable | undefined {
+  const needle = excerpt.replace(/\s+/g, ' ').trim().replace(/…$/, '').trimEnd();
+  if (!needle) return undefined;
+  for (let i = earlier.length - 1; i >= 0; i -= 1) {
+    if (quoteExcerptOf(earlier[i]).startsWith(needle)) return earlier[i];
+  }
+  return undefined;
+}
+
 /** The "replying to" block above a bubble, when the message quotes an earlier one. */
 export type QuotedContext = {
   /** Respond message id of the quoted message, as a string. Null when absent. */
@@ -325,9 +431,8 @@ export const QUOTED_CONTEXT_MAX_CHARS = 180;
  * Inbound only. It reads Respond's structured `replyTo`, which is how a
  * contact's quote-reply arrives - there is no ">" in it to parse, and parsing
  * one would be wrong anyway (the contact's own words are never ours to
- * rewrite). There is no outgoing counterpart: Respond's send API takes no
- * reply-to, and the ">"-prefix emulation we once wrote was removed rather than
- * left on screen looking like a real quote.
+ * rewrite). Our own outgoing quote is the ">" text convention instead
+ * (`splitMessageQuote`), since Respond's send API takes no reply-to.
  *
  * A quoted media message has no text, so the excerpt falls back to a typed
  * placeholder ("[image]") rather than rendering an empty block; a quote we hold

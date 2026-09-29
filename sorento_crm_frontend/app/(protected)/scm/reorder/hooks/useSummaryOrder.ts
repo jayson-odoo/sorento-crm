@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { ENTITY_DOWNLOADS_QUERY_KEY, MY_DOWNLOADS_QUERY_KEY } from '@/services/myDownloadsService';
 import {
-  exportLowStockReport,
   exportOiWorksheet,
   exportOrderSheet,
   getOrderSummaryDemand,
@@ -61,32 +60,11 @@ export function useExportOrderSheet(runId: string | null) {
 }
 
 /**
- * The low stock report, through the same My Downloads pipeline (PLAN-low-stock-report S4,
- * AC-2). Its own mutation rather than a third `format` on `useExportOrderSheet`, so the
- * two report kinds carry their own toast and their own pending flag - and so a reader of
- * the Actions menu can tell which of the two is in flight.
- */
-export function useExportLowStockReport(runId: string | null) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => exportLowStockReport(runId as string),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
-      queryClient.invalidateQueries({
-        queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, 'reorder_run', runId],
-      });
-      toast.success('Preparing the low stock report - it will appear in My Downloads.');
-    },
-    onError: (error: Error) =>
-      toast.error(error.message || 'Failed to start the low stock report'),
-  });
-}
-
-/**
  * The OI worksheet, through the same My Downloads pipeline (Lane C, PLAN-order-sheet-oi-
- * reports-22sep.md, AC-C1/AC-C2). Its own mutation, the same shape as
- * `useExportLowStockReport` - so the plan's Actions menu can tell which of the three
- * exports is in flight and toast the worksheet's own message.
+ * reports-22sep.md, AC-C1/AC-C2). Its own mutation, the same shape as `useExportOrderSheet`
+ * - so the plan's Actions menu can tell which export is in flight and toast the worksheet's
+ * own message. (The low stock report left this menu's pipeline for its own page,
+ * PLAN-excel-preview-26sep S1.)
  */
 export function useExportOiWorksheet(runId: string | null) {
   const queryClient = useQueryClient();

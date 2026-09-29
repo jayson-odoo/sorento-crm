@@ -162,14 +162,17 @@ class TestPendingSurvivesARealTurnBoundary:
         assert stored["open_question"]["kind"] == "member_offer"
         assert stored["open_question"]["kind"] in ESCALATION_OFFER_KINDS
 
-        # -- turn 2: a bare "yes" - the PARSER never says the offer was confirmed ---- #
+        # -- turn 2: a bare "yes" - the PARSER's semantic verdict confirms the offer -- #
+        # #1323 (owner ruling, 28 Sep 2026): an escalation offer is accepted on
+        # `is_escalation_confirmation` only; the published prompt sets it for a "yes"
+        # beside `is_affirmative`, which alone never hands over.
         turn2_qf = _parser_output(
             message_type="casual",
             intent_hint=None,
             domain_hint=None,
             entities=[],
             is_affirmative=True,
-            escalation={"is_escalation_confirmation": False, "company_pick": None},
+            escalation={"is_escalation_confirmation": True, "company_pick": None},
             routing={
                 "suggested_team": "customer_service",
                 "suggested_agent": "order_enquiries",
@@ -191,16 +194,15 @@ class TestPendingSurvivesARealTurnBoundary:
         # Ported (AC-1592, S6 ruling): the OLD "head flips `is_escalation_confirmation`
         # off a legacy marker string" post-process step is retired - the S6 owner ruling
         # ("the PARSER is the only decider ... no hard coding") means the parser's own
-        # `is_affirmative: true` is what `turn/apply.py::_answer_offer` accepts on
-        # directly; nothing in the CRM rewrites the parser's own emission anymore
-        # (measured: `head2.ctx["parse"]["output"]["escalation"]["is_escalation_
-        # confirmation"]` stays `False`, exactly as the parser emitted it - there is no
-        # "dual read" left to flip). The property that matters - a bare "yes" against a
+        # `is_escalation_confirmation: true` is what `turn/apply.py::_answer_offer`
+        # accepts on directly (#1323: `is_affirmative` alone no longer does); nothing in
+        # the CRM rewrites the parser's own emission anymore - there is no "dual read"
+        # left to flip). The property that matters - a bare "yes" against a
         # real, persisted `member_offer` (an `ESCALATION_OFFER_KINDS` member) actually
         # ACCEPTS the offer - is what the branch kind proves: `_answer_offer` routes an
         # accepted offer to the escalation lane, whose own branch kind is `out_of_scope`
         # (not `escalate_offer` again - that is the ASK kind, never the ACCEPT one).
-        assert head2.ctx["parse"]["output"]["escalation"]["is_escalation_confirmation"] is False, (
+        assert head2.ctx["parse"]["output"]["escalation"]["is_escalation_confirmation"] is True, (
             "the parser's own emission is untouched - nothing in the CRM rewrites it "
             "post-parse anymore (S6 ruling: the parser is the only decider)"
         )
@@ -357,7 +359,9 @@ class TestAnAbandonedMemberOfferStopsConfirming:
             domain_hint=None,
             entities=[],
             is_affirmative=True,
-            escalation={"is_escalation_confirmation": False, "company_pick": None},
+            # #1323: the parser's verdict for a "yes" over an offer; the offer has
+            # expired, so even the semantic confirmation finds nothing to accept.
+            escalation={"is_escalation_confirmation": True, "company_pick": None},
         )
         _stub_parser(monkeypatch, yes_qf)
         envelope = _envelope(is_test=False)

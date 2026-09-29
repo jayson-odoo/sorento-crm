@@ -214,7 +214,6 @@ export default function GRNList() {
       rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}
       standardToolbar={false}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

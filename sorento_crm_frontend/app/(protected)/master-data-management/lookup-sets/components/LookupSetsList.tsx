@@ -180,7 +180,6 @@ export default function LookupSetsList() {
         isPlaceholderData={isPlaceholderData}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         onRowClick={(row) => handleView(row as LookupSet)}
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">

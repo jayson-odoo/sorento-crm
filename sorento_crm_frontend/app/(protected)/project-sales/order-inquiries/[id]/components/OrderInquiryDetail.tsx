@@ -64,12 +64,19 @@ import {
   resolveReserveRowRequestAnchor,
 } from '../../../_shared/lib/orderInquiryReserve';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
+import {
+  foldKeyOf,
+  isLiveInquiryRow,
+  isWaitingUsedRow,
+  reserveHistoryRowOf,
+  type OrderInquiryLine,
+} from '../../../_shared/lib/orderInquiryLineFold';
 import type { CommitReservePayload } from '../../../_shared/services/orderInquiryReserveService';
 import { OrderInquiryLinesTab } from './OrderInquiryLinesTab';
 import { OrderInquiryGeneralTab } from './OrderInquiryGeneralTab';
 import { ReserveRequestDialog } from './ReserveRequestDialog';
 import { ReserveLineForm } from './ReserveLineForm';
-import { ReserveLineHistoryDialog } from './ReserveLineHistoryDialog';
+import { OrderInquiryLineHistoryDialog } from './OrderInquiryLineHistoryDialog';
 import type { StagedReserveEntry } from './orderInquiryHeaderLinesColumns';
 import {
   OrderInquiryRelatedPurchaseOrdersTab,
@@ -123,17 +130,6 @@ function reserveIneligibleReason(row: OrderInquiryWorklistRow): string | null {
   return null;
 }
 
-/** A ticked line still owed a document (mirrors `OrderInquiriesClient.tsx`'s own
- * `isLinkable`, kept smaller here on purpose: a single header's lines carry none of the
- * worklist's cross-header bundling, so the extra tests that function runs have nothing
- * to answer on this screen). */
-function isLinkable(row: OrderInquiryWorklistRow): boolean {
-  if (ackStateOf(row) === 'rejected') return false;
-  if (!['raised', 'partly_linked', 'placed'].includes(row.state)) return false;
-  const linked = (row.links ?? []).reduce((sum, link) => sum + Number(link.qty || '0'), 0);
-  return Number(row.qty || '0') - linked > 0;
-}
-
 export function OrderInquiryDetail({ id }: { id: string }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -142,6 +138,9 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const canAct = useHasPermission(ORDER_INQUIRY_ACTION_PERMISSION);
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
   const canReserve = useHasPermission(ORDER_INQUIRY_RESERVE_PERMISSION);
+  // #1312 (Q6): the Lines tab's own paperclip upload/remove - the same grant that
+  // confirms the board and writes OI lines.
+  const canEditAttachments = useHasPermission('projects.projects.edit');
   const { data: session } = useSession();
   const currentUserId = session?.user?.id ?? null;
 
@@ -173,8 +172,14 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     row: OrderInquiryWorklistRow;
     mode: 'reserve' | 'amend';
   } | null>(null);
-  // Which row `ReserveLineHistoryDialog` is open for (AC-RS-89).
-  const [historyRow, setHistoryRow] = useState<OrderInquiryWorklistRow | null>(null);
+  // Which sales order line the one History dialog is open for
+  // (`PLAN-oi-no-double-count-25sep.md` AC-ND-13/14, owner ruling 26 Sep, G3).
+  const [historyLine, setHistoryLine] = useState<OrderInquiryLine | null>(null);
+  // AC-RS-89 / AC-ND-14 (review S4): the line's reserve history (its Reserve tab) is read
+  // off the live row that carries a reserve, whichever row is the primary; a line with none
+  // reads its primary row and gets no Reserve tab.
+  const reserveHistoryRow = historyLine ? reserveHistoryRowOf(historyLine) : null;
+  const historyRow = reserveHistoryRow ?? historyLine?.primary ?? null;
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   // Unlink selected (AC-DP-06, fix round UL): a server-deferred pending action
   // (`order_inquiry_row.unlink`), never a confirm dialog - one park per ticked line,
@@ -210,12 +215,22 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   }
 
   const lines = useMemo(() => linesQuery.data ?? [], [linesQuery.data]);
-  const activeLines = useMemo(() => lines.filter((l) => l.state !== 'cancelled'), [lines]);
+  // S0 (`PLAN-oi-no-double-count-25sep.md`, G1/G6): a used row is history now, so it is
+  // never ticked, linked, unlinked or rejected from this page - only swept by Confirm.
+  const activeLines = useMemo(() => lines.filter(isLiveInquiryRow), [lines]);
   const selectedLines = useMemo(
     () => activeLines.filter((l) => rowSelection[l.id]),
     [activeLines, rowSelection],
   );
   const selectedIds = useMemo(() => selectedLines.map((l) => l.id), [selectedLines]);
+  // AC-ND-12: the sales order lines ticked. Review S2: a line whose only waiting rows are
+  // used ticks those used rows, so "anything ticked" reads the lines, not `selectedIds`
+  // (live rows only) - else one such tick would widen Unconfirm and Auto link to the OI.
+  const tickedLineKeys = useMemo(
+    () => new Set(lines.filter((l) => rowSelection[l.id]).map(foldKeyOf)),
+    [lines, rowSelection],
+  );
+  const anyTicked = tickedLineKeys.size > 0;
   const selectedConfirmable = useMemo(
     () =>
       selectedLines.filter((l) => {
@@ -224,6 +239,19 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       }),
     [selectedLines],
   );
+  // Review S2 (G6): a ticked line whose only waiting rows are used ones (its live rows
+  // were confirmed before the sweep existed, or it has none) sends those used rows, so
+  // the header never sits Outstanding on a row no tick can confirm. A line with a live
+  // row still waiting sends its live rows only; the server sweeps its used rows.
+  const selectedUsedToConfirm = useMemo(() => {
+    const confirmableKeys = new Set(selectedConfirmable.map(foldKeyOf));
+    return lines.filter(
+      (l) =>
+        isWaitingUsedRow(l) &&
+        tickedLineKeys.has(foldKeyOf(l)) &&
+        !confirmableKeys.has(foldKeyOf(l)),
+    );
+  }, [lines, tickedLineKeys, selectedConfirmable]);
   const selectedUnconfirmable = useMemo(
     () =>
       selectedLines.filter((l) => {
@@ -245,7 +273,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       }),
     [activeLines],
   );
-  const unconfirmScope = selectedIds.length > 0 ? selectedUnconfirmable : allUnconfirmable;
+  const unconfirmScope = anyTicked ? selectedUnconfirmable : allUnconfirmable;
   const selectedRejectable = useMemo(
     () =>
       selectedLines.filter(
@@ -253,7 +281,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       ),
     [selectedLines],
   );
-  const selectedLinkable = useMemo(() => selectedLines.filter(isLinkable), [selectedLines]);
   const selectedLinked = useMemo(
     () => selectedLines.filter((l) => l.state === 'placed' || l.state === 'partly_linked'),
     [selectedLines],
@@ -391,8 +418,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     setEditingRow({ row, mode: 'amend' });
   }, []);
 
-  const handleHistoryClick = useCallback((row: OrderInquiryWorklistRow) => {
-    setHistoryRow(row);
+  const handleLineHistoryClick = useCallback((line: OrderInquiryLine) => {
+    setHistoryLine(line);
   }, []);
 
   const handleUndoStaged = useCallback((rowId: string) => {
@@ -539,15 +566,21 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   // AC-DP-05: the visible label is simply how many lines are TICKED; disabled reads the
   // scope's own eligibility - the ticked lines' handshake state with something ticked,
   // the header's own count with nothing ticked.
-  const confirmLabel = selectedIds.length > 0 ? `Confirm (${selectedIds.length})` : 'Confirm';
-  const confirmDisabled =
-    selectedIds.length > 0
-      ? selectedConfirmable.length === 0
-      : (header?.lines_to_confirm ?? 0) === 0;
+  // AC-ND-12 (`PLAN-oi-no-double-count-25sep.md`): the grid ticks LINES, so N counts the
+  // ticked sales order lines, not the rows behind them.
+  const confirmLabel = anyTicked ? `Confirm (${tickedLineKeys.size})` : 'Confirm';
+  const confirmDisabled = anyTicked
+    ? selectedConfirmable.length === 0 && selectedUsedToConfirm.length === 0
+    : (header?.lines_to_confirm ?? 0) === 0;
 
   function runConfirm() {
+    // G6 (owner ruling 26 Sep): the ticked lines' live rows; the server takes on each
+    // line's waiting used rows in the same call (S1, AC-ND-24). Review S2: plus the used
+    // rows of a ticked line with nothing live left to confirm.
     acknowledge.mutate(
-      selectedIds.length > 0 ? { rowIds: selectedIds } : { filter: { inquiry_id: id } },
+      anyTicked
+        ? { rowIds: [...selectedIds, ...selectedUsedToConfirm.map((l) => l.id)] }
+        : { filter: { inquiry_id: id } },
       { onSuccess: () => setRowSelection({}) },
     );
   }
@@ -559,10 +592,19 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     );
   }
 
+  /**
+   * "Link selected" (R18, owner ruling from the hand test on stack C, 25 Sep 2026,
+   * supersedes G1): the SAME mutation as `runAutoLink` below, scoped to exactly the
+   * ticked lines via `row_ids` - it never turns a suggestion into a link on its own.
+   * Pressing it re-runs the AutoCount book step for the ticked lines (in AutoCount's
+   * own name) and refreshes their suggestions, catching a mistake in the automation
+   * rather than promising a placement. Unlike `runAutoLink`, nothing ticked means
+   * nothing to do - there is no whole-OI fallback for this press.
+   */
   function runLinkSelected() {
-    if (selectedLinkable.length === 0) return;
+    if (selectedIds.length === 0) return;
     autoPlace.mutate(
-      { row_ids: selectedLinkable.map((l) => l.id) },
+      { row_ids: selectedIds },
       { onSuccess: () => setRowSelection({}) },
     );
   }
@@ -573,18 +615,16 @@ export function OrderInquiryDetail({ id }: { id: string }) {
    * first. Ticked lines -> exactly those (unfiltered - the cascade itself decides what
    * it can and cannot place, the same as the worklist's own unconditional run over
    * everything); nothing ticked -> the whole OI via `filter: { inquiry_id }` (AC-AL-01).
-   * Same hook, same result reporting (`linkOutcomeText`'s toast) as "Link selected" and
-   * the worklist's "Auto link all" - nothing new invented here.
-   *
-   * NOTE for the captain: when every ticked line already IS linkable, this sends the
-   * exact same `{ row_ids }` payload through the exact same `autoPlace` mutation as
-   * `runLinkSelected` above - the two differ only when a ticked line is NOT linkable
-   * (rejected, or already fully placed), which `runLinkSelected` silently drops and this
-   * still sends. Left both in place; not my call which one goes.
+   * Same hook, same result reporting (`linkOutcomeText`'s toast) as `runLinkSelected`
+   * above - since R18 the two presses share the exact same call, just a different
+   * scope when nothing is ticked.
    */
   function runAutoLink() {
+    // Review S2: a tick on a line with only used rows is still a tick - it links nothing,
+    // and it never widens to the whole OI.
+    if (anyTicked && selectedIds.length === 0) return;
     autoPlace.mutate(
-      selectedIds.length > 0 ? { row_ids: selectedIds } : { filter: { inquiry_id: id } },
+      anyTicked ? { row_ids: selectedIds } : { filter: { inquiry_id: id } },
       { onSuccess: () => setRowSelection({}) },
     );
   }
@@ -693,8 +733,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                         Choose document
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        disabled={selectedLinkable.length === 0}
-                        onSelect={selectedLinkable.length ? runLinkSelected : undefined}
+                        disabled={selectedIds.length === 0}
+                        onSelect={selectedIds.length ? runLinkSelected : undefined}
                       >
                         <Wand2 className="size-4" aria-hidden />
                         Link selected
@@ -856,8 +896,9 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             onTickReserve={handleTickReserve}
             onEditReserve={handleEditReserve}
             onAmendReserve={handleAmendReserve}
-            onHistoryClick={handleHistoryClick}
+            onLineHistoryClick={handleLineHistoryClick}
             onUndoStaged={handleUndoStaged}
+            canEditAttachments={canEditAttachments}
           />
         </TabsContent>
 
@@ -953,14 +994,15 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         />
       ) : null}
 
-      {historyRow ? (
-        <ReserveLineHistoryDialog
-          open
+      {historyLine ? (
+        <OrderInquiryLineHistoryDialog
+          line={historyLine}
           onOpenChange={(next) => {
-            if (!next) setHistoryRow(null);
+            if (!next) setHistoryLine(null);
           }}
-          itemCode={historyRow.item_code ?? null}
-          entries={historyQuery.data ?? []}
+          // AC-ND-14: a Reserve tab only when the line has reserve history - any live row
+          // reserved or declined (review S4), not the primary row alone.
+          reserveEntries={reserveHistoryRow ? (historyQuery.data ?? []) : undefined}
         />
       ) : null}
 

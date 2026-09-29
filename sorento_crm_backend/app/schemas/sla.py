@@ -396,7 +396,7 @@ class UserSuperiorSimple(BaseModel):
 class UserSimple(BaseModel):
     """Simple user reference for tracking responses."""
     id: str
-    email: str
+    email: Optional[str] = None  # a phone-only assignee has none (identity S0)
     name: Optional[str] = None
     superior: Optional[UserSuperiorSimple] = None  # For assignee tooltip in tracking detail
 

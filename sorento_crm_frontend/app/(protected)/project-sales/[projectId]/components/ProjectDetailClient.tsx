@@ -14,6 +14,7 @@ import {
   ListChecks,
   Package,
   Paperclip,
+  Pencil,
   Receipt,
   ShoppingCart,
   Trash2,
@@ -205,6 +206,15 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           gear={
             project.can_edit && (
               <DetailActionsMenu ariaLabel="Project actions">
+                {/* First item, never a second primary (AC-PF005, D9): the form is the
+                    one place every field on this page is edited, so it leads the menu
+                    rather than sitting after the status moves. */}
+                <DropdownMenuItem
+                  onSelect={() => router.push(`/project-sales/${project.id}/edit`)}
+                >
+                  <Pencil className="size-4" aria-hidden />
+                  Edit project
+                </DropdownMenuItem>
                 {/* Exits and side moves. Deliberately not in the header: marking a
                     pursuit lost should never sit one careless click from advancing it. */}
                 {secondaryMoves.map((option) => (
@@ -287,6 +297,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                 <Fact label="Developer" value={project.developer_name} />
                 <Fact label="Registered company / SPV" value={project.registered_company_name} />
                 <Fact label="Location" value={project.location} />
+                <Fact label="Address" value={project.address} />
                 <Fact label="Project type" value={project.type_name} />
                 <Fact label="Template" value={project.template_name} />
                 <Fact label="Filing reference" value={project.admin_ref} />

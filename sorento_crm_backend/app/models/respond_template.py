@@ -43,6 +43,13 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # window is closed. Map the approved auth/utility template's code param to
     # the ``otp_code`` variable.
     "portal_otp",
+    # Sign-in OTP (identity S1, #1280) - an optional override only. Owner
+    # ruling (27 Sep 2026): CRM phone sign-in reuses the approved portal_otp
+    # template, so settings.phone_signin_otp_use_case ships empty and this use
+    # case is not offered on the WhatsApp Templates screen. It is used only if
+    # that setting names it AND a template is mapped. Map the code param to
+    # ``otp_code``.
+    "login_otp",
     # SLA daily summary - bounded template (counts + deep link) sent to a staff
     # member when their 24h window is closed at summary time. Map params to the
     # ``outstanding`` / ``escalated_last_24h`` / ``resolved_last_24h`` counts and
@@ -117,6 +124,13 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # seeded: connecting the WeChat channel and approving its template is a Respond.io task
     # with its own go, and until then an out-of-window send is refused with a reason.
     "supplier_request_chat",
+    # Ideation idle-draft reminder (PLAN-ideation-intake-redesign-24sep, S4). Sent
+    # once, 24h after the last turn on an open draft; due exactly when the 24h
+    # free-text window closes, so it will almost always go as a template. Map a
+    # slot to ``message`` at minimum - the body carries the fixed reminder text
+    # naming the idea's title. Unmapped -> the send is skipped and logged, the
+    # draft still closes on schedule (AC-1405).
+    "ideation_draft_reminder",
 )
 
 # Chat reply use cases - a *_chat / conversation_chat default MUST map a slot to the

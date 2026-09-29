@@ -47,7 +47,9 @@
  *
  * Status enums:
  *   TemplateStatus: approved | pending | rejected
- *   UseCase: complaint | stock_inquiry | purchase_request | sponsorship_form
+ *   UseCase: complaint | stock_inquiry | purchase_request | sponsorship_form | ...
+ *     (full list: `USE_CASES` below, kept in sync with the backend's
+ *     `TEMPLATE_DEFAULT_USE_CASES` tuple - app/models/respond_template.py)
  *   ParamVariable: contact_name | entity_number | status | reason | portal_url | message
  * =========================================================================
  */
@@ -79,7 +81,9 @@ export type UseCase =
   | 'form_action_reopened'
   | 'product_discontinued'
   | 'ticket_resolved'
-  | 'price_tag_update';
+  | 'price_tag_update'
+  | 'ideation_draft_reminder'
+  | 'supplier_request_chat';
 
 export type ParamVariable =
   | 'contact_name'
@@ -237,6 +241,13 @@ export const USE_CASES: {
     group: 'chat',
   },
   {
+    key: 'supplier_request_chat',
+    label: 'Supplier Request - Chat Reply',
+    description:
+      'Free-text chat reply to the supplier\'s WeChat contact when their 24h window is closed. Map a parameter to "Full update message" (the bilingual ask + public link). Nothing is seeded - the WeChat channel and its template need approving first.',
+    group: 'chat',
+  },
+  {
     key: 'portal_otp',
     label: 'Portal OTP',
     description:
@@ -331,6 +342,12 @@ export const USE_CASES: {
     label: 'Price Tag Request - Update',
     description:
       'Sent to the salesperson when their price tag request moves (received, design ready, changes requested, approved, PDF ready, ready for collection, collected, rejected) and their 24h window is closed. Map params to "Full update message" at minimum; add "Entity number" and "Portal URL" when the template carries them.',
+  },
+  {
+    key: 'ideation_draft_reminder',
+    label: 'Ideation - Draft Reminder',
+    description:
+      'Sent once, 24h after the last turn on an open idea draft, when the free-text window has closed. Map a parameter to "Full update message" (the reminder text naming the idea).',
   },
 ];
 

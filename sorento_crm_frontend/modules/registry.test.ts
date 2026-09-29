@@ -24,6 +24,20 @@ describe('module registry purge manifests', () => {
     expect(discovered.description).toBe(projectsPurgeTables.description);
   });
 
+  it('exposes the sales module with its schema-qualified tables (plan 3.7, widened S2)', () => {
+    expect(modulesWithDataPurge()).toContain('sales');
+    expect(modulePurgeTables().sales.tables).toEqual([
+      'sales.opportunity_lines',
+      'sales.opportunities',
+      'sales.target_commission_tiers',
+      'sales.target_scope',
+      'sales.target_periods',
+      'sales.targets',
+      'sales.team_members',
+      'sales.teams',
+    ]);
+  });
+
   it('names every table once, so the dialog cannot list one twice', () => {
     for (const entry of MODULE_REGISTRY) {
       if (!entry.purgeTables) continue;

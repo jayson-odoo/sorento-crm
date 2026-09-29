@@ -56,8 +56,11 @@ export interface PageHeaderProps {
    * push the toolbar wide.
    */
   titleClassName?: string;
-  /** A description or meta line, under the trail. */
-  children?: ReactNode;
+  /**
+   * No slot: a page has no subtitle or description line (owner ruling, PR #1336,
+   * CRM-wide). Title, trail and the actions are the whole header.
+   */
+  children?: never;
 }
 
 /** The root of every trail is the sidebar's own first entry, not "Home" (D11). */
@@ -131,7 +134,6 @@ export function PageHeader({
   crumbs,
   actions,
   titleClassName,
-  children,
 }: PageHeaderProps) {
   const pathname = usePathname() ?? '/';
   const { getBreadcrumb } = useMenu(pathname);
@@ -183,7 +185,6 @@ export function PageHeader({
             })}
           </BreadcrumbList>
         </Breadcrumb>
-        {children}
       </ToolbarHeading>
       {actions ? <ToolbarActions>{actions}</ToolbarActions> : null}
     </Toolbar>

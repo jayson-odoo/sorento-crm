@@ -23,8 +23,21 @@ fresh list). The dialog is titled **Plan a container**:
   a drop zone; picking **No file** does not, and skips straight to starting the plan from what
   is already on file for this supplier.
 
-With a document chosen, click **Test** to read the file without writing anything, then
-**Confirm and start plan**. With **No file**, click **Start plan** directly.
+Once a **Stock list** or **Proforma invoice** file lands in the drop zone, a column-mapping panel
+appears for it: two sample values from the sheet, the column's own header text (line breaks and
+merged-cell splits kept, e.g. `外箱/木托尺寸 [2]`), and a field picker per column, with an
+**Ignore** entry for columns that don't matter. Required fields are marked, and **Test** stays
+disabled until every one has a field. If the guessed **Header row N** is wrong, the stepper beside
+it nudges the row up or down and the columns re-read; when no row could be guessed the panel says
+so and the stepper starts at row 1.
+
+The first time this supplier's layout is seen, the panel is open. On a later upload of the same
+layout, it is folded to "N of N columns mapped from saved layout" with a **Review** link, and it
+opens again only when a column this supplier has never had before turns up.
+
+With a document chosen, click **Test**. Test saves the column choices for this supplier and reads
+the file in the same click, without writing anything else; then click **Confirm and start plan**.
+With **No file**, click **Start plan** directly.
 
 If the supplier's stock list merges a cell such as 型号 (model), 品名 (product name), 商标
 (brand), 规格 (spec), a remark, or 体积 (cbm per unit) across several model rows, every row in

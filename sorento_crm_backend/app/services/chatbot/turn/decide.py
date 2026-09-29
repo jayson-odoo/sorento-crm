@@ -11,7 +11,8 @@
 #
 #   ANSWER   the message answers the open question - a position, an offered option named
 #            by its exact label, a yes to an offer, or "all" over a numbered menu. An
-#            escalation offer takes one explicit position or a yes, nothing weaker.
+#            escalation offer takes one explicit position or the parser's own
+#            `is_escalation_confirmation`, nothing weaker (#1323).
 #   REFINE   the message keeps the standing subject and narrows it - the parser's own
 #            "only" marker, entities that sit on axes the subject does not hold, or a
 #            date window on its own (R15, R24).
@@ -82,6 +83,9 @@ class Decision:
       with the entities beside it.
     * `replaces_every_axis` - `entity_op: replace`, the op a turn carries when its own
       entities ARE the whole scope on every axis.
+    * `own_domain` - an ANSWER whose message also named a domain of its own
+      (`names_its_own_domain`): the pick is answered in THAT domain, not the roster's
+      (issue #1352, the judgement table in PLAN-picker-domain-judgement-29sep.md).
     """
 
     kind: str
@@ -93,6 +97,7 @@ class Decision:
     declined: bool = False
     negated: bool = False
     replaces_every_axis: bool = False
+    own_domain: bool = False
 
     @property
     def answers(self) -> bool:
@@ -120,8 +125,11 @@ class Decision:
             "domain_in_message",
         )
 
-    def as_trace(self) -> dict[str, str]:
-        return {"kind": self.kind, "why": self.why}
+    def as_trace(self) -> dict[str, Any]:
+        trace: dict[str, Any] = {"kind": self.kind, "why": self.why}
+        if self.own_domain:
+            trace["own_domain"] = True
+        return trace
 
 
 def _positions_by_label(pending: Pending, verdict: dict[str, Any]) -> list[int]:
@@ -241,15 +249,16 @@ def picked_positions(pending: Pending, verdict: dict[str, Any]) -> tuple[list[in
             # numbered menu - `compose._team_pick_question`'s single-team branch) is
             # answered by a yes, never by a position. "how about SO?" carried
             # `reference_positions: [1]` over exactly this shape and position 1
-            # escalated a business question about a document - the generic
-            # `is_affirmative`/`is_escalation_confirmation` arm further down in
-            # `decide()` is the only door a yes_no pending answers through.
+            # escalated a business question about a document - the
+            # `is_escalation_confirmation` arm further down in `decide()` is the only
+            # door a yes_no pending answers through (#1323).
             return None
         # A handover is the most expensive thing the bot can do with a message, so it
         # takes an EXPLICIT signal and nothing weaker: ONE position the customer typed
         # (which is how a multi-team roster is answered at all, contract 108), or the
-        # plain yes the acceptance arm reads for itself. A label match and a broaden are
-        # both too weak to hand a conversation to a human on, and so is a SET of
+        # parser's semantic confirmation the acceptance arm reads for itself (#1323). A
+        # label match and a broaden are both too weak to hand a conversation to a human
+        # on, and so is a SET of
         # positions: there is no handing one conversation to every team at once, which
         # is the rule contract 31 already keeps for "all". Measured on
         # `console/handpass3-owner-17sep-purchase-cost-po.json` step 3, where the ten
@@ -392,6 +401,27 @@ def domain_in_message(verdict: dict[str, Any]) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+def names_its_own_domain(verdict: dict[str, Any]) -> bool:
+    """Did THIS message name a domain of its own, beside whatever it picked?
+
+    Issue #1352 (owner, 29 Sep 2026: "the parser reports, the engine judges"). The parser
+    fills every field as the message says, a pick included, so "4 stock" arrives as a
+    position AND `domain_in_message: true` with `domain_hint: "inventory"`. Both halves are
+    the parser's own fields, read as-is: the flag says the message carries a domain word,
+    `domain_hint` (or `asks`) says which. `asks` alone counts, as it always has (hand pass
+    6 defect 1: "stock, incoming and PO for all of them").
+
+    The flag without a domain (`domain_in_message: true`, `domain_hint: null`, no `asks`)
+    names nothing to answer in, so it reads as False and the pick keeps the roster's
+    domain; the prompt's consistency rule is what stops the parser emitting that shape. A
+    carried `domain_hint` with the flag false is the previous turn's domain, never this
+    message's, and reads as False too: a bare "7" answers the roster it was picked off.
+    """
+    if verdict.get("asks"):
+        return True
+    return domain_in_message(verdict) is True and bool(verdict.get("domain_hint"))
+
+
 def backward_reference(verdict: dict[str, Any]) -> bool:
     """Does THIS message point at something OUTSIDE it with a pronoun (R-b, owner hand
     pass 6, 17 Sep 2026)?
@@ -407,6 +437,26 @@ def backward_reference(verdict: dict[str, Any]) -> bool:
     """
     anaphora = verdict.get("anaphora")
     return isinstance(anaphora, dict) and anaphora.get("backward_reference") is True
+
+
+def _outstanding_domain_mismatch(pending: Pending | None, verdict: dict[str, Any]) -> bool:
+    """#1262 slice 4 (F3): does THIS message's own `domain_hint` name a domain that
+    disagrees with the open OUTSTANDING offer's stored one (`pending.payload
+    ["domain"]`)? Read purely off the parser's own fields against the pending's own
+    stored field - never a word list, never a text match (the same "read the
+    parser's own output" discipline `domain_in_message`/`backward_reference` above
+    already follow). A photo read as an incoming ask (`domain_hint: "incoming"`)
+    under an open ORDER-domain offer is the mismatch this exists for; a null
+    `domain_hint` (the ordinary refining turn, which names no domain at all) or one
+    equal to the offer's own domain is not.
+    """
+    if pending is None or pending.kind not in OUTSTANDING_KINDS:
+        return False
+    domain_hint = verdict.get("domain_hint")
+    if not isinstance(domain_hint, str) or not domain_hint:
+        return False
+    offer_domain = pending.payload.get("domain")
+    return isinstance(offer_domain, str) and bool(offer_domain) and domain_hint != offer_domain
 
 
 def _subject_reading(
@@ -475,6 +525,19 @@ def _subject_reading(
             )
         return Decision(NEW_ASK, "domain_in_message", entities=named, window=window, **facts)
     if in_message is False and entities:
+        if _outstanding_domain_mismatch(pending, verdict):
+            # #1262 slice 4 (F3), AC-S4-1: this message DID name an entity, but the
+            # parser's own `domain_hint` says it is about a DIFFERENT domain than the
+            # open outstanding offer's - read as NEW_ASK (the plan's own words,
+            # "else NEW_ASK"), the SAME reading a message naming its own entity on
+            # the standing subject's own domain already gets (`_answer_outstanding`
+            # drops the question rather than mis-resolving it). A photo read as
+            # "X5: M210-GM" under an open ORDER-domain offer is this row's own case:
+            # no domain WORD (`domain_in_message: false`), but the parser still knows
+            # it is an incoming ask.
+            return Decision(
+                NEW_ASK, "names_its_own_entity", entities=named, window=window, **facts
+            )
         return Decision(
             REFINE,
             "refines_standing_subject",
@@ -483,6 +546,14 @@ def _subject_reading(
             scope=_stored_scope(pending),
             **facts,
         )
+    if in_message is True and not entities and _outstanding_domain_mismatch(pending, verdict):
+        # #1262 slice 4 (F3), AC-S4-2, owner ruling (hand pass 3, T6 half): "got eta"
+        # names ANOTHER domain of its own, with no entity at all - the table's row 2
+        # ("true, no -> a domain switch over the standing subject") is exactly this
+        # shape, and closing the offer is what stops three more turns replaying its
+        # poisoned filters (`_answer_outstanding`'s own NEW_ASK arm reads this same
+        # `why` and drops the question).
+        return Decision(NEW_ASK, "domain_switch", entities=named, window=window, **facts)
     if pending is not None and (entities or window) and _keeps_subject(verdict, pending, entities):
         return Decision(
             REFINE,
@@ -565,25 +636,39 @@ def decide(
 
     if positions:
         # A position nobody offered is still an ATTEMPT at this question - the arm
-        # re-prints it rather than dropping it silently.
+        # re-prints it rather than dropping it silently. Issue #1352: the position and the
+        # domain fields are read together - a pick whose message also named its own domain
+        # is answered in that domain (`own_domain`), a bare pick in the roster's.
         return Decision(
             ANSWER,
             picked[1] if picked else "positions",
             positions=tuple(positions),
             entities=tuple(entities),
             window=window,
+            own_domain=names_its_own_domain(verdict),
             **facts,
         )
 
-    accepted = (
-        verdict.get("is_affirmative") is True
-        or escalation.get("is_escalation_confirmation") is True
-    )
+    if pending.kind in ESCALATION_OFFER_KINDS:
+        # Issue #1323 (owner ruling, 28 Sep 2026: "the chatbot should be able to
+        # understand whether the user means escalation ... semantically"). An escalation
+        # offer is accepted on the parser's ONE semantic verdict and nothing else, for
+        # every offer shape (a yes/no offer, a team menu, a company pick).
+        # `is_affirmative` stays the AFFIRMATION flag and never hands over by itself:
+        # turn 9d9c417d carried it true beside ten product codes and a stock ask the
+        # parser itself had called `is_escalation_confirmation: false`, and the stock ask
+        # went to the warehouse team unanswered.
+        accepted = escalation.get("is_escalation_confirmation") is True
+        why = "escalation_confirmation"
+    else:
+        accepted = (
+            verdict.get("is_affirmative") is True
+            or escalation.get("is_escalation_confirmation") is True
+        )
+        why = "affirmative"
     if accepted and not (facts["declined"] or facts["negated"]):
         # A decline outranks every acceptance signal - the acceptance arm has always read
         # it that way, and now the generic path does too.
-        return Decision(
-            ANSWER, "affirmative", entities=tuple(entities), window=window, **facts
-        )
+        return Decision(ANSWER, why, entities=tuple(entities), window=window, **facts)
 
     return _subject_reading(verdict, focus, pending, entities, window, facts)

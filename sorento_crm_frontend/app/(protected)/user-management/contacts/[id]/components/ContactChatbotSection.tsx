@@ -91,6 +91,30 @@ export default function ContactChatbotSection({ contactId }: { contactId: string
           options={TIER_OPTIONS}
         />
       </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <Label htmlFor="contact-chatbot-notify-salesman" className="cursor-pointer font-normal">
+          Notify salesman
+        </Label>
+        <Switch
+          id="contact-chatbot-notify-salesman"
+          checked={profile.notify_salesman}
+          disabled={save.isPending}
+          onCheckedChange={(checked) => save.mutate({ ...profile, notify_salesman: checked === true })}
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <Label htmlFor="contact-chatbot-packing-list" className="cursor-pointer font-normal">
+          Packing list allowed
+        </Label>
+        <Switch
+          id="contact-chatbot-packing-list"
+          checked={profile.packing_list_allowed}
+          disabled={save.isPending}
+          onCheckedChange={(checked) => save.mutate({ ...profile, packing_list_allowed: checked === true })}
+        />
+      </div>
     </div>
   );
 }

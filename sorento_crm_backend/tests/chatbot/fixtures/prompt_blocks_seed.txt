@@ -23,5 +23,6 @@ Entity kind inbound_shipment: resolver packing_lists. Did-you-mean off. Default 
 Entity kind order: resolver orders. Did-you-mean off. Default narrowing not_applicable.
 Entity kind product: resolver master_products. Did-you-mean on. Default narrowing list_all.
 Entity kind promotion: resolver promotions. Did-you-mean on. Default narrowing optional_filter.
+Entity kind specification: resolver product_spec_registry. Did-you-mean off. Default narrowing optional_filter.
 Entity kind transporter: resolver transporters. Did-you-mean on. Default narrowing optional_filter.
 Entity kind warehouse: resolver warehouses. Did-you-mean on. Default narrowing optional_filter.

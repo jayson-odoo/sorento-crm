@@ -1,20 +1,18 @@
 /**
  * Reserve history timestamps are UTC on the wire (`...Z` / `+00:00`, and older naive
  * strings are naive UTC too): the dialog shows them in Malaysia time, whatever the
- * machine's own time zone.
+ * machine's own time zone. Since `PLAN-oi-no-double-count-25sep.md` S0 the entries render
+ * as the Reserve tab of the line's History dialog (`ReserveHistoryEntries`).
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { ReserveLineHistoryDialog } from './ReserveLineHistoryDialog';
+import { ReserveHistoryEntries } from './ReserveLineHistoryDialog';
 
 function renderAt(createdAt: string) {
   render(
-    <ReserveLineHistoryDialog
-      open
-      onOpenChange={() => {}}
-      itemCode="CB231SS-NL"
+    <ReserveHistoryEntries
       entries={[
         {
           kind: 'reserved',
@@ -29,7 +27,7 @@ function renderAt(createdAt: string) {
   );
 }
 
-describe('ReserveLineHistoryDialog timestamps', () => {
+describe('ReserveHistoryEntries timestamps', () => {
   it('renders a 2026-09-24T04:25:00Z event as 24/09/2026, 12:25 PM (MYT)', () => {
     renderAt('2026-09-24T04:25:00Z');
     expect(screen.getByText(/Eling on 24\/09\/2026, 12:25 pm/i)).toBeInTheDocument();

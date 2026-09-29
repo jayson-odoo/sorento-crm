@@ -23,6 +23,7 @@ import {
   matchesSuggestion,
   plannedLineCount,
   rankingNote,
+  rejectedCoveredLineIdsFor,
   rowMatchesSearch,
   shiftedDayWindow,
   unpostableDecidedFor,
@@ -1760,20 +1761,108 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
   });
 
   /**
-   * N6 (code review round 3): resolution order `confirmed > rejected > stale > saved`, the
-   * same order `BoardDecisionPill` reads by. A covered line's frozen composition is what the
-   * server carries forward regardless of a local click - marking it "rejected" in THIS
-   * session cannot make Confirm refuse a line the database already holds, so it must not be
-   * counted as a rejection either.
+   * REWORKED (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`, hand-test
+   * feedback: "we should confirm the rejection"): a reject on a covered line is a STAGED
+   * decision like every other board decision now, and Confirm is what actually withdraws it
+   * (`rejected_line_ids`) - so it counts as BOTH `rejected` (the planner's own decision) AND
+   * `toConfirm` (Confirm has something to DO with this press: carry the withdrawal). This test
+   * used to pin the opposite ("carried rather than rejected") from when a covered reject was
+   * refused outright at click time; superseded by the rework below.
    */
-  it('counts a covered line as carried rather than rejected, even when this session marked it rejected', () => {
+  it('counts a covered rejected line as BOTH rejected and something this press confirms', () => {
     const summary = confirmSummaryFor(contributions, {
       [keyOf(1)]: { verdict: 'rejected', reason: 'Changed my mind.' },
     });
-    expect(summary.rejected).toBe(0);
-    // Line 2 is uncovered and untouched, so it stays undecided (8 Sep 2026 ruling, reverses
-    // R11) - nothing is committable here.
+    expect(summary.rejected).toBe(1);
+    // Line 1's withdrawal is the one thing this press commits; line 2 is uncovered and
+    // untouched, so it stays undecided (8 Sep 2026 ruling, reverses R11).
+    expect(summary.toConfirm).toBe(1);
+  });
+
+  /**
+   * N1 (fix round): an INQUIRY-ONLY covered line's own staged reject still counts as the
+   * planner's `rejected` decision, but adds nothing to `toConfirm` - Confirm has no active
+   * decision to withdraw it from, unlike line 1's ACTIVE-decision reject above.
+   */
+  it('counts an inquiry-only covered rejected line as rejected, but NOT toward toConfirm', () => {
+    const inquiryOnly = {
+      ...contributions.find((entry) => entry.line_no === 2)!,
+      covered: true,
+      decision: null,
+    };
+    const summary = confirmSummaryFor([inquiryOnly], {
+      [inquiryOnly.key]: { verdict: 'rejected', reason: 'Not needed.' },
+    });
+    expect(summary.rejected).toBe(1);
     expect(summary.toConfirm).toBe(0);
+  });
+
+  it('rejectedCoveredLineIdsFor names the covered line’s own project_line_id', () => {
+    expect(
+      rejectedCoveredLineIdsFor(contributions, 'so-a', {
+        [keyOf(1)]: { verdict: 'rejected', reason: 'Changed my mind.' },
+      }),
+    ).toEqual(['pl-so-a-1']);
+  });
+
+  it('rejectedCoveredLineIdsFor leaves an UNCOVERED rejected line out - nothing active to withdraw', () => {
+    expect(
+      rejectedCoveredLineIdsFor(contributions, 'so-a', {
+        [keyOf(2)]: { verdict: 'rejected', reason: 'Not needed.' },
+      }),
+    ).toEqual([]);
+  });
+
+  it('rejectedCoveredLineIdsFor is empty when nothing is rejected', () => {
+    expect(rejectedCoveredLineIdsFor(contributions, 'so-a', {})).toEqual([]);
+  });
+
+  /**
+   * N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): `covered` spans TWO kinds of
+   * line - an ACTIVE decision (this describe block's line 1, `decision: frozen`), or a LIVE
+   * order-inquiry row naming it with none at all (`inquiry_decided`, migrated sheet lines,
+   * #875). Only the first has a `line_snapshots` entry Confirm's `rejected_line_ids` could
+   * ever name, so a staged reject on the SECOND kind must contribute no id and no count -
+   * built here by overriding line 2 (uncovered by default) to the inquiry-only shape,
+   * since the board fixture's own `covered` is `Boolean(line.decision)` and has no
+   * `inquiry_decided` knob of its own.
+   */
+  it('rejectedCoveredLineIdsFor and plannedLineCount exclude an INQUIRY-ONLY covered line - no active decision to withdraw', () => {
+    const inquiryOnly = {
+      ...contributions.find((entry) => entry.line_no === 2)!,
+      covered: true,
+      decision: null,
+    };
+    const draft = { [inquiryOnly.key]: { verdict: 'rejected' as const, reason: 'Not needed.' } };
+    expect(rejectedCoveredLineIdsFor([inquiryOnly], 'so-a', draft)).toEqual([]);
+    expect(plannedLineCount([inquiryOnly], 'so-a', draft)).toBe(0);
+  });
+
+  /**
+   * S4 (fix round, review): a pending planning-change batch has no shape for a
+   * withdrawal riding beside it (AC-B12, server refuses `rejected_line_ids` alongside
+   * `batch_id` outright) - so a covered line's staged reject on a BATCHED order must
+   * not count toward `plannedLineCount`/`toConfirm` either, or the "Confirm (N)" button
+   * promises a withdrawal the press cannot actually carry out ("Confirm (1) then
+   * nothing").
+   */
+  it('plannedLineCount excludes a covered rejected line when its order is in batchBlockedSalesOrderIds', () => {
+    const draft = { [keyOf(1)]: { verdict: 'rejected' as const, reason: 'Wrong site.' } };
+    // Unblocked: counts, exactly as `test_confirming_a_new_composition...` above pins.
+    expect(plannedLineCount(contributions, 'so-a', draft)).toBe(1);
+    // Blocked: the batch on so-a's own order holds it back.
+    expect(plannedLineCount(contributions, 'so-a', draft, new Set(['so-a']))).toBe(0);
+    // A DIFFERENT order's own batch block never reaches so-a's line.
+    expect(plannedLineCount(contributions, 'so-a', draft, new Set(['so-b']))).toBe(1);
+  });
+
+  it('confirmSummaryFor still counts the withdrawal as rejected, but not toward toConfirm, once batch-blocked', () => {
+    const draft = { [keyOf(1)]: { verdict: 'rejected' as const, reason: 'Wrong site.' } };
+    const blocked = confirmSummaryFor(contributions, draft, new Set(['so-a']));
+    expect(blocked.rejected).toBe(1);
+    expect(blocked.toConfirm).toBe(0);
+    const unblocked = confirmSummaryFor(contributions, draft);
+    expect(unblocked.toConfirm).toBe(1);
   });
 });
 
@@ -2085,10 +2174,10 @@ describe('confirmLinesFor and a line with no mirror', () => {
 });
 
 /**
- * A Buy on a DISCONTINUED product needs a reason (AC-B11), and the server refuses the whole
- * order's confirmation without one. The board states the flag on every line it judged, so a
- * line that would be refused is never posted from here: it is left out and NAMED, and the
- * planner gives the reason in the editor.
+ * D2 (AC-19, AC-20): a Buy on a DISCONTINUED product no longer needs a reason to post. The
+ * board still carries the discontinued flag (for the warning chip/badge elsewhere), but
+ * `lineFor` treats a discontinued Buy the same as any other line now - it posts with or
+ * without a `buy_reason`, and `unpostableDecidedFor` never names it for that cause.
  */
 describe('confirmLinesFor and a discontinued product', () => {
   const board = buildBoard(
@@ -2116,14 +2205,16 @@ describe('confirmLinesFor and a discontinued product', () => {
     contributions.map((entry) => [entry.key, { verdict: 'approved' as const }]),
   );
 
-  it('leaves an approved Buy of a discontinued product out of the body, and names why', () => {
+  it('AC-19/AC-20: posts an approved Buy of a discontinued product with no reason, same as any other line', () => {
     const lines = confirmLinesFor(contributions, 'so-a', approved);
-    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-1']);
+    expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
+      'pl-so-a-1',
+      'pl-so-a-2',
+    ]);
     expect(
-      unpostableDecidedFor(contributions, 'so-a', approved).map(
-        (entry) => `${entry.contribution.item_code}: ${entry.reason}`,
-      ),
-    ).toEqual(['OLD-1: buy_reason_missing']);
+      lines.find((entry) => entry.project_line_id === 'pl-so-a-2')!.buy_reason,
+    ).toBeUndefined();
+    expect(unpostableDecidedFor(contributions, 'so-a', approved)).toEqual([]);
   });
 
   it('posts it once the amendment carries the reason', () => {
@@ -2165,7 +2256,7 @@ describe('confirmLinesFor and a discontinued product', () => {
     expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
   });
 
-  it('still names it on an amendment that buys it without a reason (the other, SAVED line still posts)', () => {
+  it('AC-19: posts an amended Buy of a discontinued product with no reason (the other, SAVED line also posts)', () => {
     const draft = {
       [contributions.find((entry) => entry.line_no === 1)!.key]: { verdict: 'approved' as const },
       [old.key]: {
@@ -2177,10 +2268,11 @@ describe('confirmLinesFor and a discontinued product', () => {
       },
     };
     const lines = confirmLinesFor(contributions, 'so-a', draft);
-    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-1']);
-    expect(unpostableDecidedFor(contributions, 'so-a', draft).map((entry) => entry.reason)).toEqual([
-      'buy_reason_missing',
+    expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
+      'pl-so-a-1',
+      'pl-so-a-2',
     ]);
+    expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
   });
 
   it('does not ask for a reason when the discontinued line buys nothing', () => {
@@ -2200,12 +2292,12 @@ describe('confirmLinesFor and a discontinued product', () => {
     expect(unpostableDecidedFor(covered, 'so-a', approved)).toEqual([]);
   });
 
-  it('names it on an order nobody has adopted yet, and does not count it as planned', () => {
+  it('AC-19: an order nobody has adopted yet is unaffected by the discontinued cause - both lines read no_mirror and both count as planned', () => {
     const unadopted = contributions.map((entry) => ({ ...entry, project_line_id: null }));
     expect(
       unpostableDecidedFor(unadopted, 'so-a', approved, false).map((entry) => entry.reason),
-    ).toEqual(['buy_reason_missing']);
-    expect(plannedLineCount(unadopted, 'so-a', approved)).toBe(1);
+    ).toEqual([]);
+    expect(plannedLineCount(unadopted, 'so-a', approved)).toBe(2);
   });
 });
 
@@ -2267,11 +2359,12 @@ describe('confirmLinesFor and an approved COVERED line: the buy reason travels w
     expect(lines[0].buy_reason).toBe(REASON);
   });
 
-  it('still refuses it without one, the same as before', () => {
+  it('AC-19/AC-20: no longer refuses it without one - the reason is optional now', () => {
     const draft = { [key]: { verdict: 'approved' as const } };
-    expect(
-      unpostableDecidedFor(contributions, 'so-a', draft).map((entry) => entry.reason),
-    ).toEqual(['buy_reason_missing']);
+    expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
+    const lines = confirmLinesFor(contributions, 'so-a', draft);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].buy_reason).toBeUndefined();
   });
 });
 

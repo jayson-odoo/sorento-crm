@@ -251,6 +251,25 @@ def test_response_model_does_not_drop_source_po_number_on_the_spo_detail(scm_app
     assert line["source_po_number"] == "PO-2021/03-0044"
 
 
+def test_response_model_does_not_drop_spo_line_number_on_the_spo_detail(scm_app):
+    """R31b (owner, 25 Sep, stock debt lane): the document dialog's own `highlightLines`
+    (which SPO line a demand line drew from, for the "Linked" badge and the "Go to linked
+    line" jump) needs each line's own `spo_line_number` - `OrderInquirySpoDetailLine`
+    never declared it, so `response_model` silently strips it here too, the same
+    regression this file's own `source_po_number` test guards against.
+    """
+    app, db = _client(scm_app)
+    pid = _product(db)
+    spo_number = f"{MARKER}-R31B-{uuid.uuid4().hex[:8]}"
+    _allocation(db, pid, spo_number=spo_number, spo_line_number=7)
+
+    with TestClient(app) as c:
+        detail = _spo_detail(c, spo_number)
+    line = detail["lines"][0]
+    assert "spo_line_number" in line, "response_model dropped the new field on the wire"
+    assert line["spo_line_number"] == 7
+
+
 # --------------------------------------------------------- AC-C5: worklist links
 
 

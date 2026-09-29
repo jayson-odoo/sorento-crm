@@ -102,17 +102,10 @@ describe('Mobile one-offs (S4-04)', () => {
     expect(src).not.toContain('bg-muted backdrop-blur-xs');
   });
 
-  it('S4-04: the Product Specifications freshness line wraps instead of pushing', () => {
-    const src = read(
-      'app/(protected)/master-data-management/product-specifications/components/CatalogueFreshnessLine.tsx',
-    );
-    // Measured 0px wide and 500px tall at 375 with `flex-1` alone: a wrapping
-    // row breaks its lines on flex-BASIS, and basis 0 kept the paragraph on the
-    // badge and button's line with nothing left over.
-    expect(src).toContain('min-w-0 grow basis-full');
-    expect(src).toContain('sm:basis-0');
-    expect(src).toContain('flex-wrap');
-  });
+  // The Product Specifications freshness line this test pinned is retired
+  // (plan D10, owner ruling 27 Sep 2026, PLAN-product-specs-non-technical-26sep.md):
+  // `CatalogueFreshnessLine` is deleted, and nothing on the list talks about
+  // reading any more.
 
   it('S4-04: a ticket number never breaks mid-string', () => {
     const list = read('app/(protected)/ticket-management/tickets/components/TicketsList.tsx');
@@ -155,7 +148,7 @@ describe('Mobile one-offs (S4-04)', () => {
   });
 
   it('S4-04: the dashboard says what it is', () => {
-    const src = read('app/(protected)/page.tsx');
+    const src = read('app/(protected)/(home)/page.tsx');
     // S5-01 moved every page title into PageHeader; the dashboard's reads the
     // sidebar's own first entry.
     expect(src).toContain('<PageHeader title="Dashboards" />');

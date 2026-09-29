@@ -200,7 +200,6 @@ export function TagSizesList() {
             isLoading={isLoading}
             tableLayout={{ width: 'fixed', columnsResizable: true }}
             rowPending={rowPending}
-            emptyAction={listPrimaryAction}
           >
             <DataGridTable />
             <CardFooter className="justify-center">

@@ -1,22 +1,26 @@
 /**
- * D15b - the record card is never editable: label, slug, type + source pills, unit
- * and Active are read-only facts in both modes. Editing them lives on the Header
- * tab (see `HeaderTab.test.tsx`).
+ * The record header card (fix round 5, owner ruling 27 Sep 13:20 MYT: "still
+ * pretty empty"). Like every other record header (Users & Access), the card above
+ * the tabs carries the specification's identity: the name as the title, the In use
+ * state as a pill, the type, the choices count, the products count and when the
+ * catalogue was last read. It never renders as an empty box, in read or edit mode.
+ * Still no code name, no "Built in", no rule count (AC-S3.7).
  */
 import React from 'react';
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 
 import { SpecKeyRecordCard } from './SpecKeyRecordCard';
+import { formatDate } from '@/lib/helpers';
 import type { SpecRegistryKey } from '../../types/productSpec.types';
 
 function seedRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
   return {
     spec_key: 'finish',
-    label: 'Finish',
+    label: 'Finish or colour',
     data_type: 'enum',
     unit: null,
-    allowed_values: ['chrome'],
+    allowed_values: ['chrome', 'rose_gold', 'matt_black'],
     synonyms: { chrome: ['chrome'] },
     excluded_values: [],
     user_values: [],
@@ -24,7 +28,6 @@ function seedRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
     value_weights: {},
     derivation_rules: [],
     effective_rules: [],
-    rules_are_default: true,
     applies_when: {},
     read_from: 'rules',
     rank_weight: 1,
@@ -39,50 +42,91 @@ function seedRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
   } as SpecRegistryKey;
 }
 
-function renderCard(row: SpecRegistryKey, mode: 'view' | 'edit') {
+const LAST_READ = '2026-09-26T08:15:00';
+
+function renderCard(
+  row: SpecRegistryKey,
+  mode: 'view' | 'edit',
+  extra: Partial<React.ComponentProps<typeof SpecKeyRecordCard>> = {},
+) {
   return render(
     <SpecKeyRecordCard
       row={row}
+      productsCount={1234}
+      lastReadAt={LAST_READ}
       mode={mode}
-      pagerNode={null}
+      pagerNode={<span>1 of 12</span>}
       actions={[]}
       pending={null}
-      primary={null}
+      primary={<button type="button">Edit</button>}
+      {...extra}
     />,
   );
 }
 
-describe('SpecKeyRecordCard - read-only in both modes (D15b)', () => {
-  it('view mode shows label, unit and Active as plain facts', () => {
-    const row = seedRow({ label: 'Finish', unit: 'mm', is_active: false });
-    renderCard(row, 'view');
+const field = (label: string) => screen.getByTestId(`spec-header-${label}`);
 
-    expect(screen.getByText('Finish')).toBeInTheDocument();
-    expect(screen.getByText('mm')).toBeInTheDocument();
-    expect(screen.getByText('Inactive')).toBeInTheDocument();
-    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+describe.each(['view', 'edit'] as const)('SpecKeyRecordCard in %s mode - the record header', (mode) => {
+  it('renders the name as the title', () => {
+    renderCard(seedRow({ label: 'Finish or colour' }), mode);
+    expect(screen.getByRole('heading', { name: 'Finish or colour' })).toBeInTheDocument();
   });
 
-  it('edit mode renders the SAME facts, not inputs - nothing on the card is editable', () => {
-    const row = seedRow({ label: 'Finish', unit: 'mm', is_active: true });
-    renderCard(row, 'edit');
-
-    expect(screen.getByText('Finish')).toBeInTheDocument();
-    expect(screen.getByText('mm')).toBeInTheDocument();
-    // "Active" appears twice with the field on (the field's own label, and the
-    // badge's state text) - both read-only, neither an input.
-    expect(screen.getAllByText('Active')).toHaveLength(2);
-    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  it('renders In use as a pill, and Not in use when the specification is off', () => {
+    const { unmount } = renderCard(seedRow({ is_active: true }), mode);
+    expect(screen.getByTestId('spec-header-state')).toHaveTextContent('In use');
+    unmount();
+    renderCard(seedRow({ is_active: false }), mode);
+    expect(screen.getByTestId('spec-header-state')).toHaveTextContent('Not in use');
   });
 
-  it('shows the slug and the type/source pills', () => {
-    const row = seedRow({ spec_key: 'finish', data_type: 'enum', source: 'user' });
-    renderCard(row, 'view');
+  it('renders the type, the choices count, the products count and when it was last read', () => {
+    renderCard(seedRow(), mode);
+    expect(within(field('type')).getByText('List')).toBeInTheDocument();
+    expect(within(field('choices')).getByText('3')).toBeInTheDocument();
+    expect(within(field('products')).getByText((1234).toLocaleString())).toBeInTheDocument();
+    expect(field('last-read')).toHaveTextContent(formatDate(LAST_READ));
+  });
 
-    expect(screen.getByText('finish')).toBeInTheDocument();
-    expect(screen.getByText('Choice')).toBeInTheDocument();
-    expect(screen.getByText('User')).toBeInTheDocument();
+  it('folds the unit into a Number type and shows no choices count for it', () => {
+    renderCard(seedRow({ data_type: 'numeric', unit: 'mm', allowed_values: [] }), mode);
+    expect(within(field('type')).getByText('Number (mm)')).toBeInTheDocument();
+    expect(field('choices')).toHaveTextContent('None');
+  });
+
+  it('counts Product class choices from the class list, not its empty allowed values', () => {
+    renderCard(seedRow({ spec_key: 'class', label: 'Product class', allowed_values: [] }), mode, {
+      classChoiceCount: 41,
+    });
+    expect(within(field('choices')).getByText('41')).toBeInTheDocument();
+  });
+
+  it('never renders empty: identity still shows before the counts arrive', () => {
+    renderCard(seedRow(), mode, { productsCount: undefined, lastReadAt: undefined });
+    expect(screen.getByRole('heading', { name: 'Finish or colour' })).toBeInTheDocument();
+    expect(field('products')).not.toHaveTextContent(/^Products$/);
+    expect(field('last-read')).not.toHaveTextContent(/^Last read$/);
+  });
+
+  it('says Not read yet when no product carries it', () => {
+    renderCard(seedRow(), mode, { productsCount: 0, lastReadAt: null });
+    expect(within(field('products')).getByText('0')).toBeInTheDocument();
+    expect(field('last-read')).toHaveTextContent('Not read yet');
+  });
+
+  it('keeps the pager and the primary action beside the identity', () => {
+    renderCard(seedRow(), mode);
+    expect(screen.getByText('1 of 12')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+  });
+
+  it('shows no code name, no source badge, no rule count, and nothing editable', () => {
+    renderCard(seedRow({ spec_key: 'finish', source: 'user' }), mode);
+    expect(screen.queryByText('finish')).not.toBeInTheDocument();
+    expect(screen.queryByText('User')).not.toBeInTheDocument();
+    expect(screen.queryByText('Seed')).not.toBeInTheDocument();
+    expect(screen.queryByText(/rules?$/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 });

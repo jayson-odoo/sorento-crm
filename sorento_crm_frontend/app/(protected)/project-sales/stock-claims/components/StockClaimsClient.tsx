@@ -279,11 +279,7 @@ export function StockClaimsClient() {
             </Link>
           </Button>
         }
-      >
-        <p className="text-sm text-muted-foreground break-words">
-          Stock one project took from another. Supply is composed in Fulfilment Planning.
-        </p>
-      </PageHeader>
+      />
 
       <DataGrid
         table={table}
@@ -376,11 +372,6 @@ export function StockClaimsClient() {
                       ? 'A row appears here when a Borrow is confirmed in Fulfilment Planning, on either side of it.'
                       : 'A row appears here when another project borrows stock one of yours is holding.'}
                 </p>
-                <Button asChild variant="outline" className="mt-4">
-                  <Link href="/project-sales/fulfilment-planning">
-                    Open Fulfilment Planning
-                  </Link>
-                </Button>
               </div>
             ) : (
               <DataGridTable />

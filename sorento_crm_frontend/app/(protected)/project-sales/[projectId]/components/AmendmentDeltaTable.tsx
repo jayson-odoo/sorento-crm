@@ -225,7 +225,7 @@ export function AmendmentDeltaTable({
       },
       {
         id: 'phase',
-        header: ({ column }) => <DataGridColumnHeader title="Phase" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Area" column={column} />,
         cell: ({ row }) => {
           const from = row.original.phase_label_from || 'Unlabeled';
           const to = row.original.phase_label_to || 'Unlabeled';
@@ -238,7 +238,7 @@ export function AmendmentDeltaTable({
         },
         size: 180,
         minSize: 130,
-        meta: { headerTitle: 'Phase', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Area', skeleton: <Skeleton className="h-4 w-24" /> },
       },
     ];
 

@@ -54,6 +54,12 @@ from sqlalchemy.orm import Session
 
 from app.models.chat_history import CHAT_HISTORY_DEDUPE_PREDICATE, ChatHistory
 from app.models.user import User
+from app.services.otp_redaction import (
+    mask_otp_text,
+    otp_template_code_slots,
+    redact_otp_item,
+    redact_otp_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,11 +196,14 @@ def _row_to_item(row: ChatHistory) -> dict:
     return {
         "messageId": numeric_id,
         "traffic": row.type,
-        "message": {"type": "text", "text": row.message or ""},
+        "message": {"type": "text", "text": mask_otp_text(row.message or "")},
         "sender": {"source": "contact" if row.type == "incoming" else None},
         "status": _local_status(row),
         "replyTo": (
-            {"messageId": row.reply_to_message_id, "message": {"text": row.reply_to_message}}
+            {
+                "messageId": row.reply_to_message_id,
+                "message": {"text": mask_otp_text(row.reply_to_message)},
+            }
             if row.reply_to_message_id
             else None
         ),
@@ -457,8 +466,18 @@ def _page_payload(
 # ---------------------------------------------------------------------------
 
 
-def _respond_call(client, identifier: str, *, limit: int, cursor: Optional[str]) -> list[dict]:
+def _respond_call(
+    client,
+    identifier: str,
+    *,
+    limit: int,
+    cursor: Optional[str],
+    otp_slots: Optional[dict] = None,
+) -> list[dict]:
     payload = client.list_messages(identifier, limit=min(limit, RESPOND_MAX_PAGE), cursor=cursor)
+    # Reviewer B2 (#1280): no sign-in or portal code reaches the thread or the
+    # chat_histories cache, whichever client produced the page.
+    redact_otp_payload(payload, otp_slots or {})
     items = payload.get("items") if isinstance(payload, dict) else None
     return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
 
@@ -471,15 +490,16 @@ def _respond_page(
     after: Optional[str],
     around: Optional[str],
     limit: int,
+    otp_slots: Optional[dict] = None,
 ) -> dict:
     ident = contact.respond_io_id
 
     if around:
         older_n = max(0, (limit - 1) // 2)
         newer_n = max(0, limit - 1 - older_n)
-        older = list(reversed(_respond_call(client, ident, limit=older_n, cursor=str(around)))) if older_n else []
-        newer = _respond_call(client, ident, limit=newer_n, cursor=f"-{around}") if newer_n else []
-        anchor = client.get_message(ident, around)
+        older = list(reversed(_respond_call(client, ident, limit=older_n, cursor=str(around), otp_slots=otp_slots))) if older_n else []
+        newer = _respond_call(client, ident, limit=newer_n, cursor=f"-{around}", otp_slots=otp_slots) if newer_n else []
+        anchor = redact_otp_item(client.get_message(ident, around), otp_slots or {})
         anchor_items = [anchor] if isinstance(anchor, dict) and anchor.get("messageId") is not None else []
         items = older + anchor_items + newer
         return _page_payload(
@@ -493,7 +513,9 @@ def _respond_page(
 
     if after:
         # cursorId=-<id> yields NEWER messages, already ascending.
-        items = _respond_call(client, ident, limit=limit, cursor=f"-{after}")
+        items = _respond_call(
+            client, ident, limit=limit, cursor=f"-{after}", otp_slots=otp_slots
+        )
         return _page_payload(
             [_respond_item(i) for i in items],
             has_more_older=True,
@@ -503,7 +525,9 @@ def _respond_page(
         )
 
     # Newest page (no cursor) and the older walk both come back newest-first.
-    items = _respond_call(client, ident, limit=limit, cursor=str(before) if before else None)
+    items = _respond_call(
+        client, ident, limit=limit, cursor=str(before) if before else None, otp_slots=otp_slots
+    )
     items = list(reversed(items))
     return _page_payload(
         [_respond_item(i) for i in items],
@@ -715,7 +739,13 @@ def fetch_thread_page(
     if client is not None:
         try:
             page = _respond_page(
-                client, contact, before=before, after=after, around=around, limit=limit
+                client,
+                contact,
+                before=before,
+                after=after,
+                around=around,
+                limit=limit,
+                otp_slots=otp_template_code_slots(db),
             )
         except Exception:  # noqa: BLE001 - the local lane still answers
             logger.warning(
@@ -781,18 +811,23 @@ def search_thread(
         .limit(limit)
         .all()
     )
+    # Reviewer B2 (#1280): search reads the MASKED text, so a row the mirror
+    # stored with a code in it neither shows the code nor matches on it (no
+    # digit-by-digit oracle).
+    masked = [(row, mask_otp_text(row.message or "")) for row in rows]
     items = [
         {
             "message_id": str(row.message_id),
             "sent_at": row.sent_at.isoformat() if row.sent_at else None,
             "direction": row.type,
-            "snippet": _snippet(row.message or "", needle),
+            "snippet": _snippet(body, needle),
         }
-        for row in rows
+        for row, body in masked
+        if needle.lower() in body.lower()
     ]
     return {
         "items": items,
         "total": len(items),
-        "truncated": len(items) == limit,
+        "truncated": len(rows) == limit,
         "query": needle,
     }

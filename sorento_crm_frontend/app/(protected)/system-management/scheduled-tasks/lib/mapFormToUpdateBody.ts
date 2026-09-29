@@ -37,6 +37,29 @@ export function mapFormToUpdateBody(
     metadata.send_email = values.send_email !== false;
   }
 
+  // #1340: the scheduled reorder run's configurable scope. These seven keys only ride
+  // the PATCH body for this task - every other task key must never carry them, same
+  // rule as the SLA channel keys above.
+  if (task.key === 'scm_reorder_run') {
+    const warehouseCodes = values.warehouse_codes ?? [];
+    metadata.warehouse_codes = warehouseCodes.length > 0 ? warehouseCodes : null;
+    const productCodes = values.product_codes ?? [];
+    metadata.product_codes = productCodes.length > 0 ? productCodes : null;
+    metadata.demand_class = values.demand_class ? values.demand_class : null;
+    metadata.horizon_start_days =
+      values.horizon_start_days === '' || values.horizon_start_days === undefined
+        ? null
+        : values.horizon_start_days;
+    metadata.horizon_end_days =
+      values.horizon_end_days === '' || values.horizon_end_days === undefined
+        ? null
+        : values.horizon_end_days;
+    metadata.budget = values.budget === '' || values.budget === undefined ? null : values.budget;
+    // A plain boolean field (like send_in_app/send_email), not a blank-means-clear one -
+    // false is a real value, not the delete sentinel.
+    metadata.include_market = values.include_market === true;
+  }
+
   const grace = values.grace_percent;
   if (grace === '' || grace === undefined || grace === null) {
     // Blank means "use the global default". null is the backend's delete sentinel.

@@ -13,9 +13,20 @@ from typing import Any
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
 from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
-from app.services.chatbot.turn.pending import ask as pending_ask, is_roster, quick_replies_suppressed
+from app.services.chatbot.turn.pending import (
+    ask as pending_ask,
+    is_roster,
+    quick_replies as pending_quick_replies,
+    top_selling_pick,
+)
 from app.services.chatbot.turn.policy import Policy
-from app.services.chatbot.turn.state import KIND_FIELD_MAP, State, focus_row_label
+from app.services.chatbot.turn.state import (
+    KIND_FIELD_MAP,
+    State,
+    focus_row_label,
+    fold_token,
+    is_staff_profile,
+)
 
 _ATTACHED_SENTENCE = "I have attached the file(s) below."
 
@@ -161,6 +172,16 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
             continue
         rows = [r for r in (ask.get("last_result_set") or []) if isinstance(r, dict)]
         kind = str(ask.get("kind"))
+        if kind == "top_selling_pick":
+            # PLAN-chatbot-top-x-hot-selling-24sep.md S4: the ranked list's own roster
+            # builder (`turn/pending.top_selling_pick`, S1): options carry the printed
+            # code and grain, and the payload sends a pick back to the ranking.
+            question = top_selling_pick(
+                rows, asked_at_turn=turn_no, filters=dict(ask.get("filters") or {})
+            )
+            if question is not None:
+                return question
+            continue
         # The OUTSTANDING kinds keep their own `entity_type` (their options are a scope,
         # never a row to pick's own `uuid` - `apply._answer_outstanding` owns the whole
         # answering turn before the generic roster path ever reads `entity_type`). A
@@ -198,6 +219,27 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
     return None
 
 
+def _with_quantities(codes: list[Any], state: State) -> list[Any]:
+    """#1262 fix lane round 2, S1 (AC-S5-4): each envelope code named with the parser's
+    own quantity when the focus product row it came from carries one ("M210-GM (x5)"),
+    through the ONE label rule `focus_row_label`. The envelope's codes stay bare - the
+    ladder probes and the miss list read them as codes."""
+    by_code: dict[str, Any] = {}
+    for row in getattr(getattr(state, "focus", None), "products", None) or []:
+        if not isinstance(row, dict) or row.get("quantity") is None:
+            continue
+        for key in (row.get("raw"), row.get("canonical_code"), row.get("code")):
+            if key:
+                by_code.setdefault(fold_token(str(key)).casefold(), row["quantity"])
+    if not by_code:
+        return codes
+    out: list[Any] = []
+    for code in codes:
+        quantity = by_code.get(fold_token(str(code)).casefold())
+        out.append(focus_row_label({"raw": code, "quantity": quantity}) if quantity is not None else code)
+    return out
+
+
 def _header_subjects(entities: list[Any]) -> list[str]:
     """Every subject the answer is FOR, each named once.
 
@@ -223,6 +265,24 @@ def _header_subjects(entities: list[Any]) -> list[str]:
         seen.add(key)
         out.append(ledger_family_label(text))
     return out
+
+
+#: The most subjects a section header names one by one; past it the header counts them.
+HEADER_SUBJECT_MAX = 5
+
+#: Domains whose subjects are products, so a counted header says "products".
+_PRODUCT_DOMAINS = frozenset({"inventory", "incoming", "product_attachment", "master_products", "promotion"})
+
+
+def _routing_brand(ctx: Any) -> Any:
+    """The brand a freshly minted `team_pick` stamps: this turn's resolved brand, else the
+    focus product's, read only now, at the mint (#865, fix round 2 N2: the read used to run
+    on every such turn whether or not anything was minted)."""
+    brand = getattr(ctx, "routing_brand", None)
+    if brand:
+        return brand
+    thunk = getattr(ctx, "focus_brand", None)
+    return thunk() if callable(thunk) else None
 
 
 def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: Any) -> Answer:
@@ -261,10 +321,17 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             missed_domains.append(domain)
 
         label = row.label if row else domain
-        codes = ", ".join(_header_subjects(entities))
-        # A counted-set answer (AC-1316/AC-1317, "10 taps have certificates. Showing
-        # 5.") carries its OWN header, computed off the qualifying total and the
-        # class word rather than the domain label - it wins over the generic
+        subjects = _with_quantities(_header_subjects(entities), state)
+        # W6 (owner hand test round 2, turn 1): a long subject list is counted, never
+        # dumped as one line of codes ("*stock* for BRBC22102W, BRBC22108W-1A, ...").
+        codes = (
+            ", ".join(subjects)
+            if len(subjects) <= HEADER_SUBJECT_MAX
+            else f"{len(subjects)} {'products' if env.get('domain') in _PRODUCT_DOMAINS else 'items'}"
+        )
+        # A counted-set answer (AC-1316, "10 taps have certificates.") carries its OWN
+        # header, computed off the qualifying total and the class word rather than the
+        # domain label - it wins over the generic
         # `*{label}* for {codes}:` line whenever the fetch supplied one, rows or not.
         header_override = env.get("header_override")
         if isinstance(header_override, str) and header_override.strip():
@@ -289,7 +356,16 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         # `figures`/`_render_row` below is now a FALLBACK for an envelope that never
         # went through that lane at all (a unit test's own hand-built dict).
         lane_words = env.get("lane_text")
-        if isinstance(lane_words, str) and lane_words.strip():
+        # #1262 slice 1 (F2): `lane_text` is occasionally the raw text of a FAILED
+        # tool call ("Error executing tool crm_outstanding_report: ..."), fed back
+        # in by whichever lane last touched `outstanding_carried_*` (the T7/T9
+        # hijack the diagnosis transcript recorded) - this module has no way to
+        # tell that string apart from a real answer once it has reached
+        # `lane_text`, so it is caught by name, once, here, and answered with the
+        # SAME neutral line the `error` arm below already gives a broken fetch.
+        if isinstance(lane_words, str) and "Error executing tool" in lane_words:
+            block = header + "\n" + f"I could not fetch {label} just now, please try again."
+        elif isinstance(lane_words, str) and lane_words.strip():
             block = lane_words.strip()
             # Hand pass 12, Group H: a missed leg of a MULTI-domain ask must name
             # itself, never the bare fallback (`lanes/business/fetch.NO_RESULT_INTRO`,
@@ -341,6 +417,16 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                 for r in rungs_tried
             ]
             block = block + "\n" + f"Nothing on {_join_words(names)} either."
+        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+        # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D15: "just proceed"
+        # answered the products that had a quantity and dropped the rest, so the
+        # reply names the ones it did not check - a dealer must never have to work
+        # out which of the products they asked about are missing from the answer.
+        # LAST, under the rungs line: it is the closing note on this section, and it
+        # read as part of the ladder sentence when it sat above one.
+        not_checked = [n for n in (env.get("not_checked") or []) if isinstance(n, str)]
+        if not_checked:
+            block = block + "\n" + f"Not checked: {', '.join(not_checked)}."
         text_parts.append(block)
 
         for f in env_files:
@@ -385,18 +471,46 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             if team and team not in teams:
                 teams.append(team)
         if teams:
-            offer = Offer(teams=teams)
-            # R-f (owner hand pass 7, 19 Sep 2026): a SINGLE team names itself in the
-            # offer, the same tail wording `CHATBOT_REPLY_ESCALATE_OFFER` sends
-            # ("...to {{team}} team?"), via this module's own `_pretty_team` (the
-            # `turn` package may not import `chatbot.tail`). Several teams keep the
-            # bare question because the roster right below it is what names them.
-            text += (
-                f"\n\nWould you like me to escalate to {_pretty_team(teams[0])} team?"
-                if len(teams) == 1
-                else "\n\nWould you like me to escalate?"
+            # #1262 slice 11 (F8), ONE gate for both rules rather than one per call
+            # site - guards only the VISIBLE offer (the `Offer` object and its
+            # sentence), never the roster re-arm below: that carry is silent
+            # bookkeeping for a LATER accepted escalation, not a new offer.
+            # - AC-S11-1: staff (`profile.tier == "office"`, owner ruling 2) get no
+            #   BOT-INITIATED offer on a miss - they can still ask to escalate
+            #   explicitly, a different turn (an `is_escalation_confirmation`
+            #   verdict), never this arm.
+            # - AC-S11-2: a clarifying question already open when this turn's own
+            #   fetch also misses (T3's still-open `kind_pick`, `state.pending`
+            #   carried in, never resolved by `_lane_question` above because it is
+            #   not THIS turn's own ask) must stay the only open question - a
+            #   second one piled on top is what the finding measured.
+            is_staff = is_staff_profile(getattr(state, "profile", None))
+            # Phase 3 fix round (26 Sep 2026), review B1/B2: "a clarifying question
+            # open" means a question ASKED THIS TURN (a fresh kind pick / did-you-mean
+            # / roster the lane just armed), never any carried pending regardless of
+            # age - `state.pending is not None` could not tell "a roster still being
+            # asked" from "an old, fully-answered one just sitting on state" and hid a
+            # DEALER's legitimate offer over the old one too (hand pass 2 item 8).
+            carried_for_gate = getattr(state, "pending", None)
+            clarifying_open = (
+                carried_for_gate is not None
+                and carried_for_gate.asked_at_turn == getattr(state, "turn_no", None)
             )
-            carried = getattr(state, "pending", None)
+            offer_withheld = is_staff or clarifying_open
+            if not offer_withheld:
+                offer = Offer(teams=teams)
+                # R-f (owner hand pass 7, 19 Sep 2026): a SINGLE team names itself in
+                # the offer, the same tail wording `CHATBOT_REPLY_ESCALATE_OFFER`
+                # sends ("...to {{team}} team?"), via this module's own
+                # `_pretty_team` (the `turn` package may not import `chatbot.tail`).
+                # Several teams keep the bare question because the roster right
+                # below it is what names them.
+                text += (
+                    f"\n\nWould you like me to escalate to {_pretty_team(teams[0])} team?"
+                    if len(teams) == 1
+                    else "\n\nWould you like me to escalate?"
+                )
+            carried = carried_for_gate
             if carried is not None and is_roster(carried.kind):
                 # Owner hand pass 2, item 8 (turns 29605e65 miss, then 586746d3 "5" and
                 # a253e14f "3"): the escalate offer REPLACED the sticky roster the miss
@@ -406,44 +520,60 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                 # SENTENCE appended under the answer, not a second question. The team it
                 # would escalate to rides on the roster, so a "yes" over this state still
                 # reaches the right team.
-                question = replace(
-                    carried,
-                    team=carried.team or teams[0],
-                    payload={
-                        **carried.payload,
-                        "escalate_offered": True,
-                        # SRTSC07 review round 2, SHOULD-A: both halves come from
-                        # the SAME source as the `team` expression right above, not
-                        # independently. A roster CAN carry a team with no agent at
-                        # all (`answer_bridge.py`'s D4 narrower roster,
-                        # `turn/apply.py`'s narrow ask) - `carried.payload.get(
-                        # "agent") or ctx.suggested_agent` mixed a STALE carried
-                        # team with THIS turn's fresh agent whenever that happened,
-                        # a pair `/external/next-assignee` has no link for
-                        # (measured: an incoming miss with no agent, re-armed under
-                        # a later order-domain miss, paired `order_enquiries` with
-                        # the old `purchasing` team). When the team is the roster's
-                        # OWN (`carried.team` truthy), the agent is the roster's own
-                        # too, carried or not - never THIS turn's, which named no
-                        # opinion about the roster's team at all. Only when the team
-                        # itself falls to `teams[0]` (this turn's own) does the
-                        # agent follow it.
-                        "agent": (
-                            carried.payload.get("agent")
-                            if carried.team
-                            else getattr(ctx, "suggested_agent", None)
-                        ),
-                        # Round 4 (owner-approved, 22 Sep 2026): the SAME one-source
-                        # rule, one axis over - the brand travels with whichever
-                        # source the team came from.
-                        "brand_code": (
-                            carried.payload.get("brand_code")
-                            if carried.team
-                            else getattr(ctx, "routing_brand", None)
-                        ),
-                    },
-                )
-            else:
+                #
+                # Phase 3 fix round, review B1: the roster ITSELF always survives (a
+                # withheld offer must not also drop the customer's still-open pick),
+                # but the escalate stamp below - `escalate_offered` and the team/agent/
+                # brand that ride with it - is added ONLY when the offer was actually
+                # shown. This ran unconditionally before, so a withheld offer (staff, or
+                # a question asked THIS turn) still armed `escalate_offered: True` on
+                # the pending, and a later bare "yes" over it routed to an escalation
+                # nobody was ever shown.
+                payload = dict(carried.payload)
+                team = carried.team
+                if not offer_withheld:
+                    team = carried.team or teams[0]
+                    payload["escalate_offered"] = True
+                    # SRTSC07 review round 2, SHOULD-A: both halves come from
+                    # the SAME source as the `team` expression right above, not
+                    # independently. A roster CAN carry a team with no agent at
+                    # all (`answer_bridge.py`'s D4 narrower roster,
+                    # `turn/apply.py`'s narrow ask) - `carried.payload.get(
+                    # "agent") or ctx.suggested_agent` mixed a STALE carried
+                    # team with THIS turn's fresh agent whenever that happened,
+                    # a pair `/external/next-assignee` has no link for
+                    # (measured: an incoming miss with no agent, re-armed under
+                    # a later order-domain miss, paired `order_enquiries` with
+                    # the old `purchasing` team). When the team is the roster's
+                    # OWN (`carried.team` truthy), the agent is the roster's own
+                    # too, carried or not - never THIS turn's, which named no
+                    # opinion about the roster's team at all. Only when the team
+                    # itself falls to `teams[0]` (this turn's own) does the
+                    # agent follow it.
+                    payload["agent"] = (
+                        carried.payload.get("agent")
+                        if carried.team
+                        else getattr(ctx, "suggested_agent", None)
+                    )
+                    # Round 4 (owner-approved, 22 Sep 2026): the SAME one-source
+                    # rule, one axis over - the brand travels with whichever
+                    # source the team came from.
+                    payload["brand_code"] = (
+                        carried.payload.get("brand_code")
+                        if carried.team
+                        else _routing_brand(ctx)
+                    )
+                question = replace(carried, team=team, payload=payload)
+            elif not offer_withheld:
+                # #1262 slice 11 (F8): no carried roster to attach the offer to, and
+                # staff get no BOT-INITIATED one at all - a fresh `team_pick` here
+                # would be an escalation offer nobody was shown any sentence for,
+                # which is exactly what AC-S11-1 says must not be armed. Phase 3 fix
+                # round: a question asked THIS turn withholds it the same way -
+                # arming a second, fresh team_pick under an already-open clarifying
+                # question is the same double-ask the roster-carry branch above
+                # exists to avoid.
+                #
                 # SRTSC07 (prod transcript, 22 Sep 2026): `ctx.suggested_agent` is this
                 # turn's own `routing.suggested_agent` (`TurnContext`, set by
                 # `engine.py` off the SAME verdict the team half above is read from),
@@ -455,7 +585,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                     missed_domains,
                     policy,
                     agent=getattr(ctx, "suggested_agent", None),
-                    brand=getattr(ctx, "routing_brand", None),
+                    brand=_routing_brand(ctx),
                 )
 
     actions: list[dict[str, Any]] = []
@@ -567,6 +697,23 @@ def _subject_line(state: State | None, asked_kind: str) -> str:
     return "\n".join(lines)
 
 
+#: R8 (owner retest of top selling round 4): the longest menu a ranking conversation prints.
+MAX_MENU_OPTIONS = 5
+
+
+def _in_ranking(state: State | None) -> bool:
+    focus = getattr(state, "focus", None)
+    return bool(focus is not None and (focus.status == "top_selling" or focus.top_selling))
+
+
+def _short_question(pending: Any) -> str:
+    count = len(pending.options)
+    if pending.kind == "top_selling_pick":
+        return f"Which item do you mean? Reply with a rank number from 1 to {count}."
+    header = _ASK_HEADERS.get(pending.kind, "Which one do you mean?")
+    return f"{header} I found {count}, please type a little more of the name."
+
+
 def compose_question(pending: Any, state: State | None = None) -> Answer:
     """The ask, as an Answer: the subject line, the header, the numbered roster, and the
     same pending back.
@@ -598,15 +745,20 @@ def compose_question(pending: Any, state: State | None = None) -> Answer:
     verbatim = str(offered.get("offer_text") or "").strip() if isinstance(offered, dict) else ""
     if verbatim:
         body = verbatim
+    elif len(labels) > MAX_MENU_OPTIONS and _in_ranking(state):
+        # Owner retest of top selling round 4 (27 Sep 2026, R8): inside a ranking no
+        # menu lists more than five options (it listed all 100 ranked codes under
+        # "2025?"); the bot asks one short question in words and a typed number or
+        # name still picks, off the same stored options.
+        body = _short_question(pending)
+        labels = []
     action: dict[str, Any] = {
         "kind": "send_message",
         "text": body,
         # AC-1866: a `member_offer` re-print keeps its numbered text list but not the
         # names as quick-reply buttons (owner ruling 23 Sep 2026) - `result_set` below
         # still carries the roster, so a numbered reply still resolves.
-        "quick_replies": None if quick_replies_suppressed(pending.kind) else (
-            ", ".join(labels) if labels else None
-        ),
+        "quick_replies": pending_quick_replies(pending.kind, labels),
         "result_set": list(pending.options),
     }
     return Answer(sections=[], question=pending, offer=None, canned=[], files=[], actions=[action], text=body)

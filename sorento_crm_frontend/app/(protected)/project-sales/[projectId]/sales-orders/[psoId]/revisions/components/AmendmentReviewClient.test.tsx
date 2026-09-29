@@ -346,8 +346,34 @@ describe('AmendmentReviewClient', () => {
     await compare();
 
     expect(await screen.findByTestId('unmatched-empty')).toHaveTextContent(
-      'Every phase and product matched across the two versions.',
+      'Every area and product matched across the two versions.',
     );
+  });
+
+  it('names the area, not the phase, when a delta row changes it (R6)', async () => {
+    previewAmendment.mockResolvedValue(
+      preview({
+        rows: [
+          {
+            so_line_id: 'l9',
+            line_no: 9,
+            product_code: 'SRTWC0001',
+            description: 'TEST PRODUCT',
+            verb: 'DELAY',
+            field: 'phase_label',
+            from_value: 'Level 2 & 7',
+            to_value: 'Level 8 & 10',
+            qty: '10',
+          },
+        ],
+      }),
+    );
+
+    renderReview();
+    await compare();
+
+    expect(await screen.findByText(/area change/i)).toBeInTheDocument();
+    expect(screen.queryByText(/phase/i)).not.toBeInTheDocument();
   });
 
   it('reports a failed comparison', async () => {

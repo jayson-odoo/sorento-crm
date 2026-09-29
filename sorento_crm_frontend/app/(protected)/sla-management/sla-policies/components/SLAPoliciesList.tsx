@@ -155,7 +155,6 @@ export default function SLAPoliciesList() {
       onRowClick={handleRowClick}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
