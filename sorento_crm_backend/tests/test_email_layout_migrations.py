@@ -7,6 +7,8 @@ sha256 guard is checked against the body a real database carries, not a fixture 
 """
 from __future__ import annotations
 
+import hashlib
+
 import sqlalchemy as sa
 from alembic.config import Config
 from alembic.operations import Operations
@@ -110,6 +112,56 @@ def test_admin_edited_template_left_alone():  # AC-EM095
         assert _row(db, code)[2] is None
         # the others still convert
         assert _row(db, "order_inquiry_undone" + "_default")[2] is not None
+
+
+MAY_CODES = {
+    "purchase_request_approved" + "_default": "44f044773f5b20a779df2ce167088faa3998dc4d9c1aa1cd44b69365360e48b7",
+    "sponsorship_form_approved" + "_default": "1c64e75361503768cf62a4fc498b1983b5cc6a2a47b4c2b8b481e815e37d8242",
+}
+
+
+def _to_may_body(db):
+    """Rewrite the two purchase request bodies to what 212 wrote in May 2026 (long dashes)."""
+    for code, want in MAY_CODES.items():
+        body = _row(db, code)[0].replace("or '-'", "or '\u2014'")
+        assert hashlib.sha256(body.encode("utf-8")).hexdigest() == want, f"{code}: fixture is not the production body"
+        db.execute(sa.text("UPDATE email_templates SET body_html = :b WHERE code = :c"), {"b": body, "c": code})
+
+
+def test_may_seeded_long_dash_bodies_are_converted():  # AC-EM095
+    with blank_session() as db:
+        mods = _seed(db)
+        _to_may_body(db)
+        before = {c: _row(db, c) for c in MAY_CODES}
+        _run(mods["eml_0002_seed_layouts"], db)
+        for code in MAY_CODES:
+            after = _row(db, code)
+            assert after[2] is not None and after[3], code
+            assert after[0] == before[code][0] and after[1] == before[code][1], f"{code}: body must not change"
+
+
+def test_long_dash_body_with_an_admin_edit_is_left_alone():  # AC-EM095
+    with blank_session() as db:
+        mods = _seed(db)
+        _to_may_body(db)
+        db.execute(sa.text("UPDATE email_templates SET body_html = body_html || 'x' WHERE code = ANY(:c)"), {"c": list(MAY_CODES)})
+        _run(mods["eml_0002_seed_layouts"], db)
+        for code in MAY_CODES:
+            assert _row(db, code)[2] is None, code
+
+
+def test_downgrade_after_may_body_conversion_leaves_body():  # AC-EM095
+    with blank_session() as db:
+        mods = _seed(db)
+        _to_may_body(db)
+        before = {c: _row(db, c) for c in MAY_CODES}
+        mig = mods["eml_0002_seed_layouts"]
+        _run(mig, db)
+        _run(mig, db, "downgrade")
+        for code in MAY_CODES:
+            after = _row(db, code)
+            assert after[2] is None and after[3] is None, code
+            assert after[0] == before[code][0], code
 
 
 def test_system_codes_inserted_once_and_never_overwrite():  # AC-EM096

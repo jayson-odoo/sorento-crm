@@ -7,7 +7,8 @@
     oirs_0003, oihr_0003 and soatt_0001). A template an admin edited is left alone; it
     still renders branded through the implicit document. ``body_html`` and ``body_text``
     are never touched, so downgrade (which nulls what this set) restores the exact prior
-    rendering.
+    rendering. The two purchase request codes accept both seeded bodies (212 as written in
+    May 2026 with long dashes, and as #287 later rewrote it).
 (b) One ``email_templates`` row per system mail code (the hand-built mails that moved
     onto the layout), inserted only when the code is absent - never overwriting.
 
@@ -832,6 +833,13 @@ SYSTEM = json.loads(r'''{
 
 _SUFFIX = "_default"
 
+# Bodies migration 212 wrote before #287 replaced its long dashes with hyphens. A database
+# seeded in May 2026 (production) still carries these, unedited. Keyed by code stem.
+_SEEDED_ALT_SHA256 = {
+    "purchase_request_approved": "44f044773f5b20a779df2ce167088faa3998dc4d9c1aa1cd44b69365360e48b7",
+    "sponsorship_form_approved": "1c64e75361503768cf62a4fc498b1983b5cc6a2a47b4c2b8b481e815e37d8242",
+}
+
 
 def _custom_html(layout: dict) -> str:
     return "\n".join(b.get("html") or "" for b in layout["blocks"] if b.get("type") == "custom_text" and b.get("html"))
@@ -847,7 +855,8 @@ def upgrade() -> None:
         ).first()
         if row is None or row[2] is not None:
             continue
-        if hashlib.sha256((row[1] or "").encode("utf-8")).hexdigest() != spec["sha256"]:
+        digest = hashlib.sha256((row[1] or "").encode("utf-8")).hexdigest()
+        if digest not in (spec["sha256"], _SEEDED_ALT_SHA256.get(stem)):
             continue
         bind.execute(
             sa.text(

@@ -82,6 +82,6 @@ Hand-built mails (now `render_code(code, ctx)`, producers pass context):
 
 ## Migrations
 
-- **AC-EM095** `eml_0002_seed_layouts` sets `layout_json` + `preheader` on a seeded template only when its `body_html` sha256 equals the seeded body and `layout_json` is NULL; an admin-edited row is untouched; `body_html`/`body_text` are never modified; downgrade nulls what it set.
+- **AC-EM095** `eml_0002_seed_layouts` sets `layout_json` + `preheader` on a seeded template only when its `body_html` sha256 equals the seeded body and `layout_json` is NULL; an admin-edited row is untouched; `body_html`/`body_text` are never modified; downgrade nulls what it set. The two purchase request codes also match the body migration 212 wrote before #287 (long dashes), which is what production carries.
 - **AC-EM096** The same migration inserts one `email_templates` row per system code when that code is absent and never overwrites an existing row.
 - **AC-EM097** One alembic head after the lane's migrations; the first one chains on `merge_28sep_batch3`.
