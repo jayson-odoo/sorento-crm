@@ -1,6 +1,6 @@
 # PLAN - Chatbot: a linked contact is scoped to its customers; "my" / "me" means them
 
-Status: in build (29 Sep 2026; crew lane CHATBOT-CUSTOMER-SCOPE, PR #1365). Owner rulings received 29 Sep, all eight as recommended; see Decisions. Standard track:
+Status: in review, owner hand test PASSED on a06bd348 with parser v52 (29 Sep 2026; crew lane CHATBOT-CUSTOMER-SCOPE, PR #1365); CI on the current head is the last gate. Owner rulings received 29 Sep, all eight as recommended; see Decisions. Follow-ups deferred by owner ruling ("no behaviour changes now"), see "Follow-ups". Standard track:
 this is an authorization boundary (security-reviewer runs). UAC:
 `chatbot-customer-scope-29sep-acceptance-criteria.md` (written under the recommended options).
 
@@ -336,6 +336,29 @@ Known limitations, recorded and not built:
 - **A lone `contact_id` or `space_id` is 422** on orders list, by-product, debtors, analytics
   and the outstanding report (the sales report's shipped rule, now shared). The lane always
   sends both, non-blank.
+
+### Follow-ups (delta reviews on 5c693665, deferred by owner ruling after the hand test)
+
+None of these leaks data; each was reproduced by a reviewer and is recorded here for the
+next chatbot lane. Trigger for all three: the first owner report of the symptom.
+
+- **A contact's OWN name mis-tagged by the parser** (`hint: brand` / `category` / `order`)
+  beside a namesake in the book is refused rather than answered
+  (`engine._screen_resolver_for_scope`, `_exit_kind == "offer"` refuses even when the
+  surviving rows are the contact's own). Fix: when every foreign row is dropped and an own
+  row survives, continue on the own rows. Half-built and discarded in fix round 2.
+- **A stale "which kind" picker** when a DO token's resolution holds one `customer_order`
+  row and one foreign `customer` row: the screen cleans matches, compatible rows and
+  candidates but not `resolved_kinds`, so `turn_apply` offers "1. X (customer) 2. X
+  (customer_order)" (no name printed; picking 1 is refused). Fix: subtract the dropped rows
+  from `resolved_kinds[token]["customer"]` inside the screen.
+- **A padded `contact_id` on the sales report's and top selling's reveal check** gets 403
+  `sales_report_not_enabled` (fails closed) because those two sites do not strip the id the
+  way the three scope call sites do.
+- After a refusal only customer-hinted rows are cleared from the focus, so a refusal on a
+  category-hinted word can leave "I could not find <word>." on the next answer; the gate's
+  docstring says "every domain" where the lazy read covers order / purchase_order /
+  `self_reference` turns.
 
 ### Not built (named triggers)
 
