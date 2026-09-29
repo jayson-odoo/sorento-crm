@@ -83,6 +83,7 @@ export type UseCase =
   | 'ticket_resolved'
   | 'price_tag_update'
   | 'ideation_draft_reminder'
+  | 'ideation_status_update'
   | 'supplier_request_chat'
   | 'stock_ask_salesman';
 
@@ -113,6 +114,9 @@ export type ParamVariable =
   | 'product_code'
   | 'initiator'
   | 'handler_name'
+  | 'idea_number'
+  | 'status_label'
+  | 'track_url'
   | 'outcome'
   | 'customer_name'
   | 'product'
@@ -165,6 +169,7 @@ export const BUTTON_LINK_VARIABLES: ParamVariable[] = [
   'form_url',
   'discontinued_link',
   'system_url',
+  'track_url',
 ];
 
 export interface WindowState {
@@ -356,6 +361,12 @@ export const USE_CASES: {
       'Sent once, 24h after the last turn on an open idea draft, when the free-text window has closed. Map a parameter to "Full update message" (the reminder text naming the idea).',
   },
   {
+    key: 'ideation_status_update',
+    label: 'Ideation - Status Update',
+    description:
+      'Sent to the requester each time their idea moves on the ideas board (new stage, merged into another idea, or separated again). Always sent as this template. Use a Utility template; map params to "Idea number", "New status label" and "Track link", or one param to "Full update message".',
+  },
+  {
     key: 'stock_ask_salesman',
     label: 'Stock Ask - Salesman Notification',
     description:
@@ -389,6 +400,9 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'delivery_order', label: 'DO number', description: 'Delivery order number on the complaint' },
   { key: 'product_code', label: 'Product code', description: 'Product code on the stock inquiry' },
   { key: 'initiator', label: 'Initiator', description: 'SLA takeover: teammate who requested the takeover ("Requested by")' },
+  { key: 'idea_number', label: 'Idea number', description: 'Ideation: the idea number (e.g. IDEA-0031), or its title when it has no number' },
+  { key: 'status_label', label: 'New status label', description: 'Ideation: the new stage, or "combined with IDEA-0012" / "handled separately again from IDEA-0012, now <stage>"' },
+  { key: 'track_url', label: 'Track link', description: 'Ideation: public link to follow the idea, no login needed' },
   { key: 'update', label: 'Update', description: 'Lean action core - technical reply / "Approved" / "Rejected, reason: X" / "Processed by CS" / "Root cause is X" / "Resolution is X". No preamble or link.' },
   { key: 'outcome', label: 'Outcome', description: 'Stock ask: in stock / too big / no stock no incoming / no cap set for <category>' },
   { key: 'customer_name', label: 'Customer', description: 'Stock ask: the customer the dealer contact buys for' },
