@@ -249,11 +249,13 @@ def test_ac_is020_status_changed_sends_the_template_and_logs_success(db):
     assert row.direction == "outbound"
     assert row.status == "success"
     p = _payload(row)
-    assert p["event_id"] == ev["event_id"]
-    assert p["kind"] == "status_changed"
-    assert p["idea_number"] == "IDEA-0005"
-    assert p["template"] == tpl.name
-    assert p["parameters"] == ["IDEA-0005", "Discussed", "https://ss.test/public/ideas/tok5"]
+    assert p["event"]["event_id"] == ev["event_id"]
+    assert p["event"]["kind"] == "status_changed"
+    assert p["event"]["idea_number"] == "IDEA-0005"
+    assert p["event"]["template"] == tpl.name
+    assert p["message"]["type"] == "whatsapp_template"
+    assert p["message"]["template_name"] == tpl.name
+    assert p["message"]["parameters"] == ["IDEA-0005", "Discussed", "https://ss.test/public/ideas/tok5"]
 
 
 def test_ac_is021_merged_names_the_survivor(db):
@@ -422,7 +424,7 @@ def test_ac_is042_unknown_phone_skips_and_logs(db):
     (row,) = _rows(db, ev["event_id"])
     assert (row.status, row.error_code) == ("skipped", "UNKNOWN_CONTACT")
     # AC-IS061: a skip still names the mapped template.
-    assert _payload(row)["template"] == tpl.name
+    assert _payload(row)["event"]["template"] == tpl.name
 
 
 def test_ac_is042_contact_without_respond_io_id_is_unknown(db):
@@ -474,8 +476,94 @@ def test_ac_is051_missing_mapping_skips_logs_and_goes_on(db):
         (row,) = _rows(db, ev["event_id"])
         assert (row.status, row.error_code) == ("skipped", "NO_TEMPLATE")
         assert "no default template configured" in (row.error_message or "")
-        assert _payload(row)["template"] is None
+        assert _payload(row)["event"]["template"] is None
     assert svc.get_cursor(db, BASE_URL) == 31
+
+
+# ---------------------------------------------------------------------------
+# Outbox shape (owner hand test, 29 Sep): the row's request_payload carries the same
+# ``message`` block every other template send writes, so the Respond Outbox renders
+# the template and its filled parameters; the event metadata rides under ``event``.
+# ---------------------------------------------------------------------------
+
+_FILLED = "Update on your idea IDEA-{n:04d}: it is now Discussed. Track it here: https://ss.test/public/ideas/tok{n}"
+
+
+def _assert_outbox_renders(row: IntegrationLog, tpl: RespondMessageTemplate, n: int) -> None:
+    from app.api.v1.system.respond_outbox import _parse_payload
+
+    p = _payload(row)
+    msg = p["message"]
+    assert msg["type"] == "whatsapp_template"
+    assert msg["template_name"] == tpl.name
+    assert msg["template_id"] == str(tpl.id)
+    assert msg["use_case"] == "ideation_status_update"
+    assert msg["parameters"] == [f"IDEA-{n:04d}", "Discussed", f"https://ss.test/public/ideas/tok{n}"]
+    assert p["event"]["seq"] == n
+    assert p["event"]["idea_number"] == f"IDEA-{n:04d}"
+    sent_as, text, template_name, _button = _parse_payload(row.request_payload)
+    assert (sent_as, text, template_name) == ("template", _FILLED.format(n=n), tpl.name)
+
+
+def test_outbox_renders_a_sent_row(db):
+    tpl = _map_template(db)
+    c = _contact(db)
+    ev = _event(90, phone=c.phone_number)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    (row,) = _rows(db, ev["event_id"])
+    assert row.status == "success"
+    _assert_outbox_renders(row, tpl, 90)
+
+
+def test_outbox_renders_a_failed_row(db):
+    tpl = _map_template(db)
+    c = _contact(db)
+    ev = _event(91, phone=c.phone_number)
+    FakeRespondClient.fail_with = RuntimeError("respond 500")
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    (row,) = _rows(db, ev["event_id"])
+    assert (row.status, row.error_code) == ("failed", "SEND_FAILED")
+    _assert_outbox_renders(row, tpl, 91)
+
+
+@pytest.mark.parametrize(
+    "case, code",
+    [("opted_out", "OPTED_OUT"), ("unknown_contact", "UNKNOWN_CONTACT"), ("is_test", "IS_TEST")],
+)
+def test_outbox_renders_a_skipped_row_when_the_template_resolves(db, case, code):
+    tpl = _map_template(db)
+    n = {"opted_out": 92, "unknown_contact": 93, "is_test": 94}[case]
+    if case == "opted_out":
+        ev = _event(n, phone=_contact(db, outbound=False).phone_number)
+    elif case == "unknown_contact":
+        ev = _event(n, phone="+60999000222")
+    else:
+        ev = _event(n, phone=_contact(db).phone_number, is_test=True)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    assert FakeRespondClient.sent == []
+    (row,) = _rows(db, ev["event_id"])
+    assert (row.status, row.error_code) == ("skipped", code)
+    _assert_outbox_renders(row, tpl, n)
+
+
+def test_no_template_skip_keeps_the_event_and_has_no_message(db):
+    c = _contact(db)
+    ev = _event(95, phone=c.phone_number)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    (row,) = _rows(db, ev["event_id"])
+    assert (row.status, row.error_code) == ("skipped", "NO_TEMPLATE")
+    p = _payload(row)
+    assert "message" not in p
+    assert p["event"]["event_id"] == ev["event_id"]
+    assert p["event"]["template"] is None
 
 
 def test_ac_is051_unapproved_template_skips(db):

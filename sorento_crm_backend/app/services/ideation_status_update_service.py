@@ -224,8 +224,28 @@ def _mapped_template_name(db: Session) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _skip(code: str, message: str) -> dict[str, Any]:
-    return {"status": _SKIPPED, "error_code": code, "error_message": message}
+def _rendered_request(db: Session, event: dict[str, Any]) -> dict[str, Any] | None:
+    """The ``{"message": {...}}`` block this event's template would carry, built by the
+    shared ``respond_messaging_service.build_template_request`` (no send), so a skipped
+    row still shows the Respond outbox the template and its filled parameters. None
+    when no valid template is mapped."""
+    from app.services.respond_messaging_service import build_template_request
+
+    try:
+        return build_template_request(
+            db, use_case=USE_CASE, context_vars=build_context_vars(event)
+        )["request_payload"]
+    except Exception:  # noqa: BLE001 - TemplateSendSkipped, or a render that cannot run
+        return None
+
+
+def _skip(db: Session, event: dict[str, Any], code: str, message: str) -> dict[str, Any]:
+    return {
+        "status": _SKIPPED,
+        "error_code": code,
+        "error_message": message,
+        "request_payload": _rendered_request(db, event),
+    }
 
 
 def _handle_event(db: Session, event: dict[str, Any], template_name: str | None) -> dict[str, Any]:
@@ -238,17 +258,17 @@ def _handle_event(db: Session, event: dict[str, Any], template_name: str | None)
     )
 
     if event.get("is_test"):
-        return _skip("IS_TEST", "test idea: never sent to a requester")
+        return _skip(db, event, "IS_TEST", "test idea: never sent to a requester")
     if event.get("kind") not in _KINDS:
-        return _skip("UNKNOWN_KIND", f"unknown event kind {event.get('kind')!r}")
+        return _skip(db, event, "UNKNOWN_KIND", f"unknown event kind {event.get('kind')!r}")
     phone = str(event.get("requester_phone") or "").strip()
     if not phone:
-        return _skip("NO_REQUESTER_PHONE", "event carries no requester_phone")
+        return _skip(db, event, "NO_REQUESTER_PHONE", "event carries no requester_phone")
     contact = _find_contact(db, phone)
     if contact is None or not (contact.respond_io_id or "").strip():
-        return _skip("UNKNOWN_CONTACT", f"no Respond.io contact for {phone}")
+        return _skip(db, event, "UNKNOWN_CONTACT", f"no Respond.io contact for {phone}")
     if not contact.outbound_enabled:
-        return _skip("OPTED_OUT", "the requester's outbound messaging is switched off")
+        return _skip(db, event, "OPTED_OUT", "the requester's outbound messaging is switched off")
 
     context_vars = build_context_vars(event)
     try:
@@ -259,38 +279,43 @@ def _handle_event(db: Session, event: dict[str, Any], template_name: str | None)
             context_vars=context_vars,
         )
     except TemplateSendSkipped as exc:
-        return {**_skip("NO_TEMPLATE", str(exc)), "template": template_name}
+        return {
+            "status": _SKIPPED,
+            "error_code": "NO_TEMPLATE",
+            "error_message": str(exc),
+            "template": template_name,
+        }
     except Exception as exc:  # noqa: BLE001 - a send error is logged, never raised
         logger.warning(
             "ideation status update: send failed for event %s", event.get("event_id"), exc_info=True
         )
+        # ``send_template_for_use_case`` stamps the rendered request on a send error
+        # (``_attach_send_context``); render it here when the error came earlier.
+        attempted = getattr(exc, "request_payload", None)
         return {
             "status": _FAILED,
             "error_code": "SEND_FAILED",
             "error_message": str(exc)[:2000],
             "template": template_name,
-            "parameters": _attempted_parameters(exc),
+            "request_payload": attempted if isinstance(attempted, dict) else _rendered_request(db, event),
+            "respond_io_id": contact.respond_io_id,
         }
     return {
         "status": _SUCCESS,
         "template": result.get("template_name"),
-        "parameters": result.get("params"),
+        "request_payload": result.get("request_payload"),
         "response": result.get("response"),
         "respond_io_id": contact.respond_io_id,
     }
 
 
-def _attempted_parameters(exc: Exception) -> Any:
-    """The resolved parameters ``send_template_for_use_case`` stamps on a send error."""
-    payload = getattr(exc, "request_payload", None)
-    if isinstance(payload, dict) and isinstance(payload.get("message"), dict):
-        return payload["message"].get("parameters")
-    return None
-
-
 def _commit_handled(db: Session, base_url: str, event: dict[str, Any], row: dict[str, Any]) -> None:
-    """The event's one log row and the cursor move, in one commit."""
-    payload = {
+    """The event's one log row and the cursor move, in one commit.
+
+    ``request_payload`` has the shape every template send writes (the ``message`` block
+    from ``build_template_request``, which the Respond outbox renders), plus this
+    feed's own metadata under ``event``. No ``message`` when no template resolved."""
+    meta: dict[str, Any] = {
         "event_id": event.get("event_id"),
         "seq": _seq(event),
         "kind": event.get("kind"),
@@ -300,10 +325,10 @@ def _commit_handled(db: Session, base_url: str, event: dict[str, Any], row: dict
         "requester_phone": event.get("requester_phone"),
         "is_test": bool(event.get("is_test")),
     }
-    if row.get("parameters") is not None:
-        payload["parameters"] = row["parameters"]
     if row.get("respond_io_id"):
-        payload["respond_io_id"] = row["respond_io_id"]
+        meta["respond_io_id"] = row["respond_io_id"]
+    rendered = row.get("request_payload")
+    payload = {**(rendered if isinstance(rendered, dict) else {}), "event": meta}
     response = row.get("response")
     db.add(
         IntegrationLog(
@@ -339,7 +364,7 @@ def _commit_sent_fallback(db: Session, base_url: str, event: dict[str, Any], row
             endpoint=USE_CASE,
             http_method="POST",
             request_payload=json.dumps(
-                {"event_id": str(event.get("event_id"))[:100], "seq": _seq(event), "use_case": USE_CASE}
+                {"event": {"event_id": str(event.get("event_id"))[:100], "seq": _seq(event), "use_case": USE_CASE}}
             ),
             status=_SUCCESS,
             error_code="LOG_DEGRADED",
