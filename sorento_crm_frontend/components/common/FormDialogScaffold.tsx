@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -22,6 +23,11 @@ export interface FormDialogScaffoldProps {
   cancelLabel?: string;
   isPending?: boolean;
   error?: string | null;
+  /** Screen-reader-only dialog description (Radix requires one, or an explicit
+   * `aria-describedby={undefined}`, per every `DialogContent`). Falls back to the
+   * title so a caller that names nothing more specific never trips the "Missing
+   * Description" console warning. */
+  description?: string;
 }
 
 /**
@@ -37,12 +43,14 @@ export function FormDialogScaffold({
   cancelLabel = 'Cancel',
   isPending = false,
   error,
+  description,
 }: FormDialogScaffoldProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
+          <DialogDescription className="sr-only">{description ?? title}</DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="space-y-4">
           {error && (

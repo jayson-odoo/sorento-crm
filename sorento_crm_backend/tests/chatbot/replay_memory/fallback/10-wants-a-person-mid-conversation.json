@@ -1,0 +1,93 @@
+{
+  "name": "10-wants-a-person-mid-conversation",
+  "about": "Plan 7.3 example 10, AC-MEM088: a request for a person; not commercial, so the domain team takes it, and the routed message carries the live conversation's summary line.",
+  "needs_memory": true,
+  "console": true,
+  "given": {
+    "memory_level": "full",
+    "first_name": "Tan",
+    "frames": [
+      {
+        "days_ago": 3,
+        "domain": "inventory",
+        "summary": "Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team."
+      },
+      {
+        "days_ago": 5,
+        "domain": "order",
+        "summary": "Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
+      }
+    ],
+    "profile_facts": [
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ],
+        "source": "tallied",
+        "source_ref": null,
+        "first_seen": "2026-09-01",
+        "last_seen": "2026-09-25",
+        "seen_count": 5,
+        "set_by": null
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ],
+        "source": "tallied",
+        "source_ref": null,
+        "first_seen": "2026-09-01",
+        "last_seen": "2026-09-25",
+        "seen_count": 4,
+        "set_by": null
+      }
+    ],
+    "customer": {
+      "name": "Chin Chun Trading",
+      "code": "CC001",
+      "salesperson": "Aina"
+    },
+    "live_turns": [
+      {
+        "message": "incoming M486-75-BL",
+        "verdict": {
+          "domain_hint": "incoming",
+          "entities": [
+            {
+              "raw": "M486-75-BL",
+              "hint": "product",
+              "canonical_code": "M486-75-BL",
+              "current_message": true,
+              "confident": true,
+              "hint_confident": true
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "turn": {
+    "message": "I want to talk to a real person",
+    "verdict": {
+      "message_type": "request_for_help",
+      "user_goal": "trying to talk to a human",
+      "routing": {
+        "suggested_team": "customer_service",
+        "suggested_agent": null
+      }
+    }
+  },
+  "expected": {
+    "branch_kind": "out_of_scope",
+    "reply_contains": [
+      "customer service team"
+    ],
+    "comment_contains": [
+      "Conversation so far:",
+      "Incoming stock: Asked about incoming stock for M486-75-BL"
+    ]
+  }
+}

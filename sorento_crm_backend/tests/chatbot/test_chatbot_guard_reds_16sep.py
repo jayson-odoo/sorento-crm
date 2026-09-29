@@ -178,15 +178,18 @@ class TestLoadProfileTwoRowsFailsClosed:
         assert recall_enabled is False
 
     def test_a_single_matching_row_is_unaffected(self, db) -> None:
+        """`chatbot_recall_enabled` is retired (round 3, AC-MEM054, merged 5b110df8) -
+        dropped from the table, so this seed no longer names it and `load_profile`'s
+        second tuple member (a dead recall flag now, always `False`) is asserted as
+        such rather than as the old column's stored value."""
         from app.services.chatbot import turn_runtime
 
         respond_io_id = unique_code("single_contact")
         db.execute(
             text(
                 "INSERT INTO respond_contacts "
-                "(id, respond_io_id, phone_number, session_vars, chatbot_stock_allowed, "
-                "chatbot_recall_enabled) "
-                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST('{}' AS jsonb), true, true)"
+                "(id, respond_io_id, phone_number, session_vars, chatbot_stock_allowed) "
+                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST('{}' AS jsonb), true)"
             ),
             {"cid": respond_io_id, "phone": f"+60{uuid.uuid4().int % 10**9}"},
         )
@@ -195,7 +198,7 @@ class TestLoadProfileTwoRowsFailsClosed:
         profile, recall_enabled = turn_runtime.load_profile(db, respond_io_id, space_id=None)
 
         assert profile.stock_allowed is True
-        assert recall_enabled is True
+        assert recall_enabled is False
 
 
 class TestB4FocusFromWireToleratesTheOrderStatusRename:

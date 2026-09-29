@@ -51,11 +51,6 @@ DEFAULT_MODEL = "gpt-4.1-mini"
 
 CLARIFIER_MAX_TOKENS = 512
 
-# `sub-error-logger`'s `set-ran-query-formulator.js`, byte for byte:
-# `` `There is some error encountered by the AI: ${error}` ``. This is the ONE reply n8n
-# has ever built for a failed clarifier call, and AC-403 keeps it.
-CLARIFIER_ERROR_PREFIX = "There is some error encountered by the AI: "
-
 # The SETUP arm's customer text. n8n has no reply for these paths at all - a missing API
 # key or an unset AI-assistant config never reaches `sub-error-logger2`, because in n8n the
 # credential is bound to the node and the turn simply dies - so there is nothing to be

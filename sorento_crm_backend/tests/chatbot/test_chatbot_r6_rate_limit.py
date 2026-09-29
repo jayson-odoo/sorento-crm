@@ -247,7 +247,7 @@ def test_a_clarifier_rate_limit_replies_with_the_plain_sentence(
         _envelope(message=_message("what can you do")), session_factory=session_factory
     )
     assert result.reply["text"] == llm_call.RATE_LIMITED_REPLY
-    assert not result.reply["text"].startswith(casual.CLARIFIER_ERROR_PREFIX)
+    assert not result.reply["text"].startswith("There is some error encountered by the AI: ")
     row = _turn_row(session_factory, result.turn_id)
     assert row.status == "failed" and row.stage == "casual_llm" and "429" in row.error
 

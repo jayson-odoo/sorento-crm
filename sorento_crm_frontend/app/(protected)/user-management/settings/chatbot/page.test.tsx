@@ -131,10 +131,9 @@ function renderPage() {
 const saveButton = () => screen.getByRole('button', { name: /save/i });
 
 const DEFAULT_MEMORY = {
-  recall_default: false,
-  episode_retention_days: 180,
-  profile_fields: ['tier'],
-  focus_reset_events: ['topic_switch'],
+  enabled: false,
+  default_level: 'full',
+  own_level_count: 1,
 };
 const DEFAULT_TIER_ORDER = ['dealer', 'office', 'end_user'];
 

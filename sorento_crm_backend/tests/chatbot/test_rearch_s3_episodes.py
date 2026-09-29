@@ -1,40 +1,26 @@
-"""S3 - episode write on topic switch / conversation close (AC-1546, PLAN-chatbot-
-turn-rearch.md "State: three shelves"; the `conversation_frames` table and its
-`contact_respond_id` column are already committed, S0/S1 - see
-`app/models/conversation_frame.py`).
+"""S3 - episode write on topic switch (AC-1546, PLAN-chatbot-turn-rearch.md "State:
+three shelves"; the `conversation_frames` table and its `contact_respond_id` column
+are already committed, S0/S1 - see `app/models/conversation_frame.py`).
 
-`turn/memory.py::write_episode(...)` does not exist yet, so every test is RED at
-collection with `ModuleNotFoundError: No module named 'app.services.chatbot.turn.
-memory'`.
-
-**Ambiguity flagged to the captain**: the brief says "call the SLA close path used
-today for the five-key clear" for the conversation-close half of this AC. This tester
-could not find such a path (searched `app/services/chatbot/`, `app/api/v1/external/`
-and `app/services/sla_service.py` for a session_vars reset keyed to a Respond
-conversation-close event; nothing matches). `TestFrameOnConversationClose` below calls
-`write_episode(..., close_reason="conversation_close")` directly instead of driving a
-named SLA route - it tests the MEMORY seam's own close-reason handling, not the
-production trigger wiring, and is flagged rather than silently invented.
-
-**Second ambiguity**: `write_episode`'s parameter names/order are this tester's guess
-(`write_episode(db, *, contact_respond_id, domain, intent, entities, tools_used,
-turn_ids, summary, close_reason)`), since no S3 module exists yet to read the real
-signature off. The engine-level three-topic test (`TestThreeTopicsTwoFrames`) instead
-drives the seam through `engine.run_turn` with `topic_reset` on the verdict (S2's own
-v3 key, already committed), so it is independent of this tester's parameter-name guess
-for `write_episode` and only depends on the ROW COUNT/shape written to
-`conversation_frames`.
+**Retirement note (coordinator instruction, 26 Sep 2026, chatbot memory lane A):**
+this file originally also carried `TestFrameFieldsAndEmbeddingEnqueue` and
+`TestFrameOnConversationClose`, both driving `turn/memory.py::write_episode` (the
+pre-lane-A writer) DIRECTLY with hand-picked field values and, in one case, a
+`close_reason="conversation_close"` this lane's contract never recognises. Both are
+removed: the engine no longer calls `write_episode` at all (only
+`write_episode_for_reset`, `engine.py`'s sole call site), and their ground is now
+covered - inverted, for the embedding case - by the lane A tests named where the old
+classes used to be, below `TestThreeTopicsTwoFrames`. That class is UNCHANGED and
+still green: it drives the real `engine.run_turn` seam with `topic_reset` on the
+verdict, so it exercises whichever writer the engine actually calls, not a direct
+signature guess.
 """
 from __future__ import annotations
 
 import json
-from typing import Any
 
 import pytest
 from sqlalchemy import text
-
-# Forces collection failure now - see module docstring.
-from app.services.chatbot.turn.memory import write_episode  # noqa: F401
 
 from app.models.conversation_frame import ConversationFrame
 from tests.chatbot._turn_helpers import entity, verdict
@@ -117,83 +103,27 @@ class TestThreeTopicsTwoFrames:
         )
 
 
-class TestFrameFieldsAndEmbeddingEnqueue:
-    def test_frame_carries_domain_intent_entities_tools_summary_turn_ids(
-        self, session_factory
-    ) -> None:
-        from app.services.chatbot.turn.memory import write_episode
-
-        db = session_factory()
-        frame = write_episode(
-            db,
-            contact_respond_id="ZZT-episodes-fields-1",
-            domain="inventory",
-            intent="check_stock",
-            entities={"product": ["SRTWC287"]},
-            tools_used=["crm_inventory_stock_balance_list"],
-            turn_ids=["turn-1", "turn-2"],
-            summary="Checked stock for SRTWC287.",
-            close_reason="topic_switch",
-        )
-
-        assert frame.domain == "inventory"
-        assert frame.intent == "check_stock"
-        assert frame.entities.get("product") == ["SRTWC287"]
-        assert "crm_inventory_stock_balance_list" in frame.tools_used
-        assert frame.summary
-        assert list(frame.turn_ids) == ["turn-1", "turn-2"]
-
-    def test_embedding_enqueued_once_per_frame_with_source_type_conversation_frame(
-        self, session_factory, monkeypatch
-    ) -> None:
-        from app.services import embedding_service as embedding_service_mod
-        from app.services.chatbot.turn.memory import write_episode
-
-        calls: list[dict[str, Any]] = []
-        original = embedding_service_mod.EmbeddingEventService.queue_event
-
-        def spy(self, **kwargs: Any):
-            calls.append(kwargs)
-            return original(self, **kwargs)
-
-        monkeypatch.setattr(embedding_service_mod.EmbeddingEventService, "queue_event", spy)
-
-        db = session_factory()
-        write_episode(
-            db,
-            contact_respond_id="ZZT-episodes-embed-1",
-            domain="inventory",
-            intent="check_stock",
-            entities={},
-            tools_used=[],
-            turn_ids=["turn-1"],
-            summary="Checked stock.",
-            close_reason="topic_switch",
-        )
-
-        frame_calls = [c for c in calls if c.get("source_type") == "conversation_frame"]
-        assert len(frame_calls) == 1, f"expected one embedding enqueue per frame, got {frame_calls!r}"
-
-
-class TestFrameOnConversationClose:
-    """See module docstring's ambiguity note - drives `write_episode` directly with
-    `close_reason='conversation_close'` rather than a named SLA route."""
-
-    def test_conversation_close_writes_a_frame(self, session_factory) -> None:
-        from app.services.chatbot.turn.memory import write_episode
-
-        db = session_factory()
-        frame = write_episode(
-            db,
-            contact_respond_id="ZZT-episodes-close-1",
-            domain="order",
-            intent="check_outstanding",
-            entities={},
-            tools_used=[],
-            turn_ids=["turn-1"],
-            summary="Outstanding DO check for customer one.",
-            close_reason="conversation_close",
-        )
-
-        assert frame.close_reason == "conversation_close"
-        assert frame.status == "closed"
+# `TestFrameFieldsAndEmbeddingEnqueue` and `TestFrameOnConversationClose` are RETIRED
+# (coordinator instruction, 26 Sep 2026, chatbot memory lane A): both drove
+# `turn/memory.py::write_episode` (the pre-lane-A writer) DIRECTLY, and the engine no
+# longer calls it at all - `engine.py` calls only `write_episode_for_reset` now
+# (grepped: the sole `write_episode` call site left in `engine.py` is
+# `memory_mod.write_episode_for_reset`). Both classes are superseded by this lane's own
+# contract and tests, which drive the SAME ground through the real writer:
+#
+# - "frame carries domain/intent/entities/tools/summary/turn_ids": superseded by
+#   `tests/chatbot/test_memory_episode_digest.py::TestFrameCarriesDigestFields::
+#   test_live_reset_frame_carries_summary_entities_tools_domain_intent_last_message`
+#   (drives the real engine, not a direct call with hand-picked field values).
+# - "embedding enqueued once per frame": INVERTED by the lane A contract (section 3:
+#   "No embedding is enqueued for a frame ... S0 already stops calling it from the new
+#   writer") - superseded by `tests/chatbot/test_memory_episode_boundaries.py::
+#   TestNoEmbeddingEnqueued::test_write_episode_for_reset_never_enqueues_an_embedding`,
+#   which asserts the OPPOSITE of what this file's version asserted, against the writer
+#   actually in use.
+# - "conversation_close writes a frame": superseded outright - `close_reason=
+#   "conversation_close"` is not a trigger this lane recognises at all (contract
+#   section 5.1's own table: "the parser says `topic_reset` (today's only trigger)" is
+#   the ONLY closer; Q2's owner ruling explicitly dropped the round-1 draft's other
+#   close triggers). `write_episode_for_reset` has no `close_reason` PARAMETER any
+#   more - it always writes `topic_switch` - so there is no equivalent call to make.
