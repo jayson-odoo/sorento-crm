@@ -20,8 +20,15 @@ insert helper is repeated rather than imported, because a migration module must 
 depend on another migration's module staying importable. Nothing a customer sees changes
 until the owner moves the `production` label onto the new version.
 
+PR #1353 fix round 2 (merge of main at merge_29sep_batch5): the body this publishes now
+also carries the parser text main's #833 (attribute-first asks) added to
+`SEMANTIC_PARSER_PROMPT`, which shipped with no publishing migration of its own. Round 2
+itself changes no prompt text: the engine now derives the roster axis from the picked
+option (`engine._with_the_picked_axis`), so the v48 body published on the hand-test
+database from this PR's round 1 still exercises the fix.
+
 Revision ID: chatbot_picker_domain_1352
-Revises: merge_29sep_batch4
+Revises: merge_29sep_batch5
 """
 import logging
 
@@ -32,7 +39,7 @@ from app.models.ai_prompt import AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 
 revision = "chatbot_picker_domain_1352"
-down_revision = "merge_29sep_batch4"
+down_revision = "merge_29sep_batch5"
 branch_labels = None
 depends_on = None
 
