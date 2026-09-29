@@ -1,28 +1,31 @@
-"""The docs-only classifier in .github/workflows/deploy.yml (job `changes`).
+"""The gating logic in .github/workflows/deploy.yml, executed as it ships.
 
-A docs-only push to main skips image build, every test suite and the deploy
-(owner ruling 29 Sep 2026). The rule that decides "docs-only" lives in ONE
-shell step in the workflow: `DOCS_RE` names what counts as documentation,
-`NOT_DOCS_RE` names the documentation/ paths that tests READ as live inputs,
-and both ends of a rename count. This file extracts that step's `run` block out
-of the workflow and executes it under the same bash flags GitHub uses, with a
-stub `gh` that answers from a canned API payload through the real `jq` filter
-the step passes. So the shell under test is the shell that ships: nothing here
-is a copy that can drift.
+Three rules live in that workflow and are pinned here:
 
-Three things are pinned:
+1. Docs-only (job `changes`, step "Detect changed areas"): a change whose every
+   path is documentation skips image build, every test suite and the deploy
+   (owner ruling 29 Sep 2026). `DOCS_RE` names what counts as documentation,
+   `NOT_DOCS_RE` names the documentation/ paths that tests READ as live
+   inputs, both ends of a rename count, and `SCM_RE` decides whether the SCM
+   shards run on a PR.
+2. Validated push (job `changes`, step "Look for a prior green run of this
+   exact code"): a push to main whose code a prior run already passed every
+   gate on (a merge-queue run on the same SHA, or a full PR run on the merged
+   PR's head) runs only build + deploy.
+3. Fast PR gate + queue (the jobs' `if` lines and the workflow `concurrency`):
+   a `ci`-labelled PR runs the fast gates and the SCM shards only when SCM
+   paths changed, the six backend shards run in the merge queue and on an
+   unvalidated push, and only a `ci` label run joins the per-PR concurrency
+   group.
 
-1. Docs-only changes report `docs_only=true` and every area flag false; a
-   single non-docs path anywhere keeps the full pipeline (every service tree,
-   a migration, each Dockerfile, compose, both workflows, config, scripts,
-   markdown fixtures inside the trees, a rename across the boundary).
-2. Documentation paths that tests read as inputs are NOT docs. The last test
-   below scans every backend and MCP test for such paths (pathlib `/` chains
-   and open()/Path() arguments, never comments or docstrings) and runs each
-   through the step, so a new test that reads a new documentation/ path fails
-   here until NOT_DOCS_RE in the workflow covers it.
-3. Every fail-safe (zero `before` SHA, a failed API call, an empty list, the
-   300-file cap, workflow_dispatch) lands on the full pipeline.
+The shell steps are extracted from the workflow file and executed under the
+same bash flags GitHub uses, with a stub `gh` that answers every API call from
+a canned payload through the real `jq` filter the step passes. The `if`
+expressions are evaluated as written with a small evaluator for the operators
+they use. So nothing here is a copy that can drift from the workflow: the test
+scans every backend and MCP test for the documentation/ paths test code reads
+and fails when one would classify as docs (extend NOT_DOCS_RE), and asserts the
+`GATES` list in the "prior" step names exactly the test jobs main runs.
 
 Needs `bash` and `jq`, which the CI runner has; skipped when the workflow file
 is not present, which is the case inside the backend Docker image
@@ -32,6 +35,7 @@ and the image holds only sorento_crm_backend/).
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 import shutil
@@ -45,31 +49,51 @@ REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "deploy.yml"
 TEST_TREES = [REPO / "sorento_crm_backend" / "tests", REPO / "sorento_crm_mcp" / "tests"]
 ZERO_SHA = "0" * 40
+SHA = "b" * 40
+BEFORE = "a" * 40
 
+# Stub `gh api`: answers from $GH_STUB_DIR/<key>.json, where <key> is the
+# endpoint after `repos/<owner>/<repo>/` with every `/ ? & =` replaced by `_`,
+# through the --jq filter the caller passed, exactly as gh would. A missing
+# fixture is a failed call (as a 404 would be). --paginate is accepted and
+# ignored (each fixture is one page).
 GH_STUB = """\
 #!/usr/bin/env bash
-# Stub `gh api`: answers every call from $GH_STUB_FIXTURE through the --jq
-# filter the caller passed, exactly as gh would. --paginate is accepted and
-# ignored (the fixture is one page).
 if [ "${GH_STUB_FAIL:-0}" = "1" ]; then echo "stub gh: failing on purpose" >&2; exit 1; fi
-expr=""
+endpoint=""; expr=""
 while [ $# -gt 0 ]; do
-  if [ "$1" = "--jq" ]; then expr="$2"; shift; fi
+  case "$1" in
+    api) ;;
+    --jq) expr="$2"; shift ;;
+    --paginate) ;;
+    *) [ -z "$endpoint" ] && endpoint="$1" ;;
+  esac
   shift
 done
 [ -n "$expr" ] || { echo "stub gh: no --jq filter given" >&2; exit 2; }
-exec jq -r "$expr" "$GH_STUB_FIXTURE"
+key=$(printf '%s' "$endpoint" | sed -E 's#^repos/[^/]+/[^/]+/##; s#[/?&=]#_#g')
+file="$GH_STUB_DIR/$key.json"
+[ -f "$file" ] || { echo "stub gh: no fixture for $endpoint ($key)" >&2; exit 1; }
+exec jq -r "$expr" "$file"
 """
 
 
-def _step_script() -> str:
-    """The `run` block of the `Detect changed areas` step, dedented."""
+def _fixture_key(endpoint: str) -> str:
+    return re.sub(r"[/?&=]", "_", re.sub(r"^repos/[^/]+/[^/]+/", "", endpoint))
+
+
+def _workflow_text() -> str:
     if not WORKFLOW.exists():
         pytest.skip(f"{WORKFLOW} not present (in-image run)")
+    return WORKFLOW.read_text(encoding="utf-8")
+
+
+def _step_script(step_name: str) -> str:
+    """The `run` block of the named step, dedented."""
     if shutil.which("jq") is None:
         pytest.skip("jq is not installed (the CI runner has it)")
-    lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
-    start = next(i for i, line in enumerate(lines) if line.strip() == "- name: Detect changed areas")
+    lines = _workflow_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip() == f"- name: {step_name}")
     run_at = next(i for i in range(start, len(lines)) if lines[i].strip() == "run: |")
     indent = len(lines[run_at]) - len(lines[run_at].lstrip()) + 2
     body: list[str] = []
@@ -77,16 +101,45 @@ def _step_script() -> str:
         if line.strip() and (len(line) - len(line.lstrip())) < indent:
             break
         body.append(line)
-    script = textwrap.dedent("\n".join(body))
-    assert "DOCS_RE='" in script and "NOT_DOCS_RE='" in script, "step body not found in deploy.yml"
-    assert "previous_filename" in script, "both jq filters must carry previous_filename"
-    return script
+    return textwrap.dedent("\n".join(body))
 
 
-def _json(value) -> str:
-    import json
+def _run_shell(tmp_path: Path, script: str, env: dict, fixtures: dict, *, gh_fails: bool = False) -> dict[str, str]:
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir(exist_ok=True)
+    (stub_dir / "gh").write_text(GH_STUB)
+    (stub_dir / "gh").chmod(0o755)
+    fixture_dir = tmp_path / "api"
+    fixture_dir.mkdir(exist_ok=True)
+    for endpoint, payload in fixtures.items():
+        (fixture_dir / f"{_fixture_key(endpoint)}.json").write_text(json.dumps(payload))
+    output = tmp_path / "output.txt"
+    output.write_text("")
+    full_env = {
+        "PATH": f"{stub_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "GITHUB_OUTPUT": str(output),
+        "GITHUB_REPOSITORY": "jayson-odoo/sorento-crm",
+        "GH_TOKEN": "stub",
+        "GH_STUB_DIR": str(fixture_dir),
+        "GH_STUB_FAIL": "1" if gh_fails else "0",
+        **env,
+    }
+    # The same invocation GitHub uses for a `run:` step on ubuntu-latest.
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+        env=full_env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"step failed\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    return dict(line.split("=", 1) for line in output.read_text().splitlines() if "=" in line)
 
-    return json.dumps(value)
+
+# ---------------------------------------------------------------------------
+# Step "Detect changed areas"
+# ---------------------------------------------------------------------------
+
+AREA_KEYS = {"docs_only", "backend", "frontend", "mcp", "scm"}
 
 
 def run_step(
@@ -95,7 +148,8 @@ def run_step(
     files: list,
     *,
     gh_fails: bool = False,
-    before: str = "a" * 40,
+    before: str = BEFORE,
+    validated: str = "",
 ) -> dict[str, str]:
     """Run the real step with `files` as the API answer; return $GITHUB_OUTPUT.
 
@@ -109,39 +163,17 @@ def run_step(
             entries.append({"filename": f[0], "previous_filename": f[1], "status": "renamed"})
         else:
             entries.append({"filename": f, "status": "modified"})
-    payload = entries if event == "pull_request" else {"files": entries}
-    fixture = tmp_path / "api.json"
-    fixture.write_text(_json(payload))
-    stub_dir = tmp_path / "bin"
-    stub_dir.mkdir(exist_ok=True)
-    (stub_dir / "gh").write_text(GH_STUB)
-    (stub_dir / "gh").chmod(0o755)
-    output = tmp_path / "output.txt"
-    output.write_text("")
-    env = {
-        "PATH": f"{stub_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
-        "GITHUB_OUTPUT": str(output),
-        "GITHUB_REPOSITORY": "jayson-odoo/sorento-crm",
-        "GH_TOKEN": "stub",
-        "GH_STUB_FIXTURE": str(fixture),
-        "GH_STUB_FAIL": "1" if gh_fails else "0",
-        "EVENT": event,
-        "PR": "1",
-        "PUSH_BEFORE": before,
-        "PUSH_AFTER": "b" * 40,
-        "MG_BASE": "c" * 40,
-        "MG_HEAD": "d" * 40,
+    fixtures = {
+        "repos/jayson-odoo/sorento-crm/pulls/1/files": entries,
+        f"repos/jayson-odoo/sorento-crm/compare/{before}...{SHA}": {"files": entries},
+        f"repos/jayson-odoo/sorento-crm/compare/{'c' * 40}...{'d' * 40}": {"files": entries},
     }
-    # The same invocation GitHub uses for a `run:` step on ubuntu-latest.
-    result = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script()],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, f"step failed\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    outputs = dict(line.split("=", 1) for line in output.read_text().splitlines() if "=" in line)
-    assert set(outputs) == {"docs_only", "backend", "frontend", "mcp"}, outputs
+    env = {
+        "EVENT": event, "PR": "1", "PUSH_BEFORE": before, "PUSH_AFTER": SHA,
+        "MG_BASE": "c" * 40, "MG_HEAD": "d" * 40, "VALIDATED": validated,
+    }
+    outputs = _run_shell(tmp_path, _step_script("Detect changed areas"), env, fixtures, gh_fails=gh_fails)
+    assert set(outputs) == AREA_KEYS, outputs
     return outputs
 
 
@@ -162,8 +194,9 @@ DOCS_ONLY = [
     ".github/PULL_REQUEST_TEMPLATE.md",
 ]
 
-FULL_PIPELINE = {"docs_only": "false", "backend": "true", "frontend": "true", "mcp": "true"}
-DOCS_SKIP = {"docs_only": "true", "backend": "false", "frontend": "false", "mcp": "false"}
+FULL_PIPELINE = {"docs_only": "false", "backend": "true", "frontend": "true", "mcp": "true", "scm": "true"}
+DOCS_SKIP = {"docs_only": "true", "backend": "false", "frontend": "false", "mcp": "false", "scm": "false"}
+NO_AREA = {"backend": "false", "frontend": "false", "mcp": "false", "scm": "false"}
 
 
 @pytest.mark.parametrize("event", ["pull_request", "push", "merge_group"])
@@ -230,11 +263,61 @@ def test_one_non_docs_path_keeps_the_full_pipeline(tmp_path, path):
 
 def test_pull_request_area_flags_still_follow_the_service_trees(tmp_path):
     out = run_step(tmp_path, "pull_request", DOCS_ONLY + ["sorento_crm_backend/app/main.py"])
-    assert out == {"docs_only": "false", "backend": "true", "frontend": "false", "mcp": "false"}
+    assert out == {"docs_only": "false", "backend": "true", "frontend": "false", "mcp": "false", "scm": "false"}
     out = run_step(tmp_path, "pull_request", ["sorento_crm_frontend/app/page.tsx"])
-    assert out == {"docs_only": "false", "backend": "false", "frontend": "true", "mcp": "false"}
+    assert out == {"docs_only": "false", "backend": "false", "frontend": "true", "mcp": "false", "scm": "false"}
     out = run_step(tmp_path, "pull_request", ["sorento_crm_mcp/pyproject.toml"])
-    assert out == {"docs_only": "false", "backend": "false", "frontend": "false", "mcp": "true"}
+    assert out == {"docs_only": "false", "backend": "false", "frontend": "false", "mcp": "true", "scm": "false"}
+
+
+SCM_PATHS = [
+    "sorento_crm_backend/app/api/v1/scm/orders.py",
+    "sorento_crm_backend/app/services/scm/sales_order_service.py",
+    "sorento_crm_backend/app/modules/scm/bootstrap.py",
+    "sorento_crm_backend/app/models/scm.py",
+    "sorento_crm_backend/app/schemas/scm_orders.py",
+    "sorento_crm_backend/tests/scm/test_committed_v.py",
+    "sorento_crm_backend/alembic/versions/273_scm_schema.py",
+    # the harness every backend test depends on
+    "sorento_crm_backend/tests/conftest.py",
+    "sorento_crm_backend/tests/_pg_fixture.py",
+    "sorento_crm_backend/tests/ci_excluded.txt",
+    "sorento_crm_backend/.test_durations",
+    "sorento_crm_backend/scripts/bootstrap_env.py",
+    "sorento_crm_backend/requirements.txt",
+    ".github/workflows/deploy.yml",
+]
+
+
+@pytest.mark.parametrize("path", SCM_PATHS)
+def test_scm_path_on_a_pull_request_runs_the_scm_shards(tmp_path, path):
+    out = run_step(tmp_path, "pull_request", [path])
+    assert out["scm"] == "true", out
+    assert out["backend"] == "true", out
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "sorento_crm_backend/app/services/procurement_service.py",
+        "sorento_crm_backend/app/api/v1/master_data/products.py",
+        "sorento_crm_backend/tests/test_rbac.py",
+        "sorento_crm_backend/app/models/product.py",
+        "sorento_crm_backend/alembic/versions/900_products_x.py",
+        "sorento_crm_backend/app/schemas/user.py",
+        "sorento_crm_frontend/app/page.tsx",
+    ],
+)
+def test_non_scm_backend_path_on_a_pull_request_skips_the_scm_shards(tmp_path, path):
+    out = run_step(tmp_path, "pull_request", [path])
+    assert out["scm"] == "false", out
+
+
+@pytest.mark.parametrize("event", ["push", "merge_group"])
+def test_scm_follows_backend_off_a_pull_request(tmp_path, event):
+    """The queue and an unvalidated push run the SCM shards for any code change."""
+    out = run_step(tmp_path, event, ["sorento_crm_frontend/app/page.tsx"])
+    assert out == FULL_PIPELINE
 
 
 @pytest.mark.parametrize("event", ["push", "merge_group"])
@@ -252,11 +335,11 @@ def test_rename_on_a_pull_request_flags_the_tree_it_left(tmp_path):
     """On a PR the area flags follow the trees; the old path of a rename counts."""
     moved_out = [("documentation/plans/scm/old-notes.md", "sorento_crm_backend/docs/old-notes.md")]
     assert run_step(tmp_path, "pull_request", moved_out) == {
-        "docs_only": "false", "backend": "true", "frontend": "false", "mcp": "false",
+        "docs_only": "false", "backend": "true", "frontend": "false", "mcp": "false", "scm": "false",
     }
     moved_in = [("sorento_crm_mcp/tests/fixtures/x.md", "documentation/plans/scm/x.md")]
     assert run_step(tmp_path, "pull_request", moved_in) == {
-        "docs_only": "false", "backend": "false", "frontend": "false", "mcp": "true",
+        "docs_only": "false", "backend": "false", "frontend": "false", "mcp": "true", "scm": "false",
     }
     fixture_moved = [("documentation/plans/scm/notes/x.xlsx", "documentation/plans/scm/fixtures/x.xlsx")]
     assert run_step(tmp_path, "pull_request", fixture_moved)["docs_only"] == "false"
@@ -283,26 +366,186 @@ def test_fail_safes_land_on_the_full_pipeline(tmp_path):
     assert run_step(tmp_path, "push", many[:299]) == DOCS_SKIP
 
 
+def test_validated_push_zeroes_every_area_but_is_not_docs_only(tmp_path):
+    """build-images and build-and-deploy gate on docs_only, so they still run."""
+    out = run_step(tmp_path, "push", ["sorento_crm_backend/app/main.py"], validated="true")
+    assert out == {"docs_only": "false", **NO_AREA}
+    # A docs-only push stays docs-only whether or not a prior run covers it.
+    assert run_step(tmp_path, "push", DOCS_ONLY, validated="true") == DOCS_SKIP
+    # Anything but the literal "true" (empty on every other event) changes nothing.
+    assert run_step(tmp_path, "push", ["sorento_crm_backend/app/main.py"], validated="false") == FULL_PIPELINE
+    assert run_step(tmp_path, "pull_request", ["sorento_crm_frontend/x.ts"], validated="true")["frontend"] == "false"
+
+
 # ---------------------------------------------------------------------------
-# Workflow-level concurrency: only a `ci` label run joins the per-PR group.
+# Step "Look for a prior green run of this exact code"
+# ---------------------------------------------------------------------------
+
+PR_HEAD = "e" * 40
+RUNS_ON = "actions/workflows/deploy.yml/runs?head_sha={sha}&status=success&per_page=20"
+
+
+def _job_names_main_runs() -> list[str]:
+    """Every test job's reported name(s) from the workflow text, matrix expanded."""
+    text = _workflow_text()
+    jobs_text = text[text.index("\njobs:\n"):]
+    names: list[str] = []
+    for block in re.split(r"\n(?=  [a-z][\w-]*:\n)", jobs_text):
+        head = re.match(r"  ([a-z][\w-]*):\n", block)
+        if not head:
+            continue
+        job_id = head.group(1)
+        if job_id in {"changes", "build-images", "build-and-deploy", "notify-owner", "release-ci-label"}:
+            continue
+        name = re.search(r"^    name: (.+)$", block, re.M)
+        assert name, f"job {job_id} has no name"
+        shards = re.search(r"^        shard: \[([^\]]+)\]", block, re.M)
+        if shards:
+            names += [f"{name.group(1)} ({s.strip()})" for s in shards.group(1).split(",")]
+        else:
+            names.append(name.group(1))
+    return names
+
+
+def _gates_in_prior_step() -> list[str]:
+    script = _step_script("Look for a prior green run of this exact code")
+    block = re.search(r"GATES='([^']+)'", script)
+    assert block, "GATES list not found"
+    return [line.strip() for line in block.group(1).splitlines() if line.strip()]
+
+
+def test_prior_gates_name_exactly_the_test_jobs_main_runs():
+    """A job missing from GATES is one a validated push would silently never run."""
+    assert sorted(_gates_in_prior_step()) == sorted(_job_names_main_runs())
+    assert len(_gates_in_prior_step()) == 17
+
+
+def _jobs(conclusions: dict[str, str]) -> dict:
+    return {"jobs": [{"name": n, "conclusion": c} for n, c in conclusions.items()]}
+
+
+def _all_green() -> dict[str, str]:
+    return {name: "success" for name in _job_names_main_runs()}
+
+
+def run_prior(tmp_path: Path, fixtures: dict, *, gh_fails: bool = False) -> str:
+    script = _step_script("Look for a prior green run of this exact code")
+    out = _run_shell(tmp_path, script, {"SHA": SHA}, fixtures, gh_fails=gh_fails)
+    assert set(out) == {"validated"}, out
+    return out["validated"]
+
+
+def test_prior_merge_queue_run_on_the_same_sha_validates(tmp_path):
+    fixtures = {
+        RUNS_ON.format(sha=SHA): {"workflow_runs": [{"id": 501, "event": "merge_group"}]},
+        "actions/runs/501/jobs?per_page=100": _jobs(_all_green()),
+    }
+    assert run_prior(tmp_path, fixtures) == "true"
+
+
+def test_prior_run_with_a_skipped_gate_does_not_validate(tmp_path):
+    """A docs-only queue run, a non-ci label run and a fast-gate PR run all
+    conclude "success" with jobs skipped; none of them validated anything."""
+    for skipped in ["Backend test suite (Postgres, xdist) (4)", "Type-check frontend", "Validate MCP imports"]:
+        conclusions = _all_green()
+        conclusions[skipped] = "skipped"
+        fixtures = {
+            RUNS_ON.format(sha=SHA): {"workflow_runs": [{"id": 502, "event": "merge_group"}]},
+            "actions/runs/502/jobs?per_page=100": _jobs(conclusions),
+        }
+        assert run_prior(tmp_path, fixtures) == "false", skipped
+    everything_skipped = {name: "skipped" for name in _job_names_main_runs()}
+    fixtures = {
+        RUNS_ON.format(sha=SHA): {"workflow_runs": [{"id": 503, "event": "pull_request"}]},
+        "actions/runs/503/jobs?per_page=100": _jobs(everything_skipped),
+    }
+    assert run_prior(tmp_path, fixtures) == "false"
+
+
+def test_prior_run_with_a_failed_gate_does_not_validate(tmp_path):
+    conclusions = _all_green()
+    conclusions["Backend test suite - SCM (Postgres, xdist) (2)"] = "failure"
+    fixtures = {
+        RUNS_ON.format(sha=SHA): {"workflow_runs": [{"id": 504, "event": "merge_group"}]},
+        "actions/runs/504/jobs?per_page=100": _jobs(conclusions),
+    }
+    assert run_prior(tmp_path, fixtures) == "false"
+
+
+def test_prior_full_pr_run_on_the_merged_pr_head_validates(tmp_path):
+    """No run on the merge commit itself; the merged PR's head had a full green run."""
+    fixtures = {
+        RUNS_ON.format(sha=SHA): {"workflow_runs": []},
+        f"commits/{SHA}/pulls": [
+            {"number": 1, "merged_at": None, "head": {"sha": "f" * 40}},
+            {"number": 2, "merged_at": "2026-09-29T20:25:00Z", "head": {"sha": PR_HEAD}},
+        ],
+        RUNS_ON.format(sha=PR_HEAD): {"workflow_runs": [{"id": 601, "event": "pull_request"}]},
+        "actions/runs/601/jobs?per_page=100": _jobs(_all_green()),
+    }
+    assert run_prior(tmp_path, fixtures) == "true"
+
+
+def test_prior_fast_gate_pr_run_does_not_validate(tmp_path):
+    """After the fast PR gate a PR run never ran the six backend shards."""
+    conclusions = _all_green()
+    for shard in range(1, 7):
+        conclusions[f"Backend test suite (Postgres, xdist) ({shard})"] = "skipped"
+    fixtures = {
+        RUNS_ON.format(sha=SHA): {"workflow_runs": []},
+        f"commits/{SHA}/pulls": [{"number": 2, "merged_at": "2026-09-29T20:25:00Z", "head": {"sha": PR_HEAD}}],
+        RUNS_ON.format(sha=PR_HEAD): {"workflow_runs": [{"id": 602, "event": "pull_request"}]},
+        "actions/runs/602/jobs?per_page=100": _jobs(conclusions),
+    }
+    assert run_prior(tmp_path, fixtures) == "false"
+
+
+def test_prior_second_candidate_can_validate_when_the_first_does_not(tmp_path):
+    partial = _all_green()
+    partial["Validate frontend (vitest) (3)"] = "skipped"
+    fixtures = {
+        RUNS_ON.format(sha=SHA): {"workflow_runs": [{"id": 701, "event": "pull_request"}, {"id": 702, "event": "merge_group"}]},
+        "actions/runs/701/jobs?per_page=100": _jobs(partial),
+        "actions/runs/702/jobs?per_page=100": _jobs(_all_green()),
+    }
+    assert run_prior(tmp_path, fixtures) == "true"
+
+
+def test_prior_uncertainty_means_the_full_suite(tmp_path):
+    # direct push: no run on the SHA, no PR for the commit
+    assert run_prior(tmp_path, {RUNS_ON.format(sha=SHA): {"workflow_runs": []}, f"commits/{SHA}/pulls": []}) == "false"
+    # PR found but no run on its head
+    fixtures = {
+        RUNS_ON.format(sha=SHA): {"workflow_runs": []},
+        f"commits/{SHA}/pulls": [{"number": 2, "merged_at": "2026-09-29T20:25:00Z", "head": {"sha": PR_HEAD}}],
+        RUNS_ON.format(sha=PR_HEAD): {"workflow_runs": []},
+    }
+    assert run_prior(tmp_path, fixtures) == "false"
+    # the jobs call for the candidate fails
+    fixtures = {RUNS_ON.format(sha=SHA): {"workflow_runs": [{"id": 801, "event": "merge_group"}]}}
+    assert run_prior(tmp_path, fixtures) == "false"
+    # every API call fails
+    assert run_prior(tmp_path, {}, gh_fails=True) == "false"
+
+
+# ---------------------------------------------------------------------------
+# The `if` lines and the workflow-level concurrency, evaluated as written.
 # ---------------------------------------------------------------------------
 #
-# Every label added to a PR fires the workflow (trigger `types: [labeled]`);
-# the jobs skip on the label name, but the run still joins a concurrency
-# group. With the PR number as the group for every pull_request event, adding
-# `needs-hand-test` cancelled a live `ci` run (2026-09-28, #1304, run
-# 36387225667). The two expressions are evaluated here as written in the
-# workflow, with GitHub's semantics for the operators they use (`&&` and `||`
-# return an operand, like JavaScript; a missing context value is the empty
-# string).
+# A small evaluator for the subset of GitHub's expression language the
+# workflow uses: `&&` and `||` return an operand (like JavaScript), `!`
+# negates, a missing context value is the empty string, `contains()` on a
+# list is membership, `needs.*.result` is the list of every need's result,
+# and the status functions read the run state the scenario provides.
 
-_GH_TOKEN = re.compile(r"'[^']*'|\d+|[A-Za-z_][\w.-]*|&&|\|\||==|!=|[()]")
+_GH_TOKEN = re.compile(r"'[^']*'|\d+|[A-Za-z_][\w.*-]*|&&|\|\||==|!=|[(),!]")
+_GH_FUNCS = {"always", "cancelled", "success", "failure", "contains"}
 
 
 def _gh_eval(expression: str, context: dict) -> object:
-    """Evaluate the subset of GitHub's expression language the workflow uses."""
-
     def lookup(path: str):
+        if path == "needs.*.result":
+            return [job.get("result", "") for job in context.get("needs", {}).values()]
         node = context
         for part in path.split("."):
             if not isinstance(node, dict) or part not in node:
@@ -310,32 +553,194 @@ def _gh_eval(expression: str, context: dict) -> object:
             node = node[part]
         return node
 
+    def contains(haystack, needle):
+        if isinstance(haystack, list):
+            return needle in haystack
+        return str(needle).lower() in str(haystack).lower()
+
+    state = context.get("_run", {})
+    funcs = {
+        "lookup": lookup,
+        "contains": contains,
+        "always": lambda: True,
+        "cancelled": lambda: state.get("cancelled", False),
+        "success": lambda: state.get("success", True),
+        "failure": lambda: state.get("failure", False),
+    }
     python = []
     for token in _GH_TOKEN.findall(expression):
         if token == "&&":
             python.append(" and ")
         elif token == "||":
             python.append(" or ")
-        elif token in ("==", "!=", "(", ")"):
+        elif token == "!":
+            python.append(" not ")
+        elif token in ("==", "!=", "(", ")", ","):
             python.append(f" {token} ")
         elif token.startswith("'") or token.isdigit():
             python.append(token)
         elif token in ("true", "false", "null"):
             python.append({"true": "True", "false": "False", "null": "None"}[token])
+        elif token in _GH_FUNCS:
+            python.append(token)
         else:
             python.append(f"lookup({token!r})")
-    return eval("".join(python), {"__builtins__": {}}, {"lookup": lookup})  # noqa: S307
+    return eval("".join(python), {"__builtins__": {}}, funcs)  # noqa: S307
 
 
 def _gh_render(template: str, context: dict) -> str:
-    return re.sub(r"\$\{\{(.*?)\}\}", lambda m: str(_gh_eval(m.group(1).strip(), context)), template)
+    return re.sub(r"\$\{\{(.*?)\}\}", lambda m: str(_gh_eval(m.group(1).strip(), context)), template, flags=re.S)
+
+
+def _expression(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith("${{") and raw.endswith("}}"):
+        raw = raw[3:-2].strip()
+    return raw
+
+
+def _job_ifs() -> dict[str, dict]:
+    """job id -> {"if": expression or None, "needs": [...]} from the workflow text."""
+    text = _workflow_text()
+    jobs_text = text[text.index("\njobs:\n"):]
+    jobs: dict[str, dict] = {}
+    for block in re.split(r"\n(?=  [a-z][\w-]*:\n)", jobs_text):
+        head = re.match(r"  ([a-z][\w-]*):\n", block)
+        if not head:
+            continue
+        lines = block.splitlines()
+        cond = None
+        for i, line in enumerate(lines):
+            m = re.match(r"^    if: (.*)$", line)
+            if not m:
+                continue
+            value = m.group(1).strip()
+            if value in (">-", ">", "|", "|-"):
+                folded = []
+                for cont in lines[i + 1:]:
+                    if cont.strip() and (len(cont) - len(cont.lstrip())) <= 4:
+                        break
+                    folded.append(cont.strip())
+                value = " ".join(folded)
+            cond = _expression(value)
+            break
+        needs = re.search(r"^    needs:\s*(\[[^\]]*\]|\n(?:      .*\n?)+)", block, re.M)
+        need_ids: list[str] = []
+        if needs:
+            need_ids = re.findall(r"[a-z][\w-]*", needs.group(1))
+        jobs[head.group(1)] = {"if": cond, "needs": need_ids}
+    return jobs
+
+
+def _simulate(event: str, *, label: str | None = None, outputs: dict | None = None,
+              forced: dict | None = None) -> dict[str, str]:
+    """Result of every job (success/skipped/failure) for one run, in file order.
+
+    Mirrors GitHub's rule: a job whose `if` names no status function skips
+    when any need did not succeed; `always()` / `!cancelled()` conditions are
+    evaluated against the needs' results instead.
+    """
+    github = {"event_name": event, "event": {}, "run_id": 1, "workflow": "Build and Deploy Sorento"}
+    if event == "pull_request":
+        github["event"] = {"pull_request": {"number": 1370}, "label": {"name": label or "ci"}}
+    results: dict[str, str] = {}
+    forced = forced or {}
+    for job_id, job in _job_ifs().items():
+        needs = {n: {"result": results[n], "outputs": (outputs or {}) if n == "changes" else {}} for n in job["needs"]}
+        ctx = {"github": github, "needs": needs, "_run": {"cancelled": False}}
+        cond = job["if"]
+        uses_status_fn = bool(cond) and bool(re.search(r"\b(always|cancelled|success|failure)\(\)", cond))
+        if not uses_status_fn and any(r != "success" for r in (results[n] for n in job["needs"])):
+            results[job_id] = "skipped"
+            continue
+        runs = True if cond is None else bool(_gh_eval(cond, ctx))
+        results[job_id] = (forced.get(job_id, "success") if runs else "skipped")
+    return results
+
+
+def _ran(results: dict[str, str]) -> set[str]:
+    return {job for job, r in results.items() if r != "skipped"}
+
+
+GATES_ON_PR = {"check-migration-heads", "changes", "release-ci-label"}
+
+
+def test_pull_request_fast_gate_backend_with_scm_paths():
+    ran = _ran(_simulate("pull_request", outputs={"backend": "true", "scm": "true", "frontend": "false", "mcp": "false", "docs_only": "false"}))
+    assert ran == GATES_ON_PR | {"validate-backend", "test-backend-scm"}
+    assert "test-backend" not in ran, "the six backend shards never run on a pull_request"
+
+
+def test_pull_request_fast_gate_backend_without_scm_paths():
+    ran = _ran(_simulate("pull_request", outputs={"backend": "true", "scm": "false", "frontend": "false", "mcp": "false", "docs_only": "false"}))
+    assert ran == GATES_ON_PR | {"validate-backend"}
+
+
+def test_pull_request_fast_gate_frontend_and_mcp():
+    ran = _ran(_simulate("pull_request", outputs={"backend": "false", "scm": "false", "frontend": "true", "mcp": "true", "docs_only": "false"}))
+    assert ran == GATES_ON_PR | {"validate-frontend", "typecheck-frontend", "validate-mcp"}
+
+
+def test_pull_request_docs_only_runs_the_root_jobs_only():
+    ran = _ran(_simulate("pull_request", outputs={**NO_AREA, "docs_only": "true"}))
+    assert ran == GATES_ON_PR
+
+
+def test_pull_request_with_another_label_runs_nothing():
+    for label in ["needs-hand-test", "lane-running", "needs-decision"]:
+        assert _ran(_simulate("pull_request", label=label)) == set(), label
+
+
+def test_merge_group_runs_the_full_suite_and_never_deploys():
+    ran = _ran(_simulate("merge_group", outputs=FULL_PIPELINE))
+    assert ran == {
+        "check-migration-heads", "changes", "validate-backend", "validate-mcp",
+        "test-backend-scm", "test-backend", "validate-frontend", "typecheck-frontend",
+    }
+
+
+def test_push_validated_runs_build_and_deploy_only():
+    ran = _ran(_simulate("push", outputs={"docs_only": "false", "validated": "true", **NO_AREA}))
+    assert ran == {"check-migration-heads", "changes", "build-images", "build-and-deploy", "notify-owner"}
+
+
+def test_push_unvalidated_runs_everything_and_deploys():
+    ran = _ran(_simulate("push", outputs={**FULL_PIPELINE, "validated": "false"}))
+    assert ran == {
+        "check-migration-heads", "changes", "validate-backend", "validate-mcp",
+        "test-backend-scm", "test-backend", "validate-frontend", "typecheck-frontend",
+        "build-images", "build-and-deploy", "notify-owner",
+    }
+
+
+def test_push_docs_only_runs_the_root_jobs_only():
+    ran = _ran(_simulate("push", outputs={**NO_AREA, "docs_only": "true"}))
+    assert ran == {"check-migration-heads", "changes"}
+
+
+@pytest.mark.parametrize("failed", ["test-backend", "test-backend-scm", "validate-frontend", "typecheck-frontend",
+                                    "validate-backend", "validate-mcp", "check-migration-heads", "build-images"])
+def test_push_with_a_failed_gate_does_not_deploy_but_still_notifies(failed):
+    results = _simulate("push", outputs={**FULL_PIPELINE, "validated": "false"}, forced={failed: "failure"})
+    assert results["build-and-deploy"] == "skipped", failed
+    assert results["notify-owner"] == "success", "the owner is mailed about the failed deploy"
+
+
+def test_push_validated_with_a_failed_build_does_not_deploy():
+    results = _simulate("push", outputs={"docs_only": "false", "validated": "true", **NO_AREA}, forced={"build-images": "failure"})
+    assert results["build-and-deploy"] == "skipped"
+    results = _simulate("push", outputs={"docs_only": "false", "validated": "true", **NO_AREA}, forced={"check-migration-heads": "failure"})
+    assert results["build-and-deploy"] == "skipped"
+
+
+def test_workflow_dispatch_runs_everything_and_deploys():
+    ran = _ran(_simulate("workflow_dispatch", outputs=FULL_PIPELINE))
+    assert {"test-backend", "test-backend-scm", "build-images", "build-and-deploy", "notify-owner"} <= ran
 
 
 def _concurrency() -> tuple[str, str]:
     """The workflow-level `group` and `cancel-in-progress` lines, verbatim."""
-    if not WORKFLOW.exists():
-        pytest.skip(f"{WORKFLOW} not present (in-image run)")
-    text = WORKFLOW.read_text(encoding="utf-8")
+    text = _workflow_text()
     block = re.search(r"^concurrency:\n((?:  .*\n)+)", text, re.M)
     assert block, "workflow-level concurrency block not found"
     group = re.search(r"^  group: (.*)$", block.group(1), re.M)
@@ -355,7 +760,7 @@ def _event(event: str, *, label: str | None = None, pr: int | None = None, run_i
 
 def _resolve(ctx: dict) -> tuple[str, bool]:
     group, cancel = _concurrency()
-    return _gh_render(group, ctx), bool(_gh_eval(cancel.strip("${} "), ctx))
+    return _gh_render(group, ctx), bool(_gh_eval(_expression(cancel), ctx))
 
 
 def test_concurrency_ci_label_runs_share_the_pr_group_and_cancel():
@@ -385,12 +790,17 @@ def test_concurrency_non_pr_events_are_unique_and_never_cancel(event):
 
 def test_gh_eval_matches_github_semantics():
     """Guard on the evaluator itself for the operators the workflow relies on."""
-    ctx = {"github": {"event": {"pull_request": {"number": 5}}}}
+    ctx = {"github": {"event": {"pull_request": {"number": 5}}},
+           "needs": {"a": {"result": "success"}, "b": {"result": "skipped"}}}
     assert _gh_eval("github.event.pull_request.number || github.run_id", ctx) == 5
     assert _gh_eval("github.event.label.name || 'none'", ctx) == "none"  # missing -> ''
     assert _gh_eval("(true && false && 5) || 9", ctx) == 9
     assert _gh_eval("('a' == 'a' && 'b' == 'b' && 5) || 9", ctx) == 5
     assert _gh_eval("github.event_name == 'pull_request'", ctx) is False
+    assert _gh_eval("!contains(needs.*.result, 'failure')", ctx) is True
+    assert _gh_eval("contains(needs.*.result, 'skipped')", ctx) is True
+    assert _gh_eval("!cancelled() && needs.a.result == 'success'", ctx) is True
+    assert _gh_eval("always() && needs.b.result == 'success'", ctx) is False
 
 
 # ---------------------------------------------------------------------------

@@ -64,6 +64,13 @@ The `[skip ci]` convention for intermediate commits (a commit message containing
 a run for that push) stays in place as belt and braces - it costs nothing now that pushes to a PR
 do not trigger runs on their own, and it still matters for pushes to `main`.
 
+A `ci`-labelled PR run is the fast gate only: alembic head, image imports, typecheck, vitest, and
+the three SCM shards when SCM paths changed. The six main backend shards run in the merge queue
+(`merge_group`) and on an unvalidated push to main, never on a PR; a push to main that lands after
+a green queue run on the same commit runs build + deploy only (owner ruling 29 Sep 2026;
+`documentation/plans/ci/PLAN-ci-fast-gate-29sep.md`, which also lists the ruleset changes that
+turn the label into the real merge gate).
+
 A docs-only change (every path under `documentation/**`, `.claude/**`, `.cursor/**`, a root-level
 `*.md` or the PR template) runs only the `Changed areas` and `Single alembic head` jobs, on a PR,
 a merge-queue entry and a push to main alike: no image build, no test suite, no deploy, no deploy
