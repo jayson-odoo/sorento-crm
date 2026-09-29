@@ -15,12 +15,16 @@
  * GET  /api/v1/user-management/contacts/{id}                       -> RespondContact
  * PUT  /api/v1/user-management/contacts/{id}/chatbot
  *   { chatbot_profile?: { tier, default_ledgers }, memory_level?: ChatbotMemoryLevel
- *     | null, chatbot_stock_allowed?, notify_salesman?, packing_list_allowed? }
+ *     | null, chatbot_stock_allowed?, notify_salesman?, packing_list_allowed?,
+ *     chatbot_eta_offset_applied? }
  *   Round 3 (AC-MEM055) renames the body key `chatbot_memory_level` -> `memory_level`
  *   (the GET/response side keeps `chatbot_memory_level`); `chatbot_recall_enabled` is
  *   dropped outright, body and column both, and a body still naming it 422s.
  *   `chatbot_profile` in the body never touches `facts`. Absent means "leave it
  *   alone", never "clear it".
+ *   `chatbot_eta_offset_applied` (issue #1328): respond_contacts boolean NOT NULL
+ *   DEFAULT true; whether the ETA this contact is told carries the product-or-category
+ *   +x days, on the stock ask and the incoming routes alike (`app/services/eta_policy.py`).
  *
  * GET    /api/v1/user-management/contacts/{id}/chatbot/memory  (`...contacts.view`)
  *   -> ContactChatbotMemory (below), the exact shape contract section 5 documents.
@@ -53,6 +57,8 @@ export interface ContactChatbotProfile {
   notify_salesman: boolean;
   /** R7: the shipment's packing list is attached on a B3 answer. Default off. */
   packing_list_allowed: boolean;
+  /** #1328: the ETA this contact is told carries the +x days offset. Default on. */
+  eta_offset_applied: boolean;
 }
 
 export type ChatbotFactSource = 'crm' | 'tallied' | 'stated' | 'staff';
@@ -153,6 +159,7 @@ function profileFromContact(contact: {
   chatbot_stock_allowed?: boolean;
   notify_salesman?: boolean;
   packing_list_allowed?: boolean;
+  chatbot_eta_offset_applied?: boolean;
 }): ContactChatbotProfile {
   const profile = contact.chatbot_profile ?? null;
   return {
@@ -162,6 +169,7 @@ function profileFromContact(contact: {
     stock_allowed: contact.chatbot_stock_allowed !== false,
     notify_salesman: Boolean(contact.notify_salesman),
     packing_list_allowed: Boolean(contact.packing_list_allowed),
+    eta_offset_applied: contact.chatbot_eta_offset_applied !== false,
   };
 }
 
@@ -188,6 +196,7 @@ export async function saveContactChatbotProfile(
       chatbot_stock_allowed: input.stock_allowed,
       notify_salesman: input.notify_salesman,
       packing_list_allowed: input.packing_list_allowed,
+      chatbot_eta_offset_applied: input.eta_offset_applied,
     }),
   });
   if (!response.ok) {

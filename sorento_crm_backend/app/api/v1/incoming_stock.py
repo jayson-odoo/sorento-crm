@@ -25,6 +25,15 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
+from app.services.eta_policy import (
+    apply_to_incoming,
+    dealer_view,
+    is_dealer,
+    query_eta_from,
+    resolve_request_contact,
+    rules_for_contact,
+    salesperson_name,
+)
 from app.services.field_access import CLEARANCE_PERMISSION, apply_field_access
 from app.services.error_handler import handle_internal_error
 from app.services.incoming_stock_service import IncomingStockService
@@ -32,6 +41,117 @@ from app.services.uuid_list_param import parse_uuid_list
 
 
 router = APIRouter()
+
+
+class _Contact:
+    """Who a request asks on behalf of, resolved ONCE (issue #1328): the internal contact
+    id, and that contact's ETA / packing-list rules. `None` rules = no contact in play (a
+    staff session or the bare API key), and the payload goes out exactly as before."""
+
+    def __init__(self, db: Session, contact_id: Optional[str], space_id: Optional[str]):
+        self.asked = bool(contact_id)
+        self.resolved = resolve_request_contact(db, contact_id, space_id) if contact_id else None
+        self.rules = rules_for_contact(db, self.resolved) if contact_id else None
+
+    def eta_from(self, db: Session, eta_from: Optional[date]) -> Optional[date]:
+        return query_eta_from(db, self.rules, eta_from)
+
+    def windowed(self, eta_from: Optional[date], eta_to: Optional[date]) -> bool:
+        """Is this answer judged on the PADDED date? Then the service's own paging (on the
+        real date, over a widened window) cannot be trusted: a page of rows that pad out of
+        the window would read as "nothing arriving" while a later page holds the answer."""
+        return bool(
+            self.rules is not None
+            and self.rules.offset_applied
+            and (eta_from is not None or eta_to is not None)
+        )
+
+
+#: How many rows a windowed contact answer reads before judging them on the padded date:
+#: _WINDOW_PAGES service pages of the service's own maximum (50). A contact asking about
+#: a date window past this many shipments is answered from the earliest of them.
+_WINDOW_PAGES = 10
+_SERVICE_MAX_LIMIT = 50
+
+
+def _fetch_window(
+    fetch, contact: _Contact, *, eta_from, eta_to, page: int, limit: int, pageable: bool = True
+):
+    """Fetch the page the caller asked for - or, when the answer is judged on the padded
+    date, every row of the widened window (up to `_WINDOW_PAGES` service pages), so
+    `_for_contact` can filter them and page the survivors itself."""
+    if not contact.windowed(eta_from, eta_to):
+        return fetch(page, limit), None
+    first = fetch(1, _SERVICE_MAX_LIMIT)
+    rows = list(first.get("data") or []) if isinstance(first, dict) else []
+    n = 1
+    while pageable and isinstance(first, dict) and n < _WINDOW_PAGES:
+        if len(rows) >= int((first.get("pagination") or {}).get("total") or 0):
+            break
+        n += 1
+        more = fetch(n, _SERVICE_MAX_LIMIT)
+        chunk = (more or {}).get("data") or []
+        if not chunk:
+            break
+        rows.extend(chunk)
+    if isinstance(first, dict):
+        first["data"] = rows
+    return first, (page, limit)
+
+
+def _for_contact(
+    db: Session,
+    result,
+    contact: _Contact,
+    *,
+    current_user,
+    eta_from: Optional[date] = None,
+    eta_to: Optional[date] = None,
+    paged: Optional[tuple[int, int]] = None,
+):
+    """One gate for every incoming route: the contact's ETA offset and packing list rule
+    (`eta_policy.apply_to_incoming`), then the per-field reveals. Both read the SAME
+    resolved id; an unresolved contact passes an id that resolves to nobody, so the
+    field gate denies every gated field (fail closed), exactly as before this change.
+    With no contact in play the payload is returned untouched."""
+    if contact.rules is None:
+        return result
+    result = apply_to_incoming(db, result, contact.rules, eta_from=eta_from, eta_to=eta_to)
+    if paged is not None and isinstance(result, dict) and isinstance(result.get("data"), list):
+        # `_fetch_window` read the whole widened window: page it on the padded date here.
+        page, limit = paged
+        rows = result["data"]
+        result["data"] = rows[(page - 1) * limit : page * limit]
+        result["pagination"] = {"total": len(rows), "page": page, "limit": limit}
+        result["empty"] = not result["data"]
+    result = apply_field_access(
+        db,
+        result,
+        resource="incoming_stock",
+        current_user=current_user,
+        contact_id=contact.resolved or _UNRESOLVED_CONTACT,
+        staff_permission=CLEARANCE_PERMISSION,
+    )
+    if is_dealer(db, contact.resolved):
+        # PR #1329 fix round: a dealer is told each product once, its distinct ETAs and
+        # who to ask - after the reveals, so a date the contact may not see is not told.
+        result = dealer_view(result, salesperson=salesperson_name(db, contact.resolved))
+    return result
+
+
+#: A contact id no row carries: `apply_field_access` treats a contact that named nobody
+#: as CONTACT_NOT_FOUND on every gated field. Passing `None` instead would switch it to
+#: the STAFF path and hand an unresolved contact the whole payload.
+_UNRESOLVED_CONTACT = "__unresolved_contact__"
+
+
+_CONTACT_ID_DOC = (
+    "The contact this question is being asked ON BEHALF OF (respond_contacts.id or the "
+    "Respond.io id). When set, the ETA carries that contact's +x days offset when their "
+    "switch is on, the packing list is sent only when their packing list switch is on, "
+    "and gated fields follow their Incoming Stock Enquiries field reveals."
+)
+_SPACE_ID_DOC = "Respond.io workspace id, to disambiguate a Respond.io `contact_id`."
 
 
 @router.get("/by-product")
@@ -55,6 +175,8 @@ def get_incoming_for_product(
     eta_from: Optional[date] = Query(None, description="Include shipments with ETA on/after this date (YYYY-MM-DD)."),
     eta_to: Optional[date] = Query(None, description="Include shipments with ETA on/before this date (YYYY-MM-DD)."),
     limit: int = Query(10, ge=1, le=50),
+    contact_id: Optional[str] = Query(None, description=_CONTACT_ID_DOC),
+    space_id: Optional[str] = Query(None, description=_SPACE_ID_DOC),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -99,16 +221,35 @@ def get_incoming_for_product(
             resolved_product_filter.extend(buckets.product_codes)
     try:
         svc = IncomingStockService(db)
-        result = svc.incoming_for_product(
-            product_ids=resolved_product_filter or None,
-            query=query,
+        contact = _Contact(db, contact_id, space_id)
+        # A windowed contact answer reads the service's maximum and pages the products
+        # that survive the padded window itself (`_fetch_window`); this route has no page.
+        result, paged = _fetch_window(
+            lambda _page, page_limit: svc.incoming_for_product(
+                product_ids=resolved_product_filter or None,
+                query=query,
+                eta_from=contact.eta_from(db, eta_from),
+                eta_to=eta_to,
+                limit=page_limit,
+            ),
+            contact,
             eta_from=eta_from,
             eta_to=eta_to,
+            page=1,
             limit=limit,
+            pageable=False,
         )
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo
-        return result
+        return _for_contact(
+            db,
+            result,
+            contact,
+            current_user=current_user,
+            eta_from=eta_from,
+            eta_to=eta_to,
+            paged=paged,
+        )
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -135,6 +276,8 @@ def get_incoming_shipments(
     eta_to: Optional[date] = Query(None, description="Include shipments with ETA on/before this date."),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=50),
+    contact_id: Optional[str] = Query(None, description=_CONTACT_ID_DOC),
+    space_id: Optional[str] = Query(None, description=_SPACE_ID_DOC),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -167,10 +310,18 @@ def get_incoming_shipments(
                 }
     try:
         svc = IncomingStockService(db)
-        result = svc.incoming_shipments(
-            query=extra_query,
-            shipment_ids=shipment_uuid_list,
-            supplier_ids=supplier_uuid_list,
+        contact = _Contact(db, contact_id, space_id)
+        result, paged = _fetch_window(
+            lambda p, n: svc.incoming_shipments(
+                query=extra_query,
+                shipment_ids=shipment_uuid_list,
+                supplier_ids=supplier_uuid_list,
+                eta_from=contact.eta_from(db, eta_from),
+                eta_to=eta_to,
+                page=p,
+                limit=n,
+            ),
+            contact,
             eta_from=eta_from,
             eta_to=eta_to,
             page=page,
@@ -178,7 +329,15 @@ def get_incoming_shipments(
         )
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo
-        return result
+        return _for_contact(
+            db,
+            result,
+            contact,
+            current_user=current_user,
+            eta_from=eta_from,
+            eta_to=eta_to,
+            paged=paged,
+        )
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -247,13 +406,21 @@ def get_incoming_list(
                 flat_product_ids.append(piece)
     try:
         svc = IncomingStockService(db)
+        contact = _Contact(db, contact_id, space_id)
         # product_ids may be UUIDs or product_codes; the service resolves both, so
         # pass through raw rather than via parse_uuid_list (which rejects codes).
-        result = svc.incoming_list(
-            product_ids=flat_product_ids or None,
-            shipment_ids=parse_uuid_list(shipment_ids, param_name="shipment_ids"),
-            supplier_ids=parse_uuid_list(supplier_ids, param_name="supplier_ids"),
-            query=query,
+        result, paged = _fetch_window(
+            lambda p, n: svc.incoming_list(
+                product_ids=flat_product_ids or None,
+                shipment_ids=parse_uuid_list(shipment_ids, param_name="shipment_ids"),
+                supplier_ids=parse_uuid_list(supplier_ids, param_name="supplier_ids"),
+                query=query,
+                eta_from=contact.eta_from(db, eta_from),
+                eta_to=eta_to,
+                page=p,
+                limit=n,
+            ),
+            contact,
             eta_from=eta_from,
             eta_to=eta_to,
             page=page,
@@ -264,12 +431,25 @@ def get_incoming_list(
         # LLM reading the response will narrate a null as the latter. The reason
         # rides along in a `field_access` block so the answer can say "I can't
         # share that" instead of inventing a status.
+        #
+        # Issue #1328: a contact's question also gets that contact's ETA offset and
+        # packing list rule, before the field reveals (`_for_contact`).
+        if contact.asked:
+            return _for_contact(
+                db,
+                result,
+                contact,
+                current_user=current_user,
+                eta_from=eta_from,
+                eta_to=eta_to,
+                paged=paged,
+            )
         return apply_field_access(
             db,
             result,
             resource="incoming_stock",
             current_user=current_user,
-            contact_id=contact_id,
+            contact_id=None,
             space_id=space_id,
             staff_permission=CLEARANCE_PERMISSION,
         )
@@ -280,6 +460,8 @@ def get_incoming_list(
 @router.get("/shipments/{shipment_id}/products")
 def get_incoming_shipment_products(
     shipment_id: str,
+    contact_id: Optional[str] = Query(None, description=_CONTACT_ID_DOC),
+    space_id: Optional[str] = Query(None, description=_SPACE_ID_DOC),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -290,7 +472,12 @@ def get_incoming_shipment_products(
     """
     try:
         svc = IncomingStockService(db)
-        return svc.shipment_incoming_products(shipment_id)
+        return _for_contact(
+            db,
+            svc.shipment_incoming_products(shipment_id),
+            _Contact(db, contact_id, space_id),
+            current_user=current_user,
+        )
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -298,19 +485,26 @@ def get_incoming_shipment_products(
 @router.get("/shipments/{shipment_id}/attachment")
 def get_incoming_shipment_attachment(
     shipment_id: str,
+    contact_id: Optional[str] = Query(None, description=_CONTACT_ID_DOC),
+    space_id: Optional[str] = Query(None, description=_SPACE_ID_DOC),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """Fetch the packing list / shipment document attachment for a shipment.
 
     Returns `{shipment_number, attachment: {filename, file_path, mime_type}}`, or the same
-    shape with `attachment: null` when no file is linked.
+    shape with `attachment: null` when no file is linked. For a contact without the
+    packing list permission (#1328) `attachment` is absent and the answer is empty.
     """
     try:
         svc = IncomingStockService(db)
         data = svc.shipment_attachment(shipment_id)
         if data is None:
             return {"data": None, "empty": True}
+        gated = _for_contact(
+            db, {"data": data}, _Contact(db, contact_id, space_id), current_user=current_user
+        )
+        data = gated["data"]
         return {"data": data, "empty": data.get("attachment") is None}
     except Exception as e:
         raise handle_internal_error(str(e))

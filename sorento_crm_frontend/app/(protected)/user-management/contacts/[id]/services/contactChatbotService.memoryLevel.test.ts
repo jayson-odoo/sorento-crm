@@ -27,6 +27,7 @@ const BASE_INPUT = {
   stock_allowed: true,
   notify_salesman: false,
   packing_list_allowed: false,
+  eta_offset_applied: true,
 };
 
 beforeEach(() => {

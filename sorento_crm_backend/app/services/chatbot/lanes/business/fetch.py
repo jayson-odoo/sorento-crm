@@ -2794,9 +2794,19 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             else "Here are the delivered orders I found."
         )
 
+    # PR #1329 fix round: a dealer's incoming answer (`presenters._incoming_dealer`) is
+    # one line per product plus the salesperson line - the same un-numbered, intro-less
+    # shape as an answered `availability` reply.
+    dealer_incoming = bool(
+        jsc.js_string(e.get("result_type") or "") == "incoming_dealer"
+        and isinstance(e.get("items"), list)
+        and len(e["items"])
+    )
+    plain_lines = stock_availability_answered or dealer_incoming
+
     msg = (
         ""
-        if stock_availability_answered
+        if plain_lines
         else jsc.js_string(e.get("intro") or "Here are the results.").strip() + "\n\n"
     )
     if isinstance(ctx.get("predicate"), dict):
@@ -2934,7 +2944,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     for i, it in enumerate(
         [] if (qs_render or groups_render or stock_ask_render) else (e.get("items") or [])
     ):
-        msg += _item_line(i + 1 + set_row_offset, it, numbered=not stock_availability_answered) + "\n\n"
+        msg += _item_line(i + 1 + set_row_offset, it, numbered=not plain_lines) + "\n\n"
+    if dealer_incoming and jsc.truthy(e.get("closing")):
+        msg += jsc.js_string(e["closing"]).strip() + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
     # (`_project_product_specs`). Byte-inert when the key is absent.
     for miss in e.get("spec_misses") or []:
