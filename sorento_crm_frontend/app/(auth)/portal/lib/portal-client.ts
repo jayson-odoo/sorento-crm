@@ -1120,6 +1120,8 @@ export const AI_EXTRACT_FORM_KEYS: Record<PortalLandingKind, string> = {
   // Never read: the opportunity form offers no AI extract. Present because the map is keyed
   // by every landing kind.
   sales_opportunity: 'portal.sales_opportunity',
+  // Never read either: Customer asks has no form at all.
+  customer_asks: 'portal.customer_asks',
 };
 
 export async function aiExtractFromFiles(

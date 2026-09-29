@@ -1,6 +1,6 @@
 # UAC - Chatbot stock ask v2: four-branch answer, X cap, Y ETA offset, contact toggles, salesman notification, asks record
 
-Status: grilled 24 Sep 2026, ready for tickets. Plan: `PLAN-chatbot-stock-ask-v2-24sep.md`. Issue #1168. Rulings R1 to R11 (quoted in the plan) are binding.
+Status: grilled 24 Sep 2026, ready for tickets. S4 (AC-SA401 to AC-SA409) and S5 + S6 (AC-SA501 to AC-SA512, AC-SA601 to AC-SA607) built 28 Sep 2026 in PR #1333; Console fix round 28 Sep 2026 (owner ruling "it should work using chat console also"): AC-SA401 and AC-SA501 rewritten so a chat console turn notifies and records (`stock_asks.source = console`, migration `sa2_0005_stock_ask_source`); AC-SA410 and AC-SA511 stand and are hand tested from the console. Fix round 2 28 Sep 2026: AC-SA411 (allowed-to-send gate) and AC-SA412 (hand test as another contact, salesperson = owner). Plan: `PLAN-chatbot-stock-ask-v2-24sep.md`. Issue #1168. Rulings R1 to R11 (quoted in the plan) are binding.
 Numbering: AC-SA<slice><nn>, slices S0 to S6. Tags: [BE] pytest (Postgres), [FE] vitest, [E2E] recorded agent-browser or console evidence, [T] a test that exists only to pin a rule. The `tester` writes every [BE]/[FE] test red before the `coder` starts the slice.
 
 ## Journey
@@ -122,7 +122,7 @@ Owner ruling 26 Sep: F2 "okay": one bare number after a question about several p
 
 ## S4 - Agent notification + integration_log
 
-- **AC-SA401 [BE]** `notify_salesman` on: B1, B2, B4 each enqueue exactly one `notify_salesman` job on `respond_io`; B3 enqueues none; toggle off enqueues none; dry run, console and test turns enqueue none.
+- **AC-SA401 [BE]** `notify_salesman` on: B1, B2, B4 each enqueue exactly one `notify_salesman` job on `respond_io`; B3 enqueues none; toggle off enqueues none. A live turn and a CHAT CONSOLE turn enqueue the same real job (owner ruling 28 Sep 2026, "for stock ask, yeah i know chat console is dry run, but it should work using chat console also"); every other dry run (`is_test`, `test_run_id`, the Prompts screen's "Run a turn", which is `ingress: console` without the marker) enqueues none. A chat console turn is `engine._chat_console(envelope)`: `Envelope.dry_run` AND `ingress == "console"` AND the `console_origin` envelope extra (not a declared field, so the pinned external contract is unchanged), the last set only by `console_service`'s two envelope builders. The console turn's own reply stays a dry run: every action it hands back carries `dry_run: true` and nothing sends it to the dealer's WhatsApp.
 - **AC-SA402 [BE]** The job is enqueued only after the turn row is written: a turn that fails before the write enqueues nothing.
 - **AC-SA403 [BE][T]** Outcome phrase: B2 `in stock`, B1 with X set `too big`, B1 with `cap_unset` `no cap set for <category name>`, B4 `no stock no incoming`. Context vars carry `customer_name`, `contact_name`, `product` (code - name), `quantity`, `asked_at`.
 - **AC-SA404 [BE]** Recipient chain, one test per missing link (no customer, customer without `sales_agent_id`, agent without `contact_id`, agent contact without `respond_io_id`): no send, warning log, skip reason recorded, no raise.
@@ -132,10 +132,12 @@ Owner ruling 26 Sep: F2 "okay": one bare number after a question about several p
 - **AC-SA408 [BE]** Respond 401: log row failed with status and body; the dealer's reply is unaffected.
 - **AC-SA409 [BE]** `stock_ask_salesman` is in `TEMPLATE_DEFAULT_USE_CASES` and accepted by `set_default`. **[FE]** The Set Default Template dialog lists it with its label.
 - **AC-SA410 [E2E]** With a template mapped, a B2 console turn on a live contact with a linked agent delivers one message to the agent's Respond contact; the `integration_log` row is visible in the Respond outbox.
+- **AC-SA411 [BE]** Allowed-to-send gate (owner note on PR #1333, 28 Sep 2026, verbatim "it needs to respect the allowed to send boolean in respond contact"): the `notify_salesman` job is enqueued only when the salesperson's Respond contact has `respond_contacts.outbound_enabled` true, checked with the send path's own `assert_outbound_enabled`, on live and chat console turns alike. When it is false no job is enqueued, the `stock_asks` rows are still written (`notified_agent` false, `notify_skip_reason = contact_not_allowed_to_send`, so the Asks tab still shows them), and each B1 / B2 / B4 row gets one `integration_log` row, `status = skipped`, `error_message = "not sent: contact not allowed to send"`, `external_reference` the salesperson's Respond id.
+- **AC-SA412 [E2E] (closing hand test, fix round 2)** From the chat console, as ANOTHER dealer contact (not the owner's own), whose customer's sales agent is set to the owner (Jayson), whose Respond contact has allowed to send ON: a B2 ask delivers one WhatsApp line to the owner's phone and the Asks tab shows the row notified. Flip the owner's contact to allowed to send OFF, ask again: no WhatsApp, the Asks tab shows the new row not notified, and the Respond outbox shows the skipped line "not sent: contact not allowed to send".
 
 ## S5 - Asks table + CRM Asks tab
 
-- **AC-SA501 [BE]** A live turn answering N products writes N `stock_asks` rows with `customer_id`, `contact_id`, `product_id`, `product_code`, `quantity`, `branch`, `answer_summary` (the exact line sent), `state = open`; dry run and console write none.
+- **AC-SA501 [BE]** A live turn answering N products writes N `stock_asks` rows with `customer_id`, `contact_id`, `product_id`, `product_code`, `quantity`, `branch`, `answer_summary` (the exact line sent), `state = open`; a chat console turn writes the same rows with `source = console` (a live turn `source = live`), shown as a "Console" badge on the CRM Asks tab and on the portal Customer asks page (owner ruling 28 Sep 2026); every other dry run writes none.
 - **AC-SA502 [BE]** At write: B3 `notified_agent = false`, `notify_skip_reason = not_notified_branch`; toggle off `toggle_off`. The S4 task sets `notified_agent = true` on success, or the skip / failure reason.
 - **AC-SA503 [BE]** A contact with no resolvable customer still gets a row with `customer_id` NULL and reason `no_customer`.
 - **AC-SA504 [BE]** The S4 `integration_log` row has `business_table = stock_asks`, `business_id = ask.id`.
@@ -156,6 +158,9 @@ Owner ruling 26 Sep: F2 "okay": one bare number after a question about several p
 - **AC-SA604 [BE]** PATCH `/public/portal/customer-asks/{ask_id}` `{state, note}` persists for an in-scope ask; an out-of-scope ask is 404; a bad state is 422.
 - **AC-SA605 [FE]** `CustomerAsksList` renders the portal DataGrid (PortalLanding list pattern) with Asked at, Customer, Contact, Product, Qty, Branch, Answer, Notified, State, Note; empty state; State and Note editable in place.
 - **AC-SA606 [FE]** The portal nav shows "Customer asks" only for a linked agent contact.
+  Fix round 5 (owner, 29 Sep): it is one kind in the landing selector, not a separate card,
+  and it is also a per-contact switch (Contact page, Portal forms, default off); a linked
+  agent whose switch is off is not offered it and the API answers 403 FORM_TYPE_NOT_VISIBLE.
 - **AC-SA607 [E2E]** Log into the portal as the agent's contact, open Customer asks, mark the S5 row done: the CRM Asks tab shows the same state and note; 375px usable.
 
 ## Definition of Done for the lane
