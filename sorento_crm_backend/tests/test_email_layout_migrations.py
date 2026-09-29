@@ -8,7 +8,9 @@ sha256 guard is checked against the body a real database carries, not a fixture 
 from __future__ import annotations
 
 import hashlib
+import re
 
+import pytest
 import sqlalchemy as sa
 from alembic.config import Config
 from alembic.operations import Operations
@@ -242,3 +244,60 @@ def test_converted_handover_renders_heading_tables_and_button():  # AC-EM052
         # the hand-tuned text part is kept verbatim
         assert "SO DATE | S/O NO" in out["body_text"]
         assert out["subject"] == "OI: SO1"
+
+
+RESERVE_CODES = (
+    "order_inquiry_reserve_requested" + "_default",
+    "order_inquiry_reserved" + "_default",
+)
+
+
+def _converted_preview(db, code):
+    from app.models.email_template import EmailTemplate
+    from app.services.email_template_service import EmailTemplateService
+
+    template = db.query(EmailTemplate).filter(EmailTemplate.code == code).one()
+    assert template.layout_json is not None, code
+    return EmailTemplateService(db).preview(str(template.id), None)
+
+
+@pytest.mark.parametrize("code", RESERVE_CODES)
+def test_reserve_preview_has_no_unknown_or_error(code):  # AC-EM004
+    with blank_session() as db:
+        mods = _seed(db)
+        _run(mods["eml_0002_seed_layouts"], db)
+        out = _converted_preview(db, code)
+        for part in ("subject", "body_html", "body_text"):
+            assert "[unknown:" not in out[part], (code, part)
+            assert "[template-error" not in out[part], (code, part)
+
+
+@pytest.mark.parametrize("code", RESERVE_CODES)
+def test_reserve_preview_button_points_at_the_sample_link(code):  # AC-EM004
+    with blank_session() as db:
+        mods = _seed(db)
+        _run(mods["eml_0002_seed_layouts"], db)
+        html = _converted_preview(db, code)["body_html"]
+        match = re.search(r'<a [^>]*href="(https://crm\.example\.com/[^"]+)"[^>]*>\s*Open in Order Inquiries', html)
+        assert match, "button missing or without a sample link"
+        assert "reserve=sample" in match.group(1)
+
+
+@pytest.mark.parametrize("code", RESERVE_CODES)
+def test_reserve_preview_shows_sample_values(code):  # AC-EM004
+    with blank_session() as db:
+        mods = _seed(db)
+        _run(mods["eml_0002_seed_layouts"], db)
+        out = _converted_preview(db, code)
+        assert "OI-0755" in out["subject"] and "SO-26-0412" in out["subject"]
+        assert "SRT-6060-GL" in out["body_html"] and "SRT-3030-MT" in out["body_html"]
+
+
+def test_every_seeded_template_previews_without_unknown_placeholders():  # AC-EM004
+    with blank_session() as db:
+        mods = _seed(db)
+        _run(mods["eml_0002_seed_layouts"], db)
+        for code in SEEDED_CODES:
+            out = _converted_preview(db, code)
+            for part in ("subject", "body_html", "body_text"):
+                assert "[unknown:" not in out[part], (code, part)

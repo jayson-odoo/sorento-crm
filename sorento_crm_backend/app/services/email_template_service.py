@@ -203,6 +203,28 @@ def sample_context() -> dict[str, Any]:
             "link": "https://crm.example.com/scm/order-inquiries/sample",
             "lines": [{"item_code": "SRT-6060-GL", "qty": "120", "delivery_date": today.isoformat(), "outcome": "Restored"}],
         },
+        # Order inquiry reserve mails (request + reserved): the key set the real send builds
+        # in order_inquiry_reserve_service._build_context / _build_commit_context.
+        "reserve": {
+            "inquiry_no": "OI-0755",
+            "ordinal": 1,
+            "so_number": "SO-26-0412",
+            "customer": "Lim Hardware Sdn Bhd",
+            "project": "Taman Melati Phase 2",
+            "requested_by": {"name": "Jane Doe", "email": "jane@example.com"},
+            "requested_at": today.isoformat(),
+            "note": "Please hold for the 15 Oct delivery",
+            "rows": [
+                {"item_code": "SRT-6060-GL", "delivery_date": today.isoformat(), "qty": "120", "qty_requested": "120", "qty_reserved": "120", "balance": "0", "remaining": "0", "location": "KL WAREHOUSE", "reason": None},
+                {"item_code": "SRT-3030-MT", "delivery_date": today.isoformat(), "qty": "80", "qty_requested": "80", "qty_reserved": "50", "balance": "30", "remaining": "30", "location": "KL WAREHOUSE", "reason": "Only 50 in stock"},
+            ],
+            "row_count": 2,
+            "open_row_count": 1,
+            "state": "requested",
+            "link": "https://crm.example.com/scm/order-inquiries/sample?reserve=sample",
+        },
+        "requester": {"name": "Jane Doe", "email": "jane@example.com"},
+        "raiser": {"name": "Ken Tan", "email": "ken@example.com"},
         "actor": {"name": "Aina Rahman", "email": "aina@example.com"},
         "today": today.isoformat(),
         "recipient": {"name": "Sample Recipient", "email": "sample@example.com"},
