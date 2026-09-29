@@ -1,8 +1,8 @@
 # PLAN - Chatbot: a linked contact is scoped to its customers; "my" / "me" means them
 
-Status: grilling (29 Sep 2026; crew lane CHATBOT-CUSTOMER-SCOPE, PR #1365). Standard track:
+Status: in build under the grill's recommended options, owner rulings pending (29 Sep 2026; crew lane CHATBOT-CUSTOMER-SCOPE, PR #1365). Standard track:
 this is an authorization boundary (security-reviewer runs). UAC:
-`chatbot-customer-scope-29sep-acceptance-criteria.md` (written once the grill is answered).
+`chatbot-customer-scope-29sep-acceptance-criteria.md` (written under the recommended options).
 
 Owner, verbatim (29 Sep 2026):
 
@@ -160,4 +160,139 @@ See the PR comment; the answers are folded into "Decisions" below once they arri
 
 ## Decisions
 
-(pending owner rulings)
+Built under the grill's recommended options; each is marked "assumed" until the owner
+answers on PR #1365, and a differing ruling changes the AC it names and nothing else.
+
+| Q | Assumed | What it fixes in the design |
+| --- | --- | --- |
+| Q1 | (a) the shipped top selling rule: active office type = staff; else links = scoped | one function, `contact_customer_scope.py` |
+| Q2 | (a) unlinked contact unchanged | `scope.enforced` false when no links |
+| Q3 | (a) engine before the resolver + the routes | `engine._customer_scope_gate` + route checks |
+| Q4 | (a) a foreign DO number is a miss inside the scope | routes AND the links onto `order_ids` |
+| Q5 | (a) `self_reference` substitutes the links for anyone linked, staff included | `scope.linked` read even when not enforced |
+| Q6 | (a) several links = all of them, `is_primary` unread | no picker of own customers |
+| Q7 | (b) refusal names the linked customers | `REFUSED_OTHER_CUSTOMER(names)` |
+| Q8 | (a) every customer-scoped tool | `fetch.CUSTOMER_SCOPED_TOOLS` pinned to the catalogue |
+
+## Design
+
+### D1. One "who is scoped" function (core, importable by routes and lane)
+
+`app/services/contact_customer_scope.py` (new):
+
+```python
+@dataclass(frozen=True)
+class ContactCustomerScope:
+    linked: tuple[tuple[str, str], ...]   # (customer_id, customer_name), link order, every company
+    staff: bool                           # an ACTIVE office access type (the top selling rule)
+    @property
+    def enforced(self) -> bool: return bool(self.linked) and not self.staff
+    @property
+    def customer_ids(self) -> list[str]: ...
+    def match_words(self, words: list[str]) -> list[str] | None:
+        # each word: exact customer_code (case-insensitive) or a case-insensitive substring of
+        # customer_name, over `linked` only; None when ANY word matches none (refuse)
+
+def contact_customer_scope(db, contact_id: str) -> ContactCustomerScope
+def is_office_staff(db, contact_id: str) -> bool   # moved from orders._top_selling_is_staff
+def refusal_line(scope) -> str  # "Sorry, that isn't under your account. I can only check on A and B."
+```
+
+`contact_id` is the INTERNAL `respond_contacts.id`; callers resolve a Respond.io id through
+`field_access.resolve_contact_with_null_workspace_fallback` first (the lane and the routes
+both already do). The link read runs under `company_scope(db, None)` (precedent C, AC-CS-46)
+and the names come from `Customer` under the same off-scope read. `orders._top_selling_is_staff`
+becomes a one-line alias of `is_office_staff`; `orders._top_selling_dealer_scope` keeps its
+fail-closed contract but reads `contact_customer_scope`. `business_services.top_selling_dealer_ledgers`
+reads it too (returns `scope.linked` or None).
+
+### D2. Parser: `self_reference`
+
+- `head/parser.py` schema: `"self_reference": {"type": "boolean"}` beside `correction`;
+  `contracts.TOLERATED_ABSENT` gains it; `contracts.DECLARED_KEYS` follows the schema.
+- Prompt: a new trailing addendum `SELF_REFERENCE_ADDENDUM` in `chatbot_parser_prompt.py`,
+  appended to `SEMANTIC_PARSER_PROMPT` the way `TOP_SELLING_ADDENDUM` is, teaching the key
+  (AC-CS-20 wording), with the "we / us = the company" rule narrowed: "we" as the asker's
+  business ("what did we order") is `self_reference: true`; "do you / can you" about Sorento
+  stays the company rule.
+- Migration `alembic/versions/chatbot_self_reference_vocab.py`, `down_revision` = main's head
+  at merge time (`scripts/alembic-reparent.sh`), publishing a new version, label unmoved.
+- The prompt tail pins (`tests/chatbot/test_parser_prompt_tail*.py` or equivalent, whichever
+  files pin the newest addendum) are updated for the new tail.
+
+### D3. Engine: the upstream gate (before `resolve_kinds`)
+
+`engine.py`, at the seam `:3199-3209`, a new `_customer_scope_gate(db, resolver_parse_output,
+verdict, state_out.focus, ctx, contact_respond_id, space_id_for_turn, plan)`:
+
+1. Read `scope = business_services.customer_scope(db, contact_respond_id, space_id)` once per
+   turn (memoised on `ctx["customer_scope"]` = `{"ids": [...], "names": {...}, "enforced": bool,
+   "linked": bool}`; None when unlinked).
+2. Runs only when the plan touches a customer-scoped domain (`"order" in plan.domains`) or the
+   verdict has `self_reference: true`; otherwise returns the input untouched.
+3. `self_reference: true` and `scope.linked`: `focus.customers` = the linked rows
+   (`{"uuid", "canonical_code": name, "name", "hint": "customer", "current_message": True,
+   "scope": True}`); customer entities in the message are matched with `match_words`; a match
+   narrows `focus.customers` to the matches; no match -> refuse (step 5).
+4. `scope.enforced` and no self reference: customer entities matched with `match_words`
+   (matches -> `focus.customers`, resolver never sees them); no customer entity ->
+   `focus.customers` = the links (so the gate's `ALLOWS_EMPTY["order"] = False` is satisfied
+   by the scope and the fetch has its subject).
+5. Refuse: `focus.customer_scope_refused = True` (a Focus field, cleared on every turn); the
+   business lane's tool pick (`lanes/business/__init__.py` beside the `dealer_refused` arm at
+   `:1689`) returns `_fixed_reply(refusal_line)` before any tool; trace
+   `customer_scope: {"refused": "customer_not_permitted"}`. No open question armed, no offer.
+6. The header line (`tail/scope_block.py`) reads the scoped customers off `focus.customers`
+   as it does today, so the reply says `Customer: HANLIM TRADING`.
+
+Top selling keeps its own `_top_selling_dealer_scope` (it runs first and strips its customer
+words); the general gate is a no-op on a turn whose customer entities are already gone.
+
+### D4. Fetch: the defensive layer in the lane
+
+- `lanes/business/__init__.py::_fetch_semantic_input` gains `scope_customer_ids`
+  (`ctx["customer_scope"]["ids"]` when `enforced`, else absent).
+- `fetch.py`: `CUSTOMER_SCOPED_TOOLS = frozenset({crm_order_management_orders_list,
+  crm_order_management_orders_by_product_list, crm_outstanding_report, crm_sales_report,
+  crm_top_selling_report, crm_order_analytics, crm_master_customers_list})`, pinned by a test
+  against every catalogue `ToolSpec` whose `query_params` carry `customer_ids` (AC-CS-32).
+- `entity_ids_transformer`, last step before `contact_id`: when `scope_customer_ids` is
+  present and the tool is in the set: no `customer_ids` -> the scope; a subset -> kept; any id
+  outside -> raise `ScopeViolation` (a `ToolNotAllowed` sibling, caught by `run_fetch` into the
+  refusal reply, never a tool call); `customer_query` popped.
+- `crm_complaints_list` is not on the chatbot's tool pool (`gate.ALLOWED` has no complaints
+  domain), so nothing to force there; noted, not built.
+
+### D5. Routes: the defensive layer behind the MCP
+
+A shared helper `app/api/v1/order_management/_contact_scope.py::enforce_customer_scope(db,
+contact_id, space_id, customer_ids, customer_query) -> list[str] | None`: both-or-neither
+422 `contact_identity_required` (the sales report's rule); resolve the contact; `scope =
+contact_customer_scope(...)`; not enforced -> None (caller unchanged); enforced: ids outside ->
+403 `customer_not_permitted` ("You can only see orders for your own account."); a
+`customer_query` matched inside the links only (none -> the same 403); return the effective
+ids (requested subset, or the links). Applied to: orders list (`orders.py:303`), by-product
+(`:740`), outstanding report (`:1454`, gains the two params), sales report (`:1659`, replacing
+its own contact block's customer part), debtors (`:653`), analytics (`:942`). `order_ids`
+stays as given: the customer filter ANDs onto it, so a foreign number returns no rows (Q4a).
+Top selling keeps its own block (already equivalent).
+
+### D6. Tests (Phase 2, tester before coder)
+
+- `tests/chatbot/test_customer_scope_lane.py`: AC-CS-01 to 05, 10 to 15, 22 to 26, 30, 33,
+  34 through the `test_outstanding_lane._run_turn` harness (parser faked with
+  `self_reference` in the verdict, links seeded by SQL like `test_top_selling_lane.TestDealer.
+  _link_dealer`, office type by `_give_access_type`).
+- `tests/chatbot/test_customer_scope_fetch.py`: AC-CS-31, 32 (transformer unit + catalogue pin).
+- `tests/chatbot/test_customer_scope_parser.py`: AC-CS-20, 21 (schema, TOLERATED_ABSENT,
+  prompt text, migration publish idempotent with label unmoved).
+- `tests/test_customer_scope_routes.py`: AC-CS-40 to 46 through `TestClient` with the
+  `test_top_selling_report.py` fixtures (`_contact`, `_link`, `_access`, `_as_contact`).
+- `tests/chatbot/console_cases/2026-09-29-customer-scope.yaml`: AC-CS-50.
+
+### Not built (named triggers)
+
+- A picker of the contact's own customers (Q6b) - built if the owner rules (b).
+- Fail-closed for unlinked contacts (Q2b) - flip `enforced` to `not staff` once linking is
+  backfilled; the owner's call.
+- Complaints scoping - when a complaints domain joins the chatbot tool pool.
