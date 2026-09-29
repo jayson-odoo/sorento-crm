@@ -1,6 +1,6 @@
 # PLAN: sales asks as a salesperson's to-do list, date-first (lane SALES-ASKS-TODO)
 
-Status: draft, grill posted 29 Sep 2026 on PR #1364 (crew-ask, 8 questions); this draft is written
+Status: Phase 1 FE mock built and browser-verified 29 Sep 2026 (section 7b); grill posted on PR #1364 (crew-ask, 8 questions), Q6 ruled; the plan is written
 under the recommendations and each pending question is marked `[Q<n> pending]` where its answer
 changes the design. Track: full (one migration, two new routes under RBAC, one portal route).
 Plan created: 2026-09-29T08:20:00Z
@@ -277,6 +277,37 @@ scope 404, permission grants), `tests/test_migration_sat_0001.py` (columns, back
 vitest: `lib/stock-asks-todo.test.ts` (bucket table), `AskTodoList.test.tsx` (counts, groups,
 Done moves a row, Reopen, empty state, `showAgent`), `CustomerAsksList.test.tsx` rewritten for
 the to-do body, `MyCustomerAsksClient.test.tsx`, `menu.config` test for the entry.
+
+## 7b. Phase 1 evidence run (29 Sep 2026, agent-browser, sandbox dev server, mock store)
+
+Deviation recorded: the coder ran in the lane checkout, not a worktree (a cloud sandbox with no
+concurrent editor). Sandbox-only seeds, never committed: every catalog module enabled for the
+default tenant, the five `sales.customer_asks.*` slugs inserted so superadmin's permission list
+carries them (Phase 2's migration is what adds them for real).
+
+- CRM, 1280x800: signed in as a superadmin, sidebar Sales group -> `Customer asks` listed after
+  Opportunities -> `/sales/customer-asks`. `PageHeader` "Customer asks", Agent select (view_all),
+  counts `Open 5 · Needs attention 2 · Done today 1`, groups `Needs attention` (2 rows, oldest
+  first, red age labels "2 days ago" / "Yesterday") and `Today` (3 rows, one with the Console
+  badge). `Done` on the oldest row: counts `Open 4 · Needs attention 1 · Done today 2`, the row
+  under `Done today` reading "Done by Sean Ibrahim 29/09/2026, 3:43 pm" with `Reopen`. Console:
+  no error; `errors`: none.
+- CRM, 375x812: `scrollWidth == clientWidth` (360), one column, `Done` full width under the row
+  text. `Reopen` restores `Open 5 · Needs attention 2 · Done today 1`.
+- Portal, 375x812: `/portal/c/sean` with a verified token planted in local storage; the landing
+  selector lists `Customer asks 6` (the #1333 badge, one higher than the to-do's Open because the
+  mock list still counts the `incoming` ask; Q5 decides); picking it renders the same counts and
+  groups as the CRM. `Show done` opens the #1333 grid under the to-do (`state=done`, 1 row) and
+  reads `Hide done` while open. No page errors.
+- Portal, 1280x800: two-column rows, actions right; the done row greyed with its note.
+- Coder's Phase 1 divergences, standing for Phase 2 unless the grill moves them: one flat
+  `Needs attention` group (oldest first, age label per row) instead of per-day groups, because
+  a row cannot sit in both a pinned aging group and its day group (AC-ST113's day labels are
+  kept as `dayLabel`); `agent_id=all` added to the CRM todo contract for the manager's "All
+  agents" choice (AC-ST210); the portal search filters the to-do client-side.
+- Vitest breakage to hand the tester: `CustomerAsksList.test.tsx` (10, pins the replaced body),
+  `PortalLanding.customerAsks.test.tsx` (2, the body and the server-side search),
+  `menu.config.sales.test.ts` (2, the new entry).
 
 ## 8. Risks
 

@@ -168,8 +168,11 @@ function createStore(): MockAskStore {
   const todayStart = malaysiaMidnightMs(now);
   const asks = seed(todayStart);
 
-  const strip = ({ agent_id: _agentId, ...rest }: MockAsk, withAgent: boolean): StockAsk =>
-    withAgent ? { ...rest } : { ...rest, agent_code: undefined };
+  const strip = (row: MockAsk, withAgent: boolean): StockAsk => {
+    const { agent_id, ...rest } = row;
+    void agent_id; // the filter key never leaves the store
+    return withAgent ? rest : { ...rest, agent_code: undefined };
+  };
   const isOpen = (a: MockAsk) => a.state === 'open' && a.branch !== 'incoming';
   const attention = (a: MockAsk) => Date.parse(a.created_at) < todayStart;
 
