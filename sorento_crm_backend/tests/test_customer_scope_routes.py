@@ -331,3 +331,69 @@ def test_top_selling_dealer_scope_reads_the_shared_function(db, monkeypatch) -> 
     monkeypatch.setattr(scope_mod, "contact_customer_scope", _spy)
     assert _top_selling_dealer_scope(db, contact.id) == [str(own.id)]
     assert seen, "_top_selling_dealer_scope never asked the shared scope function"
+
+
+# --------------------------------------------------------------------------- #
+# AC-CS-47 - the complaints list
+# --------------------------------------------------------------------------- #
+
+COMPLAINTS = "/api/v1/complaints-management/complaints/"
+
+
+class TestComplaintsListScope:
+    """AC-CS-47: `GET /complaints-management/complaints/` gains `contact_id` / `space_id`
+    (both-or-neither). A scoped contact sees only complaints whose `customer_name` equals a
+    linked customer's name, trimmed and case-insensitive (complaints carry a name, no id).
+    Staff and a request with no contact params see every row. The complaints carry no
+    `contact_id` of their own here, so the filter is the customer name, nothing else."""
+
+    def _seed(self, db, *, office: bool = False):
+        from app.models.complaints import Complaint
+
+        own = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT OWN A")
+        contact = _contact(db)
+        _link(db, contact, own)
+        if office:
+            _access(db, contact, "Sorento Office")
+        mine = Complaint(
+            id=str(uuid.uuid4()), complaint_number=unique_code("CMP-OWN"), customer_name=" zzt own a ",
+            status="new",
+        )
+        other = Complaint(
+            id=str(uuid.uuid4()), complaint_number=unique_code("CMP-OTH"), customer_name="ZZT OTHER B",
+            status="new",
+        )
+        db.add_all([mine, other])
+        db.commit()
+        return contact, mine, other
+
+    @staticmethod
+    def _numbers(resp) -> set[str]:
+        return {row["complaint_number"] for row in resp.json()["data"]}
+
+    @pytest.mark.parametrize("half", ["contact_id", "space_id"])
+    def test_contact_identity_is_both_or_neither(self, client, db, half) -> None:
+        """AC-CS-47: one of the pair alone is 422 `contact_identity_required`."""
+        contact, _mine, _other = self._seed(db)
+        resp = client.get(COMPLAINTS, params={half: _as_contact(contact)[half]})
+        assert resp.status_code == 422, resp.text
+        assert resp.json().get("code") == "contact_identity_required", resp.text
+
+    def test_scoped_contact_sees_only_its_own_customers_complaints(self, client, db) -> None:
+        """AC-CS-47: name match is trimmed and case-insensitive; the other row is absent."""
+        contact, mine, other = self._seed(db)
+        resp = client.get(COMPLAINTS, params=_as_contact(contact))
+        assert resp.status_code == 200, resp.text
+        assert self._numbers(resp) == {mine.complaint_number}, resp.text
+        assert "OTHER B" not in resp.text
+
+    def test_staff_and_no_identity_get_both_rows(self, client, db) -> None:
+        """AC-CS-47: an active office type, and a request with no contact params, are unchanged."""
+        contact, mine, other = self._seed(db, office=True)
+        both = {mine.complaint_number, other.complaint_number}
+        staff = client.get(COMPLAINTS, params=_as_contact(contact))
+        assert staff.status_code == 200, staff.text
+        assert both <= self._numbers(staff)
+        anonymous = client.get(COMPLAINTS)
+        assert anonymous.status_code == 200, anonymous.text
+        assert both <= self._numbers(anonymous)
