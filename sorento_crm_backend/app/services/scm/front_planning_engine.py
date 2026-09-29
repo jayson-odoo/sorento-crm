@@ -434,6 +434,15 @@ class Component:
     #: reads to refuse a Buy amend over it, and what the board's own per-source dict tags
     #: on the wire so the cell can show "Received N (own arrival)".
     source: Optional[str] = None
+    #: #1362: on an own-arrival Reserve only, the two facts its sentence states apart -
+    #: what landed for this line (capped by its need) and how much of that is still free
+    #: at the bin. `qty` is what was taken, which can be less than either.
+    landed_qty: Optional[Decimal] = None
+    free_qty: Optional[Decimal] = None
+    #: #1362 item 4: how `landed_qty` is said when part of it is a SIBLING's spare - "100
+    #: spare from line 1648's purchase (200 bought for 100) landed on SPO-...". `None` when
+    #: all of it landed for this line, and the plain sentence stands.
+    landed_text: Optional[str] = None
 
     @property
     def stated(self) -> str:
@@ -770,7 +779,25 @@ def group_take_reason(
     )
 
 
-def _own_arrival_reason(location: str, qty: Decimal, document: Optional[str]) -> str:
+def landed_on(document: Optional[str]) -> str:
+    """How a landed quantity names its shipment(s) (#1362 item 2): " on SPO-2026/06-0092"
+    for one, ": 60 on SPO-2026/06-0092, 40 on SPO-2026/07-0019" for several (the shape
+    `project_supply_service._landed_document` builds, each shipment with its own quantity),
+    "" for none. One helper so the board sentence and both amend refusals read alike.
+    """
+    if not document:
+        return ""
+    return f": {document}" if " on " in document else f" on {document}"
+
+
+def own_arrival_reason(
+    location: str,
+    taken: Decimal,
+    document: Optional[str],
+    landed: Optional[Decimal] = None,
+    free: Optional[Decimal] = None,
+    landed_text: Optional[str] = None,
+) -> str:
     """R7: why an own-arrival Reserve gives this much - goods that landed FOR this line
     (or the rest of its own order), named by the document they came off, taken before
     the ordinary group-take draw.
@@ -779,10 +806,23 @@ def _own_arrival_reason(location: str, qty: Decimal, document: Optional[str]) ->
     SPO the goods physically landed on, never the PO - a PO line's own `qty_received` is
     the AutoCount TRANSFER onto a shipping order, not a receipt - so no "PO" noun is said
     of it.
+
+    #1362 (owner ruling 29 Sep 2026): what landed and how much of it is still free at the
+    bin are two facts, said apart - "100 landed for this line on SPO-2026/06-0152; 40 free
+    at BRW-BB, taken first". One number read as "the SPO carried 40". A third number only
+    when less was taken than was free (a pool share covered part of the line first).
+    Without `landed`/`free` the one-number sentence stands. Public because the board's
+    own trail sentence (`_group_take_why`) says the same thing and must not drift from it.
+
+    #1362 item 4: `landed_text` replaces the "N landed for this line on ..." half when part
+    of what landed is a sibling's spare, which never landed "for this line".
     """
-    if document:
-        return f"{qty_text(qty)} landed for this line on {document}, taken first at {location}"
-    return f"{qty_text(qty)} landed for this line, taken first at {location}"
+    on = landed_on(document)
+    if landed is None or free is None:
+        return f"{qty_text(taken)} landed for this line{on}, taken first at {location}"
+    took = "taken first" if taken >= free else f"{qty_text(taken)} taken first"
+    said = landed_text or f"{qty_text(landed)} landed for this line{on}"
+    return f"{said}; {qty_text(free)} free at {location}, {took}"
 
 
 def _cross_group_borrow_reason(location: str, qty: Decimal) -> str:
@@ -1535,7 +1575,12 @@ def _draw_group(
                     )
                     if water
                     else (
-                        _own_arrival_reason(str(location), take, document)
+                        own_arrival_reason(
+                            str(location), take, document,
+                            landed=candidate.get("landed_qty"),
+                            free=candidate.get("free_qty"),
+                            landed_text=candidate.get("landed_text"),
+                        )
                         if is_own_arrival
                         else group_take_reason(str(location), take, group_code, group_offer)
                     )
@@ -1543,6 +1588,15 @@ def _draw_group(
                 source_location=str(location),
                 rung=RUNG_GROUP_TAKE,
                 source=source,
+                **(
+                    {
+                        "landed_qty": candidate.get("landed_qty"),
+                        "free_qty": candidate.get("free_qty"),
+                        "landed_text": candidate.get("landed_text"),
+                    }
+                    if is_own_arrival
+                    else {}
+                ),
                 **(
                     {
                         "supply_key": candidate.get("supply_key"),

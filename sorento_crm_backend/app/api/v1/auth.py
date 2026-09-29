@@ -294,37 +294,26 @@ async def reset_password(
         db.add(verification_token)
         db.commit()
 
-        # Send password reset email (professional tone, visible URL, system disclaimer)
+        # Send password reset email (branded layout, visible URL, system disclaimer)
         base_url = (app_settings.frontend_base_url or "").strip().rstrip("/")
         reset_path = "/change-password"
         reset_link = f"{base_url}{reset_path}?token={token}" if base_url else f"{reset_path}?token={token}"
-        subject = "Reset your password"
-        body_text = (
-            "Hello,\n\n"
-            "You have requested a password reset for your Sorento account. Use the link below to set a new password. This link is valid for 1 hour.\n\n"
-            f"{reset_link}\n\n"
-            "If you did not request this, you can safely ignore this email.\n\n"
-            "This is a system-generated email. Please do not reply."
-        )
-        # Show the raw URL as visible, clickable link (no hidden "Click here") to reduce phishing concern
-        body_html = (
-            "<p>Hello,</p>\n"
-            "<p>You have requested a password reset for your Sorento account. Use the link below to set a new password. This link is valid for 1 hour.</p>\n"
-            f'<p><a href="{reset_link}">{reset_link}</a></p>\n'
-            "<p>If you did not request this, you can safely ignore this email.</p>\n"
-            "<p><em>This is a system-generated email. Please do not reply.</em></p>"
-        )
         try:
             from app.services.email_outbox_service import enqueue as enqueue_email
+            from app.services.email_template_service import EmailTemplateService
 
             user_email = str(getattr(user, "email", "") or "")
+            rendered = EmailTemplateService(db).render_code(
+                "auth_password_reset",
+                {"recipient": {"name": user.name or "", "email": user_email}, "reset_link": reset_link},
+            )
             enqueue_email(
                 db,
                 event_key="password_reset",
                 to=user_email,
-                subject=subject,
-                body_text=body_text,
-                body_html=body_html,
+                subject=rendered["subject"],
+                body_text=rendered["body_text"],
+                body_html=rendered["body_html"],
                 from_name="Sorento AI System",
                 metadata={"user_id": str(getattr(user, "id", "") or "")},
             )

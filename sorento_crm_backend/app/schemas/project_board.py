@@ -613,6 +613,9 @@ class BoardContribution(BaseModel):
     #: identity a project has here.
     project_key: Optional[str] = None
     line_no: int
+    #: #1362 item 5: AutoCount's own sales-order line number (`sales_order_lines.line_no`),
+    #: `None` when AutoCount gave the line none. `line_no` above is the planning ADDRESS.
+    so_line_no: Optional[int] = None
     item_code: str
     qty: str
     #: What the customer ordered on this line, what has gone out, and what is still owed.
@@ -849,6 +852,10 @@ class StockDetailSalesOrder(BaseModel):
     #: One of the lines the drawer was opened for (`line_ids`), so a planner can find their
     #: own row in somebody else's list.
     is_this_line: bool = False
+    #: Set only on a drawer's OWN line that has nothing open any more (#1362 item 3): what
+    #: was delivered on it. Such a row is listed at `so_qty` "0" so "My line" still finds
+    #: it, and it is never part of SO Qty.
+    fulfilled_qty: Optional[str] = None
 
 
 class StockDetailIncoming(BaseModel):

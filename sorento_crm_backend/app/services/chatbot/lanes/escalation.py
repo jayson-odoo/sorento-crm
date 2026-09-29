@@ -1501,7 +1501,12 @@ def _clarify_actions(text: Any, *, options: list[str], dry_run: bool) -> list[di
     """
     words = jsc.nullish_str(text).strip()
     if not words:
-        return []
+        # AC-MEM084/085 (owner ruling Q10): a turn that reaches the reply stage never
+        # ends silent. A clarify with no words of its own still sends the handover
+        # offer, the no-team wording the accepted-offer regex reads next turn.
+        from app.services.chatbot_reply_copy import CHATBOT_REPLY_ESCALATE_OFFER_NO_TEAM
+
+        return [_send_message(CHATBOT_REPLY_ESCALATE_OFFER_NO_TEAM, dry_run)]
     action = _send_message(words, dry_run)
     kept = [jsc.js_string(o).strip() for o in options if jsc.truthy(jsc.js_string(o).strip())]
     if kept:

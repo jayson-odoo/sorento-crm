@@ -45,7 +45,7 @@ PyMuPDF>=1.24
 opencv-python-headless>=4.9
 openai>=1.40.0
 py-spy
-jinja2>=3.1
+jinja2>=3.1.6
 html2text>=2024.2.26
 # PDF generation for complaint supporting-document exports.
 # Native deps required at runtime: libcairo2, libpango-1.0-0, libpangocairo-1.0-0,

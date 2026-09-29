@@ -1,0 +1,71 @@
+{
+  "name": "05-off-topic-uses-usual-site-and-products",
+  "about": "Plan 7.3 example 5: off-topic small talk; the offer uses usual_sites and usual_products (Full memory only).",
+  "needs_memory": true,
+  "given": {
+    "memory_level": "full",
+    "first_name": "Tan",
+    "frames": [
+      {
+        "days_ago": 3,
+        "domain": "inventory",
+        "summary": "Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team."
+      },
+      {
+        "days_ago": 5,
+        "domain": "order",
+        "summary": "Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
+      }
+    ],
+    "profile_facts": [
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ],
+        "source": "tallied",
+        "source_ref": null,
+        "first_seen": "2026-09-01",
+        "last_seen": "2026-09-25",
+        "seen_count": 5,
+        "set_by": null
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ],
+        "source": "tallied",
+        "source_ref": null,
+        "first_seen": "2026-09-01",
+        "last_seen": "2026-09-25",
+        "seen_count": 4,
+        "set_by": null
+      }
+    ],
+    "customer": {
+      "name": "Chin Chun Trading",
+      "code": "CC001",
+      "salesperson": "Aina"
+    }
+  },
+  "turn": {
+    "message": "hot today in Kuching ah",
+    "verdict": {
+      "message_type": "casual"
+    },
+    "clarifier": {
+      "ack": "Very! Stay cool, Mr Tan.",
+      "language": "en"
+    }
+  },
+  "expected": {
+    "branch_kind": "low_signal",
+    "reply_starts_with": "Very! Stay cool, Mr Tan.",
+    "reply_contains": [
+      "Kuching stock for SRTWB1455 or M486-75-BL"
+    ],
+    "no_tool_call": true
+  }
+}

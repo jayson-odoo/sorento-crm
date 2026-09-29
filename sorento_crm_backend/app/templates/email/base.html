@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>{{ subject }}</title>
+<style>
+  /* Only what inline styles cannot say: the phone breakpoint. Every other rule is inline. */
+  @media only screen and (max-width: 620px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+</style>
+</head>
+<body data-sorento-layout="1" style="margin:0;padding:0;width:100%;background-color:{{ theme.page_background }};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+{%- if preheader %}
+<div style="display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:{{ theme.page_background }};opacity:0;" aria-hidden="true">{{ preheader }}{{ preheader_padding }}</div>
+{%- endif %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:{{ theme.page_background }};">
+  <tr>
+    <td class="em-outer" align="center" style="padding:32px 12px;">
+      <table role="presentation" class="em-card" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:{{ theme.card_radius }}px;border-collapse:separate;overflow:hidden;">
+{% block card %}{% endblock %}
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>

@@ -43,6 +43,8 @@ function contribution(overrides: Partial<BoardContribution> = {}): BoardContribu
     agent_label: 'Jeremy Lee',
     project_label: 'Tuju Residences',
     line_no: 10,
+    // The live payload carries AutoCount's own number beside the address (#1362 item 5).
+    so_line_no: overrides.line_no ?? 10,
     item_code: 'B2155-NL-BLUE',
     qty: '43',
     qty_outstanding: '43',
@@ -155,6 +157,27 @@ describe('FulfilmentBoardListView', () => {
     expect(within(secondRow).getByText('20')).toBeInTheDocument();
     expect(within(firstRow).queryByText('(Line 10)')).not.toBeInTheDocument();
     expect(within(secondRow).queryByText('(Line 20)')).not.toBeInTheDocument();
+  });
+
+  it('#1362 item 5: the Line column prints the AutoCount line number, never the row index', async () => {
+    // SO382618's January B2154-NL line: planning row 110, AutoCount No. 2912. And the
+    // owner's unnumbered 200-piece line, which AutoCount gave no No.: "row 3".
+    renderView({
+      contributions: [
+        contribution({
+          key: 'so-1:line-110', so_number: 'SO382618', line_no: 110, so_line_no: 2912,
+        }),
+        contribution({
+          key: 'so-1:line-3', so_number: 'SO382619', line_no: 3, so_line_no: null,
+        }),
+      ],
+    });
+
+    const january = (await screen.findByText('SO382618')).closest('tr') as HTMLElement;
+    expect(within(january).getByText('2912')).toBeInTheDocument();
+    expect(within(january).queryByText('110')).not.toBeInTheDocument();
+    const unnumbered = screen.getByText('SO382619').closest('tr') as HTMLElement;
+    expect(within(unnumbered).getByText('row 3')).toBeInTheDocument();
   });
 
   // S6 (PLAN-scm-oi-worklist-excel-parity.md R-J, AC-P2/AC-P3): the board's ONE search

@@ -6,7 +6,6 @@ import { useContact } from '../components/contact-context';
 import ContactMediaAccessSection from '../components/ContactMediaAccessSection';
 import ContactAccessAgentsTable from '../components/ContactAccessAgentsTable';
 import ContactFieldRevealsSection from '../components/ContactFieldRevealsSection';
-import ContactChatbotSection from '../components/ContactChatbotSection';
 
 export default function ContactAccessPage() {
   const { isLoading, contactId } = useContact();
@@ -39,15 +38,6 @@ export default function ContactAccessPage() {
         </CardHeader>
         <CardContent>
           <ContactFieldRevealsSection contactId={contactId} />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Chatbot</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ContactChatbotSection contactId={contactId} />
         </CardContent>
       </Card>
     </div>

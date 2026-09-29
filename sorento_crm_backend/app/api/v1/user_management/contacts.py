@@ -1,8 +1,8 @@
 """Respond contacts API routes."""
 from fastapi import APIRouter, Depends, Query, status, HTTPException, Body, Request
 from sqlalchemy.orm import Session
-from typing import Optional
-from pydantic import BaseModel
+from typing import Literal, Optional
+from pydantic import BaseModel, ConfigDict
 import logging
 import httpx
 from app.database import get_db
@@ -91,6 +91,9 @@ async def get_contacts(
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
+    # AC-MEM028 (reviewer pass at d89110c0, S13): `own` lists the contacts that set
+    # their own chatbot memory level, the Memory card's count link.
+    chatbot_memory_level: Optional[Literal["own"]] = Query(None),
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db)
 ):
@@ -106,6 +109,7 @@ async def get_contacts(
             query=query,
             sort_field=sort or "created_at",
             sort_dir=dir or "asc",
+            own_memory_level_only=chatbot_memory_level == "own",
             include_linked_users=can_view_users,
         )
         return result
@@ -190,7 +194,7 @@ async def get_contact(
     try:
         service = ContactService(db)
         contact = service.get_contact(contact_id)
-        data = ContactService.contact_to_response_dict(contact)
+        data = ContactService.contact_to_response_dict(contact, db)
         data["is_salesperson"] = is_salesperson_contact(db, contact_id)
         data["suggested_role_slug"] = suggested_role_slug(db, contact_id)
         can_view_users = UserPermissionService(db).check_user_has_permission(
@@ -217,7 +221,7 @@ async def create_contact(
     try:
         service = ContactService(db)
         contact = service.create_contact(contact_data)
-        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact))
+        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact, db))
     except HTTPException:
         raise
     except Exception as e:
@@ -228,14 +232,16 @@ async def create_contact(
 async def update_contact(
     contact_id: str,
     contact_data: RespondContactUpdate,
-    current_user: dict = Depends(get_current_user),
+    # Reviewer pass at d89110c0 (S8): the same edit slug every other write on the
+    # contact's editable surface requires.
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db)
 ):
     """Update a respond contact."""
     try:
         service = ContactService(db)
         contact = service.update_contact(contact_id, contact_data)
-        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact))
+        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact, db))
     except HTTPException:
         raise
     except Exception as e:
@@ -244,18 +250,28 @@ async def update_contact(
 
 
 class ContactChatbotUpdate(BaseModel):
-    """The Contact > Access "Chatbot" card (AC-1515, AC-1561).
+    """The Contact > Access "Chatbot" card (AC-1515, AC-1561; chatbot memory lane A,
+    contract section 5).
 
-    A PUT of its own rather than two more fields on the contact PUT: these two decide
-    what the bot REMEMBERS about a person (their tier and language, and whether closed
-    topics may be recalled at all), which is a privacy decision with its own audience -
-    D3's per-contact recall toggle, global default off. Keeping it separate is what lets
-    the card be granted, audited and reasoned about on its own.
+    A PUT of its own rather than more fields on the contact PUT: these decide what the
+    bot REMEMBERS about a person and how it may behave with them, which is a privacy
+    decision with its own audience. Keeping it separate is what lets the card be
+    granted, audited and reasoned about on its own.
+
+    `memory_level` (round 3 renames the body key off `chatbot_memory_level` - the
+    RESPONSE / dict-builder field keeps that name, unchanged) replaces
+    `chatbot_recall_enabled` (DROPPED, model and column both, round 3 AC-MEM054):
+    present and null means "follow the system default", absent means "leave it
+    alone", same rule every other field on this card already follows. `extra="forbid"`
+    is what turns a body still naming the retired `chatbot_recall_enabled` into a 422
+    instead of a silently-ignored no-op.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     chatbot_profile: dict | None = None
-    chatbot_recall_enabled: bool | None = None
-    # S6: absent = leave alone, same rule as the two above.
+    memory_level: Literal["off", "conversation", "episodes", "full"] | None = None
+    # S6: absent = leave alone, same rule as every field on this card.
     chatbot_stock_allowed: bool | None = None
     # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): absent = leave
     # alone, same rule as every other field on this card.
@@ -282,11 +298,17 @@ async def update_contact_chatbot(
     """
     _ = current_user
     try:
-        contact = ContactService(db).get_contact(contact_id)
+        service = ContactService(db)
+        contact = service.get_contact(contact_id)
         if body.chatbot_profile is not None:
-            contact.chatbot_profile = body.chatbot_profile
-        if body.chatbot_recall_enabled is not None:
-            contact.chatbot_recall_enabled = body.chatbot_recall_enabled
+            # Chatbot memory lane A (contract section 5): "`chatbot_profile` in the
+            # body never touches `facts`" - see `write_chatbot_profile_keeping_facts`.
+            service.write_chatbot_profile_keeping_facts(contact.id, body.chatbot_profile)
+        # Present (including explicit null) sets it; absent leaves it alone - the same
+        # rule every other field on this card follows. `model_fields_set` is the only
+        # way to tell "sent as null" from "not sent at all" once both read as `None`.
+        if "memory_level" in body.model_fields_set:
+            contact.chatbot_memory_level = body.memory_level
         if body.chatbot_stock_allowed is not None:
             contact.chatbot_stock_allowed = body.chatbot_stock_allowed
         if body.notify_salesman is not None:
@@ -298,12 +320,100 @@ async def update_contact_chatbot(
         db.commit()
         db.refresh(contact)
         return RespondContactResponse.model_validate(
-            ContactService.contact_to_response_dict(contact)
+            ContactService.contact_to_response_dict(contact, db)
         )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error updating contact chatbot settings {contact_id}: {e}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
+#: Security review 26 Sep 2026 (S3): a `GET .../chatbot/memory` caller who holds
+#: only `user_management.contacts.view` still gets facts and open orders, but
+#: `episodes` (free-text conversation summaries) is `null` unless they ALSO hold
+#: this - the same "chat trace" slug `ai_assistant.py`'s prompt-test route already
+#: requires on top of its own edit slug. The safer of the two options the review
+#: offered: null out the one sensitive field rather than blocking the whole route.
+_CHATBOT_EPISODES_VIEW = "system.chat_history.view"
+
+
+@router.get("/{contact_id}/chatbot/memory")
+async def get_contact_chatbot_memory(
+    contact_id: str,
+    current_user: dict = Depends(require_permission("user_management.contacts.view")),
+    db: Session = Depends(get_db),
+):
+    """Facts, episodes and open orders (chatbot memory lane A, contract section 5).
+    Router is HTTP only - `ContactService.get_chatbot_memory` owns every read."""
+    from app.services.user_service import UserPermissionService
+
+    can_view_episodes = UserPermissionService(db).check_user_has_permission(
+        current_user["id"], _CHATBOT_EPISODES_VIEW
+    )
+    try:
+        return ContactService(db).get_chatbot_memory(contact_id, include_episodes=can_view_episodes)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reading chatbot memory for {contact_id}: {e}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
+class ContactFactUpdate(BaseModel):
+    # S4 (security review 26 Sep 2026): every fact value in the vocabulary is
+    # either free text or a short list of strings (`profile_facts.VOCABULARY`) -
+    # `object` accepted anything, including a nested structure no fact ever needs.
+    value: str | list[str]
+
+
+@router.put("/{contact_id}/chatbot/facts/{key}")
+async def put_contact_chatbot_fact(
+    contact_id: str,
+    key: str,
+    body: ContactFactUpdate,
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
+    db: Session = Depends(get_db),
+):
+    """Sets a staff fact; 422 on an unknown key, a CRM-only key, a value outside its
+    choices, or over its length/count limit (contract section 5)."""
+    from app.services.user_service import UserPermissionService
+
+    # Reviewer pass at d89110c0 (B4): the response is the memory GET's body, so it
+    # hides `episodes` exactly as the GET does.
+    can_view_episodes = UserPermissionService(db).check_user_has_permission(
+        current_user["id"], _CHATBOT_EPISODES_VIEW
+    )
+    try:
+        return ContactService(db).set_contact_fact(
+            contact_id, key, body.value, user_id=current_user["id"], include_episodes=can_view_episodes
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error setting chatbot fact {key} for {contact_id}: {e}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/{contact_id}/chatbot/facts/{key}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_contact_chatbot_fact(
+    contact_id: str,
+    key: str,
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
+    db: Session = Depends(get_db),
+):
+    """Hard delete through the deferred-action path - the FE fires this when the
+    countdown lapses (`contact_chatbot_fact.delete` in `app/services/record_actions.py`
+    already calls the same `ContactService.delete_contact_fact`); reachable directly
+    too, for a caller that has already waited out its own window."""
+    _ = current_user
+    try:
+        ContactService(db).delete_contact_fact(contact_id, key)
+        return None
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting chatbot fact {key} for {contact_id}: {e}", exc_info=True)
         raise handle_internal_error(str(e))
 
 
@@ -373,7 +483,7 @@ async def sync_contact(
     try:
         service = ContactService(db)
         contact = service.sync_contact_name(contact_id)
-        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact))
+        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact, db))
     except HTTPException:
         raise
     except ValueError as e:

@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import trace as trace_mod
 
@@ -271,15 +273,111 @@ def _apply(records: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def _memory(records: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """The three memory shelves before/after, each with its own writer (AC-1549)."""
+    """The three memory shelves before/after, each with its own writer (AC-1549),
+    plus the contact's context level, what this turn saved as a profile fact (S2 -
+    always `[]` until then) and the open question (chatbot memory lane A, contract
+    section 6)."""
     entries = _kind_records(records, "memory")
     if not entries:
         return None
     entry = entries[-1]
     return {
+        "level": entry.get("level"),
         "focus": entry.get("focus"),
         "profile": entry.get("profile"),
         "episodes": entry.get("episodes"),
+        "facts_saved": entry.get("facts_saved") or [],
+        "open_question": entry.get("open_question"),
+    }
+
+
+def _context(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The per-layer token budget report (chatbot memory lane A, contract section
+    6): `{level, layers: [{layer, est_tokens, cap, dropped}], total_est_tokens,
+    cap}`, exactly as `turn/context.py::assemble` returns it - `None` on a turn
+    that never reached a successful parse (no `context` event was ever added)."""
+    entries = _kind_records(records, "context")
+    if not entries:
+        return None
+    entry = entries[-1]
+    return {
+        "level": entry.get("level"),
+        "layers": entry.get("layers") or [],
+        "total_est_tokens": entry.get("total_est_tokens"),
+        "cap": entry.get("cap"),
+    }
+
+
+def _order(row: ChatbotTurn, db: Session | None = None) -> dict[str, Any] | None:
+    """The per-contact ordering ticket (chatbot memory lane A round 3, AC-MEM014) -
+    read-only, nothing to set. `ticket`/`wait_ms` come off the turn's own "queued"
+    STAGE record (`trace.py::record`, not a separate `add(kind, ...)` event) - S7
+    mode only, absent on an unordered or dry-run turn, which is the common case in
+    every environment without Redis ordering switched on. A queue TIMEOUT fails the
+    turn AT that same stage and carries `ticket` there too (no `wait_ms`, since it
+    never finished waiting), so a caller reads one shape either way.
+    `previous`/`next` are this contact's neighbouring turns on the SAME `is_test`
+    side, by `created_at` - never another contact's, never across worlds - and need a
+    live session, which `compose_trace_detail` does not always have one to hand; a
+    caller with a session passes it, and every other caller reads `None` here rather
+    than opening one of its own (this module is otherwise a read-only projection of a
+    single already-loaded row, contract with no DB dependency).
+    """
+    records = _records(row)
+    queued_records = [r for r in _stage_records(records) if r.get("stage") == "queued"]
+    queued = queued_records[-1] if queued_records else {}
+    facts = queued.get("facts") or {}
+    ticket = facts.get("ticket")
+    wait_ms = facts.get("wait_ms")
+    if ticket is None and wait_ms is None:
+        return None
+    if db is None:
+        return {"ticket": ticket, "wait_ms": wait_ms, "previous": None, "next": None}
+
+    earlier = (
+        db.query(ChatbotTurn)
+        .filter(
+            ChatbotTurn.contact_respond_id == row.contact_respond_id,
+            ChatbotTurn.is_test.is_(row.is_test),
+            ChatbotTurn.created_at < row.created_at,
+        )
+        .order_by(ChatbotTurn.created_at.desc())
+        .first()
+    )
+    later = (
+        db.query(ChatbotTurn)
+        .filter(
+            ChatbotTurn.contact_respond_id == row.contact_respond_id,
+            ChatbotTurn.is_test.is_(row.is_test),
+            ChatbotTurn.created_at > row.created_at,
+        )
+        .order_by(ChatbotTurn.created_at.asc())
+        .first()
+    )
+    return {
+        "ticket": ticket,
+        "wait_ms": wait_ms,
+        "previous": _order_neighbor(earlier),
+        "next": _order_neighbor(later),
+    }
+
+
+def _order_neighbor(row: ChatbotTurn | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    envelope = row.envelope if isinstance(row.envelope, dict) else {}
+    inner = (envelope.get("message") or {}).get("message") or {}
+    text_value = (inner.get("message") or {}).get("text") or ""
+    # AC-MEM015: the neighbour's OWN ticket, off its OWN "queued" stage - so the
+    # drawer's "ran after"/"next" can show "#N" without a second round trip. `None`
+    # for a neighbour that never queued (ordering off, or a dry run).
+    neighbor_records = [r for r in _stage_records(_records(row)) if r.get("stage") == "queued"]
+    neighbor_ticket = ((neighbor_records[-1].get("facts") or {}) if neighbor_records else {}).get("ticket")
+    return {
+        "turn_id": row.id,
+        "created_at": row.created_at,
+        "message": str(text_value)[:120],
+        "ticket": neighbor_ticket,
     }
 
 
@@ -294,7 +392,7 @@ def _prompt_text(records: list[dict[str, Any]]) -> str | None:
     return text[:PROMPT_TEXT_CHAR_CAP]
 
 
-def compose_trace_detail(row: ChatbotTurn) -> dict[str, Any]:
+def compose_trace_detail(row: ChatbotTurn, db: Session | None = None) -> dict[str, Any]:
     records = _records(row)
     return {
         "stages": _stages(records),
@@ -308,5 +406,7 @@ def compose_trace_detail(row: ChatbotTurn) -> dict[str, Any]:
         "session": _session(records),
         "apply": _apply(records),
         "memory": _memory(records),
+        "context": _context(records),
+        "order": _order(row, db),
         "prompt_text": _prompt_text(records),
     }

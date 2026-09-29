@@ -51,7 +51,6 @@ from app.models.project_so import (
 )
 from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
 from app.services import planning_change_service
-from app.services.error_handler import AppException
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
 from tests._pg_fixture import blank_session
@@ -316,6 +315,10 @@ def test_ac_s3_6_amend_refuses_a_buy_over_an_own_arrival_reserve(api):
     contract choices at the top of this file name the exact shape): a single `reserve`
     source tagged `source: own_arrival`, `supply_document` naming the PO. The amend tries
     to convert the whole 20 to a Buy.
+
+    #1362 (owner ruling, 29 Sep 2026) REVERSES this AC: an amend that Buys over goods that
+    landed for the line is the planner's recorded intent and is accepted; the confirm that
+    applies it says so and purchasing adjusts the linkage. Pinned as accepted now.
     """
     client, world = api
     db = world.db
@@ -355,16 +358,12 @@ def test_ac_s3_6_amend_refuses_a_buy_over_an_own_arrival_reserve(api):
         "buy_qty": "20", "buy_reason": "ZZT trying to buy over own-arrival stock",
         "amend_reason": "ZZT testing the refusal",
     }
-    try:
-        planning_change_service.set_row_decision(db, str(batch.id), str(row.id), "amend", composition)
-    except AppException as exc:
-        detail = exc.detail if isinstance(exc.detail, dict) else {}
-        assert detail.get("code") == "planning_change_buy_over_own_arrival", detail
-        message = str(detail.get("message"))
-        assert "20" in message, message
-        assert "ZZT-PO-OWNARR6" in message, message
-    else:
-        assert False, "expected planning_change_buy_over_own_arrival"
+    planning_change_service.set_row_decision(db, str(batch.id), str(row.id), "amend", composition)
+    db.flush()
+    assert row.decision == "amend", row.decision
+    assert (row.composition_json or {}).get("buy_qty") in ("20", "20.0000", 20), (
+        row.composition_json
+    )
 
 
 def _path_picker_world(db, world, *, on_hand):

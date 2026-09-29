@@ -199,29 +199,19 @@ def _send_invitation_link_for_user(db: Session, user) -> str:
         if base_url
         else f"{set_password_path}?token={token}"
     )
-    subject = "You're invited to join the platform"
-    body_text = (
-        f"Hello{f', {user.name}' if user.name else ''},\n\n"
-        "You have been invited to join the platform. Use the link below to set your password. This link is valid for 7 days.\n\n"
-        f"{invite_link}\n\n"
-        "After setting your password, you can sign in with your email and the new password.\n\n"
-        "This is a system-generated email. Please do not reply."
-    )
-    body_html = (
-        f"<p>Hello{f', {user.name}' if user.name else ''},</p>\n"
-        "<p>You have been invited to join the platform. Use the link below to set your password. This link is valid for 7 days.</p>\n"
-        f'<p><a href="{invite_link}">{invite_link}</a></p>\n'
-        "<p>After setting your password, you can sign in with your email and the new password.</p>\n"
-        "<p><em>This is a system-generated email. Please do not reply.</em></p>"
-    )
-
     try:
+        from app.services.email_template_service import EmailTemplateService
+
+        rendered = EmailTemplateService(db).render_code(
+            "user_invitation",
+            {"recipient": {"name": user.name or "", "email": user.email or ""}, "invite_link": invite_link},
+        )
         NotificationService(db).create_with_channel_preferences(
             user_id=str(user.id),
             type="user_invitation",
-            title=subject,
-            body=body_text,
-            data={"body_html": body_html, "from_name": "Sorento AI System"},
+            title=rendered["subject"],
+            body=rendered["body_text"],
+            data={"body_html": rendered["body_html"], "from_name": "Sorento AI System"},
             send_in_app=False,
             send_email=True,
             send_web_push=False,

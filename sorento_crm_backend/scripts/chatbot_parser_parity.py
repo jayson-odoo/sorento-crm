@@ -38,11 +38,34 @@ Usage:
     venv/bin/python scripts/chatbot_parser_parity.py --live-llm --n 50 --json out.json
 
 Costs real tokens: 2 calls per input. Not part of pytest, not part of CI.
+
+--memory-cases (AC-MEM068, plan 8.2)
+=====================================
+
+A second, unrelated mode of this same script: `tests/chatbot/fixtures/parser_memory_cases.json`
+(30 cases, each an assembled user block plus its structured inputs and an expected verdict
+shape) through the REAL parser call, TWICE per case - once with the memory blocks the fixture
+carries, once with the SAME inputs rendered at level `off` (memory stripped) - and grades each
+against `expected`. No provider call happens unless this flag is given; the shape of the
+fixture itself is covered with no network at all by
+`tests/chatbot/test_parser_memory_cases_fixture.py`.
+
+    venv/bin/python scripts/chatbot_parser_parity.py --memory-cases
+    venv/bin/python scripts/chatbot_parser_parity.py --memory-cases --prompt-version 4
+    venv/bin/python scripts/chatbot_parser_parity.py --memory-cases --cases path/to/cases.json
+
+Exits 0 only when at least 27/30 are correct WITH memory and at least 24/30 are WRONG
+ablated (the plan's own bars) - a case that is not wrong under ablation does not test memory.
+`--prompt-version <n>` pins a specific `chatbot_semantic_parser` registry version by its
+integer version number; unset defaults to the NEWEST version ever published to that name,
+never the `production` label (a candidate prompt is exactly what this mode exists to grade
+before it is promoted).
 """
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 import sys
@@ -303,6 +326,210 @@ def table(title: str, agree: Counter, total: Counter, keys) -> None:
         print(f"  keys with any disagreement: {', '.join(worst)}")
 
 
+# --------------------------------------------------------------------------- #
+# --memory-cases (AC-MEM068, plan 8.2)
+# --------------------------------------------------------------------------- #
+
+DEFAULT_MEMORY_CASES_PATH = BACKEND_ROOT / "tests" / "chatbot" / "fixtures" / "parser_memory_cases.json"
+MEMORY_CASES_PASS_WITH = 27
+MEMORY_CASES_PASS_ABLATED_WRONG = 24
+
+
+def load_memory_cases(path: Path) -> list[dict]:
+    with path.open(encoding="utf-8") as fh:
+        cases = json.load(fh)
+    if len(cases) != 30:
+        print(f"warn: {path} holds {len(cases)} cases, plan 8.2 expects about 30")
+    return cases
+
+
+def _case_layers(case: dict, *, level: str):
+    from app.services.chatbot.turn import context as context_mod
+
+    return context_mod.ContextLayers(
+        level=level,
+        profile_facts=case["profile_facts"],
+        summaries=case["summaries"],
+        earlier_messages=case["earlier_messages"],
+        previous_response=case["previous_response"],
+        current_subject=case["current_subject"],
+        pending_kind=None,
+        pending_options=None,
+        settings_profile_line=None,
+        current_message=case["current_message"],
+        reply_to=None,
+        media_line=None,
+    )
+
+
+def resolve_memory_cases_prompt(db, *, prompt_version: int | None, current_date: str):
+    """(`ParserConfig`, resolved version number) for the chosen `chatbot_semantic_parser`
+    registry version - a specific one via `--prompt-version`, or (default) the NEWEST
+    version ever published to that name, deliberately never the `production` label: a
+    candidate prompt not yet promoted is exactly what this mode exists to grade."""
+    from app.models.ai_prompt import AIPromptVersion
+    from app.services.chatbot.head.parser import PROMPT_KEY, ParserError, resolve_config
+
+    query = db.query(AIPromptVersion).filter(AIPromptVersion.name == PROMPT_KEY)
+    if prompt_version is not None:
+        row = query.filter(AIPromptVersion.version == prompt_version).first()
+        if row is None:
+            raise ParserError(f"no {PROMPT_KEY!r} version {prompt_version} in the registry")
+    else:
+        row = query.order_by(AIPromptVersion.version.desc()).first()
+        if row is None:
+            raise ParserError(f"no {PROMPT_KEY!r} versions published in the registry at all")
+    config = resolve_config(db, current_date=current_date, override_version_id=row.id)
+    return config, row.version
+
+
+def _entity_matches(actual_entities: list, expected_entity: dict) -> bool:
+    """One expected entity found in the verdict's own `entities`, by `canonical_code`
+    OR `raw` (case-insensitive, either side may carry the value the other names - the
+    live model is free to resolve a raw token to its code or leave it raw), and,
+    when named, the same `current_message` flag."""
+    want_raw = str(expected_entity.get("raw") or "").strip().lower()
+    want_code = str(expected_entity.get("canonical_code") or "").strip().lower()
+    want_cm = expected_entity.get("current_message")
+    for entity in actual_entities or []:
+        if not isinstance(entity, dict):
+            continue
+        got_raw = str(entity.get("raw") or "").strip().lower()
+        got_code = str(entity.get("canonical_code") or "").strip().lower()
+        got_values = {v for v in (got_raw, got_code) if v}
+        want_values = {v for v in (want_raw, want_code) if v}
+        if not (got_values & want_values):
+            continue
+        if want_cm is not None and bool(entity.get("current_message")) != bool(want_cm):
+            continue
+        return True
+    return False
+
+
+def grade_verdict(verdict: dict | None, expected: dict) -> tuple[bool, list[str]]:
+    """`True` plus an empty reason list when every non-null `expected` field is
+    satisfied; the caller counts wrong-under-ablation the same way, since a case
+    that stays "correct" without memory is not testing memory at all."""
+    if verdict is None:
+        return False, ["parser call failed"]
+    reasons: list[str] = []
+    if expected.get("message_type") is not None and verdict.get("message_type") != expected["message_type"]:
+        reasons.append(f"message_type: got {verdict.get('message_type')!r}, want {expected['message_type']!r}")
+    if expected.get("domain_hint") is not None and verdict.get("domain_hint") != expected["domain_hint"]:
+        reasons.append(f"domain_hint: got {verdict.get('domain_hint')!r}, want {expected['domain_hint']!r}")
+    # `profile_statements`, the list the parser emits (reviewer pass at d89110c0, S17:
+    # the singular key this used to read is in neither the fixture nor the schema, so
+    # every stated case passed free). Each wanted statement must be present, by key and,
+    # when named, by value.
+    for want in expected.get("profile_statements") or []:
+        got = [s for s in (verdict.get("profile_statements") or []) if isinstance(s, dict)]
+        if not any(
+            s.get("key") == want.get("key") and ("value" not in want or s.get("value") == want["value"])
+            for s in got
+        ):
+            reasons.append(f"profile_statements: missing {want}, got {got}")
+    expected_entities = expected.get("entities")
+    if expected_entities is not None:
+        actual_entities = verdict.get("entities") or []
+        if expected_entities == []:
+            if actual_entities:
+                reasons.append(f"entities: expected none, got {actual_entities}")
+        else:
+            for wanted in expected_entities:
+                if not _entity_matches(actual_entities, wanted):
+                    reasons.append(f"entities: missing {wanted}")
+    return (not reasons), reasons
+
+
+def counts_for_ablation(case: dict) -> bool:
+    """A case the ablation bar counts: one whose answer needs memory. A stated fact
+    (`expected.profile_statements`) is read off the current message alone, so it stays
+    right with memory ablated and says nothing about memory (S17)."""
+    return bool(case.get("needs_memory")) and not (case.get("expected") or {}).get("profile_statements")
+
+
+def run_memory_cases(args) -> int:
+    from app.database import SessionLocal
+    from app.services.chatbot.head.parser import ParserError, parse
+    from app.services.chatbot.turn import context as context_mod
+
+    cases_path = Path(args.cases) if args.cases else DEFAULT_MEMORY_CASES_PATH
+    if not cases_path.is_file():
+        print(f"STOP: no fixture at {cases_path}")
+        return 2
+    cases = load_memory_cases(cases_path)
+
+    os.environ.setdefault("no_proxy", "*")
+    current_date = args.current_date or "Friday, 04 September 2026"
+    db = SessionLocal()
+    try:
+        try:
+            config, resolved_version = resolve_memory_cases_prompt(
+                db, prompt_version=args.prompt_version, current_date=current_date
+            )
+        except ParserError as exc:
+            print(f"STOP: {exc}")
+            return 2
+    finally:
+        db.close()
+
+    print(
+        f"chatbot_semantic_parser v{resolved_version}  provider={config.provider} "
+        f"model={config.model}  cases={len(cases)}"
+    )
+
+    with_memory_correct = 0
+    ablated_wrong = 0
+    ablation_cases = sum(1 for case in cases if counts_for_ablation(case))
+    # The bar keeps its share (24 of 30) over the cases it now counts.
+    ablated_wrong_bar = math.ceil(MEMORY_CASES_PASS_ABLATED_WRONG * ablation_cases / 30)
+    for index, case in enumerate(cases, 1):
+        user_block_with_memory, _report = context_mod.assemble(_case_layers(case, level="full"))
+        user_block_ablated, _report_off = context_mod.assemble(_case_layers(case, level="off"))
+
+        try:
+            verdict_with = parse(config, user_block_with_memory)
+        except ParserError as exc:
+            verdict_with, err_with = None, str(exc)
+        else:
+            err_with = ""
+        try:
+            verdict_ablated = parse(config, user_block_ablated)
+        except ParserError as exc:
+            verdict_ablated, err_ablated = None, str(exc)
+        else:
+            err_ablated = ""
+
+        correct_with, reasons_with = grade_verdict(verdict_with, case["expected"])
+        correct_ablated, reasons_ablated = grade_verdict(verdict_ablated, case["expected"])
+        if correct_with:
+            with_memory_correct += 1
+        if not correct_ablated and counts_for_ablation(case):
+            ablated_wrong += 1
+
+        with_flag = "OK" if correct_with else "WRONG"
+        ablated_flag = "OK" if correct_ablated else "WRONG"
+        print(f"[{index}/{len(cases)}] {case['id']:<40} with-memory={with_flag:<5} ablated={ablated_flag}")
+        if not correct_with:
+            for reason in reasons_with or [err_with]:
+                print(f"    with-memory: {reason}")
+        if correct_ablated:
+            print(f"    ablated STILL CORRECT (does not test memory): {reasons_ablated or err_ablated}")
+
+    print(
+        f"\nwith memory: {with_memory_correct}/{len(cases)} correct; "
+        f"ablated: {ablated_wrong}/{ablation_cases} wrong"
+    )
+    passed = with_memory_correct >= MEMORY_CASES_PASS_WITH and ablated_wrong >= ablated_wrong_bar
+    print(
+        f"bars: with-memory >= {MEMORY_CASES_PASS_WITH}/30 "
+        f"({'PASS' if with_memory_correct >= MEMORY_CASES_PASS_WITH else 'FAIL'}), "
+        f"ablated-wrong >= {ablated_wrong_bar}/{ablation_cases} "
+        f"({'PASS' if ablated_wrong >= ablated_wrong_bar else 'FAIL'})"
+    )
+    return 0 if passed else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--live-llm", action="store_true", help="actually call the provider")
@@ -321,7 +548,39 @@ def main() -> int:
             "number is unreadable without it."
         ),
     )
+    ap.add_argument(
+        "--memory-cases",
+        action="store_true",
+        help=(
+            "run tests/chatbot/fixtures/parser_memory_cases.json through the live parser "
+            "instead of the corpus-parity mode above (AC-MEM068, plan 8.2); every other "
+            "flag in this group is ignored"
+        ),
+    )
+    ap.add_argument(
+        "--prompt-version",
+        type=int,
+        default=None,
+        help=(
+            "--memory-cases only: a chatbot_semantic_parser registry VERSION NUMBER to "
+            "grade. Default: the newest version ever published to that name, never the "
+            "production label"
+        ),
+    )
+    ap.add_argument(
+        "--cases",
+        default=None,
+        help="--memory-cases only: fixture path (default tests/chatbot/fixtures/parser_memory_cases.json)",
+    )
+    ap.add_argument(
+        "--current-date",
+        default=None,
+        help="--memory-cases only: override the prompt's {{current_date}} (default a fixed date)",
+    )
     args = ap.parse_args()
+
+    if args.memory_cases:
+        return run_memory_cases(args)
 
     os.environ.setdefault("no_proxy", "*")
     groups = {g.strip() for g in args.groups.split(",") if g.strip()}

@@ -52,6 +52,7 @@ from app.services.chatbot.head import grounding, parser
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
+from app.services.chatbot.lanes import fallback as fallback_mod
 from app.services.chatbot.lanes.escalation import run as run_escalation_lane, routing_line as escalation_routing_line
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.usage import record_parser_usage
@@ -63,8 +64,11 @@ from app.services.chatbot.turn import pending as turn_pending
 from app.services.chatbot.turn import question as turn_question
 from app.services.chatbot.turn import state as turn_state
 from app.services.chatbot.turn import compose as turn_compose
+from app.services.chatbot.turn import context as context_mod
+from app.services.chatbot.turn import episode_digest as episode_digest_mod
 from app.services.chatbot.turn import fetch as run_fetch_mod
 from app.services.chatbot.turn import memory as memory_mod
+from app.services.chatbot.turn import profile_facts as profile_facts_mod
 from app.services.chatbot.turn import tail as turn_tail
 from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as turn_apply
@@ -493,11 +497,7 @@ def _contact_respond_id(envelope: Envelope) -> str:
 
 def _is_human_intervened(envelope: Envelope) -> bool:
     """`is-human-intervened`: `custom_fields.find(...)?.value?.toBoolean() == true`."""
-    row = jsc.find(
-        jsc.get(envelope.contact, "custom_fields"),
-        lambda x: jsc.get(x, "name") == "is_human_intervened",
-    )
-    return jsc.to_boolean(jsc.get(row, "value")) is True
+    return memory_mod.contact_is_human_intervened(envelope.contact)
 
 
 def _attachment_type(envelope: Envelope) -> Any:
@@ -909,6 +909,7 @@ def _record_parser_usage(
     contact_respond_id: str,
     dry_run: bool,
     answered: bool,
+    turn_id: str | None = None,
 ) -> None:
     """One `ai_assistant_usage_logs` row for the turn's parser call.
 
@@ -924,6 +925,7 @@ def _record_parser_usage(
         response_time_ms=int((time.perf_counter() - started) * 1000),
         contact_respond_id=contact_respond_id,
         answered=answered,
+        chatbot_turn_id=turn_id,
     )
 
 
@@ -2088,6 +2090,14 @@ def run_turn(
             stage[0] = "queued"
         try:
             if ticket is not None:
+                # Chatbot memory lane A round 3 (AC-MEM014): the drawer's own Order
+                # panel reads this back through `trace_detail._order`, off the
+                # "queued" STAGE record itself - folded in rather than a separate
+                # "queue" event, so a successful wait and a queue TIMEOUT (the
+                # `except Exception` handler below, same stage) carry `ticket` in
+                # the one place. A turn that never queued (S7 off, or unordered)
+                # never gets a "queued" stage record at all.
+                queue_wait_started = time.monotonic()
                 try:
                     try:
                         dispatch.wait_for_turn(
@@ -2106,6 +2116,16 @@ def run_turn(
                             return _answered_by_predecessor(session_factory, turn_id)
                         raise
                     dispatch.mark_running(redis, contact_respond_id, ticket)
+                    turn_trace.record(
+                        "queued",  # type: ignore[arg-type]
+                        status="ok",
+                        summary="Waited for this contact's earlier messages to finish.",
+                        why="Replies to one contact are sent in the order the messages arrived.",
+                        facts={
+                            "ticket": ticket,
+                            "wait_ms": int((time.monotonic() - queue_wait_started) * 1000),
+                        },
+                    )
                 except dispatch.ORDERING_ERRORS:
                     # Redis went away mid-wait. Same call as above: answer unordered
                     # rather than not at all. `QueueWait` is NOT one of these and still
@@ -2169,12 +2189,19 @@ def run_turn(
         except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never dropped
             message = f"{type(exc).__name__}: {exc}"
             logger.exception("chatbot turn %s failed at stage %s", turn_id, stage[0])
+            # AC-MEM014: a queue TIMEOUT (`dispatch.QueueWait`, uncaught by
+            # `dispatch.ORDERING_ERRORS`) fails the turn at "queued" - the ticket it
+            # was waiting for rides on this same failure record, the one place
+            # `trace_detail._order` reads `ticket`/`wait_ms` from.
+            failure_facts: dict[str, Any] = {"stage": stage[0]}
+            if stage[0] == "queued" and ticket is not None:
+                failure_facts["ticket"] = ticket
             turn_trace.record(
                 stage[0],  # type: ignore[arg-type]
                 status="failed",
                 summary="The turn stopped before it could be answered.",
                 why="Something the turn depends on did not respond as expected.",
-                facts={"stage": stage[0]},
+                facts=failure_facts,
                 error=message,
                 raw=None,
             )
@@ -2383,6 +2410,447 @@ def _fanout_domain_hint(domains: list[Any], entities: Any) -> Any:
     return None
 
 
+_WEEKDAY_ABBR = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _short_day_time(when: Any) -> str:
+    if when is None:
+        return ""
+    # The dealers' clock, as the episode summaries read (reviewer pass at d89110c0, S14).
+    when = episode_digest_mod.local_time(when)
+    return f"{_WEEKDAY_ABBR[when.weekday()]} {when.strftime('%H:%M')}"
+
+
+def _memory_intake(
+    db: Session,
+    *,
+    contact_respond_id: str,
+    dry_run: bool,
+    turn_id: str | None = None,
+    console: bool = False,
+) -> dict[str, Any]:
+    """Everything `context.assemble` needs beyond what `turn_runtime.load_profile`
+    already reads, loaded once at intake and timed as `memory_ms` (contract section
+    3/6.6): the effective level, the last 3 closed-frame summaries (level `past`/
+    `full`), the live episode's earlier messages (level `conversation`/`past`/
+    `full`), and the "About this contact" profile slice (level `full` only - the
+    one level the parser sees it at).
+
+    Security review 26 Sep 2026 (B1): `respond_io_id` is unique WITHIN a workspace
+    only, never globally, so this resolves the ONE `respond_contacts` row through
+    `turn_runtime.resolve_contact_pk` (workspace first, NULL-workspace fallback)
+    before touching anything - an ambiguous or absent id degrades memory to `off`
+    for this turn (no fact write, no frame read) rather than guessing whose row it
+    is. `contact_pk` rides on the returned dict so every later fact write in this
+    same turn (tier, tally, `profile_statement`) locks by PRIMARY KEY, never by the
+    ambiguous string again. Never raises: a memory failure degrades to `off` with a
+    trace note, it does not fail the turn.
+    """
+    from app.models.chatbot_turn import ChatbotTurn
+    from app.models.conversation_frame import ConversationFrame
+    from app.models.user import SystemSetting
+    from app.services.chatbot import turn_runtime as turn_runtime_mod
+
+    started = time.perf_counter()
+
+    def _degraded(reason: str) -> dict[str, Any]:
+        return {
+            "effective_level": "off",
+            "level_source": "off",
+            "own_level": None,
+            "contact_pk": None,
+            "summaries": [],
+            "earlier_messages": [],
+            "profile_facts": None,
+            "read_frames": [],
+            "profile_snapshot": None,
+            "ms": int((time.perf_counter() - started) * 1000),
+            "degraded_reason": reason,
+        }
+
+    try:
+        space_id = default_space_id(db)
+        resolved = turn_runtime_mod.resolve_contact_pk(db, contact_respond_id, space_id)
+    except Exception:  # noqa: BLE001 - a resolution failure degrades, never fails the turn
+        logger.warning("chatbot: memory contact resolution failed", exc_info=True)
+        return _degraded("resolution_error")
+    if resolved is None:
+        return _degraded("ambiguous_or_missing_contact")
+    contact_pk, own_level = resolved
+    # Frames and the tally are keyed by `respond_io_id` alone, so an id another
+    # workspace's contact also carries would mix two people's memory. Refused here the
+    # same way the staff GET refuses it (reviewer pass at d89110c0, N11).
+    from app.models.access import RespondContact
+
+    shared = (
+        db.query(RespondContact.id)
+        .filter(RespondContact.respond_io_id == contact_respond_id)
+        .limit(2)
+        .count()
+    )
+    if shared > 1:
+        return _degraded("respond_id_shared")
+
+    try:
+        return _memory_intake_resolved(
+            db,
+            contact_respond_id=contact_respond_id,
+            contact_pk=contact_pk,
+            own_level=own_level,
+            dry_run=dry_run,
+            started=started,
+            turn_id=turn_id,
+            console=console,
+        )
+    except Exception:  # noqa: BLE001 - a memory read failure degrades, never fails the turn
+        logger.warning("chatbot: memory intake failed", exc_info=True)
+        return _degraded("intake_error")
+
+
+def _memory_intake_resolved(
+    db: Session,
+    *,
+    contact_respond_id: str,
+    contact_pk: str,
+    own_level: str | None,
+    dry_run: bool,
+    started: float,
+    turn_id: str | None = None,
+    console: bool = False,
+) -> dict[str, Any]:
+    from app.models.access import RespondContact
+    from app.models.chatbot_turn import ChatbotTurn
+    from app.models.conversation_frame import ConversationFrame
+    from app.models.user import SystemSetting
+
+    system_memory = db.query(SystemSetting.chatbot_memory).scalar()
+    effective = memory_mod.resolve_level(own_level, system_memory)
+    # AC-MEM052/056 (round 3): WHERE the level came from - the contact's own valid
+    # level, the system default, or off because neither applies - traced on the
+    # `context` event so a "why does this contact see nothing" question is
+    # answered by the trace alone, without cross-referencing settings.
+    level_source = memory_mod.resolve_level_source(own_level, system_memory)
+
+    summaries: list[str] = []
+    read_frames: list[dict[str, Any]] = []
+    earlier_messages: list[dict[str, Any]] = []
+    profile_facts_list: list[dict[str, Any]] | None = None
+    newest_frame = None
+
+    if effective in ("episodes", "full"):
+        frames = (
+            db.query(ConversationFrame)
+            .filter(
+                ConversationFrame.contact_respond_id == contact_respond_id,
+                ConversationFrame.is_test.is_(dry_run),
+                ConversationFrame.status == "closed",
+            )
+            .order_by(ConversationFrame.last_activity_at.desc())
+            .limit(3)
+            .all()
+        )
+        summaries = [memory_mod.frame_line(f) for f in frames]
+        read_frames = [{"id": f.id} for f in frames]
+        newest_frame = frames[0] if frames else None
+
+    if effective in ("conversation", "episodes", "full"):
+        if newest_frame is None and effective == "conversation":
+            newest_frame = (
+                db.query(ConversationFrame)
+                .filter(
+                    ConversationFrame.contact_respond_id == contact_respond_id,
+                    ConversationFrame.is_test.is_(dry_run),
+                )
+                .order_by(ConversationFrame.last_activity_at.desc())
+                .first()
+            )
+        live_query = db.query(ChatbotTurn).filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(dry_run),
+        )
+        if turn_id is not None:
+            # `_insert_turn` has already committed THIS turn's row; it is the current
+            # message, never an earlier one (reviewer pass at d89110c0, S1).
+            live_query = live_query.filter(ChatbotTurn.id != turn_id)
+        if dry_run and console:
+            # The console's world is console turns only, not other dry runs of the
+            # same contact (Prompts screen, API) - S15.
+            live_query = live_query.filter(ChatbotTurn.ingress == "console")
+        if newest_frame is not None:
+            live_query = live_query.filter(ChatbotTurn.created_at > newest_frame.last_activity_at)
+        live_turns = live_query.order_by(ChatbotTurn.created_at.desc()).limit(3).all()
+        for row in reversed(live_turns):  # oldest first, per the L3 header
+            text_value = memory_mod._turn_message_text(row)
+            if text_value:
+                earlier_messages.append({"created_at": _short_day_time(row.created_at), "text": text_value})
+
+    contact_row = db.query(RespondContact).filter(RespondContact.id == contact_pk).first()
+    # The `memory` event's profile BEFORE, taken here, before any write this turn makes
+    # (reviewer pass at d89110c0, S22).
+    profile_snapshot = _profile_snapshot(contact_row)
+    if effective == "full":
+        if contact_row is not None:
+            merged = profile_facts_mod.merged_facts_for_display(db, contact_row)
+            crm = profile_facts_mod.crm_view(db, contact_row)
+            # Security review 26 Sep 2026 (S2): structured, not the old joined
+            # string - `context.py::_render_l5` builds "About this contact:"
+            # straight from this, never by re-splitting a string on `;`.
+            profile_facts_list = profile_facts_mod.structured_slice(merged, crm)
+
+    return {
+        "effective_level": effective,
+        "level_source": level_source,
+        "own_level": own_level,
+        "contact_pk": contact_pk,
+        "summaries": summaries,
+        "earlier_messages": earlier_messages,
+        "profile_facts": profile_facts_list,
+        "read_frames": read_frames,
+        "profile_snapshot": profile_snapshot,
+        "ms": int((time.perf_counter() - started) * 1000),
+    }
+
+
+def _fact_value(facts: list[dict[str, Any]] | None, key: str) -> Any:
+    for fact in facts or []:
+        if isinstance(fact, dict) and fact.get("key") == key:
+            return fact.get("value")
+    return None
+
+
+def _as_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _live_customer(db: Session, contact_pk: str | None) -> tuple[str | None, str | None]:
+    """The contact's primary customer name and its salesperson, read live off the CRM
+    link (never memory, so every level reads it; plan 7.3 examples 4 and 6)."""
+    if not contact_pk:
+        return None, None
+    row = profile_facts_mod.primary_customer(db, contact_pk)
+    if row is None:
+        return None, None
+    customer, agent = row
+    return (customer.customer_name or None), profile_facts_mod.salesperson_name(agent)
+
+
+def _clarifier_memory_slice(memory_intake: dict[str, Any]) -> str:
+    """The clarifier's view of memory (plan S4): the profile slice (Full only) and the
+    conversation summaries (Past conversations and Full), under
+    `fallback.CLARIFIER_MEMORY_TOKENS`, oldest summaries dropped first. Empty at
+    Off and at "This conversation"."""
+    from app.services.chatbot.lanes import fallback as fallback_mod
+
+    lines: list[str] = []
+    facts = memory_intake.get("profile_facts") or []
+    if facts:
+        lines.append(
+            "About this contact: "
+            + "; ".join(f"{f.get('key', '').replace('_', ' ')} {f.get('value')}" for f in facts if isinstance(f, dict))
+        )
+    summaries = list(memory_intake.get("summaries") or [])
+    while True:
+        block = lines + ([f"Recent conversations: {' | '.join(summaries)}"] if summaries else [])
+        text_value = "\n".join(block)
+        if context_mod.est_tokens(text_value) <= fallback_mod.CLARIFIER_MEMORY_TOKENS or not (summaries or lines):
+            return text_value
+        if summaries:
+            summaries.pop()  # newest-first, so the oldest goes first
+        else:
+            lines = []
+
+
+def _fallback_context(
+    db: Session,
+    *,
+    verdict: dict[str, Any],
+    memory_intake: dict[str, Any],
+    contact_respond_id: str,
+    dry_run: bool,
+    turn_id: str,
+    policy: Any,
+) -> Any:
+    """Everything the graceful fallback reply needs from the database, read while the
+    routing session is still open (S4, plan 7.1 and 7.2). Each memory field is filled
+    only when the contact's level grants its layer (plan 6.0): the open conversation at
+    "This conversation" and above, closed conversations at "Past conversations" and
+    above, profile facts (usual products and site, saved language) at Full only. The
+    CRM link (customer, the order team) is live data, read at every level."""
+    from app.models.access import RespondContact
+    from app.services.chatbot import copy as copy_mod
+    from app.services.chatbot.lanes import fallback as fallback_mod
+    from app.services.chatbot.tail.outcome import pretty_team
+
+    level = memory_intake.get("effective_level") or "off"
+    message_type = verdict.get("message_type")
+    if message_type == "history_question" and level != "off":
+        kind = "history"
+    elif message_type == "unknown":
+        kind = "unknown"
+    else:
+        kind = "small_talk"
+
+    history = memory_mod.history_items(
+        db,
+        contact_respond_id=contact_respond_id,
+        is_test=dry_run,
+        current_turn_id=turn_id,
+        level=level,
+    )
+    facts = memory_intake.get("profile_facts") if level == "full" else None
+    usual_sites = _as_list(_fact_value(facts, "usual_sites"))
+
+    contact_pk = memory_intake.get("contact_pk")
+    customer, _salesperson = _live_customer(db, contact_pk)
+    first_name = None
+    if contact_pk:
+        first_name = db.query(RespondContact.first_name).filter(RespondContact.id == contact_pk).scalar()
+    order_domain = policy.domain("order") if policy is not None else None
+    team_code = getattr(order_domain, "escalation_team_code", None)
+
+    statements = verdict.get("profile_statements")
+    noted = [
+        s
+        for s in (statements[:3] if isinstance(statements, list) else [])
+        if isinstance(s, dict) and s.get("key") in profile_facts_mod.VOCABULARY
+    ]
+    saved_language = _fact_value(facts, "language")
+
+    return fallback_mod.FallbackContext(
+        kind=kind,
+        level=level,
+        history=history if kind == "history" else [],
+        last_time=history[0] if history else None,
+        usual_products=_as_list(_fact_value(facts, "usual_products")),
+        usual_site=usual_sites[0] if usual_sites else None,
+        customer=customer,
+        team=pretty_team(team_code).title() if team_code else None,
+        noted=noted,
+        saved_language=saved_language if isinstance(saved_language, str) else None,
+        first_name=(first_name or "").strip() or None,
+        memory_slice=_clarifier_memory_slice(memory_intake) if level in ("episodes", "full") else "",
+        copy=copy_mod.resolve(db),
+    )
+
+
+def _carried_line(
+    db: Session,
+    *,
+    verdict: dict[str, Any],
+    memory_intake: dict[str, Any],
+    contact_respond_id: str,
+    dry_run: bool,
+) -> str | None:
+    """AC-MEM083: a business answer whose subject the parser carried from memory (every
+    entity `current_message: false`, none in the live conversation) opens with one line
+    naming what was carried - from a closed conversation ("Carrying on from Tue 23 Sep:
+    outstanding DO for CC001 Chin Chun Trading."), else from the usual products ("Your
+    usual: SRTWB1455, M486-75-BL."). None when nothing came from memory."""
+    from app.models.conversation_frame import ConversationFrame
+    from app.services.chatbot import copy as copy_mod
+
+    level = memory_intake.get("effective_level") or "off"
+    if level not in ("episodes", "full"):
+        return None
+    entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
+    if not entities or any(e.get("current_message") is not False for e in entities):
+        return None
+    codes = [str(e.get("canonical_code") or e.get("raw") or "").strip() for e in entities]
+    codes = [c for c in codes if c]
+    if not codes:
+        return None
+    earlier = " ".join(str(m.get("text") or "") for m in memory_intake.get("earlier_messages") or []).upper()
+    if all(c.upper() in earlier for c in codes):
+        return None  # carried from THIS conversation, not from memory
+
+    facts = memory_intake.get("profile_facts") if level == "full" else None
+    language = _fact_value(facts, "language")
+    canned = copy_mod.resolve(db)
+
+    # "The usual" first: a code set the profile names as usual is carried from there
+    # even when an older conversation also named it.
+    usual = [p.upper() for p in _as_list(_fact_value(facts, "usual_products"))]
+    if usual and all(c.upper() in usual for c in codes):
+        return canned.render_in("carried_usual", language, products=", ".join(codes))
+    frames = (
+        db.query(ConversationFrame)
+        .filter(
+            ConversationFrame.contact_respond_id == contact_respond_id,
+            ConversationFrame.is_test.is_(dry_run),
+            ConversationFrame.status == "closed",
+        )
+        .order_by(ConversationFrame.last_activity_at.desc())
+        .limit(3)
+        .all()
+    )
+    for frame in frames:
+        # Matched on the frame's own entity codes (fix round 6: the summary is prose
+        # now, not a clause chain to split), with the summary text as the fallback.
+        named = " ".join(
+            str(v) for values in (frame.entities or {}).values() if isinstance(values, list) for v in values
+        )
+        haystack = f"{named} {frame.summary or ''}".upper()
+        if not all(c.upper() in haystack for c in codes):
+            continue
+        noun = episode_digest_mod.domain_noun(frame.domain)
+        listed = episode_digest_mod.join_words([episode_digest_mod.display_code(c) for c in codes])
+        subject = f"{noun} for {listed}" if noun else listed
+        day = episode_digest_mod.day_label(frame.last_activity_at) if frame.last_activity_at else None
+        return canned.render_in("carried_episode", language, day=day or "earlier", subject=subject)
+
+    return None
+
+
+def _handover_context(
+    db: Session,
+    *,
+    verdict: dict[str, Any],
+    memory_intake: dict[str, Any],
+    contact_respond_id: str,
+    dry_run: bool,
+    turn_id: str,
+) -> dict[str, Any]:
+    """What a handover adds to the escalation lane's own actions (AC-MEM087/088): the
+    linked salesperson for a commercial ask (the parser's `intent_hint:
+    commercial_request`), and the live conversation's summary line for the person who
+    picks it up (at "This conversation" and above)."""
+    level = memory_intake.get("effective_level") or "off"
+    salesperson = None
+    if verdict.get("intent_hint") == "commercial_request":
+        _customer, salesperson = _live_customer(db, memory_intake.get("contact_pk"))
+    summary = None
+    if level != "off":
+        summary = memory_mod.open_summary(
+            db, contact_respond_id=contact_respond_id, is_test=dry_run, current_turn_id=turn_id
+        )
+    facts = memory_intake.get("profile_facts") if level == "full" else None
+    from app.services.chatbot import copy as copy_mod
+
+    return {
+        "salesperson": salesperson,
+        "summary": summary,
+        "language": _fact_value(facts, "language"),
+        "copy": copy_mod.resolve(db) if salesperson else None,
+    }
+
+
+def _profile_snapshot(contact_row: Any) -> dict[str, Any] | None:
+    """What the `memory` event shows of the contact's profile: the saved fact count,
+    tier and language, off one `respond_contacts` row."""
+    if contact_row is None:
+        return None
+    profile = contact_row.chatbot_profile or {}
+    return {
+        "facts_count": len(profile.get("facts") or []),
+        "tier": profile.get("tier"),
+        "language": profile.get("language"),
+    }
+
+
 def _run_stages(  # noqa: PLR0915
     envelope: Envelope,
     *,
@@ -2454,7 +2922,9 @@ def _run_stages(  # noqa: PLR0915
         # from, and handed down to `resolve_kinds` -> `resolve_gate.run` -> `gate.run_gate`
         # - the one place a roster is actually cut.
         roster_caps = {row.kind: row.roster_cap for row in policy.kinds}
-        profile, recall_enabled = turn_runtime.load_profile(db, contact_respond_id)
+        # `chatbot_recall_enabled` is no longer read (contract section 2: the recall
+        # re-parse is deleted; the column stays, untouched, per Q1 - no data change).
+        profile, _recall_enabled = turn_runtime.load_profile(db, contact_respond_id)
         known_phone = turn_runtime.contact_phone(db, contact_respond_id)
         turn_no = turn_runtime.turn_number(db, contact_respond_id)
         state_in = turn_runtime.load_state(session_block, profile=profile, turn_no=turn_no)
@@ -2468,6 +2938,23 @@ def _run_stages(  # noqa: PLR0915
             ingress=envelope.ingress,
             is_test=bool(dry_run),
         )
+        # Chatbot memory lane A (contract section 3/6.6): the last 3 closed-frame
+        # summaries, the live episode's earlier messages and the profile slice -
+        # everything `context.assemble` needs beyond the profile row already read
+        # above, off the SAME session, timed as `memory_ms`.
+        memory_intake = _memory_intake(
+            db,
+            contact_respond_id=contact_respond_id,
+            dry_run=dry_run,
+            turn_id=turn_id,
+            console=envelope.ingress == "console",
+        )
+        # Security review 26 Sep 2026 (B1): the ONE contact this turn resolved to,
+        # already workspace-scoped and lock-safe - every later fact write in this
+        # turn (tier, tally, `profile_statement`) reads this instead of re-deriving
+        # an ambiguous lookup by `respond_io_id`. `None` when intake degraded.
+        remembered_before["_contact_pk"] = memory_intake.get("contact_pk")
+        remembered_before["_profile_before"] = memory_intake.get("profile_snapshot")
         # PR #1247 round 8: the last three exchanges, so a short reply is read against
         # what was asked. Same rows, same scopes, same session as the line above.
         recent = turn_runtime.recent_exchanges(
@@ -2486,6 +2973,7 @@ def _run_stages(  # noqa: PLR0915
         summary="Received the message and loaded what the bot remembered.",
         why="Every turn starts from the contact's stored conversation state.",
         facts={
+            "memory_ms": memory_intake["ms"],
             "ingress": envelope.ingress,
             "remembered_keys": len([k for k, v in remembered_before.items() if v]),
             "quoted_a_message": _reply_to_message_id(envelope) is not None,
@@ -2659,23 +3147,40 @@ def _run_stages(  # noqa: PLR0915
     # overrode the parser's answer, are gone: APPLY is the one place a verdict becomes a
     # decision now.
     stage[0] = "understood"
-    profile_words = memory_mod.profile_block(state_in.profile)
     pending_options = _pending_option_labels(state_in.pending)
     # PR #1247 rounds 8 and 9: the ONE question on the table, as a structured object the
     # parser answers in `open_question_answer` - the open pick or offer when there is
     # one (it is what the message answers), else the stock question (issue #1293).
     open_question = turn_question.open_question(state_in.pending, state_in.focus.tasks)
-    user_block = parser.build_user_block(
+    effective_level = memory_intake["effective_level"]
+    subject_full = parser.current_subject_line(state_in.focus)
+    subject_prefix = "Current subject: "
+    current_subject = (
+        subject_full[len(subject_prefix) :] if subject_full and subject_full.startswith(subject_prefix) else subject_full
+    )
+    context_layers = context_mod.ContextLayers(
+        level=effective_level,
+        profile_facts=memory_intake["profile_facts"],
+        summaries=memory_intake["summaries"],
+        earlier_messages=memory_intake["earlier_messages"],
         previous_response=previous_reply,
-        latest_user_message=latest_user_message,
+        current_subject=current_subject,
         pending_kind=state_in.pending.kind if state_in.pending is not None else None,
         pending_options=pending_options,
-        profile_block=profile_words,
-        focus=state_in.focus,
+        settings_profile_line=memory_mod.profile_block(state_in.profile),
+        current_message=latest_user_message,
+        reply_to=None,
+        media_line=None,
+        task_lines=parser.open_task_lines(state_in.focus, open_question),
+        open_question_line=parser.open_question_line(open_question),
         brands=brands,
-        open_question=open_question,
         recent_exchanges=recent,
     )
+    user_block, context_report = context_mod.assemble(context_layers)
+    # AC-MEM052/056 (round 3): where the level itself came from, alongside what it
+    # rendered - added here rather than inside `context.assemble` since that
+    # module renders layers, it does not resolve levels.
+    context_report["level_source"] = memory_intake["level_source"]
     # G6: a dry run may supply the emission instead of paying for it.
     parser_bypassed = dry_run and "mock_reformulator_output" in harness_present
     parse_started = time.perf_counter()
@@ -2719,6 +3224,7 @@ def _run_stages(  # noqa: PLR0915
                 contact_respond_id=contact_respond_id,
                 dry_run=dry_run,
                 answered=False,
+                turn_id=turn_id,
             )
             _close_turn(
                 db,
@@ -2742,44 +3248,11 @@ def _run_stages(  # noqa: PLR0915
             ),
         )
 
-    # -- recall: ONE re-parse, behind two flags (AC-1547) ------------------- #
-    # `anaphora.backward_reference` is the parser's own signal that the message points at
-    # something outside this turn's focus; `chatbot_recall_enabled` is the contact's own
-    # switch, off by default. Both, or neither: recall doubles the parser spend on the
-    # turns it fires, and it is never another contact's memory.
-    recalled: list[dict[str, Any]] = []
-    if recall_enabled and jsc.get(verdict.get("anaphora"), "backward_reference") is True:
-        with _session(session_factory) as db:
-            recalled = memory_mod.recall(contact_respond_id, verdict, db)
-        if recalled:
-            user_block = parser.build_user_block(
-                previous_response=previous_reply,
-                latest_user_message=latest_user_message,
-                pending_kind=state_in.pending.kind if state_in.pending is not None else None,
-                pending_options=pending_options,
-                profile_block=profile_words,
-                episodes_block=memory_mod.episodes_block(recalled),
-                focus=state_in.focus,
-                brands=brands,
-                open_question=open_question,
-                recent_exchanges=recent,
-            )
-            try:
-                parser_raw = parser.parse(parser_config, user_block)
-                verdict = dict(parser_raw)
-                parser_usage = getattr(parser_raw, "usage", {}) or {}
-            except parser.ParserError:
-                # The FIRST verdict is already a usable answer; a failed re-parse costs
-                # the episodes, never the turn.
-                logger.warning("chatbot turn %s: the recall re-parse did not answer", turn_id)
-        turn_trace.add(
-            "recall",
-            {
-                "frame_ids": [f.get("id") for f in recalled],
-                "frames": len(recalled),
-                "reparsed": bool(recalled),
-            },
-        )
+    # Chatbot memory lane A (contract section 3, Q5 ruling): the recall re-parse
+    # is gone - one parser call per turn, always. The frames `context.assemble`
+    # already folded into THIS call's user block (L4, level `past`/`full`) are
+    # what `episodes.read` on the `memory` trace event reports below.
+    recalled: list[dict[str, Any]] = memory_intake["read_frames"]
 
     turn_trace.record(
         "understood",
@@ -2801,6 +3274,10 @@ def _run_stages(  # noqa: PLR0915
             "entities": len(verdict.get("entities") or []),
             "prompt_version": parser_config.prompt_version,
             "tokens": int(parser_usage.get("total_tokens") or 0),
+            # Chatbot memory lane A (contract section 6): the provider's own split,
+            # alongside the total the trace already carried.
+            "prompt_tokens": int(parser_usage.get("prompt_tokens") or 0),
+            "completion_tokens": int(parser_usage.get("completion_tokens") or 0),
             "parser_bypassed": parser_bypassed,
             "recalled_frames": len(recalled),
             # D17: WHICH options the parser was shown, on the record.
@@ -2809,6 +3286,12 @@ def _run_stages(  # noqa: PLR0915
         raw={"parser_raw": parser_raw, "derived": verdict},
     )
     turn_trace.add("prompt_text", {"text": user_block})
+    # Chatbot memory lane A (contract section 6): once per successful parse, never
+    # on a failed one - `TurnTrace.persisted()` places every `.add()` event AFTER
+    # every `.record()` stage, so an event added before a parse failure would
+    # itself become the trace's last entry instead of the failed `understood`
+    # stage (AC-105/R5/H44's own "no routing" shape).
+    turn_trace.add("context", context_report)
 
     # The routing default lands ONCE, here, after the last parse and before the access
     # read (finding 2b): every reader downstream - access, the lanes, the trace - sees
@@ -2880,6 +3363,7 @@ def _run_stages(  # noqa: PLR0915
             contact_respond_id=contact_respond_id,
             dry_run=dry_run,
             answered=True,
+            turn_id=turn_id,
         )
         suggested_agent = jsc.get(verdict.get("routing"), "suggested_agent")
         access = check_access(
@@ -3326,20 +3810,142 @@ def _run_stages(  # noqa: PLR0915
             branch_kind = "demand_qty" if _demand_qty_missing(verdict) else "stock_denied"
         else:
             branch_kind = turn_route(plan)
+
+        # S4 graceful fallback (plan 7.1 and 7.2): every `low_signal` reply is
+        # `ack + memory_line + offer`, and a history question is one of them (routed
+        # here by `apply._lane`). Everything the reply reads from the database is read
+        # now, while this session is open; the clarifier call runs without one.
+        fallback_ctx: Any = None
+        if branch_kind == "low_signal":
+            try:
+                fallback_ctx = _fallback_context(
+                    db,
+                    verdict=verdict,
+                    memory_intake=memory_intake,
+                    contact_respond_id=contact_respond_id,
+                    dry_run=dry_run,
+                    turn_id=turn_id,
+                    policy=policy,
+                )
+            except Exception:  # noqa: BLE001 - the clarifier still answers, memory-less
+                logger.warning("chatbot: the fallback context did not build", exc_info=True)
+        # AC-MEM083: a business answer carried from memory names what it carried.
+        if branch_kind in ("business_query", "check_promotion"):
+            try:
+                remembered_before["_carried_line"] = _carried_line(
+                    db,
+                    verdict=verdict,
+                    memory_intake=memory_intake,
+                    contact_respond_id=contact_respond_id,
+                    dry_run=dry_run,
+                )
+            except Exception:  # noqa: BLE001 - the answer stands without the line
+                logger.warning("chatbot: the carried line did not build", exc_info=True)
+        # AC-MEM087/088: who a handover names, and what it carries to them.
+        if branch_kind == "out_of_scope":
+            try:
+                remembered_before["_handover"] = _handover_context(
+                    db,
+                    verdict=verdict,
+                    memory_intake=memory_intake,
+                    contact_respond_id=contact_respond_id,
+                    dry_run=dry_run,
+                    turn_id=turn_id,
+                )
+            except Exception:  # noqa: BLE001 - the lane's own handover stands
+                logger.warning("chatbot: the handover context did not build", exc_info=True)
         item = _stamp_item(access, branch_kind, {})
 
-        # AC-1546: the episode belongs to the topic that just CLOSED, and a topic closes
-        # because the customer changed subject - not because this turn's lane went on to
-        # answer. Written HERE, where the reset is decided, so a turn whose fetch failed
-        # or whose lane refused still remembers the topic it ended. Once per turn, never
-        # mid-topic, never on a dry run.
-        if not dry_run and verdict.get("topic_reset") is True:
-            _write_episode(
-                db,
-                contact_respond_id=contact_respond_id,
-                before=remembered_before,
-                turn_id=turn_id,
-            )
+        # Owner ruling, hand pass 10 (21 Sep 2026, `test_rearch_r10_handpass10_
+        # replay.py::TestHandPass10PromotionAskRepeatsAfterATierPick`): a fresh
+        # promotion ask that names no access level of its own must RE-OPEN the
+        # tier roster, never settle on the last picked tier. AC-MEM037 (chat-side
+        # tier persistence, "a tier pick writes `chatbot_profile.tier` so the next
+        # turn does not ask again") conflicts with that older, binding ruling -
+        # security review 26 Sep 2026 removed the write entirely rather than
+        # special-case it: `profile_facts.set_tier` and this call site are gone,
+        # a resolved tier is never persisted onto the contact row, and every ask
+        # still resolves fresh off `narrow.py`'s own turn-scoped state.
+        contact_pk = remembered_before.get("_contact_pk")
+
+        # AC-1546 / chatbot memory lane A (contract section 3): the episode belongs to
+        # the topic that just CLOSED, and a topic closes because the customer changed
+        # subject - not because this turn's lane went on to answer. Written HERE, where
+        # the reset is decided, so a turn whose fetch failed or whose lane refused
+        # still remembers the topic it ended. Once per turn, never mid-topic.
+        #
+        # Human intervention closes nothing (Q2 ruling): the topic is whatever it was
+        # when the bot resumes. D14's third named exception (Q15) is the one write a
+        # dry run may make: a CONSOLE turn writes an `is_test=true` frame of its own
+        # world; every other dry run (clone/replay/harness) writes nothing.
+        is_console_dry_run = dry_run and envelope.ingress == "console"
+        written_frame = None
+        # Fix lane round 3 (R1, owner hand test 28 Sep 2026): the parser's
+        # `topic_reset` alone never closed "check stock X" then "incoming X" (same
+        # product, so it reads as a follow-up). A turn whose plan names a different
+        # domain from the open conversation's newest one is the other switch
+        # (`episode_digest.close_trigger`, the backfill's same rule).
+        this_domain = str(plan.domains[0]) if plan.domains else None
+        may_write_episode = (not dry_run or is_console_dry_run) and not _is_human_intervened(envelope)
+        open_domain = None
+        if may_write_episode and this_domain and verdict.get("topic_reset") is not True:
+            try:
+                open_domain = memory_mod.open_topic_domain(
+                    db,
+                    contact_respond_id=contact_respond_id,
+                    is_test=dry_run,
+                    exclude_turn_id=turn_id,
+                )
+            except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
+                logger.warning("chatbot: the open topic read did not run", exc_info=True)
+        close_trigger = episode_digest_mod.close_trigger(verdict, this_domain, open_domain)
+        if close_trigger is not None and may_write_episode:
+            try:
+                written_frame = memory_mod.write_episode_for_reset(
+                    db,
+                    contact_respond_id=contact_respond_id,
+                    is_test=dry_run,
+                    resetting_turn_id=turn_id,
+                )
+            except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
+                logger.warning("chatbot: the episode write did not run", exc_info=True)
+        # Stashed on the shared `before` box (the same object `_run_answer` and
+        # `_run_entities_only_arm` already receive as `remembered_before`) so
+        # `_record_memory_trace`, several call frames later, can report what THIS turn
+        # closed without a new parameter threaded through every arm between here and
+        # there.
+        remembered_before["_episode_written"] = (
+            {
+                "id": written_frame.id,
+                "turn_count": len(written_frame.turn_ids or []),
+                "close_reason": written_frame.close_reason,
+                "summary": written_frame.summary,
+                "trigger": close_trigger,
+                "domain": getattr(written_frame, "domain", None),
+            }
+            if written_frame is not None
+            else None
+        )
+
+        # AC-MEM032: the tally runs after the episode write above has committed -
+        # never before, since it reads the newest CLOSED frames and a frame this
+        # turn just wrote is one of them. Round 3 (PLAN 6.0, AC-MEM049): facts are
+        # learned and saved at EVERY context level, Off included - the level decides
+        # only what the bot READS, never what it LEARNS. Episodes themselves are
+        # ALSO written whatever the level, staff still see everything either way; the
+        # one gate that still applies is B2's own (never on a dry run).
+        # Stashed on `before` the same way `_episode_written` is, so `_run_answer`'s
+        # tail can fold it into the turn's own `facts_saved` trace line.
+        if written_frame is not None and not dry_run and contact_pk is not None:
+            try:
+                tallied = profile_facts_mod.tally(
+                    db, contact_respond_id, is_test=dry_run, contact_pk=contact_pk
+                )
+                remembered_before["_facts_tallied"] = [
+                    {"key": f["key"], "source": f["source"]} for f in tallied
+                ]
+            except Exception:  # noqa: BLE001 - a lost tally is never a lost turn
+                logger.warning("chatbot: the profile tally did not run", exc_info=True)
 
         turn_trace.add(
             "apply",
@@ -4366,6 +4972,10 @@ def _run_stages(  # noqa: PLR0915
             turn_trace=turn_trace,
             stage=stage,
             state=state_out,
+            verdict=verdict,
+            remembered_before=remembered_before,
+            contact_respond_id=contact_respond_id,
+            recalled=recalled,
         )
 
     if branch_kind == "low_signal" and completes_here:
@@ -4382,6 +4992,11 @@ def _run_stages(  # noqa: PLR0915
             clarifier_config=clarifier_config,
             setup_error=clarifier_setup_error,
             state=state_out,
+            verdict=verdict,
+            remembered_before=remembered_before,
+            contact_respond_id=contact_respond_id,
+            recalled=recalled,
+            fallback=fallback_ctx,
         )
 
     return TurnResult(
@@ -4545,6 +5160,11 @@ def _run_answer(
     turn's memory must not depend on which of them ran - the `Answer` carries the text,
     the actions and the question, and this writes exactly that.
     """
+    # AC-MEM083 (S4): an answer whose subject was carried from memory opens with the
+    # one line naming what was carried, built in `_carried_line` before the fetch.
+    carried = remembered_before.get("_carried_line")
+    if carried and (getattr(answer, "text", "") or "").strip():
+        answer = dataclasses_replace(answer, text=f"{carried}\n\n{answer.text}")
     stage[0] = "replied"
     reply = {
         **_reply_of(answer),
@@ -4582,14 +5202,28 @@ def _run_answer(
             turn_tail.persist(state, answer, tail_ctx)
             _log_session_write(db, turn_id=turn_id, contact_respond_id=contact_respond_id)
             written = True
-        _record_memory_trace(
+
+        facts_saved = _apply_profile_statements(
+            db,
             turn_trace,
+            verdict=verdict,
+            remembered_before=remembered_before,
+            contact_respond_id=contact_respond_id,
+            turn_id=turn_id,
+            dry_run=dry_run,
+        )
+
+        _record_memory_trace(
+            db,
+            turn_trace,
+            contact_respond_id=contact_respond_id,
             before=remembered_before,
             state=state,
             answer=answer,
             recalled=recalled,
             dry_run=dry_run,
             written=written,
+            facts_saved=facts_saved,
         )
         lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run)]
         turn_trace.record(
@@ -4640,6 +5274,95 @@ def _run_answer(
         status="done",
         stage="sent",
     )
+
+
+def _apply_profile_statements(
+    db: Session,
+    turn_trace: Any,
+    *,
+    verdict: dict[str, Any],
+    remembered_before: dict[str, Any],
+    contact_respond_id: str,
+    turn_id: str,
+    dry_run: bool,
+) -> list[dict[str, Any]]:
+    """Apply the verdict's `profile_statements` and return the facts this turn saved
+    (the tally's, stashed at the topic reset, plus the stated ones)."""
+    # AC-MEM033/AC-MEM069 (round 3): `profile_statements` (a LIST, up to 3) the
+    # parser read off THIS message is applied in the tail of EVERY live arm - the
+    # answer, the casual lane and the escalation arm (reviewer pass at d89110c0, B1: a
+    # statement-only message has no domain and routes to `low_signal`) - never
+    # earlier, since a statement is only worth learning once the turn itself is being
+    # persisted (a dry run persists nothing, so it learns nothing either).
+    # Round 3 also drops the OLD level gate here: facts are learned and saved at
+    # EVERY context level, Off included (PLAN 6.0, AC-MEM049) - the level decides
+    # only what the bot READS. `apply_statement` owns every validation and
+    # precedence rule; `None` back means it was rejected (an invalid value, or a
+    # staff fact already owns the key) and nothing is saved.
+    facts_saved: list[dict[str, Any]] = list(remembered_before.get("_facts_tallied") or [])
+    statements_raw = verdict.get("profile_statements")
+    # "up to 3" is a POSITION cap on the verdict's own list, applied before
+    # validation - a verdict naming 4 (however it got past the strict schema)
+    # writes only the first three, whether or not each of those three is itself
+    # valid (AC-MEM033/069's own "keep first 3" test).
+    statements = statements_raw[:3] if isinstance(statements_raw, list) else []
+    if not dry_run:
+        # Security review 26 Sep 2026 (B1): lock by the primary key intake
+        # already resolved for this turn, never re-derive by the ambiguous
+        # `respond_io_id`. An intake that degraded (no pk resolved) writes
+        # nothing, for every statement alike.
+        tail_contact_pk = remembered_before.get("_contact_pk")
+        for statement in statements:
+            if not isinstance(statement, dict) or not statement.get("key"):
+                continue
+            stmt_key = statement.get("key")
+            stmt_spec = profile_facts_mod.VOCABULARY.get(stmt_key)
+            if stmt_spec is None or not stmt_spec.allow_stated:
+                # A statement naming a key outside the six-key stated
+                # vocabulary (contract section 6.5) - traced regardless of the
+                # contact's own memory level, since this is the PARSER's
+                # emission being out of bounds, not a settings decision.
+                turn_trace.add(
+                    "profile_statement_dropped",
+                    {"key": stmt_key, "reason": "not a stated-vocabulary key"},
+                )
+                continue
+            if tail_contact_pk is None:
+                turn_trace.add(
+                    "profile_statement_dropped",
+                    {"key": stmt_key, "reason": "contact resolution degraded"},
+                )
+                continue
+            try:
+                entry = profile_facts_mod.apply_statement(
+                    db,
+                    contact_respond_id,
+                    stmt_key,
+                    statement.get("value"),
+                    turn_id=turn_id,
+                    contact_pk=tail_contact_pk,
+                )
+            except Exception:  # noqa: BLE001 - a lost statement is never a lost turn
+                logger.warning("chatbot: profile_statement apply did not run", exc_info=True)
+                turn_trace.add("profile_statement_dropped", {"key": stmt_key, "reason": "apply error"})
+                continue
+            if entry is not None:
+                facts_saved.append({"key": entry["key"], "source": entry["source"]})
+            else:
+                turn_trace.add(
+                    "profile_statement_dropped",
+                    {"key": stmt_key, "reason": _dropped_reason(db, stmt_key, statement.get("value"))},
+                )
+    return facts_saved
+
+
+def _dropped_reason(db: Session, key: str, value: Any) -> str:
+    """Why `apply_statement` saved nothing: the value failed the key's validation, or a
+    fact that outranks a statement (staff) already owns the key."""
+    spec = profile_facts_mod.VOCABULARY[key]
+    if profile_facts_mod._normalize_for_stated(key, spec, value, db) is None:
+        return "invalid value"
+    return "outranked"
 
 
 def _run_entities_only_arm(
@@ -5018,37 +5741,66 @@ def _demand_qty_missing(verdict: dict[str, Any]) -> bool:
 
 
 def _record_memory_trace(
+    db: Session,
     turn_trace: Any,
     *,
+    contact_respond_id: str,
     before: dict[str, Any],
     state: Any,
     answer: Any,
     recalled: list[dict[str, Any]],
     dry_run: bool,
     written: bool,
+    facts_saved: list[dict[str, Any]] | None = None,
+    record_remembered: bool = True,
 ) -> None:
-    """The `memory` trace record: three shelves, before and after, writer per shelf."""
+    """The `memory` trace record (chatbot memory lane A, contract section 6): the
+    contact's context level, the three shelves before/after with their writer, what
+    THIS turn closed (`episodes.written`, stashed on `before` by the topic-reset write
+    a few call frames back) and what it fed the parser (`episodes.read`), and the
+    facts it saved this turn (tallied after a reset, stated from the tail, or both -
+    the caller has already applied both writers by the time this runs)."""
+    from app.models.access import RespondContact
+    from app.models.user import SystemSetting
     from app.services.chatbot.turn.pending import to_wire
     from app.services.chatbot.turn.state import focus_to_wire
+
+    # The contact intake resolved (workspace-scoped, by primary key), never a second
+    # `respond_io_id` lookup; the profile BEFORE is intake's snapshot, the AFTER is
+    # read now, once this turn's writes are in (reviewer pass at d89110c0, S22).
+    contact_pk = before.get("_contact_pk")
+    contact_row = (
+        db.query(RespondContact).filter(RespondContact.id == contact_pk).first()
+        if contact_pk is not None
+        else None
+    )
+    own_level = contact_row.chatbot_memory_level if contact_row is not None else None
+    system_memory = db.query(SystemSetting.chatbot_memory).scalar()
+    effective = memory_mod.resolve_level(own_level, system_memory)
+    profile_after = _profile_snapshot(contact_row)
+    if profile_after is not None and state is not None:
+        profile_after = {**profile_after, "tier": state.profile.tier, "language": state.profile.language}
 
     turn_trace.add(
         "memory",
         {
+            "level": {"own": own_level, "effective": effective},
             "focus": {
                 "before": before.get("focus") or {},
-                "after": focus_to_wire(state.focus),
+                "after": focus_to_wire(state.focus) if state is not None else None,
                 "writer": "apply",
             },
             "profile": {
-                "before": {"tier": state.profile.tier, "language": state.profile.language},
-                "after": {"tier": state.profile.tier, "language": state.profile.language},
+                "before": before.get("_profile_before"),
+                "after": profile_after,
                 "writer": "contact",
             },
             "episodes": {
-                "before": [f.get("id") for f in recalled],
-                "after": [f.get("id") for f in recalled],
+                "read": [f.get("id") for f in recalled],
+                "written": before.get("_episode_written"),
                 "writer": "tail",
             },
+            "facts_saved": list(facts_saved or []),
             "open_question": {
                 "before": before.get("open_question"),
                 "after": to_wire(answer.question) if answer is not None else None,
@@ -5058,6 +5810,10 @@ def _record_memory_trace(
             "dry_run": dry_run,
         },
     )
+    if not record_remembered:
+        # The casual and escalation arms hand the session write to `complete_turn`,
+        # whose own tail records `remembered`.
+        return
     turn_trace.record(
         "remembered",
         summary=(
@@ -5071,60 +5827,46 @@ def _record_memory_trace(
     )
 
 
-def _write_episode(
-    db: Session, *, contact_respond_id: str, before: dict[str, Any], turn_id: str
+def _remember_on_delegated_arm(
+    db: Session,
+    turn_trace: Any,
+    *,
+    turn_id: str,
+    verdict: dict[str, Any] | None,
+    remembered_before: dict[str, Any] | None,
+    contact_respond_id: str | None,
+    recalled: list[dict[str, Any]] | None,
+    state: Any,
+    dry_run: bool,
 ) -> None:
-    """AC-1546: the topic this turn RESET is the one that just closed, so it is the one
-    written. Never mid-topic, and never the topic this turn is opening.
-
-    **It writes on the TURN's session, and `memory.write_episode` commits it.** Review
-    asked for a session of its own, the way the escalation lane owns one
-    (`escalation_services.production_session`); both ways of doing that were measured on
-    16 Sep 2026 and neither works today:
-
-    * An own session NESTED inside this stage's block loses the write in every test.
-      `tests/chatbot/conftest.py::session_factory` binds every session to ONE connection
-      with `join_transaction_mode="create_savepoint"`, so an inner session's commit only
-      releases into the enclosing session's savepoint and the enclosing session's close
-      rolls it back. Probed directly: the frame was written, read back as 1 immediately
-      after, and 0 at the end of the test. Production is unaffected (each `SessionLocal`
-      takes its own connection), but the whole engine suite would be red.
-    * Moving the call out of the stage block instead reintroduces the bug this line was
-      put here to fix: a turn whose fetch failed or whose lane refused must still close
-      the topic it ended, which is why the write sits where APPLY decides `topic_reset`
-      rather than on the answer arm.
-
-    Trigger for revisiting: a test fixture that gives each session its OWN connection.
-    At that point this takes `session_factory` and opens one through `_session`, and the
-    nesting stops mattering.
-    """
-    focus_before = before.get("focus") if isinstance(before.get("focus"), dict) else {}
-    domains = focus_before.get("domains") or []
-    domain = domains[0] if domains else None
-    if not domain:
+    """The memory half of `_run_answer`'s tail for the two arms that hand the session
+    write to `complete_turn` (casual, escalation): apply the verdict's statements and
+    record the `memory` event, so a statement-only turn is remembered and traced like
+    any other (reviewer pass at d89110c0, B1 and S22)."""
+    if verdict is None or remembered_before is None or contact_respond_id is None:
         return
-    try:
-        memory_mod.write_episode(
-            db,
-            contact_respond_id=contact_respond_id,
-            domain=domain,
-            intent=None,
-            entities={
-                key: [
-                    jsc.js_string(e.get("canonical_code") or e.get("raw"))
-                    for e in value
-                    if isinstance(e, dict)
-                ]
-                for key, value in focus_before.items()
-                if isinstance(value, list) and value and isinstance(value[0], dict)
-            },
-            tools_used=[],
-            turn_ids=[turn_id],
-            summary=f"Closed the {domain} topic.",
-            close_reason="topic_switch",
-        )
-    except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
-        logger.warning("chatbot: the episode write did not run", exc_info=True)
+    facts_saved = _apply_profile_statements(
+        db,
+        turn_trace,
+        verdict=verdict,
+        remembered_before=remembered_before,
+        contact_respond_id=contact_respond_id,
+        turn_id=turn_id,
+        dry_run=dry_run,
+    )
+    _record_memory_trace(
+        db,
+        turn_trace,
+        contact_respond_id=contact_respond_id,
+        before=remembered_before,
+        state=state,
+        answer=None,
+        recalled=list(recalled or []),
+        dry_run=dry_run,
+        written=not dry_run,
+        facts_saved=facts_saved,
+        record_remembered=False,
+    )
 
 
 def _run_casual_lane(
@@ -5141,8 +5883,19 @@ def _run_casual_lane(
     clarifier_config: Any,
     setup_error: str | None = None,
     state: Any = None,
+    verdict: dict[str, Any] | None = None,
+    remembered_before: dict[str, Any] | None = None,
+    contact_respond_id: str | None = None,
+    recalled: list[dict[str, Any]] | None = None,
+    fallback: Any = None,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
+
+    `fallback` (S4, plan 7.2) is the graceful fallback's context, read off the database
+    before this runs: the clarifier writes the ack only, and the reply is `ack +
+    memory_line + offer`. A clarifier that still answers in the older `{"response"}`
+    shape is the whole reply, as before. A history question whose clarifier failed
+    still gets its list, behind the canned ack: the list needs no model.
 
     Split out of `_run_stages` so the "no DB session across LLM I/O" rule is visible in the
     signature rather than in a comment: this function takes a `session_factory`, never a
@@ -5157,6 +5910,8 @@ def _run_casual_lane(
     user_message = (
         casual.render_user_message(clarifier_prompt) if clarifier_prompt is not None else ""
     )
+    if fallback is not None and user_message:
+        user_message = f"{user_message}\n{fallback_mod.clarifier_tail(fallback)}"
 
     # -- NO DB SESSION IS OPEN HERE ---------------------------------------- #
     # Every failure string here is TYPE-PREFIXED, and every test against it is
@@ -5165,6 +5920,9 @@ def _run_casual_lane(
     # a success, close the row `done`, and leave `error` as "" - a turn that failed,
     # recorded as fine, with nothing on the trace screen to say otherwise.
     failed: str | None = setup_error
+    answer_shape: str | None = None
+    ack_replaced = False
+    reply_language: str | None = None
     if failed is not None:
         # SETUP failure (the resolver, the registry, the AI config, the API key). The
         # customer gets a FIXED sentence, never `str(exc)`: these messages carry provider
@@ -5174,25 +5932,44 @@ def _run_casual_lane(
     else:
         try:
             raw = casual.call_clarifier(clarifier_config, user_message)
-            text = casual.reply_text(casual.central_exchange({"text": raw}))
+            said = fallback_mod.read_clarifier(casual.central_exchange({"text": raw}))
+            if said is None:
+                raise casual.ClarifierAnswerEmpty("the clarifier returned nothing to say")
+            answer_shape = said.shape
+            text = said.text
+            if fallback is not None and (said.shape == "ack" or fallback.kind == "history"):
+                noted_language = next(
+                    (s.get("value") for s in fallback.noted if s.get("key") == "language"), None
+                )
+                reply_language = fallback_mod.pick_language(
+                    fallback.saved_language, noted_language, said.language
+                )
+                ack = said.text.strip()
+                # AC-MEM081: an ack stating a figure, code, price or date its own
+                # input never had is replaced by the canned one for the language.
+                if not fallback_mod.ack_is_safe(ack, user_message):
+                    ack = fallback.copy.render_in("fallback_ack", reply_language)
+                    ack_replaced = True
+                text = fallback_mod.compose(ack, fallback, fallback.copy, reply_language)
         except casual.ClarifierRateLimited as exc:
             # PR #1247 round 6, ruling 3: a rate limit that never cleared is one plain
             # sentence, never the provider's text. The row keeps the real reason.
             failed = f"{type(exc).__name__}: {exc}"
             text = llm_call.RATE_LIMITED_REPLY
-        except casual.ClarifierError as exc:
+        except Exception as exc:  # noqa: BLE001 - a provider error or an unreadable answer
+            # AC-MEM086 (owner ruling Q10): the dealer never reads exception text. The
+            # row and the trace keep the real reason; the dealer gets the turn's own
+            # apology. n8n's `sub-error-logger` interpolation is retired here.
             failed = f"{type(exc).__name__}: {exc}"
-            # The CALL arm keeps today's `sub-error-logger` text, which interpolates the
-            # error and has been what a customer sees on this path since it was written.
-            # Parity, and the reason the two arms differ (divergences.py, H32).
-            text = casual.CLARIFIER_ERROR_PREFIX + str(exc)
-        except Exception as exc:  # noqa: BLE001 - a malformed answer is the same failure
-            # The model answered but the answer was not usable (invalid JSON out of
-            # `central_exchange`). Same lane, same stage, same reply: from the customer's
-            # side there is no difference between "no answer" and "an answer I cannot read".
-            failed = f"{type(exc).__name__}: {exc}"
-            text = casual.CLARIFIER_ERROR_PREFIX + str(exc)
-
+            text = GENERIC_ERROR_REPLY
+    if failed is not None and fallback is not None and fallback.kind == "history" and fallback.copy is not None:
+        # The history list needs no model: behind the canned ack it still answers.
+        reply_language = fallback_mod.pick_language(fallback.saved_language)
+        text = fallback_mod.compose(
+            fallback.copy.render_in("fallback_ack", reply_language), fallback, fallback.copy, reply_language
+        )
+        answer_shape = "canned"
+        failed = None
     actions = [
         *actions,
         # AC-507: `quick_replies` is n8n's comma-joined string or null, never a list -
@@ -5209,10 +5986,17 @@ def _run_casual_lane(
         summary=(
             _casual_failure_summary(failed, setup_error)
             if failed is not None
+            else "The history question was answered from memory."
+            if fallback is not None and fallback.kind == "history"
+            else "The clarifier wrote the acknowledgement; the reply adds what memory holds and an offer."
+            if answer_shape == "ack"
             else "The clarifier wrote small talk or one clarifying question."
         ),
         why=(
-            "The turn carried no business question to look up, so the clarifier writes "
+            "A history question with memory on is answered from the contact's open and "
+            "closed conversations."
+            if fallback is not None and fallback.kind == "history"
+            else "The turn carried no business question to look up, so the clarifier writes "
             "the reply."
         ),
         facts={
@@ -5220,6 +6004,13 @@ def _run_casual_lane(
             "model": getattr(clarifier_config, "model", None),
             "prompt_version": getattr(clarifier_config, "prompt_version", None),
             "resolved_entities": len((clarifier_prompt or {}).get("entities") or []),
+            # S4: which shape answered, the fallback kind and level, the reply's
+            # language, and whether the guard replaced the ack (AC-MEM081).
+            "answer_shape": answer_shape,
+            "fallback_kind": getattr(fallback, "kind", None),
+            "memory_level": getattr(fallback, "level", None),
+            "language": reply_language,
+            "ack_replaced": ack_replaced,
         },
         error=failed,
         raw={"user_prompt": user_message},
@@ -5286,6 +6077,17 @@ def _run_casual_lane(
     }
 
     with _session(session_factory) as db:
+        _remember_on_delegated_arm(
+            db,
+            turn_trace,
+            turn_id=turn_id,
+            verdict=verdict,
+            remembered_before=remembered_before,
+            contact_respond_id=contact_respond_id,
+            recalled=recalled,
+            state=state,
+            dry_run=dry_run,
+        )
         _close_turn(
             db,
             turn_id,
@@ -5322,6 +6124,57 @@ def _run_casual_lane(
     )
 
 
+def _with_handover_context(
+    actions: list[dict[str, Any]], handover: dict[str, Any] | None, ctx: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """S4 (AC-MEM087/088) over the escalation lane's own actions, which it leaves in
+    place: routing, the assignment, the SLA row and the comment's own lines are the
+    lane's. What this adds:
+
+    * the comment gains `Salesperson: <name>` for a commercial ask and `Conversation so
+      far: <summary>` when the live conversation named something, so the person picking
+      it up sees who looks after the account and what was being discussed;
+    * for a commercial ask with a linked salesperson, the dealer's "routed to the
+      respective person-in-charge" line (the send after the comment) names the
+      salesperson instead.
+    """
+    if not handover:
+        return actions
+    salesperson = handover.get("salesperson")
+    summary = handover.get("summary")
+    if not (salesperson or summary):
+        return actions
+    extra = []
+    if salesperson:
+        extra.append(f"Salesperson: {salesperson}")
+    if summary:
+        extra.append(f"Conversation so far: {summary}")
+    out: list[dict[str, Any]] = []
+    seen_comment = False
+    team = None
+    for action in actions:
+        if action.get("kind") == "add_comment" and not seen_comment:
+            seen_comment = True
+            body = str(action.get("text") or "")
+            first = body.split("\n", 1)[0]
+            if first.startswith("Team: "):
+                team = first[len("Team: ") :].strip()
+            out.append({**action, "text": "\n".join([body, *extra])})
+            continue
+        if salesperson and seen_comment and action.get("kind") == "send_message" and team:
+            from app.services.chatbot import copy as copy_mod
+            from app.services.chatbot.tail.outcome import pretty_team
+
+            line = (handover.get("copy") or copy_mod.fallback_copy()).render_in(
+                "handover_salesperson", handover.get("language"), salesperson=salesperson, team=pretty_team(team)
+            )
+            out.append({**action, "text": line})
+            salesperson = None  # once
+            continue
+        out.append(action)
+    return out
+
+
 def _run_escalation_arm(
     *,
     turn_id: str,
@@ -5333,6 +6186,10 @@ def _run_escalation_arm(
     turn_trace: Any,
     stage: list[str],
     state: Any = None,
+    verdict: dict[str, Any] | None = None,
+    remembered_before: dict[str, Any] | None = None,
+    contact_respond_id: str | None = None,
+    recalled: list[dict[str, Any]] | None = None,
 ) -> TurnResult:
     """The `out_of_scope` lane, from the lane call to the closed turn (AC-501 to AC-505).
 
@@ -5387,7 +6244,9 @@ def _run_escalation_arm(
 
     arm = fragment.get("arm")
     clarify = fragment.get("clarify")
-    lane_actions = list(fragment.get("actions") or [])
+    lane_actions = _with_handover_context(
+        list(fragment.get("actions") or []), (remembered_before or {}).get("_handover"), ctx
+    )
     pending = fragment.get("pending")
 
     # Only `looked_up` is recorded here. `replied` and `remembered` are the TAIL's, and
@@ -5438,6 +6297,17 @@ def _run_escalation_arm(
     # tail reads `prior_actions` off it, so a duplicate replays them too (D15).
     all_actions = [*actions, *lane_actions]
     with _session(session_factory) as db:
+        _remember_on_delegated_arm(
+            db,
+            turn_trace,
+            turn_id=turn_id,
+            verdict=verdict,
+            remembered_before=remembered_before,
+            contact_respond_id=contact_respond_id,
+            recalled=recalled,
+            state=state,
+            dry_run=dry_run,
+        )
         _close_turn(
             db,
             turn_id,
