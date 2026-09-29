@@ -613,6 +613,9 @@ class BoardContribution(BaseModel):
     #: identity a project has here.
     project_key: Optional[str] = None
     line_no: int
+    #: #1362 item 5: AutoCount's own sales-order line number (`sales_order_lines.line_no`),
+    #: `None` when AutoCount gave the line none. `line_no` above is the planning ADDRESS.
+    so_line_no: Optional[int] = None
     item_code: str
     qty: str
     #: What the customer ordered on this line, what has gone out, and what is still owed.

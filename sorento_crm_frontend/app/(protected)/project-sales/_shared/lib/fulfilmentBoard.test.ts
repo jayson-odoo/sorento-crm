@@ -2745,3 +2745,38 @@ describe('a delivered line composes against its plan quantity', () => {
     expect(suggestionDraftFrom(delivered).open_qty).toBe('3');
   });
 });
+
+describe('#1362 item 5: soLineLabel / soLineNoText', () => {
+  it('names the AutoCount line number, never the planning row index', async () => {
+    const { soLineLabel, soLineNoText } = await import('./fulfilmentBoard');
+    expect(soLineLabel({ so_line_no: 2912, line_no: 110 })).toBe('Line 2912');
+    expect(soLineNoText({ so_line_no: 2912, line_no: 110 })).toBe('2912');
+    // AutoCount number 0 is a real number, not "absent".
+    expect(soLineLabel({ so_line_no: 0, line_no: 4 })).toBe('Line 0');
+  });
+
+  it('falls back to "row N" only when AutoCount gave the line no number', async () => {
+    const { soLineLabel, soLineNoText } = await import('./fulfilmentBoard');
+    expect(soLineLabel({ so_line_no: null, line_no: 110 })).toBe('row 110');
+    expect(soLineNoText({ so_line_no: null, line_no: 3 })).toBe('row 3');
+    // A payload with no so_line_no key at all predates the field: its number is bare.
+    expect(soLineNoText({ line_no: 3 })).toBe('3');
+  });
+});
+
+describe('#1362 item 5: failingLineText', () => {
+  it('names a refused line by its AutoCount number, not the positional one', async () => {
+    const { failingLineText } = await import('./fulfilmentBoard');
+    expect(
+      failingLineText({
+        line_no: 110,
+        so_line_no: 2912,
+        item_code: 'B2154-NL',
+        reason: '100 landed for this line on SPO-2026/09-0036; nothing to buy for it',
+      }),
+    ).toBe('Line 2912, B2154-NL: 100 landed for this line on SPO-2026/09-0036; nothing to buy for it');
+    expect(failingLineText({ line_no: null, reason: 'Nothing is mapped yet.' })).toBe(
+      'Nothing is mapped yet.',
+    );
+  });
+});

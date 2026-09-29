@@ -284,6 +284,8 @@ class SupplyFailingLine(BaseModel):
     """A line the server will not confirm, named the only way it may be (AC-C02)."""
 
     line_no: Optional[int] = None
+    #: #1362 item 5: AutoCount's own line number, the one the message names.
+    so_line_no: Optional[int] = None
     item_code: Optional[str] = None
     reason: str
 

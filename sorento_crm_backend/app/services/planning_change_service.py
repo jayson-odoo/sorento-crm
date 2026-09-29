@@ -2885,10 +2885,11 @@ def _refuse_buy_over_own_arrival(row: PlanningChangeRow, composition: dict) -> N
             # is the document goods actually LANDED on - an SPO number, never a PO
             # number - so the sentence names it bare, with no "PO" noun in front of it.
             doc = source.get("supply_document")
-            message = (
-                f"{qty_text(credited)} landed for this line{landed_on(doc)}; nothing to "
-                "buy for it"
+            # #1362 item 4: a sibling's spare says whose purchase it was.
+            landed = source.get("landed_text") or (
+                f"{qty_text(credited)} landed for this line{landed_on(doc)}"
             )
+            message = f"{landed}; nothing to buy for it"
             raise AppException(
                 status_code=409,
                 message=message,

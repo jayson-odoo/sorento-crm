@@ -54,6 +54,7 @@ import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { canQuickSave } from '../../_shared/lib/boardAmend';
+import { soLineLabel } from '../../_shared/lib/fulfilmentBoard';
 import { BoardDecisionPill, isPreMarkOnly } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { BoardVerdictActions } from './BoardVerdictActions';
@@ -508,7 +509,7 @@ export function BoardCellBreakdownDialog({
                   ? 'Already saved. Undo it before saving it again.'
                   : undefined,
         rowLabel: (row) =>
-          `Select ${row.original.so_number} line ${row.original.line_no}`,
+          `Select ${row.original.so_number} ${soLineLabel(row.original).toLowerCase()}`,
       }),
       {
         id: 'so_number',
@@ -539,7 +540,7 @@ export function BoardCellBreakdownDialog({
                 {row.original.so_number}
               </div>
               <div className="truncate text-xs text-muted-foreground">
-                {`Line ${row.original.line_no}`}
+                {soLineLabel(row.original)}
               </div>
             </div>
           </div>
@@ -1278,7 +1279,7 @@ export function BoardCellBreakdownDialog({
                 lineIds={askingLineIds}
                 forLine={
                   cell.contributions.length > 1 && shownContribution
-                    ? `${shownContribution.so_number} line ${shownContribution.line_no}`
+                    ? `${shownContribution.so_number} ${soLineLabel(shownContribution).toLowerCase()}`
                     : undefined
                 }
                 donor={donorMatches}

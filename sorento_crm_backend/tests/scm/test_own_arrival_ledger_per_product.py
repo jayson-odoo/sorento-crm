@@ -391,3 +391,215 @@ def test_1362_item3_my_line_finds_a_fulfilled_line_in_the_stock_drawer():
         assert mine[0]["fulfilled_qty"] == "100", mine[0]
         assert mine[0]["so_qty"] == "0", mine[0]
         assert detail["so_qty"] == "30", detail["so_qty"]
+
+
+# ============================================================================
+# #1362 fix round 4 (owner evidence, 29 Sep 2026). SO382618: PO 202607-S0077's B2154-NL
+# line bought 200 for SO line 1648 (from_so_line_ref = line 1648's source_ref 43495333,
+# 100 pieces, due 19/10/2026) and landed all 200 on SPO-2026/09-0036. Line 2912 (the
+# January line, planning row 110, no order inquiry) is credited the 100 surplus as tier-2
+# sibling spare, and the board said "100 landed for this line" of it.
+# ============================================================================
+
+SO382618_1648_REF = "AED_SORENTO:43494637:43495333"
+SO382618_2912_REF = "AED_SORENTO:43494637:43495999"
+
+
+def _so382618_shape(db, *, unnumbered: bool = False):
+    """Two open B2154-NL-shaped lines of one order at one bin: line 1648 (100, due first)
+    and line 2912 (100, due a week later). One PO line references line 1648 and landed
+    200 on SPO-2026/09-0036: 200 bought for 100. Competing earlier demand drives the group
+    net far below zero, so only the credit covers either line.
+
+    `unnumbered` adds the owner's unnumbered 200-piece line (no AutoCount No.), which is
+    what drops the board's planning numbering to positional 1..n."""
+    group, product = own_arrival_group(db)
+    own = own_arrival_warehouse(db, group)
+    _board_stock(db, product, own, on_hand=400)
+    specs = [
+        {"qty": "100", "required_date": FIRST_REQUIRED, "source_ref": SO382618_1648_REF},
+        {"qty": "100", "required_date": SECOND_REQUIRED, "source_ref": SO382618_2912_REF},
+    ]
+    if unnumbered:
+        specs.append(
+            {"qty": "200", "required_date": date(2026, 9, 14), "source_ref": "AED_X:1"}
+        )
+    order, lines = order_with_lines(db, product=product, warehouse=own, lines=specs)
+    lines[0].line_no = 1648
+    lines[1].line_no = 2912
+    db.flush()
+    po = supplier_and_po(db, po_number=f"202607-S0077-{_uid()[:4]}")
+    po_line_bought_for(
+        db, po, product, own, from_so_line_ref=SO382618_1648_REF, qty_received=200,
+        spo_number="SPO-2026/09-0036",
+    )
+    order_with_lines(
+        db, product=product, warehouse=own,
+        lines=[{"qty": "5000", "required_date": date(2026, 4, 1), "source_ref": "OTHER"}],
+    )
+    return order, product, own, lines
+
+
+def test_1362_item4_the_spare_of_an_over_buy_names_the_line_it_was_bought_for():
+    """Line 1648 reads its own tier-1 credit; line 2912 reads the surplus as line 1648's
+    spare, 200 bought for 100 - never "landed for this line"."""
+    with blank_session() as db:
+        order, product, own, _lines = _so382618_shape(db)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        first = _cell(board, product.product_code, "2026-08-17")["contributions"][0]
+        assert _own_arrival_reserved(first) == Decimal("100"), first["sources"]
+        assert (
+            f"100 landed for this line on SPO-2026/09-0036; 100 free at "
+            f"{own.warehouse_code}, taken first." in _own_step(first)["why"]
+        ), _own_step(first)["why"]
+
+        second = _cell(board, product.product_code, "2026-08-24")["contributions"][0]
+        assert _own_arrival_reserved(second) == Decimal("100"), second["sources"]
+        why = _own_step(second)["why"]
+        assert (
+            f"100 spare from line 1648's purchase (200 bought for 100) landed on "
+            f"SPO-2026/09-0036; 100 free at {own.warehouse_code}, taken first." in why
+        ), why
+        assert "landed for this line" not in why, why
+        # The component's own reason (what the drawer's Suggestion card prints) says the
+        # same thing as the trail.
+        reasons = [
+            s.get("reason") or "" for s in second["sources"] if s.get("source") == "own_arrival"
+        ]
+        assert any("spare from line 1648's purchase" in r for r in reasons), second["sources"]
+        # And the source dict carries it for the amend refusal.
+        texts = [s.get("landed_text") for s in second["sources"] if s.get("source") == "own_arrival"]
+        assert texts and texts[0].startswith("100 spare from line 1648's purchase"), texts
+
+
+def test_1362_item4_the_confirm_refusal_on_a_spare_names_the_line_it_was_bought_for():
+    """The confirm recheck's R7 refusal on line 2912 says the same thing as the board."""
+    with blank_session() as db:
+        within_window = date.today() + timedelta(days=10)
+        company_id, actor, project, product = _world(db)
+        own = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}")
+        _stock(db, product, own, on_hand=400)
+        core_so = _core_so(db, company_id)
+        bought_for = _core_line(
+            db, core_so, product, own, qty_ordered="100", required_date=within_window,
+        )
+        bought_for.source_ref = f"ZZT-1648-{_uid()[:8]}"
+        bought_for.line_no = 1648
+        january = _core_line(
+            db, core_so, product, own, qty_ordered="100",
+            required_date=within_window + timedelta(days=5),
+        )
+        january.source_ref = f"ZZT-2912-{_uid()[:8]}"
+        january.line_no = 2912
+        db.flush()
+        order = _project_so(db, project, so_id=core_so.id)
+        _project_line(db, order, line_no=1, product=product, core_line=bought_for)
+        line = _project_line(db, order, line_no=2, product=product, core_line=january)
+        po = supplier_and_po(db, po_number=f"ZZT-PO-1362-4-{_uid()[:6]}")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref=bought_for.source_ref,
+            qty_received=200, qty_ordered=200, spo_number="SPO-2026/09-0036",
+        )
+        db.commit()
+
+        message = _refusal(db, order, line, actor, buy="100")
+        assert message == (
+            "100 spare from line 1648's purchase (200 bought for 100) landed on "
+            "SPO-2026/09-0036; nothing to buy for it"
+        ), message
+
+
+# ---------------------------------------------------------------------------- item 5
+
+
+def test_1362_item5_the_board_carries_the_autocount_line_number_beside_its_address():
+    """An unnumbered line on the order drops the board's planning numbering to positional
+    1..n; `so_line_no` is still AutoCount's own number, the one the screen prints."""
+    with blank_session() as db:
+        order, product, _own, lines = _so382618_shape(db, unnumbered=True)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        by_line = {
+            c["line_id"]: c for cell in board["cells"] for c in cell["contributions"]
+        }
+        first, january = by_line[str(lines[0].id)], by_line[str(lines[1].id)]
+        assert first["so_line_no"] == 1648, first
+        assert january["so_line_no"] == 2912, january
+        # The address is the positional number, and it differs: that is the mix-up.
+        assert january["line_no"] != 2912, january
+        assert by_line[str(lines[2].id)]["so_line_no"] is None
+
+
+def test_1362_item5_a_confirm_refusal_names_the_autocount_line_number():
+    """The refusal's failing line carries AutoCount's No. (2912), not the project line's
+    positional number (1), so the sheet can say "Line 2912, ...". """
+    with blank_session() as db:
+        actor, product, own, _so, core_line, order, line = _confirm_world(
+            db, need="100", on_hand=100
+        )
+        core_line.line_no = 2912
+        po = supplier_and_po(db, po_number=f"ZZT-PO-1362-5-{_uid()[:6]}")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref=core_line.source_ref,
+            qty_received=100, qty_ordered=100, spo_number="SPO-2026/09-0036",
+        )
+        db.commit()
+
+        with pytest.raises(AppException) as refused:
+            ProjectSupplyService(db).confirm(
+                order,
+                ConfirmSupplyBody(
+                    lines=[ConfirmLine(project_line_id=str(line.id), buy_qty="100")]
+                ),
+                actor_user_id=actor,
+            )
+        failing = refused.value.detail.get("failing_lines") or []
+        assert failing and failing[0]["so_line_no"] == 2912, refused.value.detail
+        assert failing[0]["line_no"] == 1, failing
+
+
+# ---------------------------------------------------------------------------- item 6
+
+
+def test_1362_item6_same_date_lines_do_not_both_read_the_first_lines_purchase():
+    """Round 1's finding. Two lines of one product due the SAME day form one planning
+    unit. Line A (100) has a PO that landed 100 for it; line B (60) has none, and A's PO
+    bought exactly A's need, so there is no spare. Each member used to read the unit's
+    FIRST core line for tier 1, so B was credited A's receipt too: 100 landed became 160
+    credited. B must be credited nothing and buy its 60."""
+    with blank_session() as db:
+        group, product = own_arrival_group(db)
+        own = own_arrival_warehouse(db, group)
+        _board_stock(db, product, own, on_hand=160)
+        order, (line_a, line_b) = order_with_lines(
+            db, product=product, warehouse=own,
+            lines=[
+                {"qty": "100", "required_date": FIRST_REQUIRED, "source_ref": "L6A"},
+                {"qty": "60", "required_date": FIRST_REQUIRED, "source_ref": "L6B"},
+            ],
+        )
+        po = supplier_and_po(db, po_number="ZZT-PO-1362-6")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref="L6A", qty_received=100,
+            spo_number="SPO-2026/06-0160",
+        )
+        order_with_lines(
+            db, product=product, warehouse=own,
+            lines=[{"qty": "5000", "required_date": date(2026, 4, 1), "source_ref": "OTHER"}],
+        )
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        by_line = {
+            c["line_id"]: c
+            for c in _cell(board, product.product_code, "2026-08-17")["contributions"]
+        }
+        a, b = by_line[str(line_a.id)], by_line[str(line_b.id)]
+        credited = _own_arrival_reserved(a) + _own_arrival_reserved(b)
+        assert credited == Decimal("100"), (a["sources"], b["sources"])
+        assert _own_arrival_reserved(a) == Decimal("100"), a["sources"]
+        assert _own_arrival_reserved(b) == Decimal("0"), b["sources"]
+        assert _buy_qty(b) == Decimal("60"), b["sources"]

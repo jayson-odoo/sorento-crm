@@ -1552,6 +1552,10 @@ class ProjectSupplyService:
                     "supply_document": credit_po,
                     "landed_qty": landed,
                     "free_qty": credit_qty,
+                    # #1362 item 4: a sibling's spare is named as that sibling's purchase.
+                    "landed_text": self.own_arrival_landed_text(
+                        fact, landed, credit_tier1_qty, credit_tier2
+                    ),
                 }]
             order_borrow = self.order_borrow_candidates_for(
                 fact, as_of=as_of, borrow_left=borrow_left
@@ -2044,9 +2048,14 @@ class ProjectSupplyService:
         """
         if unit_fact is member:
             return member
-        return dataclass_replace(
-            member, unit_core_line_ids=list(unit_fact.unit_core_line_ids)
-        )
+        # #1362 item 6: the member's OWN core line leads the list, so `_core_id_of` still
+        # names this line and not the unit's first (the own-arrival credit reads it).
+        own = self._core_id_of(member)
+        ids = list(unit_fact.unit_core_line_ids)
+        if own in ids:
+            ids.remove(own)
+            ids.insert(0, own)
+        return dataclass_replace(member, unit_core_line_ids=ids)
 
     @staticmethod
     def unit_totals(
@@ -3202,14 +3211,33 @@ class ProjectSupplyService:
         `_own_arrival_credit_components` directly (no charge) and charges
         `_charge_own_arrival_credit` itself, afterwards, with what was actually drawn.
         """
+        credit, po_number, _said = self.own_arrival_credit_said(
+            fact, own_arrival_left=own_arrival_left
+        )
+        return credit, po_number
+
+    def own_arrival_credit_said(
+        self,
+        fact: _LineFacts,
+        *,
+        own_arrival_left: Optional[MutableMapping[str, Decimal]] = None,
+    ) -> Tuple[Decimal, Optional[str], Optional[str]]:
+        """`own_arrival_credit_for`, plus how the credit is said when part of it is a
+        sibling's spare (#1362 item 4, `own_arrival_landed_text`), read BEFORE the charge
+        spends that spare. The confirm recheck's refusal names the purchase with it."""
         credit, po_number, tier1_qty, tier2 = self._own_arrival_credit_components(
             fact, own_arrival_left=own_arrival_left
+        )
+        said = (
+            self.own_arrival_landed_text(fact, credit, tier1_qty, tier2)
+            if credit > _ZERO
+            else None
         )
         if own_arrival_left is not None and credit > _ZERO:
             self._charge_own_arrival_credit(
                 fact, credit, tier1_qty, tier2, own_arrival_left
             )
-        return credit, po_number
+        return credit, po_number, said
 
     def _own_arrival_credit_components(
         self,
@@ -3232,18 +3260,14 @@ class ProjectSupplyService:
         this computed it, so tier 1 is always spent before any sibling's tier-2 spare.
         `document` names the SPO the goods landed on, never the PO (R3).
         """
-        core_line_id = fact.unit_core_line_ids[0] if fact.unit_core_line_ids else None
-        if not core_line_id or not fact.own_code:
+        # #1362 item 6: THIS member's own core line (`_core_id_of`), never the unit's
+        # first. Two same-date lines of one product form one planning unit, and every
+        # member used to read `unit_core_line_ids[0]`: the line with no purchase of its own
+        # was credited its sibling's whole tier-1 receipt as if bought for it, so 100
+        # landed for one line was credited 160 across the two.
+        if not fact.own_code:
             return _ZERO, None, _ZERO, []
-        if core_line_id in self._own_arrival_line_memo:
-            core_line = self._own_arrival_line_memo[core_line_id]
-        else:
-            core_line = (
-                self.db.query(SalesOrderLine)
-                .filter(SalesOrderLine.id == core_line_id)
-                .one_or_none()
-            )
-            self._own_arrival_line_memo[core_line_id] = core_line
+        core_line = self._own_core_line(fact)
         if core_line is None or not core_line.source_ref:
             return _ZERO, None, _ZERO, []
         if not core_line.sales_order_id or not core_line.product_id:
@@ -3308,6 +3332,74 @@ class ProjectSupplyService:
         if credit <= _ZERO:
             return _ZERO, None, tier1_qty, tier2
         return credit, tier1_po or tier2_po, tier1_qty, tier2
+
+    def _own_core_line(self, fact: _LineFacts) -> Optional[Any]:
+        """The CORE sales-order line this fact's own-arrival credit is read for, memoised
+        per request (`_own_arrival_line_memo`)."""
+        core_line_id = self._core_id_of(fact)
+        if not core_line_id:
+            return None
+        if core_line_id not in self._own_arrival_line_memo:
+            self._own_arrival_line_memo[core_line_id] = (
+                self.db.query(SalesOrderLine)
+                .filter(SalesOrderLine.id == core_line_id)
+                .one_or_none()
+            )
+        return self._own_arrival_line_memo[core_line_id]
+
+    def own_arrival_landed_text(
+        self,
+        fact: _LineFacts,
+        landed: Decimal,
+        tier1_qty: Decimal,
+        tier2: List[Tuple[str, Decimal, Optional[str]]],
+    ) -> Optional[str]:
+        """#1362 item 4 (owner, 29 Sep 2026): what landed, said by WHOSE purchase it was.
+
+        `landed` is split the way `_charge_own_arrival_credit` spends it, tier 1 first:
+        this line's own PO reads "100 landed for this line on SPO-2026/09-0036"; a
+        sibling's over-buy reads "100 spare from line 1648's purchase (200 bought for 100)
+        landed on SPO-2026/09-0036", naming the sibling by its AutoCount line number. A
+        spare is never said to have landed "for this line": SO382618's January B2154-NL
+        line was credited the surplus of the 200 bought for line 1648, and "landed for
+        this line" sent the owner looking for a purchase that was never made for it.
+
+        `None` when no spare is part of `landed` - the caller's one-shipment sentence
+        (`own_arrival_reason`) already says it right.
+        """
+        core_line = self._own_core_line(fact)
+        if core_line is None or landed <= _ZERO or not tier2:
+            return None
+        siblings, received = self._own_arrival_order_facts(core_line)
+        _tier1, tier1_po = received.get(
+            str(core_line.source_ref or "").strip(), (_ZERO, None)
+        )
+        own = min(max(_dec(tier1_qty), _ZERO), landed)
+        spare_left = landed - own
+        if spare_left <= _ZERO:
+            return None
+        by_ref = {
+            str(line.source_ref).strip(): line for line in siblings if line.source_ref
+        }
+        parts: List[str] = []
+        if own > _ZERO:
+            parts.append(f"{qty_text(own)} landed for this line{landed_on(tier1_po)}")
+        for ref, spare, document in tier2:
+            if spare_left <= _ZERO:
+                break
+            take = min(spare, spare_left)
+            spare_left -= take
+            sibling = by_ref.get(ref)
+            sibling_received, _doc = received.get(ref, (_ZERO, None))
+            line_no = getattr(sibling, "line_no", None)
+            whose = f"line {line_no}'s" if line_no is not None else "another line's"
+            ordered = _dec(getattr(sibling, "qty_ordered", None))
+            parts.append(
+                f"{qty_text(take)} spare from {whose} purchase "
+                f"({qty_text(sibling_received)} bought for {qty_text(ordered)}) "
+                f"landed{landed_on(document)}"
+            )
+        return "; ".join(parts)
 
     @staticmethod
     def _charge_own_arrival_credit(
@@ -5359,7 +5451,13 @@ class ProjectSupplyService:
         rederivation refuses the very split it proposed.
         """
         line = fact.line
-        subject = {"line_no": line.line_no, "item_code": fact.item_code}
+        # #1362 item 5: `so_line_no` is the AutoCount line number off the core row, the one
+        # the refusal sentence names; `line_no` stays the sheet's own address.
+        subject = {
+            "line_no": line.line_no,
+            "so_line_no": fact.core.line_no if fact.core is not None else None,
+            "item_code": fact.item_code,
+        }
 
         def refuse(bucket: List[Dict[str, Any]], reason: str) -> None:
             bucket.append({**subject, "reason": reason})
@@ -5565,6 +5663,7 @@ class ProjectSupplyService:
         # not a second, possibly-inconsistent read.
         credit_qty = _ZERO
         credit_po: Optional[str] = None
+        credit_said: Optional[str] = None
         # AC-S3-16: same verdict as the composer - `walk()` builds no own-arrival
         # candidate at all for a line outside the reserve window, so the recheck must
         # not credit one either. A line due beyond the window is never credited,
@@ -5589,7 +5688,7 @@ class ProjectSupplyService:
             # not a bug: it only ever makes a LATER line's own credit smaller (refuses
             # rather than over-grants), and a confirm-time recheck has no "drawn" figure
             # to defer the charge to the way `walk_line`'s candidate draw does.
-            credit_qty, credit_po = self.own_arrival_credit_for(
+            credit_qty, credit_po, credit_said = self.own_arrival_credit_said(
                 fact, own_arrival_left=ledger
             )
             if credit_qty > _ZERO:
@@ -5771,10 +5870,11 @@ class ProjectSupplyService:
                 # R7 follow-up (R3): `credit_po` is now the document goods actually
                 # LANDED on - an SPO number, never a PO number - so the sentence names
                 # it bare, with no "PO" noun in front of it.
-                message = (
-                    f"{qty_text(credit_qty)} landed for this line{landed_on(credit_po)}; "
-                    "nothing to buy for it"
+                # #1362 item 4: a sibling's spare says whose purchase it was.
+                landed = credit_said or (
+                    f"{qty_text(credit_qty)} landed for this line{landed_on(credit_po)}"
                 )
+                message = f"{landed}; nothing to buy for it"
                 raise SupplyLinesRefused(
                     status_code=409,
                     message=message,

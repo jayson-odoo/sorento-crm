@@ -71,7 +71,9 @@ import {
   rowMatchesSearch,
   confirmLinesFor,
   rejectedCoveredLineIdsFor,
+  failingLineText,
   shiftedDayWindow,
+  soLineLabel,
   unpostableDecidedFor,
   type UnpostableLine,
   type UnpostableReason,
@@ -864,8 +866,8 @@ export function FulfilmentBoardPanel({
         );
         toast.success(
           decision.verdict === 'rejected'
-            ? `Line ${contribution?.line_no ?? ''} rejected · ${toConfirm} to confirm · ${rejected} rejected`
-            : `Line ${contribution?.line_no ?? ''} saved · ${toConfirm} to confirm`,
+            ? `${contribution ? soLineLabel(contribution) : 'Line'} rejected · ${toConfirm} to confirm · ${rejected} rejected`
+            : `${contribution ? soLineLabel(contribution) : 'Line'} saved · ${toConfirm} to confirm`,
         );
       }
       return true;
@@ -2105,9 +2107,7 @@ export function FulfilmentBoardPanel({
                             result.heldBack ? 'text-muted-foreground' : 'text-destructive'
                           }`}
                         >
-                          {line.line_no
-                            ? `Line ${line.line_no}${line.item_code ? `, ${line.item_code}` : ''}: ${line.reason}`
-                            : line.reason}
+                          {failingLineText(line)}
                         </li>
                       ))}
                     </ul>

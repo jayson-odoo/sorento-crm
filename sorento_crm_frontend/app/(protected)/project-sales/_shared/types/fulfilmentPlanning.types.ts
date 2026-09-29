@@ -508,6 +508,8 @@ export interface SupplyDecision {
  */
 export interface SupplyFailingLine {
   line_no?: number | null;
+  /** #1362 item 5: AutoCount's own sales-order line number, the one a message names. */
+  so_line_no?: number | null;
   item_code?: string | null;
   reason: string;
 }
@@ -1156,6 +1158,13 @@ export interface BoardContribution {
    */
   project_key?: string | null;
   line_no: number;
+  /**
+   * #1362 item 5: AutoCount's own sales-order line number (`sales_order_lines.line_no`), the
+   * "No." the sales order's Lines tab shows. What the Line column, the drawer title and every
+   * confirm message print. `line_no` is the planning ADDRESS (the draft key) and is printed
+   * only as "row N" when AutoCount gave the line no number.
+   */
+  so_line_no?: number | null;
   item_code: string;
   /**
    * What this line ASKS FOR: the PLAN quantity, `coalesce(qty_required, qty_ordered)`.
