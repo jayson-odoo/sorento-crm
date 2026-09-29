@@ -129,11 +129,12 @@ contract) is mapped to a stable `uuid5` so it still dedupes and still gets its l
 6. contact opted out (`respond_contacts.outbound_enabled` false, the per-contact outbound switch
    the reminder already honours inside `RespondClient`) -> log `skipped` / `OPTED_OUT`, checked
    up front so the row says why instead of a 403;
-7. template: `send_template_for_use_case(use_case="ideation_status_update")`, the same Respond.io
-   seam the reminder reaches through `send_text_or_template` once the window is closed. Called
-   directly, so it is ALWAYS the approved template, never free text, window open or not. No valid
-   mapping -> `TemplateSendSkipped` -> log `skipped` / `NO_TEMPLATE` with the reason; the poller
-   carries on.
+7. send: `send_text_or_template(use_case="ideation_status_update")`, the same 24h-window-aware
+   sender every CRM auto-send uses. Window open -> the session text (idea number, new status,
+   track link, greeting only when the contact has a name); window closed or unknown -> the
+   approved template. No valid mapping while the window is closed -> `TemplateSendSkipped` ->
+   log `skipped` / `NO_TEMPLATE` with the reason; the poller carries on. Changed on 29 Sep 2026
+   by the follow-up plan `PLAN-ideation-update-24h-window-29sep.md` (this step was template-only).
 
 ### 5. Send failure
 

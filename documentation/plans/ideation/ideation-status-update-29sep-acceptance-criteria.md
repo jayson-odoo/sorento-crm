@@ -69,11 +69,12 @@ one integration log row per event, send or skip, with the reason.
 - **AC-IS043** `[BE][T]` `requester_phone` matches a contact by digits when the formatting differs.
 - **AC-IS044** `[BE][T]` No `requester_phone`: logged `skipped` / `NO_REQUESTER_PHONE`.
 
-## Template only, never free text
+## Send path
 
-- **AC-IS050** `[BE][T]` The send goes through `send_template_for_use_case` to
-  `RespondClient.send_template_message` with the mapped approved template, and never through
-  `send_message` (free text), whether or not the requester's 24h window is open.
+- **AC-IS050** `[BE][T]` The send goes through `send_text_or_template`: window open ->
+  `RespondClient.send_message` with the session text, window closed or unknown ->
+  `send_template_message` with the mapped approved template (superseded detail in
+  `ideation-update-24h-window-29sep-acceptance-criteria.md` AC-UW001..003).
 - **AC-IS051** `[BE][T]` No valid mapping: logged `skipped` / `NO_TEMPLATE` with the reason, the
   poller goes on to the next event and does not raise.
 - **AC-IS052** `[BE][T]` A Respond.io send error: logged `failed` / `SEND_FAILED`, the cursor
