@@ -1,6 +1,6 @@
 # PLAN: contact <-> customer links, and a sales agent's customers from the agent side
 
-Status: built, review passed, hand test pending (29 Sep 2026); full track, no migration. PR #1366. Evidence: `evidence/contact-customers/evidence-run.md`.
+Status: hand test round 1 feedback being applied (round 3, 29 Sep 2026); full track, no migration. PR #1366. Evidence: `evidence/contact-customers/evidence-run.md`.
 Domain: sales (customer master, sales agents) + user_management (contacts).
 UAC: `contact-customers-29sep-acceptance-criteria.md` alongside.
 Lane: CONTACT-CUSTOMERS. Siblings that build on this: SALES-ASKS-TODO, CHATBOT-CUSTOMER-SCOPE.
@@ -129,6 +129,31 @@ else is asked; the agent behind a customer is derived, never typed.
   no longer returns `suggested` (D2 amended), the card has no Suggested list (D3 amended),
   AC-6 and AC-21 are withdrawn.
 - Q8 (b): ADD a read-only list of linked WhatsApp contacts on the customer detail page (D5).
+
+## Round 3 (owner hand test, 29 Sep 2026)
+
+Owner: "for contact customer, needs to be multi select component for easier linking, same goes
+for here" (the agent tab). Both pickers become MULTI-selects with one bulk action:
+
+- Component: the repo's existing `SearchableMultiSelect`
+  (`sorento_crm_frontend/components/common/SearchableMultiSelect.tsx`, async `fetchOptions(query)`,
+  per-option `description`, `disabled` options; callers today include `sales/teams/components/
+  SalesTeamModal.tsx` and `dealer-kit/tag-templates/components/ProductPickDialog.tsx`). Not a
+  new picker. The option still shows the customer's current agent as its description.
+- Contact card: pick several (e.g. every HANLIM TRADING account), then ONE "Link" button
+  ("Link 4 customers", disabled with nothing picked); already-linked customers are disabled in
+  the list. On success the selection clears and the rows appear.
+- Agent tab: pick several, then ONE "Assign" button ("Assign 3 customers"); customers already
+  on this agent are disabled in the list; the others show their current agent.
+- Bodies become lists (D2 amended): `POST /contacts/{id}/customers` `{ "customer_ids": [..] }`
+  and `POST /sales-agents/{id}/customers` `{ "customer_ids": [..] }`, one to many ids,
+  `extra="forbid"`. All-or-nothing in one transaction (same rule as `bulk-annotate`): any id
+  unknown or out of scope answers 404 and nothing is written; on the agent side any 422 (inactive
+  agent, cross-company customer) refuses the whole selection. Already-linked / already-assigned
+  ids are no-ops inside an otherwise valid request. Responses: 201 `{ "data":
+  [ContactCustomerLink] }` and 200 `{ "data": [CustomerResponse] }`, in request order.
+- The single-select paged search (`searchCustomersSelect`) stays as the fetch behind the
+  multi-select (first page of 50 per query; a narrower query is how the user reaches the rest).
 
 ## Design (round 2)
 

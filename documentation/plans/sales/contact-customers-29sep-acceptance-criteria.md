@@ -1,7 +1,7 @@
 # UAC: contact <-> customer links, and a sales agent's customers from the agent side
 
 Plan: `PLAN-contact-customers-29sep.md`. Track: full, no migration.
-Status: round 2 (29 Sep 2026). The owner answered the grill (relayed by crew on PR #1366): Q1,
+Status: round 3 (29 Sep 2026, owner hand test: both pickers multi-select with one bulk action; AC-3, AC-9, AC-22, AC-23, AC-29 gain "Round 3:" notes; AC-14 and AC-15 are new). Round 2 (29 Sep 2026). The owner answered the grill (relayed by crew on PR #1366): Q1,
 Q3, Q5, Q6, Q7 as recommended; Q2 (b) no primary in the UI or the API of this lane (answered later the same day); Q4 no
 suggestions; Q8 (b) a read-only linked-contacts list on the customer detail. No criterion is
 deleted: a withdrawn or changed one keeps its text and gains a "Round 2:" note; AC-13, AC-34
@@ -48,7 +48,9 @@ Actor B: a sales admin holding `master_data.sales_agents.edit` (read-only with `
 - AC-3 `[FE][T]` Given the "Add customer" select, when the user types, then options are
   fetched from the server (paged, 50 per page), labelled `code - name` with the current agent
   as the description; picking one calls the link mutation with that customer id and clears
-  the select.
+  the select. Round 3: the select is `SearchableMultiSelect`; picking adds to the selection,
+  a "Link N customers" button (disabled at zero) sends ONE request with every picked id, and
+  the selection clears on success; already-linked customers are disabled options.
 - AC-4 `[FE][T]` Given a non-primary row, when "Make primary" is clicked, then the set-primary
   mutation is called with `is_primary: true`; given the primary row, the button reads "Clear
   primary" and sends `false`. (Q2) Round 2: withdrawn (Q2 b); no hook, service or route for it in this lane.
@@ -67,7 +69,9 @@ Actor B: a sales admin holding `master_data.sales_agents.edit` (read-only with `
   "No customers assigned" and the hint "Assign the customers this agent handles".
 - AC-9 `[FE][T]` Given the "Assign customer" select, when a customer that another agent
   handles is picked, then the option showed that agent and the assign mutation is called with
-  the customer id (no refusal). (Q6)
+  the customer id (no refusal). (Q6) Round 3: multi-select plus one "Assign N customers"
+  button sending every picked id in one request; customers already on this agent are disabled
+  options.
 - AC-10 `[FE][T]` Given a row, when Unassign is clicked, then the deferred row action parks
   `customer.unassign_sales_agent` on the customer id with the agent id in the payload; the
   countdown is a toast and the row dims.
@@ -80,6 +84,12 @@ Actor B: a sales admin holding `master_data.sales_agents.edit` (read-only with `
   record, the phone number, the linked date; given none, the heading "No WhatsApp contacts
   linked" and the hint "Link this customer from a contact's Customers card". Read-only, no
   button.
+- AC-14 `[FE][T]` Round 3: the contact card's picker is the shared `SearchableMultiSelect`;
+  with three customers ticked the button reads "Link 3 customers" and one click calls the
+  link mutation once with the three ids; with none ticked it is disabled.
+- AC-15 `[FE][T]` Round 3: the agent tab's picker is the shared `SearchableMultiSelect`; with
+  two customers ticked the button reads "Assign 2 customers" and one click calls the assign
+  mutation once with the two ids; with none ticked it is disabled.
 - AC-12 `[FE]` A user without `user_management.contacts.edit` sees the card read-only (no
   select, no Make primary, no Unlink); without `master_data.sales_agents.edit` the tab is
   read-only (no select, no Unassign). (Q7)
@@ -98,7 +108,10 @@ Actor B: a sales admin holding `master_data.sales_agents.edit` (read-only with `
 - AC-22 `[BE][T]` POST `.../customers` with a valid `customer_id` creates the link with
   `company_id` equal to the customer's company (also under a two-company scope), `source
   = "manual"`, `linked_by` = the caller's user id, and answers 201 with the row; a repeat POST
-  for the same pair answers 201 with the same row and creates nothing.
+  for the same pair answers 201 with the same row and creates nothing. Round 3: the body is
+  `{ "customer_ids": [...] }` (one to many); the response is `{ "data": [rows] }` in request
+  order; three ids in one POST create three links in one transaction; an id already linked
+  inside the list is a no-op and its existing row is returned.
 - AC-23 `[BE][T]` POST with a customer outside the caller's scope or unknown answers 404;
   an unknown contact answers 404; `is_primary: true` on POST makes it the primary and demotes
   the other primary in that company. Round 2: the body has no `is_primary` (Q2 b); a body
@@ -124,7 +137,10 @@ Actor B: a sales admin holding `master_data.sales_agents.edit` (read-only with `
   this agent through `CustomerService.update_customer` and answers 200 with the customer
   carrying `sales_agent_code`; a customer handled by another agent is moved (Q6); an
   inactive agent answers 422; a customer of another company than the agent's answers 422
-  (shared agents always allowed); an unknown customer answers 404.
+  (shared agents always allowed); an unknown customer answers 404. Round 3: the body is
+  `{ "customer_ids": [...] }`; the response `{ "data": [customers] }` in request order; three
+  ids assign three customers in one transaction; a list with one inactive-agent/cross-company
+  422 or one unknown 404 assigns NOTHING; a customer already on this agent is a no-op.
 - AC-30 `[BE][T]` The pending action `customer.unassign_sales_agent` is registered with
   `WINDOW_REVERSIBLE` and permission `master_data.sales_agents.edit`; executing it clears
   `sales_agent_id` when it still equals the payload's agent, and leaves a customer already
