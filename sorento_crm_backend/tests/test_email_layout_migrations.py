@@ -157,6 +157,7 @@ def test_downgrade_after_may_body_conversion_leaves_body():  # AC-EM095
         before = {c: _row(db, c) for c in MAY_CODES}
         mig = mods["eml_0002_seed_layouts"]
         _run(mig, db)
+        assert all(_row(db, c)[2] is not None for c in MAY_CODES), "upgrade must convert both rows first"
         _run(mig, db, "downgrade")
         for code in MAY_CODES:
             after = _row(db, code)
