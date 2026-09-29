@@ -459,10 +459,11 @@ async def update_spo_allocation(
 @router.delete("/{allocation_id}", status_code=status.HTTP_200_OK)
 async def delete_spo_allocation(
     allocation_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("procurement.spo_allocations.delete")),
     db: Session = Depends(get_db)
 ):
-    """Delete an SPO allocation."""
+    """Delete an SPO allocation. Same gate as the bulk route above (SPO-CASCADE): this
+    checked only `get_current_user`, so any signed-in user could remove a synced line."""
     try:
         service = SPOAllocationService(db)
         service.delete_allocation(allocation_id)
