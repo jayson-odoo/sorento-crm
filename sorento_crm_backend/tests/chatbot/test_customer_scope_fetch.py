@@ -110,3 +110,47 @@ class TestSetIsPinnedToTheCatalogue:
         carrying = {spec.name for spec in _load_catalog_specs() if "customer_ids" in spec.query_params}
         assert carrying, "the catalogue no longer has a tool taking customer_ids: the pin is stale"
         assert carrying == set(fetch.CUSTOMER_SCOPED_TOOLS), carrying ^ set(fetch.CUSTOMER_SCOPED_TOOLS)
+
+
+class TestRunFetchAnswersAScopeViolationWithTheRefusal:
+    def test_run_fetch_turns_a_scope_violation_into_the_refusal_reply(self, session_factory) -> None:
+        """D4: `run_fetch` given `scope_customer_ids == [A]` (the enforced customer scope on
+        the lane's ctx) and compatible entities naming customer Z returns the refusal line
+        (never the generic "not allowed" text) and calls no tool."""
+        from app.services.chatbot.lanes.business import run_fetch
+        from app.services.chatbot.lanes.business.services import FetchServices
+
+        a, z = str(uuid.uuid4()), str(uuid.uuid4())
+        refusal = "Sorry, that isn't under your account. I can only check on ZZT OWN A."
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def _mcp(name: str, args: dict[str, Any]) -> Any:
+            calls.append((name, args))
+            return "{}"
+
+        payload = {
+            "gate": {"compatible_entities": [{"uuid": z, "entity_type": "customer", "code": "ZZT-Z"}]},
+            "tier_gate": None,
+            "ctx": {
+                "contact": {"id": "1"},
+                "access": {"attributes": ["sales_orders.outstanding"]},
+                "parse": {
+                    "output": {
+                        "domain_hint": "order",
+                        "intent_hint": "check_order",
+                        "message_type": "business_query",
+                        "order_status": "outstanding_both",
+                        "entities": [],
+                    }
+                },
+                "customer_scope": {"ids": [a], "enforced": True, "refusal": refusal},
+            },
+        }
+        db = session_factory()
+        try:
+            fragment = run_fetch(payload, services=FetchServices(mcp_call=_mcp), db=db)
+        finally:
+            db.close()
+        assert calls == []
+        assert (fragment.get("fetch") or {}).get("response") == refusal, fragment
+        assert "escalate" not in str(fragment).lower()

@@ -1291,6 +1291,84 @@ def _top_selling_dealer_scope(
     return {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}
 
 
+def _customer_scope_gate(
+    scope: dict[str, Any] | None,
+    verdict: dict[str, Any],
+    focus: Any,
+    parse_output: dict[str, Any],
+    domains: Any,
+) -> tuple[dict[str, Any], list[str] | None, bool]:
+    """PLAN-chatbot-customer-scope-29sep.md D3: the upstream block, run BEFORE the
+    resolver. Returns `(the resolver's input, the linked customer ids the turn is
+    scoped to or None, refused)`.
+
+    A contact linked to customers (`respond_contact_customers`) and holding no active
+    office access type is scoped to them: the customer words it typed are matched against
+    its OWN linked customers and stripped from the resolver's input, so the generic
+    resolver (whose name probe and picker would list other customers) is never asked
+    about them; a word matching none of them refuses the turn. `self_reference` ("my",
+    "me", "our") means the links, for staff too. A scoped contact naming no customer at
+    all is on its links. Unlinked contacts, staff without "my", top selling (its own
+    block, `_top_selling_dealer_scope`) and turns outside the order domain are untouched."""
+    if not scope or focus.status == "top_selling" or "order" not in (domains or ()):
+        return parse_output, None, False
+    self_reference = verdict.get("self_reference") is True
+    if not (scope.get("enforced") or self_reference):
+        return parse_output, None, False
+    entities = [e for e in (parse_output.get("entities") or []) if isinstance(e, dict)]
+
+    def _is_customer(e: dict[str, Any]) -> bool:
+        return e.get("hint") == "customer" or e.get("entity_type") == "customer"
+
+    words = [jsc.js_string(e.get("raw")) for e in entities if _is_customer(e) and jsc.truthy(e.get("raw"))]
+    if not words:
+        return parse_output, list(scope["ids"]), False
+    if not scope.get("enforced"):
+        return parse_output, None, False  # staff naming a customer: unscoped as today
+    from app.services import contact_customer_scope as scope_mod
+
+    ids = scope_mod.ContactCustomerScope(
+        linked=tuple((c, n, k) for c, n, k in scope["linked"]), staff=False
+    ).match_words(words)
+    stripped = {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}
+    return stripped, ids, ids is None
+
+
+def _scoped_compatible(
+    scope: dict[str, Any], ids: list[str], compatible: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The resolver's rows with the linked customers `ids` as the only customer rows."""
+    rows = [e for e in compatible if e.get("entity_type") != "customer"]
+    for cid, name, code in scope["linked"]:
+        if cid in ids:
+            rows.append(
+                {"uuid": cid, "entity_type": "customer", "code": code, "scope": True, **({"display_name": name} if name else {})}
+            )
+    return rows
+
+
+def _pass_scope_gate(
+    payload: dict[str, Any] | None, compatible: list[dict[str, Any]], *, force: bool
+) -> dict[str, Any] | None:
+    """The resolver's exit for a turn the scope gate answered. The linked customers are
+    the subject the gate's "no entities and 'order' requires a scoping entity" arm asked
+    for, so that arm (or, when `force`, any arm: the lane refuses before a fetch) is
+    passed instead of ending in the miss text and its escalate offer."""
+    if not isinstance(payload, dict):
+        return payload
+    gate = dict(payload.get("gate") if isinstance(payload.get("gate"), dict) else {})
+    gate["compatible_entities"] = compatible
+    if force or (
+        gate.get("gate_passed") is False and str(gate.get("gate_reason") or "").startswith("no entities and")
+    ):
+        gate["gate_passed"] = True
+        gate["gate_reason"] = "customer scope"
+        gate["gate_clarification"] = ""
+        exit_kind = "continue" if force or payload.get("_exit_kind") == "not_found" else payload.get("_exit_kind")
+        return {**payload, "gate": gate, "_exit_kind": exit_kind}
+    return {**payload, "gate": gate}
+
+
 def _top_selling_narrowing(
     db: Session, parse_output: dict[str, Any], focus: Any, *, dealer: bool
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -3093,6 +3171,9 @@ def _run_stages(  # noqa: PLR0915
         if in_ranking_conversation:
             # Read by the tail: no escalate offer and no routing picker (round 7).
             ctx["top_selling_no_offer"] = True
+        # PLAN-chatbot-customer-scope-29sep.md D3: the contact's customer scope, read once
+        # per turn; the gate below, `_fetch_semantic_input` and the lane read it off ctx.
+        ctx["customer_scope"] = business_services.customer_scope(db, contact_respond_id, space_id_for_turn)
 
         # Grant before roster (SF-1, PLAN-chatbot-answer-half-reattach.md slice R2):
         # an ungranted contact's sales-report ask is refused HERE, before the resolver
@@ -3226,6 +3307,9 @@ def _run_stages(  # noqa: PLR0915
                 )
             elif isinstance(state_out.focus.top_selling, dict) and state_out.focus.top_selling.get("hop"):
                 resolver_parse_output = _without_carried_words(resolver_parse_output)
+            resolver_parse_output, scope_ids, scope_refused = _customer_scope_gate(
+                ctx.get("customer_scope"), verdict, state_out.focus, resolver_parse_output, plan.domains
+            )
             if (
                 len(plan.domains) > 1
                 and resolver_parse_output.get("entities")
@@ -3290,6 +3374,15 @@ def _run_stages(  # noqa: PLR0915
             unplaced_tokens = resolve_outcome.unplaced_tokens
             spec_tier = resolve_outcome.spec_tier
             resolver_payload = resolve_outcome.payload
+            if scope_ids is not None or scope_refused:
+                # D3: the linked customers are this turn's customers; a refused turn is
+                # answered by the lane's fixed line, before any tool (D4's twin).
+                if scope_refused:
+                    ctx["customer_scope"]["refused"] = True
+                    turn_trace.add("customer_scope", {"refused": "customer_not_permitted"})
+                else:
+                    compatible_entities = _scoped_compatible(ctx["customer_scope"], scope_ids, compatible_entities)
+                resolver_payload = _pass_scope_gate(resolver_payload, compatible_entities, force=scope_refused)
             answer_parse_output = turn_runtime.answer_parse_output(
                 resolver_ctx["parse"]["output"],
                 gate=(resolver_payload or {}).get("gate"),
@@ -3316,6 +3409,21 @@ def _run_stages(  # noqa: PLR0915
             if clarify is not None:
                 state_out.focus.set_clarify = clarify
             _apply_top_selling_updates(state_out.focus, top_selling_updates)
+            if scope_ids is not None and not scope_refused:
+                # D3: the linked customers ARE the turn's customers: the header names
+                # them and a follow-up carries them. The plan's own customer rows (the
+                # typed word, never resolved) go, or `_entities_for` would drop the
+                # linked rows for not matching that word.
+                for spec in plan.fetch:
+                    spec.entities = [e for e in spec.entities if e.get("hint") != "customer"]
+                state_out.focus.customers = [
+                    {
+                        "uuid": cid, "hint": "customer", "canonical_code": code or name, "raw": name,
+                        "name": name, "current_message": False,
+                    }
+                    for cid, name, code in ctx["customer_scope"]["linked"]
+                    if cid in scope_ids
+                ]
 
         # D ROUTE. Two facts outrank the plan and neither is IN one: a refused access
         # agent (contract 58, fail closed) and the stock-denial switch, which is decided

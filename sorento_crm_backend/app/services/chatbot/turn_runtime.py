@@ -2826,7 +2826,12 @@ def make_tool_runner(
         # gate. `page_predicate is None` keeps a `set_page` continuation (its own,
         # unrelated, id-only entities) out of this.
         if page_predicate is None and not (fragment.get("fetch") or {}).get("has_result"):
-            rerun_split = _record_key_rerun_split(domain, verdict, entities, resolved_kinds)
+            # The customer scope's own rows (`engine._scoped_compatible`) are not something
+            # the message typed, so they are no "combined call" to split: a rerun on the
+            # record key alone would send the same scoped arguments a second time.
+            rerun_split = _record_key_rerun_split(
+                domain, verdict, [e for e in entities if not e.get("scope")], resolved_kinds
+            )
             # P3 (hand pass 12 Phase 3, reviewer S1): the `would_be_unfiltered` guard
             # above is computed once, before the FIRST `run_fetch`, and this rerun
             # never re-consults it - `_record_key_rerun_split`'s own `keep` can carry
