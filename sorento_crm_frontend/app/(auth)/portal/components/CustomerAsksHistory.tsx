@@ -1,34 +1,82 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import {
-  type ColumnDef,
-  getCoreRowModel,
-  useReactTable,
-} from '@tanstack/react-table';
-import { MessageSquareText } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { AskDoneByCell, AskedAtCell, AskNoteCell, AskStateCell } from '@/components/stock-asks/AskEditCells';
-import { useHasPermission } from '@/hooks/usePermissions';
-import { BRANCH_LABEL, BRANCH_VARIANT, notifiedLabel, type StockAsk } from '@/lib/stock-asks';
-import { useCustomerAsksQuery, useUpdateAskMutation } from '../hooks/useCustomerAsks';
+import { toast } from '@/lib/toast';
+import {
+  BRANCH_LABEL,
+  BRANCH_VARIANT,
+  notifiedLabel,
+  type StockAsk,
+  type StockAskPage,
+  type StockAskPatch,
+} from '@/lib/stock-asks';
+import {
+  NotASalesAgentError,
+  listCustomerAsks,
+  updateCustomerAsk,
+} from '../lib/customer-asks-service';
 
 /**
- * Chatbot stock ask v2 S5 (R9): every stock ask the chatbot answered for this customer's
- * contacts. The office works State and Note in place with `order_management.customers.edit`;
- * without it the same cells read as values.
+ * Sales-asks-todo S1: the "Show done" history under the portal to-do. It is the #1333 list
+ * (DataGrid, paged) fixed to `state=done`; the to-do above owns everything still open. Reloads
+ * when the to-do writes (`refreshKey`), so a Reopen leaves this list at once.
  */
-export function CustomerAsksTab({ customerId }: { customerId: string }) {
-  const canEdit = useHasPermission('order_management.customers.edit');
+export function CustomerAsksHistory({ search, refreshKey }: { search: string; refreshKey: number }) {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 20 });
-  const { data, isLoading, isPlaceholderData } = useCustomerAsksQuery(customerId, pagination);
-  const { mutate: updateAsk } = useUpdateAskMutation(customerId);
-  const rows = data?.data ?? [];
-  const total = data?.pagination?.total ?? 0;
+  const [page, setPage] = useState<StockAskPage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const q = search.trim();
+
+  // A new search starts again from page 1.
+  useEffect(() => {
+    setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
+  }, [q]);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    return listCustomerAsks({
+      page: pagination.pageIndex + 1,
+      limit: pagination.pageSize,
+      q,
+      state: 'done',
+    })
+      .then((data) => setPage(data))
+      .catch((error: unknown) => {
+        if (!(error instanceof NotASalesAgentError)) {
+          toast.error(error instanceof Error ? error.message : 'Failed to load customer asks');
+        }
+      })
+      .finally(() => setLoading(false));
+    // refreshKey is a reload trigger, not a value the callback reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagination.pageIndex, pagination.pageSize, q, refreshKey]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const save = useCallback((askId: string, patch: StockAskPatch) => {
+    updateCustomerAsk(askId, patch)
+      .then((updated) => {
+        setPage((prev) =>
+          prev ? { ...prev, data: prev.data.map((r) => (r.id === updated.id ? updated : r)) } : prev,
+        );
+        toast.success('Ask updated');
+      })
+      .catch((error: unknown) =>
+        toast.error(error instanceof Error ? error.message : 'Failed to update the ask'),
+      );
+  }, []);
+
+  const rows = page?.data ?? [];
+  const total = page?.pagination?.total ?? 0;
 
   const columns = useMemo<ColumnDef<StockAsk>[]>(
     () => [
@@ -39,9 +87,19 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
         cell: ({ row }) => <AskedAtCell ask={row.original} />,
       },
       {
+        id: 'customer_name',
+        header: 'Customer',
+        size: 170,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.customer_name ?? undefined}>
+            {row.original.customer_name || '-'}
+          </span>
+        ),
+      },
+      {
         id: 'contact_name',
         header: 'Contact',
-        size: 150,
+        size: 130,
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.contact_name ?? undefined}>
             {row.original.contact_name || '-'}
@@ -51,7 +109,7 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
       {
         id: 'product_code',
         header: 'Product',
-        size: 150,
+        size: 140,
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.product_name ?? row.original.product_code}>
             {row.original.product_code}
@@ -61,7 +119,7 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
       {
         id: 'quantity',
         header: 'Qty',
-        size: 70,
+        size: 60,
         cell: ({ row }) => <span className="tabular-nums">{row.original.quantity}</span>,
       },
       {
@@ -77,7 +135,7 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
       {
         id: 'answer_summary',
         header: 'Answer',
-        size: 320,
+        size: 280,
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.answer_summary}>
             {row.original.answer_summary}
@@ -87,7 +145,7 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
       {
         id: 'notified_agent',
         header: 'Notified',
-        size: 110,
+        size: 100,
         cell: ({ row }) => {
           const n = notifiedLabel(row.original);
           return (
@@ -100,13 +158,9 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
       {
         id: 'state',
         header: 'State',
-        size: 120,
+        size: 110,
         cell: ({ row }) => (
-          <AskStateCell
-            ask={row.original}
-            editable={canEdit}
-            onSave={(patch) => updateAsk({ askId: row.original.id, patch })}
-          />
+          <AskStateCell ask={row.original} editable onSave={(patch) => save(row.original.id, patch)} />
         ),
       },
       {
@@ -118,17 +172,13 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
       {
         id: 'note',
         header: 'Note',
-        size: 240,
+        size: 220,
         cell: ({ row }) => (
-          <AskNoteCell
-            ask={row.original}
-            editable={canEdit}
-            onSave={(patch) => updateAsk({ askId: row.original.id, patch })}
-          />
+          <AskNoteCell ask={row.original} editable onSave={(patch) => save(row.original.id, patch)} />
         ),
       },
     ],
-    [canEdit, updateAsk],
+    [save],
   );
 
   const table = useReactTable({
@@ -144,27 +194,13 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
     columnResizeMode: 'onChange',
   });
 
-  if (!isLoading && total === 0) {
-    return (
-      <Card>
-        <div className="flex flex-col items-center gap-2 py-10 text-center">
-          <MessageSquareText className="size-8 text-muted-foreground" />
-          <p className="font-medium">No stock asks yet</p>
-          <p className="text-sm text-muted-foreground">
-            Stock questions this customer&apos;s contacts ask the WhatsApp chatbot are listed here.
-          </p>
-        </div>
-      </Card>
-    );
-  }
-
   return (
     <DataGrid
       table={table}
       recordCount={total}
-      isLoading={isLoading}
-      isPlaceholderData={isPlaceholderData}
-      listingKey="order_management.customers.view::stock_asks"
+      isLoading={loading && !page}
+      // The portal has no CRM session to keep column preferences under.
+      listingKey={null}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
     >
       <Card>

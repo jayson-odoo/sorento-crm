@@ -832,6 +832,14 @@ PERMISSION_REGISTRY.extend(_crud("sales", "opportunities", "Sales Opportunities"
 # Slice S1: `sales_0003_targets` creates and grants these the same way. `.edit` also gates a
 # period's figure, Duplicate and Add figure (plan 3.7).
 PERMISSION_REGISTRY.extend(_crud("sales", "targets", "Sales Targets"))
+# Sales-asks-todo S2: `sat_0001_stock_ask_done` creates and grants these. `view_all` lets a user
+# read and clear another agent's asks (the manager page's Agent select).
+PERMISSION_REGISTRY.extend(_crud("sales", "customer_asks", "Customer Asks"))
+PERMISSION_REGISTRY.append({
+    "slug": "sales.customer_asks.view_all",
+    "name": "View All Customer Asks",
+    "description": "Permission to view and clear every sales agent's customer asks, not only your own.",
+})
 
 
 # Finance module (plan 3.5, slice S0, #1309; ruling Q9). Migration `fin_0001_billing_documents`

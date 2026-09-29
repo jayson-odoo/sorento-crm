@@ -63,6 +63,12 @@ class StockAsk(Base, CompanyScopedMixin):
     state = Column(String(10), nullable=False, default="open", server_default=text("'open'"))
     note = Column(Text, nullable=True)
     source = Column(String(10), nullable=False, default="live", server_default=text("'live'"))
+    #: Set in one place (`stock_ask_service._apply_update`): when `state` last became done, and
+    #: who did it (a CRM user, a portal contact, or both when the contact is also a user).
+    #: Ids, never a name; `serialize` resolves the label.
+    done_at = Column(DateTime(timezone=False), nullable=True)
+    done_by_user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    done_by_contact_id = Column(Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

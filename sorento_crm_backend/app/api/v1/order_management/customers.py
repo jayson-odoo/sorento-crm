@@ -187,7 +187,11 @@ def update_customer_ask(
     validate_uuid_path(customer_id, resource="Customer")
     validate_uuid_path(ask_id, resource="Stock ask")
     return stock_ask_service.update_for_customer(
-        db, customer_id, ask_id, body.model_dump(exclude_unset=True)
+        db,
+        customer_id,
+        ask_id,
+        body.model_dump(exclude_unset=True),
+        actor_user_id=current_user["id"],
     )
 
 

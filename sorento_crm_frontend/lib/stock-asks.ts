@@ -11,6 +11,8 @@ export interface StockAsk {
   id: string;
   customer_name: string | null;
   contact_name: string | null;
+  /** The contact's phone number, for the opened card's header. */
+  contact_phone?: string | null;
   product_code: string;
   product_name: string | null;
   quantity: number;
@@ -24,6 +26,15 @@ export interface StockAsk {
   note: string | null;
   created_at: string;
   updated_at: string | null;
+  /** Sales-asks-todo S1: when `state` last became done (naive UTC), null while open. */
+  done_at?: string | null;
+  /** Sales-asks-todo S1: the name of who marked it done (a portal contact or a CRM user). */
+  done_by?: string | null;
+  /**
+   * The owning agent's code, only sent by the CRM to-do when the caller asked for
+   * `agent_id=all`, so the manager view can name the agent on line 1 of each row.
+   */
+  agent_code?: string | null;
 }
 
 export interface StockAskPage {
