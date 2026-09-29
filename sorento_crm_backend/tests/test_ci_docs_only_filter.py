@@ -284,6 +284,116 @@ def test_fail_safes_land_on_the_full_pipeline(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Workflow-level concurrency: only a `ci` label run joins the per-PR group.
+# ---------------------------------------------------------------------------
+#
+# Every label added to a PR fires the workflow (trigger `types: [labeled]`);
+# the jobs skip on the label name, but the run still joins a concurrency
+# group. With the PR number as the group for every pull_request event, adding
+# `needs-hand-test` cancelled a live `ci` run (2026-09-28, #1304, run
+# 36387225667). The two expressions are evaluated here as written in the
+# workflow, with GitHub's semantics for the operators they use (`&&` and `||`
+# return an operand, like JavaScript; a missing context value is the empty
+# string).
+
+_GH_TOKEN = re.compile(r"'[^']*'|\d+|[A-Za-z_][\w.-]*|&&|\|\||==|!=|[()]")
+
+
+def _gh_eval(expression: str, context: dict) -> object:
+    """Evaluate the subset of GitHub's expression language the workflow uses."""
+
+    def lookup(path: str):
+        node = context
+        for part in path.split("."):
+            if not isinstance(node, dict) or part not in node:
+                return ""
+            node = node[part]
+        return node
+
+    python = []
+    for token in _GH_TOKEN.findall(expression):
+        if token == "&&":
+            python.append(" and ")
+        elif token == "||":
+            python.append(" or ")
+        elif token in ("==", "!=", "(", ")"):
+            python.append(f" {token} ")
+        elif token.startswith("'") or token.isdigit():
+            python.append(token)
+        elif token in ("true", "false", "null"):
+            python.append({"true": "True", "false": "False", "null": "None"}[token])
+        else:
+            python.append(f"lookup({token!r})")
+    return eval("".join(python), {"__builtins__": {}}, {"lookup": lookup})  # noqa: S307
+
+
+def _gh_render(template: str, context: dict) -> str:
+    return re.sub(r"\$\{\{(.*?)\}\}", lambda m: str(_gh_eval(m.group(1).strip(), context)), template)
+
+
+def _concurrency() -> tuple[str, str]:
+    """The workflow-level `group` and `cancel-in-progress` lines, verbatim."""
+    if not WORKFLOW.exists():
+        pytest.skip(f"{WORKFLOW} not present (in-image run)")
+    text = WORKFLOW.read_text(encoding="utf-8")
+    block = re.search(r"^concurrency:\n((?:  .*\n)+)", text, re.M)
+    assert block, "workflow-level concurrency block not found"
+    group = re.search(r"^  group: (.*)$", block.group(1), re.M)
+    cancel = re.search(r"^  cancel-in-progress: (.*)$", block.group(1), re.M)
+    assert group and cancel, block.group(1)
+    return group.group(1).strip(), cancel.group(1).strip()
+
+
+def _event(event: str, *, label: str | None = None, pr: int | None = None, run_id: int) -> dict:
+    ctx = {"workflow": "Build and Deploy Sorento", "event_name": event, "run_id": run_id, "event": {}}
+    if pr is not None:
+        ctx["event"]["pull_request"] = {"number": pr}
+    if label is not None:
+        ctx["event"]["label"] = {"name": label}
+    return {"github": ctx}
+
+
+def _resolve(ctx: dict) -> tuple[str, bool]:
+    group, cancel = _concurrency()
+    return _gh_render(group, ctx), bool(_gh_eval(cancel.strip("${} "), ctx))
+
+
+def test_concurrency_ci_label_runs_share_the_pr_group_and_cancel():
+    first = _resolve(_event("pull_request", label="ci", pr=1370, run_id=1))
+    second = _resolve(_event("pull_request", label="ci", pr=1370, run_id=2))
+    assert first == ("ci-Build and Deploy Sorento-1370", True)
+    assert second[0] == first[0], "a re-added ci label must supersede the older ci run"
+    other_pr = _resolve(_event("pull_request", label="ci", pr=1371, run_id=3))
+    assert other_pr[0] != first[0], "one PR's ci run must not cancel another PR's"
+
+
+@pytest.mark.parametrize("label", ["needs-hand-test", "lane-running", "needs-decision", "ready-for-agent"])
+def test_concurrency_other_label_events_join_no_group_and_cancel_nothing(label):
+    ci_group, _ = _resolve(_event("pull_request", label="ci", pr=1370, run_id=1))
+    group, cancel = _resolve(_event("pull_request", label=label, pr=1370, run_id=2))
+    assert group != ci_group, f"a {label} event must not join the PR's ci group"
+    assert group.endswith("-2"), "falls through to the run id, a group nothing else can join"
+    assert cancel is False
+
+
+@pytest.mark.parametrize("event", ["push", "merge_group", "workflow_dispatch"])
+def test_concurrency_non_pr_events_are_unique_and_never_cancel(event):
+    group, cancel = _resolve(_event(event, run_id=77))
+    assert group == "ci-Build and Deploy Sorento-77"
+    assert cancel is False
+
+
+def test_gh_eval_matches_github_semantics():
+    """Guard on the evaluator itself for the operators the workflow relies on."""
+    ctx = {"github": {"event": {"pull_request": {"number": 5}}}}
+    assert _gh_eval("github.event.pull_request.number || github.run_id", ctx) == 5
+    assert _gh_eval("github.event.label.name || 'none'", ctx) == "none"  # missing -> ''
+    assert _gh_eval("(true && false && 5) || 9", ctx) == 9
+    assert _gh_eval("('a' == 'a' && 'b' == 'b' && 5) || 9", ctx) == 5
+    assert _gh_eval("github.event_name == 'pull_request'", ctx) is False
+
+
+# ---------------------------------------------------------------------------
 # Self-check: every documentation/ path a test reads must NOT be docs.
 # ---------------------------------------------------------------------------
 

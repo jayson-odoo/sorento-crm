@@ -49,6 +49,14 @@ Plan: `PLAN-ci-docs-skip-29sep.md`. Every AC names how it is checked.
   PR, push and merge_group; a plan archived within documentation/ is. Check:
   `test_rename_*`; kill test, dropping `previous_filename` from the compare filter
   goes red.
+- **AC-13 Only a `ci` label run joins the per-PR concurrency group.** Adding
+  `needs-hand-test`, `lane-running`, `needs-decision` or any other label to a PR
+  with a live `ci` run does not cancel it (2026-09-28, #1304, run 36387225667):
+  the non-`ci` run's group is its own run id and its cancel-in-progress is false.
+  Two `ci` label events on the same PR still share the group, so the newer run
+  supersedes the older; push, merge_group and dispatch runs stay unique and never
+  cancel. Check: `test_concurrency_*`, which evaluate the workflow's two
+  expressions as written with each event's context.
 - **AC-9 Existing behaviour unchanged for code changes.** PR area flags, the
   concurrency groups, the `ci` label one-shot trigger, `check-migration-heads` on
   every event, and the deploy for a code push are untouched. Check: diff review;

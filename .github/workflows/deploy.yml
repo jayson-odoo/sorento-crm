@@ -35,25 +35,39 @@ on:
         default: false
         type: boolean
 
-# Cancels a PR's own superseded runs without touching push-to-main runs, which
-# is why the group key and cancel-in-progress both differ by event instead of
-# being one flat rule:
-#   - pull_request: the group key is the PR number, so every push to the same
-#     PR lands in the same group, and cancel-in-progress is true, so GitHub
-#     cancels that PR's older queued/running run per the docs' per-group
-#     cancellation semantics (https://docs.github.com/actions/using-jobs/using-concurrency).
-#     This is the fix: a lane pushing after every green step no longer queues
-#     one full ~17-job run per push.
+# Cancels a PR's own superseded `ci` runs without touching anything else,
+# which is why the group key and cancel-in-progress both differ by event and
+# label instead of being one flat rule:
+#   - pull_request labeled `ci`: the group key is the PR number, so every
+#     `ci` run for the same PR lands in the same group, and cancel-in-progress
+#     is true, so GitHub cancels that PR's older queued/running `ci` run per
+#     the docs' per-group cancellation semantics
+#     (https://docs.github.com/actions/using-jobs/using-concurrency). Re-adding
+#     `ci` against a new head therefore supersedes the run on the old head.
+#   - pull_request labeled ANYTHING ELSE (needs-hand-test, lane-running,
+#     needs-decision, ...): the trigger fires for every label, and every job
+#     below skips on the label name, but the run still exists and still joins
+#     a concurrency group. When that group was the PR number, adding an
+#     orchestration label cancelled the PR's live `ci` run (2026-09-28, #1304,
+#     run 36387225667). So a non-`ci` label event falls through to
+#     github.run_id: a unique group that collides with nothing, and
+#     cancel-in-progress is false for it besides. It finishes in seconds with
+#     every job skipped and cancels nothing.
 #   - push (to main) and merge_group: github.event.pull_request.number is
-#     empty, so the group key falls back to github.run_id, which is unique to
-#     this run. A unique group can never collide with another run's group, so
-#     cancel-in-progress here is a no-op and every main push still runs its
-#     full matrix independently, exactly as before this change. The dedicated
-#     `deploy-production` job-level group below is untouched (cancel-in-progress
-#     false) so no merge ever loses its deploy.
+#     empty, so the group key is github.run_id here too, unique to this run,
+#     and cancel-in-progress is false, so every main push still runs its
+#     full matrix independently. The dedicated `deploy-production` job-level
+#     group below is untouched (cancel-in-progress false) so no merge ever
+#     loses its deploy.
+# The expression is `a && b && c || d`, GitHub's ternary idiom: the PR number
+# when this is a `ci` label event (a truthy number), else the run id. Both
+# lines are evaluated as written by
+# sorento_crm_backend/tests/test_ci_docs_only_filter.py (test_concurrency_*),
+# with the real context values of each event, so the rule cannot regress
+# silently.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ (github.event_name == 'pull_request' && github.event.label.name == 'ci' && github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.label.name == 'ci' }}
 
 env:
   IMAGE_REPO: jayson1004/sorento-crm
