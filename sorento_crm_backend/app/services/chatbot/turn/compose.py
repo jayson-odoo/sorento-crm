@@ -267,6 +267,13 @@ def _header_subjects(entities: list[Any]) -> list[str]:
     return out
 
 
+#: The most subjects a section header names one by one; past it the header counts them.
+HEADER_SUBJECT_MAX = 5
+
+#: Domains whose subjects are products, so a counted header says "products".
+_PRODUCT_DOMAINS = frozenset({"inventory", "incoming", "product_attachment", "master_products", "promotion"})
+
+
 def _routing_brand(ctx: Any) -> Any:
     """The brand a freshly minted `team_pick` stamps: this turn's resolved brand, else the
     focus product's, read only now, at the mint (#865, fix round 2 N2: the read used to run
@@ -314,10 +321,17 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             missed_domains.append(domain)
 
         label = row.label if row else domain
-        codes = ", ".join(_with_quantities(_header_subjects(entities), state))
-        # A counted-set answer (AC-1316/AC-1317, "10 taps have certificates. Showing
-        # 5.") carries its OWN header, computed off the qualifying total and the
-        # class word rather than the domain label - it wins over the generic
+        subjects = _with_quantities(_header_subjects(entities), state)
+        # W6 (owner hand test round 2, turn 1): a long subject list is counted, never
+        # dumped as one line of codes ("*stock* for BRBC22102W, BRBC22108W-1A, ...").
+        codes = (
+            ", ".join(subjects)
+            if len(subjects) <= HEADER_SUBJECT_MAX
+            else f"{len(subjects)} {'products' if env.get('domain') in _PRODUCT_DOMAINS else 'items'}"
+        )
+        # A counted-set answer (AC-1316, "10 taps have certificates.") carries its OWN
+        # header, computed off the qualifying total and the class word rather than the
+        # domain label - it wins over the generic
         # `*{label}* for {codes}:` line whenever the fetch supplied one, rows or not.
         header_override = env.get("header_override")
         if isinstance(header_override, str) and header_override.strip():

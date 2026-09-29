@@ -44,6 +44,7 @@ from app.services.chatbot_parser_prompt import (
     QUANTITY_ADDENDUM,
     SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
+    SPECIFICATION_ADDENDUM,
     STOCK_TASK_ADDENDUM,
     TOP_SELLING_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
@@ -174,6 +175,8 @@ class TestBothPublishedBodiesCarryTheVocabulary:
             assert body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(
                 TOP_SELLING_ADDENDUM
             ).removesuffix(KNOWN_BRANDS_ADDENDUM).removesuffix(QUANTITY_ADDENDUM).removesuffix(
+                SPECIFICATION_ADDENDUM
+            ).removesuffix(
                 SALES_ANALYSIS_ADDENDUM
             ).removesuffix(
                 STOCK_TASK_ADDENDUM
