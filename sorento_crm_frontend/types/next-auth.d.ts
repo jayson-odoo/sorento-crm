@@ -17,6 +17,9 @@ declare module 'next-auth' {
       // companies. Both resolved from GET /companies/my-context at login.
       active_company_id?: string;
       company_grants?: string[];
+      // Where this user lands after signing in (AC-28): a salesperson's portal
+      // home, the CRM home for anyone with a permission, else the portal home.
+      homePath?: string | null;
     };
   }
 
@@ -33,6 +36,7 @@ declare module 'next-auth' {
     apiToken?: string;
     active_company_id?: string;
     company_grants?: string[];
+    homePath?: string | null;
   }
 }
 
@@ -51,5 +55,6 @@ declare module 'next-auth/jwt' {
     // Multi-company isolation: active company claim + switchable grant ids.
     active_company_id?: string;
     company_grants?: string[];
+    homePath?: string | null;
   }
 }

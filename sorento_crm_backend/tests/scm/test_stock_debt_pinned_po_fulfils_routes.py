@@ -122,8 +122,8 @@ def _assert_fulfilled(cell, seed):
 def test_production_case_at_the_0_day_rule(scm_app, line_refs):
     """AC-PO-10..13 at the shipped 0-day rule: the PO is 18 days past its date and still
     fulfils SO419208. Assigned 1,309, Short 0, line 2 on the 4 row and line 3 on the 1,305
-    row, the Supply tab lists both with Assigned to, and the board's month cell reads 0
-    (line 1's 41 has no S/O, so the overdue rule still counts it as nothing).
+    row, the Supply tab lists both with Assigned to. Line 1's 41 has no S/O; R44 (#1359)
+    keeps the overdue rule off this page, so it is free supply and the month reads +41.
 
     `line_refs=False`: the S/O resolves only to the ORDER, and quantity decides the row."""
     app, db = _client(scm_app)
@@ -137,17 +137,17 @@ def test_production_case_at_the_0_day_rule(scm_app, line_refs):
     _assert_fulfilled(cell, seed)
     free = [row for row in cell["supply"] if row["po_line_id"] == str(seed["free"].id)]
     assert [(row["overdue"], row["free_qty"], row["assigned_to"]) for row in free] == [
-        (True, 0, [])
+        (False, 41, [])
     ]
-    assert balance == 0
+    assert balance == 41
 
 
 def test_production_case_under_a_raised_rule_is_not_short_1309(scm_app):
-    """AC-PO-11 + AC-PO-13, the owner's second screen (raised to 30 there; 45 here so the
-    assumed date is in a later month whatever day the suite runs): the PO counts 45 days
-    from today, after the rows' date. The rows are still fulfilled (Short 0), the rows'
-    month reads 0, and its Supply tab lists the two pinned lines even though their own
-    date files them in a later month (never "Supply (0)" beside "Assigned 1,309")."""
+    """AC-PO-11 + AC-PO-13, the owner's second screen (raised to 30 there; 45 here). Before
+    R44 (#1359) the PO counted 45 days from today, in a later month; the stock debt page
+    now ignores the grace, so every line lands in the current month. The rows are still
+    fulfilled (Short 0), the month reads +41 (the unpinned line), and the later month lists
+    no PO line at all."""
     app, db = _client(scm_app)
     seed = _production(db, grace=45, dead=45)
     month = month_key(TODAY)
@@ -158,18 +158,12 @@ def test_production_case_under_a_raised_rule_is_not_short_1309(scm_app):
         later = _cell(c, seed, month_key(TODAY + timedelta(days=45)))
 
     _assert_fulfilled(cell, seed)
-    # Lines 2 and 3, listed here for the rows they cover; line 1's 41 is listed in its own
-    # (assumed) month only.
-    assert cell["supply_total_qty"] == 1309
-    for row in cell["supply"]:
-        if row["kind"] == "po" and row["po_line_id"] != str(seed["free"].id):
-            assert row["free_qty"] == 0
-    assert balance == 0
-
-    # The lines' own month still lists them once, with the 41 free there.
-    home = {row["po_line_id"]: row for row in later["supply"] if row["kind"] == "po"}
+    assert cell["supply_total_qty"] == 1350
+    home = {row["po_line_id"]: row for row in cell["supply"] if row["kind"] == "po"}
     assert home[str(seed["free"].id)]["free_qty"] == 41
     assert home[str(seed["line_3"].id)]["free_qty"] == 0
+    assert balance == 41
+    assert [row for row in later["supply"] if row["kind"] == "po"] == []
 
 
 def test_a_partly_pinned_po_line_is_free_only_in_its_own_month(scm_app):
