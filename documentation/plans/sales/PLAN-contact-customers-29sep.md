@@ -57,10 +57,10 @@ handles".
 - `sales_agents.contact_id` (`app/models/sales_agent.py:96-100`) is the salesperson's own phone.
   Resolved by `app/services/sales/portal_agent.py:19 agent_for_contact` (portal debtor dropdown,
   opportunity form) and `app/services/user_contact_link.py:15-38 is_salesperson_contact`.
-- On main, `app/services/portal_form_visibility_service.py:45-104` holds only market-segment
-  inheritance + per-contact overrides. The "contact linked to a sales agent" gate
-  (`sales_agent_for_contact`, `NOT_A_SALES_AGENT`) lives on PR #1333's branch
-  (`claude/chatbot-stock-ask-v2-s4-s6-113qmf`, open draft), not on main.
+- PR #1333 merged on 29 Sep 2026 (f4f70531, joined by #1367): `app/services/
+  portal_form_visibility_service.py:106` now gates the portal `customer_asks` kind on
+  `price_tag_request_service.sales_agent_for_contact` (`:109`), which resolves the agent whose
+  OWN contact this is (`sales_agents.contact_id`). Unrelated to the customer link.
 - Agent routes: `app/api/v1/master_data/sales_agents.py` (list :40, get :94, PATCH annotation
   :109) under `master_data.sales_agents.view` / `.edit`. Sales agents are an AutoCount mirror,
   no create or delete (:1-16).
@@ -138,8 +138,9 @@ sections), read under `user_management.contacts.view`, write under `.edit`:
 
 - `GET /api/v1/user-management/contacts/{contact_id}/customers` ->
   `{ "data": [ContactCustomerLink], "suggested": [SuggestedCustomer] }`.
-  `ContactCustomerLink`: `customer_id, customer_code, customer_name, is_active, is_primary,
-  source, sales_agent_id, sales_agent_code, sales_agent_name, created_at`.
+  `ContactCustomerLink`: `id` (the link row, what Unlink parks against), `customer_id,
+  customer_code, customer_name, is_active, is_primary, source, sales_agent_id,
+  sales_agent_code, sales_agent_name, created_at`.
   `SuggestedCustomer`: `customer_id, customer_code, customer_name, phone_number,
   sales_agent_code, sales_agent_name` (at most 5, from `propose_customers`).
 - `POST .../customers` body `{ "customer_id": str, "is_primary": bool = false }` -> 201
@@ -160,6 +161,9 @@ Agent side, in `app/api/v1/master_data/sales_agents.py`, read under
 - `GET /api/v1/master-data/sales-agents/{id}/customers?page&limit&query&sort&dir` ->
   `ListResponse[CustomerResponse]` (customers whose `sales_agent_id` is this agent, under the
   caller's scope; `query` matches code or name; default sort `customer_code asc`).
+  `CustomerResponse` gains `region` and `market_segment_code` (model columns that exist,
+  `order.py:125,128`, never declared on the schema; `response_model` drops what a schema does
+  not name, so the tab's two columns need them declared). Additive for every other caller.
 - `POST .../customers` body `{ "customer_id": str }` -> 200 `CustomerResponse`. Calls
   `CustomerService.update_customer(customer_id, CustomerUpdate(sales_agent_id=agent.id))`, so
   an inactive agent or a cross-company pair is the same 422 the customer form gets, and the

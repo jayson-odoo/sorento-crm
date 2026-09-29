@@ -70,6 +70,7 @@ export default function SalesAgentCustomersTab({ agentId }: { agentId: string })
     successMessage: 'Customer unassigned',
     invalidateKeys: [salesAgentCustomersKey(agentId), ['contact-customers']],
   });
+  const { run: runUnassign } = unassign;
   const rowPending = useRowPending<AgentCustomer>('customer');
 
   const rows = useMemo<AgentCustomer[]>(() => data?.data ?? [], [data]);
@@ -154,7 +155,7 @@ export default function SalesAgentCustomersTab({ agentId }: { agentId: string })
               // The row is a link to the customer; this button is not.
               e.preventDefault();
               e.stopPropagation();
-              unassign.run({
+              runUnassign({
                 id: row.original.id,
                 subject: row.original.customer_name,
                 payload: { sales_agent_id: agentId },
@@ -171,7 +172,7 @@ export default function SalesAgentCustomersTab({ agentId }: { agentId: string })
         meta: { headerTitle: 'Unassign', skeleton: <Skeleton className="h-6 w-20" /> },
       },
     ];
-  }, [canEdit, unassign.run, agentId]);
+  }, [canEdit, runUnassign, agentId]);
 
   const table = useReactTable({
     columns,

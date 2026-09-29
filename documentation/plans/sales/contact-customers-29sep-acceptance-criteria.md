@@ -76,9 +76,9 @@ Actor B: a sales admin holding `master_data.sales_agents.edit` (read-only with `
 ## Phase 2 (backend, tester-first)
 
 - AC-20 `[BE][T]` GET `/user-management/contacts/{id}/customers` returns `data` rows with
-  `customer_id, customer_code, customer_name, is_active, is_primary, source, sales_agent_id,
-  sales_agent_code, sales_agent_name, created_at`, ordered by `created_at`; an unlinked
-  contact returns `data: []`.
+  `id` (the link row id), `customer_id, customer_code, customer_name, is_active, is_primary,
+  source, sales_agent_id, sales_agent_code, sales_agent_name, created_at`, ordered by
+  `created_at`; an unlinked contact returns `data: []`.
 - AC-21 `[BE][T]` The same GET returns `suggested`: at most 5 phone-matched customers not
   already linked, each `customer_id, customer_code, customer_name, phone_number,
   sales_agent_code, sales_agent_name`; a contact with no phone match returns `[]`. (Q4)
@@ -103,7 +103,8 @@ Actor B: a sales admin holding `master_data.sales_agents.edit` (read-only with `
 - AC-28 `[BE][T]` GET `/master-data/sales-agents/{id}/customers` returns
   `ListResponse[CustomerResponse]` of the customers whose `sales_agent_id` is this agent,
   under the caller's company scope, default sort `customer_code asc`, `query` matching code
-  or name (ilike), paged by `page`/`limit`; an agent with none returns an empty page.
+  or name (ilike), paged by `page`/`limit`; an agent with none returns an empty page. Each
+  row carries `region` and `market_segment_code` (declared on `CustomerResponse`).
 - AC-29 `[BE][T]` POST `.../customers` `{customer_id}` sets `customers.sales_agent_id` to
   this agent through `CustomerService.update_customer` and answers 200 with the customer
   carrying `sales_agent_code`; a customer handled by another agent is moved (Q6); an
