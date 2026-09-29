@@ -216,7 +216,7 @@ def test_the_stock_task_addendum_teaches_the_last_answered_line():
     # then the top selling addendum (PR #1273), then #1323's
     # ESCALATION_CONFIRMATION_ADDENDUM, newest outermost.
     assert (
-        SEMANTIC_PARSER_PROMPT.removesuffix(SELF_REFERENCE_ADDENDUM).removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+        SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM)
         .removesuffix(TOP_SELLING_ADDENDUM)
         .removesuffix(KNOWN_BRANDS_ADDENDUM)
         .removesuffix(QUANTITY_ADDENDUM)

@@ -2527,6 +2527,7 @@ def make_tool_runner(
     resolver_tier_gate: dict[str, Any] | None = None,
     resolved_kinds: dict[str, dict[str, int]] | None = None,
     policy: Any = None,
+    customer_scope: dict[str, Any] | None = None,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
     """The ONE seam that reaches a tool: `run_fetch` calls it once per `FetchSpec`.
 
@@ -2621,6 +2622,9 @@ def make_tool_runner(
         lane_ctx = {
             **ctx,
             "parse": {**(ctx.get("parse") or {}), "output": lane_out},
+            # The contact's customer scope (`engine._customer_scope_gate`), read by
+            # `lanes.business.run_fetch`; a lane-only key, never on the engine's own ctx.
+            "customer_scope": customer_scope,
         }
         if page_predicate is not None:
             entities = [

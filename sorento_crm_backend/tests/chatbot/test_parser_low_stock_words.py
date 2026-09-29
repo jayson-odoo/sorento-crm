@@ -106,7 +106,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
-                body.removesuffix(SELF_REFERENCE_ADDENDUM).removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+                body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM)
                 .removesuffix(TOP_SELLING_ADDENDUM)
                 .removesuffix(KNOWN_BRANDS_ADDENDUM)
                 .removesuffix(QUANTITY_ADDENDUM)
@@ -144,7 +144,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
-                body.removesuffix(SELF_REFERENCE_ADDENDUM).removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+                body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM)
                 .removesuffix(TOP_SELLING_ADDENDUM)
                 .removesuffix(KNOWN_BRANDS_ADDENDUM)
                 .removesuffix(QUANTITY_ADDENDUM)

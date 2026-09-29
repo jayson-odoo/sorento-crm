@@ -1195,9 +1195,9 @@ class TestParserPromptAndContractsTeachSalesReport:
         # 8 on PR #833), the #1262 pair, `TOP_SELLING_ADDENDUM` and then
         # `ESCALATION_CONFIRMATION_ADDENDUM` (#1323, always the tail) stacked after this
         # one, newest outermost, so they come off first.
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(SELF_REFERENCE_ADDENDUM).endswith(ESCALATION_CONFIRMATION_ADDENDUM)
+        assert SEMANTIC_PARSER_PROMPT.endswith(ESCALATION_CONFIRMATION_ADDENDUM)
         assert (
-            SEMANTIC_PARSER_PROMPT.removesuffix(SELF_REFERENCE_ADDENDUM).removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+            SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM)
             .removesuffix(TOP_SELLING_ADDENDUM)
             .removesuffix(KNOWN_BRANDS_ADDENDUM)
             .removesuffix(QUANTITY_ADDENDUM)
@@ -1234,7 +1234,7 @@ class TestParserPromptAndContractsTeachSalesReport:
         )
 
         assert (
-            SEMANTIC_PARSER_PROMPT.removesuffix(SELF_REFERENCE_ADDENDUM).removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+            SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM)
             .removesuffix(TOP_SELLING_ADDENDUM)
             .removesuffix(KNOWN_BRANDS_ADDENDUM)
             .removesuffix(QUANTITY_ADDENDUM)

@@ -173,7 +173,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         stacked after the live text, so `GROWTH_R1_ADDENDUM` is still exactly the tail
         once the later ones are off."""
         for body in (SEMANTIC_PARSER_PROMPT,):
-            assert body.removesuffix(SELF_REFERENCE_ADDENDUM).removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(
+            assert body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM).removesuffix(
                 TOP_SELLING_ADDENDUM
             ).removesuffix(KNOWN_BRANDS_ADDENDUM).removesuffix(QUANTITY_ADDENDUM).removesuffix(
                 SPECIFICATION_ADDENDUM

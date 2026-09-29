@@ -238,7 +238,7 @@ class TestR1TheSoldWords:
         for words in ('"best selling", "hot selling", "top items", "most sold"', '"worst 100 hot selling bathtub"',
                       '"fanny water closet" -> {raw: "fanny", hint: "sales_agent"}', '"can show me the DO"'):
             assert words in TOP_SELLING_ADDENDUM, words
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(SELF_REFERENCE_ADDENDUM).removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).endswith(
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM).endswith(
             TOP_SELLING_ADDENDUM
         )
 

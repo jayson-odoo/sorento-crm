@@ -3172,8 +3172,8 @@ def _run_stages(  # noqa: PLR0915
             # Read by the tail: no escalate offer and no routing picker (round 7).
             ctx["top_selling_no_offer"] = True
         # PLAN-chatbot-customer-scope-29sep.md D3: the contact's customer scope, read once
-        # per turn; the gate below, `_fetch_semantic_input` and the lane read it off ctx.
-        ctx["customer_scope"] = business_services.customer_scope(db, contact_respond_id, space_id_for_turn)
+        # per turn; the gate below and (through `make_tool_runner`) the lane read it.
+        customer_scope = business_services.customer_scope(db, contact_respond_id, space_id_for_turn)
 
         # Grant before roster (SF-1, PLAN-chatbot-answer-half-reattach.md slice R2):
         # an ungranted contact's sales-report ask is refused HERE, before the resolver
@@ -3308,7 +3308,7 @@ def _run_stages(  # noqa: PLR0915
             elif isinstance(state_out.focus.top_selling, dict) and state_out.focus.top_selling.get("hop"):
                 resolver_parse_output = _without_carried_words(resolver_parse_output)
             resolver_parse_output, scope_ids, scope_refused = _customer_scope_gate(
-                ctx.get("customer_scope"), verdict, state_out.focus, resolver_parse_output, plan.domains
+                customer_scope, verdict, state_out.focus, resolver_parse_output, plan.domains
             )
             if (
                 len(plan.domains) > 1
@@ -3378,10 +3378,10 @@ def _run_stages(  # noqa: PLR0915
                 # D3: the linked customers are this turn's customers; a refused turn is
                 # answered by the lane's fixed line, before any tool (D4's twin).
                 if scope_refused:
-                    ctx["customer_scope"]["refused"] = True
+                    customer_scope["refused"] = True
                     turn_trace.add("customer_scope", {"refused": "customer_not_permitted"})
                 else:
-                    compatible_entities = _scoped_compatible(ctx["customer_scope"], scope_ids, compatible_entities)
+                    compatible_entities = _scoped_compatible(customer_scope, scope_ids, compatible_entities)
                 resolver_payload = _pass_scope_gate(resolver_payload, compatible_entities, force=scope_refused)
             answer_parse_output = turn_runtime.answer_parse_output(
                 resolver_ctx["parse"]["output"],
@@ -3421,7 +3421,7 @@ def _run_stages(  # noqa: PLR0915
                         "uuid": cid, "hint": "customer", "canonical_code": code or name, "raw": name,
                         "name": name, "current_message": False,
                     }
-                    for cid, name, code in ctx["customer_scope"]["linked"]
+                    for cid, name, code in customer_scope["linked"]
                     if cid in scope_ids
                 ]
 
@@ -3730,6 +3730,7 @@ def _run_stages(  # noqa: PLR0915
                     # R4 (owner ruling 5): the record-key rerun gate asks the RESOLVER
                     # what this message's token is, not the parser's hint.
                     resolved_kinds=resolved_kinds,
+                    customer_scope=customer_scope,
                     # R6 (fix round 2): so a null `routing.suggested_team` inside the
                     # per-domain fetch context gets the same domain-aware fill this
                     # turn's own `ctx.parse.output` already got above.
