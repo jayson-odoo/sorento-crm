@@ -1110,11 +1110,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • `assigned_to` - respond_user_id of the assignee (or `__unassigned__` for unassigned).\n"
             "SORT KEYS: complaint_date, created_at, delivery_order_number, customer_name, product_code, "
             "salesperson, assigned_to, status; combine with dir=asc|desc (use sort=complaint_date&dir=desc "
-            "for the most recent complaints first)."
+            "for the most recent complaints first).\n\n"
+            "COMPANY / CUSTOMER SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id`. "
+            "Pass BOTH or NEITHER. A contact linked to customers sees only those customers' complaints."
         ),
         "/api/v1/complaints-management/complaints/",
         (),
-        ("page", "limit", "assigned_to", "status", "sort", "dir"),
+        ("page", "limit", "assigned_to", "status", "sort", "dir", "contact_id", "space_id"),
         module="complaints",
         domain="complaints",
         escalation_team="support",

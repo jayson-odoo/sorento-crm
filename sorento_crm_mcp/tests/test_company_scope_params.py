@@ -54,11 +54,13 @@ SCOPED_TOOLS: frozenset[str] = frozenset({
     # would have answered across the whole group.
     "crm_procurement_po_placed_list",
     "crm_procurement_spo_allocations_last_receipt_list",
+    # PLAN-chatbot-customer-scope-29sep D5 / AC-CS-47: the complaints list narrows a
+    # customer-scoped contact to its own customers' complaints by `contact_id` + `space_id`.
+    "crm_complaints_list",
 })
 
 # AC-F8 - global (non-owned-data) tools that MUST NOT gain the scope params.
 GLOBAL_TOOLS: frozenset[str] = frozenset({
-    "crm_complaints_list",
     "crm_complaint_analytics",
     "crm_sla_conversation_tracking_dashboard",
     "crm_sla_conversation_tracking_list",
