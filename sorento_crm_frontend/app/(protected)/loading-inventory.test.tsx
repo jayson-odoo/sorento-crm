@@ -268,8 +268,13 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // Cost price Lane A (PLAN-cost-price-supplier-26sep.md, #1288):
     // `procurement-management/cost-price-uploads` is a new DataGrid list segment with its
     // own `loading.tsx`, found by the walk itself - no BODY_ONLY_SEGMENTS entry needed.
-    // With both lanes merged: 146 + 1 (contacts chatbot) + 1 (cost-price-uploads) = 148.
-    expect(requiredSegmentNames.length).toBe(148);
+    // Chatbot stock ask v2 S5: `order-management/customers/[id]/edit` now carries the
+    // customer's Asks tab (`CustomerAsksTab`, a server-paged DataGrid), so the walk finds
+    // it. Its `loading.tsx` renders `SectionSkeleton` (a form with a grid tab, the
+    // purchase-request edit precedent) - no BODY_ONLY_SEGMENTS entry needed.
+    // With all three lanes merged: 146 + 1 (contacts chatbot) + 1 (cost-price-uploads)
+    // + 1 (customer Asks tab) = 149.
+    expect(requiredSegmentNames.length).toBe(149);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

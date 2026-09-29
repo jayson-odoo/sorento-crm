@@ -596,6 +596,23 @@ def _harness_value(envelope: Envelope, key: str) -> Any:
     return (envelope.model_extra or {}).get(key)
 
 
+def _chat_console(envelope: Envelope) -> bool:
+    """A dry run the chat console page sent (owner ruling 28 Sep 2026, chatbot stock ask
+    v2): D14's `dry_run`, `ingress == "console"`, and the `console_origin` extra that only
+    `console_service`'s two envelope builders set. The Prompts screen's "Run a turn" also
+    says `ingress: console` but never sets the extra, so it is not one.
+
+    `console_origin` is an extra rather than a declared field for the reason `HARNESS_KEYS`
+    gives, and so the pinned external contract (AC-1507) is unchanged. Only the stock ask
+    hooks read this (`_run_answer`); every other D14 guard still reads `dry_run` alone.
+    """
+    return bool(
+        envelope.dry_run
+        and envelope.ingress == "console"
+        and _harness_value(envelope, "console_origin") is True
+    )
+
+
 def _inject_harness_session(
     session_block: dict[str, Any], envelope: Envelope
 ) -> dict[str, Any]:
@@ -4048,6 +4065,9 @@ def _run_stages(  # noqa: PLR0915
         # the time the ASK section runs.
         bridge_answered = False
         lane_error_text: str | None = None
+        # Chatbot stock ask v2 S4: the answered `stock_availability` entries of this
+        # turn's fetch, acted on by `_run_answer` once the turn row is closed.
+        stock_ask_entries: list[dict[str, Any]] = []
 
         # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
         # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3. -- the OPEN TASK's own
@@ -4677,6 +4697,7 @@ def _run_stages(  # noqa: PLR0915
                 # rather than a new action kind, so B3 needs nothing new from the
                 # executor.
                 answer.files.extend(_stock_ask_packing_list_files(envelopes))
+                stock_ask_entries = _stock_ask_answered_entries(envelopes)
                 record_top_selling_asked(state_out.focus, envelopes)
                 if (
                     (state_out.focus.top_selling or {}).get("asked")
@@ -4796,6 +4817,8 @@ def _run_stages(  # noqa: PLR0915
             contact_respond_id=contact_respond_id,
             verdict=verdict,
             recalled=recalled,
+            stock_ask_entries=stock_ask_entries,
+            chat_console=_chat_console(envelope),
         )
 
     with _session(session_factory) as db:
@@ -5128,6 +5151,8 @@ def _run_answer(
     contact_respond_id: str,
     verdict: dict[str, Any],
     recalled: list[dict[str, Any]],
+    stock_ask_entries: list[dict[str, Any]] | None = None,
+    chat_console: bool = False,
 ) -> TurnResult:
     """G TAIL for a turn the composer answered: persist, record, hand the actions back.
 
@@ -5217,6 +5242,23 @@ def _run_answer(
             error=None,
             records=turn_trace.persisted(),
             response={"ctx": ctx, "item": item, "actions": lane_actions, "reply": reply},
+        )
+
+    if stock_ask_entries and (not dry_run or chat_console):
+        # Chatbot stock ask v2 S4 / S5 (AC-SA401, AC-SA402, AC-SA501): AFTER the turn row
+        # is closed, never before. A live turn, and (owner ruling 28 Sep 2026) a CHAT
+        # CONSOLE turn, write the ask rows and enqueue the real salesman job; every other
+        # dry run does neither (D14). The console's own reply stays a dry run: its
+        # actions carry `dry_run: true` and nothing here sends them. The send is a
+        # queued job, so Respond never holds the dealer's reply up.
+        _after_stock_ask_turn(
+            session_factory,
+            turn_id=turn_id,
+            contact_respond_id=contact_respond_id,
+            state=state,
+            entries=stock_ask_entries,
+            reply_text=reply.get("text") or "",
+            source="console" if dry_run else "live",
         )
 
     return TurnResult(
@@ -6785,6 +6827,61 @@ def _stock_ask_packing_list_files(envelopes: list[dict[str, Any]]) -> list[dict[
                 }
             )
     return files
+
+
+def _stock_ask_answered_entries(envelopes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Chatbot stock ask v2 S4: every `stock_availability` entry of this turn's fetch that
+    carries an answer (a branch and the dealer's quantity), in the order asked.
+
+    An envelope where any product still needs a quantity was not answered at all: the
+    presenter prints no answer line then, and the reply is the quantity question. Its
+    entries become asks on the turn that answers them, once (review, PR #1333)."""
+    from app.services import stock_ask_service
+
+    entries: list[dict[str, Any]] = []
+    for envelope in envelopes or []:
+        if not isinstance(envelope, dict):
+            continue
+        block = [e for e in envelope.get("stock_availability") or [] if isinstance(e, dict)]
+        if any(e.get("needs_quantity") is True for e in block):
+            continue
+        entries.extend(stock_ask_service.answered_entries(block))
+    return entries
+
+
+def _after_stock_ask_turn(
+    session_factory: SessionFactory,
+    *,
+    turn_id: str,
+    contact_respond_id: str,
+    state: Any,
+    entries: list[dict[str, Any]],
+    reply_text: str,
+    source: str = "live",
+) -> None:
+    """Hand the answered stock ask to `stock_ask_service` once the turn is closed. Never
+    raises: the turn is answered and recorded, and a failure here must not turn it into
+    an error reply."""
+    from app.services import stock_ask_service
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    profile = getattr(state, "profile", None)
+    try:
+        with _session(session_factory) as db:
+            contact_id = resolve_contact_with_null_workspace_fallback(
+                db, contact_id=contact_respond_id, space_id=default_space_id(db)
+            )
+            stock_ask_service.after_answered_turn(
+                db,
+                turn_id=turn_id,
+                contact_id=contact_id,
+                notify_salesman=bool(getattr(profile, "notify_salesman", False)),
+                entries=entries,
+                reply_text=reply_text,
+                source=source,
+            )
+    except Exception:  # noqa: BLE001 - the dealer's answer is already recorded
+        logger.exception("chatbot turn %s: stock ask follow-up failed", turn_id)
 
 
 def _attachments_src(answer: Any) -> Any:
