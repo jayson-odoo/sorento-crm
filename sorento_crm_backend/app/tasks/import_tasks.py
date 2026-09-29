@@ -1879,6 +1879,17 @@ def _run_grn_listing_import_core(
                 created_by=created_by,
                 import_job_id=import_job_db_id,
             )
+            if header.doc_key is not None:
+                # #1354 S2: an AutoCount-owned GRN; the upsert left it alone.
+                outcome.skip(
+                    row=row_idx,
+                    code=oc.AUTOCOUNT_OWNED,
+                    message=f"AutoCount sends GRN {grn_number}",
+                    value=grn_number,
+                    identity=identity,
+                )
+                _progress(row_idx)
+                continue
             # Report which of the two actually happened. Reporting every success as
             # `created` made the last person to re-run a file look like the author
             # of every GRN in it, which is what made "who created this GRN"
@@ -2462,6 +2473,9 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                 continue
             gr_lines_by_product[(doc_no, product_id, effective_spo)].append((warehouse_id, group_data["qty"], header))
 
+        # #1354 S2: groups of an AutoCount-owned GRN write nothing and are reported as such.
+        autocount_owned_groups: set = set()
+
         # Process each (doc_no, product, effective_spo) group with shared FIFO SPO pool
         for (doc_no, product_id, effective_spo), gr_line_list in gr_lines_by_product.items():
             header = headers_by_number.get(doc_no)
@@ -2471,6 +2485,10 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                     gk = (doc_no, product_id, _wh_id, effective_spo)
                     group_line_failed.add(gk)
                     group_line_error[gk] = f"GRN header not found: {doc_no}"
+                continue
+            if header.doc_key is not None:
+                for _wh_id, _qty, _hdr in gr_line_list:
+                    autocount_owned_groups.add((doc_no, product_id, _wh_id, effective_spo))
                 continue
 
             # Every row this group writes carries the GRN's OWN company, and every
@@ -2560,7 +2578,16 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
         # spreadsheet ROW succeeded, so fan the group verdict back onto its rows.
         for group_key, source_rows in group_source_rows.items():
             identity = group_row_identity.get(group_key) or {}
-            if group_key in group_line_failed:
+            if group_key in autocount_owned_groups:
+                for source_row in source_rows:
+                    outcome.skip(
+                        row=source_row,
+                        code=oc.AUTOCOUNT_OWNED,
+                        message=f"AutoCount sends the lines of {identity.get('doc_no') or ''}".strip(),
+                        value=identity.get("doc_no"),
+                        identity=identity,
+                    )
+            elif group_key in group_line_failed:
                 message = group_line_error.get(group_key, "GRN line could not be written")
                 for source_row in source_rows:
                     outcome.fail(
@@ -2920,6 +2947,16 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                 warehouse = warehouses_map.get(normalize_code(location)) if location else None
                 if not order:
                     _skip(row_idx, oc.ORDER_NOT_FOUND, f"Order not found: {doc_no}", row_data, doc_no)
+                    continue
+                if order.doc_key is not None:
+                    # #1354 S2, plan section 3: the AutoCount DO ingest owns this DO's lines.
+                    _skip(
+                        row_idx,
+                        oc.AUTOCOUNT_OWNED,
+                        f"AutoCount sends the lines of {doc_no}",
+                        row_data,
+                        doc_no,
+                    )
                     continue
                 if not product:
                     _skip(

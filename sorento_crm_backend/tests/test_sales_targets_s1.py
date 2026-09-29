@@ -1733,14 +1733,40 @@ def test_detail_query_stays_fast_at_scale(api):
         "split_every": 1, "split_unit": "month", "target_value": 0,
     }).json()
 
+    from sqlalchemy import event
+
+    statements = []
+
+    def _capture(conn, cursor, statement, parameters, context, executemany):
+        if "do_counted AS" in statement:
+            statements.append((statement, parameters))
+
+    engine = db.get_bind().engine
+    event.listen(engine, "before_cursor_execute", _capture)
     runs = []
-    for _ in range(2):
-        started = time.monotonic()
-        res = client.get(f"{BASE}/{target['id']}")
-        runs.append(time.monotonic() - started)
-        assert res.status_code == 200, res.text
+    try:
+        for _ in range(2):
+            started = time.monotonic()
+            res = client.get(f"{BASE}/{target['id']}")
+            runs.append(time.monotonic() - started)
+            assert res.status_code == 200, res.text
+    finally:
+        event.remove(engine, "before_cursor_execute", _capture)
     took = ", ".join(f"{r:.2f}s" for r in runs)
     assert min(runs) < 3.0, f"detail took {took} for 3,600 SO lines / 7,200 DO lines"
+
+    # The stopwatch above is noisy on a shared runner; the plan is not. No step may meet the
+    # agent's sales order lines by a join FILTER (a nested loop comparing every pair): with
+    # #1354 S2's wider `order_lines`, a statistics-less planner joined the delivered-in-span DO
+    # lines to the agent's lines that way, "Rows Removed by Join Filter: 25912800", 1.8 s here
+    # and 3.3 to 3.75 s on CI against about 0.8 s.
+    assert statements, "the achievement statement was not captured"
+    statement, parameters = statements[0]
+    plan = "\n".join(
+        row[0] for row in db.connection().exec_driver_sql("EXPLAIN " + statement, parameters)
+    )
+    quadratic = [ln.strip() for ln in plan.splitlines() if "Join Filter" in ln and "sales_order_lines" in ln]
+    assert not quadratic, f"achievement plan filters a join on sales_order_lines: {quadratic}"
 
 
 # --------------------------------------------------------------------------------------- #

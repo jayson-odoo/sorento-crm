@@ -1330,8 +1330,10 @@ class TestBatch:
         assert entry["errors"]
 
     def test_an_unknown_document_entity_is_still_a_404(self, env):
+        # `delivery_orders` was this test's unknown entity until contract 2.7 (#1354 S2)
+        # made it a real one; a document type the surface still does not serve stands in.
         res = env.client.post(
-            "/api/v1/external/ingest/delivery_orders",
+            "/api/v1/external/ingest/stock_adjustments",
             json={"companyCode": env.company_a_code, "records": []},
         )
         assert res.status_code == 404, res.text

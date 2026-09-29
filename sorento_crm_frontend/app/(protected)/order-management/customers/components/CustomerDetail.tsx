@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Info, MessageSquareText } from 'lucide-react';
+import { Edit, Info, MessageSquareText, Store } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBackToListHref, useHrefWithListState } from '@/components/common/BackToList';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -14,16 +14,26 @@ import { formatDate } from '@/lib/helpers';
 import DetailActions from '@/components/common/DetailActions';
 import { useCustomerActions } from '../actions';
 import { CustomerAsksTab } from './CustomerAsksTab';
+import { CustomerBranchesTab } from './CustomerBranchesTab';
+import { useHasPermission } from '@/hooks/usePermissions';
 import CustomerLinkedContactsSection from './CustomerLinkedContactsSection';
 import CustomerOpportunitiesSection from './CustomerOpportunitiesSection';
 
-export type CustomerTab = 'details' | 'asks';
+export type CustomerTab = 'details' | 'branches' | 'asks';
 
 /** Shared with the edit page, so view and edit carry the same tabs in the same order. */
 export const CUSTOMER_TABS: { value: CustomerTab; label: string; icon: typeof Info }[] = [
   { value: 'details', label: 'Details', icon: Info },
+  // #1356: the customer's AutoCount branches, read only; needs order_management.branches.view.
+  { value: 'branches', label: 'Branches', icon: Store },
   { value: 'asks', label: 'Asks', icon: MessageSquareText },
 ];
+
+/** The tabs this user may open: Branches is hidden without order_management.branches.view. */
+export function useCustomerTabs() {
+  const canSeeBranches = useHasPermission('order_management.branches.view');
+  return CUSTOMER_TABS.filter((t) => t.value !== 'branches' || canSeeBranches);
+}
 
 interface CustomerDetailProps {
   customerId: string;
@@ -38,6 +48,7 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
   );
   const { data: customer, isLoading } = useCustomer(customerId);
   const [tab, setTab] = useState<CustomerTab>('details');
+  const tabs = useCustomerTabs();
   const { actions, dialogs } = useCustomerActions(customer, {
     onDeleted: () => router.push(backHref),
   });
@@ -105,7 +116,7 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
           unchanged), then the customer's stock asks. */}
       <Tabs value={tab} onValueChange={(v) => setTab(v as CustomerTab)}>
         <TabsList variant="line" className="mb-5">
-          {CUSTOMER_TABS.map((t) => (
+          {tabs.map((t) => (
             <TabsTrigger key={t.value} value={t.value} onClick={() => setTab(t.value)}>
               <t.icon className="size-4" />
               <span>{t.label}</span>
@@ -185,6 +196,10 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
             customerId={customerId}
             customerName={customer.customer_name}
           />
+        </TabsContent>
+
+        <TabsContent value="branches">
+          {tab === 'branches' && <CustomerBranchesTab customerId={customerId} />}
         </TabsContent>
 
         <TabsContent value="asks">

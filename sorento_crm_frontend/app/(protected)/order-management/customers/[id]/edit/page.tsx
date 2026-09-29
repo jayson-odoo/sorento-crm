@@ -9,13 +9,15 @@ import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import CustomerForm from '../../components/CustomerForm';
-import { CUSTOMER_TABS, type CustomerTab } from '../../components/CustomerDetail';
+import { useCustomerTabs, type CustomerTab } from '../../components/CustomerDetail';
 import { CustomerAsksTab } from '../../components/CustomerAsksTab';
+import { CustomerBranchesTab } from '../../components/CustomerBranchesTab';
 
 export default function EditCustomerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const [tab, setTab] = useState<CustomerTab>('details');
+  const tabs = useCustomerTabs();
 
   return (
     <>
@@ -35,7 +37,7 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
         {/* Same tabs, same order as the customer's view page (view = edit). */}
         <Tabs value={tab} onValueChange={(v) => setTab(v as CustomerTab)}>
           <TabsList variant="line" className="mb-5">
-            {CUSTOMER_TABS.map((t) => (
+            {tabs.map((t) => (
               <TabsTrigger key={t.value} value={t.value}>
                 <t.icon className="size-4" />
                 <span>{t.label}</span>
@@ -49,6 +51,9 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
                 router.push(`/order-management/customers/${id}`);
               }}
             />
+          </TabsContent>
+          <TabsContent value="branches">
+            {tab === 'branches' && <CustomerBranchesTab customerId={id} />}
           </TabsContent>
           <TabsContent value="asks">
             {tab === 'asks' && <CustomerAsksTab customerId={id} />}

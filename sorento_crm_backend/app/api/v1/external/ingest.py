@@ -52,6 +52,15 @@ from app.services.finance.billing_document_ingest_service import (
     BillingDocumentIngestService,
     BillingDocumentReadService,
 )
+from app.services.autocount_doc_ingest_service import (
+    AUTOCOUNT_BRANCH_ENTITIES,
+    AUTOCOUNT_DOC_ENTITIES,
+    BOOK_PATTERN,
+    GOODS_RECEIVE_NOTES_ENTITY,
+    AutocountDocIngestService,
+    AutocountDocReadService,
+    parse_deletion_body,
+)
 from app.services.document_ingest_service import (
     DOCUMENT_ENTITIES,
     DocumentIngestService,
@@ -109,6 +118,11 @@ INGEST_PERMISSIONS = {
     # billing_documents (contract 2.6, finance S0, ruling Q9): finance's own slugs. `.edit`
     # is the ingest gate only; no screen creates a billing document.
     "billing_documents": "finance.billing_documents.edit",
+    # AutoCount DO / GRN / branches (contract 2.7, #1354 S2): the slugs the DO and GRN screens
+    # and the customer master already use. Branches are the debtors' delivery branches.
+    "delivery_orders": "order_management.orders.edit",
+    "goods_receive_notes": "procurement.grn.edit",
+    "branches": "order_management.branches.edit",
 }
 READ_PERMISSIONS = {
     "product_categories": "master_data.product_categories.view",
@@ -124,6 +138,10 @@ READ_PERMISSIONS = {
     "shipping_orders": "scm.shipping_orders.view",
     "stock_balances": "inventory.stock.view",
     "billing_documents": "finance.billing_documents.view",
+    "delivery_orders": "order_management.orders.view",
+    "goods_receive_notes": "procurement.grn.view",
+    # Mapped so every map covers every entity; the route itself answers 404 (no read door).
+    "branches": "order_management.branches.view",
 }
 # Deleting through the ESB is its own act, so it takes its own slug on top of the
 # ingest guard the router already carries (group A4 mounts the route). Declared
@@ -144,6 +162,10 @@ DELETE_PERMISSIONS = {
     "shipping_orders": "scm.shipping_orders.delete",
     "stock_balances": "inventory.stock.delete",
     "billing_documents": "finance.billing_documents.delete",
+    # 2.7: the DO / GRN "deletions" never delete; they cancel what the sweep says vanished.
+    "delivery_orders": "order_management.orders.delete",
+    "goods_receive_notes": "procurement.grn.delete",
+    "branches": "order_management.branches.delete",
 }
 
 # A batch cap the ESB can design against. Exceeding it errors rather than
@@ -215,6 +237,8 @@ SUPPORTED_ENTITIES = (
     | set(SHIPPING_ORDER_ENTITIES)
     | set(STOCK_BALANCE_ENTITIES)
     | set(BILLING_DOCUMENT_ENTITIES)
+    | set(AUTOCOUNT_DOC_ENTITIES)
+    | set(AUTOCOUNT_BRANCH_ENTITIES)
 )
 
 # Bumped whenever the wire shape of an entity changes in a way the ESB must gate
@@ -248,7 +272,12 @@ SUPPORTED_ENTITIES = (
 # a stale guard on `source_modified_at`, and the `unchanged` verdict (with `summary.unchanged`)
 # for a push that matches what is stored. `agent_unresolved`, `product_unresolved` and
 # `stale_ignored` join `warnings`. Additive: an ESB on 2.5 never sees the entity.
-CONTRACT_VERSION = "2.6"
+# "2.7" (#1354 S2): `delivery_orders`, `goods_receive_notes` and `branches` join as push
+# entities. The record is the AutoCount vendor API's own object (PascalCase, `Details` rows),
+# the envelope adds a required `book`, the idempotency key is (company, book, DocKey), a DO / GRN
+# adopts an upload-created row by its number, and `/deletions` takes the sweep's vanished
+# `doc_keys` for a DocDate range and cancels them, never deletes. Additive.
+CONTRACT_VERSION = "2.7"
 
 
 def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
@@ -696,6 +725,95 @@ def _run_follow_book_spo_hook(db: Session, service, *, actor: Optional[str]) -> 
     return book_follow_rows_dropped
 
 
+def _book(payload: dict) -> str:
+    """Contract 2.7: the AutoCount book the records came from (`db1` = Sorento)."""
+    book = payload.get("book")
+    if not isinstance(book, str) or not BOOK_PATTERN.fullmatch(book):
+        raise AppException(
+            status_code=422,
+            message="Body must contain 'book': 1 to 20 characters of letters, digits, _ or -",
+            code="INVALID_BODY",
+        )
+    return book
+
+
+def _run_grn_receipt_hook(db: Session, service) -> None:
+    """An AutoCount GRN write moved picking lines that point at SPO allocations (a carried
+    Excel link released, a cancel, an exact link): recompute those allocations' receipt the
+    way an approved Excel GRN does. After the batch commit, best effort, like the others."""
+    touched = getattr(service, "touched_allocation_ids", set())
+    if not touched:
+        return
+    try:
+        from app.services.procurement_service import InboundShipmentService, PickingHeaderService
+
+        allocations = db.query(SPOAllocation).filter(SPOAllocation.id.in_(list(touched))).all()
+        proc = PickingHeaderService(db)
+        shipment_ids = proc._sync_received_for_allocations(
+            allocations, released=getattr(service, "released_allocation_ids", set())
+        )
+        db.commit()
+        inbound = InboundShipmentService(db)
+        for shipment_id in shipment_ids:
+            inbound.refresh_shipment_line_statuses(shipment_id)
+    except Exception:  # noqa: BLE001 - the ingest itself already committed
+        db.rollback()
+        logger.warning("ingest.grn_receipt_hook_failed", exc_info=True)
+
+
+def _cancel_vanished(entity: str, payload: dict, dry_run: bool, db: Session, current_user: dict):
+    """Contract 2.7 deletions: the sweep's vanished DocKeys for a DocDate range, cancelled in
+    place and never deleted (plan 1.10)."""
+    book = _book(payload)
+    try:
+        doc_keys, date_from, date_to = parse_deletion_body(payload)
+    except ValueError as exc:
+        raise AppException(status_code=422, message=str(exc), code="INVALID_BODY")
+    if len(doc_keys) > MAX_BATCH:
+        raise AppException(
+            status_code=413,
+            message=(
+                f"Batch of {len(doc_keys)} exceeds the maximum of {MAX_BATCH}. "
+                "Split it; the response is never silently truncated."
+            ),
+            code="BATCH_TOO_LARGE",
+        )
+    company_id = resolve_company_anchor(db, payload, current_user)
+    service = AutocountDocIngestService(
+        db, current_user.get("integration_id"), company_id=company_id, book=book
+    )
+    result = service.delete(entity, doc_keys, date_from, date_to, dry_run=dry_run)
+    if dry_run:
+        db.rollback()
+    else:
+        db.commit()
+        if entity == GOODS_RECEIVE_NOTES_ENTITY:
+            _run_grn_receipt_hook(db, service)
+    summary = result.as_dict()["summary"]
+    logger.info(
+        "deletion.batch entity=%s integration=%s company=%s dry_run=%s "
+        "deactivated=%d not_found=%d failed=%d",
+        entity,
+        current_user.get("integration_name"),
+        company_id,
+        dry_run,
+        summary["deactivated"],
+        summary["not_found"],
+        summary["failed"],
+    )
+    return result.as_dict()
+
+
+def _no_branch_door(entity: str) -> None:
+    """Contract 2.7: `branches` is ingest only; its read and deletions doors do not exist."""
+    if entity in AUTOCOUNT_BRANCH_ENTITIES:
+        raise AppException(
+            status_code=404,
+            message="'branches' has no read or deletions door",
+            code="UNKNOWN_ENTITY",
+        )
+
+
 def _entity(entity: str) -> str:
     if entity not in SUPPORTED_ENTITIES:
         raise AppException(
@@ -765,6 +883,8 @@ def ingest_masters(
             code="BATCH_TOO_LARGE",
         )
 
+    book = _book(payload) if entity in AUTOCOUNT_DOC_ENTITIES | AUTOCOUNT_BRANCH_ENTITIES else None
+
     company_id = resolve_company_anchor(db, payload, current_user)
 
     # One endpoint, three services. A document owns its lines and points at
@@ -792,6 +912,10 @@ def ingest_masters(
         # Fix round 2 (#1257): its Stock Ledger rows name the integration's
         # act-as user as `created_by`.
         extra["actor_user_id"] = current_user.get("id")
+    elif entity in AUTOCOUNT_DOC_ENTITIES | AUTOCOUNT_BRANCH_ENTITIES:
+        # Contract 2.7: the AutoCount record as the vendor API returned it, keyed per book.
+        ingester = AutocountDocIngestService
+        extra["book"] = book
     else:
         ingester = MasterIngestService
     service = ingester(
@@ -829,6 +953,8 @@ def ingest_masters(
                 result.book_repair_moves_dropped,
                 result.book_follow_rows_dropped,
             ) = _run_document_hooks(db, entity, service, actor=current_user.get("id"))
+        elif entity == GOODS_RECEIVE_NOTES_ENTITY:
+            _run_grn_receipt_hook(db, service)
 
     logger.info(
         "ingest.batch entity=%s integration=%s company=%s dry_run=%s "
@@ -883,6 +1009,10 @@ def delete_records(
     that is not left to the database to decide.
     """
     entity = _entity(entity)
+    _no_branch_door(entity)
+
+    if entity in AUTOCOUNT_DOC_ENTITIES:
+        return _cancel_vanished(entity, payload, dry_run, db, current_user)
 
     source_refs = payload.get("source_refs")
     if not isinstance(source_refs, list):
@@ -1011,6 +1141,7 @@ def read_current_state(
     become a few hundred round trips.
     """
     entity = _entity(entity)
+    _no_branch_door(entity)
 
     source_refs = payload.get("source_refs")
     if not isinstance(source_refs, list):
@@ -1042,6 +1173,11 @@ def read_current_state(
             pairs = {}
         return StockBalanceIngestService(db, company_id=company_id).current_state(
             source_refs, pairs
+        )
+
+    if entity in AUTOCOUNT_DOC_ENTITIES:
+        return AutocountDocReadService(db, company_id=company_id).current_state(
+            entity, source_refs
         )
 
     if entity in SHIPPING_ORDER_ENTITIES:
