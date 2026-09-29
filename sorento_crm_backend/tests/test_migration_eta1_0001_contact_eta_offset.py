@@ -53,12 +53,12 @@ def _column(conn, schema):
 
 
 def test_revision_chains_onto_mains_head():
-    """Main's single head at the batch 5 merge round is merge_29sep_batch5; this
+    """Main's single head at the re-chain round is cpc4_cost_packaging_method; this
     revision hangs off it, so the tree has exactly one head."""
     module = _load()
     assert module.revision == "eta1_0001_contact_eta_offset"
     assert len(module.revision) <= 32
-    assert module.down_revision == "merge_29sep_batch5"
+    assert module.down_revision == "cpc4_cost_packaging_method"
 
 
 def test_up_down_up_adds_a_not_null_default_true_column():
