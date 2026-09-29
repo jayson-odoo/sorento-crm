@@ -282,6 +282,9 @@ def _build_json_schema() -> dict[str, Any]:
             "sales_basis": {"type": ["string", "null"], "enum": ["ordered", "delivered", "invoiced", None]},
             "sales_company": string_or_null,
             "correction": {"type": ["boolean", "null"]},
+            # PLAN-chatbot-customer-scope-29sep D2: "my" / "me" / "our" as the asker's own
+            # account. Required for strict mode, tolerated absent (older prompt versions).
+            "self_reference": {"type": "boolean"},
             "routing": {
                 "type": "object",
                 "additionalProperties": False,
@@ -502,6 +505,7 @@ def _build_json_schema() -> dict[str, Any]:
             "sales_basis",
             "sales_company",
             "correction",
+            "self_reference",
             "routing",
             "escalation",
             "document",
@@ -561,6 +565,7 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
         "sales_company",
         "proceed_anyway",
         "open_question_answer",
+        "self_reference",
         "profile_statements",
     }
 )

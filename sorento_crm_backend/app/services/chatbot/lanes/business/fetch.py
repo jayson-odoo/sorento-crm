@@ -1159,6 +1159,19 @@ def entity_ids_transformer(
     if isinstance(predicate, dict) and predicate.get("certificate_ids"):
         out["certificate_ids"] = predicate["certificate_ids"]
 
+    # PLAN-chatbot-customer-scope-29sep.md D4, the LAST step before `contact_id`: a
+    # customer-scoped contact's `customer_ids` are its linked customers on every
+    # customer-scoped tool, whatever the earlier steps built. Defence in depth behind
+    # `engine._customer_scope_gate`, which never lets another customer reach this far.
+    scope_ids = jsc.get(semantic_input, "scope_customer_ids") if isinstance(semantic_input, dict) else None
+    if isinstance(scope_ids, list) and scope_ids and tool_name in CUSTOMER_SCOPED_TOOLS:
+        requested = out.get("customer_ids")
+        requested = requested if isinstance(requested, list) else ([requested] if requested else [])
+        if any(str(c) not in {str(i) for i in scope_ids} for c in requested):
+            raise ScopeViolation(f"{tool_name} asked for a customer outside the contact's scope")
+        out["customer_ids"] = requested or list(scope_ids)
+        out.pop("customer_query", None)
+
     # COERCE, THEN TRIM, and the ORDER is the whole point. `contact_id` arrives as BOTH an
     # int and a SPACE-PADDED string in production, in adjacent executions: five spine call
     # sites write `{{ ... .json.id }} ` with a trailing space inside the template. A number
@@ -1219,6 +1232,27 @@ class ToolNotAllowed(RuntimeError):
     read was never allowed", and `run_fetch` records it as the `tool_not_allowed` outcome
     so the reason is on the trace an operator reads.
     """
+
+
+class ScopeViolation(ToolNotAllowed):
+    """PLAN-chatbot-customer-scope-29sep.md D4: a customer-scoped contact's fetch asked for
+    a customer outside its links. Never a tool call; `run_fetch` answers it with the
+    refusal line, not the generic "not allowed" text."""
+
+
+#: The MCP tools that return per-customer data: every catalogue tool whose `query_params`
+#: carry `customer_ids` (pinned by `tests/chatbot/test_customer_scope_fetch.py`).
+CUSTOMER_SCOPED_TOOLS: frozenset[str] = frozenset(
+    {
+        "crm_order_management_orders_list",
+        "crm_order_management_orders_by_product_list",
+        "crm_outstanding_report",
+        "crm_sales_report",
+        "crm_top_selling_report",
+        "crm_order_analytics",
+        "crm_master_customers_list",
+    }
+)
 
 
 # The MCP tools this chatbot may call. An ALLOW-list, so a tool that is not named here is

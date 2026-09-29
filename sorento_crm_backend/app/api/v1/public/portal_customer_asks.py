@@ -22,8 +22,9 @@ from sqlalchemy.orm import Session
 from app.api.v1.public.portal import get_portal_token
 from app.database import get_db
 from app.models.portal import PortalToken
+from app.models.user import User
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
-from app.schemas.stock_ask import StockAskResponse, StockAskUpdate
+from app.schemas.stock_ask import StockAskConversationResponse, StockAskResponse, StockAskTodoResponse, StockAskUpdate
 from app.services import price_tag_request_service, stock_ask_service
 from app.services.error_handler import AppException
 from app.services.portal_form_visibility_service import switched_form_types
@@ -63,6 +64,32 @@ def portal_list_customer_asks(
     return stock_ask_service.list_for_agent(db, agent_id, page=page, limit=limit, q=q, state=state)
 
 
+@router.get("/customer-asks/todo", response_model=StockAskTodoResponse)
+def portal_customer_asks_todo(
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """The salesperson's to-do (sales-asks-todo S1): open asks oldest first plus what was
+    cleared today, grouped on the client from `today_start`."""
+    return stock_ask_service.todo_for_agent(db, _agent_id(db, token))
+
+
+@router.get("/customer-asks/{ask_id}/conversation", response_model=StockAskConversationResponse, response_model_exclude_unset=True)
+def portal_customer_ask_conversation(
+    ask_id: str,
+    whole_day: bool = Query(False),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """The chat around one ask, for the opened card. Same gate and scope as the PATCH."""
+    agent_id = _agent_id(db, token)
+    validate_uuid_path(ask_id, resource="Stock ask")
+    ask = stock_ask_service.get_ask_in_scope(db, agent_id, ask_id)
+    payload = stock_ask_service.conversation_for_ask(db, ask, whole_day=whole_day)
+    payload.pop("contact_id", None)  # the CRM's "Open in Conversations" link only
+    return payload
+
+
 @router.patch("/customer-asks/{ask_id}", response_model=StockAskResponse)
 def portal_update_customer_ask(
     ask_id: str,
@@ -72,4 +99,13 @@ def portal_update_customer_ask(
 ):
     agent_id = _agent_id(db, token)
     validate_uuid_path(ask_id, resource="Stock ask")
-    return stock_ask_service.update_for_agent(db, agent_id, ask_id, body.model_dump(exclude_unset=True))
+    # Who cleared it: the portal contact, and the CRM user that contact is (if any).
+    user_id = db.query(User.id).filter(User.respond_contact_id == token.contact_id).scalar()
+    return stock_ask_service.update_for_agent(
+        db,
+        agent_id,
+        ask_id,
+        body.model_dump(exclude_unset=True),
+        actor_contact_id=token.contact_id,
+        actor_user_id=user_id,
+    )

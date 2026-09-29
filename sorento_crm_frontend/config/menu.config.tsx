@@ -97,6 +97,13 @@ export const MENU_SIDEBAR: MenuConfig = [
         moduleKey: 'sales',
       },
       {
+        // PLAN-sales-asks-todo-29sep S2: the salesperson's to-do of customer asks.
+        title: 'Customer asks',
+        path: '/sales/customer-asks',
+        permission: 'sales.customer_asks.view',
+        moduleKey: 'sales',
+      },
+      {
         title: 'Sales Teams',
         path: '/sales/teams',
         permission: 'sales.teams.view',

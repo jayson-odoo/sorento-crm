@@ -535,9 +535,7 @@ def top_selling_dealer_ledgers(
     access type makes the contact staff whatever else it holds (fix round 3, owner
     hand test 27 Sep 2026); otherwise any `respond_contact_customers` row makes it
     that customer's dealer. Read on the engine's per-contact scoped session."""
-    from app.api.v1.order_management.orders import _top_selling_is_staff
-    from app.models.order import Customer
-    from app.services.contact_customer_service import list_links
+    from app.services import contact_customer_scope as scope_mod
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
 
     if not contact_respond_id:
@@ -545,19 +543,44 @@ def top_selling_dealer_ledgers(
     contact_id = resolve_contact_with_null_workspace_fallback(
         db, contact_id=str(contact_respond_id), space_id=space_id
     )
-    if not contact_id or _top_selling_is_staff(db, contact_id):
+    if not contact_id:
         return None
-    ids: list[str] = []
-    for link in list_links(db, contact_id):
-        if str(link.customer_id) not in ids:
-            ids.append(str(link.customer_id))
-    if not ids:
+    scope = scope_mod.contact_customer_scope(db, contact_id)
+    if scope.staff or not scope.linked:
         return None
-    names = {
-        str(row[0]): row[1] or ""
-        for row in db.query(Customer.id, Customer.customer_name).filter(Customer.id.in_(ids)).all()
+    return [(cid, name) for cid, name, _code in scope.linked]
+
+
+def customer_scope(db: Session, contact_respond_id: Any, space_id: str | None) -> dict[str, Any] | None:
+    """The asking contact's customer scope, read ONCE per turn
+    (PLAN-chatbot-customer-scope-29sep.md D1/D3): None when nobody linked the contact to a
+    customer, else `{"ids", "names", "linked": [[id, name, code]], "staff", "enforced"}`.
+    `enforced` is the top selling rule (linked and no active office access type); a
+    linked staff contact keeps `linked` for a "my" ask only. Read through the ONE core
+    function `contact_customer_scope` (as a module attribute: the tests spy on it)."""
+    from app.services import contact_customer_scope as scope_mod
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    if not contact_respond_id or not str(contact_respond_id).strip():
+        return None
+    contact_id = resolve_contact_with_null_workspace_fallback(
+        db,
+        contact_id=str(contact_respond_id).strip(),
+        space_id=(str(space_id).strip() or None) if space_id is not None else None,
+    )
+    if not contact_id:
+        return None
+    scope = scope_mod.contact_customer_scope(db, contact_id)
+    if not scope.linked:
+        return None
+    return {
+        "ids": scope.customer_ids,
+        "names": {cid: name for cid, name, _code in scope.linked},
+        "linked": [list(row) for row in scope.linked],
+        "staff": scope.staff,
+        "enforced": scope.enforced,
+        "refusal": scope_mod.refusal_line(scope),
     }
-    return [(i, names.get(i, "")) for i in ids]
 
 
 def top_selling_dealer_customer_ids(

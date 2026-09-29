@@ -43,6 +43,7 @@ from app.services.chatbot_parser_prompt import (
     ESCALATION_CONFIRMATION_ADDENDUM,
     MEMORY_ADDENDUM,
     PO_SPO_WAREHOUSE_ADDENDUM,
+    SELF_REFERENCE_ADDENDUM,
     QUANTITY_ADDENDUM,
     SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
@@ -177,7 +178,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         for body in (SEMANTIC_PARSER_PROMPT,):
             assert body.removesuffix(MEMORY_ADDENDUM).removesuffix(PO_SPO_WAREHOUSE_ADDENDUM).removesuffix(
                 ESCALATION_CONFIRMATION_ADDENDUM
-            ).removesuffix(TOP_SELLING_ADDENDUM).removesuffix(
+            ).removesuffix(SELF_REFERENCE_ADDENDUM).removesuffix(TOP_SELLING_ADDENDUM).removesuffix(
                 KNOWN_BRANDS_ADDENDUM
             ).removesuffix(QUANTITY_ADDENDUM).removesuffix(
                 SPECIFICATION_ADDENDUM

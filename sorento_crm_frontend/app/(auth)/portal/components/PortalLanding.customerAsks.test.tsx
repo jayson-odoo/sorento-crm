@@ -44,11 +44,16 @@ vi.mock('../lib/price-tag-request-service', () => ({
 }));
 
 const listCustomerAsks = vi.fn();
+const getCustomerAsksTodo = vi.fn();
 vi.mock('../lib/customer-asks-service', async () => {
   const actual = await vi.importActual<typeof import('../lib/customer-asks-service')>(
     '../lib/customer-asks-service',
   );
-  return { ...actual, listCustomerAsks: (...a: unknown[]) => listCustomerAsks(...a) };
+  return {
+    ...actual,
+    listCustomerAsks: (...a: unknown[]) => listCustomerAsks(...a),
+    getCustomerAsksTodo: (...a: unknown[]) => getCustomerAsksTodo(...a),
+  };
 });
 
 import { fetchMeWithGrace, fetchSubmissions } from '../lib/portal-client';
@@ -96,6 +101,12 @@ beforeEach(() => {
   window.localStorage.clear();
   (fetchSubmissions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (listRequestsAsSummaries as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  getCustomerAsksTodo.mockResolvedValue({
+    today_start: '2026-09-28T16:00:00Z',
+    open: [ASK],
+    done_today: [],
+    truncated: false,
+  });
   listCustomerAsks.mockImplementation((p: { state?: string }) =>
     Promise.resolve(
       p.state === 'open'
@@ -145,30 +156,51 @@ describe('PortalLanding - Customer asks is one kind in the selector (fix round 5
     expect(listCustomerAsks).not.toHaveBeenCalled();
   });
 
-  it('lists the asks in the kind, as cards with state and note worked in place, and no New button', async () => {
+  it('shows the to-do in the kind: the card with a Done button, ONE toolbar, no New button (AC-ST304, AC-ST305)', async () => {
     searchParams = new URLSearchParams('type=customer_asks');
     mockContact(['price_tag_request', 'customer_asks']);
     render(<PortalLanding slug="ah-lim" />);
     expect(await screen.findByText('Hock Lee Trading')).toBeInTheDocument();
-    expect(screen.getByText('SRT5674 x 150', { selector: 'li *' })).toBeInTheDocument();
-    expect(screen.getByLabelText('State for SRT5674')).toBeInTheDocument();
-    expect(screen.getByLabelText('Note for SRT5674')).toBeInTheDocument();
+    await waitFor(() => expect(getCustomerAsksTodo).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('radio', { name: 'Board view' }));
+    expect(screen.getByText(/Asked:\s*SRT5674 x 150/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    expect(screen.queryByTestId('ask-todo-counts')).toBeNull(); // the counts line is gone
+    expect(screen.queryByLabelText('State for SRT5674')).toBeNull(); // the State select is gone
+    expect(screen.queryByLabelText('Note for SRT5674')).toBeNull(); // the note lives in the opened card
+    expect(screen.getAllByRole('button', { name: 'Filter' })).toHaveLength(1);
+    expect(screen.getAllByLabelText('View mode')).toHaveLength(1);
     expect(screen.queryByRole('link', { name: /New Customer asks/ })).toBeNull();
     // The landing's own search box is the one search, not a second one inside the kind.
     expect(screen.getAllByRole('textbox', { name: /search/i })).toHaveLength(1);
   });
 
-  it('answers the landing search box server-side', async () => {
+  it('owns the cards / list toggle for the asks body and writes nothing to local storage (item 7)', async () => {
     searchParams = new URLSearchParams('type=customer_asks');
     mockContact(['customer_asks']);
     render(<PortalLanding slug="ah-lim" />);
     await screen.findByText('Hock Lee Trading');
+    fireEvent.click(screen.getByRole('radio', { name: 'List view' }));
+    const headers = screen.getAllByRole('columnheader').map((h) => (h.textContent ?? '').trim());
+    expect(headers).toEqual(['Asked at', 'Customer', 'Contact', 'Asked', 'Answered', '']); // no Done by
+    expect(screen.getAllByLabelText('View mode')).toHaveLength(1);
+    expect(Object.keys(window.localStorage).filter((k) => k.startsWith('icp:list-board-view:'))).toEqual([]);
+  });
+
+  it('narrows the to-do with the landing search box', async () => {
+    searchParams = new URLSearchParams('type=customer_asks');
+    mockContact(['customer_asks']);
+    getCustomerAsksTodo.mockResolvedValue({
+      today_start: '2026-09-28T16:00:00Z',
+      open: [ASK, { ...ASK, id: 'ask-2', customer_name: 'Seng Heng Motor', product_code: 'SRT9999' }],
+      done_today: [],
+      truncated: false,
+    });
+    render(<PortalLanding slug="ah-lim" />);
+    await screen.findByText('Hock Lee Trading');
     const box = screen.getByRole('textbox', { name: /search/i });
-    fireEvent.change(box, { target: { value: 'hock' } });
-    await waitFor(() =>
-      expect(listCustomerAsks).toHaveBeenCalledWith(
-        expect.objectContaining({ q: 'hock', limit: 20 }),
-      ),
-    );
+    fireEvent.change(box, { target: { value: 'seng heng' } });
+    await waitFor(() => expect(screen.queryByText('Hock Lee Trading')).toBeNull());
+    expect(screen.getByText('Seng Heng Motor')).toBeInTheDocument();
   });
 });

@@ -896,8 +896,13 @@ class OrderService:
             filters.append(
                 or_(
                     Order.customer_id.in_(_customer_uuid_filter),
-                    _func.lower(_func.btrim(Order.debtor_name)).in_(
-                        self.db.query(_func.lower(_func.btrim(customer_names_subq.c.customer_name)))
+                    # The name branch is for LEGACY rows only (no customer_id): a same-named ledger
+                    # with its own customer_id is another customer, not this one.
+                    and_(
+                        Order.customer_id.is_(None),
+                        _func.lower(_func.btrim(Order.debtor_name)).in_(
+                            self.db.query(_func.lower(_func.btrim(customer_names_subq.c.customer_name)))
+                        ),
                     ),
                 )
             )
@@ -1513,10 +1518,15 @@ class OrderService:
                 q = q.filter(
                     or_(
                         Order.customer_id.in_(customer_ids),
-                        func.lower(func.btrim(Order.debtor_name)).in_(
-                            self.db.query(
-                                func.lower(func.btrim(names_subq.c.customer_name))
-                            )
+                        # The name branch is for LEGACY rows only (no customer_id): a same-named ledger
+                        # with its own customer_id is another customer, not this one.
+                        and_(
+                            Order.customer_id.is_(None),
+                            func.lower(func.btrim(Order.debtor_name)).in_(
+                                self.db.query(
+                                    func.lower(func.btrim(names_subq.c.customer_name))
+                                )
+                            ),
                         ),
                     )
                 )
@@ -1632,10 +1642,15 @@ class OrderService:
                 pq = pq.filter(
                     or_(
                         Order.customer_id.in_(customer_ids),
-                        func.lower(func.btrim(Order.debtor_name)).in_(
-                            self.db.query(
-                                func.lower(func.btrim(names_subq.c.customer_name))
-                            )
+                        # The name branch is for LEGACY rows only (no customer_id): a same-named ledger
+                        # with its own customer_id is another customer, not this one.
+                        and_(
+                            Order.customer_id.is_(None),
+                            func.lower(func.btrim(Order.debtor_name)).in_(
+                                self.db.query(
+                                    func.lower(func.btrim(names_subq.c.customer_name))
+                                )
+                            ),
                         ),
                     )
                 )
@@ -1798,8 +1813,13 @@ class OrderService:
             q = q.filter(
                 or_(
                     Order.customer_id.in_(_customer_uuid_filter),
-                    _func.lower(_func.btrim(Order.debtor_name)).in_(
-                        self.db.query(_func.lower(_func.btrim(customer_names_subq.c.customer_name)))
+                    # The name branch is for LEGACY rows only (no customer_id): a same-named ledger
+                    # with its own customer_id is another customer, not this one.
+                    and_(
+                        Order.customer_id.is_(None),
+                        _func.lower(_func.btrim(Order.debtor_name)).in_(
+                            self.db.query(_func.lower(_func.btrim(customer_names_subq.c.customer_name)))
+                        ),
                     ),
                 )
             )

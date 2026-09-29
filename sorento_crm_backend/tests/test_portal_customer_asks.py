@@ -278,7 +278,14 @@ def test_ac_sa607_the_portal_edit_is_what_the_crm_tab_reads(world):
     row = next(r for r in crm["data"] if r.id == world["old"].id)
     assert (row.state, row.note) == ("done", "Quoted 10")
     # ...and the other way round.
-    stock_ask_service.update_for_customer(db, world["mine"].id, world["old"].id, {"state": "open"})
+    from app.models.user import User
+
+    office = User(id=_uid(), email=f"{_uid()}@zzt.test", name="Office Olive", status="ACTIVE")
+    db.add(office)
+    db.flush()
+    stock_ask_service.update_for_customer(
+        db, world["mine"].id, world["old"].id, {"state": "open"}, actor_user_id=office.id
+    )
     listed = client.get(BASE).json()["data"]
     assert next(r for r in listed if r["id"] == world["old"].id)["state"] == "open"
 

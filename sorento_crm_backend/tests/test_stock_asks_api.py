@@ -122,7 +122,16 @@ def world():
 
 
 def _api(world, permissions):
-    return _client(world["db"], permissions)
+    client, originals = _client(world["db"], permissions)
+    # A PATCH to done stamps `done_by_user_id`, an FK on users.id: the actor must be a real row.
+    from app.dependencies import get_current_user
+    from app.main import app
+    from app.models.user import User
+
+    actor = app.dependency_overrides[get_current_user]()
+    world["db"].add(User(id=actor["id"], email=actor["email"], name="Office Olive", status="ACTIVE"))
+    world["db"].flush()
+    return client, originals
 
 
 def test_ac_sa505_get_lists_newest_first_with_names_not_ids(world):

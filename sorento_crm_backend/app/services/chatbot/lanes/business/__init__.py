@@ -1304,6 +1304,12 @@ def run_fetch(
     semantic_input = _fetch_semantic_input(
         parse_output, tier_gate=tier_gate, contact_id=contact_id, space_id=space_id
     )
+    # PLAN-chatbot-customer-scope-29sep.md D3/D4: a customer-scoped contact's turn
+    # (`engine._customer_scope_gate`). The engine refuses a customer word outside its links (one fixed line, before any
+    # fetch); here the links ride to `entity_ids_transformer`, which forces them on every customer-scoped tool.
+    customer_scope = ctx.get("customer_scope") if isinstance(ctx.get("customer_scope"), dict) else {}
+    if customer_scope.get("enforced") and customer_scope.get("ids"):
+        semantic_input["scope_customer_ids"] = list(customer_scope["ids"])
     # #1262 fix lane round 3, B1-r2: an order turn's brand ids are resolved ONCE, by
     # `turn_runtime.order_brand_filter` in the tool runner (typed words first, else the
     # brand the conversation carries), and the header names the same ids. Taken as is,
@@ -1378,6 +1384,9 @@ def run_fetch(
                         plan_item.get("probe_access_levels") or [],
                     )
                 )
+            except fetch_mod.ScopeViolation:
+                # The same refusal as the main call below; no tool was called.
+                return _fixed_reply(str(customer_scope.get("refusal") or ""))
             except Exception:  # noqa: BLE001 - an unprobed tier is "unknown", never "none"
                 logger.warning("chatbot: tier probe did not run", exc_info=True)
                 probe_results.append(None)
@@ -1784,7 +1793,13 @@ def run_fetch(
         # send, and the tool called without one answers about every product. The miss
         # lane names the set, the scheme or the unknown word instead.
         return _error_fragment("the described set qualifies nothing", outcome="not_found")
-    args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
+    try:
+        args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
+    except fetch_mod.ScopeViolation:
+        # D4: the defence behind the engine's gate. No tool is called.
+        if trace is not None:
+            trace.add("customer_scope", {"refused": "customer_not_permitted"})
+        return _fixed_reply(str(customer_scope.get("refusal") or ""))
     if (
         tool_name in policy_rows.ENTITY_FILTER_REQUIRED_TOOLS
         and not fetch_mod.has_narrowing_filter(args, tool_name=tool_name)

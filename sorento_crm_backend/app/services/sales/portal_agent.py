@@ -44,3 +44,14 @@ def agent_for_contact(db: Session, contact_id: str) -> Optional[SalesAgent]:
             agent.sales_agent,
         )
     return agent
+
+
+def agent_for_user(db: Session, user_id: str) -> Optional[SalesAgent]:
+    """The sales agent a CRM user is: `users.respond_contact_id` -> `agent_for_contact`.
+    ``None`` for a user with no contact or a contact linked to no agent."""
+    from app.models.user import User
+
+    contact_id = db.query(User.respond_contact_id).filter(User.id == user_id).scalar()
+    if not contact_id:
+        return None
+    return agent_for_contact(db, contact_id)
