@@ -319,7 +319,10 @@ reduced by the reserved qty, on every sizing path (single-member, pool, product-
 Project run); the product-grain buy is allocated to the OI row's own location, not a
 retail-short sibling; retail-only product unchanged; Dealer run unchanged;
 `test_reorder_plan_project_only.py`, `test_reorder_plan_all_picked_orders.py`,
-`test_reorder_window_start.py`, `test_reorder_one_formula*` updated where they pinned the
+`test_reorder_window_start.py`, `test_reorder_one_formula*`, and
+`test_channel_read_model.py::test_project_need_is_bought_in_full_on_top_of_the_stock_that_would_cover_it`
+(was `::test_project_need_is_netted_once_against_the_stock_that_covers_it`, missed in the
+first round and caught by the SCM CI shard) updated where they pinned the
 netting on All runs (name each and cite this ruling). Lands in Lane E's worktree and PR
 #1148 as its second slice (same functions), after Lane E's review fixes.
 
