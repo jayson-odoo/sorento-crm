@@ -870,7 +870,9 @@ describe('decideComposition: the six Decide items (D1, AC-5 to AC-9, AC-51)', ()
     expect(incoming.buy_qty).toBe('100');
   });
 
-  it('AC-51: skips a Buy over stock already landed (own_arrival) for this line', () => {
+  it('#1362: a Buy over stock already landed (own_arrival) is composed, no longer skipped', () => {
+    // Owner, 29 Sep 2026: planning records the intent; Confirm keeps the Buy with a notice
+    // and purchasing adjusts the linkage. This was AC-51's skip.
     const result = decideComposition(
       decideRow({
         proposed: {
@@ -879,8 +881,9 @@ describe('decideComposition: the six Decide items (D1, AC-5 to AC-9, AC-51)', ()
       }),
       'buy',
     );
-    expect(result.skip).toBe('stock already landed for it');
-    expect(result.reserve).toBeUndefined();
+    expect(result.skip).toBeUndefined();
+    expect(result.buy_qty).toBe('100');
+    expect(result.reserve).toEqual([]);
   });
 
   it('AC-6: Use own location fills from own/group rows only, in order, never a site pool', () => {

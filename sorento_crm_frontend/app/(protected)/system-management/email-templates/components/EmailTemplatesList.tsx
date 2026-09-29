@@ -9,7 +9,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Plus, Pencil, Trash2, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, ChevronRight } from 'lucide-react';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -43,7 +43,6 @@ export default function EmailTemplatesList() {
     isSettling: querySettling,
   } = useDebouncedSearch();
   const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState<EmailTemplate | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // A search brings the reader back to page 0 to see the matches.
@@ -146,19 +145,6 @@ export default function EmailTemplatesList() {
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 w-8 p-0"
-              onClick={(e) => {
-                e.stopPropagation();
-                setEditing(row.original);
-                setShowForm(true);
-              }}
-              aria-label="Edit"
-            >
-              <Pencil className="size-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
               className="h-8 w-8 p-0 text-destructive"
               onClick={(e) => {
                 e.stopPropagation();
@@ -208,12 +194,7 @@ export default function EmailTemplatesList() {
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
   const listPrimaryAction = (
-    <Button
-      onClick={() => {
-        setEditing(null);
-        setShowForm(true);
-      }}
-    >
+    <Button onClick={() => setShowForm(true)}>
       <Plus className="mr-1 size-4" /> Add template
     </Button>
   );
@@ -257,11 +238,10 @@ export default function EmailTemplatesList() {
 
       <EmailTemplateForm
         open={showForm}
-        onOpenChange={(o) => {
-          setShowForm(o);
-          if (!o) setEditing(null);
+        onOpenChange={setShowForm}
+        onSaved={(created) => {
+          router.push(`/system-management/email-templates/${created.id}`);
         }}
-        template={editing}
       />
     </DataGrid>
   );

@@ -19,18 +19,60 @@ import ContactChatbotSection from './ContactChatbotSection';
 
 const useContactChatbotProfile = vi.fn();
 const mutate = vi.fn();
+const memoryMutate = vi.fn();
 
+// Chatbot memory lane A: `chatbot_memory_level` replaces `recall_enabled`, `language`
+// moved into the facts grid (`useContactChatbotMemory`) and `always_full_report` is
+// dead. The empty memory fixture below keeps every test in this file - none of which
+// assert on facts/conversations/open orders - rendering the same empty states those
+// new cards fall back to, rather than an undefined crash.
 vi.mock('../hooks/useContactChatbot', () => ({
   useContactChatbotProfile: (...a: unknown[]) => useContactChatbotProfile(...a),
   useSaveContactChatbotProfile: () => ({ mutate, isPending: false }),
+  useContactChatbotMemory: () => ({
+    data: {
+      level: { own: null, effective: 'off', system_default: 'off' },
+      facts: [],
+      vocabulary: [],
+      episodes: { kept: 0, limit: 20, current: null, rows: [] },
+      open_orders: { customer_name: null, rows: [] },
+    },
+    isLoading: false,
+    isError: false,
+  }),
+  useSaveContactFact: () => ({ mutate: memoryMutate, isPending: false }),
+  contactChatbotMemoryQueryKey: (contactId: string) => ['contact-chatbot-memory', contactId],
 }));
 
+// AC-MEM057 (round 3): stubbed as a deterministic native `<select>` so the memory
+// context level options/values/clearable-ness are asserted directly, the same
+// pattern `StockVisibilitySection.test.tsx` uses for the same real component.
+vi.mock('@/components/common/SearchableSelect', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/components/common/SearchableSelect')>();
+  type Props = Parameters<typeof actual.SearchableSelect>[0];
+  const Stub = ({ value, onChange, options, placeholder, disabled, clearable }: Props) => (
+    <select
+      aria-label={placeholder ?? 'select'}
+      data-clearable={clearable === undefined ? 'unset' : String(clearable)}
+      value={value ?? ''}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      {(options ?? []).map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+  return { ...actual, SearchableSelect: (props: Props) => <Stub {...props} /> };
+});
+
 const BASE_PROFILE = {
-  recall_enabled: false,
+  chatbot_memory_level: null,
   tier: null,
-  language: null,
   default_ledgers: [],
-  always_full_report: false,
   stock_allowed: true,
   notify_salesman: false,
   packing_list_allowed: false,
@@ -111,9 +153,8 @@ describe('ContactChatbotSection - contact toggles (S2, AC-SA205)', () => {
   it('toggling "Notify salesman" saves the whole profile with every other field unchanged', () => {
     const loaded = {
       ...BASE_PROFILE,
-      recall_enabled: true,
+      chatbot_memory_level: 'full',
       tier: 'dealer',
-      language: 'en',
       stock_allowed: true,
       notify_salesman: false,
       packing_list_allowed: true,
@@ -130,9 +171,8 @@ describe('ContactChatbotSection - contact toggles (S2, AC-SA205)', () => {
   it('toggling "Packing list allowed" saves the whole profile with every other field unchanged, including notify_salesman', () => {
     const loaded = {
       ...BASE_PROFILE,
-      recall_enabled: false,
+      chatbot_memory_level: null,
       tier: null,
-      language: null,
       stock_allowed: true,
       notify_salesman: true,
       packing_list_allowed: false,
@@ -144,5 +184,51 @@ describe('ContactChatbotSection - contact toggles (S2, AC-SA205)', () => {
 
     expect(mutate).toHaveBeenCalledTimes(1);
     expect(mutate.mock.calls[0][0]).toEqual({ ...loaded, packing_list_allowed: true });
+  });
+});
+
+/**
+ * AC-MEM057 (round 3 UAC, merged 5b110df8): the Contact page "Memory context level"
+ * select's option set is renamed to the round 3 level values (`past` -> `episodes`),
+ * stays clearable, and its `onChange` payload is asserted against
+ * `contactChatbotService.memoryLevel.test.ts` (this file mocks the save HOOK, so it
+ * cannot see the outgoing HTTP body key `memory_level` renamed from
+ * `chatbot_memory_level` - that is pinned at the service layer instead).
+ */
+describe('ContactChatbotSection - memory context level select (AC-MEM057, round 3)', () => {
+  function levelSelect() {
+    return screen.getByLabelText('(follow the system default)') as HTMLSelectElement;
+  }
+
+  it('offers exactly Off / This conversation / Past conversations / Full memory, with values off/conversation/episodes/full', () => {
+    useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+
+    const options = Array.from(levelSelect().options).map((o) => ({
+      value: o.value,
+      label: o.textContent,
+    }));
+    expect(options).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: 'conversation', label: 'This conversation' },
+      { value: 'episodes', label: 'Past conversations' },
+      { value: 'full', label: 'Full memory' },
+    ]);
+  });
+
+  it('is clearable', () => {
+    useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    expect(levelSelect()).toHaveAttribute('data-clearable', 'true');
+  });
+
+  it('picking "Past conversations" saves chatbot_memory_level as "episodes", not "past"', () => {
+    useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+
+    fireEvent.change(levelSelect(), { target: { value: 'episodes' } });
+
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0]).toEqual({ ...BASE_PROFILE, chatbot_memory_level: 'episodes' });
   });
 });

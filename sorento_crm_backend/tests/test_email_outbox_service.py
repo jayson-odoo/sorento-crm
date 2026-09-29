@@ -187,7 +187,9 @@ def test_enqueue_or_merge_merges_into_existing_pending_row():
     assert merged is True
     assert out_id == str(existing.id)
     assert existing.body_text == "merged_plain"
-    assert existing.body_html == "merged_html"
+    # #1349: the rebuilt body is wrapped in the branded layout by the outbox safety net.
+    assert "merged_html" in existing.body_html
+    assert "data-sorento-layout" in existing.body_html
     assert captured["meta"]["attachment_html_items"] == ["<li>A</li>", "<li>B</li>", "<li>C</li>"]
     assert len(db.added) == 0
 

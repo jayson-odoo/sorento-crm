@@ -16,6 +16,26 @@ import {
 
 export type ContactsListParams = ListPagerParams;
 
+/**
+ * The list's filters as the URL carries them (contract mirrors `usersListFilters`
+ * in `../../users/lib/listQuery.ts`) - a filter on its default (no level filter at
+ * all) is absent, never an empty string, so a key built from list state and a key
+ * built from `parseDetailSearch` are equal.
+ *
+ * `chatbot_memory_level=own` (Settings > Chatbot > Memory's "N contacts" link,
+ * AC-MEM028) is the only value this lane sends - the backend filters to
+ * `chatbot_memory_level IS NOT NULL`.
+ */
+export function contactsListFilters({
+  chatbotMemoryLevel,
+}: {
+  chatbotMemoryLevel: string | null;
+}): Record<string, string> {
+  const filters: Record<string, string> = {};
+  if (chatbotMemoryLevel) filters.chatbot_memory_level = chatbotMemoryLevel;
+  return filters;
+}
+
 export function contactsListQueryKey(params: ContactsListParams): QueryKey {
   return [
     'respond-contacts',
@@ -23,20 +43,24 @@ export function contactsListQueryKey(params: ContactsListParams): QueryKey {
     params.pageSize,
     params.sorting,
     params.searchQuery,
+    params.filters,
   ];
 }
 
 export function fetchContactsPage(
   params: ContactsListParams,
 ): Promise<RespondContactListResponse> {
-  return getContacts({
-    pageIndex: params.pageIndex,
-    pageSize: params.pageSize,
-    // The list GET wants a sort even when the grid has none, and `created_at`
-    // desc is what the screen opens on.
-    sorting: params.sorting.length ? params.sorting : [{ id: 'created_at', desc: true }],
-    searchQuery: params.searchQuery,
-  });
+  return getContacts(
+    {
+      pageIndex: params.pageIndex,
+      pageSize: params.pageSize,
+      // The list GET wants a sort even when the grid has none, and `created_at`
+      // desc is what the screen opens on.
+      sorting: params.sorting.length ? params.sorting : [{ id: 'created_at', desc: true }],
+      searchQuery: params.searchQuery,
+    },
+    params.filters,
+  );
 }
 
 /** The pager's two hooks into the contacts list. */

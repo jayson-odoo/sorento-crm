@@ -372,6 +372,20 @@ describe('BoardCellBreakdownDialog: the Suggestion card', () => {
   });
 });
 
+describe('BoardCellBreakdownDialog: a fulfilled line (#1362)', () => {
+  it('says the line is fulfilled, with what was delivered and when it was due, instead of a suggestion', () => {
+    // SO382618's 08/06 line: nothing left to plan, 100 delivered. A suggestion here answered
+    // a quantity the line no longer has.
+    renderDialog([demand({ qty: '0', qty_delivered: '100', required_date: '2026-06-08' })]);
+
+    const fulfilled = screen.getByTestId('cell-fulfilled');
+    expect(fulfilled.textContent).toContain('Fulfilled');
+    expect(fulfilled.textContent).toContain('100 delivered');
+    expect(fulfilled.textContent).toContain('due 08/06/2026');
+    expect(screen.queryByTestId('cell-suggestion')).toBeNull();
+  });
+});
+
 describe('BoardCellBreakdownDialog: the Product column', () => {
   it('is not shown when the cell holds one product - the title already names it', () => {
     renderDialog([demand({ line_no: 1 }), demand({ line_no: 2 })]);

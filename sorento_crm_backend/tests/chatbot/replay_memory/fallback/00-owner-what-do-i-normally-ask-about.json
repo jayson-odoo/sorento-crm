@@ -1,0 +1,80 @@
+{
+  "name": "owner-history-question-after-stock-and-incoming",
+  "about": "Owner hand test of round 3 (28 Sep 2026, console contact 437264483, memory On at Full): after `check stock srtwc286` and `incoming`, every wording of the history question gets the numbered list naming both asks, never the clarify menu. Plan 7.3 example 3, AC-MEM082.",
+  "needs_memory": true,
+  "given": {
+    "memory_level": "full",
+    "live_turns": [
+      {
+        "message": "check stock srtwc286",
+        "verdict": {
+          "domain_hint": "inventory",
+          "entities": [
+            {
+              "raw": "SRTWC286",
+              "hint": "product",
+              "canonical_code": "SRTWC286",
+              "current_message": true,
+              "confident": true,
+              "hint_confident": true
+            }
+          ]
+        }
+      },
+      {
+        "message": "incoming",
+        "verdict": {
+          "domain_hint": "incoming",
+          "entities": [
+            {
+              "raw": "SRTWC286",
+              "hint": "product",
+              "canonical_code": "SRTWC286",
+              "current_message": false,
+              "confident": true,
+              "hint_confident": true
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "turn": {
+    "messages": [
+      "what do i normally ask about",
+      "what did i ask",
+      "what products do i usually ask about",
+      "what did I ask you last week?"
+    ],
+    "verdict": {
+      "message_type": "history_question",
+      "domain_hint": null,
+      "intent_hint": null,
+      "entities": []
+    },
+    "clarifier": {
+      "ack": "Sure, here you go.",
+      "language": "en"
+    }
+  },
+  "expected": {
+    "branch_kind": "low_signal",
+    "reply_contains": [
+      "Here's what you checked with me recently:",
+      "1. ",
+      "2. ",
+      ", Incoming stock: Asked about incoming stock for SRTWC286, but nothing was found.",
+      ", Stock: Asked about stock for SRTWC286, but nothing was found.",
+      "Still open: the offer to pass this to the warehouse team got no reply",
+      "Reply with a number and I'll run it again"
+    ],
+    "reply_not_contains": [
+      "Are you asking about any of these?",
+      "I can help with the topics listed above.",
+      " turn",
+      "(not found)",
+      "; "
+    ],
+    "no_tool_call": true
+  }
+}

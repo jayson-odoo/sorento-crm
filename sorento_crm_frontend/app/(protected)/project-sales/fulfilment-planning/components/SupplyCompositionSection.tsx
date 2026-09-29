@@ -386,8 +386,11 @@ export function SupplyCompositionSection({
  * number, so it says so rather than printing "Line undefined".
  */
 function failingSubject(failing: SupplyFailingLine): string {
-  if (failing.line_no != null) {
-    return `Line ${failing.line_no}${failing.item_code ? `, ${failing.item_code}` : ''}`;
+  if (failing.so_line_no != null || failing.line_no != null) {
+    // #1362 item 5: AutoCount's own line number when the server sent it.
+    const label =
+      failing.so_line_no != null ? `Line ${failing.so_line_no}` : `Line ${failing.line_no}`;
+    return `${label}${failing.item_code ? `, ${failing.item_code}` : ''}`;
   }
   return failing.item_code || 'This sales order';
 }
