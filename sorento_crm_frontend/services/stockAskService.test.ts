@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const apiFetch = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/api', () => ({ apiFetch }));
 
-import { getCustomerAsksTodo, listAskAgents, updateSalesAsk } from './stockAskService';
+import { getAskConversation, getCustomerAsksTodo, listAskAgents, updateSalesAsk } from './stockAskService';
 
 function jsonResponse(body: unknown, init: { ok?: boolean; status?: number } = {}): Response {
   return {
@@ -90,5 +90,32 @@ describe('updateSalesAsk', () => {
   it('throws the extracted API message', async () => {
     apiFetch.mockResolvedValue(jsonResponse({ detail: 'Stock ask not found' }, { ok: false, status: 404 }));
     await expect(updateSalesAsk('ask-9', { note: 'x' })).rejects.toThrow('Stock ask not found');
+  });
+});
+
+// AC-ST307 / AC-ST311 (FE half): the conversation around an ask.
+describe('getAskConversation', () => {
+  const CONVERSATION = {
+    messages: [{ id: 11, direction: 'in', text: 'Got stock?', at: '2026-09-29T02:55:00' }],
+    ask_message_id: 12,
+  };
+
+  it('GETs /api/v1/sales/customer-asks/{id}/conversation and returns the payload', async () => {
+    apiFetch.mockResolvedValue(jsonResponse(CONVERSATION));
+    await expect(getAskConversation('ask-1', { wholeDay: false })).resolves.toEqual(CONVERSATION);
+    const url = String(apiFetch.mock.calls[0][0]);
+    expect(url.startsWith('/api/v1/sales/customer-asks/ask-1/conversation')).toBe(true);
+    expect(url).not.toContain('whole_day=true');
+  });
+
+  it('adds whole_day=true when the whole day is asked for', async () => {
+    apiFetch.mockResolvedValue(jsonResponse(CONVERSATION));
+    await getAskConversation('ask-1', { wholeDay: true });
+    expect(String(apiFetch.mock.calls[0][0])).toBe('/api/v1/sales/customer-asks/ask-1/conversation?whole_day=true');
+  });
+
+  it('throws the extracted API message', async () => {
+    apiFetch.mockResolvedValue(jsonResponse({ detail: 'Stock ask not found' }, { ok: false, status: 404 }));
+    await expect(getAskConversation('ask-9', { wholeDay: false })).rejects.toThrow('Stock ask not found');
   });
 });

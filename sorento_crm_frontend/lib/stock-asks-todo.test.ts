@@ -1,10 +1,18 @@
 /**
- * AC-ST113: `bucketTodo` and its labels, with today_start = 2026-09-28T16:00Z
- * (Malaysia midnight of 29 Sep 2026). The server owns the boundary; nothing guesses a zone.
+ * AC-ST113 (rewritten by AC-ST303) and AC-ST301, AC-ST302: `bucketTodo`, the ask -> landing
+ * summary adapter and the asks field contract, with today_start = 2026-09-28T16:00Z (Malaysia
+ * midnight of 29 Sep 2026). The server owns the boundary; nothing guesses a zone.
  */
 import { describe, expect, it } from 'vitest';
 import type { StockAsk } from '@/lib/stock-asks';
-import { ageLabel, bucketTodo, dayLabel, type AskTodoPayload } from '@/lib/stock-asks-todo';
+import {
+  ASK_LANDING_FIELDS,
+  askAnswerText,
+  askToSummary,
+  bucketTodo,
+  type AskTodoPayload,
+} from '@/lib/stock-asks-todo';
+import { applyLandingFilters, sortLandingItems } from '@/app/(auth)/portal/lib/landing-fields';
 
 const TODAY_START = '2026-09-28T16:00:00Z';
 
@@ -37,18 +45,18 @@ function payload(open: StockAsk[], done_today: StockAsk[] = []): AskTodoPayload 
   return { today_start: TODAY_START, open, done_today, truncated: false };
 }
 
-const ASC = { id: 'asked_at', desc: false } as const;
+const ASC = { key: 'created_at', dir: 'asc' } as const;
 
 function shape(out: ReturnType<typeof bucketTodo>) {
   return out.sections.map((sec) => ({
     key: sec.key,
     label: sec.label,
-    days: sec.days.map((d) => ({ label: d.label, ids: d.asks.map((a) => a.id) })),
+    days: sec.days.map((d) => ({ ids: d.asks.map((a) => a.id) })),
   }));
 }
 
-describe('bucketTodo (AC-ST113)', () => {
-  it('builds Needs attention then Today, day groups oldest day first, and counts', () => {
+describe('bucketTodo (AC-ST303)', () => {
+  it('builds Needs attention then Today, ONE day group per section, oldest first, and counts', () => {
     const done = [ask('e', '2026-09-20T01:00:00Z', { state: 'done', done_at: '2026-09-29T02:00:00Z', done_by: 'Sean' })];
     const out = bucketTodo(payload([JUST_BEFORE, AT_START, YESTERDAY, LAST_WEEK], done), ASC);
     expect(out.counts).toEqual({ open: 4, needs_attention: 3, done_today: 1 });
@@ -56,12 +64,11 @@ describe('bucketTodo (AC-ST113)', () => {
       {
         key: 'needs_attention',
         label: 'Needs attention',
-        days: [
-          { label: 'Tue 22 Sep', ids: ['d'] }, // the older day comes BEFORE Yesterday
-          { label: 'Yesterday', ids: ['c', 'a'] }, // 20:00Z (04:00 MYT) then 15:59Z (23:59 MYT)
-        ],
+        // No per-day sub-groups: every open ask before today_start sits in one group, oldest first
+        // (22 Sep 05:00Z, 27 Sep 20:00Z, 28 Sep 15:59Z).
+        days: [{ ids: ['d', 'c', 'a'] }],
       },
-      { key: 'today', label: 'Today', days: [{ label: 'Today', ids: ['b'] }] },
+      { key: 'today', label: 'Today', days: [{ ids: ['b'] }] },
     ]);
     expect(out.done.map((a) => a.id)).toEqual(['e']);
   });
@@ -71,10 +78,14 @@ describe('bucketTodo (AC-ST113)', () => {
     expect(shape(bucketTodo(payload([AT_START]), ASC)).map((s) => s.key)).toEqual(['today']);
   });
 
-  it('omits a section and a day that has no open row', () => {
+  it('omits a section that has no open row', () => {
     expect(bucketTodo(payload([]), ASC).sections).toEqual([]);
     const out = bucketTodo(payload([LAST_WEEK, AT_START]), ASC);
-    expect(out.sections.map((s) => s.days.map((d) => d.label))).toEqual([['Tue 22 Sep'], ['Today']]);
+    expect(out.sections.map((s) => [s.key, s.days.length])).toEqual([
+      ['needs_attention', 1],
+      ['today', 1],
+    ]);
+    expect(bucketTodo(payload([AT_START]), ASC).sections.map((s) => s.key)).toEqual(['today']);
   });
 
   it('treats a created_at with no zone as UTC (the backend sends naive UTC)', () => {
@@ -92,60 +103,123 @@ describe('bucketTodo (AC-ST113)', () => {
   });
 });
 
-describe('bucketTodo sort inside a day (AC-ST113)', () => {
+describe('bucketTodo sort inside a section (AC-ST303, AC-ST304)', () => {
   const day = (id: string, hour: number, over: Partial<StockAsk> = {}) =>
     ask(id, `2026-09-29T0${hour}:00:00Z`, over);
   const rows = [
-    day('r1', 1, { customer_name: 'Charlie', product_code: 'SRT-B', branch: 'no_incoming' }),
-    day('r2', 2, { customer_name: 'Alpha', product_code: 'SRT-C', branch: 'in_stock' }),
-    day('r3', 3, { customer_name: 'Bravo', product_code: 'SRT-A', branch: 'too_big' }),
+    day('r1', 1, { customer_name: 'Charlie' }),
+    day('r2', 2, { customer_name: 'Alpha' }),
+    day('r3', 3, { customer_name: 'Bravo' }),
   ];
-  const ids = (sort: { id: 'asked_at' | 'customer' | 'product' | 'branch'; desc: boolean }) =>
-    bucketTodo(payload(rows), sort).sections[0].days[0].asks.map((a) => a.id);
+  const ids = (sort?: { key: string; dir: 'asc' | 'desc' }) =>
+    bucketTodo(payload(rows), sort as never).sections[0].days[0].asks.map((a) => a.id);
 
-  it('asked_at ascending is the default and puts the oldest first', () => {
-    expect(ids({ id: 'asked_at', desc: false })).toEqual(['r1', 'r2', 'r3']);
-    expect(bucketTodo(payload(rows)).sections[0].days[0].asks.map((a) => a.id)).toEqual(['r1', 'r2', 'r3']);
+  it('the default sort is Created ascending: the oldest first', () => {
+    expect(ids()).toEqual(['r1', 'r2', 'r3']);
+    expect(ids({ key: 'created_at', dir: 'asc' })).toEqual(['r1', 'r2', 'r3']);
   });
 
-  it('orders by customer A to Z, by product, and by branch label', () => {
-    expect(ids({ id: 'customer', desc: false })).toEqual(['r2', 'r3', 'r1']);
-    expect(ids({ id: 'product', desc: false })).toEqual(['r3', 'r1', 'r2']);
-    // Branch labels: In stock, No stock no incoming, Too big.
-    expect(ids({ id: 'branch', desc: false })).toEqual(['r2', 'r1', 'r3']);
+  it('orders by customer A to Z and reverses on desc', () => {
+    expect(ids({ key: 'customer_name', dir: 'asc' })).toEqual(['r2', 'r3', 'r1']);
+    expect(ids({ key: 'customer_name', dir: 'desc' })).toEqual(['r1', 'r3', 'r2']);
+    expect(ids({ key: 'created_at', dir: 'desc' })).toEqual(['r3', 'r2', 'r1']);
   });
 
-  it('desc reverses each order', () => {
-    expect(ids({ id: 'asked_at', desc: true })).toEqual(['r3', 'r2', 'r1']);
-    expect(ids({ id: 'customer', desc: true })).toEqual(['r1', 'r3', 'r2']);
-  });
-
-  it('sorts inside a day only: an older day stays before a newer day whatever the sort', () => {
-    const out = bucketTodo(payload([LAST_WEEK, YESTERDAY, JUST_BEFORE]), { id: 'asked_at', desc: true });
-    const days = out.sections[0].days;
-    expect(days.map((d) => d.label)).toEqual(['Tue 22 Sep', 'Yesterday']);
-    expect(days[1].asks.map((a) => a.id)).toEqual(['a', 'c']);
+  it('sorts inside a section only: Needs attention stays before Today whatever the sort', () => {
+    const out = bucketTodo(payload([AT_START, LAST_WEEK, YESTERDAY]), { key: 'created_at', dir: 'desc' });
+    expect(out.sections.map((s) => s.key)).toEqual(['needs_attention', 'today']);
+    expect(out.sections[0].days[0].asks.map((a) => a.id)).toEqual(['c', 'd']);
   });
 });
 
-describe('day and age labels', () => {
-  it('labels an ask from the Malaysia day before today Yesterday', () => {
-    expect(dayLabel(YESTERDAY.created_at, TODAY_START)).toBe('Yesterday');
-    expect(dayLabel(JUST_BEFORE.created_at, TODAY_START)).toBe('Yesterday');
+// ---- AC-ST301 -----------------------------------------------------------------------------
+
+const ANSWER = 'SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed.';
+
+describe('askAnswerText (AC-ST301)', () => {
+  it('strips the "CODE x Q:" prefix and upper-cases the first letter', () => {
+    expect(askAnswerText(ask('t', '2026-09-29T01:00:00Z', { answer_summary: ANSWER }))).toBe(
+      'Yes, we have stock, please refer to your salesman to proceed.',
+    );
   });
 
-  it('labels an earlier day with its weekday, date and month on the Malaysia calendar', () => {
-    // 22 Sep 2026 is a Tuesday (the UAC text says "Mon 22 Sep"; the calendar wins).
-    expect(dayLabel(LAST_WEEK.created_at, TODAY_START)).toBe('Tue 22 Sep');
+  it.each([
+    ['SRT-OLD x 1500: no stock and no incoming.', 'No stock and no incoming.'],
+    ['CWCX604 x 300: the quantity is more than I can confirm.', 'The quantity is more than I can confirm.'],
+    ['SRTW2000 x 150: no stock at the moment, ETA 19/10/2026.', 'No stock at the moment, ETA 19/10/2026.'],
+  ])('reads %s as %s', (answer_summary, expected) => {
+    expect(askAnswerText(ask('t', '2026-09-29T01:00:00Z', { answer_summary }))).toBe(expected);
   });
 
-  it('labels a row from today Today', () => {
-    expect(dayLabel(AT_START.created_at, TODAY_START)).toBe('Today');
+  it('returns an answer_summary without the prefix as it is', () => {
+    expect(askAnswerText(ask('t', '2026-09-29T01:00:00Z', { answer_summary: 'answer' }))).toBe('answer');
+    expect(askAnswerText(ask('t', '2026-09-29T01:00:00Z', { answer_summary: 'Already fine.' }))).toBe('Already fine.');
+  });
+});
+
+describe('askToSummary (AC-ST301)', () => {
+  it('maps an ask to the landing summary shape', () => {
+    const row = ask('s1', '2026-09-29T01:00:00Z', {
+      customer_name: 'Hock Lee Trading',
+      contact_name: 'Ah Seng',
+      product_code: 'SRT5674',
+      quantity: 50,
+      branch: 'in_stock',
+      answer_summary: ANSWER,
+      state: 'open',
+    });
+    expect(askToSummary(row)).toMatchObject({
+      id: 's1',
+      title: 'SRT5674 x 50',
+      customer_name: 'Hock Lee Trading',
+      contact_name: 'Ah Seng',
+      created_at: '2026-09-29T01:00:00Z',
+      status: 'open',
+      answer: 'Yes, we have stock, please refer to your salesman to proceed.',
+      branch: 'in_stock',
+    });
   });
 
-  it('gives an age on a needs-attention row and none on today', () => {
-    expect(ageLabel(YESTERDAY.created_at, TODAY_START)).toBe('Yesterday');
-    expect(ageLabel(LAST_WEEK.created_at, TODAY_START)).toMatch(/^\d+ days ago$/);
-    expect(ageLabel(AT_START.created_at, TODAY_START)).toBe('');
+  it('carries a done ask as status done', () => {
+    expect(askToSummary(ask('s2', '2026-09-29T01:00:00Z', { state: 'done' })).status).toBe('done');
+  });
+});
+
+// ---- AC-ST302 -----------------------------------------------------------------------------
+
+describe('ASK_LANDING_FIELDS (AC-ST302)', () => {
+  it('is Customer (text), Answer (text), Asked (date), State (status)', () => {
+    expect(ASK_LANDING_FIELDS.map((f) => [f.label, f.type])).toEqual([
+      ['Customer', 'text'],
+      ['Answer', 'text'],
+      ['Asked', 'date'],
+      ['State', 'status'],
+    ]);
+    expect(ASK_LANDING_FIELDS.find((f) => f.label === 'Customer')!.key).toBe('customer_name');
+    expect(ASK_LANDING_FIELDS.find((f) => f.label === 'Asked')!.key).toBe('created_at');
+  });
+
+  const rowsOf = () => [
+    ask('f1', '2026-09-29T03:00:00Z', { customer_name: 'Hock Lee Trading' }),
+    ask('f2', '2026-09-27T03:00:00Z', { customer_name: 'Ah Huat Trading' }),
+    ask('f3', '2026-09-28T03:00:00Z', { customer_name: 'Seri Indah Renovation' }),
+    ask('f4', '2026-09-26T03:00:00Z', { customer_name: 'Hock Lee Trading' }),
+  ].map((a) => askToSummary(a));
+
+  it('a Customer filter keeps only that customer', () => {
+    const kept = applyLandingFilters(rowsOf(), ASK_LANDING_FIELDS, { customer_name: 'Hock Lee Trading' });
+    expect(kept.map((r) => r.id).sort()).toEqual(['f1', 'f4']);
+  });
+
+  it('sorts by Created oldest first and by Customer A to Z', () => {
+    const oldest = sortLandingItems(rowsOf(), ASK_LANDING_FIELDS, { key: 'created_at', dir: 'asc' });
+    expect(oldest.map((r) => r.id)).toEqual(['f4', 'f2', 'f3', 'f1']);
+    const az = sortLandingItems(rowsOf(), ASK_LANDING_FIELDS, { key: 'customer_name', dir: 'asc' });
+    expect(az.map((r) => r.customer_name)).toEqual([
+      'Ah Huat Trading',
+      'Hock Lee Trading',
+      'Hock Lee Trading',
+      'Seri Indah Renovation',
+    ]);
   });
 });

@@ -186,8 +186,8 @@ Agent select unchanged), AC-ST217 (pending state stays on the card's button and 
   `answer` = `askAnswerText(ask)`, `branch`; `askAnswerText` strips the `CODE x Q:` prefix from
   `answer_summary` and upper-cases the first letter ("SRT5674 x 50: yes, we have stock, ..." ->
   "Yes, we have stock, ..."); an `answer_summary` without the prefix is returned as is.
-- **AC-ST302 [FE][T]** `ASK_LANDING_FIELDS` = Customer (text), Answer (text), Asked (date), State
-  (status); `applyLandingFilters` over adapted asks with `{customer_name: 'Hock Lee Trading'}`
+- **AC-ST302 [FE][T]** `ASK_LANDING_FIELDS` = Customer (text), Answer (text), Created (date, key
+  `created_at`; the word the Sort button prints, ruled 30 Sep), State (status); `applyLandingFilters` over adapted asks with `{customer_name: 'Hock Lee Trading'}`
   keeps only that customer's rows; `sortLandingItems` with `{key: 'created_at', dir: 'asc'}` puts
   the oldest first, `{key: 'customer_name', dir: 'asc'}` A to Z.
 - **AC-ST303 [FE][T]** `bucketTodo(payload, sort)`: sections `Needs attention` (open before
@@ -211,7 +211,8 @@ Agent select unchanged), AC-ST217 (pending state stays on the card's button and 
   asked at (CRM: agent code); the Asked / Answered block with a `Jump to message` button; the
   conversation from `getAskConversation` with inbound bubbles left and outbound right, the
   `ask_message_id` bubble tagged `This ask`; `Show the whole day` refetches with `whole_day=true`;
-  CRM only `Open in Conversations` link; a Note textarea whose `Save note` button calls
+  CRM only `Open in Conversations` link to that contact's chat history (the conversation payload
+  carries `contact_id`, the `respond_contacts.id`, for this link only); a Note textarea whose `Save note` button calls
   `onNote(askId, text)` (blur does not) and then shows `Saved <time>`; foot `Done` calling
   `onDone` (or `Reopen`). Clicking `Jump to message` scrolls the tagged bubble into view (the
   bubble element receives the flash class).

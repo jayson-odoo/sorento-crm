@@ -156,17 +156,20 @@ describe('PortalLanding - Customer asks is one kind in the selector (fix round 5
     expect(listCustomerAsks).not.toHaveBeenCalled();
   });
 
-  it('shows the to-do in the kind: the row with a Done button and no New button', async () => {
+  it('shows the to-do in the kind: the card with a Done button, ONE toolbar, no New button (AC-ST304, AC-ST305)', async () => {
     searchParams = new URLSearchParams('type=customer_asks');
     mockContact(['price_tag_request', 'customer_asks']);
     render(<PortalLanding slug="ah-lim" />);
     expect(await screen.findByText('Hock Lee Trading')).toBeInTheDocument();
     await waitFor(() => expect(getCustomerAsksTodo).toHaveBeenCalled());
-    expect(screen.getByText('SRT5674 x 150', { selector: 'li *' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: 'Board view' }));
+    expect(screen.getByText(/Asked:\s*SRT5674 x 150/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
-    expect(screen.getByTestId('ask-todo-counts')).toBeInTheDocument();
+    expect(screen.queryByTestId('ask-todo-counts')).toBeNull(); // the counts line is gone
     expect(screen.queryByLabelText('State for SRT5674')).toBeNull(); // the State select is gone
-    expect(screen.getByLabelText('Note for SRT5674')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Note for SRT5674')).toBeNull(); // the note lives in the opened card
+    expect(screen.getAllByRole('button', { name: 'Filter' })).toHaveLength(1);
+    expect(screen.getAllByLabelText('View mode')).toHaveLength(1);
     expect(screen.queryByRole('link', { name: /New Customer asks/ })).toBeNull();
     // The landing's own search box is the one search, not a second one inside the kind.
     expect(screen.getAllByRole('textbox', { name: /search/i })).toHaveLength(1);

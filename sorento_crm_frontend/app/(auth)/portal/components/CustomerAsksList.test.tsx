@@ -1,7 +1,8 @@
 /**
- * Sales-asks-todo AC-ST117 (replaces the #1333 pins of the cards / grid body): the portal's
- * Customer asks tab body is the salesperson's to-do, `AskTodoList` fed by
- * `getCustomerAsksTodo`; `Show done` opens the #1333 done history (`state=done`) under it.
+ * Sales-asks-todo AC-ST117 as reshaped by S3 (AC-ST304 to AC-ST308): the portal's Customer asks
+ * tab body is the salesperson's to-do, `AskTodoList` fed by `getCustomerAsksTodo`, under the
+ * landing's own `LandingToolbar` (Filter, Sort, list / cards toggle, no New button); a card opens
+ * the conversation Drawer; `Show done` opens the #1333 done history (`state=done`) under it.
  * The service functions are mocked, never the Phase 1 mock store.
  */
 import React from 'react';
@@ -19,22 +20,24 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/portal/c/ah-lim/customer_asks',
   useSearchParams: () => new URLSearchParams(),
 }));
-vi.mock('@/components/common/SearchableSelect', () => ({
-  SearchableSelect: (props: {
-    id?: string;
-    value: string;
-    onChange: (v: string) => void;
-    options?: { value: string; label: string }[];
-  }) => (
-    <select id={props.id} value={props.value} onChange={(e) => props.onChange(e.target.value)}>
-      {(props.options ?? []).map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
-  ),
+const gridProps = vi.hoisted(() => [] as Record<string, unknown>[]);
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: vi.fn().mockResolvedValue(null),
+  upsertUserListColumnConfig: vi.fn(),
+  resetUserListColumnConfig: vi.fn(),
 }));
+vi.mock('@/components/ui/data-grid', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/ui/data-grid')>();
+  return {
+    ...actual,
+    DataGrid: (props: Record<string, unknown>) => {
+      gridProps.push(props);
+      // The key asked for is recorded; rows render without the preference fetch (jsdom holds them
+      // behind a skeleton while it runs).
+      return <actual.DataGrid {...(props as React.ComponentProps<typeof actual.DataGrid>)} listingKey={null} />;
+    },
+  };
+});
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
@@ -42,6 +45,7 @@ vi.mock('@/lib/toast', () => ({
 const getCustomerAsksTodo = vi.fn();
 const listCustomerAsks = vi.fn();
 const updateCustomerAsk = vi.fn();
+const getAskConversation = vi.fn();
 vi.mock('../lib/customer-asks-service', async () => {
   const actual = await vi.importActual<typeof import('../lib/customer-asks-service')>(
     '../lib/customer-asks-service',
@@ -51,6 +55,7 @@ vi.mock('../lib/customer-asks-service', async () => {
     getCustomerAsksTodo: (...a: unknown[]) => getCustomerAsksTodo(...a),
     listCustomerAsks: (...a: unknown[]) => listCustomerAsks(...a),
     updateCustomerAsk: (...a: unknown[]) => updateCustomerAsk(...a),
+    getAskConversation: (...a: unknown[]) => getAskConversation(...a),
   };
 });
 
@@ -94,59 +99,160 @@ function payload(over: Record<string, unknown> = {}) {
   return { today_start: TODAY_START, open: [ROW, TODAY_ROW], done_today: [], truncated: false, ...over };
 }
 
+const CONVERSATION = {
+  messages: [
+    { id: 1, direction: 'in', text: 'Boss, SRT5674 ada stock?', at: '2026-09-27T04:58:00' },
+    { id: 2, direction: 'out', text: 'SRT5674 x 150: no stock', at: '2026-09-27T05:00:00' },
+  ],
+  ask_message_id: 2,
+};
+
+/** The landing's view toggle: force the cards view whatever the stored default is. */
+function showCards() {
+  fireEvent.click(screen.getByRole('radio', { name: 'Board view' }));
+}
+function showList() {
+  fireEvent.click(screen.getByRole('radio', { name: 'List view' }));
+}
+/** Radix triggers open on a real pointerdown / pointerup / click sequence. */
+async function openMenu(name: string) {
+  const trigger = screen.getByRole('button', { name });
+  fireEvent.pointerDown(trigger, { button: 0, pointerId: 1 });
+  fireEvent.pointerUp(trigger, { button: 0, pointerId: 1 });
+  fireEvent.click(trigger);
+  await waitFor(() => expect(trigger.getAttribute('aria-expanded')).toBe('true'));
+}
+const cardOf = (text: string) => screen.getByText(text).closest('li, article, [tabindex], [role="button"]') as HTMLElement;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  gridProps.length = 0;
   window.localStorage.clear();
+  getAskConversation.mockResolvedValue(CONVERSATION);
   getCustomerAsksTodo.mockResolvedValue(payload());
   listCustomerAsks.mockResolvedValue({ data: [DONE_ROW], pagination: { total: 1, page: 1, limit: 20 } });
   updateCustomerAsk.mockResolvedValue({ ...ROW, state: 'done' });
 });
 
 describe('CustomerAsksList (portal to-do body)', () => {
-  it('renders the to-do from getCustomerAsksTodo: counts, groups, rows, and no grid or state filter', async () => {
+  it('renders the to-do from getCustomerAsksTodo as cards: two sections, no counts, no day headings', async () => {
     render(<CustomerAsksList search="" />);
     expect(await screen.findByText('Hock Lee Trading')).toBeInTheDocument();
+    showCards();
     expect(getCustomerAsksTodo).toHaveBeenCalled();
-    expect(screen.getByTestId('ask-todo-counts').textContent?.replace(/\s+/g, ' ')).toContain(
-      'Open 2 · Needs attention 1 · Done today 0',
-    );
-    expect(screen.getAllByRole('heading').map((h) => h.textContent)).toEqual([
-      'Needs attention',
-      'Sun 27 Sep',
-      'Today',
-    ]);
-    expect(screen.getByText('SRT5674 x 150')).toBeInTheDocument();
+    expect(screen.queryByTestId('ask-todo-counts')).toBeNull();
+    expect(screen.getAllByRole('heading').map((h) => h.textContent)).toEqual(['Needs attention', 'Today']);
+    const card = cardOf('Hock Lee Trading').textContent!.replace(/\s+/g, ' ');
+    expect(card).toContain('Asked: SRT5674 x 150');
+    expect(card).toContain('Answered: No stock and no incoming at the moment, please refer to your salesman.');
     expect(screen.queryByLabelText('Filter by state')).toBeNull();
-    expect(screen.queryByText('Asked at')).toBeNull(); // no grid header
     expect(screen.queryByText('ask-1')).toBeNull(); // no ids in the UI
     // The done history is closed until asked for.
     expect(listCustomerAsks).not.toHaveBeenCalled();
   });
 
-  it('Done patches the ask and refetches the to-do', async () => {
+  // AC-ST304
+  it('renders the landing toolbar (Filter, Sort reading the default, view toggle) and no New button', async () => {
     render(<CustomerAsksList search="" />);
-    const row = (await screen.findByText('Hock Lee Trading')).closest('li') as HTMLElement;
-    fireEvent.click(within(row).getByRole('button', { name: 'Done' }));
-    await waitFor(() => expect(updateCustomerAsk).toHaveBeenCalledWith('ask-1', { state: 'done' }));
-    await waitFor(() => expect(getCustomerAsksTodo).toHaveBeenCalledTimes(2));
+    await screen.findByText('Hock Lee Trading');
+    showCards();
+    expect(screen.getByRole('button', { name: 'Filter' })).toBeInTheDocument();
+    // The UAC says the default reads "Created"; the asks field list (AC-ST302) names the date
+    // field "Asked". Either satisfies the toolbar until the captain rules which word wins.
+    expect(screen.getByRole('button', { name: 'Sort' })).toHaveTextContent(/Created|Asked/);
+    expect(screen.getByLabelText('View mode')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^New/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /^New/ })).toBeNull();
   });
 
-  it('Reopen and note edits go through updateCustomerAsk', async () => {
+  // AC-ST308
+  it('keeps the toolbar when nothing is waiting', async () => {
+    getCustomerAsksTodo.mockResolvedValue(payload({ open: [] }));
+    render(<CustomerAsksList search="" />);
+    expect(await screen.findByText('Nothing waiting')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Filter' })).toBeInTheDocument();
+    expect(screen.getByLabelText('View mode')).toBeInTheDocument();
+  });
+
+  // AC-ST306 (portal half)
+  it('list view is the DataGrid with no listing key (the portal has no user row) and Done last', async () => {
+    render(<CustomerAsksList search="" />);
+    await screen.findByText('Hock Lee Trading');
+    showList();
+    const headers = screen.getAllByRole('columnheader').map((h) => (h.textContent ?? '').trim());
+    expect(headers.slice(0, 5)).toEqual(['Asked at', 'Customer', 'Contact', 'Asked', 'Answered']);
+    expect(headers.at(-1)).toBe('');
+    expect(gridProps.length).toBeGreaterThan(0);
+    expect(gridProps.every((g) => g.listingKey === null)).toBe(true);
+    const row = screen.getByText('Hock Lee Trading').closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(updateCustomerAsk).toHaveBeenCalledWith('ask-1', { state: 'done' }));
+    expect(getAskConversation).not.toHaveBeenCalled(); // the button never opens the card
+  });
+
+  it('Done patches the ask and refetches the to-do', async () => {
+    render(<CustomerAsksList search="" />);
+    await screen.findByText('Hock Lee Trading');
+    showCards();
+    fireEvent.click(within(cardOf('Hock Lee Trading')).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(updateCustomerAsk).toHaveBeenCalledWith('ask-1', { state: 'done' }));
+    await waitFor(() => expect(getCustomerAsksTodo).toHaveBeenCalledTimes(2));
+    expect(getAskConversation).not.toHaveBeenCalled(); // Done never opens the card
+  });
+
+  it('Reopen goes through updateCustomerAsk', async () => {
     getCustomerAsksTodo.mockResolvedValue(payload({ open: [TODAY_ROW], done_today: [DONE_ROW] }));
     render(<CustomerAsksList search="" />);
-    const done = (await screen.findByText('Cleared Trading')).closest('li') as HTMLElement;
-    fireEvent.click(within(done).getByRole('button', { name: 'Reopen' }));
+    await screen.findByText('Cleared Trading');
+    showCards();
+    fireEvent.click(within(cardOf('Cleared Trading')).getByRole('button', { name: 'Reopen' }));
     await waitFor(() => expect(updateCustomerAsk).toHaveBeenCalledWith('ask-3', { state: 'open' }));
+  });
 
-    const note = screen.getByLabelText('Note for SRT9999');
+  // AC-ST307 (portal half): the card opens the conversation Drawer.
+  it('opening a card fetches its conversation and shows it with the tagged bubble', async () => {
+    render(<CustomerAsksList search="" />);
+    await screen.findByText('Hock Lee Trading');
+    showCards();
+    fireEvent.click(screen.getByText('Hock Lee Trading'));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(getAskConversation).toHaveBeenCalledWith('ask-1', { wholeDay: false }));
+    expect(await within(dialog).findByText('Boss, SRT5674 ada stock?')).toBeInTheDocument();
+    expect(within(dialog).getByText('This ask')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /Jump to message/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('link', { name: 'Open in Conversations' })).toBeNull(); // CRM only
+  });
+
+  it('Show the whole day refetches with wholeDay true', async () => {
+    render(<CustomerAsksList search="" />);
+    await screen.findByText('Hock Lee Trading');
+    showCards();
+    fireEvent.click(screen.getByText('Hock Lee Trading'));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Show the whole day' }));
+    await waitFor(() => expect(getAskConversation).toHaveBeenCalledWith('ask-1', { wholeDay: true }));
+  });
+
+  it('Save note (not blur) writes the note through updateCustomerAsk; Done at the foot clears the ask', async () => {
+    render(<CustomerAsksList search="" />);
+    await screen.findByText('Hock Lee Trading');
+    showCards();
+    fireEvent.click(screen.getByText('Hock Lee Trading'));
+    const dialog = await screen.findByRole('dialog');
+    const note = await within(dialog).findByLabelText('Note');
     fireEvent.change(note, { target: { value: 'Visited, ordering Friday' } });
     fireEvent.blur(note);
-    await waitFor(() => expect(updateCustomerAsk).toHaveBeenCalledWith('ask-2', { note: 'Visited, ordering Friday' }));
+    expect(updateCustomerAsk).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save note' }));
+    await waitFor(() => expect(updateCustomerAsk).toHaveBeenCalledWith('ask-1', { note: 'Visited, ordering Friday' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(updateCustomerAsk).toHaveBeenCalledWith('ask-1', { state: 'done' }));
   });
 
   it('Show done toggles the done history (state=done) under the to-do', async () => {
     render(<CustomerAsksList search="" />);
     await screen.findByText('Hock Lee Trading');
+    showCards();
     fireEvent.click(screen.getByRole('button', { name: 'Show done' }));
     await waitFor(() =>
       expect(listCustomerAsks).toHaveBeenCalledWith(expect.objectContaining({ state: 'done', page: 1 })),
@@ -163,11 +269,13 @@ describe('CustomerAsksList (portal to-do body)', () => {
     expect(screen.queryByText('Hock Lee Trading')).toBeNull();
   });
 
-  it('marks a console ask with a Console badge and a live ask with none', async () => {
+  it('shows no Console badge (or any badge) on a console ask card', async () => {
     getCustomerAsksTodo.mockResolvedValue(payload({ open: [{ ...ROW, source: 'console' }, TODAY_ROW] }));
     render(<CustomerAsksList search="" />);
     await screen.findByText('Seng Heng Motor');
-    expect(screen.getAllByText('Console')).toHaveLength(1);
+    showCards();
+    expect(screen.queryByText('Console')).toBeNull();
+    expect(screen.queryByText('No stock, no incoming')).toBeNull();
   });
 
   it('shows the empty state when nothing is waiting', async () => {
@@ -188,7 +296,8 @@ describe('CustomerAsksList (portal to-do body)', () => {
     expect(await screen.findByText('Customer asks are for sales agents only.')).toBeInTheDocument();
   });
 
-  // AC-ST121: the sort is remembered per contact in localStorage.
+  // AC-ST121 / AC-ST304: the sort is the toolbar's Sort, remembered per contact in localStorage
+  // as the toolbar's own `{ key, dir }`.
   describe('remembered sort', () => {
     const TWO = () =>
       payload({
@@ -200,31 +309,36 @@ describe('CustomerAsksList (portal to-do body)', () => {
     const order = () => screen.getAllByText(/Trading$/).map((n) => n.textContent);
 
     it('applies a value stored for this contact on open', async () => {
-      window.localStorage.setItem('sorento.portalAsksSort.contact-1', JSON.stringify({ id: 'customer', desc: false }));
+      window.localStorage.setItem('sorento.portalAsksSort.contact-1', JSON.stringify({ key: 'customer_name', dir: 'asc' }));
       getCustomerAsksTodo.mockResolvedValue(TWO());
       render(<CustomerAsksList search="" contactId="contact-1" />);
       await screen.findByText('Zed Trading');
+      showCards();
       expect(order()).toEqual(['Abe Trading', 'Zed Trading']);
-      expect((screen.getByLabelText('Sort') as HTMLSelectElement).value).toBe('customer:asc');
+      expect(screen.getByRole('button', { name: 'Sort' })).toHaveTextContent('Customer');
     });
 
     it('ignores a value stored for another contact', async () => {
-      window.localStorage.setItem('sorento.portalAsksSort.contact-2', JSON.stringify({ id: 'customer', desc: false }));
+      window.localStorage.setItem('sorento.portalAsksSort.contact-2', JSON.stringify({ key: 'customer_name', dir: 'asc' }));
       getCustomerAsksTodo.mockResolvedValue(TWO());
       render(<CustomerAsksList search="" contactId="contact-1" />);
       await screen.findByText('Zed Trading');
-      expect((screen.getByLabelText('Sort') as HTMLSelectElement).value).toBe('asked_at:asc');
+      showCards();
+      expect(screen.getByRole('button', { name: 'Sort' })).not.toHaveTextContent('Customer');
     });
 
-    it('writes the choice under the contact key when the select changes', async () => {
+    it('re-orders inside the section and writes the choice under the contact key when Sort changes', async () => {
       getCustomerAsksTodo.mockResolvedValue(TWO());
       render(<CustomerAsksList search="" contactId="contact-1" />);
       await screen.findByText('Zed Trading');
-      fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'product:asc' } });
+      showCards();
+      await openMenu('Sort');
+      fireEvent.click(within(screen.getByRole('menu')).getByText('Customer'));
       await waitFor(() => {
         const raw = window.localStorage.getItem('sorento.portalAsksSort.contact-1');
-        expect(raw && JSON.parse(raw)).toEqual({ id: 'product', desc: false });
+        expect(raw && JSON.parse(raw)).toEqual({ key: 'customer_name', dir: 'asc' });
       });
+      expect(order()).toEqual(['Abe Trading', 'Zed Trading']);
       expect(window.localStorage.getItem('sorento.portalAsksSort.contact-2')).toBeNull();
     });
   });
@@ -252,6 +366,7 @@ describe('CustomerAsksList Show done history: Done by column (AC-ST214)', () => 
     });
     render(<CustomerAsksList search="" />);
     await screen.findByText('Hock Lee Trading');
+    showCards();
     fireEvent.click(screen.getByRole('button', { name: 'Show done' }));
     await screen.findByText('SRT-NAMED');
     expect(doneByCells('SRT-NAMED')).toBe(`Done by Agent Lim, ${formatDateTimeInMalaysia(doneAt)}`);

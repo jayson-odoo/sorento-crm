@@ -389,3 +389,60 @@ def test_customerless_ask_follows_the_contact_link_for_todo_and_patch(w):
     assert _call(w, [VIEW, EDIT], "beta", "patch", f"/{loose_b.id}", json={"state": "done"}).status_code == 200
     for who in ("me", "beta"):
         assert _call(w, [VIEW, EDIT], who, "patch", f"/{orphan.id}", json={"state": "done"}).status_code == 404
+
+
+# ---- AC-ST311 (S3): the CRM conversation route follows the PATCH scope ---------------------
+
+
+def _conv_world(led_world):
+    """Chat for the dealer contact; an ask of X (A's), Z (B's) and C (a led-then-left member) at ASK_AT."""
+    w = led_world
+    db = w["db"]
+    rid = seed.respond_io_id(db, w["dealer"])
+    w["rid"] = rid
+    w["x_conv"] = seed.ask(db, w["x"], w["dealer"], "SRT-XCONV", created_at=seed.ASK_AT)
+    w["z_conv"] = seed.ask(db, w["z"], w["dealer"], "SRT-ZCONV", created_at=seed.ASK_AT)
+    w["c_conv"] = seed.ask(db, w["c_ask"].customer_id and db.get(seed.Customer, w["c_ask"].customer_id), w["dealer"], "SRT-CCONV", created_at=seed.ASK_AT)
+    w["q_in"] = seed.chat(db, rid, seed.ASK_AT - timedelta(minutes=5), "incoming", "Got stock?")
+    w["out"] = seed.chat(db, rid, seed.ASK_AT + timedelta(minutes=1), "outgoing", f"{w['x_conv'].answer_summary}")
+    seed.chat(db, rid, seed.ASK_AT - timedelta(minutes=45), "incoming", "outside the window")
+    db.commit()
+    return w
+
+
+def test_conversation_route_mine_and_shape(led):
+    w = _conv_world(led)
+    resp = _call(w, [VIEW], "me", "get", f"/{w['x_conv'].id}/conversation")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(body) == {"messages", "ask_message_id"}
+    assert [m["id"] for m in body["messages"]] == [w["q_in"].id, w["out"].id]
+    assert all(set(m) == {"id", "direction", "text", "at"} for m in body["messages"])
+    assert [m["direction"] for m in body["messages"]] == ["in", "out"]
+    assert body["ask_message_id"] == w["out"].id
+    whole = _call(w, [VIEW], "me", "get", f"/{w['x_conv'].id}/conversation?whole_day=true")
+    assert whole.status_code == 200, whole.text
+    assert len(whole.json()["messages"]) == 3
+
+
+def test_conversation_route_leader_sees_a_current_members_ask(led):
+    w = _conv_world(led)
+    assert _call(w, [VIEW], "me", "get", f"/{w['z_conv'].id}/conversation").status_code == 200  # B is in A's team
+
+
+def test_conversation_route_scope_and_permissions(led):
+    w = _conv_world(led)
+    assert _call(w, [VIEW], "me", "get", f"/{w['x_conv'].id}/conversation").status_code == 200  # the route exists
+    for key in ("c_conv", "d_ask"):  # C left the team, D is in none
+        denied = _call(w, [VIEW], "me", "get", f"/{w[key].id}/conversation")
+        assert denied.status_code == 404, denied.text
+    assert _call(w, [VIEW, VIEW_ALL], "me", "get", f"/{w['d_ask'].id}/conversation").status_code == 200
+    assert _call(w, [], "me", "get", f"/{w['x_conv'].id}/conversation").status_code == 403
+    assert _call(w, [VIEW], "me", "get", f"/{seed.uid()}/conversation").status_code == 404
+
+
+def test_conversation_route_without_view_all_is_404_outside_the_agents_own(w):
+    assert _call(w, [VIEW], "me", "get", f"/{w['x_old'].id}/conversation").status_code == 200  # the route exists
+    other = _call(w, [VIEW], "me", "get", f"/{w['z_old'].id}/conversation")
+    assert other.status_code == 404, other.text
+    assert _call(w, [VIEW, VIEW_ALL], "me", "get", f"/{w['z_old'].id}/conversation").status_code == 200

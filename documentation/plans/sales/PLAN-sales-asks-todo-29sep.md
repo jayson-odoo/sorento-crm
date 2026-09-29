@@ -354,7 +354,8 @@ history, the sort persistence (3.2: CRM `useListingViewPreferences` under
 `GET /api/v1/public/portal/customer-asks/{ask_id}/conversation` and
 `GET /api/v1/sales/customer-asks/{ask_id}/conversation`, both `?whole_day=false`, under the same
 scope as the PATCH (404 outside it) -> `{ "messages": [{ "id", "direction": "in" | "out",
-"text", "at" }], "ask_message_id": <id | null> }`. Source: `chat_histories`
+"text", "at" }], "ask_message_id": <id | null>, "contact_id": <respond_contacts.id, for the CRM
+"Open in Conversations" link only> }`. Source: `chat_histories`
 (`app/models/chat_history.py:21`: `contact_id`, `type` = `incoming | outgoing`, `message`,
 `sent_at`), for the ask's contact: `chat_histories.contact_id` holds the Respond.io contact id, so the ask's
 `contact_id` (a `respond_contacts.id`) is resolved to that row's `respond_io_id` first, exactly as
