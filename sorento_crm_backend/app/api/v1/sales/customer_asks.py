@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
+from app.models.sales import SalesTeam, SalesTeamMember
 from app.models.sales_agent import SalesAgent
 from app.schemas.stock_ask import (
     StockAskAgentCount,
@@ -42,15 +43,35 @@ def _has_view_all(db: Session, user: dict) -> bool:
     return UserPermissionService(db).check_user_has_permission(user["id"], VIEW_ALL)
 
 
-def _require_view_all(db: Session, user: dict) -> None:
-    if not _has_view_all(db, user):
-        raise AppException(
-            status_code=403, message=f"Permission required: {VIEW_ALL}", code="FORBIDDEN"
-        )
-
-
 def _agent_ref(agent: SalesAgent) -> dict:
     return {"code": agent.sales_agent, "name": agent.person_label or agent.sales_agent}
+
+
+def _not_your_agent() -> AppException:
+    return AppException(
+        status_code=403, message="That sales agent is not in your team.", code="NOT_YOUR_AGENT"
+    )
+
+
+def _led_agent_ids(db: Session, agent_id: str) -> set[str]:
+    """The current members (and the leader) of the active teams this agent leads. Empty when
+    the agent leads none. `valid_to IS NULL` is the same "current member" predicate
+    `team_service.list_teams` uses."""
+    team_ids = [
+        t_id
+        for (t_id,) in db.query(SalesTeam.id).filter(
+            SalesTeam.leader_sales_agent_id == agent_id, SalesTeam.is_active.is_(True)
+        )
+    ]
+    if not team_ids:
+        return set()
+    members = {
+        m
+        for (m,) in db.query(SalesTeamMember.sales_agent_id).filter(
+            SalesTeamMember.sales_team_id.in_(team_ids), SalesTeamMember.valid_to.is_(None)
+        )
+    }
+    return members | {agent_id}
 
 
 @router.get("/todo", response_model=StockAskTodoResponse)
@@ -59,17 +80,26 @@ def customer_asks_todo(
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
+    view_all = _has_view_all(db, current_user)
+    mine = agent_for_user(db, current_user["id"])
+    led = _led_agent_ids(db, mine.id) if mine else set()
+
     if agent_id == ALL_AGENTS:
-        _require_view_all(db, current_user)
-        return stock_ask_service.todo_for_agent(db, None, with_agent=True)
+        if view_all:
+            return stock_ask_service.todo_for_agent(db, None, with_agent=True)
+        if not led:  # a plain user has only themself to pick
+            raise _not_your_agent()
+        return stock_ask_service.todo_for_agent(db, led, with_agent=True)
+
     if agent_id:
-        _require_view_all(db, current_user)
         validate_uuid_path(agent_id, resource="Sales agent")
         agent = db.query(SalesAgent).filter(SalesAgent.id == agent_id).first()
         if agent is None:
             raise handle_not_found("Sales agent", agent_id)
+        if not view_all and agent.id not in (led | ({mine.id} if mine else set())):
+            raise _not_your_agent()
     else:
-        agent = agent_for_user(db, current_user["id"])
+        agent = mine
         if agent is None:
             return {
                 "today_start": stock_ask_service.today_start_utc(datetime.utcnow()),
@@ -88,8 +118,15 @@ def customer_asks_agents(
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
-    _require_view_all(db, current_user)
-    return stock_ask_service.agent_counts(db)
+    """The agents the caller may pick: view_all -> every agent with an open ask; a team leader
+    -> every current member of the teams they lead (0 open allowed); otherwise `[]` (200)."""
+    if _has_view_all(db, current_user):
+        return stock_ask_service.agent_counts(db)
+    mine = agent_for_user(db, current_user["id"])
+    led = _led_agent_ids(db, mine.id) if mine else set()
+    if not led:
+        return []
+    return stock_ask_service.agent_counts(db, agent_ids=led, include_idle=True)
 
 
 @router.patch("/{ask_id}", response_model=StockAskResponse)

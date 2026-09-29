@@ -121,7 +121,9 @@ export function AskTodoList({ payload, loading, error, onDone, onReopen, onNote,
           </h2>
           {section.days.map((day) => (
             <div key={day.key} className="space-y-2">
-              <h3 className="text-xs font-medium text-muted-foreground">{day.label}</h3>
+              {section.days.length === 1 && day.label === section.label ? null : (
+                <h3 className="text-xs font-medium text-muted-foreground">{day.label}</h3>
+              )}
               <ul className="space-y-2.5">
                 <AnimatePresence initial={false}>
                   {day.asks.map((ask) => (

@@ -97,8 +97,7 @@ describe('AskTodoList counts and groups (AC-ST114)', () => {
       'H2:Needs attention',
       'H3:Tue 22 Sep',
       'H3:Yesterday',
-      'H2:Today',
-      'H3:Today',
+      'H2:Today', // one day named like its section: no H3
       'H2:Done today',
     ]);
   });

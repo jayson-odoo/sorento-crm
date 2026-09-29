@@ -113,7 +113,6 @@ describe('CustomerAsksList (portal to-do body)', () => {
       'Needs attention',
       'Sun 27 Sep',
       'Today',
-      'Today',
     ]);
     expect(screen.getByText('SRT5674 x 150')).toBeInTheDocument();
     expect(screen.queryByLabelText('Filter by state')).toBeNull();

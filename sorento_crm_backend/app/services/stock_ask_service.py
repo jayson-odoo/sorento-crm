@@ -31,9 +31,6 @@ USE_CASE = "stock_ask_salesman"
 #: R6: B1, B2 and B4 notify the agent; B3 (`incoming`) never does.
 NOTIFIED_BRANCHES = frozenset({"too_big", "in_stock", "no_incoming"})
 ANSWERED_BRANCHES = frozenset({"too_big", "in_stock", "incoming", "no_incoming"})
-#: Sales-asks-todo (plan 3.2, Q5): the to-do holds the branches the agent is notified about;
-#: an `incoming` answer is not theirs to chase.
-TODO_BRANCHES = NOTIFIED_BRANCHES
 #: A to-do is not paged: a salesperson's open asks are tens. The cap and `truncated` are the guard.
 TODO_CAP = 500
 
@@ -650,18 +647,21 @@ def update_for_customer(
     return serialize(db, [_apply_update(db, ask, data, actor_user_id=actor_user_id)])[0]
 
 
-def _agent_scope(db: Session, agent_id: Optional[str]) -> Any:
+def _agent_scope(db: Session, agent_id: Optional[str | Iterable[str]]) -> Any:
     """S6 (R9): asks of customers assigned to this agent NOW (`customers.sales_agent_id`).
     An ask with no customer belongs to nobody's list. `agent_id=None` is every agent's asks
-    (the CRM manager's "All agents": customers that have an agent). The ONE place the
-    agent -> customers relation lives (plan section 4)."""
+    (the CRM manager's "All agents": customers that have an agent); a collection of ids is
+    those agents' asks (a team leader's team). The ONE place the agent -> customers relation
+    lives (plan section 4)."""
     from app.models.order import Customer
     from app.models.stock_ask import StockAsk
 
     query = db.query(StockAsk).join(Customer, Customer.id == StockAsk.customer_id)
     if agent_id is None:
         return query.filter(Customer.sales_agent_id.isnot(None))
-    return query.filter(Customer.sales_agent_id == agent_id)
+    if isinstance(agent_id, str):
+        return query.filter(Customer.sales_agent_id == agent_id)
+    return query.filter(Customer.sales_agent_id.in_(list(agent_id)))
 
 
 def list_for_agent(
@@ -746,7 +746,7 @@ def today_start_utc(now: datetime) -> datetime:
 
 
 def todo_for_agent(
-    db: Session, agent_id: Optional[str], *, now: Optional[datetime] = None, with_agent: bool = False
+    db: Session, agent_id: Optional[str | Iterable[str]], *, now: Optional[datetime] = None, with_agent: bool = False
 ) -> dict[str, Any]:
     """The to-do read (plan 3.2): open asks oldest first (capped), and what was cleared today.
     `agent_id=None` is every agent (view_all). Grouping happens on the client from `today_start`."""
@@ -755,7 +755,7 @@ def todo_for_agent(
     start = today_start_utc(now or datetime.utcnow())
     open_rows = (
         _agent_scope(db, agent_id)
-        .filter(StockAsk.state == "open", StockAsk.branch.in_(TODO_BRANCHES))
+        .filter(StockAsk.state == "open")
         .order_by(StockAsk.created_at.asc(), StockAsk.id.asc())
         .limit(TODO_CAP + 1)
         .all()
@@ -775,9 +775,16 @@ def todo_for_agent(
     }
 
 
-def agent_counts(db: Session, *, now: Optional[datetime] = None) -> list[dict[str, Any]]:
-    """The manager's Agent select: every agent with at least one open ask, counted by the
-    to-do's rules (same branches, needs attention = asked before today)."""
+def agent_counts(
+    db: Session,
+    *,
+    agent_ids: Optional[Iterable[str]] = None,
+    include_idle: bool = False,
+    now: Optional[datetime] = None,
+) -> list[dict[str, Any]]:
+    """The Agent select's lines, counted by the to-do's rules (every branch; needs attention =
+    asked before today). `agent_ids` None is every agent. Agents with no open ask are left out,
+    unless `include_idle` (a team leader sees every current member, 0 allowed)."""
     from sqlalchemy import case, func
 
     from app.models.order import Customer
@@ -785,7 +792,8 @@ def agent_counts(db: Session, *, now: Optional[datetime] = None) -> list[dict[st
     from app.models.stock_ask import StockAsk
 
     start = today_start_utc(now or datetime.utcnow())
-    rows = (
+    ids = None if agent_ids is None else list(agent_ids)
+    query = (
         db.query(
             SalesAgent.id,
             SalesAgent.sales_agent,
@@ -796,13 +804,13 @@ def agent_counts(db: Session, *, now: Optional[datetime] = None) -> list[dict[st
         .select_from(StockAsk)
         .join(Customer, Customer.id == StockAsk.customer_id)
         .join(SalesAgent, SalesAgent.id == Customer.sales_agent_id)
-        .filter(StockAsk.state == "open", StockAsk.branch.in_(TODO_BRANCHES))
-        .group_by(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.person_label)
-        .order_by(SalesAgent.sales_agent)
-        .all()
+        .filter(StockAsk.state == "open")
     )
-    return [
-        {
+    if ids is not None:
+        query = query.filter(SalesAgent.id.in_(ids))
+    rows = query.group_by(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.person_label).all()
+    out = {
+        str(agent_id): {
             "agent_id": str(agent_id),
             "code": code,
             "name": person or code,
@@ -810,4 +818,17 @@ def agent_counts(db: Session, *, now: Optional[datetime] = None) -> list[dict[st
             "needs_attention": int(attention or 0),
         }
         for agent_id, code, person, opened, attention in rows
-    ]
+    }
+    if include_idle and ids:
+        for agent in db.query(SalesAgent).filter(SalesAgent.id.in_(ids)):
+            out.setdefault(
+                str(agent.id),
+                {
+                    "agent_id": str(agent.id),
+                    "code": agent.sales_agent,
+                    "name": agent.person_label or agent.sales_agent,
+                    "open": 0,
+                    "needs_attention": 0,
+                },
+            )
+    return sorted(out.values(), key=lambda r: r["code"])
