@@ -1298,14 +1298,9 @@ def run_fetch(
         parse_output, tier_gate=tier_gate, contact_id=contact_id, space_id=space_id
     )
     # PLAN-chatbot-customer-scope-29sep.md D3/D4: a customer-scoped contact's turn
-    # (`engine._customer_scope_gate`). A customer word outside its links is refused with
-    # ONE fixed line before any tool (no picker, no escalate offer); otherwise the links
-    # ride to `entity_ids_transformer`, which forces them on every customer-scoped tool.
+    # (`engine._customer_scope_gate`). The engine refuses a customer word outside its links (one fixed line, before any
+    # fetch); here the links ride to `entity_ids_transformer`, which forces them on every customer-scoped tool.
     customer_scope = ctx.get("customer_scope") if isinstance(ctx.get("customer_scope"), dict) else {}
-    if customer_scope.get("refused"):
-        if trace is not None:
-            trace.add("customer_scope", {"refused": "customer_not_permitted"})
-        return _fixed_reply(str(customer_scope.get("refusal") or ""))
     if customer_scope.get("enforced") and customer_scope.get("ids"):
         semantic_input["scope_customer_ids"] = list(customer_scope["ids"])
     # #1262 fix lane round 3, B1-r2: an order turn's brand ids are resolved ONCE, by
@@ -1382,6 +1377,9 @@ def run_fetch(
                         plan_item.get("probe_access_levels") or [],
                     )
                 )
+            except fetch_mod.ScopeViolation:
+                # The same refusal as the main call below; no tool was called.
+                return _fixed_reply(str(customer_scope.get("refusal") or ""))
             except Exception:  # noqa: BLE001 - an unprobed tier is "unknown", never "none"
                 logger.warning("chatbot: tier probe did not run", exc_info=True)
                 probe_results.append(None)
