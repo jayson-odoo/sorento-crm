@@ -18,7 +18,7 @@ Every column is nullable (or has a default), so no existing row is touched and t
 upload keeps writing exactly what it wrote. Downgrade drops everything this adds.
 
 Revision ID: ac_grn_do_0001_ingest
-Revises: cpc4_cost_packaging_method
+Revises: merge_29sep_batch6
 Create Date: 2026-09-29
 """
 import sqlalchemy as sa
@@ -26,7 +26,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "ac_grn_do_0001_ingest"
-down_revision = "cpc4_cost_packaging_method"
+down_revision = "merge_29sep_batch6"
 branch_labels = None
 depends_on = None
 
