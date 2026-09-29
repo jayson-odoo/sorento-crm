@@ -177,10 +177,12 @@ def _summary_row(db, run, product, *, pool_on_hand, reorder_level,
     return row
 
 
-def _hide(db, run, product) -> None:
-    """Mark the product hidden-by-default on this run, the way the list and the Decisions
-    tile read it (`hidden_by_default` on the PRODUCT-grain rec, `warehouse_id IS NULL`).
-    The order sheet export drops these rows; the low stock workbook must not (AC-32/33)."""
+def _stamp_hidden_legacy(db, run, product) -> None:
+    """A PRODUCT-grain rec stamped `hidden_by_default = true` - what every run written
+    between migration 512 (10 Sep) and PLAN-lowstock-show-all (30 Sep) still carries on
+    its covered-above-level products. The column is RETIRED: nothing reads it, so a row
+    stamped this way prints exactly like any other (AC-72..AC-75). Kept as a seed
+    precisely to prove that."""
     db.add(ReorderRecommendation(
         id=_u(), run_id=run.id, rec_type="covered", product_id=product.id,
         warehouse_id=None, status="proposed", hidden_by_default=True,
@@ -362,14 +364,14 @@ def test_workbook_has_two_sheets_in_order_with_16_columns(db):
 # =========================================================================== #
 
 def test_low_sheet_membership(db):
-    """AC-32/AC-60: a row is LOW when both figures are known and on hand is strictly
+    """AC-32/AC-74: a row is LOW when both figures are known and on hand is strictly
     below the level. The client's own rule, applied to the raw pool figure - not to a
     net, and not to anything the engine decided.
 
-    Five products either side of it, plus the case the owner's 15 Sep ruling flips: a
-    row HIDDEN BY DEFAULT is dropped from BOTH sheets now, even when it also sits below
-    its raw level - "I prefer All to match the list exported" supersedes the parent
-    plan's "the covered judgement is about the net" carve-out.
+    Five products either side of it, plus the case the owner's 30 Sep ruling flips back
+    (PLAN-lowstock-show-all, reversing 15 Sep's AC-60): a row whose rec still carries a
+    `hidden_by_default = true` stamp from an older run IS on Low when it sits below its
+    raw level - the stamp is retired and nothing reads it.
 
     At the level is NOT below it: 100 of 100 is the level being held, which is what a
     reorder level is for.
@@ -381,24 +383,23 @@ def test_low_sheet_membership(db):
     above = _product(db, stem="ABOVE")
     no_level = _product(db, stem="NOLEVEL")
     no_stock_figure = _product(db, stem="NOPOOL")
-    hidden_below = _product(db, stem="HIDDENBELOW")
+    stamped_below = _product(db, stem="STAMPEDBELOW")
 
     _summary_row(db, run, below, pool_on_hand=40, reorder_level=100)
     _summary_row(db, run, at, pool_on_hand=100, reorder_level=100)
     _summary_row(db, run, above, pool_on_hand=150, reorder_level=100)
     _summary_row(db, run, no_level, pool_on_hand=40, reorder_level=None)
     _summary_row(db, run, no_stock_figure, pool_on_hand=None, reorder_level=100)
-    _summary_row(db, run, hidden_below, pool_on_hand=40, reorder_level=100)
-    _hide(db, run, hidden_below)
+    _summary_row(db, run, stamped_below, pool_on_hand=40, reorder_level=100)
+    _stamp_hidden_legacy(db, run, stamped_below)
 
     blob, _ct, _fn, _counts = lsr.export_low_stock(db, run_id=str(run.id))
     low_codes = set(_codes_of(_sheets(blob)["Low stock"]))
 
     assert below.product_code in low_codes, "40 of 100 is below level"
-    assert hidden_below.product_code not in low_codes, (
-        "a hidden-by-default row is dropped from BOTH sheets now (AC-60 supersedes "
-        "the parent plan's AC-32) - it must not surface on Low even though it sits "
-        "below its raw level"
+    assert stamped_below.product_code in low_codes, (
+        "40 of 100 is below level whatever an old run stamped on its rec - the "
+        "hidden_by_default column is retired (AC-74)"
     )
     assert at.product_code not in low_codes, "at the level is not below it"
     assert above.product_code not in low_codes
@@ -406,7 +407,7 @@ def test_low_sheet_membership(db):
     assert no_stock_figure.product_code not in low_codes, (
         "a NULL pool_on_hand is 'nobody measured', not 'zero on hand'"
     )
-    assert low_codes == {below.product_code}, low_codes
+    assert low_codes == {below.product_code, stamped_below.product_code}, low_codes
 
 
 def test_sheets_sorted_by_category_then_item_code(db):
@@ -441,41 +442,40 @@ def test_sheets_sorted_by_category_then_item_code(db):
 # AC-33: which rows the All sheet holds
 # =========================================================================== #
 
-def test_all_sheet_matches_the_plan_list_hidden_dropped(db):
-    """AC-60 (supersedes the parent plan's AC-32/AC-33): "All" is every VISIBLE row -
-    the same population `visible_rows` gives the plan list and the order-sheet export -
-    hidden-by-default rows dropped from BOTH sheets. Owner ruling, 15 Sep: "I prefer
-    All to match the list exported".
-
-    `report()` itself stays untouched (unaffected by this slice) - it still names every
-    planned product; only the two EXPORTED documents narrow to the visible population,
-    and now they narrow to the SAME one.
+def test_all_sheet_is_every_planned_row(db):
+    """AC-73 (PLAN-lowstock-show-all, owner 30 Sep: "show all hidden items again",
+    reversing 15 Sep's AC-60): "All" is EVERY row `report()` names for the run - the
+    same population the plan list and the order sheet now print - whatever
+    `hidden_by_default` stamp an older run left on a rec. The three documents agree
+    because all three read the frozen rows whole; there is no shared filter any more
+    (`visible_rows` is gone, AC-71).
     """
     lsr = _lsr()
     run = _run(db)
-    visible = _product(db, stem="VISIBLE")
-    hidden = _product(db, stem="HIDDEN")
-    _summary_row(db, run, visible, pool_on_hand=40, reorder_level=100)
-    _summary_row(db, run, hidden, pool_on_hand=150, reorder_level=100)
-    _hide(db, run, hidden)
+    plain = _product(db, stem="PLAIN")
+    stamped = _product(db, stem="STAMPED")
+    _summary_row(db, run, plain, pool_on_hand=40, reorder_level=100)
+    _summary_row(db, run, stamped, pool_on_hand=150, reorder_level=100)
+    _stamp_hidden_legacy(db, run, stamped)
 
     report_codes = {r["product_code"] for r in svc.report(db, run_id=str(run.id))["rows"]}
-    assert report_codes == {visible.product_code, hidden.product_code}, (
-        "report() itself is untouched by this slice - still every planned product"
-    )
+    assert report_codes == {plain.product_code, stamped.product_code}
 
     blob, _ct, _fn, counts = lsr.export_low_stock(db, run_id=str(run.id))
     all_codes = set(_codes_of(_sheets(blob)["All"]))
-    assert all_codes == {visible.product_code}, (
-        f"All must match the plan list - hidden dropped: {all_codes}"
+    assert all_codes == report_codes, (
+        f"All must be every planned row, the stamped one included: {all_codes}"
     )
-    assert counts["all"] == 1, counts
+    assert counts["all"] == 2, counts
 
     sheet_bytes, _ct2, _fn2 = svc.export_report(db, run_id=str(run.id), fmt="xlsx")
     order_sheet_codes = set(_codes_of(_sheets(sheet_bytes).active))
-    assert order_sheet_codes == {visible.product_code}, (
-        "the order sheet export drops the same hidden rows, now via the shared "
-        "visible_rows helper (AC-64)"
+    assert order_sheet_codes == report_codes, (
+        "the order sheet export prints every planned row too (AC-72)"
+    )
+    assert not hasattr(svc, "visible_rows"), (
+        "summary_order_service.visible_rows is retired (AC-71): nothing narrows the "
+        "frozen rows any more"
     )
 
 
@@ -590,46 +590,47 @@ def test_export_route_refuses_over_the_cap_before_creating_a_row(scm_app, monkey
 
 
 # =========================================================================== #
-# AC-60/AC-61/AC-62/AC-63 (PLAN-low-stock-last-in-and-list-scope.md S2) - the All sheet
-# matches the plan list: one shared `visible_rows` helper, counts off the visible
-# population, `low_stock_guard_stats` deleted, the cap applied AFTER the hidden filter.
+# AC-73..AC-76 (PLAN-lowstock-show-all, 30 Sep, reversing PLAN-low-stock-last-in-and-
+# list-scope S2 / AC-60..AC-63): the counts, the guard, the cap and the daily trigger all
+# read the WHOLE frozen run. The `hidden_by_default` stamp is retired and read nowhere.
 # =========================================================================== #
 
-def test_export_low_stock_counts_are_the_visible_counts(db):
-    """AC-61: `export_low_stock`'s returned counts are the VISIBLE population - the
-    same one both sheets print - not the frozen total. 5 planned products, 2 hidden by
-    default: 3 visible, 1 of the 3 below its level."""
+def test_export_low_stock_counts_are_the_whole_run(db):
+    """AC-73/AC-74/AC-76: `export_low_stock`'s returned counts are the whole frozen run.
+    5 planned products, 2 of them stamped by an older run: all 5 print, and Low is the
+    2 with on hand under the level - one of them the stamped one. `ready_context` (the
+    daily trigger's `report.rows` / `report.low`) says the same two numbers off the same
+    `_split`."""
     lsr = _lsr()
     run = _run(db)
     low = _product(db, stem="CNTLOW")
     ok1 = _product(db, stem="CNTOK1")
     ok2 = _product(db, stem="CNTOK2")
-    hidden1 = _product(db, stem="CNTH1")
-    hidden2 = _product(db, stem="CNTH2")
+    stamped_low = _product(db, stem="CNTS1")
+    stamped_ok = _product(db, stem="CNTS2")
     _summary_row(db, run, low, pool_on_hand=10, reorder_level=100)
     _summary_row(db, run, ok1, pool_on_hand=150, reorder_level=100)
     _summary_row(db, run, ok2, pool_on_hand=100, reorder_level=100)
-    _summary_row(db, run, hidden1, pool_on_hand=10, reorder_level=100)
-    _summary_row(db, run, hidden2, pool_on_hand=150, reorder_level=100)
-    _hide(db, run, hidden1)
-    _hide(db, run, hidden2)
+    _summary_row(db, run, stamped_low, pool_on_hand=10, reorder_level=100)
+    _summary_row(db, run, stamped_ok, pool_on_hand=150, reorder_level=100)
+    _stamp_hidden_legacy(db, run, stamped_low)
+    _stamp_hidden_legacy(db, run, stamped_ok)
 
     _blob, _ct, _fn, counts = lsr.export_low_stock(db, run_id=str(run.id))
-    assert counts == {"low": 1, "all": 3, "sheets": 2}, counts
+    assert counts == {"low": 2, "all": 5, "sheets": 2}, counts
+
+    view = lsr.build_low_stock_view(db, run_id=str(run.id), split="none")
+    assert view["counts"]["rows"] == 5 and view["counts"]["low"] == 2, view["counts"]
+
+    ready = lsr.ready_context(db, str(run.id))["report"]
+    assert (ready["rows"], ready["low"]) == (5, 2), ready
 
 
-def test_low_stock_guard_uses_export_guard_stats(scm_app, monkeypatch):
-    """AC-62: `low_stock_guard_stats` is DELETED (import fails) and the low-stock export
-    route's row-count guard reads `export_guard_stats` - the SAME hidden-adjusted
-    population the order-sheet guard and the plan list use. A run with 5 frozen rows, 2
-    hidden, must pass a cap of 3 (the VISIBLE count) though the raw frozen count is 5 -
-    a route still reading the raw count would refuse it.
-    """
-    with pytest.raises(ImportError):
-        from app.services.scm.summary_order_service import (  # noqa: F401
-            low_stock_guard_stats,
-        )
-
+def test_low_stock_guard_counts_every_frozen_row(scm_app, monkeypatch):
+    """AC-75: the low-stock export route's row-count guard (`export_guard_stats`) counts
+    every frozen row - a run with 5 frozen rows, 2 of them stamped by an older run, is
+    5 rows, so a cap of 3 refuses it up front (422, no download row). A guard still
+    subtracting stamped rows would count 3 and let it through."""
     from app.api.v1.scm import order_summary as route_mod
     from app.services import queue_service
 
@@ -637,17 +638,16 @@ def test_low_stock_guard_uses_export_guard_stats(scm_app, monkeypatch):
     app, db = _client(scm_app, "purchasing")
     run_id = _seed_run(db)
     run = db.get(ReorderRun, run_id)
-    visible = [_product(db, stem=f"GRD{i}") for i in range(3)]
-    hidden = [_product(db, stem=f"GRDH{i}") for i in range(2)]
-    for p in visible:
+    plain = [_product(db, stem=f"GRD{i}") for i in range(3)]
+    stamped = [_product(db, stem=f"GRDS{i}") for i in range(2)]
+    for p in plain:
         _summary_row(db, run, p, pool_on_hand=40, reorder_level=100)
-    for p in hidden:
+    for p in stamped:
         _summary_row(db, run, p, pool_on_hand=40, reorder_level=100)
-        _hide(db, run, p)
+        _stamp_hidden_legacy(db, run, p)
     db.flush()
 
-    # Directly: export_guard_stats already reports the VISIBLE count for this run.
-    assert svc.export_guard_stats(db, run_id=run_id)["row_count"] == 3
+    assert svc.export_guard_stats(db, run_id=run_id)["row_count"] == 5
 
     monkeypatch.setattr(queue_service, "enqueue_job",
                         lambda *a, **k: type("J", (), {"id": "x"})())
@@ -658,33 +658,37 @@ def test_low_stock_guard_uses_export_guard_stats(scm_app, monkeypatch):
         resp = c.post("/api/v1/scm/order-summary/export",
                       json={"run_id": run_id, "format": "low_stock_xlsx"})
 
-    assert resp.status_code == 200, (
-        "the route refused a run whose VISIBLE row count (3) is within the cap - it "
-        f"must be reading export_guard_stats, not the raw frozen count: {resp.text}"
+    assert resp.status_code == 422, (
+        "5 frozen rows against a cap of 3 must refuse - the guard is still subtracting "
+        f"rows stamped hidden_by_default: {resp.text}"
     )
+    assert "Narrow the plan first" in resp.text
 
 
-def test_cap_applies_to_visible_rows(db, monkeypatch):
-    """AC-63: `export_low_stock`'s own cap check is against the VISIBLE `all_rows`
-    count, not the frozen total - a run with a raw total ABOVE the cap but a visible
-    count AT or below it must still export."""
+def test_cap_applies_to_every_frozen_row(db, monkeypatch):
+    """AC-75: `export_low_stock`'s own cap check is against every frozen row. 5 frozen
+    rows, 3 of them stamped by an older run, against a cap of 2: refused."""
     lsr = _lsr()
     run = _run(db)
-    visible = [_product(db, stem=f"CAPV{i}") for i in range(2)]
-    hidden = [_product(db, stem=f"CAPH{i}") for i in range(3)]
-    for p in visible:
+    plain = [_product(db, stem=f"CAPV{i}") for i in range(2)]
+    stamped = [_product(db, stem=f"CAPS{i}") for i in range(3)]
+    for p in plain:
         _summary_row(db, run, p, pool_on_hand=40, reorder_level=100)
-    for p in hidden:
+    for p in stamped:
         _summary_row(db, run, p, pool_on_hand=40, reorder_level=100)
-        _hide(db, run, p)
+        _stamp_hidden_legacy(db, run, p)
 
     monkeypatch.setattr(lsr, "MAX_LOW_STOCK_ROWS", 2)
 
-    # 5 frozen rows total, only 2 visible - must export, not refuse.
+    with pytest.raises(AppException) as excinfo:
+        lsr.export_low_stock(db, run_id=str(run.id))
+    assert excinfo.value.status_code == 422
+
+    # And at a cap that fits all 5, every one of them prints.
+    monkeypatch.setattr(lsr, "MAX_LOW_STOCK_ROWS", 5)
     blob, _ct, _fn, counts = lsr.export_low_stock(db, run_id=str(run.id))
-    assert counts["all"] == 2, counts
-    all_codes = set(_codes_of(_sheets(blob)["All"]))
-    assert all_codes == {p.product_code for p in visible}, all_codes
+    assert counts["all"] == 5, counts
+    assert set(_codes_of(_sheets(blob)["All"])) == {p.product_code for p in plain + stamped}
 
 
 # =========================================================================== #

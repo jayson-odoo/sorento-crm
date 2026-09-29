@@ -292,54 +292,49 @@ describe('PlanLinesSection - reports totals upward for the decision-progress til
     expect(() => render(<PlanLinesSection runId="run-1" />)).not.toThrow();
   });
 
-  it('does NOT count a row hidden by the default manual-mode filter (Fix 1, 2026-08-12): ' +
-    'a not-breached covered row stays out of the tile the same way it stays out of the grid', () => {
-    const visibleBuy = line({ id: 'a', sku: 'BUY-1', type: 'buy' });
-    const hiddenCovered = line({
-      id: 'b', sku: 'COV-NOT-BREACHED', type: 'covered',
+  it('PLAN-lowstock-show-all AC-70 (owner 30 Sep, reversing the 12 Aug rule): a covered ' +
+    'row whose payload still says hidden_by_default:true counts toward the tile like any other', () => {
+    const buy = line({ id: 'a', sku: 'BUY-1', type: 'buy' });
+    const coveredAboveLevel = line({
+      id: 'b', sku: 'COV-ABOVE-LEVEL', type: 'covered',
       policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
-      // S6 (PLAN-plan-list-tile-sheet-one-scope.md): visibleLines now trusts the
-      // server's own flag instead of recomputing the rule from policy_type/net/level.
+      // An old run's payload still carries the retired flag; the list must not act on it.
       hidden_by_default: true,
-    });
-    stubPlanLines({ lines: [visibleBuy, hiddenCovered], decisions: {} });
+    } as Partial<ReorderRecommendation>);
+    stubPlanLines({ lines: [buy, coveredAboveLevel], decisions: {} });
     const onTotalsChange = vi.fn();
     render(<PlanLinesSection runId="run-1" onTotalsChange={onTotalsChange} />);
 
-    // Only the visible buy row counts: 1 undecided, not 2 - the hidden row is invisible
-    // under the grid's own filter and must not inflate "N left" either.
     expect(onTotalsChange).toHaveBeenCalledWith(
-      expect.objectContaining({ decided: 0, undecided: 1 }),
+      expect.objectContaining({ decided: 0, undecided: 2 }),
     );
   });
 
-  it('PLAN-reorder-one-formula.md, AC-13: PlanBudgetReview reads the DEFAULT-VISIBLE ' +
-    'totals, not every line the hook returned', () => {
-    // 3 lines, 1 hidden_by_default. `planLines.totals` is stubbed to the WRONG (every-line)
-    // figure on purpose - it is what `<PlanBudgetReview totals={planLines.totals}>` reads
-    // today - so a pass here would mean the component still hands the review panel the
-    // unfiltered total rather than `reportedTotals` (computed over `defaultVisibleLines`,
-    // the same set the tile and the grid already agree on).
+  it('PLAN-lowstock-show-all AC-70: PlanBudgetReview reads the totals rolled up from EVERY ' +
+    'line the hook returned - the same set the tile and the grid render', () => {
+    // 3 lines, one stamped hidden_by_default by an old run. `planLines.totals` is stubbed
+    // to a WRONG figure on purpose: the review panel must read `reportedTotals` (rolled
+    // up from the rendered lines), never the hook's own stale object.
     const a = line({ id: 'a', sku: 'BUY-1', type: 'buy' });
     const b = line({ id: 'b', sku: 'BUY-2', type: 'buy' });
-    const hidden = line({
-      id: 'c', sku: 'COV-HIDDEN', type: 'covered',
+    const stamped = line({
+      id: 'c', sku: 'COV-STAMPED', type: 'covered',
       policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
       hidden_by_default: true,
-    });
+    } as Partial<ReorderRecommendation>);
     stubPlanLines({
-      lines: [a, b, hidden],
+      lines: [a, b, stamped],
       decisions: {},
       totals: {
-        decided: 0, undecided: 3, buying: 2, usingStock: 0, usingPo: 0, skipped: 0,
+        decided: 0, undecided: 99, buying: 2, usingStock: 0, usingPo: 0, skipped: 0,
         units: 0, cost: 0, unpriced: 0,
       },
     });
     render(<PlanLinesSection runId="run-1" />);
 
-    expect(screen.getByText('0 of 2')).toBeInTheDocument();
-    expect(screen.getByText('2 lines still to decide')).toBeInTheDocument();
-    expect(screen.queryByText('0 of 3')).not.toBeInTheDocument();
+    expect(screen.getByText('0 of 3')).toBeInTheDocument();
+    expect(screen.getByText('3 lines still to decide')).toBeInTheDocument();
+    expect(screen.queryByText('0 of 99')).not.toBeInTheDocument();
   });
 
   it('counts the per-warehouse rows even under a Product-grain run (S16, 21 Aug): a decision ' +
@@ -375,27 +370,6 @@ describe('PlanLinesSection - reports totals upward for the decision-progress til
     );
   });
 
-  it('DOES count the hidden row once the "covered by stock" status filter reveals it', () => {
-    const visibleBuy = line({ id: 'a', sku: 'BUY-1', type: 'buy' });
-    const revealedCovered = line({
-      id: 'b', sku: 'COV-NOT-BREACHED', type: 'covered',
-      policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
-    });
-    stubPlanLines({ lines: [visibleBuy, revealedCovered], decisions: {} });
-    const onTotalsChange = vi.fn();
-    render(
-      <PlanLinesSection
-        runId="run-1"
-        statusFilter="covered_by_stock"
-        onStatusFilterChange={vi.fn()}
-        onTotalsChange={onTotalsChange}
-      />,
-    );
-
-    expect(onTotalsChange).toHaveBeenCalledWith(
-      expect.objectContaining({ decided: 0, undecided: 2 }),
-    );
-  });
 });
 
 describe('PlanLinesSection - S16 decision-progress header count is the SERVER\'s own', () => {
@@ -413,64 +387,43 @@ describe('PlanLinesSection - S16 decision-progress header count is the SERVER\'s
   });
 });
 
-describe('PlanLinesSection - manual mode hides not-breached covered rows by default (Fix B, user feedback, 2026-08-12)', () => {
-  it('hides a not-breached covered row in manual mode', () => {
-    const notBreached = line({
-      id: 'a', sku: 'COV-NOT-BREACHED', type: 'covered',
+describe('PlanLinesSection - the list is the run: every line renders (PLAN-lowstock-show-all, owner 30 Sep 2026)', () => {
+  // Reverses the 12 Aug "not my business" rule (Fix B) and its 10 Sep server-flag twin
+  // (PLAN-plan-list-tile-sheet-one-scope S6): nothing is hidden by default any more, and
+  // there is no reveal filter because there is nothing left to reveal.
+
+  it('renders a covered row whose net sits above its manual level, with no filter applied', () => {
+    const aboveLevel = line({
+      id: 'a', sku: 'COV-ABOVE-LEVEL', type: 'covered',
+      policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
+    });
+    const belowLevel = line({
+      id: 'b', sku: 'COV-BELOW-LEVEL', type: 'covered',
+      policy_type: 'reorder_level', reorder_level: 120, net_position: 30,
+    });
+    stubPlanLines({ lines: [aboveLevel, belowLevel] });
+    render(<PlanLinesSection runId="run-1" />);
+
+    expect(screen.getByText(/plan-lines-grid/).textContent).toContain(
+      'lines=COV-ABOVE-LEVEL,COV-BELOW-LEVEL',
+    );
+  });
+
+  it('renders a line whose payload still carries hidden_by_default:true (an old run) - the flag is retired', () => {
+    const stamped = line({
+      id: 'a', sku: 'COV-STAMPED', product_id: 'p-stamped', type: 'covered',
+      warehouse_id: null, warehouse_code: null, warehouse_name: null,
       policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
       hidden_by_default: true,
-    });
-    const breached = line({
-      id: 'b', sku: 'COV-BREACHED', type: 'covered',
-      policy_type: 'reorder_level', reorder_level: 120, net_position: 30,
-      hidden_by_default: false,
-    });
-    stubPlanLines({ lines: [notBreached, breached] });
+    } as Partial<ReorderRecommendation>);
+    const other = line({ id: 'b', sku: 'BUY-1', product_id: 'p-other', type: 'buy' });
+    stubPlanLines({ lines: [stamped, other] });
     render(<PlanLinesSection runId="run-1" />);
 
-    const grid = screen.getByText(/plan-lines-grid/);
-    expect(grid.textContent).not.toContain('COV-NOT-BREACHED');
-    expect(grid.textContent).toContain('COV-BREACHED');
+    expect(screen.getByText(/plan-lines-grid/).textContent).toContain('lines=COV-STAMPED,BUY-1');
   });
 
-  it('shows the not-breached row again when the status filter is explicitly "covered by stock"', () => {
-    const notBreached = line({
-      id: 'a', sku: 'COV-NOT-BREACHED', type: 'covered',
-      policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
-    });
-    stubPlanLines({ lines: [notBreached] });
-    render(<PlanLinesSection runId="run-1" statusFilter="covered_by_stock" onStatusFilterChange={vi.fn()} />);
-
-    expect(screen.getByText(/plan-lines-grid/).textContent).toContain('COV-NOT-BREACHED');
-  });
-
-  it('a breached covered row (real gap, pool-cover case) is always visible', () => {
-    const breached = line({
-      id: 'a', sku: 'COV-BREACHED', type: 'covered',
-      policy_type: 'reorder_level', reorder_level: 120, net_position: 30,
-    });
-    stubPlanLines({ lines: [breached] });
-    render(<PlanLinesSection runId="run-1" />);
-
-    expect(screen.getByText(/plan-lines-grid/).textContent).toContain('COV-BREACHED');
-  });
-
-  it('auto-mode (reorder_point basis) rows are unaffected, breached or not', () => {
-    const autoNotBreached = line({
-      id: 'a', sku: 'AUTO-NOT-BREACHED', type: 'covered',
-      policy_type: 'reorder_point', reorder_point: 74, net_position: 100,
-    });
-    stubPlanLines({ lines: [autoNotBreached] });
-    render(<PlanLinesSection runId="run-1" />);
-
-    expect(screen.getByText(/plan-lines-grid/).textContent).toContain('AUTO-NOT-BREACHED');
-  });
-
-  it('keeps the PRODUCT\'s own covered row while the product is still on the plan', () => {
-    // The per-product basis (`PLAN-scm-reorder-per-product.md`) writes one row for the
-    // whole product, naming no warehouse, and the grouped view builds the product row from
-    // it. Hiding it left SRTWT7408's BRW disposition standing in as the plan row: Suggested
-    // qty "-", On hand 1,296 of 5,495, and no ledger to open.
+  it('renders the product-grain covered row AND its per-warehouse disposition, in hook order', () => {
     const productRow = line({
       id: 'a', sku: 'SRTWT7408', product_id: 'p-srt', type: 'covered',
       warehouse_id: null, warehouse_code: null, warehouse_name: null,
@@ -483,40 +436,22 @@ describe('PlanLinesSection - manual mode hides not-breached covered rows by defa
     stubPlanLines({ lines: [productRow, disposition] });
     render(<PlanLinesSection runId="run-1" />);
 
-    // Both rows reach the grid: the product row IS the group row, the disposition sits
-    // under it.
     expect(screen.getByText(/plan-lines-grid/).textContent).toContain(
       'lines=SRTWT7408,SRTWT7408',
     );
   });
 
-  it('still drops a product whose ONLY row is a not-breached covered one', () => {
-    // The rule the buyer asked for, where it was aimed: nothing else on the plan for this
-    // item, so the item is not their business today and stays off the list entirely.
-    const lonely = line({
-      id: 'a', sku: 'COV-ONLY', product_id: 'p-lonely', type: 'covered',
-      warehouse_id: null, warehouse_code: null, warehouse_name: null,
+  it('the "covered by stock" status filter changes nothing about which lines reach the grid ' +
+    '(the grid applies its own filters; the section passes every line)', () => {
+    const aboveLevel = line({
+      id: 'a', sku: 'COV-ABOVE-LEVEL', type: 'covered',
       policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
-      hidden_by_default: true,
     });
-    const other = line({ id: 'b', sku: 'BUY-1', product_id: 'p-other', type: 'buy' });
-    stubPlanLines({ lines: [lonely, other] });
-    render(<PlanLinesSection runId="run-1" />);
+    const buy = line({ id: 'b', sku: 'BUY-1', type: 'buy' });
+    stubPlanLines({ lines: [aboveLevel, buy] });
+    render(<PlanLinesSection runId="run-1" statusFilter="covered_by_stock" onStatusFilterChange={vi.fn()} />);
 
-    const grid = screen.getByText(/plan-lines-grid/);
-    expect(grid.textContent).not.toContain('COV-ONLY');
-    expect(grid.textContent).toContain('BUY-1');
-  });
-
-  it('a manual-basis buy row (not covered) is unaffected', () => {
-    const buyRow = line({
-      id: 'a', sku: 'MANUAL-BUY', type: 'buy',
-      policy_type: 'reorder_level', reorder_level: 120, net_position: 100,
-    });
-    stubPlanLines({ lines: [buyRow] });
-    render(<PlanLinesSection runId="run-1" />);
-
-    expect(screen.getByText(/plan-lines-grid/).textContent).toContain('MANUAL-BUY');
+    expect(screen.getByText(/plan-lines-grid/).textContent).toContain('lines=COV-ABOVE-LEVEL,BUY-1');
   });
 });
 
