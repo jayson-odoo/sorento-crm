@@ -22,7 +22,12 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Label } from '@/components/ui/label';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Popover,
+  PopoverContent,
+  PopoverPortal,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
@@ -127,7 +132,15 @@ function ContainersCell({ containers }: { containers: SPODocumentContainer[] | u
               </Badge>
             </button>
           </PopoverTrigger>
-          <PopoverContent align="start" className="w-56 space-y-1.5 p-2" onClick={(e) => e.stopPropagation()}>
+          {/* Portalled (owner, 29 Sep 2026): at the document root the popover sits above
+              the rows beneath it instead of painting inside the table. */}
+          <PopoverPortal>
+          <PopoverContent
+            align="start"
+            collisionPadding={8}
+            className="w-56 space-y-1.5 p-2"
+            onClick={(e) => e.stopPropagation()}
+          >
             {rest.map((c) => (
               <div key={c.container_number} className="text-sm">
                 {c.shipment_id ? (
@@ -145,6 +158,7 @@ function ContainersCell({ containers }: { containers: SPODocumentContainer[] | u
               </div>
             ))}
           </PopoverContent>
+          </PopoverPortal>
         </Popover>
       ) : null}
     </span>

@@ -14,7 +14,6 @@ import {
   getCoreRowModel,
 } from '@tanstack/react-table';
 import { Copy, MessageCircle, MessageCircleOff, Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -25,6 +24,7 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { PillOverflow, PillOverflowList } from '@/components/common/PillOverflow';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
@@ -258,14 +258,15 @@ export default function ContactsList() {
           if (types.length === 0) {
             return <span className="text-muted-foreground"> - </span>;
           }
+          // One row line (owner rule, 29 Sep 2026): as many types as the column fits, the
+          // rest behind "+N", every type in the popover (`PillOverflow`).
           return (
-            <div className="flex flex-wrap gap-1">
-              {types.map((t) => (
-                <Badge key={t.code} variant="secondary" className="font-normal">
-                  {t.name}
-                </Badge>
-              ))}
-            </div>
+            <PillOverflow
+              ariaLabel={`Access types of ${row.original.name || row.original.phone_number}`}
+              testId={`contact-access-types-${row.original.id}`}
+              items={types.map((t) => ({ key: t.code, label: t.name }))}
+              renderPopover={(items) => <PillOverflowList items={items} />}
+            />
           );
         },
         meta: { headerTitle: 'Access types', skeleton: <Skeleton className="h-4 w-32" /> },

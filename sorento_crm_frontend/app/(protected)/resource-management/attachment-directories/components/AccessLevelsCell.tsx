@@ -2,7 +2,12 @@
 
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Popover,
+  PopoverContent,
+  PopoverPortal,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 
 const MAX_INLINE_BADGES = 2;
 
@@ -56,20 +61,25 @@ export default function AccessLevelsCell({
               +{overflow.length}
             </button>
           </PopoverTrigger>
-          <PopoverContent
-            align="start"
-            className="w-56 p-2"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="mb-1.5 text-xs font-medium">Access levels</p>
-            <div className="flex flex-wrap gap-1">
-              {levels.map((code) => (
-                <Badge key={code} variant="secondary" className="text-[10px]">
-                  {labelFor(code)}
-                </Badge>
-              ))}
-            </div>
-          </PopoverContent>
+          {/* Portalled (owner, 29 Sep 2026): at the document root the popover sits above
+              the rows beneath it instead of painting inside the table. */}
+          <PopoverPortal>
+            <PopoverContent
+              align="start"
+              collisionPadding={8}
+              className="w-56 p-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="mb-1.5 text-xs font-medium">Access levels</p>
+              <div className="flex flex-wrap gap-1">
+                {levels.map((code) => (
+                  <Badge key={code} variant="secondary" className="text-[10px]">
+                    {labelFor(code)}
+                  </Badge>
+                ))}
+              </div>
+            </PopoverContent>
+          </PopoverPortal>
         </Popover>
       )}
     </div>
