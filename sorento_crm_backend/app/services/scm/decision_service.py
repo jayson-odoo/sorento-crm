@@ -139,8 +139,7 @@ def _refresh_run_counts(db: Session, run_id: str) -> None:
     row = db.execute(
         text(
             """
-            SELECT count(DISTINCT r.product_id)
-                     FILTER (WHERE NOT r.hidden_by_default) AS planned,
+            SELECT count(DISTINCT r.product_id) AS planned,
                    count(DISTINCT r.product_id)
                      FILTER (WHERE d.id IS NOT NULL) AS decided,
                    count(DISTINCT r.product_id)
@@ -1388,22 +1387,19 @@ def list_plan_row_decisions(db: Session, run_id: str) -> dict:
     one query apiece, keyed by what the row needs (supplier id, `(product_id,
     supplier_id)`, recommendation id) rather than re-run per row.
     """
-    # S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-2): a hidden-by-default row is not
-    # decidable BY DEFAULT, so it does not count toward the tile's total - "tile counts
-    # what the list show" (owner, 10 Sep). PLAN-reorder-one-formula.md S3/AC-12: reads the
-    # STORED `hidden_by_default` column (stamped once, at write time, by `_build_rec` -
-    # see its own docstring) rather than re-deriving the rule per row here - three
-    # independent re-derivations is exactly what drifted apart per the owner's 10 Sep
-    # measurement (list 415, tile "0 of 950", sheet 950).
+    # "Tile counts what the list show" (owner, 10 Sep) and the list shows every planned
+    # product (PLAN-lowstock-show-all, owner 30 Sep 2026), so every product with a
+    # decidable rec type counts - the `hidden_by_default` narrowing of
+    # PLAN-plan-list-tile-sheet-one-scope S7 is retired.
     candidates = (
-        db.query(ReorderRecommendation.product_id, ReorderRecommendation.hidden_by_default)
+        db.query(ReorderRecommendation.product_id)
         .filter(
             ReorderRecommendation.run_id == run_id,
             ReorderRecommendation.rec_type.in_(_PLAN_ROW_DECIDABLE_TYPES),
         )
         .all()
     )
-    decidable_product_ids = {pid for pid, hidden in candidates if not hidden}
+    decidable_product_ids = {pid for (pid,) in candidates}
     total = len(decidable_product_ids)
     quads = (
         db.query(PlanRowDecision, ReorderRecommendation.id,

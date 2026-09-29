@@ -186,10 +186,10 @@ def export_order_summary(
     # Phase 3 security review) and the sheet's own `as_of` - which names the file - come
     # off one lightweight query rather than serialising every row just to maybe refuse.
     #
-    # The low stock workbook now shares this SAME guard (PLAN-low-stock-last-in-and-list-
-    # scope S2, owner ruling 15 Sep - "I prefer All to match the list exported"):
-    # `low_stock_guard_stats` (which counted every frozen row, unreduced) is gone, and the
-    # low stock format's row count is checked against its OWN cap, `MAX_LOW_STOCK_ROWS`.
+    # The low stock workbook shares this SAME guard (PLAN-low-stock-last-in-and-list-scope
+    # S2): one count of the frozen rows - every one of them, since PLAN-lowstock-show-all
+    # (owner 30 Sep 2026) - checked against the low stock format's OWN cap,
+    # `MAX_LOW_STOCK_ROWS`.
     #
     # AC-C6: the OI worksheet's row set is OI rows, not `scm.order_summary_row` rows, so
     # `stats["row_count"]` (still read here, for `run_id`/`as_of`) says nothing about it -

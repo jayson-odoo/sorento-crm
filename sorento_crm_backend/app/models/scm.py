@@ -428,11 +428,13 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
     )
     pool_warehouse_code = Column(String(50), nullable=True)
-    # PLAN-reorder-one-formula.md S3: the ONE scope rule (`plan_scope.hidden_by_default`),
-    # stamped at write time so every SQL reader (the run's own counts, the recommendations
-    # serializer, the decisions total) reads the SAME answer the Python rule already gives -
-    # never a fourth re-derivation. The Python rule stays the only RUNTIME source; this
-    # column is a cache of its own answer, not a second rule.
+    # RETIRED (PLAN-lowstock-show-all, owner 30 Sep 2026: "show all hidden items again").
+    # Migration 512 added it for PLAN-reorder-one-formula S3 (covered + manual level + net
+    # above level => off the list by default); nothing stamps or reads it any more, so new
+    # rows land on the server default. Rows written 10-30 Sep still hold `true` and are
+    # rendered like any other. Drop it in the next SCM lane that already carries a
+    # migration (`op.drop_column("reorder_recommendation", "hidden_by_default",
+    # schema="scm")`); kept here so the ORM and the live table agree until then.
     hidden_by_default = Column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )

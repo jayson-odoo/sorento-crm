@@ -13,11 +13,12 @@ already prints.
 
 What is DIFFERENT from the order sheet, and why:
 
-* **The "All" sheet matches the plan list** (PLAN-low-stock-last-in-and-list-scope S2,
-  owner ruling 15 Sep, superseding the parent plan's AC-32/AC-33 "hidden covered rows
-  included"): hidden-by-default rows are dropped through the SAME `visible_rows` helper
-  `export_report` calls, because the owner measured the two documents disagreeing (1,266
-  All rows against 833 on the list for one run) and ruled they must not.
+* **The "All" sheet is every row the run planned** - the same population the plan list
+  and the order sheet print. PLAN-lowstock-show-all (owner ruling 30 Sep 2026, "show all
+  hidden items again") retired the hidden-by-default rule end to end, so the three
+  documents agree by all reading the frozen run whole, not through a shared filter (the
+  15 Sep `visible_rows` drop of PLAN-low-stock-last-in-and-list-scope S2 is gone).
+  "Low stock" is the ONE narrowing: `_is_low`, on hand strictly below reorder level.
 * **Three columns come from MASTER DATA, joined at export time** (AC-34) - Description,
   Category and Reorder qty. Every other column reads the frozen row, because it is a
   planning figure that belongs to the run's moment; a description a buyer fixed this
@@ -156,14 +157,12 @@ def _split(db: Session, run_id: Optional[str]) -> dict:
     by category and a buyer walks it category by category. A product with no category
     sorts under "" - first - rather than being hidden at the end of a file nobody scrolls.
 
-    "All" is the SAME population the plan list shows (PLAN-low-stock-last-in-and-list-
-    scope S2, owner ruling 15 Sep: "I prefer All to match the list exported") - hidden-by-
-    default rows dropped via the shared `svc.visible_rows`, superseding the parent plan's
-    AC-32 ("hidden covered rows included"). "Low stock" stays a subset of whatever "All"
-    prints.
+    "All" is every frozen row of the run - the population the plan list shows since
+    PLAN-lowstock-show-all (owner ruling 30 Sep 2026). "Low stock" is the subset with on
+    hand strictly below reorder level (`_is_low`), and nothing else narrows either sheet.
     """
     rep = svc.report(db, run_id=run_id)
-    rows = svc.visible_rows(db, rep)
+    rows = rep["rows"]
     master = _master_map(db, [r["product_code"] for r in rows])
     ordered = sorted(
         rows,

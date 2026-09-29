@@ -337,13 +337,16 @@ def test_engine_stamps_nothing_and_every_counter_counts_the_covered_row(scm_app)
         "UPDATE scm.reorder_recommendation SET run_id = :folded "
         "WHERE run_id IN (:r2, :r3)"
     ), {"folded": folded, "r2": r2, "r3": r3})
+    # Stamped with the run's company like every engine-written rec, so the ORM's company
+    # scope (the read `_summarise`'s callers go through) sees it too.
     exc_pid, _exc_pcode = _engine_product(db)
     db.execute(text(
         "INSERT INTO scm.reorder_recommendation "
-        "(id, run_id, product_id, warehouse_id, rec_type, status, inputs, created_at) "
+        "(id, run_id, product_id, warehouse_id, rec_type, status, inputs, company_id, "
+        " created_at) "
         "VALUES (gen_random_uuid(), :run, :pid, NULL, 'exception', 'proposed', "
-        "        '{}'::jsonb, now())"
-    ), {"run": folded, "pid": exc_pid})
+        "        '{}'::jsonb, CAST(:co AS uuid), now())"
+    ), {"run": folded, "pid": exc_pid, "co": SORENTO_COMPANY_ID})
     db.flush()
 
     recs = (

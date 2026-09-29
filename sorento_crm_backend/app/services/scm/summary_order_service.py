@@ -1739,38 +1739,6 @@ def _render_export_xlsx(rows: list[tuple]) -> bytes:
     return buf.getvalue()
 
 
-def _hidden_product_ids_for_run(db: Session, run_id: str) -> set[str]:
-    """PLAN-plan-list-tile-sheet-one-scope.md, S7 (AC-3): which products the run hides by
-    default, for its own PRODUCT-GRAIN recommendation rows (`warehouse_id IS NULL` -
-    `order_summary_row` is one row per product per run, the same cardinality). ORM, not raw
-    SQL, so the company isolation filter on `ReorderRecommendation` applies without a
-    hand-written predicate.
-
-    Reads the STORED `hidden_by_default` column (PLAN-reorder-one-formula.md S3/AC-12,
-    migration 512), stamped once at write time by `reorder_run_service._build_rec` off
-    `plan_scope.hidden_by_default`. The re-derivation that used to live here - five scalars
-    pulled out of `inputs` and the Python rule replayed per row - is deleted: it was the
-    fourth independent copy of one rule, and four copies is precisely what drifted apart
-    per the owner's 10 Sep measurement (list 415, tile "0 of 950", sheet 950). It also
-    costs one boolean per row instead of a JSONB extract per row (D1: the full-blob shape
-    it replaced cost 29.3 MB / 356 ms on the 12,948-rec run).
-
-    Keyed on `product_id`, not `product_code` (reviewer pass 3, round D, D2): a code
-    repeats across companies, an id does not, and `order_summary_row` already carries
-    `product_id` directly - no join to `products` is needed here at all.
-    """
-    rows = (
-        db.query(ReorderRecommendation.product_id)
-        .filter(
-            ReorderRecommendation.run_id == run_id,
-            ReorderRecommendation.warehouse_id.is_(None),
-            ReorderRecommendation.hidden_by_default.is_(True),
-        )
-        .all()
-    )
-    return {str(pid) for (pid,) in rows}
-
-
 def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
     """What the ASYNC export route (`POST /order-summary/export`, AC-15/AC-16) needs to
     decide the row-count refusal and name the file, WITHOUT rendering the whole report on
@@ -1788,12 +1756,10 @@ def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
     other raw read this lane touches (`_PO_BOOK_SQL`, `explain_net`, `site_pool_supply`,
     `purchase_trend`) already carries.
 
-    S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-3): the count excludes hidden-by-default
-    rows - the SAME population `export_report` prints, so the guard cannot refuse (or
-    admit) a request the export would answer differently. `as_of` is unaffected by hiding
-    (every row of one frozen run shares the same stamp), so the aggregate stays a single
-    query; the hidden count is a second, narrow one, run only when there is anything to
-    subtract.
+    Every frozen row counts (PLAN-lowstock-show-all, owner 30 Sep 2026): the order sheet
+    and the low stock workbook print the whole run, so this is the population both guard
+    against. The hidden-by-default subtraction of PLAN-plan-list-tile-sheet-one-scope S7
+    is retired with the rule.
     """
     run = _run_for(db, run_id)
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="egs")
@@ -1803,66 +1769,17 @@ def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
         FROM scm.order_summary_row WHERE run_id = :rid {co_clause}
     """), {"rid": str(run.id), **co_params}).mappings().first()
 
-    hidden_ids = _hidden_product_ids_for_run(db, str(run.id))
-    hidden_count = 0
-    if hidden_ids:
-        co_osr, co_osr_params = company_sql_predicate(
-            db, "osr.company_id", param_prefix="egsh"
-        )
-        co_osr_clause = f"AND {co_osr}" if co_osr else ""
-        # D2: no join to `products` here - `order_summary_row` carries `product_id`
-        # directly.
-        hidden_count = db.execute(text(f"""
-            SELECT COUNT(*) FROM scm.order_summary_row osr
-            WHERE osr.run_id = :rid AND osr.product_id::text = ANY(:ids) {co_osr_clause}
-        """), {"rid": str(run.id), "ids": list(hidden_ids), **co_osr_params}).scalar() or 0
-
     return {
         "run_id": str(run.id),
-        "row_count": int(row["n"] or 0) - int(hidden_count),
+        "row_count": int(row["n"] or 0),
         "as_of": row["as_of"].isoformat() if row["as_of"] else None,
     }
 
 
-#: `low_stock_guard_stats` is GONE (PLAN-low-stock-last-in-and-list-scope S2): the low
-#: stock workbook's "All" sheet now drops hidden-by-default rows exactly like the order
-#: sheet does (owner ruling 15 Sep, "I prefer All to match the list exported"), so its
-#: guard reads `export_guard_stats` - the SAME count - rather than a twin that counted the
-#: unfiltered total.
-
-
-def visible_rows(db: Session, rep: dict) -> list[dict]:
-    """`rep["rows"]` with hidden-by-default rows dropped (S7, PLAN-plan-list-tile-sheet-
-    one-scope.md AC-3) - the SAME rule the plan list and the Decisions tile already read.
-
-    Lifted out of `export_report` (PLAN-low-stock-last-in-and-list-scope S2) so the low
-    stock workbook's "All" sheet can call the identical filter: the owner's 15 Sep ruling
-    is that All must match the list, and a second copy of this drop is exactly the kind of
-    independent rule that drifted apart before (the plan-tile-list-sheet measurement: list
-    415, tile "0 of 950", sheet 950).
-
-    `report()` itself stays untouched (AC-4), so a caller reading the frozen sheet whole
-    still sees every planned product; only a caller that asks for the printed/exported view
-    narrows to what the buyer would see on the list. `_hidden_product_ids_for_run` is keyed
-    on `product_id` (D2); `report()`'s own rows carry only `product_code` (never an id - no
-    UUID crosses this module's output), so the ids are resolved to codes with a SECOND,
-    narrow join scoped to just the hidden set - typically a handful of products, not the
-    whole run.
-    """
-    rows = rep["rows"]
-    hidden_ids = _hidden_product_ids_for_run(db, rep["run_id"])
-    if not hidden_ids:
-        return rows
-    hidden_codes = {
-        code for (code,) in
-        db.query(Product.product_code).filter(Product.id.in_(hidden_ids)).all()
-    }
-    # Matched by product_code, not product_id: safe because a run always freezes ONE
-    # company's products (`write_rows` stamps the run's own company; `report()`'s rows
-    # carry no id at all). `uq_products_company_product_code` makes code -> id 1:1 WITHIN
-    # that company, so a cross-company code collision would over-drop a visible row that
-    # merely shares a code with a hidden one elsewhere, never under-drop a hidden one.
-    return [r for r in rows if r["product_code"] not in hidden_codes]
+#: `low_stock_guard_stats` (14 Sep) and `visible_rows` (15 Sep) are both GONE. The low
+#: stock workbook's guard reads `export_guard_stats` - the same count as the order sheet -
+#: and since PLAN-lowstock-show-all (30 Sep 2026) neither document narrows the frozen rows:
+#: every planned product prints, so there is no shared filter left to share.
 
 
 def export_report(db: Session, *, run_id: Optional[str], fmt: str) -> tuple[bytes, str, str]:
@@ -1877,11 +1794,13 @@ def export_report(db: Session, *, run_id: Optional[str], fmt: str) -> tuple[byte
     the book to products the run actually planned, and a covered/needs_level product still
     has a `suggestion` worth printing even with nothing to order.
 
-    S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-3): hidden-by-default rows are dropped
-    via the shared `visible_rows` (PLAN-low-stock-last-in-and-list-scope S2).
+    Every frozen row prints (PLAN-lowstock-show-all, owner 30 Sep 2026): the plan list
+    shows every planned product, and the exported sheet is faithful to the list (owner,
+    10 Sep), so the hidden-by-default drop of S7 / PLAN-low-stock-last-in-and-list-scope
+    S2 is retired.
     """
     rep = report(db, run_id=run_id)
-    rows = visible_rows(db, rep)
+    rows = rep["rows"]
     if len(rows) > MAX_EXPORT_ROWS:
         raise AppException(422, "Narrow the plan first")
     stamp = rep.get("as_of") or _today().isoformat()
