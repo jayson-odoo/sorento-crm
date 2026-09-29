@@ -457,7 +457,8 @@ async def delete_packing_list(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete a packing list (inbound shipment). Lines and SPO allocations cascade."""
+    """Delete a packing list (inbound shipment). Its lines cascade; SPO allocations are
+    unlinked, never deleted (SPO-CASCADE)."""
     try:
         service = InboundShipmentService(db)
         service.delete_shipment(shipment_id)

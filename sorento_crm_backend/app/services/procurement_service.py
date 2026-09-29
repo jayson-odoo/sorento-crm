@@ -1771,17 +1771,49 @@ class InboundShipmentService:
         return self._attach_capacity(shipment)
 
     def delete_shipment(self, shipment_id: str) -> None:
-        """Delete an inbound shipment. Lines and SPO allocations cascade via DB."""
+        """Delete an inbound shipment. Its own lines cascade; its SPO allocations do NOT.
+
+        SPO-CASCADE (owner ruling 28 Sep 2026): a shipping order is a document in its own
+        right, the shipment only the container it was booked on. The unit of work nulls
+        `inbound_shipment_id` on every allocation of this shipment (an audited update),
+        and a later shipment naming the same container relinks them
+        (`_relink_allocations_for_shipment`). Never delete them here: the AutoCount sync
+        does not re-push a document it already pushed.
+        """
         shipment = self.get_shipment(shipment_id)
+        self._unlink_allocations(shipment)
         self.db.delete(shipment)
         self.db.commit()
 
+    def _unlink_allocations(self, shipment: "InboundShipment") -> int:
+        """Null `inbound_shipment_id` on every allocation booked on `shipment`, explicitly
+        and before the delete flushes.
+
+        Explicit rather than left to the relationship: the unit of work nulls a child FK
+        inside the flush, after the audit hooks have already collected the dirty set, so
+        that unlink would leave no row. Marked dirty here, each line's unlink is an audited
+        UPDATE naming who deleted the packing list. It also holds on a database whose FK
+        has not been migrated to SET NULL yet: the UPDATE flushes before the DELETE.
+        """
+        rows = (
+            self.db.query(SPOAllocation)
+            .filter(SPOAllocation.inbound_shipment_id == shipment.id)
+            .all()
+        )
+        for row in rows:
+            row.inbound_shipment_id = None
+        return len(rows)
+
     def bulk_delete_shipments(self, shipment_ids: list[str]) -> dict:
-        """Delete multiple inbound shipments by ID. Returns message and deleted_count."""
+        """Delete multiple inbound shipments by ID. Returns message and deleted_count.
+
+        Same contract as `delete_shipment`: SPO allocations are unlinked, never deleted.
+        """
         if not shipment_ids:
             return {"message": "No packing lists to delete", "deleted_count": 0}
         shipments = self.db.query(InboundShipment).filter(InboundShipment.id.in_(shipment_ids)).all()
         for shipment in shipments:
+            self._unlink_allocations(shipment)
             self.db.delete(shipment)
         self.db.commit()
         deleted = len(shipments)
