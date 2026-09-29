@@ -1856,7 +1856,11 @@ def test_reserve_templates_render():
             f"{reserved_html}"
         )
 
-        cells = re.findall(r"<(?:td|th)\b[^>]*>", reserved_html)
+        # #1349: the rendered mail is a whole branded document; the border pin is about
+        # the template's OWN table, so it reads the authored body, not the layout's cells.
+        from tests._email_body import authored_html
+
+        cells = re.findall(r"<(?:td|th)\b[^>]*>", authored_html(reserved_html))
         assert cells, "no table cells found in the reserved template's own body"
         for tag_html in cells:
             assert "border" in tag_html, tag_html

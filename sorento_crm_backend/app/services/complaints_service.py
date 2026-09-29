@@ -1184,19 +1184,19 @@ class ComplaintService:
             event_type = "external_created"
             title = "New Complaint created"
             sentence = "A new complaint has been created and requires your review."
-        intro_plain = f"Dear Complaint Team,\n\n{sentence}"
-        intro_html = f"Dear Complaint Team,<br /><br />{sentence}"
         view_url = self._build_complaint_view_url(complaint_id, base_url_override=base_url_override)
-        body_plain = (
-            f"{intro_plain}\n\n"
-            f"{view_url}\n\n"
-            "This is a system generated email. Please do not reply."
+        # #1349: the layout builds the branded mail from CONTEXT, never a hand-built
+        # string. The template's own `body_text` reproduces this route's old plain
+        # body verbatim, so nothing downstream that reads `notification.body` sees a
+        # change in shape.
+        from app.services.email_template_service import EmailTemplateService
+
+        rendered = EmailTemplateService(self.db).render_code(
+            "complaint_created",
+            {"title": title, "sentence": sentence, "view_url": view_url},
         )
-        body_html = (
-            f"<p>{intro_html}</p>\n"
-            f'<p><a href="{view_url}">{view_url}</a></p>\n'
-            "<p>This is a system generated email. Please do not reply.</p>"
-        )
+        body_plain = rendered["body_text"]
+        body_html = rendered["body_html"]
         notif_svc = NotificationService(self.db)
         first_uid = user_ids[0]
         existing_notif = (
@@ -1396,25 +1396,31 @@ class ComplaintService:
         users = self.db.query(User).filter(User.id.in_(user_ids)).all()
 
         items_block = self._format_do_items(items)
-        items_block_html = self._format_do_items_html(items)
+        item_lines = self._do_item_lines(items)
         headline = (
             f"Replacement delivery order {order_number} for complaint "
             f"{complaint_number} has been delivered."
         )
-        sentence = headline + (f"\n\n{items_block}" if items_block else "")
         title = "Replacement delivery order delivered"
         # Staff team email -> internal detail page, never the public /view token URL.
         view_url = self._build_complaint_internal_url(complaint_id)
-        body_plain = (
-            f"Dear Complaint Team,\n\n{sentence}\n\n{view_url}\n\n"
-            "This is a system generated email. Please do not reply."
+        # #1349: rendered through the layout. The template's `body_text` reproduces
+        # this route's old plain body verbatim (the "\n- CODE x QTY" pins on
+        # `notification.body` in tests/test_complaint_do_notify.py hold unchanged).
+        from app.services.email_template_service import EmailTemplateService
+
+        rendered = EmailTemplateService(self.db).render_code(
+            "complaint_do_delivered",
+            {
+                "title": title,
+                "headline": headline,
+                "items_block": items_block,
+                "item_lines": item_lines,
+                "view_url": view_url,
+            },
         )
-        body_html = (
-            f"<p>Dear Complaint Team,<br /><br />{headline}</p>\n"
-            + (f"{items_block_html}\n" if items_block_html else "")
-            + f'<p><a href="{view_url}">{view_url}</a></p>\n'
-            "<p>This is a system generated email. Please do not reply.</p>"
-        )
+        body_plain = rendered["body_text"]
+        body_html = rendered["body_html"]
         event_type = f"do_delivered:{order_number}"
 
         # One INDIVIDUAL email per team member (each as the To recipient) + in-app.

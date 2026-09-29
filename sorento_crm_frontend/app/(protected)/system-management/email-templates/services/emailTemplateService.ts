@@ -6,6 +6,7 @@ import type {
   EmailTemplatePreview,
   EmailTemplateUpdateBody,
   ListResponse,
+  PreviewDraftBody,
   TemplateVariable,
 } from '../types/emailTemplate.types';
 
@@ -68,8 +69,25 @@ export async function previewEmailTemplate(
   return response.json();
 }
 
-export async function getTemplateVariableCatalog(): Promise<{ variables: TemplateVariable[] }> {
-  const response = await apiFetch('/api/v1/system/email-templates/variables/catalog');
+export async function getTemplateVariableCatalog(
+  code?: string | null,
+): Promise<{ variables: TemplateVariable[] }> {
+  const sp = new URLSearchParams();
+  if (code) sp.set('code', code);
+  const qs = sp.toString();
+  const response = await apiFetch(
+    `/api/v1/system/email-templates/variables/catalog${qs ? `?${qs}` : ''}`,
+  );
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load variable catalog'));
+  return response.json();
+}
+
+export async function previewEmailTemplateDraft(body: PreviewDraftBody): Promise<EmailTemplatePreview> {
+  const response = await apiFetch('/api/v1/system/email-templates/preview-draft', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to preview draft'));
   return response.json();
 }

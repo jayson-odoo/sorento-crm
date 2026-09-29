@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ordering ticket mockup</title>
+<style>
+:root{--bg:#ffffff;--fg:#0a0a0a;--muted:#f4f4f5;--muted-fg:#71717a;--border:#e4e4e7;
+--primary:#1b84ff;--primary-fg:#fff;--primary-soft:#eef5ff;--danger:#f8285a;--danger-soft:#ffeef3;
+--ok:#17c653;--ok-soft:#eafff1;--warn:#f6b100;--warn-soft:#fff8dd;--violet:#7239ea;--violet-soft:#f8f5ff;
+--pin:#f8285a;--note-bg:#fffbe6;--radius:8px;--shadow:0 8px 24px rgba(0,0,0,.12)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b0b0d;--fg:#f4f4f5;--muted:#18181b;
+--muted-fg:#a1a1aa;--border:#2e2e33;--primary-soft:#0f2742;--danger-soft:#3a0f1a;--ok-soft:#0d2d1a;--warn-soft:#332600;
+--violet-soft:#23163f;--note-bg:#2a2410;--shadow:0 8px 24px rgba(0,0,0,.5)}}
+:root[data-theme="dark"]{--bg:#0b0b0d;--fg:#f4f4f5;--muted:#18181b;--muted-fg:#a1a1aa;--border:#2e2e33;
+--primary-soft:#0f2742;--danger-soft:#3a0f1a;--ok-soft:#0d2d1a;--warn-soft:#332600;--violet-soft:#23163f;
+--note-bg:#2a2410;--shadow:0 8px 24px rgba(0,0,0,.5)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:400 14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.mk{container-type:inline-size;background:var(--bg);color:var(--fg);font-size:14px;line-height:1.45}
+.mk .app{display:grid;grid-template-columns:210px minmax(0,1fr)}
+.mk .side{border-right:1px solid var(--border);background:var(--muted);padding:14px 10px;font-size:13px}
+.mk .brand{font-weight:700;padding:4px 8px 12px}
+.mk .nav div{padding:6px 8px;border-radius:6px;color:var(--muted-fg)}
+.mk .nav .grp{font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding-top:12px}
+.mk .nav .on{background:var(--bg);color:var(--fg);font-weight:600}
+.mk .top{display:none;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);font-weight:600}
+.mk .burger{width:18px;height:12px;border-top:2px solid var(--fg);border-bottom:2px solid var(--fg);position:relative}
+.mk .burger:after{content:"";position:absolute;left:0;right:0;top:3px;border-top:2px solid var(--fg)}
+.mk .main{padding:20px 24px;min-width:0}
+.mk .crumbs{font-size:12px;color:var(--muted-fg)}
+.mk .ph{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:4px 0 14px;flex-wrap:wrap}
+.mk .ph h1{margin:0;font-size:20px;font-weight:600}
+.mk .sub{color:var(--muted-fg);font-size:13px}
+.mk .tabs{display:flex;gap:18px;border-bottom:1px solid var(--border);margin-bottom:16px;overflow-x:auto;white-space:nowrap}
+.mk .tabs span{padding:8px 0;color:var(--muted-fg);font-size:13px}
+.mk .tabs .on{color:var(--fg);font-weight:600;border-bottom:2px solid var(--primary)}
+.mk .card{border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);margin-bottom:16px}
+.mk .card-h{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.mk .card-h h3{margin:0;font-size:15px;font-weight:600}
+.mk .card-b{padding:14px 16px}
+.mk .cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.mk .row{display:grid;grid-template-columns:220px minmax(0,1fr);gap:12px;align-items:center;padding:9px 0;border-bottom:1px dashed var(--border)}
+.mk .row:last-child{border-bottom:0}
+.mk .row label{font-size:13px}
+.mk .val{font-size:13px}
+.mk .muted{color:var(--muted-fg)}
+.mk .sw{display:inline-block;width:36px;height:20px;border-radius:10px;background:var(--border);position:relative;vertical-align:middle}
+.mk .sw:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.mk .sw.on{background:var(--primary)}
+.mk .sw.on:after{left:18px}
+.mk .swrow{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.mk .sel{display:flex;align-items:center;gap:6px;min-height:34px;border:1px solid var(--border);border-radius:6px;padding:4px 8px 4px 10px;background:var(--bg);font-size:13px;flex-wrap:wrap;position:relative}
+.mk .sel .v{flex:1;min-width:60px}
+.mk .sel .ph2{flex:1;color:var(--muted-fg)}
+.mk .sel .x{color:var(--muted-fg);font-size:14px;padding:0 2px}
+.mk .sel .chev{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--muted-fg)}
+.mk .sel.focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+.mk .menu{border:1px solid var(--border);border-radius:6px;background:var(--bg);box-shadow:var(--shadow);margin-top:4px;padding:4px;font-size:13px}
+.mk .menu .search{border:1px solid var(--border);border-radius:4px;padding:5px 8px;color:var(--muted-fg);margin-bottom:4px}
+.mk .menu .opt{padding:6px 8px;border-radius:4px;display:flex;justify-content:space-between;gap:8px}
+.mk .menu .opt.hl{background:var(--muted)}
+.mk .menu .opt .tick{color:var(--primary);font-weight:700}
+.mk .comp{display:inline-block;font:500 10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--violet);background:var(--violet-soft);border-radius:4px;padding:3px 5px;margin-left:6px;vertical-align:middle}
+.mk .chip{display:inline-flex;align-items:center;gap:4px;background:var(--muted);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:12px}
+.mk .badge{display:inline-block;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:600;white-space:nowrap}
+.mk .b-crm{background:var(--muted);color:var(--muted-fg);border:1px solid var(--border)}
+.mk .b-learned{background:var(--primary-soft);color:var(--primary)}
+.mk .b-said{background:var(--ok-soft);color:#0f8a3a}
+.mk .b-staff{background:var(--violet-soft);color:var(--violet)}
+.mk .b-warn{background:var(--warn-soft);color:#a06c00}
+.mk .b-over{background:var(--warn-soft);color:#a06c00}
+.mk .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--bg);border-radius:6px;padding:5px 10px;font-size:13px;white-space:nowrap}
+.mk .btn.pr{background:var(--primary);border-color:var(--primary);color:var(--primary-fg)}
+.mk .btn.cd{background:var(--danger-soft);border-color:var(--danger);color:var(--danger)}
+.mk .ib{display:inline-flex;width:26px;height:26px;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--muted-fg)}
+.mk .dg{border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:13px}
+.mk .dg-h,.mk .dg-r{display:grid;grid-template-columns:var(--cols);gap:10px;padding:8px 12px;align-items:center}
+.mk .dg-h{background:var(--muted);font-size:12px;color:var(--muted-fg);font-weight:600}
+.mk .dg-r{border-top:1px solid var(--border)}
+.mk .dg-r.live{background:var(--primary-soft)}
+.mk .dg-r.del{background:var(--danger-soft)}
+.mk .dg-r>div{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mk .dg-r>div.wr{white-space:normal}
+.mk .row.inl{grid-template-columns:minmax(0,1fr) auto}
+.mk .empty{border:1px dashed var(--border);border-radius:6px;padding:18px;text-align:center;color:var(--muted-fg);font-size:13px}
+.mk .pin{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:var(--pin);color:#fff;font:700 11px/1 system-ui,sans-serif;margin:0 4px;vertical-align:middle;flex:none}
+.mk .modal-wrap{background:rgba(10,10,10,.35);padding:28px 16px;border-radius:var(--radius);margin-top:16px}
+.mk .modal{max-width:460px;margin:0 auto;background:var(--bg);border-radius:10px;box-shadow:var(--shadow);border:1px solid var(--border)}
+.mk .modal .mh{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:600;display:flex;justify-content:space-between}
+.mk .modal .mb{padding:14px 16px;display:grid;gap:12px}
+.mk .modal .mf{padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.mk .fl{display:grid;gap:6px}
+.mk .fl label{font-size:13px;font-weight:500}
+.mk .input{border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:13px}
+.mk .drawer-wrap{display:grid;grid-template-columns:minmax(0,1fr) 520px;gap:0;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.mk .drawer-bg{background:var(--muted);padding:12px;opacity:.75}
+.mk .drawer{border-left:1px solid var(--border);background:var(--bg);box-shadow:var(--shadow)}
+.mk .dr-h{padding:14px 16px;border-bottom:1px solid var(--border)}
+.mk .dr-b{padding:14px 16px;display:grid;gap:14px}
+.mk .sec h4{margin:0 0 8px;font-size:13px;font-weight:600}
+.mk .kv{display:grid;grid-template-columns:150px minmax(0,1fr);gap:6px 12px;font-size:13px}
+.mk .kv>div:nth-child(odd){color:var(--muted-fg)}
+.mk .stage{display:grid;grid-template-columns:18px 110px minmax(0,1fr) 60px;gap:8px;align-items:start;font-size:13px;padding:6px 0;border-bottom:1px dashed var(--border)}
+.mk .dot{width:10px;height:10px;border-radius:50%;background:var(--ok);margin-top:4px}
+.mk .dot.q{background:var(--warn)}
+.mk .bar{height:8px;border-radius:4px;background:var(--muted);overflow:hidden}
+.mk .bar i{display:block;height:100%;background:var(--primary)}
+.mk .layer{display:grid;grid-template-columns:170px minmax(0,1fr) 70px;gap:10px;align-items:center;font-size:12px;padding:3px 0}
+.mk .r{text-align:right}
+.mk .notes{margin:10px 0 0;padding:12px 14px;background:var(--note-bg);border-radius:var(--radius);font-size:13px;display:grid;gap:6px}
+.mk .notes div{display:flex;gap:6px;align-items:flex-start}
+.mk .hide-n{display:inline}
+.mk .only-n{display:none}
+@container (max-width:760px){
+ .mk .app{grid-template-columns:1fr}
+ .mk .side{display:none}
+ .mk .top{display:flex}
+ .mk .main{padding:14px 16px}
+ .mk .cols{grid-template-columns:1fr}
+ .mk .row{grid-template-columns:1fr;gap:6px}
+ .mk .row.inl{grid-template-columns:minmax(0,1fr) auto}
+ .mk .dg-h{display:none}
+ .mk .dg-r{grid-template-columns:1fr;gap:3px;padding:10px 12px}
+ .mk .dg-r>div{white-space:normal}
+ .mk .dg-r>div[data-l]:before{content:attr(data-l) ": ";color:var(--muted-fg);font-size:12px}
+ .mk .drawer-wrap{grid-template-columns:1fr}
+ .mk .drawer-bg{display:none}
+ .mk .drawer{border-left:0}
+ .mk .stage{grid-template-columns:18px minmax(0,1fr) 50px}
+ .mk .stage .sn{grid-column:2}
+ .mk .stage .sd{grid-column:2 / 4}
+ .mk .layer{grid-template-columns:minmax(0,1fr) 60px}
+ .mk .layer .bar{grid-column:1 / 3;grid-row:2}
+ .mk .kv{grid-template-columns:1fr}
+ .mk .kv>div:nth-child(odd){margin-top:6px}
+ .mk .hide-n{display:none}
+ .mk .only-n{display:inline}
+}
+/* illustrations */
+.il{container-type:inline-size;font-size:14px;line-height:1.45;color:var(--fg)}
+.il *{box-sizing:border-box}
+.il .flow{display:grid;gap:10px}
+.il .step{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--bg)}
+.il .step h5{margin:0 0 4px;font-size:14px}
+.il .step p{margin:0;font-size:13px;color:var(--muted-fg)}
+.il .arrow{text-align:center;color:var(--muted-fg);font-size:20px;line-height:1}
+.il .three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.il .L1{border-color:var(--violet);background:var(--violet-soft)}
+.il .L2{border-color:var(--primary);background:var(--primary-soft)}
+.il .L3{border-color:var(--ok);background:var(--ok-soft)}
+.il .gate{border:2px dashed var(--warn);background:var(--warn-soft)}
+.il .core{border:2px solid var(--fg)}
+.il .tag{display:inline-block;font-size:11px;font-weight:700;border-radius:999px;padding:1px 8px;background:var(--bg);border:1px solid var(--border);margin-bottom:6px}
+.il .ex{margin-top:8px;font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px}
+.il .two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.il .bubble{background:#dcf8c6;color:#111;border-radius:10px 10px 10px 2px;padding:8px 10px;max-width:420px;font-size:13px}
+.il .bubble.bot{background:var(--muted);color:var(--fg);border-radius:10px 10px 2px 10px;margin-left:auto}
+.il .chat{display:grid;gap:6px;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg)}
+.il .who{font-size:11px;color:var(--muted-fg)}
+.il .pull{display:flex;flex-wrap:wrap;gap:6px}
+.il .kvp{display:inline-flex;gap:4px;align-items:center;border:1px solid var(--ok);background:var(--ok-soft);border-radius:6px;padding:3px 8px;font-size:13px}
+.il .kvp b{font-weight:600}
+.il .seen{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--muted);border-radius:6px;padding:8px 10px;white-space:pre-wrap;word-break:break-word}
+.il .no{border:1px solid var(--danger);background:var(--danger-soft);border-radius:6px;padding:6px 10px;font-size:13px}
+.il .ladder{display:grid;gap:6px}
+.il .rung{display:grid;grid-template-columns:170px minmax(0,1fr) 90px;gap:10px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px}
+.il .rung .blocks{display:flex;gap:4px;flex-wrap:wrap}
+.il .blk{font-size:11px;border-radius:4px;padding:2px 6px}
+.il .blk.l1{background:var(--violet-soft);color:var(--violet)}
+.il .blk.l2{background:var(--primary-soft);color:var(--primary)}
+.il .blk.l3{background:var(--ok-soft);color:#0f8a3a}
+.il .blk.l0{background:var(--muted);color:var(--muted-fg)}
+.il .scale{display:grid;gap:8px}
+.il .sbar{display:flex;height:26px;border-radius:6px;overflow:hidden;font-size:11px;color:#fff;font-weight:600}
+.il .sbar span{display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden}
+.il .r{text-align:right}
+@container (max-width:640px){
+ .il .three,.il .two{grid-template-columns:1fr}
+ .il .rung{grid-template-columns:1fr}
+}
+
+.wrap{max-width:1280px;margin:0 auto;padding:16px}
+.wrap>h1{font-size:18px;margin:0 0 4px}
+.wrap>p{color:var(--muted-fg);font-size:13px;margin:0 0 14px}
+.wrap>h2{font-size:15px;margin:24px 0 8px}
+.frame{border:1px solid var(--border);border-radius:8px;overflow:hidden}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Ordering ticket mockup</h1>
+<p>Final mockup for PLAN-chatbot-memory-26sep.md, round 3 (27 Sep 2026). Static sample data. Dropdowns marked SearchableSelect / SearchableMultiSelect are the system components. Resize the window: below 760 px it is the phone layout.</p>
+<div class="frame">
+<div class="mk">
+<div class="top"><span class="burger"></span>Chat History</div>
+<div class="app"><aside class="side"><div class="brand">Sorento CRM</div><div class="nav"><div class="grp">Sales</div><div>Orders</div><div>Customers</div><div class="grp">User Management</div><div>Contacts</div><div>Settings</div><div class="grp">System Management</div><div class="on">Chat History</div><div>Prompts</div></div></aside>
+<main class="main">
+<div class="crumbs">System Management / Chat History</div>
+<div class="ph"><div><h1>Chat History</h1></div></div>
+<div class="drawer-wrap">
+ <div class="drawer-bg">
+  <div class="dg" style="--cols:80px minmax(0,1fr) 70px">
+   <div class="dg-h"><div>Time</div><div>Message</div><div>Queue</div></div>
+   <div class="dg-r"><div>10:02:58</div><div>stock SRTWB1455</div><div>#13</div></div>
+   <div class="dg-r live"><div>10:03:12</div><div>and in kuching?</div><div>#14</div></div>
+   <div class="dg-r"><div>10:03:40</div><div>ok thanks</div><div>#15</div></div>
+  </div>
+ </div>
+ <div class="drawer">
+  <div class="dr-h"><div style="font-weight:600">Turn &middot; Fri 26 Sep, 10:03:12</div>
+   <div class="sub">Tan Wei Liang (Chin Chun Trading) &middot; "and in kuching?"</div></div>
+  <div class="dr-b">
+   <div class="sec"><h4><span class="pin">1</span>Order</h4>
+    <div class="kv">
+     <div>Place in line</div><div>#14 for this contact</div>
+     <div>Waited</div><div>0.4 s</div>
+     <div>Ran after</div><div><span style="color:var(--primary)">#13 &middot; 10:02:58 "stock SRTWB1455"</span></div>
+     <div>Next</div><div><span style="color:var(--primary)">#15 &middot; 10:03:40 "ok thanks"</span></div>
+    </div></div>
+   <div class="sec"><h4>Stages</h4>
+    <div class="stage"><span class="dot q"></span><div class="sn"><b>Queued</b></div><div class="sd muted">waited for #13 to finish</div><div class="r">0.4 s</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Received</b></div><div class="sd muted">memory reads 18 ms</div><div class="r">22 ms</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Understood</b></div><div class="sd muted">one AI call &middot; prompt 23,412 tokens &middot; output 311</div><div class="r">2.71 s</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Fetched</b></div><div class="sd muted">stock, Kuching</div><div class="r">0.38 s</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Replied</b></div><div class="sd muted">1 message sent</div><div class="r">0.21 s</div></div>
+    <div class="stage"><span class="dot"></span><div class="sn"><b>Remembered</b></div><div class="sd muted">no topic switch, nothing closed</div><div class="r">96 ms</div></div>
+   </div>
+   <div class="sec"><h4><span class="pin">2</span>Memory</h4>
+    <div class="kv">
+     <div>Context level</div><div>Full memory <span class="badge b-over">own level</span></div>
+     <div>Current subject</div><div>stock &middot; SRTWB1455 &middot; Kuching</div>
+     <div>Conversation closed</div><div class="muted">none this turn</div>
+     <div>Facts saved</div><div class="muted">none this turn</div>
+    </div></div>
+   <div class="sec"><h4><span class="pin">3</span>Context sent to the AI</h4>
+    <div class="layer"><div>About this contact</div><div class="bar"><i style="width:59%"></i></div><div class="r">88 / 150</div></div>
+    <div class="layer"><div>Past conversations</div><div class="bar"><i style="width:70%"></i></div><div class="r">176 / 250</div></div>
+    <div class="layer"><div>This conversation</div><div class="bar"><i style="width:48%"></i></div><div class="r">214 / 450</div></div>
+    <div class="layer"><div>Current subject</div><div class="bar"><i style="width:12%"></i></div><div class="r">42 / 350</div></div>
+    <div class="layer"><div>Current message</div><div class="bar"><i style="width:2%"></i></div><div class="r">9 / 600</div></div>
+    <div class="layer" style="font-weight:600"><div>Total memory + message</div><div></div><div class="r">529 / 1,800</div></div>
+    <div class="muted" style="font-size:12px">Dropped: nothing</div>
+   </div>
+   <div class="sec"><h4>When the line is stuck</h4>
+    <div class="dg-r del" style="border:1px solid var(--danger);border-radius:6px;display:block">
+     <b>Timed out in line</b> &middot; waited 45 s for #13, which never finished. This message was not answered; #13 is shown as failed.</div>
+   </div>
+  </div>
+ </div>
+</div>
+<div class="notes">
+ <div><span class="pin">1</span><span><b>The per-contact ordering ticket, made visible.</b> Every message from one contact takes the next number in that contact's line, and waits until the one before it has finished, so two quick messages are never answered out of order. The drawer shows its number, how long it waited and which message it waited for. Read-only; nothing to set.</span></div>
+ <div><span class="pin">2</span><span><b>Memory panel</b>, repaired (today it expects a different shape and breaks on real turns): the contact's level and what this turn closed or saved.</span></div>
+ <div><span class="pin">3</span><span><b>What memory cost on this message</b>, each block against its cap, and anything cut to fit.</span></div>
+</div>
+</main></div></div>
+</div>
+</div>
+</body>
+</html>

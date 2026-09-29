@@ -25,6 +25,9 @@ export interface ChatMessageRow {
    * offers the raw document in a searchable JSON viewer.
    */
   state_trace?: StateTrace | null;
+  /** AC-MEM015: this row's turn's per-contact ordering ticket - null for a turn that
+   * never queued. */
+  queue_ticket?: number | null;
 }
 
 /** Opaque per-turn state-transition document. Shape owned by the n8n producer. */

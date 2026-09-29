@@ -494,3 +494,37 @@ def test_email_template_delete_blocked_when_referenced_by_active_automation(
     with pytest.raises(AppException) as exc_info:
         EmailTemplateService(db).delete(str(template.id))
     assert getattr(exc_info.value, "status_code", None) == 409
+
+
+def test_run_with_broken_template_still_sends_the_safe_layout(db: Session, monkeypatch) -> None:
+    """#1349 AC-EM083: a template an admin broke (bad Jinja) does not stop the run and
+    never puts `[template-error:...]` in a mail - each recipient gets the safe layout."""
+    from app.services.automation_service import AutomationService
+
+    creator = _mk_user(db, email=f"creator-{uuid.uuid4().hex[:6]}@test.local")
+    template = _mk_template(db)
+    template.body_html = "<p>Hi {{ recipient.name }}</p><p>{% if %}</p>"
+    _mk_promotion(db, days_until_end=7)
+    db.commit()
+    automation = _mk_automation(
+        db, template=template, creator=creator, days_before=7, extra_emails=["broken@example.com"]
+    )
+    db.commit()
+
+    result = AutomationService(db).run_now(str(automation.id))
+
+    assert result["status"] == "success"
+    assert int(result["recipients_attempted"]) == 1
+    notif = (
+        db.query(Notification)
+        .filter(
+            Notification.source_entity_type == "automation_run",
+            Notification.source_entity_id == result["run_id"],
+        )
+        .one()
+    )
+    data = dict(notif.data or {})
+    for part in (str(notif.title), str(notif.body), str(data.get("body_html"))):
+        assert "[template-error" not in part
+    assert "data-sorento-layout" in str(data.get("body_html"))
+    assert "Promo" in str(notif.title)

@@ -451,33 +451,25 @@ def _email_intake_link(db: Session, request: OnboardingRequest) -> None:
         return
 
     from app.services import email_outbox_service
+    from app.services.email_template_service import EmailTemplateService
 
     expires = request.expires_at.strftime("%d %b %Y")
-    body_text = (
-        f"Hello {request.requester_name},\n\n"
-        "Sorento asks you to submit your team for onboarding. Open the link below, "
-        "type the names in, and submit it once.\n\n"
-        f"{url}\n\n"
-        f"The link works until {expires} and you can come back to it as often as you like "
-        "until you submit.\n\n"
-        "This is a system-generated email. Please do not reply."
-    )
-    body_html = (
-        f"<p>Hello {request.requester_name},</p>"
-        "<p>Sorento asks you to submit your team for onboarding. Open the link below, "
-        "type the names in, and submit it once.</p>"
-        f'<p><a href="{url}">{url}</a></p>'
-        f"<p>The link works until {expires} and you can come back to it as often as you "
-        "like until you submit.</p>"
-        "<p><em>This is a system-generated email. Please do not reply.</em></p>"
+    rendered = EmailTemplateService(db).render_code(
+        "onboarding_intake_link",
+        {
+            "requester_name": request.requester_name,
+            "request_title": request.title,
+            "intake_url": url,
+            "expires_date": expires,
+        },
     )
     email_outbox_service.enqueue(
         db,
         event_key="onboarding_intake_link",
         to=request.requester_email,
-        subject=f"Submit your team for onboarding: {request.title}",
-        body_text=body_text,
-        body_html=body_html,
+        subject=rendered["subject"],
+        body_text=rendered["body_text"],
+        body_html=rendered["body_html"],
         from_name="Sorento AI System",
         metadata={"onboarding_request_id": str(request.id)},
     )

@@ -106,6 +106,7 @@ class ContactService:
         query: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "asc",
+        own_memory_level_only: bool = False,
         include_linked_users: bool = False,
     ):
         """List contacts with pagination and filtering.
@@ -115,6 +116,8 @@ class ContactService:
         batched query for the whole page - never one query per row.
         """
         q = self.db.query(RespondContact)
+        if own_memory_level_only:
+            q = q.filter(RespondContact.chatbot_memory_level.isnot(None))
         
         if query:
             like = f"%{query}%"
@@ -258,6 +261,12 @@ class ContactService:
             if existing is not None and str(existing.id) != contact_id:
                 raise handle_conflict("Contact with this phone number already exists.")
 
+        # Reviewer pass at d89110c0 (S8): `facts` has its own guarded write path
+        # (`chatbot/facts/{key}`); a generic profile write never touches it.
+        chatbot_profile = update_data.pop("chatbot_profile", None)
+        if chatbot_profile is not None:
+            self.write_chatbot_profile_keeping_facts(contact.id, chatbot_profile)
+
         for key, value in update_data.items():
             setattr(contact, key, value)
 
@@ -298,15 +307,47 @@ class ContactService:
         self.db.commit()
         return {"message": "Contact companies updated successfully"}
 
+    def _respond_id_belongs_uniquely_to(self, contact: RespondContact) -> bool:
+        """`respond_io_id` is unique WITHIN a Respond.io workspace only, never
+        globally (security review 26 Sep 2026, B1) - a shared id means the
+        conversation_frame rows keyed by it could belong to a NAMESAKE in another
+        workspace. `True` only when exactly one `respond_contacts` row carries it."""
+        if not contact.respond_io_id:
+            return False
+        count = (
+            self.db.query(RespondContact)
+            .filter(RespondContact.respond_io_id == contact.respond_io_id)
+            .count()
+        )
+        return count == 1
+
     def delete_contact(self, contact_id: str) -> None:
         """Delete a respond contact and all contact - agent linkages. Related contact_agent_access rows are deleted; conversation_sla_tracking.respond_contact_id is SET NULL."""
         from app.models.access import ContactAgentAccess
+        from app.models.conversation_frame import ConversationFrame
 
         contact = self.get_contact(contact_id)
         # Delete contact - agent access linkages first so the contact can be removed
         self.db.query(ContactAgentAccess).filter(
             ContactAgentAccess.respond_contact_id == contact_id
         ).delete(synchronize_session=False)
+        # Chatbot memory lane A (contract section 3): a deleted contact's episodes go
+        # with it. Keyed by `respond_io_id` - the episode store's own contact key,
+        # never the internal `respond_contacts.id`. Security review 26 Sep 2026 (B1):
+        # a `respond_io_id` shared with another workspace's contact is refused rather
+        # than deleted, so a namesake's frames never get swept up by this delete.
+        if contact.respond_io_id:
+            if self._respond_id_belongs_uniquely_to(contact):
+                self.db.query(ConversationFrame).filter(
+                    ConversationFrame.contact_respond_id == contact.respond_io_id
+                ).delete(synchronize_session=False)
+            else:
+                logger.warning(
+                    "chatbot: respond_io_id %s is shared by more than one contact; "
+                    "skipping conversation_frame delete for contact %s",
+                    contact.respond_io_id,
+                    contact_id,
+                )
         self.db.delete(contact)
         self.db.commit()
 
@@ -315,6 +356,7 @@ class ContactService:
         if not contact_ids:
             return {"deleted_count": 0, "message": "No contacts to delete."}
         from app.models.access import ContactAgentAccess
+        from app.models.conversation_frame import ConversationFrame
         deleted = 0
         for contact_id in contact_ids:
             contact = self.db.query(RespondContact).filter(RespondContact.id == contact_id).first()
@@ -322,15 +364,294 @@ class ContactService:
                 self.db.query(ContactAgentAccess).filter(
                     ContactAgentAccess.respond_contact_id == contact_id
                 ).delete(synchronize_session=False)
+                # Security review 26 Sep 2026 (B1): same refusal as `delete_contact`
+                # - never touch frames by a `respond_io_id` a namesake also holds.
+                if contact.respond_io_id:
+                    if self._respond_id_belongs_uniquely_to(contact):
+                        self.db.query(ConversationFrame).filter(
+                            ConversationFrame.contact_respond_id == contact.respond_io_id
+                        ).delete(synchronize_session=False)
+                    else:
+                        logger.warning(
+                            "chatbot: respond_io_id %s is shared by more than one "
+                            "contact; skipping conversation_frame delete for "
+                            "contact %s",
+                            contact.respond_io_id,
+                            contact_id,
+                        )
                 self.db.delete(contact)
                 deleted += 1
         self.db.commit()
         return {"deleted_count": deleted, "message": f"Deleted {deleted} contact(s)."}
 
+    # --------------------------------------------------------------------- #
+    # Chatbot memory lane A (contract section 5) - the contact's memory/facts
+    # surface. Reaches into `app.services.chatbot.turn.profile_facts` for the
+    # vocabulary, precedence and lock rules the engine's own writers already use
+    # (`test_import_boundary.py::ALLOWED` names this file as the one non-chatbot
+    # doorway, the same way it already names `app/api/v1/system/chatbot.py`).
+    # --------------------------------------------------------------------- #
+
+    def write_chatbot_profile_keeping_facts(self, contact_pk: str, profile: dict) -> None:
+        """Replace `chatbot_profile` with `profile`, except `facts`: whatever `facts`
+        the body carries is dropped, and whatever is stored at write time is kept.
+
+        One UPDATE reading the stored facts inside the statement, so a fact a turn
+        commits between the caller's read and this write is not lost (reviewer pass
+        at d89110c0, S7; AC-MEM040). Not committed here."""
+        from sqlalchemy import text
+
+        body = {k: v for k, v in dict(profile).items() if k != "facts"}
+        self.db.execute(
+            text(
+                "UPDATE respond_contacts SET chatbot_profile = CAST(:p AS jsonb) || CASE "
+                "WHEN chatbot_profile ? 'facts' THEN jsonb_build_object('facts', chatbot_profile->'facts') "
+                "ELSE '{}'::jsonb END WHERE id = :i"
+            ),
+            {"p": json.dumps(body), "i": str(contact_pk)},
+        )
+        self.db.expire_all()
+
+    def get_chatbot_memory(self, contact_id: str, *, include_episodes: bool) -> dict:
+        from app.models.user import SystemSetting
+        from app.services.chatbot.turn import memory as memory_mod
+        from app.services.chatbot.turn import profile_facts
+
+        contact = self.get_contact(contact_id)
+        system_setting = self.db.query(SystemSetting).first()
+        system_memory = (getattr(system_setting, "chatbot_memory", None) or {}) if system_setting else {}
+        own_level = getattr(contact, "chatbot_memory_level", None)
+        effective = memory_mod.resolve_level(own_level, system_memory)
+
+        merged = profile_facts.merged_facts_for_display(self.db, contact)
+        facts_out = [
+            profile_facts.fact_for_display(key, entry)
+            for key in profile_facts.VOCABULARY
+            for entry in (next((f for f in merged if f.get("key") == key), None),)
+            # A tombstone (`value: null`) is bookkeeping, not a fact (S10).
+            if entry is not None and entry.get("value") is not None
+        ]
+        vocabulary_out = [profile_facts.vocabulary_entry(key) for key in profile_facts.VOCABULARY]
+
+        return {
+            "level": {
+                "own": own_level,
+                "effective": effective,
+                # Reviewer pass at d89110c0 (S6): with the switch off, the default
+                # a contact follows is off, whatever `default_level` is stored.
+                "system_default": (
+                    (system_memory.get("default_level") or "full") if system_memory.get("enabled") else "off"
+                ),
+            },
+            "facts": facts_out,
+            "vocabulary": vocabulary_out,
+            # Security review 26 Sep 2026 (S3): free-text conversation summaries are
+            # gated behind `system.chat_history.view` ON TOP of the route's own view
+            # permission - `None` (never an empty list, which would read as "no
+            # conversations" rather than "not shown to you") when the caller lacks it.
+            "episodes": self._chatbot_episodes_summary(contact) if include_episodes else None,
+            "open_orders": self._chatbot_open_orders(contact),
+        }
+
+    #: N3 (security review 26 Sep 2026): the newest N closed frames are what a
+    #: staff card ever needs to show - bounded so a long-lived contact's full
+    #: episode history is never loaded row-by-row on every memory-card read.
+    _EPISODE_ROWS_LIMIT = 10
+    #: N3: an "open turns" query has no natural cap otherwise (a contact that
+    #: never closes a topic would load every turn it ever sent).
+    _OPEN_TURNS_LIMIT = 50
+
+    def _chatbot_episodes_summary(self, contact: RespondContact) -> dict:
+        from app.models.conversation_frame import ConversationFrame
+        from app.services.chatbot.turn.episode_digest import readable_summary, topic_label
+        from app.services.chatbot.turn.memory import KEEP_EPISODES
+
+        empty = {
+            "kept": 0,
+            "console_kept": 0,
+            "limit": KEEP_EPISODES,
+            "current": None,
+            "console_current": None,
+            "rows": [],
+        }
+        respond_id = contact.respond_io_id
+        if not respond_id:
+            return empty
+        # Security review 26 Sep 2026 (B1): a `respond_io_id` shared by more than
+        # one contact is not this contact's alone to read - refuse rather than
+        # showing a namesake's conversations.
+        if not self._respond_id_belongs_uniquely_to(contact):
+            logger.warning(
+                "chatbot: respond_io_id %s is shared by more than one contact; "
+                "refusing to read conversation_frame rows for contact %s",
+                respond_id,
+                contact.id,
+            )
+            return empty
+        # Fix lane round 3 (R1): both worlds. A console turn writes its own test
+        # frames (D14's third exception, Q15), and the owner hand-tests from the
+        # console, so the staff screen shows them too, each row marked `console`.
+        # The bot itself still never reads across worlds (`_memory_intake`).
+        kept = (
+            self.db.query(ConversationFrame)
+            .filter(
+                ConversationFrame.contact_respond_id == respond_id,
+                ConversationFrame.is_test.is_(False),
+            )
+            .count()
+        )
+        console_kept = (
+            self.db.query(ConversationFrame)
+            .filter(
+                ConversationFrame.contact_respond_id == respond_id,
+                ConversationFrame.is_test.is_(True),
+            )
+            .count()
+        )
+        frames = (
+            self.db.query(ConversationFrame)
+            .filter(ConversationFrame.contact_respond_id == respond_id)
+            .order_by(ConversationFrame.last_activity_at.desc())
+            .limit(self._EPISODE_ROWS_LIMIT)
+            .all()
+        )
+        rows = [
+            {
+                "id": f.id,
+                "date": f.last_activity_at.isoformat() if f.last_activity_at else None,
+                "domains": [f.domain] if f.domain else [],
+                # The recall reply's own Topic word (`Stock`, `Incoming stock`).
+                "topic": topic_label(f.domain),
+                # Fix round 6: never the old bracket-tag chain, even before the
+                # backfill rewrites it (the recall reply reads the same way).
+                "summary": readable_summary(f.summary, f.domain, f.entities),
+                "turn_count": len(f.turn_ids or []),
+                "close_reason": f.close_reason,
+                "first_turn_id": (f.turn_ids or [None])[0],
+                "console": bool(f.is_test),
+            }
+            for f in frames
+        ]
+        return {
+            "kept": kept,
+            "console_kept": console_kept,
+            "limit": KEEP_EPISODES,
+            "current": self._chatbot_open_conversation(respond_id, is_test=False),
+            "console_current": self._chatbot_open_conversation(respond_id, is_test=True),
+            "rows": rows,
+        }
+
+    def _chatbot_open_conversation(self, respond_id: str, *, is_test: bool) -> dict | None:
+        """The open conversation of one world: this contact's turns in no frame yet
+        (`memory.open_turns_newest`, the same reading the switch detector uses). R2
+        (fix lane round 3): `domains` is the current domain, the newest one a turn
+        planned, never an empty list while one exists."""
+        from app.models.chatbot_turn import ChatbotTurn
+        from app.services.chatbot.turn import memory as memory_mod
+        from app.services.chatbot.turn.episode_digest import digest, topic_domain, topic_label
+
+        query = memory_mod._open_turns_query(
+            self.db, contact_respond_id=respond_id, is_test=is_test, exclude_turn_id=None
+        )
+        turn_count = query.count()
+        if not turn_count:
+            return None
+        first = query.order_by(ChatbotTurn.created_at.asc()).first()
+        # N3: bounded, the newest turns only (their `trace` is the heavy column).
+        newest = memory_mod.open_turns_newest(
+            self.db, contact_respond_id=respond_id, is_test=is_test, limit=self._OPEN_TURNS_LIMIT
+        )
+        turn_dicts = [memory_mod._turn_to_digest_dict(r) for r in reversed(newest)]
+        domain = next(
+            (d for d in (topic_domain(t) for t in reversed(turn_dicts)) if d),
+            None,
+        )
+        return {
+            "turn_count": turn_count,
+            "first_turn_id": first.id if first is not None else None,
+            "started_at": first.created_at.isoformat() if first is not None and first.created_at else None,
+            "summary": digest(turn_dicts)["summary"] if turn_dicts else "",
+            "domains": [domain] if domain else [],
+            "topic": topic_label(domain),
+        }
+
+    def _chatbot_open_orders(self, contact: RespondContact) -> dict:
+        from app.models.access import RespondContactCustomer
+        from app.models.order import Customer, SalesOrder
+
+        primary = (
+            self.db.query(Customer)
+            .join(
+                RespondContactCustomer,
+                RespondContactCustomer.customer_id == Customer.id,
+            )
+            .filter(
+                RespondContactCustomer.contact_id == contact.id,
+                RespondContactCustomer.is_primary.is_(True),
+            )
+            .first()
+        )
+        if primary is None:
+            return {"customer_name": None, "rows": []}
+        orders = (
+            self.db.query(SalesOrder)
+            .filter(SalesOrder.customer_id == primary.id, SalesOrder.status.notin_(("closed", "cancelled")))
+            .order_by(SalesOrder.order_date.desc().nullslast())
+            .limit(5)
+            .all()
+        )
+        rows = [
+            {
+                "document": order.so_number,
+                "kind": "sales_order",
+                "status": (order.status or "open").replace("_", " ").title(),
+                "summary": "",
+                "date": order.order_date.isoformat() if order.order_date else None,
+                "href": f"/scm/sales-orders/{order.id}",
+            }
+            for order in orders
+        ]
+        return {"customer_name": primary.customer_name, "rows": rows}
+
+    def set_contact_fact(self, contact_id: str, key: str, value, *, user_id: str, include_episodes: bool) -> dict:
+        from app.services.chatbot.turn import profile_facts
+        from app.services.error_handler import handle_unprocessable
+
+        self.get_contact(contact_id)
+        entry = profile_facts.set_staff_fact(self.db, contact_id, key, value, user_id=user_id)
+        if entry is None:
+            raise handle_unprocessable(f"{key!r} is not an editable fact, or the value is invalid.")
+        return self.get_chatbot_memory(contact_id, include_episodes=include_episodes)
+
+    def delete_contact_fact(self, contact_id: str, key: str) -> None:
+        """N1 (security review 26 Sep 2026): 422 on an unknown key, the same as the
+        PUT route - never a silent no-op or a 500 for a caller's typo."""
+        from app.services.chatbot.turn import profile_facts
+        from app.services.error_handler import handle_unprocessable
+
+        self.get_contact(contact_id)
+        spec = profile_facts.VOCABULARY.get(key)
+        # N5: a CRM-only key has nothing stored to delete.
+        if spec is None or not spec.allow_staff:
+            raise handle_unprocessable(f"{key!r} is not an editable fact.")
+        profile_facts.delete_fact(self.db, contact_id, key)
+
     @staticmethod
-    def contact_to_response_dict(contact: RespondContact) -> dict:
+    def contact_to_response_dict(contact: RespondContact, db: Optional[Session] = None) -> dict:
         ws = getattr(contact, "workspace", None)
         access_types = list(getattr(contact, "access_types", []) or [])
+        chatbot_profile = dict(getattr(contact, "chatbot_profile", None) or {})
+        if db is not None:
+            # AC-MEM041: both dict builders carry facts, the live CRM ones (never
+            # stored) merged in the same way the memory GET does. Skipped entirely
+            # when there is nothing to add - a contact with no stored facts and no
+            # CRM link keeps the exact `{}` `chatbot_profile` pre-lane-A callers
+            # already assert on, rather than growing an always-empty `facts: []`.
+            from app.services.chatbot.turn import profile_facts
+
+            merged = profile_facts.merged_facts_for_display(db, contact)
+            if merged:
+                chatbot_profile["facts"] = merged
         return {
             "id": str(contact.id),
             "phone_number": contact.phone_number,
@@ -355,8 +676,10 @@ class ContactService:
             # silenced. A manual dict builder drops anything it does not list.
             "outbound_enabled": bool(getattr(contact, "outbound_enabled", True)),
             # Chatbot turn re-architecture (AC-1503) - same rule as every field above.
-            "chatbot_profile": getattr(contact, "chatbot_profile", None) or {},
-            "chatbot_recall_enabled": bool(getattr(contact, "chatbot_recall_enabled", False)),
+            "chatbot_profile": chatbot_profile,
+            # Chatbot memory lane A (contract section 5): null = follow the system
+            # default. Must be listed explicitly, same rule as every field above.
+            "chatbot_memory_level": getattr(contact, "chatbot_memory_level", None),
             # S6: the stock allowance, default ON - a row without the attribute is allowed.
             "chatbot_stock_allowed": bool(getattr(contact, "chatbot_stock_allowed", True)),
             # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): both

@@ -641,7 +641,7 @@ class TestStructuralCoverage:
         below so the gate is stated rather than counted.
         """
         gated_paths = {r.path for r in _mounted_get_routes() if _is_gated(r)}
-        assert len(gated_paths) == 44
+        assert len(gated_paths) == 45
         assert gated_paths == {
             "/api/v1/user-management/teams/",
             "/api/v1/user-management/teams/{team_id}",
@@ -680,6 +680,11 @@ class TestStructuralCoverage:
             # 403/200 pair and the `.edit` gate on the PUT sibling live in
             # tests/test_contact_portal_forms.py.
             "/api/v1/user-management/contacts/{contact_id}/portal-forms",
+            # --- Chatbot memory lane A (PLAN-chatbot-memory-26sep.md S2): the contact's
+            # memory read (facts, recent conversations, open orders), the same read as
+            # the contact record, so `user_management.contacts.view`; its episodes need
+            # `system.chat_history.view` as well (tests/chatbot/test_memory_security_fixes.py).
+            "/api/v1/user-management/contacts/{contact_id}/chatbot/memory",
             # --- Q2 decided: user_management.settings.view (the narrow
             # /settings/app-config projection stays open - see the allowlist)
             "/api/v1/user-management/settings/",
