@@ -1,8 +1,8 @@
 # PLAN: contact <-> customer links, and a sales agent's customers from the agent side
 
-Status: grilling (crew-ask posted 29 Sep 2026); track to be named after the answers.
+Status: planned, round 1 (29 Sep 2026); full track, no migration. Crew-ask posted on PR #1366, recommendations written in.
 Domain: sales (customer master, sales agents) + user_management (contacts).
-UAC: `contact-customers-29sep-acceptance-criteria.md` alongside (written after the grill).
+UAC: `contact-customers-29sep-acceptance-criteria.md` alongside.
 Lane: CONTACT-CUSTOMERS. Siblings that build on this: SALES-ASKS-TODO, CHATBOT-CUSTOMER-SCOPE.
 
 Owner, verbatim (29 Sep 2026, follow-up from PR #1333): "i think we need a way to configure
@@ -91,6 +91,148 @@ handles".
 - A contact's sales agents = the distinct `sales_agent_id` over its customer links (derived,
   never stored twice).
 
-## Design
+## Journey
 
-To be written after the grill (see the crew-ask on the PR).
+**Contact side.** A CS admin opens a WhatsApp contact (Internal Users > Contacts > a row). The
+Profile tab shows, under Contact Information, a "Customers" card: the customer accounts this
+phone number belongs to, each with the sales agent handling that account. The admin picks a
+customer in one searchable select ("Add customer"; the option shows the customer's current
+agent), and the row appears. If the contact belongs to several accounts, one click marks the
+one a quote defaults to as Primary. Unlink is a countdown, not a dialog. Below the linked
+rows the card offers up to five phone-matched customers as "Suggested", each with a one-click
+Link; nothing is linked until a human clicks. Nobody else is told anything.
+
+**Agent side.** A sales admin opens a sales agent (Master Data > Sales Agents > a row). A new
+"Customers" line tab lists the customers this agent handles (the customers whose
+`sales_agent_id` is this agent), searchable, paged. "Assign customer" is one searchable select
+(the option shows the customer's current agent, if any); picking moves the customer to this
+agent. Unassign per row is a countdown. The customer form's own "Sales agent" field keeps
+working; both sides write the same column.
+
+Decisions the user makes: which customer (once per link), primary or not (optional). Nothing
+else is asked; the agent behind a customer is derived, never typed.
+
+## Design (on the crew-ask recommendations; revised if the owner answers otherwise)
+
+Track: **full, no migration**. No schema change: the link table and the FK exist. No new
+permission slug. Security-reviewer runs (multi-company scoping of the link rows).
+
+### D1 Relation and seams for the sibling lanes
+
+- Customer link = `RespondContactCustomer` row. `contact_customer_service.list_links(db,
+  contact_id)` is the read the sibling lanes use (CHATBOT-CUSTOMER-SCOPE: the contact may only
+  query these `customer_id`s).
+- New `contact_customer_service.agents_for_contact(db, contact_id) -> list[SalesAgent]`:
+  distinct agents over the contact's links, ordered by agent code (SALES-ASKS-TODO: whose
+  to-do a contact's ask lands on). Derived, never stored.
+- Repair inside the lane: `link_customer` must stamp `company_id` from the CUSTOMER
+  (`Customer.company_id`), because `before_insert` (`app/services/company_scope.py:301-326`)
+  raises on an owned insert under a multi-company scope and leaves an already-set value alone.
+  Today the function never sets it, so a staff user scoped to two companies cannot link at
+  all. `propose_customers` and `list_links` run under the caller's scope unchanged.
+
+### D2 Backend routes
+
+Contact side, in `app/api/v1/user_management/contacts.py` (same file as the other per-contact
+sections), read under `user_management.contacts.view`, write under `.edit`:
+
+- `GET /api/v1/user-management/contacts/{contact_id}/customers` ->
+  `{ "data": [ContactCustomerLink], "suggested": [SuggestedCustomer] }`.
+  `ContactCustomerLink`: `customer_id, customer_code, customer_name, is_active, is_primary,
+  source, sales_agent_id, sales_agent_code, sales_agent_name, created_at`.
+  `SuggestedCustomer`: `customer_id, customer_code, customer_name, phone_number,
+  sales_agent_code, sales_agent_name` (at most 5, from `propose_customers`).
+- `POST .../customers` body `{ "customer_id": str, "is_primary": bool = false }` -> 201
+  `ContactCustomerLink`. Idempotent on the pair (a repeat answers 201 with the same row).
+  Unknown customer or a customer outside the caller's scope -> 404 (scope hides it, so the
+  two are the same answer). Unknown contact -> 404.
+- `PATCH .../customers/{customer_id}` body `{ "is_primary": bool }` -> 200
+  `ContactCustomerLink`; true demotes the other primary in that company, false clears.
+- Unlink: pending action `contact_customer_link.unlink`, `entity_types=("contact_customer_link",)`,
+  `entity_id` = the LINK row id, `window=WINDOW_REVERSIBLE`, `permission=
+  "user_management.contacts.edit"`, execute = `unlink_customer` by link id. No separate DELETE
+  route: nothing would call it (the button parks the action). Registered in
+  `app/services/record_actions.py` beside the spec-visibility remove.
+
+Agent side, in `app/api/v1/master_data/sales_agents.py`, read under
+`master_data.sales_agents.view`, write under `.edit`:
+
+- `GET /api/v1/master-data/sales-agents/{id}/customers?page&limit&query&sort&dir` ->
+  `ListResponse[CustomerResponse]` (customers whose `sales_agent_id` is this agent, under the
+  caller's scope; `query` matches code or name; default sort `customer_code asc`).
+- `POST .../customers` body `{ "customer_id": str }` -> 200 `CustomerResponse`. Calls
+  `CustomerService.update_customer(customer_id, CustomerUpdate(sales_agent_id=agent.id))`, so
+  an inactive agent or a cross-company pair is the same 422 the customer form gets, and the
+  customer audit row (`sales_agent_id` is an audited column, `order.py:85`) is written the
+  same way. Reassignment from another agent is allowed (Q6a).
+- Unassign: pending action `customer.unassign_sales_agent`, `entity_types=("customer",)`,
+  `entity_id` = customer id, payload `{ "sales_agent_id": <agent> }`, `window=
+  WINDOW_REVERSIBLE`, `permission="master_data.sales_agents.edit"`. Execute clears
+  `customers.sales_agent_id` only while it still equals the payload's agent (a customer moved
+  to another agent during the window is left alone).
+- `GET /api/v1/order-management/customers/select` (`customers_select.py:19`) additionally
+  returns `sales_agent_id, sales_agent_code, sales_agent_name` per row (additive; the
+  relationship is already `selectin`, so no per-row query). Both pickers read this select.
+
+### D3 Frontend
+
+Contact side (`app/(protected)/user-management/contacts/[id]/`):
+
+- `components/ContactCustomersSection.tsx`: a Card "Customers" placed directly after the
+  Contact Information card on `page.tsx`. Body: rows `code - name` | `Sales agent` (`code -
+  name`, or "No sales agent") | Primary `Badge` or a "Make primary" ghost button | Unlink
+  (row action, `useDeferredRowAction`, `surface: 'inline'`, verb "Unlinking"). Empty state:
+  heading "No customers linked" + hint "Link the customer accounts this contact belongs to".
+  "Add customer": one `SearchableSelect` (clearable, server search through the customers
+  select with `limit=50`, option label `code - name`, sub-label the current agent), adding on
+  pick. "Suggested" list below the rows (only when non-empty): `code - name`, phone, agent,
+  a "Link" button.
+- `services/contactCustomersService.ts` (contract at the top of the file), `hooks/
+  useContactCustomers.ts` (`useContactCustomers`, `useLinkContactCustomer`,
+  `useSetContactCustomerPrimary`; invalidate `['contact-customers', contactId]` + toast).
+- Layout at 375px: rows wrap to two lines (name on the first, agent + actions on the
+  second); the select is full width.
+
+Agent side (`app/(protected)/master-data-management/sales-agents/[id]/components/`):
+
+- `SalesAgentCustomersTab.tsx`: a fourth line tab "Customers" after Transfers in
+  `SalesAgentDetail.tsx:280-294`. Toolbar: search + "Assign customer" `SearchableSelect`
+  (same select source, option sub-label the current agent). `DataGrid` (`tableLayout:
+  { width: 'fixed', columnsResizable: true }`, `columnResizeMode: 'onChange'`, explicit
+  `size` per column, `truncate` + `title`): Code, Name, Region, Market segment, Status
+  (`Badge`), Unassign (row action, toast surface, verb "Unassigning"). `rowHref` to the
+  customer detail. Empty state: heading "No customers assigned" + hint "Assign the customers
+  this agent handles".
+- `services/salesAgentService.ts` gains `getSalesAgentCustomers` (via `buildDataGridParams`)
+  and `assignSalesAgentCustomer`; `hooks/useSalesAgents.ts` gains `useSalesAgentCustomers`
+  and `useAssignSalesAgentCustomer`.
+- Customer picker options: one new `searchCustomersSelect(query, pageIndex)` in
+  `order-management/customers/services/customerService.ts` (server-searched, `limit=50`,
+  `offset`, value = customer id, label `code - name`, `description` = the current agent
+  `code - name` or "No sales agent"), used by BOTH pickers through `SearchableSelect`'s
+  `fetchOptions` + `paginated`. The two existing callers of the select
+  (`order-management/shared/hooks/use-customer-select-query.ts`, whole list, value = id;
+  `scm/services/scmOptionsService.ts:86 searchCustomerOptions`, value = customer CODE) fit
+  neither surface: the first pulls 6,397 rows, the second addresses by code and a code is
+  not unique. Not a third copy of the same thing: a different key.
+
+No new motion: countdowns use the existing `DeferredCountdown`; nothing else animates.
+
+### D4 Out of scope
+
+Customer detail "WhatsApp contacts" section (Q8, trigger named in the crew-ask); permission
+gating of the customer PUT (#1190); backfill of phone matches (Q4c, refused by default);
+the portal and chatbot readers (sibling lanes).
+
+## Tests (tester-first; one line per AC in the UAC)
+
+pytest `tests/test_contact_customers_lane.py` (Postgres, `pg_session`, ZZT prefixes), vitest
+beside each component, browser evidence under `documentation/plans/sales/evidence/
+contact-customers/`.
+
+## Slices
+
+- S1 Phase 1 FE mock: both surfaces against a mock service (no backend).
+- S2 Phase 2 BE: tester red tests, then routes + service repair + pending actions, mock
+  swapped for `apiFetch`.
+- S3 Phase 3: reviewer + security-reviewer + browser verification, fix round, hand test.
