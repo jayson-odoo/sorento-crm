@@ -6,7 +6,7 @@ import RequireAccess from '@/app/components/common/RequireAccess';
 import { DivergenceReviewClient } from './components/DivergenceReviewClient';
 
 export const metadata: Metadata = {
-  title: 'AutoCount comparison',
+  title: 'AutoCount differences',
   description:
     'Where AutoCount disagrees with the sales order we published, line by line, and which side wins.',
 };
@@ -21,11 +21,11 @@ export default async function ProjectSalesOrderDivergencePage({
     <RequireAccess permission="projects.projects.view">
       <Container className="space-y-6">
         <PageHeader
-          title="AutoCount Comparison"
+          title="AutoCount Differences"
           crumbs={projectCrumbs(
             projectId,
             { title: 'Sales Order', path: `/project-sales/${projectId}/sales-orders/${psoId}` },
-            { title: 'AutoCount Comparison' },
+            { title: 'AutoCount Differences' },
           )}
         />
         <DivergenceReviewClient projectId={projectId} psoId={psoId} />

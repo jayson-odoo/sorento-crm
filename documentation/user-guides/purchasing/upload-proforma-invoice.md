@@ -28,14 +28,27 @@ Invoices**, and our packing list is born later, when you convert.
    same layout it is folded to "N of N columns mapped from saved layout" with a **Review** link,
    and it opens again only when a column this supplier has never had before turns up - already-
    mapped columns, and any you marked **Ignore**, don't reopen it.
-7. Click **Test**. Test saves the column choices for this supplier and reads the file in the same
-   click. Each file comes back labelled **Proforma invoice**, **Packing list**, or **Combined**,
-   with its blocks, lines, and header read out. A packing-list file also shows **Attaches to** -
-   the invoice it will attach to, already picked when the file states the invoice number or
-   shares its date; change it yourself only if that guess is wrong. A sheet that names itself
-   装箱单 (packing list) but also carries prices, cartons and CBM together reads as **Combined**:
-   Test shows one proforma-invoice block and one draft packing-list block from the same file.
-8. Click **Confirm**. A **Combined** file's Confirm creates the proforma invoice and its packing
+7. Below the column grid, when the sheet packs more than one label into a single header cell -
+   a supplier's B/L, container and seal often sit together like that, in one cell - a **Header
+   fields** section lists every `label：value` pair found above the table (and in the footer
+   rows below it), the value as its sample and the label exactly as the supplier wrote it. Pick a
+   field for each: **PI number**, **Invoice date**, **BL**, **Container**, **Seal**,
+   **Currency**, or **Ignore** for a label that isn't one of ours - an address, a phone number.
+   Map a label once and it splits out of the shared cell from then on: DAFUYUAN's
+   `提单号 ：OOLU2339207730 柜号 ：FSCU9304169 封条号：OOLLGZ7182` reads as one blob until 柜号 is
+   mapped to **Container** and 封条号 to **Seal**, then splits into its three values on every
+   later upload from that supplier. The section folds the same way the column grid above it does,
+   into "N of N header fields mapped from saved layout" with its own **Review** link, and reopens
+   only for a label this supplier has never had before.
+8. Click **Test**. Test saves the column and header-field choices for this supplier together and
+   reads the file in the same click. Each file comes back labelled **Proforma invoice**,
+   **Packing list**, or **Combined**, with its blocks, lines, and header read out. A packing-list
+   file also shows **Attaches to** - the invoice it will attach to, already picked when the file
+   states the invoice number or shares its date; change it yourself only if that guess is wrong.
+   A sheet that names itself 装箱单 (packing list) but also carries prices, cartons and CBM
+   together reads as **Combined**: Test shows one proforma-invoice block and one draft
+   packing-list block from the same file.
+9. Click **Confirm**. A **Combined** file's Confirm creates the proforma invoice and its packing
    list together, from that one upload.
 
 Re-uploading the same supplier's invoice (same supplier and the same invoice number written on
@@ -97,29 +110,54 @@ behaviour: picking a product in edit mode patches the draft, and Save persists i
 **Access:** the **Product** column control is offered only to a user who holds both the proforma invoice upload
 and reorder permissions. A user lacking either permission sees the item code as read-only text.
 
+## General tab - Container, Seal, BL, Consignee
+
+A proforma invoice's **General** tab shows **Container**, **Seal**, **BL**, and **Consignee**, in
+that order, read off the header fields above (a field the sheet never stated, or that isn't
+mapped yet, shows "-"). **Consignee** always reads your own company - it's never read off the
+supplier's sheet.
+
+## General tab - Source files
+
+A proforma invoice's **General** tab also has a **Source files** section listing the file(s) it was read from:
+the invoice workbook and, once attached, the packing-list workbook. Each file appears as a card showing
+its name, type (e.g. "Proforma invoice workbook" or "Packing list workbook"), and file size. Icons above
+the name offer **Preview** (to open the file in your browser) and **Download** (to save it).
+
 ## Convert to packing list
 
 Our own packing list is never created by this upload - it is born by converting proforma invoices,
 or by hand with **Create Packing List** on the Packing Lists page.
 
-1. On **Proforma Invoices**, tick the invoices going into one container.
-2. Click **Start**, then **Convert N to packing list**.
-3. The **Convert to a packing list** dialog shows what carries onto the draft: the container
-   number, seal number and bill of lading, when every selected invoice's packing rows (or their
-   own container reference) agree on one container. When they don't agree, those fields are left
-   blank and you're told so once you convert.
+1. On **Proforma Invoices**, tick the invoices going into one container, click **Start**, then
+   **Convert N to packing list** - or open a single invoice and press its own **Convert to
+   packing list** button (the header's primary action; it reads **Convert the rest** once part of
+   the invoice is already on a packing list). That header button is the only way to start a
+   convert from an invoice's own page now; its **Packing Lists** tab no longer has a Convert
+   button of its own.
+2. The **Convert to a packing list** dialog opens on a **Container size** picker and, for a
+   single invoice, a search box that filters the line table by code or product - useful once a
+   PI runs to dozens of lines. Every invoice line appears once in that table, even when the same
+   product repeats across several lines or packing rows - nothing doubles up and nothing is left
+   out.
+3. A **Carried onto the draft:** line states exactly what the packing list is about to receive -
+   only the parts that actually have a value: **Container**, **Seal**, **SO** (the invoice's BL
+   number), and **Consignee** (always your own company). A part the sheet never stated is left out
+   of the line rather than shown as a dash.
 4. Each supplier packing row goes onto the draft whole or stays behind for a later container - it
    is never split by typing a smaller quantity. If a supplier packed one product as two cartons of
    different sizes (Kailu's 50-carton batch and 35-carton batch of the same item, for example),
    the draft carries both as two lines, and the printed packing list shows it the same way.
 5. Click **Convert**.
 
-## General tab - Source files
+The packing list this creates shows **Container no**, **Seal no**, **SO** and **Consignee** filled
+in on its own **Container** card; **Shipper** stays "-" (nothing on a supplier's sheet states it).
+To get the workbook itself afterwards, see [Download a packing
+list](upload-packing-list.md#download-a-packing-list).
 
-A proforma invoice's **General** tab has a **Source files** section listing the file(s) it was read from:
-the invoice workbook and, once attached, the packing-list workbook. Each file appears as a card showing
-its name, type (e.g. "Proforma invoice workbook" or "Packing list workbook"), and file size. Icons above
-the name offer **Preview** (to open the file in your browser) and **Download** (to save it).
+**For an invoice uploaded before this fix:** if the same product sat on more than one line and its
+packing rows had all landed on just one of them, a rebind script the administrator runs after
+deploy corrects it; a packing list already converted from that invoice is left as it is.
 
 ## Chinese wording and its English reading
 
@@ -151,6 +189,8 @@ you convert (or create one by hand).
   wait for.
 * Uploading, attaching, replacing, matching, and dismissing all happen synchronously; no
   background job or notification is involved.
+* Downloading the packing list a convert produces runs in the background - see [Download a
+  packing list](upload-packing-list.md#download-a-packing-list).
 
 ## Bulk import
 
@@ -162,7 +202,8 @@ own **Columns for** panel, named by the file.
 ## See also
 
 * [Upload packing list](upload-packing-list.md) - the Packing Lists page's own upload (files the
-  workbook as an attachment, unread) and creating one by hand
+  workbook as an attachment, unread), creating one by hand, and [downloading a packing
+  list](upload-packing-list.md#download-a-packing-list)
 * [Upload SPO](upload-spo.md)
 * [Translating supplier wording](translating-supplier-wording.md)
 * [System Management - Import column mappings](../system-management/import-column-mappings.md)

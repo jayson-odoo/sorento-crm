@@ -723,6 +723,61 @@ describe('SupplierDocumentsUploadDialog - inline column mapper (F3, G5)', () => 
     expect(testButton()).not.toBeDisabled();
   });
 
+  // PLAN-pi-header-fields-convert-fixes-24sep.md F3: header-field picks (the PI's
+  // label:value block, e.g. 提单号 -> BL) travel in the SAME `mappings` array Test/Confirm
+  // save, alongside the column picks - one table, one save, no separate admin step.
+  it('sends header-field picks in the same save body as column picks (AC-F3)', async () => {
+    probeImportMapping.mockResolvedValue({
+      probe: {
+        header_row: 14,
+        columns: [
+          { position: 0, header: 'ITEM', field: 'item_code', source: 'supplier', samples: [] },
+          { position: 1, header: 'QTY', field: 'qty', source: 'supplier', samples: [] },
+        ],
+        required_fields: ['item_code', 'qty'],
+        header_fields: [
+          {
+            row: 13,
+            label: '提单号',
+            sample: 'OOLU2339207730',
+            field: 'bl_no',
+            source: 'supplier',
+          },
+        ],
+      },
+      fields: [
+        { field: 'item_code', label: 'Item code' },
+        { field: 'qty', label: 'Quantity' },
+      ],
+    });
+    applySupplierDocuments.mockResolvedValue({
+      proforma_invoice_ids: [], shipment_ids: [], links_written: 0, attachment_ids: [],
+    });
+    openDialog();
+    pickFiles([xlsx('invoice.xls')]);
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(1));
+    // Waited on the FOLDED summary, not the bare "Header fields" heading: the heading
+    // renders the instant the probe lands, but the mapper's own mount effect - which also
+    // fires `onChange` with the header-field pick combined in - needs one more commit to
+    // propagate back up into this dialog's `mapByFile` state, and a Test click any sooner
+    // reads the pre-effect (column-only) selections.
+    expect(
+      await screen.findByText('1 of 1 header field mapped from saved layout'),
+    ).toBeInTheDocument();
+
+    fireEvent.click(testButton());
+
+    await waitFor(() => expect(saveImportMapping).toHaveBeenCalled());
+    const call = saveImportMapping.mock.calls[0][0] as { mappings: { header: string; field: string }[] };
+    expect(call.mappings).toEqual(
+      expect.arrayContaining([
+        { header: 'ITEM', field: 'item_code' },
+        { header: 'QTY', field: 'qty' },
+        { header: '提单号', field: 'bl_no' },
+      ]),
+    );
+  });
+
   // V6 (fix-round): the self-serve supplier picker changing supplier must re-probe every
   // already-dropped file against the NEW supplier's own layout, not keep answering with
   // the PREVIOUS supplier's resolved picks.

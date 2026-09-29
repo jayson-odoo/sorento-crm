@@ -169,7 +169,7 @@ def test_a_rule_scoped_to_description_never_fires_on_pasted_text():
         "ZZT-PFT-SCOPE-DESC",
         rules_by_key={
             "material": [
-                {"match": "contains", "pattern": "BRASS", "value": "brass", "source": "description"}
+                {"builder": {"kind": "words", "look_in": "description", "words": ["BRASS"], "value": "brass"}}
             ]
         },
     )
@@ -183,7 +183,7 @@ def test_a_rule_scoped_to_flyer_fires_on_pasted_text():
         "ZZT-PFT-SCOPE-FLYER",
         rules_by_key={
             "material": [
-                {"match": "contains", "pattern": "BRASS", "value": "brass", "source": "flyer"}
+                {"builder": {"kind": "words", "look_in": "flyer", "words": ["BRASS"], "value": "brass"}}
             ]
         },
     )
@@ -197,7 +197,7 @@ def test_a_rule_scoped_to_any_fires_on_pasted_text():
         "ZZT-PFT-SCOPE-ANY",
         rules_by_key={
             "material": [
-                {"match": "contains", "pattern": "BRASS", "value": "brass", "source": "any"}
+                {"builder": {"kind": "words", "look_in": "any", "words": ["BRASS"], "value": "brass"}}
             ]
         },
     )
@@ -210,7 +210,7 @@ def test_a_code_suffix_rule_still_fires():
     proposals = propose_from_text(
         "",
         "ZZT-PFT-CODE-GY",
-        rules_by_key={"finish": [{"match": "code_suffix", "pattern": "GY", "value": "grey"}]},
+        rules_by_key={"finish": [{"builder": {"kind": "code", "code_match": "ends_with", "texts": ["-GY"], "value": "grey"}}]},
     )
 
     assert _by_key(proposals)["finish"]["value"] == "grey"
@@ -227,10 +227,10 @@ def test_apply_scope_keeps_a_key_when_the_text_itself_establishes_the_gating_cla
         "ZZT-PFT-SCOPE-KEEP",
         rules_by_key={
             "class": [
-                {"match": "contains", "pattern": "TOILET", "value": "Water Closet", "source": "any"}
+                {"builder": {"kind": "words", "look_in": "any", "words": ["TOILET"], "value": "Water Closet"}}
             ],
             "seat_material": [
-                {"match": "contains", "pattern": "PP", "value": "pp", "source": "any"}
+                {"builder": {"kind": "words", "look_in": "any", "words": ["PP"], "value": "pp"}}
             ],
         },
         scopes_by_key={"seat_material": {"class": ["Water Closet"]}},
@@ -244,9 +244,9 @@ def test_apply_scope_drops_a_key_when_the_text_never_establishes_the_gating_clas
         "Basin Tap with PP Handle",
         "ZZT-PFT-SCOPE-DROP",
         rules_by_key={
-            "class": [{"match": "contains", "pattern": "TAP", "value": "Tap", "source": "any"}],
+            "class": [{"builder": {"kind": "words", "look_in": "any", "words": ["TAP"], "value": "Tap"}}],
             "seat_material": [
-                {"match": "contains", "pattern": "PP", "value": "pp", "source": "any"}
+                {"builder": {"kind": "words", "look_in": "any", "words": ["PP"], "value": "pp"}}
             ],
         },
         scopes_by_key={"seat_material": {"class": ["Water Closet"]}},

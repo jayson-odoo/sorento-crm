@@ -113,10 +113,12 @@
  *
  *      `demand` = the lines whose required date falls in that month, or every TBA /
  *      undated line for those two keys. `supply` = the events dated in that month:
- *      on hand by bin for the current month, an SPO at its arrival, a PO line at
- *      `issue + lead` (R29) carrying its `expected_date` as `bought_for` (display
- *      only, R30). An event whose arrival has passed with nothing received is listed
- *      with `overdue: true` and counted as nothing (R31), so its `free_qty` is 0.
+ *      on hand by bin for the current month, an SPO at its arrival, a PO line at its
+ *      Delivery date (`expected_date`, R42), else `issue + lead` (R29). A PO row and a
+ *      PO entry in a demand line's `assigned_from` carry `po_number`, `po_line_number`,
+ *      `po_id` and `po_line_id` (R42). An event whose arrival has passed past the
+ *      overdue policy's dead days is listed with `overdue: true` and counted as nothing
+ *      (R31 as R-O leaves it), so its `free_qty` is 0.
  *
  *      The drill FOOTS with the cell that opened it (R37): `sum(free_qty)` less
  *      `sum(short_qty)` over these rows IS that month's balance, which is what the two
@@ -133,8 +135,9 @@
  *         `user_downloads` row; `generate_stock_debt_xlsx` runs on the `imports`
  *         queue and the workbook is fetched later from My Downloads, once the
  *         worker marks the row ready. Same pipeline as the low stock report
- *         (`exportLowStockReport` in `summaryOrderService.ts`), a different route
- *         because this screen has its own filters and its own `split`, not a
+ *         (`exportLowStockReport` in `scm/low-stock-report/services/
+ *         lowStockReportService.ts`), a different route because this screen has
+ *         its own filters and its own `split`, not a
  *         `run_id` off a reorder run.
  *      -> 422 above `MAX_LOW_STOCK_ROWS` rows, same reason and same cap as the
  *         low stock report; nothing is written.
@@ -264,7 +267,7 @@ export async function getStockDebtCell(
 /**
  * Starts the workbook export through My Downloads (R10/R12, AC-12 to AC-18, AC-33/AC-34).
  * Returns a `MyDownload` row shaped exactly like the low stock report's
- * (`exportLowStockReport` in `summaryOrderService.ts`) so the same drawer / toast plumbing
+ * (`exportLowStockReport` in `scm/low-stock-report/services/lowStockReportService.ts`) so the same drawer / toast plumbing
  * serves both.
  */
 export async function exportStockDebt(params: StockDebtExportParams): Promise<MyDownload> {

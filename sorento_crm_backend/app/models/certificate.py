@@ -285,6 +285,7 @@ class CertificateProduct(Base):
     """
 
     __tablename__ = "certificate_products"
+    __audit_skip__ = "link table, 256 to 3,420 rows a day (measured 27 Sep 2026, review B3)"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     certificate_id = Column(

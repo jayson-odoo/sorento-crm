@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { EXPORT_SPLIT_OPTIONS } from '@/components/common/export-split';
 import { useExportStockDebt } from '../hooks/useStockDebtQuery';
 import { previewStockDebtExport } from '../services/stockDebtService';
 import type { StockDebtExportParams } from '../services/stockDebtService';
@@ -14,18 +15,12 @@ import type { StockDebtExportSplit, StockDebtListResponse } from '../types/stock
 /**
  * The board's ONE primary CTA (R12, R13): a single "Export" button that opens a small
  * popover rather than growing the toolbar with a second control. Split None / Supplier /
- * Category / Supplier x Category (R5, AC-33), a one-line rows/sheets preview built from
- * whatever the board already has loaded (`previewStockDebtExport` - no network call of its
- * own), then Export - which starts the workbook through My Downloads and never blocks on
- * the worker (AC-34).
+ * Category / Supplier x Category (R5, AC-33; the four options now live in the shared
+ * `EXPORT_SPLIT_OPTIONS` - the low stock report's own dialog renders the same list), a
+ * one-line rows/sheets preview built from whatever the board already has loaded
+ * (`previewStockDebtExport` - no network call of its own), then Export - which starts the
+ * workbook through My Downloads and never blocks on the worker (AC-34).
  */
-
-const SPLIT_OPTIONS: { value: StockDebtExportSplit; label: string }[] = [
-  { value: 'none', label: 'None' },
-  { value: 'supplier', label: 'Supplier' },
-  { value: 'category', label: 'Category' },
-  { value: 'supplier_category', label: 'Supplier x Category' },
-];
 
 export function StockDebtExportPopover({
   envelope,
@@ -64,7 +59,7 @@ export function StockDebtExportPopover({
             value={split}
             onValueChange={(value) => setSplit(value as StockDebtExportSplit)}
           >
-            {SPLIT_OPTIONS.map((option) => (
+            {EXPORT_SPLIT_OPTIONS.map((option) => (
               <label key={option.value} className="flex items-center gap-2 text-sm">
                 <RadioGroupItem value={option.value} id={`export-split-${option.value}`} />
                 {option.label}

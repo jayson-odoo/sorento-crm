@@ -203,6 +203,11 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "spec_registry", "Spec Registry"
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_attachments", "Product Attachments"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_sets", "Product Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_categories", "Product Categories"))
+# Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): gates editing the
+# X / Y chatbot answer limits on a category or product. Only .view (see the two values)
+# and .edit (change them) are read by code; .add / .delete are the _crud pattern's
+# siblings and gate nothing (there is no row of its own to add or delete).
+PERMISSION_REGISTRY.extend(_crud("master_data", "chatbot_stock_limits", "Chatbot Stock Limits"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
@@ -219,6 +224,14 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_resolutions", "Compla
 PERMISSION_REGISTRY.extend(_crud("procurement", "suppliers", "Suppliers"))
 PERMISSION_REGISTRY.append({"slug": "procurement.suppliers.export", "name": "Export Suppliers", "description": "Permission to export suppliers with dynamic fields."})
 PERMISSION_REGISTRY.extend(_crud("procurement", "product_suppliers", "Product-Suppliers"))
+# Cost price from the supplier (#1288, Lane A, plan section 10). Verify is Sorento-staff
+# only - never an integration role, never reachable from a public route - and a migration
+# sweep grants all four to every "purchasing role" (whoever holds `scm.proforma_invoice.
+# upload` today), plus admin/superadmin by name.
+PERMISSION_REGISTRY.append({"slug": "procurement.cost_price_changes.upload", "name": "Upload Cost Price Changes", "description": "Upload a supplier price list, map/skip its codes, discard a draft, and apply it while verification is off."})
+PERMISSION_REGISTRY.append({"slug": "procurement.cost_price_changes.view", "name": "View Cost Price Changes", "description": "View cost-price change sets, their lines, history and source file."})
+PERMISSION_REGISTRY.append({"slug": "procurement.cost_price_changes.verify", "name": "Verify Cost Price Changes", "description": "Decide lines, return or apply a cost-price change set pending verification."})
+PERMISSION_REGISTRY.append({"slug": "procurement.suppliers.price_link", "name": "Share Supplier Price Page", "description": "Issue, view and revoke a supplier's own price-page link."})
 PERMISSION_REGISTRY.extend(_crud("procurement", "packing_lists", "Packing Lists"))
 PERMISSION_REGISTRY.append({"slug": "procurement.packing_lists.import_container_status", "name": "Import Container Status", "description": "Permission to import the Container Status workbook onto packing lists."})
 PERMISSION_REGISTRY.append({"slug": "procurement.packing_lists.view_clearance", "name": "View Container Clearance Dates", "description": "See ETA delay, CIDB inspection/approval and gatepass dates. Without it these keys are absent from API responses, not null."})
@@ -810,6 +823,46 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# Sales module (plan 3.7, slice S6). Migration `sales_0001_teams` creates these and grants
+# them to admin and superadmin; declared here as well so a database built with create_all +
+# sync_permissions (CI, `scripts/bootstrap_env`) has them.
+PERMISSION_REGISTRY.extend(_crud("sales", "teams", "Sales Teams"))
+# Slice S2 (opportunities). Migration `sales_0003_opportunities` grants these the same way.
+PERMISSION_REGISTRY.extend(_crud("sales", "opportunities", "Sales Opportunities"))
+# Slice S1: `sales_0003_targets` creates and grants these the same way. `.edit` also gates a
+# period's figure, Duplicate and Add figure (plan 3.7).
+PERMISSION_REGISTRY.extend(_crud("sales", "targets", "Sales Targets"))
+
+
+# Finance module (plan 3.5, slice S0, #1309; ruling Q9). Migration `fin_0001_billing_documents`
+# creates these and grants them to admin and superadmin; declared here as well so a database
+# built with create_all + sync_permissions (CI, `scripts/bootstrap_env`) has them. `edit` and
+# `delete` gate only the AutoCount ingest and deletions doors (no UI creates or deletes a
+# billing document); `export` is the list's Export (S2).
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "finance.billing_documents.view",
+        "name": "View Billing Documents",
+        "description": "Permission to view billing documents (invoices, cash sales, credit and debit notes).",
+    },
+    {
+        "slug": "finance.billing_documents.export",
+        "name": "Export Billing Documents",
+        "description": "Permission to export the billing documents list.",
+    },
+    {
+        "slug": "finance.billing_documents.edit",
+        "name": "Ingest Billing Documents",
+        "description": "Permission to push billing documents through the AutoCount ingest.",
+    },
+    {
+        "slug": "finance.billing_documents.delete",
+        "name": "Delete Billing Documents",
+        "description": "Permission to delete billing documents through the AutoCount ingest.",
+    },
+])
+
+
 def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> int:
     """
     Idempotent sync: ensure every slug in PERMISSION_REGISTRY exists in user_permissions.
@@ -833,3 +886,16 @@ def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> i
     if created:
         db.commit()
     return created
+
+
+# Sales module (PLAN-retail-sales-reports-26sep, S1). One slug covers the Yearly
+# comparison and the Sales report screens, their Excel export and the chatbot route
+# (G10 (a)). Granted to admin and superadmin by `sales_s1_reports_module`; everyone else
+# through the role editor.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "sales.reports.view",
+        "name": "View sales reports",
+        "description": "Open the sales reports (Yearly comparison, Sales report), export them and ask for them on WhatsApp.",
+    },
+])

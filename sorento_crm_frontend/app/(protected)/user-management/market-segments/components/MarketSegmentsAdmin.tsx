@@ -343,7 +343,6 @@ export default function MarketSegmentsAdmin() {
           isLoading={isLoading}
           emptyMessage="No market segments yet. Add one to get started."
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-          emptyAction={listPrimaryAction}
         >
           <Card>
             <CardHeader className="block">

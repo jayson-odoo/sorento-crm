@@ -139,37 +139,33 @@ def test_an_overdue_promise_that_still_lands_in_time_is_drawn_as_water_and_dated
     promising against a passed date was promising against paperwork nobody believed. R-O
     keeps that distrust but gives it a number: a document whose arrival has passed with
     nothing received still counts, landing on `as_of + overdue_grace_days` rather than the
-    date it stated. Relative to this fixture's `as_of` (`TODAY`, 18 Aug 2026) the document's
-    lateness is TODAY minus its wall-clock arrival date, not the 40 days the wall clock
-    would read against real `today` - the sentence's number drifts with the calendar since
-    the arrival is dated off `date.today()`. Its ASSUMED arrival - 1 Sep, off the
-    RECOMMENDED 14-day grace this test activates explicitly - lands before the line's own
-    3 Sep, so question 1 draws it whole, dated at the assumed day, and the sentence states
-    the lateness. A document past
-    `overdue_dead_days` (90, also activated explicitly) is still not supply (R31 stands for
-    the dead).
+    date it stated. This fixture dates the document a FIXED number of days before `as_of`
+    (`TODAY`, 18 Aug 2026), not off the wall clock, so the walk's own lateness
+    (`days_late` on the trail's sentence) never drifts with the calendar. Its ASSUMED
+    arrival - 1 Sep, off the RECOMMENDED 14-day grace this test activates explicitly -
+    lands before the line's own 3 Sep, so question 1 draws it whole, dated at the assumed
+    day, and the sentence states the lateness. A document past `overdue_dead_days` (90,
+    also activated explicitly) is still not supply (R31 stands for the dead).
 
     R-O SHIPS at 0 / 0 (captain's ruling, 3 Sep 2026), so this fixture activates the
     RECOMMENDED 14 / 90 itself rather than relying on the shipped default - it is proving
     the grace RULE, not the number production starts at.
 
     The DRILL-DOWN table (`stock_detail`, behind the frontend's `StockDocumentsPanel`) keeps
-    carrying `overdue_days` off the WALL CLOCK, which is where "go and chase this one"
-    belongs - a different measurement from the walk's own `as_of`-relative one above.
+    carrying `overdue_days` off the WALL CLOCK instead of `as_of`, which is where "go and
+    chase this one" belongs - proved below on its own document, dated off `date.today()`,
+    so that proof stays self-consistent (both the fixture and the measurement read the same
+    real clock) without ever needing to agree with the walk's `TODAY`-relative document above.
     """
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         own = _warehouse(db, f"ZZTP{_uid()[:5]}-BB"[:20])
         _policy(db, overdue_grace_days=14, overdue_dead_days=90)
-        # `overdue_days` (the drill-down's) is measured against the WALL CLOCK
-        # (`spo_supply.overdue_days`'s own default), not against the board's `as_of` dial -
-        # so the arrival is dated off `date.today()`, never off the fixture's own `TODAY`
-        # constant. The WALK's own lateness (`days_late` on the trail's sentence) is
-        # measured against `as_of` instead, which is why the two numbers below differ for
-        # the very same document: 40 is the fixed wall-clock offset below, while the
-        # walk's number is TODAY minus this arrival date and so drifts with the calendar.
-        arrives = date.today() - timedelta(days=40)
-        late = _incoming(
+        # Fixed offset from `TODAY` (the walk's own `as_of`), so `days_late` on the trail's
+        # sentence is a constant, not TODAY-minus-wall-clock. 40 days keeps the wording
+        # unambiguously plural and stays well inside the 90-day dead grace.
+        arrives = TODAY - timedelta(days=40)
+        _incoming(
             db, product, own, spo_number="ZZT-SPO-LATE", allocated=40, received=0,
             arrives=arrives,
         )
@@ -189,6 +185,21 @@ def test_an_overdue_promise_that_still_lands_in_time_is_drawn_as_water_and_dated
         assert source["arrival_date"] == TODAY + timedelta(days=14)
         expected_late = (TODAY - arrives).days
         assert f"is {expected_late} days late, assumed by" in source["reason"], source["reason"]
+
+    # A SEPARATE document for the drill-down's wall-clock proof: `stock_detail` reads
+    # `spo_supply.overdue_days()` against real `date.today()`, never `as_of`, so dating this
+    # one off `date.today()` too keeps `overdue_days == 40` true on every date it runs,
+    # without needing to also satisfy the walk's fixed-`TODAY` document above.
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTP{_uid()[:5]}-BB"[:20])
+        _policy(db, overdue_grace_days=14, overdue_dead_days=90)
+        _stock(db, product, own, on_hand=0)
+        wall_clock_arrives = date.today() - timedelta(days=40)
+        late = _incoming(
+            db, product, own, spo_number="ZZT-SPO-LATE-DRILLDOWN", allocated=40,
+            received=0, arrives=wall_clock_arrives,
+        )
 
         detail = _service(db).stock_detail(str(product.id), str(own.id))
         incoming_row = next(

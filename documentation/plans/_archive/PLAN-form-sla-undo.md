@@ -187,7 +187,8 @@ anyone looking at the form, which is everyone who cares.
 
 `prior_tracking_id` is reopened by clearing `is_resolved` / `resolved_by`, restoring the assignee,
 and restarting the clock from now against the stage's own hours via the existing working-hours
-helper (`_working_due_naive`). `escalated_at` is left as it was, so an escalated stage returns
+helper (`_working_due_naive`); a stage whose live clock came from an extension keeps it
+instead (#1326, `_extension_governs_clock`). `escalated_at` is left as it was, so an escalated stage returns
 escalated and stays locked (AC-PGE-4) - the handling-lock rule keys on `escalated_at`, never on
 tier. Breach history stays in the event logs, which survive because they are FK'd by tracking id.
 

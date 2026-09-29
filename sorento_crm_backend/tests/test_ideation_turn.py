@@ -31,12 +31,17 @@ harness (the deterministic ``confirm``-guard is tested here).
 """
 from __future__ import annotations
 
+import uuid
+from dataclasses import replace
+
 import httpx
 import pytest
 
 import app.services.ideation_turn_service as svc
+from app.models.access import ContactAccessType, RespondContact, respond_contact_access_types
 from app.services.ideation_extractor import IdeateExtraction
 from app.services.ideation_turn_service import IdeationServiceError, handle_turn
+from tests._pg_fixture import blank_session
 
 
 # --------------------------------------------------------------------------- #
@@ -45,10 +50,11 @@ from app.services.ideation_turn_service import IdeationServiceError, handle_turn
 
 
 class _FakeContact:
-    def __init__(self, phone_number: str, session_vars: dict, display_name=None):
+    def __init__(self, phone_number: str, session_vars: dict, display_name=None, submitter_tier=None):
         self.phone_number = phone_number
         self.session_vars = session_vars
         self.display_name = display_name
+        self.submitter_tier = submitter_tier
 
 
 @pytest.fixture
@@ -67,6 +73,7 @@ def wired(monkeypatch):
     state = {
         "phone": "+60123456789",
         "display_name": None,
+        "submitter_tier": None,
         "store": {},
         "extraction": IdeateExtraction(fields={}, remove=[], confirm=False),
         "create_idea_result": None,
@@ -77,7 +84,10 @@ def wired(monkeypatch):
 
     def _fake_get_contact_row(_db, respond_io_id):  # noqa: ANN001
         return _FakeContact(
-            state["phone"], dict(state["store"]), display_name=state["display_name"]
+            state["phone"],
+            dict(state["store"]),
+            display_name=state["display_name"],
+            submitter_tier=state["submitter_tier"],
         )
 
     def _fake_resolve_ideation_config(_db):  # noqa: ANN001
@@ -91,7 +101,13 @@ def wired(monkeypatch):
         )
 
     def _fake_extract(_db, **_kw):  # noqa: ANN001
-        return state["extraction"]
+        # Mirrors the real extractor's derivation (AC-1201/AC-1208/AC-1211):
+        # confirm is derived from review_action + status here, not settable
+        # directly, so a test's `review_action="submit"` behaves exactly like
+        # production once the pointer's status is threaded through.
+        base = state["extraction"]
+        confirm = bool(base.review_action == "submit" and _kw.get("status") == "review")
+        return replace(base, confirm=confirm)
 
     def _fake_call_create_idea(_base_url, _api_key, payload):  # noqa: ANN001
         state["payloads"].append(payload)
@@ -134,9 +150,24 @@ def wired(monkeypatch):
             state["store"].clear()
             state["store"].update(session_vars)
 
-        def set_extraction(self, fields=None, remove=None, confirm=False):
+        def set_extraction(
+            self,
+            fields=None,
+            remove=None,
+            skip=None,
+            title="",
+            review_action="none",
+            change_text="",
+            duplicate_choice="none",
+        ):
             state["extraction"] = IdeateExtraction(
-                fields=fields or {}, remove=remove or [], confirm=confirm
+                fields=fields or {},
+                remove=remove or [],
+                skip=skip or [],
+                title=title,
+                review_action=review_action,
+                change_text=change_text,
+                duplicate_choice=duplicate_choice,
             )
 
         def set_create_idea(self, result):
@@ -147,6 +178,9 @@ def wired(monkeypatch):
 
         def set_display_name(self, name):
             state["display_name"] = name
+
+        def set_submitter_tier(self, tier):
+            state["submitter_tier"] = tier
 
     harness = _Harness()
     monkeypatch.setattr(svc, "overwrite_for_contact", _overwrite_capture)
@@ -193,7 +227,7 @@ def test_first_turn_collecting_persists_pointer(wired):
 # --------------------------------------------------------------------------- #
 def test_input_shape_and_extraction_passthrough(wired):
     wired.set_session_vars({})
-    wired.set_extraction(fields={"module": "procurement"}, remove=["who"], confirm=False)
+    wired.set_extraction(fields={"module": "procurement"}, remove=["who"])
     wired.set_create_idea(
         {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
     )
@@ -206,7 +240,8 @@ def test_input_shape_and_extraction_passthrough(wired):
     assert p["submitter_contact_id"] == "+60123456789"
     assert "submitter" not in p
     assert p["message_text"] == "module is procurement, forget who"
-    assert p["fields"] == {"module": "procurement"}
+    # #1279 round 2 (W2): values are normalised (first letter capitalised).
+    assert p["fields"] == {"module": "Procurement"}
     assert p["remove"] == ["who"]
     assert p["confirm"] is False
 
@@ -404,7 +439,7 @@ def test_confirm_completes_and_clears(wired):
     wired.set_session_vars(
         {"ideation": {"draft_id": "d-1", "status": "review", "missing": [], "updated_at": "t"}}
     )
-    wired.set_extraction(confirm=True)
+    wired.set_extraction(review_action="submit")
     wired.set_create_idea(
         {
             "draft_id": "d-1",
@@ -425,27 +460,478 @@ def test_confirm_completes_and_clears(wired):
 
 
 # --------------------------------------------------------------------------- #
-# AC-15 - duplicate clears the pointer, relays tool copy                       #
+# AC-1215 - voted/cancelled clear the pointer too; `duplicate` is retired      #
 # --------------------------------------------------------------------------- #
-def test_duplicate_clears_pointer(wired):
+def test_voted_clears_pointer(wired):
     wired.set_session_vars(
-        {"ideation": {"draft_id": "d-1", "status": "collecting", "missing": [], "updated_at": "t"}}
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "duplicate_candidate",
+                "missing": [],
+                "updated_at": "t",
+                "duplicate_candidate": {"idea_number": "IDEA-0077", "title": "Existing idea"},
+            }
+        }
     )
+    wired.set_extraction(duplicate_choice="vote")
     wired.set_create_idea(
         {
             "draft_id": "d-1",
-            "status": "duplicate",
+            "status": "voted",
             "captured": {},
             "missing": [],
-            "reply_text": "This is similar to an existing idea - I upvoted it for you.",
-            "duplicate_of": "idea-77",
+            "reply_text": "Got it - I've voted for the existing idea.",
+            "idea_number": "IDEA-0077",
+        }
+    )
+    out = _turn(message_text="vote for that one")
+
+    assert out["status"] == "voted"
+    assert wired.payloads[0]["duplicate_choice"] == "vote"
+    assert "ideation" not in out["session_vars"]
+
+
+def test_cancelled_clears_pointer(wired):
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "d-1", "status": "collecting", "missing": [], "updated_at": "t"}}
+    )
+    wired.set_extraction(review_action="cancel")
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "cancelled",
+            "captured": {},
+            "missing": [],
+            "reply_text": "No worries, I've dropped that idea.",
+        }
+    )
+    out = _turn(message_text="actually never mind, cancel")
+
+    assert out["status"] == "cancelled"
+    assert wired.payloads[0]["cancel"] is True
+    assert "ideation" not in out["session_vars"]
+
+
+# =============================================================================
+# S2 - sorento payload, title, duplicate ask, semantic review
+# documentation/plans/ideation/ideation-intake-redesign-24sep-acceptance-criteria.md
+# =============================================================================
+
+
+# --------------------------------------------------------------------------- #
+# AC-1203 - skip rides the payload untouched from the extraction               #
+# --------------------------------------------------------------------------- #
+def test_skip_passthrough_on_payload(wired):
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "d-1", "status": "collecting", "missing": [], "next_field": "impact", "updated_at": "t"}}
+    )
+    wired.set_extraction(skip=["impact"])
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "review", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(message_text="dunno lah, can skip this one?")
+    assert wired.payloads[0]["skip"] == ["impact"]
+
+
+# --------------------------------------------------------------------------- #
+# AC-1206 - department rides fields as typed free text, no lookup              #
+# --------------------------------------------------------------------------- #
+def test_department_passthrough_as_typed_free_text(wired):
+    wired.set_session_vars({})
+    wired.set_extraction(fields={"problem": "stock alerts", "department": "warehouse team"})
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(message_text="i have an idea, our warehouse team needs stock alerts")
+    # Free text, no lookup - only normalised to a Title Case name (#1279 round 2, W2).
+    assert wired.payloads[0]["fields"]["department"] == "Warehouse Team"
+
+
+# --------------------------------------------------------------------------- #
+# AC-1207 - submitter_tier is the first access-type code, omitted when none    #
+# --------------------------------------------------------------------------- #
+def test_submitter_tier_included_when_contact_has_one(wired):
+    wired.set_session_vars({})
+    wired.set_submitter_tier("dealer")
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn()
+    assert wired.payloads[0]["submitter_tier"] == "dealer"
+
+
+def test_submitter_tier_omitted_when_contact_has_none(wired):
+    wired.set_session_vars({})
+    wired.set_submitter_tier(None)
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn()
+    assert "submitter_tier" not in wired.payloads[0]
+
+
+# --------------------------------------------------------------------------- #
+# AC-1208 / AC-1211 - submit only counts in review; cancel at any status       #
+# --------------------------------------------------------------------------- #
+def test_submit_word_confirms_only_in_review(wired):
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "d-1", "status": "review", "missing": [], "updated_at": "t"}}
+    )
+    wired.set_extraction(review_action="submit")
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "complete", "captured": {}, "missing": [], "reply_text": "done", "link": "L"}
+    )
+    _turn(message_text="can you just submit it already")
+    assert wired.payloads[0]["confirm"] is True
+
+
+def test_submit_word_outside_review_does_not_confirm(wired):
+    """AC-1211 (existing AC-11b guard, kept): review_action='submit' emitted
+    outside review must never set confirm=True."""
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "d-1", "status": "collecting", "missing": [], "updated_at": "t"}}
+    )
+    wired.set_extraction(review_action="submit")
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(message_text="submit")
+    assert wired.payloads[0]["confirm"] is False
+
+
+def test_cancel_honoured_outside_review(wired):
+    """AC-1211: a user may drop a draft at any step, not only while reviewing."""
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "d-1", "status": "collecting", "missing": ["impact"], "updated_at": "t"}}
+    )
+    wired.set_extraction(review_action="cancel")
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "cancelled", "captured": {}, "missing": [], "reply_text": "dropped"}
+    )
+    _turn(message_text="actually never mind, cancel")
+    assert wired.payloads[0]["cancel"] is True
+
+
+# --------------------------------------------------------------------------- #
+# AC-1209 - a review-turn change request carries confirm=false                 #
+# --------------------------------------------------------------------------- #
+def test_change_request_in_review_does_not_confirm(wired):
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "d-1", "status": "review", "missing": [], "updated_at": "t"}}
+    )
+    wired.set_extraction(
+        fields={"impact": "faster checkout"},
+        review_action="change",
+        change_text="change the impact to faster checkout",
+    )
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "review", "captured": {}, "missing": [], "reply_text": "updated"}
+    )
+    _turn(message_text="change the impact to faster checkout")
+    assert wired.payloads[0]["confirm"] is False
+    assert wired.payloads[0]["fields"]["impact"] == "Faster checkout"  # normalised (#1279 round 2, W2)
+
+
+# --------------------------------------------------------------------------- #
+# AC-1212 - duplicate_candidate keeps the pointer, carries the candidate       #
+# --------------------------------------------------------------------------- #
+def test_duplicate_candidate_keeps_pointer_and_candidate(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "duplicate_candidate",
+            "captured": {},
+            "missing": [],
+            "next_field": None,
+            "duplicate_candidate": {"idea_number": "IDEA-0077", "title": "Show promo price in red"},
+            "reply_text": "Similar idea exists: Show promo price in red",
         }
     )
     out = _turn()
 
-    assert out["status"] == "duplicate"
-    assert "upvoted" in out["reply_text"]
-    assert "ideation" not in out["session_vars"]
+    assert out["status"] == "duplicate_candidate"
+    ideation = out["session_vars"]["ideation"]
+    assert ideation["status"] == "duplicate_candidate"
+    assert ideation["duplicate_candidate"] == {
+        "idea_number": "IDEA-0077",
+        "title": "Show promo price in red",
+    }
+
+
+# --------------------------------------------------------------------------- #
+# AC-1213 / AC-1214 - duplicate_choice: explicit vote vs. default separate     #
+# --------------------------------------------------------------------------- #
+def test_duplicate_choice_vote_when_extracted(wired):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "duplicate_candidate",
+                "missing": [],
+                "updated_at": "t",
+                "duplicate_candidate": {"idea_number": "IDEA-0077", "title": "Existing"},
+            }
+        }
+    )
+    wired.set_extraction(duplicate_choice="vote")
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "voted", "captured": {}, "missing": [], "reply_text": "voted", "idea_number": "IDEA-0077"}
+    )
+    _turn(message_text="vote for that one")
+    assert wired.payloads[0]["duplicate_choice"] == "vote"
+
+
+def test_duplicate_choice_defaults_to_separate(wired):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "duplicate_candidate",
+                "missing": [],
+                "updated_at": "t",
+                "duplicate_candidate": {"idea_number": "IDEA-0077", "title": "Existing"},
+            }
+        }
+    )
+    # A new detail about their own idea, not a vote - defaults to keep-separate (R4).
+    wired.set_extraction(fields={"problem": "mine also covers the online store price"})
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(message_text="keep mine separate, mine also covers the online store price")
+    assert wired.payloads[0]["duplicate_choice"] == "separate"
+
+
+def test_duplicate_choice_omitted_outside_duplicate_candidate(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn()
+    assert "duplicate_choice" not in wired.payloads[0]
+
+
+# --------------------------------------------------------------------------- #
+# AC-1219 (R17) - next_field/candidate title reach the extractor as a HINT,    #
+# never as a routing key (the model's own semantic guard is pytest-covered   #
+# with a stubbed provider in tests/test_ideation_extractor.py; this pins only #
+# that handle_turn threads the hint through)                                  #
+# --------------------------------------------------------------------------- #
+def test_next_field_and_candidate_title_threaded_to_extractor(wired, monkeypatch):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "collecting",
+                "missing": [],
+                "next_field": "proposed_solution",
+                "updated_at": "t",
+            }
+        }
+    )
+    seen_kwargs = {}
+    real_fake = svc.extract_ideate_turn
+
+    def _capture(_db, **kw):
+        seen_kwargs.update(kw)
+        return real_fake(_db, **kw)
+
+    monkeypatch.setattr(svc, "extract_ideate_turn", _capture)
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(message_text="it happens most during month end")
+    assert seen_kwargs["next_field"] == "proposed_solution"
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Blocking 2 (round 1, PR #1222 at 720bb8f5): the draft's captured    #
+# answers and the stored title must reach the extractor too (not only         #
+# next_field/candidate title), so the model can EXTEND a field instead of     #
+# losing the earlier text, and keep the title stable across turns.            #
+# --------------------------------------------------------------------------- #
+def test_captured_and_prior_title_threaded_to_extractor(wired, monkeypatch):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "collecting",
+                "missing": [],
+                "next_field": "proposed_solution",
+                "title": "Dealers check order status by calling",
+                "captured": {"problem": "dealers keep calling to check order status"},
+                "updated_at": "t",
+            }
+        }
+    )
+    seen_kwargs = {}
+    real_fake = svc.extract_ideate_turn
+
+    def _capture(_db, **kw):
+        seen_kwargs.update(kw)
+        return real_fake(_db, **kw)
+
+    monkeypatch.setattr(svc, "extract_ideate_turn", _capture)
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(message_text="it happens most during month end")
+    assert seen_kwargs["captured"] == {"problem": "dealers keep calling to check order status"}
+    assert seen_kwargs["prior_title"] == "Dealers check order status by calling"
+
+
+def test_captured_answers_persisted_onto_the_pointer(wired):
+    """The pointer must carry `captured` forward (from the create_idea response)
+    so the NEXT turn can thread it to the extractor as context."""
+    wired.set_session_vars({})
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {"problem": "dealers keep calling to check order status"},
+            "missing": [],
+            "next_field": "proposed_solution",
+            "reply_text": "ok",
+        }
+    )
+    out = _turn(message_text="dealers keep calling to check order status")
+    ideation = out["session_vars"]["ideation"]
+    assert ideation["captured"] == {"problem": "dealers keep calling to check order status"}
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Nit 2 (round 2): a response that legitimately returns `captured: {}`#
+# (a `remove` emptied the draft) must NOT have the prior turn's stale answers  #
+# carried forward - `or` treats an empty dict the same as a missing key.      #
+# --------------------------------------------------------------------------- #
+def test_empty_captured_in_response_is_not_replaced_by_stale_prior_answers(wired):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "collecting",
+                "captured": {"problem": "dealers keep calling to check order status"},
+                "missing": [],
+                "updated_at": "t",
+                "is_test": False,
+            }
+        }
+    )
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {},
+            "missing": [],
+            "next_field": "problem",
+            "reply_text": "ok",
+        }
+    )
+    out = _turn(message_text="actually forget the problem")
+    ideation = out["session_vars"]["ideation"]
+    assert ideation["captured"] == {}
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Nit 3 - cancelling during duplicate_candidate omits duplicate_choice#
+# (precedence is shared-service's call; don't send a stale "separate" too)    #
+# --------------------------------------------------------------------------- #
+def test_cancel_during_duplicate_candidate_omits_duplicate_choice(wired):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "duplicate_candidate",
+                "missing": [],
+                "updated_at": "t",
+                "duplicate_candidate": {"idea_number": "IDEA-0077", "title": "Existing"},
+            }
+        }
+    )
+    wired.set_extraction(review_action="cancel")
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "cancelled", "captured": {}, "missing": [], "reply_text": "dropped"}
+    )
+    _turn(message_text="actually never mind, cancel")
+    assert wired.payloads[0]["cancel"] is True
+    assert "duplicate_choice" not in wired.payloads[0]
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Should fix 7 (round 1, PR #1222 at 720bb8f5): the submitter_tier    #
+# SQL (join + ORDER BY sort_order, code) must actually run against Postgres,  #
+# not just get set on a monkeypatched contact row (AC-1207).                  #
+# --------------------------------------------------------------------------- #
+def test_submitter_tier_sql_orders_by_sort_order_then_code():
+    with blank_session() as db:
+        db.add_all(
+            [
+                ContactAccessType(code="dealer", name="Dealer", sort_order=2),
+                ContactAccessType(code="end_user", name="End user", sort_order=1),
+            ]
+        )
+        db.flush()
+        contact = RespondContact(
+            id=str(uuid.uuid4()),
+            respond_io_id=str(uuid.uuid4()),
+            phone_number=f"+601{uuid.uuid4().int % 10**8:08d}",
+            session_vars={},
+        )
+        db.add(contact)
+        db.flush()
+        db.execute(
+            respond_contact_access_types.insert().values(
+                [
+                    {"contact_id": contact.id, "access_type_code": "dealer"},
+                    {"contact_id": contact.id, "access_type_code": "end_user"},
+                ]
+            )
+        )
+        db.commit()
+
+        state = svc._get_contact_row(db, contact.respond_io_id)
+        assert state.submitter_tier == "end_user"  # lower sort_order wins over dealer
+
+        contact_no_tier = RespondContact(
+            id=str(uuid.uuid4()),
+            respond_io_id=str(uuid.uuid4()),
+            phone_number=f"+601{uuid.uuid4().int % 10**8:08d}",
+            session_vars={},
+        )
+        db.add(contact_no_tier)
+        db.commit()
+
+        state_none = svc._get_contact_row(db, contact_no_tier.respond_io_id)
+        assert state_none.submitter_tier is None
+
+
+# --------------------------------------------------------------------------- #
+# AC-1403 (S4) - a reply after the reminder drops reminded_at and moves        #
+# updated_at, restarting the 24h clock. The pointer is already rebuilt from   #
+# scratch every turn, so this is a test, not a code change (plan S4).         #
+# --------------------------------------------------------------------------- #
+def test_reply_after_reminder_drops_reminded_at(wired):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "collecting",
+                "missing": [],
+                "updated_at": "2020-01-01T00:00:00+00:00",
+                "reminded_at": "2020-01-02T00:00:00+00:00",
+            }
+        }
+    )
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    out = _turn(message_text="sorry, still working on it")
+
+    ideation = out["session_vars"]["ideation"]
+    assert "reminded_at" not in ideation
+    assert ideation["updated_at"] != "2020-01-01T00:00:00+00:00"
 
 
 # --------------------------------------------------------------------------- #
@@ -477,7 +963,7 @@ def test_preserves_other_crm_keys_on_clear(wired):
             "ideation": {"draft_id": "d-1", "status": "review", "missing": [], "updated_at": "t"},
         }
     )
-    wired.set_extraction(confirm=True)
+    wired.set_extraction(review_action="submit")
     wired.set_create_idea(
         {"draft_id": "d-1", "status": "complete", "captured": {}, "missing": [], "reply_text": "done", "link": "L"}
     )
@@ -545,6 +1031,32 @@ def test_outage_returns_graceful_reply(wired):
     assert out["reply_text"]  # a friendly message
     assert wired.overwrites == []  # session_vars untouched
     assert out["session_vars"]["ideation"]["draft_id"] == "d-1"  # unchanged
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer round 1 (PR #1230): `_graceful` echoed the contact's raw DB         #
+# `session_vars`, not the pointer THIS turn actually read. On a dry run       #
+# carrying a TEST pointer via `session_vars_in`, an outage therefore handed   #
+# back the contact's REAL stored pointer (possibly `is_test: false`) instead  #
+# of the carried test one - a test draft silently swapped for a live draft.  #
+# --------------------------------------------------------------------------- #
+def test_outage_on_a_dry_run_keeps_the_carried_pointer_not_the_db_one(wired):
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "d-live-db", "status": "collecting", "missing": ["who"], "updated_at": "t"}}
+    )
+    carried_pointer = {
+        "draft_id": "d-test-carried",
+        "status": "collecting",
+        "missing": ["impact"],
+        "updated_at": "t2",
+        "is_test": True,
+    }
+    wired.set_create_idea(IdeationServiceError("connect timeout"))
+    out = _turn(is_test=True, session_vars_in={"ideation": carried_pointer})
+
+    assert out["status"] == "error"
+    assert wired.overwrites == []  # session_vars untouched
+    assert out["session_vars"]["ideation"] == carried_pointer
 
 
 # --------------------------------------------------------------------------- #
@@ -693,6 +1205,22 @@ def test_call_create_idea_wraps_httpx_error(monkeypatch):
     monkeypatch.setattr(httpx.Client, "post", _boom)
     with pytest.raises(IdeationServiceError):
         svc.call_create_idea("https://shared.test", "k", {"product_id": "p"})
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Should fix 3 (round 2): the HTTP status -> `status_code` mapping    #
+# itself has to be driven through an actual `httpx.HTTPStatusError`, not      #
+# monkeypatched directly - otherwise deleting the mapping code leaves every   #
+# sweep test green while production silently retries every 4xx forever.      #
+# --------------------------------------------------------------------------- #
+def test_call_create_idea_maps_http_status_error_status_code(monkeypatch):
+    def _respond(self, url, **kw):  # noqa: ANN001
+        return httpx.Response(404, json={"error": "not found"}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.Client, "post", _respond)
+    with pytest.raises(IdeationServiceError) as exc_info:
+        svc.call_create_idea("https://shared.test", "k", {"product_id": "p"})
+    assert exc_info.value.status_code == 404
 
 
 # --------------------------------------------------------------------------- #
@@ -932,3 +1460,447 @@ def test_seen_media_not_reoffered(wired):
     )
     assert "pending_media" not in out["session_vars"]["ideation"]
     assert "which relate" not in out["reply_text"]
+
+
+# --------------------------------------------------------------------------- #
+# #1277 (issue) - W1+W3 at the turn level: the exact recap shape from the    #
+# owner's console transcript, reply LLM unavailable (db=None -> config read  #
+# fails -> _call_ideate_reply_llm returns None -> the shared-service         #
+# TEMPLATE fallback is what handle_turn's reply_text formats).               #
+# --------------------------------------------------------------------------- #
+def test_1277_recap_replay_bolds_labels_and_drops_title(wired):
+    wired.set_session_vars({"ideation": {"draft_id": "d1", "status": "collecting", "missing": ["department"]}})
+    fallback_reply = (
+        '"sales order KPI tracking"\n'
+        "Problem: track sales order kpi\n"
+        "Solution: dashboard widget\n"
+        "Impact: faster visibility\n"
+        "Department: sales\n"
+        "Is that right?"
+    )
+    wired.set_create_idea(
+        {
+            "draft_id": "d1",
+            "status": "review",
+            "title": "sales order KPI tracking",
+            "captured": {
+                "problem": "track sales order kpi",
+                "proposed_solution": "dashboard widget",
+                "impact": "faster visibility",
+                "department": "sales",
+            },
+            "missing": [],
+            "reply_text": fallback_reply,
+        }
+    )
+    out = _turn(message_text="yes that's right")
+    assert out["reply_text"] == (
+        "*Problem:* track sales order kpi\n"
+        "*Solution:* dashboard widget\n"
+        "*Impact:* faster visibility\n"
+        "*Department:* sales\n"
+        # #1279 round 2 (W3): review asks the owner's confirm question.
+        "Submit this idea? Reply yes to submit, or tell me what to change."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# #1277 - W4: `offered_media` on the turn that builds a media menu.          #
+# --------------------------------------------------------------------------- #
+def test_offered_media_lists_images_in_menu_order(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea(
+        {"draft_id": "d1", "status": "collecting", "missing": ["impact"], "reply_text": "Got it. What's the impact?"}
+    )
+    out = _turn(
+        message_text="I have an idea about exporting orders",
+        fetch_recent_messages=lambda: _respond_payload(
+            _media_item("m1", "image", "https://respond/1.jpg", filename="mockup.jpg", ts=2000),
+            _media_item("m2", "image", "https://respond/2.jpg", filename="sketch.jpg", ts=1000),
+        ),
+        media_clients=_stub_media_clients(),
+    )
+    assert out["offered_media"] == [
+        {"position": 1, "kind": "image", "url": "https://respond/1.jpg", "filename": "mockup.jpg"},
+        {"position": 2, "kind": "image", "url": "https://respond/2.jpg", "filename": "sketch.jpg"},
+    ]
+
+
+def test_offered_media_empty_when_no_candidates(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea({"draft_id": "d1", "status": "collecting", "missing": ["impact"], "reply_text": "ok"})
+    out = _turn(
+        message_text="idea: dark mode",
+        fetch_recent_messages=lambda: _respond_payload(),
+        media_clients=_stub_media_clients(),
+    )
+    assert out["offered_media"] == []
+
+
+def test_offered_media_empty_on_selection_turn(wired):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d1",
+                "status": "collecting",
+                "missing": ["impact"],
+                "pending_media": [
+                    {"source_msg_id": "m1", "kind": "image", "url": "u", "filename": None, "received_at": None}
+                ],
+            }
+        }
+    )
+    wired.set_create_idea({"draft_id": "d1", "status": "collecting", "missing": [], "reply_text": "attached."})
+    out = _turn(message_text="1", media_selection="1", media_clients=_stub_media_clients())
+    assert out["offered_media"] == []
+
+
+def test_ideation_turn_response_schema_keeps_offered_media():
+    """`response_model` silently drops undeclared fields (repo lesson) - the
+    schema must declare `offered_media` or it never reaches n8n/the console."""
+    from app.schemas.external.ideation import IdeationTurnResponse
+
+    result = {
+        "status": "collecting",
+        "reply_text": "x",
+        "session_vars": {},
+        "offered_media": [{"position": 1, "kind": "image", "url": "u", "filename": "f"}],
+    }
+    dumped = IdeationTurnResponse(**result).model_dump()
+    assert dumped.get("offered_media") == result["offered_media"]
+
+
+# --------------------------------------------------------------------------- #
+# #1279 round 2 - owner console test 26 Sep 14:09Z (W1 to W3).                #
+# UAC: ideation-chat-reply-format-acceptance-criteria.md AC-9 to AC-12.       #
+# --------------------------------------------------------------------------- #
+_OWNER_OPENING = "i have an idea, i think we should implemnt production line"
+_CONFIRM_LINE = "Submit this idea? Reply yes to submit, or tell me what to change."
+_STILL_WORKING = "still being worked out"
+
+
+def test_first_capture_never_echoes_the_raw_message_seeded_by_the_intake(wired):
+    """W1 root cause: turn 1's extractor emitted proposed_solution but no problem
+    (the message reads as a solution), and the intake seeded its required
+    `problem` from `message_text`. The recap must not echo that raw text."""
+    wired.set_session_vars({})
+    wired.set_extraction(fields={"proposed_solution": "Implement a production line."})
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {"problem": _OWNER_OPENING, "proposed_solution": "Implement a production line."},
+            "missing": [],
+            "next_field": "impact",
+            "reply_text": (
+                f"Problem: {_OWNER_OPENING}\nSolution: Implement a production line.\n"
+                "What impact would this have?"
+            ),
+        }
+    )
+    out = _turn(message_text=_OWNER_OPENING)
+    assert "implemnt" not in out["reply_text"]
+    assert "i have an idea" not in out["reply_text"]
+    assert f"*Problem:* {_STILL_WORKING}" in out["reply_text"]
+    assert "*Solution:* Implement a production line." in out["reply_text"]
+
+
+def test_first_capture_shows_the_extractor_problem_from_turn_one(wired):
+    wired.set_session_vars({})
+    wired.set_extraction(
+        fields={
+            "problem": "We need our own production line.",
+            "proposed_solution": "Implement a production line.",
+        }
+    )
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {
+                "problem": "We need our own production line.",
+                "proposed_solution": "Implement a production line.",
+            },
+            "missing": [],
+            "next_field": "impact",
+            "reply_text": (
+                "Problem: We need our own production line.\n"
+                "Solution: Implement a production line.\nWhat impact would this have?"
+            ),
+        }
+    )
+    out = _turn(message_text=_OWNER_OPENING)
+    assert "*Problem:* We need our own production line." in out["reply_text"]
+    assert out["session_vars"]["ideation"]["clean_fields"] == {
+        "problem": "We need our own production line.",
+        "proposed_solution": "Implement a production line.",
+    }
+
+
+def test_seeded_raw_problem_stays_hidden_on_later_turns_until_the_extractor_cleans_it(wired):
+    """Turns 2 and 3 of the owner's session: the stored problem is still the raw
+    seed, so it keeps showing as being worked out, never as the raw text."""
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "collecting",
+                "missing": [],
+                "captured": {"problem": _OWNER_OPENING, "proposed_solution": "Implement a production line."},
+                "clean_fields": {"proposed_solution": "Implement a production line."},
+                "updated_at": "t",
+            }
+        }
+    )
+    wired.set_extraction(fields={"impact": "It will reduce our supply chain constraints."})
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {
+                "problem": _OWNER_OPENING,
+                "proposed_solution": "Implement a production line.",
+                "impact": "It will reduce our supply chain constraints.",
+            },
+            "missing": [],
+            "reply_text": (
+                f"Problem: {_OWNER_OPENING}\nSolution: Implement a production line.\n"
+                "Impact: It will reduce our supply chain constraints.\nAnything else?"
+            ),
+        }
+    )
+    out = _turn(message_text="it will reduce our supply chain constraints")
+    assert "implemnt" not in out["reply_text"]
+    assert f"*Problem:* {_STILL_WORKING}" in out["reply_text"]
+
+    # The next turn's extractor rewrites the problem: from then on it shows.
+    wired.set_extraction(fields={"problem": "We need our own production line."})
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {
+                "problem": "We need our own production line.",
+                "proposed_solution": "Implement a production line.",
+                "impact": "It will reduce our supply chain constraints.",
+            },
+            "missing": [],
+            "reply_text": "Problem: We need our own production line.\nAnything else?",
+        }
+    )
+    out = _turn(message_text="we have no production line today")
+    assert "*Problem:* We need our own production line." in out["reply_text"]
+
+
+def test_legacy_pointer_without_clean_fields_trusts_its_captured_values(wired):
+    """A draft opened before this change carries no `clean_fields`: its
+    captured values are shown as they are rather than all hidden."""
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "collecting",
+                "missing": [],
+                "captured": {"problem": "Sales performance is not tracked."},
+                "updated_at": "t",
+            }
+        }
+    )
+    wired.set_extraction(fields={"impact": "More sales."})
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {"problem": "Sales performance is not tracked.", "impact": "More sales."},
+            "missing": [],
+            "reply_text": "Problem: Sales performance is not tracked.\nImpact: More sales.\nAnything else?",
+        }
+    )
+    out = _turn(message_text="more sales")
+    assert "*Problem:* Sales performance is not tracked." in out["reply_text"]
+    assert _STILL_WORKING not in out["reply_text"]
+
+
+def test_payload_values_are_normalised_before_they_reach_the_intake(wired):
+    """W2: the owner's typed '?' and a leading 'the' never become part of a
+    stored value, whatever the extractor emitted."""
+    wired.set_session_vars({})
+    wired.set_extraction(
+        fields={"problem": "we need a production line", "department": "the manufacturing?"},
+        title='"Implement manufacturing production line?"',
+    )
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok?"}
+    )
+    _turn(message_text="the manufacturing?")
+    payload = wired.payloads[0]
+    assert payload["fields"]["department"] == "Manufacturing"
+    assert payload["fields"]["problem"] == "We need a production line"
+    assert payload["title"] == "Implement manufacturing production line"
+
+
+def _review_result(department: str = "Manufacturing") -> dict:
+    return {
+        "draft_id": "d-1",
+        "status": "review",
+        "title": "Implement manufacturing production line",
+        "captured": {
+            "problem": "We need our own manufacturing production line.",
+            "proposed_solution": "Implement a production line.",
+            "impact": "It will reduce our supply chain constraints.",
+            "department": department,
+        },
+        "missing": [],
+        "next_field": None,
+        "reply_text": (
+            '"Implement manufacturing production line"\n'
+            "Problem: We need our own manufacturing production line.\n"
+            "Solution: Implement a production line.\n"
+            "Impact: It will reduce our supply chain constraints.\n"
+            f"Department: {department}\n"
+            "What department should own this?"
+        ),
+    }
+
+
+def _review_pointer() -> dict:
+    captured = _review_result()["captured"]
+    return {
+        "ideation": {
+            "draft_id": "d-1",
+            "status": "review",
+            "missing": [],
+            "captured": captured,
+            "clean_fields": dict(captured),
+            "updated_at": "t",
+        }
+    }
+
+
+def test_review_reply_is_the_recap_then_the_confirm_question(wired):
+    """W3: once the four fields are filled the bot shows the recap (bold
+    labels, no title line) and asks the owner's confirm question last."""
+    wired.set_session_vars(_review_pointer())
+    wired.set_extraction(fields={"department": "Manufacturing"}, review_action="change")
+    wired.set_create_idea(_review_result())
+    out = _turn(message_text="manufacturing?")
+    lines = out["reply_text"].splitlines()
+    assert lines == [
+        "*Problem:* We need our own manufacturing production line.",
+        "*Solution:* Implement a production line.",
+        "*Impact:* It will reduce our supply chain constraints.",
+        "*Department:* Manufacturing",
+        _CONFIRM_LINE,
+    ]
+    assert wired.payloads[0]["confirm"] is False
+
+
+@pytest.mark.parametrize("word", ["yes", "ok", "ya", "boleh", "好", "可以", "Yes!", "ok lah"])
+def test_a_plain_yes_in_review_submits_even_when_the_extractor_failed(wired, word):
+    """Only a yes creates the idea; an extractor outage (empty extraction)
+    must not stop a plain yes from submitting."""
+    wired.set_session_vars(_review_pointer())
+    wired.set_extraction()  # empty: the extractor degraded
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "complete", "captured": {}, "missing": [], "reply_text": "done"}
+    )
+    _turn(message_text=word)
+    assert wired.payloads[0]["confirm"] is True
+
+
+@pytest.mark.parametrize(
+    "message,review_action,fields",
+    [
+        ("manufacturing?", "submit", {}),
+        ("maybe, what does impact mean?", "none", {}),
+        ("sure", "submit", {}),
+        ("yes but change the impact to faster delivery", "submit", {"impact": "Faster delivery"}),
+        ("yes cancel it", "cancel", {}),
+    ],
+)
+def test_anything_but_a_yes_in_review_does_not_create(wired, message, review_action, fields):
+    wired.set_session_vars(_review_pointer())
+    wired.set_extraction(fields=fields, review_action=review_action)
+    wired.set_create_idea(_review_result())
+    out = _turn(message_text=message)
+    assert wired.payloads[0]["confirm"] is False
+    if review_action != "cancel":
+        assert out["reply_text"].endswith(_CONFIRM_LINE)
+
+
+def test_a_yes_outside_review_does_not_create(wired):
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "d-1", "status": "collecting", "missing": [], "updated_at": "t"}}
+    )
+    wired.set_extraction(review_action="submit")
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok?"}
+    )
+    _turn(message_text="yes")
+    assert wired.payloads[0]["confirm"] is False
+
+
+def test_owner_console_session_26_sep_1409z_replays_with_the_confirmation(wired):
+    """The owner's 14:09Z session, turn by turn, with the intake's own seeding
+    of `problem` from the raw message (the W1 root cause) in the fake. No turn
+    shows a preamble, a typo or a typed '?' in a value; the department answer
+    lands in review and asks to confirm; only the final 'ok' creates."""
+    wired.set_session_vars({})
+    seeded = {"problem": _OWNER_OPENING, "proposed_solution": "Implement a production line."}
+
+    # Turn 1: the extractor misses problem; the intake seeds it from the message.
+    wired.set_extraction(fields={"proposed_solution": "Implement a production line."})
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": dict(seeded), "missing": [],
+         "next_field": "impact",
+         "reply_text": f"Problem: {_OWNER_OPENING}\nSolution: Implement a production line.\nWhat impact would this have?"}
+    )
+    t1 = _turn(message_text=_OWNER_OPENING)
+
+    # Turn 2: the owner answers the impact.
+    seeded["impact"] = "It will reduce our supply chain constraints."
+    wired.set_extraction(fields={"impact": "It will reduce our supply chain constraints."})
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "review", "captured": dict(seeded), "missing": [],
+         "reply_text": (f"Problem: {_OWNER_OPENING}\nSolution: Implement a production line.\n"
+                        "Impact: It will reduce our supply chain constraints.\nSubmit it?")}
+    )
+    t2 = _turn(message_text="it will reduce our supply chain constraints")
+
+    # Turn 3: the department, typo and '?' included. The extractor (new prompt)
+    # corrects the spelling and cleans the problem, but echoes the owner's "the"
+    # and "?" - the deterministic normaliser strips those.
+    seeded["problem"] = "We need our own manufacturing production line."
+    seeded["department"] = "Manufacturing"
+    wired.set_extraction(
+        fields={"problem": "We need our own manufacturing production line.", "department": "the manufacturing?"},
+    )
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "review", "captured": dict(seeded), "missing": [],
+         "reply_text": "Department: the manufactuirng?"}
+    )
+    t3 = _turn(message_text="the manufactuirng?")
+    assert wired.payloads[-1]["fields"]["department"] == "Manufacturing"
+
+    # Turn 4: the owner says ok - only now is the idea created.
+    wired.set_extraction(review_action="submit")
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "complete", "title": "Implement manufacturing production line",
+         "idea_number": "IDEA-0003", "link": "http://localhost:3001/public/ideas/t", "captured": dict(seeded),
+         "missing": [],
+         "reply_text": ("Implement manufacturing production line\nIDEA-0003 - we'll update you on WhatsApp\n"
+                        "Track it here: http://localhost:3001/public/ideas/t")}
+    )
+    t4 = _turn(message_text="ok")
+
+    for out in (t1, t2, t3):
+        assert "implemnt" not in out["reply_text"]
+        assert "i have an idea" not in out["reply_text"]
+        assert "manufactuirng" not in out["reply_text"]
+    assert [p["confirm"] for p in wired.payloads] == [False, False, False, True]
+    assert t2["reply_text"].endswith(_CONFIRM_LINE)
+    assert t3["reply_text"].endswith(_CONFIRM_LINE)
+    assert "*Department:* Manufacturing" in t3["reply_text"]
+    assert "*Problem:* We need our own manufacturing production line." in t3["reply_text"]
+    assert t4["status"] == "complete"
+    assert t4["reply_text"].startswith("Implement manufacturing production line\nIDEA-0003")

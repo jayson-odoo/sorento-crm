@@ -10,7 +10,12 @@
 import { readFileSync } from 'node:fs';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { OrderInquiryStatePill, ReservePill, STATE_LABEL } from './OrderInquiryVerbPill';
+import {
+  OrderInquiryLineStatePill,
+  OrderInquiryStatePill,
+  ReservePill,
+  STATE_LABEL,
+} from './OrderInquiryVerbPill';
 
 describe('AC-B5-1: the State pill reads the plain words', () => {
   it('the label map pins the owner’s exact pick for every stored state', () => {
@@ -84,8 +89,22 @@ describe('AC-B5-2: no second spelling of the state word - one map, everywhere it
     ];
     for (const relative of files) {
       const source = readFileSync(require.resolve(relative), 'utf8');
-      expect(source).toContain('OrderInquiryStatePill');
+      // `PLAN-oi-no-double-count-25sep.md` S0: the Lines tab's line row reads through
+      // `OrderInquiryLineStatePill`, which adds only the two line states and hands every
+      // row state to `OrderInquiryStatePill` (asserted below).
+      expect(source).toMatch(/OrderInquiry(Line)?StatePill/);
     }
+  });
+});
+
+describe('OrderInquiryLineStatePill (PLAN-oi-no-double-count-25sep.md S0, G7 / O2)', () => {
+  it('reads the two line states and hands a row state to the one map', () => {
+    const { rerender } = render(<OrderInquiryLineStatePill state="line_cancelled" />);
+    expect(screen.getByText('Line cancelled')).toBeInTheDocument();
+    rerender(<OrderInquiryLineStatePill state="nothing_to_buy" />);
+    expect(screen.getByText('Nothing to buy')).toBeInTheDocument();
+    rerender(<OrderInquiryLineStatePill state="raised" />);
+    expect(screen.getByText(STATE_LABEL.raised)).toBeInTheDocument();
   });
 });
 

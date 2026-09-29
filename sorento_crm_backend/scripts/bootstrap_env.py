@@ -468,6 +468,17 @@ def seed_scm_module_data() -> None:
     module_483 = importlib.util.module_from_spec(spec_483)
     spec_483.loader.exec_module(module_483)
 
+    # 506 adds the Jinbaichuan spellings (`Customer Name 客户名` / `客户名` / `Customer Name`
+    # for `consignee`, `封条号` for `seal_no`) to BOTH `packing_list` and `proforma_invoice`.
+    # Same create_all gap as every alias migration above: without this row a combined
+    # Jinbaichuan-style header ("封条号：OOLLGZ7182") resolves no label at all, so the
+    # container value it follows never gets split off (test_pi_header_cells_and_convert.py).
+    spec_506 = importlib.util.spec_from_file_location(
+        "_scm_seed_506", versions / "506_scm_pi_consignee_ref.py"
+    )
+    module_506 = importlib.util.module_from_spec(spec_506)
+    spec_506.loader.exec_module(module_506)
+
     # `ifa_supplier_word_col` adds the `supplier_inventory_word` doc type: the D7 word list
     # (`SORENTO` -> `SRT`, `连体马桶` -> `WC`, ...) a bare stock-list model number composes
     # through. Same create_all gap as every alias migration above - without the replay a
@@ -479,6 +490,16 @@ def seed_scm_module_data() -> None:
     )
     module_ifa_word = importlib.util.module_from_spec(spec_ifa_word)
     spec_ifa_word.loader.exec_module(module_ifa_word)
+
+    # `ifa_bare_container_seal` adds the bare `柜号` (container_no) / `封条` (seal_no) shared
+    # aliases DAFUYUAN and NEW YANGGANG's combined-file headers need to split past their first
+    # pair. Same create_all gap as every alias migration above; its own unique partial index
+    # (`WHERE supplier_id IS NULL`) makes the replay idempotent.
+    spec_ifa_bare = importlib.util.spec_from_file_location(
+        "_scm_seed_ifa_bare", versions / "ifa_bare_container_seal.py"
+    )
+    module_ifa_bare = importlib.util.module_from_spec(spec_ifa_bare)
+    spec_ifa_bare.loader.exec_module(module_ifa_bare)
 
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
@@ -494,7 +515,9 @@ def seed_scm_module_data() -> None:
         aliases += module_436.seed(conn)
         aliases += module_459.seed(conn)
         aliases += module_483.seed(conn)
+        module_506.seed(conn)
         aliases += module_ifa_word.seed_supplier_word_rows(conn)
+        module_ifa_bare.seed(conn)
         module_440.seed_inbound_shipment_draft_rule(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
@@ -591,12 +614,14 @@ def seed_products_list_query_fields() -> None:
     """The `products` list-query filter catalog, minimally replayed for bootstrap.
 
     `list_query_resources` / `list_query_fields` are ENTIRELY migration-seeded data
-    (101, 128, 503, ...) with no seed function of their own anywhere in this script, so a
-    bootstrapped database carries both tables completely empty - not just missing
-    `exclude_from_planning`, missing the `products` resource row itself. Only what
-    `test_product_exclude_from_planning.py` pins is replayed here: a bare `products`
-    resource (101's own shape) and the `exclude_from_planning` field (503, via its own
-    `seed()` so the two paths cannot drift). The ~40 other master fields 128 seeds are NOT
+    (101, 128, 503, prod_discontinued_at_flt, ...) with no seed function of their own
+    anywhere in this script, so a bootstrapped database carries both tables completely
+    empty - not just missing `exclude_from_planning`/`discontinued_at`, missing the
+    `products` resource row itself. Only what `test_product_exclude_from_planning.py`
+    and `test_product_discontinued_at_list.py` pin is replayed here: a bare `products`
+    resource (101's own shape), the `exclude_from_planning` field (503) and the
+    `discontinued_at` field (prod_discontinued_at_flt), each via its own `seed()` so
+    the two paths can never drift. The ~40 other master fields 128 seeds are NOT
     replayed - nothing in the suite currently reads them off a bootstrapped database, and
     the full catalog belongs in its own seed pass the day something does.
     """
@@ -630,8 +655,18 @@ def seed_products_list_query_fields() -> None:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         inserted = module.seed(conn)
-    log.info("products list-query field catalog seeded -> exclude_from_planning: %s",
-             "added" if inserted else "already present")
+
+        spec_disc = importlib.util.spec_from_file_location(
+            "_products_flt_seed_discontinued_at", versions / "prod_discontinued_at_flt.py"
+        )
+        module_disc = importlib.util.module_from_spec(spec_disc)
+        spec_disc.loader.exec_module(module_disc)
+        inserted_disc = module_disc.seed(conn)
+    log.info(
+        "products list-query field catalog seeded -> exclude_from_planning: %s, discontinued_at: %s",
+        "added" if inserted else "already present",
+        "added" if inserted_disc else "already present",
+    )
 
 
 def seed_chatbot_policy() -> None:
@@ -643,7 +678,8 @@ def seed_chatbot_policy() -> None:
     policy blocks rendered from those two tables, and `chatbot_rearch_s6d` /
     `chatbot_rearch_s6e` / `chatbot_rearch_s7` / `chatbot_rearch_s8` / `chatbot_rearch_
     s11` / `chatbot_rearch_s12` update six domains' narrowing and `chatbot_rearch_s9`
-    appends `crm_sales_report` to the order domain's tools. `chatbot_rearch_s12` then
+    appends `crm_sales_report` (and `chatbot_top_selling_tool` appends
+    `crm_top_selling_report`) to the order domain's tools. `chatbot_rearch_s12` then
     republishes the parser version over its own narrowing changes and moves the
     `production` label onto it (owner ruling 21 Sep 2026: the deploy ships the config,
     nothing is promoted by hand). All nine are migration-BODY work: `create_all` gives a
@@ -693,9 +729,16 @@ def seed_chatbot_policy() -> None:
     s9 = _load("_chatbot_rearch_s9", "chatbot_rearch_s9.py")
     s11 = _load("_chatbot_rearch_s11", "chatbot_rearch_s11.py")
     s12 = _load("_chatbot_rearch_s12", "chatbot_rearch_s12.py")
+    # Fix round 8 on PR #833: the `specification` entity kind, BEFORE the republish so
+    # the published blocks carry its entity-kind line.
+    spk = _load("_spk_0001_specification_kind", "spk_0001_specification_kind.py")
+    top_selling = _load("_chatbot_top_selling_tool", "chatbot_top_selling_tool.py")
+    sales_s1 = _load("_sales_s1_reports_module", "sales_s1_reports_module.py")
 
     with engine.begin() as conn:
         domains_inserted, kinds_inserted = s0.seed_domains_and_kinds(conn)
+    with engine.begin() as conn:
+        kinds_inserted += int(spk.insert_kind(conn))
     with engine.begin() as conn:
         s4.publish_policy_blocks(conn)
     with engine.begin() as conn:
@@ -708,6 +751,9 @@ def seed_chatbot_policy() -> None:
         s8.apply_narrowing(conn)
     with engine.begin() as conn:
         s9.apply_tools(conn)
+    with engine.begin() as conn:
+        top_selling.apply_tools(conn)
+        sales_s1.apply_tools(conn)
     with engine.begin() as conn:
         s11.apply_narrowing(conn)
     with engine.begin() as conn:

@@ -5,6 +5,7 @@
  * file carries the SHAPES, so neither restates the other. Both the Phase-1 fixture and
  * the Phase-2 backend answer to exactly these types.
  */
+import type { ExportSplit } from '@/components/common/export-split';
 
 /** Where a month's balance sits against "can this still be bought in time" (AC-S2-6). */
 export type StockDebtTone = 'red' | 'amber' | 'green';
@@ -189,6 +190,13 @@ export interface StockDebtAssignedFromDocument {
   qty: number;
   oi_number: string | null;
   oi_id: string | null;
+  /** R42 (28 Sep 2026): a PO's own link target - its number, its line within the
+   *  document, and the two ids the document dialog opens a PO on. Null for any other
+   *  kind. Optional on the TYPE only so a fixture built before R42 still type-checks. */
+  po_number?: string | null;
+  po_line_number?: number | null;
+  po_id?: string | null;
+  po_line_id?: string | null;
 }
 
 export type StockDebtAssignedFrom = StockDebtAssignedFromOnHand | StockDebtAssignedFromDocument;
@@ -202,19 +210,27 @@ export interface StockDebtSupplyEvent {
   /** Document reference. Null for on hand, which is a bin rather than a document. */
   ref: string | null;
   /** R29: the SPO's own number/line off `spo_allocations` - the Document cell's link
-   *  target. Null for on hand and for the PO kind (never emitted here, R23). */
+   *  target. Null for on hand and for the PO kind. */
   spo_number?: string | null;
   spo_line_number?: number | null;
+  /** R42 (28 Sep 2026): a PO's own link target - its number, its line within the
+   *  document, and the two ids the document dialog opens a PO on. Null for any other
+   *  kind. Optional on the TYPE only so a fixture built before R42 still type-checks. */
+  po_number?: string | null;
+  po_line_number?: number | null;
+  po_id?: string | null;
+  po_line_id?: string | null;
   warehouse_code: string | null;
-  /** Arrival: today for on hand, the SPO's arrival, `issue + lead` for a PO line (R29). */
+  /** Arrival: today for on hand, the SPO's arrival, and for a PO line its Delivery date
+   *  (R42), else `issue + lead` (R29). */
   date: string | null;
   /** PO only: the SO delivery date the line was typed against. Display only (R30). */
   bought_for: string | null;
   qty: number;
   /**
    * R26: an SPO's own Received/Outstanding - `qty` above is the RAW ordered quantity for
-   * an SPO row, `outstanding_qty` the walk's own netted balance. Both `null` for every
-   * other kind (on hand has no received/outstanding history to state), so the drill
+   * an SPO row, `outstanding_qty` the walk's own netted balance. R42: a PO row states the
+   * same three. Both `null` for on hand (on hand has no received/outstanding history to state), so the drill
    * prints those two columns blank rather than a fabricated 0.
    */
   received_qty?: number | null;
@@ -249,8 +265,13 @@ export interface StockDebtCell {
   supply_total_qty?: number;
 }
 
-/** How the export workbook is split into sheets (R5). One sheet for `none`. */
-export type StockDebtExportSplit = 'none' | 'supplier' | 'category' | 'supplier_category';
+/**
+ * How the export workbook is split into sheets (R5). One sheet for `none`. Re-exported off
+ * the shared `ExportSplit` (`components/common/export-split.ts`, PLAN-low-stock-export-
+ * split-25sep) so both Stock Debt and the low stock report speak the same four values -
+ * kept under this name so nothing else here changes.
+ */
+export type StockDebtExportSplit = ExportSplit;
 
 /** A rough count for the export popover's "212 rows, 14 sheets" line (AC-33). Best-effort:
  *  built from what the board already has loaded (`pagination.total` + `suppliers`), not a

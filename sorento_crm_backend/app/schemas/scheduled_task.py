@@ -1,6 +1,6 @@
 """Pydantic schemas for scheduled tasks and runs."""
-from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional, Dict, Any
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from typing import Optional, Dict, Any, Annotated, List, Literal
 from datetime import datetime
 
 
@@ -53,6 +53,36 @@ class ScheduledTaskResponse(BaseModel):
     late_by_seconds: Optional[int] = None    # measured from due_at, not due_at + grace
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ScmReorderRunTaskMetadata(BaseModel):
+    """Validates the ``scm_reorder_run`` task's ``metadata`` (#1340): the scope the
+    scheduled reorder run plans with. Every key is optional - absent means the same
+    default the run makes today (all warehouses, all products, both demand legs, no
+    window, full budget, market off). Other keys the task's metadata already carries
+    (``company_ids``, ``grace_percent``) pass through untouched via ``extra="allow"``.
+    """
+    model_config = ConfigDict(extra="allow")
+
+    warehouse_codes: Optional[List[Annotated[str, Field(max_length=100)]]] = Field(None, max_length=500)
+    product_codes: Optional[List[Annotated[str, Field(max_length=100)]]] = Field(None, max_length=500)
+    demand_class: Optional[Literal["project", "retail"]] = None
+    horizon_start_days: Optional[int] = Field(None, ge=-3650, le=3650, strict=True)
+    # A negative end is Start Plan's own refusal of a past cut-off: it leaves the run
+    # with no demand, so the floor is 0 (today), not negative.
+    horizon_end_days: Optional[int] = Field(None, ge=0, le=3650, strict=True)
+    budget: Optional[float] = Field(None, ge=0, strict=True)
+    include_market: Optional[bool] = Field(None, strict=True)
+
+    @model_validator(mode="after")
+    def _start_before_end(self):
+        if (
+            self.horizon_start_days is not None
+            and self.horizon_end_days is not None
+            and self.horizon_start_days > self.horizon_end_days
+        ):
+            raise ValueError("horizon_start_days must be on or before horizon_end_days")
+        return self
 
 
 class ScheduledTaskRunResponse(BaseModel):

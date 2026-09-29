@@ -405,5 +405,51 @@ describe('PlanContainerDialog', () => {
       const applyOrder = applyProformaInvoice.mock.invocationCallOrder[0];
       expect(saveOrder).toBeLessThan(applyOrder);
     });
+
+    // PLAN-pi-header-fields-convert-fixes-24sep.md F3: header-field picks (the PI's own
+    // label:value block) travel in the SAME `mappings` array Test saves, alongside the
+    // column picks - one table, one save.
+    it('sends header-field picks in the same save body as column picks (AC-F3)', async () => {
+      const resolved = unresolvedQtyProbe();
+      resolved.probe.columns[1] = { ...resolved.probe.columns[1], field: 'qty', source: 'supplier' };
+      resolved.probe.header_fields = [
+        {
+          row: 13,
+          label: '柜号',
+          sample: 'FSCU9304169',
+          field: 'container_no',
+          source: 'supplier',
+        },
+      ];
+      probeImportMapping.mockResolvedValue(resolved);
+      renderDialog();
+      await chooseSupplier();
+      await dropProformaFile();
+
+      // Waited on the folded header-fields summary, not the bare heading: the mapper's own
+      // mount effect - which also fires `onChange` with the header-field pick combined in -
+      // needs one more commit to propagate back up before Test's click handler reads the
+      // current selections.
+      expect(
+        await screen.findByText('1 of 1 header field mapped from saved layout'),
+      ).toBeInTheDocument();
+      const test = await screen.findByRole('button', { name: /Test/ });
+      await waitFor(() => expect((test as HTMLButtonElement).disabled).toBe(false));
+
+      fireEvent.click(test);
+
+      await waitFor(() => expect(saveImportMapping).toHaveBeenCalled());
+      const call = saveImportMapping.mock.calls[0][0] as {
+        mappings: { header: string; field: string }[];
+      };
+      expect(call.mappings).toEqual(
+        expect.arrayContaining([
+          { header: 'ITEM', field: 'item_code' },
+          { header: 'QTY', field: 'qty' },
+          { header: 'PRICE', field: 'unit_price' },
+          { header: '柜号', field: 'container_no' },
+        ]),
+      );
+    });
   });
 });

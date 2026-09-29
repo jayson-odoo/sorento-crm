@@ -154,8 +154,8 @@ function UsersTab({ companyId }: { companyId: string }) {
         .filter((u) => !assignedIds.has(u.id))
         .map((u) => ({
           value: u.id,
-          label: u.name || u.email,
-          description: u.email,
+          label: u.name || u.email || 'Unnamed user',
+          description: u.email ?? undefined,
         })),
     [allUsers, assignedIds],
   );
@@ -163,7 +163,7 @@ function UsersTab({ companyId }: { companyId: string }) {
   const handleAdd = (userId: string) => {
     const user = allUsers.find((u) => u.id === userId);
     if (!user) return;
-    const payload: CompanyUser = { id: user.id, name: user.name, email: user.email };
+    const payload: CompanyUser = { id: user.id, name: user.name, email: user.email ?? '' };
     addUser.mutate(payload, { onSuccess: () => setSelected('') });
   };
 

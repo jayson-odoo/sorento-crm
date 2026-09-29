@@ -16,7 +16,13 @@ from app.dependencies import (
     require_permission,
     require_permission_with_api_key,
 )
-from app.services.order_service import OrderService, stamp_so_outstanding_rows
+from app.services.order_service import (
+    OrderService,
+    has_product_filter,
+    keep_brand_lines,
+    narrow_product_ids_by_brand,
+    stamp_so_outstanding_rows,
+)
 from app.services.uuid_list_param import parse_uuid_list
 from app.config import settings as app_settings
 
@@ -284,7 +290,11 @@ from app.schemas.order import (
     BulkDeleteOrderLinesRequest,
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, ValidateImportResponse
-from app.schemas.order_management import OutstandingReportResponse, SalesReportResponse
+from app.schemas.order_management import (
+    OutstandingReportResponse,
+    SalesReportResponse,
+    TopSellingResponse,
+)
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -318,6 +328,14 @@ async def get_orders(
     product_ids: Optional[list[str]] = Query(
         None,
         description="Filter to orders containing any of these product UUIDs (via order lines).",
+    ),
+    brand_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Canonical brand UUIDs (csv/JSON/repeated) - narrows to orders containing a "
+            "product of this brand (Product.brand_id via order lines). Intersects with "
+            "product_ids when both are given (#1262 slice 9, AC-S9-6)."
+        ),
     ),
     transporter_ids: Optional[list[str]] = Query(
         None,
@@ -461,7 +479,22 @@ async def get_orders(
 
     try:
         _resolved_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
-        _resolved_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
+        _resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
+        # Review round (26 Sep 2026): the SAME cap `get_outstanding_report` already
+        # applies to its own `brand_ids` - an unbounded IN (...) from an external
+        # caller is an easy way to make the brand-narrowing query slow.
+        if _resolved_brand_ids is not None and len(_resolved_brand_ids) > 50:
+            raise AppException(
+                422,
+                "Too many values for 'brand_ids' (max 50)",
+                detail=f"got {len(_resolved_brand_ids)}",
+                code="too_many_values",
+            )
+        _resolved_product_ids = narrow_product_ids_by_brand(
+            db,
+            parse_uuid_list(product_ids, param_name="product_ids"),
+            _resolved_brand_ids,
+        )
 
         # A3 (AC-905): a DIFFERENT table (sales_order_lines, not orders), so a
         # dedicated path rather than shoehorning it into `service.list_orders` -
@@ -544,6 +577,10 @@ async def get_orders(
             sort_field=sort or "created_at",
             sort_dir=dir or "asc"
         )
+        # #1262 fix lane round 6: a brand ask lists only that brand's lines inside
+        # each document it keeps. No brand, no change.
+        if _resolved_brand_ids and isinstance(result, dict) and result.get("data"):
+            result = {**result, "data": keep_brand_lines(db, result["data"], _resolved_product_ids)}
         # Date-axis relaxation (§3.4): when the service attached `alternatives` /
         # `relaxed_axis` (only on an empty result), bypass the strict
         # `ListResponse` response_model - which would silently drop those keys -
@@ -717,6 +754,15 @@ async def get_orders_by_product(
         None,
         description="Canonical product UUIDs (csv/JSON/repeated). At least one required for this endpoint.",
     ),
+    brand_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Canonical brand UUIDs (csv/JSON/repeated) - narrows to that brand's own "
+            "products (Product.brand_id). Counts as the product narrower this endpoint "
+            "requires (#1262 slice 9, AC-S9-6); intersects with product_ids when both "
+            "are given."
+        ),
+    ),
     customer_ids: Optional[list[str]] = Query(
         None,
         description="Optional customer UUIDs. OR-fallback to debtor_name for legacy rows without FK.",
@@ -826,13 +872,32 @@ async def get_orders_by_product(
             request, limit, cap=_EXTERNAL_ORDERS_AGG_LIMIT_CAP, date_scoped=_date_scoped
         )
         norm_entities = _normalize_entities(entities)
-        parsed_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
+        resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
+        # Review round (26 Sep 2026): the SAME cap `get_outstanding_report` already
+        # applies to its own `brand_ids` - an unbounded IN (...) from an external
+        # caller is an easy way to make the brand-narrowing query slow.
+        if resolved_brand_ids is not None and len(resolved_brand_ids) > 50:
+            from app.services.error_handler import AppException
+
+            raise AppException(
+                422,
+                "Too many values for 'brand_ids' (max 50)",
+                detail=f"got {len(resolved_brand_ids)}",
+                code="too_many_values",
+            )
+        # #1262 slice 9 (F1a): a brand ALONE counts as the product narrower this
+        # endpoint requires, same as `product_ids` - the boolean check below is
+        # widened, not bypassed, so an unrelated free-text `query` is still enough
+        # on its own exactly as before.
+        parsed_product_ids = narrow_product_ids_by_brand(
+            db, parse_uuid_list(product_ids, param_name="product_ids"), resolved_brand_ids
+        )
         # Endpoint is product-centric: require a product narrower to prevent
         # full-catalog enumeration. Accepts canonical UUIDs, legacy
         # product_code/SKU list, partial product text, free-text query, or
         # the deprecated entity bag.
         has_product_narrower = bool(
-            parsed_product_ids
+            has_product_filter(parsed_product_ids)
             or product_id
             or (product_query and product_query.strip())
             or (query and query.strip())
@@ -1429,6 +1494,15 @@ async def get_outstanding_report(
             "not here - this route only matches the exact codes it is given."
         ),
     ),
+    brand_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Canonical brand UUIDs (csv/JSON/repeated) - `Product.brand_id`, the chatbot's "
+            "resolved brand entity (#1262 slice 9, AC-S9-4). A brand alone is a valid "
+            "subject (counts toward the product_code/customer_ids/customer_query "
+            "requirement below). The response echoes brand_name for the header."
+        ),
+    ),
     order_date_from: Optional[str] = Query(
         None,
         description=(
@@ -1483,21 +1557,28 @@ async def get_outstanding_report(
     from app.services.error_handler import AppException
     from app.services.outstanding_report_service import outstanding_report
 
-    # R13: the SUBJECT is a product, a customer, or both - but never nothing. An
-    # unfiltered report would sum every open sales order line in the company, which is
-    # not an answer to any question a customer can ask.
+    # #1262 slice 9 (F1a): `brand_ids` is a UUID param like `customer_ids` (S3 below),
+    # parsed before the subject check so a brand-only ask ("brand Sorento") counts as a
+    # subject the same way a product or customer does - never `subject_required` for it
+    # alone (AC-S9-4).
+    resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
+
+    # R13: the SUBJECT is a product, a customer, a brand, or any combination - but never
+    # nothing. An unfiltered report would sum every open sales order line in the
+    # company, which is not an answer to any question a customer can ask.
     resolved_product_codes = _normalize_entities(product_codes)
     if (
         not (product_code or "").strip()
         and not resolved_product_codes
         and not customer_ids
         and not (customer_query or "").strip()
+        and not resolved_brand_ids
     ):
         raise AppException(
             422,
-            "This report needs a subject: give at least one of product_code, customer_ids "
-            "or customer_query",
-            detail="product_code, customer_ids, customer_query",
+            "This report needs a subject: give at least one of product_code, customer_ids, "
+            "customer_query or brand_ids",
+            detail="product_code, customer_ids, customer_query, brand_ids",
             code="subject_required",
         )
 
@@ -1523,6 +1604,7 @@ async def get_outstanding_report(
         (resolved_customer_ids, "customer_ids"),
         (resolved_warehouse_codes, "warehouse_codes"),
         (resolved_product_codes, "product_codes"),
+        (resolved_brand_ids, "brand_ids"),
     ):
         if values is not None and len(values) > 50:
             raise AppException(
@@ -1540,6 +1622,7 @@ async def get_outstanding_report(
         customer_query=customer_query,
         customer_ids=resolved_customer_ids,
         warehouse_codes=resolved_warehouse_codes,
+        brand_ids=resolved_brand_ids,
         order_date_from=_parse_flex_date(order_date_from),
         order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
     )
@@ -1789,3 +1872,308 @@ async def get_sales_report(
     if detail == "so":
         body["detail"] = detail
     return JSONResponse(content=body)
+
+
+# ---------------------------------------------------------------------------
+# top selling - a whole-window ranking of items (or categories) on the sales
+# report's own source, predicate, reveal key and company scope
+# (`documentation/plans/chatbot/PLAN-chatbot-top-x-hot-selling-24sep.md`, S2,
+# as amended by the owner's 26 Sep 2026 rulings on PR #1175). Same no-prefix
+# router as the sales report: a report over orders, not an order row.
+# ---------------------------------------------------------------------------
+
+_TOP_SELLING_N_MAX = 100
+
+#: The office tier's access type names ("Sorento Office"), matched the way the
+#: chatbot's `tier_gate.parse_level` reads them. Restated here, not imported:
+#: core never imports the chatbot package (tests/chatbot/test_import_boundary.py).
+_OFFICE_ACCESS_TYPE_RE = re.compile(r"^(sorento|cabana|mocha) office\Z")
+
+
+def _top_selling_is_staff(db: Session, contact_id: str) -> bool:
+    """True when the contact holds at least one ACTIVE office access type
+    (`_OFFICE_ACCESS_TYPE_RE`, e.g. "Sorento Office"), whatever other types it
+    holds. The chatbot lane asks the same question
+    (`business_services.top_selling_dealer_ledgers`)."""
+    from app.models.access import ContactAccessType, respond_contact_access_types
+
+    held = (
+        db.query(ContactAccessType.name)
+        .join(
+            respond_contact_access_types,
+            respond_contact_access_types.c.access_type_code == ContactAccessType.code,
+        )
+        .filter(
+            respond_contact_access_types.c.contact_id == contact_id,
+            ContactAccessType.is_active.is_(True),
+        )
+        .all()
+    )
+    return any(_OFFICE_ACCESS_TYPE_RE.match(" ".join((name or "").split()).lower()) for (name,) in held)
+
+
+def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str]]:
+    """The customers a dealer contact is forced to, or None for staff.
+
+    Owner hand test on PR #1273 (27 Sep 2026, ruling assumed): any ACTIVE office
+    access type makes the contact staff (`_top_selling_is_staff`), whatever
+    dealer or end user types or customer links it also holds; staff sees every
+    ledger. Without one, a contact linked to any customer
+    (`respond_contact_customers`) is that customer's dealer and sees only its own
+    ledgers. Anyone else (no type, end user, dealer with no link, an inactive
+    office type, a type nobody classified) is refused (fail closed). The Sales
+    report reveal is checked by the caller before this, for everyone."""
+    from app.services.contact_customer_service import list_links
+    from app.services.error_handler import AppException
+
+    if _top_selling_is_staff(db, contact_id):
+        return None
+    own = []
+    for link in list_links(db, contact_id):
+        if link.customer_id not in own:
+            own.append(link.customer_id)
+    if own:
+        return own
+    raise AppException(
+        403,
+        "You can only see sales for your own account.",
+        code="customer_not_permitted",
+    )
+
+
+@sales_report_router.get("/top-selling", response_model=TopSellingResponse)
+async def get_top_selling(
+    rank_by: Optional[str] = Query(
+        None,
+        description=(
+            "REQUIRED: quantity | amount. No default metric (owner ruling): the chatbot "
+            "asks when the message does not say. Missing is 422 `rank_by_required`."
+        ),
+    ),
+    basis: Optional[str] = Query(
+        None,
+        description=(
+            "delivered (default) | ordered. delivered = LEAST(qty_delivered, qty_ordered), "
+            "transferred to DO, and its share of line_total; ordered = the whole line, "
+            "qty_ordered and line_total, whatever the line's status."
+        ),
+    ),
+    group: Optional[str] = Query(
+        None, description="item (default) ranks products | category ranks product categories.",
+    ),
+    n: Optional[int] = Query(
+        None,
+        description=(
+            "How many rows to return, 1 to 100. ABSENT = every ranked row (no cut-off, no "
+            "paging); total_count always states the full count."
+        ),
+    ),
+    customer_ids: Optional[list[str]] = Query(
+        None, description="Customer UUIDs (csv/JSON/repeated), the chatbot's resolved ledgers.",
+    ),
+    customer_query: Optional[str] = Query(
+        None, description="Partial match on customers.customer_name (ILIKE), at least 3 characters.",
+    ),
+    category_ids: Optional[list[str]] = Query(
+        None, description="Product category UUIDs (csv/JSON/repeated): products.category_id IN.",
+    ),
+    sales_agent_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Sales agent UUIDs (csv/JSON/repeated): sales_orders.sales_agent_id IN. When given, "
+            "the body carries sales_agent_fill_rate."
+        ),
+    ),
+    brand_ids: Optional[list[str]] = Query(
+        None, description="Brand UUIDs (csv/JSON/repeated): products.brand_id IN. Echoed as filters.brand_name.",
+    ),
+    direction: Optional[str] = Query(
+        None,
+        description=(
+            "top (default) ranks the most sold first | bottom ranks the least sold first. "
+            "Either way only items with a sale in the window are ranked."
+        ),
+    ),
+    channel: Optional[str] = Query(
+        None, description="dealer | project - sales_orders.demand_class ('retail' / 'project'). Absent = all.",
+    ),
+    date_from: Optional[str] = Query(
+        None,
+        description=(
+            "On the bucket date (required_date, else the SO's order_date). Both absent = the "
+            "current calendar year; one absent = that side of the current year. The resolved "
+            "window is echoed."
+        ),
+    ),
+    date_to: Optional[str] = Query(None, description="Same formats as date_from."),
+    detail_code: Optional[str] = Query(
+        None,
+        description=(
+            "The detail offer: one product code (group=item) or category code (group=category), "
+            "case-insensitive. Rows and totals narrow to that code and `detail` carries its "
+            "by_customer and by_month, same filters and basis, sorted by the rank_by metric desc."
+        ),
+    ),
+    count_only: bool = Query(
+        False,
+        description=(
+            "The chatbot's how-many question (no N named): the full total_count and totals with "
+            "NO rows, so the whole ranked book is never sent just to be counted. A single ranked "
+            "row is still returned (nothing to choose between). n is ignored."
+        ),
+    ),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "Respond.io contact id, both-or-neither with space_id. When given the route re-checks "
+            "the `sales_orders.sales_report` reveal key (403 `sales_report_not_enabled`). A contact "
+            "holding any active office access type is staff and sees every customer, whatever else "
+            "it holds. Otherwise a contact linked to customers is forced to them (403 "
+            "`customer_not_permitted` when it names another), and anyone else is 403 "
+            "`customer_not_permitted`."
+        ),
+    ),
+    space_id: Optional[str] = Query(None, description="Respond.io workspace id, required together with contact_id."),
+    current_user: dict = Depends(require_permission_with_api_key("order_management.orders.view")),
+    db: Session = Depends(get_db),
+):
+    """Top selling items or categories over a window (PLAN-chatbot-top-x-hot-selling-24sep, S2)."""
+    from app.services.error_handler import AppException
+    from app.services.sales_report_service import current_year_window, top_selling
+
+    def _choice(value, name, allowed, default=None):
+        norm = (value or "").strip().lower() or default
+        if norm is None:
+            raise AppException(
+                422, f"{name} is required: one of {', '.join(allowed)}",
+                detail=f"allowed: {', '.join(allowed)}", code=f"{name}_required",
+            )
+        if norm not in allowed:
+            raise AppException(
+                422, f"Unknown {name} value '{value}'",
+                detail=f"allowed: {', '.join(allowed)}", code=f"invalid_{name}",
+            )
+        return norm
+
+    rank_by_norm = _choice(rank_by, "rank_by", ("quantity", "amount"))
+    basis_norm = _choice(basis, "basis", ("delivered", "ordered"), default="delivered")
+    group_norm = _choice(group, "group", ("item", "category"), default="item")
+    direction_norm = _choice(direction, "direction", ("top", "bottom"), default="top")
+    channel_norm = (channel or "").strip().lower() or None
+    if channel_norm is not None:
+        channel_norm = _choice(channel_norm, "channel", ("dealer", "project"))
+
+    if n is not None and not 1 <= n <= _TOP_SELLING_N_MAX:
+        raise AppException(
+            422, f"n must be between 1 and {_TOP_SELLING_N_MAX}", detail=str(n), code="invalid_n",
+        )
+
+    customer_query_stripped = (customer_query or "").strip() or None
+    if customer_query_stripped and len(customer_query_stripped) < 3:
+        raise AppException(
+            422, "customer_query must be at least 3 characters",
+            detail=customer_query_stripped, code="customer_query_too_short",
+        )
+
+    detail_code_stripped = (detail_code or "").strip() or None
+    if detail_code_stripped and len(detail_code_stripped) > 100:
+        raise AppException(
+            422, "detail_code must be at most 100 characters",
+            detail=str(len(detail_code_stripped)), code="detail_code_too_long",
+        )
+
+    if bool(contact_id) != bool(space_id):
+        raise AppException(
+            422, "contact_id and space_id must both be given, or neither",
+            detail="contact_id, space_id", code="contact_identity_required",
+        )
+
+    resolved_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
+    resolved_category_ids = parse_uuid_list(category_ids, param_name="category_ids")
+    resolved_agent_ids = parse_uuid_list(sales_agent_ids, param_name="sales_agent_ids")
+    resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
+    for values, name in (
+        (resolved_customer_ids, "customer_ids"),
+        (resolved_category_ids, "category_ids"),
+        (resolved_agent_ids, "sales_agent_ids"),
+        (resolved_brand_ids, "brand_ids"),
+    ):
+        if values is not None and len(values) > 50:
+            raise AppException(
+                422, f"Too many values for '{name}' (max 50)", detail=f"got {len(values)}", code="too_many_values",
+            )
+
+    dealer_scoped = False
+    if contact_id and space_id:
+        from app.services.contact_field_reveal_service import granted_keys
+        from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+        resolved_contact_id = resolve_contact_with_null_workspace_fallback(
+            db, contact_id=contact_id, space_id=space_id
+        )
+        keys = granted_keys(db, resolved_contact_id) if resolved_contact_id else []
+        if "sales_orders.sales_report" not in keys:
+            raise AppException(
+                403, "Sales report is not enabled for your account.", code="sales_report_not_enabled",
+            )
+        own = _top_selling_dealer_scope(db, resolved_contact_id)
+        if own is not None:
+            not_permitted = AppException(
+                403, "You can only see sales for your own account.", code="customer_not_permitted",
+            )
+            if resolved_customer_ids and any(c not in own for c in resolved_customer_ids):
+                raise not_permitted
+            if customer_query_stripped:
+                from app.models.order import Customer
+                from app.services.sales_report_service import _LIKE_ESCAPE, _escape_like
+
+                matched = {
+                    row[0]
+                    for row in db.query(Customer.id).filter(
+                        Customer.customer_name.ilike(
+                            f"%{_escape_like(customer_query_stripped)}%", escape=_LIKE_ESCAPE
+                        )
+                    )
+                }
+                # Other customers only and nobody at all get the same 403, so
+                # the answer never says whether a name exists in the book.
+                if not matched.intersection(own):
+                    raise not_permitted
+            resolved_customer_ids = resolved_customer_ids or own
+            dealer_scoped = True
+
+    default_from, default_to = current_year_window()
+    parsed_from = _parse_flex_date(date_from)
+    parsed_to = _parse_flex_date(date_to)
+    window_from = parsed_from.date() if parsed_from else default_from
+    window_to = parsed_to.date() if parsed_to else default_to
+    if window_from > window_to:
+        raise AppException(
+            422, "date_from is after date_to", detail=f"{window_from} > {window_to}", code="invalid_date_range",
+        )
+
+    data = top_selling(
+        db,
+        rank_by=rank_by_norm,
+        basis=basis_norm,
+        group=group_norm,
+        # count_only: the window functions still count and total the whole set, so
+        # one row is enough to read them off (and is the row a one-row set sends).
+        n=1 if count_only else n,
+        customer_query=customer_query_stripped,
+        customer_ids=resolved_customer_ids,
+        category_ids=resolved_category_ids,
+        sales_agent_ids=resolved_agent_ids,
+        brand_ids=resolved_brand_ids,
+        channel=channel_norm,
+        date_from=window_from,
+        date_to=window_to,
+        dealer_scoped=dealer_scoped,
+        detail_code=detail_code_stripped,
+        direction=direction_norm,
+    )
+    if count_only:
+        data["n"] = None
+        if data["total_count"] > 1:
+            data["rows"] = []
+    return TopSellingResponse(**data)

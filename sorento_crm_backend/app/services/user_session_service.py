@@ -33,6 +33,9 @@ REASON_INVALID = "session_invalid"
 REASON_REVOKED = "session_revoked"
 REASON_EXPIRED = "session_expired"
 
+# How a session was minted (identity S0, AC-07). Mirrors `ck_user_sessions_auth_method`.
+AUTH_METHODS = ("password", "phone_otp", "portal_link", "impersonation")
+
 
 class SessionAuthError(Exception):
     """Raised by resolve_session; carries a reason code for the 401 body."""
@@ -55,8 +58,15 @@ def mint_session(
     remember: bool,
     user_agent: Optional[str] = None,
     ip_address: Optional[str] = None,
+    auth_method: str = "password",
 ) -> UserSession:
-    """Create a new session row and return it. Caller commits via this function."""
+    """Create a new session row and return it. Caller commits via this function.
+
+    ``auth_method`` records how the person signed in; the audit actor of every
+    request on this session carries it. Raises ValueError for an unknown method.
+    """
+    if auth_method not in AUTH_METHODS:
+        raise ValueError(f"Unknown session auth_method: {auth_method!r}")
     now = _utcnow()
     row = UserSession(
         token=secrets.token_urlsafe(48),
@@ -66,6 +76,14 @@ def mint_session(
         last_seen_at=now,
         user_agent=(user_agent or None),
         ip_address=(ip_address or None),
+        auth_method=auth_method,
+        # Explicit, not the column's `server_default=func.now()`: Postgres's
+        # `now()` is pinned to the TRANSACTION's start, so two sessions minted
+        # a moment apart inside one transaction (a test, an impersonation
+        # immediately after login) would otherwise share one `created_at` and
+        # make "the newest session" (S3 1.7 `last_sign_in_method`) a coin
+        # flip. Python's clock has real per-call resolution.
+        created_at=now,
     )
     db.add(row)
     db.commit()

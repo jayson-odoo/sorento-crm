@@ -1,6 +1,7 @@
 """TCK-2026-000031 - user<->RespondContact link + phone uniqueness.
 
-Covers AC-31-F1 (resolve), F2 (auto-link + cache + order), F3 (normalised match),
+Covers AC-31-F1 (resolve), F2 (order; the auto-link + cache is superseded by identity
+S3 fix round 2, see test_phone_match_no_longer_auto_links_or_caches), F3 (normalised match),
 F4 (duplicate phone rejected), F5 (backfill idempotent).
 
 Run: pytest tests/test_user_respond_link.py -v
@@ -53,16 +54,17 @@ def test_explicit_link_resolves(db):
     assert resolve_user_respond_io_id(db, user) == "io-explicit"
 
 
-def test_phone_match_auto_links_and_caches(db):
-    """No explicit link, but contact_number uniquely matches -> resolve + cache."""
+def test_phone_match_no_longer_auto_links_or_caches(db):
+    """AC-31-F2 superseded by identity S3 fix round 2 (#1280, reviewer B1): a unique
+    phone match neither resolves nor caches. The link is set by the owner (or once by
+    the S0 migration); a runtime cache re-linked contacts the owner had unlinked."""
     _contact(db, "60123456789", io_id="io-match")
     uid = _user(db, contact_number="60123456789")
     user = db.query(User).get(uid)
     assert user.respond_contact_id is None
-    assert resolve_user_respond_io_id(db, user) == "io-match"
-    # cached onto the user row
+    assert resolve_user_respond_io_id(db, user) is None
     db.refresh(user)
-    assert user.respond_contact_id is not None
+    assert user.respond_contact_id is None
 
 
 def test_resolution_order_explicit_wins(db):
@@ -96,7 +98,10 @@ def test_duplicate_phone_rejected(db):
     svc = UserService(db)
     with pytest.raises(Exception) as exc:
         svc.update_user(second, UserUpdate(contact_number="0123456789"))  # normalises to 60123456789
-    assert "already used" in str(exc.value).lower() or "conflict" in str(type(exc.value)).lower()
+    # S3 1.2/1.3: the conflict message now names the holder instead of the
+    # phone (`PHONE_BELONGS_TO_USER`), replacing the old
+    # "Phone number <n> is already used by another user." text everywhere.
+    assert "belongs to" in str(exc.value).lower() or "phone_belongs_to_user" in str(exc.value).lower()
 
 
 def test_backfill_idempotent(db):

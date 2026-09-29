@@ -572,6 +572,54 @@ _COPY_CASES = [
 ]
 
 
+class TestAccessDeniedTextComposerRouting:
+    """Reviewer Should fix 6 (round 1, PR #1222): `canned.access_denied_text`
+    itself, not only the `compose_ideate_denial_reply` function it calls - the
+    ideation branch routes through the composer; every other agent's denial is
+    unchanged, with no LLM call. Moved here from `tests/test_ideation_reply.py`
+    (Blocking 1, round 2): that file sits outside `tests/chatbot/`, and
+    importing `app.services.chatbot.copy`/`app.services.chatbot.lanes.canned`
+    from there broke `test_import_boundary.py`."""
+
+    def test_access_denied_text_ideation_routes_through_composer(self, monkeypatch):
+        from app.services.chatbot.copy import fallback_copy
+        from app.services.chatbot.lanes import canned
+
+        calls = []
+
+        def _fake_compose(db, *, user_message, fallback_text):
+            calls.append((user_message, fallback_text))
+            return "LLM-composed denial"
+
+        monkeypatch.setattr(
+            "app.services.ideation_turn_service.compose_ideate_denial_reply", _fake_compose
+        )
+        ctx = {
+            "parse": {"output": {"routing": {"suggested_agent": "ideation"}}},
+            "text": {"message": {"message": {"text": "i have an idea"}}},
+        }
+        out = canned.access_denied_text(None, ctx, fallback_copy())
+        assert out == "LLM-composed denial"
+        assert calls[0][0] == "i have an idea"
+
+    def test_access_denied_text_other_agent_skips_composer(self, monkeypatch):
+        from app.services.chatbot.copy import fallback_copy
+        from app.services.chatbot.lanes import canned
+
+        calls = []
+        monkeypatch.setattr(
+            "app.services.ideation_turn_service.compose_ideate_denial_reply",
+            lambda *a, **k: calls.append(1),
+        )
+        ctx = {
+            "parse": {"output": {"routing": {"suggested_agent": "purchasing"}}},
+            "text": {"message": {"message": {"text": "need stock"}}},
+        }
+        out = canned.access_denied_text(None, ctx, fallback_copy())
+        assert calls == []
+        assert "purchasing" in out
+
+
 class TestCopyKeysRenderTodaysText:
     @pytest.mark.parametrize("key,render_kwargs,expected", _COPY_CASES, ids=[c[0] for c in _COPY_CASES])
     def test_copy_keys_render_todays_text(self, key, render_kwargs, expected):
@@ -705,7 +753,10 @@ class TestIdeateBranchCallsMcpTool:
         # #1179 AC-6: a live turn says so, so the idea lands on the board.
         assert call_kwargs["is_test"] is False
 
-        expected_text = "Idea IDEA-42 recorded. Thank you!\n\nhttps://outline.example/IDEA-42"
+        # AC-1216: no raw link append - the composed reply (S3's compose_ideate_reply,
+        # or its template fallback) already carries the link itself via the facts
+        # block, so this lane relays reply_text verbatim.
+        expected_text = "Idea IDEA-42 recorded. Thank you!"
         assert result.reply["text"] == expected_text
         assert result.reply["manualResponse"] is True
         assert result.reply["includeResponse"] is True

@@ -140,9 +140,18 @@ describe('DeliveryScheduleVersionsGrid', () => {
 
     const links = await screen.findAllByRole('link', { name: 'Open' });
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
-      '/project-sales/p1/delivery-schedules/v2',
-      '/project-sales/p1/delivery-schedules/v1',
+      '/project-sales/p1/delivery-schedules/v2?from=%2Fproject-sales%2Fp1%3Ftab%3Dschedules',
+      '/project-sales/p1/delivery-schedules/v1?from=%2Fproject-sales%2Fp1%3Ftab%3Dschedules',
     ]);
+  });
+
+  it('carries the project tab as the review page origin (S2)', async () => {
+    listDeliveryScheduleVersions.mockResolvedValue([summary()]);
+    renderGrid();
+
+    const link = await screen.findByRole('link', { name: 'Open' });
+    const params = new URLSearchParams(link.getAttribute('href')?.split('?')[1]);
+    expect(params.get('from')).toBe('/project-sales/p1?tab=schedules');
   });
 
   it('says what is missing rather than rendering an empty table', async () => {

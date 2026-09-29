@@ -33,6 +33,7 @@ import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { spoDetailHref, spoNumberFromLabel } from '@/lib/spo-detail';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   PILL_TONE,
@@ -945,11 +946,27 @@ export function BoardCellBreakdownDialog({
         // numbers: take the proposal, refuse it with a reason, undo, or go and edit it.
         cell: ({ row }) => {
           const key = row.original.key;
+          const contribution = row.original;
           return (
             <div className="flex min-w-0 items-center gap-1">
-              <BoardDecisionPill contribution={row.original} decision={draft[key] ?? null} />
+              <BoardDecisionPill contribution={contribution} decision={draft[key] ?? null} />
+              {/* AC-DT-5 (`PLAN-oi-decision-trail-ui.md`, round 2): the same History icon
+                  the list view's own Verdict column carries, right after the chip -
+                  same gate, including `covered` (N1, round 3: a fully-reserved /
+                  local-buy covered line can carry no `decision` object and no OI row of
+                  its own and still be worth tracing). */}
+              {contribution.decision ||
+              contribution.draft ||
+              contribution.order_inquiry ||
+              contribution.covered ? (
+                <DecisionTrailButton
+                  coreLineId={contribution.line_id ?? null}
+                  itemCode={contribution.item_code}
+                  className="shrink-0"
+                />
+              ) : null}
               <BoardVerdictActions
-                contribution={row.original}
+                contribution={contribution}
                 decision={draft[key] ?? null}
                 onDecide={(next) => onDecide(key, next)}
                 onChange={() => openRow(key)}

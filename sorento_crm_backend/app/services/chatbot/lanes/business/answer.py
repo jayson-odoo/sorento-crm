@@ -33,6 +33,8 @@ from typing import Any, Literal
 
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
+from app.services.product_spec_registry import SPEC_ACRONYMS
+from app.services.chatbot.tail.scope_block import live_brand_words
 
 # The did-you-mean helpers the JS carries in BOTH bodies with a "keep in lockstep" note.
 # `miss_suggest` owns them because that is where their node lives; this file imports them
@@ -477,6 +479,19 @@ def crossdomain_zeroset(
     def off(why: str) -> dict[str, Any]:
         out["_xd"] = {"active": False, "why": why}
         return out
+
+    # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+    # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D17, review round 9 (finding
+    # 7): a DEALER availability reply answers in the dealer's own terms and the
+    # verdict line is the whole answer for that product, so the ladder does not run
+    # at all when the reply carries an availability block - it must never state OUR
+    # stock/incoming/PO figures beside the dealer's own yes/no.
+    env_probe: Any = passthrough
+    if jsc.truthy(env_probe) and isinstance(jsc.get(env_probe, "output"), dict):
+        env_probe = env_probe["output"]
+    availability = jsc.get(env_probe, "stock_availability")
+    if isinstance(availability, list) and availability:
+        return off("stock_availability")
 
     qf = parser if isinstance(parser, dict) else {}
     dh = qf.get("domain_hint")
@@ -2418,6 +2433,12 @@ def _token_requests(norm_code: str, tokens: set[str], all_norm_codes: set[str]) 
     )
 
 
+def _plain_words(value: Any) -> str:
+    """A domain key said in a sentence ("purchase_order" -> "purchase order"); anything
+    else is left as written. Round 4 R7 on PR #833: no snake_case reaches a reply."""
+    return jsc.js_string(value).replace("_", " ")
+
+
 def _prettify_type(value: Any) -> str:
     """A snake_case / kebab-ish resolver entity type, rendered for a customer.
 
@@ -2459,6 +2480,12 @@ def _outstanding_report_text(item: Any) -> str:
     miss from anything else never matches here.
     """
     body = item if isinstance(item, dict) else {}
+    if body.get("outstanding_report") is not True and isinstance(body.get("fetch"), dict):
+        # PLAN-chatbot-top-x-hot-selling-24sep.md S4 (AC-1957): the rearch miss path
+        # hands over the fetch fragment WRAPPED (`{"fetch": structured}`); a top selling
+        # miss with no subject arrives that way, and its own header plus "No sales
+        # found." is the answer, not a generic "Could not find order.".
+        body = body["fetch"]
     if body.get("outstanding_report") is not True:
         return ""
     return jsc.js_string(body.get("response") or "").strip()
@@ -2482,12 +2509,23 @@ def _unplaced_token_has_neighbours(resolved: Any, gate: Any) -> bool:
     Read through `miss_resolutions` + `_ms_is_exact`, the same two `build_suggest_offer`'s
     own D1 arm is built on, so this guard cannot claim a did-you-mean D1 then declines to
     print. `allowed_lookup` narrows it the same way D1 does.
+
+    Only a CODE-shaped token counts (the resolver's own `_CODE_RE`, letters and digits):
+    every F8 turn above typed a code. A plain class word ("bidet", "basin") that
+    substring-matches a few product codes is the described set's own word, not a typo,
+    and treating its matches as neighbours silenced AC-1319's zero-qualifying answer
+    ("Couldn't find a bidet with a certificate") under an unrelated did-you-mean.
     """
+    from app.services.entity_resolver import _CODE_RE
+
     r = resolved if isinstance(resolved, dict) else {}
     g = gate if isinstance(gate, dict) else {}
     allowed_lookup = jsc.get(jsc.get(g, "gate_debug"), "allowed_lookup")
     allowed = allowed_lookup if isinstance(allowed_lookup, list) else None
     for res in _ms_miss_resolutions(r, gate=g):
+        token = jsc.nullish_str(jsc.get(res, "token")).strip()
+        if len(token) < 3 or not _CODE_RE.fullmatch(token):
+            continue
         candidates = [
             *jsc.array(jsc.get(res, "matches")),
             *jsc.array(jsc.get(res, "alternatives")),
@@ -2564,27 +2602,285 @@ def _header_predicate_phrase(require: dict[str, Any]) -> str:
             if scheme:
                 parts.append(f"{scheme} certificates")
                 continue
+        if key == "price":
+            # A product ask about the set ("described") names no leg. A price ask does
+            # (fix round 12: the opener no longer carries the tool's "Prices for").
+            if value != "described":
+                parts.append("prices")
+            continue
         noun = _HEADER_PREDICATE_NOUN.get(key)
         if noun:
             parts.append(noun)
+    if not parts and "price" in (require or {}):
+        return ""
     return _and_list(parts) if parts else "that"
 
 
-def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: dict[str, Any]) -> str:
-    """AC-1316 (work item E2): "<qualifying_total> <set noun> have <predicate noun>.
-    Showing <n>." - prepended, as its OWN line, ahead of the existing render (the
-    block below it is untouched). "Showing <n>" is dropped when every qualifying
-    product already fits on the page (`qualifying_total <= shown`).
+#: The longest counted set listed in one reply (owner ruling, 26 Sep 2026: "A counted set
+#: that fits one WhatsApp message (about 50 rows) is listed in full"). Read at call time
+#: (`answer.SET_LIST_MAX`) so a test can lower it rather than seed fifty products.
+SET_LIST_MAX = 50
 
-    A pure string function: `qualifying_total` and `shown` are counts the caller
-    already has (the resolver's own `qualifying_total`, and the page the domain
-    tool actually rendered), never re-derived here.
-    """
-    verb = "has" if qualifying_total == 1 else "have"
-    header = f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
-    if qualifying_total > shown:
-        header += f" Showing {shown}."
+
+def not_understood_line(words: Any) -> str:
+    """The words the set reader could not use, said rather than silently dropped."""
+    terms = [jsc.js_string(w).strip() for w in jsc.array(words) if jsc.js_string(w).strip()]
+    if not terms:
+        return ""
+    quoted = _and_list([f'"{t}"' for t in terms])
+    # Fix round 9 on PR #833 (owner: "no explanations"): the "did not match" line of the
+    # one reply structure, never how the search was run.
+    return f"Couldn't find: {quoted}."
+
+
+#: The one opener of every described-set answer, hit or miss (fix round 12 on PR #833, owner
+#: ruling 28 Sep 2026: "why the fix that we applied for incoming cannot work for stock? this
+#: is too fragile"). Before this a hit opened with its leg's tool sentence ("Stock summary
+#: for gunmetal wash basins (2).") and only a zero set opened with this line, so the reply
+#: shape followed the COUNT and the leg word, not the ask. The leg now chooses only what the
+#: rows under it show (stock figures, incoming lines, files); the opener is the same.
+SET_OPENER = "Here's what you want:"
+
+#: What "But no ... matched these" names per leg: the product-code miss's own words
+#: ("But no incoming matched these.").
+_MISS_NOUN: dict[str, str] = {
+    "certificate": "certificate",
+    "stock": "stock",
+    "incoming": "incoming",
+    "promotion": "promotion",
+}
+
+
+def breakdown_lines(breakdown: Any, set_noun: str) -> list[str]:
+    """"• Sorento wash basins: 120", one line per value of the key the resolver broke the
+    set down by (`product_predicate_service._set_breakdown`), largest first. Fix round 9
+    on PR #833: "always break it down", no cap."""
+    noun = set_noun or "products"
+    out = []
+    for row in jsc.array(jsc.get(breakdown, "rows")):
+        value = jsc.js_string(jsc.get(row, "value")).strip()
+        count = int(jsc.get(row, "count") or 0)
+        if value and count:
+            out.append(f"• {value} {noun}: {count:,}")
+    return out
+
+
+def what_you_want_reply(asked: str, lines: list[str], *, missing: str = "", leg: str = "", team: Any) -> str:
+    """The ONE reply a miss has, the product-code miss's own (owner, 28 Sep 2026: "you do
+    like here is what you want, but no incoming, do you want me to escalate..., I want
+    that structure to stay"): what was asked for on one line, what matched line by line,
+    what did not match, one short escalate offer. Fix round 9 on PR #833."""
+    head = "\n".join([f"Here's what you want: {asked}", *lines])
+    if missing:
+        tail = f"Couldn't find: {missing}."
+    elif lines and leg:
+        tail = f"But no {leg} matched these."
+    else:
+        tail = "But none matched."
+    # #1301 (F8): a staff profile gets no bot-initiated offer; its caller passes no team.
+    return f"{head}\n\n{tail} Would you like me to escalate to {team} team?" if team else f"{head}\n\n{tail}"
+
+
+def described_members_reply(predicate: Any, team: Any) -> str | None:
+    """A set that qualified nothing, in `what_you_want_reply`: the described products
+    (`predicate.members`, the set without its legs) under "Here's what you want", then
+    "But no incoming matched these". None when the resolver sent no members."""
+    members = jsc.get(predicate, "members")
+    if not isinstance(members, dict):
+        return None
+    require = jsc.get(predicate, "require") or {}
+    labels = [jsc.js_string(c) for c in jsc.array(jsc.get(predicate, "class_labels")) if jsc.truthy(c)]
+    noun = set_noun_for(labels)
+    phrase = described_set_phrase(jsc.get(predicate, "description"), noun, {})
+    total = int(jsc.get(members, "total") or 0)
+    lines = [f"• {jsc.js_string(c)}" for c in jsc.array(jsc.get(members, "codes")) if jsc.truthy(c)]
+    lines = lines or breakdown_lines(jsc.get(members, "breakdown"), noun)
+    leg = next(iter(require), "")
+    noun_of_leg = (
+        jsc.js_string(require[leg]).strip().lower() if leg == "attachment_type" else _MISS_NOUN.get(leg, "")
+    )
+    return what_you_want_reply(f"{phrase} ({total:,})" if total else phrase, lines, leg=noun_of_leg, team=team)
+
+
+def near_miss_reply(predicate: Any, team: Any) -> str:
+    """A set none of whose described products exist ("gunmetal bathtubs"), in
+    `what_you_want_reply`: the key's other values the set does hold, one line each, as
+    the resolver counted them (`predicate.near_miss`), then "Couldn't find: gunmetal
+    (finish or colour)". The same reply an unknown value gets."""
+    near = jsc.get(predicate, "near_miss")
+    labels = [jsc.js_string(c) for c in jsc.array(jsc.get(predicate, "class_labels")) if jsc.truthy(c)]
+    noun = set_noun_for(labels)
+    asked = described_set_phrase(jsc.get(predicate, "description"), noun, jsc.get(predicate, "require") or {})
+    lines = breakdown_lines({"rows": jsc.array(jsc.get(near, "other_values"))}, set_noun_for(
+        [jsc.js_string(c) for c in jsc.array(jsc.get(near, "class_labels")) if jsc.truthy(c)] or labels
+    ))
+    value = jsc.js_string(jsc.get(near, "value")).strip()
+    label = jsc.js_string(jsc.get(near, "label")).strip().lower()
+    missing = f"{_value_words(value)} ({label})" if value and label else ""
+    return what_you_want_reply(asked, lines, missing=missing, team=team)
+
+
+def unknown_values_reply(unknown: Any, predicate: Any, team: Any, *, subject: str = "") -> str:
+    """A value the registry does not know ("pink" as a finish or colour), in
+    `what_you_want_reply`: the subject with the value as asked, the subject broken down
+    by that key (`predicate.members.breakdown`), then "Couldn't find: pink (finish or
+    colour)". No list of the registry's choices and no typo said back."""
+    members = jsc.get(predicate, "members") if isinstance(predicate, dict) else None
+    labels = [jsc.js_string(c) for c in jsc.array(jsc.get(members, "class_labels")) if jsc.truthy(c)]
+    noun = set_noun_for(labels)
+    said = [jsc.js_string(jsc.get(u, "said")).strip() for u in jsc.array(unknown)]
+    said = [w for w in said if w]
+    description = [
+        *jsc.array(jsc.get(members, "description")),
+        *({"key": "said", "label": "", "value": w, "kind": "enum"} for w in said),
+    ]
+    # No described set to break down (the product route's own reading): the customer's
+    # own words for the subject.
+    asked = described_set_phrase(description, noun, {}) if members is not None else (subject or " ".join(said))
+    missing = _and_list(
+        [
+            f"{w} ({jsc.js_string(jsc.get(u, 'label')).strip().lower()})"
+            if jsc.js_string(jsc.get(u, "label")).strip()
+            else f'"{w}"'
+            for u in jsc.array(unknown)
+            for w in [jsc.js_string(jsc.get(u, "said")).strip()]
+            if w
+        ]
+    )
+    lines = breakdown_lines(jsc.get(members, "breakdown"), noun) if members is not None else []
+    return what_you_want_reply(asked, lines, missing=missing, team=team)
+
+
+def _value_words(value: str) -> str:
+    """A display value inside a sentence: lower case, an acronym or a single capital
+    letter kept ("P trap", "PVC")."""
+    return " ".join(w if w.isupper() or w.lower() in SPEC_ACRONYMS else w.lower() for w in value.split())
+
+
+def described_set_phrase(description: Any, set_noun: str, require: dict[str, Any]) -> str:
+    """The described set in one phrase: "Sorento gunmetal wash basins with incoming
+    stock", "Sorento kitchen sinks with thickness 1.2 mm with stock".
+
+    Off the resolver's own labelled bindings (`product_predicate_service.describe_set`):
+    the brand, then every named choice as a word before the noun, then the noun (the
+    product type when one was named, else the class), then each measurement, then what
+    the set has. Fix round 8 on PR #833: this replaces the bold "*Label:* value" lines the
+    set header used to carry (owner retest of round 7: "the answer should look exactly
+    when i check stock by product code")."""
+    brand = ""
+    noun = ""
+    before: list[str] = []
+    after: list[str] = []
+    for entry in jsc.array(description):
+        key = jsc.js_string(jsc.get(entry, "key") or "").strip()
+        label = jsc.js_string(jsc.get(entry, "label") or "").strip()
+        value = jsc.js_string(jsc.get(entry, "value") or "").strip()
+        kind = jsc.js_string(jsc.get(entry, "kind") or "").strip()
+        if not value:
+            continue
+        if key == "brand":
+            brand = value
+        elif key == "class":
+            noun = set_noun if " or " in value else set_noun_for([value])
+        elif kind == "numeric":
+            after.append(f"{label.lower()} {value}")
+        elif kind == "boolean":
+            before.append(label.lower() if value.lower() == "yes" else f"not {label.lower()}")
+        else:
+            before.append(_value_words(value))
+    words = [w for w in [brand, *before, noun or set_noun] if w]
+    phrase = " ".join(words)
+    if after:
+        phrase += f" with {_and_list(after)}"
+    has = _header_predicate_phrase(require) if require else ""
+    return f"{phrase} with {has}" if has else phrase
+
+
+def build_set_header(
+    qualifying_total: int,
+    shown: int,
+    set_noun: str,
+    require: dict[str, Any],
+    *,
+    description: Any = None,
+    not_understood: Any = None,
+    offset: int = 0,
+    previous_total: int | None = None,
+    exhausted: bool = False,
+    breakdown: Any = None,
+) -> str:
+    """A counted set's ONE intro line, the same opener a set that qualified nothing has
+    (`what_you_want_reply`), with the described set, what it has and its count; the rows
+    under it are exactly the product-code rows:
+
+        Here's what you want: Sorento wash basins with stock (276, showing 1 to 10)
+
+    Fix round 12 on PR #833: the leg's word is in the phrase and nowhere else, so a stock,
+    incoming, certificate or promotion ask gets one shape and the leg picks only the rows.
+    No paging (owner ruling, 26 Sep 2026): every qualifying product listed says the count
+    alone; a named count says which ones; none listed (a set longer than `SET_LIST_MAX`)
+    gives the breakdown by the next attribute.
+
+    A pure string function: `qualifying_total` and `shown` are counts the caller already
+    has, never re-derived here."""
+    # The leg is part of the phrase ("gunmetal wash basins with stock"); a product ask
+    # about a described set (`{"price": "described"}`) names no leg at all.
+    phrase = described_set_phrase(description, set_noun, require or {})
+    withheld = not exhausted and shown <= 0 and qualifying_total > 0
+    if withheld or exhausted or shown >= qualifying_total - offset:
+        count = f"{qualifying_total:,}"
+    else:
+        count = f"{qualifying_total:,}, showing {offset + 1} to {offset + shown}"
+    header = f"{SET_OPENER} {phrase} ({count})"
+    if previous_total and previous_total != qualifying_total:
+        # W4: the page re-counted and the set moved since the question; say so.
+        header += f". It was {previous_total:,} when you asked."
+    if exhausted:
+        # Round 3 W2: a count after the last page; every product was already listed.
+        header += f"{'' if header.endswith('.') else '.'} That is all {qualifying_total:,}."
+    elif withheld:
+        # Fix round 9 on PR #833 (owner: "no cap", "always break it down"): the full count
+        # and the set broken down by the next attribute, one line each, never a paging
+        # question.
+        lines = breakdown_lines(breakdown, set_noun)
+        if lines:
+            header += "\n" + "\n".join(lines)
     return header
+
+
+#: The other-brands line's own phrase per leg ("Other brands with stock"), owner hand
+#: test round 3 on PR #833: "with certificates" / "with incoming" / "with stock".
+_OTHER_BRANDS_NOUN: dict[str, str] = {
+    "certificate": "certificates",
+    "stock": "stock",
+    "incoming": "incoming",
+    "promotion": "a promotion",
+}
+
+
+def other_brands_line(other_brands: Any, require: dict[str, Any]) -> str:
+    """"Other brands with stock: Bravat 79, Cabana 57. Name one to see them." - the
+    last line of a reply answered for the company's default brand because the customer
+    named none (owner hand test round 3 on PR #833, W4). Every other brand with its full
+    count, largest first; "" when there is none."""
+    others = [
+        f"{jsc.js_string(jsc.get(o, 'brand')).strip()} {int(jsc.get(o, 'count') or 0):,}"
+        for o in jsc.array(other_brands)
+        if jsc.js_string(jsc.get(o, "brand")).strip() and jsc.get(o, "count")
+    ]
+    if not others:
+        return ""
+    parts: list[str] = []
+    for key, value in (require or {}).items():
+        if key == "attachment_type":
+            label = jsc.js_string(value).strip().lower()
+            parts.append(label if label else "an attachment")
+        elif key == "certificate" and isinstance(value, dict) and jsc.js_string(jsc.get(value, "scheme")).strip():
+            parts.append(f"{jsc.js_string(jsc.get(value, 'scheme')).strip()} certificates")
+        elif key in _OTHER_BRANDS_NOUN:
+            parts.append(_OTHER_BRANDS_NOUN[key])
+    phrase = f" with {_and_list(parts)}" if parts else ""
+    return f"Other brands{phrase}: {', '.join(others)}. Name one to see them."
 
 
 # REV-N2/AC-1337 (third console pass): the irregular endings a bare "+s" gets
@@ -2616,71 +2912,63 @@ def set_noun_for(class_labels: list[str] | None) -> str:
     return " ".join(w.lower() for w in words)
 
 
-# --------------------------------------------------------------------------- #
-# E3 (attribute-first asks, AC-1317): "more" paging through the set_page carry.
-# --------------------------------------------------------------------------- #
-
-#: The carried id list's own cap - a 2,704-long qualifying set is carried as ids,
-#: not re-queried, so it has to stop somewhere short of the whole catalogue.
-#: Named so a test can monkeypatch it (`raising=False`) rather than seed the real
-#: count.
-SET_PAGE_ID_CAP = 200
-
-# REV-N1/AC-1337 (third console pass): the fixed set a paging reply must EQUAL,
-# lower-cased and stripped of punctuation - never a bare substring/word search,
-# which let "no more" and "next week?" wrongly page a carry that was never
-# asked to continue.
-_MORE_FIXED_PHRASES: frozenset[str] = frozenset(
-    {"more", "next", "lagi", "more please", "show more", "next 5", "next five", "lagi 5"}
-)
-_MORE_NUMBER_RE = re.compile(r"^more \d+$")
-_PUNCTUATION_RE = re.compile(r"[^\w\s]")
-_WHITESPACE_RE = re.compile(r"\s+")
+#: The qualifying ids one described set is counted and fetched from - the resolver's own
+#: cap, so a 2,704-long set is counted in full but never carried as a list of that size.
+SET_ID_CAP = 200
 
 
-def is_more_reply(text: Any) -> bool:
-    """AC-1317/AC-1337: a bare "more" / "next" / "lagi" reply, or one of the
-    fixed short courtesy/paging phrases, lower-cased and stripped of
-    punctuation - equality only, never a substring/word search over an
-    arbitrary short message: "no more", "next week?" and "more taps with
-    stock" must NOT page a carry that was never asked to continue.
-    """
-    normalized = _WHITESPACE_RE.sub(" ", _PUNCTUATION_RE.sub("", jsc.js_string(text).lower())).strip()
-    if not normalized:
-        return False
-    return normalized in _MORE_FIXED_PHRASES or bool(_MORE_NUMBER_RE.match(normalized))
+def unknown_values_sentence(unknown: Any) -> str:
+    """"I don't know 't trap' as a trap. I know P trap and S trap." - round 4 R6 (owner
+    console test on PR #833: "the water closet t trap ask, why it match s trap?"). One
+    sentence pair per unknown value, off `product_spec_search.unknown_spec_values`."""
+    parts = []
+    for u in jsc.array(unknown):
+        said = jsc.js_string(jsc.get(u, "said")).strip()
+        label = jsc.js_string(jsc.get(u, "label")).strip().lower()
+        known = [jsc.js_string(k) for k in jsc.array(jsc.get(u, "known")) if jsc.truthy(k)]
+        if not said:
+            continue
+        if not label:
+            # Fix round 8 on PR #833: a descriptor no specification names at all.
+            parts.append(f"I don't know '{said}' as anything I can search products by.")
+            continue
+        line = f"I don't know '{said}' as a {label}."
+        if known:
+            line += f" I know {_and_list(known)}."
+        parts.append(line)
+    return " ".join(parts)
 
 
-def build_set_page_header(
-    qualifying_total: int, start: int, end: int, set_noun: str, require: dict[str, Any]
-) -> str:
-    """AC-1317: "<qualifying_total> <set noun> have <predicate noun>. Showing
-    <start> to <end>." - the CONTINUATION page's own header, off the SAME
-    predicate-noun phrase `build_set_header` uses, with a pre-known `set_noun`
-    (the carry's own, never re-derived from `class_labels` - a "more" turn runs
-    no resolver call and so never re-computes them).
-    """
-    verb = "has" if qualifying_total == 1 else "have"
-    return (
-        f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}. "
-        f"Showing {start} to {end}."
+def near_miss_sentence(near: Any, require: dict[str, Any]) -> str:
+    """Round 4 R4 (owner console test on PR #833, "so it got match or not? i have no
+    visibility into whether it does the matching"): a set that qualifies nothing says
+    the value it looked for and what the set holds in the key's other values:
+
+        No gunmetal wash basins with incoming stock (I looked for Finish or colour:
+        Gunmetal among wash basins). 12 wash basins have incoming stock in another
+        finish or colour: Chrome 5, Matt black 4, White 3.
+
+    `near` is the resolver's `predicate.near_miss` (`product_predicate_service._near_miss`)."""
+    labels = [jsc.js_string(c).strip() for c in jsc.array(jsc.get(near, "class_labels")) if jsc.truthy(c)]
+    noun = set_noun_for(labels)
+    singular = labels[0].lower() if len(labels) == 1 else "product"
+    label = jsc.js_string(jsc.get(near, "label")).strip()
+    value = jsc.js_string(jsc.get(near, "value")).strip()
+    with_what = _predicate_phrase(require)
+    has_what = _header_predicate_phrase(require)
+    # An acronym keeps its capitals, word by word ("No PVC pipe wash basins"; PR #833
+    # round 5 N2, round 6 N-r5-2).
+    named = " ".join(w if w.isupper() or w.lower() in SPEC_ACRONYMS else w.lower() for w in value.split())
+    said = f"No {named} {noun} with {with_what} (I looked for {label}: {value} among {noun})."
+    total = int(jsc.get(near, "other_total") or 0)
+    if not total:
+        return f"{said} No {noun} have {with_what} in any {label.lower()}."
+    others = ", ".join(
+        f"{jsc.js_string(jsc.get(o, 'value'))} {int(jsc.get(o, 'count') or 0):,}"
+        for o in jsc.array(jsc.get(near, "other_values"))
     )
-
-
-def build_set_page_exhausted_message(qualifying_total: int, set_noun: str) -> str:
-    """AC-1317: "That was all <N> <noun>." - the fixed idiom, never conjugated
-    off `qualifying_total` ("was", not "were", even for a plural count)."""
-    return f"That was all {qualifying_total:,} {set_noun}."
-
-
-def build_set_page_narrow_message(set_noun: str) -> str:
-    """AC-1317: past the CARRIED id list's own cap (`SET_PAGE_ID_CAP`) - real
-    qualifying products remain, but the carry ran out before they did, so the
-    honest answer is to ask for a narrower question, never "that was all"."""
-    return (
-        f"That's as many {set_noun} as I can carry in one list - narrow the ask "
-        f"(a brand, or a more specific type) and I can show you the right ones."
-    )
+    counted = f"1 {singular} has" if total == 1 else f"{total:,} {noun} have"
+    return f"{said} {counted} {has_what} in another {label.lower()}: {others}."
 
 
 def not_found_error_message(
@@ -2690,8 +2978,17 @@ def not_found_error_message(
     resolved: dict[str, Any] | None,
     gate: dict[str, Any] | None,
     entitlement_levels: Any = None,
+    profile: Any = None,
 ) -> dict[str, Any]:
     """`not-found-error-message`: the miss reply, its search-scope header and its bullets.
+
+    `profile` (#1262 slice 11, F8 follow-up): the SAME staff-audience gate `turn/
+    compose.py` and `answer_bridge.py`'s cross-domain ladder already apply -
+    `is_staff_profile(profile)` suppresses the bot-initiated "Would you like me to
+    escalate to X team?" clause this function's own `build_breakdown_msg` closure
+    appends, never the rest of the miss sentence (a staff rep still reads "But no
+    order matched these", just with no offer tacked on). `None` (every caller that
+    predates this slice) reads as not-staff, byte-identical to before.
 
     H16 is structural here: `resolvedTypes` is `Object.keys(by_entity_type)` and every OTHER
     read of that object goes through `Object.values(...)`, so a metadata key on it can only
@@ -2706,6 +3003,9 @@ def not_found_error_message(
     q = parser if isinstance(parser, dict) else {}
     r = resolved if isinstance(resolved, dict) else {}
     g = gate if isinstance(gate, dict) else {}
+    from app.services.chatbot.turn.state import is_staff_profile
+
+    is_staff = is_staff_profile(profile)
 
     by_entity_type = jsc.get(r, "by_entity_type")
     resolved_types = list(by_entity_type.keys()) if isinstance(by_entity_type, dict) else []
@@ -2760,6 +3060,53 @@ def not_found_error_message(
         if (domain_hint == "order" and order_status == "outstanding")
         else ("delivered " if (domain_hint == "order" and order_status == "delivered") else "")
     )
+    # Fix round 10 on PR #833: read before the branches, so the unknown-value reply below
+    # has its team on every path (it failed on the needs-scope one).
+    routing = jsc.get(q, "routing")
+    suggested_team = jsc.get(routing, "suggested_team") if jsc.truthy(routing) else None
+    # Owner ruling 22 Sep 2026, R6 (AC-EQ-12..14): a stock/incoming question with
+    # NO team named at all must still get the domain's own escalation team
+    # (inventory -> warehouse, incoming -> purchasing), never the generic
+    # "customer_service" literal. On the `engine.run_turn` path
+    # `turn_runtime.lane_parse_output` is what actually fills a null
+    # `routing.suggested_team` (its own `DEFAULT_SUGGESTED_TEAM` chain, now
+    # domain-aware - see that function), so `suggested_team` read off
+    # `q["routing"]` here is rarely still falsy by the time a real TURN reaches
+    # this composer. This is the SAME fallback anyway, kept as the direct-call
+    # belt-and-braces: a caller that reaches `complete_answer` directly, bypassing
+    # `run_turn`/`lane_parse_output` entirely, builds its `parser` dict with no
+    # `routing` key at all - `test_s6c_answer_lane.py::TestErrorArmRendersTheMissLane
+    # .test_the_error_arm_reaches_the_miss_renderer` is exactly that shape
+    # (`domain_hint = "inventory"`, no `routing` key), and pins this fallback
+    # directly; this composer must not hand a caller like that the generic literal
+    # either.
+    if not jsc.truthy(suggested_team):
+        from app.services.chatbot.turn.policy import default_policy
+
+        domain_row = default_policy().domain(
+            jsc.js_string(domain_hint if jsc.truthy(domain_hint) else "").lower()
+        )
+        suggested_team = domain_row.escalation_team_code if domain_row is not None else None
+    team = _pretty_team(suggested_team if jsc.truthy(suggested_team) else "customer_service")
+
+    def _esc_offer(offer_team: Any = None) -> str:
+        """#1262 slice 11 (F8) follow-up (coordinator round 2): the ONE place every
+        "Would you like me to escalate to X team?" clause in this function is built -
+        AC-S11-1 names the outstanding-report miss explicitly, and this function has
+        ELEVEN such clauses (grepped, not guessed), each hand-written before this
+        slice. A per-branch `if is_staff: ... else: ...` at each site is exactly the
+        "one branch missed later" risk the coordinator flagged; routing every one of
+        them through this closure instead means a TWELFTH branch added after this
+        slice inherits the gate for free, rather than needing its own author to
+        remember it. `""` for a staff profile - the caller appends it only when
+        truthy, so no branch prints a dangling space or period-with-nothing-after.
+        """
+        t = offer_team if jsc.truthy(offer_team) else team
+        return "" if is_staff else f"Would you like me to escalate to {t} team?"
+
+    # The one reply structure's own offer (`what_you_want_reply`) under the same gate.
+    offer_team = None if is_staff else team
+
     escalate_message: Any = None
     is_clarification = False
     # datemiss-summary: the resolved-entity bullets, exposed so `build-suggest-offer` can show
@@ -2835,9 +3182,18 @@ def not_found_error_message(
             kept = [e for e in entities_list if not_access(jsc.get(e, "raw"))]
             # #11: '' (not 'the requested item') so the " for ..." segment can be dropped
             # entirely - the access suffix already says what was searched for.
+            # Fix round 8 on PR #833: the owner read "Could not find incoming for category
+            # gunmetal basin": a set the resolver described is named as its answer would
+            # name it, and an entity kind is never said as its internal key.
+            described = jsc.array(jsc.get(predicate, "description")) if isinstance(predicate, dict) else []
+            labels = [jsc.js_string(c) for c in jsc.array(jsc.get(predicate, "class_labels")) if jsc.truthy(c)] if described else []
             requested = (
-                ", ".join(
-                    f"{jsc.js_string(jsc.get(e, 'hint') or 'item')} {jsc.js_string(jsc.get(e, 'raw'))}"
+                described_set_phrase(described, set_noun_for(labels), {}).removesuffix(" with that")
+                if described
+                else ", ".join(
+                    jsc.js_string(jsc.get(e, "raw"))
+                    if jsc.get(e, "hint") in ("specification", "category", "product_type")
+                    else f"{_plain_words(jsc.get(e, 'hint') or 'item')} {jsc.js_string(jsc.get(e, 'raw'))}"
                     for e in kept
                 )
                 if kept
@@ -2859,32 +3215,6 @@ def not_found_error_message(
             if (jsc.get(q, "intent_hint") == "check_promotion" and access_levels)
             else ""
         )
-        routing = jsc.get(q, "routing")
-        suggested_team = jsc.get(routing, "suggested_team") if jsc.truthy(routing) else None
-        # Owner ruling 22 Sep 2026, R6 (AC-EQ-12..14): a stock/incoming question with
-        # NO team named at all must still get the domain's own escalation team
-        # (inventory -> warehouse, incoming -> purchasing), never the generic
-        # "customer_service" literal. On the `engine.run_turn` path
-        # `turn_runtime.lane_parse_output` is what actually fills a null
-        # `routing.suggested_team` (its own `DEFAULT_SUGGESTED_TEAM` chain, now
-        # domain-aware - see that function), so `suggested_team` read off
-        # `q["routing"]` here is rarely still falsy by the time a real TURN reaches
-        # this composer. This is the SAME fallback anyway, kept as the direct-call
-        # belt-and-braces: a caller that reaches `complete_answer` directly, bypassing
-        # `run_turn`/`lane_parse_output` entirely, builds its `parser` dict with no
-        # `routing` key at all - `test_s6c_answer_lane.py::TestErrorArmRendersTheMissLane
-        # .test_the_error_arm_reaches_the_miss_renderer` is exactly that shape
-        # (`domain_hint = "inventory"`, no `routing` key), and pins this fallback
-        # directly; this composer must not hand a caller like that the generic literal
-        # either.
-        if not jsc.truthy(suggested_team):
-            from app.services.chatbot.turn.policy import default_policy
-
-            domain_row = default_policy().domain(
-                jsc.js_string(domain_hint if jsc.truthy(domain_hint) else "").lower()
-            )
-            suggested_team = domain_row.escalation_team_code if domain_row is not None else None
-        team = _pretty_team(suggested_team if jsc.truthy(suggested_team) else "customer_service")
         is_active = jsc.get(q, "is_active")
         active_inactive = (
             " active"
@@ -3093,20 +3423,16 @@ def not_found_error_message(
                 for m in uniq
             )
             if not any_active:
-                return (
-                    f"{label} has ended, so there is nothing to send. "
-                    f"Would you like me to escalate to {team} team?"
-                )
+                esc = _esc_offer()
+                return f"{label} has ended, so there is nothing to send." + (f" {esc}" if esc else "")
             levels = [
                 jsc.js_string(x if jsc.truthy(x) else "").strip()
                 for x in jsc.array(entitlement_levels)
             ]
             levels = [x for x in levels if x]
             at = f" at your access level ({', '.join(levels)})" if levels else " to you"
-            return (
-                f"{label} is not available{at}. "
-                f"Would you like me to escalate to {team} team?"
-            )
+            esc = _esc_offer()
+            return f"{label} is not available{at}." + (f" {esc}" if esc else "")
 
         entitlement_miss = _entitlement_miss()
 
@@ -3144,6 +3470,26 @@ def not_found_error_message(
                 typed_order[group] = typed_seq
                 typed_seq += 1
 
+        # #1262 fix lane round 2, S1 (AC-S5-4): the parser's own per-entity quantity,
+        # printed beside the code it belongs to through the ONE label rule
+        # (`turn/state.py::focus_row_label`, "M210-GM (x5)") - never a regex.
+        from app.services.chatbot.turn.state import focus_row_label
+
+        qty_by_code: dict[str, Any] = {}
+        for entity in all_ents:
+            quantity = jsc.get(entity, "quantity") if jsc.truthy(entity) else None
+            if not jsc.truthy(quantity):
+                continue
+            for key in (jsc.get(entity, "raw"), jsc.get(entity, "canonical_code")):
+                if _type_norm(key):
+                    qty_by_code.setdefault(_type_norm(key), quantity)
+
+        def with_quantity(label: Any) -> str:
+            quantity = qty_by_code.get(_type_norm(bare_label(label)))
+            if quantity is None:
+                return jsc.js_string(label)
+            return jsc.js_string(focus_row_label({"raw": jsc.js_string(label), "quantity": quantity}))
+
         found_lines: list[str] = []
         for entity_type, codes in by_type.items():
             # The cap is over DISTINCT CODES, not over labels: a turn that resolved eight
@@ -3167,7 +3513,7 @@ def not_found_error_message(
                 else ""
             )
             rendered = ", ".join(
-                ", ".join(jsc.js_string(l) for l in by_code[b]) for b in named_codes
+                ", ".join(with_quantity(l) for l in by_code[b]) for b in named_codes
             )
             found_lines.append(f"• {jsc.js_string(entity_type)}: {rendered}{extra}")
         found_summary = "\n".join(found_lines)
@@ -3282,6 +3628,10 @@ def not_found_error_message(
                         head.append(f"{axis['label']}: {words or axis['allText']}")
                     elif words:
                         head.append(f"{axis['label']}: {words}")
+                # #1262 fix lane round 2, B1: the brand the fetch was filtered by.
+                brand_words = live_brand_words(g)
+                if brand_words:
+                    head.append(f"Brand: {brand_words}")
                 # Dates last, and stated even when no window was set: without it "no order
                 # matched these" never said whether it had looked at all dates or just a month.
                 if not start and not end:
@@ -3308,20 +3658,32 @@ def not_found_error_message(
                 if (is_order_scope and jsc.truthy(date_start) and jsc.truthy(date_end))
                 else date_range
             )
-            esc_ask = (
-                f"Reply 'all dates' to search without the date filter, or would you like me "
-                f"to escalate to {team} team?"
-                if (is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end)))
-                else f"Would you like me to escalate to {team} team?"
-            )
-            parts.append(
-                entitlement_miss
-                if jsc.truthy(entitlement_miss)
-                else (
-                    f"But no{active_inactive} {domain_word}{miss_window}{access} "
-                    f"matched these{co_suffix}. {esc_ask}"
+            # #1262 slice 11 (F8) follow-up: the widen invite (a genuinely useful next
+            # step, never a bot-initiated offer) stays for every audience - `is_staff`
+            # (read once, at the top of this function, the SAME flag `_esc_offer` uses)
+            # only ever drops the ", or would you like me to escalate" half joined onto
+            # it. Bespoke rather than routed through `_esc_offer` because this is the
+            # ONE site where the clause is comma-joined mid-sentence rather than its own
+            # trailing sentence - `_esc_offer`'s own phrasing covers every OTHER site.
+            windowed = is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end))
+            if windowed:
+                esc_ask = (
+                    "Reply 'all dates' to search without the date filter."
+                    if is_staff
+                    else (
+                        f"Reply 'all dates' to search without the date filter, or would you like me "
+                        f"to escalate to {team} team?"
+                    )
                 )
+            else:
+                esc_ask = _esc_offer()
+            miss_sentence = (
+                # R7 (round 4): "But no purchase order matched", never the domain key.
+                f"But no{active_inactive} {_plain_words(domain_word)}{miss_window}{access} matched these{co_suffix}."
             )
+            if esc_ask:
+                miss_sentence = f"{miss_sentence} {esc_ask}"
+            parts.append(entitlement_miss if jsc.truthy(entitlement_miss) else miss_sentence)
             return "\n\n".join(parts)
 
         # vague-token clarify: among UNRESOLVED tokens only, map each back to a parser entity
@@ -3360,7 +3722,7 @@ def not_found_error_message(
             else:
                 escalate_message = (
                     f'I captured "{captured}" but couldn\'t tell which part is which. '
-                    f"For a {jsc.js_string(domain_hint)} enquiry, please give me a labeled "
+                    f"For a {_plain_words(domain_hint)} enquiry, please give me a labeled "
                     f"specific - e.g. {labels}."
                 )
         else:
@@ -3385,11 +3747,11 @@ def not_found_error_message(
                 schemes_text = (
                     ", ".join(jsc.js_string(s) for s in schemes) if schemes else "none on file yet"
                 )
+                esc = _esc_offer()
                 escalate_message = (
                     f"The register has no {scheme_word or 'that'} certificates. "
-                    f"Schemes on file: {schemes_text}. "
-                    f"Would you like me to escalate to {team} team?"
-                )
+                    f"Schemes on file: {schemes_text}."
+                ) + (f" {esc}" if esc else "")
             elif described_set_answers and "attachment_types_on_file" in predicate:
                 # R6/AC-1329 (console fix round 2): the unrecognised word is an
                 # ATTACHMENT LABEL ("photo"), not a class/product_type word - a
@@ -3416,37 +3778,42 @@ def not_found_error_message(
                 and jsc.array(jsc.get(predicate, "unrecognized_terms"))
             ):
                 # AC-1320 (work item F2): the described set named NOTHING this
-                # catalogue can read - clarify the term, never answer the
-                # honest-zero copy below, which would falsely say "none of these
-                # qualify" for a set that was never actually described.
-                term = jsc.js_string(jsc.array(jsc.get(predicate, "unrecognized_terms"))[0])
-                suggestions = [
-                    jsc.js_string(s).strip().lower()
-                    for s in jsc.array(jsc.get(predicate, "suggestions"))
-                    if jsc.truthy(s)
+                # catalogue can read. Fix round 9 on PR #833 (owner, 28 Sep 2026: "no
+                # explanations", no typo mention): the word is the "did not match" line
+                # of the one reply structure, never a "did you mean". Fix round 10 (owner,
+                # 28 Sep 2026: "for #833 yeah exact only"): no product types are offered
+                # as lines either; a word said as the product type is named with its kind
+                # ("Couldn't find: water tap basin (product type)").
+                terms = [jsc.js_string(t) for t in jsc.array(jsc.get(predicate, "unrecognized_terms")) if jsc.truthy(t)]
+                type_raws = [
+                    jsc.js_string(jsc.get(e, "raw")).strip()
+                    for e in entities_list
+                    if jsc.get(e, "hint") in ("category", "product_type") and jsc.truthy(jsc.get(e, "raw"))
                 ]
-                if suggestions:
-                    escalate_message = (
-                        f"I don't know '{term}' as a product type. "
-                        f"Did you mean {_human_list(suggestions)}?"
-                    )
-                else:
-                    # Fix round, F2: NOTHING was near enough to offer as a real
-                    # "did you mean" - the catalogue's own most common class
-                    # labels (`common_class_labels`) still give a real answer,
-                    # never the contentless "Did you mean the product types I
-                    # know?".
-                    common = [
-                        jsc.js_string(c).strip().lower()
-                        for c in jsc.array(jsc.get(predicate, "common_class_labels"))
-                        if jsc.truthy(c)
-                    ]
-                    common_text = ", ".join(common) if common else "a class or product type I know"
-                    escalate_message = (
-                        f"I don't know '{term}' as a product type. "
-                        f"Try a product type such as {common_text}."
-                    )
-                is_clarification = True
+                asked = " ".join(
+                    jsc.js_string(jsc.get(e, "raw"))
+                    for e in entities_list
+                    if jsc.get(e, "hint") in ("category", "product_type", "specification") and jsc.truthy(jsc.get(e, "raw"))
+                ) or terms[0]
+                is_type = {raw.lower() for raw in type_raws}
+                escalate_message = what_you_want_reply(
+                    asked,
+                    [],
+                    missing=_and_list([f"{t} (product type)" if t.strip().lower() in is_type else f'"{t}"' for t in terms]),
+                    team=offer_team,
+                )
+
+            elif (
+                described_set_answers
+                and jsc.get(predicate, "qualifying_total") == 0
+                and isinstance(jsc.get(predicate, "near_miss"), dict)
+            ):
+                # Fix round 9 on PR #833 (owner, 28 Sep 2026: "you do like here is what
+                # you want, but no incoming, do you want me to escalate..., I want that
+                # structure to stay"): round 4's near-miss sentence ("I looked for ...
+                # in another finish or colour") is retired for the product-code miss's
+                # own structure, the described products line by line.
+                escalate_message = described_members_reply(predicate, offer_team) or near_miss_reply(predicate, offer_team)
             elif (
                 described_set_answers
                 and jsc.get(predicate, "qualifying_total") == 0
@@ -3515,11 +3882,24 @@ def not_found_error_message(
                     if checked_codes
                     else ""
                 )
-                escalate_message = (
-                    f"Couldn't find {subject_phrase} with "
-                    f"{_predicate_phrase(jsc.get(predicate, 'require') or {})}{checked}. "
-                    f"Would you like me to escalate to {team} team?"
-                )
+                described = jsc.array(jsc.get(predicate, "description"))
+                if described:
+                    # Fix round 8 on PR #833: the miss names the described set the way
+                    # its answer would have ("Sorento kitchen sinks with thickness 1.2 mm
+                    # with incoming stock"), every grounded property included.
+                    labels = [jsc.js_string(c) for c in jsc.array(jsc.get(predicate, "class_labels")) if jsc.truthy(c)]
+                    phrase = described_set_phrase(
+                        described, set_noun_for(labels), jsc.get(predicate, "require") or {}
+                    )
+                    escalate_message = described_members_reply(predicate, offer_team) or what_you_want_reply(
+                        phrase, [], team=offer_team
+                    )
+                else:
+                    esc = _esc_offer()
+                    escalate_message = (
+                        f"Couldn't find {subject_phrase} with "
+                        f"{_predicate_phrase(jsc.get(predicate, 'require') or {})}{checked}."
+                    ) + (f" {esc}" if esc else "")
             elif domain_hint == "product_attachment":
                 # FIX B: natural, parser-driven phrasing - never leak the internal literal.
                 product_raws = [
@@ -3565,10 +3945,10 @@ def not_found_error_message(
                         subject = f"attachments for {prod_text}"
                     else:
                         subject = requested if jsc.truthy(requested) else "the requested item"
+                    esc = _esc_offer()
                     escalate_message = (
-                        f"Could not find{active_inactive} {subject}{date_range}{access}. "
-                        f"Would you like me to escalate to {team} team?"
-                    )
+                        f"Could not find{active_inactive} {subject}{date_range}{access}."
+                    ) + (f" {esc}" if esc else "")
             elif _outstanding_report_text(item):
                 # AC-1107 / S4 point 6, and the owner's approved miss mock: an outstanding
                 # report that came back empty ALREADY says what was searched and what was
@@ -3581,10 +3961,8 @@ def not_found_error_message(
                 # team picker behind it work exactly as they do on every other miss.
                 # THIS TOOL ONLY: no other miss reaches here, because no other answer
                 # carries `outstanding_report`.
-                escalate_message = (
-                    f"{_outstanding_report_text(item)}\n\n"
-                    f"Would you like me to escalate to {team} team?"
-                )
+                esc = _esc_offer()
+                escalate_message = f"{_outstanding_report_text(item)}" + (f"\n\n{esc}" if esc else "")
                 found_summary = _outstanding_report_text(item)
             else:
                 # status-filter-aware: one or more SPECIFIC orders resolved (the DO exists)
@@ -3641,7 +4019,9 @@ def not_found_error_message(
                     # AC-1863: one order must stay byte-identical to before this fix, so the
                     # escalate question is appended to the LAST line (a space, not a newline)
                     # and only the order lines themselves are newline-joined.
-                    order_lines[-1] = f"{order_lines[-1]} Would you like me to escalate to {team} team?"
+                    esc = _esc_offer()
+                    if esc:
+                        order_lines[-1] = f"{order_lines[-1]} {esc}"
                     escalate_message = "\n".join(order_lines)
                 elif use_breakdown:
                     escalate_message = build_breakdown_msg(
@@ -3652,17 +4032,45 @@ def not_found_error_message(
                     # promotions were searched and none matched - they were not: the gate
                     # dead-ends on the no-compatible-entity branch and the fetch never runs.
                     # Saying we searched sends the customer off correcting the wrong thing.
+                    esc = _esc_offer()
                     escalate_message = (
-                        f"Couldn't find: {', '.join(label_token(t) for t in not_found_raw)}. "
-                        f"Would you like me to escalate to {team} team?"
-                    )
+                        f"Couldn't find: {', '.join(label_token(t) for t in not_found_raw)}."
+                    ) + (f" {esc}" if esc else "")
                 else:
                     for_requested = f" for {requested}" if jsc.truthy(requested) else ""
+                    esc = _esc_offer()
                     escalate_message = (
                         f"Could not find{active_inactive} {status_label}"
-                        f"{jsc.js_string(domain_hint)}{for_requested}{date_range}{access}. "
-                        f"Would you like me to escalate to {team} team?"
+                        f"{_plain_words(domain_hint)}{for_requested}{date_range}{access}."
+                    ) + (f" {esc}" if esc else "")
+
+    # R6 (round 4 on PR #833): an attribute value the registry does not know is said back
+    # with the values it does, on a set ask (`predicate.unknown_values`) and a product ask
+    # (`unknown_spec_values`) alike. It outranks every miss sentence above: nothing was
+    # searched for it, so no "couldn't find" is true.
+    unknown_values = jsc.array(jsc.get(predicate, "unknown_values")) if isinstance(predicate, dict) else []
+    unknown_values = unknown_values or jsc.array(jsc.get(r, "unknown_spec_values"))
+    if unknown_values:
+        # Fix round 9 on PR #833: the one reply structure, the subject broken down by the
+        # unknown value's key; the escalate offer stands, so it is not a clarify.
+        subject = next(
+            (
+                words
+                for hints in (("category", "product_type"), ("product",))
+                for words in [
+                    " ".join(
+                        jsc.js_string(jsc.get(e, "raw"))
+                        for e in entities_list
+                        if jsc.get(e, "hint") in hints and jsc.truthy(jsc.get(e, "raw"))
                     )
+                ]
+                if words
+            ),
+            "",
+        )
+        escalate_message = unknown_values_reply(unknown_values, predicate, offer_team, subject=subject)
+        is_clarification = False
+        found_summary = ""
 
     # Q23: the customer named an access level they do not hold. The gate detects it; say so
     # here too, or an entitlement problem reads as an ordinary "couldn't find it".
@@ -3845,6 +4253,7 @@ def build_suggest_offer(
     sibling_transform: Any = None,
     get_results: Any = None,
     execution_id: Any = None,
+    profile: Any = None,
 ) -> dict[str, Any]:
     """`build-suggest-offer` (D1 / D2 / D3): the miss lane's offer composer.
 
@@ -3858,6 +4267,15 @@ def build_suggest_offer(
     identity - in the CRM that identity is the TURN id, which is the one permanent, already
     registered difference between this port and a captured n8n run
     (`tests/chatbot/worlds.py::WORLD_DROP_PATHS`).
+
+    `profile` (#1262 slice 11 review round, 26 Sep 2026): a did-you-mean/sibling roster is
+    a clarifying QUESTION, not an escalation offer (`pending.is_roster`, `answer_bridge.
+    answer_for`'s own audience gate keeps the roster itself for staff) - but every
+    `suggest_response` this function builds bakes its own "or would you like me to escalate
+    to X team?" tail straight into the SENTENCE, before that gate ever runs. `_esc_clause`
+    is the SAME closure pattern `not_found_error_message::_esc_offer` already uses (one
+    place every such clause in a function is built, so a later branch inherits the gate for
+    free) - `""` for staff, the full clause otherwise.
     """
     out = dict(item) if isinstance(item, dict) else {}
     for key in _DYM_CTRL_KEYS:
@@ -3875,6 +4293,15 @@ def build_suggest_offer(
         routing = jsc.get(q, "routing")
         company_team = jsc.get(routing, "suggested_team") if jsc.truthy(routing) else None
     team = _pretty_team(company_team if jsc.truthy(company_team) else "customer_service")
+    from app.services.chatbot.turn.state import is_staff_profile
+
+    is_staff = is_staff_profile(profile)
+
+    def _cont(lead_in: str, escalate_suffix: str) -> str:
+        """`lead_in + escalate_suffix` (the ", or ...escalate..." tail, several wordings
+        across this function's own branches) - staff get `f"{lead_in}."` alone, no
+        escalate offer (#1262 slice 11 review round, 26 Sep 2026)."""
+        return f"{lead_in}." if is_staff else f"{lead_in}{escalate_suffix}"
 
     def mk_offer(cands: Any) -> Any:
         """id = this turn's identity (stamped onto the picked entity as its dym slot, giving
@@ -3964,8 +4391,10 @@ def build_suggest_offer(
                 out["suggest_response"] = (
                     f"No incoming stock (ETA) found for {exact_list}. Related products:\n"
                     f"{numbered}\n"
-                    f"Reply with a number to check its incoming, or reply 'yes' to escalate "
-                    f"to {team} team."
+                    + _cont(
+                        "Reply with a number to check its incoming",
+                        f", or reply 'yes' to escalate to {team} team.",
+                    )
                 )
                 # Uncapped list means NO per-sibling buttons (respond.io's button cap);
                 # numbers are typed, so Yes / No are the only buttons.
@@ -4058,6 +4487,15 @@ def build_suggest_offer(
         return keep
 
     misses = _ms_miss_resolutions(r, gate=g)
+    # Reviewer B2 on PR #833: a described set that qualifies nothing names its own miss
+    # (`not_found_error_message`'s set branches: the honest zero of AC-1319 with the
+    # codes it checked, the scheme or document type not on file of AC-1321 / R6). Its
+    # class word ("tap") forward-matched a few product codes, which is the set's own
+    # word and not a typo, so it offers no did-you-mean over the top of that sentence -
+    # the same code-shape rule `_unplaced_token_has_neighbours` applies.
+    from app.services.entity_resolver import _CODE_RE
+
+    zero_set = jsc.get(jsc.get(g, "predicate"), "qualifying_total") == 0
 
     d1s: list[dict[str, Any]] = []
     if not is_clar and not require_spec:
@@ -4065,6 +4503,8 @@ def build_suggest_offer(
         # number of missed tokens shown at 5, which with cap3 per token keeps the numbered
         # list at or under 15.
         for res in misses:
+            if zero_set and not _CODE_RE.fullmatch(jsc.nullish_str(jsc.get(res, "token")).strip()):
+                continue
             cands = token_candidates(res)
             if cands:
                 token = jsc.get(res, "token")
@@ -4331,7 +4771,8 @@ def build_suggest_offer(
         out["suggest_response"] = (
             "Couldn't find some items:\n\n"
             + "\n".join(blocks)
-            + f"\n\nReply a number to pick, or 'yes' to escalate to {team}."
+            + "\n\n"
+            + _cont("Reply a number to pick", f", or 'yes' to escalate to {team}.")
         )
         out["suggest_quick_reply"] = _quick_reply([_YES, _NO])
         out["dym_offer"] = mk_offer(out["dym_candidates"])
@@ -4360,8 +4801,10 @@ def build_suggest_offer(
                 out["suggest_response"] = (
                     f'Couldn\'t pin down "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
                     f"Here are the closest matches:\n{numbered}\n"
-                    f"Reply with a number to continue, or would you like me to escalate to "
-                    f"{team} team?"
+                    + _cont(
+                        "Reply with a number to continue",
+                        f", or would you like me to escalate to {team} team?",
+                    )
                 )
                 out["suggest_quick_reply"] = _quick_reply(
                     [str(i + 1) for i in range(len(picks))] + [_YES, _NO]
@@ -4428,15 +4871,19 @@ def build_suggest_offer(
                     out["suggest_response"] = (
                         f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
                         f"Did you mean:\n" + "\n".join(dym_lines) + "\n"
-                        f"Reply with a code to continue, or would you like me to escalate to "
-                        f"{team} team?"
+                        + _cont(
+                            "Reply with a code to continue",
+                            f", or would you like me to escalate to {team} team?",
+                        )
                     )
                 else:
                     out["suggest_response"] = (
                         f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
                         f"Did you mean {_bso_human_list(codes)}? "
-                        f"Reply with a code to continue, or would you like me to escalate to "
-                        f"{team} team?"
+                        + _cont(
+                            "Reply with a code to continue",
+                            f", or would you like me to escalate to {team} team?",
+                        )
                     )
                 out["suggest_quick_reply"] = _quick_reply([*codes, _YES, _NO])
                 out["suggest_last_result_set"] = [
@@ -4564,13 +5011,19 @@ def build_suggest_offer(
             summary = f"Here's what you want:\n{summary_text}\n\n" if summary_text else ""
             text = (
                 f"{summary}No delivery on {asked}. {jsc.js_string(cust)} has delivery on {near}. "
-                f"Reply with a date to continue, or would you like me to escalate to {team} team?"
+                + _cont(
+                    "Reply with a date to continue",
+                    f", or would you like me to escalate to {team} team?",
+                )
             )
         else:
             text = (
                 f"No {jsc.js_string(noun)} for {asked_label}. "
                 f"Try: {', '.join(jsc.js_string(v) for v in values)}. "
-                f"Reply with a code to continue, or would you like me to escalate to {team} team?"
+                + _cont(
+                    "Reply with a code to continue",
+                    f", or would you like me to escalate to {team} team?",
+                )
             )
 
         out["suggest_offer"] = True
@@ -4620,7 +5073,10 @@ def build_suggest_offer(
     out["suggest_selection_context"] = "suggest_offer"
     out["suggest_response"] = (
         f"No {jsc.js_string(noun)} for {asked_label}. Here are the closest matches:\n{numbered}\n"
-        f"Reply with a number to continue, or would you like me to escalate to {team} team?"
+        + _cont(
+            "Reply with a number to continue",
+            f", or would you like me to escalate to {team} team?",
+        )
     )
     out["suggest_quick_reply"] = _quick_reply(
         [str(i + 1) for i in range(len(alt_picks))] + [_YES, _NO]

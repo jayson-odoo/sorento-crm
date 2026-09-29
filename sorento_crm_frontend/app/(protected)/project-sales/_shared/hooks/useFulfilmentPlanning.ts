@@ -502,13 +502,20 @@ export function useLineDraftMutation() {
       key: string;
       decision: BoardDecision;
       proposed?: BoardSource[];
+      // Review round 1, Should fix 1: read only by `onError` below, never by the write
+      // itself - `BoardDecideControl`'s own lenient toast (R10) already names a failed row,
+      // so a Decide save asks this mutation to stay quiet rather than toasting it a second
+      // time.
+      silent?: boolean;
     }) => (proposed ? putLineDraft(key, decision, proposed) : putLineDraft(key, decision)),
     onSuccess: (saved, { key }) => {
       queryClient.setQueriesData<PlanningBoard>({ queryKey: [PLANNING_BOARD_KEY] }, (current) =>
         current ? patchContributionDraft(current, key, saved) : current,
       );
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error, variables) => {
+      if (!variables.silent) toast.error(error.message);
+    },
   });
 
   const remove = useMutation({
@@ -534,7 +541,9 @@ export function useLineDraftMutation() {
       key: string,
       decision: BoardDecision,
       proposed?: BoardSource[],
-    ): Promise<BoardLineDraft> => save.mutateAsync({ key, decision, proposed }),
+      options?: { silent?: boolean },
+    ): Promise<BoardLineDraft> =>
+      save.mutateAsync({ key, decision, proposed, silent: options?.silent }),
     remove: (key: string): Promise<void> => remove.mutateAsync(key),
   };
 }

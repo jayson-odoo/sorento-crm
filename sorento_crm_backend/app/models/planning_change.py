@@ -130,6 +130,7 @@ class PlanningChangeRow(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "planning_change_rows"
+    __audit_skip__ = "line table, 67 rows a day or more (measured 27 Sep 2026, review B3)"
     # Same convention as the batch above: born after 354, no pre-move name to pin.
     __audit_entity_type__ = "project_planning_change_rows"
 

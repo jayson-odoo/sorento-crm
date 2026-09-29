@@ -178,7 +178,6 @@ export default function WarehousesList() {
       rowHref={rowHref}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       standardToolbar={false}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

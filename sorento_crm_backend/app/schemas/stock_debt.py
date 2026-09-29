@@ -19,6 +19,8 @@ from typing import Annotated, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
+from app.schemas.export_split import ExportSplit as ExportSplit
+
 Tone = Literal["red", "amber", "green"]
 DemandStatus = Literal["covered", "late", "short", "pinned"]
 SupplyKind = Literal["on_hand", "spo", "po"]
@@ -26,8 +28,10 @@ SupplyKind = Literal["on_hand", "spo", "po"]
 #: read; `project` reproduces the pre-24-Sep view (flagged bins only); `retail` is pools
 #: only and ignores `group`.
 Book = Literal["all", "project", "retail"]
-#: The export workbook's split (R5/AC-13..AC-16). One sheet for `none`.
-ExportSplit = Literal["none", "supplier", "category", "supplier_category"]
+#: The export workbook's split (R5/AC-13..AC-16). One sheet for `none`. Imported from the
+#: shared `app.schemas.export_split` (PLAN-low-stock-export-split-25sep) now that the low
+#: stock report's own export accepts the same four values - re-exported under this name
+#: (`as ExportSplit`) so every other import site in this module is unchanged.
 
 
 class StockDebtMonth(BaseModel):
@@ -150,6 +154,13 @@ class StockDebtAssignedFromDocument(BaseModel):
     qty: float
     oi_number: Optional[str] = None
     oi_id: Optional[str] = None
+    #: R42 (28 Sep 2026): a PO's own link target - its number, its line within the
+    #: document, and the two ids the document dialog opens a PO on. All `None` for any
+    #: other kind.
+    po_number: Optional[str] = None
+    po_line_number: Optional[int] = None
+    po_id: Optional[str] = None
+    po_line_id: Optional[str] = None
 
 
 #: Discriminated on `kind` (the same idiom `price_tag.TagLayerPropsDoc` already uses) so an
@@ -199,12 +210,19 @@ class StockDebtSupplyEvent(BaseModel):
     kind: SupplyKind
     ref: Optional[str] = None
     #: R29: the SPO's own `spo_number`/`spo_line_number` off `spo_allocations` - the
-    #: Document cell's link target. `None` for on hand and for PO (never emitted here,
-    #: R23).
+    #: Document cell's link target. `None` for on hand and for PO.
     spo_number: Optional[str] = None
     spo_line_number: Optional[int] = None
+    #: R42 (28 Sep 2026): a PO's own link target - its number, its line within the
+    #: document, and the two ids the document dialog opens a PO on. All `None` for any
+    #: other kind.
+    po_number: Optional[str] = None
+    po_line_number: Optional[int] = None
+    po_id: Optional[str] = None
+    po_line_id: Optional[str] = None
     warehouse_code: Optional[str] = None
-    #: Arrival: today for on hand, the SPO's arrival, `issue + lead` for a PO line (R29).
+    #: Arrival: today for on hand, the SPO's arrival, and for a PO line its Delivery date
+    #: (`expected_date`, R42), else `issue + lead` (R29).
     date: Optional[DateType] = None
     #: PO only: the SO delivery date the line was typed against. Display only (R30).
     bought_for: Optional[DateType] = None
@@ -227,7 +245,8 @@ class StockDebtSupplyEvent(BaseModel):
     assigned_to: List[StockDebtAssignedTo]
     #: R26: an SPO's own Received (`quantity_received`) and Outstanding (the walk's own
     #: netted balance, what `qty` used to state before this ruling split it out) - `qty`
-    #: above is now the SPO line's RAW ordered quantity. Both `None` for every other kind
+    #: above is now the SPO line's RAW ordered quantity. R42: a PO line states the same
+    #: three off its own `qty_ordered`/`qty_received`. Both `None` for on hand
     #: (on hand has no received/outstanding history to state), so the drill prints those
     #: two columns blank rather than a fabricated 0.
     received_qty: Optional[float] = None

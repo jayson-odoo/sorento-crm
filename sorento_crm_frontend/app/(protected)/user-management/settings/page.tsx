@@ -33,6 +33,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useSettings } from './components/settings-context';
 import { SigninBackgroundCard } from './components/signin-background-card';
+import { CostPriceVerificationCard } from './components/cost-price-verification-card';
 import TimezoneSelect from './components/timezone-select';
 import {
   GeneralSettingsSchema,
@@ -1289,6 +1290,9 @@ export default function Page() {
       {/* The one setting on this screen whose value is a file, so it saves on its own
         rather than through the JSON form above. */}
       <SigninBackgroundCard />
+      {/* #1288: read by the cost price review page too, so it saves on its own click
+          rather than waiting on the General form's Save Settings. */}
+      <CostPriceVerificationCard />
     </div>
   );
 }

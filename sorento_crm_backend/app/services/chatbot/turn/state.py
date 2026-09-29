@@ -1,9 +1,14 @@
 # State: focus + pending + profile (PLAN-chatbot-turn-rearch.md "APPLY contract").
-# Dataclasses only - no pydantic here, no I/O, nothing imported outside the stdlib.
+# Dataclasses only - no pydantic here, no I/O, and nothing imported outside the stdlib
+# but `turn/task.py`, the one axis that carries a dataclass of its own (ported from PR
+# #1118, feat/chatbot-dealer-stock-verdict, not merged, owner ruling 24 Sep 2026, for
+# chatbot-stock-ask-v2 S3).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Mapping
+
+from app.services.chatbot.turn.task import Task, task_from_wire, task_to_wire
 
 
 def focus_row_label(row: Mapping[str, Any]) -> Any:
@@ -20,8 +25,24 @@ def focus_row_label(row: Mapping[str, Any]) -> Any:
     ladder (`name or canonical_code or raw`, no `display_name` at all), so a caller
     that HAD filled `display_name` onto a fresh roster's carried rows still printed
     the customer ROLLUP code instead of naming every ledger.
+
+    #1262 slice 5 (F4), AC-S5-4: a row carrying the parser's own `quantity` prints
+    it beside the code, "M210-GM (x5)" - the ONE place this reads, never a second
+    regex pulling a quantity back out of `raw` (owner ruling 1). A row with no
+    quantity at all (every row before this slice) prints exactly as it always did.
+
+    Only a row THIS message named prints it (the S1 nit, fix lane round 2): a CARRIED
+    row (`current_message: False`, `focus_from_wire`) keeps its `quantity` for the
+    stock task's per-product loop (main, chatbot-stock-ask-v2 S3), but a later subject
+    line never repeats an earlier message's "(x5)".
     """
-    return row.get("display_name") or row.get("name") or row.get("raw") or row.get("canonical_code")
+    label = row.get("display_name") or row.get("name") or row.get("raw") or row.get("canonical_code")
+    quantity = row.get("quantity")
+    if row.get("current_message") is False:
+        return label
+    if label and isinstance(quantity, (int, float)) and not isinstance(quantity, bool) and quantity:
+        return f"{label} (x{quantity:g})"
+    return label
 
 
 def fold_token(value: str) -> str:
@@ -89,6 +110,14 @@ class Focus:
     customers: list[dict[str, Any]] = field(default_factory=list)
     warehouse: list[dict[str, Any]] = field(default_factory=list)
     brands: list[str] = field(default_factory=list)
+    # #1262 slice 9 (F1a) follow-up: the outstanding report's OWN brand carry - already
+    # RESOLVED uuids (never re-resolved, D10), settled by `_settle_question_subject` off
+    # the scope-ask's stored filters and read back by `turn_runtime.outstanding_carry`.
+    # A dedicated slot, deliberately NOT `brands` above: that field holds plain CODE
+    # strings for the tier-gate's own brand x tier entitlement recompose
+    # (`turn_runtime.py`'s `recompose(tiers, focus.brands, entitled)`), an unrelated
+    # consumer this must never disturb.
+    outstanding_brand_ids: list[str] = field(default_factory=list)
     tier: list[str] = field(default_factory=list)
     domains: list[str] = field(default_factory=list)
     document: list[str] = field(default_factory=list)
@@ -102,12 +131,32 @@ class Focus:
     # `outstanding_filters` and the two could disagree).
     sales_channel: str | None = None
     date_window: dict[str, Any] | None = None
-    # The twelfth slot (AC-1534, contract 115): where a counted-set answer got to.
-    # `{"set_key": ..., "offset": n}` - the set the last answer described and how many of
-    # it the customer has already been shown, so "more" pages the SAME set instead of
-    # re-counting it. Its own slot rather than a bag entry: a page position is a focus
-    # axis like any other, and it has to be cleared by a topic reset with the rest.
+    # The twelfth slot (AC-1534, contract 115): the set a too-long counted answer asked
+    # "how many should I show?" about, `{"set_key": ...}`, read only by that question's
+    # answer (no paging, owner ruling 26 Sep 2026). Its own slot rather than a bag entry:
+    # it is a focus axis like any other, and it has to be cleared by a topic reset with
+    # the rest.
     set_page: dict[str, Any] | None = None
+    # Round 4 R5 (owner console test on PR #833): the ask a clarify question was about,
+    # `{"term", "options", "ask"}`, read only by that question's answer ("tap" after "Did
+    # you mean tap or wash basin?") and cleared by every other turn.
+    set_clarify: dict[str, Any] | None = None
+    # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: a top selling
+    # ask's own axes (`rank_by`, `basis`, `rank_group`, `top_n`, the category words and a
+    # picked row's `detail_code` / `category_code`), carried while `status ==
+    # "top_selling"`. The metric, grain, basis and count questions are answered in a
+    # SECOND message that names only the answer, so the ask they complete has to be
+    # somewhere; `turn/apply._top_selling_rules` is its one writer. One slot, not four
+    # fields: every key lives and dies with the one ask.
+    top_selling: dict[str, Any] | None = None
+    # Ported from PR #1118 (not merged) for chatbot-stock-ask-v2 S3: what the
+    # conversation still OWES (Focus.tasks, D21). A tuple of `turn/task.py::Task`, at
+    # most one per kind. Its own axis rather than a flag on `products`, because
+    # `apply._set_kind_field` REPLACES an axis wholesale on any turn that names
+    # entities of that kind - turn 1's four products would be gone the moment turn 2
+    # answered two of them - and rather than a `pending`, because a new ask CLOSES a
+    # roster and must only PARK a task.
+    tasks: tuple[Task, ...] = ()
     extra: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
@@ -126,6 +175,28 @@ class Profile:
     # same moment as the tier and the language, off the same SELECT, and the engine's
     # stock-denial gate (contract 61, 62) is the one reader.
     stock_allowed: bool = True
+    # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): both default
+    # OFF, unlike stock_allowed above - a contact with no row, or two ambiguous rows,
+    # gets no salesman notification and no packing list attachment by default.
+    notify_salesman: bool = False
+    packing_list_allowed: bool = False
+    # Owner ruling 26 Sep 2026 (hand test F1): "dealer ask cannot have escalation,
+    # cannot have direct escalation to warehouse, their contact point is sales person".
+    # A dealer is a contact whose stock visibility policy is "Availability only"
+    # (`stock_visibility.resolve_policy(...).mode == "availability"`), read once with the
+    # rest of the profile so the stock ask can refer them to their salesman instead of
+    # offering a team. Default OFF: an unresolved contact keeps today's behaviour.
+    stock_availability_only: bool = False
+
+
+def is_staff_profile(profile: "Profile | None") -> bool:
+    """#1262 slice 11 (F8), owner ruling 2: staff (a Mocha CS sales rep) is
+    `respond_contacts.chatbot_profile.tier == "office"`. The ONE check every
+    bot-initiated escalation offer site reads (`turn/compose.py`'s own composer
+    offer, `answer_bridge.py`'s cross-domain ladder offer) - staff get no offer,
+    dealer/end_user keep R6 (22 Sep) unchanged.
+    """
+    return getattr(profile, "tier", None) == "office"
 
 
 @dataclass
@@ -150,7 +221,10 @@ class State:
 # lose a ledger family on the way (journey step 5, D7).
 # --------------------------------------------------------------------------- #
 
-FOCUS_LIST_FIELDS = ("products", "customers", "warehouse", "brands", "tier", "domains", "document")
+FOCUS_LIST_FIELDS = (
+    "products", "customers", "warehouse", "brands", "outstanding_brand_ids",
+    "tier", "domains", "document",
+)
 
 
 def focus_to_wire(focus: Focus) -> dict[str, Any]:
@@ -159,6 +233,12 @@ def focus_to_wire(focus: Focus) -> dict[str, Any]:
     wire["sales_channel"] = focus.sales_channel
     wire["date_window"] = focus.date_window
     wire["set_page"] = focus.set_page
+    wire["set_clarify"] = focus.set_clarify
+    wire["top_selling"] = dict(focus.top_selling) if focus.top_selling else None
+    # Ported from PR #1118 (not merged): the open tasks travel INSIDE the focus, not
+    # on a session key of their own - the focus is the context, and a second key
+    # could disagree with it.
+    wire["tasks"] = [task_to_wire(task) for task in (focus.tasks or ())]
     wire["extra"] = {k: list(v) for k, v in (focus.extra or {}).items()}
     return wire
 
@@ -185,7 +265,7 @@ def focus_from_wire(raw: Any) -> Focus:
         value = raw.get(name)
         if not isinstance(value, list):
             continue
-        if name in ("brands", "tier", "domains", "document"):
+        if name in ("brands", "outstanding_brand_ids", "tier", "domains", "document"):
             setattr(focus, name, [v for v in value if isinstance(v, str)])
         else:
             setattr(focus, name, [_entity(v) for v in value if v is not None])
@@ -208,6 +288,18 @@ def focus_from_wire(raw: Any) -> Focus:
     focus.date_window = window if isinstance(window, dict) else None
     page = raw.get("set_page")
     focus.set_page = page if isinstance(page, dict) else None
+    clarify = raw.get("set_clarify")
+    focus.set_clarify = clarify if isinstance(clarify, dict) else None
+    top_selling = raw.get("top_selling")
+    focus.top_selling = dict(top_selling) if isinstance(top_selling, dict) else None
+    tasks = raw.get("tasks")
+    if isinstance(tasks, list):
+        # Ported from PR #1118 (not merged): a focus persisted before this slice
+        # shipped carries no `tasks` key at all, which reads as "nothing owed", never
+        # as a broken read.
+        focus.tasks = tuple(
+            task for task in (task_from_wire(row) for row in tasks) if task is not None
+        )
     extra = raw.get("extra")
     if isinstance(extra, dict):
         focus.extra = {
@@ -223,5 +315,8 @@ def _entity(value: Any) -> dict[str, Any]:
         # Read back from the session, so named by an EARLIER message - see the docstring
         # above. A copy, never the caller's dict: the wire payload is read by other
         # readers too and this rule is about the STATE, not about the stored row.
+        # #1262 fix lane round 2 (S1's nit) keeps `quantity` on a carried row for the
+        # stock task (main, chatbot-stock-ask-v2 S3); `focus_row_label` is what never
+        # prints a carried row's "(x5)" in a later subject line.
         return {**value, "current_message": False}
     return {"raw": value, "canonical_code": value, "current_message": False}

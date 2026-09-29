@@ -9,13 +9,20 @@
  * `probeImportMapping`:
  *   POST /api/v1/scm/import-mapping/probe  (multipart file, supplier_id, doc_types[],
  *   optional header_row) -> {header_row, columns:[{position, header, samples, field,
- *   source, required}], required_fields, missing_required, fields:[{field,label}]}  (B4)
+ *   source, required}], required_fields, missing_required, fields:[{field,label}],
+ *   header_fields:[{row, label, sample, field, source}]}  (B4, F1/R-D)
+ *
+ *   `header_fields` is every `label：value` pair the PI/packing-list header BLOCK states
+ *   above the table (DAFUYUAN's combined 提单号/柜号/封条号 cell, or a bare label with its
+ *   value in the next cell like `Date:`) - the mapper's own "Header fields" section (F2).
+ *   Absent for a doc type with no header block (`supplier_inventory`).
  *
  * `saveImportMapping`:
  *   POST /api/v1/scm/import-mapping/save  {supplier_id, doc_types:[...], mappings:[{header,
  *   field}]} - upserts SUPPLIER-scoped rows, replacing this supplier's earlier choice for
  *   the same header rather than accumulating (AC-M6). `field: "ignore"` is a saved choice
- *   (G2/AC-M7), never omitted.                                                     (B5)
+ *   (G2/AC-M7), never omitted. A header-field pick (F3) travels in this SAME array, keyed
+ *   by its label text - one table, one save, no separate admin step.               (B5)
  *
  * A combined file (one sheet read as BOTH a proforma invoice and a packing list, grill G4
  * / AC-M13) probes and saves against an ARRAY of doc types rather than one - the backend
@@ -59,6 +66,7 @@ export const IMPORT_MAPPING_DOC_TYPE_LABELS: Record<
 export type {
   ImportMappingColumn,
   ImportMappingField,
+  ImportMappingHeaderField,
   ImportMappingProbe,
   ImportMappingSelection,
 } from '@/components/common/ImportColumnMapper';
@@ -97,14 +105,13 @@ export async function probeImportMapping({
   const res = await apiFetch('/api/v1/scm/import-mapping/probe', { method: 'POST', body });
   if (!res.ok) throw new Error(await extractApiError(res, "Failed to read the file's columns"));
   const data = await res.json();
+  // Fix round 3 (owner hand test, 25 Sep): the whole response IS the probe - hand-picking
+  // keys here silently dropped `header_field_choices` (the mapper's Header fields section
+  // read [] and offered only Ignore) the moment the backend grew a field this list did not
+  // yet name. Spread every key through instead, so a future backend addition (or removal)
+  // never needs a matching edit here.
   return {
-    probe: {
-      header_row: data.header_row,
-      columns: data.columns,
-      required_fields: data.required_fields,
-      missing_required: data.missing_required,
-      row_count: data.row_count,
-    },
+    probe: { ...data },
     fields: data.fields,
   };
 }
@@ -120,6 +127,10 @@ export async function saveImportMapping({
   docTypes,
   mappings,
 }: SaveImportMappingRequest): Promise<void> {
+  // F3: header-field picks (the PI's own label:value block) travel in the SAME `mappings`
+  // array as the column picks, one table, one save - `canonical_fields` now lists each
+  // reader's own block fields (`_BLOCK_FIELDS`) alongside its dataclass fields, so a pick
+  // like `container_no` or `currency` resolves the same way a column pick does.
   const res = await apiFetch('/api/v1/scm/import-mapping/save', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

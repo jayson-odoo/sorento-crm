@@ -131,6 +131,12 @@ DEFAULT_OVERDUE_DEAD_DAYS = 0
 POOL_GROUP = "__pool__"
 
 
+def ownership_group(warehouse: Optional[str], is_pool: bool = False) -> str:
+    """Public name for `_group_of`, for a caller outside this module that must agree with
+    the walk about which pile a location is (R42's S/O pin stays inside its own group)."""
+    return _group_of(warehouse, is_pool)
+
+
 def _group_of(warehouse: Optional[str], is_pool: bool) -> str:
     """The ownership group a location belongs to, in ONE spelling.
 
@@ -190,6 +196,13 @@ class SupplyEvent:
     #: entry. `None` for on hand, which is a bin rather than a document.
     spo_number: Optional[str] = None
     spo_line_number: Optional[int] = None
+    #: R42 (Stock Debt only, 28 Sep 2026): a PO line's own document number, its position in
+    #: the document and the document's id - the FE opens the PO on that line from Covered
+    #: by and from the Supply tab. `None` for every other kind. The PO LINE's id is the
+    #: event key itself (`po:<id>`, `parse_supply_key`).
+    po_number: Optional[str] = None
+    po_line_number: Optional[int] = None
+    purchase_order_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -221,6 +234,11 @@ class DemandLine:
     #: mirror's own numbering, read by the ladder's borrow-donor naming and nothing here).
     #: `None` for a line AutoCount has never numbered.
     core_line_no: Optional[int] = None
+    #: R43 (Stock Debt only, 28 Sep 2026): the line's own `sales_order_lines.source_ref`
+    #: (`"{database}:{DocKey}:{DtlKey}"`), the value a PO line's S/O
+    #: (`from_so_line_ref`) quotes, so a book pin lands on the LINE it names. `None` for a
+    #: line the book never keyed.
+    source_ref: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -250,6 +268,16 @@ class Hold:
     #: is a decision (`so_line_allocations`), never a placement.
     oi_number: Optional[str] = None
     oi_id: Optional[str] = None
+    #: R42: a PO placement's own document, for the stood-up branch (AC-S2-1b) - the same
+    #: reason `spo_number` rides here.
+    po_number: Optional[str] = None
+    purchase_order_id: Optional[str] = None
+    #: R43 (owner, 28 Sep 2026, #1346): "when it is assigned, then it will fulfil the
+    #: demand ady". The Stock Debt view sets it on every hold naming a PO line (the book's
+    #: S/O and a placement alike): the quantity is fulfilled whatever the document's date,
+    #: so a dead or undated PO books no shortfall for it (unlike AC-S2-7's precedent) and a
+    #: PO landing after the line's date does not either. The board never sets it.
+    fulfils: bool = False
 
 
 @dataclass(frozen=True)
@@ -536,6 +564,7 @@ def assign(
     left = {event.key: float(event.qty) for event in counted}
     events = {event.key: event for event in counted}
     uncounted_by_key = {event.key: event for event in uncounted}
+    uncounted_left = {event.key: float(event.qty) for event in uncounted}
     states = {
         line.key: _Open(line=line, remaining=float(line.open_qty)) for line in dated
     }
@@ -563,11 +592,22 @@ def assign(
             # (the line reads `pinned`) and the drill names the order the document is
             # placed against - but the document is still not supply, so it adds nothing to
             # the month. Chasing it is the action the red cell is asking for.
+            #
+            # R43: unless the hold `fulfils` (the view's PO pins): assigned means fulfilled,
+            # so the line is owed nothing for it, and the document still adds nothing free.
+            # A fulfilling hold is capped by what the document still has outstanding, the
+            # way a counted one is capped by `left`: two placements, or a placement larger
+            # than what is left after a receipt, cannot fulfil more than the PO will bring.
             take = min(float(hold.qty), state.remaining)
+            if hold.fulfils:
+                take = min(take, uncounted_left[hold.supply_key])
             if take <= EPSILON:
                 continue
             event = uncounted_by_key[hold.supply_key]
-            state.uncounted_pinned += take
+            if hold.fulfils:
+                uncounted_left[hold.supply_key] -= take
+            else:
+                state.uncounted_pinned += take
         else:
             take = min(float(hold.qty), state.remaining)
             if take <= EPSILON:
@@ -583,6 +623,8 @@ def assign(
                 ref=hold.ref,
                 spo_number=hold.spo_number,
                 spo_line_number=hold.spo_line_number,
+                po_number=hold.po_number,
+                purchase_order_id=hold.purchase_order_id,
             )
             counted.append(event)
         state.remaining -= take
@@ -948,6 +990,7 @@ __all__ = [
     "group_book_positions",
     "month_axis",
     "month_key",
+    "ownership_group",
     "parse_supply_key",
     "tone_for",
 ]

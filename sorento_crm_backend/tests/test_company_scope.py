@@ -277,6 +277,10 @@ _COMPANY_ID_ALLOWLIST = {
     "forms",
     "import_logs",
     "audit_logs",
+    # The audit trail's own failure ledger (best-effort capture, owner ruling 28 Sep 2026):
+    # written by the global audit listener for whichever company's write lost its trail,
+    # counted company-wide on the system health page, like audit_logs.
+    "audit_trail_gaps",
     # Conversation / form SLA trackers carry the company that decides WHICH escalation
     # ladder the tracker climbs, not who may read the row. Scoping it would break the
     # two readers that have no company: the overdue scan (a scheduler tick with no
@@ -550,7 +554,40 @@ def test_every_company_id_table_is_registered():
     # (F3) - the reserve/unreserve route both load and write it BY the reserve request
     # row's id, never through a scoped parent query, so it is owned outright like its
     # sibling reserve tables above.
-    expected_owned = 137
+    # PLAN-oi-links-autocount-truth-24sep.md (issue #1215) adds 1:
+    # `order_inquiry_suggested_links` is one company's own guess the cascade walk made
+    # against its own order inquiry row, written and trimmed by
+    # `ProjectOrderInquiryService._write_suggested_links` off the scoped row - owned the
+    # same reason `order_inquiry_links` beside it is owned.
+    # PLAN-sales-targets-opportunities-26sep.md (S6) adds 2: `sales.teams` and
+    # `sales.team_members` are one company's own teams and its agents' dated places in
+    # them; the team routes load a team BY ID, so the mixin's filter is what hides another
+    # company's team (UAC S6-8).
+    # PLAN-cost-price-supplier-26sep.md (#1288, Lane A) adds 3: `product_supplier_costs`
+    # is one company's own dated cost list for its own product-supplier link,
+    # `cost_price_change_sets` is one company's upload of a supplier price list, and
+    # `supplier_price_links` is one company's link for a supplier (plan 4.1, 4.3, 4.5).
+    # The routes load a set, a line's set and a cost row BY ID, so the mixin's filter is
+    # what hides another company's prices; `cost_price_change_lines` reaches its scope
+    # through its set and is deliberately not owned.
+    # PLAN-sales-targets-opportunities-26sep.md (S1) adds 3: `sales.targets`,
+    # `sales.target_periods` and `sales.target_scope` are one company's own targets, their
+    # per-period figures and their product scope rows; every target route loads BY ID, so the
+    # mixin's filter is what hides another company's target (UAC S1-13).
+    # PLAN-sales-targets-opportunities-26sep.md (S2, section 16) adds 2:
+    # `sales.opportunities` is one company's own pipeline entry, logged by its agent in the
+    # portal or by its staff in the CRM, and `sales.opportunity_lines` are that entry's
+    # products. The lines are owned rather than derived through the opportunity because
+    # PATCH replaces the set by opportunity id and the mixin stamps the company at insert,
+    # the same reason `order_inquiry_reserve_request_rows` is owned beside its request.
+    # Both sit in the sales module's PURGE_ORDER and `purge_tables.json`.
+    # The S1 fix round 3 (PR #1297) adds 1: `sales.target_commission_tiers` are one target's
+    # own tiers, read and replaced only through that scoped target (plan 3.3).
+    # PLAN-finance-billing-documents-27sep.md (S0, #1309) adds 2: `finance.billing_documents`
+    # and `finance.billing_document_lines` are one company's own AutoCount billing documents,
+    # pushed under that company's anchor; the read-back loads a document BY ID.
+    # Merge of both lanes: main's 148 + 3 (cost price, #1288) = 151.
+    expected_owned = 151
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 @contextmanager
-def scheduler_session():
+def scheduler_session(name: str = "scheduler"):
     """A DB session for background ticks, explicitly scoped to ALL companies.
 
     Sessions default to ``UNSET``, which the company-scope filter treats as zero
@@ -37,11 +37,23 @@ def scheduler_session():
     Background work opts out of the filter, exactly as ``import_tasks`` and
     ``export_tasks`` already do. Per-row company still governs what each tick then
     does with what it read (an SLA tracker escalates up its own company's ladder).
+
+    Every write in the tick is audited as the `scheduler` actor with ``job_id`` =
+    ``name`` and no user (identity S0, AC-10); the previous actor is restored after.
     """
+    from app.audit_context import AuditActor, actor_scope
+
     db = SessionLocal()
     set_company_scope(db, None)
+    # One correlation id per tick (#1281 S0), so one tick's changes read as one action.
+    import uuid as _uuid
+
+    from app.audit_context import audit_context_scope
+
     try:
-        yield db
+        with actor_scope(AuditActor(actor_type="scheduler", job_id=name), db=db), \
+                audit_context_scope(correlation_id=_uuid.uuid4().hex[:16]):
+            yield db
     finally:
         db.close()
 
@@ -408,37 +420,90 @@ def _handler_scm_analytics(db, task):
         raise
 
 
-def _handler_scm_reorder_run(db, task):
-    """Daily scheduled reorder planning run (M8-D1/D6/D8).
+def _scm_reorder_run_kwargs(metadata, run_day):
+    """Turns the ``scm_reorder_run`` task's metadata into ``create_run`` kwargs (#1340).
 
-    Plans ALL active warehouses with market insight OFF, then funds EVERYTHING (full
-    budget) so the morning snapshot opens fully within-budget - the user tightens the
-    budget on the page to defer (M8-D6). Runs the pipeline INLINE on the scheduler/
-    worker process (like ``_handler_scm_analytics`` runs ``run_analytics`` inline) so the
-    run + the full-budget funding split are both complete + persisted when the handler
-    returns; no dependence on a live RQ worker draining the run afterwards.
+    Validates ``metadata`` with ``ScmReorderRunTaskMetadata`` (the model the PATCH path
+    already refused bad values with), resolves the relative window against ``run_day`` -
+    the scheduler's own day in the task's timezone, so a daily run never goes stale - and
+    then builds a ``CreateReorderRunRequest`` so ``require_start_on_or_before_end`` and
+    ``refuse_so_numbers_on_a_dealer_run`` run exactly as they do on ``POST /reorder-runs``.
+    With no keys set the result is today's call, unchanged: every warehouse, every
+    product, both demand legs, no window, market off.
+    """
+    from app.schemas.scheduled_task import ScmReorderRunTaskMetadata
+    from app.schemas.scm_reorder import CreateReorderRunRequest
+
+    md = ScmReorderRunTaskMetadata(**(metadata or {}))
+    req = CreateReorderRunRequest(
+        warehouse_codes=md.warehouse_codes or [],
+        product_codes=md.product_codes or [],
+        include_market=bool(md.include_market),
+        plan_horizon_start=(
+            run_day + timedelta(days=md.horizon_start_days)
+            if md.horizon_start_days is not None else None
+        ),
+        plan_horizon_date=(
+            run_day + timedelta(days=md.horizon_end_days)
+            if md.horizon_end_days is not None else None
+        ),
+        demand_class=md.demand_class,
+    )
+    return {
+        "warehouse_codes": list(req.warehouse_codes),  # empty = all active (M8-D1)
+        "buy_scope": "warehouse",  # per-warehouse planning: each buy ties to a real WH
+        "include_market": req.include_market,
+        "product_codes": list(req.product_codes) or None,
+        "plan_horizon_start": req.plan_horizon_start,
+        "plan_horizon_date": req.plan_horizon_date,
+        "demand_class": req.demand_class,
+        "enqueue": False,  # run inline on this process
+    }
+
+
+def _handler_scm_reorder_run(db, task):
+    """Daily scheduled reorder planning run (M8-D1/D6/D8; scope config #1340).
+
+    Plans the scope stated on the task's own config page - defaulting, when unset, to
+    ALL active warehouses/products, both demand legs, no window and market insight OFF -
+    then funds EVERYTHING (full budget) unless a ``budget`` cap is configured, so the
+    morning snapshot opens fully within-budget by default (M8-D6). Runs the pipeline
+    INLINE on the scheduler/worker process (like ``_handler_scm_analytics`` runs
+    ``run_analytics`` inline) so the run + the funding split are both complete +
+    persisted when the handler returns; no dependence on a live RQ worker draining the
+    run afterwards.
 
     Optional ``scheduled_tasks.metadata`` keys tune the run with no code change (the
-    "configurable time" is the row's ``start_at``/interval; these tune the run body):
+    "configurable time" is the row's ``start_at``/interval; these tune the run body -
+    see ``ScmReorderRunTaskMetadata`` for the validation each one gets):
+      * ``warehouse_codes`` - narrows the run to these warehouses; absent/empty = all.
+      * ``product_codes``   - narrows the run to these products; absent/empty = all.
+      * ``demand_class``    - ``project`` or ``retail``; absent = both legs.
+      * ``horizon_start_days`` / ``horizon_end_days`` - the "sales orders needed"
+        window, in days from the run day (in the task's own timezone); either absent
+        is unbounded on that side.
       * ``budget``        - a numeric cash cap for the scheduled split; null/absent =>
         full budget (fund everything, the default).
       * ``include_market`` - market-trend priority factor (default false; market never
-        enters a run per M8-D5, so leave false).
+        enters a run per M8-D5 unless explicitly opted in here).
     """
+    from zoneinfo import ZoneInfo
+
     from app.services.scm import reorder_run_service as reorder_svc
 
     metadata = getattr(task, "metadata_", None)
     md = metadata if isinstance(metadata, dict) else {}
-    budget = md.get("budget")
-    include_market = bool(md.get("include_market", False))
 
-    created = reorder_svc.create_run(
-        db,
-        warehouse_codes=[],            # all active warehouses (M8-D1)
-        buy_scope="warehouse",         # per-warehouse planning: each buy ties to a real WH
-        include_market=include_market,  # market OFF for the scheduled run (M8-D1)
-        enqueue=False,                  # run inline on this process
-    )
+    # The run day is the task's own local day: the run fires at 06:00 KL, which is 22:00
+    # UTC the day before, so a UTC "today" would put a 0-day window on yesterday.
+    run_day = datetime.now(ZoneInfo(getattr(task, "timezone", None) or "UTC")).date()
+    # Validates every key first; a bad stored value fails the run here, before anything
+    # is created, rather than planning a scope nobody asked for.
+    kwargs = _scm_reorder_run_kwargs(md, run_day)
+    include_market = kwargs["include_market"]
+    budget = md.get("budget")  # validated above: a non-negative number or absent
+
+    created = reorder_svc.create_run(db, **kwargs)
     run_id = created["run_id"]
     reorder_svc.run_reorder(run_id, db=db)
 
@@ -447,15 +512,36 @@ def _handler_scm_reorder_run(db, task):
     else:
         # Full budget (M8-D6): fund every costed buy regardless of a numeric cap.
         funding = reorder_svc.apply_run_budget(db, run_id, None, full=True)
+
+    # The daily low stock email is an automation (PLAN-excel-preview-26sep S1; owner ruling
+    # 26 Sep, Q1): fire its trigger with this run's link. Best effort - a failure here is
+    # logged and never fails a run that has already been planned and funded. The run and its
+    # funding are committed by now, so the rollback only drops dispatch's own work; without it
+    # a database error leaves this session aborted and the scheduler's `finish_run` on it
+    # fails (review S1). `dispatch_ready` skips a run that did not complete (review B1).
+    try:
+        from app.services.scm import low_stock_report_service
+
+        low_stock_report_service.dispatch_ready(db, run_id)
+    except Exception:
+        db.rollback()
+        logger.exception("low_stock_report_ready dispatch failed for run %s", run_id)
     return {"run_id": run_id, "include_market": include_market, **funding}
 
 
 def _drain_email_outbox_tick():
-    """APScheduler tick wrapper. Owns its own DB session (drain_email_outbox handles errors)."""
-    try:
-        from app.tasks.email_outbox_tasks import drain_email_outbox
+    """APScheduler tick wrapper. Owns its own DB session (drain_email_outbox handles errors).
 
-        summary = drain_email_outbox()
+    That session is not a `scheduler_session`, so the tick stamps the `scheduler` audit
+    actor itself (identity S0, AC-10); the drainer's session reads it from the context.
+    """
+    from app.audit_context import AuditActor, actor_scope
+
+    try:
+        from app.tasks import email_outbox_tasks
+
+        with actor_scope(AuditActor(actor_type="scheduler", job_id="email_outbox_drainer")):
+            summary = email_outbox_tasks.drain_email_outbox()
         if summary.get("picked"):
             logger.info("Email outbox drainer tick: %s", summary)
     except Exception as e:
@@ -468,7 +554,7 @@ def _ai_trace_sweep_tick():
     try:
         from app.services.ai_trace import sweep_expired_traces
 
-        with scheduler_session() as db:
+        with scheduler_session("ai_trace_sweep") as db:
             sweep_expired_traces(db)
     except Exception as e:
         logger.error("AI trace sweep tick failed: %s", e, exc_info=True)
@@ -481,7 +567,7 @@ def _spo_container_relink_sweep_tick():
     try:
         from app.services.rules.shipping_order_rules import nightly_relink_all_containers
 
-        with scheduler_session() as db:
+        with scheduler_session("spo_container_relink_sweep") as db:
             relinked = nightly_relink_all_containers(db)
             if relinked:
                 db.commit()
@@ -495,10 +581,24 @@ def _chatbot_delegated_sweep_tick():
     try:
         from app.services.chatbot_turn_sweep import sweep_stalled_delegated_turns
 
-        with scheduler_session() as db:
+        with scheduler_session("chatbot_delegated_sweep") as db:
             sweep_stalled_delegated_turns(db)
     except Exception as e:
         logger.error("Chatbot delegated sweep tick failed: %s", e, exc_info=True)
+
+
+def _ideation_idle_sweep_tick():
+    """APScheduler tick: one WhatsApp reminder at 24h idle on an open ideation
+    draft, then close (S4, AC-1401 to AC-1408). Owns its own DB session;
+    best-effort and never raises - same shape as
+    `_chatbot_delegated_sweep_tick`."""
+    try:
+        from app.services.ideation_turn_service import sweep_idle_ideation_drafts
+
+        with scheduler_session("ideation_idle_sweep") as db:
+            sweep_idle_ideation_drafts(db)
+    except Exception as e:
+        logger.error("Ideation idle sweep tick failed: %s", e, exc_info=True)
 
 
 def _autocount_pull_advance_tick():
@@ -510,7 +610,7 @@ def _autocount_pull_advance_tick():
     try:
         from app.services.autocount_pull_service import advance_building_pulls
 
-        with scheduler_session() as db:
+        with scheduler_session("autocount_pull_advance") as db:
             advance_building_pulls(db)
     except Exception as e:
         logger.error("AutoCount pull advance tick failed: %s", e, exc_info=True)
@@ -527,7 +627,7 @@ def process_pending_integration_logs():
     This function is called periodically by the scheduler.
     """
     try:
-        with scheduler_session() as db:
+        with scheduler_session("integration_log_retry") as db:
             service = IntegrationLogService(db)
             result = service.process_pending_logs()
 
@@ -543,7 +643,7 @@ def process_pending_integration_logs():
 def _scheduled_tasks_heartbeat():
     """Heartbeat: run due DB-configured scheduled tasks and persist run logs."""
     try:
-        with scheduler_session() as db:
+        with scheduler_session("scheduled_tasks_heartbeat") as db:
             run_due_tasks(db)
     except Exception as e:
         logger.error("Scheduled tasks heartbeat failed: %s", str(e), exc_info=True)
@@ -604,7 +704,7 @@ def start_scheduler():
     # bursts get throttled by the per-recipient cap inside drain_email_outbox.
     drain_seconds = 5
     try:
-        with scheduler_session() as db:
+        with scheduler_session("email_outbox_drainer_interval") as db:
             from app.models.user import SystemSetting
 
             settings_row = db.query(SystemSetting).first()
@@ -638,6 +738,16 @@ def start_scheduler():
         trigger=IntervalTrigger(minutes=1),
         id="chatbot_delegated_sweep",
         name="Chatbot delegated turn sweep",
+        replace_existing=True,
+    )
+
+    # Ideation idle draft sweep (S4, AC-1408): every 15 minutes. One WhatsApp
+    # reminder at 24h idle on an open ideation draft, then close.
+    scheduler.add_job(
+        _ideation_idle_sweep_tick,
+        trigger=IntervalTrigger(minutes=15),
+        id="ideation_idle_sweep",
+        name="Ideation idle draft sweep",
         replace_existing=True,
     )
 

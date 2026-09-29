@@ -25,12 +25,14 @@ Plan: documentation/plans/PLAN-spec-backward-search.md.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from sqlalchemy import String as _String
 from sqlalchemy import cast as _cast
-from sqlalchemy import exists, func, or_
+from sqlalchemy import case, exists, func, literal_column, or_, true
 from sqlalchemy.dialects.postgresql import ARRAY as _ARRAY
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy.sql import ColumnElement
 
@@ -68,78 +70,6 @@ class _UnrecognizedLabel(Exception):
         super().__init__(label)
         self.label = label
         self.extra = extra or {}
-
-
-def _company_scoped_class_labels(db: Session) -> list[str]:
-    """Every distinct class value a product IN THE CALLER'S OWN SCOPE carries
-    (SEC-S2/AC-1335). `ProductSpecifications` carries no `company_id` of its
-    own, so this joins `Product` (the scoped side) - the `do_orm_execute`
-    listener's `with_loader_criteria` scopes ORM entities like `Product`, not
-    a bare unjoined `ProductSpecifications` query, which would otherwise read
-    every company's class labels. ORM only, never the raw `text()` SQL
-    `product_class_signal.stored_class_labels` runs - that helper reads other,
-    non-customer-facing callers and is out of scope here."""
-    expr = ProductSpecifications.values["class"]["value"].astext
-    rows = (
-        db.query(expr)
-        .join(Product, Product.id == ProductSpecifications.product_id)
-        .filter(expr.isnot(None))
-        .distinct()
-        .all()
-    )
-    return sorted({row[0] for row in rows if row[0]})
-
-
-def _nearest_class_labels(db: Session, term: str, *, limit: int = 3) -> list[str]:
-    """Nearest class-label suggestions for an unrecognized term (AC-1320): every
-    content word in `term` against the class labels products actually carry
-    IN THE CALLER'S OWN SCOPE (`_company_scoped_class_labels`) - an exact word
-    match first ("tap" out of "water tap" against the label "Tap"), then a
-    fuzzy nearest-neighbour for a near-miss spelling. Order-stable, deduped,
-    capped at `limit` - the reply names a few candidates, never the whole
-    vocabulary.
-    """
-    import difflib
-
-    from app.services.product_spec_search import _content_words
-
-    labels = _company_scoped_class_labels(db)
-    if not labels:
-        return []
-    lowered = {label.lower(): label for label in labels}
-    found: list[str] = []
-    for word in _content_words(term):
-        if word in lowered:
-            if lowered[word] not in found:
-                found.append(lowered[word])
-            continue
-        for match in difflib.get_close_matches(word, lowered.keys(), n=limit, cutoff=0.6):
-            label = lowered[match]
-            if label not in found:
-                found.append(label)
-    return found[:limit]
-
-
-def _common_class_labels(db: Session, *, limit: int = 3) -> list[str]:
-    """The class labels the MOST products carry, most-common first (AC-1320's
-    last-resort fallback): when a term names nothing `_nearest_class_labels`
-    can read at all - no exact word match, no fuzzy near-miss - the reply still
-    has to offer SOMETHING real ("Try a product type such as tap, wash basin,
-    water closet."), never the contentless "Did you mean the product types I
-    know?". SEC-S2/AC-1335: joins `Product` (the scoped side) so a company B
-    class label never reaches a company A reply.
-    """
-    expr = ProductSpecifications.values["class"]["value"].astext
-    rows = (
-        db.query(expr, func.count())
-        .join(Product, Product.id == ProductSpecifications.product_id)
-        .filter(expr.isnot(None))
-        .group_by(expr)
-        .order_by(func.count().desc())
-        .limit(limit)
-        .all()
-    )
-    return [row[0] for row in rows if row[0]]
 
 
 def _bound_spec_matches(values: dict | None, specs: list[dict] | None) -> set[str]:
@@ -448,7 +378,9 @@ def _leg_promotion(db: Session, value: Any, access_levels: list[str] | None = No
     return exists().where(*conditions)
 
 
-def _leg_stock(db: Session, value: Any, access_levels: list[str] | None = None) -> ColumnElement:
+def _leg_stock(
+    db: Session, value: Any, access_levels: list[str] | None = None, stock_policy: Any = None
+) -> ColumnElement:
     """Plain on-hand > 0. Deliberately NOT the MCP's
     ``exclude_zero_system_adjustment`` semantics - that filter answers a
     different question ("hide rows an adjustment zeroed"), this one answers
@@ -465,13 +397,24 @@ def _leg_stock(db: Session, value: Any, access_levels: list[str] | None = None) 
     ``Stock.warehouse.has(Warehouse.is_active.is_(True))``), so the header
     never counts a product whose only on-hand row sits in an inactive
     warehouse the answer itself would never show.
+
+    `stock_policy` is the ASKING contact's stock visibility policy
+    (`stock_visibility.resolve_policy`), when there is one: only the locations
+    it allows count, through the same `warehouse_criterion` the stock tool
+    answers from (stock ask v2 R3). A dealer on "Availability only" limited to
+    one site pool is never told a product "has stock" off a location the
+    policy hides. `None` (staff, API key, no contact) keeps every active
+    warehouse, which is the tool's own answer for them too.
     """
+    from app.services.stock_visibility import warehouse_criterion
+
     return exists().where(
         Stock.product_id == Product.id,
         Stock.company_id == Product.company_id,
         Warehouse.id == Stock.warehouse_id,
         Warehouse.company_id == Product.company_id,
         Warehouse.is_active.is_(True),
+        warehouse_criterion(stock_policy, Stock.warehouse_id),
         Stock.quantity_on_hand > 0,
     )
 
@@ -498,20 +441,374 @@ def _leg_incoming(db: Session, value: Any, access_levels: list[str] | None = Non
 
 
 # R29/AC-1354: the `certificate_ids` cap - the same shape as `references.
-# _SET_PAGE_ID_CAP` / `answer.SET_PAGE_ID_CAP` (200), reused here rather than
+# _SET_ID_CAP` / `answer.SET_ID_CAP` (200), reused here rather than
 # imported to keep this module's only import of `references.py` at zero (the
 # dependency runs the other way).
 _CERTIFICATE_ID_CAP = 200
 
 # One entry per domain. A new domain lands as one function + one line here + one
 # noun in the n8n parser - never as another inline block in references.py.
+def _leg_price(db: Session, value: Any, access_levels: list[str] | None = None) -> ColumnElement:
+    """Every product of the described set: a price ask ("any gunmetal basin price") is
+    answered for the set itself, each row the product-code price answer. Fix round 8 on
+    PR #833 (owner retest of round 7: the set answer is the product-code answer "for
+    incoming, product attachment etc and every other domain"). No filter: a product with
+    no list price is still one the customer asked about, and its row says so."""
+    return true()
+
+
 REQUIRE_LEGS: dict[str, Callable[..., ColumnElement]] = {
     "attachment_type": _leg_attachment_type,
     "certificate": _leg_certificate,
     "promotion": _leg_promotion,
     "stock": _leg_stock,
     "incoming": _leg_incoming,
+    "price": _leg_price,
 }
+
+
+def _brand_rows(db: Session) -> list[Brand]:
+    """Every active brand, longest name first so "no logo" beats "no"."""
+    rows = db.query(Brand).filter(Brand.is_active.is_(True)).all()
+    rows = [r for r in rows if (r.brand_name or "").strip() and r.brand_name.strip().lower() != "others"]
+    return sorted(rows, key=lambda r: -len(r.brand_name.strip()))
+
+
+def _brand_word_re(name: str) -> re.Pattern[str]:
+    return re.compile(rf"(?<![\w-]){re.escape(name.strip())}(?![\w-])", re.IGNORECASE)
+
+
+def _bind_brand_words(
+    db: Session, brand: str | None, scope_terms: list[str] | None
+) -> tuple[str | None, list[str] | None]:
+    """`(brand, scope_terms)` with every brand name in a scope term taken out of it.
+
+    The brands table is the source (owner brief W1): the word leaves the term, and the
+    first brand named becomes the set's brand when the caller named none. A term that
+    was only the brand is dropped."""
+    if not scope_terms:
+        return brand, scope_terms
+    rows = _brand_rows(db)
+    if not rows:
+        return brand, scope_terms
+    out: list[str] = []
+    for term in scope_terms:
+        text = str(term or "")
+        for row in rows:
+            pattern = _brand_word_re(row.brand_name)
+            if pattern.search(text):
+                if not brand:
+                    brand = row.brand_name.strip()
+                text = pattern.sub(" ", text)
+        text = " ".join(text.split())
+        if text:
+            out.append(text)
+    return brand, out
+
+
+def _split_class_tail(db: Session, scope_terms: list[str] | None) -> list[str] | None:
+    """A scope term that names no class as a whole, split at the longest tail that does:
+    "wall hung basin" -> ["wall hung", "basin"] (or, round 4 R2, at the longest head that
+    does: "water closet p trap" -> ["water closet", "p trap"]), so the class ("basin" -> Wash Basin) and
+    the rest ("wall hung" -> mounting) both define the set. Owner turn 7 read "wall hung
+    basin" as mounting alone and answered every wall hung product.
+
+    Only when the leading words bind a spec of their own: "water tap" with no "water tap"
+    synonym on file stays whole, so it is still reported as a phrase nobody knows and
+    clarified with the nearest class (AC-1301/AC-1320), never answered as every tap."""
+    from app.services.product_class_signal import resolve_classes_for_term
+    from app.services.product_spec_search import resolve_terms_to_specs
+
+    if not scope_terms:
+        return scope_terms
+    out: list[str] = []
+    for term in scope_terms:
+        words = str(term or "").split()
+        if len(words) < 2 or resolve_classes_for_term(db, term):
+            out.append(term)
+            continue
+        for i in range(1, len(words)):
+            tail = " ".join(words[i:])
+            head = " ".join(words[:i])
+            if resolve_classes_for_term(db, tail) and resolve_terms_to_specs(db, [head]):
+                out.extend([head, tail])
+                break
+        else:
+            # Round 4 R2 (owner exchange 3): the class first and the spec after it,
+            # "water closet p trap" -> ["water closet", "p trap"]. Kept whole, the class
+            # never bound and the header lost its Product type line.
+            for i in range(len(words) - 1, 0, -1):
+                head = " ".join(words[:i])
+                tail = " ".join(words[i:])
+                if resolve_classes_for_term(db, head) and resolve_terms_to_specs(db, [tail]):
+                    out.extend([head, tail])
+                    break
+            else:
+                out.append(term)
+    return out
+
+
+def _display_name(name: str) -> str:
+    """"SORENTO" -> "Sorento"; a name staff typed in mixed case stays as typed."""
+    name = (name or "").strip()
+    return name.title() if name.isupper() else name
+
+
+def _sentence_case(text: str) -> str:
+    text = " ".join(str(text or "").replace("_", " ").split())
+    return text[:1].upper() + text[1:].lower() if text else text
+
+
+def describe_set(
+    db: Session, *, brand: str | None, membership: dict[str, list[str]]
+) -> list[dict[str, str]]:
+    """The described set in plain words, one `{key, label, value}` per binding, in the
+    order the header says them: Brand, Product type, then every other spec key.
+
+    Owner brief W2 on PR #833: labels and values come from the spec registry's own
+    display fields (`label`, `value_labels`), so "mounting: wall_hung" reads
+    "Mounting: Wall hung" and a staff edit to either label shows up here."""
+    from app.models.product_spec import ProductSpecRegistry
+    from app.services.product_spec_registry import display_spec_value
+
+    out: list[dict[str, str]] = []
+    if brand:
+        # Round 3 W4: no "(default)" - the reply's last line names the other brands.
+        out.append({"key": "brand", "label": "Brand", "value": _display_name(brand)})
+    classes = [c for c in membership.get("class") or [] if c]
+    others = [k for k in membership if k not in ("class", "brand")]
+    rows = (
+        {
+            row.spec_key: row
+            for row in db.query(ProductSpecRegistry).filter(ProductSpecRegistry.spec_key.in_(others)).all()
+        }
+        if others
+        else {}
+    )
+    # Owner hand test of rounds 4 to 6 on PR #833, item 5 ("close couple wc ... p trap" got
+    # both "Product type: Water closet" and "Type: Close coupled"): what the thing IS is one
+    # line, "Product type: Close coupled water closet", never two. The registry's own
+    # `product_type` key is the narrower noun, so it leads, and the class noun follows
+    # when the value does not already say it ("Kitchen tap" stays "Kitchen tap").
+    kinds = [
+        display_spec_value(v, dict(getattr(rows.get("product_type"), "value_labels", None) or {}))
+        for v in membership.get("product_type") or []
+    ]
+    if kinds:
+        named = []
+        for kind in kinds:
+            noun = _sentence_case(classes[0]).lower() if len(classes) == 1 else ""
+            named.append(kind if not noun or noun in kind.lower() else f"{kind} {noun}")
+        out.append({"key": "class", "label": "Product type", "value": " or ".join(named)})
+        others = [k for k in others if k != "product_type"]
+    elif classes:
+        out.append({"key": "class", "label": "Product type", "value": " or ".join(_sentence_case(c) for c in classes)})
+    for key in others:
+        row = rows.get(key)
+        labels = dict(getattr(row, "value_labels", None) or {})
+        values = [display_spec_value(v, labels) for v in membership[key]]
+        # Fix round 8 on PR #833: a grounded number reads with its unit ("1.2 mm").
+        unit = getattr(row, "unit", None) if row is not None and (row.data_type or "") == "numeric" else None
+        if unit:
+            values = [f"{v} {unit}" for v in values]
+        out.append(
+            {
+                "key": key,
+                "label": (row.label if row is not None and row.label else _sentence_case(key)),
+                "value": " or ".join(values),
+                # Fix round 8: how the set's intro says it ("with thickness 1.2 mm",
+                # "gunmetal", "rimless").
+                "kind": (row.data_type or "enum").lower() if row is not None else "enum",
+            }
+        )
+    return out
+
+
+def row_labels(db: Session, candidates: list[dict]) -> dict[str, dict[str, Any]]:
+    """`{product_code: {"name": "Sorento Wall Basin"}}` for the candidates: the name a
+    set row leads with.
+
+    Owner brief W3 on PR #833: "codes alone are useless to the user". Round 3 W1: a
+    product whose name is only its code is named by its description, then by its code.
+    Round 4 R3: the row is "name (code)" and the facts the ask was about, so no spec
+    values ride along any more."""
+    ids = [c.get("product_id") for c in candidates if c.get("product_id")]
+    if not ids:
+        return {}
+    names = {
+        str(pid): ((name or "").strip(), (description or "").strip().lstrip("*").strip())
+        for pid, name, description in db.query(Product.id, Product.product_name, Product.description)
+        .filter(Product.id.in_(ids))
+        .all()
+    }
+    out: dict[str, dict[str, Any]] = {}
+    for cand in candidates:
+        code = cand.get("product_code")
+        if not code:
+            continue
+        name, description = names.get(str(cand.get("product_id"))) or ("", "")
+        out[code] = {"name": next((n for n in (name, description) if n and n != code), code)}
+    return out
+
+
+#: Keys that name WHAT the set is rather than a property of it; a near miss recounts
+#: the set without a property, never without its class.
+_SET_NOUN_KEYS = frozenset({"class", "brand", "product_type"})
+
+
+def _near_miss(db: Session, *, membership: dict[str, list[str]], legs: list, brand: str | None) -> dict | None:
+    """The zero set recounted without its one spec value, by that key's other values.
+
+    Round 4 R4 (owner console test on PR #833: "the ask about gunmetal wash basin means
+    what ah, so it got match or not? i have no visibility into whether it does the
+    matching"): "No gunmetal wash basins with incoming stock (I looked for Finish or
+    colour: Gunmetal among wash basins). 12 wash basins have incoming stock in another
+    finish or colour: Chrome 5, ...". Only for a set with a class to count among and
+    exactly one property key holding one value, which is the case the owner hit; a set
+    of two property keys says the plain miss (trigger to widen: an owner turn that
+    names two). The same legs, brand scope and membership clause as the count itself,
+    one grouped query."""
+    from app.models.product_spec import ProductSpecRegistry
+    from app.services.product_spec_registry import display_spec_value
+    from app.services.product_spec_search import membership_clause
+
+    classes = list(membership.get("class") or [])
+    props = [k for k in membership if k not in _SET_NOUN_KEYS]
+    if not classes or len(props) != 1 or len(membership[props[0]]) != 1:
+        return None
+    key = props[0]
+    value = membership[key][0]
+    if not isinstance(value, str):
+        # A grounded number (fix round 8) has no other choices to recount by.
+        return None
+    rest = {k: v for k, v in membership.items() if k != key}
+    parent = aliased(Product)
+    family = func.coalesce(parent.product_code, Product.product_code)
+    stored = ProductSpecifications.values[key]["value"]
+    # Round 5 S1 (reviewer pass at d6fa2b31): a LIST value ("Rose Gold + Matt Black" on
+    # one product) is a member of each of its values, exactly as `membership_clause`
+    # matches it by containment, so it is grouped under each. A scalar string is a list
+    # of one; any other JSON type holds no value to name.
+    as_list = case(
+        (func.jsonb_typeof(stored) == "array", stored),
+        (func.jsonb_typeof(stored) == "string", func.jsonb_build_array(stored)),
+        # A literal empty ARRAY. `_cast("[]", JSONB)` bound the Python string "[]" as the
+        # JSON string "\"[]\"", a scalar, so any member with no value for the key made
+        # the whole recount fail ("cannot extract elements from a scalar") and the turn
+        # lost its predicate (fix round 8 on PR #833: the owner's "Could not find
+        # incoming for category gunmetal basin").
+        else_=literal_column("'[]'::jsonb", JSONB),
+    )
+    element = func.jsonb_array_elements_text(as_list)
+    query = (
+        db.query(family.label("family"), element.label("value"))
+        .select_from(Product)
+        .outerjoin(parent, parent.id == Product.variant_of_id)
+        .join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
+        .filter(Product.is_active.is_(True), *legs)
+    )
+    clause = membership_clause(rest)
+    if clause is not None:
+        query = query.filter(clause)
+    if brand:
+        query = query.join(Brand, Brand.id == Product.brand_id).filter(
+            func.lower(Brand.brand_name) == brand.strip().lower()
+        )
+    members = query.subquery()
+    per_value = db.query(members.c.value, func.count(func.distinct(members.c.family))).group_by(members.c.value).all()
+    # A product with two other values is ONE product in the total, however many values
+    # it is listed under.
+    others_only = func.lower(members.c.value) != str(value).lower()
+    other_total = int(
+        db.query(func.count(func.distinct(members.c.family))).filter(others_only).scalar() or 0
+    )
+    registry = db.query(ProductSpecRegistry).filter(ProductSpecRegistry.spec_key == key).first()
+    labels = dict(getattr(registry, "value_labels", None) or {})
+    others = sorted(
+        (
+            {"value": display_spec_value(v, labels), "count": int(n)}
+            for v, n in per_value
+            if n and str(v).lower() != str(value).lower()
+        ),
+        key=lambda o: (-o["count"], o["value"]),
+    )
+    return {
+        "key": key,
+        "label": registry.label if registry is not None and registry.label else _sentence_case(key),
+        "value": display_spec_value(value, labels),
+        "class_labels": sorted(classes),
+        "other_values": others,
+        "other_total": other_total,
+    }
+
+
+def _set_breakdown(
+    db: Session, members_query, *, membership: dict[str, list[str]], brand: str | None, key: str | None = None
+) -> dict | None:
+    """A set counted by the next attribute that splits it: `{key, label, rows: [{value,
+    count}]}`, largest first, each count in distinct variant families as the set's own
+    count is.
+
+    Fix round 9 on PR #833 (owner, 28 Sep 2026: "no cap", "always break it down"): a set
+    too long for one reply gives its full count and this breakdown, never a paging
+    question. The next attribute is the brand when none was named (no brand named means
+    every brand), then the class, then each registry key in the registry's own order that
+    the ask did not already bind; the first that splits the set in two or more is used.
+    `key` forces one (the key of a value the registry does not know: "pink water
+    closets" is said beside the finishes water closets come in). One query over the
+    members' brand and specification row; `_near_miss` counts the same way."""
+    from app.services.product_spec_registry import active_registry, display_spec_value
+
+    members = members_query.subquery()
+    rows = (
+        db.query(members.c.family, Brand.brand_name, ProductSpecifications.values)
+        .select_from(members)
+        .join(Product, Product.id == members.c.pid)
+        .outerjoin(Brand, Brand.id == Product.brand_id)
+        .outerjoin(ProductSpecifications, ProductSpecifications.product_id == members.c.pid)
+        .all()
+    )
+    if not rows:
+        return None
+    registry = [row for row in active_registry(db) if (row.data_type or "enum").lower() in ("enum", "numeric")]
+    by_key = {row.spec_key: row for row in registry}
+    order = [key] if key else [
+        *(["brand"] if not brand else []),
+        *(["class"] if len(membership.get("class") or []) != 1 else []),
+        *[row.spec_key for row in registry if row.spec_key not in membership and row.spec_key not in ("brand", "class")],
+    ]
+    for name in order:
+        counts: dict[str, set[str]] = {}
+        row = by_key.get(name)
+        labels = dict(getattr(row, "value_labels", None) or {})
+        for family_code, brand_name, values in rows:
+            if name == "brand":
+                found = [_display_name(brand_name)] if brand_name else []
+            else:
+                stored = ((values or {}).get(name) or {}).get("value") if isinstance(values, dict) else None
+                found = stored if isinstance(stored, list) else ([stored] if stored not in (None, "") else [])
+                shown = []
+                for v in found:
+                    text = display_spec_value(v, labels) if name != "class" else _sentence_case(str(v))
+                    if row is not None and row.unit and (row.data_type or "") == "numeric":
+                        text = f"{text} {row.unit}"
+                    shown.append(text)
+                found = shown
+            for value in found:
+                counts.setdefault(str(value), set()).add(str(family_code))
+        if len(counts) >= (1 if key else 2):
+            label = "Brand" if name == "brand" else "Product type" if name == "class" else (
+                row.label if row is not None and row.label else _sentence_case(name)
+            )
+            return {
+                "key": name,
+                "label": label,
+                "rows": sorted(
+                    ({"value": value, "count": len(families)} for value, families in counts.items()),
+                    key=lambda r: (-r["count"], r["value"]),
+                ),
+            }
+    return None
 
 
 def resolve_product_set(
@@ -525,8 +822,21 @@ def resolve_product_set(
     product_ids: list[str] | None = None,
     brand: str | None = None,
     access_levels: list[str] | None = None,
+    stock_policy: Any = None,
+    prefer_weighted_brand: bool = False,
+    brand_is_default: bool = False,
+    breakdown_over: int | None = None,
+    breakdown_key: str | None = None,
 ) -> dict:
     """(described set) ∩ (require legs), with an honest count.
+
+    Fix round 9 on PR #833 (owner, 28 Sep 2026: "always break it down", "no cap"):
+    ``breakdown_over`` is the longest set one reply lists; a set longer than it carries
+    ``breakdown``, its members counted by the next attribute that splits them
+    (`_set_breakdown`), and a set that qualifies nothing carries ``members``, the
+    described products without the require legs, so the miss can say what matched.
+    ``breakdown_key`` names the key to break the set down by (a value the registry does
+    not know is said back beside the values the set does hold).
 
     The described set is the UNION of ``product_ids`` (ids LOOKUP already
     matched by name or code prefix) and the ``class`` / ``product_type`` /
@@ -572,6 +882,13 @@ def resolve_product_set(
             code="UNKNOWN_REQUIRE_KEY",
         )
 
+    # W1 (owner hand test round 2, turns 5/7/9): a brand word inside the parser's class
+    # word ("sorento wash basin") is a BRAND, never a spec value that defines membership
+    # on its own; and a class noun at the tail of a longer word ("wall hung basin") is
+    # still the class. Both read here, so the recount of a carried set gets them too.
+    brand, scope_terms = _bind_brand_words(db, brand, scope_terms)
+    scope_terms = _split_class_tail(db, scope_terms)
+
     scoping_terms = [*(free_terms or []), *(scope_terms or [])]
     # The two kinds stay APART here (hand pass 12 R8): a scope term's own registry
     # bindings define membership, a free term's value-key binding stays boost-only.
@@ -591,7 +908,10 @@ def resolve_product_set(
         if value in (None, False):
             continue
         try:
-            clause = REQUIRE_LEGS[key](db, value, access_levels=access_levels)
+            # `stock_policy` is the stock leg's alone: the asking contact's own
+            # locations (see `_leg_stock`).
+            extra = {"stock_policy": stock_policy} if key == "stock" else {}
+            clause = REQUIRE_LEGS[key](db, value, access_levels=access_levels, **extra)
         except _UnrecognizedLabel as miss:
             unrecognized.append(miss.label)
             require_echo[key] = miss.label
@@ -628,16 +948,13 @@ def resolve_product_set(
         # is no id set either: the described set is undefined. Answering the
         # predicate over the WHOLE catalogue would be an answer to a question
         # nobody asked.
-        # AC-1320/F2: nearest class-label suggestions for the FIRST unrecognized
-        # term, so the reply can offer a real "did you mean" instead of naming
-        # nothing at all. When NOTHING is near enough either (no exact word
-        # match, no fuzzy near-miss), the fallback is the catalogue's own most
-        # common class labels under a DIFFERENT sentence template
-        # ("common_class_labels", never "suggestions") - the two carry
-        # different copy in `answer.not_found_error_message` and must not be
-        # conflated into one key.
-        nearest = _nearest_class_labels(db, unrecognized[0]) if unrecognized else []
-        zero_result: dict[str, Any] = {
+        # Fix round 10 on PR #833 (owner, 28 Sep 2026: "we don't match 100% isit? i was
+        # thinking to need exact match though", "for #833 yeah exact only"): a word
+        # that names no product type is said back as it was typed ("Couldn't find:
+        # water tap basin (product type)"), never matched to the nearest class label
+        # (the retired `_nearest_class_labels`, a close-spelling guess) nor answered with the
+        # catalogue's most common ones (`_common_class_labels`, retired with it).
+        return {
             "candidates": [],
             "qualifying_total": 0,
             "truncated": False,
@@ -645,22 +962,15 @@ def resolve_product_set(
             "require": require_echo,
             "class_labels": verdict["class_labels"],
         }
-        if nearest:
-            zero_result["suggestions"] = nearest
-        elif unrecognized:
-            common = _common_class_labels(db)
-            if common:
-                zero_result["common_class_labels"] = common
-        return zero_result
 
     parent = aliased(Product)
     family = func.coalesce(parent.product_code, Product.product_code)
 
-    def _base(query):
+    def _base(query, *, with_legs: bool = True):
         query = (
             query.select_from(Product)
             .outerjoin(parent, parent.id == Product.variant_of_id)
-            .filter(Product.is_active.is_(True), *legs)
+            .filter(Product.is_active.is_(True), *(legs if with_legs else []))
         )
         described: list[ColumnElement] = []
         if product_ids:
@@ -678,6 +988,40 @@ def resolve_product_set(
                 func.lower(Brand.brand_name) == brand.strip().lower()
             )
         return query
+
+    # R1 (owner ruling on PR #833, 27 Sep 2026: "weights as brand preference instead of
+    # switch"): a customer who names no brand gets the highest weighted brand the set
+    # reaches (`Brand.chatbot_weight`, Master Data > Brands), and the other brands' counts
+    # in weight order, then by count. No weighted brand in the set leaves the set whole; a
+    # brand the customer named always wins.
+    other_brands: list[dict[str, Any]] = []
+    set_brands: list[dict[str, Any]] = []
+    if not brand:
+        per_brand = (
+            _base(db.query(Brand.brand_name, Brand.chatbot_weight, func.count(func.distinct(family))))
+            .join(Brand, Brand.id == Product.brand_id)
+            .group_by(Brand.brand_name, Brand.chatbot_weight)
+            .all()
+        )
+        # One entry per spelled name: two rows of one brand name (two companies) count
+        # together and rank by the higher weight.
+        counts: dict[str, int] = {}
+        weights: dict[str, float] = {}
+        for name, weight, n in per_brand:
+            if not n:
+                continue
+            counts[name] = counts.get(name, 0) + int(n)
+            weights[name] = max(weights.get(name, 0.0), float(weight or 0))
+        ranked = sorted(counts, key=lambda name: (-weights[name], -counts[name], name))
+        # Fix round 9 on PR #833: no brand named means every brand. The set's brands are
+        # still returned (never said in the reply), so a brand named next narrows this set
+        # (`turn_runtime.with_brand_from_offer`).
+        if len(ranked) > 1:
+            set_brands = [{"brand": _display_name(name), "count": counts[name]} for name in ranked]
+        if prefer_weighted_brand and ranked and weights[ranked[0]] > 0:
+            brand = ranked[0]
+            brand_is_default = True
+            other_brands = [{"brand": _display_name(name), "count": counts[name]} for name in ranked[1:]]
 
     qualifying_total = _base(db.query(func.count(func.distinct(family)))).scalar() or 0
 
@@ -811,26 +1155,32 @@ def resolve_product_set(
     # same convention `schemes_on_file` follows, since a bare leg has no
     # scheme to narrow by (a product certified under both PPS and WCM must
     # never have its WCM file rendered for a PPS question). Scoped to the
-    # CANDIDATES actually shown (the same page-id list the "more" carry
-    # stores), never the whole qualifying family - a certificate the caller
+    # CANDIDATES actually shown, never the whole qualifying family - a certificate the caller
     # never sees a product for is not one it needs to fetch either. Same
     # explicit same-company predicate as `_leg_certificate` itself (the
     # `do_orm_execute` listener's `with_loader_criteria` does not reliably
     # reach every join shape here either), NULL-shared arm included.
+    #
+    # Owner hand test of rounds 4 to 6 on PR #833, item 7 ("any kitchen tap has cert" came
+    # back as Product Photos rows): the BARE leg surfaces its certificate ids too, so the
+    # attachments call narrows to the certificate files and never lists a product's photos
+    # under a certificate question.
     certificate_ids: list[str] | None = None
     cert_require = require_echo.get("certificate")
-    if isinstance(cert_require, dict) and cert_require.get("scheme") and candidates:
+    if cert_require and candidates:
         candidate_ids = [row["product_id"] for row in candidates]
+        cert_filters = [
+            CertificateProduct.product_id.in_(candidate_ids),
+            or_(Certificate.company_id.is_(None), Certificate.company_id == Product.company_id),
+            Certificate.status == "active",
+        ]
+        if isinstance(cert_require, dict) and cert_require.get("scheme"):
+            cert_filters.append(func.lower(Certificate.scheme) == str(cert_require["scheme"]).lower())
         cert_rows = (
             db.query(Certificate.id)
             .join(CertificateProduct, CertificateProduct.certificate_id == Certificate.id)
             .join(Product, Product.id == CertificateProduct.product_id)
-            .filter(
-                CertificateProduct.product_id.in_(candidate_ids),
-                or_(Certificate.company_id.is_(None), Certificate.company_id == Product.company_id),
-                Certificate.status == "active",
-                func.lower(Certificate.scheme) == str(cert_require["scheme"]).lower(),
-            )
+            .filter(*cert_filters)
             .distinct()
             .all()
         )
@@ -844,6 +1194,66 @@ def resolve_product_set(
         "require": require_echo,
         "class_labels": sorted(class_labels),
     }
+    # W1: the brand the set is scoped to, as the brands table spells it.
+    if brand:
+        outcome["brand"] = brand
+    if brand and brand_is_default:
+        outcome["brand_default"] = True
+    if other_brands:
+        outcome["other_brands"] = other_brands
+    elif set_brands:
+        outcome["set_brands"] = set_brands
+    # R4 (round 4 on PR #833): a set that qualifies nothing says what it looked for and
+    # how many qualify in the key's other values.
+    if not qualifying_total and not product_ids:
+        near = _near_miss(db, membership=verdict.get("membership") or {}, legs=legs, brand=brand)
+        if near:
+            outcome["near_miss"] = near
+    membership = verdict.get("membership") or {}
+    if breakdown_key or (breakdown_over is not None and int(qualifying_total) > breakdown_over):
+        broken = _set_breakdown(
+            db, _base(db.query(Product.id.label("pid"), family.label("family"))), membership=membership, brand=brand, key=breakdown_key
+        )
+        if broken:
+            outcome["breakdown"] = broken
+    if breakdown_over is not None and not qualifying_total and legs and not breakdown_key:
+        # Fix round 9: the described products without the legs - "Here's what you want"
+        # names them, then "But no incoming matched these", as the product-code miss does.
+        members_total = int(_base(db.query(func.count(func.distinct(family))), with_legs=False).scalar() or 0)
+        if members_total:
+            members: dict[str, Any] = {"total": members_total}
+            if members_total > breakdown_over:
+                broken = _set_breakdown(
+                    db, _base(db.query(Product.id.label("pid"), family.label("family")), with_legs=False), membership=membership, brand=brand
+                )
+                if broken:
+                    members["breakdown"] = broken
+            else:
+                codes = (
+                    _base(db.query(family.label("family"), Product.product_code), with_legs=False)
+                    .order_by(family, Product.product_code)
+                    .distinct(family)
+                    .all()
+                )
+                members["codes"] = sorted({str(f) for f, _code in codes})
+            outcome["members"] = members
+    # W2: what was identified, for the header. Present only when something was.
+    description = describe_set(
+        db, brand=brand, membership=verdict.get("membership") or {}
+    )
+    if description:
+        outcome["description"] = description
+    # W4: the set's own description, exactly as counted, so a page of it replays the
+    # SAME set (`turn_runtime.page_the_set`) instead of re-reading the parser's words.
+    outcome["set_specs"] = [
+        {"key": key, "value": value, **({"grounded": True} if isinstance(value, (int, float)) else {})}
+        for key, values in (verdict.get("membership") or {}).items()
+        for value in values
+    ]
+    # W3: a readable lead for every row the fetch will render.
+    labels = row_labels(db, candidates)
+    if labels:
+        outcome["row_labels"] = labels
     if certificate_ids is not None:
         outcome["certificate_ids"] = certificate_ids
     return outcome

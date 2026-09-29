@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { Check, CheckCircle2, ChevronRight, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -12,14 +13,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import {
   amendNeedsReason,
+  hasUnsuggestedBorrow,
   matchesSuggestion,
 } from '../../_shared/lib/fulfilmentBoard';
 import {
   amendDraftFrom,
   amendSummary,
   borrowCandidatesOf,
-  borrowReasonKeyOf,
   decisionFromAmendDraft,
+  foldReasonIntoDraft,
   suggestionDraftFrom,
   suggestionWithReasons,
 } from '../../_shared/lib/boardAmend';
@@ -54,6 +56,34 @@ import { ReserveAddDialog } from './ReserveAddDialog';
 const CONFIRMED_LINE_TITLE =
   'This line is already confirmed. Amend it to change the decision, reject it with a reason, ' +
   'or undo the confirmation.';
+
+/**
+ * D3 (S2): what the ONE Reason box seeds from - the first non-blank of a record's own
+ * "why this differs" (`reason` on a session decision, `amend_reason` on a frozen one), its
+ * `buy_reason` and its first borrow row's `reason`. Duck-typed rather than two near-identical
+ * functions: the session decision (`BoardDecision`) and the frozen one (`BoardLineDecision`)
+ * name the same field differently, and every field this reads is optional on both.
+ */
+function seedReason(
+  source:
+    | {
+        reason?: string | null;
+        amend_reason?: string | null;
+        buy_reason?: string | null;
+        borrow?: { reason?: string | null }[] | null;
+      }
+    | null
+    | undefined,
+): string {
+  if (!source) return '';
+  const candidates = [
+    source.reason,
+    source.amend_reason,
+    source.buy_reason,
+    source.borrow?.[0]?.reason,
+  ];
+  return candidates.find((text) => Boolean(text && text.trim()))?.trim() ?? '';
+}
 
 /**
  * The decision on one contributing line, taken IN THE ROW (PLAN section 3.C, ruling R7).
@@ -115,11 +145,13 @@ export function BoardLineDecisionPanel({
   const [draft, setDraft] = React.useState<DraftLine>(() =>
     draftFor(contribution, decision),
   );
-  // Seeded from the frozen decision's own `amend_reason`, not blank - the server's whole-line
-  // mix rule (`mixAllowed` below) now depends on this reaching Save even when nothing about
-  // the draft has changed since.
+  // D3 (S2): ONE Reason box now covers "why this differs", the discontinued Buy reason and
+  // every borrow reason, so it seeds from the first NON-BLANK of the three the row already
+  // carries (a record with three different texts shows the first; the others stay readable in
+  // the trail) - never blank while any of them holds something, which the server's whole-line
+  // mix rule (`mixAllowed` below) also depends on reaching Save unchanged.
   const [reason, setReason] = React.useState(
-    () => decision?.reason ?? contribution.decision?.amend_reason ?? '',
+    () => seedReason(decision) || seedReason(contribution.decision) || '',
   );
   // The draft's own answer, false included: an untick is a decision, and reading past it to
   // the frozen `true` on a covered line put the tick straight back on screen.
@@ -255,14 +287,26 @@ export function BoardLineDecisionPanel({
    * has always admitted.
    */
   const poolLimits = React.useMemo(() => poolShareLimitsOf(locations), [locations]);
+  // D3 (S2): the ONE box fanned onto the draft it would be saved from, so `lineBlockers`'s
+  // own borrow-reason check (shared with the per-order sheet, unchanged there) reads the box
+  // the same way Save will - a borrow row added by hand blocks Save until the box carries
+  // text, exactly as its own per-row Reason input used to.
+  const foldedDraft = React.useMemo(
+    () => foldReasonIntoDraft(draft, reason),
+    [draft, reason],
+  );
   // `mixAllowed`: the 8 Sep 2026 ruling. AC-L5's whole-line rule is lifted on this panel
-  // because `reason` (seeded from the frozen decision's own `amend_reason` above, or typed
-  // fresh) is what Save sends as `amend_reason` on the confirm line - `needsReason` below
-  // only forces a NEW one when the draft has moved since that baseline (`amendNeedsReason`),
-  // so an unchanged frozen mix re-saves on the reason it already carried. The per-order sheet
-  // does not pass this and still refuses the mix (`SupplyLineCard`).
-  const blockers = lineBlockers(draft, poolLimits, { mixAllowed: true });
-  const needsReason = amendNeedsReason(contribution, draft);
+  // because `reason` (seeded from the frozen decision's own reason above, or typed fresh) is
+  // what Save sends as `amend_reason` on the confirm line - `needsReason` below only forces a
+  // NEW one when the draft has moved since that baseline (`amendNeedsReason`), so an unchanged
+  // frozen mix re-saves on the reason it already carried. The per-order sheet does not pass
+  // this and still refuses the mix (`SupplyLineCard`).
+  const blockers = lineBlockers(foldedDraft, poolLimits, { mixAllowed: true });
+  // D3: required exactly when the composition differs from its baseline, OR a borrow row the
+  // engine did not suggest is on the line - the server's own borrow-reason rule, asked here
+  // before the round trip. Reject's own requirement is unconditional and lives on its button.
+  const needsReason =
+    amendNeedsReason(contribution, draft) || hasUnsuggestedBorrow(contribution, draft.borrow);
   /**
    * Which verdict Save takes, and therefore what it may be pressed for: approving the
    * engine's own composition is never blocked, because there is nothing about it to balance
@@ -452,8 +496,12 @@ export function BoardLineDecisionPanel({
       if (approvingNow) {
         ok = await onDecide({
           ...suggestionWithReasons(contribution, {
-            buy_reason: draft.buy_reason,
-            borrow: draft.borrow,
+            // D3 (S2): the ONE box, not a per-field input any more - `foldedDraft` is the same
+            // fan-out Save's amending branch below uses. AC-28: `reason` travels on the
+            // approving branch too, not only the amending `else` below.
+            reason,
+            buy_reason: foldedDraft.buy_reason,
+            borrow: foldedDraft.borrow,
             // S2 (fix round 2, reviewer): the Order back switch and Document cited box are on
             // screen for this exact line - a wholly-bought approving save used to take them
             // from the SUGGESTION draft (always false/'') and drop whatever the planner had
@@ -465,7 +513,7 @@ export function BoardLineDecisionPanel({
         });
       } else {
         ok = await onDecide({
-          ...decisionFromAmendDraft(draft, reason),
+          ...decisionFromAmendDraft(foldedDraft, reason),
           // THE BOOLEAN, never `|| undefined`: `false` is the planner's answer that the numbers
           // are fine, and dropping the key let the frozen `true` behind it read as current.
           suspected_system_issue: suspected,
@@ -485,27 +533,18 @@ export function BoardLineDecisionPanel({
       setDirty(false);
       setLocked(false);
       if (approvingNow) {
-        // The reseed keeps the reasons just sent (measured cause 1): resetting straight to
-        // `suggestionDraftFrom` put the engine's own (reason-less) borrow sentences and a blank
-        // Buy reason back on screen the instant the save that just carried the planner's own
-        // reasons had landed - the box audibly emptied under them.
+        // D3 (S2): the reason box is NOT cleared here any more (AC-28) - it is the one place
+        // `buy_reason` and every borrow reason now live, `foldReasonIntoDraft` reads it fresh
+        // on every render, and clearing it the instant its own save landed would wipe the
+        // reason off screen while it is still what was just saved.
         const suggestion = suggestionDraftFrom(contribution);
-        const typedReasons = new Map(
-          draft.borrow.map((row) => [borrowReasonKeyOf(row), row.reason]),
-        );
         setDraft({
           ...suggestion,
-          buy_reason: draft.buy_reason,
-          borrow: suggestion.borrow.map((row) => ({
-            ...row,
-            reason: typedReasons.get(borrowReasonKeyOf(row)) ?? row.reason,
-          })),
           // S2: the same reseed gap one field over - Order back and Document cited went back to
           // the suggestion's own false/'' the instant the save that just carried them landed.
           order_back: draft.order_back,
           cited_document: draft.cited_document,
         });
-        setReason('');
       }
       // S4/AC-4.1: the button answers the click itself, within the interaction, before the
       // pill's own "Saved" and the toast even have to be looked at - and it keeps answering
@@ -808,26 +847,6 @@ export function BoardLineDecisionPanel({
                         </Button>
                       )}
                     </div>
-                    <div className="space-y-1">
-                      <label
-                        className="block text-2xs uppercase tracking-wide text-muted-foreground"
-                        htmlFor={`line-borrow-reason-${contribution.key}-${row.key}`}
-                      >
-                        Reason <span className="text-destructive">*</span>
-                      </label>
-                      <Textarea
-                        id={`line-borrow-reason-${contribution.key}-${row.key}`}
-                        rows={2}
-                        value={row.reason}
-                        disabled={locked}
-                        placeholder="In your own words"
-                        onChange={(event) => {
-                          const next = [...draft.borrow];
-                          next[index] = { ...row, reason: event.target.value };
-                          setBorrow(next);
-                        }}
-                      />
-                    </div>
                   </div>
                 ))
               )}
@@ -927,26 +946,6 @@ export function BoardLineDecisionPanel({
                   )}
                 </div>
               )}
-              {draft.is_discontinued && (
-                <div className="space-y-1">
-                  <label
-                    className="block text-2xs uppercase tracking-wide text-muted-foreground"
-                    htmlFor={`line-buy-reason-${contribution.key}`}
-                  >
-                    Reason <span className="text-destructive">*</span>
-                  </label>
-                  <Textarea
-                    id={`line-buy-reason-${contribution.key}`}
-                    rows={2}
-                    value={draft.buy_reason}
-                    disabled={locked}
-                    placeholder="In your own words"
-                    onChange={(event) =>
-                      edit({ ...draft, buy_reason: event.target.value })
-                    }
-                  />
-                </div>
-              )}
             </div>
           </Block>
         </div>
@@ -990,13 +989,21 @@ export function BoardLineDecisionPanel({
 
           <div className="space-y-1">
             <label
-              className="block text-2xs uppercase tracking-wide text-muted-foreground"
+              className="flex items-center gap-1.5 text-2xs uppercase tracking-wide text-muted-foreground"
               htmlFor={`line-reason-${contribution.key}`}
             >
-              Why this differs
+              Reason
               {needsReason ? (
                 <span className="text-destructive"> *</span>
               ) : null}
+              {/* D3 (S2): a discontinued Buy no longer needs a reason (the gate is gone, S1) -
+                  the badge only says what the box is silent about; the box itself carries no
+                  asterisk for this cause alone. */}
+              {draft.is_discontinued && toMinor(draft.buy_qty) > 0 && (
+                <Badge variant="warning" appearance="light" size="sm">
+                  Discontinued
+                </Badge>
+              )}
             </label>
             <Textarea
               id={`line-reason-${contribution.key}`}

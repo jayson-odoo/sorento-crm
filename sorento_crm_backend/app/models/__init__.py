@@ -13,8 +13,11 @@ from app.models.product_set_proposal import ProductSetProposalBatch, ProductSetP
 from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException, ProductSpecVerification, ProductSpecFlyerBatch, ProductSpecFlyerProposal
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
 from app.models.sales_agent import SalesAgent
+from app.models.sales import SalesTeam, SalesTeamMember
+from app.models.finance import BillingDocument, BillingDocumentLine
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
+from app.models.cost_price import ProductSupplierCost, CostPriceChangeSet, CostPriceChangeLine, SupplierPriceLink
 from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, CampaignType, MarketingCampaign
 from app.models.forms import Form, FormSection, FormField, FormVersion, FormSubmission
@@ -67,7 +70,7 @@ from app.models.job import ImportJob, ImportJobRow
 from app.models.download import UserDownload, DownloadStatus
 from app.models.report_view import ReportView
 from app.models.saved_view import SavedView
-from app.models.audit import AuditLog
+from app.models.audit import AuditLog, AuditTrailGap
 from app.models.notification import Notification, NotificationDelivery, PushSubscription
 from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
 from app.models.health_alert_state import HealthAlertState
@@ -296,6 +299,7 @@ __all__ = [
     "PublicHoliday",
     "WorkCalendarConfig",
     "AuditLog",
+    "AuditTrailGap",
     "Notification",
     "NotificationDelivery",
     "PushSubscription",
@@ -367,6 +371,12 @@ __all__ = [
     "MarketSignal",
     "ScmAnalyticsRun",
     "MarketResearchRun",
+    # Sales (schema: sales)
+    "SalesTeam",
+    "SalesTeamMember",
+    # Finance (schema: finance)
+    "BillingDocument",
+    "BillingDocumentLine",
     # Dealer Kit (schema: dealer_kit)
     "Page",
     "PageVersion",

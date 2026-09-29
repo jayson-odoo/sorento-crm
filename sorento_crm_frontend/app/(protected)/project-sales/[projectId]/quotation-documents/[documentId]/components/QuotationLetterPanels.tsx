@@ -75,7 +75,7 @@ export function QuotationCoverLetterPanel({
       html={html}
       onChange={onChange}
       placeholder="The letter the customer reads before the prices"
-      emptyHint="No cover letter on this quotation yet. It is filled in from the company template when the quotation is issued."
+      emptyHint="No cover letter on this quotation yet."
     />
   );
 }
@@ -93,7 +93,7 @@ export function QuotationTermsPanel({
       html={html}
       onChange={onChange}
       placeholder="The clauses the customer holds us to"
-      emptyHint="No terms on this quotation yet. They are filled in from the company template when the quotation is issued."
+      emptyHint="No terms on this quotation yet."
     />
   );
 }

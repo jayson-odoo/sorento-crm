@@ -12,10 +12,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { statusPillClass } from '@/lib/status-pill';
@@ -25,7 +26,6 @@ import {
 } from '../../_shared/hooks/useOrderInquiry';
 import { formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
 import type {
-  OrderInquiryDocumentAllocation,
   OrderInquiryPoDetailLine,
   OrderInquirySpoDetailLine,
 } from '../../_shared/types/orderInquiry.types';
@@ -46,6 +46,9 @@ export function OrderInquiryDocumentDialog({
   kind,
   document,
   poId,
+  poLineId,
+  spoLineId,
+  suggestedLineId,
   open,
   onOpenChange,
   highlightLines,
@@ -55,6 +58,26 @@ export function OrderInquiryDocumentDialog({
   document: string;
   /** Addresses the purchase order. Null on an SPO, which is addressed by its number. */
   poId?: string | null;
+  /**
+   * Issue #1215 point 2: the line the OPENING row's own REAL link sits on, so the PO
+   * lines grid can highlight it - a PO with two lines of the same item made the panel's
+   * Item column alone ambiguous about which one. Ignored on an SPO document.
+   */
+  poLineId?: string | null;
+  /**
+   * R15 (owner rulings, 25 Sep 2026, hand test on stack C): the mirror of `poLineId`
+   * for the SPO lightbox - the `spo_allocations` row the OPENING row's own real link
+   * sits on (`link.spo_allocation_id`), never re-derived on the frontend by product or
+   * source PO number. Ignored on a PO document.
+   */
+  spoLineId?: string | null;
+  /**
+   * R11 (owner rulings, 24 Sep 2026): the line a SUGGESTED link names
+   * (`OrderInquirySuggestedLink.po_line_id`), opened from the Suggested cell - the same
+   * highlight idiom as `poLineId`, and both can show at once (a row can hold a real
+   * link on one line and a suggestion for another on the same document).
+   */
+  suggestedLineId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /**
@@ -64,25 +87,151 @@ export function OrderInquiryDocumentDialog({
    */
   highlightLines?: number[];
 }) {
+  // R16 (owner rulings, 25 Sep 2026): "1 button to quickly jump to the linked line" -
+  // a PO with 178 lines left the linked one, on page 7, unreachable without paging by
+  // hand. The linked/suggested line's own id, whichever this dialog was opened for; a
+  // real link always wins the LABEL over a suggestion (the two callers never set both
+  // at once in practice, but a row can hold both, R11).
+  const linkedLineId = kind === 'po' ? (poLineId ?? null) : (spoLineId ?? null);
+  // R31b (stock debt lane): `highlightLines` names a line by NUMBER, with no id of its
+  // own for the header button to hold until the SPO data loads and `SpoBody` resolves
+  // it against the document's own lines (its `highlightLineRowId`). Should fix 4
+  // (review round 3): a placeholder used to unblock the button the moment the caller
+  // named a line at all, whether or not any row on the document actually carried it -
+  // an enabled Go to that scrolls to nothing reads as broken. `SpoBody` reports what
+  // it resolved (`null` while loading or on no match) through `onHighlightResolved`
+  // below, so the button stays disabled until a real row backs it.
+  const hasHighlightLines = kind === 'spo' && Boolean(highlightLines && highlightLines.length);
+  const [resolvedHighlightLineId, setResolvedHighlightLineId] = React.useState<string | null>(null);
+  const highlightedLineId =
+    linkedLineId ?? suggestedLineId ?? (hasHighlightLines ? resolvedHighlightLineId : null);
+  // "Go to suggested line" only when the dialog was opened from the Suggested cell -
+  // a real link, or nothing highlighted at all, both read the default label.
+  const goToLabel = !linkedLineId && suggestedLineId ? 'Go to suggested line' : 'Go to linked line';
+  // Incremented on every press - PoBody/SpoBody re-run their scroll-into-view effect
+  // off this, even when the page itself does not change (the reader presses it again
+  // after scrolling away by hand).
+  const [goToNonce, setGoToNonce] = React.useState(0);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl" data-testid={`document-detail-${document}`}>
-        <DialogHeader>
-          <DialogTitle className="tabular-nums">{document}</DialogTitle>
-          <DialogDescription>
-            {kind === 'po' ? 'Purchase order' : 'Shipping order'}
-          </DialogDescription>
+        <DialogHeader className="flex-row items-start justify-between gap-3 space-y-0">
+          <div>
+            <DialogTitle className="tabular-nums">{document}</DialogTitle>
+            <DialogDescription>
+              {kind === 'po' ? 'Purchase order' : 'Shipping order'}
+            </DialogDescription>
+          </div>
+          <GoToLinkedLineButton
+            label={goToLabel}
+            disabled={!highlightedLineId}
+            onClick={() => setGoToNonce((current) => current + 1)}
+          />
         </DialogHeader>
         <DialogBody className="max-h-[70vh] overflow-y-auto">
           {kind === 'po' ? (
-            <PoBody poId={poId ?? null} open={open} />
+            <PoBody
+              poId={poId ?? null}
+              poLineId={poLineId ?? null}
+              suggestedLineId={suggestedLineId ?? null}
+              goToLineId={highlightedLineId}
+              goToNonce={goToNonce}
+              open={open}
+            />
           ) : (
-            <SpoBody spoNumber={document} open={open} highlightLines={highlightLines} />
+            <SpoBody
+              spoNumber={document}
+              spoLineId={spoLineId ?? null}
+              suggestedLineId={suggestedLineId ?? null}
+              goToLineId={highlightedLineId}
+              goToNonce={goToNonce}
+              open={open}
+              highlightLines={highlightLines}
+              onHighlightResolved={setResolvedHighlightLineId}
+            />
           )}
         </DialogBody>
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * R16: one button, both lightboxes, same label rule and same disabled state - reused
+ * rather than written twice so the two screens can never drift about wording. Wrapped
+ * in a `Tooltip` only while disabled (the data-grid-list-toolbar idiom): a `<span
+ * tabIndex={0}>` around the disabled `<button>` so the reason is still reachable by
+ * keyboard and screen reader, since a real `disabled` button swallows focus and hover.
+ */
+function GoToLinkedLineButton({
+  label,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const button = (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      data-testid="document-detail-go-to-line"
+      disabled={disabled}
+      onClick={onClick}
+      className="shrink-0"
+    >
+      {label}
+    </Button>
+  );
+  if (!disabled) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={0}>{button}</span>
+      </TooltipTrigger>
+      <TooltipContent>No linked or suggested line to go to</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * R16: jumps `PanelDataGrid` to the page holding `lineId` (its own `focusRowId`, so no
+ * second pagination state is built) and scrolls that row into view. `nonce` re-fires
+ * the scroll on every press, even when the page does not change - `PanelDataGrid`'s own
+ * jump is keyed off `focusRowId` changing, which a same-value re-press would not do.
+ *
+ * The row to scroll to is found by the SAME `data-linked-line`/`data-suggested-line`
+ * attribute the highlight already sets (`rowAttributes` below), inside the caller's own
+ * container ref - never a fresh id lookup, so this can never disagree with what is
+ * actually highlighted. Retried across a few animation frames because `PanelDataGrid`'s
+ * own page jump is a SECOND state update (its internal `useEffect` runs after this
+ * component's), so the target row is not always in the DOM yet on the frame this fires.
+ */
+function useGoToHighlightedLine(containerRef: React.RefObject<HTMLElement | null>, nonce: number) {
+  React.useEffect(() => {
+    if (!nonce) return;
+    let cancelled = false;
+    let attempts = 0;
+    const tryScroll = () => {
+      if (cancelled) return;
+      const el = containerRef.current?.querySelector(
+        '[data-linked-line="true"], [data-suggested-line="true"]',
+      );
+      if (el) {
+        el.scrollIntoView({ block: 'center' });
+        return;
+      }
+      attempts += 1;
+      if (attempts < 8) requestAnimationFrame(tryScroll);
+    };
+    requestAnimationFrame(tryScroll);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nonce]);
 }
 
 /**
@@ -94,11 +243,18 @@ export function OrderInquiryDocumentLink({
   kind,
   document,
   poId,
+  poLineId,
+  spoLineId,
+  suggestedLineId,
   highlightLines,
 }: {
   kind: 'po' | 'spo';
   document: string;
   poId?: string | null;
+  poLineId?: string | null;
+  /** R15: the `spo_allocations` row this REAL link sits on. Ignored for kind `po`. */
+  spoLineId?: string | null;
+  suggestedLineId?: string | null;
   highlightLines?: number[];
 }) {
   const [open, setOpen] = React.useState(false);
@@ -121,6 +277,9 @@ export function OrderInquiryDocumentLink({
           kind={kind}
           document={document}
           poId={poId}
+          poLineId={poLineId}
+          spoLineId={spoLineId}
+          suggestedLineId={suggestedLineId}
           open
           onOpenChange={setOpen}
           highlightLines={highlightLines}
@@ -151,76 +310,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function NotStated() {
   return <span className="font-normal text-muted-foreground">Not stated</span>;
-}
-
-/**
- * Who this document's quantity is spoken for by (plan section 4.3). No Standing column
- * any more (nit, review of PR #471): a row is born acknowledged (S1), so every allocation
- * reads Confirmed and the column said nothing a person could act on.
- */
-function AllocationsPanel({
-  allocations,
-}: {
-  allocations?: OrderInquiryDocumentAllocation[] | null;
-}) {
-  return (
-    <section className="space-y-2">
-      <h3 className="text-sm font-semibold">Allocated to</h3>
-      {!allocations || allocations.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No allocations yet.</p>
-      ) : (
-        <div className="overflow-x-auto overscroll-x-contain rounded-md border">
-          <table className="w-full min-w-[480px] text-xs tabular-nums">
-            <thead>
-              <tr className="border-b text-muted-foreground">
-                <th className="px-3 py-1.5 text-start font-medium uppercase tracking-wide">
-                  Order inquiry
-                </th>
-                <th className="px-3 py-1.5 text-start font-medium uppercase tracking-wide">
-                  S/O no
-                </th>
-                <th className="px-3 py-1.5 text-start font-medium uppercase tracking-wide">
-                  Item
-                </th>
-                <th className="px-2 py-1.5 text-end font-medium uppercase tracking-wide">
-                  Qty
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {allocations.map((allocation, index) => (
-                <tr
-                  key={`${allocation.inquiry_no ?? 'allocation'}-${allocation.item_code ?? ''}-${index}`}
-                  className="border-b last:border-b-0"
-                >
-                  <td className="px-3 py-1.5">
-                    {allocation.inquiry_no || (
-                      <span className="text-muted-foreground">Not numbered</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-1.5">
-                    {allocation.so_number || (
-                      <span className="text-muted-foreground">Not numbered</span>
-                    )}
-                  </td>
-                  <td className="max-w-[180px] px-3 py-1.5">
-                    <span className="block truncate" title={allocation.item_code ?? ''}>
-                      {allocation.item_code || (
-                        <span className="text-muted-foreground">Unresolved</span>
-                      )}
-                    </span>
-                  </td>
-                  <td className="px-2 py-1.5 text-end font-medium">
-                    {formatInquiryQty(allocation.qty)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
 }
 
 function SkuCellContent({ sku, name }: { sku?: string | null; name?: string | null }) {
@@ -300,6 +389,23 @@ const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
     ),
     size: 110,
     meta: { headerTitle: 'Remaining' },
+  },
+  {
+    // Issue #1215 point 2: every order inquiry row's own placement on this line,
+    // summed - the panel named only the DOCUMENT before, and a PO with two lines of
+    // the same item could not say which one held the quantity.
+    id: 'allocated',
+    accessorFn: (line) => line.allocated ?? '0',
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Allocated" column={column} className="justify-end" />
+    ),
+    cell: ({ row }) => (
+      <span className="block text-end tabular-nums">
+        {formatInquiryQty(row.original.allocated ?? '0')}
+      </span>
+    ),
+    size: 100,
+    meta: { headerTitle: 'Allocated' },
   },
   {
     id: 'location',
@@ -421,10 +527,27 @@ function searchOfLine(line: { sku?: string | null; product_name?: string | null;
   return `${line.sku ?? ''} ${line.product_name ?? ''} ${line.location ?? ''}`;
 }
 
-function PoBody({ poId, open }: { poId: string | null; open: boolean }) {
+function PoBody({
+  poId,
+  poLineId,
+  suggestedLineId,
+  goToLineId,
+  goToNonce = 0,
+  open,
+}: {
+  poId: string | null;
+  poLineId?: string | null;
+  suggestedLineId?: string | null;
+  /** R16: the id `PanelDataGrid.focusRowId` jumps its page to on a Go to press. */
+  goToLineId?: string | null;
+  goToNonce?: number;
+  open: boolean;
+}) {
   const { data, isLoading, isError, error } = useOrderInquiryPoDetail(poId ?? undefined, {
     enabled: open && Boolean(poId),
   });
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  useGoToHighlightedLine(containerRef, goToNonce);
 
   if (!poId) {
     return (
@@ -449,7 +572,7 @@ function PoBody({ poId, open }: { poId: string | null; open: boolean }) {
     [data.supplier_name, data.supplier_code].filter(Boolean).join(' - ') || undefined;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" ref={containerRef}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <dl className="grid min-w-0 flex-1 grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
           <Field label="Supplier">
@@ -483,6 +606,7 @@ function PoBody({ poId, open }: { poId: string | null; open: boolean }) {
         title="Lines"
         columns={PO_LINE_COLUMNS}
         rows={data.lines}
+        getRowId={(line) => line.id ?? ''}
         listingKey="projects.projects.view::order-inquiry-po-lines"
         emptyTitle="This purchase order carries no lines."
         searchOf={searchOfLine}
@@ -490,19 +614,46 @@ function PoBody({ poId, open }: { poId: string | null; open: boolean }) {
         pageSize={10}
         // The DialogBody already owns the scroll viewport (overflow-y-auto).
         scrollerMaxHeight={false}
+        // R16: reuses the grid's own pagination state - no second grid, no new
+        // primitive. Only set once the reader has actually pressed Go to (`goToNonce`),
+        // so opening the dialog never jumps the page on its own.
+        focusRowId={goToNonce ? (goToLineId ?? null) : null}
+        // Should fix 1 (review round 2): `goToLineId` never changes between
+        // presses - it is the one highlighted line for this dialog's whole life -
+        // so without the request key a second Go to press after paging away found
+        // `PanelDataGrid`'s own guard already satisfied and did nothing.
+        focusRequestKey={goToNonce}
+        // Issue #1215 point 2: highlight the line the OPENING row's own REAL link sits
+        // on - a PO with two lines of the same item is exactly the case the plain Item
+        // column could not tell apart. R13 (owner rulings, 24 Sep 2026): the lines grid
+        // is the WHOLE answer now - no panel underneath states it a second way. R11:
+        // a SUGGESTED line (`suggestedLineId`) gets the SAME highlight idiom, and both
+        // can be set at once - a row can hold a real link on one line and a suggestion
+        // for another on the same document.
+        rowClassName={(line) =>
+          (poLineId && line.id === poLineId) || (suggestedLineId && line.id === suggestedLineId)
+            ? 'bg-primary/10'
+            : undefined
+        }
+        rowAttributes={(line) => ({
+          ...(poLineId && line.id === poLineId ? { 'data-linked-line': 'true' } : {}),
+          ...(suggestedLineId && line.id === suggestedLineId
+            ? { 'data-suggested-line': 'true' }
+            : {}),
+        })}
       />
-
-      <AllocationsPanel allocations={data.allocations} />
     </div>
   );
 }
 
-/** `getRowId`'s own id for one line - keyed by its own `spo_line_number` where the book
- *  states one (unique per document), else its SKU/location (a line `highlightLines` can
- *  never name has no need of a perfectly unique fallback). The SAME id `focusRowId`
- *  below names, so a jump and a row can never disagree about which one they mean. Single
- *  parameter, matching `PanelDataGrid`'s own `getRowId` signature exactly. */
+/** `getRowId`'s own id for one line - the row's own `id` when the book states one (the
+ *  usual case, and what `spoLineId`/`suggestedLineId` themselves are), else a stand-in
+ *  keyed by `spo_line_number` or by SKU/location - an R31b caller (stock debt) may know
+ *  only the line NUMBER, never the row's id. The SAME id `focusRowId` below names, so a
+ *  jump and a row can never disagree about which one they mean. Single parameter,
+ *  matching `PanelDataGrid`'s own `getRowId` signature exactly. */
 function spoLineRowId(line: OrderInquirySpoDetailLine): string {
+  if (line.id) return line.id;
   return line.spo_line_number != null
     ? `line-${line.spo_line_number}`
     : `row-${line.sku ?? ''}-${line.location ?? ''}`;
@@ -510,36 +661,63 @@ function spoLineRowId(line: OrderInquirySpoDetailLine): string {
 
 function SpoBody({
   spoNumber,
+  spoLineId,
+  suggestedLineId,
+  goToLineId,
+  goToNonce = 0,
   open,
   highlightLines,
+  onHighlightResolved,
 }: {
   spoNumber: string;
+  /**
+   * R15 (owner rulings, 25 Sep 2026, hand test on stack C): the `spo_allocations` row
+   * the OPENING row's own real link sits on - the exact mirror of the PO lightbox's
+   * `poLineId`, resolved server-side (`link.spo_allocation_id`), never by matching
+   * product or source PO number here.
+   */
+  spoLineId?: string | null;
+  suggestedLineId?: string | null;
+  /** R16: the id `PanelDataGrid.focusRowId` jumps its page to on a Go to press. */
+  goToLineId?: string | null;
+  goToNonce?: number;
   open: boolean;
+  /**
+   * R31b (stock debt lane): the SPO line numbers a CALLER's own line drew from - marks
+   * the matching row with a "Linked" badge and rides the SAME go-to/highlight path a
+   * real `spoLineId` does (`highlightLineRowId` below), rather than a second mechanism.
+   * Ignored on the PO body.
+   */
   highlightLines?: number[];
+  /**
+   * Should fix 4 (review round 3): reports what `highlightLineRowId` below resolved
+   * to - `null` while the document is still loading, or once it is in and no line on
+   * it carries any of `highlightLines` - so the header's Go to button (which mounts
+   * BEFORE this body's own data does) can stay disabled until a real row backs it.
+   */
+  onHighlightResolved?: (rowId: string | null) => void;
 }) {
   const { data, isLoading, isError } = useOrderInquirySpoDetail(spoNumber, { enabled: open });
-  // R31b: the jump fires on CLICK, never on mount - a caller's own line may already sit
-  // on the page it opens to, and forcing a jump every time would fight a reader paging
-  // away from it on their own.
-  const [focusRowId, setFocusRowId] = React.useState<string | null>(null);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  useGoToHighlightedLine(containerRef, goToNonce);
 
-  const linkedLineNumbers = React.useMemo(
-    () => new Set(highlightLines ?? []),
-    [highlightLines],
-  );
-  const columns = React.useMemo(
-    () => buildSpoLineColumns(linkedLineNumbers),
-    [linkedLineNumbers],
-  );
-  // The FIRST line this document carries that the caller named - `assigned_from` is one
-  // entry per source, so there is at most one document line a stock-debt row could ever
-  // point at, but "first" keeps this honest if that ever stops being true.
-  const linkedRowId = React.useMemo(() => {
+  const linkedLineNumbers = React.useMemo(() => new Set(highlightLines ?? []), [highlightLines]);
+  const columns = React.useMemo(() => buildSpoLineColumns(linkedLineNumbers), [linkedLineNumbers]);
+  // R31b: resolve `highlightLines` (a NUMBER) to the matching row's own id, once the
+  // data is in, so it can ride the exact highlight/go-to path a real `spoLineId` does.
+  const highlightLineRowId = React.useMemo(() => {
+    if (!linkedLineNumbers.size) return null;
     const match = (data?.lines ?? []).find(
       (line) => line.spo_line_number != null && linkedLineNumbers.has(line.spo_line_number),
     );
     return match ? spoLineRowId(match) : null;
   }, [data, linkedLineNumbers]);
+  React.useEffect(() => {
+    onHighlightResolved?.(highlightLineRowId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightLineRowId]);
+  const effectiveSpoLineId = spoLineId ?? highlightLineRowId;
+  const effectiveGoToLineId = spoLineId ?? suggestedLineId ?? highlightLineRowId ?? goToLineId ?? null;
 
   if (isLoading) return <LoadingBody />;
   if (isError || !data) {
@@ -553,46 +731,79 @@ function SpoBody({
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <dl className="grid min-w-0 flex-1 grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
-          <Field label="Supplier">{data.supplier_name || <NotStated />}</Field>
-          <Field label="ETA">
-            {data.eta ? formatDateInMalaysia(data.eta) : <NotStated />}
-          </Field>
-          <Field label="Shipment">{data.shipment_ref || <NotStated />}</Field>
-          <Field label="Container">{data.container_no || <NotStated />}</Field>
-        </dl>
-        {linkedRowId && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            onClick={() => setFocusRowId(linkedRowId)}
-          >
-            Go to linked line
-          </Button>
-        )}
-      </div>
+    <div className="space-y-5" ref={containerRef}>
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+        <Field label="Supplier">{data.supplier_name || <NotStated />}</Field>
+        <Field label="ETA">
+          {data.eta ? formatDateInMalaysia(data.eta) : <NotStated />}
+        </Field>
+        <Field label="Shipment">{data.shipment_ref || <NotStated />}</Field>
+        <Field label="Container">{data.container_no || <NotStated />}</Field>
+      </dl>
 
       <PanelDataGrid<OrderInquirySpoDetailLine>
         title="Lines"
         columns={columns}
         rows={data.lines}
         getRowId={spoLineRowId}
-        focusRowId={focusRowId}
         listingKey="projects.projects.view::order-inquiry-spo-lines"
         emptyTitle="This shipping order carries no lines."
         searchOf={searchOfLine}
         searchPlaceholder="Search product or location..."
         pageSize={10}
         scrollerMaxHeight={false}
+        // R16: same idiom as the PO lightbox - the grid's own pagination state, only
+        // engaged once the reader presses Go to.
+        focusRowId={goToNonce ? effectiveGoToLineId : null}
+        // Should fix 1 (review round 2): same reasoning as the PO lightbox above -
+        // a second press must jump again even though `goToLineId` never changes.
+        focusRequestKey={goToNonce}
+        // R15/R31b: the SPO lightbox highlights its own linked/suggested/counted line
+        // exactly the way the PO lightbox already does - `spoLineId` is the OI row's
+        // real link's own `spo_allocation_id`; `highlightLineRowId` is the same idiom
+        // resolved from a caller's `highlightLines` line number (stock debt), never a
+        // re-match by product or source PO number.
+        rowClassName={(line) =>
+          (effectiveSpoLineId && spoLineRowId(line) === effectiveSpoLineId) ||
+          (suggestedLineId && line.id === suggestedLineId)
+            ? 'bg-primary/10'
+            : undefined
+        }
+        rowAttributes={(line) => ({
+          ...(effectiveSpoLineId && spoLineRowId(line) === effectiveSpoLineId
+            ? { 'data-linked-line': 'true' }
+            : {}),
+          ...(suggestedLineId && line.id === suggestedLineId
+            ? { 'data-suggested-line': 'true' }
+            : {}),
+        })}
       />
-
-      <AllocationsPanel allocations={data.allocations} />
     </div>
   );
+}
+
+/**
+ * R17 (owner rulings, 25 Sep 2026, hand test on stack C): a "via SPO" PO number -
+ * `source_po_number` on an spo-kind link, never a real po-kind link of its own - opens
+ * the PO lightbox for that source PO rather than reading dead text (review round 1's
+ * should-fix 4 fix, reversed by this ruling). `purchaseOrderId` is resolved on the
+ * SERVER now (review round 2 Should fix 3, `links_for_rows`, one batched
+ * `PurchaseOrder.po_number IN (...)` for the whole page) - by `SPOAllocation.po_line_id`
+ * traced to its own header first, then by `from_po_number` itself when there is no such
+ * FK, which is the ordinary book-fed case. The client no longer scans the worklist for
+ * it (`useOrderInquiryPoIdByNumber`, retired - it could never answer for a PO reached
+ * ONLY through an SPO, since that PO holds no `po`-kind link of its own on any row).
+ * Shared by the worklist's backing-documents dialog and the OI detail Lines tab, so the
+ * two screens can never disagree about how this number opens.
+ */
+export function ViaSpoPoNumber({
+  poNumber,
+  purchaseOrderId,
+}: {
+  poNumber: string;
+  purchaseOrderId?: string | null;
+}) {
+  return <OrderInquiryDocumentLink kind="po" document={poNumber} poId={purchaseOrderId ?? null} />;
 }
 
 export default OrderInquiryDocumentDialog;

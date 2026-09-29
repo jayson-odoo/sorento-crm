@@ -100,6 +100,9 @@ export interface ProformaDocumentSummary {
   invoice_date: string | null;
   container_no: string | null;
   bl_no: string | null;
+  /** R-E (owner ruling 25 Sep): distinct from `bl_no` now. Optional so a hand-built
+   *  fixture from before this field existed still typechecks. */
+  so_no?: string | null;
   lines: number;
   qty: number | null;
   total: number | null;
@@ -177,6 +180,11 @@ export interface ProformaInvoiceListRow {
    *  seal and the SO. */
   consignee: string | null;
   bl_no: string | null;
+  /** R-E (owner ruling 25 Sep): the forwarder's booking/SO reference - its OWN header
+   *  field now, distinct from `bl_no`, never derived from it (the superseded 6 Sep
+   *  carry-BL-as-SO rule). Optional so a hand-built fixture from before this field
+   *  existed still typechecks; the real payload always states it. */
+  so_no?: string | null;
   total_amount: number | null;
   line_count: number;
   source_ref: string | null;
@@ -373,6 +381,22 @@ export interface ProformaInvoiceSourceFile {
   mime_type: string | null;
 }
 
+/** Container/seal/SO/BL/consignee EXACTLY as Convert (B1) will write them onto the draft -
+ *  B3/AC-C5: computed server-side by the SAME function `convert_to_draft_shipment` uses,
+ *  so the dialog's "Carried onto the draft" line can never disagree with what Convert
+ *  itself does. R-E (owner ruling 25 Sep): `so` and `bl` are two INDEPENDENT facts - `so`
+ *  lands on the packing list's `forwarder_order_ref`, `bl` on its `bill_of_lading_number` -
+ *  superseding the 6 Sep rule that put `bl_no` alone into the SO field. */
+export interface ProformaInvoiceConvertCarry {
+  container: string | null;
+  seal: string | null;
+  so: string | null;
+  /** R-E (owner ruling 25 Sep): the true bill of lading, distinct from `so` now - never
+   *  derived from it (the superseded 6 Sep carry-BL-as-SO rule). */
+  bl: string | null;
+  consignee: string | null;
+}
+
 export interface ProformaInvoiceDetail extends ProformaInvoiceListRow {
   lines: ProformaInvoiceLine[];
   converted_shipments: ConvertedShipmentRef[];
@@ -382,6 +406,10 @@ export interface ProformaInvoiceDetail extends ProformaInvoiceListRow {
   /** Optional while an older payload (or a record uploaded before the link existed) carries
    *  no links at all - the detail then names its files without offering to open them. */
   source_files?: ProformaInvoiceSourceFile[];
+  /** Optional so a fixture/test payload built before this field existed still type-checks -
+   *  the real endpoint always sends it (B3); the convert dialog falls back to an
+   *  all-`null` carry when it is absent. */
+  convert_carry?: ProformaInvoiceConvertCarry;
 }
 
 /** One PI's outcome inside a convert - always present, so the caller can name every

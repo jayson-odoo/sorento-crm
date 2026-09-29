@@ -468,8 +468,8 @@ export default function ConversationSLATrackingDetail({
                 { value: '', label: 'No assignee' },
                 ...usersSelect.map((user) => ({
                   value: user.id,
-                  label: user.name || user.email,
-                  searchText: `${user.name ?? ''} ${user.email}`.trim(),
+                  label: user.name || user.email || 'Unnamed user',
+                  searchText: `${user.name ?? ''} ${user.email ?? ''}`.trim(),
                 })),
               ]}
               placeholder="No assignee"
