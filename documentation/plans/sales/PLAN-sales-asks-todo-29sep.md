@@ -1,6 +1,6 @@
 # PLAN: sales asks as a salesperson's to-do list, date-first (lane SALES-ASKS-TODO)
 
-Status: owner rulings Q1 to Q8 received 29 Sep 2026 (section 0b, binding); Phase 1 mock (section 7b) being updated to them before the hand test is re-filed; Phase 2 red tests committed (5109da98). The plan was first written
+Status: built 29 Sep 2026, Track: full. Owner rulings Q1 to Q8 (section 0b) applied; Phase 2 green (section 7c evidence); awaiting the owner's hand test on the real rows and Phase 3 review. The plan was first written
 under the recommendations and each pending question is marked `[Q<n> pending]` where its answer
 changes the design. Track: full (one migration, two new routes under RBAC, one portal route).
 Plan created: 2026-09-29T08:20:00Z
@@ -260,7 +260,10 @@ CRM mount: `app/(protected)/sales/customer-asks/page.tsx` -> `MyCustomerAsksClie
   themself. `agent_id` given: must be pickable, else 403 (`NOT_YOUR_AGENT`); an id that is no
   agent at all is 404. `agent_id=all` = every pickable agent's rows, each carrying `agent_code`.
   A leader is never granted a slug for this: leading a team IS the grant.
-- PATCH scope: the ask's customer's agent is mine, or I hold `view_all` (the office marking on
+- PATCH scope = the view scope (Q7 (c), ruled 29 Sep after the coder flagged that a leader
+  could see a member's row but not clear it): the ask's customer's agent is one of my pickable
+  agents, which is mine, or a current member of a team I lead, or anyone with `view_all` (the
+  office marking on
   an agent's behalf); otherwise 404, never 403 (no id probing). Actor label for `done_by`: the
   user's full name.
 
@@ -362,6 +365,34 @@ carries them (Phase 2's migration is what adds them for real).
 - Vitest breakage to hand the tester: `CustomerAsksList.test.tsx` (10, pins the replaced body),
   `PortalLanding.customerAsks.test.tsx` (2, the body and the server-side search),
   `menu.config.sales.test.ts` (2, the new entry).
+
+## 7c. Phase 2 evidence run (29 Sep 2026, agent-browser, sandbox dev server, REAL backend on `sat_0001`)
+
+Sandbox seeds (never committed): superadmin user, agent SEAN I linked to portal contact "Sean
+Tan" (slug `sean`, verified token, `customer_asks` switch on), agent LCL, three customers, seven
+asks (two before today, four today across all four branches incl. one `console`, one done).
+
+- CRM, 1280x800: sign in, sidebar Sales -> Customer asks (after Opportunities). Admin is linked to
+  no agent: "You are not linked to a sales agent" with the Agent select listing `All agents`,
+  `LCL · 1 open · 0 need attention`, `SEAN I · 4 open · 2 need attention` (view_all). Picking
+  SEAN I: `Open 5 · Needs attention 2 · Done today 1` (Q5: the `incoming` row counts),
+  `Needs attention` with day sub-headings `Sun 27 Sep` then `Yesterday` (oldest day first, red
+  age labels), `Today` with no duplicate sub-heading, `Incoming` and `Console` badges present,
+  `Done today` with the backfilled row reading "Done" (no name). Sort select: picking `Customer
+  A to Z` fires `PUT /api/v1/list-query/column-config/sales.customer_asks.view%3A%3Atodo` (200)
+  and survives a full reload. `Done` on the oldest row: `PATCH /api/v1/sales/customer-asks/{id}`
+  200, counts `Open 4 · Needs attention 1 · Done today 2`, the row under `Done today` reading
+  "Done by Sandbox Admin 29/09/2026, 4:19 pm" (`done_by_user_id` resolved to the name); `Reopen`
+  restores `Open 5 · Needs attention 2 · Done today 1`. `errors`: none.
+- CRM, 375x812: `scrollWidth == clientWidth`, one column, full-width `Done`.
+- Portal, 375x812: `/portal/c/sean`, selector `Customer asks 5`, the same counts and groups,
+  Sort `Oldest first` default; `Newest first` written to `localStorage
+  sorento.portalAsksSort.sbx-contact-sean` as `{"id":"asked_at","desc":true}`. `Done` on the
+  oldest row: "Done by Sean Tan 29/09/2026, 4:20 pm" (`done_by_contact_id` resolved to the
+  contact label), counts move. No page errors. 1280x800: two-column rows.
+- Suites: lane + #1333 files 93 passed; neighbours (`tests/chatbot/test_stock_ask_record.py`,
+  `test_stock_ask_notify.py`, `test_rbac.py`) 68 passed; vitest whole suite: see the commit
+  that records it.
 
 ## 8. Risks
 

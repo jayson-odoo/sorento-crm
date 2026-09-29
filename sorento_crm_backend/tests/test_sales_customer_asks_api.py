@@ -223,8 +223,8 @@ def led(w):
     w["d"] = seed.agent(db, seed.contact(db, "Agent Delta"), "D")
     c_cust = seed.customer(db, "Customer C", w["c"])
     d_cust = seed.customer(db, "Customer D", w["d"])
-    seed.ask(db, c_cust, w["dealer"], "SRT-C", created_at=w["start"] + timedelta(seconds=1))
-    seed.ask(db, d_cust, w["dealer"], "SRT-D", created_at=w["start"] + timedelta(seconds=1))
+    w["c_ask"] = seed.ask(db, c_cust, w["dealer"], "SRT-C", created_at=w["start"] + timedelta(seconds=1))
+    w["d_ask"] = seed.ask(db, d_cust, w["dealer"], "SRT-D", created_at=w["start"] + timedelta(seconds=1))
     yesterday = (datetime.utcnow() - timedelta(days=1)).date()
     w["team"] = _team(db, "T", w["a"], [(w["a"], None), (w["b"], None), (w["c"], yesterday)])
     db.commit()
@@ -278,6 +278,22 @@ def test_a_leader_of_an_inactive_team_is_nobodys_leader(w):
     denied = _call(w, [VIEW], "me", "get", f"/todo?agent_id={w['b'].id}")
     assert denied.status_code == 403
     assert denied.json().get("code") == "NOT_YOUR_AGENT"
+
+
+# ---- AC-ST216 ---------------------------------------------------------------------------
+
+
+def test_team_leader_can_clear_a_members_ask(led):
+    w = led
+    ok = _call(w, [VIEW, EDIT], "me", "patch", f"/{w['z_old'].id}", json={"state": "done"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["done_by"] == "Alpha Person"
+    w["db"].expire_all()
+    assert w["db"].get(seed.StockAsk, w["z_old"].id).done_by_user_id == w["me"].id
+
+    for key in ("c_ask", "d_ask"):  # C's membership ended; D is in no team
+        denied = _call(w, [VIEW, EDIT], "me", "patch", f"/{w[key].id}", json={"state": "done"})
+        assert denied.status_code == 404, denied.text
 
 
 # ---- AC-ST206 ---------------------------------------------------------------------------

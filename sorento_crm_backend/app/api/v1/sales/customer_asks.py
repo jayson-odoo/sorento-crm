@@ -137,17 +137,18 @@ def customer_asks_update(
     db: Session = Depends(get_db),
 ):
     validate_uuid_path(ask_id, resource="Stock ask")
+    # The PATCH scope is the view scope: self, a led team's current members, or everyone.
     if _has_view_all(db, current_user):
-        agent_id: Optional[str] = None
+        agent_ids: Optional[set[str]] = None
     else:
         mine = agent_for_user(db, current_user["id"])
         if mine is None:
             raise handle_not_found("Stock ask", ask_id)
-        agent_id = mine.id
+        agent_ids = _led_agent_ids(db, mine.id) | {mine.id}
     return stock_ask_service.update_for_sales(
         db,
         ask_id,
         body.model_dump(exclude_unset=True),
-        agent_id=agent_id,
+        agent_id=agent_ids,
         actor_user_id=current_user["id"],
     )

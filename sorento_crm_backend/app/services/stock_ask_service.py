@@ -724,9 +724,9 @@ def update_for_agent(
 
 
 def update_for_sales(
-    db: Session, ask_id: str, data: dict[str, Any], *, agent_id: Optional[str], actor_user_id: str
+    db: Session, ask_id: str, data: dict[str, Any], *, agent_id: Optional[str | Iterable[str]], actor_user_id: str
 ) -> Any:
-    """The CRM to-do's PATCH: `agent_id` is my agent (my customers' asks only), or None for a
+    """The CRM to-do's PATCH: `agent_id` is the caller's pickable agents (self, a led team), or None for a
     caller with view_all (any ask that belongs to some agent's customer). Out of scope is a 404."""
     from app.models.stock_ask import StockAsk
     from app.services.error_handler import handle_not_found

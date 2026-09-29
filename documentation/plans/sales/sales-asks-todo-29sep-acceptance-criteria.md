@@ -126,6 +126,9 @@ to A, customer Z assigned to B, asks with `created_at` set explicitly around a f
   not C or D; `todo?agent_id=<B>` returns B's payload; `agent_id=<C>` and `agent_id=<D>` are 403
   `NOT_YOUR_AGENT`; `agent_id=all` returns A's and B's rows with `agent_code`. A leader of an
   inactive team (`is_active = false`) is not a leader for this. [Q7]
+- **AC-ST216 [BE]** The clear scope equals the view scope (Q7 (c)): as the A-linked leader without
+  `view_all`, `PATCH .../customer-asks/{id}` `{state: done}` on B's ask is 200 with
+  `done_by_user_id` = the leader's user and `done_by` = the leader's name; on C's and D's asks 404.
 - **AC-ST206 [BE]** `PATCH /api/v1/sales/customer-asks/{id}` `{state: done}` as the A-linked
   user on X's ask stamps `done_by_user_id` = that user and returns `done_by` = the user's name;
   on Z's ask 404; with `view_all` on Z's
