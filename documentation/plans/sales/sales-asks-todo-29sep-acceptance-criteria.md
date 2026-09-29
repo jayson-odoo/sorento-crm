@@ -53,6 +53,11 @@ to A, customer Z assigned to B, asks with `created_at` set explicitly around a f
   `respond_contact_customers`) to two customers, one handled by A and one by B, appears in BOTH
   A's and B's `open` with `customer_name` null; an ask with no customer and an unlinked contact
   appears in nobody's; the portal and CRM PATCH scopes follow the same rule.
+- **AC-ST105c [BE]** (security review S3, B1) Contact P is linked (a Sorento link row) to a Sorento
+  customer handled by A; a customer-less ask from P sits in Mocha; a caller scoped to both
+  companies acting as A: the Mocha ask is absent from A's to-do and `agent_counts`, PATCH on it
+  is 404 (CRM and portal), its conversation is 404. Every joined row in `_agent_scope` is tied
+  to the ask's `company_id`.
 - **AC-ST106 [BE]** `open` holds every branch: an open `incoming` ask and a `console` ask are in
   `open` and count (Q5 (a)). [Q5]
 - **AC-ST107 [BE]** `open` is ordered by `created_at` ascending, id as tie-break; `done_today` by
@@ -211,8 +216,9 @@ Agent select unchanged), AC-ST217 (pending state stays on the card's button and 
   asked at (CRM: agent code); the Asked / Answered block with a `Jump to message` button; the
   conversation from `getAskConversation` with inbound bubbles left and outbound right, the
   `ask_message_id` bubble tagged `This ask`; `Show the whole day` refetches with `whole_day=true`;
-  CRM only `Open in Conversations` link to that contact's chat history (the conversation payload
-  carries `contact_id`, the `respond_contacts.id`, for this link only); a Note textarea whose `Save note` button calls
+  CRM only `Open in Conversations` link to that contact's chat history (the CRM conversation
+  payload carries `contact_id`, the `respond_contacts.id`, for this link only; the portal payload
+  does not, security review S3 N1); a Note textarea whose `Save note` button calls
   `onNote(askId, text)` (blur does not) and then shows `Saved <time>`; foot `Done` calling
   `onDone` (or `Reopen`). Clicking `Jump to message` scrolls the tagged bubble into view (the
   bubble element receives the flash class).

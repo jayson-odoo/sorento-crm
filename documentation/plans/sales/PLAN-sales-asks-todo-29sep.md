@@ -366,6 +366,11 @@ widens to the ask's Malaysia calendar day (at most 200 rows). `ask_message_id` =
 row nearest after `created_at` whose `message` contains the ask's `answer_summary` line, else
 the nearest outgoing row after `created_at`, else null. Nothing else of the row is on the wire
 (no Respond ids, no result set, no latency). An ask with no contact answers an empty list.
+Security review of S3 (29 Sep): the contact-link branch of `_agent_scope` ties the link row and
+the linked customer to the ask's `company_id` (B1, AC-ST105c); the portal payload omits
+`contact_id` (N1); `ask_message_id` is one of the returned messages (N2); `chat_histories`
+has no company column, so a contact who talks to two companies' bots has both in one window,
+the same limit the Conversations screens carry today (N3, noted, not a lane defect).
 
 **Deleted by the reshape:** the counts line, the age label, the in-line Sort select, the day
 sub-headings, the Notified / Console / branch badges on the to-do, the inline note cell on the
