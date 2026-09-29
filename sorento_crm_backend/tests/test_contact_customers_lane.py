@@ -227,8 +227,8 @@ def test_ac20_get_contact_customers_lists_links_in_created_order(client, db):
     first = _customer(db, agent=agent_a)
     second = _customer(db, agent=agent_b)
     # Insert the later link first so ordering by created_at, not by insertion, is proven.
-    _link(db, contact, second, is_primary=True, age_minutes=10)
-    _link(db, contact, first, age_minutes=1)
+    link_second = _link(db, contact, second, is_primary=True, age_minutes=10)
+    link_first = _link(db, contact, first, age_minutes=1)
     db.commit()
 
     response = client.get(f"{CONTACTS}/{contact.id}/customers")
@@ -237,6 +237,8 @@ def test_ac20_get_contact_customers_lists_links_in_created_order(client, db):
     body = response.json()
     assert [row["customer_id"] for row in body["data"]] == [first.id, second.id]
     row = body["data"][0]
+    # `id` is the respond_contact_customers row id, what the unlink action parks on.
+    assert [r["id"] for r in body["data"]] == [link_first.id, link_second.id]
     assert row["customer_code"] == first.customer_code
     assert row["customer_name"] == first.customer_name
     assert row["is_active"] is True
@@ -324,6 +326,7 @@ def test_ac22_post_link_stamps_customer_company_and_is_idempotent(client, db, ac
 
     assert first.status_code == 201, first.text
     assert first.json()["customer_id"] == customer.id
+    assert first.json()["id"] == _links_in_db(db, contact.id)[0].id
     assert first.json()["customer_code"] == customer.customer_code
     links = _links_in_db(db, contact.id)
     assert len(links) == 1
@@ -420,8 +423,9 @@ def test_ac24_patch_true_demotes_other_primary_and_false_clears(client, db):
     first = _customer(db)
     second = _customer(db)
     _link(db, contact, first, is_primary=True, age_minutes=1)
-    _link(db, contact, second, age_minutes=2)
+    link_second = _link(db, contact, second, age_minutes=2)
     db.commit()
+    link_second_id = link_second.id
 
     promote = client.patch(
         f"{CONTACTS}/{contact.id}/customers/{second.id}", json={"is_primary": True}
@@ -429,6 +433,7 @@ def test_ac24_patch_true_demotes_other_primary_and_false_clears(client, db):
 
     assert promote.status_code == 200, promote.text
     assert promote.json()["customer_id"] == second.id
+    assert promote.json()["id"] == link_second_id
     assert promote.json()["is_primary"] is True
     assert {l.customer_id for l in _links_in_db(db, contact.id) if l.is_primary} == {second.id}
 
@@ -438,6 +443,7 @@ def test_ac24_patch_true_demotes_other_primary_and_false_clears(client, db):
 
     assert clear.status_code == 200, clear.text
     assert clear.json()["is_primary"] is False
+    assert clear.json()["id"] == link_second_id
     assert [l for l in _links_in_db(db, contact.id) if l.is_primary] == []
 
 
@@ -569,8 +575,21 @@ def test_ac28_agent_customers_are_this_agents_only_sorted_by_code(client, db):
     agent = _agent(db)
     other_agent = _agent(db)
     # Inserted out of order: default sort is customer_code asc.
+    from app.models.access import MarketSegment
+
+    segment = MarketSegment(
+        id=str(uuid.uuid4()), code=f"zzt-{tag}", name="ZZT segment", is_active=True
+    )
+    db.add(segment)
+    db.flush()
     c3 = _customer(db, agent=agent, customer_code=f"ZZT-{tag}-C3")
-    c1 = _customer(db, agent=agent, customer_code=f"ZZT-{tag}-C1")
+    c1 = _customer(
+        db,
+        agent=agent,
+        customer_code=f"ZZT-{tag}-C1",
+        region="Selangor",
+        market_segment_code=segment.code,
+    )
     c2 = _customer(db, agent=agent, customer_code=f"ZZT-{tag}-C2")
     _customer(db, agent=other_agent, customer_code=f"ZZT-{tag}-C0")
     _customer(db, customer_code=f"ZZT-{tag}-C9")
@@ -583,6 +602,10 @@ def test_ac28_agent_customers_are_this_agents_only_sorted_by_code(client, db):
     assert [row["id"] for row in body["data"]] == [c1.id, c2.id, c3.id]
     assert body["pagination"]["total"] == 3
     assert body["data"][0]["sales_agent_code"] == agent.sales_agent
+    # Declared on CustomerResponse: response_model would silently drop them otherwise.
+    assert body["data"][0]["region"] == "Selangor"
+    assert body["data"][0]["market_segment_code"] == segment.code
+    assert "region" in body["data"][1] and body["data"][1]["region"] is None
 
 
 def test_ac28_agent_customers_query_matches_code_or_name(client, db):
