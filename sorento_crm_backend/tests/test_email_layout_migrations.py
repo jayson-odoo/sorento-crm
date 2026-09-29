@@ -74,9 +74,14 @@ def _row(db, code):
 
 def test_head_chain():  # AC-EM097
     mods = _scripts()
-    assert mods["eml_0001_layout_columns"].down_revision == "merge_29sep_batch5"
     assert mods["eml_0002_seed_layouts"].down_revision == "eml_0001_layout_columns"
     sd = ScriptDirectory.from_config(Config("alembic.ini"))
+    # The root's parent is whatever main's head was at the last re-parent
+    # (scripts/alembic-reparent.sh), so it is checked as "a real revision that
+    # is not ours", never by name: a pinned name goes red on every main merge.
+    parent = mods["eml_0001_layout_columns"].down_revision
+    assert isinstance(parent, str) and not parent.startswith("eml_")
+    assert sd.get_revision(parent) is not None
     assert sd.get_heads() == ["eml_0002_seed_layouts"]
     for rev in ("eml_0001_layout_columns", "eml_0002_seed_layouts"):
         assert len(rev) <= 32
