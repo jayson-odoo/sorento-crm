@@ -84,14 +84,8 @@ export async function getCustomerSalesAgentsSelect(): Promise<CustomerSalesAgent
 /** Page size of the customers select. */
 export const CUSTOMER_SELECT_PAGE_SIZE = 50;
 
-export interface CustomerSelectRow {
-  id: string;
-  customer_code: string;
-  customer_name: string;
-  sales_agent_id?: string | null;
-  sales_agent_code?: string | null;
-  sales_agent_name?: string | null;
-}
+/** A customers-select option; `salesAgentId` lets a caller disable "already on this agent". */
+export type CustomerSelectOption = SearchableSelectOption & { salesAgentId?: string | null };
 
 /**
  * One page of customers for the contact card's "Add customers" and the sales agent tab's
@@ -101,11 +95,22 @@ export interface CustomerSelectRow {
  *     -> { data: { id, customer_code, customer_name, sales_agent_id, sales_agent_code,
  *          sales_agent_name }[] }
  *   The three sales_agent_* fields are additive (UAC AC-31), null when unassigned.
+ *
+ * value = customer id, label = `code - name`, description = the customer's current agent as
+ * `code - name`, or "No sales agent".
  */
-export async function searchCustomerSelectRows(
+export async function searchCustomersSelect(
   query: string,
   pageIndex = 0,
-): Promise<CustomerSelectRow[]> {
+): Promise<CustomerSelectOption[]> {
+  type Row = {
+    id: string;
+    customer_code: string;
+    customer_name: string;
+    sales_agent_id?: string | null;
+    sales_agent_code?: string | null;
+    sales_agent_name?: string | null;
+  };
   const search = new URLSearchParams({
     limit: String(CUSTOMER_SELECT_PAGE_SIZE),
     offset: String(pageIndex * CUSTOMER_SELECT_PAGE_SIZE),
@@ -115,18 +120,15 @@ export async function searchCustomerSelectRows(
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load customers'));
   }
-  return ((await response.json()) as { data?: CustomerSelectRow[] }).data ?? [];
-}
-
-/** The option label (`code - name`) and description (current agent, or "No sales agent"). */
-export function customerSelectOption(c: CustomerSelectRow): SearchableSelectOption {
-  return {
+  const rows = ((await response.json()) as { data?: Row[] }).data ?? [];
+  return rows.map((c) => ({
     value: c.id,
     label: `${c.customer_code} - ${c.customer_name}`,
     description: c.sales_agent_code
       ? `${c.sales_agent_code} - ${c.sales_agent_name ?? ''}`.replace(/ - $/, '')
       : 'No sales agent',
-  };
+    salesAgentId: c.sales_agent_id ?? null,
+  }));
 }
 
 export interface CustomerLinkedContact {

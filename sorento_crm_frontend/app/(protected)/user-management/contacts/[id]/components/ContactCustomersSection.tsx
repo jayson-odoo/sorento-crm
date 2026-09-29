@@ -41,9 +41,9 @@ export default function ContactCustomersSection({ contactId }: { contactId: stri
     invalidateKeys: [contactCustomersKey(contactId), ['customer-linked-contacts']],
   });
 
-  const links = data?.data ?? [];
+  const links = useMemo(() => data?.data ?? [], [data]);
   const linkedIds = useMemo(() => new Set(links.map((l) => l.customer_id)), [links]);
-  const picker = useCustomerMultiPicker((row) => linkedIds.has(row.id));
+  const picker = useCustomerMultiPicker((option) => linkedIds.has(option.value));
 
   return (
     <Card>

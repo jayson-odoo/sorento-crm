@@ -58,7 +58,7 @@ export default function SalesAgentCustomersTab({ agentId }: { agentId: string })
     });
   const assign = useAssignSalesAgentCustomers(agentId);
   // Customers already on this agent are shown but cannot be ticked; the rest show their agent.
-  const picker = useCustomerMultiPicker((row) => row.sales_agent_id === agentId);
+  const picker = useCustomerMultiPicker((option) => option.salesAgentId === agentId);
 
   // Unassign asks nothing (D7): the row dims and a toast counts down with Cancel. The payload
   // names the agent so the server clears the column only while it still equals it.
