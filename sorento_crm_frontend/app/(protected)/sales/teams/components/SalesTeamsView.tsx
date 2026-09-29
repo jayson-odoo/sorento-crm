@@ -14,7 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Container } from '@/components/common/container';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PageHeader } from '@/components/common/PageHeader';
-import { PillOverflow } from '@/components/common/PillOverflow';
+import { PillOverflow, PillOverflowList } from '@/components/common/PillOverflow';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useSalesTeams } from '../hooks/useSalesTeams';
@@ -88,13 +88,10 @@ export default function SalesTeamsView() {
             <PillOverflow
               ariaLabel={`Agents in ${row.original.name}`}
               items={agentPills(row.original)}
-              renderPopover={(items) => (
-                <ul className="flex flex-col gap-1 text-sm">
-                  {items.map((i) => (
-                    <li key={i.key}>{i.label}</li>
-                  ))}
-                </ul>
-              )}
+              // The shared one-label-per-line body every label-only cell uses (#1377
+              // follow-up), instead of this list's own copy of the same markup.
+              renderPopover={(items) => <PillOverflowList items={items} />}
+              testId={`sales-team-agents-${row.original.id}`}
             />
           ) : (
             <span className="text-muted-foreground">No agents</span>

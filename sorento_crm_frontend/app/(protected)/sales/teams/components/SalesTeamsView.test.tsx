@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 class ResizeObserverStub {
   observe() {}
@@ -119,6 +119,39 @@ describe('SalesTeamsView', () => {
     const pills = within(north).getAllByRole('button').filter((b) => b.textContent?.includes(' - '));
     expect(pills[0].textContent).toBe('MEI - Tan Mei Ling (Leader)');
     expect(within(north).queryByText('ALI - Ali Hassan (Leader)')).toBeNull();
+  });
+
+  it('"+N" opens the shared one-label-per-line popover listing every agent, and Escape closes it (PILL-OVERFLOW-2)', async () => {
+    // jsdom lays nothing out (every width is 0), so `PillOverflow` shows pill 0 and folds
+    // the rest behind "+N" - the same fold a narrow Agents column produces in a browser.
+    withTeams([
+      team({
+        leader_sales_agent_id: 'mei',
+        member_count: 3,
+        members: [
+          { sales_agent_id: 'ali', label: 'ALI - Ali Hassan' },
+          { sales_agent_id: 'mei', label: 'MEI - Tan Mei Ling' },
+          { sales_agent_id: 'raj', label: 'RAJ - Raj Kumar' },
+        ],
+      }),
+    ]);
+    render(<SalesTeamsView />);
+    const cell = within(screen.getByTestId('sales-team-agents-north'));
+    expect(cell.getByText('MEI - Tan Mei Ling (Leader)')).toBeTruthy();
+    fireEvent.click(cell.getByText('+2'));
+
+    const popover = within(await screen.findByTestId('sales-team-agents-north-popover'));
+    const lines = popover.getAllByRole('listitem').map((li) => li.textContent);
+    expect(lines).toEqual([
+      'MEI - Tan Mei Ling (Leader)',
+      'ALI - Ali Hassan',
+      'RAJ - Raj Kumar',
+    ]);
+
+    fireEvent.keyDown(screen.getByTestId('sales-team-agents-north-popover'), { key: 'Escape' });
+    await waitFor(() =>
+      expect(screen.queryByTestId('sales-team-agents-north-popover')).toBeNull(),
+    );
   });
 
   it('tags no pill when the team has no leader', () => {
