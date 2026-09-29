@@ -50,9 +50,23 @@ TEST_PREFIX = "ZZT"
 SCRATCH_SCHEMA_PREFIX = "zzs"
 
 
-def unique_code(stem: str = "") -> str:
-    """A collision-free code for a test-created record."""
-    return f"{TEST_PREFIX}-{stem}-{uuid.uuid4().hex[:8]}" if stem else f"{TEST_PREFIX}-{uuid.uuid4().hex[:8]}"
+# ``alpha=True`` maps each hex digit onto a letter (0->g ... 9->p), so the suffix keeps its
+# 32 bits of entropy but never contains a digit.
+_HEX_DIGITS_TO_LETTERS = str.maketrans("0123456789", "ghijklmnop")
+
+
+def unique_code(stem: str = "", *, alpha: bool = False) -> str:
+    """A collision-free code for a test-created record.
+
+    ``alpha=True`` gives a suffix with no digits. Ask for it when the code is searched by
+    substring under a test that also sends a digit-only token: eight random hex chars can
+    spell "65502" (or any other run of digits a test asserts an exact result set for), and
+    the app matching it is correct behaviour, so the test data has to stay out of the way.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    if alpha:
+        suffix = suffix.translate(_HEX_DIGITS_TO_LETTERS)
+    return f"{TEST_PREFIX}-{stem}-{suffix}" if stem else f"{TEST_PREFIX}-{suffix}"
 
 
 @contextmanager
