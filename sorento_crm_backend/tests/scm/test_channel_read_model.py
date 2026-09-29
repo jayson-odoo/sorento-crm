@@ -610,21 +610,27 @@ def test_recommendation_inputs_carry_the_channel_need_breakdown(scm_app):
     assert float(rows[0]["rounded_qty"] or 0) == 49.0
 
 
-def test_project_need_is_netted_once_against_the_stock_that_covers_it(scm_app):
-    """AC-E05 as the ONE FORMULA leaves it (PLAN-reorder-one-formula.md, owner ruling
-    11 Sep 2026), same question as before: where does a firm project buy of 5 go when the
+def test_project_need_is_bought_in_full_on_top_of_the_stock_that_would_cover_it(scm_app):
+    """AC-E05's question, same as before: where does a firm project buy of 5 go when the
     location holds 100?
 
-    It goes INTO the net, exactly once, and the 100 covers it: `net` = 100 + 0 + 0 - 5 = 95,
-    against a reorder point of 0, so `buy = 0 - 95` clips to nothing and the row is
-    `covered`. The #794 bypass that force-triggered a buy here - firm project demand added
-    on top of the netting, so the same 5 units were bought while 100 sat on the shelf - is
-    retired, and this is the case that names the difference.
+    Originally pinned the ONE-FORMULA answer (PLAN-reorder-one-formula.md, owner ruling
+    11 Sep 2026): into the net exactly once, the 100 covers it, the row reads `covered`
+    and buys nothing.
 
-    The demand is NOT lost, which is what this test has always been about: the row still
-    states `project_committed` 5 (the raw channel reading, never capped), and the covered
-    row itself states the commitment its stock is covering. Only `project_need` - the
-    DISPLAY split of what is actually being BOUGHT - is 0, because nothing is.
+    FLIPPED by Lane F (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep 2026 -
+    CB4702 x 493 hidden behind 702 on hand): a confirmed project Buy is bought IN FULL on
+    an All run, never netted against on-hand/SPO/PO, the SAME rule a Project run already
+    applied (R1a). Retail's own share here (100 on hand, no retail demand, rop 0) triggers
+    nothing on its own, so the row's buy is the confirmed 5 alone, with the SAME "project
+    buy" reason `_emit_pool` already uses when it adds a raw project need on top of an
+    untriggered retail figure.
+
+    What this test has always been about is still pinned: the demand is NOT lost. The row
+    states `project_committed` 5 (the raw channel reading, never capped), and the DISPLAY
+    `net` is unchanged by Lane F - 100 + 0 + 0 - 5 = 95, the project channel inside it
+    exactly once - only the SIZING no longer reads it. `project_need`, the split of what
+    is actually being BOUGHT, is now the 5 that is.
     """
     _, db, _, _ = scm_app
     wid = _mk_warehouse(db, "ZZTCHRM-RUN-B")
@@ -639,18 +645,25 @@ def test_project_need_is_netted_once_against_the_stock_that_covers_it(scm_app):
 
     rows = _recs(db, created["run_id"], pid, wid)
     assert rows, "the location must still state what it did about the firm project demand"
-    assert [r["rec_type"] for r in rows] == ["covered"], (
-        "100 on hand genuinely covers 5 of confirmed project demand - buying it again is "
-        "the double-count the one formula retires"
+    assert [r["rec_type"] for r in rows] == ["buy"], (
+        "a confirmed project Buy must be bought in full on an All run (Lane F, 23 Sep "
+        "2026), not read covered just because on hand happens to be large"
+    )
+    assert float(rows[0]["rounded_qty"] or 0) == 5.0, (
+        "the buy is the confirmed 5 alone: Retail's own share is untriggered"
     )
     inputs = rows[0]["inputs"]
     assert inputs["project_committed"] == 5, (
-        "the firm demand is still READ and still frozen on the row - only the buy is 0"
+        "the firm demand is still READ and still frozen on the row"
     )
-    assert float(inputs["net"]) == 95.0, "project demand nets ONCE: 100 - 5"
-    assert inputs["project_need"] == 0, (
-        "project_need is the split of what is being bought, and nothing is being bought"
+    assert float(inputs["net"]) == 95.0, (
+        "the DISPLAY net still nets project demand ONCE: 100 - 5; only the sizing no "
+        "longer reads it"
     )
+    assert inputs["project_need"] == 5, (
+        "project_need is the split of what is being bought, and the confirmed 5 is"
+    )
+    assert inputs["retail_need"] == 0, "nothing of the buy is Retail's"
 
 
 def test_a_sheet_origin_project_order_reaches_the_plan_as_nothing_at_all(scm_app):
