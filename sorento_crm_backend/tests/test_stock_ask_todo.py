@@ -143,13 +143,17 @@ def test_todo_scope_is_my_customers_only(w):
     assert {r.id for r in out["open"]} == {ax.id, ay.id}
 
 
-def test_todo_excludes_incoming_branch(w):
+def test_todo_includes_every_branch(w):
     svc, db = _svc(), w["db"]
-    kept = [seed.ask(db, w["x"], w["dealer"], f"SRT-{b}", branch=b) for b in ("too_big", "in_stock", "no_incoming")]
-    seed.ask(db, w["x"], w["dealer"], "SRT-INC", branch="incoming")
+    rows = [
+        seed.ask(db, w["x"], w["dealer"], f"SRT-{b}", branch=b)
+        for b in ("too_big", "in_stock", "incoming", "no_incoming")
+    ]
+    console = seed.ask(db, w["x"], w["dealer"], "SRT-CON", source="console")
     out = svc.todo_for_agent(db, w["a"].id, now=NOW)
-    assert {r.id for r in out["open"]} == {r.id for r in kept}
-    assert svc.TODO_BRANCHES == frozenset({"too_big", "in_stock", "no_incoming"})
+    assert {r.id for r in out["open"]} == {r.id for r in rows} | {console.id}
+    assert next(r for r in out["open"] if r.id == console.id).source == "console"
+    assert not hasattr(svc, "TODO_BRANCHES")
 
 
 # ---- AC-ST107 ---------------------------------------------------------------------------

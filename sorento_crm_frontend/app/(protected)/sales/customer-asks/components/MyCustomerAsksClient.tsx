@@ -4,21 +4,31 @@ import { useMemo, useState } from 'react';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { AskTodoList } from '@/components/stock-asks/AskTodoList';
-import { useHasPermission } from '@/hooks/usePermissions';
+import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
+import { DEFAULT_ASK_SORT, normalizeSort } from '@/lib/stock-asks-todo';
 import { useAskAgentsQuery, useAskDoneMutation, useCustomerAsksTodoQuery } from '../hooks/useCustomerAsksTodo';
 
 const ALL_AGENTS = 'all';
+/** The remembered sort lives in the existing per-user view preference row (plan 3.2). */
+const SORT_LISTING_KEY = 'sales.customer_asks.view::todo';
+const DEFAULT_SORTING = [{ id: DEFAULT_ASK_SORT.id, desc: DEFAULT_ASK_SORT.desc }];
 
 /**
  * Sales > Customer asks: the signed-in salesperson's to-do (the same `AskTodoList` the portal
- * mounts). With `sales.customer_asks.view_all` an Agent select lists every agent with open
- * counts; clearing it returns to mine.
+ * mounts). When the API lists agents the caller may pick (view_all, or a team leader's team) an
+ * Agent select shows them with open counts; clearing it returns to mine.
  */
 export function MyCustomerAsksClient() {
-  const canViewAll = useHasPermission('sales.customer_asks.view_all');
   const [agentId, setAgentId] = useState('');
   const todo = useCustomerAsksTodoQuery(agentId);
-  const agents = useAskAgentsQuery(canViewAll);
+  const agents = useAskAgentsQuery();
+  const prefs = useListingViewPreferences({
+    listingKey: SORT_LISTING_KEY,
+    defaultSorting: DEFAULT_SORTING,
+    filtersVersion: 1,
+  });
+  const sort = normalizeSort(prefs.sorting[0]);
+  const canPick = (agents.data?.length ?? 0) > 0;
   const save = useAskDoneMutation();
 
   const agentOptions = useMemo(
@@ -40,7 +50,7 @@ export function MyCustomerAsksClient() {
       <PageHeader
         title="Customer asks"
         actions={
-          canViewAll ? (
+          canPick ? (
             <div className="w-full sm:w-80">
               <label htmlFor="customer-asks-agent" className="sr-only">
                 Agent
@@ -66,7 +76,9 @@ export function MyCustomerAsksClient() {
       ) : (
         <AskTodoList
           payload={todo.data ?? null}
-          loading={todo.isLoading}
+          loading={todo.isLoading || prefs.isLoading}
+          sort={sort}
+          onSortChange={(next) => prefs.setSorting([{ id: next.id, desc: next.desc }])}
           error={todo.isError ? (todo.error instanceof Error ? todo.error.message : 'Try again shortly.') : null}
           showAgent={Boolean(agentId)}
           onDone={(askId) => save.mutate({ askId, patch: { state: 'done' } })}

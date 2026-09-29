@@ -126,7 +126,7 @@ def test_todo_mine_and_unlinked_and_403(w):
     resp = _call(w, [VIEW], "me", "get", "/todo")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert {r["id"] for r in body["open"]} == {w["x_old"].id, w["y_yday"].id, w["x_today"].id}
+    assert {r["id"] for r in body["open"]} == {w["x_old"].id, w["y_yday"].id, w["x_today"].id, w["x_incoming"].id}
     assert [r["id"] for r in body["done_today"]] == [w["x_done"].id]
     assert body["agent"]["code"] == w["a"].sales_agent
     assert "name" in body["agent"]
@@ -147,13 +147,15 @@ def test_todo_mine_and_unlinked_and_403(w):
 # ---- AC-ST204 ---------------------------------------------------------------------------
 
 
-def test_todo_agent_id_requires_view_all(w):
+def test_todo_agent_id_scope(w):
     ok = _call(w, [VIEW, VIEW_ALL], "me", "get", f"/todo?agent_id={w['b'].id}")
     assert ok.status_code == 200, ok.text
     assert {r["id"] for r in ok.json()["open"]} == {w["z_old"].id, w["z_today"].id}
     assert ok.json()["agent"]["code"] == w["b"].sales_agent
 
-    assert _call(w, [VIEW], "me", "get", f"/todo?agent_id={w['b'].id}").status_code == 403
+    plain = _call(w, [VIEW], "me", "get", f"/todo?agent_id={w['b'].id}")
+    assert plain.status_code == 403
+    assert plain.json().get("code") == "NOT_YOUR_AGENT", plain.text
     assert _call(w, [VIEW, VIEW_ALL], "me", "get", f"/todo?agent_id={seed.uid()}").status_code == 404
 
 
@@ -161,11 +163,13 @@ def test_todo_all_agents_carries_agent_code(w):
     resp = _call(w, [VIEW, VIEW_ALL], "me", "get", "/todo?agent_id=all")
     assert resp.status_code == 200, resp.text
     rows = resp.json()["open"]
-    assert {r["id"] for r in rows} == {w["x_old"].id, w["y_yday"].id, w["x_today"].id, w["z_old"].id, w["z_today"].id}
+    assert {r["id"] for r in rows} == {w["x_old"].id, w["y_yday"].id, w["x_today"].id, w["x_incoming"].id, w["z_old"].id, w["z_today"].id}
     codes = {r["id"]: r["agent_code"] for r in rows}
     assert codes[w["x_old"].id] == w["a"].sales_agent
     assert codes[w["z_old"].id] == w["b"].sales_agent
-    assert _call(w, [VIEW], "me", "get", "/todo?agent_id=all").status_code == 403
+    plain = _call(w, [VIEW], "me", "get", "/todo?agent_id=all")
+    assert plain.status_code == 403
+    assert plain.json().get("code") == "NOT_YOUR_AGENT", plain.text
 
 
 # ---- AC-ST205 ---------------------------------------------------------------------------
@@ -179,11 +183,101 @@ def test_agents_list_counts(w):
     assert set(by_code) == {w["a"].sales_agent, w["b"].sales_agent}  # the idle agent has no open ask
     a = by_code[w["a"].sales_agent]
     assert a["agent_id"] == w["a"].id and "name" in a
-    assert (a["open"], a["needs_attention"]) == (3, 2)  # incoming and done rows never count
+    assert (a["open"], a["needs_attention"]) == (4, 3)  # the incoming row counts (Q5 (a)); done rows never do
     b = by_code[w["b"].sales_agent]
     assert (b["open"], b["needs_attention"]) == (2, 1)
 
-    assert _call(w, [VIEW], "me", "get", "/agents").status_code == 403
+    plain = _call(w, [VIEW], "me", "get", "/agents")
+    assert plain.status_code == 200, plain.text
+    assert plain.json() == []
+
+
+# ---- AC-ST215 ---------------------------------------------------------------------------
+
+
+def _team(db, name, leader, member_rows, *, is_active=True):
+    """`member_rows`: [(agent, valid_to)]. The leader is set AFTER the memberships exist:
+    `trg_sales_teams_leader_is_member` wants the leader to be a current member."""
+    from app.models.sales import SalesTeam, SalesTeamMember
+
+    team = SalesTeam(id=seed.uid(), company_id=SORENTO, name=f"ZZT {name} {seed.uid()[:6]}", is_active=is_active)
+    db.add(team)
+    db.flush()
+    for agent, valid_to in member_rows:
+        db.add(
+            SalesTeamMember(
+                id=seed.uid(), company_id=SORENTO, sales_team_id=team.id, sales_agent_id=agent.id, valid_to=valid_to
+            )
+        )
+    db.flush()
+    team.leader_sales_agent_id = leader.id
+    db.flush()
+    return team
+
+
+@pytest.fixture
+def led(w):
+    """A leads active team T with current members A and B; C left T yesterday; D is in no team."""
+    db = w["db"]
+    w["c"] = seed.agent(db, seed.contact(db, "Agent Gamma"), "C")
+    w["d"] = seed.agent(db, seed.contact(db, "Agent Delta"), "D")
+    c_cust = seed.customer(db, "Customer C", w["c"])
+    d_cust = seed.customer(db, "Customer D", w["d"])
+    seed.ask(db, c_cust, w["dealer"], "SRT-C", created_at=w["start"] + timedelta(seconds=1))
+    seed.ask(db, d_cust, w["dealer"], "SRT-D", created_at=w["start"] + timedelta(seconds=1))
+    yesterday = (datetime.utcnow() - timedelta(days=1)).date()
+    w["team"] = _team(db, "T", w["a"], [(w["a"], None), (w["b"], None), (w["c"], yesterday)])
+    db.commit()
+    return w
+
+
+def test_team_leader_scope(led):
+    w = led
+    agents = _call(w, [VIEW], "me", "get", "/agents")
+    assert agents.status_code == 200, agents.text
+    by_code = {r["code"]: r for r in agents.json()}
+    assert set(by_code) == {w["a"].sales_agent, w["b"].sales_agent}  # not C (left), not D (no team)
+    assert by_code[w["a"].sales_agent]["open"] == 4
+
+    b = _call(w, [VIEW], "me", "get", f"/todo?agent_id={w['b'].id}")
+    assert b.status_code == 200, b.text
+    assert {r["id"] for r in b.json()["open"]} == {w["z_old"].id, w["z_today"].id}
+
+    for other in ("c", "d"):
+        denied = _call(w, [VIEW], "me", "get", f"/todo?agent_id={w[other].id}")
+        assert denied.status_code == 403, denied.text
+        assert denied.json().get("code") == "NOT_YOUR_AGENT"
+
+    everyone = _call(w, [VIEW], "me", "get", "/todo?agent_id=all")
+    assert everyone.status_code == 200, everyone.text
+    rows = everyone.json()["open"]
+    assert {r["id"] for r in rows} == {
+        w["x_old"].id, w["y_yday"].id, w["x_today"].id, w["x_incoming"].id, w["z_old"].id, w["z_today"].id
+    }
+    assert {r["agent_code"] for r in rows} == {w["a"].sales_agent, w["b"].sales_agent}
+
+
+def test_team_leader_agents_list_counts_members_with_zero_open(led):
+    w = led
+    idle = seed.agent(w["db"], seed.contact(w["db"], "Agent Idle"), "IDLE")
+    w["db"].add(
+        __import__("app.models.sales", fromlist=["SalesTeamMember"]).SalesTeamMember(
+            id=seed.uid(), company_id=SORENTO, sales_team_id=w["team"].id, sales_agent_id=idle.id
+        )
+    )
+    w["db"].commit()
+    by_code = {r["code"]: r for r in _call(w, [VIEW], "me", "get", "/agents").json()}
+    assert (by_code[idle.sales_agent]["open"], by_code[idle.sales_agent]["needs_attention"]) == (0, 0)
+
+
+def test_a_leader_of_an_inactive_team_is_nobodys_leader(w):
+    db = w["db"]
+    _team(db, "Off", w["a"], [(w["a"], None), (w["b"], None)], is_active=False)
+    db.commit()
+    assert _call(w, [VIEW], "me", "get", "/agents").json() == []
+    denied = _call(w, [VIEW], "me", "get", f"/todo?agent_id={w['b'].id}")
+    assert denied.status_code == 403
+    assert denied.json().get("code") == "NOT_YOUR_AGENT"
 
 
 # ---- AC-ST206 ---------------------------------------------------------------------------

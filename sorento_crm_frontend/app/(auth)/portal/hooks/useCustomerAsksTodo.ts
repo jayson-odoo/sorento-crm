@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from '@/lib/toast';
-import type { AskTodoPayload } from '@/lib/stock-asks-todo';
+import { DEFAULT_ASK_SORT, normalizeSort, type AskSort, type AskTodoPayload } from '@/lib/stock-asks-todo';
 import { NotASalesAgentError, getCustomerAsksTodo, updateCustomerAsk } from '../lib/customer-asks-service';
 import type { StockAskPatch } from '@/lib/stock-asks';
 
@@ -55,4 +55,40 @@ export function useCustomerAsksTodo() {
     reopen: (askId: string) => save(askId, { state: 'open' }),
     note: (askId: string, note: string) => save(askId, { note }),
   };
+}
+
+const SORT_KEY_PREFIX = 'sorento.portalAsksSort.';
+
+/**
+ * The to-do's sort, remembered per contact in localStorage (the landing's default-tab pattern,
+ * `sorento.portalDefaultTab.<contact_id>`); the portal has no user row to key a server
+ * preference on. A stored value that is not one of the choices reads as the default.
+ */
+export function usePortalAsksSort(contactId: string | null | undefined) {
+  const [sort, setSortState] = useState<AskSort>(DEFAULT_ASK_SORT);
+
+  useEffect(() => {
+    if (!contactId || typeof window === 'undefined') {
+      setSortState(DEFAULT_ASK_SORT);
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(`${SORT_KEY_PREFIX}${contactId}`);
+      setSortState(normalizeSort(raw ? JSON.parse(raw) : null));
+    } catch {
+      setSortState(DEFAULT_ASK_SORT);
+    }
+  }, [contactId]);
+
+  const setSort = useCallback(
+    (next: AskSort) => {
+      setSortState(next);
+      if (contactId && typeof window !== 'undefined') {
+        window.localStorage.setItem(`${SORT_KEY_PREFIX}${contactId}`, JSON.stringify(next));
+      }
+    },
+    [contactId],
+  );
+
+  return [sort, setSort] as const;
 }

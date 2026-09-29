@@ -10,7 +10,17 @@ import { AskedAtCell, AskNoteCell } from '@/components/stock-asks/AskEditCells';
 import { NOOP_ON_UPDATE, surfaceExitTransition, useReducedMotion } from '@/lib/motion';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { BRANCH_LABEL, BRANCH_VARIANT, notifiedLabel, type StockAsk } from '@/lib/stock-asks';
-import { ageLabel, bucketTodo, type AskTodoPayload } from '@/lib/stock-asks-todo';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import {
+  ASK_SORT_OPTIONS,
+  DEFAULT_ASK_SORT,
+  ageLabel,
+  bucketTodo,
+  normalizeSort,
+  sortToValue,
+  type AskSort,
+  type AskTodoPayload,
+} from '@/lib/stock-asks-todo';
 import { cn } from '@/lib/utils';
 
 export interface AskTodoListProps {
@@ -22,6 +32,9 @@ export interface AskTodoListProps {
   onNote: (askId: string, note: string) => void;
   /** The CRM manager page: name the agent on line 1 of each row. */
   showAgent?: boolean;
+  /** Orders the rows inside every day. The mount owns where it is remembered. */
+  sort?: AskSort;
+  onSortChange?: (sort: AskSort) => void;
 }
 
 /**
@@ -29,9 +42,9 @@ export interface AskTodoListProps {
  * Sales > Customer asks in the CRM. Presentational: the mount fetches, this groups (one pure
  * function, `bucketTodo`) and renders. One action per row, the row leaves the list.
  */
-export function AskTodoList({ payload, loading, error, onDone, onReopen, onNote, showAgent = false }: AskTodoListProps) {
+export function AskTodoList({ payload, loading, error, onDone, onReopen, onNote, showAgent = false, sort = DEFAULT_ASK_SORT, onSortChange }: AskTodoListProps) {
   const reduced = useReducedMotion();
-  const bucketed = useMemo(() => (payload ? bucketTodo(payload) : null), [payload]);
+  const bucketed = useMemo(() => (payload ? bucketTodo(payload, sort) : null), [payload, sort]);
 
   if (error) {
     return (
@@ -52,26 +65,43 @@ export function AskTodoList({ payload, loading, error, onDone, onReopen, onNote,
   }
   if (!payload || !bucketed) return null;
 
-  const { counts, groups, done } = bucketed;
+  const { counts, sections, done } = bucketed;
   const exit = { opacity: 0, transition: surfaceExitTransition(reduced) };
 
   return (
     <div className="space-y-5">
-      <p className="text-sm text-muted-foreground" data-testid="ask-todo-counts">
-        Open <span className="font-semibold tabular-nums text-foreground">{counts.open}</span>
-        {' · '}
-        Needs attention{' '}
-        <span
-          className={cn(
-            'font-semibold tabular-nums',
-            counts.needs_attention > 0 ? 'text-destructive' : 'text-foreground',
-          )}
-        >
-          {counts.needs_attention}
-        </span>
-        {' · '}
-        Done today <span className="font-semibold tabular-nums text-foreground">{counts.done_today}</span>
-      </p>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-muted-foreground" data-testid="ask-todo-counts">
+          Open <span className="font-semibold tabular-nums text-foreground">{counts.open}</span>
+          {' · '}
+          Needs attention{' '}
+          <span
+            className={cn(
+              'font-semibold tabular-nums',
+              counts.needs_attention > 0 ? 'text-destructive' : 'text-foreground',
+            )}
+          >
+            {counts.needs_attention}
+          </span>
+          {' · '}
+          Done today <span className="font-semibold tabular-nums text-foreground">{counts.done_today}</span>
+        </p>
+        <div className="w-full sm:w-48">
+          <label htmlFor="ask-todo-sort" className="sr-only">
+            Sort
+          </label>
+          <SearchableSelect
+            id="ask-todo-sort"
+            value={sortToValue(normalizeSort(sort))}
+            onChange={(v) => {
+              const hit = ASK_SORT_OPTIONS.find((o) => o.value === v);
+              if (hit) onSortChange?.(hit.sort);
+            }}
+            options={ASK_SORT_OPTIONS.map(({ value, label }) => ({ value, label }))}
+            size="sm"
+          />
+        </div>
+      </div>
 
       {counts.open === 0 ? (
         <div className="space-y-2 rounded-lg border px-6 py-8 text-center">
@@ -81,38 +111,35 @@ export function AskTodoList({ payload, loading, error, onDone, onReopen, onNote,
         </div>
       ) : null}
 
-      {groups.map((group) => (
-        <section key={group.key} aria-labelledby={`ask-group-${group.key}`} className="space-y-2">
+      {sections.map((section) => (
+        <section key={section.key} aria-labelledby={`ask-section-${section.key}`} className="space-y-3">
           <h2
-            id={`ask-group-${group.key}`}
-            className={cn(
-              'text-sm font-semibold',
-              group.key === 'needs_attention' && 'text-destructive',
-            )}
+            id={`ask-section-${section.key}`}
+            className={cn('text-sm font-semibold', section.key === 'needs_attention' && 'text-destructive')}
           >
-            {group.label}
+            {section.label}
           </h2>
-          <ul className="space-y-2.5">
-            <AnimatePresence initial={false}>
-              {group.asks.map((ask) => (
-                <motion.li
-                  key={ask.id}
-                  exit={exit}
-                  onUpdate={NOOP_ON_UPDATE}
-                  className="rounded-lg border"
-                >
-                  <AskRow
-                    ask={ask}
-                    todayStart={payload.today_start}
-                    showAge={group.key === 'needs_attention'}
-                    showAgent={showAgent}
-                    onDone={() => onDone(ask.id)}
-                    onNote={(note) => onNote(ask.id, note)}
-                  />
-                </motion.li>
-              ))}
-            </AnimatePresence>
-          </ul>
+          {section.days.map((day) => (
+            <div key={day.key} className="space-y-2">
+              <h3 className="text-xs font-medium text-muted-foreground">{day.label}</h3>
+              <ul className="space-y-2.5">
+                <AnimatePresence initial={false}>
+                  {day.asks.map((ask) => (
+                    <motion.li key={ask.id} exit={exit} onUpdate={NOOP_ON_UPDATE} className="rounded-lg border">
+                      <AskRow
+                        ask={ask}
+                        todayStart={payload.today_start}
+                        showAge={section.key === 'needs_attention'}
+                        showAgent={showAgent}
+                        onDone={() => onDone(ask.id)}
+                        onNote={(note) => onNote(ask.id, note)}
+                      />
+                    </motion.li>
+                  ))}
+                </AnimatePresence>
+              </ul>
+            </div>
+          ))}
         </section>
       ))}
 

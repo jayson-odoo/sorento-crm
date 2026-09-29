@@ -14,12 +14,11 @@ export function useCustomerAsksTodoQuery(agentId: string) {
   });
 }
 
-/** Agents with open counts for the manager's select; only asked when `sales.customer_asks.view_all`. */
-export function useAskAgentsQuery(enabled: boolean) {
+/** The agents the caller may pick (view_all, or a team leader's team); `[]` renders no select. */
+export function useAskAgentsQuery() {
   return useQuery({
     queryKey: [AGENTS_KEY],
     queryFn: listAskAgents,
-    enabled,
   });
 }
 

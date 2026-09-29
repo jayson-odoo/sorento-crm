@@ -6,7 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { AskTodoList } from '@/components/stock-asks/AskTodoList';
 import type { AskTodoPayload } from '@/lib/stock-asks-todo';
 import type { StockAsk } from '@/lib/stock-asks';
-import { useCustomerAsksTodo } from '../hooks/useCustomerAsksTodo';
+import { useCustomerAsksTodo, usePortalAsksSort } from '../hooks/useCustomerAsksTodo';
 import { CustomerAsksHistory } from './CustomerAsksHistory';
 
 function matches(ask: StockAsk, needle: string): boolean {
@@ -19,8 +19,9 @@ function matches(ask: StockAsk, needle: string): boolean {
  * search box narrows the to-do; `Show done` opens the paged done history (#1333) under it, so
  * the to-do stays a to-do. [Q1 pending: this mount stays only if the portal is kept.]
  */
-export function CustomerAsksList({ search }: { search: string }) {
+export function CustomerAsksList({ search, contactId }: { search: string; contactId?: string | null }) {
   const todo = useCustomerAsksTodo();
+  const [sort, setSort] = usePortalAsksSort(contactId);
   const [showDone, setShowDone] = useState(false);
   const needle = search.trim().toLowerCase();
 
@@ -52,6 +53,8 @@ export function CustomerAsksList({ search }: { search: string }) {
         onDone={todo.done}
         onReopen={todo.reopen}
         onNote={todo.note}
+        sort={sort}
+        onSortChange={setSort}
       />
       <Button variant="ghost" size="sm" onClick={() => setShowDone((v) => !v)} aria-expanded={showDone}>
         {showDone ? 'Hide done' : 'Show done'}
