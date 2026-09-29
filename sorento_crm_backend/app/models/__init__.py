@@ -14,6 +14,7 @@ from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, 
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
 from app.models.sales_agent import SalesAgent
 from app.models.sales import SalesTeam, SalesTeamMember
+from app.models.stock_ask import StockAsk
 from app.models.finance import BillingDocument, BillingDocumentLine
 from app.models.autocount_branch import Branch
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
@@ -403,6 +404,8 @@ __all__ = [
     "OnboardingTemplate",
     "OnboardingRequest",
     "OnboardingPerson",
+    # Chatbot stock ask v2 S5
+    "StockAsk",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy

@@ -83,6 +83,9 @@ class Decision:
       with the entities beside it.
     * `replaces_every_axis` - `entity_op: replace`, the op a turn carries when its own
       entities ARE the whole scope on every axis.
+    * `own_domain` - an ANSWER whose message also named a domain of its own
+      (`names_its_own_domain`): the pick is answered in THAT domain, not the roster's
+      (issue #1352, the judgement table in PLAN-picker-domain-judgement-29sep.md).
     """
 
     kind: str
@@ -94,6 +97,7 @@ class Decision:
     declined: bool = False
     negated: bool = False
     replaces_every_axis: bool = False
+    own_domain: bool = False
 
     @property
     def answers(self) -> bool:
@@ -121,8 +125,11 @@ class Decision:
             "domain_in_message",
         )
 
-    def as_trace(self) -> dict[str, str]:
-        return {"kind": self.kind, "why": self.why}
+    def as_trace(self) -> dict[str, Any]:
+        trace: dict[str, Any] = {"kind": self.kind, "why": self.why}
+        if self.own_domain:
+            trace["own_domain"] = True
+        return trace
 
 
 def _positions_by_label(pending: Pending, verdict: dict[str, Any]) -> list[int]:
@@ -394,6 +401,27 @@ def domain_in_message(verdict: dict[str, Any]) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+def names_its_own_domain(verdict: dict[str, Any]) -> bool:
+    """Did THIS message name a domain of its own, beside whatever it picked?
+
+    Issue #1352 (owner, 29 Sep 2026: "the parser reports, the engine judges"). The parser
+    fills every field as the message says, a pick included, so "4 stock" arrives as a
+    position AND `domain_in_message: true` with `domain_hint: "inventory"`. Both halves are
+    the parser's own fields, read as-is: the flag says the message carries a domain word,
+    `domain_hint` (or `asks`) says which. `asks` alone counts, as it always has (hand pass
+    6 defect 1: "stock, incoming and PO for all of them").
+
+    The flag without a domain (`domain_in_message: true`, `domain_hint: null`, no `asks`)
+    names nothing to answer in, so it reads as False and the pick keeps the roster's
+    domain; the prompt's consistency rule is what stops the parser emitting that shape. A
+    carried `domain_hint` with the flag false is the previous turn's domain, never this
+    message's, and reads as False too: a bare "7" answers the roster it was picked off.
+    """
+    if verdict.get("asks"):
+        return True
+    return domain_in_message(verdict) is True and bool(verdict.get("domain_hint"))
+
+
 def backward_reference(verdict: dict[str, Any]) -> bool:
     """Does THIS message point at something OUTSIDE it with a pronoun (R-b, owner hand
     pass 6, 17 Sep 2026)?
@@ -608,13 +636,16 @@ def decide(
 
     if positions:
         # A position nobody offered is still an ATTEMPT at this question - the arm
-        # re-prints it rather than dropping it silently.
+        # re-prints it rather than dropping it silently. Issue #1352: the position and the
+        # domain fields are read together - a pick whose message also named its own domain
+        # is answered in that domain (`own_domain`), a bare pick in the roster's.
         return Decision(
             ANSWER,
             picked[1] if picked else "positions",
             positions=tuple(positions),
             entities=tuple(entities),
             window=window,
+            own_domain=names_its_own_domain(verdict),
             **facts,
         )
 

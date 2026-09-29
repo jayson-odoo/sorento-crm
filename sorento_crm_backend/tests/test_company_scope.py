@@ -586,8 +586,12 @@ def test_every_company_id_table_is_registered():
     # PLAN-finance-billing-documents-27sep.md (S0, #1309) adds 2: `finance.billing_documents`
     # and `finance.billing_document_lines` are one company's own AutoCount billing documents,
     # pushed under that company's anchor; the read-back loads a document BY ID.
-    # main's 151 (148 + 3 cost price, #1288) + 1 (#1354 S2): `branches`, the AutoCount branch table.
-    expected_owned = 152
+    # PLAN-chatbot-stock-ask-v2-24sep.md (S5) adds 1: `stock_asks` is one company's own
+    # record of the chatbot's stock answers; the PATCH routes load an ask BY ID, so the
+    # mixin's filter is what hides another company's ask (AC-SA505).
+    # Merge of the lanes: main's 148 + 3 (cost price, #1288) = 151, + 1 (stock_asks) = 152,
+    # + 1 (#1354 S2): `branches`, the AutoCount branch table = 153.
+    expected_owned = 153
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
