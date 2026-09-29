@@ -54,9 +54,10 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import UNDOMAINED_CHATBOT_TOOLS, is_timeline
+from app.services.chatbot.contracts import UNDOMAINED_CHATBOT_TOOLS, is_timeline, named_count
 from app.services.chatbot.turn.policy import default_policy
 from app.services.chatbot.turn import policy_rows
+from app.services.product_spec_registry import display_spec_value
 
 logger = logging.getLogger(__name__)
 
@@ -324,11 +325,32 @@ TYPE_TO_PARAM: dict[str, str] = {
     # `crm_inventory_warehouses_list`, `crm_procurement_spo_allocations_last_receipt_list`
     # and `crm_procurement_po_last_cost_list`.
     "warehouse": "warehouse_ids",
+    # #1262 slice 9 (F1a), AC-S9-4/AC-S9-6: `crm_outstanding_report` and the order
+    # tools that already take `product_ids` (orders list, orders by product) all
+    # take `brand_ids` the same way.
+    "brand": "brand_ids",
 }
 
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z", re.IGNORECASE
 )
+
+
+def is_uuid(value: Any) -> bool:
+    """The one shape check for "is this a real uuid" (#1262 slice 2, F1c) - every seam
+    that writes a `uuid` field or a `*_ids` filter off a bare string calls this rather
+    than growing its own regex. A kind-pick's printed label ("Sorento (customer)") is
+    not one, and neither is an unresolved code the resolver never placed; only a real
+    `_UUID_RE`-shaped id is.
+    """
+    return bool(jsc.truthy(value) and _UUID_RE.match(jsc.js_string(value)))
+
+
+def _resolved_brand_ids(semantic_input: Any) -> list[str]:
+    """The brand ids `lanes/business/__init__._resolve_outstanding_brand_ids` resolved
+    for this turn off the live brand list (the key keeps its first caller's name), real
+    uuids only - the same `is_uuid` guard every other `<entity>_ids` argument uses."""
+    return [b for b in jsc.array(jsc.get(semantic_input, "outstanding_brand_ids")) if is_uuid(b)]
 
 
 def entity_has_resolved_uuid(entity: dict[str, Any]) -> bool:
@@ -341,7 +363,7 @@ def entity_has_resolved_uuid(entity: dict[str, Any]) -> bool:
     applies per entity before building `*_ids`.
     """
     uuid = jsc.get(entity, "uuid") if jsc.truthy(entity) else None
-    return bool(jsc.truthy(uuid) and _UUID_RE.match(jsc.js_string(uuid)))
+    return is_uuid(uuid)
 
 
 # Tools that answer a DOCUMENT request and must be given something to narrow by.
@@ -398,6 +420,13 @@ def has_narrowing_filter(args: Any, *, tool_name: str | None = None) -> bool:
 # silent drop as sending the wrong name.
 SCALAR_PARAMS: frozenset[str] = frozenset()
 
+#: The sales analysis's `group_by` -> the route's `rows` (the years are always across).
+#: "month" is months down the side; "year" and no axis said are one line per channel.
+SALES_ANALYSIS_GROUP_BY = {"": "channel", "year": "channel", "month": "month"}
+#: The bases `GET /sales/analysis` answers (finance S1 added invoiced); anything else,
+#: or none, is Delivered, the report's default.
+SALES_ANALYSIS_BASES = ("ordered", "delivered", "invoiced")
+
 DATE_PARAMS: dict[str, tuple[str, str]] = {
     "crm_order_management_orders_list": ("actual_delivery_date_from", "actual_delivery_date_to"),
     "crm_order_management_orders_by_product_list": (
@@ -419,9 +448,15 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     # PLAN-chatbot-sales-report.md S4 wiring point 5: the report's own contract, on
     # the bucket date (required_date, else order_date) - never actual_delivery_date.
     "crm_sales_report": ("date_from", "date_to"),
+    # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 6: the same bucket date. No date
+    # sends none: the ROUTE defaults to the current calendar year and echoes it (as
+    # built on PR #1263, superseding the plan's lane-side default).
+    "crm_top_selling_report": ("date_from", "date_to"),
     # AC-71: the low stock report's window narrows which sales orders the fresh plan
     # counts as demand - the run's own "plan until" pair, under the route's names.
     "crm_low_stock_report": ("date_from", "date_to"),
+    # PLAN-retail-sales-reports-26sep S1: the period of the sales analysis, by order date.
+    "crm_sales_analysis": ("date_from", "date_to"),
 }
 
 def _current_myt_year() -> int:
@@ -497,6 +532,60 @@ def space_id_or_default(space_id: Any) -> str:
 # at all", so it is the promotions read, asked once per entitled tier - promotion rows carry
 # no access level, so there is no key a single batched answer could be matched back on.
 TIER_PROBE_TOOL = "crm_marketing_promotions_list"
+
+
+# The row cap a counted set's fetch asks each leg's tool for: the tool's own maximum
+# `limit` (`api/v1/inventory/stock.py` allows 5000, the attachment and promotion lists
+# `MAX_PAGE_LIMIT` 1000, `/incoming-stock/list` 50). Up to `answer.SET_LIST_MAX`
+# products at about 20 rows each fit the first three.
+SET_ROW_LIMIT: dict[str, int] = {
+    "crm_inventory_stock_balance_list": 1000,
+    "crm_master_product_attachments_list": 1000,
+    "crm_marketing_promotion_products_list": 1000,
+    "crm_incoming_stock_list": 50,
+}
+
+
+def _set_named_count(semantic_input: Any) -> int | None:
+    """How many of a counted set the customer asked to see (`top_n`), or None."""
+    return named_count(jsc.get(semantic_input, "top_n"))
+
+
+def _set_list_size(semantic_input: Any) -> int:
+    """How many products of a counted set one reply lists: the named count, never past
+    `answer.SET_LIST_MAX`. Deferred import: `answer.py` imports from this module."""
+    from app.services.chatbot.lanes.business import answer as answer_mod
+
+    named = _set_named_count(semantic_input)
+    return min(named, answer_mod.SET_LIST_MAX) if named else answer_mod.SET_LIST_MAX
+
+
+def _names_the_ask(attribute: str) -> bool:
+    """Is this requested attribute the ask's own word ("incoming", "eta", "stock",
+    "cert"), rather than a field of the answer? Owner hand test of rounds 4 to 6 on PR
+    #833, item 1: an incoming answer closed each row with "*Incoming:* not recorded yet"
+    for the word that asked for it. Deferred import: `predicate` is a sibling module."""
+    from app.services.chatbot.lanes.business.predicate import names_a_leg
+
+    return names_a_leg(attribute)
+
+
+def _rendered_product_count(items: list[Any]) -> int | None:
+    """Distinct products the rendered rows name: a row's "Product Code" field, else its
+    title (the stock tool's availability rows carry no fields). None when no row names
+    one, so a result type this header never fires for is left alone."""
+    codes: set[str] = set()
+    for it in items:
+        code = ""
+        for f in jsc.get(it, "fields") or []:
+            if isinstance(f, dict) and f.get("label") == "Product Code":
+                code = jsc.nullish_str(f.get("value")).strip()
+                break
+        if not code and not (jsc.get(it, "fields") or []):
+            code = jsc.nullish_str(jsc.get(it, "title")).strip()
+        if code:
+            codes.add(code)
+    return len(codes) if codes else None
 
 
 def entity_ids_transformer(
@@ -607,6 +696,17 @@ def entity_ids_transformer(
         warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
         if isinstance(warehouse_codes, list) and warehouse_codes:
             out["warehouse_codes"] = warehouse_codes
+        # #1262 slice 9 (F1a): the brand word(s) this turn named, already resolved to
+        # ids by `_resolve_report_product_and_location`'s own brand step (the token
+        # never reached the shared resolver, so this is the only place it becomes an
+        # id) - a brand alone is a valid subject for this report (AC-S9-4).
+        # N1 (security review, 26 Sep 2026): only real uuids ever forward - the same
+        # `is_uuid` guard every other `<entity>_ids` argument in this function uses,
+        # never a bare `isinstance(..., list)` check that would let a non-uuid string
+        # reach the tool call.
+        brand_ids = _resolved_brand_ids(semantic_input)
+        if brand_ids:
+            out["brand_ids"] = brand_ids
         # AC-1105 (review round, 13 Sep 2026): the WORD the customer typed, echoed by
         # the route onto its own body so the presenter can render "IB (BRW-IB, MWH-IB)".
         # The lane never re-renders that header itself: one writer, one wording.
@@ -624,8 +724,13 @@ def entity_ids_transformer(
         # AC-1132: the scope-answer's carried customer_ids are ALREADY resolved UUIDs
         # (restored by `head/output_exchange.py`, never re-parsed) - they win over
         # whatever THIS turn's own (empty) entity list produced.
-        carried_customers = jsc.get(semantic_input, "outstanding_carried_customer_ids")
-        if isinstance(carried_customers, list) and carried_customers:
+        # #1262 slice 2 (F1c): a session's carried customer subject is a resolved
+        # uuid or it is nothing - a kind-pick's printed label ("Sorento (customer)")
+        # riding on this same key must never reach the tool as a `customer_ids` filter.
+        carried_customers = [
+            u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
+        ]
+        if carried_customers:
             out["customer_ids"] = carried_customers
         # AC-1138 (D10 on main): "1"/"2" against an open detail offer re-runs THIS
         # SAME tool with `detail=so|do` - the MCP layer swaps in the numbered list
@@ -653,8 +758,11 @@ def entity_ids_transformer(
         # AC-1132-equivalent: the offer's carried customer_ids are ALREADY resolved
         # UUIDs (restored by `head/output_exchange.py`, never re-parsed) - they win
         # over whatever THIS turn's own (empty) entity list produced.
-        carried_customers = jsc.get(semantic_input, "outstanding_carried_customer_ids")
-        if isinstance(carried_customers, list) and carried_customers:
+        # #1262 slice 2 (F1c): same uuid-only rule as `crm_outstanding_report` above.
+        carried_customers = [
+            u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
+        ]
+        if carried_customers:
             out["customer_ids"] = carried_customers
         # R-B3 (reviewer finding, Phase 3 fix round): the turn's OWN sales_channel wins
         # when given; a pick or a refinement of an open sales_report_detail offer names
@@ -696,6 +804,67 @@ def entity_ids_transformer(
             if isinstance(semantic_input, dict):
                 semantic_input["date_filter_start"] = out["date_from"]
                 semantic_input["date_filter_end"] = out["date_to"]
+
+    # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 7:
+    # `crm_top_selling_report`'s own contract. Everything comes off the parser's own
+    # fields, carried on the focus slot `semantic_input["top_selling"]`
+    # (`turn/apply._top_selling_rules`), never the message text.
+    if tool_name == "crm_top_selling_report":
+        out.pop("product_ids", None)
+        out.pop("warehouse_ids", None)
+        slot = jsc.get(semantic_input, "top_selling")
+        slot = slot if isinstance(slot, dict) else {}
+        out["rank_by"] = jsc.js_string(slot.get("rank_by"))
+        if slot.get("basis") in ("delivered", "ordered"):
+            out["basis"] = slot["basis"]
+        category_grain = slot.get("rank_group") == "category"
+        if category_grain:
+            out["group"] = "category"
+        # A category grain ranks categories against each other, so a category FILTER
+        # has nothing to narrow (plan, filters matrix: ignored, the header prints all).
+        category_ids = jsc.get(semantic_input, "top_selling_category_ids")
+        if isinstance(category_ids, list) and category_ids and not category_grain:
+            out["category_ids"] = category_ids
+        chosen = slot.get("customer_ids")
+        if isinstance(chosen, list) and chosen:
+            # "1" to "customer or sales agent?" (owner retest, 27 Sep 2026).
+            out["customer_ids"] = [jsc.js_string(i) for i in chosen]
+        dealer_ids = slot.get("dealer_customer_ids")
+        if isinstance(dealer_ids, list) and dealer_ids:
+            # A linked dealer's own ledgers its words named (`engine._top_selling_dealer_scope`).
+            out["customer_ids"] = [jsc.js_string(i) for i in dealer_ids]
+        # The agent and brand the ranking is narrowed by (`engine._top_selling_narrowing`,
+        # owner retest 27 Sep 2026), never a customer.
+        agent_ids = [jsc.js_string(i) for i in (slot.get("agent_ids") or []) if jsc.truthy(i)]
+        agent_ids += [
+            jsc.get(e, "uuid")
+            for e in jsc.array(entities)
+            if isinstance(e, dict) and e.get("entity_type") == "sales_agent" and e.get("uuid")
+        ]
+        if agent_ids:
+            out["sales_agent_ids"] = list(dict.fromkeys(agent_ids))
+        brand_ids = [jsc.js_string(i) for i in (slot.get("brand_ids") or []) if jsc.truthy(i)]
+        if brand_ids:
+            out["brand_ids"] = brand_ids
+        if slot.get("rank_direction") == "bottom":
+            # "cold selling", "least sold": the least sold first.
+            out["direction"] = "bottom"
+        channel = jsc.get(semantic_input, "sales_channel")
+        if jsc.truthy(channel):
+            out["channel"] = jsc.js_string(channel)
+        detail_code = jsc.js_string(slot.get("detail_code") or "").strip()
+        top_n = slot.get("top_n")
+        if detail_code:
+            # A picked row: that code's customers and months, same filters and basis.
+            out["detail_code"] = detail_code
+        elif isinstance(top_n, (int, float)) and not isinstance(top_n, bool) and top_n >= 1:
+            # Owner ruling 26 Sep: a named N is 1 to 100 ("top 100").
+            out["n"] = min(int(top_n), 100)
+        else:
+            # No N named: the full count and no rows, so the reply states the total
+            # and asks how many (owner, PR #1258 05:32Z) without the whole book being
+            # sent to be counted (review N1). One row comes back as is.
+            out["count_only"] = True
 
     # PLAN-low-stock-report S6 (AC-66/AC-71): this tool's own contract is CODES too - the
     # route resolves warehouse and product CODES, and a UUID would silently match nothing.
@@ -739,6 +908,43 @@ def entity_ids_transformer(
             space_id if space_id is not None else jsc.get(semantic_input, "space_id")
         )
 
+    # PLAN-retail-sales-reports-26sep S1: the sales analysis names an AXIS, a channel, a
+    # basis, a company and a period - never an entity id. "by month" is months down the
+    # side and the years across (the yearly comparison); anything else is one line per
+    # channel, the years across. No period said is this calendar year as at today (G6).
+    if tool_name == "crm_sales_analysis":
+        for key in ("product_ids", "customer_ids", "warehouse_ids", "limit", "group_by", "top_n"):
+            out.pop(key, None)
+        group_by = jsc.js_string(jsc.get(semantic_input, "group_by") or "")
+        # Every axis mapped by name (review round 2 S1). Any other `group_by` never gets
+        # here: `run_fetch` says it cannot draw it and fetches nothing.
+        out["rows"] = SALES_ANALYSIS_GROUP_BY[group_by]
+        out["cols"] = "year"
+        channel = jsc.get(semantic_input, "sales_channel")
+        if channel in ("dealer", "project"):
+            out["channel"] = channel
+        basis = jsc.get(semantic_input, "sales_basis")
+        out["basis"] = basis if basis in SALES_ANALYSIS_BASES else "delivered"
+        company = jsc.get(semantic_input, "sales_company")
+        if jsc.truthy(company):
+            out["company"] = jsc.js_string(company).strip()
+        if not jsc.truthy(out.get("date_from")) and not jsc.truthy(out.get("date_to")):
+            from app.services.reports.registry import today_malaysia
+
+            today = today_malaysia()
+            out["date_from"] = f"{today.year}-01-01"
+            out["date_to"] = today.isoformat()
+        top_n = jsc.get(semantic_input, "top_n")
+        if isinstance(top_n, int) and top_n > 0:
+            out["n"] = top_n
+        _sa_contact = trig.get("contact_id")
+        if _sa_contact is None:
+            _sa_contact = jsc.get(semantic_input, "contact_id")
+        out["contact_id"] = jsc.nullish_str(_sa_contact).strip()
+        out["space_id"] = space_id_or_default(
+            space_id if space_id is not None else jsc.get(semantic_input, "space_id")
+        )
+
     # S2 (review round, 13 Sep 2026): a warehouse entity on a PLAIN order ask.
     # `TYPE_TO_PARAM` maps it to `warehouse_ids`, which NEITHER order-list tool declares
     # ("any DO for X at BRW" therefore sent a param the MCP dropped, and the answer was
@@ -756,6 +962,15 @@ def entity_ids_transformer(
                 codes.append(jsc.js_string(code))
         if codes:
             out["warehouse_codes"] = codes
+
+    # #1262 fix lane round 2, B1 (AC-S9-6): the orders tools take the SAME resolved
+    # brand ids the outstanding report does. The live brand never reaches the shared
+    # resolver (`turn_runtime.resolve_kinds`'s order-domain strip), so it is never a
+    # gate row with a uuid and `TYPE_TO_PARAM["brand"]` alone could not carry it here.
+    if tool_name in ORDER_TOOLS:
+        brand_ids = _resolved_brand_ids(semantic_input)
+        if brand_ids:
+            out["brand_ids"] = brand_ids
 
     # order_status (order tools only): "outstanding" | "delivered" | "so_outstanding"
     # (A3, AC-905); omitted when null.
@@ -821,6 +1036,30 @@ def entity_ids_transformer(
         attributes = access.get("attributes") if isinstance(access.get("attributes"), list) else []
         if "inventory.sellable" in attributes:
             out["include_sellable"] = True
+        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+        # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D13/D20: the dealer's OWN
+        # quantity, per product, as the `{product uuid: int}` map the route declares
+        # and parses (`parse_requested_quantities`). Absent, never null, on a turn
+        # that states no quantity at all - the tool's scalar `requested_qty` contract
+        # (n8n, direct callers) is untouched, and an ask with no quantity still comes
+        # back `needs_quantity`, which is what OPENS the task in the first place.
+        #
+        # MUST cross the MCP as a JSON STRING, not a native dict (review round 3, the
+        # live pass): the route (`app/api/v1/inventory/stock.py`) declares
+        # `requested_quantities: Optional[str]`, and the MCP's `_compile_tool` types
+        # every query param off `_scalar_union` (no dict case) unless the tool is
+        # listed in `TOOL_OBJECT_QUERY_PARAMS` - sent as a string here either way, so
+        # the value round-trips identically whichever path compiles it.
+        #
+        # Review round 6, finding B: NOT key-sorted. The map is built in the order
+        # the dealer named the products (`turn_runtime._spec_quantities`, over the
+        # spec's own entities), and sorting the keys here would throw that order away
+        # - the reply then notes the products back in an order the dealer never used.
+        quantities = jsc.get(semantic_input, "requested_quantities")
+        if isinstance(quantities, dict) and quantities:
+            out["requested_quantities"] = json.dumps(
+                dict(quantities), separators=(",", ":")
+            )
 
     # group_by / top_n (A3, AC-909/AC-910): additive parser keys, uniform across
     # every list tool this plan touches. `top_n` aliases to `limit` for the
@@ -836,17 +1075,21 @@ def entity_ids_transformer(
         elif tool_name in ORDER_TOOLS or tool_name in GROUP_BY_TOOLS:
             out["limit"] = top_n
 
-    # E1 (attribute-first asks, fix round 11 Sep): a HAS turn - the resolver's
-    # `predicate` block rode through the gate untouched - shows the first FIVE
-    # qualifying PRODUCTS, never five ROWS: `limit` is the tool's own ROW cap
-    # (a stock answer can carry several warehouse rows per product, a cert
-    # answer several files per product), so setting `limit=5` there cut a
-    # 7-product answer down to 5 rows spanning 4 products under a header that
-    # said "Showing 5" - `limit` is left at the tool's own default entirely,
-    # and the PAGE is built by slicing `product_ids` itself. "more" (E3) pages
-    # the next five ids from the carried offer the same way.
+    # A counted set (the resolver's `predicate` rode through the gate) lists PRODUCTS,
+    # never a ROW count: `limit` is the tool's own row cap (a stock answer carries a row
+    # per warehouse, a cert answer a row per file), so it is left alone and the list is
+    # cut by slicing `product_ids` itself - to the count the customer named (`top_n`),
+    # else to `answer.SET_LIST_MAX` (owner ruling, 26 Sep 2026: a set that fits one
+    # message is listed in full; a longer one is answered with its count and a question,
+    # `output_structurer` below). No paging: nothing is kept for a "more".
     if trig.get("predicate") is not None and isinstance(out.get("product_ids"), list):
-        out["product_ids"] = out["product_ids"][:5]
+        out["product_ids"] = out["product_ids"][: _set_list_size(semantic_input)]
+        # Reviewer B3 on PR #833: the tool's own DEFAULT row cap (50) cut a listed set
+        # short - a stock row per location, a cert row per file - so 40 basins came back
+        # as about 8. The listed products need all their rows: ask for the tool's
+        # maximum. The header still counts what actually rendered (`output_structurer`).
+        if tool_name in SET_ROW_LIMIT:
+            out["limit"] = SET_ROW_LIMIT[tool_name]
 
     # R29/AC-1354: a scheme-narrowed certificate leg's own certificate ids
     # ride the SAME predicate block, straight through under the SAME arg
@@ -1029,9 +1272,13 @@ IDENTITY_KEYS: frozenset[str] = frozenset(
     }
 )
 
-# ETA is kept ALWAYS, asked for or not: it is the public answer to "where is my container",
-# and the cross-domain renderer sorts incoming rows on it.
-ALWAYS_KEPT_KEYS: frozenset[str] = frozenset({"estimated_arrival_date"})
+# ETA and its delay are kept always, asked for or not: the ETA is the public answer to
+# "where is my container", and the cross-domain renderer sorts incoming rows on it. The
+# delay is IMPLIED by the ETA, never NAMED, so `req_attrs` does not carry it: a denied
+# delay is stripped upstream (`app/services/field_access.py`) and gets no "can't share"
+# note, a blank delay gets no "not recorded yet" note. Only an explicit `eta_delay_date`
+# in `requested_attributes` turns those notes on.
+ALWAYS_KEPT_KEYS: frozenset[str] = frozenset({"estimated_arrival_date", "eta_delay_date"})
 
 # Chronological order of an inbound container's clearance checkpoints. Mirrors the
 # admin-editable `statuses` rows (entity_type "inbound_shipment", by sort_order) as they
@@ -1295,6 +1542,13 @@ def _axis_labelled_subject(entities: Any) -> str:
         claimed |= types
         codes = [r["code"] for r in kept if r["type"] in types]
         if codes:
+            # #1262 slice 3 (F5), AC-S3-3: above 5, name the COUNT, never every one
+            # of them - a catalogue-wide sweep (5,857 products) joined every "match"
+            # into a single miss line that spanned three WhatsApp messages. At or
+            # under the cap the customer's own subject still prints in full.
+            if len(codes) > 5:
+                parts.append(f"the {len(codes)} {jsc.js_string(axis['label']).lower()}s searched")
+                continue
             # "A", "A and B", "A, B and C" - the last join is a word so the axis boundary
             # stays readable next to the comma that separates axes.
             listed = (
@@ -1562,6 +1816,13 @@ def _project_product_specs(
             if raw_key in hidden:
                 dropped_keys.add(raw_key)
             else:
+                # R7 (round 4 on PR #833, "why all the values are snake case?"): a stored
+                # value never reaches a reply as stored. The MCP sends the CRM's plain
+                # words once it carries `display_value`; this reads any slug that still
+                # arrives the same way (`display_spec_value`), so an older MCP cannot leak
+                # "cold_only" either.
+                if isinstance(f.get("value"), str):
+                    f["value"] = display_spec_value(f["value"])
                 spec_fields.append(f)
 
         if not asked:
@@ -1798,14 +2059,18 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
             continue
         if e.get("entity_type") == "customer":
             uid = e.get("uuid")
-            if uid and uid not in customer_ids:
+            # #1262 slice 2 (F1c): never a kind-pick's printed label or an
+            # unresolved code, only a real uuid.
+            if is_uuid(uid) and uid not in customer_ids:
                 customer_ids.append(uid)
     if not customer_ids:
         # R13: a CUSTOMER-subject answering turn resolved no entity this turn - the ids
         # rode in on the carried filter set, and they have to ride back out on it too, or
         # the offer this hit arms loses the only subject it has.
         customer_ids = [
-            uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
+            uid
+            for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids"))
+            if is_uuid(uid)
         ]
     return {
         "product_code": product_codes[0] if product_codes else None,
@@ -1825,6 +2090,14 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
         # built - and a REFINEMENT of that offer ("this month only") has to re-run the
         # same scope rather than re-ask a question the customer already answered.
         "scope": semantic_input.get("outstanding_scope"),
+        # #1262 slice 9 (F1a) follow-up: the SAME already-resolved brand ids
+        # `_resolve_report_product_and_location` wrote onto this same `semantic_input`
+        # earlier in this fetch - the report just ran with them, so the detail offer
+        # (and any refinement of it) carries them forward the same way it does
+        # `customer_ids` above.
+        "brand_ids": [
+            b for b in jsc.array(semantic_input.get("outstanding_brand_ids")) if is_uuid(b)
+        ],
     }
 
 
@@ -1852,10 +2125,13 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
         has_result = envelope.get("has_result") is True
     else:
         # The render never happened (an MCP that returned the raw body, or a failure
-        # fallback). Nothing can be said about absence from a shape this function did
-        # not get, so the text stands and the turn is treated as an answer.
+        # fallback - #1262 slice 1, F2: a raised tool call's own error text, now that
+        # `call_tool` raises on `isError` instead of returning it as a string). A bare
+        # string here is never a rendered report, so it is never treated as a result -
+        # `has_result: True` for one is what let a tool-error string answer the miss
+        # lane and print "Error executing tool ..." verbatim.
         text = result if isinstance(result, str) else jsc.js_string(result)
-        has_result = bool(text.strip())
+        has_result = False
     offer = _outstanding_offer_from_text(text)
 
     outstanding_ask = (
@@ -1871,7 +2147,13 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
         else None
     )
     return {
-        "response": text,
+        # Review round (26 Sep 2026), SF1: `has_result: False` alone did not stop
+        # `turn/compose.py` printing this same bare string VERBATIM whenever it rode
+        # in on `lane_text` (only the literal substring "Error executing tool" was
+        # ever stripped, AC-S1-3's own narrow fix) - a bare, non-envelope string is
+        # NEVER a rendered report, so it must never reach `response` either, the
+        # same "never treated as a result" rule `has_result` already states above.
+        "response": text if "response" in envelope else "",
         "response_intro": None,
         "answers": [],
         "attachments": [],
@@ -1948,11 +2230,10 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
         text = jsc.js_string(envelope.get("response") or "")
         has_result = envelope.get("has_result") is True
     else:
-        # The render never happened (an MCP that returned the raw body, or a failure
-        # fallback). Nothing can be said about absence from a shape this function did
-        # not get, so the text stands and the turn is treated as an answer.
+        # Mirrors `_outstanding_report_output`'s own fix (#1262 slice 1, F2): a bare
+        # string here is never a rendered report, so it is never treated as a result.
         text = result if isinstance(result, str) else jsc.js_string(result)
-        has_result = bool(text.strip())
+        has_result = False
     offer = _outstanding_offer_from_text(text)
 
     outstanding_ask = (
@@ -1968,7 +2249,11 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     return {
-        "response": text,
+        # Mirrors `_outstanding_report_output`'s own SF1 fix (review round, 26 Sep
+        # 2026): a bare, non-envelope string is never a rendered report, so it must
+        # never reach `response` either - only "Error executing tool" ever got
+        # stripped downstream, so any other unrendered string rode through verbatim.
+        "response": text if "response" in envelope else "",
         "response_intro": None,
         "answers": [],
         "attachments": [],
@@ -1993,9 +2278,11 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
 #: wording for its own error envelope; this copy covers only the "render never happened"
 #: fallback, where the presenter's text never reached this function.
 _LOW_STOCK_ERROR_TEXT = "Could not run the low stock report right now."
+#: The presenter's own error line for `crm_sales_analysis`, for a body it never rendered.
+_SALES_ANALYSIS_ERROR_TEXT = "Could not run the sales report right now."
 
 
-def _low_stock_report_output(result: Any) -> dict[str, Any]:
+def _low_stock_report_output(result: Any, *, fallback: str = _LOW_STOCK_ERROR_TEXT) -> dict[str, Any]:
     """PLAN-low-stock-report S6 (AC-66): `crm_low_stock_report`'s own envelope.
 
     `_outstanding_report_output`'s shape, with one difference that is the whole point:
@@ -2026,7 +2313,7 @@ def _low_stock_report_output(result: Any) -> dict[str, Any]:
         # safe default text, so state the error line verbatim as a terminal answer rather
         # than stringing a raw status dict into the reply or dropping into the generic
         # inventory miss.
-        text = _LOW_STOCK_ERROR_TEXT
+        text = fallback
         has_result = True
         attachments = None
     return {
@@ -2081,6 +2368,85 @@ def _forms_browse_ask(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any] 
     }
 
 
+def _top_selling_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
+    """PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 9. The
+    presenter's minimal envelope (`presenters._top_selling_envelope`) is the reply
+    verbatim, beside the two sibling reports: the ranking carries its own header, so
+    the generic search-scope header is skipped (`outstanding_report`, AC-1958).
+
+    * A ranking hit arms its printed rows as a sticky `top_selling_pick` roster (owner,
+      PR #1258 05:32Z: the list behaves like the customer and product pickers), through
+      the same `outstanding_ask` hand-off the detail offers use; `compose._lane_question`
+      builds it with `turn/pending.top_selling_pick`.
+    * The how-many reply, the detail reply and a refusal arm nothing (`result_set` is
+      empty on all three), so an open list stays open across a detail.
+    * `has_result: false` is the miss (AC-1957): the not-found path, escalate offer and
+      all."""
+    envelope = result if isinstance(result, dict) else {}
+    semantic_input = ctx.get("semantic_input") if isinstance(ctx.get("semantic_input"), dict) else {}
+    if "response" in envelope:
+        text = jsc.js_string(envelope.get("response") or "")
+        # Owner retest (27 Sep 2026): a ranking with no sales is an ANSWER ("No sales
+        # found." under its own header), never "Could not find order" and never the
+        # escalation offer with its routing picker.
+        has_result = envelope.get("has_result") is True or (
+            envelope.get("result_type") == "top_selling" and bool(text.strip())
+        )
+    else:
+        text = result if isinstance(result, str) else jsc.js_string(result)
+        has_result = bool(text.strip())
+    notes = [jsc.js_string(n) for n in jsc.array(semantic_input.get("top_selling_notes")) if jsc.truthy(n)]
+    if notes and text.strip():
+        text = "\n".join(notes) + "\n\n" + text
+    rows = [r for r in jsc.array(envelope.get("result_set")) if isinstance(r, dict)]
+    slot = semantic_input.get("top_selling") if isinstance(semantic_input.get("top_selling"), dict) else {}
+    outstanding_ask = (
+        {
+            "kind": "top_selling_pick",
+            "last_result_set": rows,
+            "filters": {"tool": "crm_top_selling_report", **{k: v for k, v in slot.items() if k != "detail_code"}},
+        }
+        if rows and envelope.get("result_type") == "top_selling"
+        else None
+    )
+    return {
+        "response": text,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": has_result,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_ask": outstanding_ask,
+        "outstanding_report": True,
+        # The how-many reply ASKS (reviewer B2, PR #1273): recorded on the slot so the
+        # next bare number is its count, while a list or a single row asks nothing and
+        # the next ask naming the ranking starts fresh.
+        "top_selling_asked": "how_many" if envelope.get("result_type") == "top_selling_how_many" else None,
+        # The item codes the ranking listed, in rank order: an outstanding ask after it
+        # asks about exactly these (fix lane round 8, `apply._hop_to_report`). An empty
+        # list on a ranking that listed none (how many, no sales, a category ranking),
+        # None on a detail or a refusal, which leave the listed ranking standing.
+        "top_selling_codes": (
+            [jsc.js_string(r.get("code")) for r in rows if r.get("entity_type") == "product" and jsc.truthy(r.get("code"))]
+            if envelope.get("result_type") in ("top_selling", "top_selling_how_many")
+            else None
+        ),
+        "top_selling_drop": list(semantic_input.get("top_selling_drop") or []) or None,
+    }
+
+
+def _dmy(value: Any) -> str:
+    text = jsc.js_string(value or "")[:10]
+    parts = text.split("-")
+    return f"{parts[2]}/{parts[1]}/{parts[0]}" if len(parts) == 3 else text
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -2095,6 +2461,16 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         return _sales_report_output(result, ctx)
     if jsc.js_string(ctx.get("tool") or "") == "crm_low_stock_report":
         return _low_stock_report_output(result)
+    if jsc.js_string(ctx.get("tool") or "") == "crm_top_selling_report":
+        return _top_selling_output(result, ctx)
+    if jsc.js_string(ctx.get("tool") or "") == "crm_sales_analysis":
+        # The same envelope: the presenter's text and, when there is one, the Excel. It
+        # states its own scope (company, channel, basis, period), so the order domain's
+        # generic Customer/Product/Dates header must not print above it.
+        return {
+            **_low_stock_report_output(result, fallback=_SALES_ANALYSIS_ERROR_TEXT),
+            "own_header": True,
+        }
     e = _extract_envelope(result)
     # Read once, for both the restricted-field drop below and the spec-visibility
     # drop (PLAN-spec-visibility-policy.md "Chatbot seam") - one contact, one
@@ -2345,7 +2721,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             have = {jsc.js_string(f["key"]) for f in it["fields"] if _has_key(f)}
             for k in req_attrs:
                 kk = jsc.nullish_str(k).strip()
-                if not kk or kk in have or kk in denied_map:
+                if not kk or kk in have or kk in denied_map or _names_the_ask(kk):
                     continue
                 it["fields"].append(
                     {"key": kk, "label": _label_for(kk, None), "value": "not recorded yet"}
@@ -2368,6 +2744,27 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             f"I can't share the {_label_for(kk, d).lower()} {_EM_DASH} "
             "please check with the office."
         )
+
+    # Chatbot stock ask v2 S3 fix round 1, Blocking 1 (R6/R14/AC-SA312): once every
+    # product in an `availability` reply has a branch, the presenter's per-item title
+    # (`sorento_crm_mcp.presenters._availability_line`) already carries the whole R14
+    # sentence - product, quantity, and the answer. A shared intro in front of it, or a
+    # position number ("1. ") on it, both say something the four fixed sentences never
+    # said: the old `_AVAILABILITY_NO` intro read as a statement about OUR stock even
+    # for a `too_big` entry with plenty on hand, which R6 B1 forbids ("never reveal
+    # stock"). So an answered `availability` reply gets no intro line and no numbering
+    # (plan sample (g)); the presenter itself already returns "" for `intro` in this
+    # case (see `_availability_intro`).
+    stock_availability_answered = bool(
+        jsc.js_string(e.get("result_type") or "") == "stock_availability"
+        and isinstance(e.get("items"), list)
+        and len(e["items"])
+        and not any(
+            jsc.truthy(jsc.get(jsc.get(it, "flags"), "needs_quantity"))
+            for it in e["items"]
+            if jsc.truthy(it)
+        )
+    )
 
     # The PRESENTER owns the intro whenever it emits `summary_items` - it states the page
     # geometry there, and this override would replace it with a sentence that says less.
@@ -2397,7 +2794,16 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             else "Here are the delivered orders I found."
         )
 
-    msg = jsc.js_string(e.get("intro") or "Here are the results.").strip() + "\n\n"
+    msg = (
+        ""
+        if stock_availability_answered
+        else jsc.js_string(e.get("intro") or "Here are the results.").strip() + "\n\n"
+    )
+    if isinstance(ctx.get("predicate"), dict):
+        # Round 3 W1 (owner hand test on PR #833, "the message too long already"): a
+        # counted set's header says what the list is; the tool's own intro under it
+        # ("Stock summary for the requested products.") says it again.
+        msg = ""
 
     # The summary follows the ANSWER, not the rows: `has_result is True`, never truthiness,
     # because a boolean arriving as the STRING "false" is truthy and would print a summary
@@ -2434,13 +2840,31 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if len(action_links):
         msg += "\n"
 
-    def _item_line(position: int, it: Any) -> str:
+    # Fix round 8 on PR #833 (owner retest of round 7: "the answer should look exactly
+    # when i check stock by product code, ... this applies to incoming, product attachment
+    # etc and every other domain"): a counted set's rows are the product-code rows, from
+    # the same tool in the same mode, through `_item_line` below. Only the intro differs.
+    # W4: a page that continues a list numbers its rows where the list stands.
+    set_predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
+    set_row_offset = int(jsc.get(set_predicate, "offset") or 0) if set_predicate is not None else 0
+
+    def _item_line(position: int, it: Any, *, numbered: bool = True) -> str:
         field_lines = "\n".join(
             f"*{jsc.js_string(jsc.get(f, 'label', jsc.UNDEFINED))}:* "
             f"{_fmt_value(jsc.get(f, 'value'))}"
             for f in (jsc.get(it, "fields") or [])
         )
-        line = f"{position}. {field_lines}"
+        # An item with no fields at all is named by its own title: the stock tool's
+        # availability mode renders the product and nothing else, so a dealer is never
+        # shown a quantity (without this it printed as a bare "1. "), and an answered
+        # `availability` item's title carries the whole verdict sentence (ported from
+        # PR #1118 for chatbot-stock-ask-v2 S3, review round 3, Observation B).
+        if not field_lines:
+            field_lines = jsc.nullish_str(jsc.get(it, "title")).strip()
+        # Chatbot stock ask v2 S3 fix round 1, Blocking 1 (R14/AC-SA312): an answered
+        # `availability` item's title already starts "<code> x <Q>:", so it is not
+        # numbered (plan sample (g) shows plain lines, not a numbered list).
+        line = field_lines if not numbered else f"{position}. {field_lines}"
         flags = jsc.get(it, "flags")
         if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "discontinued")):
             line += "\n⚠️  *(PRODUCT DISCONTINUED)*"
@@ -2473,13 +2897,44 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
                 position += 1
                 msg += _item_line(position, it) + "\n\n"
 
+    # Ported from PR #1118 (not merged), review round 3 (Observation B): while ANY
+    # product still needs a quantity (D14), `intro` (`_noted_and_missing_question`)
+    # has already said everything relevant - the items themselves carry no fields at
+    # all and, before the `_item_line` title fallback above existed, printed as a
+    # numbered list of nothing. Suppressed only while the ask is open; once every
+    # product has a quantity the items DO carry the per-product verdict line and must
+    # print, same as `qs_render`/`groups_render` above.
+    stock_ask_render = bool(
+        jsc.js_string(e.get("result_type") or "") == "stock_availability"
+        and isinstance(e.get("items"), list)
+        and any(
+            jsc.truthy(jsc.get(jsc.get(it, "flags"), "needs_quantity"))
+            for it in e["items"]
+            if jsc.truthy(it)
+        )
+    )
+
     # A quantity ask prints the SUMMARY ONLY: the two order perspectives are separate
     # questions and the parser already separates them. The ROWS are suppressed from the
     # MESSAGE, never from the STATE - `answers` below is untouched, so a positional pick
     # still resolves against the same page rows. And ONLY the numbered list goes: the
     # multi-company note reads `e.items` for attribution and must keep seeing the real rows.
-    for i, it in enumerate([] if (qs_render or groups_render) else (e.get("items") or [])):
-        msg += _item_line(i + 1, it) + "\n\n"
+    if set_predicate is not None and stock_ask_render:
+        # Fix round 8 on PR #833: a dealer on availability only, still owing a quantity,
+        # reads the set's products by code (the availability item's own title, as the
+        # product-code answer names it), then the tool's own question - the set intro
+        # replaced the intro that carried it.
+        for i, it in enumerate(e.get("items") or []):
+            title = jsc.nullish_str(jsc.get(it, "title")).strip()
+            if title:
+                msg += f"{i + 1 + set_row_offset}. {title}\n\n"
+        question = jsc.js_string(e.get("intro") or "").strip()
+        if question:
+            msg += question + "\n\n"
+    for i, it in enumerate(
+        [] if (qs_render or groups_render or stock_ask_render) else (e.get("items") or [])
+    ):
+        msg += _item_line(i + 1 + set_row_offset, it, numbered=not stock_availability_answered) + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
     # (`_project_product_specs`). Byte-inert when the key is absent.
     for miss in e.get("spec_misses") or []:
@@ -2540,7 +2995,19 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if access_notes:
         msg += "\n".join(access_notes) + "\n\n"
 
-    ts = _fmt_ts(e.get("last_updated_at"))
+    # Chatbot stock ask v2 S3 fix round 2, Blocking 1 (R6 B1, R14, AC-SA312): production
+    # always sets `last_updated_at` (`StockService._apply_stock_visibility`, every policy
+    # mode, availability included), so an answered `availability` reply would otherwise
+    # end in a line that is not one of the four R6 sentences and whose digits are ours -
+    # exactly what the intro and the numbering were already gated off of above, for the
+    # same reason. `compact` and `detailed` are untouched (R10): neither is a
+    # `stock_availability` reply.
+    #
+    # Owner hand test 26 Sep, slice 1: keyed on the RESULT TYPE, not on "answered". The
+    # quantity question ("How many units do you need?") is an availability reply too,
+    # and it printed the timestamp on T1, T3, T8, T13 and T16.
+    stock_availability_reply = jsc.js_string(e.get("result_type") or "") == "stock_availability"
+    ts = None if stock_availability_reply else _fmt_ts(e.get("last_updated_at"))
     if ts:
         msg += f"_Data last updated: {ts}_"
 
@@ -2558,66 +3025,94 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # would render with no leading count/attribute line at all.
     predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
     set_header: str | None = None
+    # A set too long for one message is answered with its count and a question, and no
+    # rows (owner ruling, 26 Sep 2026) - `answers` and the files go with them below, so
+    # neither a positional pick nor an attachment send can reach a row nobody was shown.
+    set_withheld = False
     if predicate is not None:
-        from app.services.chatbot.lanes.business.answer import (
-            build_set_header,
-            build_set_page_header,
-            set_noun_for,
-        )
+        from app.services.chatbot.lanes.business import answer as answer_mod
 
-        qualifying_total = jsc.get(predicate, "qualifying_total") or 0
+        qualifying_total = int(jsc.get(predicate, "qualifying_total") or 0)
         require = jsc.get(predicate, "require") or {}
-        # E3/AC-1317: a "more" continuation page carries its OWN pre-known
-        # `set_noun` and page bounds (`page`) - a "more" turn runs no resolver
-        # call, so there are no fresh `class_labels` to re-derive one from.
-        page = jsc.get(predicate, "page")
-        if isinstance(page, dict):
-            header = build_set_page_header(
-                qualifying_total,
-                jsc.get(page, "start"),
-                jsc.get(page, "end"),
-                jsc.js_string(jsc.get(page, "set_noun")) or "products",
-                require,
-            )
+        class_labels = jsc.array(jsc.get(predicate, "class_labels"))
+        # A recount of a carried set (`turn_runtime.page_the_set`, the answer to "how
+        # many should I show?") runs no class read of its own and names its noun itself.
+        set_noun = jsc.nullish_str(jsc.get(predicate, "set_noun")).strip() or answer_mod.set_noun_for(class_labels)
+        # `set_noun_for` is always plural (its own contract, AC-1316) - singular
+        # only for the ONE-qualifying-product header ("1 tap has ...", never
+        # "1 taps has ...") is the class label ITSELF (REV-N2/AC-1337), never a
+        # naive "-1 char" strip of the pluralised noun: that guess turned
+        # "bathroom accessories" into "bathroom accessorie", not the real
+        # singular "bathroom accessory". Only the single-label case has one to
+        # use; the "products" fallback (zero or blended labels) has no
+        # singular of its own and keeps its old strip.
+        if qualifying_total == 1:
+            single_labels = [label for label in class_labels if label and label.strip()]
+            if len(single_labels) == 1:
+                set_noun = single_labels[0].strip().lower()
+            elif set_noun.endswith("s"):
+                set_noun = set_noun[:-1]
+        named = _set_named_count(semantic_input)
+        # W4: a page that continues a list starts past what was already listed.
+        offset = int(jsc.get(predicate, "offset") or 0)
+        remaining = max(qualifying_total - offset, 0)
+        if named is None and qualifying_total > answer_mod.SET_LIST_MAX and jsc.get(predicate, "breakdown"):
+            # Fix round 9 on PR #833: the count and the breakdown by the next attribute.
+            shown = 0
+            set_withheld = True
+        elif named is None and qualifying_total > answer_mod.SET_LIST_MAX:
+            # Nothing splits the set (one brand, every key alike): list what fits rather
+            # than a bare count with nothing to pick from.
+            shown = min(answer_mod.SET_LIST_MAX, remaining)
+        elif named is None:
+            shown = remaining
         else:
-            # R8 (console fix round 2, AC-1330): `shown` is distinct PRODUCTS
-            # rendered, never tool rows - a stock/cert answer carries one row per
-            # warehouse/certificate, so five products across three warehouses is
-            # fifteen rows and would have overstated "Showing 15" for a five-page
-            # answer. Falls back to the row count when no row carries a product
-            # code at all (a result type this header never fires for today).
-            items0 = e.get("items") or []
-
-            def _product_code_of_row(it: Any) -> str:
-                fields = jsc.get(it, "fields")
-                if not isinstance(fields, list):
-                    return ""
-                for f in fields:
-                    if isinstance(f, dict) and f.get("label") == "Product Code":
-                        return jsc.nullish_str(f.get("value")).strip()
-                return ""
-
-            shown_codes = {c for c in (_product_code_of_row(it) for it in items0) if c}
-            shown = len(shown_codes) if shown_codes else len(items0)
-            class_labels = jsc.array(jsc.get(predicate, "class_labels"))
-            set_noun = set_noun_for(class_labels)
-            # `set_noun_for` is always plural (its own contract, AC-1316) - singular
-            # only for the ONE-qualifying-product header ("1 tap has ...", never
-            # "1 taps has ...") is the class label ITSELF (REV-N2/AC-1337), never a
-            # naive "-1 char" strip of the pluralised noun: that guess turned
-            # "bathroom accessories" into "bathroom accessorie", not the real
-            # singular "bathroom accessory". Only the single-label case has one to
-            # use; the "products" fallback (zero or blended labels) has no
-            # singular of its own and keeps its old strip.
-            if qualifying_total == 1:
-                single_labels = [label for label in class_labels if label and label.strip()]
-                if len(single_labels) == 1:
-                    set_noun = single_labels[0].strip().lower()
-                elif set_noun.endswith("s"):
-                    set_noun = set_noun[:-1]
-            header = build_set_header(qualifying_total, shown, set_noun, require)
+            shown = min(named, answer_mod.SET_LIST_MAX, remaining)
+        if not set_withheld:
+            # Reviewer B3 on PR #833 (R8/AC-1330 restored): the header states what the
+            # rows show, never what was asked for. A tool that still cut rows at its
+            # cap rendered fewer PRODUCTS than were sent, and the header must say
+            # "Here are the first N" over those, never claim the list is complete.
+            rendered = _rendered_product_count(e.get("items") or [])
+            if rendered is not None and rendered < shown:
+                shown = rendered
+        header = answer_mod.build_set_header(
+            qualifying_total,
+            shown,
+            set_noun,
+            require,
+            description=jsc.get(predicate, "description"),
+            not_understood=jsc.get(predicate, "unrecognized_terms"),
+            offset=offset,
+            previous_total=jsc.get(predicate, "previous_total"),
+            breakdown=jsc.get(predicate, "breakdown"),
+        )
         set_header = header
-        msg = f"{header}\n{msg}"
+        # Round 3 W4: the default brand answered, so the reply closes with the others -
+        # above the footer, which stays the last line as it is on the product-code answer.
+        # Fix round 9 on PR #833: a word the set reader could not use closes the reply in
+        # the same place ("Couldn't find: ..."), the "did not match" line.
+        other_brands = "\n".join(
+            line
+            for line in (
+                answer_mod.not_understood_line(jsc.get(predicate, "unrecognized_terms")),
+                answer_mod.other_brands_line(jsc.get(predicate, "other_brands"), require),
+            )
+            if line
+        )
+        if set_withheld:
+            msg = header
+        else:
+            body = msg.strip()
+            footer = f"_Data last updated: {ts}_" if ts else ""
+            if other_brands:
+                if footer and body.endswith(footer):
+                    body = f"{body[: -len(footer)].strip()}\n\n{other_brands}\n\n{footer}"
+                else:
+                    body = f"{body}\n\n{other_brands}"
+            msg = f"{header}\n\n{body}"
+        if set_withheld and other_brands:
+            msg = f"{msg.strip()}\n\n{other_brands}"
 
     final_response = msg.strip()
     if so_bucket_refusal:
@@ -2629,13 +3124,17 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         # The counted-set header alone (AC-1316/AC-1317), so a reader that renders its
         # own rows can still prefix the right line - see the note above `predicate`.
         "set_header": set_header,
+        # Integration round 11 on PR #833: whether that header names a DESCRIBED set
+        # (`predicate.description`), which is the one intro line of a carried set's
+        # follow-up ("cert" after "gunmetal basin") and so is never withheld with it.
+        "set_described": bool(predicate is not None and jsc.array(jsc.get(predicate, "description"))),
         # GROUPED: the flat `items` order and the NUMBERED order the customer just read
         # are two different orders, and `answers` is what a positional pick ("2") resolves
         # against - so a grouped answer used to hand back a different record than the one
         # numbered 2 on screen (review, should-fix 4). Flattened in RENDER order, which is
         # the only order the customer can be talking about. Ungrouped, this is `items`
         # unchanged, so nothing else moves.
-        "answers": _rendered_answers(e) if groups_render else e.get("items"),
+        "answers": [] if set_withheld else (_rendered_answers(e) if groups_render else e.get("items")),
     }
     # Spread-in, not defaulted: a reply with no summary keeps EXACTLY the keys it has today.
     if qs_render:
@@ -2644,7 +3143,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         out["groups"] = e["groups"]
     out.update(
         {
-            "attachments": e.get("attachments") or [],
+            "attachments": [] if set_withheld else (e.get("attachments") or []),
             "action_links": e.get("action_links") or [],
             "last_updated_at": e.get("last_updated_at") or None,
             "has_result": bool(jsc.truthy(e.get("has_result"))),
@@ -2660,6 +3159,15 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     )
     if len(lookup_cos) > 1:
         out["lookup_companies"] = lookup_cos
+    if isinstance(e.get("stock_availability"), list):
+        # Ported from PR #1118 (not merged), D25: the backend states, per product,
+        # whether a quantity is still required - the one fact the open stock task is
+        # built from (`turn/task.py::tasks_after_reply`). Carried through UNREAD by
+        # this lane: the sentence the dealer sees is the MCP presenter's, as it
+        # already is for every other row.
+        out["stock_availability"] = [
+            row for row in e["stock_availability"] if isinstance(row, dict)
+        ]
     if jsc.js_string(ctx.get("tool") or "") == _FORMS_LIST_TOOL:
         # Beside `out["answers"]`, never instead of it: the numbered list still prints
         # through the generic per-row grammar, and `forms_ask` only gives `envelope_of`

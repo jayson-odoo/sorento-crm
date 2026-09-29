@@ -18,6 +18,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useContact } from './components/contact-context';
+import ContactUserAccountSection from './components/ContactUserAccountSection';
 import ContactMarketSegmentSection from './components/ContactMarketSegmentSection';
 import ContactAttachmentTypesSection from './components/ContactAttachmentTypesSection';
 import ContactPortalFormsSection from './components/ContactPortalFormsSection';
@@ -74,7 +75,7 @@ export default function ContactProfilePage() {
   }
 
   return (
-    <>
+    <div className="space-y-4">
       <Card>
         <CardHeader>
           <CardHeading>
@@ -224,11 +225,13 @@ export default function ContactProfilePage() {
         </CardContent>
       </Card>
 
+      <ContactUserAccountSection contact={contact} />
+
       <ContactEditDialog
         open={editDialogOpen}
         closeDialog={() => setEditDialogOpen(false)}
         contact={contact}
       />
-    </>
+    </div>
   );
 }

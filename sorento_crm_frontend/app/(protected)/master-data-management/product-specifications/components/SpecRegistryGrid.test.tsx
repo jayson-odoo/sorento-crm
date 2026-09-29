@@ -41,6 +41,14 @@ vi.mock('../services/productSpecService', () => ({
   getKeysForProduct: (...a: unknown[]) => getKeysForProduct(...a),
 }));
 
+// D5 (fix round 3): "Product class" reads its Choices count off the category
+// master, not `allowed_values.length` - see the SpecRegistryGrid.classChoices
+// test below.
+const getProductClassLabels = vi.fn().mockResolvedValue([]);
+vi.mock('../../product-categories/services/categoryService', () => ({
+  getProductClassLabels: (...a: unknown[]) => getProductClassLabels(...a),
+}));
+
 import { toast } from '@/lib/toast';
 import { SpecRegistryGrid } from './SpecRegistryGrid';
 
@@ -57,7 +65,6 @@ function baseKey(overrides: Record<string, unknown> = {}) {
     value_weights: {},
     derivation_rules: [],
     effective_rules: [{ match: 'contains', pattern: 'chrome' }],
-    rules_are_default: true,
     synonyms: {},
     applies_when: {},
     read_from: 'rules',
@@ -102,6 +109,8 @@ beforeEach(() => {
   getSpecRegistry.mockReset();
   getKeysForProduct.mockReset();
   getSpecRegistry.mockResolvedValue({ keys: ROWS });
+  getProductClassLabels.mockReset();
+  getProductClassLabels.mockResolvedValue([]);
   bulkDeletionRun.mockReset();
   vi.mocked(toast.warning).mockReset();
   Element.prototype.scrollIntoView = vi.fn();
@@ -186,27 +195,27 @@ describe('SpecRegistryGrid', () => {
   });
 });
 
-describe('SpecRegistryGrid - row menu (D14, D15, D15b)', () => {
+describe('SpecRegistryGrid - row menu (D14, D15, D15b, AC-S3.8)', () => {
   /** Radix opens on pointerdown, not click. */
   function openMenu(trigger: HTMLElement) {
     fireEvent.pointerDown(trigger, new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
   }
 
-  it('both a seed and a user row carry the "..." menu, Delete disabled on the seed row', async () => {
+  it('a built-in row carries no "..." menu at all - Delete was the only item it could ever hold (AC-S3.8)', async () => {
     renderGrid();
     await screen.findByText('Finish');
 
-    // The gear is always present (D15b) - Finish is source: 'seed', Bowl count is 'user'.
-    // The grid is sorted by label, so Bowl count comes first, Finish second.
+    // Finish is source: 'seed' / built-in and Bowl count is 'user': with Delete
+    // the only action either row could ever carry, an all-permission-filtered
+    // row (`DetailActionsMenu`'s own rule) leaves no menu behind at all, not an
+    // empty one - so only Bowl count's "..." renders.
     const menuButtons = screen.getAllByRole('button', { name: 'specification actions' });
-    expect(menuButtons).toHaveLength(2);
-
-    openMenu(menuButtons[1]); // Finish's row (seed)
-    const item = await screen.findByRole('menuitem', { name: 'Delete specification' });
-    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(menuButtons).toHaveLength(1);
+    openMenu(menuButtons[0]);
+    expect(await screen.findByRole('menuitem', { name: 'Delete specification' })).toBeInTheDocument();
   });
 
-  it('a user-made row with the delete permission has Delete enabled', async () => {
+  it('an added specification keeps a deferred Delete (AC-S3.8)', async () => {
     renderGrid();
     await screen.findByText('Finish');
 
@@ -214,6 +223,35 @@ describe('SpecRegistryGrid - row menu (D14, D15, D15b)', () => {
     openMenu(menuButtons[0]); // Bowl count's row - source: 'user'
     const item = await screen.findByRole('menuitem', { name: 'Delete specification' });
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
+  });
+});
+
+describe('SpecRegistryGrid - default columns and no re-read (AC-S3.1, AC-S3.2, AC-S3.4)', () => {
+  it('shows Specification, Type, Choices, Products by default; Code, Rules, Built in are not visible', async () => {
+    renderGrid();
+    await screen.findByText('Finish');
+
+    expect(screen.getByText('Specification')).toBeInTheDocument();
+    expect(screen.getAllByText('Type').length).toBeGreaterThan(0);
+    expect(screen.getByText('Choices')).toBeInTheDocument();
+    expect(screen.getByText('Products')).toBeInTheDocument();
+    expect(screen.queryByText('Code')).not.toBeInTheDocument();
+    expect(screen.queryByText('Rules')).not.toBeInTheDocument();
+    expect(screen.queryByText('Built in')).not.toBeInTheDocument();
+    // The Choice/Number/Yes-or-no/Text wording (AC-S3.2), never "Choice".
+    expect(screen.getByText('List')).toBeInTheDocument();
+    expect(screen.queryByText('Choice')).not.toBeInTheDocument();
+  });
+
+  it('renders no status pill, no Re-read button, and none of the retired re-read wording', async () => {
+    renderGrid();
+    await screen.findByText('Finish');
+
+    expect(screen.queryByRole('button', { name: /re-?read/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Never read')).not.toBeInTheDocument();
+    expect(screen.queryByText('Rules changed since')).not.toBeInTheDocument();
+    expect(screen.queryByText('Needs a re-read')).not.toBeInTheDocument();
+    expect(screen.queryByText('Up to date')).not.toBeInTheDocument();
   });
 });
 
@@ -241,5 +279,39 @@ describe('SpecRegistryGrid - bulk delete skips seed rows (D14)', () => {
 
     expect(bulkDeletionRun).not.toHaveBeenCalled();
     expect(toast.warning).toHaveBeenCalledWith('1 skipped (shipped with the product)');
+  });
+});
+
+describe('SpecRegistryGrid - Product class Choices (AC-S3.3, fix round 3 D5)', () => {
+  const CLASS_ROW = baseKey({
+    spec_key: 'class',
+    label: 'Product class',
+    data_type: 'enum',
+    allowed_values: [],
+    measured_coverage: 11584,
+  });
+
+  it('reads the category master\'s distinct class label count, never 0 from an empty allowed_values', async () => {
+    getSpecRegistry.mockResolvedValue({ keys: [CLASS_ROW] });
+    getProductClassLabels.mockResolvedValue([
+      'Water Closet',
+      'Kitchen Sink',
+      'Basin Mixer',
+      'Urinal',
+    ]);
+
+    renderGrid();
+
+    const row = (await screen.findByText('Product class')).closest('tr')!;
+    await waitFor(() => expect(row.textContent).toContain('4'));
+  });
+
+  it('a specification with real choices still reads allowed_values.length, unaffected', async () => {
+    getProductClassLabels.mockResolvedValue(['Water Closet', 'Kitchen Sink']);
+    renderGrid();
+
+    const row = (await screen.findByText('Finish')).closest('tr')!;
+    // `baseKey()`'s own allowed_values: ['chrome', 'black'].
+    expect(row.textContent).toContain('2');
   });
 });

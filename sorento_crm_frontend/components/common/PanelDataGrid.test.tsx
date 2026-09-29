@@ -95,3 +95,25 @@ describe('PanelDataGrid: `expanded` wired by the caller expands in place', () =>
     expect(screen.getByTestId('expanded-panel')).toHaveTextContent('Detail for r1');
   });
 });
+
+describe('PanelDataGrid: empty state is heading and hint only (PR #1336)', () => {
+  it('has no CTA slot; a passed action never renders', () => {
+    render(
+      <PanelDataGrid<Row>
+        title="Rows"
+        columns={columnsWithExpansion()}
+        rows={[]}
+        getRowId={(row) => row.id}
+        listingKey="test.panel-data-grid.empty"
+        emptyTitle="No rows yet"
+        emptyBody="Rows appear here once added."
+        // @ts-expect-error the slot is gone (CRM-wide rule)
+        emptyAction={<button type="button">Add row</button>}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'No rows yet' })).toBeInTheDocument();
+    expect(screen.getByText('Rows appear here once added.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add row' })).toBeNull();
+  });
+});

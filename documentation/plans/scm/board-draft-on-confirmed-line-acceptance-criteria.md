@@ -5,7 +5,7 @@ Plan: `PLAN-board-draft-on-confirmed-line.md`
 ## Backend (pytest, `tests/test_fulfilment_line_draft_route.py`)
 
 - AC-B1. PUT `/project-sales/fulfilment-planning/lines/{key}/draft` with verdict `approved` on a line an ACTIVE decision covers answers 409, code `board_line_already_confirmed`, and writes no `so_supply_decision_drafts` row.
-- AC-B2. Same request with verdict `rejected` answers the same 409 and writes no row.
+- AC-B2. Same request with verdict `rejected` answers the same 409 and writes no row. (superseded by `PLAN-board-reject-on-confirmed-line.md`, 22 Sep 2026)
 - AC-B3. Same request with verdict `amended` answers 200 and the row is written (the amend path is untouched).
 - AC-B4. Verdict `approved` on a line NO decision covers answers 200 (regression guard for the ordinary save).
 - AC-B5. A line whose only decision is SUPERSEDED is not covered: verdict `approved` answers 200.

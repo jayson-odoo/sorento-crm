@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Any, Dict, Literal, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -84,6 +84,12 @@ def _assert_can_act_on(db: Session, order, current_user: dict) -> None:
     Passing `order.project_id` straight to `get_project_or_404` answered 404 "Project not
     found" for every adopted order, which took Confirm and Re-sync - the last steps of the
     journey - off the screen entirely. Company scope is enforced by the mixin either way.
+
+    Callers: `confirm_supply` and `rerun_reconciliation`. `save_line_draft` never called
+    this (S2, review round 3) once R3(b)'s rework (23 Sep 2026,
+    `PLAN-board-reject-on-confirmed-line.md`) took the un-decide seam back out of the
+    draft save - a rejected verdict on a covered line is STAGED like every other board
+    decision, and Confirm is the only write that still reaches `uncover_lines`.
     """
     if not order.project_id:
         return
@@ -371,7 +377,11 @@ def save_line_draft(
     and drafts are SHARED across the planning team by ruling. A draft claims no stock and
     promises nothing - Confirm still applies the full check to the composition it posts -
     so gating the save on project ownership would only stop the second planner AC-4.5 is
-    about from correcting the first one's line.
+    about from correcting the first one's line. This holds for EVERY verdict, `rejected` on
+    a covered line included since the 23 Sep 2026 rework
+    (`PLAN-board-reject-on-confirmed-line.md`, owner ruling): the save only writes a draft
+    now, never `uncover_lines` - Confirm is the one write that still needs the per-project
+    check, and it already runs its own.
 
     `{contribution_key}` is the board's own `contributions[].key` -
     `${sales_order_id}|${line_no}|${item_code}|${bucket_key}` - URL-encoded by the client
@@ -469,20 +479,22 @@ def confirm_all(
 
         def write_one(order, entry):
             resolved_batch_id = entry.batch_id or (None if any_per_order else payload.batch_id)
-            # One journal per order (S1, #978): `confirm_many` commits or rolls back
-            # each entry on its own, so wrapping HERE - inside that per-order try -
-            # means a refused order's partial capture is rolled back with everything
-            # else it refused, and never reaches `attach`.
-            before_id = _active_decision_id(db, order)
-            with UndoJournal(db) as journal:
-                if resolved_batch_id:
-                    body = _confirm_a_planning_change(
-                        db, order, _BatchedEntry(list(entry.lines), resolved_batch_id), actor_id
-                    )
-                else:
-                    body = supply.confirm(order, entry, actor_user_id=actor_id)
-            _attach_undo_journal(db, order, journal, before_id)
-            return body
+            # `_confirm_with_possible_rejects` opens its OWN `UndoJournal` per branch (S1,
+            # #978: `confirm_many` commits or rolls back each entry on its own, so a journal
+            # opened HERE - inside that per-order try - never survives past this order's own
+            # write). `entry.rejected_line_ids` is this order's own half of the board's
+            # withdrawal, `entry` itself the composition `confirm()` already reads.
+            return _confirm_with_possible_rejects(
+                db,
+                supply,
+                order,
+                entry,
+                actor_user_id=actor_id,
+                batch_id=resolved_batch_id,
+                confirm_batch=lambda: _confirm_a_planning_change(
+                    db, order, _BatchedEntry(list(entry.lines), resolved_batch_id), actor_id
+                ),
+            )
 
         results = supply.confirm_many(
             payload.orders,
@@ -653,6 +665,297 @@ def get_supply_proposal(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+def _reasons_for_rejected_lines(
+    db: Session, order, rejected_line_ids: list, *, named_lines: set
+) -> Tuple[Dict[str, str], str]:
+    """The reason CS gave for each `rejected_line_ids` entry, read off its own SAVED
+    DRAFT - never off the request body, which carries no reason of its own (owner ruling
+    23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`: reject on a confirmed line is
+    STAGED, and the draft `save_draft` already wrote is the one place the reason lives).
+
+    Refused 422 `board_line_reject_reason_required` when an id does not resolve to a
+    line on THIS order, carries no draft, or that draft's own verdict is not `rejected`
+    with a non-blank reason - a stale client (a tab open since before the reject, a race
+    with another planner) is exactly what this defends against, the route never trusting
+    an id on its own. Also refused when an id appears in `named_lines` too (`payload.lines`)
+    - a line cannot be REPLACED and DROPPED by the same press.
+
+    B1 (fix round, review): an id also has to be COVERED BY THE ACTIVE DECISION, checked
+    HERE rather than left to `uncover_lines`' own bare `bool` (which the withdrawal-only
+    caller used to ignore outright - a stale tab could Confirm a withdrawal for a line
+    nobody still covers, and the mixed path never checked at all). A stale client is
+    refused the SAME 422 either way - `board_line_withdrawal_not_covered` names the
+    actual cause rather than reusing `board_line_reject_reason_required`, which would
+    read as "you forgot the reason" on a line that never had anything to withdraw.
+    Loaded ONCE for the whole call: every id in `rejected_line_ids` is checked against
+    the SAME active decision, never a fresh read per id.
+
+    N4 (nit, fix round): `covered_ids` above is deliberately a bare "does the active
+    decision's own `line_snapshots` name this id" - unlike `_active_coverage`
+    (`project_line_draft_service.py`), it carries NO `_in_open_planning_change` exemption
+    for a line sitting in a batch nobody has applied yet. That is safe here, not an
+    oversight: this function is only ever reached from `confirm_supply` /
+    `confirm_all`'s shared seam, which already refuses `rejected_line_ids` alongside a
+    `batch_id` outright (422 `board_reject_not_supported_in_batch`, AC-B12) BEFORE this
+    function is called - a withdrawal never reaches a batched line in the first place, so
+    there is nothing for the exemption to do here. `_active_coverage` still needs its own
+    exemption because `save_draft` (a batched line's OTHER verdicts - amend, approve) is
+    reached with no such upstream refusal.
+
+    Returns the reasons keyed by `project_line_id`, and the ONE sentence the superseded
+    revision is stamped with instead of `_write_decision`'s own "Reconfirmed by CS." -
+    every rejected line named, in order: "Line 2 rejected: wrong site; Line 5 rejected:
+    discontinued".
+    """
+    from app.models.project_so import DECISION_ACTIVE, ProjectSalesOrderLine, SOSupplyDecision
+
+    reasons: Dict[str, str] = {}
+    sentences: list = []
+    if not rejected_line_ids:
+        return reasons, ""
+    active = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one_or_none()
+    )
+    covered_ids = {
+        str((snapshot or {}).get("project_line_id") or "")
+        for snapshot in (active.line_snapshots or [])
+    } if active is not None else set()
+    covered_ids.discard("")
+    drafts = project_line_draft_service.drafts_for_orders(db, [order.so_id] if order.so_id else [])
+    for project_line_id in rejected_line_ids:
+        if str(project_line_id) in named_lines:
+            raise AppException(
+                status_code=422,
+                message=(
+                    "A line cannot be confirmed with a new composition and withdrawn as "
+                    "rejected in the same press."
+                ),
+                code="board_reject_line_named_twice",
+            )
+        if str(project_line_id) not in covered_ids:
+            raise AppException(
+                status_code=422,
+                message="This line is not confirmed any more. Reload the board.",
+                code="board_line_withdrawal_not_covered",
+            )
+        mirror = (
+            db.query(ProjectSalesOrderLine)
+            .filter(
+                ProjectSalesOrderLine.id == str(project_line_id),
+                ProjectSalesOrderLine.project_sales_order_id == order.id,
+            )
+            .one_or_none()
+        )
+        draft = (
+            drafts.get(str(mirror.core_sales_order_line_id))
+            if mirror is not None and mirror.core_sales_order_line_id
+            else None
+        )
+        decision = (draft or {}).get("decision") or {}
+        reason = str(decision.get("reason") or "").strip()
+        if mirror is None or draft is None or decision.get("verdict") != "rejected" or not reason:
+            raise AppException(
+                status_code=422,
+                message="Say why this line is being refused first.",
+                code="board_line_reject_reason_required",
+            )
+        reasons[str(project_line_id)] = reason
+        sentences.append(f"Line {mirror.line_no} rejected: {reason}")
+    return reasons, "; ".join(sentences)
+
+
+def _restamp_superseded_reason(db: Session, before_id, reason: str) -> None:
+    """`_write_decision` always stamps a reconfirmed revision "Reconfirmed by CS." -
+    right for an ordinary reconfirm, wrong for one that ALSO carried a withdrawal
+    (owner ruling 23 Sep 2026): the audit is what the planner actually said, the same
+    trade `uncover_lines` already makes for its own whole-revision branch. `before_id` is
+    the decision that was active before `confirm()` ran, read by the caller before the
+    call - the same row `confirm()` supersedes, so this corrects it in place rather than
+    guessing which revision to look up.
+    """
+    if not before_id or not reason:
+        return
+    from app.models.project_so import SOSupplyDecision
+
+    decision = (
+        db.query(SOSupplyDecision).filter(SOSupplyDecision.id == before_id).one_or_none()
+    )
+    if decision is not None:
+        decision.superseded_reason = reason
+        db.flush()
+
+
+def _withdrawal_only_result(
+    db: Session, service: ProjectSupplyService, order, rejected_line_ids: list
+) -> Dict[str, Any]:
+    """`ConfirmResult`-shaped answer for a Confirm that named NO lines of its own -
+    `uncover_lines` already ran (either of its two branches: some other covered line
+    survives in a fresh revision, or none does and the order goes back to undecided) -
+    built here rather than returned by `uncover_lines` itself, which keeps its own bare
+    `bool` because the purchasing-refusal path (its other caller) never wanted more.
+    """
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+    active = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one_or_none()
+    )
+    decided = len(active.line_snapshots or []) if active is not None else 0
+    total = len(service.lines_of(str(order.id)))
+    suspected = (
+        sum(
+            1
+            for snapshot in (active.line_snapshots or [])
+            if (snapshot or {}).get("suspected_system_issue")
+        )
+        if active is not None
+        else 0
+    )
+    return {
+        "revision_no": active.revision_no if active is not None else 0,
+        "confirmed_at": active.confirmed_at if active is not None else None,
+        # Nit (fix round, review): a fixed literal, never read off `order`, the SAME
+        # convention `_write_decision`'s own `ConfirmResult` follows for every OTHER
+        # Confirm - this field states that the PRESS committed, not a workflow state the
+        # order itself carries (the order has none at this granularity); a withdrawal
+        # that retires the whole revision (AC-B3) still answers "confirmed" for that
+        # reason, same as a press that confirms nothing new but keeps the order covered.
+        "review_state": "confirmed",
+        "inquiry_rows_created": 0,
+        "exceptions": [],
+        "lines_decided": decided,
+        "lines_undecided": max(total - decided, 0),
+        "transfers_written": 0,
+        "transfers_failed": 0,
+        "transfers_kept": 0,
+        "suspected_issues": suspected,
+        "rejected_count": len(rejected_line_ids),
+    }
+
+
+def _confirm_with_possible_rejects(
+    db: Session,
+    service: ProjectSupplyService,
+    order,
+    payload: Any,
+    *,
+    actor_user_id: str,
+    batch_id: Optional[str],
+    confirm_batch,
+) -> Dict[str, Any]:
+    """The one seam both Confirm routes share (owner ruling 23 Sep 2026,
+    `PLAN-board-reject-on-confirmed-line.md`): a press may REPLACE lines (`payload.lines`),
+    WITHDRAW covered ones (`payload.rejected_line_ids`), or both - Confirm is what commits
+    a staged rejection, never the draft save.
+
+    `batch_id` is the CALLER's own resolved id (`confirm_supply` reads `payload.batch_id`
+    directly; `confirm_all`'s `write_one` folds in the body-level fallback first) - kept as
+    an explicit argument rather than read off `payload` again so the two callers' different
+    fallback rules never have to be reconciled here.
+
+    A pending planning change may not ALSO carry a withdrawal (422): the batch apply
+    (`_confirm_a_planning_change`) has no shape for `uncover_line_ids` - it turns the
+    board's own lines into the batch rows' compositions - so a press naming both is refused
+    outright rather than silently dropping one half (`PLAN-board-reject-on-confirmed-line.md`
+    Design section, "Not in scope").
+
+    UNDO JOURNAL (S1, #978, project_supply_undo_service.py's own module docstring): a
+    revision `uncover_lines` mints on its OWN (nothing named in `payload.lines`) is NEVER
+    wrapped in `UndoJournal` here - that is the existing, deliberate invariant the docstring
+    states ("a revision minted anywhere else - `uncover_lines` after a rejection... is never
+    wrapped... not undoable"), and this rework's `elif rejected_line_ids:` branch below is
+    exactly that call. A withdrawal riding alongside `payload.lines` reaches `uncover_lines`
+    THROUGH `confirm()`'s own `uncover_line_ids` parameter instead, which stays inside the
+    journal exactly as an ordinary reconfirm does - undoable, as the plan states.
+    """
+    named = {str(entry.project_line_id) for entry in getattr(payload, "lines", []) or []}
+    # DEDUPED (nit, fix round, review): a line named twice in `rejected_line_ids` is one
+    # withdrawal, not two - `dict.fromkeys` keeps the FIRST occurrence's order, which
+    # matters only for the joined `superseded_reason` sentence reading naturally.
+    rejected_line_ids = list(
+        dict.fromkeys(str(x) for x in (getattr(payload, "rejected_line_ids", None) or []))
+    )
+    if batch_id and rejected_line_ids:
+        raise AppException(
+            status_code=422,
+            message=(
+                "A pending planning change cannot also withdraw a rejected line in the "
+                "same press. Apply the change first, then reject the line and confirm "
+                "again."
+            ),
+            code="board_reject_not_supported_in_batch",
+        )
+    reasons, joined_reason = _reasons_for_rejected_lines(
+        db, order, rejected_line_ids, named_lines=named
+    )
+    before_id = _active_decision_id(db, order)
+    if batch_id:
+        with UndoJournal(db) as journal:
+            body = confirm_batch()
+        _attach_undo_journal(db, order, journal, before_id)
+    elif getattr(payload, "lines", None):
+        with UndoJournal(db) as journal:
+            body = service.confirm(
+                order,
+                payload,
+                actor_user_id=actor_user_id,
+                uncover_line_ids=rejected_line_ids,
+                # S2/S3 (rework fix round): the BARE per-line reason, so each withdrawn
+                # line's own OI row note reads "Taken out of the confirmation: <its own
+                # reason>" rather than the ordinary carry-forward's "Superseded by
+                # revision N" - `joined_reason` stays reserved for `superseded_reason`
+                # below.
+                uncover_reason_by_line=reasons,
+            )
+            # AC-B14 (fix round, review): INSIDE the journal, not after it closes.
+            # `_write_decision` (`service.confirm`, just above) stamps the superseded
+            # revision "Reconfirmed by CS." WHILE the journal is open, so the journal's
+            # own `update` entry for `superseded_reason` records that value as its
+            # `new`. Restamping AFTER the `with` block exits (the first cut of this
+            # rework) left the LIVE column reading the joined sentence while the
+            # journal still said "Reconfirmed by CS." - `_changed_refusal` compares
+            # exactly those two and refused every undo of this path with 409
+            # `changed`, on a row nothing but this confirm itself had touched.
+            if rejected_line_ids:
+                _restamp_superseded_reason(db, before_id, joined_reason)
+                body["rejected_count"] = len(rejected_line_ids)
+        _attach_undo_journal(db, order, journal, before_id)
+    elif rejected_line_ids:
+        # NOT wrapped in `UndoJournal` - see this function's own docstring.
+        uncovered = service.uncover_lines(
+            order,
+            rejected_line_ids,
+            actor_user_id=actor_user_id,
+            reason=joined_reason,
+            reason_by_line=reasons,
+        )
+        # B1 (fix round, review, belt and braces): `_reasons_for_rejected_lines` above
+        # already refuses an id the active decision does not cover, so this should never
+        # actually be `False` - kept as a second guard rather than trusting that no
+        # future caller of `uncover_lines` ever drifts the two checks apart.
+        if not uncovered:
+            raise AppException(
+                status_code=422,
+                message="This line is not confirmed any more. Reload the board.",
+                code="board_line_withdrawal_not_covered",
+            )
+        body = _withdrawal_only_result(db, service, order, rejected_line_ids)
+    else:
+        with UndoJournal(db) as journal:
+            body = service.confirm(order, payload, actor_user_id=actor_user_id)
+        _attach_undo_journal(db, order, journal, before_id)
+    return body
+
+
 @router.post("/sales-orders/{pso_id}/confirm", response_model=ConfirmResult)
 def confirm_supply(
     pso_id: str,
@@ -666,22 +969,33 @@ def confirm_supply(
     rechecks each against authoritative facts, and one stale, unbalanced or unmapped line
     refuses the lot with `failing_lines` naming each by line number and item code. A line
     the body does not name is left undecided on purpose (13.4) and keeps counting as
-    demand; a body naming no line at all is refused. The Order Inquiry handoff runs inside
-    this same transaction, so purchasing can never be told to buy something that was not
-    also promised.
+    demand; a body naming no line at all AND withdrawing none is refused. The Order Inquiry
+    handoff runs inside this same transaction, so purchasing can never be told to buy
+    something that was not also promised.
+
+    `payload.rejected_line_ids` (owner ruling 23 Sep 2026,
+    `PLAN-board-reject-on-confirmed-line.md`, hand-test feedback, "we should confirm the
+    rejection"): the mirror ids of covered lines the board staged a `rejected` draft on.
+    This press is what actually takes them OUT of the confirmation - `save_draft` only
+    ever writes the draft. See `_confirm_with_possible_rejects`'s own docstring for the
+    shared seam both Confirm routes run this through.
     """
     try:
         validate_uuid_path(pso_id, resource="Sales order")
         service = ProjectSupplyService(db)
         order = service.get_order(pso_id)
         _assert_can_act_on(db, order, current_user)
-        before_id = _active_decision_id(db, order)
-        with UndoJournal(db) as journal:
-            if payload.batch_id:
-                body = _confirm_a_planning_change(db, order, payload, current_user["id"])
-            else:
-                body = service.confirm(order, payload, actor_user_id=current_user["id"])
-        _attach_undo_journal(db, order, journal, before_id)
+        body = _confirm_with_possible_rejects(
+            db,
+            service,
+            order,
+            payload,
+            actor_user_id=current_user["id"],
+            batch_id=payload.batch_id,
+            confirm_batch=lambda: _confirm_a_planning_change(
+                db, order, payload, current_user["id"]
+            ),
+        )
         db.commit()
         return body
     except Exception as exc:

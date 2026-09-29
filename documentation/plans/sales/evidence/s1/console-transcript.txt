@@ -1,0 +1,74 @@
+=== contact 437264483 | says: compare dealer sales 2025 vs 2026 by month
+*Sales, Sorento*
+Channel: Dealer
+Basis: Delivered (transferred to DO)
+Period: 01/01/2025 to 26/09/2026
+Months: 12
+
+Month: 2025 | 2026 | Difference
+JAN: 362,770.95 | 417,600.80 | 54,829.85
+FEB: 377,094.91 | 452,771.41 | 75,676.50
+MAR: 391,917.05 | 483,519.55 | 91,602.50
+APR: 435,753.10 | 420,877.58 | (14,875.52)
+MAY: 344,158.13 | 400,585.69 | 56,427.56
+JUN: 469,567.65 | 333,023.39 | (136,544.26)
+JUL: 417,392.65 | 341,594.44 | (75,798.21)
+AUG: 369,599.23 | 483,691.77 | 114,092.54
+SEP: 345,372.60 | 236,325.45 | (109,047.15)
+OCT: 406,466.74 | - | -
+NOV: 494,890.75 | - | -
+DEC: 377,171.57 | - | -
+Total: 4,792,155.33 | 3,569,990.08 | 56,363.81
+
+The Excel follows here.
+actions: ['send_message']
+
+=== contact 437264483 | says: total project sales this year
+*Sales, Sorento*
+Channel: Project team
+Basis: Delivered (transferred to DO)
+Period: 01/01/2026 to 26/09/2026
+Channels: 1
+
+Project team: RM 836,609.82
+Total: RM 836,609.82
+
+The Excel follows here.
+actions: ['send_message']
+
+=== contact 437264484 | says: sales this year
+Sorento or Mocha?
+actions: ['send_message']
+
+=== contact 437264484 | says: Mocha sales by month this year
+*Sales, Mocha*
+Channel: All channels
+Basis: Delivered (transferred to DO)
+Period: 01/01/2026 to 26/09/2026
+Months: 12
+
+JAN: RM 136,015.99
+FEB: RM 139,071.05
+MAR: RM 136,089.32
+APR: RM 128,911.75
+MAY: RM 136,767.43
+JUN: RM 103,309.99
+JUL: RM 138,806.50
+AUG: RM 147,386.30
+SEP: RM 75,428.55
+OCT: -
+NOV: -
+DEC: -
+Total: RM 1,141,786.88
+
+The Excel follows here.
+actions: ['send_message']
+
+=== contact 437264485 | says: total sales this year
+Sorry, I can only share sales figures for your own account.
+actions: ['send_message']
+
+=== contact 437264486 | says: total sales this year
+Sales report is not enabled for your account.
+actions: ['send_message']
+

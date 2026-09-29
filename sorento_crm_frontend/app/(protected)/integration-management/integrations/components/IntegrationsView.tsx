@@ -210,12 +210,7 @@ export function IntegrationsView() {
 
   return (
     <div className="space-y-4 p-4 md:p-6">
-      <PageHeader title="Integrations">
-        <p className="text-sm text-muted-foreground">
-          Systems that call Sorento with an API key. Each authenticates as its own user, so
-          that user&apos;s role decides what it can reach.
-        </p>
-      </PageHeader>
+      <PageHeader title="Integrations" />
 
       <DataGrid
         table={table}
@@ -225,7 +220,6 @@ export function IntegrationsView() {
         onRowClick={(row) =>
           router.push(`/integration-management/integrations/${row.id}`)
         }
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <DataGridListToolbar

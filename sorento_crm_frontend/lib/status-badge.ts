@@ -31,6 +31,8 @@ const STATUS_VARIANT_MAP: Record<string, StatusBadgeVariant> = {
   posted: 'success',
   allowed: 'success',
   yes: 'success',
+  // Cost price change set (#1288): a set whose lines have been written to the live price.
+  applied: 'success',
 
   // Warning / in progress / pending
   pending: 'warning',
@@ -74,6 +76,16 @@ const STATUS_VARIANT_MAP: Record<string, StatusBadgeVariant> = {
   closed: 'secondary',
   low: 'destructive',
   skipped: 'secondary',
+
+  // Sales opportunity stages (Phase 3 fix2 should-fix 3, sales_seed_service.py's
+  // DEFAULT_OPPORTUNITY_STATUSES). `new` already reads as `warning` above, the same
+  // "needs attention" tint a brand new, unqualified opportunity gets everywhere else
+  // "new" is used in this app.
+  qualified: 'primary',
+  proposal: 'primary',
+  negotiation: 'warning',
+  won: 'success',
+  lost: 'destructive',
 };
 
 /**

@@ -29,16 +29,16 @@ describe('canCancelReserveRequest', () => {
 });
 
 describe('resolveReserveRowRequestAnchor', () => {
-  it('prefers the highest-ordinal request that still holds a link (qty_reserved > 0)', () => {
+  it('6e.4: the latest answered request by ordinal, the row the server amends - even when an earlier one still holds a link', () => {
     expect(
       resolveReserveRowRequestAnchor([
         { id: 'rr-1', ordinal: 1, rowQtyReserved: '50' },
         { id: 'rr-2', ordinal: 2, rowQtyReserved: '0' },
       ]),
-    ).toBe('rr-1');
+    ).toBe('rr-2');
   });
 
-  it('falls back to any answered request when NONE still holds a link', () => {
+  it('the latest answered request when none holds a link either', () => {
     expect(
       resolveReserveRowRequestAnchor([
         { id: 'rr-1', ordinal: 1, rowQtyReserved: '0' },
@@ -51,3 +51,10 @@ describe('resolveReserveRowRequestAnchor', () => {
     expect(resolveReserveRowRequestAnchor([])).toBeNull();
   });
 });
+
+// `reserveRequestCompletes` (O2/O3, fix round 4 nits) is retired round 4
+// (`PLAN-oi-request-cs-reserve.md` 6e.1/6e.2): whether a commit completes its
+// request is now server truth alone (`commit_request`'s own `reserve.open_row_count`),
+// never a client-side guess built for a per-row confirm's own toast wording - the
+// staged-map CTA posts ONE batched commit and reads the response, it never asks this
+// question of the cache mid-flow.

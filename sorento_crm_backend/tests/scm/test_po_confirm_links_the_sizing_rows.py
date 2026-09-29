@@ -38,6 +38,20 @@ def _linked_qty(db, row_id) -> float:
     ), {"r": row_id}).scalar() or 0)
 
 
+def _suggested_qty(db, row_id) -> float:
+    """Reversal (review round 4 Blocking 1, `PLAN-oi-links-autocount-truth-24sep.md` S3):
+    the `po_confirm` door's cascade walk now writes a SUGGESTED link, never a real one,
+    whatever priority `own_so_claim`/`cited` gave the candidate in the walk - G2, a
+    suggestion never claims. Every test below that used to read `_linked_qty` for the
+    cascade's own placement now reads this instead; `_linked_qty` stays for the write-time
+    claim tests that check `scm.order_link_claim`, and for the two tests that assert a
+    project-bin line nobody's SO claims is never taken at all (0 either way)."""
+    return float(db.execute(text(
+        "SELECT COALESCE(SUM(qty), 0) FROM projects.order_inquiry_suggested_links "
+        "WHERE row_id = :r"
+    ), {"r": row_id}).scalar() or 0)
+
+
 def _pool_warehouse(db, code: str) -> str:
     """A warehouse that is genuinely a POOL by the FK `_pool_codes()` reads (slice H, 8 Sep
     2026 - the automatic pass takes from the site pool alone). None of this file's tests are
@@ -60,6 +74,9 @@ def test_the_confirm_links_the_two_rows_that_sized_the_line_not_the_older_one(sc
     LINES may be offered and this test is about which ROWS get them, so the scenario is
     put where only one rule is in play. `group_of_warehouse_code` reads the suffix after
     the first hyphen, so a code with no hyphen carries no group at all.
+
+    Reversal (review round 4 Blocking 1, S3): the `po_confirm` door's cascade write is now
+    a SUGGESTED link (`_suggested_qty`), never a real one - see that helper's own note.
     """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
@@ -87,9 +104,9 @@ def test_the_confirm_links_the_two_rows_that_sized_the_line_not_the_older_one(sc
 
     PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
 
-    assert _linked_qty(db, five["inquiry_row"].id) == 5.0
-    assert _linked_qty(db, three["inquiry_row"].id) == 3.0
-    assert _linked_qty(db, older["inquiry_row"].id) == 0.0, (
+    assert _suggested_qty(db, five["inquiry_row"].id) == 5.0
+    assert _suggested_qty(db, three["inquiry_row"].id) == 3.0
+    assert _suggested_qty(db, older["inquiry_row"].id) == 0.0, (
         "the older row at another warehouse took the buy the two rows at this one sized"
     )
 
@@ -100,6 +117,9 @@ def test_a_product_with_a_located_and_an_unlocated_line_does_not_kill_the_cascad
     without gives `str < None`, a TypeError, INSIDE the best-effort try. The whole cascade
     would be skipped and one log line left behind, which is the worst shape a defect can
     take: a confirm that reports success and links nothing.
+
+    Reversal (review round 4 Blocking 1, S3): `_suggested_qty` replaces `_linked_qty` -
+    the cascade's own write is a suggestion now, whatever the priority.
     """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
@@ -124,7 +144,7 @@ def test_a_product_with_a_located_and_an_unlocated_line_does_not_kill_the_cascad
     out = PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
 
     assert out["confirmed_count"] == 1
-    assert _linked_qty(db, row["inquiry_row"].id) == 4.0, (
+    assert _suggested_qty(db, row["inquiry_row"].id) == 4.0, (
         "the cascade was skipped, which is what the TypeError did silently"
     )
 
@@ -208,7 +228,10 @@ def _draft_po(db, *, product_id, warehouse_id, qty, source_ref=None) -> str:
 def test_a_confirm_leaves_a_row_due_beyond_the_plans_horizon_unlinked(scm_app):
     """A confirm has nobody to ask for a date, so it uses the plan's own - the horizon the
     buy was sized against. A 2030 line eating the purchase order a 2026 line asked for is
-    the whole reason the date exists."""
+    the whole reason the date exists.
+
+    Reversal (review round 4 Blocking 1, S3): `_suggested_qty` replaces `_linked_qty`.
+    """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
     here = _pool_warehouse(db, f"{MARKER}HZN")
@@ -226,8 +249,8 @@ def test_a_confirm_leaves_a_row_due_beyond_the_plans_horizon_unlinked(scm_app):
 
     PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
 
-    assert _linked_qty(db, near["inquiry_row"].id) == 5.0
-    assert _linked_qty(db, far["inquiry_row"].id) == 0.0, (
+    assert _suggested_qty(db, near["inquiry_row"].id) == 5.0
+    assert _suggested_qty(db, far["inquiry_row"].id) == 0.0, (
         "the 2030 row took the buy under a horizon that does not reach it"
     )
 
@@ -238,6 +261,8 @@ def test_a_confirm_links_under_the_horizon_of_the_run_it_was_drafted_off(scm_app
     A draft purchase order is a buy sized by one particular plan run, and it may sit in
     the drafts for days while another run plans further out. Linking it under the newer
     run's horizon would hand the buy to rows the run that ordered it never counted.
+
+    Reversal (review round 4 Blocking 1, S3): `_suggested_qty` replaces `_linked_qty`.
     """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
@@ -257,8 +282,8 @@ def test_a_confirm_links_under_the_horizon_of_the_run_it_was_drafted_off(scm_app
 
     PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
 
-    assert _linked_qty(db, near["inquiry_row"].id) == 5.0
-    assert _linked_qty(db, far["inquiry_row"].id) == 0.0, (
+    assert _suggested_qty(db, near["inquiry_row"].id) == 5.0
+    assert _suggested_qty(db, far["inquiry_row"].id) == 0.0, (
         "the buy was linked under a horizon a LATER run planned to"
     )
 
@@ -273,6 +298,8 @@ def test_a_confirm_off_a_run_that_named_no_horizon_links_under_none(scm_app):
     so every purchase order drafted off it was linked under whatever date somebody's last
     manual run happened to plan to. A purchase order drafted off a run links under THAT
     run's horizon or under none.
+
+    Reversal (review round 4 Blocking 1, S3): `_suggested_qty` replaces `_linked_qty`.
     """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
@@ -292,8 +319,8 @@ def test_a_confirm_off_a_run_that_named_no_horizon_links_under_none(scm_app):
 
     PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
 
-    assert _linked_qty(db, near["inquiry_row"].id) == 5.0
-    assert _linked_qty(db, far["inquiry_row"].id) == 3.0, (
+    assert _suggested_qty(db, near["inquiry_row"].id) == 5.0
+    assert _suggested_qty(db, far["inquiry_row"].id) == 3.0, (
         "the run that sized this buy named no horizon, and a LATER run's date was used"
     )
 
@@ -306,6 +333,8 @@ def test_two_purchase_orders_confirmed_together_each_link_under_their_own_run(sc
     linked under was whichever row Postgres handed back first, and the other purchase order
     was linked under a horizon its own run never planned to. Each purchase order is its own
     buy, sized by its own run.
+
+    Reversal (review round 4 Blocking 1, S3): `_suggested_qty` replaces `_linked_qty`.
     """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
@@ -332,12 +361,12 @@ def test_two_purchase_orders_confirmed_together_each_link_under_their_own_run(sc
         [made["NEAR"]["po"], made["FAR"]["po"]], actor=actor
     )
 
-    assert _linked_qty(db, made["NEAR"]["soon"]) == 5.0
-    assert _linked_qty(db, made["NEAR"]["late"]) == 0.0, (
+    assert _suggested_qty(db, made["NEAR"]["soon"]) == 5.0
+    assert _suggested_qty(db, made["NEAR"]["late"]) == 0.0, (
         "the 2030 row was linked under the OTHER purchase order's run, which plans to 2031"
     )
-    assert _linked_qty(db, made["FAR"]["soon"]) == 5.0
-    assert _linked_qty(db, made["FAR"]["late"]) == 3.0, (
+    assert _suggested_qty(db, made["FAR"]["soon"]) == 5.0
+    assert _suggested_qty(db, made["FAR"]["late"]) == 3.0, (
         "the 2030 row was refused under the OTHER purchase order's run, which stops at 2026"
     )
 
@@ -345,7 +374,10 @@ def test_two_purchase_orders_confirmed_together_each_link_under_their_own_run(sc
 def test_a_purchase_order_naming_two_runs_falls_back_to_the_latest_completed(scm_app):
     """A purchase order whose lines were drafted off two different plans names no ONE run,
     so it takes the plan in force - the same answer a hand-keyed purchase order gets - and
-    says so in the log. Picking either of the two would be picking at random."""
+    says so in the log. Picking either of the two would be picking at random.
+
+    Reversal (review round 4 Blocking 1, S3): `_suggested_qty` replaces `_linked_qty`.
+    """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
     here = _pool_warehouse(db, f"{MARKER}TWORUNS")
@@ -372,8 +404,8 @@ def test_a_purchase_order_naming_two_runs_falls_back_to_the_latest_completed(scm
 
     PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
 
-    assert _linked_qty(db, near["inquiry_row"].id) == 5.0
-    assert _linked_qty(db, far["inquiry_row"].id) == 3.0, (
+    assert _suggested_qty(db, near["inquiry_row"].id) == 5.0
+    assert _suggested_qty(db, far["inquiry_row"].id) == 3.0, (
         "two runs is no run: the plan in force reaches 2031 and the row is inside it"
     )
 
@@ -408,8 +440,15 @@ def test_a_group_bought_to_exactly_the_plan_figure_is_still_offered(scm_app):
     line of the confirmed order for the rows that sized its plan cell - the same
     `own_so_claim` `_candidate` now reads. A group location IS a project bin on the real
     book (`segment='project'`, measured; see `_group_warehouse`), so this row's own claim
-    is written in the SAME transaction the confirm runs in, and the row links in full -
-    exactly as it did before slice H, through the exception the owner explicitly kept.
+    is written in the SAME transaction the confirm runs in, and the candidate is offered
+    in full - exactly as it did before slice H, through the exception the owner explicitly
+    kept.
+
+    Reversal (review round 4 Blocking 1, `PLAN-oi-links-autocount-truth-24sep.md` S3, G2):
+    `own_so_claim` decides whether the candidate is CASCADABLE at all - it does not make
+    the cascade's own terminal write real. Since S3 that write is a suggestion for every
+    door, this one included, and `scm.order_link_claim` (the write-time claim above) is
+    written before the walk runs and is untouched by it - a suggestion never claims.
     """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
@@ -432,7 +471,7 @@ def test_a_group_bought_to_exactly_the_plan_figure_is_still_offered(scm_app):
 
     PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
 
-    assert _linked_qty(db, row["inquiry_row"].id) == 8.0, (
+    assert _suggested_qty(db, row["inquiry_row"].id) == 8.0, (
         "AC-H11: a group bought to exactly the plan figure was refused its own purchase "
         "order - the write-time claim is the owner's own-SO exception, not gated on the "
         "deficit boundary at all"

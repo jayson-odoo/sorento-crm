@@ -168,30 +168,10 @@
  *    `app.services.pdf_render`; xlsx is an openpyxl workbook built in
  *    `summary_order_service` (`xlsx_renderer`'s fixed table shape did not fit the sheet).
  *
- * 6) The low stock report, through the SAME export endpoint (S4, PLAN-low-stock-report)
- *
- *      POST /api/v1/scm/order-summary/export
- *          { run_id: <opaque>, format: 'low_stock_xlsx' }
- *
- *      -> 200  DownloadResponse (`MyDownload`, `status: 'pending'`) of kind
- *              `low_stock_xlsx`, filename `low-stock-<as_of ddmmyyyy>.xlsx`,
- *              `source_entity_type: 'reorder_run'` - a `user_downloads` row was created
- *              and `generate_low_stock_report` enqueued on the `imports` queue (AC-30).
- *      -> 422  too many rows for this kind ("Narrow the plan first" - its OWN cap,
- *              `MAX_LOW_STOCK_ROWS = 5000` on the "All" sheet, not the order sheet's 2000),
- *              or a malformed/invisible run.
- *      -> 409  one export of this kind is already in flight for this user and run.
- *      Auth: `scm.dashboard.view`, as the order sheet.
- *
- *    The workbook carries TWO sheets, "Low stock" then "All", sixteen columns each: Item
- *    code, Description, Category, BRW on hand, Reorder level, Reorder qty, Suggested qty,
- *    Suggestion, Order qty, Dealer o/s, Supplier, BRW PO qty, BRW incoming qty, Last in
- *    qty, Last in date, Remarks (AC-31). Neither sheet drops the rows the plan hides by
- *    default, because a covered row can still sit below its raw level (AC-32/AC-33).
- *
- *    It is a separate function rather than a third value on `exportOrderSheet`'s union
- *    because the body is what the order sheet's own test strict-equals, and because the
- *    two carry different caps and a different toast.
+ * 6) The low stock report moved to its own page and service (PLAN-excel-preview-26sep S1):
+ *    `scm/low-stock-report/services/lowStockReportService.ts` previews the workbook and
+ *    posts the same export endpoint with its split and filters. The split dialog and its
+ *    `low-stock-preview` read are gone.
  *
  * -- ERROR SHAPE -------------------------------------------------------------
  * Every failure is the standard `AppException` envelope the global handler in
@@ -256,29 +236,10 @@ export async function exportOrderSheet(
 }
 
 /**
- * Starts the low stock report through My Downloads (PLAN-low-stock-report S4, AC-2).
- * Same endpoint, same pipeline, a different `format` - and no mock branch, for the same
- * reason `exportOrderSheet` has none: a fixture cannot usefully stand in for a workbook
- * the worker renders. Returns the created `MyDownload` row (`status: 'pending'`); the
- * file is fetched later from the drawer, once the worker marks it ready.
- */
-export async function exportLowStockReport(runId: string): Promise<MyDownload> {
-  const res = await apiFetch('/api/v1/scm/order-summary/export', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ run_id: runId, format: 'low_stock_xlsx' }),
-  });
-  if (!res.ok) {
-    throw new Error(await extractApiError(res, 'Failed to start the low stock report'));
-  }
-  return (await res.json()) as MyDownload;
-}
-
-/**
  * Starts the OI worksheet export through My Downloads (Lane C, PLAN-order-sheet-oi-
  * reports-22sep.md, AC-C1/AC-C2). Same endpoint, same pipeline, a third `format` - the
  * run's OWN Start Plan scope of live OI Buy rows, not the order sheet's rows. No mock
- * branch, for the same reason `exportOrderSheet`/`exportLowStockReport` have none: a
+ * branch, for the same reason `exportOrderSheet` has none: a
  * fixture cannot usefully stand in for a workbook the worker renders. Returns the created
  * `MyDownload` row (`status: 'pending'`); the file is fetched later from the drawer, once
  * the worker marks it ready.

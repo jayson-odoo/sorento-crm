@@ -56,3 +56,26 @@ export async function deleteCustomer(id: string): Promise<void> {
     throw new Error(await extractApiError(response, 'Failed to delete customer'));
   }
 }
+
+export interface CustomerSalesAgentOption {
+  id: string;
+  sales_agent: string;
+  person_label: string | null;
+}
+
+/**
+ * Every active sales agent, for the customer form's "Sales agent" select.
+ *
+ * Served off `GET /customers/sales-agents-select` rather than the sales-agents master's own
+ * list (`master_data.sales_agents.view`) or the SCM one (`scm.dashboard.view`): a role that
+ * may edit a customer does not necessarily hold either. Unpaged - ~38 active agents today,
+ * comfortably below one page - so there is no capped dropdown to worry about.
+ */
+export async function getCustomerSalesAgentsSelect(): Promise<CustomerSalesAgentOption[]> {
+  const response = await apiFetch('/api/v1/order-management/customers/sales-agents-select');
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load sales agents'));
+  }
+  const body: { data?: CustomerSalesAgentOption[] } = await response.json();
+  return body.data ?? [];
+}

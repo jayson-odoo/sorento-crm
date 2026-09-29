@@ -165,7 +165,6 @@ export default function ChatbotEntityKindsList() {
         isLoading={isLoading}
         onRowClick={(row) => openEdit(row)}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">

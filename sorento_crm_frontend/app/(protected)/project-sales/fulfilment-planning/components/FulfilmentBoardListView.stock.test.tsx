@@ -121,4 +121,17 @@ describe('AC-RS-42: the board list view carries a Stock button per line', () => 
     const props = breakdownDialogSpy.mock.calls[breakdownDialogSpy.mock.calls.length - 1][0];
     expect(JSON.stringify(props)).toMatch(/CKS1050/);
   });
+
+  it('AC-DT-11 (round 2, PLAN-oi-decision-trail-ui.md): icon only, ghost variant - matches the verdict-row pencil, no visible "Stock" text', async () => {
+    renderView();
+
+    const button = await screen.findByRole('button', { name: /stock/i });
+    // The accessible name still comes off `aria-label`, never off rendered text - the
+    // `<span className="hidden xl:inline">Stock</span>` label is gone.
+    expect(button).not.toHaveTextContent('Stock');
+    // `outline` (what this button used to be) always carries `border-input`; `ghost`
+    // never does - the class list is the only reliable way to tell the two variants
+    // apart without reaching into the component's own props.
+    expect(button.className).not.toMatch(/border-input/);
+  });
 });

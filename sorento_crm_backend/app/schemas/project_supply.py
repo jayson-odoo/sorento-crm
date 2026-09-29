@@ -430,6 +430,21 @@ class ConfirmSupplyBody(BaseModel):
     #: Confirm naming a batch already applied is refused with a message rather than
     #: writing a second revision.
     batch_id: Optional[str] = None
+    #: The mirror `project_line_id`s of COVERED lines a `rejected` draft was staged on
+    #: (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`: "we should
+    #: confirm the rejection" - reject on a confirmed line is a STAGED decision like every
+    #: other board decision, and Confirm is what commits it, never the draft save itself).
+    #: Never overlaps `lines` above - a line is either being REPLACED (named in `lines`) or
+    #: DROPPED (named here), and the route refuses a line named in both. Absent on every
+    #: ordinary Confirm; a batch Confirm (`batch_id` set) may not carry this - the two are
+    #: refused together (422), because a pending planning change has no shape for a
+    #: withdrawal alongside it.
+    #:
+    #: DEDUPED, not refused (nit, fix round, review): the route drops a repeated id
+    #: rather than 422ing over it - a line named twice is one withdrawal either way, and
+    #: nothing about a duplicate is a stale-client signal worth refusing over the way a
+    #: line named in BOTH `lines` and here is.
+    rejected_line_ids: List[str] = Field(default_factory=list)
 
 
 class ConfirmException(BaseModel):
@@ -465,6 +480,12 @@ class ConfirmResult(BaseModel):
     #: (R10). Reported rather than logged: the flag is a request to look at something, and a
     #: request nobody is told about is a request nobody answers.
     suspected_issues: int = 0
+    #: How many covered lines this SAME press withdrew (`ConfirmSupplyBody.rejected_line_ids`,
+    #: owner ruling 23 Sep 2026). The toast needs it beside `lines_decided` - "N confirmed"
+    #: says nothing about the lines this press also took OUT, and `response_model` drops an
+    #: undeclared field silently, so it has to be named here rather than left in the
+    #: in-process dict the way `settled_in_place`/`auto_place_products` are.
+    rejected_count: int = 0
 
 
 # ------------------------------------------------------------------- the Plans page (D1)
@@ -515,6 +536,10 @@ class ConfirmManyOrderBody(BaseModel):
     #: back to `ConfirmManyBody.batch_id` when absent, so the pre-slice shape (one
     #: body-level id applied to every order) keeps working during the deploy window.
     batch_id: Optional[str] = None
+    #: This order's own half of `ConfirmSupplyBody.rejected_line_ids` - same rule, same
+    #: refusal alongside a batch (owner ruling 23 Sep 2026,
+    #: `PLAN-board-reject-on-confirmed-line.md`).
+    rejected_line_ids: List[str] = Field(default_factory=list)
 
 
 class ConfirmManyBody(BaseModel):
@@ -550,6 +575,9 @@ class ConfirmManyOrderResult(BaseModel):
     transfers_kept: Optional[int] = None
     #: The lines flagged as a suspected system problem, summed the same way (R10).
     suspected_issues: Optional[int] = None
+    #: How many covered lines this order's own press withdrew, the per-order twin of
+    #: `ConfirmResult.rejected_count` (owner ruling 23 Sep 2026).
+    rejected_count: Optional[int] = None
     error: Optional[str] = None
     #: The lines the server refused, named the way `SupplyFailingLine` always is (AC-C02),
     #: when the refusal named any.

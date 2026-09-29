@@ -176,9 +176,9 @@ class TestDomainsCrudHappyPath:
         body = resp.json()
         assert "data" in body or "items" in body, body
 
-    def test_post_then_get_one_then_put_then_delete(self, client) -> None:
+    def test_post_then_get_one_then_put_then_delete(self, client, real_tool_name) -> None:
         name = unique_code("domain")
-        create_resp = client.post(DOMAINS_BASE, json=_domain_body(name, tool="crm_master_products_list"))
+        create_resp = client.post(DOMAINS_BASE, json=_domain_body(name, tool=real_tool_name))
         assert create_resp.status_code in (200, 201), create_resp.text
         created = create_resp.json()
         domain_id = created.get("id") or created.get("name")
@@ -187,7 +187,7 @@ class TestDomainsCrudHappyPath:
         assert get_resp.status_code == 200, get_resp.text
         assert get_resp.json().get("name") == name
 
-        put_body = _domain_body(name, tool="crm_master_products_list")
+        put_body = _domain_body(name, tool=real_tool_name)
         put_body["label"] = "ZZT updated label"
         put_resp = client.put(f"{DOMAINS_BASE}/{domain_id}", json=put_body)
         assert put_resp.status_code == 200, put_resp.text
@@ -236,15 +236,15 @@ class TestAuthDenial:
         resp = client.get(DOMAINS_BASE)
         assert resp.status_code == 200, resp.text
 
-    def test_post_without_manage_is_403(self, client) -> None:
+    def test_post_without_manage_is_403(self, client, real_tool_name) -> None:
         _GRANTS.discard(MANAGE)
-        resp = client.post(DOMAINS_BASE, json=_domain_body(unique_code("domain"), tool="crm_master_products_list"))
+        resp = client.post(DOMAINS_BASE, json=_domain_body(unique_code("domain"), tool=real_tool_name))
         assert resp.status_code == 403, resp.text
         assert MANAGE in resp.text
 
-    def test_put_without_manage_is_403(self, client) -> None:
+    def test_put_without_manage_is_403(self, client, real_tool_name) -> None:
         _GRANTS.discard(MANAGE)
-        resp = client.put(f"{DOMAINS_BASE}/inventory", json=_domain_body("inventory", tool="crm_master_products_list"))
+        resp = client.put(f"{DOMAINS_BASE}/inventory", json=_domain_body("inventory", tool=real_tool_name))
         assert resp.status_code == 403, resp.text
 
     def test_delete_without_manage_is_403(self, client) -> None:

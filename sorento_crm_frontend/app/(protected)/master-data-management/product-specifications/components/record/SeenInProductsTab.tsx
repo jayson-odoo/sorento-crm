@@ -9,8 +9,6 @@ import {
   type ColumnDef,
   type PaginationState,
 } from '@tanstack/react-table';
-import { RefreshCw } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -20,10 +18,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
-import { useHasPermission } from '@/hooks/usePermissions';
 import { readableValue } from '@/lib/spec-readable';
 import { useSpecKeyProductsQuery } from '../../hooks/useSpecKeyProductsQuery';
-import { useSpecRegistryMutations } from '../../hooks/useSpecRegistryMutations';
 import type { SpecKeyProduct } from '../../services/productSpecService';
 
 /** Where a value came from, in the words the person reading this uses. */
@@ -56,8 +52,6 @@ export function SeenInProductsTab({
   valueLabels?: Record<string, string>;
 }) {
   const pathname = usePathname();
-  const canEdit = useHasPermission('master_data.spec_registry.edit');
-  const { reread } = useSpecRegistryMutations();
   const [valueFilter, setValueFilter] = useState<string | undefined>();
   const [classFilter, setClassFilter] = useState<string | undefined>();
   const [sourceFilter, setSourceFilter] = useState<string | undefined>();
@@ -189,17 +183,6 @@ export function SeenInProductsTab({
   const emptyState = (
     <div className="flex flex-col items-center gap-3 py-10 text-center">
       <p className="text-sm font-medium">Not seen on any product yet</p>
-      {canEdit && (
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={reread.isPending}
-          onClick={() => reread.mutate()}
-        >
-          <RefreshCw className="size-4" aria-hidden />
-          Reread catalogue
-        </Button>
-      )}
     </div>
   );
 

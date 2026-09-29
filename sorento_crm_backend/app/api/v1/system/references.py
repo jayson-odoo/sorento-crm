@@ -1329,6 +1329,15 @@ class ResolveReferenceRequest(BaseModel):
             "Omit / null = no cap (current default behaviour)."
         ),
     )
+    exact_match: bool = Field(
+        default=False,
+        description=(
+            "Only with `spec_fallback`: list only products that hold every value asked "
+            "for exactly, the product type included, never the nearest by relevance "
+            "(the chatbot's rule, PR #833 fix round 10). Absent or false keeps the "
+            "relevance ranking byte-identical for every other caller."
+        ),
+    )
     spec_fallback: bool = Field(
         default=False,
         description=(
@@ -1356,6 +1365,27 @@ class ResolveReferenceRequest(BaseModel):
             "Registry (`GET /api/v1/master-data/spec-registry`). Every spec is a "
             "scoring BOOST, never a filter, so an over-extracted one cannot empty the "
             "picker. Only used when `spec_fallback` is true."
+        ),
+    )
+    unknown_values: list[dict] | None = Field(
+        default=None,
+        description=(
+            "Fix round 8 on PR #833: descriptors the chatbot's grounding step "
+            "(`chatbot/head/grounding.py`) could not place on any choice of the "
+            "specification registry, as [{key, label, said, known}] ('pink' said as a "
+            "finish or colour). Answered like `unknown_spec_values`: said back with "
+            "the known choices before anything is counted or searched."
+        ),
+    )
+    set_list_max: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Fix round 9 on PR #833: the longest set the caller lists in one reply. A "
+            "`require` set longer than it carries `predicate.breakdown` (its members "
+            "counted by the next attribute), and a set that qualifies nothing carries "
+            "`predicate.members` (the described products without the legs). Absent: "
+            "neither is computed."
         ),
     )
     hidden_spec_keys: list[str] | None = Field(
@@ -1520,61 +1550,74 @@ class ResolveReferenceRequest(BaseModel):
         return v
 
 
-def _has_exact_product_match(result: dict[str, Any], tokens: list[str] | None = None) -> bool:
-    """AC-1305/R1 (console fix round 2, 11 Sep): did a CODE-SHAPED caller token
-    already resolve to a product match, at ANY tier?
+#: The resolver tiers that match a product CODE (`entity_resolver`): the whole code, a
+#: code prefix, a code substring, a set's head code, the AND probe (code-only by design).
+#: Never `embedding`, `trgm` or `spec_search`: those are nearest-neighbour guesses.
+_CODE_MATCH_TIERS = frozenset({"exact", "prefix", "substring", "head_code", "and"})
 
-    The shape test is the TOKEN's own (this file's own `_is_code_shaped`, the
-    "mixed letters and digits" `_CODE_RE` test - NOT `answer.py`'s
-    same-named function, which exists for a different job: filtering a
-    did-you-mean candidate LIST of already-known codes, and is deliberately
-    loose there). A code-shaped token ("zztwc286") that resolves only by
-    PREFIX still means the customer typed a complete-enough code, so
-    `require`'s described-set machinery must not run over it - `tier` no
-    longer gates this at all (`exact`/`head_code` used to be the only tiers
-    checked, which let a PREFIX-tier code slip through and wrongly grow a
-    `predicate` block). A WORD token ("bidet", "sorento") never blocks HAS,
-    even when it happens to resolve at the "exact" tier (a product literally
-    coded "SORENTO") - the customer's own word is not thereby a code.
 
-    R1: the lane ALWAYS sends `match_mode: "and"`, and AND mode's own product
-    probe stamps EVERY row `match_tier="and"` - it never produces "exact" or
-    "head_code" - so the OLD tier-based `intersection` check could never fire
-    on the lane's real request shape (measured: `scripts/chatbot_replay_
-    resolve.py` on "check stock srtwc286"). `intersection` carries no per-row
-    token (AND mode blends every token into one list), so the shape test runs
-    against the CALLER's own `tokens` instead: a code-shaped token sent AT ALL,
-    with `intersection` carrying any product match, is the same "typed a
-    complete code" signal the OR-mode branch above reads per-resolution.
+def _code_matched(result: dict[str, Any], tokens: list[str] | None = None) -> bool:
+    """Code first (fix round 13 on PR #833, owner 28 Sep 2026: "if found by product code
+    -> forward asking, if cannot find product code, fallback to spec search -> reverse
+    asking"): did the resolver match a caller token to a product BY ITS CODE?
+
+    A match by code is a code tier (`_CODE_MATCH_TIERS`, at any of them) whose own code
+    contains the token, case and separators ignored: "srtwc286" by prefix, "7820" as a
+    substring of all seven MKT7820SS codes. Such a token makes the turn a forward ask
+    over every code match, so `require` (the HAS / counted-set branch) never runs for
+    it and zero on hand stays in the answer. Only a token with a digit in it can be a
+    code: a word ("basin", "gunmetal", "sorento" even where a product is literally
+    coded SORENTO) describes a set and keeps the counted-set path.
+
+    `resolutions` carry their token; AND mode's `intersection` blends every token into
+    one list, so the caller's own `tokens` are tested against it instead.
     """
+
+    def _fold(value: Any) -> str:
+        return re.sub(r"[^0-9a-z]", "", str(value or "").lower())
+
+    def _hit(token: Any, match: Any) -> bool:
+        fragment = _fold(token)
+        return (
+            any(ch.isdigit() for ch in fragment)
+            and isinstance(match, dict)
+            and match.get("entity_type") == "product"
+            and match.get("match_tier") in _CODE_MATCH_TIERS
+            and fragment in _fold(match.get("canonical_code"))
+        )
+
     for resolution in result.get("resolutions") or []:
         token = (resolution or {}).get("token")
-        if not _is_code_shaped(str(token or "")):
-            continue
-        for match in (resolution or {}).get("matches") or []:
-            if (match or {}).get("entity_type") == "product":
-                return True
-    intersection = result.get("intersection") or []
-    if intersection and any(_is_code_shaped(str(t or "")) for t in (tokens or [])):
-        for match in intersection:
-            if (match or {}).get("entity_type") == "product":
-                return True
-    return False
+        if any(_hit(token, m) for m in (resolution or {}).get("matches") or []):
+            return True
+    return any(
+        _hit(token, match)
+        for token in tokens or []
+        for match in result.get("intersection") or []
+    )
 
 
 def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
-    """Every product uuid LOOKUP already matched, in order, deduped.
+    """Every product uuid LOOKUP matched BY CODE, in order, deduped.
 
     Work item C2: the described set's other half besides the class/product_type/
-    brand bindings - a caller who typed "bidet" already has three name matches from
-    the ordinary product probes (the screenshot picker), and those ids are a
-    perfectly good described set on their own.
+    brand bindings.
+
+    Fix round 10 on PR #833 (owner, 28 Sep 2026: "i tried to search like gunmetal
+    basin, there is no such thing and it gives me flexible trap", "for #833 yeah exact
+    only"): only a code-tier match counts (the code, its prefix, a substring of it: the
+    code matching a typed "65502" still gets). A word ("basin", "gunmetal basin")
+    describes the set through the catalogue's own vocabulary alone (`filter_specs`); the
+    resolver's embedding and trigram neighbours of a word are a guess, and the embedding
+    tier is what put a flexible trap into "gunmetal basin".
     """
     ids: list[str] = []
     seen: set[str] = set()
 
     def _take(match: Any) -> None:
         if not isinstance(match, dict) or match.get("entity_type") != "product":
+            return
+        if match.get("match_tier") not in _CODE_MATCH_TIERS:
             return
         uid = match.get("uuid")
         if uid and uid not in seen:
@@ -1589,17 +1632,140 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
     return ids
 
 
+#: The resolver tiers that answer a token with its nearest neighbour, not a match.
+_NEIGHBOUR_TIERS = frozenset({"embedding", "trgm"})
+
+
+def _drop_word_neighbours(result: dict[str, Any]) -> None:
+    """Fix round 10 on PR #833 (owner, 28 Sep 2026: "i tried to search like gunmetal
+    basin, there is no such thing and it gives me flexible trap", "for #833 yeah exact
+    only"), for `exact_match` callers: a WORD token (no digit in it: "basin", "gunmetal
+    basin") gets no product by nearest neighbour, neither as a match (the embedding tier
+    answered "basin" with the flexible trap) nor as a did-you-mean alternative. A token
+    with a digit keeps them: a code typo ("SRWC8088") still finds its code. Customers,
+    orders and every other entity type are untouched."""
+    def word(token: Any) -> bool:
+        return not any(ch.isdigit() for ch in str(token or ""))
+
+    def neighbour(match: Any) -> bool:
+        return (
+            isinstance(match, dict)
+            and match.get("entity_type") == "product"
+            and match.get("match_tier") in _NEIGHBOUR_TIERS
+        )
+
+    for resolution in result.get("resolutions") or []:
+        if not isinstance(resolution, dict) or not word(resolution.get("token")):
+            continue
+        for key in ("matches", "alternatives"):
+            kept = [m for m in resolution.get(key) or [] if not neighbour(m)]
+            if len(kept) != len(resolution.get(key) or []):
+                resolution[key] = kept
+        if not resolution.get("matches"):
+            resolution["resolved"] = False
+            token = resolution.get("token")
+            unresolved = result.setdefault("unresolved_tokens", [])
+            if token and token not in unresolved:
+                unresolved.append(token)
+    if all(word(t) for t in result.get("tokens") or []):
+        if isinstance(result.get("alternatives"), list):
+            result["alternatives"] = [m for m in result["alternatives"] if not neighbour(m)]
+        if isinstance(result.get("intersection"), list):
+            result["intersection"] = [m for m in result["intersection"] if not neighbour(m)]
+            by_type: dict[str, list[dict[str, Any]]] = {}
+            for m in result["intersection"]:
+                by_type.setdefault(m["entity_type"], []).append(m)
+            result["by_entity_type"] = by_type
+            result["empty"] = not result["intersection"]
+            if result["empty"]:
+                result["unresolved_tokens"] = list(result.get("tokens") or [])
+
+
 # A COPY of `app.services.chatbot.head.output_exchange._CERT_RE`, never an import of it:
 # this file sits outside the chatbot module boundary (`tests/chatbot/test_import_boundary
 # .py`'s AC-002), so the same cert-word test is duplicated here rather than reached across
 # it. Keep the two in lockstep by hand if the word list ever changes.
 _CERT_WORD_RE = re.compile(r"cert|ikram|span|sirim|bomba|ms\s?[0-9]|halal", re.IGNORECASE)
 
-# A COPY of `app.services.chatbot.lanes.business.answer.SET_PAGE_ID_CAP`, for the same
-# module-boundary reason `_CERT_WORD_RE` above is a copy: the "more" carry (E3, AC-1317)
-# pages off however many qualifying ids `resolve_product_set` is asked for, so this file
-# has to ask for at least this many rather than the ordinary LOOKUP page size.
-_SET_PAGE_ID_CAP = 200
+# A COPY of `app.services.chatbot.lanes.business.answer.SET_ID_CAP`, for the same
+# module-boundary reason `_CERT_WORD_RE` above is a copy: a counted set lists (up to
+# `answer.SET_LIST_MAX`) off however many qualifying ids `resolve_product_set` is asked
+# for, so this file has to ask for at least this many rather than the ordinary LOOKUP
+# page size.
+_SET_ID_CAP = 200
+
+
+def _stock_policy_for(db: Session, payload: "ResolveReferenceRequest"):
+    """The asking contact's stock visibility policy, or None when no contact is named.
+
+    Resolved through the same NULL-workspace fallback the spec policy uses below (SF-1),
+    so a contact with `workspace_id IS NULL` gets their real policy rather than none.
+    """
+    if not payload.contact_id:
+        return None
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+    from app.services.stock_visibility import resolve_policy
+
+    resolved = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=payload.contact_id, space_id=payload.space_id
+    )
+    return resolve_policy(db, resolved or payload.contact_id, payload.space_id)
+
+
+def _with_grounded_unknowns(found: list[dict], grounded: list[dict] | None) -> list[dict]:
+    """The registry's own unknown-value reading of the message, plus the ones the
+    chatbot's grounding step found (fix round 8 on PR #833), one per key. Grounding wins
+    for a key both name: it read the parser's placed words, not the whole sentence."""
+    extra = [dict(u) for u in (grounded or []) if isinstance(u, dict) and str(u.get("said") or "").strip()]
+    keys = {u.get("key") for u in extra if u.get("key")}
+    return extra + [u for u in found if u.get("key") not in keys]
+
+
+def _unknown_value_members(db: Session, payload, query_text: str, unknown: list[dict], current_user) -> dict | None:
+    """The described set without its unknown value, broken down by that value's key:
+    "pink water closets" is answered with the finishes the water closets do come in
+    (fix round 9 on PR #833, owner: "always break it down"). None when the rest of the
+    ask describes no set."""
+    from app.services.product_predicate_service import resolve_product_set
+    from app.services.product_spec_understanding import derive_search_inputs
+
+    # Fix round 10 on PR #833: a word with no key at all ("pnk" in "pnk water closet",
+    # "kitchne" in "kitchne sink") breaks the rest down by the next attribute that splits
+    # it (`_set_breakdown`), so the reply still lists what does exist.
+    key = next((u.get("key") for u in unknown if u.get("key")), None)
+    said = [str(u.get("said") or "") for u in unknown]
+    specs, _free, _excl, _understanding = derive_search_inputs(
+        db,
+        _strip_predicate_words(query_text, said),
+        specs=list(payload.extracted_specs or []),
+        free_terms=[],
+        allow_model=False,
+        user_id=current_user.get("id"),
+        log_usage=False,
+    )
+    brand_entry = next((e for e in specs if e.get("key") == "brand"), None)
+    specs = [e for e in specs if e.get("key") not in ("brand", key)]
+    scope_terms = list(payload.scope_terms or [])
+    if not specs and not scope_terms:
+        return None
+    outcome = resolve_product_set(
+        db,
+        require={},
+        specs=specs,
+        scope_terms=scope_terms or None,
+        limit=1,
+        brand=str(brand_entry["value"]) if brand_entry else None,
+        access_levels=payload.access_levels,
+        breakdown_key=key,
+        breakdown_over=None if key else 0,
+    )
+    if not outcome.get("qualifying_total"):
+        return None
+    members: dict[str, Any] = {"total": int(outcome["qualifying_total"])}
+    for field in ("breakdown", "description", "class_labels"):
+        if outcome.get(field):
+            members[field] = outcome[field]
+    return members
 
 
 def _strip_predicate_words(text: str, words: list[str] | None) -> str:
@@ -2608,6 +2774,17 @@ def resolve_reference_post(
     db: Session = Depends(get_db),
 ):
     """POST variant for external callers that send JSON body (e.g. n8n HTTP node)."""
+    # A code, then words that pick among its variants ("Srtwc7604 p trap price"; owner
+    # hand test of rounds 4 to 6 on PR #833, items 2 to 4): the code token becomes the
+    # variant codes the words pick, and the description token those words came from is
+    # dropped, so the ask resolves as that code's variants and never as a category set.
+    from app.services.product_code_family import narrow_code_tokens
+
+    narrowed = narrow_code_tokens(
+        db, query=payload.query or "", tokens=payload.tokens, allowed_types=payload.allowed_entity_types
+    )
+    if narrowed is not None:
+        payload = payload.model_copy(update={"tokens": narrowed, "raw_tokens": None})
     try:
         result = _resolve_input(
             db,
@@ -2633,13 +2810,16 @@ def resolve_reference_post(
             code="ENTITY_PIN_MISMATCH",
         ) from exc
 
+    if payload.exact_match:
+        _drop_word_neighbours(result)
+
     # Shape B: a domain predicate over the described set. This is NOT a fallback -
     # "what faucets have certs" is a different question from "find me a faucet",
     # and it runs whenever the parser asked it, whatever the normal probes found -
-    # UNLESS a caller token already resolved to a full product code (AC-1305): the
-    # customer typed a complete code, so the response stays byte-identical to the
-    # same request without `require`.
-    if payload.require and not _has_exact_product_match(result, payload.tokens):
+    # UNLESS a caller token matched a product by code (`_code_matched`: code first,
+    # spec search only when no code matched), so the response stays byte-identical to
+    # the same request without `require`.
+    if payload.require and not _code_matched(result, payload.tokens):
         from app.services.product_predicate_service import (
             recover_certificate_scheme,
             resolve_product_set,
@@ -2669,6 +2849,30 @@ def resolve_reference_post(
         # BINDINGS (`specs`) are wanted here; ranking still runs on exactly the
         # free terms the caller sent, unchanged.
         query_text = _strip_predicate_words(payload.query or "", payload.predicate_words)
+
+        # R6 (round 4 on PR #833, "why it match s trap?"): a value the registry does not
+        # know ("t trap") is said back with the ones it does; the set is never counted
+        # with it dropped or read as its nearest neighbour.
+        from app.services.product_spec_search import unknown_spec_values
+
+        unknown = _with_grounded_unknowns(
+            unknown_spec_values(db, " ".join([payload.query or "", *(payload.scope_terms or [])])),
+            payload.unknown_values,
+        )
+        if unknown:
+            result["predicate"] = {
+                "require": payload.require,
+                "qualifying_total": 0,
+                "truncated": False,
+                "unrecognized_terms": [u["said"] for u in unknown],
+                "unknown_values": unknown,
+            }
+            # Fix round 9 on PR #833: the subject without the unknown value, broken down
+            # by that value's key, so the reply lists what the set does come in.
+            members = _unknown_value_members(db, payload, query_text, unknown, current_user)
+            if members:
+                result["predicate"]["members"] = members
+            return _stamp_brand_on_products(db, result)
 
         # R14/AC-1338 (third console pass): a bare `{"certificate": True}`
         # require whose remainder still holds the scheme word (never split
@@ -2734,10 +2938,12 @@ def resolve_reference_post(
             else (None if payload.free_terms else _has_turn_free_terms(payload, result, query_text))
         )
 
-        # E3/AC-1317: the "more" carry pages by 5 off the QUALIFYING ids
-        # themselves, capped at `_SET_PAGE_ID_CAP` (200) - never the ordinary
-        # LOOKUP page size (`payload.limit`, 15), which would leave a
-        # 7-qualifying answer with only the first 5 to page through.
+        # The counted set lists off the QUALIFYING ids themselves, capped at
+        # `_SET_ID_CAP` (200) - never the ordinary LOOKUP page size
+        # (`payload.limit`, 15), which would cut a 40-product set that fits one
+        # message down to 15.
+        # Read BEFORE `_emit_spec_matches` adds the qualifying set to the resolutions.
+        lookup_ids = _collect_lookup_product_ids(result)
         outcome = resolve_product_set(
             db,
             # R14/AC-1338: the PROMOTED require (a bare `true` recovered a
@@ -2748,8 +2954,8 @@ def resolve_reference_post(
             specs=specs,
             free_terms=payload.free_terms,
             scope_terms=scope_terms,
-            limit=max(payload.limit or 0, _SET_PAGE_ID_CAP),
-            product_ids=_collect_lookup_product_ids(result) or None,
+            limit=max(payload.limit or 0, _SET_ID_CAP),
+            product_ids=lookup_ids or None,
             brand=brand,
             # SEC-S1/AC-1334: the promotion leg must see the caller's OWN tier,
             # not only the ordinary entity-resolution filter
@@ -2757,6 +2963,14 @@ def resolve_reference_post(
             # turn's qualifying_total must never count a tier-restricted
             # promotion the contact cannot see.
             access_levels=payload.access_levels,
+            # The stock leg counts only the locations the asking contact's own
+            # stock visibility policy allows, as the stock tool answers them.
+            stock_policy=_stock_policy_for(db, payload) if require.get("stock") else None,
+            # Fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+            # brand, never a silent default. R1's weighted default is off here; a set too
+            # long for one message is broken down by brand instead (`breakdown`).
+            prefer_weighted_brand=False,
+            breakdown_over=payload.set_list_max,
         )
         # One nested block, not top-level scalars: n8n item-mutation chains
         # persist top-level keys across nodes. And never inside `by_entity_type`,
@@ -2777,17 +2991,6 @@ def resolve_reference_post(
         # never the product-type sentence below.
         if "attachment_types_on_file" in outcome:
             result["predicate"]["attachment_types_on_file"] = outcome["attachment_types_on_file"]
-        # F2/AC-1320: nearest class-label suggestions on an unrecognized-term
-        # zero - absent whenever the resolver found none to offer, same
-        # present-only-on-the-relevant-miss convention as `schemes_on_file`.
-        if outcome.get("suggestions"):
-            result["predicate"]["suggestions"] = outcome["suggestions"]
-        # F2/AC-1320 fix round: the last-resort fallback (the catalogue's own
-        # most common class labels) when NOTHING was near enough to offer as a
-        # `suggestions` entry - a distinct key because it carries different
-        # copy ("Try a product type such as ...", never "Did you mean ...?").
-        if outcome.get("common_class_labels"):
-            result["predicate"]["common_class_labels"] = outcome["common_class_labels"]
         # E2/AC-1316: the described set's class label(s), for the set-answer
         # header's noun (`answer.set_noun_for`) - present only when non-empty
         # (AC-1309's own shape-lock test asserts `predicate` carries EXACTLY its
@@ -2799,17 +3002,51 @@ def resolve_reference_post(
         # convention as `schemes_on_file`.
         if outcome.get("certificate_ids"):
             result["predicate"]["certificate_ids"] = outcome["certificate_ids"]
+        # W2/W1 (owner hand test round 2): what the set was identified as, in plain
+        # words, and its brand - present only when there is one to say.
+        if outcome.get("description"):
+            result["predicate"]["description"] = outcome["description"]
+        if outcome.get("brand"):
+            result["predicate"]["brand"] = outcome["brand"]
+            # The brand word IS placed: it scopes the set. Left in `unresolved_tokens`
+            # it closed a Sorento answer with "I could not find sorento."
+            brand_key = str(outcome["brand"]).strip().lower()
+            result["unresolved_tokens"] = [
+                t for t in (result.get("unresolved_tokens") or []) if str(t).strip().lower() != brand_key
+            ]
+        if outcome["qualifying_total"] and scope_terms:
+            # The class words ARE placed too: they described the set the header names.
+            # Owner hand test of rounds 4 to 6 on PR #833, items 5 and 7: "close couple wc"
+            # and "WALL MOUNTED KITCHEN TAP" were read into the header, then the reply
+            # closed with "I could not find close couple wc." A word the reader could
+            # not use stays reported (`unrecognized_terms`).
+            unread = {str(t).strip().lower() for t in outcome.get("unrecognized_terms") or []}
+            placed = {str(t).strip().lower() for t in scope_terms} - unread
+            result["unresolved_tokens"] = [
+                t for t in (result.get("unresolved_tokens") or []) if str(t).strip().lower() not in placed
+            ]
+        if outcome.get("row_labels"):
+            result["predicate"]["row_labels"] = outcome["row_labels"]
+        if outcome.get("other_brands"):
+            result["predicate"]["other_brands"] = outcome["other_brands"]
+        # R4 (round 4): what a zero set looked for and the count in its other values.
+        if outcome.get("near_miss"):
+            result["predicate"]["near_miss"] = outcome["near_miss"]
+        # Fix round 9: a long set's breakdown by the next attribute, and a zero set's
+        # described products without the legs.
+        for key in ("breakdown", "members", "set_brands"):
+            if outcome.get(key):
+                result["predicate"][key] = outcome[key]
+        # W4: what a page of this set replays - the bound specs, the brand and the ids
+        # LOOKUP matched (the other half of the union) - so the page counts the same set.
+        if outcome["qualifying_total"]:
+            result["predicate"]["set_key"] = {
+                "specs": outcome.get("set_specs") or [],
+                "brand": outcome.get("brand"),
+                "brand_default": bool(outcome.get("brand_default")),
+                "product_ids": lookup_ids[:_SET_ID_CAP],
+            }
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")
-        # R30/AC-1355: what this HAS turn's own bindings asked for (`specs`,
-        # class included) - the spec_fallback branch below already stamps
-        # this off `search_specs`' own `asked_for`; a HAS/require turn never
-        # runs that ranker call at all (`filter_specs` reads `specs` and
-        # `scope_terms` directly), so without this the Match line's own
-        # `spec_asked` intersection had nothing to read and stayed silent for
-        # every set answer, whatever its candidates matched.
-        result["spec_asked"] = [{"key": e.get("key"), "value": e.get("value")} for e in specs] + [
-            {"key": "class", "value": label} for label in (outcome.get("class_labels") or [])
-        ]
         # R2 only fires on a genuine HAS answer (qualifying_total > 0): the
         # existing zero-qualifying miss flow names its own candidate codes off
         # these SAME forward matches (F1's pre-existing "Couldn't find a bidet
@@ -2858,6 +3095,19 @@ def resolve_reference_post(
         # cannot change mid-request.
         registry_rows = active_registry(db)
         brands = brand_names(db)
+
+        # R6 (round 4 on PR #833): "any water clost t trap?" listed S trap water closets.
+        # A value the registry does not know is said back (`answer.unknown_values_sentence`),
+        # never searched for as its nearest neighbour, so no spec candidate is offered.
+        from app.services.product_spec_search import unknown_spec_values
+
+        unknown = _with_grounded_unknowns(
+            unknown_spec_values(db, payload.query or "", registry_rows=registry_rows),
+            payload.unknown_values,
+        )
+        if unknown:
+            result["unknown_spec_values"] = unknown
+            return _stamp_brand_on_products(db, result)
 
         # The sentence is ALWAYS read - through the SAME helper the Product
         # Specifications preview page uses, which is why raw text "just works"
@@ -2938,7 +3188,10 @@ def resolve_reference_post(
         if hidden_spec_keys:
             specs = [s for s in specs if s.get("key") not in hidden_spec_keys]
 
-        found = search_specs(db, specs=specs, exclusions=exclusions, free_terms=free_terms)
+        # Fix round 10 on PR #833 (owner, 28 Sep 2026: "for #833 yeah exact only"): the
+        # chatbot (`exact_match`) is listed only products that hold every value asked
+        # for, never the nearest by relevance (`search_specs(exact=True)`).
+        found = search_specs(db, specs=specs, exclusions=exclusions, free_terms=free_terms, exact=payload.exact_match)
         if hidden_spec_keys:
             from app.services.product_spec_rendering import render_spec_sentence
 
@@ -2970,14 +3223,21 @@ def resolve_reference_post(
                         # `render_spec_sentence` reads `{key: {"value": ...}}`;
                         # `filtered_values` is already values-only, so each is
                         # re-wrapped one level to match.
-                        nested = {k: {"value": v} for k, v in filtered_values.items()}
+                        # The brand rides on `specifications` from the product's own
+                        # field (it is not a specification, #1286), so it is handed
+                        # to the renderer beside the values rather than inside them.
+                        nested = {
+                            k: {"value": v}
+                            for k, v in filtered_values.items()
+                            if k != "brand"
+                        }
                         # A None render (nothing left to say) falls back to the
                         # product's own code, never the ORIGINAL summary - an
                         # identifying code is not a leak of what filtering
                         # removed, where the unfiltered sentence would be.
-                        candidate["summary"] = render_spec_sentence(nested) or candidate.get(
-                            "product_code", ""
-                        )
+                        candidate["summary"] = render_spec_sentence(
+                            nested, brand=filtered_values.get("brand")
+                        ) or candidate.get("product_code", "")
                 if isinstance(matched_specs, list):
                     candidate["matched_specs"] = [
                         k for k in matched_specs if k not in hidden_spec_keys

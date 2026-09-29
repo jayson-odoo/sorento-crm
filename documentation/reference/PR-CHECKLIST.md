@@ -2,6 +2,18 @@
 
 Before merging, verify compliance with [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-STANDARDS.md).
 
+## PR body (owner ruling, 24 Sep 2026)
+- [ ] Body carries `Track: small-fix` or `Track: full` near the top, matching the plan's
+      Status line (`PRINCIPLES.md` "Small fix track")
+- [ ] Body carries `Plan created: <ISO timestamp>` (the plan file's first git commit
+      timestamp, or its Status-line date if not yet committed), so lane duration is
+      measurable alongside CI's own PR-open-to-merge time
+- [ ] If `security-reviewer` did not run, the body says so ("security-reviewer: not run,
+      diff outside its surface") - it runs only when the diff touches auth, RBAC, external
+      ingest, uploads or multi-company scoping
+- [ ] `guide-writer` is not expected per lane (retired from the per-lane pipeline, 24 Sep
+      2026 ruling) - Outline updates are on-request or a weekly batch instead
+
 ## CRUD structure
 - [ ] List page has search/filter and "Add/Create" button
 - [ ] Create/edit uses modal by default (dedicated page only when ADR-exempt)
@@ -58,6 +70,17 @@ Before merging, verify compliance with [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-
 - [ ] No feature-explanation prose in the UI
 - [ ] 375px and 1280px screenshots attached
 - [ ] Any new motion honours `prefers-reduced-motion` (`useReducedMotion` from `lib/motion.ts`)
+
+## Who did this (audit actor, `PLAN-unified-identity-26sep.md` section 8.3)
+- [ ] A new "who did this" column is `<verb>_by_user_id`, String FK to `users.id` ON DELETE SET
+      NULL; never a Respond.io agent id, a name or an email
+- [ ] A column written from a portal route also gets `<verb>_by_contact_id` beside it, filled
+      whenever the actor is a contact with no user (such contacts keep using the portal)
+- [ ] An action a contact takes without a user (chatbot turn, WhatsApp ingest) is recorded against
+      the contact and, when the contact has a user, that user too
+- [ ] New request, job or tick entry points stamp the actor through `app.audit_context.stamp_actor`
+      (never a bare contextvar set inside a sync dependency: it is lost at flush); audit screens show
+      `actor_label`, never an id
 
 ## Test cost
 - [ ] New backend tests do not add whole-suite-running slow tests without cause; check the `--durations=30` block in the backend CI logs for the PR ("Backend test suite (Postgres)" and "Backend test suite - SCM (Postgres)") and justify any new entry over ~2s

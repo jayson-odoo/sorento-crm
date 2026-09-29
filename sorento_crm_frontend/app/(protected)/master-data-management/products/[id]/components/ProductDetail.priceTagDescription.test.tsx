@@ -41,6 +41,14 @@ vi.mock('../../hooks/useProducts', () => ({
   useProductPurchaseHistory: () => ({ data: undefined }),
 }));
 
+// The chatbot stock-limits row (PLAN-chatbot-stock-ask-v2-24sep.md S1) needs
+// `useHasPermission`, which needs a NextAuth `<SessionProvider>` this file does not
+// set up - stub the hook at its own module, same idiom as
+// `ProductsList.discontinued.test.tsx`.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => false,
+}));
+
 vi.mock('../../../product-attachments/hooks/useProductAttachments', () => ({
   useProductAttachmentsByProduct: () => ({ data: [] }),
 }));

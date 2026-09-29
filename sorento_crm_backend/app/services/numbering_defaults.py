@@ -58,6 +58,14 @@ CRM_SPO_PREFIX_TEMPLATE = "S-SPO-{year}/{month:02d}-"
 CRM_SPO_NUMBER_DIGITS = 4
 CRM_SPO_RESET_POLICY = "monthly"
 
+#: `NumberingService` doc_type for a cost-price change set's own code (#1288, Lane A):
+#: `CPC-nnnn`, never resetting - contract 1.3's `CPC-0007` is the name people say and search
+#: by, so it does not restart every month the way a document date-series does.
+COST_PRICE_CHANGE_SET_DOC_TYPE = "cost_price_change_set"
+COST_PRICE_CHANGE_SET_PREFIX_TEMPLATE = "CPC-"
+COST_PRICE_CHANGE_SET_NUMBER_DIGITS = 4
+COST_PRICE_CHANGE_SET_RESET_POLICY = "none"
+
 
 _INSERT = text(
     """
@@ -112,6 +120,21 @@ def seed_proforma_invoice_rule(connection, *, company_id: Optional[str] = None) 
             "prefix": PROFORMA_INVOICE_PREFIX_TEMPLATE,
             "digits": PROFORMA_INVOICE_NUMBER_DIGITS,
             "reset": PROFORMA_INVOICE_RESET_POLICY,
+            "company_id": str(company_id) if company_id else None,
+        },
+    )
+
+
+def seed_cost_price_change_set_rule(connection, *, company_id: Optional[str] = None) -> None:
+    """Give the cost-price change-set series to `company_id`, or to every company when it is
+    None. Same shape and same reasoning as `seed_inbound_shipment_draft_rule` above."""
+    connection.execute(
+        _INSERT,
+        {
+            "doc_type": COST_PRICE_CHANGE_SET_DOC_TYPE,
+            "prefix": COST_PRICE_CHANGE_SET_PREFIX_TEMPLATE,
+            "digits": COST_PRICE_CHANGE_SET_NUMBER_DIGITS,
+            "reset": COST_PRICE_CHANGE_SET_RESET_POLICY,
             "company_id": str(company_id) if company_id else None,
         },
     )

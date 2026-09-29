@@ -199,6 +199,14 @@ class DeliveryScheduleVersionResponse(BaseModel):
         0, description="Pages that answered. Below page_count means the read was partial."
     )
     document_url: Optional[str] = None
+    attachment_id: Optional[str] = Field(
+        None,
+        description=(
+            "The schedule file's attachment. The in-app PDF viewer reads its bytes through "
+            "/resource-management/attachments/{id}/download, since document_url is "
+            "cross-origin with no CORS headers."
+        ),
+    )
     schedule_date: Optional[str] = None
     phases: List[SchedulePhaseResponse] = []
     products: List[ScheduleProductResponse] = []

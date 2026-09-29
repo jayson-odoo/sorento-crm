@@ -41,6 +41,7 @@ from app.models.scm import OrderLinkClaim
 from app.services.document_ingest_service import CANCELLED
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
+from app.services.scm import sales_agent_service
 from app.services.scm.demand import is_open_demand
 from app.services.scm.demand_class import DEMAND_CLASSES, class_of
 from app.services.scm.front_planning_engine import BORROW, BUY, RESERVE
@@ -240,22 +241,23 @@ class SalesOrderService:
             raise AppException(404, "Sales agent not found", code="SALES_AGENT_NOT_FOUND")
         return agent
 
-    def list_agents(self, query: Optional[str] = None) -> list[dict]:
+    def list_agents(self, query: Optional[str] = None, scope=None) -> list[dict]:
         """Every active sales agent, for the Agent filter and the detail page's Agent select.
 
         `sales_agents` is a shared master (no `CompanyScopedMixin`, see
-        `app/models/sales_agent.py`) - unscoped, same as `_agent` above and
+        `app/models/sales_agent.py`) - unscoped by default, same as `_agent` above and
         `sales_agent_service.resolve`. `query` is an optional substring match on the code
         or the person label, for the searchable select; omitted, every active row comes
         back (~55 today, comfortably below a page).
+
+        `scope` (a `CompanyScope`, default `None` = unrestricted) is read by
+        `sales_agent_service.list_active`'s `scope_filter`: `None` keeps this route's own
+        historical unscoped behaviour, while a caller that DOES want isolation (the customer
+        form's `/customers/sales-agents-select`, PR #1177 review blocking item 1) passes its
+        own resolved scope so the two selects share ONE query and can never drift about
+        which agents exist.
         """
-        qs = self.db.query(SalesAgent).filter(SalesAgent.is_active.is_(True))
-        if query:
-            like = f"%{query.strip()}%"
-            qs = qs.filter(
-                or_(SalesAgent.sales_agent.ilike(like), SalesAgent.person_label.ilike(like))
-            )
-        rows = qs.order_by(SalesAgent.sales_agent.asc()).all()
+        rows = sales_agent_service.list_active(self.db, query, scope)
         return [
             {
                 "id": a.id,
@@ -1616,6 +1618,14 @@ class SalesOrderService:
                 file_name=None,
             )
             if batch is None:
+                # S1 (`PLAN-esb-change-row-refresh.md`, review round 1): `build_batch` can
+                # supersede an OLDER pending row (a gate-failed change that still differs from
+                # what that row describes) even while returning `None` itself - there is
+                # nothing NEW to keep, but the older row's `applied_state` write is real and
+                # already sitting on this session. Committed here, not left for a later,
+                # unrelated commit to carry - the manual-edit request has no other write
+                # coming after this to flush it.
+                self.db.commit()
                 return None
             # `build_batch` takes no source-kind parameter - its only caller until now was
             # the SO-book upload, which is the column's own `server_default`. Stamp this
@@ -1769,6 +1779,16 @@ class SalesOrderService:
                 line_changes.append((
                     target, old_qty, target.required_date, old_item_code, old_location,
                 ))
+                # S2, `PLAN-esb-change-row-refresh.md`: fetched once, unconditionally, so
+                # every field below that also lives on the mirror line (product on a swap,
+                # qty and required_date always) can follow the core line in the same
+                # transaction - a manual edit otherwise leaves the mirror the board reads
+                # drifting behind the book (AC-7), exactly like an ESB re-push would.
+                mirror_line = (
+                    self.db.query(ProjectSalesOrderLine)
+                    .filter(ProjectSalesOrderLine.core_sales_order_line_id == target.id)
+                    .first()
+                )
                 target.product_id = prod.id
                 if old_item_code != prod.product_code:
                     # R5 (review round, second re-walk): a product change on a MATCHED line
@@ -1776,11 +1796,6 @@ class SalesOrderService:
                     # mirror's own `product_id` too - left alone, the mirror keeps naming
                     # the OLD product forever, disagreeing with the core line it reconciles
                     # to and with the `product_changed` change row this same edit raises.
-                    mirror_line = (
-                        self.db.query(ProjectSalesOrderLine)
-                        .filter(ProjectSalesOrderLine.core_sales_order_line_id == target.id)
-                        .first()
-                    )
                     if mirror_line is not None:
                         mirror_line.product_id = prod.id
                 target.qty_ordered = ln.qty_ordered
@@ -1804,6 +1819,10 @@ class SalesOrderService:
                     target.uom = uom
                 for col, value in money.items():
                     setattr(target, col, value)
+                if mirror_line is not None:
+                    mirror_line.qty = target.qty_ordered
+                    if "required_date" in fields_set:
+                        mirror_line.delivery_date = target.required_date
             else:
                 new_line = SalesOrderLine(
                     sales_order_id=so.id,

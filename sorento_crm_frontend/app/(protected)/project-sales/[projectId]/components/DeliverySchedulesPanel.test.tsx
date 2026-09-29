@@ -242,8 +242,17 @@ describe('DeliverySchedulesPanel', () => {
     const review = await screen.findByRole('link', { name: /^Review$/ });
     expect(review).toHaveAttribute(
       'href',
-      '/project-sales/p1/delivery-schedules/v2',
+      '/project-sales/p1/delivery-schedules/v2?from=%2Fproject-sales%2Fp1%3Ftab%3Dschedules',
     );
+  });
+
+  it('carries the Schedules tab as the review page origin (S2)', async () => {
+    listDeliverySchedules.mockResolvedValue([schedule()]);
+    renderPanel();
+
+    const review = await screen.findByRole('link', { name: /^Review$/ });
+    const params = new URLSearchParams(review.getAttribute('href')?.split('?')[1]);
+    expect(params.get('from')).toBe('/project-sales/p1?tab=schedules');
   });
 
   it('hides every write affordance on a project the user cannot edit', async () => {

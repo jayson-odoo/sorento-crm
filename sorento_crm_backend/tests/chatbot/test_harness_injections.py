@@ -352,3 +352,127 @@ class TestHarnessInjectionsG8:
             "previous_conversation_state",
             "referenced_result_set",
         ]
+
+
+# --------------------------------------------------------------------------- #
+# Fix 3 (PLAN-chatbot-order-status-all-orders-23sep.md, console contact 437264483,
+# turns 20:41:40 / 20:41:51 +09, 23 Sep 2026). `_inject_harness_session` wrote the
+# harness `previous_conversation_state` into `session_vars["variables"]` only, never
+# touching the stored row's own top-level `focus`/`open_question`/etc -
+# `session_state.five_keys` returns the STORED top-level keys the moment ANY of them
+# is present and never looks at `variables` in that case, so injection silently did
+# nothing for any contact whose stored row was already in the new five-key shape
+# (every contact since #952): a `customer_pick` the console showed one turn earlier
+# was invisible, and a numbered reply resolved against the contact's REAL stored
+# question instead.
+# --------------------------------------------------------------------------- #
+
+
+class TestFix3HarnessFiveKeyStateReplacesTheStoredFiveKeys:
+    """Unit-level on `_inject_harness_session` + `turn_runtime.load_state`, the same
+    two functions a real turn calls in sequence (`engine.py` ~1205 then ~1218)."""
+
+    #: A stored row already in the NEW five-key shape - the case injection used to be
+    #: unable to override at all.
+    STORED_SESSION_VARS: dict[str, Any] = {
+        "focus": {
+            "customers": [{"uuid": "zzt-stored-customer", "canonical_code": "ZZTSTORED"}],
+        },
+        "open_question": {
+            "kind": "outstanding_detail",
+            "options": [],
+            "expects": None,
+            "team": None,
+            "asked_at_turn": 3,
+            "payload": {},
+        },
+        "ideation": None,
+        "access_levels": [],
+        "contains_flyer": False,
+    }
+
+    def _session_block(self) -> dict[str, Any]:
+        return {"respond_io_id": "zzt-fix3", "session_vars": dict(self.STORED_SESSION_VARS)}
+
+    def test_ac_1868_harness_five_key_state_replaces_the_stored_five_keys(self) -> None:
+        """The measured defect: the stored row has an open `outstanding_detail`
+        question and a stored customer; the harness names a DIFFERENT customer and a
+        `customer_pick` question. Before the fix, `load_state` still returned the
+        stored `outstanding_detail` pending and the stored customer - RED."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.state import Profile
+
+        harness_state = {
+            "focus": {
+                "customers": [{"uuid": "zzt-harness-customer", "canonical_code": "ZZTHARNESS"}],
+            },
+            "open_question": {
+                "kind": "customer_pick",
+                "options": [
+                    {"position": 1, "label": "Customer A", "entity_type": "customer"},
+                    {"position": 2, "label": "Customer B", "entity_type": "customer"},
+                ],
+                "expects": "pick",
+                "team": None,
+                "asked_at_turn": 5,
+                "payload": {},
+            },
+        }
+        envelope = _envelope(is_test=True, previous_conversation_state=harness_state)
+
+        injected = engine_mod._inject_harness_session(self._session_block(), envelope)
+        state = turn_runtime.load_state(injected, profile=Profile(), turn_no=1)
+
+        assert state.pending is not None and state.pending.kind == "customer_pick", (
+            f"the harness question must win over the stored outstanding_detail one: {state.pending}"
+        )
+        assert [o.get("label") for o in state.pending.options] == ["Customer A", "Customer B"]
+        assert [c.get("uuid") for c in state.focus.customers] == ["zzt-harness-customer"], (
+            "the harness focus customer must win over the stored one"
+        )
+
+    def test_ac_1869_empty_harness_state_erases_the_stored_five_keys_for_the_turn(self) -> None:
+        """`{}` is membership, not truthiness (`_harness_keys_present`'s own rule): the
+        harness is saying "this contact remembers nothing", not "I said nothing"."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.state import Profile
+
+        envelope = _envelope(is_test=True, previous_conversation_state={})
+
+        injected = engine_mod._inject_harness_session(self._session_block(), envelope)
+        state = turn_runtime.load_state(injected, profile=Profile(), turn_no=1)
+
+        assert state.pending is None, "an empty harness state remembers no open question"
+        assert state.focus.customers == [], "an empty harness state remembers no focus"
+
+    def test_ac_1870_legacy_flat_harness_shape_still_projects_through_variables(self) -> None:
+        """The legacy flat shape (`contracts.LegacyVariables`, no five-key names) keeps
+        today's behaviour - it lands in `variables` - but the stored top-level five
+        keys must be stripped so `session_state.five_keys` falls through to the
+        legacy projection instead of returning the stored ones untouched."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.state import Profile
+
+        legacy_state = {
+            "pending": {"kind": "escalation_offer", "team": "customer_service", "ttl": 2},
+            "domain_hint": "order",
+        }
+        envelope = _envelope(is_test=True, previous_conversation_state=legacy_state)
+
+        injected = engine_mod._inject_harness_session(self._session_block(), envelope)
+
+        assert injected["session_vars"]["variables"] == legacy_state, (
+            "unchanged behaviour: a legacy flat shape still lands in `variables`"
+        )
+        assert "focus" not in injected["session_vars"], (
+            "the stored top-level five keys must be stripped so `five_keys` falls "
+            "through to the legacy projection instead of leaking the stored ones"
+        )
+
+        state = turn_runtime.load_state(injected, profile=Profile(), turn_no=1)
+        assert state.pending is not None and state.pending.kind == "team_pick", (
+            f"the legacy nest's own projection must win, not the stored outstanding_detail: {state.pending}"
+        )
+        assert state.focus.customers == [], (
+            "the stored customer must not leak through a legacy-shaped harness value"
+        )

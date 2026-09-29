@@ -25,6 +25,7 @@ import {
   movedNoteOf,
   previousValueOf,
 } from '../../_shared/lib/orderInquiryAck';
+import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { OrderInquiryVerbPill, ReservePill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   bundledHeadline,
@@ -35,12 +36,14 @@ import {
   orderInquiryRowHref,
   orderInquirySoLineHref,
   orderInquirySoLineLabel,
+  raisedKindLabel,
 } from '../../_shared/lib/orderInquiryWorklist';
 import type {
   OrderInquiryLinkSuggestion,
   OrderInquiryWorklistRow,
 } from '../../_shared/types/orderInquiry.types';
 import { OrderInquiryBackingDocumentsDialog } from './OrderInquiryBackingDocumentsDialog';
+import { OrderInquiryDocumentLink } from './OrderInquiryDocumentDialog';
 import { OrderInquiryQtyAnnotationDialog } from './OrderInquiryQtyAnnotationDialog';
 
 function Muted({ children }: { children: React.ReactNode }) {
@@ -52,7 +55,7 @@ function Muted({ children }: { children: React.ReactNode }) {
  * applies and wins. The order inquiry number stays on the header, the email and the URL -
  * purchasing does not need it as a worklist column any more.
  */
-export const DEFAULT_HIDDEN_COLUMNS: string[] = ['inquiry_no'];
+export const DEFAULT_HIDDEN_COLUMNS: string[] = ['inquiry_no', 'raise_event'];
 
 /**
  * REV design (17 Sep review round): the row's own one-word marks - `via PO`/`via SPO`,
@@ -62,7 +65,7 @@ export const DEFAULT_HIDDEN_COLUMNS: string[] = ['inquiry_no'];
  * idiom the `+N` pill beside them already used (`size="sm" appearance="light" asChild`);
  * `warning` is the design system's own token for the amber marks, never a literal one.
  */
-function WorklistPill({
+export function WorklistPill({
   as = 'span',
   warning = false,
   testId,
@@ -150,9 +153,18 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
  * Written nowhere: no link is created for either, so `via` never appears outside these
  * two columns.
  */
-interface DocumentEntry {
+export interface DocumentEntry {
   document: string;
   via: 'po' | 'spo' | null;
+  /**
+   * R17 (owner rulings, 25 Sep 2026): addresses the PO lightbox for a `kind: 'po'`
+   * entry - the real link's own `po_id`, or, for a `via: 'spo'` derived entry, the
+   * source PO id resolved through the SPO allocation's own supply PO line
+   * (`purchase_order_id`). Null when neither resolves (an SPO allocation with no
+   * supply PO line, whose PO the Lines tab / worklist then look up by number
+   * instead). Never set for a `kind: 'spo'` entry - there is no PO to address there.
+   */
+  poId: string | null;
   /**
    * The FIRST link naming this document is fully received (S1,
    * `PLAN-oi-replan-received-links.md`, AC-RL-02) - goods that have landed, not a promise
@@ -174,17 +186,24 @@ interface DocumentEntry {
   suggestion: OrderInquiryLinkSuggestion | null;
 }
 
-function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
+export function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
   const entries: DocumentEntry[] = [];
   const seen = new Set<string>();
   for (const link of row.links ?? []) {
     let named: string | null = null;
     let via: 'po' | 'spo' | null = null;
+    let poId: string | null = null;
     if (kind === 'po') {
-      if (link.kind === 'po') named = link.document;
-      else if (link.kind === 'spo' && link.source_po_number) {
+      if (link.kind === 'po') {
+        named = link.document;
+        poId = link.po_id ?? null;
+      } else if (link.kind === 'spo' && link.source_po_number) {
         named = link.source_po_number;
         via = link.derived_po ? 'spo' : null;
+        // R17: the source PO's OWN id, resolved through this SPO allocation's supply
+        // PO line - never guessed here, the Lines tab / worklist fall back to a
+        // number lookup only when this is null.
+        poId = link.purchase_order_id ?? null;
       }
     } else if (link.kind === 'spo') {
       named = link.document;
@@ -196,6 +215,7 @@ function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): Document
     entries.push({
       document,
       via,
+      poId,
       received: Boolean(link.received),
       receivedQty: link.received_qty ?? null,
       qty: link.qty ?? null,
@@ -438,6 +458,64 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
       ) : null}
     </span>
   );
+}
+
+/**
+ * The Suggested column (`PLAN-oi-links-autocount-truth-24sep.md` section 3.5, AC-LT-01
+ * to 03; R11/R12, owner rulings 24 Sep 2026, superseding the section's original mock):
+ * a document the cascade SUGGESTS for this row - never a real link, never read by the
+ * PO/SPO cells or the State pill above.
+ *
+ * The cell carries the document number ONLY - one per row, a plain `+N` when the row
+ * holds more than one (R11: "don't need to show this, just make sure when i open the
+ * SPO document i can see the line being highlighted"). No kind badge, no location, no
+ * qty, no late marker, and no amber "suggested" word or pill (R12: "the suggested
+ * column is good enough"). Opening the document from this cell opens the SAME
+ * `OrderInquiryDocumentDialog` the PO/SPO cells use, and highlights the suggested line
+ * in the lines grid (`suggestedLineId`) with the same idiom the linked line already
+ * uses (issue #1215 point 2) - both able to show at once. `-` when the row carries none
+ * (AC-LT-03).
+ */
+function SuggestedCell({ row }: { row: OrderInquiryWorklistRow }) {
+  const suggestions = row.suggested_links ?? [];
+  if (suggestions.length === 0) return <Muted>-</Muted>;
+  const [first, ...rest] = suggestions;
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <OrderInquiryDocumentLink
+        kind={first.kind}
+        document={first.document}
+        poId={first.po_id}
+        suggestedLineId={first.kind === 'po' ? first.po_line_id : first.spo_allocation_id}
+      />
+      {rest.length ? (
+        <Badge asChild size="sm" variant="secondary" appearance="light">
+          <span
+            data-testid={`suggested-pill-${row.id}`}
+            className="shrink-0 tabular-nums"
+            // Nit 1 (review round 2): the cell shows one document (R11); the rest
+            // are a hover away rather than hidden entirely.
+            title={rest.map((suggestion) => suggestion.document).join(', ')}
+          >
+            +{rest.length}
+          </span>
+        </Badge>
+      ) : null}
+    </span>
+  );
+}
+
+/** The Suggested column def, shared between the worklist and the OI detail Lines tab
+ * (AC-LT-07) - same reasons `orderInquirySoLineColumn` is factored out below. */
+export function orderInquirySuggestedColumn(): ColumnDef<OrderInquiryWorklistRow> {
+  return {
+    id: 'suggested',
+    accessorFn: (row) => row.suggested_links?.[0]?.document ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="Suggested" column={column} />,
+    size: 220,
+    meta: { headerTitle: 'Suggested', skeleton: <Skeleton className="h-4 w-24" /> },
+    cell: ({ row }) => <SuggestedCell row={row.original} />,
+  };
 }
 
 /**
@@ -834,6 +912,31 @@ export function InstructionCell({ row }: { row: OrderInquiryWorklistRow }) {
 }
 
 /**
+ * AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): `<Kind> by <name> · <date time>`, or the
+ * bare kind word when the server matched no event (`Sheet` / `Planning change`, which
+ * carry no `raise_event_by_name`/`raise_event_at`), or a dash when nothing at all is
+ * known about how the row was raised. Shared with the Lines tab
+ * (`orderInquiryHeaderLinesColumns.tsx`) so the same row reads the same way there.
+ */
+export function RaisedCell({ row }: { row: OrderInquiryWorklistRow }) {
+  const kind = raisedKindLabel(row);
+  if (!kind) return <Muted>-</Muted>;
+  // A sheet row reads the bare word: whatever event the window matched, nobody in this
+  // system raised it, and a name or a time beside "Sheet" would say somebody did.
+  const text =
+    kind === 'Sheet'
+      ? kind
+      : `${kind}${row.raise_event_by_name ? ` by ${row.raise_event_by_name}` : ''}${
+          row.raise_event_at ? ` · ${formatDateTimeInMalaysia(row.raise_event_at)}` : ''
+        }`;
+  return (
+    <span className="block truncate" title={text}>
+      {text}
+    </span>
+  );
+}
+
+/**
  * The worklist's columns, in the spreadsheet's own order (`JAN - DEC 2026 ORDER.xlsx`).
  *
  * Shared between the main list and the calendar's day drilldown, so a person reading
@@ -1093,6 +1196,9 @@ export function useOrderInquiryWorklistColumns({
           return <DocumentsCell row={row.original} kind="spo" />;
         },
       },
+      // AC-LT-01 to 03/08: the Suggested column, right after SPO - never merged into the
+      // PO/SPO cells above, which read real links only.
+      orderInquirySuggestedColumn(),
       {
         accessorKey: 'agent_code',
         header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
@@ -1173,8 +1279,38 @@ export function useOrderInquiryWorklistColumns({
               reserveState={row.original.reserve_state}
               reservedQty={row.original.reserved_qty}
             />
+            {/* AC-DT-5 (`PLAN-oi-decision-trail-ui.md`, round 2): the decision trail
+                icon, beside the row's own state-ish marks - there is no separate "State"
+                column on this worklist (the Lines tab has one; see the note there), so
+                this is where a state-like pill already sits. On EVERY row, not only a
+                reserved one: `DecisionTrailButton` itself hides when the row names no
+                core sales-order line at all. */}
+            <DecisionTrailButton
+              coreLineId={row.original.core_line_id ?? null}
+              itemCode={row.original.item_code}
+              className="size-5 shrink-0 text-muted-foreground"
+            />
           </div>
         ),
+      },
+      {
+        // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the trail behind the instruction -
+        // Raised, Reconfirmed, Sheet or Planning change, by whom, when. Hidden by
+        // default here (`DEFAULT_HIDDEN_COLUMNS`); the OI detail Lines tab hides it by
+        // default too now (round 2 ruling - column preferences still let it on either
+        // screen). Unsortable: it is a derived, per-row match against
+        // `order_inquiry_raises`, not a plain column. `accessorFn` is what the column
+        // picker itself keys "can this be listed" on (`data-grid-column-visibility.tsx`),
+        // so a bare `id` + `cell` (round 1's own shape) made this column impossible to
+        // ever turn back on. "Raised via", not "Raised": the "Raised by" column sits
+        // right beside this one (captain ruling, review round 1).
+        id: 'raise_event',
+        accessorFn: (row) => raisedKindLabel(row) ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Raised via" column={column} />,
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Raised via', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => <RaisedCell row={row.original} />,
       },
       {
         // WHO pushed this to purchasing. Sorted server-side on the person's name, which

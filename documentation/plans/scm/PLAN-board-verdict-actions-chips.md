@@ -33,7 +33,9 @@ Branch `feat/board-verdict-actions-chips`, worktree `sorento_crm-board-verdict-a
 
 - R1 (default, 22 Sep): chip is a word (`OI` / `PO` / `SPO`), number in the tooltip.
 - R2 (default): Accept on Change proposed = `suggestedDecisionFor`, what Confirm writes.
-- R3 (default): Confirmed line gets Change decision only.
+- R3 (default): Confirmed line gets Change decision only. Superseded 22 Sep 2026 by
+  `PLAN-board-reject-on-confirmed-line.md` R3(b): a confirmed line now also shows Reject,
+  which takes the line out of the confirmation and records the rejection.
 - R4 (owner "go", 22 Sep): lane opens now off origin/main. The sibling lane
   `fix/board-options-collapsible-reject-feedback` (uncommitted, touches
   `BoardLineDecisionPanel` + `FulfilmentBoardPanel.decide` toast) is NOT touched here; this

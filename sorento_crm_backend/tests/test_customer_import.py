@@ -119,7 +119,7 @@ def _hostile_aliases(session) -> None:
                 """
                 INSERT INTO import_field_alias (doc_type, field, alias, locale)
                 VALUES ('customer', :f, :a, NULL)
-                ON CONFLICT (doc_type, field, alias) DO NOTHING
+                ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING
                 """
             ),
             {"f": field, "a": alias},
@@ -535,7 +535,7 @@ def test_customer_type_is_written_on_insert_only():
             text(
                 "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
                 "VALUES ('customer', 'customer_type', 'Debtor Type', NULL) "
-                "ON CONFLICT (doc_type, field, alias) DO NOTHING"
+                "ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING"
             )
         )
         session.flush()

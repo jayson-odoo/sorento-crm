@@ -757,6 +757,62 @@ describe('useLineDraftMutation', () => {
     expect(patched.contributions[1]).toBe(otherContribution);
   });
 
+  /**
+   * REWORKED (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`, hand-test
+   * feedback: "we should confirm the rejection"): a reject on a COVERED line used to reach
+   * `uncover_lines` on the server at save time (S3, fix round 3), which needed the wider
+   * invalidation this test used to pin. It is a STAGED draft now, same as any other verdict
+   * - nothing about the active confirmation moves until Confirm actually withdraws it - so a
+   * reject save behaves identically whether the line is covered or not: the plain cache
+   * patch is the whole story, same as `useConfirmManyMutation`'s own D16 note above.
+   */
+  it('a rejected save on a COVERED line stays the plain cache patch - nothing invalidated (D16)', async () => {
+    const saved = {
+      decision: { verdict: 'rejected' as const, reason: 'wrong site' },
+      saved_by: 'Eling',
+      saved_at: '2026-09-03T01:00:00',
+      stale: false,
+    };
+    putLineDraft.mockResolvedValue(saved);
+
+    client.setQueryDefaults([PLANNING_BOARD_KEY], { gcTime: Infinity });
+    client.setQueryData(
+      [PLANNING_BOARD_KEY, 'so-a'],
+      board({ contributions: [contribution({ covered: true })] }),
+    );
+
+    const api = await drafts();
+    await api.save(KEY, { verdict: 'rejected', reason: 'wrong site' });
+
+    expect(invalidated).toEqual([]);
+    // The cache patch still ran - Rejected reads back immediately.
+    const patched = client.getQueryData<PlanningBoard>([PLANNING_BOARD_KEY, 'so-a'])!;
+    expect(patched.contributions[0].draft).toEqual(saved);
+  });
+
+  it('a rejected save on an UNCOVERED line is the same plain cache patch', async () => {
+    const saved = {
+      decision: { verdict: 'rejected' as const, reason: 'wrong site' },
+      saved_by: 'Eling',
+      saved_at: '2026-09-03T01:00:00',
+      stale: false,
+    };
+    putLineDraft.mockResolvedValue(saved);
+
+    client.setQueryDefaults([PLANNING_BOARD_KEY], { gcTime: Infinity });
+    client.setQueryData(
+      [PLANNING_BOARD_KEY, 'so-a'],
+      board({ contributions: [contribution({ covered: false })] }),
+    );
+
+    const api = await drafts();
+    await api.save(KEY, { verdict: 'rejected', reason: 'wrong site' });
+
+    expect(invalidated).toEqual([]);
+    const patched = client.getQueryData<PlanningBoard>([PLANNING_BOARD_KEY, 'so-a'])!;
+    expect(patched.contributions[0].draft).toEqual(saved);
+  });
+
   it('undoes by key: patches the draft to null, and invalidates nothing (D16)', async () => {
     deleteLineDraft.mockResolvedValue(undefined);
 

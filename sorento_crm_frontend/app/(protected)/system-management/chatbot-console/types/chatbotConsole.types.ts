@@ -27,6 +27,9 @@ export interface ConsoleTraceSummary {
   args_short: Record<string, unknown> | null;
   crossdomain_rungs: string[];
   reveals_dropped: string[];
+  /** An escalation turn's draw in one line (team, brand, source, assignee); null on
+   * every other turn. Optional: an older backend does not send it. */
+  routing_line?: string | null;
 }
 
 export interface ConsoleTurnResponse {
@@ -84,6 +87,8 @@ export interface ChatbotConsoleMessage {
   /** Item 6: the parser prompt version the turn ran - the small "v18" pill on a bot
    * bubble. Absent/null = no pill. */
   promptVersion?: number | null;
+  /** Only the FIRST bot bubble of an escalation turn carries this: where it went. */
+  routingLine?: string | null;
   /** Only the LAST bot bubble of a turn carries these - chips send that text on click. */
   quickReplies?: string[];
   /** Media status/preview, wired in commit 2. */

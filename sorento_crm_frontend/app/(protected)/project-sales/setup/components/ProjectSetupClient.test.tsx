@@ -137,7 +137,9 @@ describe('ProjectSetupClient', () => {
     expect(listingKeys).not.toContain('/project-sales/setup');
   });
 
-  it('says what a type is when there are none, and offers the first one', async () => {
+  // #1335: one CTA per list. The toolbar's "Add type" is the only Add; the empty
+  // state keeps its heading and hint, and the page carries no subtitle.
+  it('says what a type is when there are none, and offers Add only in the toolbar', async () => {
     renderClient();
 
     expect(await screen.findByText('No project types yet')).toBeInTheDocument();
@@ -145,8 +147,15 @@ describe('ProjectSetupClient', () => {
       screen.getByText(/A type is the kind of job: property development, hotel, fitout/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Add the first type' }),
-    ).toBeInTheDocument();
+      screen.queryByRole('button', { name: 'Add the first type' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /add .*type/i })).toHaveLength(1);
+    expect(
+      screen.queryByText(/what a new one starts with/i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add type' }));
+    expect(await screen.findByText('Add a project type')).toBeInTheDocument();
   });
 
   it('asks for a type before it can show templates', async () => {

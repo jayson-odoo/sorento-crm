@@ -176,6 +176,19 @@ describe('ImportFieldAliasesList - Stock list words doc type (AC-F1)', () => {
     expect(await screen.findByRole('option', { name: 'Stock list words' })).toBeInTheDocument();
   });
 
+  // AC-M15 (import column mapper, gap found by the guide-writer): the inline mapper's own
+  // "supplier_inventory" doc type had no entry here at all, so a stock-list layout saved
+  // through the mapper - including an "Ignore" row - could never be reviewed or deleted on
+  // this admin page.
+  it('offers "Stock list" in the document type select', async () => {
+    renderList();
+    await screen.findByText('Item code');
+
+    fireEvent.click(screen.getByLabelText('Document type'));
+
+    expect(await screen.findByRole('option', { name: 'Stock list' })).toBeInTheDocument();
+  });
+
   it('shows the supplier name beside a supplier-scoped word, and blank for a shared one', async () => {
     listImportFieldAliases.mockReset().mockImplementation((docType: string) => {
       if (docType === 'supplier_inventory_word') {

@@ -164,6 +164,13 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
             # `tools[0]` - the pick is an override in
             # `lanes/business/__init__.py::run_fetch`, beside the outstanding one.
             "crm_sales_report",
+            # PLAN-chatbot-top-x-hot-selling-24sep.md S3 (AC-1941): same rule, an
+            # allow-list member only; migration `chatbot_top_selling_tool`.
+            "crm_top_selling_report",
+            # PLAN-retail-sales-reports-26sep S1: an allow-list member only, picked by
+            # the `sales_analysis` override in `run_fetch`, never `tools[0]`. Migration
+            # `sales_s1_reports_module` adds it to a seeded database.
+            "crm_sales_analysis",
         ],
         escalation_team_code="customer_service",
         switch_words=[
@@ -335,6 +342,8 @@ DATE_PARAM_TOOLS: set[str] = {
     "crm_outstanding_report",
     "crm_sales_report",
     "crm_low_stock_report",
+    "crm_top_selling_report",
+    "crm_sales_analysis",
 }
 
 # --------------------------------------------------------------------------- #
@@ -358,6 +367,17 @@ PRODUCT_BASE_PROPERTY_WORDS: dict[str, str] = {
     "discontinued": "is_discontinued",
     "brand": "brand_id",
 }
+
+SPECIFICATION_KIND_ROW: dict[str, Any] = dict(
+    kind="specification",
+    label="Specification",
+    resolver_source="product_spec_registry",
+    did_you_mean=False,
+    default_narrowing="optional_filter",
+    family_grouping=None,
+    base_property_words={},
+    roster_cap=10,
+)
 
 DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
     dict(
@@ -479,7 +499,9 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         family_grouping=None,
         base_property_words={},
         roster_cap=10,
-    ),
+    ),    # Fix round 8 on PR #833 (migration `spk_0001_specification_kind`): a product
+    # property, grounded against the specification registry after the parse.
+    SPECIFICATION_KIND_ROW,
 ]
 
 # `DEFAULT_TIER_ORDER` used to live here (AC-1502). Gone (AC-1594, S6): the one literal is

@@ -98,6 +98,9 @@ class ProductComboPart(Base):
     """
 
     __tablename__ = "product_combo_parts"
+    # The combo owns the part: history and company follow the combo's host, not the part
+    # product (audit review N-a at cba2b754).
+    __audit_parent__ = "combo_id"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     combo_id = Column(

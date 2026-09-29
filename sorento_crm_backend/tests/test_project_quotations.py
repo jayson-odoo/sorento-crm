@@ -716,7 +716,6 @@ def test_editing_a_line_leaves_an_audit_trail():
     does it: the global listener is registered at app startup, which a unit test does not
     run, and registering it here would put audit side effects on every other test's flush.
     """
-    from app.models.audit import AuditLog
     from app.services import audit_service
     from app.services import project_quotation_service as quotes
 
@@ -744,13 +743,14 @@ def test_editing_a_line_leaves_an_audit_trail():
         line.notes = "Agreed with the QS on site"
         audit_service._session_before_flush(db, None, None)
 
+        # The hook builds its rows for after_flush's savepointed INSERT (best-effort capture,
+        # owner ruling 28 Sep 2026) rather than adding them to the business flush.
         rows = [
-            obj
-            for obj in db.new
-            if isinstance(obj, AuditLog)
-            and obj.entity_type == "project_quotation_lines"
-            and obj.entity_id == line.id
-            and obj.action == "UPDATE"
+            row
+            for row in db.info.get("audit_rows") or []
+            if row["entity_type"] == "project_quotation_lines"
+            and row["entity_id"] == line.id
+            and row["action"] == "UPDATE"
         ]
         assert rows, "a line edit wrote no audit entry"
 
@@ -758,7 +758,6 @@ def test_editing_a_line_leaves_an_audit_trail():
 def test_changing_a_price_floor_leaves_an_audit_trail():
     """A floor is a policy somebody set, and a breach report is only arguable if who
     changed the policy and when is recoverable."""
-    from app.models.audit import AuditLog
     from app.services import audit_service
 
     with blank_session() as db:
@@ -770,10 +769,8 @@ def test_changing_a_price_floor_leaves_an_audit_trail():
         audit_service._session_before_flush(db, None, None)
 
         rows = [
-            obj
-            for obj in db.new
-            if isinstance(obj, AuditLog)
-            and obj.entity_type == "price_floor_rules"
-            and obj.entity_id == rule.id
+            row
+            for row in db.info.get("audit_rows") or []
+            if row["entity_type"] == "price_floor_rules" and row["entity_id"] == rule.id
         ]
         assert rows, "a price floor change wrote no audit entry"

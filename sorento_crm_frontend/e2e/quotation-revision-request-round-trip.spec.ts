@@ -201,7 +201,7 @@ test.describe('Quotation revision request round trip', () => {
         '/signatures',
       );
       const tabStrip = page.getByTestId('quotation-document-tab-strip');
-      await expect(tabStrip.getByRole('tab', { name: /^scopes$/i })).toHaveAttribute(
+      await expect(tabStrip.getByRole('tab', { name: /^header$/i })).toHaveAttribute(
         'data-state',
         'active',
       );

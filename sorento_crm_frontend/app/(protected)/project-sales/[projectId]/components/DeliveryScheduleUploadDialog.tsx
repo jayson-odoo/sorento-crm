@@ -17,11 +17,15 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { toast } from '@/lib/toast';
-import { listParties } from '../../_shared/services/projectService';
+import { listEditableProjectOptions, listParties } from '../../_shared/services/projectService';
 import { usePurchaseOrders } from '../../_shared/hooks/useProjects';
-import { useDeliveryScheduleMutations } from '../../_shared/hooks/useDeliverySchedules';
+import {
+  useDeliveryScheduleMutations,
+  useDeliverySchedules,
+} from '../../_shared/hooks/useDeliverySchedules';
 import type { DeliverySchedule } from '../../_shared/types/deliverySchedule.types';
 import type { Project } from '../../_shared/types/project.types';
+import { pipelineOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
 
 const ACCEPTED = '.pdf,.jpg,.jpeg,.png';
 
@@ -31,19 +35,41 @@ const ACCEPTED = '.pdf,.jpg,.jpeg,.png';
  * The PO is asked for because the PO version is what the column totals are reconciled
  * AGAINST, and the issuer is asked rather than assumed: on the client's own documents R2 was
  * issued by a different company than the one that raised the PO.
+ *
+ * `project` is omitted when this opens from the page-level Start menu (S2), which is not
+ * scoped to a row: the project field renders first, and once one is picked this fetches that
+ * project's own schedules to feed "Revision of" instead of relying on a `schedules` prop the
+ * caller cannot supply yet. That same absence is what names the review page's origin (S4):
+ * Start always returns to the Pipeline list (`pipelineListQuery` is the grid's own list
+ * state), a fixed `project` call site names its own origin instead (`originHref`) or omits
+ * one to stay put.
  */
 export function DeliveryScheduleUploadDialog({
   project,
   schedules,
   onDone,
+  originHref,
+  pipelineListQuery,
 }: {
-  project: Project;
-  schedules: DeliverySchedule[];
+  project?: Project;
+  schedules?: DeliverySchedule[];
   onDone: () => void;
+  originHref?: string;
+  pipelineListQuery?: string;
 }) {
   const router = useRouter();
-  const purchaseOrders = usePurchaseOrders(project.id);
-  const { upload } = useDeliveryScheduleMutations(project.id);
+  const [pickedProjectId, setPickedProjectId] = React.useState('');
+  const needsProjectField = !project;
+  const effectiveProjectId = project?.id ?? pickedProjectId;
+  const purchaseOrders = usePurchaseOrders(effectiveProjectId || undefined);
+  const { upload } = useDeliveryScheduleMutations(effectiveProjectId);
+  const fetchedSchedules = useDeliverySchedules(
+    schedules ? undefined : effectiveProjectId || undefined,
+  );
+  const scheduleRows = React.useMemo(
+    () => schedules ?? fetchedSchedules.data ?? [],
+    [schedules, fetchedSchedules.data],
+  );
 
   const [poId, setPoId] = React.useState('');
   const [scheduleId, setScheduleId] = React.useState('');
@@ -53,14 +79,20 @@ export function DeliveryScheduleUploadDialog({
 
   const poRows = React.useMemo(() => purchaseOrders.data ?? [], [purchaseOrders.data]);
 
+  // Changing the project (from the page-level Start picker) invalidates a PO chosen under
+  // the previous one, same as changing the PO invalidates its schedule below.
+  React.useEffect(() => {
+    setPoId('');
+  }, [effectiveProjectId]);
+
   // One PO is the normal case, so pick it rather than making the user confirm the obvious.
   React.useEffect(() => {
     if (!poId && poRows.length === 1) setPoId(poRows[0].id);
   }, [poId, poRows]);
 
   const existingForPo = React.useMemo(
-    () => schedules.filter((schedule) => schedule.purchase_order_id === poId),
-    [schedules, poId],
+    () => scheduleRows.filter((schedule) => schedule.purchase_order_id === poId),
+    [scheduleRows, poId],
   );
 
   // Changing the PO invalidates a schedule chosen under the previous one.
@@ -79,7 +111,7 @@ export function DeliveryScheduleUploadDialog({
     }));
   }, []);
 
-  const blocked = !poId || !file || upload.isPending;
+  const blocked = !effectiveProjectId || !poId || !file || upload.isPending;
 
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
@@ -94,7 +126,7 @@ export function DeliveryScheduleUploadDialog({
         <form
           onSubmit={async (event) => {
             event.preventDefault();
-            if (!file || !poId) return;
+            if (!file || !poId || !effectiveProjectId) return;
             // mutateAsync rethrows, and the toast is already shown by the mutation's own
             // onError - an uncaught rethrow here would only surface as an unhandled
             // rejection in the browser (e.g. on the duplicate-upload 409).
@@ -113,12 +145,35 @@ export function DeliveryScheduleUploadDialog({
               return;
             }
             onDone();
+            const origin = needsProjectField
+              ? pipelineOriginHref(pipelineListQuery, effectiveProjectId)
+              : originHref;
             router.push(
-              `/project-sales/${project.id}/delivery-schedules/${result.schedule_version_id}`,
+              withReviewOrigin(
+                `/project-sales/${effectiveProjectId}/delivery-schedules/${result.schedule_version_id}`,
+                origin,
+              ),
             );
           }}
         >
           <DialogBody className="max-h-[65vh] space-y-4 overflow-y-auto">
+            {needsProjectField && (
+              <div className="space-y-1.5">
+                <Label htmlFor="schedule-project">
+                  Project <span className="text-destructive">*</span>
+                </Label>
+                <SearchableSelect
+                  id="schedule-project"
+                  value={pickedProjectId}
+                  onChange={setPickedProjectId}
+                  clearable
+                  fetchOptions={listEditableProjectOptions}
+                  placeholder="Search a project"
+                  emptyMessage="No projects match"
+                />
+              </div>
+            )}
+
             <div className="space-y-1.5">
               <Label htmlFor="schedule-po">
                 Purchase order <span className="text-destructive">*</span>
@@ -127,12 +182,13 @@ export function DeliveryScheduleUploadDialog({
                 id="schedule-po"
                 value={poId}
                 onChange={setPoId}
+                disabled={!effectiveProjectId}
                 options={poRows.map((po) => ({
                   value: po.id,
                   label: po.po_number,
                   description: po.issuing_party_name ?? undefined,
                 }))}
-                placeholder="Which PO is this schedule for"
+                placeholder={effectiveProjectId ? 'Which PO is this schedule for' : 'Pick a project first'}
                 emptyMessage="No purchase orders on this project"
               />
             </div>

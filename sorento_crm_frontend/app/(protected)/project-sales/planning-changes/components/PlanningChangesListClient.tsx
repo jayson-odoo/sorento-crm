@@ -219,13 +219,7 @@ export function PlanningChangesListClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        title="Planning changes"
-      >
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Every re-uploaded sales order book that moved a planned line.
-        </p>
-      </PageHeader>
+      <PageHeader title="Planning changes" />
 
       <nav
         aria-label="State"

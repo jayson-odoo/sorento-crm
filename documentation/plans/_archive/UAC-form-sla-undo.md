@@ -165,7 +165,9 @@ She never comes to the system for this. She is told.
   the assignee's pending list and is excluded from SLA statistics.
 - **AC-PGE-3** The previous stage tracker is **reopened** - `is_resolved` cleared, assignee
   restored to who held it, clock restarted from the undo moment against the stage's own hours.
-  Its original breach history is preserved, not rewritten.
+  Its original breach history is preserved, not rewritten. Amended by #1326: a stage whose
+  clock was last set by an extension (an `extend` event with no escalation after it) keeps the
+  clock it had immediately before the action, extended deadline included, instead of restarting.
 - **AC-PGE-4** Reopening respects the handling lock: if the reopened stage was escalated
   (`escalated_at` set), it comes back escalated and locked, not silently un-escalated.
 - **AC-PGE-5** Undo of an action that spawned nothing (a terminal resolve with no `next_config_id`)

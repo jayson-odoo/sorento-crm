@@ -197,7 +197,10 @@ def _sponsorship_payload(number: str) -> PurchaseRequestExternalCreate:
         customer_name=f"{MARKER} customer",
         date_of_delivery="2026-09-01",
         requested_by=f"{MARKER} requester",
-        products=[{"item_code": f"{MARKER}-ITEM", "quantity": "3"}],
+        # unit_price is required on every sponsorship line since #1227 - unrelated
+        # to this suite's own concern (the number suffix), so the line just needs
+        # to be valid rather than testing that rule.
+        products=[{"item_code": f"{MARKER}-ITEM", "quantity": "3", "unit_price": "10.00"}],
         contact_id=f"{MARKER}-contact",
         space_id=f"{MARKER}-space",
         user_confirmed=True,

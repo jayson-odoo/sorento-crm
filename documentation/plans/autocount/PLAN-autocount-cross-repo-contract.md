@@ -448,3 +448,127 @@ master entity's adopt branch is unchanged.
 only for `products`: when the reference misses, the code is looked up the same
 case/whitespace-insensitive way adoption does, and proceeds only when the match is unlinked or
 under the same source system - same predicate, same warning.
+
+## 12. billing_documents (contract 2.6)
+
+27 Sep 2026, finance S0 (#1309). Plan: `documentation/plans/finance/PLAN-finance-billing-documents-27sep.md`
+(3.3); UAC `finance-billing-documents-27sep-acceptance-criteria.md` S0. The CRM side is built; the
+shared service's sink is not. This section is the contract of record for it.
+
+**Endpoints.** The existing surface, one new entity, same envelope and verdicts as every other:
+
+| Call | Slug | Body |
+| --- | --- | --- |
+| `POST /api/v1/external/ingest/billing_documents` (`?dry_run=true` optional) | `finance.billing_documents.edit` | `{"companyCode": "SRT", "records": [...]}` |
+| `POST /api/v1/external/ingest/billing_documents/deletions` (`?dry_run=true` optional) | `.edit` and `finance.billing_documents.delete` | `{"companyCode": "SRT", "source_refs": [...]}` |
+| `POST /api/v1/external/read/billing_documents` | `finance.billing_documents.view` | `{"companyCode": "SRT", "source_refs": [...]}` |
+
+`GET /api/v1/external/contract` answers `"version": "2.6"`, lists `billing_documents` in
+`entities`, every record key and every `lines.<key>` under `fields_added.billing_documents`, and
+the rules below under `field_notes.billing_documents`. Batch cap 1000 records (413
+`BATCH_TOO_LARGE` above it); a body without a `records` (or `source_refs`) array is 422
+`INVALID_BODY`; the company anchor is unchanged (422 `COMPANY_ANCHOR_REQUIRED` with no
+`companyCode` and no binding, 422 on an unknown or ambiguous code). The migration grants the
+three slugs the doors need to every role holding `scm.sales_orders.edit` (Q16, built as (a)).
+
+**Record shape** (`CanonicalBillingDocument`, unknown keys refused):
+
+```json
+{
+  "source_ref": "SRT_DB:IV:88213",
+  "document_type": "invoice",
+  "doc_no": "IV-2609/0142",
+  "doc_date": "2026-09-26",
+  "status": "posted",
+  "source_modified_at": "2026-09-26T09:14:02",
+  "customer_ref": "SRT_DB:300-R009", "customer_code": "300-R009", "customer_name": "...",
+  "agent_code": "SEAN I",
+  "currency_code": "MYR", "currency_rate": 1,
+  "net_total": 1000.00, "tax_total": 100.00, "total": 1100.00, "local_net_total": 1000.00,
+  "against_doc_no": null, "against_source_ref": null,
+  "ref": "THE MET KL", "description": "...",
+  "lines": [
+    {
+      "source_ref": "SRT_DB:IV:88213:1", "line_number": 1,
+      "product_ref": "SRT_DB:ABC-1", "product_code": "ABC-1", "description": "...",
+      "uom": "PCS", "quantity": 10, "unit_price": 100.00, "discount_amount": 0,
+      "net_amount": 1000.00, "tax_code": "SV-10", "tax_rate": 10, "tax_amount": 100.00,
+      "line_total": 1100.00,
+      "from_doc_type": "DO", "from_doc_no": "DO-2609/0077", "from_line_ref": "SRT_DB:SO:1234:1"
+    }
+  ]
+}
+```
+
+Required: `source_ref`, `document_type` (`invoice`, `cash_sale`, `credit_note`, `debit_note`),
+`doc_no`, `doc_date`, `status` (`posted`, `cancelled`), `net_total`, `tax_total`, `total`,
+`local_net_total`; per line `source_ref` and `quantity`. `currency_code` defaults to `MYR` and
+`currency_rate` to 1. Money and quantities are JSON numbers. A record fails, with the field
+named in `errors`, when: a key is unknown; `total` is not `net_total + tax_total` within 0.01
+(`errors.total`); a line on an `invoice` or `cash_sale` has a negative quantity
+(`errors["lines.N.quantity"]`); two lines share a `source_ref` or there are more than 2000
+(`errors.lines`); the type or status is outside its list. The rest of the batch lands.
+
+**Idempotency key.** `(company, document_type, source_ref)`: the `integration_references` row
+(entity type `billing_documents`, one per document, scoped to the anchor company) and a unique
+index on the table behind it. `source_ref` is `{database}:{IV|CS|CN|DN}:{DocKey}` (A2), so an
+IV and a CN sharing a DocKey number are two documents; a ref already naming a document of
+another type is refused (`errors.document_type`). Lines are keyed by their own `source_ref`
+(DtlKey) within the document.
+
+**Resolution.** Customer (`customer_ref`, then `customer_code`), sales agent (`agent_code`) and
+product (`product_ref`, then `product_code`) are linked only when they resolve inside the anchor
+company (a sales agent may also be a shared row). They are never created and a record is never
+`retryable` for them: an unresolved one lands null with the code kept (`debtor_code`,
+`agent_code`, `item_code`) and the warning `customer_unresolved`, `agent_unresolved` or
+`product_unresolved`. A line may name no product at all (a charge line). A credit or debit note
+links its document by `against_source_ref`, else by `against_doc_no` when exactly one invoice,
+cash sale or debit note in the company carries that number; the number is kept either way, and
+when that document lands later its ingest fills the link. `from_line_ref` links the line to the
+anchor's sales order line whose `source_ref` it is; the three `from_*` values are kept as sent.
+
+**Verdicts.** `created`, `updated`, `failed`, and new in 2.6 `unchanged`: the push is identical to
+what is stored, or older than it by `source_modified_at` (warning `stale_ignored`); nothing is
+written. `summary.unchanged` appears only when non-zero: read a missing key as 0. Each record
+carries `entity_id` and `lines: {created, updated, deleted}`. Two concurrent FIRST pushes of the
+same document can collide on the unique index; the loser answers `failed` with a `conflict`
+error, and re-pushing it answers `unchanged` or `updated`.
+
+**Versions, cancels and deletes.** A push names the whole document: an omitted optional field is
+stored as null and a line not sent is deleted (the one exception to `absent_vs_null` on this
+surface). A line sent again keeps its id. When both stored and incoming `source_modified_at`
+exist and the incoming one is older, nothing is written. A push WITHOUT `source_modified_at`
+always applies and clears the stored one, which switches the guard off for that document until
+a timestamped push lands: always send it, backfill included. An offset timestamp is converted to
+UTC; a naive one is taken as UTC. `status: "cancelled"` is an update: the
+row and its lines stay, and every total leaves it out. `/deletions` hard-deletes a document and
+its lines (`deleted`), or sets it `cancelled` (`deactivated`) when a credit or debit note still
+points at it; an unknown or other-company ref is `not_found`.
+
+**Backfill.** History arrives through the same endpoint, oldest first, invoices and cash sales
+before the credit and debit notes of the same day, in batches of up to 1000. The CRM has
+no start-date floor and no start-date setting; the start date is shared-service configuration
+(the owner plans 1 Jan 2023, ruling Q2). Re-running any batch is safe. Each company pushes under its
+own `companyCode`.
+
+**Assumptions for the shared service to confirm** (plan 3.3.6; A9 is settled by ruling Q6: the
+NDA scope is header, line, customer, agent, product and tax fields, nothing on bank, GL or
+payments):
+
+- **A1.** AutoCount exposes IV, CS, CN and DN headers with item detail (Sales-module tables, not
+  the AR-module ones).
+- **A2.** DocKey is unique per document table, not across them, so the ref carries the type; the
+  line ref appends DtlKey.
+- **A3.** Each header has a last-modified timestamp the ETL already watermarks on
+  (`source_modified_at`).
+- **A4.** A CN (and DN) names the invoice it is against at header level. If AutoCount only has
+  per-line or knock-off allocations, ruling Q4 is revisited.
+- **A5.** Headers carry `CurrencyCode`, `CurrencyRate` and a local (MYR) net amount
+  (`local_net_total`); lines carry a tax code, rate and amount, net and gross.
+- **A6.** A line transferred from a DO or SO names its source line, and the shared service can
+  map a DO line back to its SO line ref (`from_line_ref`) when the IV came from a DO.
+- **A7.** Cancelled documents stay in AutoCount with a Cancelled flag; deleted ones vanish and the
+  ETL detects them as deletions.
+- **A8.** Agent and customer codes on billing documents are the codes the SO feed sends.
+- **A10.** The agent code on an IV transferred from an SO is the SO's agent code in the normal
+  case; the shared service reports how often they differ (feeds Q15).

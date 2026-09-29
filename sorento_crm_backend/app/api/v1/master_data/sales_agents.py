@@ -124,6 +124,7 @@ async def annotate_sales_agent(
         sales_agent_service.annotate(
             db, agent,
             person_label=payload.person_label, write_person_label="person_label" in fields,
+            aliases=payload.aliases, write_aliases="aliases" in fields,
             demand_class=payload.demand_class, write_demand_class="demand_class" in fields,
             location_group=payload.location_group,
             write_location_group="location_group" in fields,

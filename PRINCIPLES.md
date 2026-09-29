@@ -52,7 +52,11 @@ vs a `.claude/agents` subagent) - see the /feature skill map. Planning and grill
 the main session; Phase 1 is delegated to the `coder` agent in a worktree; in Phase 2 the
 `tester` agent writes the failing tests FIRST (from the UAC and the captain's test list)
 before the `coder` (one agent, kept alive for the whole lane) makes them green; Phase 3 runs
-`reviewer` + `security-reviewer` + browser verification (`tester`) in parallel, once per lane.
+`reviewer` + browser verification (`tester`) in parallel, once per lane; `security-reviewer`
+joins only when the diff touches its surface (auth, RBAC, external ingest, uploads,
+multi-company scoping) - otherwise it is skipped and the PR body says so (owner ruling,
+24 Sep 2026). `guide-writer` no longer runs per lane (same ruling): Outline updates are
+on-request or a weekly batch over merged lanes, see `.claude/agents/guide-writer.md`.
 Running a step in the wrong seat is a process violation.
 
 0. **Guided user experience FIRST - design the journey before the system.** Before any entity,
@@ -109,10 +113,13 @@ Running a step in the wrong seat is a process violation.
 5. **Phase 3 - Review, in parallel.** Once per lane (not per slice), `reviewer` runs
    `/code-review` (or `ultra` for big diffs) plus a **kill test**: comment out the implementing
    branch for 2-3 UAC lines, run the test, confirm it goes red - a test that stays green is a
-   blocker; `security-reviewer` runs the built-in `/security-review` checklist whenever the diff
-   touches auth, RBAC, external ingest, uploads or multi-company scoping; browser verification
-   (`tester`) runs alongside both. Fix round goes back to the same `coder`. Address findings via
-   `--fix` / `/simplify` → `guide-writer` updates the Outline user guide → open PR. Reviewer runs
+   blocker; `security-reviewer` runs the built-in `/security-review` checklist only when the diff
+   touches auth, RBAC/permission gating, external ingest, uploads or multi-company scoping -
+   otherwise it is skipped and the PR body says so ("security-reviewer: not run, diff outside
+   its surface") (owner ruling, 24 Sep 2026); browser verification (`tester`) runs alongside
+   both. Fix round goes back to the same `coder`. Address findings via `--fix` / `/simplify` →
+   open PR - `guide-writer` is retired from this step (same ruling): the Outline user guide is
+   updated on-request or as a weekly batch over merged lanes, not per lane. Reviewer runs
    `documentation/reference/PR-CHECKLIST.md` + the DoD gate below. Use THIS repo's `/code-review`,
    not the plugin's same-named skill, unless asked otherwise. Inbound bugs enter via `/triage`
    (labels in `documentation/agents/triage-labels.md`) and are worked with `/diagnosing-bugs`;
@@ -121,11 +128,16 @@ Running a step in the wrong seat is a process violation.
 6. **Branch** per feature; merge only after review. The user codes concurrently in the main
    checkout - `git status` before ANY branch/commit op; never assume the tree is clean.
 
-## Small fix track (owner ruling, 18 Sep 2026)
+## Small fix track (owner rulings, 18 Sep 2026 + 24 Sep 2026)
 
-A change that is **one seam, under ~50 lines of app code, no migration, no new endpoint,
-no auth or scoping change** skips the full pipeline. The captain names the track in the
-plan's Status line ("Track: small fix") and it runs as:
+**Track is chosen by the diff, not by feel** (24 Sep 2026 ruling - evidence: the last 35 merged
+PRs each took 30 min to 6 h from PR-open to merge, with 30 PRs open at once and 26 of them
+ready; coding and review were not the slow part, the per-lane ceremony and queue were). A lane
+whose expected diff is **under ~300 changed lines, with no migration, no auth/RBAC/permission
+change, and no new external ingest surface** IS the small fix track - no journey/grill/UAC
+ceremony beyond a one-paragraph plan with a Status line naming the track. Everything else is
+the full track. The captain names the track in the plan's Status line ("Track: small fix")
+before spawning, and it runs as:
 
 1. Plan + UAC still written (short: the ruling, the seam, the ACs). No journey, no grill.
 2. **No private DB clone.** Tests run on the shared dev DB, touched files only, named in the
@@ -136,13 +148,28 @@ plan's Status line ("Track: small fix") and it runs as:
 3. **One coder, no separate tester.** The coder writes the red tests and the fix in one
    pass, tests first in the same message. Reds are still shown red before green.
 4. **One reviewer.** `security-reviewer` only when the diff touches auth, RBAC, ingest,
-   uploads or multi-company scoping. Kill test still runs.
+   uploads or multi-company scoping - otherwise skipped, and the PR body says so. Kill test
+   still runs.
 5. **Browser pass only when a screen changed**, scoped to that screen, on whichever stack
    is already up (main or a lane's). No stack boot for a backend-only fix.
-6. Guide line if the user-visible rule changed, then PR. CI is the full gate.
+6. No guide-writer step - it is retired from the per-lane pipeline (24 Sep 2026 ruling; see
+   `.claude/agents/guide-writer.md`), Outline updates now run on-request or as a weekly batch.
+   PR carries `Track: small-fix` and `Plan created: <ISO timestamp>` (see PR checklist). CI is
+   the full gate.
 
 Anything that grows past the definition mid-lane moves to the full track; say so in the
 plan. The full track stays mandatory for features.
+
+## Post-merge cleanup (owner ruling, 24 Sep 2026)
+
+**Cleanup is pre-authorised, not owner-run.** Once a lane's PR is merged, the captain removes
+that lane's worktree (`git worktree remove`; `--force` only when the sole dirt is an untracked
+`.env*` file), deletes its `.next` via `./scripts/worktree-gc.sh --apply`, runs
+`git worktree prune`, and drops that lane's private `*_ci` Postgres database and flushes its
+redis db index - all without asking. Two standing guards stay non-negotiable: grep every
+remaining worktree's `.env*` for the database name before any `DROP DATABASE`, and never touch
+a worktree whose directory is the cwd of a live `next dev` / uvicorn / worker process the
+captain did not start.
 
 ## Modular architecture - classify core vs module FIRST (before UAC)
 
