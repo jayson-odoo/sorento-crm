@@ -158,6 +158,9 @@ Owner ruling 26 Sep: F2 "okay": one bare number after a question about several p
 - **AC-SA604 [BE]** PATCH `/public/portal/customer-asks/{ask_id}` `{state, note}` persists for an in-scope ask; an out-of-scope ask is 404; a bad state is 422.
 - **AC-SA605 [FE]** `CustomerAsksList` renders the portal DataGrid (PortalLanding list pattern) with Asked at, Customer, Contact, Product, Qty, Branch, Answer, Notified, State, Note; empty state; State and Note editable in place.
 - **AC-SA606 [FE]** The portal nav shows "Customer asks" only for a linked agent contact.
+  Fix round 5 (owner, 29 Sep): it is one kind in the landing selector, not a separate card,
+  and it is also a per-contact switch (Contact page, Portal forms, default off); a linked
+  agent whose switch is off is not offered it and the API answers 403 FORM_TYPE_NOT_VISIBLE.
 - **AC-SA607 [E2E]** Log into the portal as the agent's contact, open Customer asks, mark the S5 row done: the CRM Asks tab shows the same state and note; 375px usable.
 
 ## Definition of Done for the lane

@@ -1,5 +1,7 @@
 /**
- * Chatbot stock ask v2 S6 - the portal's Customer asks page (AC-SA605).
+ * Chatbot stock ask v2 S6 - the portal's Customer asks (AC-SA605). Since fix round 5 it is the
+ * body of the landing's Customer asks kind: cards by default, the grid in list view, the
+ * landing's own search box feeding `search`.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -75,9 +77,14 @@ beforeEach(() => {
   updateCustomerAsk.mockResolvedValue({ ...ROW, state: 'done' });
 });
 
+function Harness({ search = '', initialView = 'list' }: { search?: string; initialView?: 'list' | 'board' }) {
+  const [view, setView] = React.useState<'list' | 'board'>(initialView);
+  return <CustomerAsksList search={search} view={view} onViewChange={setView} />;
+}
+
 describe('CustomerAsksList', () => {
-  it('renders the grid with every column', async () => {
-    render(<CustomerAsksList slug="ah-lim" />);
+  it('renders the grid with every column in list view', async () => {
+    render(<Harness />);
     await waitFor(() => expect(screen.getByText('SRT5674')).toBeInTheDocument());
     for (const header of [
       'Asked at',
@@ -109,7 +116,7 @@ describe('CustomerAsksList', () => {
       ],
       pagination: { total: 2, page: 1, limit: 20 },
     });
-    render(<CustomerAsksList slug="ah-lim" />);
+    render(<Harness />);
     await waitFor(() => expect(screen.getByText('SRT9999')).toBeInTheDocument());
     const badges = screen.getAllByText('Console');
     expect(badges).toHaveLength(1);
@@ -118,12 +125,12 @@ describe('CustomerAsksList', () => {
 
   it('shows an explicit empty state', async () => {
     listCustomerAsks.mockResolvedValue({ data: [], pagination: { total: 0, page: 1, limit: 20 } });
-    render(<CustomerAsksList slug="ah-lim" />);
+    render(<Harness />);
     await waitFor(() => expect(screen.getByText('No customer asks yet')).toBeInTheDocument());
   });
 
-  it('edits state and note in place', async () => {
-    render(<CustomerAsksList slug="ah-lim" />);
+  it.each(['list', 'board'] as const)('edits state and note in place (%s view)', async (initialView) => {
+    render(<Harness initialView={initialView} />);
     const state = await screen.findByLabelText('State for SRT5674');
     fireEvent.change(state, { target: { value: 'done' } });
     await waitFor(() => expect(updateCustomerAsk).toHaveBeenCalledWith('ask-1', { state: 'done' }));
@@ -135,18 +142,41 @@ describe('CustomerAsksList', () => {
     );
   });
 
-  it('searches by customer or product', async () => {
-    render(<CustomerAsksList slug="ah-lim" />);
+  it('searches by the search it is handed, from page 1', async () => {
+    const { rerender } = render(<Harness search="" />);
     await screen.findByText('SRT5674');
-    fireEvent.change(screen.getByLabelText('Search customer asks'), { target: { value: 'hock' } });
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <Harness search="hock" />
+      </QueryClientProvider>,
+    );
     await waitFor(() =>
-      expect(listCustomerAsks).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'hock' })),
+      expect(listCustomerAsks).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'hock', page: 1 })),
+    );
+  });
+
+  it('shows cards in board view: customer, product and qty, branch, answer', async () => {
+    render(<Harness initialView="board" />);
+    const card = (await screen.findByText('Hock Lee Trading')).closest('li') as HTMLElement;
+    expect(card).not.toBeNull();
+    expect(card.textContent).toContain('SRT5674');
+    expect(card.textContent).toContain('150');
+    expect(card.textContent).toContain('Ah Seng');
+    expect(screen.queryByText('Asked at')).toBeNull(); // no grid header in board view
+  });
+
+  it('filters by state', async () => {
+    render(<Harness />);
+    await screen.findByText('SRT5674');
+    fireEvent.change(screen.getByLabelText('Filter by state'), { target: { value: 'done' } });
+    await waitFor(() =>
+      expect(listCustomerAsks).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'done', page: 1 })),
     );
   });
 
   it('tells a contact who is no sales agent', async () => {
     listCustomerAsks.mockRejectedValue(new NotASalesAgentError());
-    render(<CustomerAsksList slug="ah-lim" />);
+    render(<Harness />);
     await waitFor(() =>
       expect(screen.getByText('Customer asks are for sales agents only.')).toBeInTheDocument(),
     );

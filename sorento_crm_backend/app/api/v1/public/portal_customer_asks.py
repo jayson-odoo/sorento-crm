@@ -7,6 +7,10 @@ same resolution the debtor lookup uses). It lists the stock asks of the customer
 that agent (`customers.sales_agent_id`), never the agent's order debtors, and edits the same
 `state` and `note` the CRM customer's Asks tab edits. A contact linked to no agent gets 403
 `NOT_A_SALES_AGENT`; an ask outside the agent's customers is a 404.
+
+Fix round 5 (owner, 29 Sep): Customer asks is also a per-contact switch, the
+`contact_portal_form_overrides` row Price Tag Request is switched by (Contact page -> Portal
+forms), off by default. A linked agent whose switch is off gets 403 `FORM_TYPE_NOT_VISIBLE`.
 """
 from __future__ import annotations
 
@@ -22,6 +26,8 @@ from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.stock_ask import StockAskResponse, StockAskUpdate
 from app.services import price_tag_request_service, stock_ask_service
 from app.services.error_handler import AppException
+from app.services.portal_form_visibility_service import switched_form_types
+from app.services.portal_service import CUSTOMER_ASKS_FORM_TYPE
 from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter(tags=["public-portal-customer-asks"])
@@ -34,6 +40,12 @@ def _agent_id(db: Session, token: PortalToken) -> str:
             status_code=403,
             message="Customer asks are for sales agents only.",
             code="NOT_A_SALES_AGENT",
+        )
+    if CUSTOMER_ASKS_FORM_TYPE not in switched_form_types(db, token.contact_id):
+        raise AppException(
+            status_code=403,
+            message="Customer asks is not available for your account.",
+            code="FORM_TYPE_NOT_VISIBLE",
         )
     return agent.id
 

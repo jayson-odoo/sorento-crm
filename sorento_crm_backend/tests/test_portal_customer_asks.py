@@ -19,6 +19,7 @@ from sqlalchemy import text
 from app.main import app
 from app.models.base import set_company_scope
 from app.models.order import Customer
+from app.models.price_tag import ContactPortalFormOverride
 from app.models.sales_agent import SalesAgent
 from app.models.stock_ask import StockAsk
 from app.services import price_tag_request_service as ptr
@@ -28,6 +29,7 @@ from ._pg_fixture import blank_session
 
 SORENTO = "00000000-0000-0000-0000-000000000001"
 BASE = "/api/v1/public/portal/customer-asks"
+CUSTOMER_ASKS = "customer_asks"
 
 
 def _uid() -> str:
@@ -51,6 +53,13 @@ def _agent(db, contact_id: str | None, code: str) -> SalesAgent:
     db.add(row)
     db.flush()
     return row
+
+
+def _switch(db, contact_id: str, on: bool) -> None:
+    """Fix round 5: the contact's own Customer asks switch (Contact page -> Portal forms),
+    the same `contact_portal_form_overrides` row Price Tag Request is switched by."""
+    db.add(ContactPortalFormOverride(contact_id=contact_id, form_type=CUSTOMER_ASKS, is_enabled=on))
+    db.flush()
 
 
 def _customer(db, name: str, agent: SalesAgent | None) -> Customer:
@@ -92,8 +101,15 @@ def world():
         agent_contact = _contact(db, "Agent Lim")
         other_agent_contact = _contact(db, "Agent Tan")
         stranger = _contact(db, "Not An Agent")
+        switched_off_agent_contact = _contact(db, "Agent Wong")
         agent = _agent(db, agent_contact, "LIM")
         other_agent = _agent(db, other_agent_contact, "TAN")
+        _agent(db, switched_off_agent_contact, "WONG")
+        # Fix round 5: Customer asks is a per-contact switch, default off. The agent the
+        # earlier pins drive has it on; so does the stranger, so AC-SA603 still proves the
+        # linked-agent rule on its own; Agent Wong is linked but left at the default.
+        _switch(db, agent_contact, True)
+        _switch(db, stranger, True)
         mine = _customer(db, "Hock Lee Trading", agent)
         mine2 = _customer(db, "Seng Heng Motor", agent)
         theirs = _customer(db, "Other Agent Trading", other_agent)
@@ -102,6 +118,7 @@ def world():
             "dealer": dealer,
             "agent_contact": agent_contact,
             "stranger": stranger,
+            "switched_off_agent_contact": switched_off_agent_contact,
             "agent": agent,
             "mine": mine,
             "old": _ask(db, mine, dealer, "SRT-OLD", minutes_ago=60),
@@ -278,3 +295,60 @@ def test_ac_sa606_the_open_filter_counts_only_open_asks(world):
 def test_security_a_percent_in_the_search_is_literal(world):
     client = _client(world, world["agent_contact"])
     assert client.get(f"{BASE}?q=%25").json()["data"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 5 (owner, 29 Sep): Customer asks is a selector kind, switched per contact
+# --------------------------------------------------------------------------- #
+
+
+def test_fix5_customer_asks_is_a_grantable_form_kind_default_off():
+    from app.services.portal_service import GRANTABLE_PORTAL_FORM_TYPES, SUPPORTED_TYPES
+
+    assert CUSTOMER_ASKS in GRANTABLE_PORTAL_FORM_TYPES
+    assert CUSTOMER_ASKS not in SUPPORTED_TYPES  # not a base kind: off until switched on
+
+
+def test_fix5_a_linked_agent_with_the_switch_off_is_403_on_get_and_patch(world):
+    client = _client(world, world["switched_off_agent_contact"])
+    got = client.get(BASE)
+    assert got.status_code == 403
+    assert got.json().get("code") == "FORM_TYPE_NOT_VISIBLE", got.text
+    patched = client.patch(f"{BASE}/{world['old'].id}", json={"state": "done"})
+    assert patched.status_code == 403
+    assert patched.json().get("code") == "FORM_TYPE_NOT_VISIBLE"
+
+
+def test_fix5_switching_it_off_again_closes_the_route(world):
+    db = world["db"]
+    db.query(ContactPortalFormOverride).filter(
+        ContactPortalFormOverride.contact_id == world["agent_contact"],
+        ContactPortalFormOverride.form_type == CUSTOMER_ASKS,
+    ).update({"is_enabled": False})
+    db.flush()
+    assert _client(world, world["agent_contact"]).get(BASE).status_code == 403
+
+
+def test_fix5_visible_form_types_needs_the_switch_and_a_linked_agent(world):
+    from app.services.portal_form_visibility_service import resolve_visible_form_types
+
+    db = world["db"]
+    assert CUSTOMER_ASKS in resolve_visible_form_types(db, world["agent_contact"])
+    # Switch at its default (off): not offered, even though the contact is an agent.
+    assert CUSTOMER_ASKS not in resolve_visible_form_types(db, world["switched_off_agent_contact"])
+    # Switch on but linked to no sales agent: still not offered.
+    assert CUSTOMER_ASKS not in resolve_visible_form_types(db, world["stranger"])
+    # A dealer with nothing set never sees it.
+    assert CUSTOMER_ASKS not in resolve_visible_form_types(db, world["dealer"])
+
+
+def test_fix5_the_crm_contact_portal_forms_row_lists_it_off_by_default(world):
+    from app.api.v1.user_management.contact_portal_forms import _build_view
+
+    db = world["db"]
+    off = {f["form_type"]: f for f in _build_view(db, world["switched_off_agent_contact"])["forms"]}
+    assert off[CUSTOMER_ASKS] == {
+        "form_type": CUSTOMER_ASKS, "inherited": False, "override": None, "effective": False,
+    }
+    on = {f["form_type"]: f for f in _build_view(db, world["agent_contact"])["forms"]}
+    assert on[CUSTOMER_ASKS]["effective"] is True
