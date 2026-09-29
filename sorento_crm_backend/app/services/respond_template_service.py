@@ -96,6 +96,12 @@ PARAM_VARIABLES = (
     "product",
     "quantity",
     "asked_at",
+    # Ideation status update (#1355, ``ideation_status_update``): the idea number (or
+    # title), the new status wording, and the public track link (also a URL-button
+    # link variable). Filled by ideation_status_update_service.build_context_vars.
+    "idea_number",
+    "status_label",
+    "track_url",
 )
 
 # Use cases whose template MUST map a slot to a specific variable, or the message
