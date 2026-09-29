@@ -23,7 +23,7 @@ transaction. No row changes. Idempotent: a database whose FK already reads SET N
 alone.
 
 Revision ID: spo_cascade_0001_set_null
-Revises: merge_29sep_batch7
+Revises: ideation_status_events_s1
 """
 import logging
 
@@ -31,10 +31,9 @@ from alembic import op
 from sqlalchemy import inspect
 
 revision = "spo_cascade_0001_set_null"
-# Parented on main's merge revision (#1374 joined eml_0002_seed_layouts and
-# mem_0003_parser_history after they merged back to back), re-parented by the lane
-# on each main merge per scripts/alembic-reparent.sh.
-down_revision = "merge_29sep_batch7"
+# Parented on main's current head, re-parented by the lane on each main merge per
+# scripts/alembic-reparent.sh.
+down_revision = "ideation_status_events_s1"
 branch_labels = None
 depends_on = None
 
