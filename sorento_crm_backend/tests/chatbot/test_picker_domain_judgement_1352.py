@@ -846,3 +846,207 @@ def test_g_the_picked_axis_replaces_a_carried_value_that_names_no_picked_option(
     picked = {"raw": "HANLIM TRADING (JB) SDN BHD", "hint": "customer", "current_message": True}
     out = _with_the_picked_axis(verdict(entities=[picked], reference_positions=[2]), customers, [2])
     assert out["entities"] == [picked], "an entity naming the picked option stays"
+
+
+# =============================================================================== #
+# H. The engine reads a bare position itself (PR #1353 fix round 3)
+#
+# Owner retest of round 2 on the :3105 copy, parser v48 (chatbot.turns, 29 Sep 2026 11:44
+# MYT, contact 487555417): "promo srtwc286" -> roster (1 Office, 2 Dealer, 3 End user) ->
+# "1" Office files (correct) -> "2" the SAME Office files. Turn "2" (id 3f56a40d): the
+# parser read the bare "2" as reference_positions [1], open_question_answer {pick, [1]},
+# access_levels ["Sorento Office"]. Round 2's picked-axis rule had nothing to correct: the
+# position it was handed named the carried Office level. Owner ruling: the parser
+# reports, the engine judges. While a numbered roster is open, a bare "2", "1 and 2",
+# "1, 2" or "all" (the forms the roster's own reply line offers) is read by the engine and
+# its positions win over the parser's; the parser stays authoritative for a typed label
+# or code and for any message that is not a bare pick.
+#
+# The user block the parser was shown on that turn is replayed too: its "Recent
+# exchanges, oldest first" opened with "User: 2 / Assistant: I have attached the file(s)
+# below." because the 11:32 run of the same conversation had ended with that "2" - the
+# block reads the contact's last three COMPLETED turns, oldest first, whatever run they
+# came from, and the newest pair's reply is the Previous response line.
+# =============================================================================== #
+
+
+def _live_pick_reading(position_the_parser_read: int, carried: list[str]) -> dict[str, Any]:
+    """The v48 reading of a bare number, as chatbot.turns recorded it."""
+    from tests.chatbot.test_engine import _parser_output
+
+    return _parser_output(
+        domain_hint="promotion", intent_hint="check_promotion", domain_in_message=False,
+        entities=[], access_levels=list(carried), reference_positions=[position_the_parser_read],
+        open_question_answer={"mode": "pick", "picked": [position_the_parser_read]},
+    )
+
+
+def _exchanges(block: str) -> list[str]:
+    lines = block.splitlines()
+    return lines[lines.index("Recent exchanges, oldest first:") + 1:]
+
+
+def test_h_the_live_2_read_as_1_answers_dealer_with_the_live_user_block(session_factory, monkeypatch):
+    """The reproduction, turn for turn: two runs of "promo <family>" -> "1" -> "2" on one
+    contact, the parser reading every bare number as position 1 with the Office level
+    carried after the first pick. The second run's "2" is shown exactly the block the
+    owner quoted, and answers Dealer."""
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.head import parser as parser_mod
+    from app.services.chatbot.lanes.business import fetch as fetch_mod
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._pg_fixture import unique_code
+    from tests.chatbot.test_engine import _parser_output
+    from tests.chatbot.test_engine_company_scope import _seed_product
+    from tests.chatbot.test_rearch_r5_production_decides import _seed_contact_and_get
+    from tests.chatbot.test_rearch_r6_review_round import _mark_workspace_default, _run_turn_engine
+
+    blocks: list[str] = []
+    real_block = parser_mod.build_user_block
+
+    def traced_block(*args: Any, **kwargs: Any) -> str:
+        block = real_block(*args, **kwargs)
+        blocks.append(block)
+        return block
+
+    monkeypatch.setattr(parser_mod, "build_user_block", traced_block)
+    _seed_contact_and_get(session_factory)
+    _mark_workspace_default(session_factory)
+    _seed_live_entitlement(session_factory)
+    code = unique_code("ZZT1353R3")
+    ids = {
+        _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=f"{code}-SH"),
+        _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=f"{code}-SH-NEW"),
+    }
+
+    def turn(run: str, text: str, qf: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+        captured: list[tuple[str, dict[str, Any]]] = []
+        result = _run_turn_engine(
+            session_factory, monkeypatch, qf=qf, text_body=text, msg_id=f"zzt-1353-h-{run}-{text}",
+            mcp_call=_promotion_double(captured), real_entitlement=True,
+        )
+        return (result.reply or {}).get("text") or "", [a for n, a in captured if n == fetch_mod.TIER_PROBE_TOOL]
+
+    ask = _parser_output(
+        domain_hint="promotion", intent_hint="check_promotion", domain_in_message=True,
+        entities=[{"raw": code, "hint": "product", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    replies: dict[str, str] = {}
+    for run in ("11:32", "11:44"):
+        roster, _ = turn(run, f"promo {code}", ask)
+        assert "1. Office" in roster and "2. Dealer" in roster and "3. End user" in roster, roster
+        office, calls = turn(run, "1", _live_pick_reading(1, []))
+        assert sorted(calls[-1].get("access_levels") or []) == _OFFICE_ALL, calls
+        dealer, calls = turn(run, "2", _live_pick_reading(1, ["Sorento Office"]))
+        assert calls, f"'2' must fetch promotions: {dealer!r}"
+        assert set(calls[-1].get("product_ids") or []) == ids, calls
+        assert sorted(calls[-1].get("access_levels") or []) == _DEALER_ALL, (run, calls[-1].get("access_levels"))
+        replies[run] = dealer
+
+    # The block the second "2" was parsed from, as the owner quoted it.
+    block = blocks[-1]
+    assert "Current user message: 2" in block, block
+    assert '"kind":"pick_one"' in block and '"position":2,"code":"dealer","label":"Dealer"' in block, block
+    assert "Pending: the assistant is waiting for a tier_pick reply." in block, block
+    assert "Open question options: Office; Dealer; End user" in block, block
+    from app.services.chatbot.head.parser import _exchange_text
+
+    assert _exchanges(block) == [
+        "User: 2",
+        f"Assistant: {_exchange_text(replies['11:32'])}",
+        f"User: promo {code}",
+        f"Assistant: {_exchange_text(roster)}",
+        "User: 1",
+        "Assistant: (the Previous response)",
+    ], block
+
+
+@pytest.mark.parametrize(
+    ("message", "positions"),
+    [
+        ("2", [2]), (" 2. ", [2]), ("#3", [3]), ("1 and 2", [1, 2]), ("1, 2", [1, 2]),
+        ("1,3", [1, 3]), ("1 & 3", [1, 3]), ("2 1", [1, 2]), ("all", [1, 2, 3]), ("ALL", [1, 2, 3]),
+        ("4", None), ("0", None), ("1 and 4", None), ("dealer", None), ("2 dealer", None),
+        ("promo 2", None), ("stock for 2", None), ("", None), ("2nd", None), ("1 or 2", None),
+    ],
+)
+def test_h_the_engine_reads_only_a_bare_position_over_the_open_roster(message, positions):
+    """What counts as a bare pick: a whole number from 1 to the option count, the
+    "1 and 2" / "1, 2" lists and "all". A word beside the number, an ordinal, a typed
+    label or a number past the roster is the parser's to read."""
+    from app.services.chatbot.engine import _bare_roster_positions
+
+    tiers = pending_ask(
+        "tier_pick",
+        [{"position": i, "label": t, "entity_type": "tier", "payload": {"value": t.lower()}} for i, t in enumerate(["Office", "Dealer", "End user"], 1)],
+        asked_at_turn=1,
+        payload={"domain": "promotion"},
+    )
+    assert _bare_roster_positions(tiers, message) == positions
+
+
+def test_h_the_engine_positions_win_over_the_parsers_on_every_roster_kind():
+    """tier_pick, product_pick and customer_pick alike: the engine's positions replace the
+    parser's `reference_positions` and `open_question_answer`, and a message that is not a
+    bare pick keeps the parser's reading untouched."""
+    from app.services.chatbot.engine import _with_the_engine_pick
+
+    rosters = [
+        _roster(),
+        pending_ask("customer_pick", [dict(o) for o in _CUSTOMER_OPTIONS], asked_at_turn=1, payload={"domain": "order"}),
+    ]
+    for roster in rosters:
+        reading = _live_pick_reading(1, [])
+        out = _with_the_engine_pick(reading, roster, "2")
+        assert out["reference_positions"] == [2], out
+        assert out["open_question_answer"] == {"mode": "pick", "picked": [2]}, out
+        assert out["domain_in_message"] is False, out
+        assert _with_the_engine_pick(reading, roster, "check stock") is reading
+        assert _with_the_engine_pick(reading, roster, "2 stock") is reading
+    # The parser read the bare "2" as a pick of 2 already: nothing to correct.
+    same = _live_pick_reading(2, [])
+    assert _with_the_engine_pick(same, rosters[0], "2") is same
+    # No roster open: the parser's reading stands.
+    assert _with_the_engine_pick(_live_pick_reading(1, []), None, "2")["reference_positions"] == [1]
+
+
+def test_h_a_three_turn_console_conversation_reads_oldest_first_on_a_created_at_tie(session_factory):
+    """The "Recent exchanges, oldest first" order, pinned for a three-turn console
+    conversation: "promo srtwc286" -> "1" -> "2". `created_at` is Postgres `now()`, the
+    transaction's start, so rows written in one transaction tie on it (every test that
+    drives `engine.run_turn` over this fixture does); `started_at`, the head's own clock,
+    is what orders them then. Rows inserted out of order so a tie cannot pass by luck.
+    The newest pair's answer is also the Previous response line."""
+    import uuid
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.chatbot_turn import ChatbotTurn
+    from app.services.chatbot import turn_runtime
+    from app.services.chatbot.head.parser import build_user_block
+
+    contact = "zzt-1353-r3-order"
+    tie = datetime(2026, 9, 29, 3, 44, tzinfo=timezone.utc)
+    turns = [("promo srtwc286", "Which access level do you need for srtwc286?"), ("1", "Office files"), ("2", "Dealer files")]
+    db = session_factory()
+    for index in (2, 0, 1):
+        said, answered = turns[index]
+        db.add(ChatbotTurn(
+            id=str(uuid.uuid4()), contact_respond_id=contact, message_id=f"zzt-1353-r3-{index}",
+            ingress=turn_runtime._CONSOLE_INGRESS, is_test=True, status="done",
+            envelope={"message": {"message": {"message": {"text": said}}}},
+            response={"reply": {"text": answered}}, created_at=tie, started_at=tie + timedelta(seconds=index),
+        ))
+    db.commit()
+
+    scope = {"contact_respond_id": contact, "ingress": turn_runtime._CONSOLE_INGRESS, "is_test": True}
+    recent = turn_runtime.recent_exchanges(db, **scope)
+    assert recent == turns, recent
+    previous = turn_runtime.previous_reply_text(db, **scope)
+    assert previous == "Dealer files", previous
+    block = build_user_block(previous_response=previous, latest_user_message="3", pending_kind=None, recent_exchanges=recent)
+    assert _exchanges(block) == [
+        "User: promo srtwc286", "Assistant: Which access level do you need for srtwc286?",
+        "User: 1", "Assistant: Office files",
+        "User: 2", "Assistant: (the Previous response)",
+    ], block
+    assert "Current user message: 3" in block and "User: 3" not in block, block

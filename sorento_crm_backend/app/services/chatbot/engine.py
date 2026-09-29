@@ -228,6 +228,83 @@ def _picks_in_the_roster_domain(pending: Any, verdict: dict[str, Any]) -> list[i
     return list(picked[0])
 
 
+#: A bare pick as the roster's own reply line offers it ('Reply with the number(s), e.g.
+#: "1", "1 and 2", or "all".'): whole numbers joined by commas, "&", "and" or spaces.
+_BARE_POSITIONS = re.compile(r"#?\d+(?:\s*(?:,|&|\band\b)?\s*#?\d+)*")
+
+
+def _bare_roster_positions(pending: Any, message: str) -> list[int] | None:
+    """The positions a BARE pick names over an open numbered roster, or None.
+
+    PR #1353 fix round 3 (owner retest, v48, chatbot.turns 29 Sep 2026 11:44 MYT, turn
+    3f56a40d): over the tier roster (1 Office, 2 Dealer, 3 End user) with Office picked
+    one turn earlier, the parser read the bare "2" as `reference_positions: [1]` and
+    `open_question_answer: {pick, [1]}`, so the Office files were sent again. Owner
+    ruling: the parser reports, the engine judges. A message that is nothing but a
+    position ("2"), a list of them ("1 and 2", "1, 2") or "all" is read here, in code;
+    every position must be on the roster (1 to the option count), else it is not a bare
+    pick of THIS roster and the parser's reading stands. A word beside the number ("2
+    dealer", "stock for 2"), an ordinal or a typed label is the parser's to read.
+    """
+    if pending is None or not turn_pending.is_roster(pending.kind) or not pending.options:
+        return None
+    if (pending.payload or {}).get("stock_pick"):
+        # A bare number under a stock pick is its quantity (`apply._stock_pick_requantified`).
+        return None
+    offered = sorted(
+        int(o["position"]) for o in pending.options
+        if isinstance(o, dict) and isinstance(o.get("position"), int) and not isinstance(o.get("position"), bool)
+    )
+    if not offered:
+        return None
+    text = str(message or "").strip().lower().rstrip(".!")
+    if text == "all":
+        return offered
+    if not _BARE_POSITIONS.fullmatch(text):
+        return None
+    positions = sorted({int(n) for n in re.findall(r"\d+", text)})
+    if not positions or any(p not in offered for p in positions):
+        return None
+    return positions
+
+
+def _with_the_engine_pick(verdict: dict[str, Any], pending: Any, message: str) -> dict[str, Any]:
+    """The verdict with the engine's own reading of a bare pick (`_bare_roster_positions`).
+
+    The engine's positions replace the parser's `reference_positions` and
+    `open_question_answer`, and a bare number names no domain (`domain_in_message`
+    false, no `asks`), so the pick is answered in the roster's domain (contract 121) and
+    round 2's picked-axis rule then runs on these positions. Left untouched: no roster
+    open, a message that is not a bare pick, a reading the parser did not make a pick at
+    all (a quantity, a top-N count - the readers before this one already settled
+    those), and a reading that already agrees.
+    """
+    positions = _bare_roster_positions(pending, message)
+    if positions is None:
+        return verdict
+    answer = verdict.get("open_question_answer")
+    read_as_pick = bool(verdict.get("reference_positions")) or (
+        isinstance(answer, dict) and answer.get("mode") == "pick"
+    ) or verdict.get("broaden_axis") == "all"
+    if not read_as_pick:
+        return verdict
+    picked = {"mode": "pick", "picked": positions}
+    if (
+        verdict.get("reference_positions") == positions
+        and (answer is None or answer == picked)
+        and verdict.get("domain_in_message") is not True
+        and not verdict.get("asks")
+    ):
+        return verdict
+    return {
+        **verdict,
+        "reference_positions": positions,
+        "open_question_answer": picked,
+        "domain_in_message": False,
+        "asks": [],
+    }
+
+
 def _option_words(option: dict[str, Any]) -> set[str]:
     """Every name a roster option goes by: its label, code, name, uuids and tier value."""
     payload = option.get("payload") if isinstance(option.get("payload"), dict) else {}
@@ -2849,6 +2926,31 @@ def _run_stages(  # noqa: PLR0915
         )
         if order_list_rule:
             turn_trace.add("order_list", {"verdict_rule": order_list_rule})
+
+        # PR #1353 fix round 3: a bare position over an open roster is read by the
+        # engine, and its positions win over the parser's (turn 3f56a40d: "2" read as 1).
+        # Not while a stock quantity asked AFTER the roster is the current question:
+        # there the bare number is that quantity (`apply._stock_task_is_the_current_question`).
+        from app.services.chatbot.turn.apply import (
+            _stock_task_is_the_current_question,
+            _stock_task_owed_a_number,
+        )
+
+        owed_task = _stock_task_owed_a_number(state_in.focus)
+        if owed_task is None or not _stock_task_is_the_current_question(state_in, owed_task, verdict):
+            engine_verdict = _with_the_engine_pick(
+                verdict, state_in.pending, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+            )
+            if engine_verdict is not verdict:
+                turn_trace.add(
+                    "engine_pick",
+                    {
+                        "roster": state_in.pending.kind,
+                        "positions": engine_verdict.get("reference_positions"),
+                        "parser_positions": verdict.get("reference_positions"),
+                    },
+                )
+                verdict = engine_verdict
 
         # PR #1353 fix round 2: a bare pick answered in the roster's domain takes the
         # roster's axis from the option picked, never from a value the parser carried.
