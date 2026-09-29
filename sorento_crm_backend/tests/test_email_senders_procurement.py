@@ -142,9 +142,12 @@ def test_stock_inquiry_created_email_is_branded(db, monkeypatch):  # AC-EM063
         intro_html="Dear Purchasing Team,<br /><br />A stock inquiry has been approved and is now pending purchasing review.",
         event_type="pending_purchasing",
     )
+    # The sender writes one row per team user: the first carries the single email to all
+    # (data.body_html), the rest are in-app only. Pin the email row, never an unordered first().
     row = (
         db.query(Notification)
         .filter(
+            Notification.user_id == str(u1.id),
             Notification.source_entity_type == "stock_inquiry",
             Notification.source_entity_id == inquiry_id,
             Notification.event_type == "pending_purchasing",
