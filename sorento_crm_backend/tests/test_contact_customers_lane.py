@@ -274,13 +274,14 @@ def test_ac22_post_link_stamps_customer_company_and_is_idempotent(client, db, ac
     customer = _customer(db)
     db.commit()
 
-    first = client.post(f"{CONTACTS}/{contact.id}/customers", json={"customer_id": customer.id})
+    first = client.post(f"{CONTACTS}/{contact.id}/customers", json={"customer_ids": [customer.id]})
 
     assert first.status_code == 201, first.text
-    assert first.json()["customer_id"] == customer.id
-    assert first.json()["id"] == _links_in_db(db, contact.id)[0].id
-    assert "is_primary" not in first.json()
-    assert first.json()["customer_code"] == customer.customer_code
+    row = first.json()["data"][0]
+    assert row["customer_id"] == customer.id
+    assert row["id"] == _links_in_db(db, contact.id)[0].id
+    assert "is_primary" not in row
+    assert row["customer_code"] == customer.customer_code
     links = _links_in_db(db, contact.id)
     assert len(links) == 1
     assert links[0].company_id == SORENTO
@@ -288,7 +289,7 @@ def test_ac22_post_link_stamps_customer_company_and_is_idempotent(client, db, ac
     assert links[0].linked_by == actor.id
     link_id = links[0].id
 
-    again = client.post(f"{CONTACTS}/{contact.id}/customers", json={"customer_id": customer.id})
+    again = client.post(f"{CONTACTS}/{contact.id}/customers", json={"customer_ids": [customer.id]})
 
     assert again.status_code == 201, again.text
     assert again.json() == first.json()
@@ -303,12 +304,48 @@ def test_ac22_post_link_under_two_company_scope_takes_the_customers_company(clie
     customer = _customer(db, company_id=MOCHA_ID)
     db.commit()
 
-    response = client.post(f"{CONTACTS}/{contact.id}/customers", json={"customer_id": customer.id})
+    response = client.post(f"{CONTACTS}/{contact.id}/customers", json={"customer_ids": [customer.id]})
 
     assert response.status_code == 201, response.text
     links = _links_in_db(db, contact.id)
     assert len(links) == 1
     assert links[0].company_id == MOCHA_ID
+
+
+def test_ac22_three_ids_in_one_post_create_three_links_in_request_order(client, db):
+    contact = _contact(db)
+    customers = [_customer(db) for _ in range(3)]
+    db.commit()
+    ids = [customers[2].id, customers[0].id, customers[1].id]
+
+    response = client.post(f"{CONTACTS}/{contact.id}/customers", json={"customer_ids": ids})
+
+    assert response.status_code == 201, response.text
+    assert [row["customer_id"] for row in response.json()["data"]] == ids
+    assert {link.customer_id for link in _links_in_db(db, contact.id)} == set(ids)
+    assert len(_links_in_db(db, contact.id)) == 3
+
+
+def test_ac22_an_already_linked_id_in_the_list_is_a_noop_returning_its_row(client, db):
+    contact = _contact(db)
+    existing = _customer(db)
+    fresh = _customer(db)
+    link = _link(db, contact, existing)
+    db.commit()
+    link_id = link.id
+
+    response = client.post(
+        f"{CONTACTS}/{contact.id}/customers",
+        json={"customer_ids": [existing.id, fresh.id]},
+    )
+
+    assert response.status_code == 201, response.text
+    rows = response.json()["data"]
+    assert [row["customer_id"] for row in rows] == [existing.id, fresh.id]
+    assert rows[0]["id"] == link_id
+    links = _links_in_db(db, contact.id)
+    assert len(links) == 2
+    assert {l.customer_id for l in links} == {existing.id, fresh.id}
 
 
 # ============================================================ AC-23 link refusals
@@ -319,7 +356,7 @@ def test_ac23_unknown_customer_is_404(client, db):
     db.commit()
 
     response = client.post(
-        f"{CONTACTS}/{contact.id}/customers", json={"customer_id": str(uuid.uuid4())}
+        f"{CONTACTS}/{contact.id}/customers", json={"customer_ids": [str(uuid.uuid4())]}
     )
 
     assert _domain_404(response), response.text
@@ -331,7 +368,7 @@ def test_ac23_customer_outside_scope_is_404(client, db, state):
     db.commit()
     state["scope"] = frozenset({SORENTO})
 
-    response = client.post(f"{CONTACTS}/{contact.id}/customers", json={"customer_id": foreign.id})
+    response = client.post(f"{CONTACTS}/{contact.id}/customers", json={"customer_ids": [foreign.id]})
 
     assert _domain_404(response), response.text
     assert _links_in_db(db, contact.id) == []
@@ -342,7 +379,7 @@ def test_ac23_unknown_contact_is_404(client, db):
     db.commit()
 
     response = client.post(
-        f"{CONTACTS}/{uuid.uuid4()}/customers", json={"customer_id": customer.id}
+        f"{CONTACTS}/{uuid.uuid4()}/customers", json={"customer_ids": [customer.id]}
     )
 
     assert _domain_404(response), response.text
@@ -355,7 +392,7 @@ def test_ac23_post_body_carrying_is_primary_is_422(client, db):
 
     response = client.post(
         f"{CONTACTS}/{contact.id}/customers",
-        json={"customer_id": customer.id, "is_primary": True},
+        json={"customer_ids": [customer.id], "is_primary": True},
     )
 
     assert response.status_code == 422, response.text
@@ -370,13 +407,43 @@ def test_ac23_two_posts_for_the_same_pair_share_one_row(client, db):
     db.commit()
     url = f"{CONTACTS}/{contact.id}/customers"
 
-    first = client.post(url, json={"customer_id": customer.id})
-    second = client.post(url, json={"customer_id": customer.id})
+    first = client.post(url, json={"customer_ids": [customer.id]})
+    second = client.post(url, json={"customer_ids": [customer.id]})
 
     assert first.status_code == 201, first.text
     assert second.status_code == 201, second.text
-    assert first.json()["id"] == second.json()["id"]
+    assert first.json()["data"][0]["id"] == second.json()["data"][0]["id"]
     assert len(_links_in_db(db, contact.id)) == 1
+
+
+def test_ac23_a_list_with_one_unknown_or_hidden_id_links_nothing(client, db, state):
+    contact = _contact(db)
+    good = _customer(db)
+    foreign = _customer(db, company_id=MOCHA_ID)
+    db.commit()
+    state["scope"] = frozenset({SORENTO})
+    url = f"{CONTACTS}/{contact.id}/customers"
+
+    unknown = client.post(url, json={"customer_ids": [good.id, str(uuid.uuid4())]})
+    hidden = client.post(url, json={"customer_ids": [good.id, foreign.id]})
+
+    assert _domain_404(unknown), unknown.text
+    assert _domain_404(hidden), hidden.text
+    assert _links_in_db(db, contact.id) == []
+
+
+def test_ac23_empty_list_and_singular_body_are_422(client, db):
+    contact = _contact(db)
+    customer = _customer(db)
+    db.commit()
+    url = f"{CONTACTS}/{contact.id}/customers"
+
+    empty = client.post(url, json={"customer_ids": []})
+    singular = client.post(url, json={"customer_id": customer.id})
+
+    assert empty.status_code == 422, empty.text
+    assert singular.status_code == 422, singular.text
+    assert _links_in_db(db, contact.id) == []
 
 
 # ============================================================ AC-24 withdrawn
@@ -458,7 +525,7 @@ def test_ac26_post_without_contacts_edit_is_403(client, db, state):
     db.commit()
     state["granted"] = {CONTACT_VIEW}
 
-    posted = client.post(f"{CONTACTS}/{contact.id}/customers", json={"customer_id": customer.id})
+    posted = client.post(f"{CONTACTS}/{contact.id}/customers", json={"customer_ids": [customer.id]})
 
     assert posted.status_code == 403, posted.text
 
@@ -591,11 +658,11 @@ def test_ac29_assign_sets_the_agent_and_answers_the_customer(client, db):
     customer = _customer(db)
     db.commit()
 
-    response = client.post(f"{AGENTS}/{agent.id}/customers", json={"customer_id": customer.id})
+    response = client.post(f"{AGENTS}/{agent.id}/customers", json={"customer_ids": [customer.id]})
 
     assert response.status_code == 200, response.text
-    assert response.json()["id"] == customer.id
-    assert response.json()["sales_agent_code"] == agent.sales_agent
+    assert [c["id"] for c in response.json()["data"]] == [customer.id]
+    assert response.json()["data"][0]["sales_agent_code"] == agent.sales_agent
     db.expire_all()
     assert db.get(Customer, customer.id).sales_agent_id == agent.id
 
@@ -606,7 +673,7 @@ def test_ac29_assign_moves_a_customer_from_another_agent(client, db):
     customer = _customer(db, agent=old_agent)
     db.commit()
 
-    response = client.post(f"{AGENTS}/{agent.id}/customers", json={"customer_id": customer.id})
+    response = client.post(f"{AGENTS}/{agent.id}/customers", json={"customer_ids": [customer.id]})
 
     assert response.status_code == 200, response.text
     db.expire_all()
@@ -618,7 +685,7 @@ def test_ac29_assign_to_an_inactive_agent_is_422(client, db):
     customer = _customer(db)
     db.commit()
 
-    response = client.post(f"{AGENTS}/{agent.id}/customers", json={"customer_id": customer.id})
+    response = client.post(f"{AGENTS}/{agent.id}/customers", json={"customer_ids": [customer.id]})
 
     assert response.status_code == 422, response.text
     db.expire_all()
@@ -632,9 +699,9 @@ def test_ac29_assign_across_companies_is_422_but_shared_agent_is_allowed(client,
     db.commit()
 
     refused = client.post(
-        f"{AGENTS}/{owned_by_mocha.id}/customers", json={"customer_id": customer.id}
+        f"{AGENTS}/{owned_by_mocha.id}/customers", json={"customer_ids": [customer.id]}
     )
-    allowed = client.post(f"{AGENTS}/{shared.id}/customers", json={"customer_id": customer.id})
+    allowed = client.post(f"{AGENTS}/{shared.id}/customers", json={"customer_ids": [customer.id]})
 
     assert refused.status_code == 422, refused.text
     assert allowed.status_code == 200, allowed.text
@@ -645,10 +712,72 @@ def test_ac29_assign_unknown_customer_is_404(client, db):
     db.commit()
 
     response = client.post(
-        f"{AGENTS}/{agent.id}/customers", json={"customer_id": str(uuid.uuid4())}
+        f"{AGENTS}/{agent.id}/customers", json={"customer_ids": [str(uuid.uuid4())]}
     )
 
     assert _domain_404(response), response.text
+
+
+def _agent_of(db, customer_id):
+    db.expire_all()
+    return db.get(Customer, customer_id).sales_agent_id
+
+
+def test_ac29_three_ids_assign_three_customers_in_request_order(client, db):
+    agent = _agent(db)
+    other = _agent(db)
+    customers = [_customer(db), _customer(db, agent=other), _customer(db)]
+    db.commit()
+    ids = [customers[2].id, customers[0].id, customers[1].id]
+
+    response = client.post(f"{AGENTS}/{agent.id}/customers", json={"customer_ids": ids})
+
+    assert response.status_code == 200, response.text
+    assert [c["id"] for c in response.json()["data"]] == ids
+    assert all(c["sales_agent_code"] == agent.sales_agent for c in response.json()["data"])
+    assert [_agent_of(db, c.id) for c in customers] == [agent.id] * 3
+
+
+def test_ac29_a_list_with_one_refusal_assigns_nothing(client, db):
+    inactive = _agent(db, is_active=False)
+    owned_by_mocha = _agent(db, company_id=MOCHA_ID)
+    active = _agent(db)
+    first = _customer(db)
+    second = _customer(db)
+    db.commit()
+
+    inactive_422 = client.post(
+        f"{AGENTS}/{inactive.id}/customers", json={"customer_ids": [first.id, second.id]}
+    )
+    cross_company_422 = client.post(
+        f"{AGENTS}/{owned_by_mocha.id}/customers", json={"customer_ids": [first.id, second.id]}
+    )
+    unknown_404 = client.post(
+        f"{AGENTS}/{active.id}/customers",
+        json={"customer_ids": [first.id, str(uuid.uuid4()), second.id]},
+    )
+
+    assert inactive_422.status_code == 422, inactive_422.text
+    assert cross_company_422.status_code == 422, cross_company_422.text
+    assert _domain_404(unknown_404), unknown_404.text
+    assert _agent_of(db, first.id) is None
+    assert _agent_of(db, second.id) is None
+
+
+def test_ac29_a_customer_already_on_this_agent_is_a_noop(client, db):
+    agent = _agent(db)
+    already = _customer(db, agent=agent)
+    fresh = _customer(db)
+    db.commit()
+
+    response = client.post(
+        f"{AGENTS}/{agent.id}/customers", json={"customer_ids": [already.id, fresh.id]}
+    )
+
+    assert response.status_code == 200, response.text
+    assert [c["id"] for c in response.json()["data"]] == [already.id, fresh.id]
+    assert _agent_of(db, already.id) == agent.id
+    assert _agent_of(db, fresh.id) == agent.id
 
 
 # ============================================================ AC-30 unassign action
@@ -754,7 +883,7 @@ def test_ac32_assign_then_unassign_are_audited_with_the_sales_agent_change(clien
     db.commit()
     customer_id = customer.id
 
-    assigned = client.post(f"{AGENTS}/{agent.id}/customers", json={"customer_id": customer_id})
+    assigned = client.post(f"{AGENTS}/{agent.id}/customers", json={"customer_ids": [customer_id]})
     assert assigned.status_code == 200, assigned.text
 
     parked = _park(
