@@ -85,6 +85,11 @@ the PO line delivery date and park it as like a supply".
 - **AC-PO-12 `[T]`** Given SO419208 with a 4 row and a 1,305 row and PO 202609-S0029 line 2 (4) and line 3 (1,305) naming SO419208, when the view walks, then line 2 covers the 4 row only and line 3 the 1,305 row only (by the S/O line ref, else by exact quantity), and each row's Covered by lists only that PO line.
 - **AC-PO-13 `[BE]`** Given the same case, when the rows' bucket is drilled, then the Supply tab lists PO lines 2 and 3 with Assigned to `SO419208 line 1 (4)` and `SO419208 line 2 (1,305)`, even when the PO's assumed date files it in a later month (Free 0 there; its own month still lists it with its Free).
 
+**R44 (owner, 29 Sep 2026, #1359):** "the supply here doesn't care about anything received, same like SO, nothing delivered also is fine, I just need to know what's my sold quantity (demand) and purchased quantity (supply), so I don't really care about the fulfilment". Supersedes, for the Stock Debt page only, AC-S2-4b, the overdue halves of AC-PO-6 and AC-PO-10, and AC-PO-13's "assumed date in a later month"; the board path (AC-S3-1c, AC-PO-8) keeps the overdue rule.
+
+- **AC-PO-14 `[T]`** Given CSK14A-NL with SO419208 1,309 outstanding pinned to PO 202609-S0029 lines of 4 and 1,305, and an unpinned line of 41 on the same PO, every delivery date past and nothing received, when the Stock Debt page is read under any overdue policy (0 / 0, 14 / 90, 45 / 45), then the current month cell reads +41, the row total +41, the Supply tab lists all three lines in the current month with `overdue: false`, the 41 line Free 41 with its `days_late` stated, the two pinned lines Free 0, the Demand rows Pinned with Short 0, and the export's month and Total read +41.
+- **AC-PO-15 `[T]`** Given the same fixtures, when reorder planning, coverage or front planning run (`assignments_for`, never `view`), then their answers are unchanged: the overdue grace and dead rules still apply there.
+
 ## S3 - Ladder v7: use, borrow on hand, pool, buy
 
 Engine `front_planning_engine.propose_line` walks the rungs in this order; candidate builders in `project_supply_service.py`; every case is a pytest on Postgres in `tests/scm/test_ladder_v7_borrow.py`, written before the code.

@@ -1,16 +1,20 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
+import { useCallback } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, Edit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBackToListHref, useHrefWithListState } from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useSupplier, suppliersPagerQuery } from '../../hooks/useSuppliers';
 import { formatDate } from '@/lib/helpers';
 import DetailActions from '@/components/common/DetailActions';
 import { useSupplierActions } from '../../actions';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { SupplierPricesTab } from './SupplierPricesTab';
 
 interface SupplierDetailProps {
   supplierId: string;
@@ -18,6 +22,8 @@ interface SupplierDetailProps {
 
 export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const backHref = useBackToListHref('/procurement-management/suppliers');
   // Edit carries the list state too: the edit screen has a pager of its own.
   const editHref = useHrefWithListState(
@@ -27,6 +33,21 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
   const { actions, dialogs } = useSupplierActions(supplier, {
     onDeleted: () => router.push(backHref),
   });
+  const canViewPrices = useHasPermission('procurement.product_suppliers.view');
+
+  // Same URL-held tab as the product record (ProductDetail.tsx): a tab survives
+  // stepping to the next supplier with the pager above.
+  const activeTab = searchParams.get('tab') || 'details';
+  const handleTabChange = useCallback(
+    (tab: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (tab === 'details') params.delete('tab');
+      else params.set('tab', tab);
+      const qs = params.toString();
+      router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
 
   if (isLoading) {
     return (
@@ -87,75 +108,90 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
       </div>
 
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Contact Information</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <p className="text-sm text-muted-foreground">Contact Name</p>
-              <p className="font-medium">{supplier.contact_name || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Email</p>
-              <p className="font-medium">{supplier.email || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Phone</p>
-              <p className="font-medium">{supplier.phone_number || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Address</p>
-              <p className="font-medium">
-                {supplier.address_line1 && (
-                  <>
-                    {supplier.address_line1}
-                    {supplier.address_line2 && <>, {supplier.address_line2}</>}
-                    <br />
-                    {supplier.city && supplier.state && (
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
+        <TabsList variant="line" className="w-full justify-start">
+          <TabsTrigger value="details">Details</TabsTrigger>
+          {canViewPrices ? <TabsTrigger value="prices">Costs</TabsTrigger> : null}
+        </TabsList>
+
+        <TabsContent value="details">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle>Contact Information</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <p className="text-sm text-muted-foreground">Contact Name</p>
+                  <p className="font-medium">{supplier.contact_name || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Email</p>
+                  <p className="font-medium">{supplier.email || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Phone</p>
+                  <p className="font-medium">{supplier.phone_number || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Address</p>
+                  <p className="font-medium">
+                    {supplier.address_line1 && (
                       <>
-                        {supplier.city}, {supplier.state} {supplier.postal_code}
+                        {supplier.address_line1}
+                        {supplier.address_line2 && <>, {supplier.address_line2}</>}
                         <br />
+                        {supplier.city && supplier.state && (
+                          <>
+                            {supplier.city}, {supplier.state} {supplier.postal_code}
+                            <br />
+                          </>
+                        )}
+                        {supplier.country_name}
                       </>
                     )}
-                    {supplier.country_name}
-                  </>
-                )}
-                {!supplier.address_line1 && '-'}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Payment Terms</p>
-              <p className="font-medium">{supplier.payment_terms_days} days</p>
-            </div>
-          </CardContent>
-        </Card>
+                    {!supplier.address_line1 && '-'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Payment Terms</p>
+                  <p className="font-medium">{supplier.payment_terms_days} days</p>
+                </div>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Quick Info</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <p className="text-sm text-muted-foreground">Supplier Code</p>
-              <p className="font-medium">{supplier.supplier_code}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Status</p>
-              <Badge variant={supplier.is_active ? 'success' : 'secondary'}>
-                {supplier.is_active ? 'Active' : 'Inactive'}
-              </Badge>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Created</p>
-              <p className="font-medium text-sm">{formatDate(new Date(supplier.created_at))}</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+            <Card>
+              <CardHeader>
+                <CardTitle>Quick Info</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <p className="text-sm text-muted-foreground">Supplier Code</p>
+                  <p className="font-medium">{supplier.supplier_code}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Status</p>
+                  <Badge variant={supplier.is_active ? 'success' : 'secondary'}>
+                    {supplier.is_active ? 'Active' : 'Inactive'}
+                  </Badge>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Created</p>
+                  <p className="font-medium text-sm">{formatDate(new Date(supplier.created_at))}</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
 
-      {/* TODO: Linked products grid, performance rating, recent orders, attachments */}
+          {/* TODO: Linked products grid, performance rating, recent orders, attachments */}
+        </TabsContent>
+
+        {canViewPrices ? (
+          <TabsContent value="prices">
+            <SupplierPricesTab supplierId={supplierId} />
+          </TabsContent>
+        ) : null}
+      </Tabs>
     </div>
   );
 }

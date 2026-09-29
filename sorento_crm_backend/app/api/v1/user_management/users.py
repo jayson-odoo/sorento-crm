@@ -100,6 +100,10 @@ async def get_users(
                 "updated_at": user.updated_at,
                 "last_sign_in_at": user.last_sign_in_at,
                 "email_verified_at": user.email_verified_at,
+            # identity S1 (#1280), plan 5.3: Set a/Change password button label,
+            # "Needs attention" phone banner. Derived - not a stored column.
+            "has_password": bool((user.password or "").strip()),
+            "phone_verified_at": getattr(user, "phone_verified_at", None),
                 "is_trashed": user.is_trashed,
                 "is_protected": user.is_protected,
                 "roles": [{"id": r.id, "name": r.name} for r in roles],
@@ -422,6 +426,10 @@ async def get_current_user_profile(
             "updated_at": user.updated_at,
             "last_sign_in_at": user.last_sign_in_at,
             "email_verified_at": user.email_verified_at,
+            # identity S1 (#1280), plan 5.3: Set a/Change password button label,
+            # "Needs attention" phone banner. Derived - not a stored column.
+            "has_password": bool((user.password or "").strip()),
+            "phone_verified_at": getattr(user, "phone_verified_at", None),
             "is_trashed": user.is_trashed,
             "is_protected": user.is_protected,
             "roles": [{"id": r.id, "name": r.name} for r in roles],
@@ -575,6 +583,10 @@ async def get_user(
             "updated_at": user.updated_at,
             "last_sign_in_at": user.last_sign_in_at,
             "email_verified_at": user.email_verified_at,
+            # identity S1 (#1280), plan 5.3: Set a/Change password button label,
+            # "Needs attention" phone banner. Derived - not a stored column.
+            "has_password": bool((user.password or "").strip()),
+            "phone_verified_at": getattr(user, "phone_verified_at", None),
             "is_trashed": user.is_trashed,
             "is_protected": user.is_protected,
             "roles": [{"id": r.id, "name": r.name} for r in roles],
@@ -868,6 +880,10 @@ async def update_current_user_profile(
             "updated_at": user.updated_at,
             "last_sign_in_at": user.last_sign_in_at,
             "email_verified_at": user.email_verified_at,
+            # identity S1 (#1280), plan 5.3: Set a/Change password button label,
+            # "Needs attention" phone banner. Derived - not a stored column.
+            "has_password": bool((user.password or "").strip()),
+            "phone_verified_at": getattr(user, "phone_verified_at", None),
             "is_trashed": user.is_trashed,
             "is_protected": user.is_protected,
             "roles": [{"id": r.id, "name": r.name} for r in roles],

@@ -264,8 +264,12 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // BODY_ONLY_SEGMENTS entry needed. Total: 146.
     // Chatbot memory lane A: `user-management/contacts/[id]/chatbot` is a new segment
     // with its own `loading.tsx`, found by the walk itself - no BODY_ONLY_SEGMENTS entry
-    // needed. Total: 147.
-    expect(requiredSegmentNames.length).toBe(147);
+    // needed.
+    // Cost price Lane A (PLAN-cost-price-supplier-26sep.md, #1288):
+    // `procurement-management/cost-price-uploads` is a new DataGrid list segment with its
+    // own `loading.tsx`, found by the walk itself - no BODY_ONLY_SEGMENTS entry needed.
+    // With both lanes merged: 146 + 1 (contacts chatbot) + 1 (cost-price-uploads) = 148.
+    expect(requiredSegmentNames.length).toBe(148);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

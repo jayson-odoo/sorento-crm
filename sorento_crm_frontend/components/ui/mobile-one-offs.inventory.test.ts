@@ -148,7 +148,7 @@ describe('Mobile one-offs (S4-04)', () => {
   });
 
   it('S4-04: the dashboard says what it is', () => {
-    const src = read('app/(protected)/page.tsx');
+    const src = read('app/(protected)/(home)/page.tsx');
     // S5-01 moved every page title into PageHeader; the dashboard's reads the
     // sidebar's own first entry.
     expect(src).toContain('<PageHeader title="Dashboards" />');

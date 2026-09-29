@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from typing import Optional, List, Any
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.services.procurement_service import SupplierService
 from app.schemas.procurement import SupplierCreate, SupplierUpdate, SupplierResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
@@ -208,3 +208,19 @@ async def delete_supplier(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.get("/{supplier_id}/cost-lists")
+async def get_supplier_cost_lists(
+    supplier_id: str,
+    query: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    packaging: Optional[str] = Query(None),
+    current_user: dict = Depends(require_permission("procurement.product_suppliers.view")),
+    db: Session = Depends(get_db),
+):
+    """Every linked product's dated cost lists for this supplier, one entry per product and
+    packaging method (#1288, contract 2.1; round 8)."""
+    from app.services.procurement.supplier_cost_service import list_cost_lists_for_supplier
+
+    return list_cost_lists_for_supplier(db, supplier_id, query=query, status=status, packaging=packaging)
