@@ -203,21 +203,26 @@ def test_the_stock_task_addendum_teaches_the_last_answered_line():
         QUANTITY_ADDENDUM,
         SALES_ANALYSIS_ADDENDUM,
         SEMANTIC_PARSER_PROMPT,
+        SPECIFICATION_ADDENDUM,
         STOCK_TASK_ADDENDUM,
+        TOP_SELLING_ADDENDUM,
     )
 
     assert '"Last answered:"' in STOCK_TASK_ADDENDUM
     assert '"how about 100?"' in STOCK_TASK_ADDENDUM
     assert "correction true" in STOCK_TASK_ADDENDUM
-    # SALES_ANALYSIS_ADDENDUM (#1267 S1) stacks after this one, then #1262's
-    # QUANTITY_ADDENDUM and KNOWN_BRANDS_ADDENDUM, then #1323's
+    # SALES_ANALYSIS_ADDENDUM (#1267 S1) stacks after this one, then SPECIFICATION_ADDENDUM
+    # (fix round 8 on PR #833), then #1262's QUANTITY_ADDENDUM and KNOWN_BRANDS_ADDENDUM,
+    # then the top selling addendum (PR #1273), then #1323's
     # ESCALATION_CONFIRMATION_ADDENDUM, then chatbot memory lane A's MEMORY_ADDENDUM,
     # newest outermost.
     assert (
         SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM)
         .removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+        .removesuffix(TOP_SELLING_ADDENDUM)
         .removesuffix(KNOWN_BRANDS_ADDENDUM)
         .removesuffix(QUANTITY_ADDENDUM)
+        .removesuffix(SPECIFICATION_ADDENDUM)
         .removesuffix(SALES_ANALYSIS_ADDENDUM)
         .endswith(STOCK_TASK_ADDENDUM)
     )

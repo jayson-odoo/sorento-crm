@@ -311,7 +311,6 @@ export default function ContactAccessTypesAdmin() {
         isLoading={typesLoading}
         emptyMessage="No access types. Add one to get started."
         tableLayout={{ width: 'fixed', columnsVisibility: true }}
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">

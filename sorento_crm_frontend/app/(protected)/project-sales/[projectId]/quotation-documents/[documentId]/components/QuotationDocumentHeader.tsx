@@ -5,16 +5,22 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { formatDateInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
+import {
+  useProjectQuotationVersions,
+  useQuotations,
+} from '../../../../_shared/hooks/useProjects';
 import { formatMyrExact } from '../../../../_shared/lib/money';
 import type {
   QuotationDocument,
   QuotationDocumentBody,
+  QuotationScope,
 } from '../../../../_shared/services/quotationDocumentService';
 
 /**
  * The letterhead, laid out the way the customer reads it on the printed quotation: the refs
- * that get quoted back on the right, who it is to on the left, then the one line naming the job.
+ * that get quoted back on the right, who it is to on the left. The line naming the job is not
+ * repeated here as a read: the record header above the card already shows it (#1335).
  *
  * Every field here ARRIVES derived - recipient from the project's party, subject from the project
  * title, ref from the numbering rule. The screen shows them rather than asking for them, which
@@ -60,6 +66,81 @@ function EditField({
   );
 }
 
+/**
+ * Who issued and when each scope's current version was opened, for the Header details (#1341,
+ * owner: "this one should be in header details"). The values are per scope version and genuinely
+ * differ (each scope's version is opened on its own, by whoever opened it), so a quotation with
+ * more than one scope lists them grouped by scope; one scope reads as a plain pair of fields.
+ */
+export type QuotationHeaderDetail = {
+  scopeId: string;
+  scopeLabel: string;
+  versionNo: number;
+  issuedByName: string | null;
+  openedAt: string | null;
+};
+
+/** The current version of each of this document's scopes, off the queries the page already runs. */
+export function useQuotationHeaderDetails(
+  projectId: string | undefined,
+  scopes: QuotationScope[],
+): QuotationHeaderDetail[] {
+  const quotations = useQuotations(projectId);
+  const ids = React.useMemo(() => new Set(scopes.map((scope) => scope.id)), [scopes]);
+  const mine = React.useMemo(
+    () => (quotations.data ?? []).filter((row) => ids.has(row.id)),
+    [quotations.data, ids],
+  );
+  const versions = useProjectQuotationVersions(mine);
+  return scopes.flatMap((scope) => {
+    const current = versions.rows.find(
+      (row) => row.quotation.id === scope.id && row.version.is_current,
+    )?.version;
+    if (!current) return [];
+    return [
+      {
+        scopeId: scope.id,
+        scopeLabel: scope.scope_label,
+        versionNo: current.version_no,
+        issuedByName: current.issued_by_name ?? null,
+        openedAt: current.created_at ?? null,
+      },
+    ];
+  });
+}
+
+function DetailPair({ detail }: { detail: QuotationHeaderDetail }) {
+  return (
+    <>
+      <Field label="Issued by" value={detail.issuedByName ?? '-'} />
+      <Field
+        label="Opened"
+        value={detail.openedAt ? formatDateTimeInMalaysia(detail.openedAt) : '-'}
+      />
+    </>
+  );
+}
+
+function HeaderDetails({ details }: { details: QuotationHeaderDetail[] }) {
+  if (details.length === 0) return null;
+  if (details.length === 1) return <DetailPair detail={details[0]} />;
+  return (
+    <div className="space-y-2">
+      {details.map((detail) => {
+        const name = `${detail.scopeLabel} v${detail.versionNo}`;
+        return (
+          <div key={detail.scopeId} role="group" aria-label={name} className="space-y-1">
+            <p className="min-w-0 break-words text-xs font-semibold text-muted-foreground">
+              {name}
+            </p>
+            <DetailPair detail={detail} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function addressLines(address: string | null): string[] {
   if (!address) return [];
   return address
@@ -71,6 +152,7 @@ function addressLines(address: string | null): string[] {
 export function QuotationDocumentHeader({
   document,
   liveGrandTotal = null,
+  details = [],
   onChange,
 }: {
   /**
@@ -86,6 +168,8 @@ export function QuotationDocumentHeader({
    * changes - the number the user is watching disagrees with the number they are editing.
    */
   liveGrandTotal?: string | null;
+  /** Issued by and Opened, per scope version, for the details beside the refs. */
+  details?: QuotationHeaderDetail[];
   /**
    * Set only in an edit session, exactly like the letter panels' own `onChange`. Absent means
    * this is a read. Typing here writes nothing: it stages onto the document draft, and the
@@ -99,7 +183,7 @@ export function QuotationDocumentHeader({
   const docDate = document.doc_date ? formatDateInMalaysia(document.doc_date) : '';
 
   return (
-    <Card>
+    <Card data-testid="quotation-header-card">
       <CardContent className="grid gap-6 py-5 md:grid-cols-2">
         <div className="min-w-0 space-y-1">
           <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -208,6 +292,7 @@ export function QuotationDocumentHeader({
               <Field label="Date" value={docDate || '-'} />
             </>
           )}
+          <HeaderDetails details={details} />
           {/* The total belongs with the refs, not beside the buttons in the page header. It is a
               FACT about the document, the same kind as its date, and the client asked for it here.
               Up in the header it competed with the primary action for the eye.
@@ -222,8 +307,10 @@ export function QuotationDocumentHeader({
           </div>
         </div>
 
-        <div className="border-t border-border pt-4 md:col-span-2">
-          {onChange ? (
+        {/* The subject is only an input here. As a read it would repeat the project title the
+            record header already shows right above this card (#1335). */}
+        {onChange ? (
+          <div className="border-t border-border pt-4 md:col-span-2">
             <EditField id="quotation-subject-title" label="Subject">
               <Input
                 id="quotation-subject-title"
@@ -232,12 +319,8 @@ export function QuotationDocumentHeader({
                 placeholder="The one line naming the job"
               />
             </EditField>
-          ) : (
-            <p className="min-w-0 break-words text-sm font-semibold uppercase tracking-wide">
-              {document.subject_title ?? '-'}
-            </p>
-          )}
-        </div>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

@@ -34,10 +34,11 @@ const listProjects = vi.fn();
 const listParties = vi.fn();
 const listProjectTypes = vi.fn();
 const listingKeys: (string | null | undefined)[] = [];
+const push = vi.fn();
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/pipeline',
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push, replace: vi.fn() }),
   // The list restores its page, sort and filters from the query string Back hands
   // it (S3-01), so it reads the URL on every render.
   useSearchParams: () => new URLSearchParams(''),
@@ -193,6 +194,20 @@ describe('PipelineClient', () => {
     await waitFor(() => expect(listProjects).toHaveBeenCalled());
   });
 
+  // #1335: no subtitle under the title, and the empty board offers no second
+  // CTA beside the header's Start menu.
+  it('carries no subtitle, and the empty board repeats no header CTA', async () => {
+    renderClient();
+
+    const empty = (await screen.findByText('No projects registered yet'))
+      .parentElement as HTMLElement;
+    expect(within(empty).queryByRole('button')).toBeNull();
+    expect(within(empty).queryByRole('link')).toBeNull();
+    expect(
+      screen.queryByText(/so nobody works a development twice/i),
+    ).not.toBeInTheDocument();
+  });
+
   it('carries no separate filter card above the grid', async () => {
     renderClient();
     switchToGrid();
@@ -311,14 +326,14 @@ describe('PipelineClient, Start menu (S2)', () => {
     ]);
   });
 
-  it('Register a project opens the existing project create dialog (S2-3)', async () => {
+  it('Register a project navigates to the create page, opening no dialog (AC-PF003)', async () => {
     renderClient();
     openStart();
 
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Register a project' }));
 
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Register a project')).toBeInTheDocument();
+    expect(push).toHaveBeenCalledWith('/project-sales/new');
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('Upload PO opens the PO upload dialog with a required project field first (S2-4)', async () => {

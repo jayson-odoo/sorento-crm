@@ -212,7 +212,6 @@ export default function ChatbotDomainsList() {
         isLoading={isLoading}
         onRowClick={(row) => openEdit(row)}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">

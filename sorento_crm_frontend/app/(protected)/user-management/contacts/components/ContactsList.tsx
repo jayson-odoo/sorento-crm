@@ -415,7 +415,6 @@ export default function ContactsList() {
       isLoading={isLoading}
       isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

@@ -51,7 +51,6 @@ export function PanelDataGrid<TRow extends object>({
   error,
   emptyTitle,
   emptyBody,
-  emptyAction,
   onRowClick,
   rowClassName,
   rowAttributes,
@@ -94,7 +93,11 @@ export function PanelDataGrid<TRow extends object>({
   emptyTitle: string;
   /** One short line at most. A tab is not the place to explain the feature (ADR 1e). */
   emptyBody?: string;
-  emptyAction?: React.ReactNode;
+  /**
+   * No slot: an empty state is heading and hint only, and the page's one
+   * primary CTA lives in its header (owner ruling, PR #1336, CRM-wide).
+   */
+  emptyAction?: never;
   onRowClick?: (row: TRow) => void;
   /**
    * Extra classes layered onto a row (the same idiom `DataGrid`'s own `rowClassName`
@@ -441,7 +444,6 @@ export function PanelDataGrid<TRow extends object>({
                   {emptyBody}
                 </p>
               )}
-              {emptyAction && <div className="mt-4 flex justify-center">{emptyAction}</div>}
             </div>
           ) : (
             <DataGridTable />

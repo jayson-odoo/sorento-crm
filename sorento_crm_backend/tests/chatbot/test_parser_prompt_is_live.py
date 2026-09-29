@@ -35,7 +35,9 @@ from app.services.chatbot_parser_prompt import (
     QUANTITY_ADDENDUM,
     SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
+    SPECIFICATION_ADDENDUM,
     STOCK_TASK_ADDENDUM,
+    TOP_SELLING_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
 )
 
@@ -217,19 +219,25 @@ def _without_growth_r1_addendum(text: str) -> str:
     `GROWTH_R1_ADDENDUM` really is the tail once `LAST_COST_ADDENDUM` is off lives in
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
-    # MEMORY_ADDENDUM (chatbot memory lane A) is the newest addendum, then
-    # ESCALATION_CONFIRMATION_ADDENDUM (#1323), then the #1262 pair (KNOWN_BRANDS_ADDENDUM,
-    # QUANTITY_ADDENDUM), then SALES_ANALYSIS_ADDENDUM (#1267 S1),
-    # then STOCK_TASK_ADDENDUM (ported from PR #1118, not merged, chatbot-stock-ask-v2
-    # S3), so they come off FIRST, in that order.
+    # MEMORY_ADDENDUM (chatbot memory lane A) is the newest addendum and the prompt's
+    # tail, so it is peeled first; ESCALATION_CONFIRMATION_ADDENDUM (#1323) sits beneath
+    # it, then `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4), then
+    # the #1262 pair (KNOWN_BRANDS_ADDENDUM, QUANTITY_ADDENDUM), then
+    # SPECIFICATION_ADDENDUM (fix round 8 on PR #833), then SALES_ANALYSIS_ADDENDUM
+    # (#1267 S1), then STOCK_TASK_ADDENDUM (ported from PR #1118, not merged,
+    # chatbot-stock-ask-v2 S3).
     if text.endswith(MEMORY_ADDENDUM):
         text = text[: -len(MEMORY_ADDENDUM)]
     if text.endswith(ESCALATION_CONFIRMATION_ADDENDUM):
         text = text[: -len(ESCALATION_CONFIRMATION_ADDENDUM)]
+    if text.endswith(TOP_SELLING_ADDENDUM):
+        text = text[: -len(TOP_SELLING_ADDENDUM)]
     if text.endswith(KNOWN_BRANDS_ADDENDUM):
         text = text[: -len(KNOWN_BRANDS_ADDENDUM)]
     if text.endswith(QUANTITY_ADDENDUM):
         text = text[: -len(QUANTITY_ADDENDUM)]
+    if text.endswith(SPECIFICATION_ADDENDUM):
+        text = text[: -len(SPECIFICATION_ADDENDUM)]
     if text.endswith(SALES_ANALYSIS_ADDENDUM):
         text = text[: -len(SALES_ANALYSIS_ADDENDUM)]
     if text.endswith(STOCK_TASK_ADDENDUM):

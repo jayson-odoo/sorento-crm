@@ -39,13 +39,7 @@ const COLUMNS: ColumnDef<Row>[] = [
   { accessorKey: 'note', header: 'Note', size: 900 },
 ];
 
-function Harness({
-  emptyMessage,
-  emptyAction,
-}: {
-  emptyMessage?: string;
-  emptyAction?: React.ReactNode;
-}) {
+function Harness({ emptyMessage }: { emptyMessage?: string }) {
   const table = useReactTable({
     data: [] as Row[],
     columns: COLUMNS,
@@ -58,7 +52,6 @@ function Harness({
       recordCount={0}
       isLoading={false}
       emptyMessage={emptyMessage}
-      emptyAction={emptyAction}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
     >
       <DataGridTable />
@@ -77,23 +70,34 @@ describe('DataGridTable empty state', () => {
     expect(screen.getByText('No stock inquiries match this filter')).toBeInTheDocument();
   });
 
-  it('S5-06: an empty listing offers the next step, beside its message', () => {
-    render(
-      <Harness
-        emptyMessage="No users yet"
-        emptyAction={<button type="button">Add user</button>}
-      />,
-    );
-
-    const action = screen.getByRole('button', { name: 'Add user' });
-    expect(action).toBeInTheDocument();
-    // Inside the same sticky container as the message, so the offer travels with
-    // it on a grid wider than its scroll container.
-    const message = screen.getByText('No users yet');
-    expect(message.closest('[data-slot="data-grid-empty"]')).toContainElement(action);
+  it('PR #1336: the empty state has no CTA slot; a passed action never renders', () => {
+    function Smuggler() {
+      const table = useReactTable({
+        data: [] as Row[],
+        columns: COLUMNS,
+        getRowId: (r) => r.id,
+        getCoreRowModel: getCoreRowModel(),
+      });
+      return (
+        <DataGrid
+          table={table}
+          recordCount={0}
+          isLoading={false}
+          emptyMessage="No users yet"
+          // @ts-expect-error the slot is gone: heading and hint only (CRM-wide rule)
+          emptyAction={<button type="button">Add user</button>}
+          tableLayout={{ width: 'fixed', columnsResizable: true }}
+        >
+          <DataGridTable />
+        </DataGrid>
+      );
+    }
+    render(<Smuggler />);
+    expect(screen.getByText('No users yet')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add user' })).toBeNull();
   });
 
-  it('S5-06: a listing with no next step renders the message alone', () => {
+  it('renders the message alone, with no button', () => {
     render(<Harness />);
     const empty = screen
       .getByText('No data available')

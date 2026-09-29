@@ -946,6 +946,18 @@ def update_project(
     apply_sales_details(
         db, project, payload, brand_ids=payload.get("brand_ids")
     )
+
+    # Present-and-null is an unlink; absent leaves the link alone (#1339).
+    if "lead_id" in payload:
+        from app.services.project_lead_service import set_project_lead
+
+        set_project_lead(
+            db,
+            project,
+            payload["lead_id"],
+            actor_user_id=actor_user_id,
+            permissions=permissions,
+        )
     return project
 
 

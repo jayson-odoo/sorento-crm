@@ -45,7 +45,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { FormSection } from './FormSection';
+import { FormSection } from '@/components/common/FormSection';
 import { RevisionHistory } from './RevisionHistory';
 import {
   SearchableSelect,

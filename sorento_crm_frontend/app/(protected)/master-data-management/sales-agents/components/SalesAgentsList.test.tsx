@@ -86,6 +86,7 @@ function agent(over: Partial<SalesAgent> = {}): SalesAgent {
     internal_note: null,
     follow_up: false,
     person_label: 'Sean',
+    aliases: null,
     demand_class: 'project',
     location_group: 'BB',
     contact_id: null,

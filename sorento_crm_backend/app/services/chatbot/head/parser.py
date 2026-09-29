@@ -117,10 +117,10 @@ def _build_json_schema() -> dict[str, Any]:
             "is_affirmative": {"type": ["boolean", "null"]},
             "user_goal": string_or_null,
             # AC-1317: true when the message asks for more of the set the LAST answer
-            # counted ("more", "next", "lagi", ...) - a dedicated boolean rather than a
-            # free-text `user_goal` word the code matches against a list, which was
-            # still a text rule wearing the parser's clothes (captain ruling, 16 Sep
-            # 2026). `turn/apply.py::_is_continuation` reads this key only.
+            # counted ("more", "next", "lagi", ...). Declared and still emitted, but
+            # nothing pages on it any more (owner ruling, 26 Sep 2026: no paging); the
+            # answer to "how many should I show?" is `top_n`, read by
+            # `turn/apply.py::_named_count`.
             "continuation": {"type": ["boolean", "null"]},
             "access_levels": {"type": "array", "items": {"type": "string"}},
             "broaden_axis": string_or_null,
@@ -170,6 +170,14 @@ def _build_json_schema() -> dict[str, Any]:
                         # absent from `required`, and a key the provider is never
                         # forced to reason about is a key it never fills.
                         "quantity": {"type": ["number", "null"]},
+                        # Fix round 8 on PR #833 (owner retest of round 7): a
+                        # `specification` entity names its registry key and the choice
+                        # (or number) the words mean; null on every other kind. The
+                        # vocabulary is the policy block's Specification lines, and
+                        # `head/grounding.py` checks both against the registry after the
+                        # parse. Required like every other key: strict mode.
+                        "spec_key": string_or_null,
+                        "spec_value": {"type": ["string", "number", "boolean", "null"]},
                     },
                     "required": [
                         "raw",
@@ -179,6 +187,8 @@ def _build_json_schema() -> dict[str, Any]:
                         "confident",
                         "hint_confident",
                         "quantity",
+                        "spec_key",
+                        "spec_value",
                     ],
                 },
             },
@@ -235,6 +245,20 @@ def _build_json_schema() -> dict[str, Any]:
             # reading as null; the field is genuinely conditional (emitted only on a
             # sales report ask) either way.
             "sales_channel": {"type": ["string", "null"], "enum": ["dealer", "project", None]},
+            # PLAN-chatbot-top-x-hot-selling-24sep.md "Parser (S4)": the top selling ask's
+            # three axes, each nullable and each an ENUM for the reason `group_by` gives
+            # (no earlier prompt version emits them, so no working turn produces a value
+            # outside the set). Required for strict mode, exempted from the recorded
+            # emissions' check through `TOLERATED_ABSENT`, exactly like `sales_channel`.
+            # `unclear` is the parser saying the message could mean either: the lane asks
+            # (owner rulings 26 Sep 2026: never assume the basis or the grain). A null
+            # `rank_by` is asked too (no default metric).
+            "rank_by": {"type": ["string", "null"], "enum": ["quantity", "amount", None]},
+            "basis": {"type": ["string", "null"], "enum": ["delivered", "ordered", "unclear", None]},
+            "rank_group": {"type": ["string", "null"], "enum": ["item", "category", "unclear", None]},
+            # Fix lane round 4 (owner retest, 27 Sep 2026): "cold selling", "least sold"
+            # rank ascending. Same shape and same exemption as the three above.
+            "rank_direction": {"type": ["string", "null"], "enum": ["top", "bottom", None]},
             # PLAN-retail-sales-reports-26sep S1: the sales analysis's basis and the
             # company named. Required for strict mode and tolerated absent, exactly as
             # `sales_channel` above (no recorded emission carries them).
@@ -452,6 +476,10 @@ def _build_json_schema() -> dict[str, Any]:
             "group_by",
             "top_n",
             "sales_channel",
+            "rank_by",
+            "basis",
+            "rank_group",
+            "rank_direction",
             "sales_basis",
             "sales_company",
             "correction",
@@ -488,6 +516,8 @@ DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
 #: it HAS to be declared at the wire, and no prompt version before the sales report
 #: addendum ever emits it - so every recorded emission and every `mock_reformulator_
 #: output` a console case carries lacks it, and reads as null.
+#: The top selling keys (`rank_by`, `basis`, `rank_group`, `rank_direction`) join for
+#: the same reason.
 #: `proceed_anyway` joins them by the SAME rule (ported from PR #1118, not merged,
 #: D13): it has to be declared at the wire to exist at all, and no prompt version
 #: before this lane's addendum emits it, so every recorded emission and every
@@ -502,6 +532,10 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
         "broaden_to",
         "domain_in_message",
         "sales_channel",
+        "rank_by",
+        "basis",
+        "rank_group",
+        "rank_direction",
         "sales_basis",
         "sales_company",
         "proceed_anyway",

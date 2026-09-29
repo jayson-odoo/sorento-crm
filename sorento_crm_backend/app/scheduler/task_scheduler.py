@@ -420,37 +420,90 @@ def _handler_scm_analytics(db, task):
         raise
 
 
-def _handler_scm_reorder_run(db, task):
-    """Daily scheduled reorder planning run (M8-D1/D6/D8).
+def _scm_reorder_run_kwargs(metadata, run_day):
+    """Turns the ``scm_reorder_run`` task's metadata into ``create_run`` kwargs (#1340).
 
-    Plans ALL active warehouses with market insight OFF, then funds EVERYTHING (full
-    budget) so the morning snapshot opens fully within-budget - the user tightens the
-    budget on the page to defer (M8-D6). Runs the pipeline INLINE on the scheduler/
-    worker process (like ``_handler_scm_analytics`` runs ``run_analytics`` inline) so the
-    run + the full-budget funding split are both complete + persisted when the handler
-    returns; no dependence on a live RQ worker draining the run afterwards.
+    Validates ``metadata`` with ``ScmReorderRunTaskMetadata`` (the model the PATCH path
+    already refused bad values with), resolves the relative window against ``run_day`` -
+    the scheduler's own day in the task's timezone, so a daily run never goes stale - and
+    then builds a ``CreateReorderRunRequest`` so ``require_start_on_or_before_end`` and
+    ``refuse_so_numbers_on_a_dealer_run`` run exactly as they do on ``POST /reorder-runs``.
+    With no keys set the result is today's call, unchanged: every warehouse, every
+    product, both demand legs, no window, market off.
+    """
+    from app.schemas.scheduled_task import ScmReorderRunTaskMetadata
+    from app.schemas.scm_reorder import CreateReorderRunRequest
+
+    md = ScmReorderRunTaskMetadata(**(metadata or {}))
+    req = CreateReorderRunRequest(
+        warehouse_codes=md.warehouse_codes or [],
+        product_codes=md.product_codes or [],
+        include_market=bool(md.include_market),
+        plan_horizon_start=(
+            run_day + timedelta(days=md.horizon_start_days)
+            if md.horizon_start_days is not None else None
+        ),
+        plan_horizon_date=(
+            run_day + timedelta(days=md.horizon_end_days)
+            if md.horizon_end_days is not None else None
+        ),
+        demand_class=md.demand_class,
+    )
+    return {
+        "warehouse_codes": list(req.warehouse_codes),  # empty = all active (M8-D1)
+        "buy_scope": "warehouse",  # per-warehouse planning: each buy ties to a real WH
+        "include_market": req.include_market,
+        "product_codes": list(req.product_codes) or None,
+        "plan_horizon_start": req.plan_horizon_start,
+        "plan_horizon_date": req.plan_horizon_date,
+        "demand_class": req.demand_class,
+        "enqueue": False,  # run inline on this process
+    }
+
+
+def _handler_scm_reorder_run(db, task):
+    """Daily scheduled reorder planning run (M8-D1/D6/D8; scope config #1340).
+
+    Plans the scope stated on the task's own config page - defaulting, when unset, to
+    ALL active warehouses/products, both demand legs, no window and market insight OFF -
+    then funds EVERYTHING (full budget) unless a ``budget`` cap is configured, so the
+    morning snapshot opens fully within-budget by default (M8-D6). Runs the pipeline
+    INLINE on the scheduler/worker process (like ``_handler_scm_analytics`` runs
+    ``run_analytics`` inline) so the run + the funding split are both complete +
+    persisted when the handler returns; no dependence on a live RQ worker draining the
+    run afterwards.
 
     Optional ``scheduled_tasks.metadata`` keys tune the run with no code change (the
-    "configurable time" is the row's ``start_at``/interval; these tune the run body):
+    "configurable time" is the row's ``start_at``/interval; these tune the run body -
+    see ``ScmReorderRunTaskMetadata`` for the validation each one gets):
+      * ``warehouse_codes`` - narrows the run to these warehouses; absent/empty = all.
+      * ``product_codes``   - narrows the run to these products; absent/empty = all.
+      * ``demand_class``    - ``project`` or ``retail``; absent = both legs.
+      * ``horizon_start_days`` / ``horizon_end_days`` - the "sales orders needed"
+        window, in days from the run day (in the task's own timezone); either absent
+        is unbounded on that side.
       * ``budget``        - a numeric cash cap for the scheduled split; null/absent =>
         full budget (fund everything, the default).
       * ``include_market`` - market-trend priority factor (default false; market never
-        enters a run per M8-D5, so leave false).
+        enters a run per M8-D5 unless explicitly opted in here).
     """
+    from zoneinfo import ZoneInfo
+
     from app.services.scm import reorder_run_service as reorder_svc
 
     metadata = getattr(task, "metadata_", None)
     md = metadata if isinstance(metadata, dict) else {}
-    budget = md.get("budget")
-    include_market = bool(md.get("include_market", False))
 
-    created = reorder_svc.create_run(
-        db,
-        warehouse_codes=[],            # all active warehouses (M8-D1)
-        buy_scope="warehouse",         # per-warehouse planning: each buy ties to a real WH
-        include_market=include_market,  # market OFF for the scheduled run (M8-D1)
-        enqueue=False,                  # run inline on this process
-    )
+    # The run day is the task's own local day: the run fires at 06:00 KL, which is 22:00
+    # UTC the day before, so a UTC "today" would put a 0-day window on yesterday.
+    run_day = datetime.now(ZoneInfo(getattr(task, "timezone", None) or "UTC")).date()
+    # Validates every key first; a bad stored value fails the run here, before anything
+    # is created, rather than planning a scope nobody asked for.
+    kwargs = _scm_reorder_run_kwargs(md, run_day)
+    include_market = kwargs["include_market"]
+    budget = md.get("budget")  # validated above: a non-negative number or absent
+
+    created = reorder_svc.create_run(db, **kwargs)
     run_id = created["run_id"]
     reorder_svc.run_reorder(run_id, db=db)
 

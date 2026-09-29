@@ -332,6 +332,29 @@ describe('the project header', () => {
   });
 });
 
+describe('editing the project (AC-PF005, AC-PF006)', () => {
+  it('offers Edit project first in the gear, and navigates to the edit page', async () => {
+    renderDetail();
+
+    openOverflow();
+    const menu = await screen.findByRole('menu');
+    const items = within(menu).getAllByRole('menuitem');
+    expect(items[0]).toHaveTextContent('Edit project');
+
+    fireEvent.click(within(menu).getByText('Edit project'));
+
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/edit');
+  });
+
+  it('hides the whole gear, and so Edit project with it, when the viewer cannot edit', () => {
+    projectFixture = project({ can_edit: false });
+
+    renderDetail();
+
+    expect(screen.queryByRole('button', { name: 'Project actions' })).toBeNull();
+  });
+});
+
 describe('deleting a project', () => {
   it('confirms before it deletes, and says the delete cannot be undone', async () => {
     renderDetail();
@@ -365,6 +388,15 @@ describe('the overview, read as sections', () => {
     }
     // The old catch-all title is gone; if it comes back, so has the wall of fields.
     expect(screen.queryByText('Registration')).toBeNull();
+  });
+
+  it('shows an Address fact so every form field has a read counterpart (AC-PF014, D9)', () => {
+    projectFixture = project({ address: '123 Jalan Setia' });
+
+    renderDetail();
+
+    expect(screen.getByText('Address')).toBeInTheDocument();
+    expect(screen.getByText('123 Jalan Setia')).toBeInTheDocument();
   });
 
   it('names the lead this project came from, and links to it', () => {

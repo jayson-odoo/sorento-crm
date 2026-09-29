@@ -1,13 +1,12 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, Lock, RefreshCw, TriangleAlert } from 'lucide-react';
+import { AlertTriangle, RefreshCw, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useUOMSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 // The shared products `/select` mapper, keeping the fields a picked product decides.
@@ -154,12 +153,13 @@ export function stagedScopeTotal(lines: StagedQuotationLine[]): string | null {
 }
 
 /**
- * What the document screen hands down so one scope can be edited without writing anything.
+ * What the quotation form page hands down so one scope can be edited without writing anything.
  *
  * Its presence IS edit mode for this scope. Absent, the table is a clean read: no inputs, no
  * per-row saves, nothing to press by accident. That was the client's complaint in one sentence -
  * "every addition of line doesn't trigger a save ... very annoying" - and the answer is a view
- * that is a view, plus an Edit that puts the whole document into one staged session.
+ * that is a view, plus Edit quotation, whose form page stages every scope and saves them once
+ * (#1341: the same editor, moved under the form's Lines tab).
  */
 export type QuotationScopeEditing = {
   /** The scope's staged lines, or null until it has been seeded from the server's rows. */
@@ -183,14 +183,22 @@ export type QuotationScopeEditing = {
 export function QuotationVersionEditor({
   project,
   quotation,
+  seriesId,
   edit,
 }: {
   project: Project;
-  quotation: ProjectQuotation;
-  /** Set by the document screen while its edit session is open. See `QuotationScopeEditing`. */
+  /**
+   * The scope. Null on the form page for a scope added there and not saved yet (#1341): it has no
+   * version, so there is nothing to read, and its lines start empty and are staged like any other.
+   */
+  quotation: ProjectQuotation | null;
+  /** The series the form has staged for this scope, over the saved one. */
+  seriesId?: string | null;
+  /** Set by the form page, which holds the staged lines. See `QuotationScopeEditing`. */
   edit?: QuotationScopeEditing | null;
 }) {
-  const versions = useQuotationVersions(quotation.id);
+  const isUnsaved = quotation === null;
+  const versions = useQuotationVersions(quotation?.id);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [revising, setRevising] = React.useState(false);
   const recompute = useQuotationRecomputeMutation(project.id);
@@ -214,7 +222,9 @@ export function QuotationVersionEditor({
   // version until somebody revises, so gating on `is_current` left the fields open on a
   // quotation the customer already holds: the user typed a price, the server refused with 422,
   // and the number stayed on screen looking saved.
-  const editable = Boolean(selected?.is_editable ?? selected?.is_current) && project.can_edit;
+  // A scope added on the form has no version yet, and is editable by the one who is adding it.
+  const editable =
+    (isUnsaved || Boolean(selected?.is_editable ?? selected?.is_current)) && project.can_edit;
   const sortedLines = React.useMemo(
     () => [...(lines.data ?? [])].sort((a, b) => a.sort_order - b.sort_order),
     [lines.data],
@@ -280,7 +290,9 @@ export function QuotationVersionEditor({
    * Only fetched when the scope is actually quoted from a series; most are not, and an
    * unconditional request would be a round trip for an answer of "nothing".
    */
-  const seriesRows = useSeriesProductRows(quotation.series_id ?? undefined);
+  const seriesRows = useSeriesProductRows(
+    (seriesId !== undefined ? seriesId : quotation?.series_id) ?? undefined,
+  );
   const seriesPriceByProduct = React.useMemo(() => {
     const map = new Map<string, string>();
     (seriesRows.data ?? []).forEach((row) => {
@@ -416,7 +428,7 @@ export function QuotationVersionEditor({
           };
         },
         annotate: (row, draft) => (
-          <LineFlags quotationId={quotation.id} line={row?.line ?? null} draft={draft} />
+          <LineFlags quotationId={quotation?.id ?? null} line={row?.line ?? null} draft={draft} />
         ),
       },
       {
@@ -570,7 +582,13 @@ export function QuotationVersionEditor({
    */
   const seedScope = edit?.seed;
   React.useEffect(() => {
-    if (!seedScope || !isEditing || staged !== null || !selected || lines.isLoading) return;
+    if (!seedScope || !isEditing || staged !== null) return;
+    // Nothing on the server to start from: an unsaved scope starts with no lines.
+    if (isUnsaved) {
+      seedScope('', []);
+      return;
+    }
+    if (!selected || lines.isLoading) return;
     seedScope(
       selected.id,
       sortedLines.map((line) => ({
@@ -581,7 +599,7 @@ export function QuotationVersionEditor({
         removed: false,
       })),
     );
-  }, [isEditing, lines.isLoading, seedScope, selected, sortedLines, staged]);
+  }, [isEditing, isUnsaved, lines.isLoading, seedScope, selected, sortedLines, staged]);
 
   /**
    * What the table draws, in display order: the staged set while editing, the server's rows
@@ -733,7 +751,10 @@ export function QuotationVersionEditor({
             </Button>
           )}
 
-          {project.can_edit && current && (
+          {/* Not on the form page: a revise writes a new version at once, under lines the form
+              has staged against the current one and saves by scope. The quotation page's Edit
+              quotation already asks to revise before it opens the form. */}
+          {project.can_edit && current && !edit && (
             <Button
               type="button"
               size="sm"
@@ -750,34 +771,15 @@ export function QuotationVersionEditor({
         <RecomputeSummary result={recomputed} onDismiss={() => setRecomputed(null)} />
       )}
 
-      {selected && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-          {selected.issued_by_name && <span>Issued by {selected.issued_by_name}</span>}
-          {selected.created_at && (
-            <span>Opened {formatDateTimeInMalaysia(selected.created_at)}</span>
-          )}
-          {!selected.is_current && selected.frozen_at && (
-            <span className="flex items-center gap-1">
-              <Lock className="size-3" aria-hidden />
-              Frozen {formatDateTimeInMalaysia(selected.frozen_at)}
-            </span>
-          )}
-          {selected.is_issued && (
-            <span className="flex items-center gap-1">
-              <Lock className="size-3" aria-hidden />
-              Issued to the customer
-            </span>
-          )}
-        </div>
-      )}
-
+      {/* No "Issued by / Opened" strip above the table: the owner moved it into the Header tab's
+          details ("this one should be in header details", #1341). */}
       {/* Why this version cannot be edited, and the way out, in one sentence. The old copy
           ("The customer holds this version, so its lines cannot be changed. Open a revision to
           re-price it.") described a state and offered no move, which is exactly what the client
-          read and still could not act on. Edit up in the document header is the move now. */}
+          read and still could not act on. Edit quotation in the gear is the move now. */}
       {selected?.is_issued && selected.is_current && (
         <p className="text-xs text-muted-foreground">
-          {`The customer holds v${selected.version_no}. Edit opens v${selected.version_no + 1} and leaves what was sent untouched.`}
+          {`The customer holds v${selected.version_no}. Edit quotation opens v${selected.version_no + 1} and leaves what was sent untouched.`}
         </p>
       )}
 
@@ -827,7 +829,7 @@ export function QuotationVersionEditor({
           isEditing
             ? 'Nothing quoted yet. Add a line and pick a product to freeze its code, description and list price onto it.'
             : editable
-              ? 'Nothing quoted yet. Press Edit to price this scope.'
+              ? undefined
               : 'This version was frozen without any lines.'
         }
         describeRow={(row, index) =>
@@ -865,7 +867,7 @@ export function QuotationVersionEditor({
         filterEmptyHint={`No line matches "${lineSearch.trim()}".`}
       />
 
-      {revising && current && (
+      {revising && current && quotation && (
         <ReviseQuotationDialog
           projectId={project.id}
           quotation={quotation}
@@ -1013,7 +1015,8 @@ function LineFlags({
   line,
   draft,
 }: {
-  quotationId: string;
+  /** Null on a scope not saved yet: the verdict is asked of a saved scope, so only Off-catalog shows. */
+  quotationId: string | null;
   line: QuotationLine | null;
   draft: InlineDraft;
 }) {
@@ -1026,9 +1029,9 @@ function LineFlags({
     (line.product_id ?? '') === productId &&
     (price || '') === (line.unit_price ?? '');
   const verdict = useLineVerdict(
-    quotationId,
+    quotationId ?? '',
     { product_id: productId || undefined, unit_price: price || undefined },
-    !pristine,
+    !pristine && quotationId !== null,
   );
 
   const belowFloor = pristine ? line.is_below_floor : Boolean(verdict.data?.is_below_floor);

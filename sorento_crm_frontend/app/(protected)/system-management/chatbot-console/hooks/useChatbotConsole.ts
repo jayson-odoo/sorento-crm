@@ -20,9 +20,6 @@ import {
 } from '../types/chatbotConsole.types';
 
 const LAST_CONTACT_STORAGE_KEY = 'chatbot-console:last-contact';
-// Item 6: the operator's EXPLICIT prompt-version choice, next to the stored contact. Same
-// helper shape; `{ id: null }` is a real choice too (the live production label).
-export const PROMPT_VERSION_STORAGE_KEY = 'chatbot-console:prompt-version';
 // How often the "still reading/transcribing" poll checks back, once a media turn's own
 // synchronous wait already timed out server-side. Matches the plan's own "every 2 s".
 const MEDIA_POLL_INTERVAL_MS = 2000;
@@ -67,32 +64,6 @@ function writeStoredContact(contact: StoredContact): void {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(LAST_CONTACT_STORAGE_KEY, JSON.stringify(contact));
-  } catch {
-    // Storage can be full or disabled; the console still works, it just forgets next visit.
-  }
-}
-
-interface StoredPromptChoice {
-  id: string | null;
-}
-
-function readStoredPromptChoice(): StoredPromptChoice | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(PROMPT_VERSION_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<StoredPromptChoice>;
-    if (parsed.id === null || typeof parsed.id === 'string') return { id: parsed.id };
-  } catch {
-    // Ignored - a corrupt value is the same as absent.
-  }
-  return null;
-}
-
-function writeStoredPromptChoice(choice: StoredPromptChoice): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(PROMPT_VERSION_STORAGE_KEY, JSON.stringify(choice));
   } catch {
     // Storage can be full or disabled; the console still works, it just forgets next visit.
   }
@@ -148,9 +119,11 @@ export function useChatbotConsole() {
   const [contactId, setContactIdState] = useState<string | null>(null);
   const [contactLabelState, setContactLabelState] = useState<string>('');
   const [promptVersionId, setPromptVersionIdState] = useState<string | null>(null);
-  // Item 6: set once the versions have loaded - the stored choice when it still exists,
-  // else the newest full body. A later explicit clear (null = live label) must not be
-  // re-defaulted, which is what this flag guards.
+  // Item 6 (revised, PR #1273 retest): the operator's pick lives in React state ONLY for
+  // this page session - never localStorage/sessionStorage/URL - so a reload always starts
+  // from the newest full body again rather than replaying a stale pick from a prior visit.
+  // This flag guards against re-defaulting over an explicit in-session pick (including an
+  // explicit "live label" clear, id === null) once the versions list refetches.
   const promptChoiceApplied = useRef(false);
   const [runId, setRunId] = useState<string>(() => newRunId());
   const [sessionVars, setSessionVars] = useState<Record<string, unknown> | null>({});
@@ -172,23 +145,12 @@ export function useChatbotConsole() {
   useEffect(() => {
     if (promptChoiceApplied.current || !promptVersions) return;
     promptChoiceApplied.current = true;
-    const stored = readStoredPromptChoice();
-    if (stored) {
-      // An explicit "live label" choice (null) stands; a stored id must still exist - a
-      // deleted version falls back to the default rather than pinning a ghost.
-      if (stored.id === null) return;
-      if (promptVersions.some((v) => v.id === stored.id)) {
-        setPromptVersionIdState(stored.id);
-        return;
-      }
-    }
     setPromptVersionIdState(defaultPromptVersionId(promptVersions));
   }, [promptVersions]);
 
   const setPromptVersionId = useCallback((id: string | null) => {
     promptChoiceApplied.current = true;
     setPromptVersionIdState(id);
-    writeStoredPromptChoice({ id });
   }, []);
 
   // Default contact: last used from localStorage, else the contact of the most recent

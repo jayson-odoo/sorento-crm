@@ -234,6 +234,11 @@ class DemandLine:
     #: mirror's own numbering, read by the ladder's borrow-donor naming and nothing here).
     #: `None` for a line AutoCount has never numbered.
     core_line_no: Optional[int] = None
+    #: R43 (Stock Debt only, 28 Sep 2026): the line's own `sales_order_lines.source_ref`
+    #: (`"{database}:{DocKey}:{DtlKey}"`), the value a PO line's S/O
+    #: (`from_so_line_ref`) quotes, so a book pin lands on the LINE it names. `None` for a
+    #: line the book never keyed.
+    source_ref: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -267,11 +272,12 @@ class Hold:
     #: reason `spo_number` rides here.
     po_number: Optional[str] = None
     purchase_order_id: Optional[str] = None
-    #: R42: this hold is the BOOK's S/O reference on a PO line, not a confirmed decision.
-    #: It decides WHO the document goes to, never WHEN the line had it: a document landing
-    #: after the line's own date still leaves the line short in its own month (R37), so
-    #: that quantity books there. A placement or an allocation keeps pinning at any date.
-    from_book_so: bool = False
+    #: R43 (owner, 28 Sep 2026, #1346): "when it is assigned, then it will fulfil the
+    #: demand ady". The Stock Debt view sets it on every hold naming a PO line (the book's
+    #: S/O and a placement alike): the quantity is fulfilled whatever the document's date,
+    #: so a dead or undated PO books no shortfall for it (unlike AC-S2-7's precedent) and a
+    #: PO landing after the line's date does not either. The board never sets it.
+    fulfils: bool = False
 
 
 @dataclass(frozen=True)
@@ -357,9 +363,6 @@ class _Open:
     #: so the line reads `pinned`, and the goods are still not there, so the month is still
     #: owed the quantity. Without this the two rulings would cancel each other out.
     uncounted_pinned: float = 0.0
-    #: R42: pinned by the book's S/O to a document landing AFTER the line's own date. The
-    #: document is the line's, and it still went without on its date (R37).
-    late_pinned: float = 0.0
 
 
 def parse_supply_key(supply_key: str) -> Tuple[Optional[str], Optional[str]]:
@@ -561,6 +564,7 @@ def assign(
     left = {event.key: float(event.qty) for event in counted}
     events = {event.key: event for event in counted}
     uncounted_by_key = {event.key: event for event in uncounted}
+    uncounted_left = {event.key: float(event.qty) for event in uncounted}
     states = {
         line.key: _Open(line=line, remaining=float(line.open_qty)) for line in dated
     }
@@ -581,11 +585,6 @@ def assign(
                 continue
             left[hold.supply_key] -= take
             event = events[hold.supply_key]
-            if hold.from_book_so and effective_date(event.at, as_of) > effective_date(
-                state.line.required_date, as_of
-            ):
-                state.late_pinned += take
-                state.late = True
         elif hold.supply_key in uncounted_by_key:
             # A DEAD document (R-O) somebody has already been promised - `uncounted_by_key`
             # holds only what `counted_event` refused outright, past `overdue_dead_days`, a
@@ -593,11 +592,22 @@ def assign(
             # (the line reads `pinned`) and the drill names the order the document is
             # placed against - but the document is still not supply, so it adds nothing to
             # the month. Chasing it is the action the red cell is asking for.
+            #
+            # R43: unless the hold `fulfils` (the view's PO pins): assigned means fulfilled,
+            # so the line is owed nothing for it, and the document still adds nothing free.
+            # A fulfilling hold is capped by what the document still has outstanding, the
+            # way a counted one is capped by `left`: two placements, or a placement larger
+            # than what is left after a receipt, cannot fulfil more than the PO will bring.
             take = min(float(hold.qty), state.remaining)
+            if hold.fulfils:
+                take = min(take, uncounted_left[hold.supply_key])
             if take <= EPSILON:
                 continue
             event = uncounted_by_key[hold.supply_key]
-            state.uncounted_pinned += take
+            if hold.fulfils:
+                uncounted_left[hold.supply_key] -= take
+            else:
+                state.uncounted_pinned += take
         else:
             take = min(float(hold.qty), state.remaining)
             if take <= EPSILON:
@@ -786,7 +796,7 @@ def _walk(
         # still clear it (it becomes `late`), and that does not give the month back: the
         # order was still short in the month it was promised for.
         state.short_at_date = _round(
-            max(state.remaining, 0.0) + state.uncounted_pinned + state.late_pinned
+            max(state.remaining, 0.0) + state.uncounted_pinned
         )
         if state.remaining > EPSILON:
             shortfalls.setdefault(group, []).append(state)

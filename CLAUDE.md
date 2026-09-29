@@ -151,7 +151,8 @@ cannot drift:
 
 - List = DataGrid + search/filters + Add. Create/edit = **modal by default**; dedicated page only
   for complex/multi-tab/file-centric flows. View = `/{module}/{id}` detail page rendering **every**
-  section, with an explicit empty state + next-step CTA.
+  section, with an explicit empty state (heading + hint, no button: one CTA per page, in the
+  header, and no subtitle; `DESIGN-LANGUAGE.md` section 6).
 - **Delete = hard delete, no confirmation dialog** (D7, Apple Alignment S6). A destructive or
   detach action - Delete, Archive-as-delete, Unlink - is a server-deferred pending action: the
   button becomes a countdown (10s hard delete / 5s reversible, both from System Settings) with a
@@ -159,8 +160,8 @@ cannot drift:
   cancel it. Never `confirm()`; `ConfirmDeleteDialog` is retired - a new importer of it or of a
   destructive `AlertDialog` is a defect. A soft-delete endpoint is called Archive, never "delete".
 - **View and Edit are the SAME layout** - same tabs in the same order, same fields in the same
-  order; editing swaps a read-only value for an input in place. Read-only metadata lives in the
-  page header, never in a tab body.
+  order; editing swaps a read-only value for an input in place. Read-only metadata sits directly
+  under the page header, never in a tab body.
 - Detail pages carry prev/next record navigation (`components/common/RecordNavigation`).
 - Every optional select is `clearable`. Every dropdown is `SearchableSelect`/`SearchableMultiSelect`.
 - Usable and non-clipped at **375px AND 1280px**.

@@ -206,7 +206,6 @@ export default function PromotionTypesList() {
       rowPending={rowPending}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage="No promotion types yet. Add one to control what happens to a promotion after it ends."
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

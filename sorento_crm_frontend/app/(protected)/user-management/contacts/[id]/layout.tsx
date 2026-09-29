@@ -145,9 +145,8 @@ export default function ContactLayout({
           actions={
             <BackToList listPath="/user-management/contacts" label="Back to contacts" />
           }
-        >
-          {contact ? <ContactMeta contact={contact} /> : null}
-        </PageHeader>
+        />
+        {contact ? <ContactMeta contact={contact} /> : null}
 
         {notFound ? (
           <div className="text-center py-12">

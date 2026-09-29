@@ -81,8 +81,10 @@ PURCHASE_ORDER_PROBE_TOOL = "crm_procurement_po_placed_list"
 #: is added because that table deliberately omits it (the field-reveal gate resolves
 #: it), and `sales_report` for the SAME reason as the outstanding asks: the probe
 #: measures DELIVERED DOs, a population this report does not read at all.
+#: `top_selling` joins for the same reason (PLAN-chatbot-top-x-hot-selling-24sep.md S4
+#: point 10): the ranking reads sales order lines, never delivered DOs.
 OUTSTANDING_ORDER_STATUS: frozenset[str] = frozenset(
-    {"outstanding", "sales_report", *fetch_mod.ORDER_STATUS_TO_SCOPE}
+    {"outstanding", "sales_report", "top_selling", *fetch_mod.ORDER_STATUS_TO_SCOPE}
 )
 
 # The probe's injected default window, from `probe-customer-orders`' semantic_input
@@ -377,6 +379,8 @@ def resolve_bare_reply_under_member_offer(
         "fallback_to_all_types": True,
         "limit": 15,
         "spec_fallback": True,
+        # Fix round 10 on PR #833 ("for #833 yeah exact only"): exact values, no ranking guess.
+        "exact_match": True,
         "understand_phrase": True,
         # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): this contact's
         # hidden keys ride along so the resolve route can neither rank on one nor
@@ -465,125 +469,6 @@ def _query_text(ctx: dict[str, Any]) -> str:
         return ""
 
 
-def _set_page_reply(ctx: dict[str, Any], parser: dict[str, Any]) -> dict[str, Any] | None:
-    """E3 (attribute-first asks, AC-1317): a bare "more" / "next" / "lagi" reply
-    under a carried `set_page` selection answers from the CARRY ALONE - no
-    resolver call runs, and for the two terminal arms below, no MCP call either.
-    `None` when this turn is not one of these, so every existing caller of
-    `run()` is unaffected.
-
-    Three arms:
-
-    * **the next page** - a `continue` exit whose `gate` is FABRICATED from the
-      carry (`compatible_entities` = the next slice of ids, `predicate.page` =
-      the bounds `fetch.output_structurer` renders "Showing X to Y" from and
-      `compile_state._set_page_carry` advances the offset from). The parser's
-      OWN `domain_hint` is overridden to the carry's - a bare "more" names no
-      domain of its own, and `run_fetch`'s tool pick reads it.
-    * **exhausted** (past the carried ids AND the true count): "That was all N
-      noun." - reuses the SAME `offer` exit mechanism the incoming/customer
-      PICKER already answers straight from its own `escalate_message`, with no
-      roster of its own to arm.
-    * **capped** (past the carried ids, but real qualifying products remain
-      beyond `answer.SET_PAGE_ID_CAP`): a "narrow the ask" reply, same
-      mechanism.
-    """
-    prev = _prev_variables(ctx)
-    carry = prev.get("last_result_set") if isinstance(prev, dict) else None
-    if not isinstance(prev, dict) or prev.get("selection_context") != "set_page":
-        return None
-    if not isinstance(carry, dict) or not carry:
-        return None
-
-    from app.services.chatbot.lanes.business import answer as answer_mod
-
-    if not answer_mod.is_more_reply(_query_text(ctx)):
-        return None
-
-    ids = list(carry.get("qualifying_ids") or [])
-    offset = int(carry.get("offset") or 0)
-    qualifying_total = int(carry.get("qualifying_total") or 0)
-    set_noun = jsc.js_string(carry.get("set_noun")) or "products"
-    require = carry.get("require") or {}
-    domain = carry.get("domain")
-
-    if offset >= len(ids):
-        message = (
-            answer_mod.build_set_page_narrow_message(set_noun)
-            if qualifying_total > len(ids)
-            else answer_mod.build_set_page_exhausted_message(qualifying_total, set_noun)
-        )
-        return exit_item(
-            {"escalate_message": message, "is_clarification": True},
-            exit_kind="offer",
-            fields={
-                "resolved": {},
-                # `set_page_terminal` (not `None`): the tail needs to SEE this
-                # turn ran, so it can positively CLEAR the set-page carry rather
-                # than silently no-op and re-arm the very state this reply just
-                # closed.
-                "gate": {"set_page_terminal": True},
-                "ctx_resolved": {},
-                "aggregate": None,
-                "tier_gate": None,
-            },
-        )
-
-    next_ids = ids[offset : offset + 5]
-    new_offset = offset + len(next_ids)
-    page_predicate: dict[str, Any] = {
-        "require": require,
-        "qualifying_total": qualifying_total,
-        "truncated": False,
-        "unrecognized_terms": [],
-        "class_labels": [],
-        "page": {
-            "start": offset + 1,
-            "end": new_offset,
-            "new_offset": new_offset,
-            "set_noun": set_noun,
-        },
-    }
-    # R29/AC-1354: the FIRST page's own scheme-narrowed certificate ids,
-    # carried straight through - `fetch.entity_ids_transformer` reads
-    # `predicate.certificate_ids` off THIS block exactly as it does off a
-    # real resolver call, so every later "more" page keeps narrowing to the
-    # same files. Absent when the carry never had them (a bare leg).
-    carried_certificate_ids = carry.get("certificate_ids")
-    if isinstance(carried_certificate_ids, list) and carried_certificate_ids:
-        page_predicate["certificate_ids"] = list(carried_certificate_ids)
-    gate_item: dict[str, Any] = {
-        "compatible_entities": [
-            {"uuid": pid, "entity_type": "product", "canonical_code": None} for pid in next_ids
-        ],
-        "gate_passed": True,
-        "predicate": page_predicate,
-    }
-    mutated_parser = {**parser, "domain_hint": domain}
-    mutated_ctx = {**ctx, "parse": {**(ctx.get("parse") or {}), "output": mutated_parser}}
-    item_out = {
-        **gate_item,
-        "ctx": {**mutated_ctx, "resolved": {}, "entities": None, "gate": gate_item},
-    }
-    # SEC-B1/AC-1333: a `tier_gate` dict carrying the FIRST page's own recomposed
-    # access_levels - never `None` - so `_fetch_semantic_input` reads it the same
-    # way it does off a real tier gate, instead of falling to the bare "more"
-    # parser output's own (empty) `access_levels` and silently dropping the tier
-    # filter from a promotion page.
-    page_tier_gate = {"access_levels_recomposed": list(carry.get("access_levels") or [])}
-    return exit_item(
-        item_out,
-        exit_kind="continue",
-        fields={
-            "resolved": {},
-            "gate": gate_item,
-            "ctx_resolved": item_out,
-            "aggregate": None,
-            "tier_gate": page_tier_gate,
-        },
-    )
-
-
 #: The entity hints whose value IS a code the customer typed, as opposed to a word that
 #: describes a class of them. `inbound_shipment` is here because the parser hands the SAME
 #: typed product code either hint ("srtwt7202-new" came back `product` on one live run and
@@ -660,8 +545,7 @@ def resolve_entity_body(
     (which a brand-qualified code can translate wrong), running effectively unrestricted
     rather than the contact's actual, single entitled tier. `tier_gate=None` (it never
     ran) or an empty recomposed list (nothing to state) both fall back to today's
-    behaviour unchanged - the `set_page` reply path keeps its own carry-based tiers and
-    never reaches this function at all.
+    behaviour unchanged.
 
     `excluded_entity_ids` (#1262 slice 9 F1a, security review round 2, 26 Sep 2026) is
     `run()`'s own `resolver_excluded_entity_ids` - a live-brand entity `turn_runtime.
@@ -680,6 +564,14 @@ def resolve_entity_body(
             "resolve-entity: ctx.parse.output.entities is not an array, so the token map "
             "cannot be built (n8n throws on the same read)"
         )
+    # Fix round 8 on PR #833: a grounded `specification` entity (`head/grounding.py`) is
+    # not a record to look up. It travels as a registry binding (`extracted_specs`), and
+    # a value the registry does not know as `unknown_values`, said back before anything
+    # is counted; the resolver's token map never sees it.
+    from app.services.chatbot.head.grounding import specification_entities
+
+    grounded = specification_entities(entities)
+    entities = [e for e in entities if not any(e is g for g in grounded)]
     if excluded_entity_ids:
         entities = [e for e in entities if id(e) not in excluded_entity_ids]
 
@@ -707,6 +599,8 @@ def resolve_entity_body(
         "fallback_to_all_types": True,
         "limit": 15,
         "spec_fallback": True,
+        # Fix round 10 on PR #833 ("for #833 yeah exact only"): exact values, no ranking guess.
+        "exact_match": True,
         "understand_phrase": True,
         # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): see the sibling
         # body builder above for the reasoning.
@@ -716,6 +610,25 @@ def resolve_entity_body(
     }
     if dry_run:
         body["dry_run"] = True
+    grounded_specs = [
+        {"key": g.get("spec_key"), "value": g.get("spec_value"), "evidence": g.get("raw"), "grounded": True}
+        for g in grounded
+        if g.get("spec_key") and g.get("spec_value") is not None
+    ]
+    if grounded_specs:
+        body["extracted_specs"] = grounded_specs
+    unknown_values = [
+        {
+            "key": g.get("spec_key") or "",
+            "label": g.get("spec_label") or "",
+            "said": g.get("raw") or "",
+            "known": list(g.get("spec_known") or []),
+        }
+        for g in grounded
+        if g.get("spec_value") is None and (g.get("raw") or "").strip()
+    ]
+    if unknown_values:
+        body["unknown_values"] = unknown_values
     if jsc.js_string(match_mode).lower() != "and":
         pins: dict[str, Any] = {}
         for x in entities:
@@ -776,11 +689,16 @@ def resolve_entity_body(
     # READ at all rather than only refusing to page it. A described ask ("which taps have
     # a cert") names a `product_type` / `category` word and is untouched; a turn naming
     # both a code and a class word keeps its scope term and is untouched too.
-    if require is not None and not scope_terms and _names_a_typed_code(parse_output):
+    if require is not None and not scope_terms and not grounded_specs and _names_a_typed_code(parse_output):
         require = None
     if require is not None:
         body["require"] = require
         body["predicate_words"] = derive_predicate_words(parse_output, require, message_text=_query_text(ctx))
+        # Fix round 9 on PR #833: the reply's list limit, so a longer set comes back with
+        # its breakdown and a zero set with its described products (read at call time).
+        from app.services.chatbot.lanes.business import answer as answer_mod
+
+        body["set_list_max"] = int(answer_mod.SET_LIST_MAX)
         if scope_terms:
             body["scope_terms"] = scope_terms
     return body
@@ -1051,14 +969,6 @@ def run(
             "this sub indexes `$('build-ctx').first().json.ctx`"
         )
     parser = _parser_output(ctx)
-
-    # E3 (attribute-first asks, AC-1317): a bare "more" reply under a carried
-    # `set_page` selection is answered from that carry alone, before anything
-    # else in this walk runs - in particular, before `resolve-entity`, so a
-    # "more" turn makes NO resolver call.
-    set_page = _set_page_reply(ctx, parser)
-    if set_page is not None:
-        return set_page
 
     aggregate: dict[str, Any] | None = None
     tier_gate_out: dict[str, Any] | None = None
