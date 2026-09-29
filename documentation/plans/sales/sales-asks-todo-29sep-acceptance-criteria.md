@@ -121,10 +121,11 @@ to A, customer Z assigned to B, asks with `created_at` set explicitly around a f
 ## S2: the CRM mount, mine and every agent
 
 - **AC-ST201 [BE]** `user_permissions` holds `sales.customer_asks.{view,add,edit,delete}` and
-  `sales.customer_asks.view_all`; every role holding `sales.opportunities.view` holds `.view` and
-  `.edit` and NOT `.view_all` (Q7 (c): a salesperson sees their own list, a leader their team;
-  security review B1, 29 Sep); `admin` and `superadmin` hold all five; an `integration_*` role
-  holds none. [Q7]
+  `sales.customer_asks.view_all`, granted by the explicit role list in plan 3.4 (owner check-in
+  29 Sep): `salesperson` holds `.view` and `.edit` and NOT `.view_all`; `director`,
+  `customer_service` (and the other manager roles listed) hold all five; `admin` and `superadmin`
+  hold all five; a role that merely holds `sales.opportunities.view`, and an `integration_*`
+  role, hold none. [Q7]
 - **AC-ST202 [BE][T]** `agent_for_user(db, user)`: a user whose `respond_contact_id` is CA
   resolves agent A; a user with no contact, or a contact linked to no agent, resolves None.
 - **AC-ST203 [BE]** `GET /api/v1/sales/customer-asks/todo` as the A-linked user returns AC-ST105's

@@ -260,9 +260,20 @@ CRM mount: `app/(protected)/sales/customer-asks/page.tsx` -> `MyCustomerAsksClie
   (`_crud("sales", "customer_asks", "Customer Asks")`, `.edit` gates the PATCH), migration
   grants `.view` + `.edit` to every role holding `sales.opportunities.view` and to `admin`
   (the `sales_0003_opportunities` sweep shape), integration roles excluded. `view_all` goes to
-  `admin` and `superadmin` ONLY (security review B1, 29 Sep 2026: sweeping it onto the
-  salesperson roles would have made every salesperson a manager and voided Q7 (c)); a named
-  office or manager role gets it by hand in Roles.
+  `admin` and `superadmin` ONLY among the sweep (security review B1, 29 Sep 2026: sweeping it
+  onto the salesperson roles would have made every salesperson a manager and voided Q7 (c)).
+  **Owner check-in 29 Sep 2026 (the sweep reached only admin on dev, where nobody else holds
+  `sales.opportunities.view`): grants are an EXPLICIT role list, in the migration and in the
+  crew-migration SQL, roles absent on an install skipped:**
+
+  | role | view + edit (own list) | view_all (every agent) |
+  | --- | --- | --- |
+  | `salesperson` | yes | no (a team leader reaches their team by leading it) |
+  | `director`, `project_sales_manager`, `project_sales_coordinator`, `customer_service` | yes | yes |
+  | `admin`, `superadmin` | yes | yes (they bypass the check anyway) |
+  | `guest`, `portal_user`, `purchasing`, `integration_*` | no | no |
+
+  Posted as a crew-ask for the owner to confirm; any other role is granted by hand in Roles.
 - "Me": `agent_for_user(db, user)` (new, `app/services/sales/portal_agent.py`, beside
   `agent_for_contact`): `users.respond_contact_id` -> `agent_for_contact`. Without `agent_id`
   the list is mine; a user linked to no agent gets `{open: [], done_today: [], ...,

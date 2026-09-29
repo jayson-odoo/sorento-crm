@@ -8,12 +8,13 @@ Plan: documentation/plans/sales/PLAN-sales-asks-todo-29sep.md, 3.1 and 3.4 (one 
    guarded ADD CONSTRAINT so the revision is re-runnable.
 2. Backfill: a row already `done` reads `done_at = updated_at` (the best answer the table holds),
    both actor ids NULL (shown as "Done", no name). Only rows with no `done_at` yet are touched.
-3. `sales.customer_asks.{view,add,edit,delete,view_all}` created when absent, then swept: `view`
-   and `edit` go to every role that holds `sales.opportunities.view` (the salesperson's roles).
-   `view_all` goes to `admin` and `superadmin` only: a salesperson sees their own list and a team
-   leader their team (plan 3.4, Q7 (c)), so nobody else needs every agent's asks. `admin` and
-   `superadmin` hold all five. Integration roles are excluded (an integration
-   credential has no browser to clear an ask from), same reasoning as `522_autocount_pull_perms`.
+3. `sales.customer_asks.{view,add,edit,delete,view_all}` created when absent, then granted by
+   an explicit role list (plan 3.4): `salesperson` gets `view` and `edit` (own list; leading a
+   team is the grant for the team's rows, Q7 (c)); `admin`, `superadmin`, `director`,
+   `project_sales_manager`, `project_sales_coordinator` and `customer_service` get all five,
+   `view_all` included. A role absent on an install is skipped. Integration roles are never
+   granted (an integration credential has no browser to clear an ask from), same reasoning as
+   `522_autocount_pull_perms`.
 
 Downgrade drops the two columns and leaves the permission rows (`sync_permissions` recreates them
 from the registry on boot, and a grant an admin made by hand must not vanish with a rollback).
@@ -45,10 +46,21 @@ _FKS = (
     ("fk_stock_asks_done_by_user", "done_by_user_id", "users(id)"),
     ("fk_stock_asks_done_by_contact", "done_by_contact_id", "respond_contacts(id)"),
 )
-_GRANTED = ("sales.customer_asks.view", "sales.customer_asks.edit")
-_SWEEP_SOURCE = "sales.opportunities.view"
-_GRANT_ROLE_SLUGS = ("admin", "superadmin")
-_EXCLUDED_ROLE_PREFIX = "integration\\_%"
+#: Explicit role lists (owner check-in 29 Sep 2026: a sweep off `sales.opportunities.view`
+#: reached only `admin` on the dev database, so the salesperson role got nothing). A role that
+#: does not exist on an install is skipped; nothing is created. Integration roles never appear.
+#: Own list only (view + edit): a salesperson sees their own asks; leading a team IS the grant
+#: for the team's rows, no slug. Every agent (view + edit + view_all): the office and managers.
+_OWN_LIST_ROLE_SLUGS = ("salesperson",)
+_ALL_AGENTS_ROLE_SLUGS = (
+    "admin",
+    "superadmin",
+    "director",
+    "project_sales_manager",
+    "project_sales_coordinator",
+    "customer_service",
+)
+_OWN_LIST_SLUGS = ("sales.customer_asks.view", "sales.customer_asks.edit")
 
 
 def upgrade() -> None:
@@ -89,34 +101,20 @@ def upgrade() -> None:
             ),
             {"slug": slug, "name": name, "descr": description},
         )
-    bind.execute(
-        sa.text(
-            """
-            INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
-            SELECT gen_random_uuid()::text, rp.role_id, tgt.id, now()
-            FROM user_role_permissions rp
-            JOIN user_permissions src ON src.id = rp.permission_id AND src.slug = :source
-            JOIN user_roles r ON r.id = rp.role_id
-            CROSS JOIN user_permissions tgt
-            WHERE tgt.slug = ANY(:granted)
-              AND r.slug NOT LIKE :excluded
-            ON CONFLICT (role_id, permission_id) DO NOTHING
-            """
-        ),
-        {"source": _SWEEP_SOURCE, "granted": list(_GRANTED), "excluded": _EXCLUDED_ROLE_PREFIX},
+    grant_sql = sa.text(
+        """
+        INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
+        SELECT gen_random_uuid()::text, r.id, p.id, now()
+        FROM user_roles r
+        CROSS JOIN user_permissions p
+        WHERE r.slug = ANY(:roles) AND p.slug = ANY(:slugs)
+        ON CONFLICT (role_id, permission_id) DO NOTHING
+        """
     )
+    bind.execute(grant_sql, {"roles": list(_OWN_LIST_ROLE_SLUGS), "slugs": list(_OWN_LIST_SLUGS)})
     bind.execute(
-        sa.text(
-            """
-            INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
-            SELECT gen_random_uuid()::text, r.id, p.id, now()
-            FROM user_roles r
-            CROSS JOIN user_permissions p
-            WHERE r.slug = ANY(:roles) AND p.slug = ANY(:slugs)
-            ON CONFLICT (role_id, permission_id) DO NOTHING
-            """
-        ),
-        {"roles": list(_GRANT_ROLE_SLUGS), "slugs": [slug for slug, _, _ in _PERMS]},
+        grant_sql,
+        {"roles": list(_ALL_AGENTS_ROLE_SLUGS), "slugs": [slug for slug, _, _ in _PERMS]},
     )
 
 
