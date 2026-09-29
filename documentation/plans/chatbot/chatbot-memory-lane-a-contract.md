@@ -238,6 +238,9 @@ chatbot parser row.
    needs a prompt cut, which is the owner's open decision on #1275. The published prompt with
    the addendum is 40,935 (fixture render) / 40,859 (fresh `blank_session` render), under
    40,599 + 512 = 41,111. Note that 512 is over AC-MEM066's own 400; that too waits on #1275.
+   Second re-pin the same day: main bc75eb96 (#1353, issue #1352, "a pick never overrides
+   the message's own domain") measures 41,163 (+564), so `CEILING` is 41,163; this lane
+   merged over it measures 40,984 without the addendum and 41,499 with it (limit 41,675).
    Published text: `mem_0002_parser_memory` publishes `chatbot_rearch_s4._body(session)`
    (the constant plus the rendered policy blocks, the way s4 and s12 build production
    versions), memory addendum included, as the next `chatbot_semantic_parser` version with

@@ -296,10 +296,12 @@ class TestFinding11APickAnswersEveryDomainTheAskNamed:
             reference_positions=[1],
         )
         state2, plan, branch = _decide(v, pending=pend)
-        assert state2.focus.domains == ["purchase_cost"], (
-            f"got {state2.focus.domains!r} - if this now includes 'inventory' too, "
-            "the fan-out fix has landed"
-        )
+        # Issue #1352 (29 Sep 2026): the fan-out fix has landed. The pick named its own
+        # domains (`asks`), so it is answered in THOSE domains (`pick_in_message_domain`)
+        # rather than re-domained to the one the roster's payload names - ruling 11's "a
+        # pick answers every domain the ask named".
+        assert state2.focus.domains == ["purchase_cost", "inventory"], state2.focus.domains
+        assert "pick_in_message_domain" in plan.trace.rules_fired, plan.trace.rules_fired
 
 
 class TestFinding2CustomerRosterCarriesHasDoStamps:

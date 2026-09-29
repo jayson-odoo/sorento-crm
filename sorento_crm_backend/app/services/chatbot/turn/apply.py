@@ -39,6 +39,7 @@ from app.services.chatbot.turn.decide import (
     broaden_level,
     decide,
     domain_in_message,
+    names_its_own_domain,
 )
 from app.services.chatbot.turn.narrow import decide as narrow_decide
 from app.services.chatbot.turn.pending import (
@@ -801,23 +802,34 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             trace.picked_kinds.append(str(EXTRA_KIND_ALIASES.get(kind_for_focus, kind_for_focus)))
 
         trace.rules_fired.append("answer_pending")
-        # Contract 121: a pick never re-domains the turn. The question recorded the
-        # domain it was asked for, so the answer goes back to it rather than leaving
-        # a bare positional with nothing to be about.
+        # Issue #1352 (owner, 29 Sep 2026: "the parser reports, the engine judges"): the
+        # pick settles WHICH option; the message's own domain fields settle WHERE the
+        # answer goes. A bare pick ("4", "the fourth") names no domain, so it answers the
+        # roster in the domain the question was asked for (contract 121, unchanged). A
+        # pick that ALSO named a domain ("4 stock", or "check stock" with the position
+        # the parser still sees on screen) is answered in the MESSAGE's domain:
+        # `_focus_rules` writes it from `asks` / `domain_hint`, and the roster's own
+        # carried status (a sales report's, an outstanding ask's) stays behind with the
+        # roster's domain. Re-domaining that turn to the roster is what answered "check
+        # stock" with the same incoming reply (case 1).
         asked_for = pending.payload.get("domains") or (
             [pending.payload["domain"]] if pending.payload.get("domain") else []
         )
-        if asked_for:
-            focus.domains = [d for d in asked_for if isinstance(d, str) and d]
-        # AC-1704: the SAME carry `_answer_outstanding` does for its own detail
-        # offers (`focus.status`, projected onto `order_status` by `turn_runtime.
-        # lane_parse_output`) - a roster pick (`customer_pick`, `product_pick`)
-        # answering a SALES REPORT ask needs it too, since that status reached the
-        # asking turn's verdict directly and the answering turn's own verdict never
-        # repeats it.
-        asked_status = pending.payload.get("status")
-        if isinstance(asked_status, str) and asked_status:
-            focus.status = asked_status
+        own_domain = decision.own_domain and not _names_only_the_roster_domain(verdict or {}, asked_for)
+        if own_domain:
+            trace.rules_fired.append("pick_in_message_domain")
+        else:
+            if asked_for:
+                focus.domains = [d for d in asked_for if isinstance(d, str) and d]
+            # AC-1704: the SAME carry `_answer_outstanding` does for its own detail
+            # offers (`focus.status`, projected onto `order_status` by `turn_runtime.
+            # lane_parse_output`) - a roster pick (`customer_pick`, `product_pick`)
+            # answering a SALES REPORT ask needs it too, since that status reached the
+            # asking turn's verdict directly and the answering turn's own verdict never
+            # repeats it.
+            asked_status = pending.payload.get("status")
+            if isinstance(asked_status, str) and asked_status:
+                focus.status = asked_status
         # #1262 slice 8 (F1b siblings), owner ruling 6: a SECOND ambiguous token
         # queued on THIS pick's own payload is asked NEXT, once this one is
         # answered - never the same options re-printed (`with_answered_positions`,
@@ -860,8 +872,8 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
         # "Customer: Sorento", and `escalate_offered` got stamped onto a question with
         # nothing left to ask).
         if pending.kind != "kind_pick" and is_roster(pending.kind):
-            return focus, with_answered_positions(pending, positions), None, True
-        return focus, None, None, True
+            return focus, with_answered_positions(pending, positions), None, not own_domain
+        return focus, None, None, not own_domain
 
     if decision.answers and decision.why == "affirmative":
         trace.rules_fired.append("answer_pending_accept")
@@ -929,6 +941,15 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
     # naming its own business subject over an escalation offer (growth r1).
     trace.rules_fired.append("answer_pending_not_an_answer")
     return focus, pending, None, False
+
+
+def _names_only_the_roster_domain(verdict: dict[str, Any], asked_for: list[Any]) -> bool:
+    """A pick whose own domain word is the roster's own ("incoming for the 4th" over an
+    incoming roster) answers exactly as a bare pick does, carried status included
+    (AC-1704): the message named no OTHER domain to answer in."""
+    named = [a.get("domain") for a in (verdict.get("asks") or []) if isinstance(a, dict)]
+    named = [d for d in named if d] or ([verdict["domain_hint"]] if verdict.get("domain_hint") else [])
+    return bool(named) and bool(asked_for) and set(named) <= set(asked_for)
 
 
 def _focus_rules(
@@ -2107,7 +2128,12 @@ def _narrow_and_plan(
                 focus=focus,
                 profile=state.profile,
                 attributes=attributes,
-                resolved_candidates=(candidates or {}).get(kind),
+                # AC-1704's rule at the fetch seam too (issue #1352): a kind a pick just
+                # settled is fetched as the picked option, never re-read from what the
+                # resolver made of the same message's typed code. "stoick
+                # SRTWC286-SH-NEW" picks option 4 and names the code as an entity; the
+                # resolver's prefix match on that code is four variants.
+                resolved_candidates=None if kind in picked else (candidates or {}).get(kind),
                 just_picked=kind in picked,
                 family_grouping=getattr(policy.kind(kind), "family_grouping", None),
                 unplaced=unplaced,
@@ -2384,9 +2410,10 @@ def _bare_position_is_the_quantity(state: State, verdict: dict[str, Any], trace:
     tool asked "How many units of SRTWC286-SH?" again. Written onto `demand_qty` here,
     before any reader, the same way `_normalise_demand_qty` settles its own two shapes.
     """
-    if state.pending is not None:
+    task = _stock_task_owed_a_number(state.focus)
+    if task is None:
         return
-    if _stock_task_owed_a_number(state.focus) is None:
+    if state.pending is not None and not _stock_task_is_the_current_question(state, task, verdict):
         return
     position = _lone_position(verdict)
     if position is None:
@@ -2394,6 +2421,30 @@ def _bare_position_is_the_quantity(state: State, verdict: dict[str, Any], trace:
     verdict["demand_qty"] = position
     verdict["reference_positions"] = []
     trace.rules_fired.append("bare_number_is_the_quantity")
+
+
+def _stock_task_is_the_current_question(state: State, task: Any, verdict: dict[str, Any]) -> bool:
+    """Issue #1352, the chained-question rule (owner ruling, 29 Sep 2026): the engine
+    judges a message against the CURRENT question first, and earlier rosters stay stored
+    underneath for a later pick.
+
+    "incoming srtwc286" -> "4" -> "check stock" -> "How many units of SRTWC286-SH-NEW?"
+    leaves the product roster stored (sticky, contract 36) AND the stock task asking.
+    The task was touched after the roster was asked, so it is the question the next bare
+    number answers: "5" is SRTWC286-SH-NEW's quantity, never variant 5 off the roster
+    underneath (the scout's trace T4 fetched incoming for SRTWC286-SH-NEW-150). A message
+    that names its own domain is not a bare answer to either and is left to the judgement
+    in `_answer_pending`. A stored pick with no turn stamp, or one asked at or after the
+    task, is still the current question: today's behaviour.
+    """
+    pending = state.pending
+    if pending is None or _stock_pick(pending) or not is_roster(pending.kind):
+        return False
+    if names_its_own_domain(verdict):
+        return False
+    asked = pending.asked_at_turn
+    touched = max(task.opened_at_turn or 0, task.touched_at_turn or 0)
+    return isinstance(asked, int) and touched > asked
 
 
 def _open_point_form_task(focus: Focus) -> Any:
@@ -3188,23 +3239,17 @@ def apply(
         domains = [task_domain]
         trace.rules_fired.append("domain_locked_by_task")
     elif domain_locked and focus.domains and not asks:
-        # Contract 121 / AC-1522: a pick never re-domains the turn. `_answer_pending`
-        # put the domain the question was ASKED under onto the focus and `_focus_rules`
-        # left it alone, and this is the second half of that: re-reading `asks` or
-        # `domain_hint` here would have undone it, because a bare "3" is parsed against
-        # the whole message history and its verdict still carries the PREVIOUS turn's
-        # domain hint. The answer belongs to the roster it was picked off.
-        #
-        # Defect 1 (owner hand pass 6, 17 Sep 2026): that is only true when this
-        # message says nothing of its own. "stock, incoming and PO for all of them"
-        # and "ok how about stock and PO only" both answered a roster AND named their
-        # own domains in the same breath (`asks` non-empty on the SAME verdict), and
-        # the lock rendered the roster's old domain set instead - two of three the
-        # first time, three again (re-adding incoming) the second. `asks` is what THIS
-        # message actually asked for; the lock exists to stop a message that asked for
-        # nothing being read against stale history, not to overrule one that did ask.
+        # Contract 121 / AC-1522, narrowed by issue #1352: a pick with NO domain word of
+        # its own answers in the domain the roster was asked under. `domain_hint` is not
+        # read here because on this path the message named no domain (`decide.
+        # names_its_own_domain` is False): a bare "3" is parsed against the whole message
+        # history and its verdict may still carry the PREVIOUS turn's domain hint. A pick
+        # that DID name its own domain never reaches this branch - `_answer_pending`
+        # returns it unlocked and the chain below reads `asks` / `domain_hint` (hand pass
+        # 6 defect 1 was the `asks` half of the same rule). The old lock read neither
+        # and answered "check stock" with the roster's incoming reply (case 1).
         domains = list(focus.domains)
-        trace.rules_fired.append("domain_locked_by_pick")
+        trace.rules_fired.append("pick_in_roster_domain")
     elif asks:
         domains = [a["domain"] for a in asks if a.get("domain")]
     elif verdict.get("domain_hint"):
@@ -3499,6 +3544,15 @@ def _roster_is_about(pending: Pending, focus: Focus) -> bool:
         if not code:
             continue
         for row in _kind_field(focus, str(kind)):
+            if isinstance(row, str):
+                # PR #1353 fix round 1: a code-only axis (`_CODE_ONLY_FIELDS`: the tier,
+                # the brand) holds plain codes, never rows. Skipping them read a tier
+                # roster the customer had just picked "office" off as "about something
+                # else", so a pick whose verdict carried `domain_in_message` closed it
+                # (`new_ask_closes_stale_roster`) and the next "2" had nothing to answer.
+                if row.strip().casefold() == code:
+                    return True
+                continue
             if not isinstance(row, dict):
                 continue
             for name in ("canonical_code", "code", "raw"):
@@ -3508,7 +3562,9 @@ def _roster_is_about(pending: Pending, focus: Focus) -> bool:
 
 
 def _kind_field(focus: Focus, kind: str) -> list[Any]:
-    attr = KIND_FIELD_MAP.get(kind)
+    # The read side of `_set_kind_field`'s code-only write: a tier pick lands on
+    # `focus.tier`, never on `focus.extra["tier"]` (PR #1353 fix round 1).
+    attr = _CODE_ONLY_FIELDS.get(kind) or KIND_FIELD_MAP.get(kind)
     if attr:
         value = getattr(focus, attr, [])
         return list(value) if isinstance(value, list) else []

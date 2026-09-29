@@ -62,12 +62,17 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # code-first rule), #1273 (top selling) and #1323 (escalation confirmation). So CEILING is
 # main's own measured prompt at fd521c20, and it bounds everything EXCEPT this lane's
 # MEMORY_ADDENDUM (the lane's body edits save 179 against main: 40,420 at 8371dbee).
-CEILING = 40_599
+# Same day, second re-pin: main bc75eb96 (#1353, issue #1352 "a pick never overrides the
+# message's own domain": one DOMAIN IN MESSAGE rule plus the open numbered question and
+# stock task edits) measures 41,163 (+564); this lane merged over it without the addendum
+# measures 40,984 (still 179 under main).
+CEILING = 41_163
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is
 # pinned here; returning to 339 needs a prompt cut, which is the owner's open decision on
-# #1275. With the addendum in, the published prompt is 40,935 (limit 41,111).
+# #1275. With the addendum in, the published prompt is 41,499 over main bc75eb96
+# (limit 41,675).
 MEMORY_ADDENDUM_CEILING = 512
 
 
@@ -100,14 +105,14 @@ class TestPromptUnderCeiling:
         assert tokens <= CEILING, (
             f"the production parser prompt without MEMORY_ADDENDUM is {tokens} est. "
             f"tokens, over the {CEILING} ceiling (contract section 6.3 / AC-MEM061: main "
-            f"fd521c20's own measured prompt, re-pinned 29 Sep 2026 after #833, #1273 and "
-            f"#1323 grew it past the 26 Sep 2026 coordinator figure of 37,153) - the static "
-            f"prompt may not grow"
+            f"bc75eb96's own measured prompt, re-pinned 29 Sep 2026 after #833, #1273, "
+            f"#1323 and #1353 grew it past the 26 Sep 2026 coordinator figure of 37,153) - "
+            f"the static prompt may not grow"
         )
         total = _est_tokens(_rendered_production_prompt())
         assert total <= CEILING + MEMORY_ADDENDUM_CEILING, (
             f"the production parser prompt is {total} est. tokens, over "
-            f"{CEILING} + {MEMORY_ADDENDUM_CEILING} (main fd521c20 plus the memory addendum)"
+            f"{CEILING} + {MEMORY_ADDENDUM_CEILING} (main bc75eb96 plus the memory addendum)"
         )
 
     def test_memory_addendum_growth_is_bounded(self) -> None:

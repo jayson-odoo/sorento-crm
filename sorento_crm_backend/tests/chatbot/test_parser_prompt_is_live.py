@@ -187,7 +187,18 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # 2026): main's +54 (the brand bullet now points at the Known brands line, 63055 -> 63109)
 # and this lane's -387 above touch different spans of the body and both stand:
 # 62668 + 54 = 62722. Measured, not derived.
-CONSTANT_CHARS = 62722
+# Merge of main into the #1262 lane (fix lane round 5, 27 Sep 2026): main's -602
+# (63657 -> 63055) and this lane's +54 (63657 -> 63711) touch different spans of the
+# body and both stand: 63055 + 54 = 63109.
+# 63109 -> 63358 (issue #1352, 29 Sep 2026, owner ruling "the parser reports, the engine
+# judges"): DOMAIN IN MESSAGE gains the consistency rule "domain_in_message true means
+# domain_hint is never null" with its one example (+249). The open numbered question
+# block and the stock task block also changed, but both sit in addenda this measure
+# subtracts. Measured via `_without_growth_r1_addendum(SEMANTIC_PARSER_PROMPT)`.
+# Merge of main bc75eb96 (#1353) into chatbot memory lane A (fix round 7, 29 Sep 2026):
+# main's +249 and this lane's -387 touch different spans and both stand:
+# 62722 + 249 = 62971.
+CONSTANT_CHARS = 62971
 
 #: The line the round 8 cut rewrote, as the live file carries it and as the constant does.
 COMPANIES_OFFERED_LIVE = (

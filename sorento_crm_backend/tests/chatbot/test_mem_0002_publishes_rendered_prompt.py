@@ -6,7 +6,7 @@ from `chatbot_domains` / `chatbot_entity_kinds` (`chatbot_rearch_s4._body`, prom
 `chatbot_rearch_s12`). At d89110c0 this migration published the bare constant, so the
 version the owner's hand test puts on the label had every domain and entity-kind paragraph
 missing. This pins: the published template IS `s4._body(session)`, carries the memory
-addendum and the policy blocks, sits under main's 40,599 est. token ceiling plus the 512 bound on the memory addendum (re-pinned 29 Sep 2026, see `test_parser_prompt_budget.CEILING`), is unlabelled,
+addendum and the policy blocks, sits under main's 41,163 est. token ceiling plus the 512 bound on the memory addendum (re-pinned 29 Sep 2026, see `test_parser_prompt_budget.CEILING`), is unlabelled,
 and a second run publishes nothing.
 
 Runs on the blank scratch schema (`blank_session`), the same way
@@ -94,7 +94,7 @@ class TestMem0002PublishesTheRenderedBody:
             )
             assert _est_tokens(without_memory) <= CEILING, (
                 f"{_est_tokens(without_memory)} est. tokens without the memory addendum, "
-                f"over main fd521c20's measured {CEILING} ceiling"
+                f"over main bc75eb96's measured {CEILING} ceiling"
             )
             assert _est_tokens(rendered) <= CEILING + MEMORY_ADDENDUM_CEILING, (
                 f"{_est_tokens(rendered)} est. tokens, over {CEILING} + "

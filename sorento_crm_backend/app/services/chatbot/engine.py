@@ -173,6 +173,224 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _without_carried_domain_on_a_roster_pick(
+    parse_output: dict[str, Any], rules_fired: list[str]
+) -> dict[str, Any]:
+    """The resolver's verdict on a pick the engine answered in the ROSTER's domain.
+
+    PR #1353 fix round 1 (owner hand test, v48: "promotion for srtwc286" -> "1" -> "2"
+    answered with the wrong promotions). The parser now keeps `domain_hint` on a bare
+    pick, but on this path (`pick_in_roster_domain`, `decide.names_its_own_domain`
+    False) that hint is the roster's carried domain, not a word of this message, and the
+    plan already answers in it. The resolver read it as a fresh ask: a second pick over
+    an already-settled product hands it no token at all, and the gate's "no entities and
+    'promotion' requires a scoping entity" exit (`not_found`) then answered "That would
+    search every promotion we have" over the Dealer fetch that had just run for the
+    product, while its tier gate re-asked the tier the pick had settled. A bare pick
+    reaches the resolver with no domain of its own, exactly as a pick that named none
+    always did. A message that named its own entity is left alone.
+    """
+    if "pick_in_roster_domain" not in rules_fired:
+        return parse_output
+    if any(
+        isinstance(e, dict) and e.get("current_message") is True
+        for e in (parse_output.get("entities") or [])
+    ):
+        return parse_output
+    if not parse_output.get("domain_hint") and not parse_output.get("intent_hint"):
+        return parse_output
+    # PR #1353 fix round 2 (merge of main's #833): the carried `intent_hint` is the same
+    # echo. `lanes/business/predicate.derive_require` reads `check_promotion` as the bare
+    # "has a promotion" leg, so a pick over an already-settled product (no token for the
+    # resolver) built a described set over nothing, and `run_fetch` answered "the
+    # described set qualifies nothing" instead of the promotion fetch the pick planned.
+    return {**parse_output, "domain_hint": None, "intent_hint": None}
+
+
+def _picks_in_the_roster_domain(pending: Any, verdict: dict[str, Any]) -> list[int]:
+    """The positions a bare pick answered over an open roster, in the roster's domain.
+
+    PR #1353 fix round 2: the parser resolves WHICH position (a number, an ordinal, a
+    typed label); this is only the engine's reading of whether the message also named a
+    domain of its own. A pick naming none, or naming only the roster's own domain, is
+    answered in the roster's domain (`apply._answer_pending`, contract 121). Anything
+    else returns [] and the verdict is left as the parser wrote it.
+    """
+    from app.services.chatbot.turn.apply import _names_only_the_roster_domain
+    from app.services.chatbot.turn.decide import names_its_own_domain, picked_positions
+
+    if pending is None or not turn_pending.is_roster(pending.kind) or not pending.options:
+        return []
+    picked = picked_positions(pending, verdict)
+    if picked is None:
+        return []
+    asked_for = pending.payload.get("domains") or (
+        [pending.payload["domain"]] if pending.payload.get("domain") else []
+    )
+    if names_its_own_domain(verdict) and not _names_only_the_roster_domain(verdict, asked_for):
+        return []
+    return list(picked[0])
+
+
+#: A bare pick as the roster's own reply line offers it ('Reply with the number(s), e.g.
+#: "1", "1 and 2", or "all".'): whole numbers joined by commas, "&", "and" or spaces.
+_BARE_POSITIONS = re.compile(r"#?\d+(?:\s*(?:,|&|\band\b)?\s*#?\d+)*")
+
+
+def _bare_roster_positions(pending: Any, message: str) -> list[int] | None:
+    """The positions a BARE pick names over an open numbered roster, or None.
+
+    PR #1353 fix round 3 (owner retest, v48, chatbot.turns 29 Sep 2026 11:44 MYT, turn
+    3f56a40d): over the tier roster (1 Office, 2 Dealer, 3 End user) with Office picked
+    one turn earlier, the parser read the bare "2" as `reference_positions: [1]` and
+    `open_question_answer: {pick, [1]}`, so the Office files were sent again. Owner
+    ruling: the parser reports, the engine judges. A message that is nothing but a
+    position ("2"), a list of them ("1 and 2", "1, 2") or "all" is read here, in code;
+    every position must be on the roster (1 to the option count), else it is not a bare
+    pick of THIS roster and the parser's reading stands. A word beside the number ("2
+    dealer", "stock for 2"), an ordinal or a typed label is the parser's to read.
+    """
+    if pending is None or not turn_pending.is_roster(pending.kind) or not pending.options:
+        return None
+    if (pending.payload or {}).get("stock_pick"):
+        # A bare number under a stock pick is its quantity (`apply._stock_pick_requantified`).
+        return None
+    offered = sorted(
+        int(o["position"]) for o in pending.options
+        if isinstance(o, dict) and isinstance(o.get("position"), int) and not isinstance(o.get("position"), bool)
+    )
+    if not offered:
+        return None
+    text = str(message or "").strip().lower().rstrip(".!")
+    if text == "all":
+        return offered
+    if not _BARE_POSITIONS.fullmatch(text):
+        return None
+    positions = sorted({int(n) for n in re.findall(r"\d+", text)})
+    if not positions or any(p not in offered for p in positions):
+        return None
+    return positions
+
+
+def _with_the_engine_pick(verdict: dict[str, Any], pending: Any, message: str) -> dict[str, Any]:
+    """The verdict with the engine's own reading of a bare pick (`_bare_roster_positions`).
+
+    The engine's positions replace the parser's `reference_positions` and
+    `open_question_answer`, and a bare number names no domain (`domain_in_message`
+    false, no `asks`), so the pick is answered in the roster's domain (contract 121) and
+    round 2's picked-axis rule then runs on these positions. Left untouched: no roster
+    open, a message that is not a bare pick, a reading the parser did not make a pick at
+    all (a quantity, a top-N count - the readers before this one already settled
+    those), and a reading that already agrees.
+    """
+    positions = _bare_roster_positions(pending, message)
+    if positions is None:
+        return verdict
+    answer = verdict.get("open_question_answer")
+    read_as_pick = bool(verdict.get("reference_positions")) or (
+        isinstance(answer, dict) and answer.get("mode") == "pick"
+    ) or verdict.get("broaden_axis") == "all"
+    if not read_as_pick:
+        return verdict
+    picked = {"mode": "pick", "picked": positions}
+    if (
+        verdict.get("reference_positions") == positions
+        and (answer is None or answer == picked)
+        and verdict.get("domain_in_message") is not True
+        and not verdict.get("asks")
+    ):
+        return verdict
+    return {
+        **verdict,
+        "reference_positions": positions,
+        "open_question_answer": picked,
+        "domain_in_message": False,
+        "asks": [],
+    }
+
+
+def _option_words(option: dict[str, Any]) -> set[str]:
+    """Every name a roster option goes by: its label, code, name, uuids and tier value."""
+    payload = option.get("payload") if isinstance(option.get("payload"), dict) else {}
+    values = [
+        option.get("label"), option.get("code"), option.get("name"), option.get("uuid"),
+        payload.get("value"), payload.get("tier"), *(option.get("uuids") or []),
+    ]
+    return {str(v).strip().lower().replace("_", " ") for v in values if isinstance(v, str) and v.strip()}
+
+
+def _with_the_picked_axis(
+    verdict: dict[str, Any], pending: Any, positions: list[int]
+) -> dict[str, Any]:
+    """The roster's own axis, off the option(s) the customer picked.
+
+    PR #1353 fix round 2 (owner retest, v48, chatbot.turns 29 Sep 2026 10:22 MYT):
+    "promo srtwc286" -> tier roster -> "1" Office -> "2" answered Office again. With
+    `previous_conversation_state` carrying access_levels ["Sorento Office"], the parser
+    echoed that level on the bare "2", and the resolver's tier gate
+    (`lanes/business/tier_gate.tier_gate`) stated the tier off the parser's
+    `access_levels`: Office, recomposed to all three Office levels, over the Dealer just
+    picked. Owner ruling: the parser reports, the engine judges. On a bare pick the
+    picked option IS the axis, so a carried value of it that names none of the picked
+    options is dropped:
+
+    * `tier_pick`: `access_levels` keeps each carried level naming a picked tier ("Sorento
+      Dealer" over a Dealer pick) and adds the picked tier's own value for every picked
+      tier no carried level names. `tier_gate` reads a bare tier value as stated.
+    * any other roster (product, customer): an entity of the roster's kind naming no
+      picked option is dropped - the parser's echo of the previous pick is not a second
+      subject. The picked option itself reaches the focus through `_answer_pending`.
+    """
+    matched = [o for o in pending.options if o.get("position") in positions]
+    if not matched:
+        return verdict
+    kind = str(matched[0].get("entity_type") or "")
+    if pending.kind == "tier_pick" or kind == "tier":
+        from app.services.chatbot.lanes.business.tier_gate import parse_level
+
+        picked: list[str] = []
+        for o in matched:
+            payload = o.get("payload") if isinstance(o.get("payload"), dict) else {}
+            value = o.get("code") or payload.get("value") or payload.get("tier") or o.get("label")
+            if isinstance(value, str) and value and value.strip().lower() not in picked:
+                picked.append(value.strip().lower())
+        carried = [a for a in (verdict.get("access_levels") or []) if isinstance(a, str)]
+
+        def tier_of(level: str) -> str:
+            parsed = parse_level(level)
+            return parsed["tier"] if parsed else level.strip().lower().replace(" ", "_")
+
+        kept = [a for a in carried if tier_of(a) in picked]
+        named = {tier_of(a) for a in kept}
+        levels = kept + [t for t in picked if t not in named]
+        entities = [
+            e for e in (verdict.get("entities") or [])
+            if not (isinstance(e, dict) and e.get("hint") == "tier" and str(e.get("canonical_code") or e.get("raw") or "").strip().lower() not in picked)
+        ]
+        if levels == carried and len(entities) == len(verdict.get("entities") or []):
+            return verdict
+        return {**verdict, "access_levels": levels, "entities": entities}
+    if not kind:
+        return verdict
+    words: set[str] = set()
+    for o in matched:
+        words |= _option_words(o)
+
+    def names_a_pick(e: dict[str, Any]) -> bool:
+        return any(
+            isinstance(v, str) and v.strip().lower().replace("_", " ") in words
+            for v in (e.get("uuid"), e.get("canonical_code"), e.get("raw"), e.get("name"))
+        )
+
+    entities = verdict.get("entities") or []
+    kept_entities = [
+        e for e in entities if not (isinstance(e, dict) and e.get("hint") == kind and not names_a_pick(e))
+    ]
+    if len(kept_entities) == len(entities):
+        return verdict
+    return {**verdict, "entities": kept_entities}
+
+
 @contextmanager
 def _session(factory: SessionFactory) -> Iterator[Session]:
     db = factory()
@@ -3193,6 +3411,48 @@ def _run_stages(  # noqa: PLR0915
         if order_list_rule:
             turn_trace.add("order_list", {"verdict_rule": order_list_rule})
 
+        # PR #1353 fix round 3: a bare position over an open roster is read by the
+        # engine, and its positions win over the parser's (turn 3f56a40d: "2" read as 1).
+        # Not while a stock quantity asked AFTER the roster is the current question:
+        # there the bare number is that quantity (`apply._stock_task_is_the_current_question`).
+        from app.services.chatbot.turn.apply import (
+            _stock_task_is_the_current_question,
+            _stock_task_owed_a_number,
+        )
+
+        owed_task = _stock_task_owed_a_number(state_in.focus)
+        if owed_task is None or not _stock_task_is_the_current_question(state_in, owed_task, verdict):
+            engine_verdict = _with_the_engine_pick(
+                verdict, state_in.pending, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+            )
+            if engine_verdict is not verdict:
+                turn_trace.add(
+                    "engine_pick",
+                    {
+                        "roster": state_in.pending.kind,
+                        "positions": engine_verdict.get("reference_positions"),
+                        "parser_positions": verdict.get("reference_positions"),
+                    },
+                )
+                verdict = engine_verdict
+
+        # PR #1353 fix round 2: a bare pick answered in the roster's domain takes the
+        # roster's axis from the option picked, never from a value the parser carried.
+        roster_picks = _picks_in_the_roster_domain(state_in.pending, verdict)
+        if roster_picks:
+            picked_verdict = _with_the_picked_axis(verdict, state_in.pending, roster_picks)
+            if picked_verdict is not verdict:
+                turn_trace.add(
+                    "picked_axis",
+                    {
+                        "roster": state_in.pending.kind,
+                        "positions": roster_picks,
+                        "access_levels": [verdict.get("access_levels"), picked_verdict.get("access_levels")],
+                        "entities_dropped": len(verdict.get("entities") or []) - len(picked_verdict.get("entities") or []),
+                    },
+                )
+                verdict = picked_verdict
+
         # C APPLY, first pass: state and plan from the verdict alone.
         state_out, plan = turn_apply(state_in, verdict, policy)
 
@@ -3406,6 +3666,9 @@ def _run_stages(  # noqa: PLR0915
                 (ctx.get("parse") or {}).get("output") or {},
                 state_out.focus,
                 unsettled_only=plan.ask is None,
+            )
+            resolver_parse_output = _without_carried_domain_on_a_roster_pick(
+                resolver_parse_output, plan.trace.rules_fired
             )
             # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4 (AC-1954): under `order`
             # the generic resolver re-types a category token as a customer
