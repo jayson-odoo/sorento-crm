@@ -22,11 +22,7 @@ Plan: `PLAN-oi-order-rows-uncapped.md`. AC-OU-n.
   against it.
 - AC-OU-9: Migration 527 re-creates `scm.committed_v` in place, same columns and types,
   round-trips with 525, and the drift guard passes.
-- AC-OU-10: `scripts/reopen_delivered_order_rows.py` refuses to run without
-  `--delivery-from` (exit 2).
-- AC-OU-11: With `--delivery-from 2026-09-01 --apply`, an importer-closed ORDER row with
-  delivery 15 Sep on a delivered line becomes `raised` with `actioned_by/at` NULL and its
-  header `raised`; a row with delivery 15 Aug, a person-actioned row, and a row on a
-  cancelled line are untouched; the dry run writes nothing and prints each candidate.
-- AC-OU-12 (browser, once a slot frees): Start Plan, Demand = Project, search SO421985: listed
+- AC-OU-10 / AC-OU-11: RETIRED 29 Sep 2026 with the reopen script (owner ruling R3 = A,
+  reopen none). No automatic or scripted reopen of importer-closed rows.
+- AC-OU-12 (browser): Start Plan, Demand = Project, search SO421985: listed
   with 3 rows; the plan buys 493 of each of CB4702, CSH2072, CSA150.

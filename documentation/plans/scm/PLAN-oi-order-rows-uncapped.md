@@ -1,8 +1,9 @@
 # PLAN: An ORDER inquiry row is owed until it is linked, whatever AutoCount says about the line (23 Sep 2026)
 
-Status: BUILT 23 Sep 2026, review round 2; browser AC-OU-12 queued (no slot). Feature track (one demand fragment
-across the view, the plan SELECT and the worklist ORM twin, a view migration, a bounded
-reopen script).
+Status: BUILT 23 Sep 2026, review round 2; fix round 29 Sep 2026 (R3 = A recorded, reopen
+script removed, main merged, migration 527 re-parented onto `cpc4_cost_packaging_method`,
+browser AC-OU-12 run). Feature track (one demand fragment across the view, the plan SELECT
+and the worklist ORM twin, a view migration).
 UAC: `oi-order-rows-uncapped-acceptance-criteria.md`.
 Lane: worktree `../sorento_crm-oi-order-uncapped`, branch `fix/oi-order-rows-uncapped` off
 `origin/main` 7c2c8e342 (alembic head `oirs_0002_reserve_round2`). Tests on `sorento_buc_ci`
@@ -45,10 +46,13 @@ order". A raised ORDER row is buy demand until purchasing links it, full stop.
 - R2 (owner, 23 Sep, implied by R1): the importer keeps closing rows on CANCELLED lines only.
   A row uploaded against a delivered line is raised like any other (history close narrows
   from "not open demand" to "line cancelled").
-- R3 (open, asked 23 Sep): reopen scope for rows the importer already closed on delivered
-  lines. A: none automatic; B: delivery date on or after 1 Sep 2026 (168 rows, 9,221 units);
-  C: another date. The script takes `--delivery-from <date>` so the ruling only sets the
-  argument; it never runs without one.
+- R3 (owner, 29 Sep 2026): A, reopen NONE. Rows the importer closed on delivered lines
+  before this lane stay `actioned`; nothing is reopened automatically or by script in prod.
+  The options were A: none; B: delivery date on or after 1 Sep 2026 (168 rows, 9,221 units
+  on the 21 Sep copy); C: another date. With A the bounded reopen script this plan carried
+  as S4 has no consumer, so it is removed with its tests rather than shipped as an unused
+  tool; CS re-raises any such row by uploading it again (R2 makes a delivered line a raise
+  candidate).
 
 ## 4. Slices
 
@@ -77,21 +81,10 @@ order". A raised ORDER row is buy demand until purchasing links it, full stop.
   per-row `_rank` closure sort OPEN before CLOSED as their own dominant tier, ahead of
   free/room/last-resort; a row reaches a closed line only once the item's own candidate set
   on that order holds no open line at all.
-- S4 Reopen script `scripts/reopen_delivered_order_rows.py --delivery-from YYYY-MM-DD
-  [--company CODE] [--apply]`: rows `verb IN (ORDER, ORDER_BACK)`, `state = actioned`,
-  importer-closed (`actioned_by == order_inquiries.raised_by` and `actioned_at` within 60 s
-  of `raised_at` or of `raised_at + 8 h`, the same test `backfill_order_back_rows.py` uses),
-  core line `line_status != cancelled`, `delivery_date >= --delivery-from`, unlinked qty >
-  0 -> `state = raised`, `actioned_by/at` NULL, header `raised`. Dry run by default prints
-  SO, item, qty, delivery, company; `--apply` commits once; `--delivery-from` mandatory. The
-  scope is not only "delivered" rows: it reopens any importer-closed row the old
-  `_is_open_demand` test would have stamped `actioned` for ANY reason - `line_status !=
-  open`, `purchasing_status = covered`, or qty 0 alike - as long as the core line is not
-  cancelled and the delivery date clears the cutoff (or carries none at all, which always
-  clears it regardless of `--delivery-from`, the same "unscheduled demand is still demand"
-  reading `horizon_committed_select_sql` gives it). Measured on the 23 Sep copy this is 0
-  rows for `covered` and 0 for qty-0 beyond the delivered shape already counted, so R3's
-  168-row / 9,221-unit figure (option B) is the real scope, not an undercount.
+- S4 Reopen script: DROPPED (R3 = A, 29 Sep 2026). Review rounds 1 to 3 shipped it as
+  `scripts/reopen_delivered_order_rows.py --delivery-from <date>` with its own tests; the
+  29 Sep fix round removed both. The PR's earlier commits hold it if a later ruling ever
+  wants a bounded reopen (measured scope then: option B was 168 rows / 9,221 units).
 - S5 Picker / plan / board: nothing to change; they read the fragments.
 
 ## 5. Test list (tester first)
@@ -107,9 +100,7 @@ order". A raised ORDER row is buy demand until purchasing links it, full stop.
   no row created, nothing history-closed (`_close_history` retired, AC-OU-8); ORDER_BACK
   unchanged. Open lines keep pairing priority over closed ones (R4, captain, 23 Sep 2026).
 - Migration 527 drift guard + in-place round trip (clone the 525 test).
-- Reopen script: importer-closed row with delivery 15 Sep and `--delivery-from 2026-09-01`
-  flips; delivery 15 Aug does not; person-actioned does not; cancelled line does not; dry
-  run writes nothing; no `--delivery-from` -> exit 2.
+- Reopen script: retired with S4 (R3 = A, 29 Sep 2026); its test file went with it.
 - Existing AC-OB-5 (`test_ac_ob_5_...stays_capped_at_zero`) is now WRONG by ruling: rewrite
   it to expect the row quantity and cite R1.
 
