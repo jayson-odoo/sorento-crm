@@ -358,16 +358,17 @@ def resolve_template_params(
     return params
 
 
-def send_template_for_use_case(
+def build_template_request(
     db: Session,
     *,
-    identifier: str,
     use_case: str,
     context_vars: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Send the use case's default template. Raises TemplateSendSkipped when
-    no valid default is configured."""
-    from app.services.integration_service import RespondClient
+    """Resolve the use case's default template and render it, without sending.
+
+    Returns ``{template, params, button, request_payload}``; ``request_payload`` is the
+    ``{"message": {"type": "whatsapp_template", ...}}`` block the Respond outbox renders.
+    Raises TemplateSendSkipped when no valid default is configured."""
     from app.services.respond_template_service import (
         BUTTON_URL_KEY,
         button_url_base,
@@ -456,6 +457,30 @@ def send_template_for_use_case(
             "button": button_payload,
         }
     }
+    return {
+        "template": template,
+        "params": params,
+        "button": button_payload,
+        "request_payload": request_payload,
+    }
+
+
+def send_template_for_use_case(
+    db: Session,
+    *,
+    identifier: str,
+    use_case: str,
+    context_vars: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Send the use case's default template. Raises TemplateSendSkipped when
+    no valid default is configured."""
+    from app.services.integration_service import RespondClient
+
+    built = build_template_request(db, use_case=use_case, context_vars=context_vars)
+    template = built["template"]
+    params = built["params"]
+    button_payload = built["button"]
+    request_payload = built["request_payload"]
     # Single-workspace today: RespondClient() resolves the default workspace key.
     # Switch to RespondClient.for_identifier(db, identifier) when multi-workspace
     # routing per contact is needed.
