@@ -57,10 +57,11 @@ class TestTheMigrationIsAMergeRevision:
         module = _migration()
         heads = _alembic_heads_excluding(REVISION)
         down = module.down_revision
-        assert isinstance(down, (tuple, list)), (
-            f"a merge revision carries a tuple down_revision, got {down!r}"
-        )
-        assert set(down) == heads, (set(down), heads)
+        # A string parent when main has one head (re-parented onto `merge_29sep_batch7`
+        # after #1374), a tuple when the lane had to join two - either way the parents are
+        # exactly the heads the graph has without this revision.
+        parents = set(down) if isinstance(down, (tuple, list)) else {down}
+        assert parents == heads, (parents, heads)
 
     def test_with_it_the_graph_has_one_head(self) -> None:
         from alembic.config import Config

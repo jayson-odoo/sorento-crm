@@ -9,10 +9,9 @@ asks for ("latest PO for SRT79-SS", "SPO biggest quantity first at BRW"). All th
 `PO_SPO_WAREHOUSE_ADDENDUM` plus the one in-body edit, so this publishes the current
 `SEMANTIC_PARSER_PROMPT` as the next version after whatever the database holds.
 
-A MERGE revision: origin/main carried two heads when this lane branched
-(`eml_0002_seed_layouts` from #1350 and `mem_0003_parser_history` from #1304), so this
-revision revises both and the graph has one head again. Nothing about either parent is
-read or changed here.
+Chains onto `merge_29sep_batch7` (#1374), the join main landed for the two heads it
+carried when this lane branched (`eml_0002_seed_layouts` from #1350 and
+`mem_0003_parser_history` from #1304). Nothing about the parent is read or changed here.
 
 Idempotent the same way `chatbot_top_selling_vocab_r6` is: a database that runs the chain
 in one upgrade gets the current body from the first publishing migration and this one finds
@@ -22,7 +21,7 @@ importable. Nothing a customer sees changes until the owner moves the `productio
 onto the new version (the Chatbot Console's prompt version picker).
 
 Revision ID: chatbot_po_spo_warehouse_vocab
-Revises: eml_0002_seed_layouts, mem_0003_parser_history
+Revises: merge_29sep_batch7
 """
 import logging
 
@@ -33,7 +32,7 @@ from app.models.ai_prompt import AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 
 revision = "chatbot_po_spo_warehouse_vocab"
-down_revision = ("eml_0002_seed_layouts", "mem_0003_parser_history")
+down_revision = "merge_29sep_batch7"
 branch_labels = None
 depends_on = None
 
