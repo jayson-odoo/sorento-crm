@@ -41,7 +41,12 @@ Plan: `PLAN-low-stock-last-in-and-list-scope.md`. Numbering continues the parent
 - **AC-59** The order summary route's response declares the two new keys (a route test asserts
   `spo_number` and `container` survive `response_model`).
 
-## All sheet matches the list (S2)
+## All sheet matches the list (S2) - SUPERSEDED 30 Sep 2026
+
+> AC-60..AC-64 are reversed by `PLAN-lowstock-show-all.md` / `lowstock-show-all-acceptance-
+> criteria.md` (AC-66..AC-78), owner ruling 30 Sep 2026: every planned row prints on the
+> plan list, the order sheet and the All sheet; nothing is hidden by default; `visible_rows`
+> is deleted. Kept below as the record of what PR #919 shipped.
 
 - **AC-60** A run with 5 planned products, 2 of them `hidden_by_default = true`: the All sheet
   prints exactly the 3 visible products; the Low sheet is the subset of those 3 with

@@ -1,6 +1,6 @@
 # PLAN - Plan list and low stock report show every planned product; Low = on hand below reorder level
 
-Status: in progress - small fix track (no migration, no auth change, no new UI)
+Status: implemented - awaiting review (PR #1382); small fix track (no migration, no auth change, no new UI)
 Domain: scm
 Lane: LOWSTOCK-SHOW-ALL
 Owner ruling source: chat, 30 Sep 2026 06:30 ("SHOW ALL HIDDEN ITEMS AGAIN")

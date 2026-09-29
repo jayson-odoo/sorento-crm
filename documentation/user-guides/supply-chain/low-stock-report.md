@@ -39,11 +39,12 @@ before the first finishes is refused with a message pointing at **My Downloads**
 
 Under **None**, the workbook carries two sheets:
 
-* **Low stock** - only products currently below their raw reorder level.
-* **All** - the rest of the book. **All prints exactly the rows the plan's Lines tab shows** -
-  a covered product whose net sits above its own reorder level is left off both sheets, the
-  same as the list (see [Run a reorder plan](run-a-reorder-plan.md#filters)). **Low stock**
-  stays a subset of whatever **All** prints.
+* **Low stock** - only products whose **BRW on hand** is strictly below their **Reorder
+  level**. A product holding exactly its level is not low. Nothing else decides membership:
+  stock on the way (a purchase order or a shipping order) does not take a product off this
+  sheet, and there is no column for it.
+* **All** - every product the plan planned, the same rows the plan's Lines tab shows (see
+  [Run a reorder plan](run-a-reorder-plan.md#filters)). **Low stock** is a subset of **All**.
 
 Under a split, the same "Low" / full pair repeats once per group instead of once for the whole
 plan (see Split into sheets, above), but every row still comes from that same underlying set.
