@@ -150,6 +150,7 @@ from app.services.scm.front_planning_engine import (
     available_for_project,
     group_take_reason,
     group_water_reason,
+    landed_on,
     pool_reserve_capacity,
     pool_share_reason,
     qty_text,
@@ -316,6 +317,57 @@ def _own_arrival_spare_key(source_ref: str) -> str:
     per-bin keys live in, exactly as `_pile_key` and `_group_budget_key` do.
     """
     return f"spare\x00{source_ref}"
+
+
+def _add_landed(
+    by_ref: Dict[str, Dict[str, Decimal]], ref: str, spo_number: Optional[str], qty: Any
+) -> None:
+    """One SPO row's receipt, added to `ref -> {spo_number -> landed}`."""
+    shipments = by_ref.setdefault(ref, {})
+    shipments[spo_number or ""] = shipments.get(spo_number or "", _ZERO) + _dec(qty)
+
+
+def _landed_document(shipments: Mapping[str, Decimal]) -> Tuple[Decimal, Optional[str]]:
+    """`(what landed, the document naming it)` for one line (#1362 item 2).
+
+    One shipment is named bare ("SPO-2026/06-0092"). Several that each landed something
+    are named every one, with its own quantity, in SPO order ("60 on SPO-2026/06-0092, 40
+    on SPO-2026/07-0019") - `front_planning_engine.landed_on` reads that shape.
+    """
+    total = sum(shipments.values(), _ZERO)
+    named = sorted((spo, qty) for spo, qty in shipments.items() if spo and qty > _ZERO)
+    if len(named) > 1:
+        return total, ", ".join(f"{qty_text(qty)} on {spo}" for spo, qty in named)
+    if named:
+        return total, named[0][0]
+    return total, next((spo for spo in sorted(shipments) if spo), None)
+
+
+def _landed_for_refs(
+    by_ref: Mapping[str, Mapping[str, Decimal]],
+    linked_by_ref: Mapping[str, Mapping[str, Decimal]],
+) -> Dict[str, Tuple[Decimal, Optional[str]]]:
+    """`ref -> (landed, document)`, the order inquiry's placement first (#1362 item 2).
+
+    Where the line's order inquiry row links a specific SPO and that link has landed
+    something, the link names the shipment and its landed figure is tier 1 - also when the
+    PO line's own receipts add to LESS (the inquiry placed the line on a shipment its own
+    PO line was never received across). The one exception is a PO line that landed MORE
+    than the placement says: those goods physically arrived against this line's own
+    purchase, and a placement cannot take them away (AC-S3-12's own shape, 70 landed on the
+    line's PO beside a 40 placement), so that larger figure stands with its own shipments
+    named. Otherwise the PO line's receipts stand, every contributing shipment named.
+    """
+    out: Dict[str, Tuple[Decimal, Optional[str]]] = {}
+    for ref in set(by_ref) | set(linked_by_ref):
+        linked = linked_by_ref.get(ref) or {}
+        linked_total = sum(linked.values(), _ZERO)
+        own_total = sum((by_ref.get(ref) or {}).values(), _ZERO)
+        if linked_total > _ZERO and linked_total >= own_total:
+            out[ref] = _landed_document(linked)
+        elif ref in by_ref:
+            out[ref] = _landed_document(by_ref[ref])
+    return out
 
 
 def _dec(value: Any, default: Decimal = _ZERO) -> Decimal:
@@ -1483,11 +1535,27 @@ class ProjectSupplyService:
                 )
             )
             if credit_qty > _ZERO:
+                # #1362: the sentence states two facts apart - what landed for this line
+                # (tier 1 plus the tier-2 spare, capped by what the line needs) and how
+                # much of it is still free at the bin (`credit_qty`, that figure capped by
+                # what is left of this product's on hand there in this walk). Read as one
+                # number, "40 landed" was taken to mean the SPO carried 40.
+                landed = min(
+                    credit_tier1_qty
+                    + sum((spare for _ref, spare, _po in credit_tier2), _ZERO),
+                    max(_dec(fact.open_qty), _ZERO),
+                )
                 own_arrival_candidates = [{
                     "location": fact.own_code,
                     "qty": credit_qty,
                     "source": "own_arrival",
                     "supply_document": credit_po,
+                    "landed_qty": landed,
+                    "free_qty": credit_qty,
+                    # #1362 item 4: a sibling's spare is named as that sibling's purchase.
+                    "landed_text": self.own_arrival_landed_text(
+                        fact, landed, credit_tier1_qty, credit_tier2
+                    ),
                 }]
             order_borrow = self.order_borrow_candidates_for(
                 fact, as_of=as_of, borrow_left=borrow_left
@@ -1980,9 +2048,14 @@ class ProjectSupplyService:
         """
         if unit_fact is member:
             return member
-        return dataclass_replace(
-            member, unit_core_line_ids=list(unit_fact.unit_core_line_ids)
-        )
+        # #1362 item 6: the member's OWN core line leads the list, so `_core_id_of` still
+        # names this line and not the unit's first (the own-arrival credit reads it).
+        own = self._core_id_of(member)
+        ids = list(unit_fact.unit_core_line_ids)
+        if own in ids:
+            ids.remove(own)
+            ids.insert(0, own)
+        return dataclass_replace(member, unit_core_line_ids=ids)
 
     @staticmethod
     def unit_totals(
@@ -2566,6 +2639,7 @@ class ProjectSupplyService:
         out: List[
             Tuple[str, Decimal, Optional[date], str, Optional[str], Optional[str]]
         ] = []
+        own_line = self._core_id_of(fact)
         for line_id in self._unit_line_ids(fact):
             row = self._assignment_line(fact, line_id, as_of=as_of)
             if row is None:
@@ -2576,6 +2650,12 @@ class ProjectSupplyService:
                     break
                 take = min(left, max(_dec(item.qty), _ZERO))
                 if take <= _ZERO:
+                    continue
+                if getattr(item, "landed", False) and str(line_id) != str(own_line):
+                    # #1362 round 5 (owner ruling): goods that landed for ANOTHER member
+                    # of this unit are that member's, never offered to this one. They
+                    # still absorb that member's own `left`.
+                    left -= take
                     continue
                 event = item.event
                 if not event.warehouse or event.is_pool:
@@ -2779,10 +2859,12 @@ class ProjectSupplyService:
         pre-isolation shape) means "do not narrow", exactly as `_resolve_ref_line` reads
         it.
 
-        `spo_number` is the first one found per ref (own-arrival fixtures never split
-        one SO line's buy across two shipping orders); a mixed real one still returns a
-        true total, only the SENTENCE and the amend refusal name one SPO of it, which is
-        what R7's follow-up (R3) asks for.
+        #1362 item 2 (owner, 29 Sep 2026): the document is no longer "the first SPO
+        found". A PO line received across two shipping orders names BOTH, each with what it
+        landed ("60 on SPO-2026/06-0092, 40 on SPO-2026/07-0019"), and a line whose order
+        inquiry row carries a placement link to a specific SPO names THAT shipment and
+        takes ITS received quantity as the landed figure, unless the PO line itself landed
+        more (`_landed_for_refs`).
         """
         refs = [ref for ref in {str(r).strip() for r in source_refs if r} if ref]
         if not refs or not product_id:
@@ -2808,11 +2890,80 @@ class ProjectSupplyService:
                 PurchaseOrderLine.company_id == company_id,
                 SPOAllocation.company_id == company_id,
             )
-        out: Dict[str, Tuple[Decimal, Optional[str]]] = {}
+        by_ref: Dict[str, Dict[str, Decimal]] = {}
         for ref, qty, spo_number in query.all():
-            total, held = out.get(str(ref), (_ZERO, None))
-            out[str(ref)] = (total + _dec(qty), held or spo_number)
+            _add_landed(by_ref, str(ref), spo_number, qty)
+        return _landed_for_refs(
+            by_ref,
+            self._oi_linked_landed_by_ref(refs, product_id=product_id, company_id=company_id),
+        )
+
+    def _oi_linked_landed_by_ref(
+        self,
+        refs: Sequence[str],
+        *,
+        product_id: Optional[str],
+        company_id: Optional[str],
+    ) -> Dict[str, Dict[str, Decimal]]:
+        """`source_ref -> {spo_number -> landed}` off the order inquiry's own PLACEMENT
+        links (#1362 item 2): the SO line's live order-inquiry row(s), each link naming an
+        SPO row (`OrderInquiryLink.spo_allocation_id`), of the SAME product as the line.
+
+        What a link says landed for the line is `min(link.qty, allocation.quantity_
+        received)`: the placement is the part of that shipment put against this line, and
+        the allocation's receipt is how much of the shipment has actually arrived, so the
+        line cannot be owed more of it than either. A cancelled row places nothing.
+        """
+        if not refs or not product_id:
+            return {}
+        out: Dict[str, Dict[str, Decimal]] = {}
+        for ref, _product, _company, spo_number, placed, received in self._oi_placements(
+            refs, [product_id], company_id=company_id
+        ):
+            _add_landed(out, str(ref).strip(), spo_number, min(_dec(placed), _dec(received)))
         return out
+
+    def _oi_placements(
+        self,
+        refs: Iterable[str],
+        product_ids: Iterable[str],
+        *,
+        company_id: Optional[str] = None,
+    ) -> List[Any]:
+        """The raw rows behind `_oi_linked_landed_by_ref`: `(line source_ref, product,
+        company, spo_number, placed, received)` for every live order-inquiry SPO placement
+        on a line holding one of `refs`. The SPO row must be for the line's own product and
+        company (the same AC-6 pairing the SPO receipt join states in its JOIN)."""
+        query = (
+            self.db.query(
+                SalesOrderLine.source_ref,
+                SalesOrderLine.product_id,
+                SalesOrderLine.company_id,
+                SPOAllocation.spo_number,
+                OrderInquiryLink.qty,
+                SPOAllocation.quantity_received,
+            )
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
+            )
+            .join(OrderInquiryRow, OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id)
+            .join(OrderInquiryLink, OrderInquiryLink.row_id == OrderInquiryRow.id)
+            .join(
+                SPOAllocation,
+                (SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
+                & (SPOAllocation.product_id == SalesOrderLine.product_id)
+                & (SPOAllocation.company_id == SalesOrderLine.company_id),
+            )
+            .filter(
+                SalesOrderLine.source_ref.in_(list(refs)),
+                SalesOrderLine.product_id.in_(list(product_ids)),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+        )
+        if company_id is not None:
+            query = query.filter(SalesOrderLine.company_id == company_id)
+        return query.all()
 
     def _prefetch_own_arrival(
         self, entries: Sequence[Tuple[Any, _LineFacts, Any]]
@@ -2910,8 +3061,8 @@ class ProjectSupplyService:
             siblings_by_key.setdefault(row_key, []).append(row)
 
         refs = {str(row.source_ref).strip() for row in sibling_rows if row.source_ref}
-        received_all: Dict[str, Dict[str, Tuple[Decimal, Optional[str]]]] = {}
-        received_scoped: Dict[Tuple[str, str], Dict[str, Tuple[Decimal, Optional[str]]]] = {}
+        received_all: Dict[str, Dict[str, Dict[str, Decimal]]] = {}
+        received_scoped: Dict[Tuple[str, str], Dict[str, Dict[str, Decimal]]] = {}
         if refs and product_ids:
             # R7 follow-up (`PLAN-r7-landed-reads-spo-received.md`): the same SPO join
             # `_po_received_by_so_line_ref` reads, batched. `SPOAllocation.product_id ==
@@ -2947,25 +3098,47 @@ class ProjectSupplyService:
             )
             for ref, qty, product_id, company_id, spo_number in rows:
                 ref = str(ref)
-                bucket_all = received_all.setdefault(str(product_id), {})
-                total, held = bucket_all.get(ref, (_ZERO, None))
-                bucket_all[ref] = (total + _dec(qty), held or spo_number)
+                _add_landed(
+                    received_all.setdefault(str(product_id), {}), ref, spo_number, qty
+                )
                 if company_id is not None:
-                    bucket_scoped = received_scoped.setdefault(
-                        (str(product_id), str(company_id)), {}
+                    _add_landed(
+                        received_scoped.setdefault((str(product_id), str(company_id)), {}),
+                        ref, spo_number, qty,
                     )
-                    total, held = bucket_scoped.get(ref, (_ZERO, None))
-                    bucket_scoped[ref] = (total + _dec(qty), held or spo_number)
+
+        # #1362 item 2: the order inquiry's own SPO placements, the same question
+        # `_oi_linked_landed_by_ref` asks for one key, batched and split back out the same
+        # way the SPO receipts above are.
+        linked_all: Dict[str, Dict[str, Dict[str, Decimal]]] = {}
+        linked_scoped: Dict[Tuple[str, str], Dict[str, Dict[str, Decimal]]] = {}
+        if refs and product_ids:
+            for ref, product_id, company_id, spo_number, placed, received in (
+                self._oi_placements(refs, product_ids)
+            ):
+                landed = min(_dec(placed), _dec(received))
+                ref = str(ref).strip()
+                _add_landed(linked_all.setdefault(str(product_id), {}), ref, spo_number, landed)
+                if company_id is not None:
+                    _add_landed(
+                        linked_scoped.setdefault((str(product_id), str(company_id)), {}),
+                        ref, spo_number, landed,
+                    )
 
         for key in keys:
             sales_order_id, product_id, company_id = key
             siblings = siblings_by_key.get(key, [])
-            received = (
+            by_ref = (
                 received_scoped.get((product_id, company_id), {})
                 if company_id
                 else received_all.get(product_id, {})
             )
-            self._own_arrival_order_memo[key] = (siblings, received)
+            linked = (
+                linked_scoped.get((product_id, company_id), {})
+                if company_id
+                else linked_all.get(product_id, {})
+            )
+            self._own_arrival_order_memo[key] = (siblings, _landed_for_refs(by_ref, linked))
 
     def _own_arrival_order_facts(
         self, core_line: Any
@@ -3045,14 +3218,33 @@ class ProjectSupplyService:
         `_own_arrival_credit_components` directly (no charge) and charges
         `_charge_own_arrival_credit` itself, afterwards, with what was actually drawn.
         """
+        credit, po_number, _said = self.own_arrival_credit_said(
+            fact, own_arrival_left=own_arrival_left
+        )
+        return credit, po_number
+
+    def own_arrival_credit_said(
+        self,
+        fact: _LineFacts,
+        *,
+        own_arrival_left: Optional[MutableMapping[str, Decimal]] = None,
+    ) -> Tuple[Decimal, Optional[str], Optional[str]]:
+        """`own_arrival_credit_for`, plus how the credit is said when part of it is a
+        sibling's spare (#1362 item 4, `own_arrival_landed_text`), read BEFORE the charge
+        spends that spare. The confirm recheck's refusal names the purchase with it."""
         credit, po_number, tier1_qty, tier2 = self._own_arrival_credit_components(
             fact, own_arrival_left=own_arrival_left
+        )
+        said = (
+            self.own_arrival_landed_text(fact, credit, tier1_qty, tier2)
+            if credit > _ZERO
+            else None
         )
         if own_arrival_left is not None and credit > _ZERO:
             self._charge_own_arrival_credit(
                 fact, credit, tier1_qty, tier2, own_arrival_left
             )
-        return credit, po_number
+        return credit, po_number, said
 
     def _own_arrival_credit_components(
         self,
@@ -3075,18 +3267,14 @@ class ProjectSupplyService:
         this computed it, so tier 1 is always spent before any sibling's tier-2 spare.
         `document` names the SPO the goods landed on, never the PO (R3).
         """
-        core_line_id = fact.unit_core_line_ids[0] if fact.unit_core_line_ids else None
-        if not core_line_id or not fact.own_code:
+        # #1362 item 6: THIS member's own core line (`_core_id_of`), never the unit's
+        # first. Two same-date lines of one product form one planning unit, and every
+        # member used to read `unit_core_line_ids[0]`: the line with no purchase of its own
+        # was credited its sibling's whole tier-1 receipt as if bought for it, so 100
+        # landed for one line was credited 160 across the two.
+        if not fact.own_code:
             return _ZERO, None, _ZERO, []
-        if core_line_id in self._own_arrival_line_memo:
-            core_line = self._own_arrival_line_memo[core_line_id]
-        else:
-            core_line = (
-                self.db.query(SalesOrderLine)
-                .filter(SalesOrderLine.id == core_line_id)
-                .one_or_none()
-            )
-            self._own_arrival_line_memo[core_line_id] = core_line
+        core_line = self._own_core_line(fact)
         if core_line is None or not core_line.source_ref:
             return _ZERO, None, _ZERO, []
         if not core_line.sales_order_id or not core_line.product_id:
@@ -3151,6 +3339,74 @@ class ProjectSupplyService:
         if credit <= _ZERO:
             return _ZERO, None, tier1_qty, tier2
         return credit, tier1_po or tier2_po, tier1_qty, tier2
+
+    def _own_core_line(self, fact: _LineFacts) -> Optional[Any]:
+        """The CORE sales-order line this fact's own-arrival credit is read for, memoised
+        per request (`_own_arrival_line_memo`)."""
+        core_line_id = self._core_id_of(fact)
+        if not core_line_id:
+            return None
+        if core_line_id not in self._own_arrival_line_memo:
+            self._own_arrival_line_memo[core_line_id] = (
+                self.db.query(SalesOrderLine)
+                .filter(SalesOrderLine.id == core_line_id)
+                .one_or_none()
+            )
+        return self._own_arrival_line_memo[core_line_id]
+
+    def own_arrival_landed_text(
+        self,
+        fact: _LineFacts,
+        landed: Decimal,
+        tier1_qty: Decimal,
+        tier2: List[Tuple[str, Decimal, Optional[str]]],
+    ) -> Optional[str]:
+        """#1362 item 4 (owner, 29 Sep 2026): what landed, said by WHOSE purchase it was.
+
+        `landed` is split the way `_charge_own_arrival_credit` spends it, tier 1 first:
+        this line's own PO reads "100 landed for this line on SPO-2026/09-0036"; a
+        sibling's over-buy reads "100 spare from line 1648's purchase (200 bought for 100)
+        landed on SPO-2026/09-0036", naming the sibling by its AutoCount line number. A
+        spare is never said to have landed "for this line": SO382618's January B2154-NL
+        line was credited the surplus of the 200 bought for line 1648, and "landed for
+        this line" sent the owner looking for a purchase that was never made for it.
+
+        `None` when no spare is part of `landed` - the caller's one-shipment sentence
+        (`own_arrival_reason`) already says it right.
+        """
+        core_line = self._own_core_line(fact)
+        if core_line is None or landed <= _ZERO or not tier2:
+            return None
+        siblings, received = self._own_arrival_order_facts(core_line)
+        _tier1, tier1_po = received.get(
+            str(core_line.source_ref or "").strip(), (_ZERO, None)
+        )
+        own = min(max(_dec(tier1_qty), _ZERO), landed)
+        spare_left = landed - own
+        if spare_left <= _ZERO:
+            return None
+        by_ref = {
+            str(line.source_ref).strip(): line for line in siblings if line.source_ref
+        }
+        parts: List[str] = []
+        if own > _ZERO:
+            parts.append(f"{qty_text(own)} landed for this line{landed_on(tier1_po)}")
+        for ref, spare, document in tier2:
+            if spare_left <= _ZERO:
+                break
+            take = min(spare, spare_left)
+            spare_left -= take
+            sibling = by_ref.get(ref)
+            sibling_received, _doc = received.get(ref, (_ZERO, None))
+            line_no = getattr(sibling, "line_no", None)
+            whose = f"line {line_no}'s" if line_no is not None else "another line's"
+            ordered = _dec(getattr(sibling, "qty_ordered", None))
+            parts.append(
+                f"{qty_text(take)} spare from {whose} purchase "
+                f"({qty_text(sibling_received)} bought for {qty_text(ordered)}) "
+                f"landed{landed_on(document)}"
+            )
+        return "; ".join(parts)
 
     @staticmethod
     def _charge_own_arrival_credit(
@@ -4842,6 +5098,11 @@ class ProjectSupplyService:
         invalid: List[Dict[str, Any]] = []
         seen: set = set()
         checked: List[Tuple[ProjectSalesOrderLine, Any, _LineFacts]] = []
+        # #1362 (owner, 29 Sep 2026): a Buy over goods that landed for the line is the
+        # planner's recorded intent, confirmed with a notice - `_check_line` fills this,
+        # `_write_decision` puts the landed fact on the Buy's order inquiry row for
+        # purchasing, and the result returns it. Project line id -> notice line.
+        self._landed_buy_notices: Dict[str, Dict[str, Any]] = {}
         # What is still available as the payload is walked, so two lines of the SAME
         # confirmation cannot each be sold the whole pile. The per-line facts say what was
         # free when the sheet was read; these say what is left after the lines before it
@@ -4869,6 +5130,15 @@ class ProjectSupplyService:
         # ledgers from the same quantity the ladder was asked about. Grouped exactly as
         # `_proposals_for` groups.
         units = self._unit_checks(lines, facts, covered=covered_ids)
+        # #1362 item 3 (owner, 29 Sep 2026): a named line with NOTHING open left - delivered
+        # after a decision was saved on it - is skipped, not checked and not guarded. Its
+        # saved composition answers a quantity the line no longer has, so confirming it
+        # refused the WHOLE order ("100 landed for this line ...; nothing to buy for it",
+        # or "the components add up to 100 and the line is open for 0").
+        # A planning change SETTLING a line to zero names it on purpose (its order inquiry
+        # row is updated to the new quantity), so a settle-in-place line is never skipped.
+        fulfilled: List[ProjectSalesOrderLine] = []
+        settle_in_place = {str(line_id) for line_id in settle_in_place_line_ids}
 
         for entry in payload_lines:
             line = by_id.get(str(entry.project_line_id))
@@ -4890,8 +5160,11 @@ class ProjectSupplyService:
                     }
                 )
                 continue
-            seen.add(str(line.id))
             fact = facts[str(line.id)]
+            if fact.open_qty <= _ZERO and str(line.id) not in settle_in_place:
+                fulfilled.append(line)
+                continue
+            seen.add(str(line.id))
             checked.append((line, entry, fact))
             self._check_line(
                 entry,
@@ -4949,11 +5222,35 @@ class ProjectSupplyService:
                 failing_lines=stale,
             )
 
+        if fulfilled:
+            # The stale decision is CLEARED, not marked superseded: a draft is a staged
+            # verdict with no history of its own (`project_line_draft_service`), and on a
+            # line with nothing open there is nothing left for any verdict to decide.
+            from app.services import project_line_draft_service
+
+            project_line_draft_service.delete_drafts_for_lines(
+                self.db,
+                [line.core_sales_order_line_id for line in fulfilled],
+                company_id=str(order.company_id) if order.company_id else None,
+            )
+        if not checked and not uncover_line_ids:
+            # Every named line was already fulfilled: nothing to write, and a new revision
+            # carrying the old one forward verbatim is not a decision anybody made.
+            decided = len(self._frozen_by_line(self.active_decision(str(order.id))))
+            return {
+                "revision_no": None,
+                "inquiry_rows_created": 0,
+                "exceptions": [],
+                "lines_decided": decided,
+                "lines_undecided": max(len(lines) - decided, 0),
+                "lines_fulfilled_skipped": len(fulfilled),
+            }
+
         carried = self._carried_lines(
             self.active_decision(str(order.id)), named=seen, by_id=by_id, facts=facts,
             uncover=set(uncover_line_ids),
         )
-        return self._write_decision(
+        body = self._write_decision(
             order,
             checked,
             # The order's lines and every line's facts, so the frozen proposal is composed
@@ -4973,6 +5270,9 @@ class ProjectSupplyService:
             # frozen beside the decision is the one they were shown. Absent means today.
             as_of=getattr(payload, "as_of", None),
         )
+        body["lines_fulfilled_skipped"] = len(fulfilled)
+        body["landed_buy_notices"] = list(self._landed_buy_notices.values()) or None
+        return body
 
     def _carried_lines(
         self,
@@ -5164,7 +5464,16 @@ class ProjectSupplyService:
         rederivation refuses the very split it proposed.
         """
         line = fact.line
-        subject = {"line_no": line.line_no, "item_code": fact.item_code}
+        # #1362 item 5: `so_line_no` is the AutoCount line number off the core row, the one
+        # the refusal sentence names; `line_no` stays the sheet's own address.
+        subject = {
+            "line_no": line.line_no,
+            "so_line_no": fact.core.line_no if fact.core is not None else None,
+            "item_code": fact.item_code,
+            # #1362 hold-back: addressing only, so confirm-all can hold THIS line back and
+            # confirm the rest of the order (`confirm_many`). Never rendered.
+            "project_line_id": str(line.id),
+        }
 
         def refuse(bucket: List[Dict[str, Any]], reason: str) -> None:
             bucket.append({**subject, "reason": reason})
@@ -5370,6 +5679,7 @@ class ProjectSupplyService:
         # not a second, possibly-inconsistent read.
         credit_qty = _ZERO
         credit_po: Optional[str] = None
+        credit_said: Optional[str] = None
         # AC-S3-16: same verdict as the composer - `walk()` builds no own-arrival
         # candidate at all for a line outside the reserve window, so the recheck must
         # not credit one either. A line due beyond the window is never credited,
@@ -5394,7 +5704,7 @@ class ProjectSupplyService:
             # not a bug: it only ever makes a LATER line's own credit smaller (refuses
             # rather than over-grants), and a confirm-time recheck has no "drawn" figure
             # to defer the charge to the way `walk_line`'s candidate draw does.
-            credit_qty, credit_po = self.own_arrival_credit_for(
+            credit_qty, credit_po, credit_said = self.own_arrival_credit_said(
                 fact, own_arrival_left=ledger
             )
             if credit_qty > _ZERO:
@@ -5570,25 +5880,29 @@ class ProjectSupplyService:
             )
             uncovered = credit_qty - reserved_at_credit_bin
             if uncovered > _ZERO:
-                # S-1 (round-5): names the CREDITED quantity, the same figure
-                # `_refuse_buy_over_own_arrival` states for its own seam - not
-                # whatever a partial Reserve happened to leave uncovered of it.
-                # R7 follow-up (R3): `credit_po` is now the document goods actually
-                # LANDED on - an SPO number, never a PO number - so the sentence names
-                # it bare, with no "PO" noun in front of it.
-                message = (
-                    f"{qty_text(credit_qty)} landed for this line on {credit_po}; "
-                    "nothing to buy for it"
-                    if credit_po
-                    else f"{qty_text(credit_qty)} landed for this line; nothing to buy "
-                    "for it"
+                # #1362 (owner, 29 Sep 2026): "this good is on hand, and is covering the
+                # line, but, from fulfilment planning, is kind of requesting it to be
+                # delayed while the link is intact, then only purchasing will do the
+                # adjustment in the linkage". Planning RECORDS the intent: the Buy is
+                # confirmed as decided, never refused and never swapped for the landed
+                # goods, and the PO/SPO link stays as it is. What landed is said on the
+                # Buy's own order inquiry row (`_write_decision`), which purchasing must
+                # acknowledge anyway, and in the confirm result. It used to refuse the
+                # whole order ("... nothing to buy for it", AC-S3-15).
+                # #1362 item 4: a sibling's spare says whose purchase it was.
+                landed = credit_said or (
+                    f"{qty_text(credit_qty)} landed for this line{landed_on(credit_po)}"
                 )
-                raise SupplyLinesRefused(
-                    status_code=409,
-                    message=message,
-                    failing_lines=[{**subject, "reason": message}],
-                    code="planning_change_buy_over_own_arrival",
-                )
+                notices = getattr(self, "_landed_buy_notices", None)
+                if notices is not None:
+                    notices[str(line.id)] = {
+                        **{k: v for k, v in subject.items() if k != "project_line_id"},
+                        "landed": landed,
+                        "reason": (
+                            f"Buy {qty_text(buy)} confirmed as decided; {landed} "
+                            "stay linked to it, for purchasing to adjust"
+                        ),
+                    }
 
         for item in entry.borrow or []:
             self._check_borrow(item, fact, borrow_left, refuse, stale, invalid, carried_holds)
@@ -5767,8 +6081,12 @@ class ProjectSupplyService:
                         failing_lines=[
                             {
                                 "line_no": line.line_no,
+                                "so_line_no": (
+                                    fact.core.line_no if fact.core is not None else None
+                                ),
                                 "item_code": fact.item_code,
                                 "reason": message,
+                                "project_line_id": str(line.id),
                             }
                         ],
                         conflict={
@@ -6535,6 +6853,11 @@ class ProjectSupplyService:
                         (getattr(entry, "cited_document", None) or "").strip() or None
                     ),
                     "origin": origin_by_product.get(str(fact.product_id), "overseas"),
+                    # #1362: a Buy over goods that landed for the line, kept as decided.
+                    # Purchasing reads this on the Buy's own row and adjusts the linkage.
+                    "landed_note": (
+                        getattr(self, "_landed_buy_notices", None) or {}
+                    ).get(str(line.id), {}).get("landed"),
                 }
             )
         for entry in carried:
@@ -10341,6 +10664,51 @@ class ProjectSupplyService:
 
     # --------------------------------------------------- confirm all approved (D3)
 
+    def _write_holding_back(
+        self,
+        order: ProjectSalesOrder,
+        entry: Any,
+        write: Callable[[ProjectSalesOrder, Any], Dict[str, Any]],
+        hold_back: bool,
+    ) -> Tuple[Dict[str, Any], Any, List[Dict[str, Any]]]:
+        """#1362 (owner, 29 Sep 2026: "i think we are too restrictive already"): one line's
+        stale or conflicting decision must not refuse the whole order.
+
+        When the recheck refuses named lines (`SupplyLinesRefused`, every failing line
+        addressed by `project_line_id`), those lines are held back - rolled back, left out
+        of the body, their saved decisions untouched - and the rest of the order is
+        confirmed without them. A line the payload does not name is undecided, which is a
+        normal outcome (13.4), so nothing here invents a state. Repeated while it still
+        makes progress, because holding one member back can make a unit sibling fail its
+        own check next. Refused as before when nothing would be left to confirm, or when a
+        refusal names no line (it is about the order, not a line).
+
+        Not for a planning-change apply (`hold_back=False`): a batch names its lines on
+        purpose, and applying part of it would leave the batch half applied.
+        """
+        held: List[Dict[str, Any]] = []
+        while True:
+            try:
+                return write(order, entry), entry, held
+            except SupplyLinesRefused as refused:
+                failing = refused.failing_lines
+                ids = {str(f.get("project_line_id") or "") for f in failing}
+                lines = list(getattr(entry, "lines", None) or [])
+                keep = [line for line in lines if str(line.project_line_id) not in ids]
+                if (
+                    not hold_back
+                    or not failing
+                    or "" in ids
+                    or not keep
+                    or len(keep) == len(lines)
+                ):
+                    raise
+                self.db.rollback()
+                held.extend(
+                    {k: v for k, v in f.items() if k != "project_line_id"} for f in failing
+                )
+                entry = entry.model_copy(update={"lines": keep})
+
     def confirm_many(
         self,
         entries: Sequence[Any],
@@ -10348,6 +10716,7 @@ class ProjectSupplyService:
         actor_user_id: str,
         assert_can_act: Callable[[Session, ProjectSalesOrder], None],
         write: Optional[Callable[[ProjectSalesOrder, Any], Dict[str, Any]]] = None,
+        can_hold_back: Optional[Callable[[Any], bool]] = None,
     ) -> List[Dict[str, Any]]:
         """"Confirm all approved" (D3): every order's Confirm, each in its OWN transaction.
 
@@ -10372,6 +10741,7 @@ class ProjectSupplyService:
         write = write or (
             lambda order, entry: self.confirm(order, entry, actor_user_id=actor_user_id)
         )
+        can_hold_back = can_hold_back or (lambda _entry: True)
         results: List[Dict[str, Any]] = []
         for entry in entries:
             pso_id = str(entry.pso_id)
@@ -10392,10 +10762,13 @@ class ProjectSupplyService:
                     }
                 )
                 continue
+            held_back: List[Dict[str, Any]] = []
             try:
                 order = self.get_order(pso_id)
                 assert_can_act(self.db, order)
-                body = write(order, entry)
+                body, entry, held_back = self._write_holding_back(
+                    order, entry, write, can_hold_back(entry)
+                )
                 self.db.commit()
                 results.append(
                     {
@@ -10419,6 +10792,13 @@ class ProjectSupplyService:
                         # `.get`, the same reason every field above reads one: a body this
                         # order's own write never populated must not fail the whole result.
                         "rejected_count": body.get("rejected_count"),
+                        # #1362 item 3: named lines skipped because nothing was open.
+                        "lines_fulfilled_skipped": body.get("lines_fulfilled_skipped"),
+                        # #1362 hold-back: lines the recheck refused, left out so the rest
+                        # of the order confirmed; each keeps its saved decision.
+                        "lines_held_back": held_back or None,
+                        # #1362: Buys confirmed over goods that landed for their line.
+                        "landed_buy_notices": body.get("landed_buy_notices"),
                     }
                 )
             except Exception as exc:  # noqa: BLE001 - every order must get an answer

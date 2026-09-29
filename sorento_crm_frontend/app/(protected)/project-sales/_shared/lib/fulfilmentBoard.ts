@@ -1208,3 +1208,73 @@ export function orderListRows<
     return (a.required_date ?? '9999-12-31').localeCompare(b.required_date ?? '9999-12-31');
   });
 }
+
+/**
+ * #1362 item 5 (owner, 29 Sep 2026): the number a person reads for a sales-order line is
+ * AutoCount's own line number, the "No." the order's Lines tab shows - never the planning
+ * row index. "Line 2912" when AutoCount numbered the line; "row 110" (the planning position)
+ * only when it did not, so the two numberings are never printed under one name.
+ */
+export function soLineLabel(line: {
+  so_line_no?: number | null;
+  line_no?: number | null;
+}): string {
+  const text = soLineNoText(line);
+  if (!text) return 'Line';
+  return text.startsWith('row ') ? text : `Line ${text}`;
+}
+
+/**
+ * The Line column's own cell: "2912", or "row 110" when AutoCount gave no number
+ * (`so_line_no: null`, which the board always sends). A payload with no `so_line_no` key
+ * at all predates the field and says nothing either way, so its `line_no` is printed bare.
+ */
+export function soLineNoText(line: {
+  so_line_no?: number | null;
+  line_no?: number | null;
+}): string {
+  if (line.so_line_no !== null && line.so_line_no !== undefined) return String(line.so_line_no);
+  if (line.line_no === null || line.line_no === undefined) return '';
+  return line.so_line_no === null ? `row ${line.line_no}` : String(line.line_no);
+}
+
+/**
+ * One refused line of a Confirm, as the board lists it: "Line 2912, B2154-NL: <reason>"
+ * (#1362 item 5, AutoCount's number), the bare reason when it is about the whole order.
+ */
+export function failingLineText(line: {
+  so_line_no?: number | null;
+  line_no?: number | null;
+  item_code?: string | null;
+  reason: string;
+}): string {
+  if (!line.line_no && line.so_line_no == null) return line.reason;
+  return `${soLineLabel(line)}${line.item_code ? `, ${line.item_code}` : ''}: ${line.reason}`;
+}
+
+/**
+ * #1362 (owner, 29 Sep 2026: "i think we are too restrictive already"): what a CONFIRMED
+ * order's result still has to tell the planner, one line each. A line held back by the
+ * recheck ("row 29, B2154-NL held back, decision kept: <reason>") and a Buy kept over goods
+ * that landed for its line (the notice purchasing also reads on the Buy's inquiry row).
+ */
+export function confirmNoticeLines(result: {
+  lines_held_back?: Array<{
+    so_line_no?: number | null;
+    line_no?: number | null;
+    item_code?: string | null;
+    reason: string;
+  }> | null;
+  landed_buy_notices?: Array<{
+    so_line_no?: number | null;
+    line_no?: number | null;
+    item_code?: string | null;
+    reason: string;
+  }> | null;
+}): string[] {
+  const held = (result.lines_held_back ?? []).map((line) =>
+    failingLineText({ ...line, reason: `held back, decision kept: ${line.reason}` }),
+  );
+  const landed = (result.landed_buy_notices ?? []).map((line) => failingLineText(line));
+  return [...held, ...landed];
+}

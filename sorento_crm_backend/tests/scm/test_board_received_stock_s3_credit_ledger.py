@@ -124,6 +124,10 @@ def test_ac_s3_11_compose_never_covers_the_same_units_twice():
     0. When A is walked, `own_arrival_credit_for` finds nothing left of the physical pile to
     credit, so A's credit is 0 and its 40 composes elsewhere (Buy, since this world offers
     no other rung) - never a second, uncharged Reserve of 40 at the identical bin.
+
+    #1362 round 5 (owner ruling, 29 Sep 2026) AMENDS the winner, not the invariant: A's 40
+    landed for A and is pinned to it in the assignment, so B's ordinary rung finds nothing
+    free and B buys; A is credited its 40. Still never 80 drawn from 40.
     """
     with blank_session() as db:
         group, product = own_arrival_group(db)
@@ -161,24 +165,27 @@ def test_ac_s3_11_compose_never_covers_the_same_units_twice():
             f"A={reserved_a} B={reserved_b}, sources A={by_so[order_a.so_number]['sources']} "
             f"B={by_so[order_b.so_number]['sources']}"
         )
-        # The fixed ladder's actual outcome, pinned exactly so a regression is caught by a
-        # CHANGED number here rather than a silent pass: B wins the tie ordinarily and takes
-        # the whole 40 (rung group_take, no own_arrival source) - the line served first by
-        # the ordinary rung takes the bin, and the credit finds nothing left. A's own-arrival
-        # credit is therefore 0, and its 40 composes as Buy instead of a second Reserve.
-        assert reserved_b == Decimal("40"), by_so[order_b.so_number]["sources"]
-        assert reserved_a == Decimal("0"), by_so[order_a.so_number]["sources"]
+        # The ladder's actual outcome, pinned exactly so a regression is caught by a
+        # CHANGED number here rather than a silent pass. #1362 round 5 (owner ruling, 29 Sep
+        # 2026, "we cannot snatch, what's ordered against the SO should stay belonged to
+        # it") reversed who wins: A's 40 landed for A, so it is pinned to A before anybody
+        # queues, and B - served first by the tie-break - finds nothing free and buys. It
+        # used to be B taking the whole bin and A's credit finding nothing left.
+        assert reserved_b == Decimal("0"), by_so[order_b.so_number]["sources"]
+        assert reserved_a == Decimal("40"), by_so[order_a.so_number]["sources"]
         own_arrival_sources = [
             s
             for s in by_so[order_a.so_number]["sources"]
             if s.get("rung") == "group_take" and s.get("source") == "own_arrival"
         ]
-        assert not own_arrival_sources, own_arrival_sources
+        assert sum(Decimal(s["qty"]) for s in own_arrival_sources) == Decimal("40"), (
+            by_so[order_a.so_number]["sources"]
+        )
         buy_sources = [
-            s for s in by_so[order_a.so_number]["sources"] if s.get("kind") == "buy"
+            s for s in by_so[order_b.so_number]["sources"] if s.get("kind") == "buy"
         ]
         assert buy_sources and Decimal(buy_sources[0]["qty"]) == Decimal("40"), by_so[
-            order_a.so_number
+            order_b.so_number
         ]["sources"]
 
 
@@ -718,6 +725,12 @@ def test_ac_s3_15_board_confirm_refuses_a_buy_over_own_arrival():
     1`, and `pytest.raises(AppException)` below fails with "DID NOT RAISE" - there is
     no refusal to catch, because the seam that would raise one does not exist at
     confirm time, only at `set_row_decision`'s amend time.
+
+    #1362 (owner ruling, 29 Sep 2026): no longer refused. "this good is on hand, and is
+    covering the line, but, from fulfilment planning, is kind of requesting it to be
+    delayed while the link is intact, then only purchasing will do the adjustment in the
+    linkage" - the Buy is confirmed as decided and the confirm returns a notice naming
+    what landed, which is what this test now pins.
     """
     within_window = date.today() + timedelta(days=10)
     with blank_session() as db:
@@ -741,22 +754,19 @@ def test_ac_s3_15_board_confirm_refuses_a_buy_over_own_arrival():
         line = _project_line(db, order, line_no=1, product=product, core_line=core_line)
         db.commit()
 
-        with pytest.raises(AppException) as refused:
-            ProjectSupplyService(db).confirm(
-                order,
-                ConfirmSupplyBody(
-                    lines=[
-                        ConfirmLine(project_line_id=str(line.id), buy_qty="20"),
-                    ]
-                ),
-                actor_user_id=actor,
-            )
-        assert refused.value.status_code == 409, refused.value.detail
-        assert refused.value.detail.get("code") == "planning_change_buy_over_own_arrival", (
-            refused.value.detail
+        spo_number = spo.spo_number
+        result = ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(project_line_id=str(line.id), buy_qty="20"),
+                ]
+            ),
+            actor_user_id=actor,
         )
-        message = refused.value.detail.get("message") or ""
-        assert "20" in message and spo.spo_number in message, message
+        assert result["revision_no"] is not None, result
+        (notice,) = result["landed_buy_notices"]
+        assert notice["landed"] == f"20 landed for this line on {spo_number}", notice
 
 
 def test_ac_s3_15_control_buy_beside_a_fully_reserved_credit_is_accepted():
@@ -838,6 +848,12 @@ def test_ac_s3_15_refusal_names_the_credited_quantity_not_the_uncovered_part():
     message reads "12 landed for this line on ..." - the part the posted Reserve left
     short, not what actually landed. Document name updated by the R7 follow-up
     (`PLAN-r7-landed-reads-spo-received.md`): the message names the SPO, never the PO.
+
+    #1362 (owner ruling, 29 Sep 2026): no longer refused. "this good is on hand, and is
+    covering the line, but, from fulfilment planning, is kind of requesting it to be
+    delayed while the link is intact, then only purchasing will do the adjustment in the
+    linkage" - the Buy is confirmed as decided and the confirm returns a notice naming
+    what landed, which is what this test now pins.
     """
     within_window = date.today() + timedelta(days=10)
     with blank_session() as db:
@@ -861,30 +877,27 @@ def test_ac_s3_15_refusal_names_the_credited_quantity_not_the_uncovered_part():
         line = _project_line(db, order, line_no=1, product=product, core_line=core_line)
         db.commit()
 
-        with pytest.raises(AppException) as refused:
-            ProjectSupplyService(db).confirm(
-                order,
-                ConfirmSupplyBody(
-                    lines=[
-                        ConfirmLine(
-                            project_line_id=str(line.id),
-                            reserve=[{"warehouse_id": str(own.id), "qty": "8"}],
-                            buy_qty="12",
-                            amend_reason=(
-                                "ZZT AC-S3-15 - partial reserve at the credited bin, "
-                                "remainder bought"
-                            ),
+        spo_number = spo.spo_number
+        result = ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(
+                        project_line_id=str(line.id),
+                        reserve=[{"warehouse_id": str(own.id), "qty": "8"}],
+                        buy_qty="12",
+                        amend_reason=(
+                            "ZZT AC-S3-15 - partial reserve at the credited bin, "
+                            "remainder bought"
                         ),
-                    ]
-                ),
-                actor_user_id=actor,
-            )
-        assert refused.value.status_code == 409, refused.value.detail
-        assert refused.value.detail.get("code") == "planning_change_buy_over_own_arrival", (
-            refused.value.detail
+                    ),
+                ]
+            ),
+            actor_user_id=actor,
         )
-        message = refused.value.detail.get("message") or ""
-        assert "20 landed for this line on" in message and spo.spo_number in message, (
+        (notice,) = result["landed_buy_notices"]
+        message = notice["reason"]
+        assert "20 landed for this line on" in message and spo_number in message, (
             f"the message must name the credited quantity (20), not the uncovered part "
             f"(12) the posted Reserve happened to leave: message={message!r}"
         )
