@@ -66,7 +66,15 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # message's own domain": one DOMAIN IN MESSAGE rule plus the open numbered question and
 # stock task edits) measures 41,163 (+564); this lane merged over it without the addendum
 # measures 40,984 (still 179 under main).
-CEILING = 41_163
+# Third re-pin, 29 Sep 2026 (PR #1365, CHATBOT-CUSTOMER-SCOPE, PLAN-chatbot-customer-scope-
+# 29sep D2): `SELF_REFERENCE_ADDENDUM` teaches the boolean `self_reference` ("my" / "me" /
+# "our" as the asker's own account, Malay and Chinese forms included) and is a genuine new
+# addendum the owner ruled must land (grill Q5), so per the rule above CEILING rises in the
+# same commit to the new measured value: 41,466 without the memory addendum, and 41,981
+# with it (the estimator rounds per text, so the two do not add up exactly); the pin is
+# the combined figure minus the addendum's own 512 bound, so both assertions below hold
+# on the measured prompt. The memory lane's rendered body measures 41,390 on the same text.
+CEILING = 41_469
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is
