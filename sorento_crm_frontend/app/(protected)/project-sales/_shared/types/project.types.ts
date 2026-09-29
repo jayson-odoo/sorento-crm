@@ -196,6 +196,8 @@ export interface ProjectRegisterBody {
   registered_company_name?: string | null;
   location?: string | null;
   address?: string | null;
+  /** Filing reference, e.g. PS26-0143 (D7). Settable on create too, not edit-only. */
+  admin_ref?: string | null;
   architect_party_id?: string | null;
   main_contractor_party_id?: string | null;
   estimated_sales_value?: string | null;
@@ -203,6 +205,8 @@ export interface ProjectRegisterBody {
   expected_delivery_from?: string | null;
   expected_delivery_to?: string | null;
   brand_ids?: string[];
+  /** Which lead this project came from. `null` unlinks (D6); omit to leave alone. */
+  lead_id?: string | null;
 }
 
 export interface ProjectUpdateBody extends Partial<ProjectRegisterBody> {
@@ -210,7 +214,6 @@ export interface ProjectUpdateBody extends Partial<ProjectRegisterBody> {
   management_support?: string | null;
   management_notes?: string | null;
   loss_reason?: string | null;
-  admin_ref?: string | null;
 }
 
 export interface ClashCandidate {

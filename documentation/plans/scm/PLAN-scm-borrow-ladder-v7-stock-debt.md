@@ -1,6 +1,6 @@
 # PLAN - Borrow ladder v7 and the Stock Debt view
 
-Status: **APPROVED 2026-08-29** (captain: "the logic is robust, let's proceed"; scenario table on SRTWB242 signed off). Grilled in session (R1-R23), lavish review rounds 1-6 (R24-R36). Tickets: S1 #385, S2 #386, S3 #387, S4 #388 (jayson-odoo/sorento-crm). Lane: `feat/scm-borrow-ladder-v7-stock-debt`. S1 = PR #389 (29 Aug, CI green). S2 = PR #391 (30 Aug, stacked on #389: `supply_assignment`, `_po_rows`, the stock-debt service + routes, the page). S4 = PR #409 (30 Aug, stacked on #400; all four slices delivered). S3 = PR #400 (30 Aug, stacked on #391; R37-R40 landed during captain testing; `tests/scm/test_ladder_v7_borrow.py` + 3.2's own notes). S4 built 30 Aug on `feat/scm-supply-borrow`, stacked on S3: step 3 + the placement moves + `tests/scm/test_ladder_v7_supply_borrow.py`; three deviations recorded in 3.2 step 3 and one in AC-S4-5. UAC: `scm-borrow-ladder-v7-stock-debt-acceptance-criteria.md`. R42 (28 Sep 2026, #1331, purchase orders as Stock Debt supply, section 3.4b): built on PR #1332, small fix track. Sits on `PLAN-scm-order-unit-ladder-v6.md` (units, donor ledger), `PLAN-demo-followups-19aug-ladder-v2.md` section E (ownership groups, window, coverage date), `PLAN-scm-planning-inline-decisions.md` (board editor, one Confirm), ADR-0011 (no bucketed arithmetic).
+Status: **APPROVED 2026-08-29** (captain: "the logic is robust, let's proceed"; scenario table on SRTWB242 signed off). Grilled in session (R1-R23), lavish review rounds 1-6 (R24-R36). Tickets: S1 #385, S2 #386, S3 #387, S4 #388 (jayson-odoo/sorento-crm). Lane: `feat/scm-borrow-ladder-v7-stock-debt`. S1 = PR #389 (29 Aug, CI green). S2 = PR #391 (30 Aug, stacked on #389: `supply_assignment`, `_po_rows`, the stock-debt service + routes, the page). S4 = PR #409 (30 Aug, stacked on #400; all four slices delivered). S3 = PR #400 (30 Aug, stacked on #391; R37-R40 landed during captain testing; `tests/scm/test_ladder_v7_borrow.py` + 3.2's own notes). S4 built 30 Aug on `feat/scm-supply-borrow`, stacked on S3: step 3 + the placement moves + `tests/scm/test_ladder_v7_supply_borrow.py`; three deviations recorded in 3.2 step 3 and one in AC-S4-5. UAC: `scm-borrow-ladder-v7-stock-debt-acceptance-criteria.md`. R42 (28 Sep 2026, #1331, purchase orders as Stock Debt supply, section 3.4b): built on PR #1332, small fix track. R43 (28 Sep 2026, #1346, a pinned PO line fulfils its sales order, section 3.4b): built on PR #1347, small fix track. Sits on `PLAN-scm-order-unit-ladder-v6.md` (units, donor ledger), `PLAN-demo-followups-19aug-ladder-v2.md` section E (ownership groups, window, coverage date), `PLAN-scm-planning-inline-decisions.md` (board editor, one Confirm), ADR-0011 (no bucketed arithmetic).
 
 ## 0. The captain's ask (29 Aug 2026, after the client demo)
 
@@ -179,14 +179,12 @@ VIEW. The board and the ladder do not change.
      stood-up branch; a book S/O is not a confirmed decision and does not get one.
    - **Three limits, added by the lane's own review (28 Sep), all from that same fact (a book S/O
      is the book's statement, not a Confirm):**
-     - It pins only a PO line the walk COUNTS (`counted_event`). A dead or undated PO is not
-       supply, and a pin on it takes the line out of the walk, so the line read short beside
-       free stock in its own bin. It pins nothing until it is re-dated or the grace is raised.
+     - ~~It pins only a PO line the walk COUNTS (`counted_event`).~~ **Withdrawn by R43** (below):
+       the S/O pins whatever the overdue rule says of the PO's date.
      - It pins only inside the PO's own ownership group (a site pool is its own group). Only a
-       Confirm moves supply across a group (R40).
-     - It decides WHO gets the PO, never WHEN the line had it: a PO landing after the line's own
-       date still leaves that quantity short in the line's own month (R37). A placement or a
-       confirmed allocation keeps pinning at any date, as before.
+       Confirm moves supply across a group (R40). Kept.
+     - ~~A PO landing after the line's own date still leaves that quantity short in the line's
+       own month (R37).~~ **Withdrawn by R43**: a pinned quantity is fulfilled.
    - A TBA, undated or unlocated sales-order line draws nothing (R14), so it is never given a
      book pin; its share stays free.
 4. **Covered by and the Supply tab.** A demand line covered by a PO prints the PO in Covered by
@@ -196,9 +194,9 @@ VIEW. The board and the ladder do not change.
    Outstanding = what the walk counts, Assigned to and Free as for an SPO.
 5. **Overdue is the SPO rule, unchanged (R-O).** A PO line whose delivery date has passed counts
    on `as_of + overdue_grace_days`, and past `overdue_dead_days` it counts as nothing and is
-   listed as `overdue, not counted`. A dead PO pins nothing through its S/O (point 3); a
-   PLACEMENT on a dead PO keeps naming it and its month still books the quantity (the SPO
-   precedent, AC-S2-7). The policy ships at 0 / 0 on
+   listed as `overdue, not counted`. R43 amends the rest of this sentence: a dead PO still
+   pins through its S/O, and in the view a pin on a PO line (book S/O or placement) books no
+   shortfall; only the UNPINNED rest of the line follows the rule. The policy ships at 0 / 0 on
    `scm.priority_policy`, so with no change to the settings every PO line whose delivery date is
    before today counts as nothing. Raise the two numbers on `/scm/policies` (Fulfilment priority
    panel, `PUT` through the `scm.priority_policy` settings route); 14 / 90 is the recommended
@@ -208,6 +206,63 @@ VIEW. The board and the ladder do not change.
 7. **The board path is pinned unchanged.** `assignments_for` (the ladder and the board) keeps
    `issue + lead` dating and reads no book S/O pins. A test runs both paths on one fixture and
    compares them.
+
+#### R43: a pinned PO line fulfils its sales order (owner, 28 Sep 2026, issue #1346)
+
+Status: built on PR #1347 (branch `fix/scm-stock-debt-pinned-po-fulfils`), reviewed (one review
+round folded in: the outstanding cap on a past-due PO pin, the exact-quantity gate) and
+browser-verified at 1280 and 375 on the production case; awaiting CI and the owner's hand test.
+Small fix track (no migration of its own, no auth/RBAC change, no new ingest surface; the branch
+carries #1348's `merge_28sep_batch3` byte for byte because main had two heads).
+
+**The owner's words, verbatim (28 Sep 2026, 20:5x MYT), after #1332 deployed:** "i just
+deployed the stock debt and it is successful, but why this one still not assigned to the PO
+one?"; after raising the overdue rule to 30 days: "hmm ok i changed it to 30 and this is pinned,
+but why still say short 1309 ah, this is too confusing la, i prefer it to be 0 days set, and when
+it is assigned, then it will fulfil the demand ady"; and "the 1305 supposed to be for the 2nd
+line, 4 supposed to be for 1st line ma so i am not sure why both line 2 and 3 goes to 1305, this
+1309 of demand supposed to be fulfilled already considered".
+
+The case: SO419208 x CSK14A-NL at BRW-BB, two open lines due 14/09/2026 (4 outstanding of 135
+ordered, and 1,305); PO 202609-S0029, delivery 10/09/2026, line 1 41 with no S/O, line 2 4 and
+line 3 1,305 both naming SO419208, nothing received or placed.
+
+**Diagnosis (pinned by `tests/scm/test_stock_debt_pinned_po_fulfils*.py`):**
+- At the 0-day rule the PO is past its date, `counted_event` refuses it, and R42's
+  `_book_so_holds` asked only about counted PO lines: no pin, Assigned 0, both rows Short.
+- At 30 days the PO counts on `as_of + 30`, after the rows' date, so R42's "lands after the
+  line's date" limit booked the pin as `late_pinned` into `short_at_date`: Pinned and Short 1,309.
+- Both PO lines resolve to the same ORDER (document level) and each filled that order's lines
+  earliest-first on its own, so whichever sorted first spilt over: line 3's 1,305 took the 4
+  row's 4 and line 2's 4 landed on the 1,305 row.
+- The Supply tab of the rows' month listed only events DATED in that month; a PO assumed into a
+  later month read "Supply (0)" beside "Assigned 1,309".
+
+**R43.** For the Stock Debt VIEW only (the board and the ladder do not change; AC-PO-8 still pins
+them):
+1. **The S/O pin does not depend on the overdue rule.** Every PO line whose S/O names a sales
+   order held here pins that order's open lines, whether the PO is on time, past its date (at
+   any rule, including the shipped 0 days) or undated. The overdue rule keeps governing the
+   UNPINNED rest of the line and every PO line with no S/O, exactly as before.
+2. **Assigned means fulfilled.** In the view every hold on a PO line (the book's S/O and a
+   placement alike, `Hold.fulfils`) books no shortfall, whatever the PO's date. A fully covered
+   row reads Pinned with Short 0; a partly covered row reads Short = outstanding less assigned.
+   The total row, the month cell on the board and the dialog header show only the uncovered
+   quantity. A hold that is not a PO in the view (on hand, SPO, anything on the board) keeps
+   AC-S2-7 (a promise on a dead document still books its month).
+3. **Covered by lists exactly the lines that cover the row.** A PO line pins the sales-order LINE
+   its S/O names first (`from_so_line_ref` = `sales_order_lines.source_ref`, trimmed); then, for
+   a PO line whose ref names no line held here AND only when another such PO line names the
+   same order for the product, a line needing exactly what the PO line has left (quantity is
+   what tells two PO lines of one order apart; a lone PO line keeps date order, so it never
+   skips an earlier row for a later one); then the order's other lines earliest first. The
+   three passes run over every PO line in turn, so no PO line spills over a row another PO
+   line names. No quantity is counted twice: the walk caps each pin by what the event and the
+   line have left, a past-due or undated PO included (a fulfilling hold on it is capped by its
+   outstanding, so a placement larger than what is left after a receipt fulfils only that).
+4. **The Supply tab** of a bucket lists every PO line pinned to a row of that bucket, with its
+   Assigned to, even when its own date files it in another month. Listed there with Free 0: any
+   spare quantity is credited to its own month, which lists it as before.
 
 ### 3.5 Flag and policy (S1, R17, R20)
 

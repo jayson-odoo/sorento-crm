@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Layers, Mail, PenLine, ScrollText } from 'lucide-react';
+import { FileText, ListOrdered, Mail, PenLine, ScrollText } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 /**
@@ -16,6 +16,10 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
  *
  * Each trigger is a real link rather than a button that pushes. Same navigation, but it can also
  * be opened in a new tab and read by a screen reader as somewhere to go.
+ *
+ * Header first, then Lines (#1341). The owner: "i need this to be under 'Header' tab to align with
+ * our system design", and "Lines" written over the old Scopes label. Same Header / Lines pair and
+ * icons as the SPO document page; the data model still says scope.
  */
 type TabDefinition = {
   key: string;
@@ -27,7 +31,8 @@ type TabDefinition = {
 export function quotationDocumentTabs(projectId: string, documentId: string): TabDefinition[] {
   const base = `/project-sales/${projectId}/quotation-documents/${documentId}`;
   return [
-    { key: 'scopes', title: 'Scopes', icon: Layers, path: base },
+    { key: 'header', title: 'Header', icon: FileText, path: base },
+    { key: 'lines', title: 'Lines', icon: ListOrdered, path: `${base}/lines` },
     { key: 'cover-letter', title: 'Cover letter', icon: Mail, path: `${base}/cover-letter` },
     { key: 'terms', title: 'Terms', icon: ScrollText, path: `${base}/terms` },
     { key: 'signatures', title: 'Signatures', icon: PenLine, path: `${base}/signatures` },
@@ -48,7 +53,7 @@ export function QuotationDocumentTabs({
   );
   // The pathname is the single source of truth for which tab is open, so a browser Back lands on
   // the tab it came from instead of on a component still holding the old selection.
-  const activeKey = tabs.find((tab) => tab.path === pathname)?.key ?? 'scopes';
+  const activeKey = tabs.find((tab) => tab.path === pathname)?.key ?? 'header';
 
   return (
     <Tabs value={activeKey} className="min-w-0">

@@ -1,5 +1,5 @@
 /**
- * S7 + S11 - the quotation document shell: the signing gate, and the edit view.
+ * S7 + #1341 - the quotation document shell: the signing gate, and the way into editing.
  *
  * Two things are pinned here.
  *
@@ -7,21 +7,11 @@
  * issued (AC-H1). The screen has to say so before the click, not after, and the reason has to be
  * readable rather than hidden in a tooltip.
  *
- * The edit view is S11, and it is the client's complaint answered: "every addition of line doesn't
- * trigger a save, cause now i delete each line, then you ask me to confirm, then when i add line,
- * you also trigger save, very annoying". So the claims are that a whole session of edits is ONE
- * write, that Cancel puts everything back, that a tab switch loses nothing, that the confirmation
- * happens once at Save and names the count, and that Edit on a version the customer holds reaches
- * a revision only after being asked.
- *
- * The line editor is NOT stubbed for those: the whole point is the chain from a keystroke in a
- * cell to a single request, and a stub in the middle would prove none of it.
- *
- * The last block is the letterhead becoming editable, which is the client's next sentence: "when we
- * are in edit view right, we need to be able to edit these also, like the header details, your ref,
- * date, to, attn". Its claims are that the block is a read until Edit, that what is typed there
- * rides the SAME one Save as the lines, that Cancel puts the letterhead back too, and that the
- * address survives being multi-line.
+ * The in-place edit session is gone (#1341): "Edit quotation means I edit the whole quotation", so
+ * Edit in the gear opens the form page, and this page is a read. The claims here are that the gear
+ * leads there (after the existing revise prompt when the customer holds a version), that no
+ * Save/Cancel pair or letterhead input appears on this page, and that the per-scope Edit scope
+ * button is gone while Record outcome stays.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -73,11 +63,18 @@ const createQuotationLine = vi.fn();
 const updateQuotationLine = vi.fn();
 const deleteQuotationLine = vi.fn();
 const reviseQuotation = vi.fn();
+const push = vi.fn();
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/project-sales/p1/quotation-documents/d1',
   useSearchParams: () => new URLSearchParams(),
+}));
+
+// The lines are the system DataGrid now (#1341), which holds skeleton rows until the saved
+// column order answers; nothing answers that call under jsdom.
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
 // The price-floor block reads the caller's grants to decide whether to offer Approve/Reject.
@@ -172,10 +169,7 @@ import { toast } from '@/lib/toast';
 import { QuotationDocumentClient } from './QuotationDocumentClient';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationScopesTab } from './QuotationScopesTab';
-import {
-  QuotationSignaturesTab,
-  QuotationTermsTab,
-} from './QuotationDocumentTabPanels';
+import { QuotationHeaderTab, QuotationSignaturesTab } from './QuotationDocumentTabPanels';
 
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -372,11 +366,6 @@ async function gearOffersEdit() {
   return offered;
 }
 
-async function startEditing() {
-  await pressEdit();
-  return screen.findByRole('textbox', { name: 'Qty on SRT-WC-01' });
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   getProject.mockResolvedValue(project());
@@ -431,41 +420,6 @@ describe('QuotationDocumentClient header total', () => {
     expect(screen.getByText('RM 235,000.00')).toBeInTheDocument();
   });
 
-  it('sums the staged lines itself and keeps the other scopes saved', async () => {
-    // Two scopes, only one of them edited. The shell derives the figure from the STAGED drafts
-    // rather than being told one by whichever editor is mounted, which is what let a tab switch
-    // snap the header back to a number the screen no longer agreed with.
-    getQuotationDocument.mockResolvedValue(
-      quotationDocument({
-        grand_total: '253420.50',
-        scopes: [
-          scope({ id: 'q1', scope_label: 'Townhouse', scope_total: '235000.00' }),
-          scope({
-            id: 'q2',
-            scope_label: 'Guard house',
-            sort_order: 2,
-            current_version_id: 'v9',
-            scope_total: '18420.50',
-          }),
-        ],
-      }),
-    );
-    listQuotations.mockResolvedValue([quotation()]);
-    listQuotationVersions.mockResolvedValue([version()]);
-    listQuotationLines.mockResolvedValue([line()]);
-    renderScreen();
-
-    // The server's own total until anything moves.
-    expect(await screen.findByText('RM 253,420.50')).toBeInTheDocument();
-
-    const qty = await startEditing();
-    fireEvent.change(qty, { target: { value: '3' } });
-
-    // 3 x 900.00 on the edited scope, plus the guard house's saved 18,420.50, to the cent.
-    await waitFor(() => expect(screen.getByText('RM 21,120.50')).toBeInTheDocument());
-    expect(screen.queryByText('RM 253,420.50')).not.toBeInTheDocument();
-  });
-
   it('renders every field of the letterhead, with a dash where there is no value', () => {
     // Never a hidden section: a document with no Your Ref is a normal document, not a fault.
     render(
@@ -485,31 +439,7 @@ describe('QuotationDocumentClient header total', () => {
  * the record header names the project, so neither is said a second time on the screen.
  */
 describe('QuotationDocumentClient header dedupe', () => {
-  it('does not repeat the document number under the breadcrumb', async () => {
-    // Our Ref differs so the only way the number can be on screen is a repeat of the title.
-    getQuotationDocument.mockResolvedValue(quotationDocument({ our_ref: 'NCSB-OURS-1' }));
-    renderScreen();
-
-    expect(await screen.findByText('NCSB-OURS-1')).toBeInTheDocument();
-    expect(screen.queryByText('SRT/Q/2026/0141')).toBeNull();
-    // The status pill and the project title and developer lines stay.
-    expect(
-      screen.getByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText('Nadi Cergas Sdn Bhd').length).toBeGreaterThan(0);
-    expect(screen.getByText('Draft')).toBeInTheDocument();
-  });
-
-  it('says the project title once, in the record header, not again in the card', async () => {
-    getQuotationDocument.mockResolvedValue(quotationDocument());
-    renderScreen();
-
-    expect(
-      await screen.findByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText('CADANGAN MEMBINA PANGSAPURI')).toHaveLength(1);
-  });
-
+  // The number and project title specs live on the Header tab below ("#1336 kept, AC-QF054").
   it('leaves no subject read in the card, but keeps the Subject input in an edit session', () => {
     const { rerender } = render(<QuotationDocumentHeader document={quotationDocument()} />);
     expect(screen.queryByText('CADANGAN MEMBINA PANGSAPURI')).toBeNull();
@@ -524,7 +454,7 @@ describe('QuotationDocumentClient signing gate', () => {
     getQuotationDocument.mockResolvedValue(quotationDocument());
     renderScreen();
 
-    const issue = await screen.findByRole('button', { name: 'Issue R1' });
+    const issue = await screen.findByRole('button', { name: 'Send to Customer R1' });
     expect(issue).toBeDisabled();
     expect(issue).toHaveAttribute('title', 'Sign it first');
     // Readable without hovering: the tooltip alone is unusable on a phone.
@@ -539,7 +469,7 @@ describe('QuotationDocumentClient signing gate', () => {
     );
     renderScreen();
 
-    const issue = await screen.findByRole('button', { name: 'Issue R1' });
+    const issue = await screen.findByRole('button', { name: 'Send to Customer R1' });
     expect(issue).toBeEnabled();
     expect(screen.queryByText('Sign it first')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
@@ -559,7 +489,7 @@ describe('QuotationDocumentClient signing gate', () => {
     );
     renderScreen();
 
-    const issue = await screen.findByRole('button', { name: 'Issue R1' });
+    const issue = await screen.findByRole('button', { name: 'Send to Customer R1' });
     expect(issue).toBeDisabled();
     expect(issue).toHaveAttribute(
       'title',
@@ -578,7 +508,7 @@ describe('QuotationDocumentClient signing gate', () => {
     );
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Issue R1' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: 'Send to Customer R1' })).toBeEnabled();
   });
 
   it('refuses to re-issue an issued document that carries no signature', async () => {
@@ -609,7 +539,7 @@ describe('QuotationDocumentClient signing gate', () => {
     ]);
     renderScreen();
 
-    const issue = await screen.findByRole('button', { name: 'Issue R2' });
+    const issue = await screen.findByRole('button', { name: 'Send to Customer R2' });
     expect(issue).toBeDisabled();
     expect(issue).toHaveAttribute('title', 'Sign it first');
     // And the way out is offered, not just the refusal.
@@ -633,202 +563,45 @@ describe('QuotationDocumentClient signing gate', () => {
     expect(screen.getByText('203.0.113.9')).toBeInTheDocument();
     // The customer half still renders, stating its own resting state rather than vanishing.
     expect(
-      screen.getByText(/Issue this quotation to send the customer a link/i),
+      screen.getByText(/Send this quotation to the customer to give them a link/i),
     ).toBeInTheDocument();
   });
 });
 
-describe('QuotationDocumentClient edit view', () => {
-  it('reads as a document until Edit is pressed', async () => {
+describe('QuotationDocumentClient Edit quotation (#1341)', () => {
+  it('AC-QF002: the gear offers Edit quotation, and it opens the form page', async () => {
     seedOneScope();
     renderScreen();
 
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
-    expect(await gearOffersEdit()).toBe(true);
+    await pressEdit();
+
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/d1/edit');
+  });
+
+  it('AC-QF004: the page is a read - no Save/Cancel pair, no letterhead inputs, no line editor', async () => {
+    seedOneScope();
+    renderScreen();
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    await pressEdit();
+
     expect(screen.queryByRole('button', { name: 'Save quotation' })).toBeNull();
-    expect(screen.queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(screen.queryByLabelText('Your Ref')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Add a line/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Edit line/i })).toBeNull();
   });
 
   it('keeps Edit out of the header, where the one CTA lives', async () => {
-    // The client, with the header buttons circled: "edit should be in gear button". Issue is
-    // the move that changes what the customer holds; Edit is a thing you can also do.
     seedOneScope();
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Issue R1' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Send to Customer R1' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
-  it(
-    'turns a whole session of changes into ONE write carrying the full set',
-    async () => {
-      // The client's complaint, measured: ten changes used to be ten requests and a dialog per
-      // deletion. The DoD says building a scope performs one write, so that is what is counted.
-      seedOneScope([
-        line({ id: 'l1', product_code: 'SRT-WC-01', sort_order: 0 }),
-        line({ id: 'l2', product_code: 'SRT-BASIN-02', description: 'Basin', sort_order: 10 }),
-      ]);
-      renderScreen();
-      await startEditing();
-
-      const edits: [string, string][] = [
-        ['Qty on SRT-WC-01', '11'],
-        ['Unit price on SRT-WC-01', '910.00'],
-        ['Description on SRT-WC-01', 'Rimless wall-hung WC'],
-        ['Tech spec on SRT-WC-01', 'Rimless'],
-        ['Brand on SRT-WC-01', 'SORENTO'],
-        ['Qty on SRT-BASIN-02', '12'],
-        ['Unit price on SRT-BASIN-02', '560.00'],
-        ['Description on SRT-BASIN-02', 'Counter basin'],
-        ['Tech spec on SRT-BASIN-02', 'Vitreous china'],
-        ['Complete set on SRT-BASIN-02', 'c/w waste'],
-      ];
-      for (const [label, value] of edits) {
-        fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value } });
-      }
-      // And one line that did not exist before, so "the full set" means something.
-      fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-      fireEvent.change(await screen.findByRole('textbox', { name: 'Description on line 3' }), {
-        target: { value: 'Bespoke vanity top' },
-      });
-
-      // Nothing has left the browser yet. That is the whole feature.
-      expect(replaceQuotationLines).not.toHaveBeenCalled();
-      expect(updateQuotationLine).not.toHaveBeenCalled();
-      expect(createQuotationLine).not.toHaveBeenCalled();
-
-      fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
-
-      await waitFor(() => expect(replaceQuotationLines).toHaveBeenCalledTimes(1));
-      const [versionId, body] = replaceQuotationLines.mock.calls[0] as [
-        string,
-        { id?: string; description_snapshot: string | null; quantity: string }[],
-      ];
-      expect(versionId).toBe('v2');
-      // Everything on screen, in display order, ids and all: a line the body omits is DELETED.
-      expect(body).toHaveLength(3);
-      expect(body.map((item) => item.id)).toEqual(['l1', 'l2', undefined]);
-      expect(body[0]).toMatchObject({
-        description_snapshot: 'Rimless wall-hung WC',
-        quantity: '11',
-        unit_price: '910.00',
-      });
-      expect(body[2]).toMatchObject({ description_snapshot: 'Bespoke vanity top' });
-      expect(updateQuotationLine).not.toHaveBeenCalled();
-      expect(createQuotationLine).not.toHaveBeenCalled();
-      // Saved, and back to a document you can read.
-      await waitFor(() => expect(screen.queryByRole('button', { name: 'Save quotation' })).toBeNull());
-    },
-    // Eleven edits through the real editor is a lot of rendering for one claim, and the claim is
-    // worth the cost: a stub in the middle would prove nothing about a keystroke reaching a
-    // request. The generous budget is so a loaded CI box does not report it as a failure.
-    20000,
-  );
-
-  it('puts everything back on Cancel, and writes nothing', async () => {
-    seedOneScope();
-    renderScreen();
-    const qty = await startEditing();
-
-    fireEvent.change(qty, { target: { value: '3' } });
-    // In the header AND the table's footer, which is the pair that used to be able to disagree.
-    await waitFor(() => expect(screen.getAllByText('RM 2,700.00').length).toBeGreaterThan(1));
-
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    // The server's rows, exactly as they were before Edit, and no request on the way past.
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save quotation' })).toBeNull());
-    expect(await gearOffersEdit()).toBe(true);
-    expect(screen.queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
-    expect(screen.getAllByText('RM 9,000.00').length).toBeGreaterThan(0);
-    expect(screen.queryByText('RM 2,700.00')).toBeNull();
-    expect(replaceQuotationLines).not.toHaveBeenCalled();
-  });
-
-  it(
-    'keeps staged edits across a tab switch, which routed tabs would otherwise throw away',
-    async () => {
-      // The tabs are ROUTES, so the scopes panel really does unmount on the way to the terms. The
-      // session lives in the shell for exactly this reason, and it is the work somebody would be
-      // most annoyed to lose.
-      seedOneScope();
-      const { openTab } = renderScreen();
-      const qty = await startEditing();
-
-      fireEvent.change(qty, { target: { value: '7' } });
-      await waitFor(() => expect(screen.getAllByText('RM 6,300.00').length).toBeGreaterThan(0));
-
-      openTab(<QuotationSignaturesTab />);
-      expect(
-        await screen.findByText('Signatures', { selector: '[data-slot="card-title"]' }),
-      ).toBeInTheDocument();
-      expect(screen.queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
-      // Still counted while the panel that produced it is not even mounted.
-      expect(screen.getByText('RM 6,300.00')).toBeInTheDocument();
-
-      openTab(<QuotationScopesTab />);
-
-      expect(await screen.findByRole('textbox', { name: 'Qty on SRT-WC-01' })).toHaveValue('7');
-      expect(replaceQuotationLines).not.toHaveBeenCalled();
-    },
-    20000,
-  );
-
-  it(
-    'opens the terms for editing in the same session, and stages them for the same Save',
-    async () => {
-      seedOneScope();
-      const { openTab } = renderScreen();
-      await startEditing();
-
-      openTab(<QuotationTermsTab />);
-
-      // The prose tabs are part of the one Save too. Leaving them read-only would put two
-      // different saving behaviours on one screen, which is the surprise being removed.
-      expect(
-        await screen.findByText('Terms and conditions', {
-          selector: '[data-slot="card-title"]',
-        }),
-      ).toBeInTheDocument();
-      // The empty state belongs to the READ. In a session the writing surface takes its place.
-      expect(screen.queryByText(/No terms on this quotation yet/i)).toBeNull();
-      expect(document.querySelector('.ProseMirror')).not.toBeNull();
-      expect(updateQuotationDocument).not.toHaveBeenCalled();
-    },
-    20000,
-  );
-
-  it('asks once, at Save, and names how many lines are going', async () => {
-    seedOneScope([
-      line({ id: 'l1', product_code: 'SRT-WC-01' }),
-      line({ id: 'l2', product_code: 'SRT-BASIN-02', description: 'Basin', sort_order: 10 }),
-    ]);
-    renderScreen();
-    await startEditing();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Remove SRT-WC-01' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Remove SRT-BASIN-02' }));
-
-    // Staging destroyed nothing, so nothing was asked. The rows are still there, struck through.
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(await screen.findAllByText('Removed on save')).toHaveLength(2);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
-
-    const dialog = await screen.findByRole('alertdialog');
-    expect(within(dialog).getByText(/Saving removes 2 lines/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/cannot be undone/i)).toBeInTheDocument();
-    expect(replaceQuotationLines).not.toHaveBeenCalled();
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save and remove 2 lines' }));
-
-    await waitFor(() => expect(replaceQuotationLines).toHaveBeenCalledTimes(1));
-    // An empty array is how the whole-set write clears a version, and it is what "remove both"
-    // actually means.
-    expect(replaceQuotationLines.mock.calls[0][1]).toEqual([]);
-  });
-
-  it('opens a revision before editing a version the customer holds, and only on a yes', async () => {
+  it('AC-QF003: asks before revising a version the customer holds, then opens the form', async () => {
     seedOneScope();
     listQuotationVersions.mockResolvedValue([
       version({ is_issued: true, is_editable: false }),
@@ -844,30 +617,27 @@ describe('QuotationDocumentClient edit view', () => {
     );
     renderScreen();
 
-    // The reason and the move, in the header, before anything is pressed.
     expect(
       await screen.findByText(/The customer holds this version\. Edit opens the next one\./i),
     ).toBeInTheDocument();
 
     await pressEdit();
 
-    // Never a silent branch: a revision that appeared without being asked for is a document the
-    // customer was never told about.
     expect(await screen.findByText(/This version is with the customer/i)).toBeInTheDocument();
     expect(reviseQuotation).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Open a new version and edit' }));
 
     await waitFor(() => expect(reviseQuotation).toHaveBeenCalledWith('q1'));
-    // And it lands in edit mode rather than making somebody press Edit a second time.
-    expect(await screen.findByRole('button', { name: 'Save quotation' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/d1/edit'),
+    );
   });
 
   it('does not offer a revision because ANOTHER document in the project is locked', async () => {
-    // `listQuotations` answers every scope in the PROJECT, across every quotation document. Read
-    // without filtering, a clean single-scope draft was told "This version is with the customer"
-    // and offered a revision of four scopes it does not own, because some OTHER document in the
-    // same project had been issued. The document on screen is the only one Edit may act on.
+    // `listQuotations` answers every scope in the PROJECT. The document on screen is the only one
+    // Edit may act on, so a clean draft goes straight to the form.
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ grand_total: '9000.00', scopes: [scope()] }),
     );
@@ -875,8 +645,6 @@ describe('QuotationDocumentClient edit view', () => {
       quotation(),
       quotation({ id: 'other-doc-scope', current_version_id: 'other-v1' }),
     ]);
-    // Keyed by scope, the way the hook really queries: the other document's scope is the frozen
-    // one, and this document's is not. A single shared answer would hide the very bug under test.
     listQuotationVersions.mockImplementation((quotationId: string) =>
       Promise.resolve(
         quotationId === 'other-doc-scope'
@@ -887,10 +655,10 @@ describe('QuotationDocumentClient edit view', () => {
     listQuotationLines.mockResolvedValue([line()]);
     renderScreen();
 
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
     await pressEdit();
 
-    // Straight into edit mode: no prompt, and nothing revised.
-    expect(await screen.findByRole('button', { name: 'Save quotation' })).toBeInTheDocument();
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/d1/edit');
     expect(screen.queryByText(/This version is with the customer/i)).not.toBeInTheDocument();
     expect(reviseQuotation).not.toHaveBeenCalled();
   });
@@ -901,7 +669,6 @@ describe('QuotationDocumentClient edit view', () => {
     renderScreen();
 
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
-    // Not in the header, and not in the gear it moved into either.
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
     expect(await gearOffersEdit()).toBe(false);
     expect(
@@ -910,149 +677,20 @@ describe('QuotationDocumentClient edit view', () => {
   });
 });
 
-/**
- * The letterhead in an edit session.
- *
- * No scope is seeded for most of these: the letterhead is the shell's own block, and a spec that
- * needed the line editor running to make a claim about the Attn field would be pinning the wrong
- * thing (and paying eleven renders for it).
- */
-describe('QuotationDocumentClient letterhead editing', () => {
-  /** Straight into a session, without the line editor in the way. */
-  async function editLetterhead(overrides: Partial<QuotationDocument> = {}) {
-    getQuotationDocument.mockResolvedValue(quotationDocument(overrides));
-    const rendered = renderScreen();
-    await pressEdit();
-    return rendered;
-  }
-
-  it('is a read until Edit, and only then an input', async () => {
+/** The letterhead on the read page. Its editing moved to the form page (#1341). */
+describe('QuotationDocumentClient letterhead', () => {
+  it('shows the values and nowhere to type, even after Edit is pressed', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ your_ref: 'NCSB/2026/117' }),
     );
-    renderScreen();
+    renderScreen(<QuotationHeaderTab />);
 
-    // The values are on screen from the start, because the whole point of the block is that the
-    // system already knows them. What is absent is anywhere to type.
     expect(await screen.findByText('NCSB/2026/117')).toBeInTheDocument();
+    await pressEdit();
     expect(screen.queryByLabelText('Your Ref')).toBeNull();
     expect(screen.queryByLabelText('Attn')).toBeNull();
     expect(screen.queryByLabelText('Address')).toBeNull();
-    expect(screen.queryByLabelText('Date')).toBeNull();
-
-    await pressEdit();
-
-    expect(await screen.findByLabelText('Your Ref')).toHaveValue('NCSB/2026/117');
-    expect(screen.getByLabelText('Attn')).toHaveValue('Kelly');
-    expect(screen.getByLabelText('Name')).toHaveValue('Nadi Cergas Sdn Bhd');
-    expect(screen.getByLabelText('Date')).toHaveValue('2026-02-26');
-    // Our Ref is the number the customer already has, minted by the numbering rule, and the
-    // backend refuses to change it. So it stays a read even here.
-    expect(screen.queryByLabelText('Our Ref')).toBeNull();
-    expect(screen.getByText('Our Ref')).toBeInTheDocument();
-    // Once, in the letterhead's Our Ref. The page title already is the number (#1335).
-    expect(screen.getAllByText('SRT/Q/2026/0141')).toHaveLength(1);
-  });
-
-  it('sends the staged letterhead in the ONE document PATCH', async () => {
-    await editLetterhead();
-
-    fireEvent.change(await screen.findByLabelText('Your Ref'), {
-      target: { value: 'NCSB/PO/2026/551' },
-    });
-    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-03-02' } });
-    fireEvent.change(screen.getByLabelText('Attn'), { target: { value: 'Ms Tan' } });
-    fireEvent.change(screen.getByLabelText('Name'), {
-      target: { value: 'Nadi Cergas Sdn Bhd (Finance)' },
-    });
-    fireEvent.change(screen.getByLabelText('Phone'), { target: { value: '03-1234 5678' } });
-
-    // Nothing has left the browser, exactly as for a line edit.
     expect(updateQuotationDocument).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
-
-    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
-    const [projectArg, documentArg, body] = updateQuotationDocument.mock.calls[0] as [
-      string,
-      string,
-      Record<string, unknown>,
-    ];
-    expect(projectArg).toBe('p1');
-    expect(documentArg).toBe('d1');
-    expect(body).toEqual({
-      your_ref: 'NCSB/PO/2026/551',
-      doc_date: '2026-03-02',
-      attn_name: 'Ms Tan',
-      recipient_name_snapshot: 'Nadi Cergas Sdn Bhd (Finance)',
-      recipient_phone_snapshot: '03-1234 5678',
-    });
-    // Saved, and back to a document you can read.
-    await waitFor(() => expect(screen.queryByLabelText('Your Ref')).toBeNull());
-  });
-
-  it('keeps a staged letterhead edit across a tab switch', async () => {
-    // The same claim the lines make, and it has to be made separately: the letterhead reads its
-    // value out of `documentDraft`, so a session that reset the draft on the way to the terms
-    // would silently put the server's recipient back while the user was reading the clauses.
-    const { openTab } = await editLetterhead();
-
-    fireEvent.change(await screen.findByLabelText('Attn'), { target: { value: 'Ms Tan' } });
-
-    openTab(<QuotationTermsTab />);
-    expect(
-      await screen.findByText('Terms and conditions', { selector: '[data-slot="card-title"]' }),
-    ).toBeInTheDocument();
-
-    openTab(<QuotationScopesTab />);
-
-    expect(await screen.findByLabelText('Attn')).toHaveValue('Ms Tan');
-    expect(updateQuotationDocument).not.toHaveBeenCalled();
-  });
-
-  it('puts the letterhead back on Cancel, and writes nothing', async () => {
-    await editLetterhead({ your_ref: 'NCSB/2026/117' });
-
-    fireEvent.change(await screen.findByLabelText('Your Ref'), {
-      target: { value: 'WRONG-REF' },
-    });
-    fireEvent.change(screen.getByLabelText('Attn'), { target: { value: 'Nobody' } });
-    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Wrong subject' } });
-    // The heading follows the staged copy too, or the card and the title two centimetres above
-    // it would disagree about the same document.
-    expect(
-      screen.getByRole('heading', { level: 2, name: 'Wrong subject' }),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save quotation' })).toBeNull());
-    expect(await gearOffersEdit()).toBe(true);
-    expect(screen.queryByLabelText('Your Ref')).toBeNull();
-    expect(screen.getByText('NCSB/2026/117')).toBeInTheDocument();
-    expect(screen.getByText('Kelly')).toBeInTheDocument();
-    expect(
-      screen.getByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText('WRONG-REF')).toBeNull();
-    expect(updateQuotationDocument).not.toHaveBeenCalled();
-  });
-
-  it('round-trips a multi-line address through the textarea', async () => {
-    const address = 'Level 12, Menara Nadi\nJalan Ampang\n50450 Kuala Lumpur';
-    await editLetterhead();
-
-    // A single-line input would flatten this on the way in, and the PDF prints a line per
-    // newline, so the newlines ARE the address.
-    fireEvent.change(await screen.findByLabelText('Address'), { target: { value: address } });
-    expect(screen.getByLabelText('Address')).toHaveValue(address);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
-
-    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
-    expect(updateQuotationDocument.mock.calls[0][2]).toEqual({
-      recipient_address_snapshot: address,
-    });
   });
 
   it('reads a multi-line address back a line at a time', async () => {
@@ -1074,7 +712,7 @@ describe('QuotationDocumentClient letterhead editing', () => {
   it('offers a reader no letterhead inputs', async () => {
     getProject.mockResolvedValue(project({ can_edit: false }));
     getQuotationDocument.mockResolvedValue(quotationDocument());
-    renderScreen();
+    renderScreen(<QuotationHeaderTab />);
 
     // The record's own subtitle and the letterhead both name the recipient, so both answer here.
     await waitFor(() =>
@@ -1187,7 +825,7 @@ describe('QuotationDocumentClient queued exports', () => {
     renderScreen();
     const menu = await openGear();
 
-    expect(within(menu).getAllByText('Issue it first').length).toBeGreaterThan(0);
+    expect(within(menu).getAllByText('Send it to the customer first').length).toBeGreaterThan(0);
     fireEvent.click(within(menu).getByText('Download PDF'));
     expect(queueQuotationIssuePdf).not.toHaveBeenCalled();
   });
@@ -1337,7 +975,9 @@ describe('QuotationDocumentClient change request', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open a new version and edit' }));
 
     await waitFor(() => expect(reviseQuotation).toHaveBeenCalledWith('q1'));
-    expect(await screen.findByRole('button', { name: 'Save quotation' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/d1/edit'),
+    );
   });
 
   it('gives a reader the words but no way to act on them', async () => {
@@ -1423,18 +1063,31 @@ describe('QuotationDocumentClient standing badge', () => {
  * user starts.
  */
 describe('QuotationDocumentClient scope series', () => {
-  it('offers Edit scope on the open scope, so the series can be set at all', async () => {
+  it('AC-QF004: offers no per-scope Edit scope; Record outcome stays', async () => {
+    // The owner: "editing of scope should be done by 'Edit Quotation', not a separate button".
     seedOneScope();
     renderScreen();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit scope' }));
+    expect(await screen.findByRole('button', { name: 'Record outcome' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit scope' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add a scope' })).toBeNull();
+  });
 
-    // The dialog that carries the series picker, not a second copy of the form. Scoped to
-    // the dialog because the scope header names the series too, and a page-wide match would
-    // pass on that alone - i.e. it would pass even with the dialog never opening.
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Series', { selector: 'label' })).toBeInTheDocument();
-    expect(dialog.querySelector('#quotation-series')).not.toBeNull();
+  it('AC-QF036: an empty scope reads as an empty grid, with no Press Edit hint', async () => {
+    seedOneScope([]);
+    renderScreen();
+
+    expect(await screen.findByText(/No lines yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Press Edit/i)).toBeNull();
+  });
+
+  it('a quotation with no scopes offers Edit quotation as its next step', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument({ scopes: [] }));
+    renderScreen();
+
+    const link = await screen.findByRole('link', { name: 'Edit quotation' });
+    expect(link).toHaveAttribute('href', '/project-sales/p1/quotation-documents/d1/edit');
+    expect(screen.queryByRole('button', { name: 'Add a scope' })).toBeNull();
   });
 
   it('says which series the scope is quoted from', async () => {
@@ -1458,5 +1111,108 @@ describe('QuotationDocumentClient scope series', () => {
     renderScreen();
 
     expect(await screen.findByText('No series')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Fix round 2 (#1341, owner addenda 2 to 4 and the 11:33Z alignment notes).
+ */
+describe('QuotationDocumentClient Send to Customer (AC-QF057)', () => {
+  it('names the primary CTA Send to Customer, with the revision it will send', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({ signatory_signature: signature() }),
+    );
+    renderScreen();
+
+    expect(await screen.findByRole('button', { name: 'Send to Customer R1' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /^Issue/ })).toBeNull();
+  });
+
+  it('says Send it to the customer first on the exports of a draft, never Issue it first', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument());
+    renderScreen();
+
+    const menu = await openGear();
+    expect(within(menu).getAllByText('Send it to the customer first').length).toBeGreaterThan(0);
+    expect(within(menu).queryByText('Issue it first')).toBeNull();
+  });
+});
+
+describe('QuotationDocumentClient Header details (AC-QF052)', () => {
+  it('puts Issued by and Opened in the Header tab, once, for a one-scope quotation', async () => {
+    seedOneScope();
+    listQuotationVersions.mockResolvedValue([
+      version({ issued_by_name: 'Baser Ramli', created_at: '2026-09-28T02:30:00' }),
+    ]);
+    renderScreen(<QuotationHeaderTab />);
+
+    const card = await screen.findByTestId('quotation-header-card');
+    await waitFor(() => expect(card).toHaveTextContent('Issued by'));
+    expect(card).toHaveTextContent('Baser Ramli');
+    expect(card).toHaveTextContent('Opened');
+    expect(within(card).getAllByText('Issued by')).toHaveLength(1);
+  });
+
+  it('groups them by scope when the scopes were opened by different people', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        scopes: [scope(), scope({ id: 'q2', scope_label: 'Guard House', current_version_id: 'v9' })],
+      }),
+    );
+    listQuotations.mockResolvedValue([
+      quotation(),
+      quotation({ id: 'q2', scope_label: 'Guard House', current_version_id: 'v9' }),
+    ]);
+    listQuotationVersions.mockImplementation((quotationId: string) =>
+      Promise.resolve(
+        quotationId === 'q2'
+          ? [version({ id: 'v9', quotation_id: 'q2', version_no: 1, issued_by_name: 'Kelly Tan' })]
+          : [version({ issued_by_name: 'Baser Ramli' })],
+      ),
+    );
+    renderScreen(<QuotationHeaderTab />);
+
+    const card = await screen.findByTestId('quotation-header-card');
+    await waitFor(() => expect(card).toHaveTextContent('Kelly Tan'));
+    const townhouse = within(card).getByRole('group', { name: 'Townhouse v2' });
+    const guard = within(card).getByRole('group', { name: 'Guard House v1' });
+    expect(townhouse).toHaveTextContent('Baser Ramli');
+    expect(guard).toHaveTextContent('Kelly Tan');
+  });
+
+  it('leaves no Issued by / Opened strip above the lines table', async () => {
+    seedOneScope();
+    listQuotationVersions.mockResolvedValue([
+      version({ issued_by_name: 'Baser Ramli', created_at: '2026-09-28T02:30:00' }),
+    ]);
+    renderScreen();
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByText(/Issued by/)).toBeNull();
+    expect(screen.queryByText(/^Opened/)).toBeNull();
+  });
+});
+
+describe('QuotationDocumentClient header dedupe (#1336 kept, AC-QF054)', () => {
+  it('does not repeat the document number under the breadcrumb', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument({ our_ref: 'NCSB-OURS-1' }));
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('NCSB-OURS-1')).toBeInTheDocument();
+    expect(screen.queryByText('SRT/Q/2026/0141')).toBeNull();
+    expect(
+      screen.getByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Draft')).toBeInTheDocument();
+  });
+
+  it('says the project title once, in the record header, not again in the Header tab card', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument());
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('CADANGAN MEMBINA PANGSAPURI')).toHaveLength(1);
   });
 });

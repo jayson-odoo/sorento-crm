@@ -49,6 +49,10 @@
  * Viewer.tsx`'s three `h-[45vh]` (3 lines) were the short fixed-height strip the same item
  * replaced with the tab's own full height, on `dvh` this time rather than re-adding `vh`
  * (M6-02/M6-03) - see that file's own comment. Baseline below is -2 files / -6 lines.
+ *
+ * PLAN-project-form-28sep.md (#1339) deleted `pipeline/components/RegisterProjectDialog.tsx`
+ * outright - the dialog it fixed-height-scrolled is gone, moved to a page (`ProjectForm.tsx`,
+ * no dialog, no `vh`), not converted. Baseline below is -1 file / -4 lines.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -128,7 +132,6 @@ const FRACTIONAL_VH_FILES = [
   'app/(protected)/project-sales/order-inquiries/components/OrderInquiryMatrixCellDrilldown.tsx',
   'app/(protected)/project-sales/order-inquiries/components/OrderInquiryScheduleMatrix.tsx',
   'app/(protected)/project-sales/parties/components/PartyFormDialog.tsx',
-  'app/(protected)/project-sales/pipeline/components/RegisterProjectDialog.tsx',
   'app/(protected)/project-sales/setup/components/ProjectTemplateDialog.tsx',
   'app/(protected)/project-sales/setup/components/ProjectTypeDialog.tsx',
   'app/(protected)/project-sales/setup/components/TemplateChecklistPanel.tsx',
@@ -279,7 +282,7 @@ describe('fixed viewport-height sweep (M6-02 / M6-03)', () => {
       const lines = fs.readFileSync(file, 'utf8').split('\n');
       matchingLines += lines.filter((line) => PATTERN.test(line)).length;
     }
-    expect(ALLOWLIST.size).toBe(146);
-    expect(matchingLines).toBe(216);
+    expect(ALLOWLIST.size).toBe(145);
+    expect(matchingLines).toBe(212);
   });
 });

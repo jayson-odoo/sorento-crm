@@ -24,3 +24,12 @@ export function projectCrumbs(
     ...below,
   ];
 }
+
+/** The trail for `/project-sales/new`, off the pipeline rather than a project record. */
+export function registerProjectCrumbs(): PageHeaderCrumb[] {
+  return [
+    { title: 'Project Sales' },
+    { title: 'Pipeline', path: '/project-sales/pipeline' },
+    { title: 'Register a project' },
+  ];
+}

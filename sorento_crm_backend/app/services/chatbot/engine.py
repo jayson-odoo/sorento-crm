@@ -44,10 +44,11 @@ from app.services.chatbot.contracts import (
     SELF_CLOSING_BRANCH_KINDS,
     TURN_FAILURE_STAGES,
     Envelope,
+    named_count,
 )
 from app.services.chatbot.delegate import enabled_lanes_from
 from app.services.error_handler import AppException
-from app.services.chatbot.head import parser
+from app.services.chatbot.head import grounding, parser
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
@@ -1668,10 +1669,20 @@ def _top_selling_verdict(
         hint = jsc.js_string(e.get("hint") or "")
         raw = " ".join(jsc.js_string(e.get("raw") or "").split())
         current = e.get("current_message") is not False and not e.get("uuid")
-        if not current or not raw or hint not in ("customer", "sales_agent", "category", "brand", "promotion", "product"):
+        if current and raw and hint == "specification" and not e.get("spec_key"):
+            # Merge of main into PR #833 (fix round 13): the specification kind splits
+            # "fanny water closet" into the class and an UNKNOWN specification "fanny"
+            # before this reading; inside a ranking such a word is a group like any other.
+            # A word that names nothing is the leftover said once ("marble").
+            kind = _classify_word_group(db, raw)
+            split = ([{"raw": raw, "hint": kind}], []) if kind else _split_noisy_token(db, raw)
+            if split is None:
+                split = ([], [w for w in raw.split() if len(w) >= 3 and w.lower() not in TOP_SELLING_WHO_WORDS])
+        elif not current or not raw or hint not in ("customer", "sales_agent", "category", "brand", "promotion", "product"):
             rebuilt.append(e)
             continue
-        split = _noisy_split(db, raw, hint)
+        else:
+            split = _noisy_split(db, raw, hint)
         if split is None:
             if hint == "customer" and says_agent and business_services.resolve_sales_agent_token(db, raw):
                 # "by sean salea agent": the message calls the name an agent (R2).
@@ -2581,6 +2592,47 @@ def _run_stages(  # noqa: PLR0915
     verdict = turn_runtime.with_company_pick(
         verdict, pending=state_in.pending, message=latest_user_message
     )
+    # Reviewer S1 on PR #833: the answer to "how many should I show?" must not rest on
+    # the parser filling `top_n` for a bare "10" - its prompt has no example of one, and
+    # its positional rule pulls a bare number toward `reference_positions`.
+    # Round 4 R5 on PR #833: the answer to an open clarify re-runs the ask it was about.
+    verdict = turn_runtime.with_clarify_answer(
+        verdict, latest_user_message, carried=state_in.focus.set_clarify
+    )
+    verdict = turn_runtime.with_set_count_from_text(
+        verdict, latest_user_message, carried=state_in.focus.set_page
+    )
+    # Round 7 on PR #833 (owner hand test, item 6): a brand the last set answer offered
+    # narrows that set.
+    verdict = turn_runtime.with_brand_from_offer(
+        verdict, latest_user_message, carried=state_in.focus.set_page
+    )
+    # Round 3 W3 on PR #833: a class word of this message's own starts a new set.
+    verdict = turn_runtime.with_new_set_words(verdict)
+    # Fix round 8 on PR #833 (owner retest of round 7): every descriptor the parser
+    # emitted is grounded against the specification registry, after the clarify answer
+    # is substituted (so "p trap" answering "t trap" is read as the choice it is) and
+    # before APPLY reads the verdict: the category keeps what the thing IS, a colour or
+    # a size becomes a `specification` entity, and nothing is a document type unless it
+    # is on the list.
+    with _session(session_factory) as grounding_db:
+        verdict, grounding_notes = grounding.ground(
+            grounding_db, verdict, message=latest_user_message.split("\n", 1)[0] if isinstance(latest_user_message, str) else None
+        )
+    if grounding_notes:
+        turn_trace.add("grounding", {"changes": grounding_notes})
+    # Fix round 12 on PR #833 (owner ruling 28 Sep 2026): once grounding has read the ask
+    # as a described product set, the set's leg (stock, incoming, promotion, a document)
+    # is the turn's domain, whatever verb carried it; APPLY plans from that.
+    from app.services.chatbot.lanes.business.predicate import with_set_leg
+
+    leg_verdict = with_set_leg(verdict, message_text=latest_user_message if isinstance(latest_user_message, str) else None)
+    if leg_verdict is not verdict:
+        turn_trace.add(
+            "set_leg",
+            {"from": [verdict.get("domain_hint"), verdict.get("intent_hint")], "to": [leg_verdict.get("domain_hint"), leg_verdict.get("intent_hint")]},
+        )
+        verdict = leg_verdict
 
     # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"
@@ -2825,7 +2877,12 @@ def _run_stages(  # noqa: PLR0915
         answer_parse_output: dict[str, Any] = (ctx.get("parse") or {}).get("output") or {}
         # SF-1: a refused sales-report ask never reaches the resolver at all - no
         # `resolve_gate.run` call, no roster built from what it would have found.
-        if not sales_report_grant_refused and (plan.fetch or plan.ask is not None):
+        # W4 (owner hand test round 2): a page of a carried set is answered off the carry
+        # alone (`turn_runtime.page_the_set`). Re-resolving the carried class word without
+        # the set's predicate placed nothing ("wash basin" is no product code), and that
+        # resolver's own not-found exit turned the page into "Couldn't find: wash basin".
+        set_page_turn = bool(plan.fetch) and isinstance(plan.fetch[0].filters.get("set_page"), dict)
+        if not sales_report_grant_refused and not set_page_turn and (plan.fetch or plan.ask is not None):
             # The REAL branch this plan belongs to, the SAME function "D ROUTE" below
             # calls on the (possibly reconciled) plan - not a literal "business_query"
             # for every turn, so a promotion ask reaches `resolve_gate.run` at
@@ -2971,6 +3028,13 @@ def _run_stages(  # noqa: PLR0915
                     resolved_candidates,
                     frozenset(unplaced_tokens),
                 )
+            # Round 4 R5: a clarify this turn is about to ask keeps the ask, so its answer
+            # re-runs it (`turn_runtime.with_clarify_answer`).
+            clarify = turn_runtime.set_clarify_carry(
+                verdict, predicate, (resolver_payload or {}).get("resolved")
+            )
+            if clarify is not None:
+                state_out.focus.set_clarify = clarify
             _apply_top_selling_updates(state_out.focus, top_selling_updates)
 
         # D ROUTE. Two facts outrank the plan and neither is IN one: a refused access
@@ -3580,7 +3644,12 @@ def _run_stages(  # noqa: PLR0915
                             dry_run=dry_run,
                             asked_at_turn=turn_no,
                             turn_id=turn_id,
-                            focus_products=state_out.focus.products,
+                            # A page of a carried set answers about its own ids only.
+                            # The focus still holds the LAST answer's rows, and reading
+                            # them as this turn's ask closed a Cabana page with "No stock
+                            # and no incoming for" the Sorento rows before it (round 7
+                            # on PR #833, owner hand test item 6).
+                            focus_products=None if set_page_turn else state_out.focus.products,
                             # #1262 slice 11 (F8): the ladder rung's own audience
                             # gate reads the SAME profile the composer's arm does.
                             profile=state_out.profile,
@@ -3620,22 +3689,61 @@ def _run_stages(  # noqa: PLR0915
                     raw=None,
                 )
             else:
-                # AC-1317: where the counted set got to, so "more" pages the SAME set
-                # next turn instead of counting it again from nothing.
+                # No paging (owner ruling, 26 Sep 2026). A counted set is remembered only
+                # when it was too long to list (more than `answer.SET_LIST_MAX`, no count
+                # named): the reply asked "how many should I show?", and the answer to
+                # that question lists that many of the same set (`turn/apply.py`'s
+                # `set_count_answered`). Every other turn leaves nothing carried.
                 #
-                # Written only for a SPEC-tier answer: the counted set is how that tier
-                # of the ONE product ladder renders, and a code-tier answer is a list,
-                # which leaves no page behind. `set_page_carry` refuses a set with no
-                # scope term of its own on top of that, so a "more" can never page the
-                # whole catalogue (turns 92d565a5 / b383d402 / 2e7ca929, 17 Sep 2026).
+                # Written only for a SPEC-tier answer: the counted set is how that tier of
+                # the ONE product ladder renders, and a code-tier answer is a list.
+                # `set_page_carry` refuses a set with no scope term of its own on top of
+                # that, so the recount can never read the whole catalogue (turns 92d565a5
+                # / b383d402 / 2e7ca929, 17 Sep 2026).
                 #
                 # Security B2 (re-check round): the carry records the ENTITLEMENT this
-                # page answered under, off the envelope's own `access_levels_used` (the
-                # recomposed list the tool call actually carried). The next "more"
-                # recounts the set by that, never by the parser's list, which a bare
-                # "more" leaves empty and which reads downstream as "no tier filter".
+                # answer counted under, off the envelope's own `access_levels_used` (the
+                # recomposed list the tool call actually carried). The recount uses that,
+                # never the parser's list, which a bare count leaves empty and which reads
+                # downstream as "no tier filter".
+                from app.services.chatbot.lanes.business import answer as business_answer
+
                 class_terms = turn_runtime.class_scope_terms(verdict)
-                if predicate is not None and plan.fetch and spec_tier:
+                qualifying = int((predicate or {}).get("qualifying_total") or 0)
+                asked = named_count(verdict.get("top_n"))
+                withheld = (
+                    predicate is not None
+                    and plan.fetch
+                    and spec_tier
+                    and qualifying > business_answer.SET_LIST_MAX
+                    and asked is None
+                    and bool((predicate or {}).get("breakdown"))
+                )
+                # Fix round 9 on PR #833: a long set nothing splits lists what fits, and
+                # is carried like a named count so "another N" continues it.
+                listed_to_the_limit = (
+                    predicate is not None
+                    and plan.fetch
+                    and spec_tier
+                    and qualifying > business_answer.SET_LIST_MAX
+                    and asked is None
+                    and not withheld
+                )
+                # W4 (owner hand test round 2): a set listed only in part (the customer
+                # named fewer than qualify) is carried too, so their own "another N"
+                # continues it. The reply never offers that.
+                partly_listed = (
+                    predicate is not None
+                    and plan.fetch
+                    and spec_tier
+                    and asked is not None
+                    and min(asked, business_answer.SET_LIST_MAX) < qualifying
+                )
+                paged = bool(plan.fetch) and isinstance(plan.fetch[0].filters.get("set_page"), dict)
+                if paged:
+                    # A page of a carried set: the runner hands back where it stopped.
+                    state_out.focus.set_page = envelopes[0].get("set_carry") if envelopes else None
+                elif withheld or partly_listed or listed_to_the_limit:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
                         predicate,
                         plan.fetch[0],
@@ -3643,10 +3751,30 @@ def _run_stages(  # noqa: PLR0915
                         access_levels=(
                             envelopes[0].get("access_levels_used") if envelopes else None
                         ),
+                        shown=(
+                            0
+                            if withheld
+                            else business_answer.SET_LIST_MAX
+                            if listed_to_the_limit
+                            else min(asked, business_answer.SET_LIST_MAX)
+                        ),
                     )
-                elif not any(isinstance(s.filters.get("set_page"), dict) for s in plan.fetch):
-                    # An answer that is not a counted set closes the page: the customer
-                    # has moved on, and "more" must not resume a set they left.
+                elif predicate is not None and plan.fetch and spec_tier and (
+                    predicate.get("other_brands") or predicate.get("set_brands")
+                ):
+                    # Round 7 item 6: the reply closed with "Other brands ... Name one to
+                    # see them.", so the brand named next narrows this set.
+                    state_out.focus.set_page = turn_runtime.set_page_carry(
+                        predicate,
+                        plan.fetch[0],
+                        class_terms,
+                        access_levels=(
+                            envelopes[0].get("access_levels_used") if envelopes else None
+                        ),
+                        shown=qualifying,
+                        offer_only=True,
+                    )
+                else:
                     state_out.focus.set_page = None
                 # Ported from PR #1118 (not merged), D25: the open stock task is
                 # whatever the REPLY says is still owed - opened, updated and closed

@@ -105,6 +105,17 @@ DOMAIN_HINTS: tuple[str, ...] = tuple(row["name"] for row in policy_rows.DEFAULT
 DomainHint = Literal[DOMAIN_HINTS]  # type: ignore[valid-type]
 
 
+def named_count(top_n: Any) -> int | None:
+    """The count a message named (the parser's `top_n`), or None: a bool, a non-int or a
+    value <= 0 names none. THE one reading, shared by the engine (arming the counted-set
+    carry), `turn/apply.py` (reading the answer to "how many should I show?") and the
+    fetch (slicing the set), so the three cannot disagree about one turn (reviewer N2 on
+    PR #833: `True` or `0` once withheld the rows while arming no carry)."""
+    if isinstance(top_n, bool) or not isinstance(top_n, int) or top_n <= 0:
+        return None
+    return top_n
+
+
 def coerce_domain_hint(value: Any) -> Any:
     """A `domain_hint` outside the enum above, coerced to null. THE one guard.
 
@@ -189,6 +200,9 @@ ENTITY_HINTS = (
     "category",
     "brand",
     "attachment_type",
+    # Fix round 8 on PR #833: a product property from the specification registry
+    # (`head/grounding.py`), never a document type.
+    "specification",
 )
 EntityHint = Literal[ENTITY_HINTS]  # type: ignore[valid-type]
 
@@ -560,6 +574,8 @@ class Focus(BaseModel):
     date_window: dict[str, Any] | None = None
     # AC-1317: where a counted-set answer got to, `{set_key, offset}`.
     set_page: dict[str, Any] | None = None
+    # Round 4 R5: the ask an open clarify question was about, `{term, options, ask}`.
+    set_clarify: dict[str, Any] | None = None
     # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: the top selling
     # ask's own axes while `status == "top_selling"` (`turn/state.py::Focus.top_selling`).
     top_selling: dict[str, Any] | None = None

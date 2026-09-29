@@ -41,6 +41,7 @@ interface Draft {
   is_active: boolean;
   access_levels: string[];
   flows_to_purchasing: boolean;
+  chatbot_weight: string;
   is_searchable: boolean;
 }
 
@@ -140,6 +141,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
       is_active: brand.is_active,
       access_levels: brand.access_levels ?? [],
       flows_to_purchasing: brand.flows_to_purchasing,
+      chatbot_weight: String(brand.chatbot_weight ?? 0),
       is_searchable: brand.is_searchable ?? true,
     });
     setEditing(true);
@@ -161,16 +163,24 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
         is_active: draft.is_active,
         access_levels: draft.access_levels,
         flows_to_purchasing: draft.flows_to_purchasing,
+        chatbot_weight: Number(draft.chatbot_weight) || 0,
         is_searchable: draft.is_searchable,
       },
     });
     cancelEdit();
   };
 
+  // Round 6 N-r5-1: the dialog's own words (zod in BrandFormDialog), under the input.
+  const weight = draft ? Number(draft.chatbot_weight) : 0;
+  const weightError =
+    weight < 0 ? 'Enter 0 or more' : weight > 9999 ? 'Enter 9999 or less' : null;
+
   const canSave =
     !!draft &&
     draft.brand_code.trim().length > 0 &&
     draft.brand_name.trim().length > 0 &&
+    Number(draft.chatbot_weight) >= 0 &&
+    Number(draft.chatbot_weight) <= 9999 &&
     !update.isPending;
 
   const actions: RecordAction[] = [
@@ -314,6 +324,30 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
                     'Yes'
                   ) : (
                     'No'
+                  )}
+                </Field>
+
+                <Field label="Chatbot brand weight" htmlFor="brand-chatbot-weight">
+                  {editing && draft ? (
+                    <div className="grid gap-1.5">
+                      <Input
+                        id="brand-chatbot-weight"
+                        type="number"
+                        min={0}
+                        max={9999}
+                        step={0.1}
+                        inputMode="decimal"
+                        className="w-32"
+                        aria-invalid={weightError ? true : undefined}
+                        value={draft.chatbot_weight}
+                        onChange={(e) => setDraft({ ...draft, chatbot_weight: e.target.value })}
+                      />
+                      {weightError && (
+                        <p className="text-xs font-normal text-destructive">{weightError}</p>
+                      )}
+                    </div>
+                  ) : (
+                    String(brand.chatbot_weight ?? 0)
                   )}
                 </Field>
 

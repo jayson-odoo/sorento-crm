@@ -32,7 +32,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM
+from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM, named_count
 from app.services.chatbot.turn.apply import names_its_own_ask
 from app.services.chatbot.turn.decide import picked_positions
 from app.services.chatbot.turn.pending import (
@@ -842,6 +842,214 @@ def _accepted_pending_brand(pending: Pending | None, verdict: Mapping[str, Any])
     / `company_pick` already use. See `_accepted_pending_field`'s own docstring for
     the shared gate/accept-check/fall-through."""
     return _accepted_pending_field(pending, verdict, "brand_code")
+
+
+# A message that is ONLY a count: "10", "show 10", "the first 10", "10 please", "top 20".
+_BARE_COUNT_RE = re.compile(
+    r"^(?:(?:show|list|give|send|bagi|tunjuk)\s+(?:me\s+)?)?"
+    r"(?:(?:the\s+)?(?:first|top)\s+)?"
+    r"(\d{1,4})"
+    r"(?:\s+(?:please|pls|plz|only|je|sahaja))?[.!]?$",
+    re.IGNORECASE,
+)
+
+
+def with_set_count_from_text(
+    verdict: dict[str, Any], message: Any, *, carried: Any
+) -> dict[str, Any]:
+    """The verdict with `top_n` read off a bare count, while "how many should I show?"
+    is open (`focus.set_page`, armed only when a set was too long to list).
+
+    Reviewer S1 on PR #833. The follow-up read only the parser's `top_n`, and nothing
+    in the parser prompt covers a bare "10" given as the answer to a count question: a
+    null `top_n` answered nothing, and a `reference_positions: [10]` would pick row 10 of
+    a list that was never sent. With the question open and the message nothing BUT a
+    count, the count is that number and no position is picked. A message that names
+    anything else (a subject, a word the regex does not know) is left to the parser.
+    """
+    if not isinstance(carried, dict) or not isinstance(message, str):
+        return verdict
+    if any(isinstance(e, dict) and e.get("current_message") is True for e in (verdict.get("entities") or [])):
+        return verdict
+    # W4: after a LISTED page (`shown` > 0), "another N" continues the set, read whatever
+    # the parser made of it. Round 3 W2 (owner hand test, "why when i say 10, it gives
+    # some other answer"): so does a bare count - "10" after a page of 30 is rows 31 to
+    # 40 of the same set, never a row pick (a set answer mints no pick roster) and never
+    # the parser's own reading of it.
+    shown = int((carried.get("set_key") or {}).get("shown") or 0)
+    more = set_continue_count(message)
+    if more is not None:
+        return {**verdict, "top_n": more, "reference_positions": [], SET_CONTINUE_KEY: True}
+    if shown == 0 and named_count(verdict.get("top_n")) is not None:
+        return verdict
+    # Line 1 is the customer's own text; a quoted "reply to: ..." rides on line 2
+    # (`engine.build_latest_user_message`).
+    lines = message.strip().splitlines()
+    match = _BARE_COUNT_RE.match(lines[0].strip()) if lines else None
+    if not match:
+        return verdict
+    count = int(match.group(1))
+    if count <= 0:
+        return verdict
+    if shown > 0:
+        return {**verdict, "top_n": count, "reference_positions": [], SET_CONTINUE_KEY: True}
+    return {**verdict, "top_n": count, "reference_positions": []}
+
+
+#: The verdict keys that say WHAT was asked, kept with an open clarify so its answer
+#: re-runs that ask (round 4 R5).
+_CLARIFY_ASK_KEYS = (
+    "message_type",
+    "intent_hint",
+    "domain_hint",
+    "scope_intent",
+    "match_mode",
+    "requested_attributes",
+    "user_goal",
+    "access_levels",
+)
+_CLARIFY_LEAD_WORDS = frozenset({"the", "a", "an", "i", "mean", "meant", "yes", "ya", "its", "it", "is"})
+
+
+def set_clarify_carry(verdict: dict[str, Any], predicate: Any, resolved: Any) -> dict[str, Any] | None:
+    """What an open clarify question was about, for `focus.set_clarify`, or None.
+
+    Round 4 R5 (owner console test on PR #833: "i clarify if it is tap or wash basin and i
+    said tap, you supposed to do the searching"). Two questions carry it: the product-type
+    clarify ("I don't know 'water tap basin' as a product type. Did you mean tap or wash
+    basin?", AC-1320, retired in fix round 10: no product types are offered) and the unknown
+    value one (R6, "I know P trap and S trap."). Kept:
+    the unknown words, the options offered, and the ask itself (intent, domain, attribute
+    and this message's own entities), so the answer is that ask with the word replaced."""
+    term: str | None = None
+    options: list[str] = []
+    unknown = []
+    if isinstance(predicate, dict):
+        unknown = [u for u in (predicate.get("unknown_values") or []) if isinstance(u, dict)]
+    if not unknown and isinstance(resolved, dict):
+        unknown = [u for u in (resolved.get("unknown_spec_values") or []) if isinstance(u, dict)]
+    if unknown:
+        term = jsc.nullish_str(unknown[0].get("said")).strip()
+        options = [jsc.nullish_str(k).strip().lower() for k in unknown[0].get("known") or []]
+    options = [o for o in options if o]
+    if not term or not options:
+        return None
+    ask = {key: verdict.get(key) for key in _CLARIFY_ASK_KEYS}
+    ask["entities"] = [
+        dict(e)
+        for e in (verdict.get("entities") or [])
+        if isinstance(e, dict) and e.get("current_message") is True
+    ]
+    return {"term": term, "options": options, "ask": ask}
+
+
+def _replace_word(text: Any, term: str, option: str) -> Any:
+    if not isinstance(text, str):
+        return text
+    if text.strip().lower() == term.lower():
+        return option
+    return re.sub(re.escape(term), option, text, flags=re.IGNORECASE)
+
+
+def with_clarify_answer(verdict: dict[str, Any], message: Any, *, carried: Any) -> dict[str, Any]:
+    """The carried ask with the unknown word replaced, when this message answers the open
+    clarify with one of its options; else the verdict unchanged.
+
+    Round 4 R5 (owner console test on PR #833): "tap" after "Did you mean tap or wash
+    basin?" was read on its own, a product search that listed two codes. The answer is
+    the question's own ask again, "any water tap basin" with "water tap basin" read as
+    "tap", so the customer gets the counted set ("2 taps have stock."). A message that is
+    not one of the options is a question of its own and is left to the parser."""
+    if not isinstance(carried, dict) or not isinstance(message, str):
+        return verdict
+    term = jsc.nullish_str(carried.get("term")).strip()
+    options = [o for o in (carried.get("options") or []) if isinstance(o, str) and o]
+    ask = carried.get("ask") if isinstance(carried.get("ask"), dict) else None
+    lines = message.strip().splitlines()
+    words = re.findall(r"[a-z0-9]+", lines[0].lower()) if lines else []
+    while words and words[0] in _CLARIFY_LEAD_WORDS:
+        words = words[1:]
+    reply = " ".join(words)
+    option = next((o for o in options if " ".join(re.findall(r"[a-z0-9]+", o.lower())) == reply), None)
+    if not term or ask is None or option is None:
+        return verdict
+    entities = []
+    replaced = False
+    for e in ask.get("entities") or []:
+        if not isinstance(e, dict):
+            continue
+        raw = e.get("raw")
+        new_raw = _replace_word(raw, term, option)
+        replaced = replaced or new_raw != raw
+        entities.append({**e, "raw": new_raw, "canonical_code": None, "current_message": True})
+    if not replaced:
+        entities.append({"raw": option, "hint": "product_type", "canonical_code": None, "current_message": True, "confident": True})
+    out = {**verdict, **{k: v for k, v in ask.items() if k != "entities"}}
+    out["entities"] = entities
+    out["user_goal"] = _replace_word(ask.get("user_goal"), term, option)
+    out["top_n"] = None
+    out["reference_positions"] = []
+    return out
+
+
+#: The entity hints that describe WHICH products a set is: its class word, its spec
+#: words, its brand, and the codes of an earlier answer.
+_SET_DESCRIBING_HINTS = frozenset({"product_type", "category", "spec", "specification", "brand", "product"})
+
+
+def with_new_set_words(verdict: dict[str, Any]) -> dict[str, Any]:
+    """The verdict without an EARLIER turn's set words, when this message names a class
+    word of its own.
+
+    Round 3 W3 (owner hand test on PR #833, turn 4): "which basin has cert" after a
+    water closet set came back with the water closet words and codes beside "basin",
+    `current_message: false` - the parser reads them off the conversation. They blended
+    into "Product type: Wash basin or Water closet" or, carrying the listed codes, asked
+    for the attachment type of a water closet. A new class word starts a new set: the
+    earlier class, spec, brand and product entities are dropped. A customer, a location
+    or a document from earlier is not part of the set and stays.
+    """
+    entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
+    names_a_class = any(
+        e.get("current_message") is True and jsc.nullish_str(e.get("hint")).strip().lower() in CLASS_HINTS
+        for e in entities
+    )
+    if not names_a_class:
+        return verdict
+    kept = [
+        e
+        for e in entities
+        if e.get("current_message") is True
+        or jsc.nullish_str(e.get("hint")).strip().lower() not in _SET_DESCRIBING_HINTS
+    ]
+    if len(kept) == len(entities):
+        return verdict
+    return {**verdict, "entities": kept}
+
+
+#: Set on the verdict when the message asked for "another N" of the carried set;
+#: `turn/apply.py` pages a LISTED set only then.
+SET_CONTINUE_KEY = "set_continue"
+
+# "another 40", "can give another 40?", "40 more", "next 40", "lagi 10": the customer asks
+# for more of a list, naming how many (W4, owner hand test round 2). The bot never offers
+# this; it only answers it.
+_CONTINUE_COUNT_RE = re.compile(
+    r"\b(?:another|next|more|lagi|further)\s+(\d{1,4})\b|\b(\d{1,4})\s+(?:more|lagi|further)\b",
+    re.IGNORECASE,
+)
+
+
+def set_continue_count(message: Any) -> int | None:
+    """The count in an "another N" message, or None."""
+    if not isinstance(message, str):
+        return None
+    lines = message.strip().splitlines()
+    match = _CONTINUE_COUNT_RE.search(lines[0]) if lines else None
+    if not match:
+        return None
+    count = int(match.group(1) or match.group(2))
+    return count if count > 0 else None
 
 
 #: The domains whose help requests are answered rather than escalated (contract 21, 22):
@@ -2354,10 +2562,15 @@ def make_tool_runner(
         page_ids: list[str] = []
         carry = spec.filters.get("set_page")
         if isinstance(carry, dict):
-            # Security B2: the entitlement comes off the CARRY (what page 1 answered
-            # under), never off this turn's verdict - a bare "more" states no tier, and
-            # an empty list is read downstream as "no tier filter at all".
-            page_predicate, page_ids = page_the_set(db, carry)
+            # Security B2: the entitlement comes off the CARRY (what the first answer
+            # counted under), never off this turn's verdict - a bare count states no
+            # tier, and an empty list is read downstream as "no tier filter at all".
+            page_predicate, page_ids = page_the_set(
+                db,
+                carry,
+                size=spec.filters.get("top_n"),
+                stock_policy=_contact_stock_policy(db, ctx, space_id),
+            )
         # R6 (fix round 2), corrected in fix round 4: `policy` is threaded through
         # so a null `routing.suggested_team` gets a domain-aware fill here too,
         # rather than the flat `DEFAULT_SUGGESTED_TEAM` literal - but this is the
@@ -2542,17 +2755,40 @@ def make_tool_runner(
             )
             if probe_gate.get("gate_passed") is False:
                 no_subject_gate = probe_gate
-        if (
+        exhausted = page_predicate is not None and bool(page_predicate.get("exhausted")) and not page_ids
+        if exhausted:
+            # Round 3 W2: every product of the carried set is listed already. No tool call:
+            # the reply is the set's own header, closed by "That is all N.".
+            from app.services.chatbot.lanes.business import answer as business_answer
+
+            said = business_answer.build_set_header(
+                int(page_predicate.get("qualifying_total") or 0),
+                0,
+                jsc.nullish_str(page_predicate.get("set_noun")).strip() or "products",
+                page_predicate.get("require") or {},
+                description=page_predicate.get("description"),
+                previous_total=page_predicate.get("previous_total"),
+                exhausted=True,
+            )
+            others = business_answer.other_brands_line(
+                page_predicate.get("other_brands"), page_predicate.get("require") or {}
+            )
+            text = f"{said}\n\n{others}" if others else said
+            fragment: dict[str, Any] = {"fetch": {"has_result": True, "response": text, "set_header": said}}
+        elif (
             (
                 spec.filters.get("tier")
                 and isinstance(tier_gate_value, dict)
                 and not tier_gate_value.get("access_levels_recomposed")
             )
             or (page_predicate is not None and page_predicate.get("entitlement_missing"))
+            # A recount that found nothing has no ids to send, and a tool called with
+            # no product filter answers about the whole catalogue: a miss, not a call.
+            or (page_predicate is not None and not page_ids)
             or would_be_unfiltered
             or no_subject_gate is not None
         ):
-            fragment: dict[str, Any] = {
+            fragment = {
                 "fetch": {"has_result": False, "response": business_fetch.NO_RESULT_INTRO},
                 "outcome": "not_found",
             }
@@ -2647,7 +2883,7 @@ def make_tool_runner(
                 "fetch": {"has_result": False, "response": business_fetch.NO_RESULT_INTRO},
                 "outcome": "not_found",
             }
-        return envelope_of(
+        envelope = envelope_of(
             fragment,
             spec,
             entities,
@@ -2665,6 +2901,12 @@ def make_tool_runner(
             raw_fragment=fragment,
             brand_names=brand_names,
         )
+        if page_predicate is not None:
+            # W4: what an "another N" after this page continues from; after the last page
+            # it stays, so a further count says "That is all" (round 3 W2). The engine
+            # keeps it on `focus.set_page`.
+            envelope["set_carry"] = page_predicate.get("next_carry") if (page_ids or exhausted) else None
+        return envelope
 
     return runner
 
@@ -2704,8 +2946,8 @@ def spec_tier_matched(resolved: Any) -> bool:
     ONE product lane, one ladder: the resolver tries the code tiers and falls back to the
     spec/class search only when they matched nothing, so "SRTWC286 got stock" and "which
     water closet got stock" walk the same path and only the second reaches the fallback.
-    The counted-set answer ("N water closets have stock. Showing 5." plus the page
-    cursor) is simply how a SPEC-tier match RENDERS; a code-tier match renders as the
+    The counted-set answer ("N water closets have stock." over the listed set) is
+    simply how a SPEC-tier match RENDERS; a code-tier match renders as the
     list. The render had been following the `require` predicate instead, which
     `predicate.derive_require` builds from the INTENT alone (`check_stock` ->
     `{"stock": true}`) - so it rides every stock, incoming and promotion turn there is,
@@ -2730,9 +2972,6 @@ def spec_tier_matched(resolved: Any) -> bool:
     return bool(products) and all(m.get("match_tier") == SPEC_TIER for m in products)
 
 
-SET_PAGE_SIZE = 5
-
-
 def _entitled_names(values: Any) -> list[str]:
     """The access-level NAMES in `values`, trimmed, non-empty, in order."""
     return [v for v in jsc.array(values) if isinstance(v, str) and v.strip()]
@@ -2744,56 +2983,156 @@ def set_page_carry(
     scope_terms: list[str],
     *,
     access_levels: Any = None,
+    shown: int = 0,
+    offer_only: bool = False,
 ) -> dict[str, Any] | None:
-    """Where a counted-set answer got to, for `focus.set_page` (AC-1317).
+    """The set a too-long counted answer asked about, for `focus.set_page`.
 
-    `{set_key, offset}` and nothing more: the set is RE-DESCRIBED next turn from
+    `offer_only` (owner hand test of rounds 4 to 6 on PR #833, item 6): a set listed in
+    full whose reply closed with "Other brands with stock: Cabana 3, Mocha 2. Name one to
+    see them." is carried too, only so the brand named next narrows THIS set
+    (`with_brand_from_offer`). It never continues as a page.
+
+    No paging (owner ruling, 26 Sep 2026): the carry exists only so the answer to "how
+    many should I show?" - the parser's own count key, `top_n` - can list that many of
+    the SAME set. The engine writes it only when the rows were withheld (more than
+    `answer.SET_LIST_MAX` qualifying, no count named) and clears it on the next turn
+    whatever that turn is. `{set_key}` and nothing more: the set is RE-DESCRIBED from
     `set_key` rather than carried as a list of ids, so a session never holds two hundred
-    uuids and a "more" three turns later still answers over live data.
+    uuids and the answer is counted over live data.
 
-    Called only for a SPEC-tier answer (`spec_tier_matched`), and never without a scope
-    term: `set_key` describes the population by its `require` leg and its class words, so
-    an empty `scope_terms` describes "every product that has stock" and the next "more"
-    pages the whole catalogue. A spec tier reached with nothing to scope by is a miss, not
-    a set.
+    Never without a scope term: `set_key` describes the population by its `require` leg
+    and its class words, so an empty `scope_terms` describes "every product that has
+    stock". A spec tier reached with nothing to scope by is a miss, not a set.
 
     **Security B2 (re-check round, 20 Sep 2026): `access_levels` is part of the
     description, not beside it.** The same `require` leg and the same class words read
     under two entitlements are two different populations, so the levels page 1 actually
     answered under (`lanes/business._fetch_semantic_input`'s own, off
     `tier_gate.access_levels_recomposed`, carried out as the envelope's
-    `access_levels_used`) belong INSIDE `set_key` - main records the same fact as
-    `access_levels` on its own flat carry (`lanes/business/resolve_gate._set_page_reply`
-    reads it back as the next page's `tier_gate`). Without it the "more" turn had nothing
-    to recount by and fell to the PARSER's `access_levels`, which is empty in 249 of 249
+    `access_levels_used`) belong INSIDE `set_key`. Without it the recount had nothing
+    to count by and fell to the PARSER's `access_levels`, which is empty in 249 of 249
     real captures: `product_predicate_service._access_level_codes` reads an empty name
-    list as "no tier filter", so page 2 of a promotion set counted and named products
+    list as "no tier filter", so a recount of a promotion set counted and named products
     whose only promotion is restricted to a tier the contact does not hold. The key is
-    ALWAYS written, empty list included - a carry with no levels recorded is refused by
-    `page_the_set` rather than read as "no restriction".
+    ALWAYS written, empty list included - a promotion carry with no levels recorded is
+    refused by `page_the_set` rather than read as "no restriction".
     """
-    if not predicate or not scope_terms:
+    # W4 (owner hand test round 2): the resolver's own description of the set it counted
+    # (`predicate.set_key`: the bound specs, the brand, the ids LOOKUP matched) is what a
+    # page replays, so "10" after "144 Sorento wall hung basins" pages THAT set, never
+    # the parser's class word re-read without its brand (which answered 334).
+    described = predicate.get("set_key") if isinstance(predicate, dict) else None
+    described = described if isinstance(described, dict) else {}
+    has_description = bool(described.get("specs") or described.get("brand") or described.get("product_ids"))
+    if not predicate or not (scope_terms or has_description):
         return None
     total = int(predicate.get("qualifying_total") or 0)
-    if total <= 0:
+    offered = [
+        {"brand": str(o.get("brand")), "count": int(o.get("count") or 0)}
+        for o in (predicate.get("other_brands") or predicate.get("set_brands") or [])
+        if isinstance(o, dict) and str(o.get("brand") or "").strip() and o.get("count")
+    ]
+    if offer_only and not offered:
+        return None
+    if total <= 0 or (shown >= total and not offer_only):
         return None
     labels = [c for c in (predicate.get("class_labels") or []) if isinstance(c, str)]
     from app.services.chatbot.lanes.business.answer import set_noun_for
 
+    key: dict[str, Any] = {
+        "require": predicate.get("require") or {},
+        "scope_terms": list(scope_terms),
+        "domain": spec.domain,
+        "set_noun": predicate.get("set_noun") or set_noun_for(labels),
+        "access_levels": _entitled_names(access_levels),
+        "total": total,
+        "shown": int(shown),
+    }
+    if has_description:
+        key["specs"] = list(described.get("specs") or [])
+        key["brand"] = described.get("brand")
+        key["brand_default"] = bool(described.get("brand_default"))
+        key["product_ids"] = list(described.get("product_ids") or [])
+    if offered:
+        key["other_brands"] = offered
+    if offer_only:
+        key["offer_only"] = True
+    return {"set_key": key}
+
+
+#: The verdict key `with_brand_from_offer` sets: the offered brand the message chose.
+SET_BRAND_KEY = "set_brand"
+
+#: Words around a brand name that do not change which brand was named ("show me cabana").
+_BRAND_PICK_FILLER = frozenset(
+    {"show", "see", "me", "only", "the", "please", "pls", "for", "in", "brand", "ok", "okay", "how", "about", "what", "and", "then"}
+)
+
+
+def with_brand_from_offer(verdict: dict[str, Any], message: Any, *, carried: Any) -> dict[str, Any]:
+    """The verdict with `SET_BRAND_KEY` set when the message names one of the brands the
+    last set answer offered ("Other brands with stock: Cabana 3, Mocha 2. Name one to see
+    them.") and nothing else.
+
+    Owner hand test of rounds 4 to 6 on PR #833, item 6: "cabana" answered "1,136 products
+    have stock" over every Cabana product, when the offer had said Cabana 3. The brand
+    named there narrows the SAME set (`turn/apply.py`, `set_brand_chosen`), so the count
+    in the offer and the narrowed answer are one count. A message that names a product,
+    a class or any other subject is a new question and is left alone."""
+    if not isinstance(carried, dict) or not isinstance(message, str):
+        return verdict
+    offered = (carried.get("set_key") or {}).get("other_brands") or []
+    names = {str(o.get("brand") or "").strip().lower(): str(o.get("brand") or "").strip() for o in offered if isinstance(o, dict)}
+    names.pop("", None)
+    if not names:
+        return verdict
+    for e in verdict.get("entities") or []:
+        if not isinstance(e, dict) or e.get("current_message") is not True:
+            continue
+        if str(e.get("hint") or "").strip().lower() != "brand":
+            return verdict
+    lines = message.strip().splitlines()
+    words = [w for w in re.findall(r"[a-z0-9]+", lines[0].lower()) if w not in _BRAND_PICK_FILLER] if lines else []
+    said = " ".join(words)
+    chosen = names.get(said)
+    if chosen is None:
+        return verdict
     return {
-        "set_key": {
-            "require": predicate.get("require") or {},
-            "scope_terms": list(scope_terms),
-            "domain": spec.domain,
-            "set_noun": set_noun_for(labels),
-            "access_levels": _entitled_names(access_levels),
-        },
-        "offset": min(SET_PAGE_SIZE, total),
+        **verdict,
+        SET_BRAND_KEY: chosen,
+        "entities": [e for e in verdict.get("entities") or [] if not (isinstance(e, dict) and e.get("current_message") is True)],
+        "reference_positions": [],
     }
 
 
-def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: Any = None):
-    """The next page of a carried set: `(predicate, product_ids)`.
+def _contact_stock_policy(db: Session, ctx: dict[str, Any], space_id: str | None):
+    """The asking contact's stock visibility policy (None for no contact), resolved the
+    way the resolver resolves it for the first answer (`references._stock_policy_for`)."""
+    contact_id = jsc.nullish_str(jsc.get(jsc.get(ctx, "contact"), "id")).strip()
+    if not contact_id:
+        return None
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+    from app.services.stock_visibility import resolve_policy
+
+    resolved = resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
+    return resolve_policy(db, resolved or contact_id, space_id)
+
+
+def page_the_set(
+    db: Session,
+    carry: dict[str, Any],
+    *,
+    access_levels: Any = None,
+    size: int | None = None,
+    stock_policy: Any = None,
+):
+    """The first `size` products of a carried set: `(predicate, product_ids)`.
+
+    `size` is the count the customer named (capped at `answer.SET_LIST_MAX`, the
+    default). `stock_policy` is the asking contact's stock visibility policy, so a
+    dealer's recount of a stock set covers only the locations it allows, exactly as the
+    first answer's did (`product_predicate_service._leg_stock`).
 
     The set is re-counted from its own description, which is what makes the carry two
     small values instead of a list - and what makes a page honest when the catalogue
@@ -2801,30 +3140,32 @@ def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: Any = Non
 
     **Security B2: the entitlement is part of that description.** The recount runs under
     the levels the CARRY recorded (`set_key.access_levels`, written by `set_page_carry`
-    from the levels page 1's own fetch used), never under anything this turn's parser
-    happened to state - a "more" states nothing, and an empty name list reaches
+    from the levels the first answer's own fetch used), never under anything this turn's parser
+    happened to state - a bare count states none, and an empty name list reaches
     `product_predicate_service._access_level_codes` as "no tier filter at all", which is
-    how page 2 of a promotion set widened past page 1. A carry that records NO levels is
-    refused (`qualifying_total: 0`, no ids, `entitlement_missing`), so the runner answers
-    the miss instead of reading the set unfiltered.
+    how a recount of a promotion set once widened past the first answer. A carry that
+    records NO levels is refused (`qualifying_total: 0`, no ids, `entitlement_missing`),
+    so the runner answers the miss instead of reading the set unfiltered.
 
     `access_levels` is for a caller that already knows the entitlement and holds a carry
-    written before it was recorded: the first page under it STAMPS the carry, so every
-    later page of that same carry recounts under the same authority. Production's own
-    "more" (`make_tool_runner.runner`) passes nothing at all.
+    written before it was recorded: the first recount under it STAMPS the carry.
+    Production's own recount (`make_tool_runner.runner`) passes nothing at all.
     """
-    from app.services.chatbot.lanes.business.answer import SET_PAGE_ID_CAP
+    from app.services.chatbot.lanes.business import answer as answer_mod
     from app.services.product_predicate_service import resolve_product_set
 
     key = carry.get("set_key") or {}
-    offset = int(carry.get("offset") or 0)
     entitled = _entitled_names(key.get("access_levels"))
     if not entitled:
         stamped = _entitled_names(access_levels)
         if stamped:
             key["access_levels"] = list(stamped)
             entitled = stamped
-    if not entitled:
+    # Only the promotion leg is tier-restricted (`product_predicate_service._leg_promotion`
+    # is the one leg that reads `access_levels`), so only a set with one needs a recorded
+    # entitlement to be recounted honestly; a certificate, stock, incoming or attachment
+    # set has none to record and must not be refused for lacking it.
+    if not entitled and (key.get("require") or {}).get("promotion"):
         return {
             "require": key.get("require") or {},
             "qualifying_total": 0,
@@ -2832,23 +3173,23 @@ def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: Any = Non
             "unrecognized_terms": [],
             "class_labels": [],
             "entitlement_missing": True,
-            "page": {
-                "start": offset + 1,
-                "end": offset,
-                "new_offset": offset,
-                "set_noun": key.get("set_noun") or "products",
-            },
+            "set_noun": key.get("set_noun") or "products",
         }, []
+    # W4: a carry that holds the resolver's own description replays it exactly (specs,
+    # brand, LOOKUP ids); an older carry falls back to its class words.
+    described = "specs" in key or "brand" in key or "product_ids" in key
     outcome = resolve_product_set(
         db,
         require=key.get("require") or {},
-        specs=[],
+        specs=list(key.get("specs") or []) if described else [],
         free_terms=None,
-        scope_terms=list(key.get("scope_terms") or []),
-        limit=SET_PAGE_ID_CAP,
-        product_ids=None,
-        brand=None,
+        scope_terms=None if described else list(key.get("scope_terms") or []),
+        limit=answer_mod.SET_ID_CAP,
+        product_ids=(list(key.get("product_ids") or []) or None) if described else None,
+        brand=key.get("brand") if described else None,
+        brand_is_default=bool(key.get("brand_default")) if described else False,
         access_levels=entitled,
+        stock_policy=stock_policy,
     )
     total = int(outcome.get("qualifying_total") or 0)
     ids = [
@@ -2857,21 +3198,37 @@ def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: Any = Non
         if isinstance(c, dict)
     ]
     ids = [i for i in ids if i]
-    page_ids = ids[offset : offset + SET_PAGE_SIZE]
-    end = offset + len(page_ids)
+    limit = answer_mod.SET_LIST_MAX if not size else min(int(size), answer_mod.SET_LIST_MAX)
+    # "another N" continues from where the last list stopped.
+    offset = max(0, int(key.get("shown") or 0))
+    page_ids = ids[offset : offset + limit]
     predicate = {
         "require": outcome.get("require") or key.get("require") or {},
         "qualifying_total": total,
         "truncated": bool(outcome.get("truncated")),
         "unrecognized_terms": [],
         "class_labels": [],
-        "page": {
-            "start": offset + 1,
-            "end": end,
-            "new_offset": end,
-            "set_noun": key.get("set_noun") or "products",
-        },
+        "set_noun": key.get("set_noun") or "products",
     }
+    if offset:
+        predicate["offset"] = offset
+    if total and offset >= total:
+        # Round 3 W2: a count after the last page. Every product was listed already, and
+        # the reply says so ("That is all 62.") rather than calling the tool with nothing.
+        predicate["exhausted"] = True
+    # The count the question was asked over: said again when the page counts another.
+    asked_total = int(key.get("total") or 0)
+    if asked_total and asked_total != total:
+        predicate["previous_total"] = asked_total
+    for field in ("description", "row_labels", "brand", "other_brands"):
+        if outcome.get(field):
+            predicate[field] = outcome[field]
+    if outcome.get("certificate_ids"):
+        predicate["certificate_ids"] = outcome["certificate_ids"]
+    # The next page's carry: the same description, moved past what this page lists.
+    # Kept after the last page too (round 3 W2), so a further count says "That is all".
+    next_key = {**key, "total": total, "shown": min(offset + len(page_ids), total) if page_ids else offset}
+    predicate["next_carry"] = {"set_key": next_key} if total else None
     return predicate, page_ids
 
 
@@ -2921,8 +3278,8 @@ def _tier_gate(
     `resolver_tier_gate` is not a dict, which three production shapes reach - the
     resolver raising (`turn_runtime.py:776-778` logs it and returns `payload=None`), a
     plan naming both `ideate` and `promotion` (the `ideate` entry builds no tier gate,
-    `lanes/business/__init__.py:45-49`), and `resolve_gate.run`'s own `set_page` early
-    return (`resolve_gate.py:990`, ahead of the `access_check` block). All three now
+    `lanes/business/__init__.py:45-49`), and a recount of a carried set (the answer to
+    "how many should I show?", `page_the_set`), which runs no resolver. All three now
     recompose to `[]`, and the runner's fail-closed guard above answers the miss.
     """
     tier = spec.filters.get("tier")
@@ -2968,7 +3325,11 @@ def with_carried_entities(
     that distinguishes "typed this turn" from "carried" (the low stock prune, the
     outstanding report's typed-code match) still can.
 
-    A turn that names its own entities is untouched - this is the EMPTY case only.
+    A turn that names its own entities is untouched - this is the EMPTY case, and the
+    case of a turn that names only a document word ("cert?", "photo?"): that word says
+    what to answer, not about what, so the subject and its filters are carried beside it
+    (fix round 9 on PR #833, the owner's "cert?" after "any gunmetal basin has
+    incoming?" answered every certified product).
 
     `unsettled_only` is the FETCH turn's version of the same question, and the narrower
     reading of it. A carry that already holds a `uuid` is settled: it is in the plan
@@ -2979,7 +3340,12 @@ def with_carried_entities(
     or sends the token where a uuid belongs. Those rows, and only those, are handed over
     on a turn that fetches.
     """
-    if parse_output.get("entities"):
+    own = [e for e in parse_output.get("entities") or [] if isinstance(e, dict)]
+    domain_word_only = bool(own) and all(
+        str(e.get("hint") or "").strip().lower() == "attachment_type" and e.get("current_message") is not False
+        for e in own
+    )
+    if parse_output.get("entities") and not domain_word_only:
         return parse_output
     carried: list[dict[str, Any]] = []
     # Every kind the focus holds, `extra` included. `KIND_FIELD_MAP` names four kinds
@@ -2997,6 +3363,9 @@ def with_carried_entities(
         if isinstance(rows, list)
     ]
     for kind, rows in by_kind:
+        if domain_word_only and kind == "attachment_type":
+            # This turn's own document word replaces the carried one.
+            continue
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -3014,10 +3383,16 @@ def with_carried_entities(
             }
             if row.get("uuid"):
                 entity["uuid"] = row["uuid"]
+            # Fix round 8 on PR #833: a grounded specification keeps its registry key and
+            # value, so "cert?" after "any gunmetal basin has incoming?" asks about the
+            # SAME gunmetal basins.
+            for name in ("spec_key", "spec_value", "spec_unit", "spec_label", "spec_words", "spec_known"):
+                if name in row:
+                    entity[name] = row[name]
             carried.append(entity)
     if not carried:
         return parse_output
-    return {**parse_output, "entities": carried}
+    return {**parse_output, "entities": [*carried, *own]}
 
 
 def _is_certificate_type(db: Session, attachment_type_id: Any) -> bool:
@@ -3318,7 +3693,7 @@ def domain_denial_text(db: Session, domain: str) -> str | None:
 
 
 def _lane_text_without_withheld_header(
-    text: Any, set_header: Any, *, counted_set: bool
+    text: Any, set_header: Any, *, counted_set: bool, set_described: bool = False
 ) -> Any:
     """#1262 slice 6 (F6a): `header_override` (below) is already withheld when
     `counted_set` is False - this is the SAME withholding for the other carrier.
@@ -3329,8 +3704,13 @@ def _lane_text_without_withheld_header(
     have incoming stock." above the real ETA rows). Stripped by exact prefix, off
     the same `set_header` string `header_override` itself is built from - never a
     guess at the header's shape.
+
+    A header over a DESCRIBED set (`set_described`, integration round 11 on PR #833)
+    stays: it is the one intro line of that set's reply ("Certificates found for
+    gunmetal wash basins (2).") on a follow-up turn that carries the set, not a
+    count over leftover words.
     """
-    if counted_set or not isinstance(text, str) or not isinstance(set_header, str):
+    if counted_set or set_described or not isinstance(text, str) or not isinstance(set_header, str):
         return text
     prefix = set_header.strip()
     if prefix and text.startswith(prefix):
@@ -3402,9 +3782,10 @@ def envelope_of(
             denial_text if refused else fetched.get("response"),
             fetched.get("set_header"),
             counted_set=counted_set,
+            set_described=bool(fetched.get("set_described")),
         ),
-        # A counted-set answer's own header ("10 taps have certificates. Showing
-        # 5.", AC-1316/AC-1317) - unlike `lane_text` this travels ALONGSIDE rows, not
+        # A counted-set answer's own header ("10 taps have certificates.",
+        # AC-1316) - unlike `lane_text` this travels ALONGSIDE rows, not
         # instead of them: the composer still renders `figures` through its own
         # per-row grammar, only the domain-generic header line is replaced.
         #
@@ -3479,7 +3860,7 @@ def envelope_of(
         # 1455`): the RECOMPOSED access levels this fetch actually went out with
         # (`_fetch_semantic_input`'s own, off `tier_gate.access_levels_recomposed` when
         # a tier gate ran). `engine.py` records it on the set-page carry so a later
-        # "more" recounts the set under the SAME entitlement rather than under the
+        # count answer recounts the set under the SAME entitlement rather than under the
         # parser's own, empty, list. `None` on every arm that never called the tool.
         "access_levels_used": fetched.get("access_levels"),
         # The top selling question this reply asked (`group` / `metric` / `basis` /
