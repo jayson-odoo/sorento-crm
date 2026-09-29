@@ -1789,10 +1789,9 @@ class InboundShipmentService:
         """Null `inbound_shipment_id` on every allocation booked on `shipment`, explicitly
         and before the delete flushes.
 
-        Explicit rather than left to the relationship: the unit of work nulls a child FK
-        inside the flush, after the audit hooks have already collected the dirty set, so
-        that unlink would leave no row. Marked dirty here, each line's unlink is an audited
-        UPDATE naming who deleted the packing list. It also holds on a database whose FK
+        Explicit rather than left to the relationship, so each line's unlink can be
+        written as an audit row naming who deleted the packing list (`_audit_spo_line`;
+        the table opts out of the automatic hooks). It also holds on a database whose FK
         has not been migrated to SET NULL yet: the UPDATE flushes before the DELETE.
         """
         rows = (
@@ -1802,6 +1801,17 @@ class InboundShipmentService:
         )
         for row in rows:
             row.inbound_shipment_id = None
+            _audit_spo_line(
+                self.db,
+                row,
+                "UPDATE",
+                old_values={"inbound_shipment_id": str(shipment.id)},
+                new_values={"inbound_shipment_id": None},
+                description=(
+                    f"Unlinked from packing list {shipment.shipment_number or shipment.id}"
+                    " on its deletion"
+                ),
+            )
         return len(rows)
 
     def bulk_delete_shipments(self, shipment_ids: list[str]) -> dict:
@@ -1818,6 +1828,43 @@ class InboundShipmentService:
         self.db.commit()
         deleted = len(shipments)
         return {"message": f"{deleted} packing list(s) deleted", "deleted_count": deleted}
+
+
+def _audit_spo_line(
+    db: Session,
+    row: "SPOAllocation",
+    action: str,
+    *,
+    old_values: Optional[dict] = None,
+    new_values: Optional[dict] = None,
+    description: Optional[str] = None,
+) -> None:
+    """One explicit audit row for a staff-driven change to an SPO line (SPO-CASCADE).
+
+    `spo_allocations` opts out of the default-on hooks (measured for the sync's churn,
+    review B3, and the plan's 10x ceiling cannot credit the sync-writer exclusion), so a
+    line that disappears leaves nothing behind unless the writer says so itself. This is
+    that statement, attributed the way `audit_service.record` attributes: to the stamped
+    actor. In the same transaction as the change, on purpose: a delete this table cannot
+    account for is worse than a delete that fails.
+    """
+    from app.audit_context import get_actor
+    from app.services.audit_service import _model_to_audit_dict, _uuid_or_none, log_audit
+
+    actor = get_actor(db)
+    log_audit(
+        db,
+        "spo_allocations",
+        str(row.id),
+        action,
+        old_values=old_values if old_values is not None else _model_to_audit_dict(row),
+        new_values=new_values,
+        user_id=_uuid_or_none(actor.user_id) if actor is not None else None,
+        ip_address=actor.ip_address if actor is not None else None,
+        description=description,
+        company_id=getattr(row, "company_id", None),
+        skip_flush=True,
+    )
 
 
 def next_spo_line_number(
@@ -3033,22 +3080,19 @@ class SPOAllocationService:
         by id. The id list is already narrowed to one company by construction, so the
         second query's own missing scope changes nothing.
         """
-        ids = [
-            row[0]
-            for row in self.db.query(SPOAllocation.id)
+        rows = (
+            self.db.query(SPOAllocation)
             .filter(SPOAllocation.spo_number == spo_number)
             .all()
-        ]
+        )
+        ids = [row.id for row in rows]
         if not ids:
             return {"message": "No SPO document to delete", "deleted_count": 0}
-        shipment_ids = {
-            shipment_id
-            for (shipment_id,) in self.db.query(SPOAllocation.inbound_shipment_id)
-            .filter(SPOAllocation.id.in_(ids))
-            .distinct()
-            .all()
-            if shipment_id is not None
-        }
+        shipment_ids = {row.inbound_shipment_id for row in rows if row.inbound_shipment_id is not None}
+        # One audit row per line before the query-level delete (`_audit_spo_line`): this
+        # is the path the UI's deferred "Delete selected" takes, the one an operator uses.
+        for row in rows:
+            _audit_spo_line(self.db, row, "DELETE", description=f"SPO document {spo_number} deleted")
         deleted = (
             self.db.query(SPOAllocation)
             .filter(SPOAllocation.id.in_(ids))
@@ -3406,6 +3450,7 @@ class SPOAllocationService:
         """Delete an SPO allocation by ID."""
         allocation = self.get_allocation(allocation_id)
         shipment_id = allocation.inbound_shipment_id
+        _audit_spo_line(self.db, allocation, "DELETE")
         self.db.delete(allocation)
         self.db.commit()
         InboundShipmentService(self.db).refresh_shipment_line_statuses(shipment_id)
@@ -3414,14 +3459,12 @@ class SPOAllocationService:
         """Delete multiple SPO allocations by ID. Returns count of deleted."""
         if not allocation_ids:
             return {"message": "No allocations to delete", "deleted_count": 0}
-        shipment_ids = {
-            shipment_id
-            for (shipment_id,) in self.db.query(SPOAllocation.inbound_shipment_id)
-            .filter(SPOAllocation.id.in_(allocation_ids))
-            .distinct()
-            .all()
-            if shipment_id is not None
-        }
+        # The rows themselves, not only their shipment ids: each one gets its own audit
+        # row before the query-level delete removes it (`_audit_spo_line`).
+        rows = self.db.query(SPOAllocation).filter(SPOAllocation.id.in_(allocation_ids)).all()
+        shipment_ids = {row.inbound_shipment_id for row in rows if row.inbound_shipment_id is not None}
+        for row in rows:
+            _audit_spo_line(self.db, row, "DELETE")
         deleted = self.db.query(SPOAllocation).filter(SPOAllocation.id.in_(allocation_ids)).delete(synchronize_session=False)
         self.db.commit()
         inbound_svc = InboundShipmentService(self.db)

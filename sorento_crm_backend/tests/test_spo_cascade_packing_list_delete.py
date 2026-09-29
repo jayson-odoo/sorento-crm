@@ -275,9 +275,10 @@ def _audit_rows(env, entity_id: str, action: str) -> list[AuditLog]:
 
 
 def test_deleting_an_spo_line_as_staff_writes_an_audit_row_naming_who(env):
-    """A future disappearance has to be traceable: who, when, which document. The row
-    was on the audit skip list (measured for the SYNC's churn, which the sync-writer
-    rule already excludes), so a staff delete left nothing behind."""
+    """A future disappearance has to be traceable: who, when, which document. The table
+    is on the audit skip list (measured for the SYNC's churn, and the plan's 10x ceiling
+    cannot credit the sync-writer exclusion), so a staff delete left nothing behind; the
+    service now writes the row itself (`procurement_service._audit_spo_line`)."""
     container = _container()
     shipment = _shipment(env, container)
     (line,) = _autocount_lines(env, shipment, container, count=1)
@@ -319,6 +320,31 @@ def test_bulk_deleting_spo_lines_as_staff_writes_an_audit_row_per_line(env):
         rows = _audit_rows(env, line_id, "DELETE")
         assert len(rows) == 1, f"no audit row for bulk-deleted line {line_no}"
         assert rows[0].user_id == user_id
+
+
+def test_deleting_an_spo_document_as_staff_writes_an_audit_row_per_line(env):
+    """`spo_document.delete`, the deferred action the UI's "Delete selected" parks
+    (`record_actions._delete_spo_document` -> `delete_document`): the path an operator
+    actually takes, so the one that most needs a trail."""
+    container = _container()
+    shipment = _shipment(env, container)
+    lines = _autocount_lines(env, shipment, container, count=2)
+    expected = [(row.id, row.spo_line_number) for row in lines]
+    spo_number = lines[0].spo_number
+    user_id = str(uuid.uuid4())
+    stamp_actor(
+        AuditActor(actor_type="user", user_id=user_id, real_user_id=user_id, auth_method="password"),
+        db=env.db,
+    )
+
+    result = SPOAllocationService(env.db).delete_document(spo_number)
+
+    assert result["deleted_count"] == 2
+    for line_id, line_no in expected:
+        rows = _audit_rows(env, line_id, "DELETE")
+        assert len(rows) == 1, f"no audit row for document-deleted line {line_no}"
+        assert rows[0].user_id == user_id
+        assert (rows[0].old_values or {}).get("spo_number") == spo_number
 
 
 def test_deleting_a_packing_list_records_the_unlink_on_each_spo_line(env):

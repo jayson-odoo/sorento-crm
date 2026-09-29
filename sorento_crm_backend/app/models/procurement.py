@@ -469,14 +469,14 @@ class SPOAllocation(Base, CompanyScopedMixin):
         a warehouse); a location we cannot place cannot cover a line standing at one.
     """
     __tablename__ = "spo_allocations"
-    # Audited by default since SPO-CASCADE (28 Sep 2026): 18 synced lines disappeared with
-    # no row saying who or when. The skip was measured against the SYNC's churn (2,602 to
-    # 29,343 rows a day, review B3), and the sync never reached the default-on hooks anyway:
-    # the ESB ingest, the imports queue and the scheduler are sync writers
-    # (`audit_context.sync_writer_for`), which `_audited_here` excludes unless a model opts
-    # in with `__audit_track__`. This table does not, so what gets a row now is only the
-    # staff-driven write: an operator's delete or edit, a GRN approval's receipt recompute,
-    # an SPO raised from a draft shipment, and the unlink when a packing list is deleted.
+    # Stays opted out of the default-on hooks: the audit standard's measured 10x ceiling
+    # (`tests/test_audit_standard_s0_round3.py::projected_rows_per_day`) cannot credit the
+    # sync-writer exclusion, and this table's volume alone breaches it on paper. What the
+    # SPO-CASCADE incident needed (18 synced lines gone with no row saying who or when) is
+    # written explicitly instead: `procurement_service._audit_spo_line` records every
+    # staff-driven delete of a line (single, bulk, whole document) and the unlink when a
+    # packing list is deleted, attributed to the stamped actor.
+    __audit_skip__ = "shipping order allocation lines from the sync, 2,602 to 29,343 rows a day (measured 27 Sep 2026, review B3)"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     spo_number = Column(String(50), nullable=True)
