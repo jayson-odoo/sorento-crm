@@ -195,6 +195,7 @@ def _build_envelope(
     envelope["is_test"] = True
     envelope["test_run_id"] = run_id
     envelope["ingress"] = "console"
+    envelope["console_origin"] = True
     envelope["shadow_of"] = None
     if session_vars is not None:
         envelope["previous_conversation_state"] = session_vars
@@ -650,6 +651,7 @@ def _run_console_media_turn(
         "is_test": True,
         "test_run_id": run_id,
         "ingress": "console",
+        "console_origin": True,
     }
     if session_vars is not None:
         envelope_dict["previous_conversation_state"] = session_vars
