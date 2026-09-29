@@ -100,15 +100,18 @@ class TestWarehouseAndListDefault:
         out = _args(PO_TOOL, entities=[_warehouse()])
         assert out.get("warehouse_ids") == [WAREHOUSE_UUID], out
 
-    def test_the_spo_list_default_is_ten_rows(self) -> None:
-        assert getattr(fetch, "SPO_LIST_ROWS", None) == 10
+    def test_no_lane_side_list_default_exists(self) -> None:
+        """Owner ruling 29 Sep 2026, verbatim: "for SPO question with no product name, keep
+        it as it is" - the tool's own one-row unscoped default answers, so the lane
+        declares no row constant of its own (PLAN S7)."""
+        assert not hasattr(fetch, "SPO_LIST_ROWS")
 
-    def test_a_warehouse_only_spo_ask_lists_ten_rows(self) -> None:
+    def test_a_warehouse_only_spo_ask_sends_no_top_n(self) -> None:
         out = _args(SPO_TOOL, entities=[_warehouse()])
         assert out.get("warehouse_ids") == [WAREHOUSE_UUID], out
-        assert out.get("top_n") == 10, out
+        assert "top_n" not in out, out
 
-    def test_a_named_top_n_wins(self) -> None:
+    def test_a_named_top_n_still_travels(self) -> None:
         out = _args(SPO_TOOL, entities=[_warehouse()], top_n=3)
         assert out.get("top_n") == 3, out
 

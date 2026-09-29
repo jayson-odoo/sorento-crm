@@ -183,12 +183,12 @@ revision over both (see M1) so the branch has exactly one head.
   key sends nothing (the tool's own default order). `sort_dir` from the parser wins over
   the default. Row order in the reply is the tool's order (the presenters never re-sort;
   `sorento_crm_mcp/presenters.py:465-530`).
-- S7. SPO list default: on `crm_procurement_spo_allocations_last_receipt_list`, when the
-  built args carry no `product_ids` and the ask named no `top_n`, the fetch sends
-  `top_n = SPO_LIST_ROWS` (10) so an SPO ask scoped only by a warehouse (or a sort) lists
-  the latest lines instead of the tool's one-row default. A named `top_n` wins; a
-  product-scoped ask keeps the tool's per-product default of 1. Assumption flagged to the
-  owner in the PR; one constant, no setting.
+- S7. SPO ask with no product: owner ruling (29 Sep 2026, verbatim) "for SPO question with
+  no product name, keep it as it is". The lane adds NO row default: an SPO ask scoped only
+  by a warehouse or a sort reaches the tool with no `top_n` and the tool's own unscoped
+  default (one row, the newest by the chosen sort) answers. A named count ("last 3",
+  "top 20") still travels as `top_n`, exactly as today. (Option (a), a lane-side
+  `top_n = 10`, was proposed and declined.)
 
 ### W. Warehouse filter
 

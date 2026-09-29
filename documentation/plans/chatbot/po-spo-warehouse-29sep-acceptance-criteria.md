@@ -28,8 +28,8 @@ Not a gate on the build: both filters match by `warehouse_id` OR `location_code`
 Answered (orchestrator, read-only on `sorento_cagent_stack`, data as of 2026-09-18):
 Q1 `po_lines = 3919`, `po_lines_with_warehouse = 2975` (~76%). Q2 `spo_lines = 77666`,
 `spo_with_warehouse_id = 76985`, `spo_code_only = 681`, `spo_no_location = 0`. Coverage is
-enough: both halves are built. Option (a) of the SPO list-default ask (top_n 10 for a
-no-product SPO ask) proceeds.
+enough: both halves are built. On the SPO list-default ask the owner ruled option (b),
+verbatim "for SPO question with no product name, keep it as it is": no lane-side default.
 
 ## Routing (S1..S4)
 
@@ -98,8 +98,9 @@ no-product SPO ask) proceeds.
   never gets `sort`/`dir`.
   Test: `tests/chatbot/test_po_spo_sort_fetch.py::TestSortMapsPerTool`.
 - AC-10 A resolved warehouse entity on the PO tool becomes `warehouse_ids`; on the SPO
-  tool with no `product_ids` and no `top_n`, the args carry `top_n == 10`; a named `top_n`
-  wins; with `product_ids` present no default is added.
+  tool with no `product_ids` and no named count, the args carry NO `top_n` (owner ruling:
+  "for SPO question with no product name, keep it as it is", so the tool's own one-row
+  default answers); a named `top_n` still travels.
   Test: `test_po_spo_sort_fetch.py::TestWarehouseAndListDefault`.
 - AC-11 `run_gate` under `domain_hint "purchase_order"` keeps product + warehouse, drops a
   customer, and passes a zero-entity ask (`gate_passed` True, reason names `permits
@@ -150,8 +151,8 @@ no-product SPO ask) proceeds.
 
 - AC-18 `laneboard/scripts/1373.md` and
   `tests/chatbot/console_cases/2026-09-29-po-spo-warehouse.yaml` carry: "PO to BRW"
-  (PO placed rows, every `Location` BRW), "SPO for BRW-BB" (SPO lines at BRW-BB, up to
-  10), "SPO SRT79-SS" (SPO line(s) for that product, not incoming), "last in SRTWC286 at
+  (PO placed rows, every `Location` BRW), "SPO for BRW-BB" (the newest SPO line at
+  BRW-BB, the tool's unscoped default; "last 3 SPO for BRW-BB" gives three), "SPO SRT79-SS" (SPO line(s) for that product, not incoming), "last in SRTWC286 at
   BRW" (unchanged behaviour, one row per product at BRW), "latest PO for SRT79-SS"
   (PO rows newest PO Date first), "SPO biggest quantity first at BRW" (SPO Quantity
   descending), then "oldest first" alone (same list re-sorted).
