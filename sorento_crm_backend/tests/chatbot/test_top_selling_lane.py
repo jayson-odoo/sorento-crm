@@ -1059,6 +1059,8 @@ class TestParser:
         assert prompt_mod.SEMANTIC_PARSER_PROMPT.removesuffix(
             prompt_mod.MEMORY_ADDENDUM
         ).removesuffix(
+            prompt_mod.PO_SPO_WAREHOUSE_ADDENDUM
+        ).removesuffix(
             prompt_mod.ESCALATION_CONFIRMATION_ADDENDUM
         ).endswith(text)
         for banned in (chr(0x2014), chr(0x2013)):

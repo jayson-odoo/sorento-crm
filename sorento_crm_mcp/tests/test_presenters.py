@@ -127,6 +127,26 @@ def test_incoming_list_allocation_flags_and_unallocated_field():
     assert c["flags"]["discontinued"] is False
 
 
+def test_incoming_list_with_container_and_quantity_denied_prints_no_number():
+    """Issue #1328: the backend strips the container number and every quantity for a
+    contact denied them (absent, not null). The row still names the product and the
+    warehouse, and never prints "None" where a quantity was."""
+    out = env("crm_incoming_stock_list", {
+        "data": [{
+            "shipment_number": "SH1",
+            "estimated_arrival_date": "2026-11-02",
+            "lines": [
+                {"product_code": "A", "warehouse_allocations": [{"warehouse_code": "BRW"}]},
+            ],
+        }],
+    })
+    fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert fields["Warehouse Allocations"] == "BRW"
+    assert "Container" not in fields
+    assert "Incoming Quantity" not in fields
+    assert "None" not in json.dumps(out["items"])
+
+
 def test_incoming_list_missing_gap_key_claims_no_partial():
     """Forward-compat: an older backend omits `unallocated_quantity`.
 
@@ -1776,3 +1796,65 @@ def test_product_attachment_with_no_link_is_listed_with_the_unavailable_note_and
     second = {f["label"]: f["value"] for f in out["items"][1]["fields"]}
     assert "File Link" not in second
     assert [a["filename"] for a in out["attachments"]] == ["CWSP124.jpg"]
+
+
+# --- PR #1329 fix round: the dealer's incoming reply ---------------------------------
+
+
+def test_dealer_view_is_one_line_per_product_and_the_salesperson():
+    """The backend's dealer view (an "Availability only" contact): the product code once,
+    its distinct ETAs, and who to ask. No intro, no numbering, no field of ours."""
+    for tool in ("crm_incoming_stock_list", "crm_incoming_stock_by_product"):
+        out = env(tool, {
+            "data": [
+                {"product_code": "SRTWC286-SH-NEW", "etas": ["2026-09-08", "2026-09-20"]},
+            ],
+            "dealer_view": True,
+            "salesperson_name": "Sean",
+        })
+        assert out["result_type"] == "incoming_dealer"
+        assert out["intro"] == ""
+        assert [i["title"] for i in out["items"]] == ["SRTWC286-SH-NEW\nETA: 2026-09-08, 2026-09-20"]
+        assert out["items"][0]["fields"] == []
+        assert out["closing"] == "Please refer to your salesperson, Sean."
+        assert out["has_result"] is True
+
+
+def test_dealer_view_without_a_salesperson_still_refers():
+    out = env("crm_incoming_stock_list", {
+        "data": [{"product_code": "A", "etas": ["2026-09-08"]}],
+        "dealer_view": True,
+        "salesperson_name": None,
+    })
+    assert out["closing"] == "Please refer to your salesperson."
+
+
+def test_dealer_view_with_nothing_incoming_is_a_miss():
+    out = env("crm_incoming_stock_list", {
+        "data": [], "empty": True, "dealer_view": True, "salesperson_name": "Sean",
+    })
+    assert out["has_result"] is False
+    assert out["items"] == []
+
+
+def test_identical_incoming_rows_print_once():
+    """Two lines that read the same once the contact's reveals are applied (the
+    container and quantities withheld) are one line to the reader."""
+    row = {
+        "shipment_number": "SH1",
+        "estimated_arrival_date": "2026-09-08",
+        "lines": [{"product_code": "A", "warehouse_allocations": [{"warehouse_code": "BRW"}]}],
+    }
+    out = env("crm_incoming_stock_list", {"data": [row, {**row, "shipment_number": "SH2"}]})
+    assert len(out["items"]) == 1
+
+
+def test_incoming_rows_that_differ_still_print_apart():
+    rows = [
+        {"shipment_number": "SH1", "shipping_container_number": "C1",
+         "estimated_arrival_date": "2026-09-08", "lines": [{"product_code": "A"}]},
+        {"shipment_number": "SH2", "shipping_container_number": "C2",
+         "estimated_arrival_date": "2026-09-08", "lines": [{"product_code": "A"}]},
+    ]
+    out = env("crm_incoming_stock_list", {"data": rows})
+    assert len(out["items"]) == 2

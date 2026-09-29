@@ -212,9 +212,17 @@ def _oi_order_back(db, *, pid, wid, qty="493"):
     """The owner's own measured shape: ONE project SO, ONE core line delivered IN FULL
     (`line_status='closed'`, nothing outstanding), an ORDER_BACK row of `qty` at the
     line's own location (`donor_warehouse_code=None` - `COALESCE(donor.id, sol.warehouse_
-    id)` falls back to the line's own warehouse when `stock_location` names none)."""
+    id)` falls back to the line's own warehouse when `stock_location` names none).
+
+    ``sibling_order=False``: the shared seed also plants an ORDER row of the same `qty`
+    on the same line by default, which the 7.3 cap used to zero out on a delivered line.
+    R1 (`PLAN-oi-order-rows-uncapped.md`, 23 Sep 2026) retires that cap, so with the
+    sibling in the line would carry `2 * qty` and every "bought in full" figure below
+    would double (986, not 493). The measured shape is ONE row, so only that row is
+    seeded."""
     return _project_so_delivered_line_with_order_back(
         db, product_id=pid, warehouse_id=wid, donor_warehouse_code=None, qty=qty,
+        sibling_order=False,
     )
 
 

@@ -703,9 +703,14 @@ class StockService:
             # (one cheap extra lookup) so `_apply_stock_visibility` can read that
             # contact's own `packing_list_allowed` toggle without threading a bigger
             # change through `resolve_policy`'s other callers.
-            from app.services.field_access import resolve_contact_id
+            #
+            # Issue #1328: resolved through `eta_policy.resolve_request_contact` (with the
+            # NULL-workspace fallback), the SAME resolution the incoming routes use, so a
+            # contact's ETA and packing list switches read identically on both. Only the
+            # switches read this id; the policy above keeps its own lookup.
+            from app.services.eta_policy import resolve_request_contact
 
-            resolved_contact_id = resolve_contact_id(self.db, contact_id, space_id)
+            resolved_contact_id = resolve_request_contact(self.db, contact_id, space_id)
             if policy is None:
                 return {
                     "data": [],
@@ -1533,9 +1538,6 @@ class StockService:
         # date ever appear. Replaces #1118's verdict()/spo_allocations/purchase-order/
         # threshold read (ported as-is in an earlier step of this slice to reach
         # #1118 parity; superseded here, `app/services/stock_verdict.py` deleted).
-        from datetime import timedelta
-
-        from app.models.access import RespondContact
         from app.models.order import SalesOrderLine
         from app.models.product import ProductCategory
         from app.models.resources import Attachment
@@ -1543,6 +1545,7 @@ class StockService:
             _attachment_payload,
             earliest_packing_list_shipment,
         )
+        from app.services.eta_policy import rules_for_contact, visible_eta
         from app.services.stock_ask_branch import branch as compute_branch
         from app.services.stock_ask_limits import effective as effective_limits
 
@@ -1630,14 +1633,10 @@ class StockService:
         # was resolved against (AC-SA311/AC-SA312: a raw GET never carries the file
         # for a contact who may not have it, the same rule that already withholds
         # every quantity of ours).
-        packing_list_allowed = False
-        if resolved_contact_id:
-            contact_row = (
-                self.db.query(RespondContact.packing_list_allowed)
-                .filter(RespondContact.id == resolved_contact_id)
-                .first()
-            )
-            packing_list_allowed = bool(contact_row and contact_row[0])
+        #
+        # Issue #1328: read through `eta_policy.rules_for_contact`, the one place the
+        # incoming routes read it too, together with the contact's ETA offset switch.
+        contact_rules = rules_for_contact(self.db, resolved_contact_id)
 
         # Review round 5 (kept from #1118): ONE entry per product CODE. A dealer
         # contact whose companies both carry the same code resolves it to two
@@ -1718,8 +1717,9 @@ class StockService:
                 entry["category_name"] = category.category_name
                 if entry["branch"] == "incoming" and shipment is not None:
                     _shipment_id, eta_date, attachment_id = shipment
-                    entry["eta"] = (eta_date + timedelta(days=y)).strftime("%d/%m/%Y")
-                    if packing_list_allowed:
+                    # Issue #1328: `+ y` only when this contact's ETA offset switch is on.
+                    entry["eta"] = visible_eta(eta_date, y, contact_rules).strftime("%d/%m/%Y")
+                    if contact_rules.packing_list_allowed:
                         attachment = (
                             self.db.query(Attachment)
                             .filter(Attachment.id == attachment_id)

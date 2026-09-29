@@ -1200,7 +1200,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "never for what a customer ordered from us (that is crm_order_management_orders_list). "
             "NEVER netted against incoming shipments: a PO and an SPO are two separate answers. "
             "group_by = product | supplier | date; include_summary adds the placed quantity and "
-            "line count."
+            "line count. Filters by warehouse_ids; sorts by expected_date, product, supplier, "
+            "outstanding_qty, po_date or ordered_qty."
         ),
         typical_user_questions=(
             "Is there a PO for SRTWC8517?",
@@ -1225,7 +1226,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "and how much', including a line nothing has been received against yet. NOT for "
             "current stock on hand (crm_inventory_stock_balance_list) and NOT for what is still "
             "on the way (crm_incoming_stock_by_product). top_n defaults to 1; 'last 3 in' is "
-            "top_n=3."
+            "top_n=3. Filters by warehouse_ids; sorts by spo_date, spo_quantity, gr_date or "
+            "gr_quantity."
         ),
         typical_user_questions=(
             "Last in for SRTWC8517?",

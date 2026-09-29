@@ -199,7 +199,7 @@ function ChatbotSettingsCard({
             />
           </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <SwitchRow
             id="contact-chatbot-stock"
             label="Stock checks"
@@ -220,6 +220,13 @@ function ChatbotSettingsCard({
             checked={profile.packing_list_allowed}
             disabled={save.isPending}
             onCheckedChange={(checked) => save.mutate({ ...profile, packing_list_allowed: checked })}
+          />
+          <SwitchRow
+            id="contact-chatbot-eta-offset"
+            label="ETA buffer days"
+            checked={profile.eta_offset_applied}
+            disabled={save.isPending}
+            onCheckedChange={(checked) => save.mutate({ ...profile, eta_offset_applied: checked })}
           />
         </div>
       </CardContent>

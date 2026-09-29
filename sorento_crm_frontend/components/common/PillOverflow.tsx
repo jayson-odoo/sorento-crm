@@ -126,7 +126,9 @@ export function PillOverflow({
   // re-measured the DOM on every unrelated re-render, not only when a pill's key/label or
   // the count actually changed. Joins the two fields `recompute` cares about into a string,
   // which the dependency array below compares by VALUE the way a primitive does.
-  const itemsSignature = items.map((item) => `${item.key} ${item.label}`).join('');
+  const itemsSignature = items
+    .map((item) => `${item.key} ${item.label}`)
+    .join('');
 
   React.useLayoutEffect(() => {
     pillRefs.current = pillRefs.current.slice(0, items.length);
@@ -201,7 +203,12 @@ export function PillOverflow({
             className="flex min-w-0 flex-wrap items-center gap-1 overflow-hidden"
           >
             {items.slice(0, visibleCount).map((item) => (
-              <Pill key={item.key} label={item.label} tone={item.tone} interactive />
+              <Pill
+                key={item.key}
+                label={item.label}
+                tone={item.tone}
+                interactive
+              />
             ))}
             {overflowCount > 0 && (
               <Pill label={`+${overflowCount}`} tone="neutral" interactive />
@@ -220,6 +227,12 @@ export function PillOverflow({
             // `BoardTrailPopover` prevents it). Read-only content, so it does not need the
             // focus.
             onOpenAutoFocus={(event) => event.preventDefault()}
+            // The portal moves the content to the document root in the DOM, but a React
+            // event still bubbles up the COMPONENT tree: a click on a listed item reached
+            // the DataGrid row's own handler and opened the row (`rowHref` / `onRowClick`)
+            // behind the popover. The wrapper above only stops clicks that land on a pill,
+            // so the content stops its own here, the way the other "+N" popovers do.
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="max-h-[60vh] overflow-auto p-3 text-xs">
               {renderPopover(items)}
@@ -228,6 +241,22 @@ export function PillOverflow({
         </PopoverPortal>
       </Popover>
     </div>
+  );
+}
+
+/**
+ * The plain popover body a label-only cell wants: every item on its own line. The People
+ * pages (Roles, Access types), the role list's Permissions and the other label-list cells
+ * pass this as `renderPopover` so the same fold reads the same way on every list; a cell
+ * whose items carry more than a label (a link, a tone legend) renders its own.
+ */
+export function PillOverflowList({ items }: { items: PillItem[] }) {
+  return (
+    <ul className="flex flex-col gap-1 text-sm">
+      {items.map((item) => (
+        <li key={item.key}>{item.label}</li>
+      ))}
+    </ul>
   );
 }
 

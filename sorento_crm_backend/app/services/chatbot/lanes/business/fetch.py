@@ -499,6 +499,43 @@ GROUP_BY_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+# PLAN-po-spo-warehouse-29sep S6: the parser's `sort_by` mapped to each PO/SPO tool's own
+# `sort` key. A key a tool has no column for is absent, so it sends nothing and the tool's
+# own default order answers. `SORT_DEFAULT_DIR` is the direction when the parser named none.
+SORT_KEY_BY_TOOL: dict[str, dict[str, str]] = {
+    "crm_procurement_po_placed_list": {
+        "date": "po_date",
+        "expected_date": "expected_date",
+        "quantity": "ordered_qty",
+        "outstanding": "outstanding_qty",
+        "product": "product",
+        "supplier": "supplier",
+    },
+    "crm_procurement_spo_allocations_last_receipt_list": {
+        "date": "spo_date",
+        "expected_date": "spo_date",
+        "quantity": "spo_quantity",
+        "received_date": "gr_date",
+        "received_quantity": "gr_quantity",
+    },
+}
+#: A tool's sort key that orders by a RESTRICTED field, and the field-reveal key that
+#: permits it (the same key the presenter's `restrict()` names for that field). Without
+#: the grant the sort is not sent (security review, PR #1373, finding 1).
+RESTRICTED_SORT_KEYS: dict[str, dict[str, str]] = {
+    "crm_procurement_po_placed_list": {"supplier": "purchase_orders.supplier"},
+}
+SORT_DEFAULT_DIR: dict[str, str] = {
+    "date": "desc",
+    "expected_date": "asc",
+    "quantity": "desc",
+    "outstanding": "desc",
+    "received_date": "desc",
+    "received_quantity": "desc",
+    "product": "asc",
+    "supplier": "asc",
+}
+
 # A6: the one tool with its OWN `top_n` param (default 1, "last 3 in"); every
 # other GROUP_BY_TOOLS/ORDER_TOOLS member aliases `top_n` to `limit` instead
 # (above), since it has no `top_n` param of its own.
@@ -1074,6 +1111,24 @@ def entity_ids_transformer(
             out["top_n"] = top_n
         elif tool_name in ORDER_TOOLS or tool_name in GROUP_BY_TOOLS:
             out["limit"] = top_n
+    # PLAN-po-spo-warehouse-29sep S6: the sort axis, for the two PO/SPO tools only.
+    sort_by = jsc.get(semantic_input, "sort_by")
+    mapped = SORT_KEY_BY_TOOL.get(tool_name, {}).get(sort_by) if isinstance(sort_by, str) else None
+    # Security review (PR #1373, finding 1): a sort on a RESTRICTED field orders the rows
+    # by a value the contact may not see - the same side channel the restricted-field
+    # drop below refuses for `group_by=supplier` (rows clustered by supplier with the
+    # names blanked still say which lines share one). Refused HERE, before the call, so
+    # the tool's own default order answers; the drop cannot re-order rows after the fact.
+    sort_perm = RESTRICTED_SORT_KEYS.get(tool_name, {}).get(mapped) if mapped else None
+    if sort_perm is not None:
+        access = trig.get("access") if isinstance(trig.get("access"), dict) else {}
+        attributes = access.get("attributes") if isinstance(access.get("attributes"), list) else []
+        if sort_perm not in attributes:
+            mapped = None
+    if mapped:
+        out["sort"] = mapped
+        sort_dir = jsc.get(semantic_input, "sort_dir")
+        out["dir"] = sort_dir if sort_dir in ("asc", "desc") else SORT_DEFAULT_DIR[sort_by]
 
     # A counted set (the resolver's `predicate` rode through the gate) lists PRODUCTS,
     # never a ROW count: `limit` is the tool's own row cap (a stock answer carries a row
@@ -2794,9 +2849,19 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             else "Here are the delivered orders I found."
         )
 
+    # PR #1329 fix round: a dealer's incoming answer (`presenters._incoming_dealer`) is
+    # one line per product plus the salesperson line - the same un-numbered, intro-less
+    # shape as an answered `availability` reply.
+    dealer_incoming = bool(
+        jsc.js_string(e.get("result_type") or "") == "incoming_dealer"
+        and isinstance(e.get("items"), list)
+        and len(e["items"])
+    )
+    plain_lines = stock_availability_answered or dealer_incoming
+
     msg = (
         ""
-        if stock_availability_answered
+        if plain_lines
         else jsc.js_string(e.get("intro") or "Here are the results.").strip() + "\n\n"
     )
     if isinstance(ctx.get("predicate"), dict):
@@ -2934,7 +2999,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     for i, it in enumerate(
         [] if (qs_render or groups_render or stock_ask_render) else (e.get("items") or [])
     ):
-        msg += _item_line(i + 1 + set_row_offset, it, numbered=not stock_availability_answered) + "\n\n"
+        msg += _item_line(i + 1 + set_row_offset, it, numbered=not plain_lines) + "\n\n"
+    if dealer_incoming and jsc.truthy(e.get("closing")):
+        msg += jsc.js_string(e["closing"]).strip() + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
     # (`_project_product_specs`). Byte-inert when the key is absent.
     for miss in e.get("spec_misses") or []:

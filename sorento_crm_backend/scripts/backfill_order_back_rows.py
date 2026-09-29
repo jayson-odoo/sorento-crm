@@ -10,6 +10,9 @@ that turned an order back CS wrote into a closed ORDER instruction the moment it
 uploaded - the picker hides the order, and `scm.committed_v` reads it as satisfied. The
 fix in `app.services.scm.demand` / `project_order_inquiry_import_service` stops it
 happening to a NEW upload; this script repairs what already shipped that way.
+(`_close_history` itself is retired entirely as of 23 Sep 2026, R2,
+`PLAN-oi-order-rows-uncapped.md` - the candidate gate refuses a cancelled line before a
+row is ever raised, so there is nothing left for it to close after the fact.)
 
 WHAT IT DOES
 ------------
@@ -26,7 +29,8 @@ A candidate only exists among rows the IMPORTER, not a person, closed: `verb = '
 TWO signals together, both narrower than either alone:
 
 * The CLOCK - the importer stamps `actioned_at` from the SAME `now` it stamps the
-  header's own `raised_at` with (`_close_history`'s caller), so an importer-closed row's
+  header's own `raised_at` with (`_close_history`'s caller, back when this script was
+  written - the function itself is retired now, see above), so an importer-closed row's
   `actioned_at` sits within 60 seconds of `order_inquiries.raised_at`. Rows imported
   before the S5a timezone fix (`project_order_inquiry_import_service.py`, `_now()`) wrote
   a naive MYT wall clock instead of naive UTC for one of the two writers, an 8-hour skew -

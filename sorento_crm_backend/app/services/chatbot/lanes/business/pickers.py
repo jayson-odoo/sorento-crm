@@ -92,6 +92,11 @@ def annotate_incoming(gate: dict[str, Any] | None, *, probe: Any) -> dict[str, A
     has_incoming: set[str] = set()
     for a in answers:
         code = jsc.get(a, "title") if jsc.truthy(a) else a
+        if jsc.get(jsc.get(a, "flags"), "dealer_view") is True and isinstance(code, str):
+            # PR #1329 fix round 2: a dealer's incoming line is "<code>\nETA: <dates>" in
+            # the title, with no field (the MCP presenter's `_incoming_dealer`). The whole
+            # title matched no code, so every roster line read "no incoming".
+            code = code.split("\n", 1)[0]
         if not jsc.truthy(code) and jsc.truthy(a) and isinstance(jsc.get(a, "fields"), list):
             field = jsc.find(
                 jsc.get(a, "fields"),

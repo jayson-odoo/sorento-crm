@@ -439,9 +439,10 @@ def _remove(db: Session, file_name: str, all_companies: bool) -> Dict[str, Any]:
     # from the states of its rows: raised while anything on it still waits, actioned when
     # nothing does. Pulling rows out in bulk changes that set without going through the
     # writer, so a header that keeps ANOTHER file's rows would sit on a state its own rows no
-    # longer support (an upload's rows are born raised or actioned by `_close_history`, so
-    # the two mix on one header routinely). Recomputed for every header this pass touched;
-    # the ones it deleted are skipped by that reader's own missing-header check.
+    # longer support (`_close_history` retired 23 Sep 2026, R2 - an upload's rows are all
+    # born raised now, but a header can still mix raised and actioned rows once linking has
+    # actioned some of them). Recomputed for every header this pass touched; the ones it
+    # deleted are skipped by that reader's own missing-header check.
     if inquiry_ids:
         from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
