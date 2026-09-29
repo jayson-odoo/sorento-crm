@@ -104,7 +104,17 @@ class EngineConsole:
         self.transcript: list[str] = []
         self.blocks: list[str] = []
         self.tool_calls: list[tuple[str, dict[str, Any]]] = []
+        #: Every `turn_apply` Plan's trace, in call order (issue #1352: the judgement a
+        #: turn made - its decision and the rules that fired - read off the real apply).
+        self.traces: list[Any] = []
+        #: The LAST apply trace of each turn, one per `say` (a turn can run apply twice).
+        self.turn_traces: list[Any] = []
         self._next: dict[str, Any] | None = None
+        #: Issue #1352: set to a number and the stock tool answers in the `compact`
+        #: shape (a staff contact who may see quantities: "Total: <n>"), so a stock
+        #: turn ANSWERS rather than asking the dealer's "How many units?". None keeps
+        #: the dealer availability shape every earlier test pins.
+        self.stock_on_hand: int | None = None
         self._turns = 0
         #: `session_patch` of the last turn, sent back as the next turn's
         #: `previous_conversation_state` - the console's own carry.
@@ -135,6 +145,29 @@ class EngineConsole:
             self.tool_calls.append((name, args))
             if name != "crm_inventory_stock_balance_list":
                 return json.dumps({"answers": []})
+            if self.stock_on_hand is not None:
+                summary = [
+                    {
+                        "product_id": pid,
+                        "product_code": self.codes[pid],
+                        "total_on_hand": self.stock_on_hand,
+                        "locations": [{"warehouse_code": "BRW", "quantity_on_hand": self.stock_on_hand}],
+                    }
+                    for pid in args.get("product_ids") or []
+                    if pid in self.codes
+                ]
+                return present(
+                    name,
+                    json.dumps(
+                        {
+                            "data": [],
+                            "pagination": {"total": len(summary), "page": 1, "limit": 50},
+                            "stock_visibility": {"mode": "compact", "warehouse_codes": None, "source": "contact"},
+                            "stock_summary": summary,
+                            "last_updated_at": "2026-09-29T01:00:00",
+                        }
+                    ),
+                )
             wanted = args.get("requested_quantities") or {}
             if isinstance(wanted, str):
                 # The route's query param: a JSON object, as `turn_runtime` sends it.
@@ -175,6 +208,15 @@ class EngineConsole:
         monkeypatch.setattr(parser_mod, "parse", fake_parse)
         monkeypatch.setattr(MCPRuntimeClient, "call_tool", fake_call_tool)
 
+        real_apply = engine_mod.turn_apply
+
+        def traced_apply(*args: Any, **kwargs: Any):
+            state_out, plan = real_apply(*args, **kwargs)
+            self.traces.append(plan.trace)
+            return state_out, plan
+
+        monkeypatch.setattr(engine_mod, "turn_apply", traced_apply)
+
     def say(self, message: str, v: dict[str, Any]) -> str:
         self._turns += 1
         self._next = v
@@ -199,12 +241,24 @@ class EngineConsole:
         assert out.error is None, out.error
         self.state = out.session_patch
         text = (out.reply or {}).get("text") or ""
+        self.turn_traces.append(self.traces[-1] if self.traces else None)
         self.transcript += [message, f"-> {text}"]
         return text
 
     @property
     def last_block(self) -> str:
         return self.blocks[-1]
+
+    @property
+    def last_trace(self) -> Any:
+        return self.traces[-1]
+
+    @property
+    def stored_question(self) -> dict[str, Any] | None:
+        """The open question the last turn stored for the next one (`tail.py`)."""
+        state = self.state if isinstance(self.state, dict) else {}
+        question = state.get("open_question")
+        return question if isinstance(question, dict) else None
 
 
 def stock(*entities: dict[str, Any], **overrides: Any) -> dict[str, Any]:
