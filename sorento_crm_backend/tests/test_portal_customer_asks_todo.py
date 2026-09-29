@@ -135,3 +135,27 @@ def test_portal_patch_with_a_user_linked_to_the_contact_stamps_the_user_too(w):
     assert resp.json()["done_by"] == "Alpha Person"
     row = _row(w, w["x_open"].id)
     assert (row.done_by_user_id, row.done_by_contact_id) == (uid, w["ca"])
+
+
+# ---- AC-ST105b (#1366), the portal half --------------------------------------------------
+
+
+def test_portal_todo_and_patch_follow_the_customerless_contact_link(w):
+    from app.models.access import RespondContactCustomer
+
+    db = w["db"]
+    for cust in (w["x"], w["z"]):
+        db.add(RespondContactCustomer(id=seed.uid(), contact_id=w["dealer"], customer_id=cust.id, company_id=SORENTO))
+    loose = seed.ask(db, None, w["dealer"], "SRT-LOOSE", created_at=datetime.utcnow() - timedelta(minutes=5))
+    stranger = seed.contact(db, "Unlinked Walk-in")
+    orphan = seed.ask(db, None, stranger, "SRT-ORPHAN", created_at=datetime.utcnow() - timedelta(minutes=5))
+    db.commit()
+
+    client = _client(w, w["ca"])
+    body = client.get(f"{BASE}/todo").json()
+    ids = {r["id"] for r in body["open"]}
+    assert loose.id in ids and orphan.id not in ids
+    assert next(r for r in body["open"] if r["id"] == loose.id)["customer_name"] is None
+
+    assert client.patch(f"{BASE}/{loose.id}", json={"state": "done"}).status_code == 200
+    assert client.patch(f"{BASE}/{orphan.id}", json={"state": "done"}).status_code == 404

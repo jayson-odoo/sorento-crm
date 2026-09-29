@@ -361,3 +361,31 @@ def test_company_scope_holds(w):
     assert agents.status_code == 200, agents.text
     codes = {r["code"] for r in agents.json()}
     assert w["a"].sales_agent not in codes and w["b"].sales_agent not in codes
+
+
+# ---- AC-ST105b (#1366), the CRM half ------------------------------------------------------
+
+
+def test_customerless_ask_follows_the_contact_link_for_todo_and_patch(w):
+    from app.models.access import RespondContactCustomer
+
+    db = w["db"]
+    for cust in (w["x"], w["z"]):
+        db.add(RespondContactCustomer(id=seed.uid(), contact_id=w["dealer"], customer_id=cust.id, company_id=SORENTO))
+    loose_a = seed.ask(db, None, w["dealer"], "SRT-LOOSE-A", created_at=w["start"] + timedelta(seconds=2))
+    loose_b = seed.ask(db, None, w["dealer"], "SRT-LOOSE-B", created_at=w["start"] + timedelta(seconds=3))
+    stranger = seed.contact(db, "Unlinked Walk-in")
+    orphan = seed.ask(db, None, stranger, "SRT-ORPHAN", created_at=w["start"] + timedelta(seconds=4))
+    w["beta"] = _user(db, "Beta Person", w["cb"])
+    db.commit()
+
+    mine = _call(w, [VIEW], "me", "get", "/todo").json()
+    assert loose_a.id in {r["id"] for r in mine["open"]} and orphan.id not in {r["id"] for r in mine["open"]}
+    assert next(r for r in mine["open"] if r["id"] == loose_a.id)["customer_name"] is None
+    theirs = _call(w, [VIEW], "beta", "get", "/todo").json()
+    assert loose_b.id in {r["id"] for r in theirs["open"]} and orphan.id not in {r["id"] for r in theirs["open"]}
+
+    assert _call(w, [VIEW, EDIT], "me", "patch", f"/{loose_a.id}", json={"state": "done"}).status_code == 200
+    assert _call(w, [VIEW, EDIT], "beta", "patch", f"/{loose_b.id}", json={"state": "done"}).status_code == 200
+    for who in ("me", "beta"):
+        assert _call(w, [VIEW, EDIT], who, "patch", f"/{orphan.id}", json={"state": "done"}).status_code == 404

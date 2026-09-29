@@ -241,3 +241,51 @@ def test_todo_at_exactly_500_is_not_truncated(w):
     out = svc.todo_for_agent(db, w["a"].id, now=NOW)
     assert len(out["open"]) == 500
     assert out["truncated"] is False
+
+
+# ---- AC-ST105b (#1366) ------------------------------------------------------------------
+
+
+def _link(db, contact_id, customer):
+    from app.models.access import RespondContactCustomer
+
+    db.add(
+        RespondContactCustomer(
+            id=seed.uid(), contact_id=contact_id, customer_id=customer.id, company_id=SORENTO
+        )
+    )
+    db.flush()
+
+
+def test_customerless_ask_of_a_contact_linked_to_two_agents_customers_is_in_both_todos(w):
+    svc, db = _svc(), w["db"]
+    _link(db, w["dealer"], w["x"])  # handled by A
+    _link(db, w["dealer"], w["z"])  # handled by B
+    loose = seed.ask(db, None, w["dealer"], "SRT-105B")
+    stranger = seed.contact(db, "Unlinked Walk-in")
+    orphan = seed.ask(db, None, stranger, "SRT-ORPHAN")
+
+    for agent in (w["a"], w["b"]):
+        out = svc.todo_for_agent(db, agent.id, now=NOW)
+        assert loose.id in {r.id for r in out["open"]}, agent.sales_agent
+        assert orphan.id not in {r.id for r in out["open"]}
+        row = next(r for r in out["open"] if r.id == loose.id)
+        assert row.customer_name is None
+    assert orphan.id not in {r.id for r in svc.todo_for_agent(db, None, now=NOW)["open"]}
+
+
+def test_customerless_ask_is_patchable_by_both_linked_agents_and_by_nobody_else(w):
+    svc, db = _svc(), w["db"]
+    _link(db, w["dealer"], w["x"])
+    _link(db, w["dealer"], w["z"])
+    first = seed.ask(db, None, w["dealer"], "SRT-105B-1")
+    second = seed.ask(db, None, w["dealer"], "SRT-105B-2")
+    stranger = seed.contact(db, "Unlinked Walk-in")
+    orphan = seed.ask(db, None, stranger, "SRT-ORPHAN")
+
+    assert svc.update_for_agent(db, w["a"].id, first.id, {"state": "done"}, actor_contact_id=w["ca"]).done_by
+    assert svc.update_for_agent(db, w["b"].id, second.id, {"state": "done"}, actor_contact_id=w["cb"]).done_by
+    for agent, contact_id in ((w["a"], w["ca"]), (w["b"], w["cb"])):
+        with pytest.raises(Exception) as exc:
+            svc.update_for_agent(db, agent.id, orphan.id, {"state": "done"}, actor_contact_id=contact_id)
+        assert getattr(exc.value, "status_code", None) == 404
