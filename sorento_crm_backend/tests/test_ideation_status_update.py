@@ -8,6 +8,11 @@ nothing else: the feed (a fake feed over a list of events that honours ``after``
 ``httpx`` behind a ``MockTransport`` for the request shape) and the Respond.io HTTP
 client (``RespondClient``), so the template mapping path - ``respond_template_defaults``
 to ``send_template_for_use_case`` - is the production one over real rows.
+
+The 24h window is held CLOSED by default (the ``db`` fixture patches
+``messaging.get_window_state``): the send is window-aware (``send_text_or_template``),
+so a closed window is what keeps every template-asserting test on the template branch.
+Window-open and window-unknown cases opt in through ``_window`` (AC-UW001 onward).
 """
 from __future__ import annotations
 
@@ -35,6 +40,9 @@ from app.models.respond_workspace import RespondWorkspace
 from app.services.ideation_turn_service import _IdeationConfig
 from tests._pg_fixture import blank_session, unique_code
 
+# Captured before any fixture patches it: the real shared window function (AC-UW003).
+_REAL_GET_WINDOW_STATE = messaging.get_window_state
+
 BASE_URL = "https://shared.test/be"
 API_KEY = "ws-key"
 
@@ -45,8 +53,8 @@ API_KEY = "ws-key"
 
 
 class FakeRespondClient:
-    """Stands in for RespondClient. Records template sends; a free-text send is a
-    test failure (AC-IS050)."""
+    """Stands in for RespondClient. Records every send: template sends as
+    ``kind == "template"``, free-text session sends as ``kind == "text"``."""
 
     sent: list[dict[str, Any]] = []
     fail_with: Exception | None = None
@@ -57,25 +65,42 @@ class FakeRespondClient:
     def send_template_message(self, identifier, **kwargs):
         if FakeRespondClient.fail_with is not None:
             raise FakeRespondClient.fail_with
-        FakeRespondClient.sent.append({"identifier": identifier, **kwargs})
+        FakeRespondClient.sent.append({"identifier": identifier, "kind": "template", **kwargs})
         return {"messageId": 991}
 
-    def send_message(self, *args, **kwargs):  # pragma: no cover - must never run
-        raise AssertionError("free text must never be sent for an ideation status update")
+    def send_message(self, identifier, text, *args, **kwargs):
+        if FakeRespondClient.fail_with is not None:
+            raise FakeRespondClient.fail_with
+        FakeRespondClient.sent.append({"identifier": identifier, "text": text, "kind": "text"})
+        return {"messageId": 992}
+
+
+def _window(monkeypatch, open: bool) -> None:
+    """Re-patch the window the send reads (open or closed)."""
+    monkeypatch.setattr(
+        messaging,
+        "get_window_state",
+        lambda *a, **k: {
+            "open": open,
+            "last_incoming_at": None,
+            "checked_at": "",
+            "source": "respond_api" if open else "none",
+        },
+    )
 
 
 @pytest.fixture
 def db(monkeypatch) -> Session:
+    """The 24h window is held CLOSED by default so the template path runs and the
+    template-asserting tests stay valid; a test opts into an open window with
+    ``_window(monkeypatch, True)``. RespondClient is always the fake."""
     FakeRespondClient.sent = []
     FakeRespondClient.fail_with = None
     monkeypatch.setattr(integration_service, "RespondClient", FakeRespondClient)
-    # The template path never reads the window. It is held OPEN anyway so that a drift
-    # to send_text_or_template would take the free-text branch and hit the
-    # send_message trap above (AC-IS050).
     monkeypatch.setattr(
         messaging,
         "get_window_state",
-        lambda *a, **k: {"open": True, "last_incoming_at": None, "checked_at": ""},
+        lambda *a, **k: {"open": False, "last_incoming_at": None, "checked_at": "", "source": "none"},
     )
     monkeypatch.setattr(
         svc,
@@ -128,7 +153,8 @@ def _map_template(db: Session, *, params: int = 3, status: str = "approved") -> 
 
 
 def _contact(db: Session, *, phone: str | None = None, outbound: bool = True,
-             respond_io_id: str | None = "auto") -> RespondContact:
+             respond_io_id: str | None = "auto", name: str | None = None,
+             first_name: str | None = None, last_name: str | None = None) -> RespondContact:
     phone = phone or f"+601{uuid.uuid4().int % 10**8:08d}"
     c = RespondContact(
         id=str(uuid.uuid4()),
@@ -136,6 +162,9 @@ def _contact(db: Session, *, phone: str | None = None, outbound: bool = True,
         respond_io_id=(str(uuid.uuid4().int % 10**9) if respond_io_id == "auto" else respond_io_id),
         outbound_enabled=outbound,
         session_vars={},
+        name=name,
+        first_name=first_name,
+        last_name=last_name,
     )
     db.add(c)
     db.commit()
@@ -311,23 +340,159 @@ def test_ac_is024_unknown_kind_skips_logs_and_advances(db):
     assert svc.get_cursor(db, BASE_URL) == 9
 
 
-def test_ac_is050_template_even_with_an_open_window_and_message_var(db):
-    """The fixture holds the window OPEN; FakeRespondClient.send_message raises."""
-    tpl = _map_template(db, params=1)
-    db.query(RespondTemplateDefault).filter_by(use_case="ideation_status_update").update(
-        {"param_mapping": {"1": "message"}}
-    )
-    db.commit()
+URL10 = "https://ss.test/public/ideas/tok10"
+
+
+def test_ac_uw001_open_window_sends_the_session_text(db, monkeypatch):
+    _map_template(db)
+    _window(monkeypatch, True)
+    c = _contact(db, name="Ali")
+    ev = _event(10, phone=c.phone_number)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    assert len(FakeRespondClient.sent) == 1
+    send = FakeRespondClient.sent[0]
+    assert send["kind"] == "text"
+    assert send["identifier"] == c.respond_io_id
+    assert send["text"] == f"Hi Ali, update on your idea IDEA-0010: it is now Discussed. Track it here: {URL10}"
+    (row,) = _rows(db, ev["event_id"])
+    assert row.status == "success"
+    p = _payload(row)
+    assert p["message"]["type"] == "text"
+    assert p["event"]["sent_as"] == "text"
+    assert p["event"]["window"]["open"] is True
+
+
+def test_ac_uw002_closed_window_sends_the_template(db):
+    tpl = _map_template(db)
+    c = _contact(db, name="Ali")
+    ev = _event(10, phone=c.phone_number)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    assert len(FakeRespondClient.sent) == 1
+    send = FakeRespondClient.sent[0]
+    assert send["kind"] == "template"
+    assert send["template_name"] == tpl.name
+    assert send["parameters"][0] == "IDEA-0010"
+    (row,) = _rows(db, ev["event_id"])
+    p = _payload(row)
+    assert p["message"]["type"] == "whatsapp_template"
+    assert p["event"]["sent_as"] == "template"
+    assert p["event"]["window"]["open"] is False
+
+
+def test_ac_uw003_unknown_window_sends_the_template(db, monkeypatch):
+    _map_template(db)
+    monkeypatch.setattr(messaging, "get_window_state", _REAL_GET_WINDOW_STATE)
+    monkeypatch.setattr(messaging, "_resolve_last_incoming", lambda *a, **k: (None, "none"))
+    messaging.reset_window_cache()
+    c = _contact(db, name="Ali")
+    ev = _event(10, phone=c.phone_number)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    assert [s["kind"] for s in FakeRespondClient.sent] == ["template"]
+    (row,) = _rows(db, ev["event_id"])
+    p = _payload(row)
+    assert p["event"]["window"]["source"] == "none"
+    assert p["event"]["window"]["open"] is False
+    messaging.reset_window_cache()
+
+
+def test_ac_uw004_no_contact_name_means_no_greeting(db, monkeypatch):
+    _map_template(db)
+    _window(monkeypatch, True)
     c = _contact(db)
     ev = _event(10, phone=c.phone_number)
 
     svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
 
+    text = FakeRespondClient.sent[0]["text"]
+    assert text == f"Update on your idea IDEA-0010: it is now Discussed. Track it here: {URL10}"
+    assert "Hi -" not in text
+    assert not text.startswith("Hi")
+
+
+def test_ac_uw004_first_and_last_name_greet(db, monkeypatch):
+    _map_template(db)
+    _window(monkeypatch, True)
+    c = _contact(db, first_name="Siti", last_name="Rahman")
+    ev = _event(10, phone=c.phone_number)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    assert FakeRespondClient.sent[0]["text"].startswith("Hi Siti Rahman, ")
+
+
+def test_ac_uw004_contact_name_reaches_the_template(db):
+    tpl = _map_template(db, params=1)
+    db.query(RespondTemplateDefault).filter_by(use_case="ideation_status_update").update(
+        {"param_mapping": {"1": "contact_name"}}
+    )
+    db.commit()
+    c = _contact(db, name="Ali")
+    ev = _event(10, phone=c.phone_number)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
     assert FakeRespondClient.sent[0]["template_name"] == tpl.name
-    assert FakeRespondClient.sent[0]["parameters"] == [
-        "Update on your idea IDEA-0010: it is now Discussed. Track it here: "
-        "https://ss.test/public/ideas/tok10"
-    ]
+    assert FakeRespondClient.sent[0]["parameters"] == ["Ali"]
+
+
+def test_ac_uw006_open_window_without_a_template_still_sends_text(db, monkeypatch):
+    _window(monkeypatch, True)
+    c = _contact(db, name="Ali")
+    ev = _event(10, phone=c.phone_number)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    assert [s["kind"] for s in FakeRespondClient.sent] == ["text"]
+    (row,) = _rows(db, ev["event_id"])
+    assert row.status == "success"
+    assert row.error_code is None
+
+
+def test_ac_uw006_closed_window_without_a_template_skips(db):
+    c = _contact(db, name="Ali")
+    ev = _event(10, phone=c.phone_number)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    assert FakeRespondClient.sent == []
+    (row,) = _rows(db, ev["event_id"])
+    assert (row.status, row.error_code) == ("skipped", "NO_TEMPLATE")
+
+
+def test_ac_uw005_failed_open_window_send_logs_a_text_attempt(db, monkeypatch):
+    _map_template(db)
+    _window(monkeypatch, True)
+    c = _contact(db, name="Ali")
+    ev = _event(10, phone=c.phone_number)
+    FakeRespondClient.fail_with = RuntimeError("respond 500")
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    (row,) = _rows(db, ev["event_id"])
+    assert (row.status, row.error_code) == ("failed", "SEND_FAILED")
+    p = _payload(row)
+    assert p["message"]["type"] == "text"
+    assert p["event"]["sent_as"] == "text"
+
+
+def test_ac_uw007_redelivered_event_not_sent_twice_in_window(db, monkeypatch):
+    _map_template(db)
+    _window(monkeypatch, True)
+    c = _contact(db, name="Ali")
+    ev = _event(10, phone=c.phone_number)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+    svc.set_cursor(db, BASE_URL, 0)
+    db.commit()
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    assert len(FakeRespondClient.sent) == 1
 
 
 # ---------------------------------------------------------------------------

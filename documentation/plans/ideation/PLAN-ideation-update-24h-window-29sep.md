@@ -1,6 +1,6 @@
 # PLAN - Ideation status update joins the 24h-window-aware update sender
 
-**Status:** in progress, 29 Sep 2026. Track: small fix track (diff under 300 lines, no migration,
+**Status:** in review, 29 Sep 2026. Track: small fix track (diff under 300 lines, no migration,
 no auth or RBAC change, no new ingest surface). Lane `crew/update-24h-unified` (crew lane
 UPDATE-24H). UAC: `ideation-update-24h-window-29sep-acceptance-criteria.md`.
 
