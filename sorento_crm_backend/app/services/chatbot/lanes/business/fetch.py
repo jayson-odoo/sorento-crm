@@ -499,9 +499,6 @@ GROUP_BY_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-# A6: the one tool with its OWN `top_n` param (default 1, "last 3 in"); every
-# other GROUP_BY_TOOLS/ORDER_TOOLS member aliases `top_n` to `limit` instead
-# (above), since it has no `top_n` param of its own.
 # PLAN-po-spo-warehouse-29sep S6: the parser's `sort_by` mapped to each PO/SPO tool's own
 # `sort` key. A key a tool has no column for is absent, so it sends nothing and the tool's
 # own default order answers. `SORT_DEFAULT_DIR` is the direction when the parser named none.
@@ -539,6 +536,9 @@ SORT_DEFAULT_DIR: dict[str, str] = {
     "supplier": "asc",
 }
 
+# A6: the one tool with its OWN `top_n` param (default 1, "last 3 in"); every
+# other GROUP_BY_TOOLS/ORDER_TOOLS member aliases `top_n` to `limit` instead
+# (above), since it has no `top_n` param of its own.
 TOP_N_DIRECT_TOOLS: frozenset[str] = frozenset(
     {
         "crm_procurement_spo_allocations_last_receipt_list",

@@ -77,9 +77,12 @@ verbatim "for SPO question with no product name, keep it as it is": no lane-side
   `domain_in_message` False, `sort_by: "date"`) over that focus plans a
   `purchase_order` fetch (not idle chat) and replaces the sort; (c) a NEW ASK
   (`domain_in_message` True with an entity, another domain) drops `focus.sort`
-  (`new_ask_drops_sort` fired); (d) a refinement (entity only, `domain_in_message`
+  (`new_ask_drops_sort` fired); (c2) a domain-only message with NO entity
+  (`domain_in_message` True, entities []) drops it too, unless it names its own sort
+  (review round, blocker 2); (d) a refinement (entity only, `domain_in_message`
   False) keeps it; (e) `topic_reset` clears it.
-  Test: `test_po_spo_sort_focus.py::TestSortCarriesLikeTheDateWindow`.
+  Test: `test_po_spo_sort_focus.py::TestSortCarriesLikeTheDateWindow` and
+  `::TestANewAskWithNoEntityAlsoDropsTheSort`.
 - AC-8 `turn_runtime.lane_parse_output(verdict, focus=...)` sets `sort_by`/`sort_dir` from
   `focus.sort` when the verdict names none, and leaves the verdict's own values when it
   does.
@@ -95,8 +98,11 @@ verbatim "for SPO question with no product name, keep it as it is": no lane-side
   spo_date/spo_date/spo_quantity/gr_date/gr_quantity; a parser `sort_dir` wins over the
   default; an unmapped key (`supplier` on the SPO tool, `received_date` on the PO tool)
   sends neither `sort` nor `dir`; a tool outside the two (`crm_inventory_stock_balance_list`)
-  never gets `sort`/`dir`.
-  Test: `tests/chatbot/test_po_spo_sort_fetch.py::TestSortMapsPerTool`.
+  never gets `sort`/`dir`. `supplier` on the PO tool is sent only with the
+  `purchase_orders.supplier` grant on the trigger's access attributes. The two keys are
+  on `_fetch_semantic_input`'s output (a live turn reaches the transformer through it).
+  Test: `tests/chatbot/test_po_spo_sort_fetch.py::TestSortMapsPerTool`,
+  `::TestARestrictedSortNeedsTheGrant`, `::TestTheSortReachesTheFetchOnALiveTurn`.
 - AC-10 A resolved warehouse entity on the PO tool becomes `warehouse_ids`; on the SPO
   tool with no `product_ids` and no named count, the args carry NO `top_n` (owner ruling:
   "for SPO question with no product name, keep it as it is", so the tool's own one-row
@@ -105,9 +111,11 @@ verbatim "for SPO question with no product name, keep it as it is": no lane-side
 - AC-11 `run_gate` under `domain_hint "purchase_order"` keeps product + warehouse, drops a
   customer, and passes a zero-entity ask (`gate_passed` True, reason names `permits
   broad query`); `answer._SCOPE_WORD["purchase_order"]` exists.
-  Test: `tests/chatbot/test_warehouse_entity.py::TestGateKeepsWarehouseOnPurchaseOrder`.
-  The replay suite (`tests/chatbot/test_replay.py`) stays green with fixture-scoped
-  divergences for the 8 purchase_order captures.
+  Test: `tests/chatbot/test_warehouse_entity.py::TestGateKeepsWarehouseOnPurchaseOrder`
+  and `::TestACustomerOnlyPurchaseOrderAskIsAsked` (a customer-only PO ask is asked for a
+  product code or warehouse, with the customer's word for the domain). The replay suite
+  (`tests/chatbot/test_replay.py`) stays green with no new divergence (measured: no
+  graded capture moves).
 
 ## Routes and services (W2..W4, O1, O2)
 

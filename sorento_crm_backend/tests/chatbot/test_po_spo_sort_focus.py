@@ -138,3 +138,27 @@ class TestLaneParseOutputProjectsTheSort:
 
         out = self._out(verdict(), Focus(domains=["purchase_order"]))
         assert not out.get("sort_by")
+
+
+class TestANewAskWithNoEntityAlsoDropsTheSort:
+    """Reviewer blocker 2 on PR #1373: "PO oldest first" then "any SPO?" (a domain word,
+    no entity) must not carry `date asc` onto the SPO tool, whose product-less default is
+    ONE row - the customer would get the OLDEST SPO line. PLAN S5: any NEW ASK that names
+    no sort drops it, entity or not."""
+
+    def test_a_domain_only_new_ask_drops_the_sort(self) -> None:
+        v = verdict(
+            domain_hint="spo_allocation", intent_hint="check_spo", domain_in_message=True,
+            entities=[],
+        )
+        state2, plan = _apply(_po_focus(), v)
+        assert getattr(state2.focus, "sort", "missing") is None
+        assert "new_ask_drops_sort" in plan.trace.rules_fired, plan.trace.rules_fired
+
+    def test_a_domain_only_new_ask_that_names_its_own_sort_keeps_that_one(self) -> None:
+        v = verdict(
+            domain_hint="spo_allocation", intent_hint="check_spo", domain_in_message=True,
+            entities=[], sort_by="quantity", sort_dir="asc",
+        )
+        state2, _plan = _apply(_po_focus(), v)
+        assert getattr(state2.focus, "sort", None) == {"by": "quantity", "dir": "asc"}

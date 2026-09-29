@@ -788,8 +788,9 @@ def test_warehouse_filter_matches_location_code(db):
 
 
 def test_a_warehouse_id_outside_the_scope_matches_nothing(db):
-    """Security review on PR #1373 (finding 4): the SPO twin of the PO test - a warehouse
-    uuid from another company narrows to nothing on both branches."""
+    """Security review on PR #1373 (finding 4), sharpened by the reviewer's kill test: the
+    SPO twin of the PO test - a MOCHA line whose `location_code` is a Sorento warehouse's
+    code is not matched through that warehouse's id under a Mocha scope, on either branch."""
     from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
 
     seed_mocha(db)
@@ -797,6 +798,10 @@ def test_a_warehouse_id_outside_the_scope_matches_nothing(db):
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="KL-X")
     line = _allocation(db, product_id=prod.id, expected_date=date(2026, 6, 1), spo_number="SPO-KLX")
     line.location_code = "KL-X"
+    mocha_product = product(db, company_id=MOCHA_ID, code="MCH-WH-SCOPE")
+    mocha_line = _allocation(db, product_id=mocha_product.id, expected_date=date(2026, 6, 2), spo_number="SPO-KLX-MOCHA")
+    mocha_line.location_code = "KL-X"
+    mocha_line.company_id = MOCHA_ID
     db.flush()
     db.commit()
 
@@ -804,5 +809,10 @@ def test_a_warehouse_id_outside_the_scope_matches_nothing(db):
     assert _spo_numbers(last_receipt_rows(db, product_ids=[prod.id], warehouse_ids=[wh.id])) == ["SPO-KLX"]
 
     set_company_scope(db, frozenset({MOCHA_ID}))
-    assert last_receipt_rows(db, product_ids=[prod.id], warehouse_ids=[wh.id]) == []
+    assert last_receipt_rows(db, product_ids=[mocha_product.id], warehouse_ids=[wh.id]) == []
     assert last_receipt_rows(db, warehouse_ids=[wh.id], top_n=5) == []
+
+
+def test_route_an_empty_sort_or_dir_is_the_default_not_a_422(client, db):
+    resp = client.get(f"{BASE}/last-receipt", params={"sort": "", "dir": ""})
+    assert resp.status_code == 200, resp.text

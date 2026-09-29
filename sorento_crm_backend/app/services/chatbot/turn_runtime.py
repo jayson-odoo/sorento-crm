@@ -1507,7 +1507,8 @@ def lane_parse_output(
     # PLAN-po-spo-warehouse-29sep S5: the PO/SPO sort axis, a default, never an override.
     if not out.get("sort_by") and focus is not None and focus.sort:
         out["sort_by"] = focus.sort.get("by")
-        out["sort_dir"] = focus.sort.get("dir")
+        if not out.get("sort_dir"):
+            out["sort_dir"] = focus.sort.get("dir")
     # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: the top
     # selling ask's axes, off the FOCUS (`turn/apply._top_selling_rules` already laid
     # this turn's own values over the carried ones). One key, read by

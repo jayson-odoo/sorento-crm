@@ -58,9 +58,10 @@ from app.services.chatbot.turn.state import EXTRA_KIND_ALIASES, KIND_FIELD_MAP, 
 
 RESET_KEEPS = {"tier", "brands"}
 
-# D6, "domain follows the document" (SPO belongs to spo_allocation, not incoming, per the
-# 29 Sep 2026 owner ruling, PLAN-po-spo-warehouse-29sep S1): a turn that names a document kind and no domain is
-# about the domain that OWNS that document. A dict rather than a policy column because it
+# D6, "domain follows the document": a turn that names a document kind and no domain is
+# about the domain that OWNS that document (SPO belongs to spo_allocation, not incoming,
+# per the 29 Sep 2026 owner ruling, PLAN-po-spo-warehouse-29sep S1). A dict rather than a
+# policy column because it
 # is five literals that follow from what the document IS - a migration for this would be a
 # table with one true row shape and no second reader.
 DOMAIN_BY_DOCUMENT: dict[str, str] = {
@@ -1046,10 +1047,6 @@ def _focus_rules(
                 # rule, unchanged).
                 focus.date_window = None
                 trace.rules_fired.append("new_ask_drops_date_window")
-            if focus.sort and not verdict.get("sort_by"):
-                # PLAN-po-spo-warehouse-29sep S5: the sort axis follows the window's rule.
-                focus.sort = None
-                trace.rules_fired.append("new_ask_drops_sort")
             # Hand pass 10 (owner ruling): the SAME rule, extended to the two axes
             # that hold no subject of their own - `tier` and `extra` are never a
             # SUBJECT (contract 121's `domain_in_message` table is unchanged: it
@@ -1077,6 +1074,20 @@ def _focus_rules(
                     trace.rules_fired.append(f"new_ask_drops_{extra_kind}")
         elif decision.refines:
             trace.rules_fired.append("refinement_keeps_subject")
+    if (
+        focus.sort
+        and not verdict.get("sort_by")
+        and (decision.starts_fresh or domain_in_message(verdict) is True)
+    ):
+        # PLAN-po-spo-warehouse-29sep S5: a message that says WHAT it is asking (a NEW
+        # ASK, or a domain word of its own with no entity, which `decide()` files as a
+        # CARRY) and names no sort drops the carried one (reviewer blocker 2, PR #1373:
+        # "PO oldest first" then "any SPO?" must not answer the OLDEST SPO line). Outside
+        # the `by_kind` guard above on purpose - the window's drop sits inside it because
+        # a window only ever narrows a named subject; a sort orders whatever list comes
+        # next. A refinement and a sort-only re-sort carry no domain word, so they keep it.
+        focus.sort = None
+        trace.rules_fired.append("new_ask_drops_sort")
 
     if not domain_locked:
         if domain_override:

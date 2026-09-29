@@ -430,3 +430,35 @@ class TestGateKeepsWarehouseOnPurchaseOrder:
         from app.services.chatbot.lanes.business.answer import _SCOPE_WORD
 
         assert _SCOPE_WORD.get("purchase_order") == "purchase order"
+
+
+class TestACustomerOnlyPurchaseOrderAskIsAsked:
+    """Reviewer item 6 on PR #1373, pinned as a deliberate change: before the
+    `purchase_order` gate row a customer token carried from an order ask rode into the PO
+    tool (which has no customer filter) and the whole open book came back as if it were
+    hanlim's. Now the gate refuses it and the miss line asks for a product code or
+    warehouse, with the customer's word for the domain."""
+
+    def test_the_gate_fails_and_names_the_scope_word(self) -> None:
+        from app.services.chatbot.lanes.business.answer import _SCOPE_WORD, not_found_error_message
+
+        resolver = _resolver(_match(CUSTOMER_UUID, "customer", "HANLIM"))
+        gate = run_gate(
+            dict(resolver),
+            parser={"domain_hint": "purchase_order", "entities": []},
+            resolver=resolver,
+        )
+        assert gate["gate_passed"] is False
+        assert "incompatible with 'purchase_order'" in gate["gate_reason"]
+        assert _SCOPE_WORD["purchase_order"] == "purchase order"
+        parser = {
+            "domain_hint": "purchase_order",
+            "entities": [],
+            "routing": {"suggested_team": "purchasing"},
+            "access_levels": [],
+        }
+        resolved = {"by_entity_type": {}, "tokens": [], "unresolved_tokens": []}
+        out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        message = (out.get("escalate_message") or "").strip()
+        assert "purchase order" in message, message
+        assert "purchase_order" not in message, message

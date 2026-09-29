@@ -704,21 +704,42 @@ def test_the_sort_constants_are_published_by_the_service():
 
 
 def test_a_warehouse_id_outside_the_scope_matches_nothing(db):
-    """Security review on PR #1373 (finding 4): a warehouse uuid from another company
-    resolves to no code (the column-only read ANDs the company predicate by hand), so a
-    line carrying that code in `location_code` is not matched through it either."""
+    """Security review on PR #1373 (finding 4), sharpened by the reviewer's kill test: a
+    warehouse uuid from another company resolves to no code (`warehouse_codes_for` ANDs
+    the company predicate by hand), so a MOCHA line carrying that Sorento warehouse's code
+    in `location_code` is NOT matched through it under a Mocha scope."""
     from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
 
     seed_mocha(db)
     wh = _warehouse(db, code="KL-X")
     sorento_product = product(db, company_id=DEFAULT_COMPANY_ID, code="SRT-WH-SCOPE")
     _spo(db, product_id=sorento_product.id, allocated=4, number="SPO-KLX", location_code="KL-X")
+    mocha_product = product(db, company_id=MOCHA_ID, code="MCH-WH-SCOPE")
+    db.add(
+        SPOAllocation(
+            id=str(uuid.uuid4()),
+            company_id=MOCHA_ID,
+            spo_number="SPO-KLX-MOCHA",
+            product_id=mocha_product.id,
+            allocated_quantity=7,
+            quantity_received=0,
+            receipt_status="pending",
+            location_code="KL-X",
+        )
+    )
     db.commit()
 
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
     assert [r["po_number"] for r in purchase_orders_placed_rows(db, warehouse_ids=[wh.id])] == ["SPO-KLX"]
 
     set_company_scope(db, frozenset({MOCHA_ID}))
+    # The Mocha line is in scope and carries the code, but the code is not resolvable
+    # from a Sorento warehouse id under this scope: nothing matches.
     assert purchase_orders_placed_rows(db, warehouse_ids=[wh.id]) == []
     summary = purchase_orders_placed_summary(db, warehouse_ids=[wh.id])
     assert summary == {"po_placed_qty": 0, "po_placed_count": 0}
+
+
+def test_an_empty_sort_or_dir_is_the_default_not_a_422(client, db):
+    resp = client.get(f"{BASE}/placed", params={"sort": "", "dir": ""})
+    assert resp.status_code == 200, resp.text

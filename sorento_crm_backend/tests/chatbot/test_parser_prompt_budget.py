@@ -71,7 +71,11 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # "SPO" -> spo_allocation in-body edit take the prompt without MEMORY_ADDENDUM to 42,356 est.
 # tokens and the whole prompt to the 42,872 this test prints; CEILING is 42,872 - 512 = 42,360
 # so both assertions hold (+1,197 over 41,163).
-CEILING = 42_360
+# Review round (same PR, reviewer items 3 and 4): the DOCUMENT section's second in-body edit
+# ("shipment"/"container" name no paper) and the "last in names no sort" line take the
+# prompt without MEMORY_ADDENDUM to 42,424 and the whole prompt to 42,939; CEILING is
+# 42,939 - 512 = 42,427 so both assertions hold.
+CEILING = 42_427
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is

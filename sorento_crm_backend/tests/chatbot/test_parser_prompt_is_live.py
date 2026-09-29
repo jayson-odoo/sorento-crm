@@ -201,7 +201,11 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # 62722 + 249 = 62971.
 # 62971 -> 62977 (29 Sep 2026, PLAN-po-spo-warehouse-29sep S2): the OUTSTANDING block's
 # "SPO" -> incoming becomes "SPO" -> spo_allocation, an in-body edit (+6).
-CONSTANT_CHARS = 62977
+# 62977 -> 63051 (29 Sep 2026, PLAN-po-spo-warehouse-29sep S2, review round): the DOCUMENT
+# section's `"SPO", "shipment", "container" -> ["SPO"]` becomes `"SPO", "SPO allocation" ->
+# ["SPO"]` with "shipment"/"container" naming no paper (they are incoming's own words, and
+# the SPO document now routes to spo_allocation), an in-body edit (+74).
+CONSTANT_CHARS = 63051
 
 #: The line the round 8 cut rewrote, as the live file carries it and as the constant does.
 COMPANIES_OFFERED_LIVE = (

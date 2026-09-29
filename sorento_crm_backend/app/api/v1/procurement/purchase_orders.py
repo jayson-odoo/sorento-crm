@@ -133,14 +133,17 @@ def get_purchase_orders_placed(
             detail=f"allowed: {', '.join(sorted(PO_GROUP_BY_AXES))}",
             code="invalid_group_by",
         )
-    if sort is not None and sort not in PO_SORT_KEYS:
+    # An empty `sort=` / `dir=` is the default, as it was before validation existed.
+    sort = sort or "expected_date"
+    dir = dir or "asc"
+    if sort not in PO_SORT_KEYS:
         raise AppException(
             422,
             f"Unknown sort value '{sort}'",
             detail=f"allowed: {', '.join(sorted(PO_SORT_KEYS))}",
             code="invalid_sort",
         )
-    if dir is not None and dir not in PO_SORT_DIRS:
+    if dir not in PO_SORT_DIRS:
         raise AppException(
             422,
             f"Unknown dir value '{dir}'",

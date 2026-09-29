@@ -75,6 +75,9 @@ async def get_spo_last_receipt(
     `sort` / `dir` choose the order (default spo_date desc, nulls last); an unknown value is a
     422 (PLAN-po-spo-warehouse-29sep O2).
     """
+    # An empty `sort=` / `dir=` is the default, never a 422.
+    sort = sort or "spo_date"
+    dir = dir or "desc"
     if sort not in SPO_SORT_KEYS:
         raise AppException(
             422,

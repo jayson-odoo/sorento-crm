@@ -154,3 +154,26 @@ class TestARestrictedSortNeedsTheGrant:
 
     def test_the_map_names_the_presenters_own_key(self) -> None:
         assert fetch.RESTRICTED_SORT_KEYS == {PO_TOOL: {"supplier": "purchase_orders.supplier"}}
+
+
+class TestTheSortReachesTheFetchOnALiveTurn:
+    """Reviewer blocker 1 on PR #1373: `lanes/business._fetch_semantic_input` builds the
+    fetch's input from a FIXED key list, and without `sort_by` / `sort_dir` on it the
+    transformer read None on every live turn while the hand-built tests above stayed
+    green. Goes through the builder, exactly as `test_parser_growth_r1_reachability` does
+    for `group_by` / `top_n`."""
+
+    def test_the_two_keys_are_on_the_fetch_semantic_input(self) -> None:
+        from app.services.chatbot.lanes.business import _fetch_semantic_input
+
+        semantic = _fetch_semantic_input(
+            {"domain_hint": "purchase_order", "sort_by": "quantity", "sort_dir": "desc"},
+            tier_gate=None,
+            contact_id="1",
+            space_id="s",
+        )
+        assert semantic.get("sort_by") == "quantity" and semantic.get("sort_dir") == "desc", semantic
+        out = fetch.entity_ids_transformer(
+            {"entities": [], "tool": PO_TOOL, "semantic_input": semantic}
+        )
+        assert out.get("sort") == "ordered_qty" and out.get("dir") == "desc", out

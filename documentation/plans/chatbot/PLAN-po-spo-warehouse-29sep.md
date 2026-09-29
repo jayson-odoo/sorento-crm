@@ -119,10 +119,14 @@ revision over both (see M1) so the branch has exactly one head.
   `SO/DO -> order`, `GRN -> goods_receive` unchanged; `incoming` no longer appears as a
   value of that dict. The `incoming` policy row (tools, switch words, narrowing, ladder)
   is byte-identical.
-- S2. In-body prompt edit (the same shape as the Known-brands bullet, PR #1301): the
-  OUTSTANDING block's `"SPO" ->\nincoming)` becomes `"SPO" ->\nspo_allocation)`. Net +6
-  chars on `CONSTANT_CHARS` (`test_parser_prompt_is_live.py`), recorded there in the same
-  commit.
+- S2. Two in-body prompt edits (the same shape as the Known-brands bullet, PR #1301):
+  the OUTSTANDING block's `"SPO" ->\nincoming)` becomes `"SPO" ->\nspo_allocation)` (+6),
+  and the DOCUMENT section's `"SPO", "shipment", "container" -> ["SPO"]` becomes `"SPO",
+  "SPO allocation" -> ["SPO"]` with "shipment" and "container" naming no paper (+74;
+  review round: with the SPO document routing to `spo_allocation`, a shipment or
+  container turn with no domain and no carry must not fall back there - those are
+  incoming's own words). Both recorded on `CONSTANT_CHARS`
+  (`test_parser_prompt_is_live.py`) in the same commit.
 - S3. New addendum `PO_SPO_WAREHOUSE_ADDENDUM` in `chatbot_parser_prompt.py`, appended
   AFTER `ESCALATION_CONFIRMATION_ADDENDUM` and BEFORE `MEMORY_ADDENDUM` (three tests pin
   `SEMANTIC_PARSER_PROMPT.endswith(MEMORY_ADDENDUM)`), and peeled by
@@ -159,12 +163,16 @@ revision over both (see M1) so the branch has exactly one head.
   `_IDLE_CHAT_DISQUALIFIERS` gains `sort_by`.
 - S5. Engine carry: `Focus.sort: dict | None` = `{"by": <sort_by>, "dir": <sort_dir or
   None>}`, on the wire as `"sort"` (`focus_to_wire`/`focus_from_wire`; an old wire with no
-  key reads None). `_focus_rules` writes it whenever the verdict names `sort_by`; a NEW ASK
-  (`decision.starts_fresh`) that names no sort drops it (rule `new_ask_drops_sort`, the
-  same rule `date_window` follows); a refinement or carry keeps it; `topic_reset` clears
-  it with the rest. `turn_runtime.lane_parse_output` projects `focus.sort` onto
-  `out["sort_by"]`/`out["sort_dir"]` when the verdict names none (a DEFAULT, never an
-  override, N2's rule).
+  key reads None). `_focus_rules` writes it whenever the verdict names `sort_by`; a
+  message that says WHAT it is asking (a NEW ASK, `decision.starts_fresh`, or a domain
+  word of its own with no entity, `domain_in_message` true, which `decide()` files as a
+  CARRY) and names no sort drops it (rule `new_ask_drops_sort`; review round, blocker 2:
+  "PO oldest first" then "any SPO?" must not answer the oldest SPO line); a refinement or
+  a sort-only re-sort keeps it; `topic_reset` clears it with the rest.
+  `turn_runtime.lane_parse_output` projects `focus.sort` onto `out["sort_by"]` /
+  `out["sort_dir"]` when the verdict names none (a DEFAULT, never an override, N2's
+  rule), and `lanes/business._fetch_semantic_input` names both keys on the fetch's input
+  (review round, blocker 1: without them the transformer read None on every live turn).
 - S6. Fetch (`lanes/business/fetch.py::entity_ids_transformer`): a per-tool key map
   `SORT_KEY_BY_TOOL` and a per-key default direction `SORT_DEFAULT_DIR`:
 
@@ -181,7 +189,9 @@ revision over both (see M1) so the branch has exactly one head.
 
   `sort`/`dir` are emitted only for those two tools and only when the key maps; an unmapped
   key sends nothing (the tool's own default order). `sort_dir` from the parser wins over
-  the default. Row order in the reply is the tool's order (the presenters never re-sort;
+  the default. A sort on a RESTRICTED field (`supplier`, key `purchase_orders.supplier`,
+  `fetch.RESTRICTED_SORT_KEYS`) is not sent without the grant, the same rule the
+  restricted-field drop applies to `group_by=supplier` (security review, finding 1). Row order in the reply is the tool's order (the presenters never re-sort;
   `sorento_crm_mcp/presenters.py:465-530`).
 - S7. SPO ask with no product: owner ruling (29 Sep 2026, verbatim) "for SPO question with
   no product name, keep it as it is". The lane adds NO row default: an SPO ask scoped only
@@ -197,10 +207,12 @@ revision over both (see M1) so the branch has exactly one head.
   True`, so a bare "PO" keeps listing the open book exactly as today's unscoped
   pass-through does, while a customer or transporter token no longer rides into the PO
   tool. `answer._SCOPE_WORD["purchase_order"] = "purchase order"` for the miss line the
-  new row can now produce. Replay captures whose domain is `purchase_order` (8 files under
-  `tests/chatbot/replay_turns/`) move on `gate_reason` and the `allowed_lookup` echo:
-  registered FIXTURE-SCOPED in `tests/chatbot/divergences.py`, on exactly the fields that
-  move, after the `resource_attachment` precedent (`divergences.py:857-890`).
+  new row can now produce. Deliberate behaviour change, pinned by
+  `tests/chatbot/test_warehouse_entity.py::TestACustomerOnlyPurchaseOrderAskIsAsked`: a
+  PO ask whose only entity is a customer (carried from an order ask) used to list the
+  whole open book as if it were that customer's; it now asks for a product code or
+  warehouse. Measured on the replay suite (`tests/chatbot/test_replay.py`, 65 passed):
+  no graded capture moves on the new row, so no `divergences.py` entry was needed.
 - W2. MCP catalog: `crm_procurement_po_placed_list` declares `warehouse_ids`;
   `crm_procurement_spo_allocations_last_receipt_list` declares `sort` and `dir`. Tool
   descriptions name the new params and the sort keys. `mcp_tool_capability_service`
@@ -241,12 +253,13 @@ revision over both (see M1) so the branch has exactly one head.
 ### M. Migration and publish
 
 - M1. `alembic/versions/chatbot_po_spo_warehouse_vocab.py`, `revision =
-  "chatbot_po_spo_warehouse_vocab"` (30 chars), `down_revision = ("eml_0002_seed_layouts",
-  "mem_0003_parser_history")` - a MERGE revision, because main carries both heads today.
-  Body: the `publish()` pattern of `chatbot_top_selling_vocab_r6.py` (publish
-  `SEMANTIC_PARSER_PROMPT` as the next `chatbot_semantic_parser` version unless a version
-  already carries that exact body; never move a label). Re-parent with
-  `scripts/alembic-reparent.sh` before merge if main's heads change.
+  "chatbot_po_spo_warehouse_vocab"` (30 chars), `down_revision = "merge_29sep_batch7"`
+  (main joined its two heads in #1374; the lane's first cut was a merge revision over
+  both and was re-parented onto that join). Body: the `publish()` pattern of
+  `chatbot_top_selling_vocab_r6.py` (publish `SEMANTIC_PARSER_PROMPT` as the next
+  `chatbot_semantic_parser` version unless a version already carries that exact body;
+  never move a label). Re-parent with `scripts/alembic-reparent.sh` before merge if
+  main's head moves again.
 - M2. `scripts/publish_parser_prompt.py`: the same idempotent publish as a standalone
   script (reads `DATABASE_URL` from the backend env; prints the version it published or
   found). Crew's hand-test copy does not run alembic data migrations, so the orchestrator
