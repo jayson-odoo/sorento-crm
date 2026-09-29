@@ -11,13 +11,17 @@
  * owns the one destructive `Alert` above it (AC-20/AC-29): this component
  * reports errors up via `onError` rather than rendering its own, so "Back to
  * email" clears the same slot the email form uses.
+ *
+ * The number is entered through the shared `PhoneInput` (owner ruling, 29 Sep
+ * 2026): Malaysia by default, sent as E.164, and an incomplete number stops at
+ * the field's own error state instead of reaching request-code.
  */
 
 import { useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { LoaderCircleIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { PhoneInput } from '@/components/common/PhoneInput';
 import { Label } from '@/components/ui/label';
 import { OtpCodeField, useResendCooldown } from '@/components/auth/OtpCodeField';
 import { useRequestSigninCode } from '../hooks/usePhoneSignin';
@@ -33,6 +37,8 @@ interface Props {
 export function PhoneSignIn({ onError, onSignedIn }: Props) {
   const [step, setStep] = useState<PhoneStep>('phone');
   const [phone, setPhone] = useState('');
+  const [phoneValid, setPhoneValid] = useState(false);
+  const [showPhoneError, setShowPhoneError] = useState(false);
   const [code, setCode] = useState('');
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
@@ -42,6 +48,10 @@ export function PhoneSignIn({ onError, onSignedIn }: Props) {
 
   const sendCode = () => {
     onError(null);
+    if (!phoneValid) {
+      setShowPhoneError(true);
+      return;
+    }
     requestCode.mutate(phone, {
       onSuccess: (result) => {
         setSentTo(result.sent_to);
@@ -129,13 +139,16 @@ export function PhoneSignIn({ onError, onSignedIn }: Props) {
     <div className="space-y-5">
       <div className="space-y-1.5">
         <Label htmlFor="phone">Phone number</Label>
-        <Input
+        <PhoneInput
           id="phone"
           value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          inputMode="tel"
-          autoComplete="tel"
-          placeholder="e.g. 012-345 6789"
+          onChange={(e164, { valid }) => {
+            setPhone(e164);
+            setPhoneValid(valid);
+            setShowPhoneError(false);
+          }}
+          showError={showPhoneError}
+          disabled={requestCode.isPending}
         />
       </div>
 

@@ -73,6 +73,10 @@ function renderSignin() {
 
 const CODE_RESULT = { sent_to: '+60•••6789', expires_in_seconds: 600, resend_in_seconds: 60 };
 
+// Every accepted spelling of 012-345 6789 reaches the backend as this one value
+// (owner ruling 29 Sep 2026: the shared PhoneInput sends E.164).
+const E164 = '+60123456789';
+
 async function toPhoneCodeStep(typedPhone = '012-345 6789') {
   mockRequestSigninCode.mockResolvedValue(CODE_RESULT);
   renderSignin();
@@ -80,7 +84,7 @@ async function toPhoneCodeStep(typedPhone = '012-345 6789') {
   fireEvent.change(screen.getByLabelText('Phone number'), { target: { value: typedPhone } });
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
   await waitFor(() => expect(screen.getByTestId('otp-code-field')).toBeInTheDocument());
-  return typedPhone;
+  return E164;
 }
 
 beforeEach(() => {
@@ -170,6 +174,35 @@ describe('AC-20: /signin phone entry', () => {
     expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
     expect(screen.queryByRole('checkbox')).toBeNull();
     expect(screen.queryByText('Remember me')).toBeNull();
+  });
+
+  it('the phone field is the shared PhoneInput, Malaysia (+60) by default', () => {
+    renderSignin();
+    openPhone();
+
+    expect(screen.getByRole('button', { name: 'Country: Malaysia (+60)' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Phone number')).toHaveAttribute('type', 'tel');
+  });
+
+  it.each([['0123456789'], ['60123456789'], ['+60 12-345 6789']])(
+    'Continue after entering %s requests the code for +60123456789',
+    async (typed) => {
+      const sent = await toPhoneCodeStep(typed);
+      expect(sent).toBe(E164);
+      expect(mockRequestSigninCode).toHaveBeenCalledWith(E164);
+    },
+  );
+
+  it('Continue with an incomplete number shows the field error and requests nothing', () => {
+    renderSignin();
+    openPhone();
+    fireEvent.change(screen.getByLabelText('Phone number'), { target: { value: '01234' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    expect(screen.getByText('Enter a complete phone number.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Phone number')).toHaveAttribute('aria-invalid', 'true');
+    expect(mockRequestSigninCode).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('otp-code-field')).toBeNull();
   });
 
   it('Continue requests the code with the typed number, then shows the WhatsApp line, Change number and the code field', async () => {

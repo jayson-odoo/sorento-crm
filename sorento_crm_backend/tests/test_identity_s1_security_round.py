@@ -132,13 +132,13 @@ def rate_limit_cleanup():
 
 
 # --------------------------------------------------------------------------- #
-# B1: sign-in / portal codes must not be readable from integration_log        #
+# B1, overruled by the owner on 29 Sep 2026 ("show the code in the outbox"): #
+# the operator reads the code from the outbox on a test copy, so the          #
+# integration_log row carries the real code for sign-in and portal sends.     #
 # --------------------------------------------------------------------------- #
-def test_b1_signin_otp_success_send_leaves_no_code_in_integration_log():
-    """RED reason (pre-fix): `_send_and_log` wrote the real code into
-    `request_payload` (`{"message": {"type": "text", "text": "...<code>..."}}`)
-    on every send, and `GET /api/v1/integrations/logs` has no permission gate
-    - any signed-in user could read the code and verify as the target."""
+def test_b1_signin_otp_success_send_shows_code_in_integration_log():
+    """Owner ruling 29 Sep 2026: the success row's request and response
+    payloads carry the real sign-in code, unmasked."""
     from app.database import SessionLocal
     from app.tasks.respond_io_tasks import send_login_otp_respond_message
 
@@ -166,18 +166,19 @@ def test_b1_signin_otp_success_send_leaves_no_code_in_integration_log():
         )
         assert row is not None
         assert row.status == "success"
-        assert code not in (row.request_payload or ""), row.request_payload
-        assert code not in (row.response_payload or ""), row.response_payload
+        assert code in (row.request_payload or ""), row.request_payload
+        assert "******" not in (row.request_payload or ""), row.request_payload
+        assert code in (row.response_payload or ""), row.response_payload
     finally:
         db.query(IntegrationLog).filter(IntegrationLog.business_id == otp_id).delete(synchronize_session=False)
         db.commit()
         db.close()
 
 
-def test_b1_signin_otp_failed_send_leaves_no_code_in_integration_log():
-    """RED reason (pre-fix): the FAILURE branch's default `request_payload`
-    (built before the send is even attempted) already embeds the rendered
-    text, code and all, and gets written to the `failed` row verbatim."""
+def test_b1_signin_otp_failed_send_shows_code_in_integration_log():
+    """Owner ruling 29 Sep 2026: a failed send (local dev, no Respond.io)
+    still leaves the code readable in the `failed` row, the operator's one
+    way to read it back on a test copy."""
     from app.database import SessionLocal
     from app.tasks.respond_io_tasks import send_login_otp_respond_message
 
@@ -204,17 +205,18 @@ def test_b1_signin_otp_failed_send_leaves_no_code_in_integration_log():
         )
         assert row is not None
         assert row.status == "failed"
-        assert code not in (row.request_payload or ""), row.request_payload
-        assert code not in (row.error_message or ""), row.error_message
+        assert code in (row.request_payload or ""), row.request_payload
+        assert "******" not in (row.request_payload or ""), row.request_payload
+        assert code in (row.error_message or ""), row.error_message
     finally:
         db.query(IntegrationLog).filter(IntegrationLog.business_id == otp_id).delete(synchronize_session=False)
         db.commit()
         db.close()
 
 
-def test_b1_portal_otp_success_send_leaves_no_code_in_integration_log():
-    """The portal's own OTP is the SAME `portal_otp_codes` row phone sign-in's
-    verify accepts - a readable portal code is a CRM takeover too."""
+def test_b1_portal_otp_success_send_shows_code_in_integration_log():
+    """The portal OTP send shares `_send_and_log` with sign-in, so the same
+    ruling applies: the code is readable in the row."""
     from app.database import SessionLocal
     from app.tasks.respond_io_tasks import send_portal_otp_respond_message
 
@@ -224,7 +226,7 @@ def test_b1_portal_otp_success_send_leaves_no_code_in_integration_log():
     fake_result = {
         "sent_as": "text",
         "rendered_text": f"Your Sorento portal verification code is {code}.",
-        "response": {"ok": True, "id": "resp-b1-portal-success"},
+        "response": {"ok": True, "id": "resp-b1-portal-success", "echo": f"code {code} sent"},
         "request_payload": {"message": {"type": "text", "text": f"Your Sorento portal verification code is {code}."}},
     }
     try:
@@ -241,15 +243,16 @@ def test_b1_portal_otp_success_send_leaves_no_code_in_integration_log():
             .first()
         )
         assert row is not None
-        assert code not in (row.request_payload or ""), row.request_payload
-        assert code not in (row.response_payload or ""), row.response_payload
+        assert code in (row.request_payload or ""), row.request_payload
+        assert "******" not in (row.request_payload or ""), row.request_payload
+        assert code in (row.response_payload or ""), row.response_payload
     finally:
         db.query(IntegrationLog).filter(IntegrationLog.business_id == otp_id).delete(synchronize_session=False)
         db.commit()
         db.close()
 
 
-def test_b1_portal_otp_failed_send_leaves_no_code_in_integration_log():
+def test_b1_portal_otp_failed_send_shows_code_in_integration_log():
     from app.database import SessionLocal
     from app.tasks.respond_io_tasks import send_portal_otp_respond_message
 
@@ -276,8 +279,9 @@ def test_b1_portal_otp_failed_send_leaves_no_code_in_integration_log():
         )
         assert row is not None
         assert row.status == "failed"
-        assert code not in (row.request_payload or ""), row.request_payload
-        assert code not in (row.error_message or ""), row.error_message
+        assert code in (row.request_payload or ""), row.request_payload
+        assert "******" not in (row.request_payload or ""), row.request_payload
+        assert code in (row.error_message or ""), row.error_message
     finally:
         db.query(IntegrationLog).filter(IntegrationLog.business_id == otp_id).delete(synchronize_session=False)
         db.commit()

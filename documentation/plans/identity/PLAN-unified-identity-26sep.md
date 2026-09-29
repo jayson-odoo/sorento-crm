@@ -21,7 +21,9 @@ PR #1307 (branch `claude/identity-s1-phone-signin-w6akca`, full track); the revi
 PR retargeted to main (28 Sep 2026, retarget round), with the owner ruling of 27 Sep applied: sign-in
 reuses the approved `portal_otp` WhatsApp template; main cd220251 merged in (28 Sep 2026, merge-main
 round, clean merge, single alembic head `fin_0001_billing_documents`); main 2e894c4c merged in
-(28 Sep 2026, merge round 4, single alembic head `merge_28sep_esc_fin`). S2 not started.
+(28 Sep 2026, merge round 4, single alembic head `merge_28sep_esc_fin`); S1 fix round 2 (29 Sep
+2026, owner rulings): the shared `PhoneInput` on the sign-in phone step, and the OTP kept readable
+in the Respond outbox (B1 overruled). S2 not started.
 S3 built on PR #1306 (stacked on S0; no migration); the reviewer pass at 6a7f0bcd (needs work:
 B1, S1 to S5, N1 to N6) is addressed by S3 fix lane round 2 on the same PR (27 Sep 2026), ready
 for the orchestrator's review; the retarget round (28 Sep 2026) merged main 9d150067 into it and
@@ -477,10 +479,16 @@ already has (section 3.2).
   button, no Sign Up line. No extra heading, no explanatory copy.
 - **Email mode** is today's page exactly: Email, Password with "Forgot Password?", the eye
   toggle, Remember me, Continue. Nothing moves; the divider and phone button sit below it.
-- **Phone mode, step 1:** "Phone number" `Input` (`inputMode="tel"`, `autoComplete="tel"`,
-  placeholder "e.g. 012-345 6789"), then the full-width "Continue" button. No Remember me: a phone
-  sign-in is always the 30-day rolling session (Q15). The FE sends the number as typed; the
-  backend normalises it with `normalize_msisdn`.
+- **Phone mode, step 1:** "Phone number" through the shared system `PhoneInput`
+  (`components/common/PhoneInput.tsx`; fix round 2, owner ruling 29 Sep 2026: "i think our phone
+  number input needs to use a proper phone number input ... default to malaysia so all phone
+  number is cleansed"): a flag + dial-code country picker (the standard `SearchableSelect`),
+  Malaysia (+60) by default, the number in national format as it is typed, placeholder
+  "012-345 6789", then the full-width "Continue" button. "0166753328", "60166753328" and
+  "+60 16-675 3328" all become `+60166753328`; the FE sends that E.164 value, and an incomplete
+  number stops at the field's error state ("Enter a complete phone number.") without a request.
+  The backend still normalises what it receives with `normalize_msisdn` (the second line). No
+  Remember me: a phone sign-in is always the 30-day rolling session (Q15).
 - **Phone mode, step 2 (same card, "Back to email" stays):** the line "We'll send a code to your
   WhatsApp <masked number>" with "Change number" beside it, one "Verification code" `Input`
   styled exactly as the portal's (`variant="lg"`, numeric, `one-time-code`, placeholder "6-digit
@@ -491,6 +499,14 @@ already has (section 3.2).
   `send_portal_otp_respond_message` job on the `respond_io` queue, the same limits); only the
   entry differs (section 4.2). The FE shares the portal card's code input and countdown, lifted
   into one component both pages import, not copied.
+- **The code is readable in the Respond outbox** (owner ruling 29 Sep 2026, "show the code in the
+  outbox", overruling security round B1 of #1280): the `integration_logs` row for the sign-in code
+  send, and for the portal OTP send that shares `_send_and_log`, keeps the real code in
+  `request_payload`, `response_payload` and `error_message`. Why: the operator reads the code from
+  the outbox on a test copy. B1 had replaced it with `******` because `GET
+  /api/v1/integrations/logs` has no permission gate of its own; that exposure is accepted by the
+  owner. Every other read of a contact's WhatsApp messages still masks the code (reviewer B2,
+  `app/services/otp_redaction.py`), which this ruling does not change.
 - **Errors in words, in the existing `Alert`:** wrong code "That code is not right. 4 tries
   left."; expired "That code has expired. Send a new one."; limit "Too many tries. Try again in 12
   minutes." (from the 429's seconds); no WhatsApp contact or unknown number: nothing distinguishes

@@ -27,7 +27,8 @@ Phase 1 contract for slice S1 of `PLAN-unified-identity-26sep.md` (section 10 S1
 
 ### `POST /api/v1/auth/phone/request-code` (public, AC-21, AC-22, AC-23)
 
-Request `{ "phone": "012-345 6789" }` (any format; normalised by `normalize_msisdn`).
+Request `{ "phone": "+60123456789" }`: `/signin` sends E.164 from the shared `PhoneInput` (fix
+round 2, 29 Sep 2026). Any format is still accepted and normalised by `normalize_msisdn`.
 
 - 422 when the number does not normalise to 8 to 15 digits: `detail` "Enter a valid phone
   number." (depends only on the typed text, never on the database).
@@ -53,8 +54,11 @@ Request `{ "phone": "012-345 6789" }` (any format; normalised by `normalize_msis
   and no user is ever created.
 - Every 200 records "a code was requested for this number now" in Redis (10 minute TTL) for the
   verify step's messages.
-- No sign-in or portal code is readable anywhere in the CRM (fix lane round 2, reviewer B2): the
-  outbox row carries `******`, the portal job's RQ description is redacted, and every read of a
+- The Respond outbox row (`integration_logs` `request_payload`, `response_payload`,
+  `error_message`) carries the real sign-in or portal code: owner ruling 29 Sep 2026 ("show the
+  code in the outbox") overruled security round B1, because the operator reads the code from the
+  outbox on a test copy. Everywhere else no sign-in or portal code is readable in the CRM (fix
+  lane round 2, reviewer B2): the portal job's RQ description is redacted, and every read of a
   contact's WhatsApp messages (`RespondClient.list_messages` / `get_message`, the thread's Respond
   and local lanes, in-thread search, the `chat_histories` cache and the n8n mirror ingest) masks
   the in-window texts and the `otp_code` parameter of the `portal_otp` / `login_otp` template
