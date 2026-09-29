@@ -647,31 +647,55 @@ def update_for_customer(
     return serialize(db, [_apply_update(db, ask, data, actor_user_id=actor_user_id)])[0]
 
 
-def _owning_agent_column() -> Any:
+def _owning_agent_column(entity: Any = None) -> Any:
     """The customer-to-agent relation, in ONE place: today `customers.sales_agent_id`. The
     agent scope, `serialize(with_agent=True)` and `agent_counts` all read it from here, so the
-    swap to CONTACT-CUSTOMERS' relation (#1366, plan section 4) is one edit."""
+    swap to CONTACT-CUSTOMERS' relation (#1366, plan section 4) is one edit. `entity` is the
+    `Customer` alias to read it from (default: `Customer`)."""
     from app.models.order import Customer
 
-    return Customer.sales_agent_id
+    return (entity or Customer).sales_agent_id
 
 
 def _agent_scope(db: Session, agent_id: Optional[str | Iterable[str]]) -> Any:
     """S6 (R9): asks of customers assigned to this agent NOW (`customers.sales_agent_id`).
-    An ask with no customer belongs to nobody's list. `agent_id=None` is every agent's asks
-    (the CRM manager's "All agents": customers that have an agent); a collection of ids is
-    those agents' asks (a team leader's team). The ONE place the agent -> customers relation
-    lives (plan section 4)."""
+    `agent_id=None` is every agent's asks (the CRM manager's "All agents"); a collection of ids
+    is those agents' asks (a team leader's team). The ONE place the agent -> customers relation
+    lives (plan section 4).
+
+    AC-ST105b (#1366): an ask with NO customer belongs to the agents handling a customer its
+    contact is linked to (`respond_contact_customers`), read every time, nothing stored on the
+    ask. A customer-less ask whose contact links to no handled customer belongs to nobody."""
+    from sqlalchemy import and_, exists, or_
+    from sqlalchemy.orm import aliased
+
+    from app.models.access import RespondContactCustomer
     from app.models.order import Customer
     from app.models.stock_ask import StockAsk
 
-    query = db.query(StockAsk).join(Customer, Customer.id == StockAsk.customer_id)
+    linked = aliased(Customer)
     owner = _owning_agent_column()
-    if agent_id is None:
-        return query.filter(owner.isnot(None))
-    if isinstance(agent_id, str):
-        return query.filter(owner == agent_id)
-    return query.filter(owner.in_(list(agent_id)))
+    linked_owner = _owning_agent_column(linked)
+
+    def matches(column: Any) -> Any:
+        if agent_id is None:
+            return column.isnot(None)
+        if isinstance(agent_id, str):
+            return column == agent_id
+        return column.in_(list(agent_id))
+
+    via_contact = and_(
+        StockAsk.customer_id.is_(None),
+        exists()
+        .where(RespondContactCustomer.contact_id == StockAsk.contact_id)
+        .where(linked.id == RespondContactCustomer.customer_id)
+        .where(matches(linked_owner)),
+    )
+    return (
+        db.query(StockAsk)
+        .outerjoin(Customer, Customer.id == StockAsk.customer_id)
+        .filter(or_(matches(owner), via_contact))
+    )
 
 
 def list_for_agent(
@@ -842,3 +866,83 @@ def agent_counts(
                 },
             )
     return sorted(out.values(), key=lambda r: r["code"])
+
+
+#: The window either side of the ask, and the row caps (plan 3.6).
+CONVERSATION_MINUTES = 30
+CONVERSATION_CAP = 60
+CONVERSATION_DAY_CAP = 200
+
+
+def get_ask_in_scope(db: Session, agent_id: Optional[str | Iterable[str]], ask_id: str) -> Any:
+    """One ask inside an agent scope (`_agent_scope`), or a 404."""
+    from app.models.stock_ask import StockAsk
+    from app.services.error_handler import handle_not_found
+
+    ask = _agent_scope(db, agent_id).filter(StockAsk.id == ask_id).first()
+    if ask is None:
+        raise handle_not_found("Stock ask", ask_id)
+    return ask
+
+
+def conversation_for_ask(db: Session, ask: Any, *, whole_day: bool = False) -> dict[str, Any]:
+    """The chat around an ask (plan 3.6): the contact's `chat_histories` rows within 30 minutes
+    either side of `created_at` (at most 60), or the ask's Malaysia calendar day (at most 200).
+
+    `chat_histories.contact_id` holds the Respond.io contact id, so the ask's contact
+    (`respond_contacts.id`) is resolved to its `respond_io_id` first. Only id, direction, text and
+    time leave here. When the cap bites, the rows nearest the ask are kept, oldest first.
+    `ask_message_id` is the outgoing row after the ask that carries its answer line, else the
+    nearest outgoing row after it, else None."""
+    from sqlalchemy import func
+
+    from app.models.access import RespondContact
+    from app.models.chat_history import ChatHistory
+
+    empty: dict[str, Any] = {"messages": [], "ask_message_id": None}
+    if not ask.contact_id:
+        return empty
+    respond_io_id = db.query(RespondContact.respond_io_id).filter(RespondContact.id == ask.contact_id).scalar()
+    if not respond_io_id:
+        return empty
+
+    created = ask.created_at
+    if whole_day:
+        start = today_start_utc(created)
+        end, cap = start + timedelta(days=1), CONVERSATION_DAY_CAP
+    else:
+        start = created - timedelta(minutes=CONVERSATION_MINUTES)
+        end, cap = created + timedelta(minutes=CONVERSATION_MINUTES), CONVERSATION_CAP
+    in_window = [
+        ChatHistory.contact_id == respond_io_id,
+        ChatHistory.sent_at >= start,
+        ChatHistory.sent_at < end if whole_day else ChatHistory.sent_at <= end,
+    ]
+    rows = (
+        db.query(ChatHistory.id, ChatHistory.type, ChatHistory.message, ChatHistory.sent_at)
+        .filter(*in_window)
+        .order_by(func.abs(func.extract("epoch", ChatHistory.sent_at - created)), ChatHistory.id)
+        .limit(cap)
+        .all()
+    )
+    rows.sort(key=lambda r: (r.sent_at, r.id))
+    messages = [
+        {
+            "id": r.id,
+            "direction": "out" if r.type == "outgoing" else "in",
+            "text": r.message,
+            "at": r.sent_at,
+        }
+        for r in rows
+    ]
+
+    after = (
+        db.query(ChatHistory.id, ChatHistory.message)
+        .filter(*in_window, ChatHistory.type == "outgoing", ChatHistory.sent_at >= created)
+        .order_by(ChatHistory.sent_at, ChatHistory.id)
+        .all()
+    )
+    ask_message_id = next((r.id for r in after if ask.answer_summary and ask.answer_summary in (r.message or "")), None)
+    if ask_message_id is None and after:
+        ask_message_id = after[0].id
+    return {"messages": messages, "ask_message_id": ask_message_id}

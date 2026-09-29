@@ -1,19 +1,28 @@
 /**
  * Sales asks as a salesperson's to-do list (lane SALES-ASKS-TODO): the payload both mounts
- * (portal Customer asks, CRM Sales > Customer asks) receive, and the ONE pure function that
- * turns it into counts and groups. The server owns the day boundary (`today_start`); nothing
- * here guesses a timezone.
+ * (portal Customer asks, CRM Sales > Customer asks) receive, and the pure functions that turn it
+ * into sections and into the landing toolbar's shapes. The server owns the day boundary
+ * (`today_start`); nothing here guesses a timezone.
  *
- * Rules (owner rulings, plan section 0b):
- * - Q3 grouping: `Needs attention` pinned (one group per Malaysia day, oldest first), then `Today`.
+ * Rules (owner rulings, plan section 0b and 0c):
+ * - Q3 grouping: one `Needs attention` section (open, asked before `today_start`), then `Today`.
  * - Q4 overdue: needs attention = open and asked before `today_start`.
+ * - Q5: every branch counts, `incoming` and `console` included.
  */
-import { BRANCH_LABEL, type StockAsk } from '@/lib/stock-asks';
+import type { StockAsk } from '@/lib/stock-asks';
+import {
+  applyLandingFilters,
+  sortLandingItems,
+  type LandingField,
+  type LandingFilters,
+  type LandingSort,
+} from '@/app/(auth)/portal/lib/landing-fields';
+import type { PortalSubmissionSummary } from '@/app/(auth)/portal/lib/portal-client';
 
 export interface AskTodoPayload {
   /** Malaysia midnight of today, as a UTC instant ("2026-09-28T16:00:00Z"). */
   today_start: string;
-  /** state open, oldest first, capped at 500. */
+  /** state open, every branch, oldest first, capped at 500. */
   open: StockAsk[];
   /** state done with `done_at >= today_start`, newest first. */
   done_today: StockAsk[];
@@ -22,7 +31,7 @@ export interface AskTodoPayload {
   agent?: { code: string; name: string } | null;
 }
 
-/** One line of the manager's Agent select (`GET /api/v1/sales/customer-asks/agents`). */
+/** One line of the Agent select (`GET /api/v1/sales/customer-asks/agents`). */
 export interface AskAgentSummary {
   /** The filter key, never shown. */
   agent_id: string;
@@ -32,13 +41,27 @@ export interface AskAgentSummary {
   needs_attention: number;
 }
 
+/** The chat around one ask (`GET .../customer-asks/{id}/conversation`). */
+export interface AskConversationMessage {
+  id: number;
+  direction: 'in' | 'out';
+  text: string;
+  /** Naive UTC, like every backend datetime. */
+  at: string;
+}
+export interface AskConversation {
+  messages: AskConversationMessage[];
+  /** The outgoing message that carries the ask's answer, when there is one. */
+  ask_message_id: number | null;
+  /** The contact's row id, only for the CRM's "Open in Conversations" link; absent on the wire today. */
+  contact_id?: string | null;
+}
+
 export type TodoSectionKey = 'needs_attention' | 'today';
 
-/** One Malaysia calendar day inside a section. */
+/** One day group inside a section. Since the reshape a section holds exactly one. */
 export interface TodoDay {
-  /** `yyyy-mm-dd` on the Malaysia calendar. */
   key: string;
-  /** `Today`, `Yesterday` or `Tue 22 Sep`. */
   label: string;
   asks: StockAsk[];
 }
@@ -49,52 +72,111 @@ export interface TodoSection {
   days: TodoDay[];
 }
 
-export type AskSortId = 'asked_at' | 'customer' | 'product' | 'branch';
-export interface AskSort {
-  id: AskSortId;
-  desc: boolean;
-}
-
-export const DEFAULT_ASK_SORT: AskSort = { id: 'asked_at', desc: false };
-
-/** The Sort select's five choices; the value is `<id>:<asc|desc>`. */
-export const ASK_SORT_OPTIONS: { value: string; label: string; sort: AskSort }[] = [
-  { value: 'asked_at:asc', label: 'Oldest first', sort: { id: 'asked_at', desc: false } },
-  { value: 'asked_at:desc', label: 'Newest first', sort: { id: 'asked_at', desc: true } },
-  { value: 'customer:asc', label: 'Customer A to Z', sort: { id: 'customer', desc: false } },
-  { value: 'product:asc', label: 'Product A to Z', sort: { id: 'product', desc: false } },
-  { value: 'branch:asc', label: 'Branch', sort: { id: 'branch', desc: false } },
-];
-
-export function sortToValue(sort: AskSort): string {
-  return `${sort.id}:${sort.desc ? 'desc' : 'asc'}`;
-}
-
-/** A stored sort that is not one of the five choices reads as the default. */
-export function normalizeSort(sort: { id?: unknown; desc?: unknown } | null | undefined): AskSort {
-  if (!sort) return DEFAULT_ASK_SORT;
-  const hit = ASK_SORT_OPTIONS.find((o) => o.sort.id === sort.id && o.sort.desc === Boolean(sort.desc));
-  return hit ? hit.sort : DEFAULT_ASK_SORT;
-}
-
 export interface BucketedTodo {
   counts: { open: number; needs_attention: number; done_today: number };
   sections: TodoSection[];
   done: StockAsk[];
 }
 
+// ---- the landing toolbar's view of an ask ------------------------------------------------
+
+/** The landing summary shape plus the asks' own extra keys the field table reads. */
+export type AskSummary = PortalSubmissionSummary & {
+  contact_name: string | null;
+  answer: string;
+  branch: string;
+};
+
+/** "SRT5674 x 50: yes, we have stock" -> "Yes, we have stock". Without the prefix, as it is. */
+export function askAnswerText(ask: Pick<StockAsk, 'answer_summary'>): string {
+  const text = ask.answer_summary ?? '';
+  const stripped = text.replace(/^\s*\S+ x \d+:\s*/, '');
+  if (stripped === text) return text;
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
+}
+
+export function askProductText(ask: Pick<StockAsk, 'product_code' | 'quantity'>): string {
+  return `${ask.product_code} x ${ask.quantity}`;
+}
+
+export function askToSummary(ask: StockAsk): AskSummary {
+  return {
+    id: ask.id,
+    kind: 'customer_asks',
+    title: askProductText(ask),
+    reference: null,
+    status: ask.state,
+    is_editable: false,
+    is_draft: false,
+    created_at: ask.created_at,
+    customer_name: ask.customer_name,
+    contact_name: ask.contact_name,
+    answer: askAnswerText(ask),
+    branch: ask.branch,
+  };
+}
+
+/**
+ * The asks kind's field contract for `LandingToolbar` (Filter and Sort share it). The date field
+ * is keyed `created_at`; its label is the word the Sort button prints.
+ */
+export const ASK_LANDING_FIELDS: LandingField[] = [
+  { key: 'customer_name', label: 'Customer', type: 'text' },
+  { key: 'answer', label: 'Answer', type: 'text' },
+  { key: 'created_at', label: 'Asked', type: 'date' },
+  { key: 'status', label: 'State', type: 'status' },
+];
+
+/** Oldest waits at the top. */
+export const DEFAULT_ASK_SORT: LandingSort = { key: 'created_at', dir: 'asc' };
+
+/** A stored or persisted sort that names no field of this kind reads as the default. */
+export function normalizeAskSort(sort: { key?: unknown; dir?: unknown } | null | undefined): LandingSort {
+  const key = sort?.key === 'asked_at' ? 'created_at' : sort?.key;
+  if (typeof key !== 'string' || !ASK_LANDING_FIELDS.some((f) => f.key === key)) return DEFAULT_ASK_SORT;
+  return { key, dir: sort?.dir === 'desc' ? 'desc' : 'asc' };
+}
+
+/** The remembered-preference row's `sorting[0]` <-> the toolbar's sort. */
+export function askSortFromSorting(sorting: { id: string; desc?: boolean }[] | undefined): LandingSort {
+  const first = sorting?.[0];
+  return normalizeAskSort(first ? { key: first.id, dir: first.desc ? 'desc' : 'asc' } : null);
+}
+
+export function askSortToSorting(sort: LandingSort): { id: string; desc: boolean }[] {
+  return [{ id: sort.key, desc: sort.dir === 'desc' }];
+}
+
+/**
+ * The payload narrowed by the toolbar's filters and, on the portal, the landing search box.
+ * Rows only leave; `today_start`, `truncated` and `agent` stay.
+ */
+export function filterTodoPayload(
+  payload: AskTodoPayload,
+  filters: LandingFilters,
+  search = '',
+): AskTodoPayload {
+  const needle = search.trim().toLowerCase();
+  const keep = (rows: StockAsk[]) => {
+    const summaries = rows.map(askToSummary);
+    const ids = new Set(applyLandingFilters(summaries, ASK_LANDING_FIELDS, filters).map((s) => s.id));
+    return rows.filter(
+      (a) =>
+        ids.has(a.id) &&
+        (!needle ||
+          [a.customer_name, a.contact_name, a.product_code].some((v) => v?.toLowerCase().includes(needle))),
+    );
+  };
+  return { ...payload, open: keep(payload.open), done_today: keep(payload.done_today) };
+}
+
+// ---- grouping ----------------------------------------------------------------------------
+
 const DAY_MS = 86_400_000;
-const MALAYSIA_OFFSET_MS = 8 * 3_600_000;
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** Backend datetimes are naive UTC; treat a string with no zone as UTC. */
 export function utcMs(value: string): number {
   return Date.parse(/(Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`);
-}
-
-function byCreated(a: StockAsk, b: StockAsk): number {
-  return utcMs(a.created_at) - utcMs(b.created_at) || a.id.localeCompare(b.id);
 }
 
 /** Whole Malaysia days between the ask's day and today (1 = yesterday). 0 for today. */
@@ -105,79 +187,30 @@ export function daysBeforeToday(createdAt: string, todayStart: string): number {
   return Math.ceil((start - created) / DAY_MS);
 }
 
-/** `Yesterday` or `Mon 22 Sep` (the months are named here: `Intl` en-GB spells it "Sept"). */
-export function dayLabel(createdAt: string, todayStart: string): string {
-  const days = daysBeforeToday(createdAt, todayStart);
-  if (days === 0) return 'Today';
-  if (days === 1) return 'Yesterday';
-  const d = new Date(utcMs(createdAt) + MALAYSIA_OFFSET_MS);
-  return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
-}
-
-/** "Yesterday", "2 days ago" ... for a Needs attention row; '' for a row from today. */
-export function ageLabel(createdAt: string, todayStart: string): string {
-  const days = daysBeforeToday(createdAt, todayStart);
-  if (days === 0) return '';
-  return days === 1 ? 'Yesterday' : `${days} days ago`;
-}
-
-/** Malaysia calendar date of an instant, `yyyy-mm-dd`. */
-function malaysiaDayKey(ms: number): string {
-  return new Date(ms + MALAYSIA_OFFSET_MS).toISOString().slice(0, 10);
-}
-
-function compareBy(sort: AskSort): (a: StockAsk, b: StockAsk) => number {
-  const text = (a: string | null | undefined, b: string | null | undefined) =>
-    (a ?? '').localeCompare(b ?? '', undefined, { sensitivity: 'base' });
-  return (a, b) => {
-    let primary = 0;
-    if (sort.id === 'customer') primary = text(a.customer_name, b.customer_name);
-    else if (sort.id === 'product') primary = text(a.product_code, b.product_code);
-    else if (sort.id === 'branch') primary = text(BRANCH_LABEL[a.branch] ?? a.branch, BRANCH_LABEL[b.branch] ?? b.branch);
-    const tie = byCreated(a, b);
-    const order = primary || tie;
-    return sort.desc ? -order : order;
-  };
-}
-
-function toDays(asks: StockAsk[], todayStart: string, sort: AskSort): TodoDay[] {
-  const byDay = new Map<string, StockAsk[]>();
-  for (const a of asks) {
-    const key = malaysiaDayKey(utcMs(a.created_at));
-    byDay.set(key, [...(byDay.get(key) ?? []), a]);
-  }
-  const cmp = compareBy(sort);
-  return [...byDay.entries()]
-    .sort(([x], [y]) => x.localeCompare(y)) // oldest day first
-    .map(([key, rows]) => ({
-      key,
-      label: dayLabel(rows[0].created_at, todayStart),
-      asks: [...rows].sort(cmp),
-    }));
+function ordered(asks: StockAsk[], sort: LandingSort): StockAsk[] {
+  const byId = new Map(asks.map((a) => [a.id, a]));
+  return sortLandingItems(asks.map(askToSummary), ASK_LANDING_FIELDS, sort).map((s) => byId.get(s.id)!);
 }
 
 /**
  * Counts and sections from one payload. `Needs attention` (pinned) holds every open ask asked
- * before `today_start`, split by Malaysia day, oldest day first; `Today` holds the rest as one
- * day. `sort` orders the rows inside every day. A day with no open row is absent. Every branch
- * counts, `incoming` and `console` included (Q5 (a)).
+ * before `today_start`, `Today` the rest; `sort` orders the rows inside each. An empty section is
+ * absent. Every branch counts (Q5 (a)).
  */
-export function bucketTodo(payload: AskTodoPayload, sort: AskSort = DEFAULT_ASK_SORT): BucketedTodo {
+export function bucketTodo(payload: AskTodoPayload, sort: LandingSort = DEFAULT_ASK_SORT): BucketedTodo {
   const start = utcMs(payload.today_start);
   const before = payload.open.filter((a) => utcMs(a.created_at) < start);
   const today = payload.open.filter((a) => utcMs(a.created_at) >= start);
 
+  const section = (key: TodoSectionKey, label: string, asks: StockAsk[]): TodoSection => ({
+    key,
+    label,
+    days: [{ key, label, asks: ordered(asks, sort) }],
+  });
+
   const sections: TodoSection[] = [];
-  if (before.length) {
-    sections.push({
-      key: 'needs_attention',
-      label: 'Needs attention',
-      days: toDays(before, payload.today_start, sort),
-    });
-  }
-  if (today.length) {
-    sections.push({ key: 'today', label: 'Today', days: toDays(today, payload.today_start, sort) });
-  }
+  if (before.length) sections.push(section('needs_attention', 'Needs attention', before));
+  if (today.length) sections.push(section('today', 'Today', today));
 
   return {
     counts: {

@@ -77,6 +77,7 @@ import {
 } from '../lib/portal-paths';
 import { useRevisionPolicy } from '../hooks/useRevisions';
 import { ReviseAction } from './ReviseAction';
+import { LandingCardShell } from './LandingCardShell';
 import { LandingToolbar } from './LandingToolbar';
 import { CustomerAsksList } from './CustomerAsksList';
 import { listCustomerAsks } from '../lib/customer-asks-service';
@@ -1132,10 +1133,7 @@ function SubmissionCard({
   const statusText = submissionStatusLabel(row);
 
   return (
-    <div
-      {...press}
-      className={`relative block rounded-lg border ${tintClass} px-3.5 py-3 pr-3 hover:brightness-95 active:brightness-90 transition-[filter] select-none cursor-pointer`}
-    >
+    <LandingCardShell {...press} tintClass={tintClass}>
       {/* Status badge anchored top-right; allows multi-word status to wrap
           onto two lines without colliding with the primary text. */}
       {isComplaint && !row.is_draft ? (
@@ -1241,7 +1239,7 @@ function SubmissionCard({
           </p>
         )}
       </div>
-    </div>
+    </LandingCardShell>
   );
 }
 

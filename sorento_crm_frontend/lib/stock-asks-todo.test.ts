@@ -192,7 +192,7 @@ describe('ASK_LANDING_FIELDS (AC-ST302)', () => {
     expect(ASK_LANDING_FIELDS.map((f) => [f.label, f.type])).toEqual([
       ['Customer', 'text'],
       ['Answer', 'text'],
-      ['Asked', 'date'],
+      ['Created', 'date'],
       ['State', 'status'],
     ]);
     expect(ASK_LANDING_FIELDS.find((f) => f.label === 'Customer')!.key).toBe('customer_name');

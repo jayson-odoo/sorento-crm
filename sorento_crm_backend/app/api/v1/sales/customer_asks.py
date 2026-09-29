@@ -22,6 +22,7 @@ from app.dependencies import require_permission
 from app.models.sales import SalesTeam, SalesTeamMember
 from app.models.sales_agent import SalesAgent
 from app.schemas.stock_ask import (
+    StockAskConversationResponse,
     StockAskAgentCount,
     StockAskResponse,
     StockAskTodoResponse,
@@ -131,6 +132,30 @@ def customer_asks_agents(
     return stock_ask_service.agent_counts(db, agent_ids=led, include_idle=True)
 
 
+def _patch_scope(db: Session, user: dict, ask_id: str) -> Optional[set[str]]:
+    """The agents whose asks the caller may act on (PATCH and conversation scope): everyone with
+    view_all (None), else self plus a led team's current members. A caller linked to no agent
+    has no scope: 404 (never a 403, so an ask id cannot be probed)."""
+    if _has_view_all(db, user):
+        return None
+    mine = agent_for_user(db, user["id"])
+    if mine is None:
+        raise handle_not_found("Stock ask", ask_id)
+    return _led_agent_ids(db, mine.id) | {mine.id}
+
+
+@router.get("/{ask_id}/conversation", response_model=StockAskConversationResponse)
+def customer_asks_conversation(
+    ask_id: str,
+    whole_day: bool = Query(False),
+    current_user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    validate_uuid_path(ask_id, resource="Stock ask")
+    ask = stock_ask_service.get_ask_in_scope(db, _patch_scope(db, current_user, ask_id), ask_id)
+    return stock_ask_service.conversation_for_ask(db, ask, whole_day=whole_day)
+
+
 @router.patch("/{ask_id}", response_model=StockAskResponse)
 def customer_asks_update(
     ask_id: str,
@@ -139,18 +164,10 @@ def customer_asks_update(
     db: Session = Depends(get_db),
 ):
     validate_uuid_path(ask_id, resource="Stock ask")
-    # The PATCH scope is the view scope: self, a led team's current members, or everyone.
-    if _has_view_all(db, current_user):
-        agent_ids: Optional[set[str]] = None
-    else:
-        mine = agent_for_user(db, current_user["id"])
-        if mine is None:
-            raise handle_not_found("Stock ask", ask_id)
-        agent_ids = _led_agent_ids(db, mine.id) | {mine.id}
     return stock_ask_service.update_for_sales(
         db,
         ask_id,
         body.model_dump(exclude_unset=True),
-        agent_id=agent_ids,
+        agent_id=_patch_scope(db, current_user, ask_id),
         actor_user_id=current_user["id"],
     )

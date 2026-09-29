@@ -60,6 +60,20 @@ class StockAskAgentCount(BaseModel):
     needs_attention: int
 
 
+class StockAskMessage(BaseModel):
+    """One chat line around an ask: no turn ids, no parser output, no delivery status."""
+
+    id: int
+    direction: Literal["in", "out"]
+    text: str
+    at: datetime
+
+
+class StockAskConversationResponse(BaseModel):
+    messages: list[StockAskMessage]
+    ask_message_id: Optional[int] = None
+
+
 class StockAskUpdate(BaseModel):
     """What the office (and the sales agent on the portal) edits: state and note only.
     A field left out is left alone."""

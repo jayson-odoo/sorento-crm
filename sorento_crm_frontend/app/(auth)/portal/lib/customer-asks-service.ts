@@ -13,11 +13,14 @@
  *          contact's label, a transition to open clears both, a note-only PATCH touches neither)
  *   GET   /api/v1/public/portal/customer-asks?state=done&page=&limit=  (unchanged, "Show done")
  * `StockAsk` gains `done_at` and `done_by`.
+ *   GET   /api/v1/public/portal/customer-asks/{id}/conversation[?whole_day=true]  (S3, plan 3.6)
+ *     -> { messages: [{ id, direction: 'in' | 'out', text, at }], ask_message_id: id | null }
+ *        Same gate and scope as the PATCH.
  */
 import { buildDataGridParams } from '@/lib/api-client';
 import { portalFetch, unwrap } from './portal-client';
 import type { StockAsk, StockAskPage, StockAskPatch, StockAskState } from '@/lib/stock-asks';
-import type { AskTodoPayload } from '@/lib/stock-asks-todo';
+import type { AskConversation, AskTodoPayload } from '@/lib/stock-asks-todo';
 
 const BASE = '/api/v1/public/portal/customer-asks';
 
@@ -59,4 +62,15 @@ export async function updateCustomerAsk(askId: string, patch: StockAskPatch): Pr
   });
   if (res.status === 403) throw new NotASalesAgentError();
   return unwrap<StockAsk>(res, 'Failed to update the ask');
+}
+
+/** The chat around one ask, for the opened card. */
+export async function getAskConversation(
+  askId: string,
+  opts: { wholeDay: boolean },
+): Promise<AskConversation> {
+  const qs = opts.wholeDay ? '?whole_day=true' : '';
+  const res = await portalFetch(`${BASE}/${encodeURIComponent(askId)}/conversation${qs}`);
+  if (res.status === 403) throw new NotASalesAgentError();
+  return unwrap<AskConversation>(res, 'Failed to load the conversation');
 }

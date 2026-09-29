@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from '@/lib/toast';
-import { DEFAULT_ASK_SORT, normalizeSort, type AskSort, type AskTodoPayload } from '@/lib/stock-asks-todo';
+import { DEFAULT_ASK_SORT, normalizeAskSort, type AskTodoPayload } from '@/lib/stock-asks-todo';
+import type { LandingSort } from '../lib/landing-fields';
 import { NotASalesAgentError, getCustomerAsksTodo, updateCustomerAsk } from '../lib/customer-asks-service';
 import type { StockAskPatch } from '@/lib/stock-asks';
 
@@ -59,7 +60,20 @@ export function useCustomerAsksTodo() {
     pendingAskId,
     done: (askId: string) => save(askId, { state: 'done' }),
     reopen: (askId: string) => save(askId, { state: 'open' }),
-    note: (askId: string, note: string) => save(askId, { note }),
+    /** Rejects when the save fails (after toasting), so the opened card shows "Saved" only when it was. */
+    note: async (askId: string, note: string) => {
+      setPendingAskId(askId);
+      try {
+        await updateCustomerAsk(askId, { note });
+        await load();
+        setVersion((v) => v + 1);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to update the ask');
+        throw e;
+      } finally {
+        setPendingAskId(null);
+      }
+    },
   };
 }
 
@@ -68,10 +82,10 @@ const SORT_KEY_PREFIX = 'sorento.portalAsksSort.';
 /**
  * The to-do's sort, remembered per contact in localStorage (the landing's default-tab pattern,
  * `sorento.portalDefaultTab.<contact_id>`); the portal has no user row to key a server
- * preference on. A stored value that is not one of the choices reads as the default.
+ * preference on. A stored value that names no field of the asks kind reads as the default.
  */
 export function usePortalAsksSort(contactId: string | null | undefined) {
-  const [sort, setSortState] = useState<AskSort>(DEFAULT_ASK_SORT);
+  const [sort, setSortState] = useState<LandingSort>(DEFAULT_ASK_SORT);
 
   useEffect(() => {
     if (!contactId || typeof window === 'undefined') {
@@ -80,14 +94,14 @@ export function usePortalAsksSort(contactId: string | null | undefined) {
     }
     try {
       const raw = window.localStorage.getItem(`${SORT_KEY_PREFIX}${contactId}`);
-      setSortState(normalizeSort(raw ? JSON.parse(raw) : null));
+      setSortState(normalizeAskSort(raw ? JSON.parse(raw) : null));
     } catch {
       setSortState(DEFAULT_ASK_SORT);
     }
   }, [contactId]);
 
   const setSort = useCallback(
-    (next: AskSort) => {
+    (next: LandingSort) => {
       setSortState(next);
       if (contactId && typeof window !== 'undefined') {
         window.localStorage.setItem(`${SORT_KEY_PREFIX}${contactId}`, JSON.stringify(next));

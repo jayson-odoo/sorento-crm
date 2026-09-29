@@ -78,7 +78,7 @@ def test_window_rows_shape_and_isolation(w):
     resp = _get(w, w["ask"].id)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert set(body) == {"messages", "ask_message_id"}
+    assert set(body) == {"messages", "ask_message_id", "contact_id"}
     ids = [m["id"] for m in body["messages"]]
     assert ids == [w["q_in"].id, w["out_other"].id, w["out_answer"].id, w["out_late"].id]  # oldest first
     for m in body["messages"]:
@@ -152,7 +152,7 @@ def test_service_contract_conversation_for_ask(w):
     from app.services import stock_ask_service
 
     out = stock_ask_service.conversation_for_ask(w["db"], w["ask"])
-    assert set(out) == {"messages", "ask_message_id"}
+    assert set(out) == {"messages", "ask_message_id", "contact_id"}
     assert [m["id"] for m in out["messages"]][0] == w["q_in"].id
     assert out["ask_message_id"] == w["out_answer"].id
     assert {m["direction"] for m in out["messages"]} == {"in", "out"}

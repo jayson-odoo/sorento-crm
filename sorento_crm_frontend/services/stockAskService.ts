@@ -6,7 +6,7 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { StockAsk, StockAskPage, StockAskPatch } from '@/lib/stock-asks';
-import type { AskAgentSummary, AskTodoPayload } from '@/lib/stock-asks-todo';
+import type { AskAgentSummary, AskConversation, AskTodoPayload } from '@/lib/stock-asks-todo';
 
 const BASE = '/api/v1/order-management/customers';
 const SALES_BASE = '/api/v1/sales/customer-asks';
@@ -32,6 +32,10 @@ const SALES_BASE = '/api/v1/sales/customer-asks';
  *        team's current members, or everyone with view_all); otherwise 404. A transition
  *        to done stamps `done_at` and the actor (the user id, server side); `done_by` on the wire is
  *        a label (my name), never an id; a transition to open clears both.
+ *   GET   /api/v1/sales/customer-asks/{ask_id}/conversation[?whole_day=true]  (S3, plan 3.6)
+ *     -> { messages: [{ id, direction: 'in' | 'out', text, at }], ask_message_id: id | null }
+ *        Same scope as the PATCH (404 outside it). The chat around the ask: 30 minutes either
+ *        side of it, or its whole Malaysia day.
  */
 
 export async function listCustomerAsks(
@@ -81,5 +85,16 @@ export async function updateSalesAsk(askId: string, patch: StockAskPatch): Promi
     body: JSON.stringify(patch),
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to update the ask'));
+  return response.json();
+}
+
+/** The chat around one ask, for the opened card. */
+export async function getAskConversation(
+  askId: string,
+  opts: { wholeDay: boolean },
+): Promise<AskConversation> {
+  const qs = opts.wholeDay ? '?whole_day=true' : '';
+  const response = await apiFetch(`${SALES_BASE}/${encodeURIComponent(askId)}/conversation${qs}`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the conversation'));
   return response.json();
 }

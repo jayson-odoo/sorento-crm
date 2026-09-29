@@ -111,7 +111,7 @@ describe('AskConversationPanel conversation (AC-ST307)', () => {
       ['in', 'Boss, SRT567'],
       ['out', 'How many uni'],
       ['out', 'SRT5674 x 50'],
-      ['in', 'ok tq, I call'],
+      ['in', 'ok tq, I cal'],
     ]);
   });
 

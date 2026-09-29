@@ -415,7 +415,7 @@ def test_conversation_route_mine_and_shape(led):
     resp = _call(w, [VIEW], "me", "get", f"/{w['x_conv'].id}/conversation")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert set(body) == {"messages", "ask_message_id"}
+    assert set(body) == {"messages", "ask_message_id", "contact_id"}
     assert [m["id"] for m in body["messages"]] == [w["q_in"].id, w["out"].id]
     assert all(set(m) == {"id", "direction", "text", "at"} for m in body["messages"])
     assert [m["direction"] for m in body["messages"]] == ["in", "out"]
