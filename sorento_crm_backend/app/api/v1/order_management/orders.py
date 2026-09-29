@@ -1884,32 +1884,11 @@ async def get_sales_report(
 
 _TOP_SELLING_N_MAX = 100
 
-#: The office tier's access type names ("Sorento Office"), matched the way the
-#: chatbot's `tier_gate.parse_level` reads them. Restated here, not imported:
-#: core never imports the chatbot package (tests/chatbot/test_import_boundary.py).
-_OFFICE_ACCESS_TYPE_RE = re.compile(r"^(sorento|cabana|mocha) office\Z")
-
-
 def _top_selling_is_staff(db: Session, contact_id: str) -> bool:
-    """True when the contact holds at least one ACTIVE office access type
-    (`_OFFICE_ACCESS_TYPE_RE`, e.g. "Sorento Office"), whatever other types it
-    holds. The chatbot lane asks the same question
-    (`business_services.top_selling_dealer_ledgers`)."""
-    from app.models.access import ContactAccessType, respond_contact_access_types
+    """Alias of `contact_customer_scope.is_office_staff` (the one shared rule)."""
+    from app.services.contact_customer_scope import is_office_staff
 
-    held = (
-        db.query(ContactAccessType.name)
-        .join(
-            respond_contact_access_types,
-            respond_contact_access_types.c.access_type_code == ContactAccessType.code,
-        )
-        .filter(
-            respond_contact_access_types.c.contact_id == contact_id,
-            ContactAccessType.is_active.is_(True),
-        )
-        .all()
-    )
-    return any(_OFFICE_ACCESS_TYPE_RE.match(" ".join((name or "").split()).lower()) for (name,) in held)
+    return is_office_staff(db, contact_id)
 
 
 def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str]]:
@@ -1923,17 +1902,14 @@ def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str
     ledgers. Anyone else (no type, end user, dealer with no link, an inactive
     office type, a type nobody classified) is refused (fail closed). The Sales
     report reveal is checked by the caller before this, for everyone."""
-    from app.services.contact_customer_service import list_links
+    from app.services import contact_customer_scope as scope_mod
     from app.services.error_handler import AppException
 
-    if _top_selling_is_staff(db, contact_id):
+    scope = scope_mod.contact_customer_scope(db, contact_id)
+    if scope.staff:
         return None
-    own = []
-    for link in list_links(db, contact_id):
-        if link.customer_id not in own:
-            own.append(link.customer_id)
-    if own:
-        return own
+    if scope.linked:
+        return scope.customer_ids
     raise AppException(
         403,
         "You can only see sales for your own account.",

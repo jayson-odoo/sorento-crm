@@ -535,9 +535,7 @@ def top_selling_dealer_ledgers(
     access type makes the contact staff whatever else it holds (fix round 3, owner
     hand test 27 Sep 2026); otherwise any `respond_contact_customers` row makes it
     that customer's dealer. Read on the engine's per-contact scoped session."""
-    from app.api.v1.order_management.orders import _top_selling_is_staff
-    from app.models.order import Customer
-    from app.services.contact_customer_service import list_links
+    from app.services import contact_customer_scope as scope_mod
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
 
     if not contact_respond_id:
@@ -545,19 +543,12 @@ def top_selling_dealer_ledgers(
     contact_id = resolve_contact_with_null_workspace_fallback(
         db, contact_id=str(contact_respond_id), space_id=space_id
     )
-    if not contact_id or _top_selling_is_staff(db, contact_id):
+    if not contact_id:
         return None
-    ids: list[str] = []
-    for link in list_links(db, contact_id):
-        if str(link.customer_id) not in ids:
-            ids.append(str(link.customer_id))
-    if not ids:
+    scope = scope_mod.contact_customer_scope(db, contact_id)
+    if scope.staff or not scope.linked:
         return None
-    names = {
-        str(row[0]): row[1] or ""
-        for row in db.query(Customer.id, Customer.customer_name).filter(Customer.id.in_(ids)).all()
-    }
-    return [(i, names.get(i, "")) for i in ids]
+    return [(cid, name) for cid, name, _code in scope.linked]
 
 
 def top_selling_dealer_customer_ids(
