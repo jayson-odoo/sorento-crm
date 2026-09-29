@@ -43,6 +43,13 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # window is closed. Map the approved auth/utility template's code param to
     # the ``otp_code`` variable.
     "portal_otp",
+    # Sign-in OTP (identity S1, #1280) - an optional override only. Owner
+    # ruling (27 Sep 2026): CRM phone sign-in reuses the approved portal_otp
+    # template, so settings.phone_signin_otp_use_case ships empty and this use
+    # case is not offered on the WhatsApp Templates screen. It is used only if
+    # that setting names it AND a template is mapped. Map the code param to
+    # ``otp_code``.
+    "login_otp",
     # SLA daily summary - bounded template (counts + deep link) sent to a staff
     # member when their 24h window is closed at summary time. Map params to the
     # ``outstanding`` / ``escalated_last_24h`` / ``resolved_last_24h`` counts and

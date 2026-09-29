@@ -31,6 +31,8 @@ const STATUS_VARIANT_MAP: Record<string, StatusBadgeVariant> = {
   posted: 'success',
   allowed: 'success',
   yes: 'success',
+  // Cost price change set (#1288): a set whose lines have been written to the live price.
+  applied: 'success',
 
   // Warning / in progress / pending
   pending: 'warning',

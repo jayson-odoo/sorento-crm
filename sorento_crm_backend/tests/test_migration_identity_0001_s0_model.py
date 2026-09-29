@@ -90,7 +90,8 @@ def test_placement_check_survives_a_later_migration_stacked_on_top(tmp_path):
     """Any PR that adds its own migration above this one (PR #1313) must not turn
     this file red: the graph is still correct and single-headed there. The throwaway
     migration stacks on the real head, as a later PR's does: finance S0's
-    `fin_0001_billing_documents` already sits directly on this migration."""
+    `fin_0001_billing_documents` already sits directly on this migration, and PR #1305's
+    cpc1 to cpc3 sit above that."""
     (current_head,) = _script().get_heads()
     (tmp_path / "zzt_0001_on_top_of_identity.py").write_text(
         'revision = "zzt_0001_on_top_of_identity"\n'

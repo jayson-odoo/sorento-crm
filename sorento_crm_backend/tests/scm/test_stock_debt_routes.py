@@ -1055,20 +1055,19 @@ def test_the_cell_states_ordered_as_the_cs_required_quantity_when_set(scm_app):
     assert got.json()["demand"][0]["qty_ordered"] == 80
 
 
-def test_a_dead_document_is_listed_and_counted_as_nothing(scm_app):
-    """AC-S2-4b / R31 as R-O leaves it (AC-O.3), on the wire: the arrival passed 120 days
-    ago with nothing received, the grace period has given up on it, so the line is short
-    and the document is still in the drill with `overdue: true` - the row a reader sees as
-    "not counted".
-
-    The document was 20 days late until R-O landed, which is inside the 90-day dead line
-    and therefore counted now; the alive half is the next test.
+def test_a_120_day_late_document_is_still_supply_on_the_page(scm_app):
+    """AC-S2-4b / R31 as R44 (owner, 29 Sep 2026, #1359) leaves it for THIS page: the
+    arrival passed 120 days ago with nothing received, past any dead line, and the stock
+    debt page still counts it - supply is the purchased quantity, whatever its date. It is
+    listed today with `overdue: false`, named late (`days_late`), and it covers the line.
+    The dead rule itself stays the board's and the ladder's (`test_overdue_grace_ladder.py`).
     """
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
     product = _product(db, f"{marker}-A")
-    _spo(db, product, warehouse, qty=50, arrives=TODAY - timedelta(days=120))
+    stated = TODAY - timedelta(days=120)
+    _spo(db, product, warehouse, qty=50, arrives=stated)
     due = _months_ahead(1)
     _demand(
         db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1"
@@ -1076,30 +1075,29 @@ def test_a_dead_document_is_listed_and_counted_as_nothing(scm_app):
     db.flush()
 
     with TestClient(app) as c:
-        overdue = c.get(
+        landing = c.get(
             f"{BASE}/{product.id}/cell", params={"month": month_key(TODAY)}
         ).json()
         cell = c.get(
             f"{BASE}/{product.id}/cell", params={"month": month_key(due)}
         ).json()
 
-    assert [event["overdue"] for event in overdue["supply"]] == [True]
-    assert overdue["supply"][0]["qty"] == 50
-    assert overdue["supply"][0]["stated_date"] is None, (
-        "nothing is assumed about a document the walk counted as nothing"
-    )
-    assert cell["demand"][0]["status"] == "short"
-    assert cell["demand"][0]["assigned_qty"] == 0
+    [row] = landing["supply"]
+    assert row["overdue"] is False
+    assert row["qty"] == 50
+    assert row["date"] == TODAY.isoformat()
+    assert row["stated_date"] == stated.isoformat()
+    assert row["days_late"] == 120
+    assert cell["demand"][0]["status"] == "covered"
+    assert cell["demand"][0]["assigned_qty"] == 50
 
 
-def test_a_late_but_alive_document_is_listed_at_its_assumed_date(scm_app):
-    """AC-O.3's other half (R-O, #586): 41 days late on a 14-day grace, so the ledger row
-    is filed under the ASSUMED arrival, prints the date the paperwork states beside it, and
-    is not marked overdue - it is supply, and the line it covers is not short.
-
-    R-O SHIPS at 0 / 0 (captain's ruling, 3 Sep 2026), so this test activates the
-    RECOMMENDED 14 / 90 itself rather than relying on the shipped default - it is proving
-    the grace RULE, not the number production starts at.
+def test_a_late_document_lands_today_whatever_the_policy_grace(scm_app):
+    """AC-O.3's other half as R44 (#1359) leaves it for this page: 41 days late under a
+    14 / 90 policy. The page ignores the grace, so the ledger row is filed TODAY (the axis
+    starts today, so that is the month it arrived in), prints the date the paperwork
+    states beside it, and is not marked overdue - it is supply, and the line it covers is
+    not short. The grace itself stays the board's (`test_overdue_grace_ladder.py`).
 
     `stated_date` / `days_late` are asserted BY NAME: `response_model` drops what a schema
     does not declare, and a field the walk computes and the wire never carries is a field
@@ -1114,7 +1112,6 @@ def test_a_late_but_alive_document_is_listed_at_its_assumed_date(scm_app):
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
     product = _product(db, f"{marker}-A")
     stated = TODAY - timedelta(days=41)
-    assumed = TODAY + timedelta(days=14)
     _spo(db, product, warehouse, qty=50, arrives=stated)
     due = _months_ahead(2)
     _demand(
@@ -1124,15 +1121,15 @@ def test_a_late_but_alive_document_is_listed_at_its_assumed_date(scm_app):
 
     with TestClient(app) as c:
         landing = c.get(
-            f"{BASE}/{product.id}/cell", params={"month": month_key(assumed)}
+            f"{BASE}/{product.id}/cell", params={"month": month_key(TODAY)}
         ).json()
         cell = c.get(
             f"{BASE}/{product.id}/cell", params={"month": month_key(due)}
         ).json()
 
     rows = [event for event in landing["supply"] if event["kind"] == "spo"]
-    assert len(rows) == 1, "filed under the month it is ASSUMED to land in"
-    assert rows[0]["date"] == assumed.isoformat()
+    assert len(rows) == 1, "filed under today's month, never today + grace"
+    assert rows[0]["date"] == TODAY.isoformat()
     assert rows[0]["stated_date"] == stated.isoformat()
     assert rows[0]["days_late"] == 41
     assert rows[0]["overdue"] is False

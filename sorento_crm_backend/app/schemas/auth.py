@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
 
 
@@ -22,6 +22,45 @@ class LoginResponse(BaseModel):
     role_id: str
     role_name: str | None = None
     role_ids: list[str] = []
+    # Where this user lands after signing in (AC-28): a salesperson's portal
+    # home, the CRM home for anyone with a permission, else the portal home.
+    home_path: str | None = None
+
+
+class PhoneRequestCodeRequest(BaseModel):
+    """POST /api/v1/auth/phone/request-code (identity S1, AC-21)."""
+
+    phone: str
+
+
+class PhoneRequestCodeResponse(BaseModel):
+    # Same shape for every number, known or not (no enumeration).
+    sent_to: str
+    expires_in_seconds: int
+    resend_in_seconds: int
+
+
+class PhoneVerifyRequest(BaseModel):
+    """POST /api/v1/auth/phone/verify (identity S1, AC-24)."""
+
+    phone: str
+    code: str = Field(..., pattern=r"^\d{6}$")
+
+
+class SetPasswordRequest(BaseModel):
+    """POST /api/v1/auth/password (identity S1, plan 5.3)."""
+
+    current_password: str | None = None
+    new_password: str = Field(..., min_length=8)
+
+    @field_validator("new_password")
+    @classmethod
+    def _new_password_fits_bcrypt(cls, v: str) -> str:
+        # Note fix (security round, #1280): bcrypt truncates/raises past 72
+        # BYTES - without this, a longer password 500s instead of a clean 422.
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("Password must be 72 bytes or fewer.")
+        return v
 
 
 class SignupRequest(BaseModel):

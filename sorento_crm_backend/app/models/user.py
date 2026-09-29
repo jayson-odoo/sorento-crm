@@ -419,6 +419,12 @@ class SystemSetting(Base):
     # status change and anything else that can simply be set back.
     deferred_delete_seconds = Column(Integer, nullable=False, server_default="10", default=10)
     deferred_action_seconds = Column(Integer, nullable=False, server_default="5", default=5)
+    # Cost price from the supplier (#1288, AC-S2-20): off for the first rollout (owner ruling
+    # 27 Sep 00:45). On, a staff upload goes through Submit/Decide/Return before Apply; off, the
+    # uploader applies directly. A supplier-channel set (Lane B) is Pending regardless.
+    cost_price_verification_enabled = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     # How many days an untouched price tag collection waits before the sweep
     # closes it (r9 D10). 0 turns the sweep off; 7 is the shipped default.
     price_tag_auto_collect_days = Column(

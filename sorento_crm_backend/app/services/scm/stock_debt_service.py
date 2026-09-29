@@ -94,6 +94,15 @@ _ZERO = Decimal("0")
 #: other (R28).
 BUCKET_KEYS = (BUCKET_TBA, BUCKET_UNDATED, BUCKET_UNLOCATED)
 
+#: R44 (owner, 29 Sep 2026, #1359): the overdue numbers the stock debt VIEW walks. "I just
+#: need to know what's my sold quantity (demand) and purchased quantity (supply), so I don't
+#: really care about the fulfilment": a document past its date is still supply at its
+#: outstanding quantity, landing today (grace 0, so in the month it arrives in, the axis
+#: starting today) and never dead. The policy's own grace/dead stay the board's, the
+#: ladder's, coverage's and front planning's (`assignments_for` never passes `view`).
+VIEW_OVERDUE_GRACE_DAYS = 0
+VIEW_OVERDUE_DEAD_DAYS = 10**9
+
 EXPORT_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
@@ -143,8 +152,8 @@ def book_so_pins(
     already hold on the PO line)`. Each PO line may pin its outstanding (`event.qty`) less
     that placed quantity, over the named order's lines for the SAME product, each up to what
     the line still needs once the confirmed holds (`holds`: allocations and placements) and
-    earlier S/O pins have spoken. What is left over is not pinned, so it stays supply (or
-    not) under the overdue rule exactly as an unpinned PO line does.
+    earlier S/O pins have spoken. What is left over is not pinned, so it stays free supply
+    exactly as an unpinned PO line does (R44: the view walks no overdue rule).
 
     WHICH line of the order, in three passes over every PO line (R43, owner, 28 Sep 2026:
     "the 1305 supposed to be for the 2nd line, 4 supposed to be for 1st line"):
@@ -500,8 +509,9 @@ class StockDebtService:
                 if item.pinned and item.event.kind == KIND_PO
             }
             for event in events:
-                # An uncounted document (dead, or with no date at all) is listed in the
-                # CURRENT month: its own arrival month has gone, and the axis starts today.
+                # An uncounted document is listed in the CURRENT month: the axis starts
+                # today. R44 (#1359): the view walks no overdue rule, so the only one left
+                # is a document with no date at all.
                 walked = admitted.get(event.key)
                 counted = walked is not None
                 arrival = walked.at if counted else event.at
@@ -841,6 +851,9 @@ class StockDebtService:
         settings = self.supply._fulfilment_settings()
         grace = settings.get("overdue_grace_days")
         dead = settings.get("overdue_dead_days")
+        if view:
+            # R44 (#1359): the overdue rule stays out of the view, see the constants.
+            grace, dead = VIEW_OVERDUE_GRACE_DAYS, VIEW_OVERDUE_DEAD_DAYS
         if view and include_po:
             # R43 (#1346): in the view a hold on a PO line fulfils its line whatever the PO's
             # date - a placement as much as the book's S/O below. The board never gets here.
@@ -1467,8 +1480,8 @@ class StockDebtService:
         assigned, then it will fulfil the demand ady". Every PO line with an outstanding
         quantity is asked, whatever the overdue rule says of its date - dead, late or
         undated. R42 asked only the lines `counted_event` admitted, so at the shipped 0-day
-        rule a PO past its Delivery date pinned nothing. The rule still governs the
-        UNPINNED rest of the line, in `assign()`.
+        rule a PO past its Delivery date pinned nothing. R44 (#1359): the UNPINNED rest of
+        the line is free supply in `assign()`, the view walking no overdue rule.
         """
         po_events: Dict[str, Tuple[str, SupplyEvent]] = {}
         for product_id, events in supply_rows.items():
