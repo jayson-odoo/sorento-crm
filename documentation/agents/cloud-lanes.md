@@ -68,8 +68,11 @@ A docs-only change (every path under `documentation/**`, `.claude/**`, `.cursor/
 `*.md` or the PR template) runs only the `Changed areas` and `Single alembic head` jobs, on a PR,
 a merge-queue entry and a push to main alike: no image build, no test suite, no deploy, no deploy
 email (owner ruling 29 Sep 2026; `documentation/plans/ci/PLAN-ci-docs-skip-29sep.md`). One
-non-docs path anywhere in the change, a markdown file inside a service tree included, keeps the
-full pipeline.
+non-docs path anywhere in the change keeps the full pipeline: a markdown file inside a service
+tree, either end of a rename, or documentation a test reads as input (`documentation/reference/`,
+a plan's `fixtures/`, `samples/` or `seed-assets/` folder, and the plan files listed in the
+workflow's `NOT_DOCS_RE`). A test that reads a new documentation path must add it there, or
+`tests/test_ci_docs_only_filter.py` fails.
 
 A PR with no `ci` label shows no checks and therefore cannot merge under branch protection - that
 is intended, not a bug: it is what keeps a not-yet-ready PR from being mergeable by accident.

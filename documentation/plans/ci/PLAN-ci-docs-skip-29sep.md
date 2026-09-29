@@ -36,9 +36,22 @@ One file, `.github/workflows/deploy.yml`, no migration, no auth change:
    `merge_group.base_sha...head_sha` compare on a queue entry. One `gh api` call, no
    checkout, as before.
 2. New output `docs_only`, true when every path matches
-   `DOCS_RE='^(documentation/|\.claude/|\.cursor/|[^/]+\.md$|\.github/PULL_REQUEST_TEMPLATE\.md$)'`.
-   Anything else (code, migration, Dockerfile, compose, workflow, lockfile, config,
-   script, a markdown file inside a service tree) is not docs.
+   `DOCS_RE='^(documentation/|\.claude/|\.cursor/|[^/]+\.md$|\.github/PULL_REQUEST_TEMPLATE\.md$)'`
+   and no path matches `NOT_DOCS_RE`, the documentation/ paths tests read as live
+   inputs (crew review of #1370): `documentation/reference/`,
+   `plans/<domain>/fixtures/`, `plans/<domain>/samples/`,
+   `plans/<domain>/seed-assets/` (also under `_archive/`),
+   `plans/autocount/PLAN-autocount-cross-repo-contract.md` and
+   `plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4.md`. Evidence:
+   `tests/scm/test_description_translation.py:433`,
+   `tests/chatbot/test_samantha_26sep_s3_catalogue_sweep.py:146`,
+   `tests/test_ingest_billing_documents_contract.py:23`,
+   `tests/test_tag_template_seed_docs.py:36`,
+   `sorento_crm_mcp/tests/test_presenters_top_selling.py:39`. Anything else (code,
+   migration, Dockerfile, compose, workflow, lockfile, config, script, a markdown
+   file inside a service tree) is not docs. Both jq filters emit
+   `previous_filename` too, so a rename across the documentation boundary is
+   judged on both of its paths.
 3. Docs-only sets every area flag false, so validate-backend, validate-mcp,
    test-backend, test-backend-scm, validate-frontend and typecheck-frontend skip
    through their existing `if`s. `build-images`, `build-and-deploy` and
@@ -57,15 +70,23 @@ head (fast gate)`, both green, nothing else.
 
 ## Tests
 
-- `sorento_crm_backend/tests/test_ci_docs_only_filter.py` reads the `DOCS_RE=` line
-  out of deploy.yml and runs the same `grep -Ev` over docs-only and mixed lists (a
-  path from each service tree, a migration, each Dockerfile, compose, both
-  workflows, lockfile, config, scripts, markdown fixtures inside the trees, and
-  nested `documentation/` or `.claude/` folders). Runs in `test-backend`; skips in
-  the Docker image, where the workflow file is absent.
-- The whole `changes` step was also run as a script with a stubbed `gh` across 17
-  cases (PR, push, merge_group, dispatch, zero SHA, gh failure, empty list, 299 vs
-  300 files); results in the PR body.
+- `sorento_crm_backend/tests/test_ci_docs_only_filter.py` extracts the step's `run`
+  block out of deploy.yml and executes it under GitHub's bash flags with a stub
+  `gh` that answers through the real `jq` filter from a canned API payload, so the
+  shell under test is the shell that ships. Cases: docs-only on PR, push and
+  merge_group; one non-docs path of each kind (each service tree, a migration,
+  each Dockerfile, compose, both workflows, lockfile, config, scripts, markdown
+  fixtures inside the trees, nested `documentation/` or `.claude/` folders, each
+  test-input documentation path); renames across the boundary in both
+  directions and within documentation; every fail-safe (zero SHA, gh failure on
+  each event, empty list, 300 vs 299 files, workflow_dispatch).
+- Self-check against drift: the same file scans every backend and MCP test with
+  `ast` for the documentation/ paths test CODE names (pathlib `/` chains and
+  `Path()`/`open()`/`read_text()`/`glob()` arguments; comments, docstrings and
+  citation strings do not count), runs each through the step and fails when one
+  would classify as docs. The fix is to extend `NOT_DOCS_RE`, never the test.
+  Runs in `test-backend`; skips in the Docker image, where the workflow file is
+  absent.
 
 ## Not done, on purpose
 

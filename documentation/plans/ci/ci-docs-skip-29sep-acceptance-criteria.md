@@ -33,6 +33,22 @@ Plan: `PLAN-ci-docs-skip-29sep.md`. Every AC names how it is checked.
 - **AC-8 The regex under test is the regex that ships.** The pytest reads `DOCS_RE=`
   from deploy.yml and fails if the line is missing, duplicated or not a single
   quoted literal. Check: `_docs_regex()` assertions.
+- **AC-10 Documentation a test reads is not docs.** A change under
+  `documentation/reference/`, `plans/<domain>/fixtures/`, `plans/<domain>/samples/`,
+  `plans/<domain>/seed-assets/` (also under `_archive/`),
+  `plans/autocount/PLAN-autocount-cross-repo-contract.md` or
+  `plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4.md` keeps the full pipeline.
+  Check: `test_one_non_docs_path_keeps_the_full_pipeline` (the last eight cases).
+- **AC-11 The deny list cannot drift from the tests.** A test that reads a new
+  documentation/ path fails
+  `test_every_documentation_path_a_test_reads_keeps_the_full_pipeline` until
+  `NOT_DOCS_RE` covers it. Check: kill test, dropping `reference/` from
+  `NOT_DOCS_RE` goes red.
+- **AC-12 Renames count both paths.** A file moved from a service tree into
+  documentation/ (or the reverse, or out of a fixtures folder) is not docs-only on
+  PR, push and merge_group; a plan archived within documentation/ is. Check:
+  `test_rename_*`; kill test, dropping `previous_filename` from the compare filter
+  goes red.
 - **AC-9 Existing behaviour unchanged for code changes.** PR area flags, the
   concurrency groups, the `ci` label one-shot trigger, `check-migration-heads` on
   every event, and the deploy for a code push are untouched. Check: diff review;

@@ -135,16 +135,24 @@ jobs:
   # Two questions, answered from one file list:
   #
   # 1. `docs_only`: is EVERY changed file documentation? Docs-only means
-  #    every path matches `DOCS_RE` below: `documentation/**`, `.claude/**`,
-  #    `.cursor/**`, a root-level `*.md` (CLAUDE.md, PRINCIPLES.md,
-  #    LESSONS-LEARNT.md, ...) or the PR template. Nothing under the four
-  #    service trees counts, whatever its extension: `*.md` files inside
-  #    them are test fixtures (tests/chatbot/replay_turns, e2e/fixtures) and
-  #    the MCP Dockerfile copies its README into the image. A workflow, a
-  #    Dockerfile, a migration, a lockfile or any config file is therefore
-  #    never docs-only either, because none of them match. When the answer
-  #    is yes, every area flag is false, so the validate/test/typecheck
-  #    jobs skip through their existing `if`s, and build-images,
+  #    every path matches `DOCS_RE` below (`documentation/**`, `.claude/**`,
+  #    `.cursor/**`, a root-level `*.md` such as CLAUDE.md, PRINCIPLES.md or
+  #    LESSONS-LEARNT.md, or the PR template) AND no path matches
+  #    `NOT_DOCS_RE`: the parts of documentation/ that tests READ as live
+  #    inputs (`documentation/reference/*.md`, `plans/<domain>/fixtures/`,
+  #    `plans/<domain>/samples/`, `plans/<domain>/seed-assets/`, and two
+  #    plan files whose text a test asserts against). A change there can
+  #    turn a test red, so it keeps the full pipeline. Nothing under the
+  #    four service trees counts either, whatever its extension: `*.md`
+  #    files inside them are test fixtures (tests/chatbot/replay_turns,
+  #    e2e/fixtures) and the MCP Dockerfile copies its README into the
+  #    image. A workflow, a Dockerfile, a migration, a lockfile or any
+  #    config file is therefore never docs-only, because none of them
+  #    match. A rename counts both of its paths (`previous_filename` is in
+  #    the jq filters), so a file moved between a service tree and
+  #    documentation/ is never docs-only in either direction. When the
+  #    answer is yes, every area flag is false, so the validate/test/
+  #    typecheck jobs skip through their existing `if`s, and build-images,
   #    build-and-deploy and notify-owner gate on it directly: a docs merge
   #    to main runs this job and the alembic gate above (about 30 seconds
   #    between them) and nothing else. Owner ruling 29 Sep 2026: "all the
@@ -167,10 +175,15 @@ jobs:
   #
   # Plain `gh api` over the file list (the PR's files, or the compare of
   # the push / merge-queue range), no third-party action and no checkout:
-  # it is one HTTP call and it finishes in seconds. The regex is asserted
-  # by sorento_crm_backend/tests/test_ci_docs_only_filter.py, which reads
-  # the `DOCS_RE=` line out of this file and runs the same `grep -Ev` over
-  # docs-only and mixed file lists, so the two cannot drift.
+  # it is one HTTP call and it finishes in seconds. The step is asserted by
+  # sorento_crm_backend/tests/test_ci_docs_only_filter.py, which extracts
+  # this step's `run` block out of this file and executes it with a stub
+  # `gh` (real `jq` over a canned API payload) for docs-only, mixed, rename
+  # and fail-safe cases, so the shell under test is the shell that ships.
+  # The same test scans every backend and MCP test for the documentation/
+  # paths it opens (pathlib chains and open()/Path() arguments, not
+  # comments) and fails when one of them would classify as docs, which is
+  # the signal to extend NOT_DOCS_RE below.
   changes:
     name: Changed areas
     runs-on: ubuntu-latest
@@ -202,15 +215,20 @@ jobs:
           MG_HEAD: ${{ github.event.merge_group.head_sha }}
         run: |
           # One line per changed path, or empty with `why` set when the list
-          # cannot be established (which means: full pipeline).
+          # cannot be established (which means: full pipeline). A renamed
+          # file contributes both its new path (`filename`) and its old one
+          # (`previous_filename`, absent on every other status), so a move
+          # out of or into a service tree is judged on both ends.
           files=""
           why=""
           compare() {
-            gh api "repos/$GITHUB_REPOSITORY/compare/$1...$2" --paginate --jq '.files[].filename'
+            gh api "repos/$GITHUB_REPOSITORY/compare/$1...$2" --paginate \
+              --jq '.files[] | .filename, (.previous_filename // empty)'
           }
           case "$EVENT" in
             pull_request)
-              files=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate --jq '.[].filename') \
+              files=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate \
+                        --jq '.[] | .filename, (.previous_filename // empty)') \
                 || { files=""; why="PR file list call failed"; }
               ;;
             push)
@@ -235,10 +253,17 @@ jobs:
             echo "changed files ($count):"; printf '%s\n' "$files" | sed 's/^/  /'
           fi
 
-          # Docs-only classification. Keep this regex on ONE line starting with
-          # `DOCS_RE=`: the pytest named in the job comment extracts it by that
-          # prefix.
+          # Docs-only classification: a path is docs when it matches DOCS_RE and
+          # does not match NOT_DOCS_RE. NOT_DOCS_RE lists the documentation/
+          # paths that tests read as live inputs; the pytest named in the job
+          # comment fails when a test reads a documentation/ path this pair
+          # would still classify as docs, so extend NOT_DOCS_RE when it does.
           DOCS_RE='^(documentation/|\.claude/|\.cursor/|[^/]+\.md$|\.github/PULL_REQUEST_TEMPLATE\.md$)'
+          NOT_DOCS_RE='^documentation/(reference/|plans/(_archive/)?[^/]+/(fixtures|samples|seed-assets)/|plans/autocount/PLAN-autocount-cross-repo-contract\.md$|plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4\.md$)'
+          non_docs=$({
+            printf '%s\n' "$files" | grep -Ev "$DOCS_RE" || true
+            printf '%s\n' "$files" | grep -E "$NOT_DOCS_RE" || true
+          } | sort -u)
           docs_only=false
           if [ -n "$why" ]; then
             echo "docs_only=false: $why"
@@ -246,9 +271,9 @@ jobs:
             echo "docs_only=false: no changed files reported"
           elif [ "$count" -ge 300 ]; then
             echo "docs_only=false: $count files reaches the compare API's 300-file cap, list may be truncated"
-          elif printf '%s\n' "$files" | grep -Evq "$DOCS_RE"; then
-            echo "docs_only=false: non-docs paths present:"
-            printf '%s\n' "$files" | grep -Ev "$DOCS_RE" | sed 's/^/  /'
+          elif [ -n "$non_docs" ]; then
+            echo "docs_only=false: non-docs paths present (code, or documentation a test reads as input):"
+            printf '%s\n' "$non_docs" | sed 's/^/  /'
           else
             docs_only=true
             echo "docs_only=true: every changed file is documentation"
@@ -260,9 +285,13 @@ jobs:
             echo "docs-only change: no service area counts as changed"
             exit 0
           fi
-          if [ "$EVENT" != "pull_request" ]; then
+          # A PR whose file list could not be fetched is treated like a push:
+          # every area changed. Before docs_only existed the failed call
+          # failed this job (and skipped every gate with it, red); a swallowed
+          # failure must never turn into an all-flags-false green run.
+          if [ "$EVENT" != "pull_request" ] || [ -n "$why" ]; then
             for area in backend frontend mcp; do echo "$area=true"; done | tee -a "$GITHUB_OUTPUT"
-            echo "$EVENT is not a pull_request: every area counts as changed"
+            echo "${why:-$EVENT is not a pull_request}: every area counts as changed"
             exit 0
           fi
           flag() {
