@@ -86,7 +86,14 @@ def test_head_chain():  # AC-EM097
     parent = mods["eml_0001_layout_columns"].down_revision
     assert isinstance(parent, str) and not parent.startswith("eml_")
     assert sd.get_revision(parent) is not None
-    assert sd.get_heads() == ["eml_0002_seed_layouts"]
+    # Same rule for the head: the next lane's migration chains onto eml_0002 and becomes
+    # the head, so the check is "one head, and eml_0002 is in its ancestry", never
+    # `get_heads() == ["eml_0002_seed_layouts"]` (the shape test_migration_bcw_0001 and
+    # test_order_inquiry_handover_attachments already use).
+    heads = sd.get_heads()
+    assert len(heads) == 1, heads
+    chain = {rev.revision for rev in sd.walk_revisions(base="base", head=heads[0])}
+    assert "eml_0002_seed_layouts" in chain, (chain, heads)
     for rev in ("eml_0001_layout_columns", "eml_0002_seed_layouts"):
         assert len(rev) <= 32
 
