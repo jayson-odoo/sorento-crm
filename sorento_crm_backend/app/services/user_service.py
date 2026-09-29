@@ -750,6 +750,11 @@ class UserService:
         update_data = user_data.model_dump(exclude_unset=True)
         logger.info(f"Updating user {user_id} with data: {update_data}")
 
+        # Lost phone (identity S1, plan 5.3): captured BEFORE the field loop
+        # below overwrites it, so a genuine change can be told apart from a
+        # PUT that merely repeats the same number.
+        old_contact_number = user.contact_number
+
         # Product-discontinued scopes are rows, not a column: pulled out of the
         # field loop below and replaced wholesale. Omitted leaves them untouched;
         # an empty list clears them (and the user then hears nothing).
@@ -888,6 +893,17 @@ class UserService:
             )
         self.db.refresh(user)
         logger.info(f"After commit - respond_user_id: {user.respond_user_id}, superior_id: {user.superior_id}")
+
+        # Lost phone (identity S1, plan 5.3): a changed contact_number can no
+        # longer be trusted to be the same person who verified it, so the
+        # verification clears and every session ends - the next phone sign-in
+        # to the NEW number re-verifies it from scratch.
+        if "contact_number" in update_data and update_data["contact_number"] != old_contact_number:
+            user.phone_verified_at = None
+            self.db.commit()
+            from app.services.user_session_service import revoke_all_for_user
+
+            revoke_all_for_user(self.db, user_id)
 
         if email_changed and old_email_for_notification is not None:
             try:
