@@ -98,21 +98,17 @@ def test_ac_s1_1_apply_never_fails_over_a_placement_that_vanished_by_apply_time(
     assert any("nothing to move" in text for text in released), fresh.result_json
 
 
-def test_ac_s1_2_a_partial_placement_still_raises_409_unchanged(api):
-    """AC-S1-2: "Same row but the line still holds part of the frozen quantity (0 <
-    available < freed): Confirm still raises 409 `planning_change_reallocation_no_document`
-    (unchanged)."
+def test_ac_s1_2_a_partial_placement_records_what_is_left_and_never_fails_the_order(api):
+    """AC-S1-2, re-read under the owner's 29 Sep 2026 ruling (PR #1369, option (c)): the
+    planning side re-deals nothing, so there is no re-deal to refuse. "Same row but the
+    line still holds part of the frozen quantity (0 < available < freed)": Confirm
+    succeeds; the row's `released_documents` records the intent for the part still on the
+    line (AutoCount) and says the rest is no longer on the line, nothing to move. The 409
+    `planning_change_reallocation_no_document` is retired.
 
     The same `_drop_line_to_100` shape (freed = 34), but only PART of the placement is
-    gone by apply time: the link is trimmed to 10 rather than removed outright, so
+    left by apply time: the link is trimmed to 10 rather than removed outright, so
     `0 < available (10) < freed (34)`.
-
-    `apply()` never lets a single order's `AppException` propagate out of it (module
-    contract, measured directly): one order's savepoint is rolled back and the reason is
-    recorded on `result["failed_orders"]` instead, so the assertion reads the result dict
-    rather than expecting a raised exception - the shape every other test in this domain
-    (`test_planning_change_reallocation.py`'s own `_reallocation_failure_is_loud...` test)
-    already reads it in.
     """
     world, core_so, core_line, order, line, po, batch = _drop_line_to_100(api)
     db = world.db
@@ -131,9 +127,20 @@ def test_ac_s1_2_a_partial_placement_still_raises_409_unchanged(api):
     result = planning_change_service.apply(db, str(batch.id), world.actor)
     db.commit()
 
-    assert result["failed_orders"], "the partial placement must still fail the order (unchanged)"
-    reason = result["failed_orders"][0]["reason"]
-    assert "has no purchase-order line to re-deal" in reason, reason
+    assert result["failed_orders"] == [], result
+    db.expire_all()
+    from app.models.planning_change import PlanningChangeRow
+
+    fresh = db.get(PlanningChangeRow, row.id)
+    released = (fresh.result_json or {}).get("released_documents") or []
+    assert any(
+        po.po_number in text and "10" in text and "AutoCount" in text for text in released
+    ), fresh.result_json
+    assert any(
+        "24" in text and "no longer on the line" in text and "nothing to move" in text
+        for text in released
+    ), fresh.result_json
+    assert not (fresh.result_json or {}).get("executed_reallocations"), fresh.result_json
 
 
 def test_ac_s1_3_a_row_whose_core_line_closed_is_superseded_and_the_order_still_applies(api):
