@@ -841,9 +841,12 @@ def test_ac32_assign_then_unassign_are_audited_with_the_sales_agent_change(clien
         .order_by(AuditLog.changed_at)
         .all()
     )
+    # The seed's own CREATE row also lists every audited column (sales_agent_id: None),
+    # so only the UPDATE rows are the assign and the unassign.
+    updates = [row for row in rows if row.action == "UPDATE"]
     changes = [
-        (row.new_values or {}).get("sales_agent_id")
-        for row in rows
+        row.new_values["sales_agent_id"]
+        for row in updates
         if "sales_agent_id" in (row.new_values or {})
     ]
     # Assign wrote the agent id, unassign wrote null: the move is traceable.
