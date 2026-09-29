@@ -1,44 +1,52 @@
 /**
  * ============================================================================
- * Contact > Access > Chatbot card (chatbot turn re-architecture, S5, AC-1560/AC-1561)
+ * Contact > Chatbot (chatbot memory lane A, round 3 mockup)
  * ============================================================================
- * Layering: UI -> hooks (useContactChatbotProfile) -> THIS service -> lib/api -> backend.
+ * Layering: UI -> hooks (`useContactChatbot.ts`) -> THIS service -> lib/api -> backend.
  *
- *   GET /api/v1/user-management/contacts/{id}          the contact record already
- *     carries `chatbot_profile` / `chatbot_recall_enabled` (AC-1503, both dict
- *     builders) - no dedicated GET route exists for the card alone.
- *   PUT /api/v1/user-management/contacts/{id}/chatbot
- *     { chatbot_profile?, chatbot_recall_enabled?, chatbot_stock_allowed?,
- *       notify_salesman?, packing_list_allowed? }
- *     Absent means "leave it alone", never "clear it" - a recall toggle must not
- *     switch off as a side effect of saving a language.
+ * Mockup: `documentation/plans/chatbot/chatbot-memory-27sep-mockup-contact.html`.
+ * Contract: `documentation/plans/chatbot/chatbot-memory-lane-a-contract.md` sections
+ * 4 (profile facts) and 5 (HTTP contract).
  *
- * The mocked S1 shape (`tier_set_by_pick`, `tier_set_at`, `ledgers_summary`) does not
- * exist on the real contact - the backend has no signal distinguishing a value a pick
- * set from one typed here, so `tier` is edited directly like `language`, same as every
- * other profile field on this card.
+ * ---------------------------------------------------------------------------
+ * THE CONTRACT (every route below is real - S0 landed the first two, S2 the rest)
+ * ---------------------------------------------------------------------------
  *
- * ---- notify_salesman / packing_list_allowed (PLAN-chatbot-stock-ask-v2-24sep.md
- * S2, R7) ----------------------------------------------------------------------
- *   respond_contacts.notify_salesman        boolean NOT NULL DEFAULT false
- *   respond_contacts.packing_list_allowed   boolean NOT NULL DEFAULT false
- * Both are plain siblings of `chatbot_stock_allowed` (not nested in
- * `chatbot_profile`) and ride the GET contact / PUT .../chatbot payload as plain
- * fields.
+ * GET  /api/v1/user-management/contacts/{id}                       -> RespondContact
+ * PUT  /api/v1/user-management/contacts/{id}/chatbot
+ *   { chatbot_profile?: { tier, default_ledgers }, memory_level?: ChatbotMemoryLevel
+ *     | null, chatbot_stock_allowed?, notify_salesman?, packing_list_allowed? }
+ *   Round 3 (AC-MEM055) renames the body key `chatbot_memory_level` -> `memory_level`
+ *   (the GET/response side keeps `chatbot_memory_level`); `chatbot_recall_enabled` is
+ *   dropped outright, body and column both, and a body still naming it 422s.
+ *   `chatbot_profile` in the body never touches `facts`. Absent means "leave it
+ *   alone", never "clear it".
+ *
+ * GET    /api/v1/user-management/contacts/{id}/chatbot/memory  (`...contacts.view`)
+ *   -> ContactChatbotMemory (below), the exact shape contract section 5 documents.
+ * PUT    /api/v1/user-management/contacts/{id}/chatbot/facts/{key}  (`...contacts.edit`)
+ *   body `{ value: string | string[] }` -> sets a staff fact, returns the memory GET body.
+ * DELETE /api/v1/user-management/contacts/{id}/chatbot/facts/{key}  (`...contacts.edit`)
+ *   Hard delete through the deferred-action path (the FE fires it when the countdown
+ *   lapses, same mechanism every other delete uses) -> 204.
  */
 
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import { getProductsForLineSelect } from '@/app/(protected)/master-data-management/products/services/productService';
+import { getBrands } from '@/app/(protected)/master-data-management/brands/services/brandService';
+import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
+import type { SearchableMultiSelectOption } from '@/components/common/SearchableMultiSelect';
 import { getContact } from './contactService';
 
+export type ChatbotMemoryLevel = 'off' | 'conversation' | 'episodes' | 'full';
+
 export interface ContactChatbotProfile {
-  recall_enabled: boolean;
+  /** null = follow the system default (contract section 2). */
+  chatbot_memory_level: ChatbotMemoryLevel | null;
   tier: string | null;
-  language: string | null;
+  /** Not edited on this card - carried through unchanged so a save never clears it. */
   default_ledgers: string[];
-  /** Not edited on this card - carried through unchanged so a save from here never
-   * clears it (the PUT route replaces the whole `chatbot_profile` dict, not a merge). */
-  always_full_report: boolean;
   /** S6: stock checks allowed for this contact (`chatbot_stock_allowed`), default on. */
   stock_allowed: boolean;
   /** R7: the customer's sales agent gets one WhatsApp line per answered ask. Default off. */
@@ -47,25 +55,110 @@ export interface ContactChatbotProfile {
   packing_list_allowed: boolean;
 }
 
-function fromContact(contact: {
-  chatbot_profile?: {
-    tier?: string | null;
-    language?: string | null;
-    default_ledgers?: string[] | null;
-    always_full_report?: boolean | null;
+export type ChatbotFactSource = 'crm' | 'tallied' | 'stated' | 'staff';
+
+export interface ContactChatbotFact {
+  key: string;
+  label: string;
+  /** The stored raw value (`"ms"`, `["SRTWB1455"]`) - fed straight back into an
+   * in-place edit, no label reverse-mapping (contract section 5). */
+  value: string | string[] | null;
+  /** The grid's own printable label (`"Malay"`, `"SRTWB1455, M486-75-BL"`). */
+  display: string | null;
+  source: ChatbotFactSource;
+  /** ISO date, or null for a fact read live from the CRM (contract section 5). */
+  last_seen: string | null;
+  editable: boolean;
+  /** Set only on a CRM fact whose source record has its own page (e.g. `customer`). */
+  link?: string | null;
+}
+
+export type ChatbotVocabularyKind = 'choice' | 'multi' | 'text';
+
+export interface ContactChatbotVocabularyEntry {
+  key: string;
+  label: string;
+  kind: ChatbotVocabularyKind;
+  options: { value: string; label: string }[] | null;
+  max_length: number | null;
+}
+
+export interface ContactChatbotEpisodeCurrent {
+  turn_count: number;
+  first_turn_id: string;
+  started_at: string;
+  summary: string;
+  domains: string[];
+  /** The Topic the chatbot's recall reply prints (`Stock`, `Incoming stock`). */
+  topic?: string;
+}
+
+export interface ContactChatbotEpisodeRow {
+  id: string;
+  date: string;
+  domains: string[];
+  /** The Topic the chatbot's recall reply prints (`Stock`, `Incoming stock`). */
+  topic?: string;
+  summary: string;
+  turn_count: number;
+  close_reason: string;
+  first_turn_id: string;
+  /** A console (test) conversation, written by the Chatbot Console, never read by live turns. */
+  console?: boolean;
+}
+
+export interface ContactChatbotOpenOrderRow {
+  document: string;
+  kind: string;
+  status: string;
+  summary: string;
+  /** Null when the order carries no order date. */
+  date: string | null;
+  href: string;
+}
+
+export interface ContactChatbotMemory {
+  level: {
+    own: ChatbotMemoryLevel | null;
+    effective: ChatbotMemoryLevel;
+    system_default: ChatbotMemoryLevel;
+  };
+  facts: ContactChatbotFact[];
+  vocabulary: ContactChatbotVocabularyEntry[];
+  // `null` when the caller lacks `system.chat_history.view` on top of this page's
+  // own view permission (security review 26 Sep 2026, S3) - conversation summaries
+  // are gated separately from the rest of the memory card, never hidden as an
+  // empty list (which would read as "no conversations" rather than "no access").
+  episodes: {
+    kept: number;
+    /** Closed console conversations kept (their own newest 20). */
+    console_kept?: number;
+    limit: number;
+    current: ContactChatbotEpisodeCurrent | null;
+    /** The console's own open conversation, when the console has turns in no episode yet. */
+    console_current?: ContactChatbotEpisodeCurrent | null;
+    rows: ContactChatbotEpisodeRow[];
   } | null;
-  chatbot_recall_enabled?: boolean;
+  open_orders: {
+    customer_name: string | null;
+    rows: ContactChatbotOpenOrderRow[];
+  };
+}
+
+export type ContactChatbotSaveInput = ContactChatbotProfile;
+
+function profileFromContact(contact: {
+  chatbot_profile?: { tier?: string | null; default_ledgers?: string[] | null } | null;
+  chatbot_memory_level?: ChatbotMemoryLevel | null;
   chatbot_stock_allowed?: boolean;
   notify_salesman?: boolean;
   packing_list_allowed?: boolean;
 }): ContactChatbotProfile {
   const profile = contact.chatbot_profile ?? null;
   return {
-    recall_enabled: Boolean(contact.chatbot_recall_enabled),
+    chatbot_memory_level: contact.chatbot_memory_level ?? null,
     tier: profile?.tier ?? null,
-    language: profile?.language ?? null,
     default_ledgers: profile?.default_ledgers ?? [],
-    always_full_report: Boolean(profile?.always_full_report),
     stock_allowed: contact.chatbot_stock_allowed !== false,
     notify_salesman: Boolean(contact.notify_salesman),
     packing_list_allowed: Boolean(contact.packing_list_allowed),
@@ -74,10 +167,8 @@ function fromContact(contact: {
 
 export async function getContactChatbotProfile(contactId: string): Promise<ContactChatbotProfile> {
   const contact = await getContact(contactId);
-  return fromContact(contact);
+  return profileFromContact(contact);
 }
-
-export type ContactChatbotSaveInput = ContactChatbotProfile;
 
 export async function saveContactChatbotProfile(
   contactId: string,
@@ -89,13 +180,11 @@ export async function saveContactChatbotProfile(
     body: JSON.stringify({
       // The route replaces the whole `chatbot_profile` dict (never a merge), so every
       // field the contact already had is sent back, not just the one edited here.
-      chatbot_profile: {
-        tier: input.tier,
-        language: input.language,
-        default_ledgers: input.default_ledgers,
-        always_full_report: input.always_full_report,
-      },
-      chatbot_recall_enabled: input.recall_enabled,
+      chatbot_profile: { tier: input.tier, default_ledgers: input.default_ledgers },
+      // Round 3 (AC-MEM055) renames the BODY key off `chatbot_memory_level` -
+      // `ContactChatbotProfile`/`ContactChatbotSaveInput` keep that name (it is what
+      // the GET/response side still calls it), only the outgoing PUT key changes.
+      memory_level: input.chatbot_memory_level,
       chatbot_stock_allowed: input.stock_allowed,
       notify_salesman: input.notify_salesman,
       packing_list_allowed: input.packing_list_allowed,
@@ -104,5 +193,69 @@ export async function saveContactChatbotProfile(
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to save chatbot settings'));
   }
-  return fromContact(await response.json());
+  return profileFromContact(await response.json());
+}
+
+export async function getContactChatbotMemory(contactId: string): Promise<ContactChatbotMemory> {
+  const response = await apiFetch(`/api/v1/user-management/contacts/${contactId}/chatbot/memory`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load chatbot memory'));
+  }
+  return response.json();
+}
+
+/** `PUT .../chatbot/facts/{key}` - sets a staff fact; every save makes the fact Staff,
+ * even one that replaces a Learned or Said value (contract section 4). Returns the
+ * memory GET body so the grid, vocabulary and everything else stay in sync with the
+ * one write. */
+export async function saveContactFact(
+  contactId: string,
+  key: string,
+  value: string | string[],
+): Promise<ContactChatbotMemory> {
+  const response = await apiFetch(`/api/v1/user-management/contacts/${contactId}/chatbot/facts/${key}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save fact'));
+  }
+  return response.json();
+}
+
+/**
+ * Server-searched product options for the "Usual products" fact (Add fact modal).
+ *
+ * Real endpoint, not a mock (`/api/v1/master-data/products/select`, LESSONS-LEARNT: a
+ * static option list does not scale to the product catalog) - product codes double as
+ * the human-readable value the fact stores, so no id/label split is needed.
+ */
+export async function searchUsualProductOptions(query: string): Promise<SearchableMultiSelectOption[]> {
+  const products = await getProductsForLineSelect(query);
+  return products.map((product) => ({
+    value: product.product_code,
+    label: product.product_name
+      ? `${product.product_code} - ${product.product_name}`
+      : product.product_code,
+  }));
+}
+
+/** Server-searched brand names for "Usual brands" - stored as the brand NAME, not an id
+ * (contract section 4: "list of brand names"). */
+export async function searchUsualBrandOptions(query: string): Promise<SearchableMultiSelectOption[]> {
+  const result = await getBrands({ pageIndex: 0, pageSize: 20, sorting: [], searchQuery: query });
+  return result.data.map((brand) => ({ value: brand.brand_name, label: brand.brand_name }));
+}
+
+/** Server-searched warehouse names for "Usual sites" - stored as the warehouse NAME
+ * (contract section 4: "list of warehouse names"). */
+export async function searchUsualSiteOptions(query: string): Promise<SearchableMultiSelectOption[]> {
+  const result = await getWarehouses({ pageIndex: 0, pageSize: 20, sorting: [], searchQuery: query });
+  return result.data
+    .filter((warehouse) => warehouse.warehouse_name)
+    .map((warehouse) => ({
+      value: warehouse.warehouse_name as string,
+      label: warehouse.warehouse_name as string,
+    }));
 }

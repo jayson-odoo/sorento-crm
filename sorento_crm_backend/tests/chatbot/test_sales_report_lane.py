@@ -1173,13 +1173,16 @@ class TestParserPromptAndContractsTeachSalesReport:
         is deliberately dropped, so the original "both texts ship" premise (dev vs
         prod split) no longer applies. `STOCK_TASK_ADDENDUM`, `SALES_ANALYSIS_ADDENDUM`
         (#1267 S1), `QUANTITY_ADDENDUM` (issue #1262 slice 5, 26 Sep 2026),
-        `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026) then
-        `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4) now stack
-        after it, newest outermost, so it is checked by `.removesuffix` rather than a
-        bare `.endswith`."""
+        `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026), then
+        `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4), then
+        `ESCALATION_CONFIRMATION_ADDENDUM` (#1323) and `MEMORY_ADDENDUM` (chatbot memory
+        lane A, migration `mem_0002_parser_memory`) now stack after it, newest outermost,
+        so `SALES_REPORT_ADDENDUM` is the tail of the one body that exists once those are
+        stripped, checked by `.removesuffix` rather than a bare `.endswith`."""
         from app.services.chatbot_parser_prompt import (
             ESCALATION_CONFIRMATION_ADDENDUM,
             KNOWN_BRANDS_ADDENDUM,
+            MEMORY_ADDENDUM,
             QUANTITY_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
@@ -1189,14 +1192,21 @@ class TestParserPromptAndContractsTeachSalesReport:
             TOP_SELLING_ADDENDUM,
         )
 
+        assert SEMANTIC_PARSER_PROMPT.endswith(MEMORY_ADDENDUM), (
+            "SEMANTIC_PARSER_PROMPT does not end with MEMORY_ADDENDUM - it is "
+            "the newest addendum, so it is the tail"
+        )
         # `STOCK_TASK_ADDENDUM` (ported from PR #1118, not merged, chatbot-stock-ask-v2
         # S3), `SALES_ANALYSIS_ADDENDUM` (#1267 S1), `SPECIFICATION_ADDENDUM` (fix round
-        # 8 on PR #833), the #1262 pair, `TOP_SELLING_ADDENDUM` and then
-        # `ESCALATION_CONFIRMATION_ADDENDUM` (#1323, always the tail) stacked after this
+        # 8 on PR #833), the #1262 pair, `TOP_SELLING_ADDENDUM`, then
+        # ESCALATION_CONFIRMATION_ADDENDUM (#1323), then MEMORY_ADDENDUM stacked after this
         # one, newest outermost, so they come off first.
-        assert SEMANTIC_PARSER_PROMPT.endswith(ESCALATION_CONFIRMATION_ADDENDUM)
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM).endswith(
+            ESCALATION_CONFIRMATION_ADDENDUM
+        )
         assert (
-            SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+            SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM)
+            .removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
             .removesuffix(TOP_SELLING_ADDENDUM)
             .removesuffix(KNOWN_BRANDS_ADDENDUM)
             .removesuffix(QUANTITY_ADDENDUM)
@@ -1206,9 +1216,9 @@ class TestParserPromptAndContractsTeachSalesReport:
             .endswith(SALES_REPORT_ADDENDUM)
         ), (
             "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM once the "
-            "newer TOP_SELLING_ADDENDUM/KNOWN_BRANDS_ADDENDUM/QUANTITY_ADDENDUM/SALES_ANALYSIS_ADDENDUM/"
-            "STOCK_TASK_ADDENDUM are stripped - SALES_REPORT_ADDENDUM must stay the tail "
-            "beneath them"
+            "newer MEMORY_ADDENDUM/ESCALATION_CONFIRMATION_ADDENDUM/TOP_SELLING_ADDENDUM/"
+            "KNOWN_BRANDS_ADDENDUM/QUANTITY_ADDENDUM/SALES_ANALYSIS_ADDENDUM/STOCK_TASK_ADDENDUM "
+            "are stripped - SALES_REPORT_ADDENDUM must stay the tail beneath them"
         )
 
     def test_the_addendum_stacks_after_low_stock(self) -> None:
@@ -1222,6 +1232,7 @@ class TestParserPromptAndContractsTeachSalesReport:
             KNOWN_BRANDS_ADDENDUM,
             LOW_STOCK_ADDENDUM,
             ESCALATION_CONFIRMATION_ADDENDUM,
+            MEMORY_ADDENDUM,
             QUANTITY_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
@@ -1232,7 +1243,8 @@ class TestParserPromptAndContractsTeachSalesReport:
         )
 
         assert (
-            SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+            SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM)
+            .removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
             .removesuffix(TOP_SELLING_ADDENDUM)
             .removesuffix(KNOWN_BRANDS_ADDENDUM)
             .removesuffix(QUANTITY_ADDENDUM)

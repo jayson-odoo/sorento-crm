@@ -336,9 +336,12 @@ def test_every_handler_resolves_its_service_import(key):
             raise RuntimeError("session refused")
 
     action = RECORD_ACTIONS[key]
-    #: A composite address for the one handler that takes one - it refuses half of a
+    #: A composite address for each handler that takes one - it refuses half of a
     #: `<product id>:<spec key>` before reaching any service, which is its whole job.
-    entity_ids = {"product_spec_value.clear": f"{_uid()}:width"}
+    entity_ids = {
+        "product_spec_value.clear": f"{_uid()}:width",
+        "contact_chatbot_fact.delete": f"{_uid()}:note",
+    }
     payload = {
         "entity_id": entity_ids.get(key, _uid()),
         # The route always puts the actor here, and a handler scoped to the requester
