@@ -118,10 +118,12 @@ else is asked; the agent behind a customer is derived, never typed.
   Q5 (a): Customers tab on the sales agent record with Assign / Unassign. Q6 (a): reassigning a
   customer another agent handles is allowed, the picker shows the current agent. Q7 (a): each
   page's own edit permission.
-- Q2 PENDING: the owner asked what "primary" means; crew is explaining. The Primary marker is
-  held OUT of the UI until the answer (no badge, no Make/Clear primary). The PATCH route and
-  `set_primary` stay built and tested (AC-24) but nothing calls them; if the answer is "no
-  primary", they are removed in the same round.
+- Q2 (b), answered later on 29 Sep: NO primary customer in the UI. This lane neither shows
+  nor sets `is_primary` anywhere: the PATCH route, `set_primary`, the `is_primary` body field
+  on POST, the FE hook/service for it and the AC-24 tests are removed; the link responses do
+  not carry `is_primary`. The existing column and the dealer kit's use of it
+  (`resolve_customer`, `link_customer(is_primary=...)`, `_demote_other_primaries`) stay
+  untouched: no schema change, no data change.
 - Q4: NO suggestions. The owner links by clicking the Add customer select only: no phone-match
   rows, no backfill. `propose_customers` stays where it was (dealer kit), unused here; the GET
   no longer returns `suggested` (D2 amended), the card has no Suggested list (D3 amended),
@@ -155,14 +157,14 @@ sections), read under `user_management.contacts.view`, write under `.edit`:
 - `GET /api/v1/user-management/contacts/{contact_id}/customers` ->
   `{ "data": [ContactCustomerLink] }` (round 2: no `suggested`, Q4).
   `ContactCustomerLink`: `id` (the link row, what Unlink parks against), `customer_id,
-  customer_code, customer_name, is_active, is_primary, source, sales_agent_id,
-  sales_agent_code, sales_agent_name, created_at`.
-- `POST .../customers` body `{ "customer_id": str, "is_primary": bool = false }` -> 201
-  `ContactCustomerLink`. Idempotent on the pair (a repeat answers 201 with the same row).
+  customer_code, customer_name, is_active, source, sales_agent_id, sales_agent_code,
+  sales_agent_name, created_at` (round 2: no `is_primary`, Q2 b).
+- `POST .../customers` body `{ "customer_id": str }` -> 201 `ContactCustomerLink`. Idempotent
+  on the pair (a repeat answers 201 with the same row; a concurrent duplicate insert is
+  caught and re-read, reviewer nit 6). Round 2: no `is_primary` (Q2 b).
   Unknown customer or a customer outside the caller's scope -> 404 (scope hides it, so the
   two are the same answer). Unknown contact -> 404.
-- `PATCH .../customers/{customer_id}` body `{ "is_primary": bool }` -> 200
-  `ContactCustomerLink`; true demotes the other primary in that company, false clears.
+- (Round 2, Q2 b: the PATCH `is_primary` route is removed.)
 - Unlink: pending action `contact_customer_link.unlink`, `entity_types=("contact_customer_link",)`,
   `entity_id` = the LINK row id, `window=WINDOW_REVERSIBLE`, `permission=
   "user_management.contacts.edit"`, execute = `unlink_customer` by link id. No separate DELETE
@@ -199,8 +201,8 @@ Contact side (`app/(protected)/user-management/contacts/[id]/`):
 - `components/ContactCustomersSection.tsx`: a Card "Customers" placed directly after the
   Contact Information card on `page.tsx`. Body: rows `code - name` | `Sales agent` (`code -
   name`, or "No sales agent") | Unlink (row action, `useDeferredRowAction`, `surface:
-  'inline'`, verb "Unlinking"). Round 2: no Primary badge or Make/Clear primary until Q2 is
-  answered; no Suggested list (Q4). Empty state: heading "No customers linked" + hint "Link
+  'inline'`, verb "Unlinking"). Round 2: no Primary badge or Make/Clear primary (Q2 b); no
+  Suggested list (Q4). Empty state: heading "No customers linked" + hint "Link
   the customer accounts this contact belongs to". "Add customer": one `SearchableSelect`
   (clearable, server search through the customers select with `limit=50`, option label
   `code - name`, sub-label the current agent), adding on pick.
@@ -244,7 +246,7 @@ portal and chatbot readers (sibling lanes); the Primary marker in the UI (Q2 pen
 
 - `GET /api/v1/order-management/customers/{customer_id}/linked-contacts` under
   `order_management.customers.view` -> `{ "data": [{ "id" (link id), "contact_id", "name",
-  "phone_number", "is_primary", "created_at" }] }`, ordered by `created_at`; the customer is
+  "phone_number", "created_at" }] }` (no `is_primary`, Q2 b), ordered by `created_at`; the customer is
   read under the caller's scope (404 when hidden or unknown). Read-only: no write route.
 - `order-management/customers/components/CustomerLinkedContactsSection.tsx`, rendered on the
   customer detail Details tab (`CustomerDetail.tsx`, after the existing cards, before
@@ -253,6 +255,12 @@ portal and chatbot readers (sibling lanes); the Primary marker in the UI (Q2 pen
   name, never the id). Empty state: heading "No WhatsApp contacts linked" + hint "Link this
   customer from a contact's Customers card". Service `getCustomerLinkedContacts` in
   `customerService.ts`, hook `useCustomerLinkedContacts` in `useCustomers.ts`.
+- Reviewer findings carried into the same round: unassign and unlink share one rule, a
+  record that is gone or moved during the window ends the action `failed` with a readable
+  message, never `committed` (nit 5); a concurrent duplicate link insert is caught on
+  `IntegrityError` and the existing row returned (nit 6); assign/unassign invalidate the
+  `['sales-agent-customers']` prefix and the customer detail query (nit 7); `link_customer`
+  takes the customer the route already loaded (nit 9).
 - Security review nits carried into the same round: the unlink handler raises not-found for
   a link the caller cannot see (the action is marked failed, not committed); parking
   `contact_customer_link.unlink` or `customer.unassign_sales_agent` checks the record exists
