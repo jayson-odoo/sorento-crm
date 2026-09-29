@@ -67,6 +67,27 @@ def _effective_coalesce_seconds(cfg: EmailEventConfig, evt_def: Any) -> Optional
     return evt_def.coalesce_window_seconds
 
 
+def _ensure_layout(
+    db: Session, subject: str, body_text: Optional[str], body_html: Optional[str]
+) -> tuple[str, Optional[str]]:
+    """The safety net (#1349 D6): every outgoing mail wears the branded layout. A body
+    already rendered through it passes untouched; anything else (a title/body-only
+    notification, a producer added later that forgot) is wrapped in the plain safe
+    layout. Never raises: a failure here keeps the original body rather than losing mail."""
+    from app.services.email_layout import has_layout, load_theme, plain_layout
+
+    if has_layout(body_html):
+        return body_text or "", body_html
+    try:
+        wrapped = plain_layout(
+            subject=subject or "", text=body_text or "", theme=load_theme(db), html=body_html
+        )
+        return (body_text or wrapped.body_text), wrapped.body_html
+    except Exception as exc:  # noqa: BLE001
+        logger.error("email layout safety net failed, sending the body as is: %s", exc, exc_info=True)
+        return body_text or "", body_html
+
+
 def enqueue(
     db: Session,
     *,
@@ -86,14 +107,20 @@ def enqueue(
     attachment_filename: Optional[str] = None,
     attachment_storage_provider: Optional[str] = None,
     attachment_storage_key: Optional[str] = None,
+    layout: bool = True,
 ) -> str:
     """Write a row to email_outbox. Returns row id. Drainer dispatches asynchronously.
 
     Disabled events still create a row (so operators can see what would have been sent and
     what got cancelled at drain time) - the drainer marks it `cancelled` with reason
     `event_disabled` rather than skipping silently.
+
+    ``layout=False`` is the one opt-out from the branded layout, for the supplier notice
+    (text-only by design, PLAN-email-layout-28sep.md D9).
     """
     cfg, evt_def = _resolve_event_config(db, event_key)
+    if layout:
+        body_text, body_html = _ensure_layout(db, subject, body_text, body_html)
     eff_priority = _effective_priority(cfg, evt_def, priority)
 
     recipients_json = None
@@ -139,6 +166,7 @@ def enqueue_or_merge(
     rebuild_body: Optional[callable] = None,  # type: ignore[valid-type]
     priority: Optional[int] = None,
     max_attempts: int = 5,
+    layout: bool = True,
 ) -> tuple[str, bool]:
     """Coalesce-aware enqueue. Returns (outbox_id, merged_into_existing).
 
@@ -160,6 +188,7 @@ def enqueue_or_merge(
     if not coalesce_seconds:
         new_id = enqueue(
             db,
+            layout=layout,
             event_key=event_key,
             to=to,
             subject=subject,
@@ -205,6 +234,8 @@ def enqueue_or_merge(
         existing.metadata_json = merged_meta
         if rebuild_body is not None:
             new_text, new_html = rebuild_body(merged_meta)
+            if layout:
+                new_text, new_html = _ensure_layout(db, existing.subject, new_text, new_html)
             existing.body_text = new_text
             existing.body_html = new_html
         if existing.scheduled_for < now + timedelta(seconds=coalesce_seconds):
@@ -213,6 +244,8 @@ def enqueue_or_merge(
         return str(existing.id), True
 
     eff_priority = _effective_priority(cfg, evt_def, priority)
+    if layout:
+        body_text, body_html = _ensure_layout(db, subject, body_text, body_html)
     row = EmailOutbox(
         event_key=event_key,
         recipient_email=to,
