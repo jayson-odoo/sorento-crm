@@ -849,6 +849,10 @@ class StockDetailSalesOrder(BaseModel):
     #: One of the lines the drawer was opened for (`line_ids`), so a planner can find their
     #: own row in somebody else's list.
     is_this_line: bool = False
+    #: Set only on a drawer's OWN line that has nothing open any more (#1362 item 3): what
+    #: was delivered on it. Such a row is listed at `so_qty` "0" so "My line" still finds
+    #: it, and it is never part of SO Qty.
+    fulfilled_qty: Optional[str] = None
 
 
 class StockDetailIncoming(BaseModel):

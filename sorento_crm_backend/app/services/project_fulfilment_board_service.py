@@ -114,6 +114,7 @@ from app.services.scm.front_planning_engine import (
     RUNG_SUPPLY_BORROW,
     TIMELY_SPO,
     date_text,
+    landed_on,
     own_arrival_reason,
     pool_reserve_capacity,
     pool_share_capacity,
@@ -1027,6 +1028,48 @@ class FulfilmentBoardService:
         # (R5): the earliest claim on the pile leads, and a document with no date lists
         # last rather than first, because "not stated" is not "wanted immediately".
         sales_orders = [_so_row(row) for row in rows]
+        # #1362 item 3: a line the drawer was opened for that has nothing open any more
+        # (delivered) is no claim on the pile, so the ledger above never lists it and "My
+        # line" found nothing. It is listed after the claims, at zero, saying what was
+        # delivered - never counted into SO Qty, which sums `rows` alone.
+        listed = {row["line_id"] for row in sales_orders}
+        missing = [line_id for line_id in asking if line_id not in listed]
+        if missing:
+            done = (
+                self.db.query(
+                    SalesOrderLine.id.label("line_id"),
+                    SalesOrder.id.label("sales_order_id"),
+                    SalesOrder.so_number,
+                    SalesOrder.order_date,
+                    SalesOrder.internal_note,
+                    SalesOrder.project_label,
+                    SalesOrder.demand_class,
+                    Customer.customer_name,
+                    Customer.id.label("customer_id"),
+                    SalesOrderLine.required_date,
+                    SalesOrderLine.warehouse_id.label("warehouse_id"),
+                    owed.label("owed"),
+                    SalesOrderLine.qty_delivered,
+                    Warehouse.warehouse_code.label("line_location"),
+                    SalesAgent.sales_agent.label("agent_code"),
+                )
+                .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+                .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
+                .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+                .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
+                .filter(
+                    SalesOrderLine.id.in_(missing),
+                    SalesOrderLine.product_id == product_id,
+                    ~is_open_demand(),
+                )
+                .order_by(SalesOrderLine.required_date.asc().nullslast(), SalesOrderLine.id)
+                .all()
+            )
+            for row in done:
+                entry = _so_row(row)
+                entry["location"] = entry["location"] or row.line_location
+                entry["fulfilled_qty"] = qty_text(_dec(row.qty_delivered))
+                sales_orders.append(entry)
         by_location = self.supply.incoming_by_location([product_id], target_ids)
         incoming_rows = [
             (bin_id, ref)
@@ -4003,11 +4046,7 @@ class FulfilmentBoardService:
                 own_arrival_reason(location, qty, document, landed=landed, free=free)
                 + ". "
                 if location and landed is not None and free is not None
-                else (
-                    f"{qty_text(qty)} landed for this line on {document}, taken first. "
-                    if document
-                    else f"{qty_text(qty)} landed for this line, taken first. "
-                )
+                else f"{qty_text(qty)} landed for this line{landed_on(document)}, taken first. "
             )
             for qty, document, location, landed, free in own_arrival
             if qty > _ZERO

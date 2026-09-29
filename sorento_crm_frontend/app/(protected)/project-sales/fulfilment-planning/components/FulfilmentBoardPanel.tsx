@@ -1428,9 +1428,16 @@ export function FulfilmentBoardPanel({
       // the promises made, the movements somebody now has to approve (the panel below lists
       // them), and the rows purchasing has been handed.
       const ok = result.results.filter((entry) => entry.ok);
-      const linesConfirmed = orders
-        .filter((order) => ok.some((entry) => entry.pso_id === order.pso_id))
-        .reduce((total, order) => total + order.lines.length, 0);
+      // Named lines the server skipped because nothing was open on them any more, their
+      // stale saved decision cleared (#1362). Posted, but not confirmed.
+      const fulfilled = ok.reduce(
+        (total, entry) => total + (entry.lines_fulfilled_skipped ?? 0),
+        0,
+      );
+      const linesConfirmed =
+        orders
+          .filter((order) => ok.some((entry) => entry.pso_id === order.pso_id))
+          .reduce((total, order) => total + order.lines.length, 0) - fulfilled;
       const transfers = ok.reduce((total, entry) => total + (entry.transfers_written ?? 0), 0);
       // What was already on a warehouse's list and stayed there (R16). Said only when there
       // IS one: on a first confirmation it is always zero, and a zero in the sentence would
@@ -1448,6 +1455,9 @@ export function FulfilmentBoardPanel({
           (kept > 0 ? `${kept} kept · ` : '') +
           `${inquiries} inquiry row${inquiries === 1 ? '' : 's'}` +
           (withdrawn > 0 ? ` · ${withdrawn} withdrawn` : '') +
+          (fulfilled > 0
+            ? ` · ${fulfilled} line${fulfilled === 1 ? '' : 's'} already fulfilled, decision cleared`
+            : '') +
           (leftOutAtConfirm > 0 ? ` · ${leftOutAtConfirm} left out` : '');
         // S4 (fix round 2, reviewer): a press that left something out is not an unqualified
         // success, the owner's own words on SO420745 were "confirming silently is dangerous" -

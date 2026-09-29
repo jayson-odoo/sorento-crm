@@ -775,6 +775,17 @@ def group_take_reason(
     )
 
 
+def landed_on(document: Optional[str]) -> str:
+    """How a landed quantity names its shipment(s) (#1362 item 2): " on SPO-2026/06-0092"
+    for one, ": 60 on SPO-2026/06-0092, 40 on SPO-2026/07-0019" for several (the shape
+    `project_supply_service._landed_document` builds, each shipment with its own quantity),
+    "" for none. One helper so the board sentence and both amend refusals read alike.
+    """
+    if not document:
+        return ""
+    return f": {document}" if " on " in document else f" on {document}"
+
+
 def own_arrival_reason(
     location: str,
     taken: Decimal,
@@ -798,7 +809,7 @@ def own_arrival_reason(
     Without `landed`/`free` the one-number sentence stands. Public because the board's
     own trail sentence (`_group_take_why`) says the same thing and must not drift from it.
     """
-    on = f" on {document}" if document else ""
+    on = landed_on(document)
     if landed is None or free is None:
         return f"{qty_text(taken)} landed for this line{on}, taken first at {location}"
     took = "taken first" if taken >= free else f"{qty_text(taken)} taken first"

@@ -99,7 +99,14 @@ from app.models.scm import ItemClassification
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.scm import order_link_service
-from app.services.scm.front_planning_engine import BORROW, BUY, RESERVE, TIMELY_SPO, qty_text
+from app.services.scm.front_planning_engine import (
+    BORROW,
+    BUY,
+    RESERVE,
+    TIMELY_SPO,
+    landed_on,
+    qty_text,
+)
 from app.services.scm.outstanding_diff import (
     ADDED,
     CLOSED,
@@ -2845,6 +2852,10 @@ def _refuse_buy_over_own_arrival(row: PlanningChangeRow, composition: dict) -> N
     proposal would have locked a planner out of amending that line at all, with a message
     naming a document they could do nothing about.
     """
+    if _row_open_qty(row) <= _ZERO:
+        # #1362 item 3: a line with nothing open has no Buy to refuse - its credit and
+        # any saved composition answer a quantity the line no longer has.
+        return
     credit_sources = [
         s for s in (row.proposal_json or {}).get("sources") or []
         if s.get("source") == "own_arrival"
@@ -2875,10 +2886,8 @@ def _refuse_buy_over_own_arrival(row: PlanningChangeRow, composition: dict) -> N
             # number - so the sentence names it bare, with no "PO" noun in front of it.
             doc = source.get("supply_document")
             message = (
-                f"{qty_text(credited)} landed for this line on {doc}; nothing to buy "
-                "for it"
-                if doc
-                else f"{qty_text(credited)} landed for this line; nothing to buy for it"
+                f"{qty_text(credited)} landed for this line{landed_on(doc)}; nothing to "
+                "buy for it"
             )
             raise AppException(
                 status_code=409,
@@ -4702,7 +4711,9 @@ def _apply_one_order(
         confirm_result = result
         settled_in_place = list(result.get("settled_in_place") or [])
         auto_place_products = list(result.get("auto_place_products") or [])
-        revised = True
+        # None when every line it named was already fulfilled (#1362 item 3): nothing
+        # was written, so nothing was revised.
+        revised = revision_no is not None
     elif active_decision is not None and (replanned or retired):
         supply.supersede_for_material_change(
             order,

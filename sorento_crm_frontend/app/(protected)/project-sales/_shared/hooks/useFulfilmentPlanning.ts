@@ -224,10 +224,18 @@ export function useReconciliationMutations() {
       queryClient.invalidateQueries({ queryKey: [BOARD_TRANSFERS_KEY] });
       queryClient.invalidateQueries({ queryKey: [PLANNING_CHANGE_BATCH_KEY] });
       const rows = result.inquiry_rows_created;
+      // #1362: lines the server skipped because nothing was open on them any more.
+      const fulfilled = result.lines_fulfilled_skipped ?? 0;
+      const fulfilledText =
+        fulfilled > 0
+          ? ` ${fulfilled} line${fulfilled === 1 ? '' : 's'} already fulfilled, decision cleared.`
+          : '';
       toast.success(
-        `Confirmed as revision ${result.revision_no}. ${rows} purchase row${
-          rows === 1 ? '' : 's'
-        } handed over.`,
+        result.revision_no === null
+          ? `Nothing to confirm.${fulfilledText}`
+          : `Confirmed as revision ${result.revision_no}. ${rows} purchase row${
+              rows === 1 ? '' : 's'
+            } handed over.${fulfilledText}`,
       );
       // Only when something went wrong. The successful count is on the Transfers page and
       // does not need saying twice; an unwritten movement has no other way to be noticed.

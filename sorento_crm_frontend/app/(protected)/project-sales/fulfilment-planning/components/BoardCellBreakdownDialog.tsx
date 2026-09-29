@@ -143,6 +143,14 @@ export function BoardCellBreakdownDialog({
   const decided = cell.contributions.filter(
     (entry) => Boolean(draft[entry.key]) || entry.covered,
   ).length;
+  // #1362: every line of the cell has nothing left to plan (delivered after a decision was
+  // saved on it). The drawer says so, with what was delivered and when it was due, instead
+  // of a suggestion answering a quantity the line no longer has.
+  const fulfilledLines =
+    cell.contributions.length > 0 &&
+    cell.contributions.every((entry) => Number(entry.qty) === 0)
+      ? cell.contributions
+      : [];
   // The item flags are per item; a covered or unplannable line carries null, so the first
   // line the ladder walked speaks for the cell. A cell holding several products (a pivoted
   // axis) states none: one item's verdict must not be pinned on another's.
@@ -1066,21 +1074,38 @@ export function BoardCellBreakdownDialog({
               sub={`${decided} decided`}
             />
 
-            <CompositionCard
-              testId="cell-suggestion"
-              rowTestId="suggestion"
-              title={
-                suggestionIsStale
-                  ? `Suggestion (before ladder ${LADDER_VERSION})`
-                  : 'Suggestion'
-              }
-              rows={suggestion}
-              empty={
-                suggestionRecorded
-                  ? 'Nothing proposed for this cell'
-                  : 'Not recorded for this revision'
-              }
-            />
+            {fulfilledLines.length > 0 ? (
+              <div
+                data-testid="cell-fulfilled"
+                className="rounded-md border border-border p-3 text-sm"
+              >
+                <div className="text-xs font-medium text-muted-foreground">Fulfilled</div>
+                {fulfilledLines.map((entry) => (
+                  <div key={entry.key} className="mt-1">
+                    {`${entry.qty_delivered ?? '0'} delivered`}
+                    {entry.required_date
+                      ? `, due ${formatDateInMalaysia(entry.required_date)}`
+                      : ''}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <CompositionCard
+                testId="cell-suggestion"
+                rowTestId="suggestion"
+                title={
+                  suggestionIsStale
+                    ? `Suggestion (before ladder ${LADDER_VERSION})`
+                    : 'Suggestion'
+                }
+                rows={suggestion}
+                empty={
+                  suggestionRecorded
+                    ? 'Nothing proposed for this cell'
+                    : 'Not recorded for this revision'
+                }
+              />
+            )}
 
             {/* Beside the suggestion, never instead of it (AC-D3). SAME component, two
                 inputs: two cards that merely resembled each other would drift, and the whole

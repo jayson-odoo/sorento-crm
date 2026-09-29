@@ -157,3 +157,237 @@ def test_1362_free_part_smaller_than_landed_says_both_numbers():
             f"100 landed for this line on SPO-2026/06-0153; 60 free at "
             f"{own.warehouse_code}, taken first." in why
         ), why
+
+
+# ============================================================================
+# #1362 item 2 (owner, 29 Sep 2026): SO382618 line 400 read "on SPO-2026/06-0044" while
+# its order-inquiry rows link SPO-2026/06-0092 and SPO-2026/07-0019. The PO line's
+# receipts were summed across every SPO row but only the FIRST one found was named.
+# ============================================================================
+
+from datetime import timedelta  # noqa: E402
+
+import pytest  # noqa: E402
+
+from app.models.project_so import (  # noqa: E402
+    INQUIRY_PLACED,
+    IV_ORDER_BACK,
+    OrderInquiry,
+    OrderInquiryLink,
+    OrderInquiryRow,
+    SOSupplyDecisionDraft,
+)
+from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody  # noqa: E402
+from app.services.error_handler import AppException  # noqa: E402
+from app.services.project_supply_service import ProjectSupplyService  # noqa: E402
+from tests.scm.test_project_supply_service_ladder import _world  # noqa: E402
+from tests.test_so_supply_confirmation import (  # noqa: E402
+    _core_line,
+    _core_so,
+    _project_line,
+    _project_so,
+    _stock,
+    _warehouse,
+)
+
+
+def _second_shipment(db, spo, *, spo_number: str, received: int):
+    """Another SPO row landing the SAME PO line (`from_po_line_ref`), the way a PO line
+    received across two shipping orders looks."""
+    from app.models.procurement import SPOAllocation
+
+    row = SPOAllocation(
+        id=_uid(), spo_number=spo_number, spo_line_number=int(spo.spo_line_number) + 5000,
+        product_id=spo.product_id, warehouse_id=spo.warehouse_id,
+        location_code=spo.location_code, allocated_quantity=received,
+        quantity_received=received, receipt_status="fully_received", line_status="closed",
+        from_po_line_ref=spo.from_po_line_ref, from_po_number=spo.from_po_number,
+        company_id=spo.company_id,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _confirm_world(db, *, need: str, on_hand: int):
+    within_window = date.today() + timedelta(days=10)
+    company_id, actor, project, product = _world(db)
+    own = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}")
+    _stock(db, product, own, on_hand=on_hand)
+    core_so = _core_so(db, company_id)
+    core_line = _core_line(
+        db, core_so, product, own, qty_ordered=need, required_date=within_window,
+    )
+    core_line.source_ref = f"ZZT-1362-{_uid()[:8]}"
+    db.flush()
+    order = _project_so(db, project, so_id=core_so.id)
+    line = _project_line(db, order, line_no=1, product=product, core_line=core_line)
+    return actor, product, own, core_so, core_line, order, line
+
+
+def _refusal(db, order, line, actor, buy: str) -> str:
+    with pytest.raises(AppException) as refused:
+        ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(lines=[ConfirmLine(project_line_id=str(line.id), buy_qty=buy)]),
+            actor_user_id=actor,
+        )
+    assert refused.value.detail.get("code") == "planning_change_buy_over_own_arrival", (
+        refused.value.detail
+    )
+    return refused.value.detail.get("message") or ""
+
+
+def test_1362_item2_a_po_line_landed_on_two_shipments_names_both_with_their_quantities():
+    """No order inquiry: the PO line bought for the line landed 60 on SPO-2026/06-0092
+    and 40 on SPO-2026/07-0019. The refusal names BOTH, each with what it landed - it
+    used to name whichever row the query returned first."""
+    with blank_session() as db:
+        actor, product, own, _so, core_line, order, line = _confirm_world(
+            db, need="100", on_hand=100
+        )
+        po = supplier_and_po(db, po_number=f"ZZT-PO-1362-2A-{_uid()[:6]}")
+        _po_line, spo = po_line_bought_for(
+            db, po, product, own, from_so_line_ref=core_line.source_ref,
+            qty_received=100, qty_ordered=100, spo_received=60,
+            spo_number="SPO-2026/06-0092",
+        )
+        _second_shipment(db, spo, spo_number="SPO-2026/07-0019", received=40)
+        db.commit()
+
+        message = _refusal(db, order, line, actor, buy="100")
+        assert message == (
+            "100 landed for this line: 60 on SPO-2026/06-0092, 40 on SPO-2026/07-0019; "
+            "nothing to buy for it"
+        ), message
+
+
+def test_1362_item2_the_order_inquiry_placement_names_its_own_shipments():
+    """SO382618 line 400's shape: the PO line bought for the line landed 100 on
+    SPO-2026/06-0044, but the line's order-inquiry row places it 60 on SPO-2026/06-0092 and
+    40 on SPO-2026/07-0019, both received. The placement is the answer: the refusal names
+    0092 and 0019 with their quantities - never 0044."""
+    with blank_session() as db:
+        actor, product, own, _so, core_line, order, line = _confirm_world(
+            db, need="100", on_hand=100
+        )
+        po = supplier_and_po(db, po_number=f"ZZT-PO-1362-2B-{_uid()[:6]}")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref=core_line.source_ref,
+            qty_received=100, qty_ordered=100, spo_number="SPO-2026/06-0044",
+        )
+        inquiry = OrderInquiry(id=_uid(), project_sales_order_id=order.id)
+        db.add(inquiry)
+        db.flush()
+        for placed, spo_number in ((60, "SPO-2026/06-0092"), (40, "SPO-2026/07-0019")):
+            other_po = supplier_and_po(db, po_number=f"ZZT-PO-1362-2C-{_uid()[:6]}")
+            _other_line, linked_spo = po_line_bought_for(
+                db, other_po, product, own, from_so_line_ref=f"ZZT-ELSE-{_uid()[:6]}",
+                qty_received=placed, qty_ordered=placed, spo_number=spo_number,
+            )
+            row = OrderInquiryRow(
+                id=_uid(), order_inquiry_id=inquiry.id, so_line_id=line.id,
+                item_code=product.product_code, qty=Decimal(placed), verb=IV_ORDER_BACK,
+                state=INQUIRY_PLACED,
+            )
+            db.add(row)
+            db.flush()
+            db.add(
+                OrderInquiryLink(
+                    id=_uid(), row_id=row.id, spo_allocation_id=linked_spo.id,
+                    document=linked_spo.spo_number, qty=Decimal(placed),
+                )
+            )
+        db.commit()
+
+        message = _refusal(db, order, line, actor, buy="100")
+        assert message == (
+            "100 landed for this line: 60 on SPO-2026/06-0092, 40 on SPO-2026/07-0019; "
+            "nothing to buy for it"
+        ), message
+
+
+# ============================================================================
+# #1362 item 3 (owner, 29 Sep 2026): SO382618's SRTWCY7604-WEPLS line due 08/06 had 0
+# to plan and a saved "Buy 100". Confirm-all still sent that composition and the R7 guard
+# refused the WHOLE order.
+# ============================================================================
+
+
+def test_1362_item3_a_fulfilled_line_with_a_stale_decision_does_not_block_the_order():
+    """A decided line, then fulfilled to zero open (`qty_required = 0`, 100 delivered),
+    beside an ordinary open line. Confirm naming BOTH - the stale "Buy 100" included -
+    succeeds: the fulfilled line is skipped, counted, and its saved decision cleared."""
+    with blank_session() as db:
+        actor, product, own, core_so, done_core, order, done_line = _confirm_world(
+            db, need="100", on_hand=100
+        )
+        po = supplier_and_po(db, po_number=f"ZZT-PO-1362-3-{_uid()[:6]}")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref=done_core.source_ref,
+            qty_received=100, qty_ordered=100, spo_number="SPO-2026/06-0044",
+        )
+        done_core.qty_delivered = Decimal("100")
+        done_core.qty_required = Decimal("0")
+        db.add(
+            SOSupplyDecisionDraft(
+                id=_uid(), sales_order_id=core_so.id, core_line_id=done_core.id,
+                company_id=done_core.company_id, line_no=1,
+                item_code=product.product_code, bucket_key="2026-06-08",
+                decision={"verdict": "amended", "buy": "100"},
+            )
+        )
+        open_core = _core_line(
+            db, core_so, product, own, qty_ordered="5",
+            required_date=date.today() + timedelta(days=20),
+        )
+        open_line = _project_line(db, order, line_no=2, product=product, core_line=open_core)
+        db.commit()
+
+        result = ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(project_line_id=str(done_line.id), buy_qty="100"),
+                    ConfirmLine(project_line_id=str(open_line.id), buy_qty="5"),
+                ]
+            ),
+            actor_user_id=actor,
+        )
+        assert result["lines_fulfilled_skipped"] == 1, result
+        assert result["revision_no"] is not None, result
+        left = (
+            db.query(SOSupplyDecisionDraft)
+            .filter(SOSupplyDecisionDraft.core_line_id == done_core.id)
+            .count()
+        )
+        assert left == 0
+
+
+def test_1362_item3_my_line_finds_a_fulfilled_line_in_the_stock_drawer():
+    """The stock drawer opened for a delivered line: the ledger lists open claims only, so
+    "My line" found nothing. The asking line is now listed, marked as this line, at zero,
+    saying what was delivered - and it is not counted into SO Qty."""
+    with blank_session() as db:
+        group, product = own_arrival_group(db)
+        own = own_arrival_warehouse(db, group)
+        _board_stock(db, product, own, on_hand=100)
+        order, (done, _open) = order_with_lines(
+            db, product=product, warehouse=own,
+            lines=[
+                {"qty": "100", "required_date": date(2026, 6, 8), "source_ref": "LD",
+                 "delivered": "100"},
+                {"qty": "30", "required_date": FIRST_REQUIRED, "source_ref": "LO"},
+            ],
+        )
+
+        detail = _service(db).stock_detail(
+            str(product.id), str(own.id), line_ids=[str(done.id)]
+        )
+
+        mine = [row for row in detail["sales_orders"] if row["is_this_line"]]
+        assert len(mine) == 1, detail["sales_orders"]
+        assert mine[0]["line_id"] == str(done.id)
+        assert mine[0]["fulfilled_qty"] == "100", mine[0]
+        assert mine[0]["so_qty"] == "0", mine[0]
+        assert detail["so_qty"] == "30", detail["so_qty"]

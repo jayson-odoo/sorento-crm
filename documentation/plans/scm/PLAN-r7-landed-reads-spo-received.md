@@ -122,6 +122,27 @@ drew 221 of the 261 through the ordinary group take, and AC-S3-11 charges that d
 same ledger. Whether landed-for-a-line goods should outrank an earlier line's ordinary draw
 is an open owner ruling on #1362. It is not changed here.
 
+## Follow-up: #1362 items 2 and 3 (owner, 29 Sep 2026)
+
+Item 2, shipment naming. `_po_received_by_so_line_ref` summed every SPO row landing the PO
+line but named the first one found, so SO382618 line 400 read "on SPO-2026/06-0044" while its
+order-inquiry rows link SPO-2026/06-0092 and SPO-2026/07-0019. Now (`_landed_for_refs`):
+where the line's order-inquiry row links a specific SPO row, that link names the shipment and
+its landed figure is tier 1, `min(link qty, allocation quantity_received)` per link, even when
+the PO line's own receipts add to a different number. Otherwise the PO line's receipts stand
+and every contributing shipment is named with its quantity: "100 landed for this line: 60 on
+SPO-2026/06-0092, 40 on SPO-2026/07-0019". One helper, `front_planning_engine.landed_on`,
+words the board sentence and both amend refusals.
+
+Item 3, a stale decision on a fulfilled line. A named line whose plan quantity is 0 is skipped
+by `confirm` (not checked, not guarded), counted as `lines_fulfilled_skipped`, and its saved
+draft is deleted (cleared, not marked superseded: a draft has no history of its own, and on a
+line with nothing open there is nothing left for it to decide). `_refuse_buy_over_own_arrival`
+returns early for such a row. The cell drawer states "Fulfilled, N delivered, due <date>" in
+place of the suggestion. The stock drawer lists the drawer's own fulfilled line at zero, so
+"My line" finds it. There is no delivered-date column on `sales_order_lines`, so the date said
+is the line's due date.
+
 ## Out of scope
 
 - The board proposing Buy for a late own-SPO (R2 keeps it).
