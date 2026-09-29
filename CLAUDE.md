@@ -238,7 +238,11 @@ changed screen. Name the track in the plan's Status line.
 
 - **One lane = one branch = one PR.** A feature lane's slices land as commits on the lane branch,
   folded by the captain; slices are never opened as separate GitHub PRs. The user tests the lane
-  once on its stack, then one merge, one deploy. Exception: genuinely independent work in a
+  once on its stack, then one merge. A merge does NOT deploy (owner decision 29 Sep 2026): a push
+  to main runs only the alembic head gate; the release is a `workflow_dispatch` of `deploy.yml` on
+  main that the orchestrator triggers after a batch has merged, and its deploy job waits for the
+  owner's approval in the GitHub `production` environment (see
+  `documentation/plans/ci/PLAN-ci-fast-gate-29sep.md`). Exception: genuinely independent work in a
   different domain gets its own lane, not a sub-PR.
 - **Pre-PR gate (mandatory before marking a PR ready, and again right before merge if another
   lane merged first):**
@@ -248,7 +252,7 @@ changed screen. Name the track in the plan's Status line.
   3. Confirm CI's fast gate logic locally: single alembic head.
 - CI enforcement already in place: `check-migration-heads` job fails any PR/merge-queue entry
   with two heads; `build-and-deploy` runs in the `deploy-production` concurrency group so
-  back-to-back merges deploy serially instead of overlapping.
+  two releases dispatched close together deploy serially instead of overlapping.
 
 ## Browser verification (agent-browser)
 
