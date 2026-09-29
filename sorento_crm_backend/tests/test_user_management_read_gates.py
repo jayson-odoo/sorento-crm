@@ -641,7 +641,10 @@ class TestStructuralCoverage:
         below so the gate is stated rather than counted.
         """
         gated_paths = {r.path for r in _mounted_get_routes() if _is_gated(r)}
-        assert len(gated_paths) == 45
+        # 46: the chatbot memory read (below) and the contact -> customers read
+        # (`/contacts/{contact_id}/customers`, PLAN-contact-customers-29sep D2, under
+        # contacts.view) each joined the package on the same day.
+        assert len(gated_paths) == 46
         assert gated_paths == {
             "/api/v1/user-management/teams/",
             "/api/v1/user-management/teams/{team_id}",
@@ -664,6 +667,7 @@ class TestStructuralCoverage:
             "/api/v1/user-management/contacts/{contact_id}/access-agents",
             "/api/v1/user-management/contacts/{contact_id}/attachment-types",
             "/api/v1/user-management/contacts/{contact_id}/cs-routing",
+            "/api/v1/user-management/contacts/{contact_id}/customers",
             "/api/v1/user-management/contacts/{contact_id}/market-segments",
             # --- The chatbot media PR, and deliberately NOT on the `contacts.view`
             # its path siblings above take: reading a contact's media gates is

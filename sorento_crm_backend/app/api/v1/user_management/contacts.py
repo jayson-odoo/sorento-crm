@@ -20,6 +20,12 @@ from app.services.user_contact_link import (
 from app.schemas.user import RespondContactResponse, RespondContactCreate, RespondContactUpdate, ContactAgentAccessResponse
 from app.schemas.common import ListResponse
 from app.schemas.market_segment import MarketSegmentCodesUpdate
+from app.schemas.contact_customer import (
+    ContactCustomerLinkCreate,
+    ContactCustomerLinksResponse,
+    ContactCustomersResponse,
+)
+from app.services import contact_customer_service
 from app.services.error_handler import handle_internal_error, handle_not_found
 
 logger = logging.getLogger(__name__)
@@ -746,6 +752,73 @@ async def set_contact_attachment_types(
     except HTTPException:
         raise
     except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+def _require_contact(db: Session, contact_id: str) -> None:
+    if contact_customer_service.get_contact(db, contact_id) is None:
+        raise handle_not_found("Contact", contact_id)
+
+
+@router.get("/{contact_id}/customers", response_model=ContactCustomersResponse)
+async def get_contact_customers(
+    contact_id: str,
+    current_user: dict = Depends(require_permission("user_management.contacts.view")),
+    db: Session = Depends(get_db),
+):
+    """The customer accounts this contact belongs to."""
+    try:
+        _require_contact(db, contact_id)
+        return contact_customer_service.contact_customers_payload(db, contact_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post(
+    "/{contact_id}/customers",
+    response_model=ContactCustomerLinksResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def link_contact_customers(
+    contact_id: str,
+    payload: ContactCustomerLinkCreate,
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
+    db: Session = Depends(get_db),
+):
+    """Link several customers to this contact in one request, all or nothing.
+
+    Every id is resolved under the caller's scope BEFORE anything is written, so one
+    unknown or hidden id answers 404 and links none. An already-linked customer is a no-op
+    that answers its existing row. Rows come back in request order."""
+    try:
+        _require_contact(db, contact_id)
+        customers = []
+        for customer_id in dict.fromkeys(payload.customer_ids):
+            customer = contact_customer_service.get_customer_in_scope(db, customer_id)
+            if customer is None:
+                # Unknown and out-of-scope are the same answer: scope hides the row.
+                raise handle_not_found("Customer", customer_id)
+            customers.append(customer)
+        linked_by = str(current_user.get("id") or current_user.get("sub") or "") or None
+        links = [
+            contact_customer_service.link_customer(
+                db, contact_id, customer.id, customer=customer, linked_by=linked_by
+            )
+            for customer in customers
+        ]
+        db.commit()
+        rows = []
+        for link, customer in zip(links, customers):
+            db.refresh(link)
+            rows.append(contact_customer_service.link_row(link, customer))
+        return {"data": rows}
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
         raise handle_internal_error(str(e))
 
 

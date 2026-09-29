@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { FileText, ListOrdered, LoaderCircleIcon, Move, SquarePen } from 'lucide-react';
+import { FileText, ListOrdered, LoaderCircleIcon, Move, SquarePen, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,6 +21,7 @@ import {
   SearchableSelect,
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
+import SalesAgentCustomersTab from './SalesAgentCustomersTab';
 import SalesOrdersGrid from '@/app/(protected)/scm/sales-orders/components/SalesOrdersGrid';
 import { getContactSelect } from '../../services/salesAgentService';
 import { useAnnotateSalesAgent, useSalesAgent } from '../../hooks/useSalesAgents';
@@ -291,6 +292,10 @@ export function SalesAgentDetail({ id }: { id: string }) {
             <Move />
             <span>Transfers</span>
           </TabsTrigger>
+          <TabsTrigger value="customers">
+            <Users />
+            <span>Customers</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-0 space-y-4 focus-visible:outline-none">
@@ -483,6 +488,10 @@ export function SalesAgentDetail({ id }: { id: string }) {
             listingKey="master_data.sales_agents.view::stock-transfers"
             showFilters={false}
           />
+        </TabsContent>
+
+        <TabsContent value="customers" className="mt-0 focus-visible:outline-none">
+          <SalesAgentCustomersTab agentId={agent.id} />
         </TabsContent>
       </Tabs>
     </div>
