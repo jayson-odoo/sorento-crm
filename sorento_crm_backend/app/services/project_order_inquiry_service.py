@@ -550,6 +550,17 @@ def _qty_str(value: Decimal) -> str:
     return format(_dec(value).normalize(), "f")
 
 
+def _documents_of(links: Sequence[Any]) -> str:
+    """The documents a row's links name, once each, in link order - for a note that tells
+    purchasing which document to adjust in AutoCount."""
+    seen: List[str] = []
+    for link in links:
+        document = getattr(link, "document", None)
+        if document and document not in seen:
+            seen.append(document)
+    return ", ".join(seen) if seen else "the document"
+
+
 def project_customer_label(
     customer_name: Optional[str],
     project_title: Optional[str],
@@ -1695,19 +1706,21 @@ class ProjectOrderInquiryService:
 
         if need <= _ZERO:
             # Nothing is bought for this line any more - the book reduced it to nothing, or
-            # the fresh plan meets it from stock. Its placements go back, so the document is
-            # free for whoever needs it next rather than held against a withdrawn
-            # instruction; `_remove_links` writes its own "Unlinked from ..." stamp.
+            # the fresh plan meets it from stock. Its placements STAY (owner ruling 29 Sep
+            # 2026, `PLAN-oi-links-intent-only.md`: "the PO link is based on autocount
+            # linkage as source of truth"): the planning side records that the document
+            # is purchasing's to release in AutoCount, and the sync brings the change
+            # back. Until then the link reads exactly as AutoCount has it.
             links = self._links_of(row.id)
             had_links = bool(links)
-            if links:
-                self._remove_links(row, links)
             row.state = INQUIRY_CANCELLED
-            row.note = (
-                f"{row.note}; {moved}; the book left nothing to buy"
-                if row.note
-                else f"{moved}; the book left nothing to buy"
-            )
+            ending = "the book left nothing to buy"
+            if links:
+                ending = (
+                    f"{ending}; {_documents_of(links)} stays linked, purchasing releases "
+                    "it in AutoCount"
+                )
+            row.note = f"{row.note}; {moved}; {ending}" if row.note else f"{moved}; {ending}"
             # Review round 2 Blocking 4 (AC-LT-18): a settled-in-place row this branch
             # cancels holds no capacity for anyone else's row a moment longer.
             self._drop_suggested_links([row])
@@ -1729,32 +1742,19 @@ class ProjectOrderInquiryService:
 
         links = self._links_of(row.id)
         linked = sum((_dec(link.qty) for link in links), _ZERO)
+        over_linked: Optional[str] = None
         if linked > need:
-            # Latest arrival first: the row keeps the cover that lands soonest.
-            by_arrival = sorted(
-                links,
-                key=lambda link: (
-                    self._link_expected_date(link) or date.max,
-                    link.linked_at or datetime.min,
-                ),
-                reverse=True,
+            # AC-P3-8 used to trim the excess here, latest arrival first. Superseded by
+            # the owner's ruling of 29 Sep 2026 (`PLAN-oi-links-intent-only.md`):
+            # "shrinking a line shouldn't trim its own PO link, the quantity change is
+            # still at the autocount side by the purchasing". The links stand as AutoCount
+            # has them; the row reads `placed` over its new, smaller quantity, and the
+            # note names the excess as purchasing's to adjust. `_unlinked_need` already
+            # reads a row linked above its quantity as needing nothing more.
+            over_linked = (
+                f"{_qty_str(linked - need)} over-linked on {_documents_of(links)} stays "
+                "for purchasing to adjust in AutoCount"
             )
-            giving_back: List[OrderInquiryLink] = []
-            for link in by_arrival:
-                excess = linked - need
-                if excess <= _ZERO:
-                    break
-                qty = _dec(link.qty)
-                if excess >= qty:
-                    giving_back.append(link)
-                    linked -= qty
-                    continue
-                # Only the EXCESS goes back, not the whole placement: the buyer arranged
-                # that quantity on that document and the line still wants most of it.
-                link.qty = qty - excess
-                linked = need
-            if giving_back:
-                self._remove_links(row, giving_back)
 
         # Did the CONFIRMATION actually restate this line, or is it only riding along
         # because a different line in the same order was named (review of PR #471, B2)?
@@ -1779,6 +1779,8 @@ class ProjectOrderInquiryService:
             row.stock_location = entry.get("stock_location")
         row.supply_decision_id = decision.id
         row.order_inquiry_id = inquiry.id
+        if over_linked:
+            row.note = f"{row.note}; {over_linked}" if row.note else over_linked
         if changed:
             row.note = f"{row.note}; {moved}" if row.note else moved
             # The same two facts as figures, for the Was / Now table (the note above is
@@ -2131,9 +2133,10 @@ class ProjectOrderInquiryService:
             and self._own_arrival_credit_for_row(row, need=linked_qty) >= linked_qty
         ):
             return None
-        open_links = [link for link in links if str(link.id) not in received]
-        if open_links:
-            self._remove_links(row, open_links)
+        # The still-open links used to be released here (AC-RL-11) so the raise-time
+        # cascade could draft them onto the fresh row. Owner ruling 29 Sep 2026
+        # (`PLAN-oi-links-intent-only.md`): they stay exactly as AutoCount has them; the
+        # cascade only suggests, and purchasing moves the link in AutoCount.
         fragments = []
         for link in received_links:
             document = link.document or "the document"
