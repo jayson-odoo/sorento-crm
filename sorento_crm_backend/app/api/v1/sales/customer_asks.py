@@ -4,8 +4,10 @@
 "Me" is the sales agent the signed-in user is (`users.respond_contact_id` ->
 `sales_agents.contact_id`); a user linked to no agent gets an empty to-do (200), not a 403.
 `sales.customer_asks.view_all` lets a caller read one other agent (`agent_id=<id>`), every
-agent (`agent_id=all`) and the agents list, and clear an ask on an agent's behalf. An ask
-outside the caller's scope is a 404, never a 403, so ids cannot be probed.
+agent (`agent_id=all`) and the agents list, and clear an ask on an agent's behalf. A team
+leader reaches their team's current members the same way. The GETs answer 404 for an id that is
+no agent and 403 NOT_YOUR_AGENT for an agent outside the caller's pickable set (plan 3.4); the
+PATCH answers 404 for both, so an ask id cannot be probed.
 """
 from __future__ import annotations
 

@@ -8,9 +8,11 @@ Plan: documentation/plans/sales/PLAN-sales-asks-todo-29sep.md, 3.1 and 3.4 (one 
    guarded ADD CONSTRAINT so the revision is re-runnable.
 2. Backfill: a row already `done` reads `done_at = updated_at` (the best answer the table holds),
    both actor ids NULL (shown as "Done", no name). Only rows with no `done_at` yet are touched.
-3. `sales.customer_asks.{view,add,edit,delete,view_all}` created when absent, then swept: `view`,
-   `edit` and `view_all` go to every role that holds `sales.opportunities.view` (the salesperson's
-   roles) and to `admin` and `superadmin`. Integration roles are excluded (an integration
+3. `sales.customer_asks.{view,add,edit,delete,view_all}` created when absent, then swept: `view`
+   and `edit` go to every role that holds `sales.opportunities.view` (the salesperson's roles).
+   `view_all` goes to `admin` and `superadmin` only: a salesperson sees their own list and a team
+   leader their team (plan 3.4, Q7 (c)), so nobody else needs every agent's asks. `admin` and
+   `superadmin` hold all five. Integration roles are excluded (an integration
    credential has no browser to clear an ask from), same reasoning as `522_autocount_pull_perms`.
 
 Downgrade drops the two columns and leaves the permission rows (`sync_permissions` recreates them
@@ -43,7 +45,7 @@ _FKS = (
     ("fk_stock_asks_done_by_user", "done_by_user_id", "users(id)"),
     ("fk_stock_asks_done_by_contact", "done_by_contact_id", "respond_contacts(id)"),
 )
-_GRANTED = ("sales.customer_asks.view", "sales.customer_asks.edit", "sales.customer_asks.view_all")
+_GRANTED = ("sales.customer_asks.view", "sales.customer_asks.edit")
 _SWEEP_SOURCE = "sales.opportunities.view"
 _GRANT_ROLE_SLUGS = ("admin", "superadmin")
 _EXCLUDED_ROLE_PREFIX = "integration\\_%"
