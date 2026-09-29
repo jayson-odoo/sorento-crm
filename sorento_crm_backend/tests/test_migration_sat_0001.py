@@ -84,7 +84,7 @@ def test_revision_fits_alembic_version_and_sits_on_main_head():
     module = _load()
     assert module.revision == NAME
     assert len(module.revision) <= 32
-    assert module.down_revision == "ideation_status_events_s1"
+    assert module.down_revision == "merge_29sep_batch8"
 
 
 def test_columns_exist_and_rerun_is_noop():
