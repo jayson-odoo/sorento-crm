@@ -120,7 +120,8 @@ export function CustomerAsksList({
       {showDone ? <CustomerAsksHistory search={search} refreshKey={todo.version} /> : null}
 
       <Drawer open={Boolean(opened)} onOpenChange={(next) => !next && setOpened(null)}>
-        <DrawerContent className="max-h-[90vh]">
+        {/* M6-02: dvh - phone-facing portal sheet, so a `vh` cap sits under mobile Safari's chrome. */}
+        <DrawerContent className="max-h-[90dvh]">
           <DrawerHeader className="sr-only">
             <DrawerTitle>Customer ask</DrawerTitle>
             <DrawerDescription>The conversation around this ask</DrawerDescription>
