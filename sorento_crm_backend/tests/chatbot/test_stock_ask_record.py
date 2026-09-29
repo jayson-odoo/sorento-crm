@@ -78,12 +78,12 @@ def test_ac_sa501_a_live_turn_writes_one_open_row_per_answered_product(
     reply = out.reply["text"]
 
     rows = _by_code(session_factory)
-    assert set(rows) == {"ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-INC", "ZZTSA-NOI"}
+    assert set(rows) == {"ZZTSA4-BIG", "ZZTSA4-INS", "ZZTSA4-INC", "ZZTSA4-NOI"}
     expected = {
-        "ZZTSA-BIG": ("too_big", 300, f"ZZTSA-BIG x 300: {TOO_BIG}"),
-        "ZZTSA-INS": ("in_stock", 50, f"ZZTSA-INS x 50: {IN_STOCK}"),
-        "ZZTSA-INC": ("incoming", 150, "ZZTSA-INC x 150: no stock at the moment, ETA 19/10/2026."),
-        "ZZTSA-NOI": ("no_incoming", 20, f"ZZTSA-NOI x 20: {NO_INCOMING}"),
+        "ZZTSA4-BIG": ("too_big", 300, f"ZZTSA4-BIG x 300: {TOO_BIG}"),
+        "ZZTSA4-INS": ("in_stock", 50, f"ZZTSA4-INS x 50: {IN_STOCK}"),
+        "ZZTSA4-INC": ("incoming", 150, "ZZTSA4-INC x 150: no stock at the moment, ETA 19/10/2026."),
+        "ZZTSA4-NOI": ("no_incoming", 20, f"ZZTSA4-NOI x 20: {NO_INCOMING}"),
     }
     for code, (branch, qty, line) in expected.items():
         row = rows[code]
@@ -135,13 +135,13 @@ def test_ac_sa501_a_chat_console_turn_writes_console_rows_on_the_asks_tab_and_po
     assert out.error is None, out.error
 
     rows = _by_code(session_factory)
-    assert set(rows) == {"ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI", "ZZTSA-INC"}
+    assert set(rows) == {"ZZTSA4-BIG", "ZZTSA4-INS", "ZZTSA4-NOI", "ZZTSA4-INC"}
     for code, row in rows.items():
         assert row.source == "console", code
         assert row.customer_id == dealer.customer_id
         assert row.state == "open"
     assert {f["ask_id"] for f in dealer.notified} == {
-        rows[c].id for c in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI")
+        rows[c].id for c in ("ZZTSA4-BIG", "ZZTSA4-INS", "ZZTSA4-NOI")
     }
 
     db = session_factory()
@@ -173,7 +173,7 @@ def test_ac_sa501_a_console_reply_is_never_sent_to_whatsapp(
     results = _run_jobs(session_factory, dealer)
     assert [r["status"] for r in results] == ["sent", "sent", "sent"]
     assert {ident for ident, _text in _FakeRespond.sent} == {"ZZT-agent-rid"}
-    assert all("ZZTSA-" in text_ for _ident, text_ in _FakeRespond.sent)
+    assert all("ZZTSA4-" in text_ for _ident, text_ in _FakeRespond.sent)
 
 
 def test_ac_sa501_toggle_off_still_records_every_ask(session_factory, monkeypatch, stub_access):
@@ -188,8 +188,8 @@ def test_ac_sa502_reasons_at_write(session_factory, monkeypatch, stub_access):
     dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=False)
     dealer.ask_all_four()
     rows = _by_code(session_factory)
-    assert rows["ZZTSA-INC"].notify_skip_reason == "not_notified_branch"
-    for code in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI"):
+    assert rows["ZZTSA4-INC"].notify_skip_reason == "not_notified_branch"
+    for code in ("ZZTSA4-BIG", "ZZTSA4-INS", "ZZTSA4-NOI"):
         assert rows[code].notify_skip_reason == "toggle_off", code
     assert all(r.notified_agent is False for r in rows.values())
 
@@ -200,9 +200,9 @@ def test_ac_sa502_b3_is_not_notified_even_with_the_toggle_on(
     dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
     dealer.ask_all_four()
     rows = _by_code(session_factory)
-    assert rows["ZZTSA-INC"].notify_skip_reason == "not_notified_branch"
+    assert rows["ZZTSA4-INC"].notify_skip_reason == "not_notified_branch"
     assert {f["ask_id"] for f in dealer.notified} == {
-        rows[c].id for c in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI")
+        rows[c].id for c in ("ZZTSA4-BIG", "ZZTSA4-INS", "ZZTSA4-NOI")
     }
 
 
@@ -216,10 +216,10 @@ def test_ac_sa502_a_sent_notification_flips_notified_agent(
     results = _run_jobs(session_factory, dealer)
     assert [r["status"] for r in results] == ["sent", "sent", "sent"]
     rows = _by_code(session_factory)
-    for code in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI"):
+    for code in ("ZZTSA4-BIG", "ZZTSA4-INS", "ZZTSA4-NOI"):
         assert rows[code].notified_agent is True, code
         assert rows[code].notify_skip_reason is None, code
-    assert rows["ZZTSA-INC"].notified_agent is False
+    assert rows["ZZTSA4-INC"].notified_agent is False
     assert len(_FakeRespond.sent) == 3
 
 
@@ -233,7 +233,7 @@ def test_ac_sa502_each_skip_reason_is_written_on_the_row(
     results = _run_jobs(session_factory, dealer)
     assert {r["reason"] for r in results} == {"no_sales_agent"}
     rows = _by_code(session_factory)
-    for code in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI"):
+    for code in ("ZZTSA4-BIG", "ZZTSA4-INS", "ZZTSA4-NOI"):
         assert rows[code].notified_agent is False
         assert rows[code].notify_skip_reason == "no_sales_agent", code
 
@@ -247,8 +247,8 @@ def test_ac_sa502_a_failed_send_is_written_on_the_row(
     _window(monkeypatch, open_=False)  # closed, and no template mapped
     _run_jobs(session_factory, dealer)
     rows = _by_code(session_factory)
-    assert rows["ZZTSA-BIG"].notified_agent is False
-    assert rows["ZZTSA-BIG"].notify_skip_reason == "send_failed"
+    assert rows["ZZTSA4-BIG"].notified_agent is False
+    assert rows["ZZTSA4-BIG"].notify_skip_reason == "send_failed"
 
 
 def test_ac_sa503_a_contact_with_no_customer_still_gets_a_row(
@@ -258,10 +258,10 @@ def test_ac_sa503_a_contact_with_no_customer_still_gets_a_row(
     dealer.ask_all_four()
     rows = _by_code(session_factory)
     assert len(rows) == 4
-    for code in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI"):
+    for code in ("ZZTSA4-BIG", "ZZTSA4-INS", "ZZTSA4-NOI"):
         assert rows[code].customer_id is None
         assert rows[code].notify_skip_reason == "no_customer", code
-    assert rows["ZZTSA-INC"].notify_skip_reason == "not_notified_branch"
+    assert rows["ZZTSA4-INC"].notify_skip_reason == "not_notified_branch"
     assert dealer.jobs == []
 
 
@@ -280,7 +280,7 @@ def test_ac_sa504_the_integration_log_references_the_ask(
     assert len(logs) == 3
     assert {l.business_table for l in logs} == {"stock_asks"}
     assert {str(l.business_id) for l in logs} == {
-        rows[c].id for c in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI")
+        rows[c].id for c in ("ZZTSA4-BIG", "ZZTSA4-INS", "ZZTSA4-NOI")
     }
     assert all(json.loads(l.request_payload)["message"]["type"] == "text" for l in logs)
 
@@ -361,18 +361,18 @@ def test_security_the_dealer_name_is_one_short_line_in_the_agent_message(
 def test_ac_sa501_a_reply_still_owing_a_quantity_records_and_notifies_nothing(
     session_factory, monkeypatch, stub_access
 ):
-    """Reviewer blocker (PR #1333): "ZZTSA-INS 50 and ZZTSA-BIG" is answered with a
+    """Reviewer blocker (PR #1333): "ZZTSA4-INS 50 and ZZTSA4-BIG" is answered with a
     quantity question, not with INS's line, so INS is not an answered ask yet. It is
     recorded (once) on the turn that answers it."""
     from tests.chatbot._r9_engine_console import product, stock
 
     dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
     out = dealer.say(
-        "ZZTSA-INS 50 and ZZTSA-BIG",
-        stock(product("ZZTSA-INS", 50), product("ZZTSA-BIG")),
+        "ZZTSA4-INS 50 and ZZTSA4-BIG",
+        stock(product("ZZTSA4-INS", 50), product("ZZTSA4-BIG")),
     )
     assert out.error is None, out.error
-    assert "ZZTSA-INS x 50:" not in (out.reply or {}).get("text", "")
+    assert "ZZTSA4-INS x 50:" not in (out.reply or {}).get("text", "")
     assert _asks(session_factory) == []
     assert dealer.notified == []
 
@@ -387,7 +387,7 @@ def test_review_a_failed_enqueue_is_written_on_the_row(session_factory, monkeypa
     out = dealer.ask_all_four()
     assert out.error is None, out.error
     rows = _by_code(session_factory)
-    for code in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI"):
+    for code in ("ZZTSA4-BIG", "ZZTSA4-INS", "ZZTSA4-NOI"):
         assert rows[code].notify_skip_reason == "enqueue_failed", code
         assert rows[code].notified_agent is False
 
@@ -409,4 +409,4 @@ def test_review_a_failed_success_log_still_marks_the_row_sent(
     monkeypatch.setattr(stock_ask_service, "_log", log)
     results = _run_jobs(session_factory, dealer)
     assert [r["status"] for r in results] == ["sent", "sent", "sent"]
-    assert _by_code(session_factory)["ZZTSA-BIG"].notified_agent is True
+    assert _by_code(session_factory)["ZZTSA4-BIG"].notified_agent is True

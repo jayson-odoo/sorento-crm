@@ -52,11 +52,18 @@ IN_STOCK = "yes, we have stock, please refer to your salesman to proceed."
 NO_INCOMING = "no stock and no incoming at the moment, please refer to your salesman."
 
 # One product per branch, so a single four-product ask exercises all four.
+#
+# Every code carries a digit (fix round 4, merge fallout with #833): the code-first rule
+# (`references._code_matched`, `resolve_gate._names_a_typed_code`) reads only a
+# code-shaped token WITH a digit as a typed code. The old digitless "ZZTSA-BIG" read as a
+# described word, so the four-code ask became a counted "which of these has stock" set
+# ("Couldn't find a ZZTSA-BIG ... with stock") and never reached the stock tool, the
+# notify jobs or the asks rows. `test_the_fixture_codes_are_typed_codes` pins it.
 BRANCH_OF = {
-    "ZZTSA-BIG": "too_big",
-    "ZZTSA-INS": "in_stock",
-    "ZZTSA-INC": "incoming",
-    "ZZTSA-NOI": "no_incoming",
+    "ZZTSA4-BIG": "too_big",
+    "ZZTSA4-INS": "in_stock",
+    "ZZTSA4-INC": "incoming",
+    "ZZTSA4-NOI": "no_incoming",
 }
 
 
@@ -262,12 +269,12 @@ class LiveDealer:
 
     def ask_all_four(self, *, is_test: bool = False, console: bool = False, **extra: Any):
         return self.say(
-            "ZZTSA-BIG 300, ZZTSA-INS 50, ZZTSA-INC 150, ZZTSA-NOI 20",
+            "ZZTSA4-BIG 300, ZZTSA4-INS 50, ZZTSA4-INC 150, ZZTSA4-NOI 20",
             stock(
-                product("ZZTSA-BIG", 300),
-                product("ZZTSA-INS", 50),
-                product("ZZTSA-INC", 150),
-                product("ZZTSA-NOI", 20),
+                product("ZZTSA4-BIG", 300),
+                product("ZZTSA4-INS", 50),
+                product("ZZTSA4-INC", 150),
+                product("ZZTSA4-NOI", 20),
             ),
             is_test=is_test,
             console=console,
@@ -287,6 +294,18 @@ class LiveDealer:
         return out
 
 
+def test_the_fixture_codes_are_typed_codes():
+    """Fix round 4 pin: every fixture code is a typed CODE under #833's code-first rule,
+    so the family ask is a forward ask with one figure line per product, never a counted
+    set. A digitless rename would silently route every engine test here to the HAS miss."""
+    from app.services.chatbot.lanes.business.gate import _is_a_described_word
+    from app.services.chatbot.lanes.business.resolve_gate import _names_a_typed_code
+
+    for code in BRANCH_OF:
+        assert not _is_a_described_word(code), code
+        assert _names_a_typed_code({"entities": [product(code, 1)]}), code
+
+
 def test_ac_sa401_toggle_on_enqueues_one_job_per_b1_b2_b4_and_none_for_b3(
     session_factory, monkeypatch, stub_access
 ):
@@ -294,11 +313,11 @@ def test_ac_sa401_toggle_on_enqueues_one_job_per_b1_b2_b4_and_none_for_b3(
     out = dealer.ask_all_four()
     assert out.error is None, out.error
     reply = (out.reply or {}).get("text") or ""
-    assert f"ZZTSA-INC x 150: no stock at the moment, ETA 19/10/2026." in reply
+    assert f"ZZTSA4-INC x 150: no stock at the moment, ETA 19/10/2026." in reply
 
     facts = dealer.notified
     assert sorted(f["branch"] for f in facts) == ["in_stock", "no_incoming", "too_big"]
-    assert {f["product_code"] for f in facts} == {"ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI"}
+    assert {f["product_code"] for f in facts} == {"ZZTSA4-BIG", "ZZTSA4-INS", "ZZTSA4-NOI"}
     assert {f["quantity"] for f in facts} == {300, 50, 20}
     for _func, _args, kwargs in dealer.jobs:
         assert kwargs.get("queue_name") == "respond_io"
@@ -334,7 +353,7 @@ def test_ac_sa401_a_dry_run_that_is_not_the_chat_console_enqueues_nothing(
     out = dealer.ask_all_four(**extra)
     assert out.error is None, out.error
     assert out.is_test is True
-    assert "ZZTSA-BIG x 300" in ((out.reply or {}).get("text") or "")
+    assert "ZZTSA4-BIG x 300" in ((out.reply or {}).get("text") or "")
     assert dealer.jobs == []
 
 
@@ -354,7 +373,7 @@ def test_ac_sa401_a_chat_console_turn_enqueues_the_real_notify_job(
 
     facts = dealer.notified
     assert sorted(f["branch"] for f in facts) == ["in_stock", "no_incoming", "too_big"]
-    assert {f["product_code"] for f in facts} == {"ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI"}
+    assert {f["product_code"] for f in facts} == {"ZZTSA4-BIG", "ZZTSA4-INS", "ZZTSA4-NOI"}
     for func, _args, kwargs in dealer.jobs:
         assert func is stock_ask_tasks.notify_salesman
         assert kwargs.get("queue_name") == "respond_io"
@@ -373,7 +392,7 @@ def test_ac_sa401_an_ask_still_owing_a_quantity_enqueues_nothing(
     session_factory, monkeypatch, stub_access
 ):
     dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
-    out = dealer.say("check stock ZZTSA-INS", stock(product("ZZTSA-INS")))
+    out = dealer.say("check stock ZZTSA4-INS", stock(product("ZZTSA4-INS")))
     assert out.error is None, out.error
     assert dealer.notified == []
 
