@@ -144,7 +144,7 @@ belongs with (image-then-"idea" vs image-then-"complaint" are the same shape, op
 ```
 Input:  { product_id, submitter (phone E.164), message_text,
           attachments?: [{ source_msg_id, url, type:"image"|"video"|"file"|"audio", filename?, caption? }],
-          draft_id?, discard_draft_id? }
+          draft_id?, discard_draft_id?, is_test (bool, always sent; true on a chatbot test turn, #1179) }
 Output: { draft_id, status: "collecting"|"complete"|"duplicate",
           captured: {...}, missing: ["field", ...], reply_text, link?, duplicate_of? }
 ```

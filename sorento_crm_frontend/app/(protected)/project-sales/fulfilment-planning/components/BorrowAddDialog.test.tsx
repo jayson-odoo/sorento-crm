@@ -10,8 +10,12 @@
  * What is pinned here: the table renders the SAME columns (and none of the retired ones),
  * a source row expands into the same ledger the Grid view expands into (`This line` on the
  * asking line's own row), the impact sentence below the table still updates as the
- * quantity is typed, and the reason/quantity/authorisation validation and the payload
- * handed back on Add are unchanged - none of that lived in the table markup.
+ * quantity is typed, and the quantity/authorisation validation and the payload handed back
+ * on Add are unchanged - none of that lived in the table markup.
+ *
+ * D3 (S2): the dialog's OWN reason field is gone - `BoardLineDecisionPanel` (and, on the
+ * per-order sheet, `SupplyLineCard`) carry the one Reason box now, so `onAdd`'s third
+ * argument is the same-agent authorisation, folded, or `''`.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -452,28 +456,19 @@ describe('BorrowAddDialog', () => {
     expect(screen.getByLabelText('Quantity')).toHaveValue(50);
   });
 
-  it('adds nothing until a reason is typed', () => {
+  // D3 (S2): this dialog no longer asks for a reason - `BoardLineDecisionPanel`'s own Reason
+  // box (or, on the per-order sheet, `SupplyLineCard`'s own per-row Reason field) is where
+  // that text is typed now, so Add is enabled off quantity and donor alone.
+  it('adds on a valid quantity with no reason typed - there is no reason field here any more', () => {
     renderDialog();
 
-    const add = screen.getByRole('button', { name: 'Add the borrow' });
-    expect(add).toBeDisabled();
-
-    fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: '   ' } });
-    expect(add).toBeDisabled();
-    expect(onAdd).not.toHaveBeenCalled();
-
-    fireEvent.change(screen.getByLabelText(/Reason/), {
-      target: { value: 'HQ has no delivery booked before October.' },
-    });
-    expect(add).toBeEnabled();
+    expect(screen.queryByLabelText(/^Reason/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeEnabled();
   });
 
   it('adds nothing on a zero or negative quantity', () => {
     renderDialog();
 
-    fireEvent.change(screen.getByLabelText(/Reason/), {
-      target: { value: 'HQ has no delivery booked before October.' },
-    });
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '0' } });
     expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeDisabled();
 
@@ -481,20 +476,13 @@ describe('BorrowAddDialog', () => {
     expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeDisabled();
   });
 
-  it('hands back the chosen candidate, the quantity and the trimmed reason', () => {
+  it('hands back the chosen candidate, the quantity and an empty reason (no same-agent donor)', () => {
     renderDialog();
 
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '40' } });
-    fireEvent.change(screen.getByLabelText(/Reason/), {
-      target: { value: '  HQ has no delivery booked before October.  ' },
-    });
     fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
 
-    expect(onAdd).toHaveBeenCalledWith(
-      OTHER_LOCATION,
-      '40',
-      'HQ has no delivery booked before October.',
-    );
+    expect(onAdd).toHaveBeenCalledWith(OTHER_LOCATION, '40', '');
     expect(onDone).toHaveBeenCalled();
   });
 
@@ -506,16 +494,9 @@ describe('BorrowAddDialog', () => {
 
     expect(screen.getByLabelText('Quantity')).toHaveValue(20);
 
-    fireEvent.change(screen.getByLabelText(/Reason/), {
-      target: { value: 'Their hand-over is in December.' },
-    });
     fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
 
-    expect(onAdd).toHaveBeenCalledWith(
-      OTHER_PROJECT,
-      '20',
-      'Their hand-over is in December.',
-    );
+    expect(onAdd).toHaveBeenCalledWith(OTHER_PROJECT, '20', '');
   });
 
   it('closes on cancel without adding anything', () => {
@@ -531,7 +512,6 @@ describe('BorrowAddDialog', () => {
     const nativeConfirm = vi.spyOn(window, 'confirm');
 
     renderDialog();
-    fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: 'Because.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
 
     expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -558,9 +538,6 @@ describe('BorrowAddDialog: authorising a same-agent borrow', () => {
     renderDialog([GROUP_BORROW]);
 
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '71' } });
-    fireEvent.change(screen.getByLabelText(/^Reason/), {
-      target: { value: 'The site is waiting on this delivery.' },
-    });
 
     const add = screen.getByRole('button', { name: 'Add the borrow' });
     expect(add).toBeDisabled();
@@ -574,8 +551,7 @@ describe('BorrowAddDialog: authorising a same-agent borrow', () => {
     expect(onAdd).toHaveBeenCalledWith(
       GROUP_BORROW,
       '71',
-      'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. ' +
-        'The site is waiting on this delivery.',
+      'Authorised by agent JEREMY: Agreed on the phone, 25 Aug.',
     );
   });
 
@@ -585,16 +561,9 @@ describe('BorrowAddDialog: authorising a same-agent borrow', () => {
     expect(screen.queryByLabelText(/^Authorised by agent/)).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '20' } });
-    fireEvent.change(screen.getByLabelText(/^Reason/), {
-      target: { value: 'Nothing else is free before the date.' },
-    });
     fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
 
-    expect(onAdd).toHaveBeenCalledWith(
-      OTHER_LOCATION,
-      '20',
-      'Nothing else is free before the date.',
-    );
+    expect(onAdd).toHaveBeenCalledWith(OTHER_LOCATION, '20', '');
   });
 
   it('names the authorisation without an agent code when the donor states none', () => {
@@ -627,16 +596,9 @@ describe('BorrowAddDialog: the authorisation belongs to the donor it was typed f
     expect(screen.queryByLabelText(/^Authorised by agent/)).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '5' } });
-    fireEvent.change(screen.getByLabelText(/^Reason/), {
-      target: { value: 'Nothing else is free before the date.' },
-    });
     fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
 
-    expect(onAdd).toHaveBeenCalledWith(
-      otherAgent,
-      '5',
-      'Nothing else is free before the date.',
-    );
+    expect(onAdd).toHaveBeenCalledWith(otherAgent, '5', '');
   });
 
   it('asks again from empty when the planner comes back to the same-agent donor', () => {
@@ -658,9 +620,6 @@ describe('BorrowAddDialog: the authorisation belongs to the donor it was typed f
     fireEvent.click(within(donorRow('MWH-BB')).getByRole('radio'));
 
     expect(screen.getByLabelText(/^Authorised by agent JEREMY/)).toHaveValue('');
-    fireEvent.change(screen.getByLabelText(/^Reason/), {
-      target: { value: 'The site is waiting.' },
-    });
     expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeDisabled();
   });
 });

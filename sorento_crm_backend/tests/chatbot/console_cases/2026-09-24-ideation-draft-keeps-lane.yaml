@@ -1,0 +1,129 @@
+# Console case for issue #1178: an open ideation draft keeps short and question-shaped
+# turns in the ideate lane (`documentation/plans/chatbot/PLAN-chatbot-ideation-draft-keeps-
+# lane.md`, AC-12). Evidence: `documentation/plans/ideation/REVIEW-ideation-flow-ux-24sep.md`
+# findings 2 and 3 - Run 1 turn 3 and Run 2 turn 3, replayed here as ONE conversation.
+#
+# NOT collected by pytest. Run against a lane stack:
+#
+#   cd sorento_crm_backend
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-24-ideation-draft-keeps-lane.yaml \
+#       --base-url http://127.0.0.1:<lane backend port> --mock-parser
+#
+# `--mock-parser` feeds each turn's `parser:` block below as the verdict, so the run grades
+# the HEAD (apply + route) deterministically with no LLM call: the two blocks are the shapes
+# the review's transcripts imply (a `clarification` with no domain, a bare `confirmation`
+# with no domain), and before the fix they graded `clarify_menu` and `low_signal`. Drop the
+# flag to run the same two turns through the live parser (`--sleep-seconds 8` per the OpenAI
+# TPM 429 lesson; export EXTERNAL_API_KEY from the backend .env first).
+#
+# The draft is INJECTED through `previous_conversation_state` (the five-key shape, so the
+# harness replaces the stored memory for the first turn - `engine._inject_harness_session`)
+# rather than built up by earlier turns: on a dry run the ideate lane never calls the intake
+# tool (D14) and its preview only ECHOES the pointer it was given, so a `--say` walk never
+# opens a draft at all - which is exactly why the review's own walks carried no pointer.
+# The echo is also what carries the injected draft from turn 1 into turn 2 here.
+#
+# Every ideate turn on a dry run answers the fixed placeholder
+# "[dry-run: ideation reply not generated]" (finding 1 of the same review), so the grade
+# is the branch kind plus "not the low-signal greeting", never the intake's own words.
+
+contact: "437264483"
+
+cases:
+  - name: open draft keeps a question and a bare confirm in the ideate lane (#1178)
+    previous_conversation_state:
+      focus:
+        domains: ["ideate"]
+      open_question: null
+      ideation:
+        draft_id: "console-draft-1178"
+        status: "collecting"
+        missing: ["proposed_solution", "impact", "department"]
+      access_levels: []
+      contains_flyer: false
+    turns:
+      - text: "what do you mean impact?"
+        parser:
+          message_type: "clarification"
+          intent_hint: null
+          domain_hint: null
+          scope_intent: null
+          is_affirmative: null
+          user_goal: "asking what impact means"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: null
+          demand_qty: null
+          entities: []
+          entity_op: null
+          domain_in_message: false
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: null, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: ideate
+          reply_not_contains:
+            - "How can I help today"
+      - text: "confirm"
+        parser:
+          message_type: "confirmation"
+          intent_hint: null
+          domain_hint: null
+          scope_intent: null
+          is_affirmative: true
+          user_goal: "confirming"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: null
+          demand_qty: null
+          entities: []
+          entity_op: null
+          domain_in_message: false
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: null, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: ideate
+          reply_not_contains:
+            - "How can I help today"

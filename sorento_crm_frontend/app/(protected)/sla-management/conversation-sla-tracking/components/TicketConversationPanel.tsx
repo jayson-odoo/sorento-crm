@@ -12,6 +12,7 @@ import InternalCommentComposer from '@/components/common/conversation/InternalCo
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
 import { useConversationEvents } from '@/components/common/conversation/useConversationEvents';
 import { useConversationThread } from '@/components/common/conversation/useConversationThread';
+import { useReplyTarget } from '@/components/common/conversation/useReplyTarget';
 
 import {
   useSlaTrackingConversation,
@@ -99,6 +100,10 @@ export default function TicketConversationPanel({
   // Reply talks to the contact; Comment never leaves the CRM. Two modes, one
   // switch, so nobody can WhatsApp a customer while meaning to leave a note.
   const [composerMode, setComposerMode] = useState<'reply' | 'comment'>('reply');
+  // #1317: the customer message the next Reply answers. Only the Reply
+  // composer shows or sends it; Comment never leaves the CRM, so never quotes.
+  // Another ticket clears it (the hook's reset key).
+  const { replyTo: replyTarget, startReply, clearReplyTo } = useReplyTarget(ticketId);
   const queryClient = useQueryClient();
 
   const activeId = enabled ? ticketId : null;
@@ -263,6 +268,16 @@ export default function TicketConversationPanel({
             // fetch-back loader when its target is outside the loaded window -
             // never a second one. Already-loaded quotes keep scrolling locally.
             onJumpToMessage={thread.jumpToMessage}
+            // #1317: WhatsApp's message actions. Reply (menu + swipe) only
+            // where this viewer can actually answer; Copy always.
+            onReply={
+              canReply
+                ? (target) => {
+                    startReply(target);
+                    setComposerMode('reply');
+                  }
+                : undefined
+            }
             // Fix round 5: the SAME floor this panel's own root carries (via
             // `className` below) has to reach RespondChatList's root too - a
             // bare `min-h-0 flex-1` root with no floor of its own can still be
@@ -367,10 +382,23 @@ export default function TicketConversationPanel({
             sendAdapter={
               ticket
                 ? (payload) =>
-                    sendMutation.mutateAsync({ text: payload.text, attachments: payload.files })
+                    sendMutation.mutateAsync({
+                      text: payload.text,
+                      attachments: payload.files,
+                      ...(payload.replyToExcerpt
+                        ? {
+                            reply_to_message_id: payload.replyToMessageId ?? null,
+                            reply_to_excerpt: payload.replyToExcerpt,
+                          }
+                        : {}),
+                    })
                 : undefined
             }
             notAvailableMessage={notAvailableMessage}
+            replyTo={canReply ? replyTarget : null}
+            // After a send, only the target that send carried is dropped: a
+            // bubble picked while it was in flight stays picked.
+            onClearReplyTo={clearReplyTo}
           />
         </div>
       )}

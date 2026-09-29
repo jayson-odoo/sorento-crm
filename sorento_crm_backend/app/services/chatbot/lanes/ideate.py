@@ -24,10 +24,10 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import PREVIEW, PREVIEW_IDEATE_REPLY
 
 logger = logging.getLogger(__name__)
 
@@ -105,12 +105,14 @@ def build_reply(result: Mapping[str, Any]) -> dict[str, Any]:
     `ideation` is the pointer the tail persists, and it is read through both session-vars
     shapes. `ideate_status` defaults to `'error'`, which is the JS's own fallback and the
     reason a tool that answers without a status still reads as a failure on the trace.
+
+    No raw ``link`` append (AC-1216): the composed reply (S3's
+    ``compose_ideate_reply``, or its shared-service template fallback) already
+    carries the link itself, deliberately, via the facts block - appending it again
+    here would risk a doubled URL rather than fixing a missing one.
     """
     r = result if isinstance(result, dict) else {}
     response = jsc.get(r, "reply_text") or ""
-    link = jsc.get(r, "link")
-    if jsc.get(r, "status") == "complete" and jsc.truthy(link) and jsc.js_string(link) not in response:
-        response = f"{response}\n\n{jsc.js_string(link)}"
 
     session_vars = jsc.get(r, "session_vars") or {}
     if jsc.has(session_vars, "ideation"):
@@ -126,36 +128,33 @@ def build_reply(result: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def preview_result(ctx: Mapping[str, Any]) -> dict[str, Any]:
-    """What the tool WOULD have answered, stood in for (D14, AC-507, H37).
+def offered_images(result: Mapping[str, Any]) -> list[dict[str, Any]] | None:
+    """#1277: the images the reply's media menu offered, as `send_attachments` entries.
 
-    Fed through `build_reply` like a real result, so the preview and the live fragment can
-    only differ in the values the seam would have supplied - never in the shape.
-
-    `reply_text` and `status` are placeholders because BOTH come out of the tool: unlike
-    the escalation lane, this lane has no sentence of its own to say. `ideation` is the
-    pointer the turn ALREADY resolved out of the contact's session (it is what
-    `build_arguments` sends), so it carries its real value: the preview session patch then
-    reads "unchanged", which is the truth about a turn that wrote nothing. Echoing the
-    prior pointer rather than nulling it also keeps a preview from looking like it wiped an
-    open draft.
-
-    **`status` keeps the `<preview>` marker and `reply_text` does NOT.** They are read by
-    two different audiences: `status` and the trace facts are the operator's, and the
-    marker is exactly what tells them the tool was never called; `reply_text` becomes the
-    customer-facing reply and the `send_message` action that carries it, and a customer
-    reading "<preview>" has been sent a placeholder from somebody else's diagnostic
-    vocabulary. One value, said in each audience's own words.
+    One entry per image, captioned with its menu number so the customer can match the
+    picture to the "1, 2, ..." list the text asks about. Other kinds keep their number in
+    the list but are not sent. `None`, not `[]`, when there is nothing to send: the
+    engine's `_send_actions` emits a `send_attachments` action for any non-None value.
+    The window needs no check of its own: this is the reply to a message the customer
+    just sent, the same as every other chatbot attachment send.
     """
-    session_vars = jsc.get(jsc.get(ctx, "session"), "session_vars") or {}
-    nested = jsc.get(jsc.get(session_vars, "variables"), "ideation")
-    ideation = nested if jsc.truthy(nested) else jsc.get(session_vars, "ideation")
-    return {
-        "status": PREVIEW,
-        "reply_text": PREVIEW_IDEATE_REPLY,
-        "link": None,
-        "session_vars": {"ideation": ideation if ideation is not None else None},
-    }
+    entries: list[dict[str, Any]] = []
+    for media in jsc.get(result, "offered_media") or []:
+        if not isinstance(media, dict) or media.get("kind") != "image" or not media.get("url"):
+            continue
+        position = media.get("position")
+        filename = media.get("filename") or f"image-{position}.jpg"
+        mime, _ = mimetypes.guess_type(filename)
+        entries.append(
+            {
+                "url": media["url"],
+                "filename": filename,
+                "mimeType": mime if mime and mime.startswith("image/") else "image/jpeg",
+                "attachmentType": "image",
+                "caption": jsc.js_string(position),
+            }
+        )
+    return entries or None
 
 
 def run(
@@ -163,12 +162,14 @@ def run(
 ) -> dict[str, Any]:
     """The whole lane: build the arguments, call the tool, hand the tail its fragment.
 
-    **The dry-run check is the first thing that happens**, the same ordering and for the
-    same reason as `escalation.run` - H37 is a side effect performed before the guard, and
-    here the side effect is not local: `crm_ideation_turn` mints or mutates a REAL idea
-    record in the shared service, pulls the contact's media off respond.io and writes an
-    `integration_log`. None of that is in `chatbot.turns` and none of it rolls back with
-    the session, so D14's "zero writes" can only be met by not calling the tool at all.
+    **A dry run calls the tool too, as a test turn** (#1179, owner ruling 24 Sep 2026).
+    `crm_ideation_turn` mints or mutates a REAL idea record in the shared service, so the
+    first cut of D14 did not call it at all and stood a placeholder reply in - which left
+    ideation untestable anywhere but live WhatsApp. Now `is_test` rides the call: the
+    shared service stores the idea flagged as a test (hidden from the board by default),
+    the endpoint skips its own session write, and the console reads the real intake
+    replies. The rest of the dry run is unchanged - the tail writes nothing, the action
+    carries `dry_run: true`, and nothing here sends.
 
     The reply rides on `item.outcome_fragment['build-ideate-reply']` - RS-6.1c's own
     mechanism, and the exact key `build-outcome` reads - so the tail needs no ideate arm.
@@ -181,7 +182,9 @@ def run(
     the ideate fragment first, so today that empty arm loses; a ladder edit is all it
     would take for it to win, which is exactly the shape S4 hit on `low_signal`.
     """
-    result = preview_result(ctx) if dry_run else call_ideation_tool(**build_arguments(ctx))
+    # `is_test` is always sent, true or false: the shared service keys the board filter on
+    # it, and a live turn that omitted it would be one more shape to read as "live".
+    result = call_ideation_tool(**build_arguments(ctx), is_test=dry_run)
     reply = build_reply(result)
     return {
         "item": {**reply, "outcome_fragment": {"build-ideate-reply": reply}},
@@ -189,9 +192,8 @@ def run(
             "manualResponse": reply["manualResponse"],
             "includeResponse": reply["includeResponse"],
             "ideate_status": reply["ideate_status"],
+            # #1277: the offered images ride the engine's existing `send_attachments`
+            # action, sent after the text (n8n does the Respond.io send, D9).
+            "attachments_src": offered_images(result),
         },
-        # The whole reply is a placeholder on a dry run, so the action that carries it
-        # says so beside its `dry_run` flag - the same `preview` key the escalation lane
-        # puts on the two actions whose values a seam would have supplied.
-        "preview": dry_run,
     }

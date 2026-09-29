@@ -442,26 +442,29 @@ def test_a_rule_pointing_at_a_value_the_key_does_not_have_is_refused():
 
     with pytest.raises(Exception) as excinfo:
         _validate_rules(
-            [{"match": "contains", "pattern": "FREE STANDING", "value": "free_standing"}],
+            [{"builder": {"kind": "words", "words": ["FREE STANDING"], "value": "free_standing"}}],
             allowed_values=["wall_hung", "floor_standing", "pedestal"],
             data_type="enum",
         )
 
-    assert "free_standing" in str(excinfo.value)
+    # Refused in plain words, without the value's code name (#1286, D15).
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.code == "spec_registry_unknown_rule_value"
+    assert "free_standing" not in excinfo.value.message
 
 
 def test_an_open_vocabulary_key_accepts_any_value():
-    # `brand` and `class` take their values from the catalogue, so there is no list to
-    # check a rule against.
+    # `class` takes its values from the catalogue, so there is no list to check a rule
+    # against.
     from app.api.v1.master_data.spec_registry import _validate_rules
 
     cleaned = _validate_rules(
-        [{"match": "contains", "pattern": "ACME", "value": "Acme"}],
+        [{"builder": {"kind": "words", "words": ["ACME"], "value": "Acme"}}],
         allowed_values=[],
         data_type="enum",
     )
 
-    assert cleaned[0]["value"] == "Acme"
+    assert cleaned[0]["builder"]["value"] == "Acme"
 
 
 # --------------------------------------------------------------------------- #
@@ -487,11 +490,11 @@ def test_a_value_staff_added_is_usable_in_a_rule(db):
     assert "floor_standing" in merged_allowed_values(row), "the shipped list survives"
 
     cleaned = _validate_rules(
-        [{"match": "contains", "pattern": "FREE STANDING", "value": "free_standing"}],
+        [{"builder": {"kind": "words", "words": ["FREE STANDING"], "value": "free_standing"}}],
         allowed_values=merged_allowed_values(row),
         data_type="enum",
     )
-    assert cleaned[0]["value"] == "free_standing"
+    assert cleaned[0]["builder"]["value"] == "free_standing"
 
 
 def test_a_re_seed_does_not_remove_a_value_staff_added(db):
@@ -817,13 +820,15 @@ def test_suppressing_a_value_stops_it_being_derived(client, db):
     seed_spec_registry(db)
     before = configured_rules(db)
     assert any(
-        str(rule.get("value")) == "french_gold" for rule in before.get("finish", [])
+        str(rule["builder"].get("value")) == "french_gold" for rule in before.get("finish", [])
     ), "a rule produces this value to begin with, or the test proves nothing"
 
     client.patch(f"{ENDPOINT}/finish", json={"suppressed_values": ["french_gold"]})
 
     after = configured_rules(db)
-    assert not any(str(rule.get("value")) == "french_gold" for rule in after.get("finish", []))
+    assert not any(
+        str(rule["builder"].get("value")) == "french_gold" for rule in after.get("finish", [])
+    )
     assert after.get("finish"), "only that value's rules go, not the whole key's"
 
 
@@ -839,11 +844,15 @@ def test_a_rule_survives_the_value_it_produces_being_suppressed(client, db):
 
     response = client.patch(
         f"{ENDPOINT}/finish",
-        json={"derivation_rules": [{"match": "contains", "pattern": "FR GOLD", "value": "french_gold"}]},
+        json={
+            "derivation_rules": [
+                {"builder": {"kind": "words", "words": ["FR GOLD"], "value": "french_gold"}}
+            ]
+        },
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["derivation_rules"][0]["value"] == "french_gold"
+    assert response.json()["derivation_rules"][0]["builder"]["value"] == "french_gold"
 
 
 def test_a_release_can_correct_a_rule_it_shipped(db):
@@ -860,18 +869,40 @@ def test_a_release_can_correct_a_rule_it_shipped(db):
     # Pretend the release before this one shipped the broken pattern, and that a human
     # added a rule of their own on top.
     row.derivation_rules = [
-        {"match": "present", "pattern": "SCREW", "value": True, "_seed": True},
-        {"match": "present", "pattern": "MOUNTING KIT", "value": True},
+        {"builder": {"kind": "words", "look_in": "any", "words": ["SCREW"], "value": True}, "_seed": True},
+        {"builder": {"kind": "words", "words": ["MOUNTING KIT"], "value": True}},
     ]
     db.flush()
 
     seed_spec_registry(db, commit=False)
-    rules = _keys(db)["has_fixing_screw"].derivation_rules
-    patterns = [r["pattern"] for r in rules]
+    builders = [r["builder"] for r in _keys(db)["has_fixing_screw"].derivation_rules]
 
-    assert "SCREW" not in patterns, "the superseded seed rule survived and still fires first"
-    assert any("W/O" in p for p in patterns), "the corrected rule was not installed"
-    assert "MOUNTING KIT" in patterns, "a human's own rule must never be removed by a seed"
+    assert not any(
+        b.get("words") == ["SCREW"] and not b.get("skip_after") for b in builders
+    ), "the superseded seed rule survived and still fires first"
+    assert any("W/O" in (b.get("skip_after") or []) for b in builders), "the corrected rule was not installed"
+    assert any(b.get("words") == ["MOUNTING KIT"] for b in builders), (
+        "a human's own rule must never be removed by a seed"
+    )
+
+
+def test_a_reseed_keeps_a_persons_order_when_nothing_shipped_changed(db):
+    """#1286: a rule is identified by its builder, so a person who saved the shipped
+    rules in their own order (the save drops the `_seed` marker) keeps that order on
+    the next deploy, and their own rules stay where they put them."""
+    from app.services.product_spec_registry import _rules_from_shipped_tables
+
+    seed_spec_registry(db, commit=False)
+    row = _keys(db)["mounting"]
+    shipped = _rules_from_shipped_tables()["mounting"]
+    mine = {"builder": {"kind": "words", "look_in": "any", "words": ["HANG ON WALL"], "value": "wall_hung"}}
+    reordered = [{"builder": r["builder"]} for r in reversed(shipped)]
+    row.derivation_rules = reordered[:3] + [mine] + reordered[3:]
+    db.flush()
+
+    seed_spec_registry(db, commit=False)
+
+    assert _keys(db)["mounting"].derivation_rules == reordered[:3] + [mine] + reordered[3:]
 
 
 def test_the_rules_fingerprint_moves_when_max_value_changes(db):

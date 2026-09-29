@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import * as HoverCardPrimitive from '@radix-ui/react-hover-card';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  NOOP_ON_UPDATE,
   surfaceExitTransition,
   surfaceTransition,
   surfaceVariants,
@@ -71,6 +72,7 @@ function HoverCardContent({
               animate={variants.animate}
               exit={{ ...variants.exit, transition: exitTransition }}
               transition={transition}
+              onUpdate={NOOP_ON_UPDATE}
             >
               {children}
             </motion.div>

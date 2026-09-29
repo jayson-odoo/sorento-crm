@@ -84,6 +84,7 @@ export function SalesAgentDetail({ id }: { id: string }) {
 
   const [isEditing, setIsEditing] = useState(false);
   const [personLabel, setPersonLabel] = useState('');
+  const [aliases, setAliases] = useState('');
   const [demandClass, setDemandClass] = useState('');
   const [locationGroup, setLocationGroup] = useState('');
   const [isActive, setIsActive] = useState(true);
@@ -112,6 +113,7 @@ export function SalesAgentDetail({ id }: { id: string }) {
 
   const beginEdit = (agent: SalesAgent) => {
     setPersonLabel(agent.person_label ?? '');
+    setAliases(agent.aliases ?? '');
     setDemandClass(agent.demand_class ?? '');
     setLocationGroup(agent.location_group ?? '');
     setIsActive(agent.is_active);
@@ -181,6 +183,7 @@ export function SalesAgentDetail({ id }: { id: string }) {
 
   const handleSave = async () => {
     const trimmedLabel = personLabel.trim();
+    const trimmedAliases = aliases.trim();
     const trimmedGroup = locationGroup.trim();
     const trimmedNote = internalNote.trim();
     try {
@@ -188,6 +191,7 @@ export function SalesAgentDetail({ id }: { id: string }) {
         id: agent.id,
         data: {
           person_label: trimmedLabel ? trimmedLabel : null,
+          aliases: trimmedAliases ? trimmedAliases : null,
           demand_class: demandClass ? demandClass : null,
           // Upper-cased on save so a typed `bb` still compares equal to the suffix a
           // warehouse code like `BRW-BB` carries.
@@ -314,6 +318,21 @@ export function SalesAgentDetail({ id }: { id: string }) {
                   />
                 ) : (
                   agent.person_label || <span className="text-muted-foreground">Not set</span>
+                )}
+              </Field>
+              <Field label="Also known as" htmlFor={isEditing ? 'sa-edit-aliases' : undefined}>
+                {isEditing ? (
+                  <Input
+                    id="sa-edit-aliases"
+                    value={aliases}
+                    onChange={(e) => setAliases(e.target.value)}
+                    // varchar(255) on the backend, felt while typing.
+                    maxLength={255}
+                    placeholder="Other names, comma separated"
+                    className="h-8"
+                  />
+                ) : (
+                  agent.aliases || <span className="text-muted-foreground">Not set</span>
                 )}
               </Field>
               <Field label="Demand class" htmlFor={isEditing ? 'sa-edit-demand-class' : undefined}>

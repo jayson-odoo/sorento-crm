@@ -96,13 +96,7 @@ export function ProjectSetupClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        title="Project setup"
-      >
-        <p className="text-sm text-muted-foreground">
-          What kinds of project we pursue, and what a new one starts with.
-        </p>
-      </PageHeader>
+      <PageHeader title="Project setup" />
 
       <div className="grid gap-4 xl:grid-cols-2">
         <ProjectTypesGrid
@@ -341,14 +335,7 @@ function ProjectTypesGrid({
           A type is the kind of job: property development, hotel, fitout.
         </span>
       }
-      // The same offer as the toolbar's, worded as the next step it is here
-      // (S5-06). It renders under the message, in the empty state's own slot.
-      emptyAction={
-        <Button type="button" onClick={onAdd}>
-          <Plus className="size-4" aria-hidden />
-          Add the first type
-        </Button>
-      }
+      // No emptyAction: the toolbar's Add is the one offer (#1335).
     >
       <Card>
         <CardHeader className="block pt-5">
@@ -518,16 +505,7 @@ function ProjectTemplatesGrid({
           </span>
         )
       }
-      // Nothing to offer until a type is chosen: the next step is the choice
-      // itself, and it is in the list beside this one.
-      emptyAction={
-        hasType ? (
-          <Button type="button" onClick={onAdd}>
-            <Plus className="size-4" aria-hidden />
-            Add the first template
-          </Button>
-        ) : undefined
-      }
+      // No emptyAction: the toolbar's Add is the one offer (#1335).
     >
       <Card>
         <CardHeader className="block pt-5">

@@ -141,6 +141,9 @@ class ConsoleTraceSummary(BaseModel):
     args_short: dict[str, Any] | None = None
     crossdomain_rungs: list[str] = Field(default_factory=list)
     reveals_dropped: list[str] = Field(default_factory=list)
+    # An escalation turn's draw in one line (team, brand, source, assignee); None on
+    # every other turn.
+    routing_line: str | None = None
 
 
 class ConsoleTurnResponse(BaseModel):

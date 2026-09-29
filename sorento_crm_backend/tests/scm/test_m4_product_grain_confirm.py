@@ -38,7 +38,7 @@ from app.models.base import company_scope
 from app.models.inventory import Warehouse
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.models.project_so import INQUIRY_PLACED
+from app.models.project_so import INQUIRY_RAISED
 from app.models.scm import OrderSummaryRow, ReorderRecommendation, ReorderRun
 from app.services import project_seed_service
 from app.services.scm import decision_service as dsvc
@@ -53,6 +53,7 @@ from tests.test_order_inquiry_place_on_po import (
     _sorento as _oi_sorento,
     _user as _oi_user,
 )
+from tests.test_order_inquiry_suggested_links import _suggested_of as _oi_suggested_of
 
 pytestmark = requires_pg
 
@@ -536,7 +537,15 @@ def test_bulk_confirm_auto_places_a_raised_order_inquiry_buy_row():
     """Confirming a draft PO (either grain) is now a THIRD trigger of the same
     idempotent cascade `project_supply_service.auto_place_for_confirmed_products` already
     runs on decision confirm - a RAISED buy row for the same product claims the
-    line the confirm just opened, in the same run, best-effort."""
+    line the confirm just opened, in the same run, best-effort.
+
+    Reversal (review round 4 Blocking 1, `PLAN-oi-links-autocount-truth-24sep.md` S3):
+    this PO line carries no `from_so_line_ref` (the book never names it), so the cascade's
+    own terminal write for it is a SUGGESTED link, never a real one - G2, a suggestion
+    never claims `scm.order_link_claim` or the row's own PO/SPO display fields. The row
+    stays `raised` (To buy) with `po_line_id` unset; the suggestion is what names the
+    line the confirm just opened.
+    """
     with blank_session() as db:
         company_id = _oi_sorento(db)
         project_seed_service.run(db, company_id=company_id)
@@ -567,9 +576,11 @@ def test_bulk_confirm_auto_places_a_raised_order_inquiry_buy_row():
         db.refresh(po)
         assert po.status == "active", "the confirm itself must still succeed"
         db.refresh(row)
-        assert row.state == INQUIRY_PLACED, "the just-opened PO line must be auto-claimed"
-        assert row.po_line_id == po_line.id
-        assert "auto: po_confirm" in (row.note or "")
+        assert row.state == INQUIRY_RAISED, "the just-opened PO line only suggests, it does not place"
+        assert row.po_line_id is None, "a suggestion never writes the row's own display field"
+        (suggestion,) = _oi_suggested_of(db, row.id)
+        assert suggestion.po_line_id == po_line.id, "the suggestion names the just-opened line"
+        assert suggestion.trigger == "po_confirm"
 
 
 def test_bulk_confirm_still_succeeds_when_auto_place_blows_up(monkeypatch):

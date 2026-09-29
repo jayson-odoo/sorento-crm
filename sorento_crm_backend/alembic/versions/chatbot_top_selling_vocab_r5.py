@@ -1,0 +1,97 @@
+"""Republish the chatbot parser prompt with the top selling round 5 words, label unmoved.
+
+Fix lane round 5 on PR #1273 (owner retest of top selling round 4, 27 Sep 2026) grew
+`TOP_SELLING_ADDENDUM`: answers to "customer or sales agent?" in words, a name next to
+"agent" is the agent, a phrase carrying several things split, "worst 100 hot selling",
+a year over a ranked list is the period, and a report ask after a ranking. A database
+that already ran `chatbot_top_selling_vocab_r4` (the owner's local stack, parser v38)
+holds the older body, and that migration will not run again, so this one publishes the
+current `SEMANTIC_PARSER_PROMPT` as the next version.
+
+Idempotent the same way `chatbot_top_selling_vocab_r4` is: a database that runs the
+chain in one upgrade (production) gets the current body from the first and this one
+finds it already published and does nothing. The insert helper is repeated rather than
+imported, because a migration module must not depend on another migration's module
+staying importable. Nothing a customer sees changes until the owner moves the
+`production` label onto the new version.
+
+Revision ID: chatbot_top_selling_vocab_r5
+Revises: chatbot_top_selling_vocab_r4
+"""
+import logging
+
+from alembic import op
+from sqlalchemy.orm import Session
+
+from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+from app.services.ai_prompt_registry import PROMPT_KEYS
+
+revision = "chatbot_top_selling_vocab_r5"
+down_revision = "chatbot_top_selling_vocab_r4"
+branch_labels = None
+depends_on = None
+
+logger = logging.getLogger("alembic.runtime.migration")
+
+PROMPT_NAME = "chatbot_semantic_parser"
+
+
+def _full_text() -> str:
+    from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
+
+    return SEMANTIC_PARSER_PROMPT
+
+
+def publish(session: Session) -> int | None:
+    """Publish the body as the next version unless one already carries it. Returns the
+    new version number, or None when already published."""
+    template = _full_text()
+    existing = (
+        session.query(AIPromptVersion)
+        .filter(AIPromptVersion.name == PROMPT_NAME, AIPromptVersion.template == template)
+        .first()
+    )
+    if existing is not None:
+        logger.info("chatbot parser top selling round 5 prompt already published as v%s", existing.version)
+        return None
+    versions = session.query(AIPromptVersion.version).filter(AIPromptVersion.name == PROMPT_NAME).all()
+    next_version = max((int(v[0]) for v in versions), default=0) + 1
+    session.add(
+        AIPromptVersion(
+            name=PROMPT_NAME,
+            version=next_version,
+            type="text",
+            template=template,
+            variables=list(PROMPT_KEYS[PROMPT_NAME].variables),
+        )
+    )
+    session.commit()
+    logger.info(
+        "published chatbot parser top selling round 5 prompt as v%s (%s chars); production "
+        "label left where it was, promote by moving it",
+        next_version,
+        len(template),
+    )
+    return next_version
+
+
+def upgrade() -> None:
+    from app.services.ai_prompt_seed import seed_prompt_registry
+
+    bind = op.get_bind()
+    seed_prompt_registry(bind)
+    session = Session(bind=bind)
+    try:
+        publish(session)
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def downgrade() -> None:
+    """Nothing to drop: `chatbot_top_selling_vocab`'s downgrade removes the version
+    carrying this same body (unless a label points at it), and a version this upgrade
+    published is that body too. Dropping it here as well would leave that downgrade
+    nothing to find, so the pair stays one owner of one row."""

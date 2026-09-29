@@ -437,7 +437,6 @@ export default function SPOAllocationsList() {
       isPlaceholderData={isPlaceholderData}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage={emptyMessage}
-      emptyAction={listPrimaryAction}
       rowHref={(row) => detailHref(row)}
       rowPending={rowPending}
     >

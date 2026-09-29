@@ -2,6 +2,20 @@ import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { ProductCategory, CategoryTreeItem, CategoryFormData } from '../types/category.types';
 
+/**
+ * Chatbot stock limits, X / Y (PLAN-chatbot-stock-ask-v2-24sep.md S1):
+ *   product_categories.chatbot_max_qty          integer | null  (X: the highest
+ *     quantity the assistant may confirm for a product in this category; unset
+ *     means the assistant cannot answer any quantity for it, R2)
+ *   product_categories.chatbot_eta_offset_days  integer | null  (Y: days added
+ *     to a shipment's ETA the assistant quotes; unset means 0 days)
+ * Both ride the GET/PUT /api/v1/master-data/product-categories/{id} payload as
+ * plain fields; editing either is gated server-side by
+ * `master_data.chatbot_stock_limits.edit` (403 on a changed value without it),
+ * reading by `.view` (the values are not secret - `.view` gates the FE display
+ * only, per the plan's S1 backend seam).
+ */
+
 export async function getCategoriesTree(): Promise<CategoryTreeItem[]> {
   const response = await apiFetch('/api/v1/master-data/product-categories/tree', {
     method: 'GET',

@@ -1,0 +1,167 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Order inquiry: one row per SO line</title>
+<style>
+:root{--bg:#fafaf9;--fg:#1c1917;--mut:#6b7280;--line:#e7e5e4;--card:#fff;--head:#f5f5f4;--rose:#e11d48;--sky:#0284c7;--em:#059669;--amb:#d97706;--vio:#7c3aed;--pri:#2563eb;--grey:#a8a29e}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0c0a09;--fg:#e7e5e4;--mut:#a8a29e;--line:#292524;--card:#1c1917;--head:#231f1d;--grey:#57534e}}
+:root[data-theme="dark"]{--bg:#0c0a09;--fg:#e7e5e4;--mut:#a8a29e;--line:#292524;--card:#1c1917;--head:#231f1d;--grey:#57534e}
+*,*::before,*::after{box-sizing:border-box}
+body{font:14px/1.5 -apple-system,Inter,system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0;padding:24px 16px;max-width:1340px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:34px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.sub,.note{color:var(--mut)}.note{font-size:12px}
+.frame{border:1px solid var(--line);border-radius:12px;background:var(--card);overflow:hidden;margin:10px 0}
+.frame-scroll{overflow-x:auto;min-width:0}
+.w1280{width:1280px}.w375{width:375px;max-width:100%}
+.phones{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}.phones>div{min-width:0;max-width:100%}
+.lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:14px 0 6px}
+.pad{padding:14px 16px}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.hdr h3{margin:0;font-size:18px}.meta{font-size:12px;color:var(--mut)}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.stat{border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:12px}.stat b{display:block;font-size:16px}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);font-size:13px;overflow-x:auto;white-space:nowrap}.tabs span{padding:6px 0}.tabs .on{border-bottom:2px solid var(--pri);font-weight:600}
+table{border-collapse:collapse;width:100%;font-size:12px;table-layout:fixed}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+th{background:var(--head);color:var(--mut);font-weight:500}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+tfoot td{font-weight:600;background:var(--head)}
+tr.grey td{color:var(--grey)}
+tr.dup td{background:color-mix(in oklab,var(--rose) 7%,transparent)}
+.pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--line);white-space:nowrap}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.p-b{color:var(--pri)}.p-a{color:var(--amb)}.p-g{color:var(--em)}.p-v{color:var(--vio)}.p-r{color:var(--rose)}.p-m{color:var(--mut)}
+.doc{color:var(--pri);text-decoration:underline}
+.more{font-size:11px;border:1px solid var(--line);border-radius:999px;padding:0 6px;margin-left:4px;color:var(--mut)}
+.ico{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:6px;border:1px solid var(--line);margin-left:6px;vertical-align:middle;color:var(--mut)}
+.ico svg{width:13px;height:13px}
+.was{font-size:11px;color:var(--mut);margin-left:6px}
+.cb{display:inline-block;width:13px;height:13px;border:1px solid var(--grey);border-radius:3px;vertical-align:-2px}
+.cb.dis{opacity:.35}
+.dlg{border:1px solid var(--line);border-radius:12px;background:var(--card);box-shadow:0 10px 30px rgba(0,0,0,.12)}
+.dlg .top{display:flex;justify-content:space-between;padding:12px 16px 0}.dlg .top b{font-size:15px}
+.x{color:var(--mut)}
+.scrim{background:color-mix(in oklab,black 35%,transparent);padding:30px;border-radius:12px;overflow-x:auto}
+@media (max-width:600px){.scrim{padding:10px}}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--card)}
+.card.bad{border-color:color-mix(in oklab,var(--rose) 45%,var(--line))}.card.good{border-color:color-mix(in oklab,var(--em) 45%,var(--line))}
+ul{margin:6px 0 6px 18px;padding:0}li{margin:2px 0}
+code{font-size:12px;background:var(--head);padding:1px 4px;border-radius:4px}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute"><symbol id="hist" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></symbol></svg>
+
+<h1>Order inquiry detail: one row per sales order line</h1>
+<p class="sub">Issue #1248. Plan <code>PLAN-oi-no-double-count-25sep.md</code>, grilled. Owner rulings 26 Sep 2026 applied: four quantity columns SO Qty / Requested / Taken / Remaining (G4), always one row per sales order line (G5), no Was / now on the main view (G1), used and confirmed cancelled-line rows in History (G6), cancelled line greyed (G7), no worklist change (G8). Example: SO402757, inquiry OI-2026/09-0112, five sales order lines.</p>
+
+<div class="cards">
+<div class="card"><b>The sales order it flows from</b>
+<table><thead><tr><th style="width:36px">No.</th><th>Product</th><th class="n" style="width:70px">Qty</th><th style="width:90px">Status</th></tr></thead>
+<tbody><tr><td>1</td><td>CKS1050</td><td class="n">5</td><td>Open</td></tr><tr><td>2</td><td>WC200</td><td class="n">10</td><td>Open</td></tr><tr><td>3</td><td>C-FH12</td><td class="n">728</td><td>Open</td></tr><tr><td>4</td><td>TAP-88</td><td class="n">5</td><td>Open</td></tr><tr class="grey"><td>5</td><td>BSN-40</td><td class="n">4</td><td>Cancelled</td></tr></tbody></table>
+<p class="note">Line 1 changed from 2 to 5 after PO-2026/09-0023 (2 pcs) was received into BRW-IB. Line 4: CS requested 5, 2 reserved from stock, 3 still to buy.</p></div>
+<div class="card bad"><b>Today: 8 rows, Qty 752</b><ul><li>Line 1 shows twice: 2 "used" plus 5 "Replaces 2 used"</li><li>Line 2 twice: 6 on PO plus a fresh 4</li><li>Line 3 twice: a sheet split 364 + 364</li><li>Header list reads 8 lines, 752</li></ul></div>
+<div class="card good"><b>Under the plan: 5 rows, SO Qty 748 foots the SO</b><ul><li>One row per sales order line, No. 1 to 5 (Owner ruling 26 Sep, G5)</li><li>SO Qty, Requested, Taken, Remaining (Owner ruling 26 Sep, G4)</li><li>Used, superseded and re-raised rows sit behind the one History icon; no "Was 2, now 5" on the grid (G1)</li><li>Header list reads 5 lines, 748 (G10)</li></ul></div>
+</div>
+
+<h2>1. Today, 1280 (for comparison)</h2>
+<p class="note">Rows shaded red are the second row for a sales order line (sites D1 and D3 in the plan).</p>
+<div class="frame-scroll"><div class="frame w1280"><div class="pad">
+<div class="hdr"><div><h3>OI-2026/09-0112</h3><div class="meta">SO402757 · Tan Brothers Construction · Raised 18 Sep 2026</div></div><div><span class="pill p-a">Outstanding</span></div></div>
+<div class="stats"><div class="stat">Lines<b>8</b></div><div class="stat">Qty<b>752</b></div><div class="stat">To confirm<b>3 / 8</b></div></div>
+<div class="tabs"><span class="on">Lines</span><span>General</span><span>Related PO</span><span>Related SPO</span></div>
+<table><colgroup><col style="width:28px"><col style="width:90px"><col style="width:120px"><col style="width:110px"><col style="width:70px"><col style="width:60px"><col style="width:100px"><col style="width:90px"><col style="width:120px"><col style="width:140px"><col style="width:140px"><col style="width:90px"><col style="width:90px"><col style="width:120px"></colgroup>
+<thead><tr><th></th><th>Product</th><th>SO line</th><th class="n">Qty</th><th class="n">Taken</th><th class="n">Rem.</th><th>Delivery</th><th>Location</th><th>Supplier</th><th>PO</th><th>SPO</th><th>Instr.</th><th></th><th>State</th></tr></thead>
+<tbody>
+<tr><td><span class="cb"></span></td><td>CKS1050</td><td>SO402757 · L1</td><td class="n">2 <span class="pill p-m">used</span></td><td class="n">2</td><td class="n">0</td><td>02 Oct 2026</td><td>BRW-IB</td><td>Hafele MY</td><td class="doc">PO-2026/09-0023</td><td>-</td><td>Order</td><td></td><td><span class="pill p-g">On PO</span></td></tr>
+<tr class="dup"><td><span class="cb"></span></td><td>CKS1050</td><td>SO402757 · L1</td><td class="n">5</td><td class="n">0</td><td class="n">5</td><td>09 Oct 2026</td><td>BRW-IB</td><td>Hafele MY</td><td>-</td><td>-</td><td>Order</td><td></td><td><span class="pill p-a">To buy</span></td></tr>
+<tr><td><span class="cb"></span></td><td>WC200</td><td>SO402757 · L2</td><td class="n">6</td><td class="n">6</td><td class="n">0</td><td>05 Oct 2026</td><td>BRW-IB</td><td>Roca</td><td class="doc">PO-2026/09-0031</td><td>-</td><td>Order</td><td></td><td><span class="pill p-g">On PO</span></td></tr>
+<tr class="dup"><td><span class="cb"></span></td><td>WC200</td><td>SO402757 · L2</td><td class="n">4</td><td class="n">0</td><td class="n">4</td><td>05 Oct 2026</td><td>BRW-IB</td><td>Roca</td><td>-</td><td>-</td><td>Order</td><td></td><td><span class="pill p-a">To buy</span></td></tr>
+<tr><td><span class="cb"></span></td><td>C-FH12</td><td>SO402757 · L3</td><td class="n">364</td><td class="n">364</td><td class="n">0</td><td>20 Oct 2026</td><td>SITE-KL</td><td>Foshan HW</td><td>-</td><td class="doc">SPO-2026/09-0007</td><td>Order</td><td></td><td><span class="pill p-v">On SPO</span></td></tr>
+<tr class="dup"><td><span class="cb"></span></td><td>C-FH12</td><td>SO402757 · L3</td><td class="n">364</td><td class="n">364</td><td class="n">0</td><td>20 Oct 2026</td><td>SITE-KL</td><td>Foshan HW</td><td>-</td><td class="doc">SPO-2026/09-0009</td><td>Order</td><td></td><td><span class="pill p-v">On SPO</span></td></tr>
+<tr><td><span class="cb"></span></td><td>TAP-88</td><td>SO402757 · L4</td><td class="n">3</td><td class="n">0</td><td class="n">3</td><td>09 Oct 2026</td><td>BRW-IB</td><td>Grohe</td><td>-</td><td>-</td><td>Order</td><td></td><td><span class="pill p-a">To buy</span></td></tr>
+<tr><td><span class="cb"></span></td><td>BSN-40</td><td>SO402757 · L5</td><td class="n">4 <span class="pill p-m">cancelled</span></td><td class="n">0</td><td class="n">4</td><td>09 Oct 2026</td><td>BRW-IB</td><td>Hafele MY</td><td>-</td><td>-</td><td>Order</td><td></td><td><span class="pill p-a">To buy</span></td></tr>
+</tbody><tfoot><tr><td></td><td></td><td></td><td class="n">752</td><td colspan="10"></td></tr></tfoot></table>
+</div></div></div>
+
+<h2>2. Under the plan, 1280</h2>
+<p class="note">Owner ruling 26 Sep (G4, G5): one row per sales order line, in the SO's line order. SO Qty is the sales order line's own quantity; Requested is what CS raised to buy (sum of the line's live buy rows); Taken is linked plus reserved; Remaining is Requested minus Taken. The one History icon sits in every State cell. No "Was / now" text anywhere on the grid (G1). Suggested (#1220) is shown empty here; Raised via (#1244) stays hidden by default. The grid scrolls sideways inside its own container.</p>
+<div class="frame-scroll"><div class="frame w1280"><div class="pad">
+<div class="hdr"><div><h3>OI-2026/09-0112</h3><div class="meta">SO402757 · Tan Brothers Construction · Raised 18 Sep 2026</div></div><div><span class="pill p-a">Outstanding</span></div></div>
+<div class="stats"><div class="stat">Lines<b>5</b></div><div class="stat">Qty<b>748</b></div><div class="stat">To confirm<b>2 / 5</b></div></div>
+<div class="tabs"><span class="on">Lines</span><span>General</span><span>Related PO</span><span>Related SPO</span></div>
+<div class="frame-scroll"><table style="width:1440px"><colgroup><col style="width:28px"><col style="width:40px"><col style="width:100px"><col style="width:70px"><col style="width:84px"><col style="width:64px"><col style="width:84px"><col style="width:100px"><col style="width:100px"><col style="width:150px"><col style="width:190px"><col style="width:90px"><col style="width:80px"><col style="width:110px"><col style="width:150px"></colgroup>
+<thead><tr><th></th><th>No.</th><th>Product</th><th class="n">SO Qty</th><th class="n">Requested</th><th class="n">Taken</th><th class="n">Remaining</th><th>Delivery</th><th>Supplier</th><th>PO</th><th>SPO</th><th>Suggested</th><th>Location</th><th>Instr.</th><th>State</th></tr></thead>
+<tbody>
+<tr><td><span class="cb"></span></td><td>1</td><td>CKS1050</td><td class="n">5</td><td class="n">5</td><td class="n">0</td><td class="n">5</td><td>09 Oct 2026</td><td>Hafele MY</td><td>-</td><td>-</td><td>-</td><td>BRW-IB</td><td>Order</td><td><span class="pill p-a">To confirm</span><span class="ico" title="History"><svg><use href="#hist"/></svg></span></td></tr>
+<tr><td><span class="cb"></span></td><td>2</td><td>WC200</td><td class="n">10</td><td class="n">10</td><td class="n">6</td><td class="n">4</td><td>05 Oct 2026</td><td>Roca</td><td class="doc">PO-2026/09-0031</td><td>-</td><td>-</td><td>BRW-IB</td><td>Order</td><td><span class="pill p-a">To buy</span><span class="ico" title="History"><svg><use href="#hist"/></svg></span></td></tr>
+<tr><td><span class="cb"></span></td><td>3</td><td>C-FH12</td><td class="n">728</td><td class="n">728</td><td class="n">728</td><td class="n">0</td><td>20 Oct 2026</td><td>Foshan HW</td><td>-</td><td><span class="doc">SPO-2026/09-0007</span><span class="more">+1</span></td><td>-</td><td>SITE-KL</td><td>Order</td><td><span class="pill p-v">On SPO</span><span class="ico" title="History"><svg><use href="#hist"/></svg></span></td></tr>
+<tr><td><span class="cb"></span></td><td>4</td><td>TAP-88</td><td class="n">5</td><td class="n">5</td><td class="n">2</td><td class="n">3</td><td>09 Oct 2026</td><td>Grohe</td><td>-</td><td>-</td><td>-</td><td>BRW-IB</td><td>Order</td><td><span class="pill p-g">Reserved 2</span><span class="ico" title="History"><svg><use href="#hist"/></svg></span></td></tr>
+<tr class="grey"><td><span class="cb dis"></span></td><td>5</td><td>BSN-40</td><td class="n">4</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td>09 Oct 2026</td><td>Hafele MY</td><td>-</td><td>-</td><td>-</td><td>BRW-IB</td><td>-</td><td><span class="pill p-m">Line cancelled</span><span class="ico" title="History"><svg><use href="#hist"/></svg></span></td></tr>
+</tbody><tfoot><tr><td></td><td></td><td></td><td class="n">748</td><td class="n">748</td><td class="n">736</td><td class="n">12</td><td colspan="8"></td></tr></tfoot></table></div>
+<p class="note">Footer totals leave out the cancelled line 5 (G7), so SO Qty and Requested both foot 748 over lines 1 to 4, and Requested is the header's Qty (G10: Lines 5, Qty 748 on the header list too). Line 2 folds a 6 on PO-0031 and a fresh 4 (G5); line 3 folds the 364 + 364 split, the SPO cell lists both behind "+1". Line 4: CS requested 5, 2 reserved from stock sit in Taken, 3 remain (the "from stock" hover is gone, G4).</p>
+</div></div></div>
+
+<h2>3. History dialog for line 1, 1280 (the #1248 case)</h2>
+<p class="note">Opened from line 1's History icon. One dialog per sales order line (G2); one icon replaces the reserve History icon and #1244's decision-trail icon (G3). Rows is the default tab. Owner ruling 26 Sep (G1): this is the only place the used row and the "Was 2" story show.</p>
+<div class="scrim"><div class="dlg" style="max-width:760px;margin:0 auto">
+<div class="top"><b>History - CKS1050 (SO402757 L1)</b><span class="x">✕</span></div>
+<div class="pad" style="padding-top:8px">
+<div class="tabs"><span class="on">Rows</span><span>Decisions</span></div>
+<div class="frame-scroll"><table style="min-width:600px"><colgroup><col style="width:110px"><col style="width:50px"><col style="width:100px"><col style="width:140px"><col style="width:260px"></colgroup>
+<thead><tr><th>When</th><th class="n">Qty</th><th>What</th><th>Document</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>25 Sep 2026</td><td class="n">5</td><td><span class="pill p-a">Now</span></td><td>-</td><td title="Was 2. Replaces 2 used; PO-2026/09-0023 received 24 Sep 2026 into BRW-IB">Was 2. Replaces 2 used; PO-2026/09-0023 received 24 Sep 2026 into BRW-IB</td></tr>
+<tr><td>25 Sep 2026</td><td class="n">2</td><td><span class="pill p-m">Used</span></td><td class="doc">PO-2026/09-0023</td><td title="PO-2026/09-0023 received 24 Sep 2026, goods are BRW-IB stock, released at revision 3">PO-2026/09-0023 received 24 Sep 2026, goods are BRW-IB stock, released at revision 3</td></tr>
+<tr><td>19 Sep 2026</td><td class="n">2</td><td><span class="pill p-m">Re-raised</span></td><td>-</td><td>Superseded by revision 2</td></tr>
+</tbody></table></div>
+<p class="note">Decisions tab = the #1244 decision trail for the same line, unchanged. A Reserve tab appears only when the line has reserve history (it would on line 4).</p>
+</div></div></div>
+
+<h2>4. Under the plan, 375</h2>
+<div class="phones">
+<div>
+<div class="lbl">Lines tab, first columns in view; the grid scrolls sideways in its own container</div>
+<div class="frame w375"><div class="pad" style="padding:12px">
+<div><h3 style="margin:0;font-size:16px">OI-2026/09-0112</h3><div class="meta">SO402757 · Tan Brothers Construction</div></div>
+<div class="stats"><div class="stat">Lines<b>5</b></div><div class="stat">Qty<b>748</b></div></div>
+<div class="tabs"><span class="on">Lines</span><span>General</span><span>Related PO</span><span>Related SPO</span></div>
+<div class="frame-scroll"><table style="width:720px"><colgroup><col style="width:28px"><col style="width:34px"><col style="width:84px"><col style="width:60px"><col style="width:76px"><col style="width:56px"><col style="width:76px"><col style="width:306px"></colgroup>
+<thead><tr><th></th><th>No.</th><th>Product</th><th class="n">SO Qty</th><th class="n">Requested</th><th class="n">Taken</th><th class="n">Remaining</th><th>Delivery · Supplier · PO / SPO ... State</th></tr></thead>
+<tbody>
+<tr><td><span class="cb"></span></td><td>1</td><td>CKS1050</td><td class="n">5</td><td class="n">5</td><td class="n">0</td><td class="n">5</td><td>09 Oct 2026 · Hafele MY</td></tr>
+<tr><td><span class="cb"></span></td><td>2</td><td>WC200</td><td class="n">10</td><td class="n">10</td><td class="n">6</td><td class="n">4</td><td>05 Oct 2026 · Roca</td></tr>
+<tr><td><span class="cb"></span></td><td>3</td><td>C-FH12</td><td class="n">728</td><td class="n">728</td><td class="n">728</td><td class="n">0</td><td>20 Oct 2026 · Foshan HW</td></tr>
+<tr><td><span class="cb"></span></td><td>4</td><td>TAP-88</td><td class="n">5</td><td class="n">5</td><td class="n">2</td><td class="n">3</td><td>09 Oct 2026 · Grohe</td></tr>
+<tr class="grey"><td><span class="cb dis"></span></td><td>5</td><td>BSN-40</td><td class="n">4</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td>09 Oct 2026 · Hafele MY</td></tr>
+</tbody></table></div>
+<p class="note">The built grid keeps the 1280 column order and scrolls sideways inside its own scroller (DESIGN-LANGUAGE 7); nothing pins automatically. The page itself never scrolls sideways.</p>
+</div></div>
+</div>
+<div>
+<div class="lbl">History dialog, 375</div>
+<div class="frame w375" style="background:color-mix(in oklab,black 35%,transparent);padding:10px">
+<div class="dlg"><div class="top"><b style="font-size:14px">History - CKS1050 (SO402757 L1)</b><span class="x">✕</span></div>
+<div class="pad" style="padding:8px 12px 12px">
+<div class="tabs"><span class="on">Rows</span><span>Decisions</span></div>
+<div class="frame-scroll"><table style="width:520px"><colgroup><col style="width:90px"><col style="width:40px"><col style="width:80px"><col style="width:130px"><col style="width:180px"></colgroup>
+<thead><tr><th>When</th><th class="n">Qty</th><th>What</th><th>Document</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>25 Sep 2026</td><td class="n">5</td><td><span class="pill p-a">Now</span></td><td>-</td><td>Was 2. Replaces 2 used; PO-2026/09-0023 ...</td></tr>
+<tr><td>25 Sep 2026</td><td class="n">2</td><td><span class="pill p-m">Used</span></td><td class="doc">PO-2026/09-0023</td><td>PO-2026/09-0023 received 24 Sep ...</td></tr>
+<tr><td>19 Sep 2026</td><td class="n">2</td><td><span class="pill p-m">Re-raised</span></td><td>-</td><td>Superseded by revision 2</td></tr>
+</tbody></table></div>
+<p class="note">The dialog fits the viewport; the Rows grid scrolls sideways in its own container; long notes truncate with the full text in the title.</p>
+</div></div></div>
+</div>
+</div>
+
+<h2>5. What moves where</h2>
+<div class="frame-scroll"><table style="table-layout:auto;min-width:560px"><thead><tr><th>Row kind</th><th>Main grid</th><th>History, Rows tab</th></tr></thead><tbody>
+<tr><td>Live raised / partly linked / placed / actioned</td><td>folded into the line row; counts in Requested, Taken, Remaining</td><td>listed as "Now"</td></tr>
+<tr><td>Used (<code>redirected_to_pool</code>)</td><td>gone (Owner ruling 26 Sep, G1, G6), no Was / now text</td><td>Used, with its received document</td></tr>
+<tr><td>Superseded (cancelled, "Superseded by revision N")</td><td>gone (already hidden today)</td><td>Superseded</td></tr>
+<tr><td>Re-raised carry (old cancelled row)</td><td>gone (already hidden today)</td><td>Re-raised</td></tr>
+<tr><td>Shrunk partly-linked plus fresh remainder</td><td>one row, Requested = both</td><td>both listed as Now</td></tr>
+<tr><td>Sheet split (364 + 364)</td><td>one row, 728, SPO "+1"</td><td>both listed as Now</td></tr>
+<tr><td>CANCEL_BALANCE / DELAY / ADVANCE</td><td>the line's Instruction when most urgent; never in any quantity (G5)</td><td>Now while live; Cancel balance when retired</td></tr>
+<tr><td>Rows on a cancelled SO line</td><td>one grey row, "Line cancelled", Requested 0, before and after Confirm (G7)</td><td>Line cancelled; its used rows as Used</td></tr>
+<tr><td>Worklist (all inquiries)</td><td>unchanged (Owner ruling 26 Sep, G8: being discontinued)</td><td>-</td></tr>
+</tbody></table></div>
+</body></html>

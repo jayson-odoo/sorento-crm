@@ -14,6 +14,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -32,6 +33,7 @@ _DOC_TYPE_LABELS = {
     "proforma_invoice": "proforma invoices",
     "packing_list": "packing lists",
     "outstanding_so": "outstanding sales orders",
+    "supplier_inventory": "stock lists",
     "supplier_inventory_word": "stock list words",
 }
 
@@ -210,33 +212,46 @@ def create_import_field_alias(
     )
     _assert_known_field(payload.doc_type, field_value)
     _assert_supplier_exists(db, payload.supplier_id)
-    # Matched on the TRIPLE alone, regardless of `supplier_id` (review round 3): the mapping
-    # a (doc_type, field, alias) pair names already exists the moment ANY row - shared, or
-    # another supplier's - names it, and a second row on that same triple is not an
-    # override (an override changes the FIELD, i.e. the word's token, for the same alias),
-    # it is a duplicate of an answer that already exists.
-    existing = (
-        db.query(ImportFieldAlias)
-        .filter(
-            ImportFieldAlias.doc_type == payload.doc_type,
-            ImportFieldAlias.field == field_value,
-            ImportFieldAlias.alias == payload.alias,
-        )
-        .first()
+    # Matched on the triple WITHIN THE SAME SCOPE (owner ruling A, review round 2, migration
+    # `ifa_supplier_uniq` - supersedes review round 3's note that used to live here): a
+    # shared row (`supplier_id` NULL) duplicates only another shared row on the same
+    # triple - a second supplier saving the identical (doc_type, field, alias) triple is
+    # not a duplicate of a DIFFERENT supplier's row, it is that supplier's own first row,
+    # exactly what the DB itself now allows (R11). A SUPPLIER payload additionally checks
+    # against a SHARED row on the same triple, because that one genuinely IS redundant -
+    # the shared row already answers this supplier's header the same way theirs would, the
+    # same rule `import_mapping_service.save()` uses to skip writing one (R19's kept half).
+    existing_query = db.query(ImportFieldAlias).filter(
+        ImportFieldAlias.doc_type == payload.doc_type,
+        ImportFieldAlias.field == field_value,
+        ImportFieldAlias.alias == payload.alias,
     )
-    if existing is not None:
-        if existing.supplier_id:
-            supplier_name = _supplier_names(db, [existing]).get(str(existing.supplier_id))
-            scope = f" ({supplier_name})" if supplier_name else " (another supplier's row)"
-        else:
-            scope = " (shared)"
-        raise AppException(
-            status.HTTP_409_CONFLICT,
-            f"Header {payload.alias} is already mapped to "
-            f"{_label_for(payload.doc_type, field_value)} for "
-            f"{_DOC_TYPE_LABELS.get(payload.doc_type, payload.doc_type)}{scope}.",
-            code="duplicate_alias",
+    if payload.supplier_id:
+        existing_query = existing_query.filter(
+            or_(
+                ImportFieldAlias.supplier_id.is_(None),
+                ImportFieldAlias.supplier_id == payload.supplier_id,
+            )
         )
+    else:
+        existing_query = existing_query.filter(ImportFieldAlias.supplier_id.is_(None))
+    existing = existing_query.first()
+    if existing is not None:
+        if existing.supplier_id is None:
+            message = (
+                f"Header {payload.alias} is already the shared mapping to "
+                f"{_label_for(payload.doc_type, field_value)} for "
+                f"{_DOC_TYPE_LABELS.get(payload.doc_type, payload.doc_type)}."
+            )
+        else:
+            supplier_name = _supplier_names(db, [existing]).get(str(existing.supplier_id))
+            scope = f" ({supplier_name})" if supplier_name else " (this supplier)"
+            message = (
+                f"Header {payload.alias} is already mapped to "
+                f"{_label_for(payload.doc_type, field_value)} for "
+                f"{_DOC_TYPE_LABELS.get(payload.doc_type, payload.doc_type)}{scope}."
+            )
+        raise AppException(status.HTTP_409_CONFLICT, message, code="duplicate_alias")
     row = ImportFieldAlias(
         doc_type=payload.doc_type, field=field_value, alias=payload.alias,
         locale=payload.locale, supplier_id=payload.supplier_id,

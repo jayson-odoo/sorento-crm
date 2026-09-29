@@ -187,6 +187,7 @@ function stockForm(
   file: File,
   supplierId: string,
   loadingPlanId?: string | null,
+  headerRow?: number | null,
 ): FormData {
   const body = new FormData();
   body.append('file', file);
@@ -196,16 +197,20 @@ function stockForm(
   // cannot move an older plan's figures. Absent (the standalone stock-list page) it keeps
   // the supplier-wide replace it always did.
   if (loadingPlanId) body.append('loading_plan_id', loadingPlanId);
+  // The import column mapper's stepper (B6, AC-M3) - which row is the header, overriding
+  // the guess. Sent whenever the mapper has read one, never invented here.
+  if (headerRow != null) body.append('header_row', String(headerRow));
   return body;
 }
 
 export async function previewStockList(
   file: File,
   supplierId: string,
+  headerRow?: number | null,
 ): Promise<StockListPreview> {
   const res = await apiFetch('/api/v1/scm/supplier-inventory/preview', {
     method: 'POST',
-    body: stockForm(file, supplierId),
+    body: stockForm(file, supplierId, null, headerRow),
   });
   const body = await readJson<Omit<StockListPreview, 'ok'>>(res, 'Failed to read the stock list');
   // The backend calls it `readable`; the shared upload hook asks for `ok`.
@@ -226,18 +231,23 @@ export async function applyStockList(
   file: File,
   supplierId: string,
   loadingPlanId?: string | null,
+  headerRow?: number | null,
 ): Promise<StockListResult> {
   const res = await apiFetch('/api/v1/scm/supplier-inventory/apply', {
     method: 'POST',
-    body: stockForm(file, supplierId, loadingPlanId),
+    body: stockForm(file, supplierId, loadingPlanId, headerRow),
   });
   return readJson<StockListResult>(res, 'Failed to save the stock list');
 }
 
-export async function testStockList(file: File, supplierId: string): Promise<UploadTestResult> {
+export async function testStockList(
+  file: File,
+  supplierId: string,
+  headerRow?: number | null,
+): Promise<UploadTestResult> {
   const res = await apiFetch('/api/v1/scm/supplier-inventory/apply?validate_only=true', {
     method: 'POST',
-    body: stockForm(file, supplierId),
+    body: stockForm(file, supplierId, null, headerRow),
   });
   return readJson<UploadTestResult>(res, 'Failed to test the stock list');
 }
@@ -1184,6 +1194,12 @@ export interface SupplierDocumentLinePreview {
 }
 
 export interface SupplierDocumentBlock {
+  /** Which reader produced this block (owner hand-test round, 24 Sep evening) - a
+   *  `combined` file's own `blocks` list mixes both kinds (one PI block, one packing-list
+   *  block), and nothing else on a display block said which; `confirmCounts` in the
+   *  upload dialog needs this to count "1 invoice, 1 draft packing list" instead of
+   *  double-counting every combined block toward both. */
+  part: 'proforma_invoice' | 'packing_list';
   container_no: string | null;
   seal_no: string | null;
   cartons: number | null;
@@ -1315,6 +1331,8 @@ interface SupplierDocumentsFormOptions {
   attachTo?: { id: string; pi_number: string } | null;
   /** Per block, what the operator picked instead of what the server resolved. */
   attachToBlocks?: SupplierDocumentBlockAttach[];
+  /** The import column mapper's stepper pick, per file (B6, AC-M3) - `{file name: row}`. */
+  headerRows?: Record<string, number>;
 }
 
 function supplierDocumentsForm(files: File[], opts: SupplierDocumentsFormOptions): FormData {
@@ -1326,6 +1344,9 @@ function supplierDocumentsForm(files: File[], opts: SupplierDocumentsFormOptions
   if (opts.attachTo) body.append('attach_to', opts.attachTo.id);
   if (opts.attachToBlocks?.length) {
     body.append('attach_to_blocks', JSON.stringify(opts.attachToBlocks));
+  }
+  if (opts.headerRows && Object.keys(opts.headerRows).length > 0) {
+    body.append('header_rows', JSON.stringify(opts.headerRows));
   }
   return body;
 }
@@ -1485,23 +1506,20 @@ export async function getConsolidatedPackingList(
 }
 
 /**
- * The same list as the file Ms Tee used to build by hand.
- *
- * The name comes from the server's `Content-Disposition` rather than being rebuilt here, so
- * the download and the sheet inside it agree on which container this is. `fallbackName` is
- * what the file is called if the header is missing - the container or shipment number, never
- * the shipment id, because a downloaded file named after a UUID tells its reader nothing.
+ * E1/E2: enqueue an async xlsx export of the consolidated packing list, same shape as
+ * `exportComplaintPdf` - `DownloadService.create(kind="packing_list_xlsx", ...)` +
+ * `enqueue_job(...)` on the server, the result appears in My Downloads and this
+ * shipment's own Download history (`EntityDownloadsButton entityType="inbound_shipment"`).
+ * The old synchronous `downloadPackingListExport` (a blob download off the GET route) had
+ * no caller left once the gear switched to this - retired (fix round 1, review). The GET
+ * route itself stays mounted server-side for one release (MCP/n8n callers), marked
+ * deprecated.
  */
-export async function downloadPackingListExport(
-  shipmentId: string,
-  fallbackName?: string | null,
-): Promise<void> {
-  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/packing-list/export`);
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to export the packing list'));
-  const filename =
-    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
-    `${fallbackName || 'container'}-packing-list.xlsx`;
-  saveBlobAs(await res.blob(), filename);
+export async function enqueuePackingListExport(shipmentId: string): Promise<void> {
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/packing-list/export`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to queue the packing list export'));
 }
 
 /**

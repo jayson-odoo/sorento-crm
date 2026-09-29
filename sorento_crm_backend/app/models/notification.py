@@ -9,6 +9,7 @@ import uuid
 class Notification(Base):
     """User notification record (in-app)."""
     __tablename__ = "notifications"
+    __audit_skip__ = "notification fan-out; read and archive already write explicit audit rows"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, nullable=False, index=True)
@@ -44,6 +45,7 @@ class Notification(Base):
 class NotificationDelivery(Base):
     """Per-channel delivery status for a notification."""
     __tablename__ = "notification_deliveries"
+    __audit_skip__ = "notification delivery fan-out"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     notification_id = Column(

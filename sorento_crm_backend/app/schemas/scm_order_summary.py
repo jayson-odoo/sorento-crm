@@ -27,6 +27,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.export_split import ExportSplit
+
 
 class OrderSummaryLocationAllocationOut(BaseModel):
     """One location's share of a Product-grain chosen quantity (AC-F08).
@@ -292,10 +294,83 @@ class OrderSummaryExportIn(BaseModel):
     newest completed run, exactly like the GET report. `format` is validated in the route
     (422 on anything but ``pdf`` / ``xlsx`` / ``low_stock_xlsx``) rather than here, so the
     message stays the existing wording the old synchronous export used.
+
+    `split` (PLAN-low-stock-export-split-25sep, AC-12/AC-13/R6) applies to the low stock
+    report ONLY - the route refuses it 422 on any other format. An unrecognised value is
+    refused at THIS layer, by the `Literal` itself: pydantic's 422 on a bad `split` needs no
+    route-level check, unlike `format`, which the route validates against its own list of
+    plain strings.
     """
 
     run_id: Optional[str] = None
     format: str
+    split: ExportSplit = "none"
+    # PLAN-excel-preview-26sep AC-6: the page's supplier / category filters, as split keys
+    # ("No supplier" / "No category" for a blank). Low stock report only; the route refuses
+    # them 422 on any other format. Omitted or empty keeps every row.
+    suppliers: Optional[List[str]] = None
+    categories: Optional[List[str]] = None
+
+
+class LowStockViewRunOut(BaseModel):
+    """Which run the view shows. `run_id` is opaque: the page needs it to export the same run
+    it is showing when it was opened without one (newest run), and never renders it."""
+
+    run_id: str
+    as_of: Optional[str] = None
+    #: When the plan was computed (Malaysia wall time, no zone), for the page's "Daily plan,
+    #: <d Mon yyyy HH:MM>" subtitle (review N3). None on a run with no rows.
+    generated_at: Optional[str] = None
+
+
+class LowStockViewSheetOut(BaseModel):
+    """One sheet of the workbook-to-be: its tab title and the rows it prints, by index into
+    `LowStockViewOut.rows`, in print order (AC-9: each row travels once). `low` marks a
+    "Low stock" / "<key> - Low" sheet."""
+
+    title: str
+    row_indexes: List[int]
+    low: bool
+
+
+class LowStockFacetOut(BaseModel):
+    """One supplier or category choice over the WHOLE run (AC-5): its split key ("No
+    supplier" / "No category" for a blank), how many rows it holds and how many are low."""
+
+    key: str
+    rows: int
+    low: int
+
+
+class LowStockFacetsOut(BaseModel):
+    suppliers: List[LowStockFacetOut]
+    categories: List[LowStockFacetOut]
+
+
+class LowStockViewCountsOut(BaseModel):
+    """After the filters: rows kept, of which low, and the sheets the file will hold."""
+
+    rows: int
+    low: int
+    sheets: int
+
+
+class LowStockViewOut(BaseModel):
+    """`GET /order-summary/low-stock-view` (PLAN-excel-preview-26sep AC-1): the low stock
+    workbook for one run, split and filtered, as the in-app page shows it. Built by the
+    same function that writes the file (AC-2). Over the cap (`over_cap`) `rows` and
+    `sheets` are empty and `counts` still says how many rows the filters keep."""
+
+    run: LowStockViewRunOut
+    split: ExportSplit
+    columns: List[str]
+    rows: List[List[str | float | None]]
+    sheets: List[LowStockViewSheetOut]
+    facets: LowStockFacetsOut
+    counts: LowStockViewCountsOut
+    over_cap: bool
+    max_rows: int
+    filename: str
 
 
 class OrderSummaryDecisionIn(BaseModel):

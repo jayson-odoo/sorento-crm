@@ -43,6 +43,31 @@ const BASE = '/api/v1/project-sales';
  * service does is read them, export them and record what purchasing did about them.
  */
 
+/**
+ * SUGGESTED LINKS - CONTRACT (`PLAN-oi-links-autocount-truth-24sep.md`). A suggested
+ * link is the cascade's proposal of a document line for a row - NEVER an
+ * `order_inquiry_links` row, never read by `state`/`po_ref`/`spo_ref`/the PO or SPO
+ * cells. Always called a SUGGESTED LINK, never "suggestion" (that name is taken by
+ * `OrderInquiryLink.suggestion`, the unrelated S1b reallocate/unlink advice on a REAL
+ * link).
+ *
+ *   Row payload (`OrderInquiryRow`, `OrderInquiryWorklistRow`):
+ *     suggested_links : OrderInquirySuggestedLink[] - `[{kind, document, po_id,
+ *       po_line_id, spo_allocation_id, location, qty, expected_date, late_days,
+ *       trigger}]`, separate from `links`.
+ *
+ *   POST {BASE}/order-inquiries/auto-place  (G4, R18): `AutoPlaceResult` carries
+ *     `book_linked_rows` / `suggested_rows` / `changed_rows` beside `placed_rows` -
+ *     AutoCount's own links from the pass's book step, what it could only suggest for
+ *     the rest, and how many rows this pass actually moved. R18 (owner ruling from the
+ *     hand test on stack C, 25 Sep 2026, supersedes G1): "Link selected" is THIS same
+ *     route, `row_ids` naming exactly the ticked rows - there is no separate route for
+ *     it. It never turns a suggestion into a real link on its own; the book step above
+ *     already writes only what AutoCount names, in AutoCount's own name, and the
+ *     cascade only ever suggests. Pressing it re-runs that book step for the ticked
+ *     rows (catching a mistake in the automation) and refreshes their suggestions.
+ */
+
 function normaliseEnvelope(body: unknown, fallbackLimit: number): OrderInquiryListEnvelope {
   const raw = (body ?? {}) as {
     data?: OrderInquiryRow[];
@@ -621,6 +646,8 @@ export function worklistParams(params: OrderInquiryWorklistParams, limit: number
       // `PLAN-oi-header-list-detail.md`, S3/AC-DT-02: the OI detail page's own Lines
       // tab and whole-OI Export Excel - every non-cancelled row of ONE header.
       inquiry_id: params.inquiry_id,
+      // S2 (`PLAN-oi-no-double-count-25sep.md`, AC-ND-20): the Lines tab's cancelled rows.
+      include_history: params.include_history ? 'true' : undefined,
       delivery_month: params.delivery_month,
       raised_date: params.raised_date,
       state: params.state,
@@ -887,8 +914,9 @@ export async function getOrderInquiryHeader(
  * first. `limit` is the backend's own `MAX_PAGE_LIMIT` (1000); a header past that many
  * lines (max measured, 242) pages again rather than truncating.
  *
- * Cancelled lines are NOT filtered here; the Lines tab hides them the same way the
- * worklist does (S5), client-side.
+ * `PLAN-oi-no-double-count-25sep.md` S2 (AC-ND-20): `include_history` brings the
+ * header's cancelled rows in the same read. The Lines tab folds them into their line's
+ * History, never into a line row of their own, so the History dialog reads nothing more.
  */
 export async function getOrderInquiryHeaderLines(
   id: string,
@@ -898,7 +926,12 @@ export async function getOrderInquiryHeaderLines(
   let rows: OrderInquiryWorklistRow[] = [];
   for (;;) {
     // Pages are read in order, not fanned out - each one depends on the last.
-    const envelope = await listOrderInquiryWorklist({ inquiry_id: id, limit, page });
+    const envelope = await listOrderInquiryWorklist({
+      inquiry_id: id,
+      include_history: true,
+      limit,
+      page,
+    });
     rows = rows.concat(envelope.data);
     if (envelope.data.length === 0 || rows.length >= envelope.total) break;
     page += 1;

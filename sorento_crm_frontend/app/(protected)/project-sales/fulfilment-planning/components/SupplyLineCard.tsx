@@ -163,7 +163,7 @@ export function SupplyLineCard({
       {line.is_discontinued && (
         <div className="flex items-start gap-2 border-b border-border bg-destructive/5 px-3 py-2.5 text-sm">
           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
-          <span>This product is discontinued. Buying it takes a reason.</span>
+          <span>This product is discontinued.</span>
         </div>
       )}
 
@@ -354,7 +354,7 @@ export function SupplyLineCard({
                     className="block text-2xs uppercase tracking-wide text-muted-foreground"
                     htmlFor={`buy-reason-${line.project_line_id}`}
                   >
-                    Reason <span className="text-destructive">*</span>
+                    Reason
                   </label>
                   <Textarea
                     id={`buy-reason-${line.project_line_id}`}

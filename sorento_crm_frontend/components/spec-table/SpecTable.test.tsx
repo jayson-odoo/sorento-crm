@@ -173,7 +173,9 @@ describe('the source badge', () => {
     // Two rows read from the description - `material` and the key the registry has
     // since dropped - so this is deliberately getAllByText.
     expect(screen.getAllByText('Description').length).toBeGreaterThan(0);
-    expect(screen.getByText('Category')).toBeInTheDocument();
+    // A value read off the product's own category never claims to be a read of
+    // the description (AC-S2.7).
+    expect(screen.getByText("Product's category")).toBeInTheDocument();
   });
 
   it('gives an authored source the affirmative pill and a machine one the muted pill', () => {

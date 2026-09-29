@@ -68,6 +68,14 @@ def current_year_period() -> Dict[str, Any]:
     return {"kind": "year", "year": today_malaysia().year}
 
 
+_MONTH_NAMES = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+#: A month-of-year axis's fixed values ("01", "JAN") .. ("12", "DEC"). The kernel reads a
+#: column carrying exactly these as months of the year (the VARIANCE window, G5 (a)).
+MONTHS_OF_YEAR: Tuple[Tuple[str, str], ...] = tuple(
+    (f"{index:02d}", name) for index, name in enumerate(_MONTH_NAMES, start=1)
+)
+
+
 @dataclass(frozen=True)
 class Column:
     """One catalog column: what it is called, what it holds, and how to select it."""
@@ -85,6 +93,13 @@ class Column:
     # Renders a raw dimension value for the screen ("2026-01" -> "Jan'26"). The frontend
     # must not invent a formatting rule per dimension, so the dataset supplies one.
     value_label: Optional[Callable[[Any], str]] = None
+    #: An axis that prints EVERY value, in this order, whether the data holds it or not:
+    #: (value, label) pairs. A month-of-year axis must print JAN to DEC in September too,
+    #: and a cell with nothing in it stays blank, never 0.
+    fixed_values: Optional[Tuple[Tuple[str, str], ...]] = None
+    #: The period_months idea for years: every year of the period is a value, so a year
+    #: with no sales is a blank row rather than a missing one.
+    period_years: bool = False
 
     def __post_init__(self) -> None:
         if self.type not in COLUMN_TYPES:
@@ -124,6 +139,10 @@ class Dataset:
     # Years the dataset actually holds rows for, newest first. Optional: without it the
     # filter bar offers the current year and the four before it.
     years: Optional[Callable[[Any], List[int]]] = None
+    #: The select param whose single value is the company a run reads (scope="company").
+    #: The engine checks the value against the caller's grant (403 outside it), defaults
+    #: it to the caller's current company, and names the company in the title block.
+    company_param: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.scope not in SCOPES:
@@ -248,16 +267,42 @@ class TickGroup:
 
 @dataclass(frozen=True)
 class DetailLayout:
-    title: str
+    #: The detail tab's heading; a callable of the query context when it follows the
+    #: dataset the run reads (the Yearly comparison's Invoiced basis lists documents).
+    title: Union[str, Callable[[Any], str]]
     order_by: Callable[[Any], Sequence[ColumnElement]]
     groups: Tuple[TickGroup, ...] = ()
     key: str = "detail"
+    #: Over the sync cap: "refuse" answers 422 (the register must be read whole), and
+    #: "truncate" returns the first rows with `truncated` set, so a years-long summary
+    #: is not refused because of the lines under it.
+    cap: str = "refuse"
+
+
+PIVOT_VARIANCES = frozenset({"last_two_rows"})
+PIVOT_CHARTS = frozenset({"line"})
 
 
 @dataclass(frozen=True)
 class PivotLayout:
     title: str
     key: str = "summary"
+    #: "last_two_rows": a VARIANCE row, the last row minus the one before it, over the
+    #: columns the last row has (a year to date against the same months a year earlier).
+    variance: Optional[str] = None
+    #: "line": the screen draws the pivot as a line chart under the table, and the
+    #: workbook writes a native chart under the block.
+    chart: Optional[str] = None
+    #: The screen prints whole ringgit; the workbook keeps the sen.
+    whole_units: bool = False
+    #: The column-totals row. A year-by-month table has no use for 2024 + 2025 + 2026.
+    column_totals: bool = True
+
+    def __post_init__(self) -> None:
+        if self.variance is not None and self.variance not in PIVOT_VARIANCES:
+            raise ValueError(f"Pivot '{self.title}' declares an unknown variance '{self.variance}'")
+        if self.chart is not None and self.chart not in PIVOT_CHARTS:
+            raise ValueError(f"Pivot '{self.title}' declares an unknown chart '{self.chart}'")
 
 
 @dataclass(frozen=True)
@@ -288,6 +333,17 @@ class WorkbookSpec:
     summary_row_total_label: str = "TOTAL"
     #: The summary's column-totals row ("TOTAL SALES" on the client's own sheet).
     summary_total_row_label: str = "TOTAL"
+    #: One sheet per month of the period. A three-year comparison must not write 33.
+    month_sheets: bool = True
+    #: A select param key: the summary sheet writes one block per chosen value, one under
+    #: the other (both channels of the yearly comparison on one page, as the PDF has them).
+    sheet_per: Optional[str] = None
+    #: The period line reads "AS AT <last day>" rather than the range.
+    period_as_at: bool = False
+    #: The money cells' number format; unset, the accounting RM format.
+    money_format: Optional[str] = None
+    #: What a money cell with no value holds. "" leaves it empty, which a chart skips.
+    no_value: str = "-"
 
 
 # --------------------------------------------------------------------- definition
@@ -306,11 +362,65 @@ class ReportDefinition:
     #  "pivot": {"rows": ..., "cols": ..., "measures": [...]}}
     default_view: Dict[str, Any]
     workbook: WorkbookSpec
+    #: The installable module that owns this report. The routes check it per request, and
+    #: a definition that names none is refused (fail closed).
+    module_key: Optional[str] = None
+    #: A line printed under the filter bar and in the workbook's title block, given the
+    #: query context (the basis of a sales report).
+    note: Optional[Callable[[Any], str]] = None
+    #: Which tab the screen opens on.
+    opens_on: str = "detail"
+    #: One report over more than one row set: (select param key, {value: dataset}). A run
+    #: whose param names a value here reads that dataset; any other value reads `dataset`.
+    #: The Yearly comparison's Basis = Invoiced reads billing documents, not sales order
+    #: lines (finance S1). The datasets share the company param, the date basis key and the
+    #: default view's pivot axes, so one saved view runs on any of them.
+    datasets_by: Optional[Tuple[str, Dict[str, "Dataset"]]] = None
+
+    def dataset_for(self, values: Dict[str, Any]) -> Dataset:
+        """The dataset a run with these bound param values reads."""
+        if self.datasets_by is None:
+            return self.dataset
+        key, by_value = self.datasets_by
+        chosen = values.get(key) or []
+        return by_value.get(chosen[0], self.dataset) if len(chosen) == 1 else self.dataset
+
+    def datasets(self) -> List[Dataset]:
+        """Every dataset this report can read, `dataset` first."""
+        extra = list(self.datasets_by[1].values()) if self.datasets_by else []
+        return [self.dataset] + [d for d in extra if d is not self.dataset]
+
+    def catalog(self) -> List[Column]:
+        """Every column of every dataset, once per key, `dataset`'s own first: what the
+        Columns panel offers. A column the chosen dataset lacks is left out of that run."""
+        seen: Dict[str, Column] = {}
+        for dataset in self.datasets():
+            for column in dataset.columns:
+                seen.setdefault(column.key, column)
+        return list(seen.values())
 
 
 def validate(definition: ReportDefinition) -> None:
     """Fail at import time rather than on the first run of the screen."""
-    dataset = definition.dataset
+    for dataset in definition.datasets():
+        _validate_against(definition, dataset)
+    if definition.datasets_by is not None:
+        key = definition.datasets_by[0]
+        if not any(isinstance(p, SelectParam) and p.key == key for p in definition.params):
+            raise ValueError(
+                f"Report '{definition.key}' picks its dataset by '{key}', which is not a select param"
+            )
+        for dataset in definition.datasets():
+            if (dataset.company_param, dataset.scope) != (
+                definition.dataset.company_param,
+                definition.dataset.scope,
+            ):
+                raise ValueError(
+                    f"Report '{definition.key}' dataset '{dataset.key}' names another company param or scope"
+                )
+
+
+def _validate_against(definition: ReportDefinition, dataset: Dataset) -> None:
     view = definition.default_view
     pivot = view.get("pivot") or {}
 
@@ -333,8 +443,9 @@ def validate(definition: ReportDefinition) -> None:
                 f"Report '{definition.key}' default view names '{key}' as a measure, "
                 "which is not a catalog measure"
             )
+    catalog = {c.key for c in definition.catalog()}
     for key in (view.get("detail") or {}).get("columns") or ():
-        if dataset.column(key) is None:
+        if key not in catalog:
             raise ValueError(
                 f"Report '{definition.key}' default view names detail column '{key}', "
                 "which the dataset catalog does not hold"
@@ -346,6 +457,20 @@ def validate(definition: ReportDefinition) -> None:
                 f"Report '{definition.key}' groups on '{group.source}', "
                 "which is not a catalog dimension"
             )
+    if definition.opens_on not in ("detail", "summary"):
+        raise ValueError(f"Report '{definition.key}' opens on unknown tab '{definition.opens_on}'")
+    if definition.detail.cap not in ("refuse", "truncate"):
+        raise ValueError(f"Report '{definition.key}' declares an unknown detail cap")
+    split = definition.workbook.sheet_per
+    if split is not None and not any(
+        isinstance(p, SelectParam) and p.key == split for p in definition.params
+    ):
+        raise ValueError(f"Report '{definition.key}' splits by '{split}', which is not a select param")
+    company_param = dataset.company_param
+    if company_param is not None and not any(
+        isinstance(p, SelectParam) and p.key == company_param for p in definition.params
+    ):
+        raise ValueError(f"Report '{definition.key}' names company param '{company_param}' it lacks")
     basis = (view.get("params") or {}).get("date_basis")
     if basis is not None and dataset.basis(basis) is None:
         raise ValueError(

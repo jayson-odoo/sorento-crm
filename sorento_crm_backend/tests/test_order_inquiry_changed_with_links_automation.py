@@ -27,6 +27,9 @@ sibling draft-links suite does: one seeding chain, and the real database because
 """
 from __future__ import annotations
 
+from decimal import Decimal
+
+from app.models.project_so import OrderInquiryLink
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
 from .test_order_inquiry_handshake import (
@@ -41,6 +44,31 @@ from .test_order_inquiry_handshake import (
 __all__ = ["api", "world"]  # re-exported fixtures; keeps linters from calling them unused
 
 TRIGGER = "order_inquiry_changed_with_links"
+
+
+def _write_real_link(world, row, po, po_line, *, qty, auto=False):
+    """A real link, written directly (review round 4 Blocking 1). Since S3
+    (`PLAN-oi-links-autocount-truth-24sep.md`) the raise-time cascade only SUGGESTS, so
+    `_raise_one_row`/`_raise_two_rows` alone no longer give a row the REAL link this
+    trigger is about. `auto=False` is the shape a manual Choose document/Link PO press
+    (G3, still real) writes; `auto=True` is a legacy `_cascade_only` real link - the kind
+    that could only predate S3, per the G5 guard (plan 3.4) - for the one test below that
+    is specifically about that draft case.
+    """
+    link = OrderInquiryLink(
+        company_id=world.company_id,
+        row_id=row.id,
+        po_line_id=po_line.id,
+        document=po.po_number,
+        qty=Decimal(str(qty)),
+        linked_by=world.buyer,
+        auto=auto,
+    )
+    world.db.add(link)
+    world.db.flush()
+    ProjectOrderInquiryService(world.db).refresh_link_state([row])
+    world.db.commit()
+    return link
 
 
 def _captured_dispatches(monkeypatch) -> list[dict]:
@@ -86,16 +114,21 @@ def _for_row(calls: list[dict], row_id: str) -> list[dict]:
 
 def test_a_settle_with_a_link_dispatches_the_automation(api, monkeypatch):
     """AC-1.7: a row THAT HAS LINKS is amended (settled in place) -> the trigger fires
-    with both the Now and the Was."""
+    with both the Now and the Was.
+
+    Reversal (review round 4 Blocking 1, S3): the raise-time cascade only suggests now,
+    so the row's real link is written directly - see `_write_real_link`.
+    """
     _client, world = api
     _register(world)
     calls = _captured_dispatches(monkeypatch)
-    _open_po_line(world, qty=50)
+    po, po_line = _open_po_line(world, qty=50)
     fixture = _raise_one_row(api)
     row = fixture["row"]
     world.db.flush()
+    _write_real_link(world, row, po, po_line, qty="10")
     assert ProjectOrderInquiryService(world.db)._links_of(row.id), (
-        "the raise-time cascade has to have linked it for this test to mean anything"
+        "the row must carry a real link for this test to mean anything"
     )
 
     _settle(world, fixture, qty="25")
@@ -129,16 +162,21 @@ def test_a_linkless_settle_dispatches_nothing(api, monkeypatch):
 def test_a_zeroed_settle_that_gives_back_a_link_dispatches_too(api, monkeypatch):
     """S4 (review of PR #471). The book reduced the line to nothing: `_settle_row_in_place`
     cancels the row and gives its link back - a row that carried real supply and now
-    carries none is exactly the case G6 exists for, not only a quantity/date edit."""
+    carries none is exactly the case G6 exists for, not only a quantity/date edit.
+
+    Reversal (review round 4 Blocking 1, S3): same as the test above - the real link is
+    written directly since the raise-time cascade only suggests now.
+    """
     _client, world = api
     _register(world)
     calls = _captured_dispatches(monkeypatch)
-    _open_po_line(world, qty=50)
+    po, po_line = _open_po_line(world, qty=50)
     fixture = _raise_one_row(api, qty="10")
     row = fixture["row"]
     world.db.flush()
+    _write_real_link(world, row, po, po_line, qty="10")
     assert ProjectOrderInquiryService(world.db)._links_of(row.id), (
-        "the raise-time cascade has to have linked it for this test to mean anything"
+        "the row must carry a real link for this test to mean anything"
     )
 
     _settle(world, fixture, qty="0")
@@ -156,15 +194,22 @@ def test_a_dropped_lines_cascade_linked_row_dispatches_when_retired(api, monkeyp
     """S4's other half. `_retire_uncovered_rows` cancels a cascade-linked row when its
     LINE leaves the revision entirely (the line was covered, then CS un-decided it) -
     the document goes back to the pool exactly as a zeroed settle-in-place does, and
-    purchasing has to hear about it the same way."""
+    purchasing has to hear about it the same way.
+
+    Reversal (review round 4 Blocking 1, S3): a `_cascade_only` real link (`auto=True`
+    on every link the row holds) can now only be a LEGACY link from before S3 (the G5
+    guard, plan 3.4 - the fresh cascade never writes a real link any more), so the draft
+    this test is about is written directly rather than produced by `_raise_two_rows`.
+    """
     from app.services.project_supply_service import ProjectSupplyService
 
     _client, world = api
     _register(world)
     calls = _captured_dispatches(monkeypatch)
-    _open_po_line(world, qty=50)
+    po, po_line = _open_po_line(world, qty=50)
     fixture = _raise_two_rows(api)
     dropped = fixture["first"]["row"]
+    _write_real_link(world, dropped, po, po_line, qty="10", auto=True)
     assert ProjectOrderInquiryService(world.db)._links_of(dropped.id), (
         "the draft has to exist for this test to mean anything"
     )

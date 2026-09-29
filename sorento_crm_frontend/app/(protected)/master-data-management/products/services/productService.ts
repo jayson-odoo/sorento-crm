@@ -18,6 +18,15 @@ import type {
 } from '../types/product.types';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 
+/**
+ * Chatbot stock limits, X / Y (PLAN-chatbot-stock-ask-v2-24sep.md S1):
+ *   products.chatbot_max_qty          integer | null  (X: overrides the
+ *     product's category value when set; unset falls back to the category)
+ *   products.chatbot_eta_offset_days  integer | null  (Y: same override rule)
+ * Both ride the GET/PUT /api/v1/master-data/products/{id} payload as plain
+ * fields, gated the same way as the category columns (see categoryService.ts).
+ */
+
 export interface GetProductsParams extends DataGridApiFetchParams {
   category_id?: string;
   /**
@@ -34,6 +43,9 @@ export interface GetProductsParams extends DataGridApiFetchParams {
   variant_filter?: 'base' | 'variant' | 'all';
   /** Deep link from a "products discontinued" notification - show only that batch. */
   discontinued_batch_id?: string;
+  /** "Discontinued at" range (issue #1287), YYYY-MM-DD, Malaysia calendar day inclusive. */
+  discontinued_from?: string;
+  discontinued_to?: string;
 }
 
 
@@ -56,6 +68,8 @@ export async function getProducts(
     item_type,
     variant_filter,
     discontinued_batch_id,
+    discontinued_from,
+    discontinued_to,
   } = params;
 
   const sortField = sorting?.[0]?.id || '';
@@ -74,6 +88,8 @@ export async function getProducts(
     ...(item_type ? { item_type } : {}),
     ...(variant_filter && variant_filter !== 'all' ? { variant_filter } : {}),
     ...(discontinued_batch_id ? { discontinued_batch_id } : {}),
+    ...(discontinued_from ? { discontinued_from } : {}),
+    ...(discontinued_to ? { discontinued_to } : {}),
   });
 
   const response = await apiFetch(

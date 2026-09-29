@@ -48,3 +48,21 @@ without changing anything.
 the empty, `scripts.bootstrap_env`-seeded schema (reference data only - roles, order statuses,
 permissions - no business rows, no customer data). A journey that needs real data runs locally
 instead.
+
+## CI trigger (standing rule, 25 Sep 2026)
+
+A push to a lane's PR never runs CI - `.github/workflows/deploy.yml`'s `pull_request` trigger is
+`types: [labeled]` only, gated on the label being exactly `ci`. The orchestrator is the only one
+who adds that label, and only once the lane is genuinely ready for CI (Phase 3, or a small-fix
+track PR ready to merge). A lane, cloud or local, never adds the `ci` label to its own PR and does
+not wait for CI on that PR unless its brief says the label was already added - a lane that needs a
+CI result waits for the orchestrator to say so, it does not poll the PR itself. A workflow run
+removes the label again the moment it fires, so the operator recipe to re-run CI against a new
+head is always `gh pr edit <n> --add-label ci`, never leaving the label sitting on the PR.
+
+The `[skip ci]` convention for intermediate commits (a commit message containing it skips creating
+a run for that push) stays in place as belt and braces - it costs nothing now that pushes to a PR
+do not trigger runs on their own, and it still matters for pushes to `main`.
+
+A PR with no `ci` label shows no checks and therefore cannot merge under branch protection - that
+is intended, not a bug: it is what keeps a not-yet-ready PR from being mergeable by accident.

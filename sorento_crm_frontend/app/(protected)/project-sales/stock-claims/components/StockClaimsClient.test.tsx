@@ -177,9 +177,15 @@ describe('StockClaimsClient', () => {
         'A row appears here when a Borrow is confirmed in Fulfilment Planning, on either side of it.',
       ),
     ).toBeInTheDocument();
+    // #1335: the header's link is the one way there; the empty state does not
+    // repeat it, and no subtitle sits under the title.
+    const links = screen.getAllByRole('link', { name: /open fulfilment planning/i });
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute('href', '/project-sales/fulfilment-planning');
+    expect(links[0].closest('[data-slot="toolbar-actions"]')).not.toBeNull();
     expect(
-      screen.getAllByRole('link', { name: /open fulfilment planning/i })[0],
-    ).toHaveAttribute('href', '/project-sales/fulfilment-planning');
+      screen.queryByText(/Stock one project took from another/i),
+    ).not.toBeInTheDocument();
   });
 
   it('states a load failure in words', async () => {

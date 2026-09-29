@@ -381,7 +381,6 @@ export default function PromotionsList() {
       isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       standardToolbar={false}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

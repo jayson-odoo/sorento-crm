@@ -834,7 +834,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     const first = 'so-a|1|WESERP10B|2026-08-31';
 
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Typing, not yet saved.' },
     });
 
@@ -865,7 +865,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     const key = 'so-a|1|WESERP10B|2026-08-31';
 
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Typing, not yet saved.' },
     });
 
@@ -926,7 +926,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     openLines();
 
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Cancelled by the customer.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
@@ -954,7 +954,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     const save = screen.getByRole('button', { name: 'Save decision' });
     expect(save).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: {
         value: 'The site wants new stock, not what is standing there.',
       },
@@ -2589,6 +2589,29 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     expect(chips.textContent).not.toMatch(/ABC/);
   });
 
+  it('AC-23: the discontinued chip reads "Discontinued" and its title no longer says a Buy needs a reason', () => {
+    const cell = cellOf([demand({ qty: '100' })]);
+    const contribution = cell.contributions[0];
+    contribution.item_flags = {
+      dealer_hot_selling: false,
+      dealer_hot_selling_where: [],
+      project_hot_selling: false,
+      project_hot_selling_where: [],
+      dealer_classified: false,
+      project_classified: false,
+      discontinued: true,
+      retail_classification_available: true,
+    };
+    renderCell(cell);
+    openLines();
+    openTrail(contribution.key);
+
+    const chip = screen.getByTestId(`trail-flag-${contribution.key}-discontinued`);
+    expect(chip).toHaveTextContent('Discontinued');
+    expect(chip).toHaveAttribute('title', 'Discontinued');
+    expect(chip.getAttribute('title')).not.toMatch(/needs a reason/);
+  });
+
   it('shows a project hot-selling chip alongside the dealer one when both flags are set', () => {
     const cell = cellOf([demand({ qty: '100' })]);
     const contribution = cell.contributions[0];
@@ -4054,6 +4077,29 @@ describe('AC-B1/AC-B11: the Decision column carries the same Verdict trio as the
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Reject SO403340 line 1' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('AC-DT-5 (round 2, PLAN-oi-decision-trail-ui.md): the Decision column carries the same History icon the list view does, for a covered line', () => {
+    const frozen = {
+      revision_no: 1,
+      timely_spo_qty: '0',
+      reserve: [],
+      borrow: [],
+      buy_qty: '43',
+    };
+    renderDialog([demand({ qty: '43', decision: frozen })]);
+    openLines();
+
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+  });
+
+  it('hides it for a bare suggested line', () => {
+    renderDialog([demand()]);
+    openLines();
+
+    expect(
+      screen.queryByRole('button', { name: /decision trail/i }),
     ).not.toBeInTheDocument();
   });
 });

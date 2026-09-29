@@ -7,6 +7,7 @@ import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui';
 import { AnimatePresence, motion } from 'motion/react';
 import { PRESSED_CLASS } from '@/components/ui/primitive-classes';
 import {
+  NOOP_ON_UPDATE,
   surfaceExitTransition,
   surfaceTransition,
   surfaceVariants,
@@ -97,6 +98,7 @@ function DropdownMenuSubContent({
             animate={variants.animate}
             exit={{ ...variants.exit, transition: exitTransition }}
             transition={transition}
+            onUpdate={NOOP_ON_UPDATE}
           >
             {children}
           </motion.div>
@@ -147,6 +149,7 @@ function DropdownMenuContent({
               animate={variants.animate}
               exit={{ ...variants.exit, transition: exitTransition }}
               transition={transition}
+              onUpdate={NOOP_ON_UPDATE}
             >
               {children}
             </motion.div>

@@ -55,6 +55,9 @@ class MirrorAnnotationUpdate(BaseModel):
     #: pasted 120-character name dies in the flush and the user's toast reads
     #: `StringDataRightTruncation`, which tells them nothing they can act on.
     person_label: Optional[str] = Field(None, max_length=100)
+    #: "Also known as": the other names the person goes by, comma separated. Tidied by
+    #: ``sales_agent_service.annotate``; bounded to the column's width like the label.
+    aliases: Optional[str] = Field(None, max_length=255)
     #: What this agent's orders are for. Validated by ``sales_agent_service``, not here:
     #: typing it as a Literal would answer a bad word with a 422 field error instead of
     #: the service's message naming the words the fulfilment policy can weigh.
@@ -105,6 +108,7 @@ class SalesAgentResponse(_MirrorBase):
     sales_agent: str
     description: Optional[str] = None
     person_label: Optional[str] = None
+    aliases: Optional[str] = None
     demand_class: Optional[str] = None
     location_group: Optional[str] = None
     contact_id: Optional[str] = None

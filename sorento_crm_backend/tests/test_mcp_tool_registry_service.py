@@ -7,8 +7,8 @@ from dataclasses import dataclass
 import pytest
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
 from app.models.access import McpTool
+from tests._pg_fixture import blank_session
 
 
 @dataclass(frozen=True)
@@ -25,12 +25,19 @@ class _FakeSpec:
 
 @pytest.fixture
 def db() -> Session:
-    s = SessionLocal()
-    try:
+    # A private scratch schema, not `SessionLocal()` against the shared database
+    # (issue #1241): `sync_catalog`'s "deactivate tools missing from the code
+    # catalog" step is an unfiltered, table-wide UPDATE by design - every stale
+    # row, not just this test's own - so two xdist workers each calling the real
+    # `sync_catalog` against the SAME shared `mcp_tools` (this file and
+    # `tests/chatbot/test_parser_growth_r1_reachability.py`'s real-catalog sync)
+    # raced each other's rows: CI saw `DeadlockDetected`, and locally the same
+    # race silently overwrote a freshly-synced row's `is_active` back to False.
+    # A scratch schema per test removes the shared table entirely instead of
+    # serializing around it - the same fix `test_mcp_catalog_ideation.py`
+    # already uses for this exact function.
+    with blank_session() as s:
         yield s
-    finally:
-        s.rollback()
-        s.close()
 
 
 @pytest.fixture

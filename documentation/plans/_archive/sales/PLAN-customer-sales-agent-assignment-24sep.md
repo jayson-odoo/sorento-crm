@@ -4,6 +4,11 @@ Status: implemented, PR #1177 merged 24 Sep 2026 (e6012f655)
 Domain: sales (customer master, order_management module).
 UAC: `customer-sales-agent-assignment-24sep-acceptance-criteria.md` alongside.
 
+Superseded in part (27 Sep 2026): the 14 Aug 2026 ruling quoted below, that sales agents are not
+users, is replaced by #1280 (owner ruling 26 Sep 2026 23:45 MYT, "yeah correct"). A salesperson
+may now have a user, created by the owner from their WhatsApp contact; see
+`documentation/plans/identity/PLAN-unified-identity-26sep.md` section 6.7.
+
 ## Measured facts (origin/main 319f4226)
 
 - `customers.sales_agent_id` FK to `sales_agents.id` ON DELETE SET NULL already exists (`app/models/order.py:142`). Set only by import and document ingest today; read by the portal debtor dropdown (`price_tag_request_service.py:2408`).
