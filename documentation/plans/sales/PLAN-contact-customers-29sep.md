@@ -1,6 +1,6 @@
 # PLAN: contact <-> customer links, and a sales agent's customers from the agent side
 
-Status: planned, round 1 (29 Sep 2026); full track, no migration. Crew-ask posted on PR #1366, recommendations written in.
+Status: building, round 2 (owner rulings 29 Sep 2026 applied, see "Round 2"); full track, no migration. PR #1366.
 Domain: sales (customer master, sales agents) + user_management (contacts).
 UAC: `contact-customers-29sep-acceptance-criteria.md` alongside.
 Lane: CONTACT-CUSTOMERS. Siblings that build on this: SALES-ASKS-TODO, CHATBOT-CUSTOMER-SCOPE.
@@ -112,7 +112,23 @@ working; both sides write the same column.
 Decisions the user makes: which customer (once per link), primary or not (optional). Nothing
 else is asked; the agent behind a customer is derived, never typed.
 
-## Design (on the crew-ask recommendations; revised if the owner answers otherwise)
+## Round 2 (owner rulings, 29 Sep 2026, relayed by crew on PR #1366)
+
+- Q1 (a): reuse `respond_contact_customers`. Q3 (a): Customers card on the contact Profile tab.
+  Q5 (a): Customers tab on the sales agent record with Assign / Unassign. Q6 (a): reassigning a
+  customer another agent handles is allowed, the picker shows the current agent. Q7 (a): each
+  page's own edit permission.
+- Q2 PENDING: the owner asked what "primary" means; crew is explaining. The Primary marker is
+  held OUT of the UI until the answer (no badge, no Make/Clear primary). The PATCH route and
+  `set_primary` stay built and tested (AC-24) but nothing calls them; if the answer is "no
+  primary", they are removed in the same round.
+- Q4: NO suggestions. The owner links by clicking the Add customer select only: no phone-match
+  rows, no backfill. `propose_customers` stays where it was (dealer kit), unused here; the GET
+  no longer returns `suggested` (D2 amended), the card has no Suggested list (D3 amended),
+  AC-6 and AC-21 are withdrawn.
+- Q8 (b): ADD a read-only list of linked WhatsApp contacts on the customer detail page (D5).
+
+## Design (round 2)
 
 Track: **full, no migration**. No schema change: the link table and the FK exist. No new
 permission slug. Security-reviewer runs (multi-company scoping of the link rows).
@@ -137,12 +153,10 @@ Contact side, in `app/api/v1/user_management/contacts.py` (same file as the othe
 sections), read under `user_management.contacts.view`, write under `.edit`:
 
 - `GET /api/v1/user-management/contacts/{contact_id}/customers` ->
-  `{ "data": [ContactCustomerLink], "suggested": [SuggestedCustomer] }`.
+  `{ "data": [ContactCustomerLink] }` (round 2: no `suggested`, Q4).
   `ContactCustomerLink`: `id` (the link row, what Unlink parks against), `customer_id,
   customer_code, customer_name, is_active, is_primary, source, sales_agent_id,
   sales_agent_code, sales_agent_name, created_at`.
-  `SuggestedCustomer`: `customer_id, customer_code, customer_name, phone_number,
-  sales_agent_code, sales_agent_name` (at most 5, from `propose_customers`).
 - `POST .../customers` body `{ "customer_id": str, "is_primary": bool = false }` -> 201
   `ContactCustomerLink`. Idempotent on the pair (a repeat answers 201 with the same row).
   Unknown customer or a customer outside the caller's scope -> 404 (scope hides it, so the
@@ -184,13 +198,12 @@ Contact side (`app/(protected)/user-management/contacts/[id]/`):
 
 - `components/ContactCustomersSection.tsx`: a Card "Customers" placed directly after the
   Contact Information card on `page.tsx`. Body: rows `code - name` | `Sales agent` (`code -
-  name`, or "No sales agent") | Primary `Badge` or a "Make primary" ghost button | Unlink
-  (row action, `useDeferredRowAction`, `surface: 'inline'`, verb "Unlinking"). Empty state:
-  heading "No customers linked" + hint "Link the customer accounts this contact belongs to".
-  "Add customer": one `SearchableSelect` (clearable, server search through the customers
-  select with `limit=50`, option label `code - name`, sub-label the current agent), adding on
-  pick. "Suggested" list below the rows (only when non-empty): `code - name`, phone, agent,
-  a "Link" button.
+  name`, or "No sales agent") | Unlink (row action, `useDeferredRowAction`, `surface:
+  'inline'`, verb "Unlinking"). Round 2: no Primary badge or Make/Clear primary until Q2 is
+  answered; no Suggested list (Q4). Empty state: heading "No customers linked" + hint "Link
+  the customer accounts this contact belongs to". "Add customer": one `SearchableSelect`
+  (clearable, server search through the customers select with `limit=50`, option label
+  `code - name`, sub-label the current agent), adding on pick.
 - `services/contactCustomersService.ts` (contract at the top of the file), `hooks/
   useContactCustomers.ts` (`useContactCustomers`, `useLinkContactCustomer`,
   `useSetContactCustomerPrimary`; invalidate `['contact-customers', contactId]` + toast).
@@ -224,9 +237,27 @@ No new motion: countdowns use the existing `DeferredCountdown`; nothing else ani
 
 ### D4 Out of scope
 
-Customer detail "WhatsApp contacts" section (Q8, trigger named in the crew-ask); permission
-gating of the customer PUT (#1190); backfill of phone matches (Q4c, refused by default);
-the portal and chatbot readers (sibling lanes).
+Permission gating of the customer PUT (#1190); backfill of phone matches (Q4, refused); the
+portal and chatbot readers (sibling lanes); the Primary marker in the UI (Q2 pending).
+
+### D5 Customer detail: linked WhatsApp contacts (round 2, Q8 b)
+
+- `GET /api/v1/order-management/customers/{customer_id}/linked-contacts` under
+  `order_management.customers.view` -> `{ "data": [{ "id" (link id), "contact_id", "name",
+  "phone_number", "is_primary", "created_at" }] }`, ordered by `created_at`; the customer is
+  read under the caller's scope (404 when hidden or unknown). Read-only: no write route.
+- `order-management/customers/components/CustomerLinkedContactsSection.tsx`, rendered on the
+  customer detail Details tab (`CustomerDetail.tsx`, after the existing cards, before
+  Opportunities). Rows: name (or the phone number when the contact has no name), phone,
+  linked date; the name links to `/user-management/contacts/{contact_id}` (the UI shows the
+  name, never the id). Empty state: heading "No WhatsApp contacts linked" + hint "Link this
+  customer from a contact's Customers card". Service `getCustomerLinkedContacts` in
+  `customerService.ts`, hook `useCustomerLinkedContacts` in `useCustomers.ts`.
+- Security review nits carried into the same round: the unlink handler raises not-found for
+  a link the caller cannot see (the action is marked failed, not committed); parking
+  `contact_customer_link.unlink` or `customer.unassign_sales_agent` checks the record exists
+  under the caller's scope and refuses with 404 otherwise (same shape as the undo refusal in
+  `app/api/v1/system/pending_actions.py`).
 
 ## Tests (tester-first; one line per AC in the UAC)
 

@@ -1,10 +1,11 @@
 # UAC: contact <-> customer links, and a sales agent's customers from the agent side
 
 Plan: `PLAN-contact-customers-29sep.md`. Track: full, no migration.
-Status: draft, round 1 (29 Sep 2026). The eight grill questions (PR #1366, first crew-ask) are
-unanswered; each recommendation is written in as the expected behaviour and marked `(Q<n>)`,
-and changes if the owner rules otherwise. No criterion is deleted on a ruling: it keeps its
-text and gains a "Round 2:" note.
+Status: round 2 (29 Sep 2026). The owner answered the grill (relayed by crew on PR #1366): Q1,
+Q3, Q5, Q6, Q7 as recommended; Q2 pending (Primary marker held out of the UI); Q4 no
+suggestions; Q8 (b) a read-only linked-contacts list on the customer detail. No criterion is
+deleted: a withdrawn or changed one keeps its text and gains a "Round 2:" note; AC-13, AC-34
+and AC-35 are new.
 Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser via agent-browser, `[T]` has a named
 test, `[UX]` measurable design criterion.
 
@@ -19,12 +20,15 @@ Actor B: a sales admin holding `master_data.sales_agents.edit` (read-only with `
 - **J2.** A picks a customer in "Add customer" (searchable by code or name; the option says
   which agent currently handles it). The row appears with that agent. Nothing else is asked.
 - **J3.** When the contact belongs to several accounts, A clicks "Make primary" on one; the
-  badge moves. (Q2)
+  badge moves. (Q2) Round 2: held until the owner answers Q2; not on screen.
 - **J4.** A clicks Unlink on a row: the button becomes a 5s countdown with Cancel; when it
   lapses the row is gone. No dialog.
 - **J5.** Under the rows, "Suggested" lists up to five customers whose phone matches the
   contact's; A clicks Link on one and it becomes a row. Nothing is linked without that click.
-  (Q4)
+  (Q4) Round 2: withdrawn, the owner links by the Add customer select only.
+- **J9.** Round 2 (Q8 b): B, or anyone with customers view, opens Sales > Customers > a
+  customer: the Details tab shows "WhatsApp contacts", the contacts linked to this account,
+  read-only, each opening the contact record.
 - **J6.** B opens Master Data > Sales Agents from the sidebar, then an agent, then the new
   "Customers" tab: the customers this agent handles, searchable and paged.
 - **J7.** B picks a customer in "Assign customer" (the option says its current agent, if any);
@@ -37,7 +41,7 @@ Actor B: a sales admin holding `master_data.sales_agents.edit` (read-only with `
 - AC-1 `[FE][T]` Given a contact with two links, when the Profile tab renders, then the
   "Customers" card sits directly after Contact Information and shows one row per link:
   `code - name`, the agent as `code - name` (or "No sales agent"), and a Primary badge on the
-  primary row. No UUID is rendered.
+  primary row. No UUID is rendered. Round 2: no Primary badge (Q2 pending).
 - AC-2 `[FE][T]` Given a contact with no links, then the card shows the empty state heading
   "No customers linked" and the hint "Link the customer accounts this contact belongs to", and
   the "Add customer" select is still present.
@@ -47,13 +51,15 @@ Actor B: a sales admin holding `master_data.sales_agents.edit` (read-only with `
   the select.
 - AC-4 `[FE][T]` Given a non-primary row, when "Make primary" is clicked, then the set-primary
   mutation is called with `is_primary: true`; given the primary row, the button reads "Clear
-  primary" and sends `false`. (Q2)
+  primary" and sends `false`. (Q2) Round 2: held, the controls are not rendered; the hook and
+  service stay for the answer.
 - AC-5 `[FE][T]` Given a row, when Unlink is clicked, then the row's control becomes the
   deferred countdown (`useDeferredRowAction`, action key `contact_customer_link.unlink`,
   entity id = the link id); no dialog opens and Escape does not cancel.
 - AC-6 `[FE][T]` Given suggestions, then a "Suggested" list shows `code - name`, the phone
   number and the agent, with a Link button per row that calls the link mutation; given no
-  suggestions, the list is absent (not an empty heading). (Q4)
+  suggestions, the list is absent (not an empty heading). (Q4) Round 2: withdrawn (no
+  suggestions at all); the card renders no Suggested list.
 - AC-7 `[FE][T]` Given the sales agent detail, then a fourth line tab "Customers" follows
   Transfers and renders a DataGrid (fixed layout, resizable columns, explicit sizes,
   truncate + title) with Code, Name, Region, Market segment, Status and an Unassign action;
@@ -69,6 +75,12 @@ Actor B: a sales admin holding `master_data.sales_agents.edit` (read-only with `
 - AC-11 `[UX]` Both surfaces are usable and unclipped at 375px and 1280px: the contact rows
   wrap to two lines at 375px, the selects are full width, the grid scrolls horizontally.
   Nothing new animates beyond the existing countdown; reduced motion is honoured by it.
+- AC-13 `[FE][T]` Round 2 (Q8 b): Given a customer with two linked contacts, the customer
+  detail Details tab shows a "WhatsApp contacts" section after the existing cards with one row
+  per link: the contact's name (or its phone number when unnamed) as a link to the contact
+  record, the phone number, the linked date; given none, the heading "No WhatsApp contacts
+  linked" and the hint "Link this customer from a contact's Customers card". Read-only, no
+  button.
 - AC-12 `[FE]` A user without `user_management.contacts.edit` sees the card read-only (no
   select, no Make primary, no Unlink); without `master_data.sales_agents.edit` the tab is
   read-only (no select, no Unassign). (Q7)
@@ -82,6 +94,7 @@ Actor B: a sales admin holding `master_data.sales_agents.edit` (read-only with `
 - AC-21 `[BE][T]` The same GET returns `suggested`: at most 5 phone-matched customers not
   already linked, each `customer_id, customer_code, customer_name, phone_number,
   sales_agent_code, sales_agent_name`; a contact with no phone match returns `[]`. (Q4)
+  Round 2: withdrawn; the GET body has no `suggested` key.
 - AC-22 `[BE][T]` POST `.../customers` with a valid `customer_id` creates the link with
   `company_id` equal to the customer's company (also under a two-company scope), `source
   = "manual"`, `linked_by` = the caller's user id, and answers 201 with the row; a repeat POST
@@ -118,6 +131,15 @@ Actor B: a sales admin holding `master_data.sales_agents.edit` (read-only with `
   sales_agent_code, sales_agent_name` (null when unassigned) alongside the existing fields.
 - AC-32 `[BE][T]` The customer audit row for an assign or unassign records the
   `sales_agent_id` change (the existing `__audit_columns__` path), so the move is traceable.
+- AC-34 `[BE][T]` Round 2 (Q8 b): GET `/order-management/customers/{customer_id}/linked-contacts`
+  returns `data` rows `id, contact_id, name, phone_number, is_primary, created_at` for the
+  links of that customer, ordered by `created_at`; a customer with none returns `data: []`; a
+  customer outside the caller's scope or unknown answers 404.
+- AC-35 `[BE][T]` The route needs `order_management.customers.view` (403 otherwise). Parking
+  `contact_customer_link.unlink` on a link id the caller cannot see, or
+  `customer.unassign_sales_agent` on a customer the caller cannot see, is refused with 404 at
+  park time; executing the unlink handler on a missing link marks the action failed, never
+  committed.
 - AC-33 `[FE]` The Phase 1 mocks are swapped for `apiFetch` calls at the service boundary;
   the contact card and the agent tab show real rows from the throwaway database.
 
