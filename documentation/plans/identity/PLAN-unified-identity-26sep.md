@@ -82,7 +82,7 @@ no backfill, no sync hook, no first sign-in.
 
 This reverses a recorded ruling: `app/models/sales_agent.py:7-10` and `:206-209` carry the
 captain's 14 Aug 2026 ruling that salespeople "shouldn't have user account in our system, or
-optional at least", repeated in `documentation/plans/sales/PLAN-customer-sales-agent-assignment-24sep.md:10`.
+optional at least", repeated in `documentation/plans/_archive/sales/PLAN-customer-sales-agent-assignment-24sep.md:15`.
 Owner ruling 26 Sep 2026 23:45 MYT (Q2): "yeah correct", #1280 supersedes it; S3 corrects the
 docstring and that plan.
 

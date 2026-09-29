@@ -71,7 +71,10 @@ import {
   rowMatchesSearch,
   confirmLinesFor,
   rejectedCoveredLineIdsFor,
+  confirmNoticeLines,
+  failingLineText,
   shiftedDayWindow,
+  soLineLabel,
   unpostableDecidedFor,
   type UnpostableLine,
   type UnpostableReason,
@@ -864,8 +867,8 @@ export function FulfilmentBoardPanel({
         );
         toast.success(
           decision.verdict === 'rejected'
-            ? `Line ${contribution?.line_no ?? ''} rejected · ${toConfirm} to confirm · ${rejected} rejected`
-            : `Line ${contribution?.line_no ?? ''} saved · ${toConfirm} to confirm`,
+            ? `${contribution ? soLineLabel(contribution) : 'Line'} rejected · ${toConfirm} to confirm · ${rejected} rejected`
+            : `${contribution ? soLineLabel(contribution) : 'Line'} saved · ${toConfirm} to confirm`,
         );
       }
       return true;
@@ -1428,9 +1431,28 @@ export function FulfilmentBoardPanel({
       // the promises made, the movements somebody now has to approve (the panel below lists
       // them), and the rows purchasing has been handed.
       const ok = result.results.filter((entry) => entry.ok);
-      const linesConfirmed = orders
-        .filter((order) => ok.some((entry) => entry.pso_id === order.pso_id))
-        .reduce((total, order) => total + order.lines.length, 0);
+      // Named lines the server skipped because nothing was open on them any more, their
+      // stale saved decision cleared (#1362). Posted, but not confirmed.
+      const fulfilled = ok.reduce(
+        (total, entry) => total + (entry.lines_fulfilled_skipped ?? 0),
+        0,
+      );
+      // #1362: lines the recheck held back so the rest of their order confirmed, and Buys
+      // kept over goods that landed for their line. Both are named in the panel below.
+      const heldBack = ok.reduce(
+        (total, entry) => total + (entry.lines_held_back?.length ?? 0),
+        0,
+      );
+      const landedBuys = ok.reduce(
+        (total, entry) => total + (entry.landed_buy_notices?.length ?? 0),
+        0,
+      );
+      const linesConfirmed =
+        orders
+          .filter((order) => ok.some((entry) => entry.pso_id === order.pso_id))
+          .reduce((total, order) => total + order.lines.length, 0) -
+        fulfilled -
+        heldBack;
       const transfers = ok.reduce((total, entry) => total + (entry.transfers_written ?? 0), 0);
       // What was already on a warehouse's list and stayed there (R16). Said only when there
       // IS one: on a first confirmation it is always zero, and a zero in the sentence would
@@ -1448,11 +1470,18 @@ export function FulfilmentBoardPanel({
           (kept > 0 ? `${kept} kept · ` : '') +
           `${inquiries} inquiry row${inquiries === 1 ? '' : 's'}` +
           (withdrawn > 0 ? ` · ${withdrawn} withdrawn` : '') +
-          (leftOutAtConfirm > 0 ? ` · ${leftOutAtConfirm} left out` : '');
+          (fulfilled > 0
+            ? ` · ${fulfilled} line${fulfilled === 1 ? '' : 's'} already fulfilled, decision cleared`
+            : '') +
+          (leftOutAtConfirm > 0 ? ` · ${leftOutAtConfirm} left out` : '') +
+          (heldBack > 0 ? ` · ${heldBack} held back` : '') +
+          (landedBuys > 0
+            ? ` · ${landedBuys} Buy${landedBuys === 1 ? '' : 's'} kept over landed goods`
+            : '');
         // S4 (fix round 2, reviewer): a press that left something out is not an unqualified
         // success, the owner's own words on SO420745 were "confirming silently is dangerous" -
         // so the toast that SAYS so reads amber, not the plain green every other Confirm gets.
-        if (leftOutAtConfirm > 0) {
+        if (leftOutAtConfirm > 0 || heldBack > 0 || landedBuys > 0) {
           toast.warning(summary);
         } else {
           toast.success(summary);
@@ -2067,6 +2096,9 @@ export function FulfilmentBoardPanel({
               // A refusal names the LINES it refused, not just the order: the fix is on one
               // row, and "SO404352: refused" sends a planner to read thirty of them.
               const failing = result.failing_lines ?? [];
+              // #1362: a confirmed order can still name lines - held back, or a Buy kept
+              // over landed goods - and each one is something to act on.
+              const notices = result.ok ? confirmNoticeLines(result) : [];
               return (
                 <li key={`${result.pso_id}-${result.so_number ?? ''}`} className="space-y-0.5">
                   <span
@@ -2095,9 +2127,22 @@ export function FulfilmentBoardPanel({
                             result.heldBack ? 'text-muted-foreground' : 'text-destructive'
                           }`}
                         >
-                          {line.line_no
-                            ? `Line ${line.line_no}${line.item_code ? `, ${line.item_code}` : ''}: ${line.reason}`
-                            : line.reason}
+                          {failingLineText(line)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {notices.length > 0 && (
+                    <ul
+                      data-testid="board-confirm-notices"
+                      className="space-y-0.5 rounded-md bg-amber-50 px-2 py-1.5 dark:bg-amber-950/30"
+                    >
+                      {notices.map((text, index) => (
+                        <li
+                          key={`${result.pso_id}-notice-${index}`}
+                          className="text-sm break-words text-amber-800 dark:text-amber-300"
+                        >
+                          {text}
                         </li>
                       ))}
                     </ul>

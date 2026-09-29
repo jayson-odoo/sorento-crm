@@ -772,17 +772,9 @@ export function decideComposition(
   // suggested always took.
 
   if (way === 'buy') {
-    // R10/Q16/AC-51: a Buy over stock the server has ALREADY landed for this line (an own
-    // arrival) is refused at Confirm (`planning_change_buy_over_own_arrival`); skipping it
-    // here is kinder than a 409 there. Read off the same flag the board's "Received" chip
-    // keys off (`BoardReserveComponent.source === 'own_arrival'`), never re-derived.
-    const landed = (contribution.proposed?.components ?? contribution.sources).some(
-      (source) =>
-        source.kind === 'reserve' &&
-        (source as { source?: string | null }).source === 'own_arrival' &&
-        toMinor(source.qty) > 0,
-    );
-    if (landed) return { skip: 'stock already landed for it' };
+    // #1362 (owner, 29 Sep 2026): a Buy over stock that already landed for this line is the
+    // planner's recorded intent. Confirm keeps it as decided with a notice, and purchasing
+    // adjusts the linkage, so it is no longer skipped here (it was AC-51's skip).
     return {
       reserve: [],
       borrow: [],

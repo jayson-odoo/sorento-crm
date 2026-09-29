@@ -1,6 +1,6 @@
 # PLAN: assign a sales agent to a customer from the CRM (sales module slice 1)
 
-Status: small fix track, PR open (#1177). Issue #1170 slice 1; unblocks #1168.
+Status: implemented, PR #1177 merged 24 Sep 2026 (e6012f655)
 Domain: sales (customer master, order_management module).
 UAC: `customer-sales-agent-assignment-24sep-acceptance-criteria.md` alongside.
 

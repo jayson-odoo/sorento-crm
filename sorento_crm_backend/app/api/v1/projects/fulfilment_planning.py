@@ -503,6 +503,10 @@ def confirm_all(
                 session, order, current_user
             ),
             write=write_one,
+            # #1362 hold-back: an order answering a planning-change batch is applied whole.
+            can_hold_back=lambda entry: not (
+                entry.batch_id or (None if any_per_order else payload.batch_id)
+            ),
         )
         return {"results": results}
     except Exception as exc:
