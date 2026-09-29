@@ -26,6 +26,7 @@ import pytest
 
 from app.services.chatbot_parser_prompt import (
     ESCALATION_CONFIRMATION_ADDENDUM,
+    SELF_REFERENCE_ADDENDUM,
     GROWTH_R1_ADDENDUM,
     KNOWN_BRANDS_ADDENDUM,
     LAST_COST_ADDENDUM,
@@ -250,6 +251,8 @@ def _without_growth_r1_addendum(text: str) -> str:
         text = text[: -len(PO_SPO_WAREHOUSE_ADDENDUM)]
     if text.endswith(ESCALATION_CONFIRMATION_ADDENDUM):
         text = text[: -len(ESCALATION_CONFIRMATION_ADDENDUM)]
+    if text.endswith(SELF_REFERENCE_ADDENDUM):
+        text = text[: -len(SELF_REFERENCE_ADDENDUM)]
     if text.endswith(TOP_SELLING_ADDENDUM):
         text = text[: -len(TOP_SELLING_ADDENDUM)]
     if text.endswith(KNOWN_BRANDS_ADDENDUM):

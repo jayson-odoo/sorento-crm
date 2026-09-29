@@ -1,0 +1,200 @@
+# Console cases for the chatbot customer scope journey (CHATBOT-CUSTOMER-SCOPE, AC-CS-50).
+#
+# `documentation/plans/chatbot/PLAN-chatbot-customer-scope-29sep.md` and
+# `chatbot-customer-scope-29sep-acceptance-criteria.md`, written under the grill's recommended
+# options: a contact linked to customers (`respond_contact_customers`) with no ACTIVE office
+# access type is "scoped" and only ever sees its own customers; "my" / "me" / "our" is the
+# parser's `self_reference: true` and means those customers. A word naming anyone else gets
+# the one-line refusal, `Sorry, that isn't under your account. I can only check on <names>.`,
+# with no picker, no escalate offer and no lookup of the other customer.
+#
+# Every expectation is STRUCTURAL (the refusal sentence, the absence of a picker, the
+# parser's `self_reference`), never a money figure, so the file holds on any prod copy.
+# `expect.parser` grades the LIVE parser, the half no pytest can reach.
+#
+# NOT collected by pytest, and it cannot run in the cloud sandbox (no LLM key). Run it on the
+# lane stack with the REAL parser, and again after deploy:
+#
+#   cd sorento_crm_backend
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-29-customer-scope.yaml \
+#       --base-url http://127.0.0.1:<lane backend port> --sleep-seconds 8 \
+#       --prompt-version <id of the chatbot_semantic_parser version migration
+#                         chatbot_self_reference_vocab published>
+#
+# `--prompt-version` because the migration publishes the new prompt UNLABELLED: without it the
+# run grades the prompt production still points at, which has never heard of `self_reference`.
+# Export EXTERNAL_API_KEY from the backend .env first.
+#
+# PREREQUISITES (the owner seeds these on the stack; each contact needs one prior turn so a
+# `chatbot.turns` envelope exists to borrow, see the script's own docstring):
+# - 437264483: the default office staff contact (an active "Sorento Office" type), holding the
+#   `sales_orders.outstanding` reveal key.
+# - 990000001: a dealer contact with NO link and no office type, same reveal key.
+# - 990000002: a dealer contact linked to exactly ONE customer (call it OWN). The other-customer
+#   cases below name HANLIM and its code 300-H070: pick any customer that is NOT OWN and
+#   change the words if OWN happens to be a HANLIM.
+# - 990000003: a dealer contact linked to exactly TWO customers.
+# - REPLACE-WITH-A-FOREIGN-DO: a real delivery order number of a customer that 990000002 is
+#   NOT linked to.
+
+contact: "437264483"
+
+cases:
+  # ---- a scoped contact naming someone else is refused, before any lookup ----
+  - name: Leak 1 - other customer by name is refused with one line
+    cold: true
+    contact: "990000002"
+    turns:
+      - text: "outstanding for HANLIM"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Sorry, that isn't under your account. I can only check on"]
+          reply_not_contains: ["Which customer", "HANLIM TRADING", "HANLIM HARDWARE", "escalate", "Outstanding for which document"]
+          no_uuid: true
+
+  - name: Leak 2 - other customer by code is refused the same way
+    cold: true
+    contact: "990000002"
+    turns:
+      - text: "outstanding for 300-H070"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Sorry, that isn't under your account. I can only check on"]
+          reply_not_contains: ["Which customer", "HANLIM", "escalate"]
+          no_uuid: true
+
+  - name: Leak 3 - another customer's DO number is a plain miss, never the refusal
+    cold: true
+    contact: "990000002"
+    turns:
+      - text: "status of DO REPLACE-WITH-A-FOREIGN-DO"
+        expect:
+          branch_kind: business_query
+          reply_not_contains: ["Sorry, that isn't under your account", "HANLIM", "escalate"]
+          no_uuid: true
+
+  - name: Leak 4 - a bare order ask is about the contact's own account only
+    cold: true
+    contact: "990000002"
+    turns:
+      - text: "list outstanding DO"
+        expect:
+          branch_kind: business_query
+          reply_not_contains: ["Which customer", "Which product", "Customer: all"]
+          no_uuid: true
+
+  - name: Leak 5 - who are your customers does not list the book
+    cold: true
+    contact: "990000002"
+    turns:
+      - text: "who are your customers"
+        expect:
+          branch_kind: business_query
+          reply_not_contains: ["HANLIM", "escalate"]
+          no_uuid: true
+
+  # ---- "my" / "me" / "our" means the contact's own customers ----
+  - name: My 1 - one link, "what's my outstanding" runs on the link with no question
+    cold: true
+    contact: "990000002"
+    turns:
+      - text: "what's my outstanding"
+        expect:
+          branch_kind: business_query
+          parser: {self_reference: true}
+          reply_not_contains: ["Which customer", "Which product", "Customer: all", "Sorry, that isn't under your account"]
+          no_uuid: true
+
+  - name: My 2 - two links, "my outstanding" uses both and shows no picker
+    cold: true
+    contact: "990000003"
+    turns:
+      - text: "what's my outstanding"
+        expect:
+          branch_kind: business_query
+          parser: {self_reference: true}
+          reply_not_contains: ["Which customer", "Sorry, that isn't under your account"]
+          no_uuid: true
+
+  - name: My 3 - no link, "my" is ignored and today's behaviour holds
+    cold: true
+    contact: "990000001"
+    turns:
+      - text: "what's my outstanding"
+        expect:
+          branch_kind: business_query
+          parser: {self_reference: true}
+          reply_not_contains: ["Sorry, that isn't under your account"]
+          no_uuid: true
+
+  - name: My 4 - "where is my shipment" stays the ETA rule and is self reference
+    cold: true
+    contact: "990000002"
+    turns:
+      - text: "where is my shipment"
+        expect:
+          parser: {self_reference: true}
+          reply_not_contains: ["Sorry, that isn't under your account"]
+
+  - name: My 5 - "we" as the asker's own business
+    cold: true
+    contact: "990000002"
+    turns:
+      - text: "what did we order last month"
+        expect:
+          branch_kind: business_query
+          parser: {self_reference: true}
+          reply_not_contains: ["Which customer", "Sorry, that isn't under your account"]
+          no_uuid: true
+
+  - name: My 6 - Malay and Chinese first person
+    cold: true
+    contact: "990000002"
+    turns:
+      - text: "outstanding saya punya"
+        expect:
+          parser: {self_reference: true}
+          reply_not_contains: ["Which customer", "Sorry, that isn't under your account"]
+      - text: "我的未交货"
+        expect:
+          parser: {self_reference: true}
+          reply_not_contains: ["Which customer", "Sorry, that isn't under your account"]
+
+  - name: My 7 - "my" plus someone else's name is refused, not answered
+    cold: true
+    contact: "990000002"
+    turns:
+      - text: "my outstanding for HANLIM"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Sorry, that isn't under your account. I can only check on"]
+          reply_not_contains: ["Which customer", "HANLIM TRADING", "escalate"]
+
+  # ---- the company is not the asker ----
+  - name: Company 1 - a question about Sorento is not self reference
+    cold: true
+    contact: "990000002"
+    turns:
+      - text: "do you deliver to Penang"
+        expect:
+          parser: {self_reference: false}
+
+  # ---- staff and unlinked contacts notice nothing ----
+  - name: Staff 1 - an office contact naming another customer is answered as before
+    cold: true
+    turns:
+      - text: "outstanding for HANLIM"
+        expect:
+          branch_kind: business_query
+          parser: {self_reference: false}
+          reply_not_contains: ["Sorry, that isn't under your account"]
+
+  - name: Unlinked 1 - a contact nobody linked names a customer as before
+    cold: true
+    contact: "990000001"
+    turns:
+      - text: "outstanding for HANLIM"
+        expect:
+          branch_kind: business_query
+          reply_not_contains: ["Sorry, that isn't under your account"]
