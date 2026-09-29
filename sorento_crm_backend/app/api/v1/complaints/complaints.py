@@ -217,6 +217,26 @@ def _csv_ids(raw: Optional[str]) -> Optional[list[str]]:
     return ids or None
 
 
+def _scoped_customer_names(db: Session, contact_id: Optional[str], space_id: Optional[str]) -> Optional[list[str]]:
+    """The linked customers' names a customer-scoped contact's complaints are limited to
+    (PLAN-chatbot-customer-scope-29sep.md D5, AC-CS-47), or None when the request is not
+    scoped (no contact identity, staff, or an unlinked contact). Complaints carry a customer
+    NAME and no customer id, so the filter is by name. NOT the complaint's own `contact_id`
+    filter (`ComplaintService.list_complaints(contact_id=...)`), which this never sets."""
+    from app.api.v1.order_management._contact_scope import require_contact_identity_pair
+    from app.services import contact_customer_scope as scope_mod
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    require_contact_identity_pair(contact_id, space_id)
+    if not (contact_id and space_id):
+        return None
+    resolved = resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
+    if not resolved:
+        return None
+    scope = scope_mod.contact_customer_scope(db, str(resolved))
+    return [name for name in scope.names if name] if scope.enforced else None
+
+
 @router.get("/", response_model=ListResponse[ComplaintResponse])
 async def get_complaints(
     page: int = Query(1, ge=1),
@@ -232,11 +252,23 @@ async def get_complaints(
     ),
     sort: Optional[str] = Query("complaint_date"),
     dir: Optional[str] = Query("asc"),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "Respond.io contact id, both-or-neither with space_id (one alone is 422). A contact "
+            "linked to customers and holding no office access type sees only the complaints "
+            "of those customers."
+        ),
+    ),
+    space_id: Optional[str] = Query(
+        None, description="Respond.io workspace id, required together with contact_id."
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get complaints with pagination, search, assignee/status/root-cause/resolution filters, and sorting."""
     try:
+        customer_names = _scoped_customer_names(db, contact_id, space_id)
         service = ComplaintService(db)
         result = service.list_complaints(
             page=page,
@@ -251,6 +283,7 @@ async def get_complaints(
             viewer_user_id=(current_user or {}).get("id"),
             root_cause_ids=_csv_ids(root_cause_ids),
             resolution_ids=_csv_ids(resolution_ids),
+            customer_names=customer_names,
         )
         return result
     except HTTPException:

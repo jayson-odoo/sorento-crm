@@ -419,6 +419,7 @@ class ComplaintService:
         space_id: Optional[str] = None,
         root_cause_ids: Optional[List[str]] = None,
         resolution_ids: Optional[List[str]] = None,
+        customer_names: Optional[List[str]] = None,
     ):
         """Build the filtered + sorted complaints query shared by ``list_complaints``
         and ``neighbours`` so the two can never drift.
@@ -477,6 +478,13 @@ class ComplaintService:
         res_ids = [str(i).strip() for i in (resolution_ids or []) if str(i).strip()]
         if res_ids:
             q = q.filter(Complaint.resolution_id.in_(res_ids))
+        # A customer-scoped contact (PLAN-chatbot-customer-scope-29sep.md D5, AC-CS-47):
+        # complaints carry the customer's NAME and no id, so the rows are those whose trimmed,
+        # lower-cased name is one of the linked customers'. `None` = not scoped; an empty
+        # list matches nothing.
+        if customer_names is not None:
+            wanted = [" ".join(str(n).split()).lower() for n in customer_names if str(n).strip()]
+            q = q.filter(func.lower(func.btrim(Complaint.customer_name)).in_(wanted))
 
         sort_map = {
             "complaint_date": Complaint.complaint_date,
@@ -698,6 +706,7 @@ class ComplaintService:
         viewer_user_id: Optional[str] = None,
         root_cause_ids: Optional[List[str]] = None,
         resolution_ids: Optional[List[str]] = None,
+        customer_names: Optional[List[str]] = None,
     ):
         """List complaints. assigned_to filters by respond_user_id (assignee). status filters by complaint status.
 
@@ -715,6 +724,7 @@ class ComplaintService:
             space_id=space_id,
             root_cause_ids=root_cause_ids,
             resolution_ids=resolution_ids,
+            customer_names=customer_names,
         )
 
         from sqlalchemy.orm import joinedload
