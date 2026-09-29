@@ -666,7 +666,12 @@ export function PortalLanding({ slug }: { slug?: string }) {
           {currentTab === 'sales_opportunity' ? <MyTargetPanel slug={slug} /> : null}
 
           {currentTab === 'customer_asks' ? (
-            <CustomerAsksList search={debouncedSearch} contactId={contact?.contact_id} />
+            <CustomerAsksList
+              search={debouncedSearch}
+              contactId={contact?.contact_id}
+              view={view}
+              onViewChange={setView}
+            />
           ) : (
           <SubmissionList
             kind={currentTab}

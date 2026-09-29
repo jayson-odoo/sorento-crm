@@ -33,6 +33,8 @@ export interface AskTodoGridProps {
   payload: AskTodoPayload;
   sort: LandingSort;
   showAgent: boolean;
+  /** The CRM only: who cleared each ask. */
+  showDoneBy?: boolean;
   /** `sales.customer_asks.view::todo` on the CRM; null on the portal (no user row to key on). */
   listingKey: string | null;
   onOpen: (ask: StockAsk) => void;
@@ -83,6 +85,7 @@ export function AskTodoGrid({
   payload,
   sort,
   showAgent,
+  showDoneBy = false,
   listingKey,
   onOpen,
   onDone,
@@ -117,25 +120,6 @@ export function AskTodoGrid({
         size: 170,
         cell: ({ row }) => text(formatDateTimeInMalaysia(row.original.ask.created_at)),
       },
-      {
-        id: 'customer_name',
-        header: header('customer_name', 'Customer'),
-        size: 180,
-        cell: ({ row }) => text(row.original.ask.customer_name),
-      },
-      { id: 'contact_name', header: 'Contact', size: 130, cell: ({ row }) => text(row.original.ask.contact_name) },
-      {
-        id: 'asked',
-        header: 'Asked',
-        size: 130,
-        cell: ({ row }) => text(askProductText(row.original.ask)),
-      },
-      {
-        id: 'answer',
-        header: header('answer', 'Answered'),
-        size: 300,
-        cell: ({ row }) => text(askAnswerText(row.original.ask)),
-      },
       ...(showAgent
         ? [
             {
@@ -147,11 +131,34 @@ export function AskTodoGrid({
           ]
         : []),
       {
-        id: 'done_by',
-        header: 'Done by',
-        size: 220,
-        cell: ({ row }) => <AskDoneByCell ask={row.original.ask} />,
+        id: 'customer_name',
+        header: header('customer_name', 'Customer'),
+        size: 180,
+        cell: ({ row }) => text(row.original.ask.customer_name),
       },
+      { id: 'contact_name', header: 'Contact', size: 130, cell: ({ row }) => text(row.original.ask.contact_name) },
+      {
+        id: 'asked',
+        header: header('title', 'Asked'),
+        size: 130,
+        cell: ({ row }) => text(askProductText(row.original.ask)),
+      },
+      {
+        id: 'answer',
+        header: header('answer', 'Answered'),
+        size: 300,
+        cell: ({ row }) => text(askAnswerText(row.original.ask)),
+      },
+      ...(showDoneBy
+        ? [
+            {
+              id: 'done_by',
+              header: 'Done by',
+              size: 220,
+              cell: ({ row }) => <AskDoneByCell ask={row.original.ask} />,
+            } satisfies ColumnDef<GridRow>,
+          ]
+        : []),
       {
         id: 'actions',
         header: '',
@@ -171,7 +178,7 @@ export function AskTodoGrid({
         },
       },
     ];
-  }, [showAgent, sort, onSortChange, pendingAskId, onDone, onReopen]);
+  }, [showAgent, showDoneBy, sort, onSortChange, pendingAskId, onDone, onReopen]);
 
   const table = useReactTable({
     data: rows,

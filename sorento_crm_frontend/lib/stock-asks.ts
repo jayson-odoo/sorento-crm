@@ -11,6 +11,8 @@ export interface StockAsk {
   id: string;
   customer_name: string | null;
   contact_name: string | null;
+  /** The contact's phone number, for the opened card's header. */
+  contact_phone?: string | null;
   product_code: string;
   product_name: string | null;
   quantity: number;

@@ -210,6 +210,8 @@ describe('MyCustomerAsksClient (AC-ST209)', () => {
     fireEvent.click(screen.getByText('Customer mine'));
     const dialog = await screen.findByRole('dialog');
     await waitFor(() => expect(getAskConversation).toHaveBeenCalledWith('mine', { wholeDay: false }));
+    expect(within(dialog).getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Reopen' })).toBeNull(); // an open ask
     expect(await within(dialog).findByText('Boss, ada stock?')).toBeInTheDocument();
     expect(within(dialog).getByText('This ask')).toBeInTheDocument();
     expect(within(dialog).getByText(/SEAN I/)).toBeInTheDocument();
@@ -243,6 +245,20 @@ describe('MyCustomerAsksClient (AC-ST209)', () => {
     await waitFor(() => expect(getCustomerAsksTodo).toHaveBeenCalledTimes(2));
     expect(toast.success).toHaveBeenCalled();
     expect(getAskConversation).not.toHaveBeenCalled();
+  });
+
+  it('a note-only save does not refetch the agents list', async () => {
+    render(<MyCustomerAsksClient />);
+    await screen.findByText('Customer mine');
+    await waitFor(() => expect(listAskAgents).toHaveBeenCalledTimes(1));
+    showCards();
+    fireEvent.click(screen.getByText('Customer mine'));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(await within(dialog).findByLabelText('Note'), { target: { value: 'Called' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save note' }));
+    await waitFor(() => expect(updateSalesAsk).toHaveBeenCalledWith('mine', { note: 'Called' }));
+    await waitFor(() => expect(getCustomerAsksTodo).toHaveBeenCalledTimes(2)); // the to-do refetches
+    expect(listAskAgents).toHaveBeenCalledTimes(1); // the counts cannot have moved
   });
 
   it('Reopen goes through updateSalesAsk', async () => {
@@ -318,6 +334,17 @@ describe('MyCustomerAsksClient Agent select (AC-ST210)', () => {
     await waitFor(() => expect(getCustomerAsksTodo).toHaveBeenLastCalledWith('agent-b'));
     fireEvent.change(select, { target: { value: '' } });
     await waitFor(() => expect(getCustomerAsksTodo).toHaveBeenLastCalledWith(undefined));
+  });
+
+  it('a single picked agent renders no Agent column: only All agents does', async () => {
+    render(<MyCustomerAsksClient />);
+    const select = await screen.findByLabelText('Agent');
+    await screen.findByRole('option', { name: /WT I/ });
+    fireEvent.change(select, { target: { value: 'agent-b' } });
+    await waitFor(() => expect(getCustomerAsksTodo).toHaveBeenLastCalledWith('agent-b'));
+    await screen.findByText('Customer mine');
+    showList();
+    expect(screen.getAllByRole('columnheader').map((h) => (h.textContent ?? '').trim())).not.toContain('Agent');
   });
 
   it('All agents fetches agent_id=all and names the agent on each row', async () => {

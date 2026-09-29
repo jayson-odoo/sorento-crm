@@ -8,9 +8,9 @@ import { NotASalesAgentError, getCustomerAsksTodo, updateCustomerAsk } from '../
 import type { StockAskPatch } from '@/lib/stock-asks';
 
 /**
- * The portal's to-do state. The portal has no QueryClient (it runs on a portal token, outside
- * the CRM session), so this is plain state over the service: load once, refetch quietly after
- * every Done / Reopen / Note so the row moves without a spinner.
+ * The portal's to-do state: plain state over the service (the portal runs on a portal token,
+ * not the CRM session): load once, refetch quietly after every Done / Reopen / Note so the row
+ * moves without a spinner.
  */
 export function useCustomerAsksTodo() {
   const [payload, setPayload] = useState<AskTodoPayload | null>(null);

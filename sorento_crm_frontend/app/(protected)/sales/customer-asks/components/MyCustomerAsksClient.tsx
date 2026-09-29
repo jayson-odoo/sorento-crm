@@ -144,7 +144,9 @@ export function MyCustomerAsksClient() {
             }}
             onDone={done}
             onReopen={reopen}
-            showAgent={Boolean(agentId)}
+            showAgent={agentId === ALL_AGENTS}
+            showDoneBy
+            filtered={Object.keys(filters).length > 0}
             pendingAskId={pendingAskId}
             listingKey={SORT_LISTING_KEY}
           />
@@ -164,6 +166,7 @@ export function MyCustomerAsksClient() {
               conversation={conversation.data}
               loading={conversation.isLoading}
               showOpenInConversations
+              agentCode={current.agent_code ?? todo.data?.agent?.code ?? null}
               onWholeDay={() => setWholeDay(true)}
               onNote={(askId, note) => save.mutateAsync({ askId, patch: { note } })}
               onDone={(askId) => {

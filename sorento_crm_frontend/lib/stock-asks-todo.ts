@@ -122,6 +122,8 @@ export function askToSummary(ask: StockAsk): AskSummary {
  */
 export const ASK_LANDING_FIELDS: LandingField[] = [
   { key: 'customer_name', label: 'Customer', type: 'text' },
+  // Keyed `title` (the `CODE x Q` line of the summary), so Product filters and sorts by it.
+  { key: 'title', label: 'Product', type: 'text' },
   { key: 'answer', label: 'Answer', type: 'text' },
   { key: 'created_at', label: 'Created', type: 'date' },
   { key: 'status', label: 'State', type: 'status' },
@@ -172,19 +174,9 @@ export function filterTodoPayload(
 
 // ---- grouping ----------------------------------------------------------------------------
 
-const DAY_MS = 86_400_000;
-
 /** Backend datetimes are naive UTC; treat a string with no zone as UTC. */
 export function utcMs(value: string): number {
   return Date.parse(/(Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`);
-}
-
-/** Whole Malaysia days between the ask's day and today (1 = yesterday). 0 for today. */
-export function daysBeforeToday(createdAt: string, todayStart: string): number {
-  const start = utcMs(todayStart);
-  const created = utcMs(createdAt);
-  if (created >= start) return 0;
-  return Math.ceil((start - created) / DAY_MS);
 }
 
 function ordered(asks: StockAsk[], sort: LandingSort): StockAsk[] {

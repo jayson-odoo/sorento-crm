@@ -59,7 +59,23 @@ vi.mock('../lib/customer-asks-service', async () => {
   };
 });
 
-import { CustomerAsksList } from './CustomerAsksList';
+import { CustomerAsksList as AsksBody } from './CustomerAsksList';
+
+/**
+ * The asks body takes `view` / `onViewChange` from the landing (it owns the toggle state, like
+ * every other kind) and stores nothing itself. This harness plays the landing.
+ */
+const onViewChangeSpy = vi.fn();
+function CustomerAsksList(props: { search: string; contactId?: string | null; initialView?: 'list' | 'board' }) {
+  const [view, setView] = React.useState<'list' | 'board'>(props.initialView ?? 'board');
+  return (
+    <AsksBody
+      search={props.search}
+      contactId={props.contactId}
+      {...({ view, onViewChange: (m: 'list' | 'board') => { onViewChangeSpy(m); setView(m); } } as object)}
+    />
+  );
+}
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { NotASalesAgentError } from '../lib/customer-asks-service';
 
@@ -126,6 +142,7 @@ const cardOf = (text: string) => screen.getByText(text).closest('li, article, [t
 
 beforeEach(() => {
   vi.clearAllMocks();
+  onViewChangeSpy.mockClear();
   gridProps.length = 0;
   window.localStorage.clear();
   getAskConversation.mockResolvedValue(CONVERSATION);
@@ -165,6 +182,16 @@ describe('CustomerAsksList (portal to-do body)', () => {
     expect(screen.queryByRole('link', { name: /^New/ })).toBeNull();
   });
 
+  it('takes the view from the landing props and stores nothing itself', async () => {
+    render(<CustomerAsksList search="" initialView="list" />);
+    await screen.findByText('Hock Lee Trading');
+    expect(screen.getAllByRole('columnheader').length).toBeGreaterThan(0); // list from the prop, no toggle click
+    fireEvent.click(screen.getByRole('radio', { name: 'Board view' }));
+    expect(onViewChangeSpy).toHaveBeenCalledWith('board');
+    expect(screen.queryAllByRole('columnheader')).toHaveLength(0);
+    expect(Object.keys(window.localStorage).filter((k) => k.startsWith('icp:list-board-view:'))).toEqual([]);
+  });
+
   // AC-ST308
   it('keeps the toolbar when nothing is waiting', async () => {
     getCustomerAsksTodo.mockResolvedValue(payload({ open: [] }));
@@ -181,7 +208,7 @@ describe('CustomerAsksList (portal to-do body)', () => {
     showList();
     const headers = screen.getAllByRole('columnheader').map((h) => (h.textContent ?? '').trim());
     expect(headers.slice(0, 5)).toEqual(['Asked at', 'Customer', 'Contact', 'Asked', 'Answered']);
-    expect(headers.at(-1)).toBe('');
+    expect(headers).toEqual(['Asked at', 'Customer', 'Contact', 'Asked', 'Answered', '']); // no Done by, no Agent
     expect(gridProps.length).toBeGreaterThan(0);
     expect(gridProps.every((g) => g.listingKey === null)).toBe(true);
     const row = screen.getByText('Hock Lee Trading').closest('tr') as HTMLElement;
@@ -221,6 +248,8 @@ describe('CustomerAsksList (portal to-do body)', () => {
     expect(within(dialog).getByText('This ask')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /Jump to message/ })).toBeInTheDocument();
     expect(within(dialog).queryByRole('link', { name: 'Open in Conversations' })).toBeNull(); // CRM only
+    expect(within(dialog).getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Reopen' })).toBeNull(); // an open ask
   });
 
   it('Show the whole day refetches with wholeDay true', async () => {

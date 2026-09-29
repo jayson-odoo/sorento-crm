@@ -28,6 +28,10 @@ export interface AskTodoListProps {
   onReopen: (askId: string) => void;
   /** The CRM manager view: an Agent column in the list. */
   showAgent?: boolean;
+  /** The CRM only: a Done by column in the list. */
+  showDoneBy?: boolean;
+  /** A filter or search narrowed the rows: an empty result reads "No asks match". */
+  filtered?: boolean;
   /** The ask whose Done / Reopen PATCH is in flight: its button is disabled meanwhile. */
   pendingAskId?: string | null;
   /** `sales.customer_asks.view::todo` on the CRM, null on the portal. */
@@ -51,6 +55,8 @@ export function AskTodoList({
   onDone,
   onReopen,
   showAgent = false,
+  showDoneBy = false,
+  filtered = false,
   pendingAskId = null,
   listingKey = null,
 }: AskTodoListProps) {
@@ -81,8 +87,14 @@ export function AskTodoList({
     counts.open === 0 ? (
       <div className="space-y-2 rounded-lg border px-6 py-8 text-center">
         <MessageSquareText className="mx-auto size-8 text-muted-foreground" />
-        <p className="font-medium">Nothing waiting</p>
-        <p className="text-sm text-muted-foreground">Asks your customers make on WhatsApp land here.</p>
+        {filtered ? (
+          <p className="font-medium">No asks match</p>
+        ) : (
+          <>
+            <p className="font-medium">Nothing waiting</p>
+            <p className="text-sm text-muted-foreground">Asks your customers make on WhatsApp land here.</p>
+          </>
+        )}
       </div>
     ) : null;
   const truncated = payload.truncated ? (
@@ -99,6 +111,7 @@ export function AskTodoList({
             payload={payload}
             sort={sort}
             showAgent={showAgent}
+            showDoneBy={showDoneBy}
             listingKey={listingKey}
             onOpen={onOpen}
             onDone={onDone}
@@ -131,6 +144,7 @@ export function AskTodoList({
                     <AskCard
                       ask={ask}
                       pending={pendingAskId === ask.id}
+                      showAgent={showAgent}
                       onOpen={onOpen}
                       onDone={onDone}
                       onReopen={onReopen}
@@ -156,6 +170,7 @@ export function AskTodoList({
                 <AskCard
                   ask={ask}
                   pending={pendingAskId === ask.id}
+                  showAgent={showAgent}
                   onOpen={onOpen}
                   onDone={onDone}
                   onReopen={onReopen}

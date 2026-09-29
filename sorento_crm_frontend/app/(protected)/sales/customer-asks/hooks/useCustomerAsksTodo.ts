@@ -29,7 +29,8 @@ export function useAskDoneMutation() {
     mutationFn: ({ askId, patch }: { askId: string; patch: StockAskPatch }) => updateSalesAsk(askId, patch),
     onSuccess: (_ask, { patch }) => {
       queryClient.invalidateQueries({ queryKey: [TODO_KEY] });
-      queryClient.invalidateQueries({ queryKey: [AGENTS_KEY] });
+      // The counts only move with a state change; a note cannot.
+      if (patch.state) queryClient.invalidateQueries({ queryKey: [AGENTS_KEY] });
       queryClient.invalidateQueries({ queryKey: ['customer-asks'] });
       toast.success(
         patch.state === 'done' ? 'Marked done' : patch.state === 'open' ? 'Reopened' : 'Note saved',

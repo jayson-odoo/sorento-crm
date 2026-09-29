@@ -13,6 +13,7 @@ import {
   utcMs,
   type AskConversation,
 } from '@/lib/stock-asks-todo';
+import { useReducedMotion } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
 /** Where the CRM's chat history for one contact lives. */
@@ -24,6 +25,8 @@ export interface AskConversationPanelProps {
   loading: boolean;
   /** CRM only: the link to that contact's chat history. */
   showOpenInConversations: boolean;
+  /** CRM only: the agent's code, on the header line. */
+  agentCode?: string | null;
   onWholeDay: () => void;
   /** Saves the note; a rejection is the caller's to report, "Saved" shows only after it resolves. */
   onNote: (askId: string, note: string) => Promise<unknown> | void;
@@ -43,6 +46,7 @@ export function AskConversationPanel({
   conversation,
   loading,
   showOpenInConversations,
+  agentCode,
   onWholeDay,
   onNote,
   onDone,
@@ -53,6 +57,7 @@ export function AskConversationPanel({
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState(false);
+  const reduced = useReducedMotion();
   const taggedRef = useRef<HTMLDivElement | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
@@ -63,8 +68,9 @@ export function AskConversationPanel({
   const messages = conversation?.messages ?? [];
   const askMessageId = conversation?.ask_message_id ?? null;
 
-  const jump = () => {
-    taggedRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  // A keyboard click (detail 0) or reduced motion jumps at once; only a pointer click glides.
+  const jump = (fromKeyboard: boolean) => {
+    taggedRef.current?.scrollIntoView({ block: 'center', behavior: reduced || fromKeyboard ? 'auto' : 'smooth' });
     setFlash(true);
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setFlash(false), 1800);
@@ -93,26 +99,28 @@ export function AskConversationPanel({
         <header className="space-y-0.5">
           <p className="text-base">
             <span className="font-semibold">{ask.customer_name || ask.contact_name || '-'}</span>
-            {ask.customer_name && ask.contact_name ? (
-              <span className="text-sm text-muted-foreground"> {ask.contact_name}</span>
-            ) : null}
           </p>
+          {ask.contact_name || ask.contact_phone ? (
+            <p className="text-sm text-muted-foreground">
+              {[ask.customer_name ? ask.contact_name : null, ask.contact_phone].filter(Boolean).join(' · ')}
+            </p>
+          ) : null}
           <p className="text-xs text-muted-foreground">
-            {formatDateTimeInMalaysia(ask.created_at)}
-            {ask.agent_code ? ` · ${ask.agent_code}` : ''}
+            Asked {formatDateTimeInMalaysia(ask.created_at)}
+            {agentCode ? ` · ${agentCode}` : ''}
           </p>
         </header>
 
         <div className="space-y-1 rounded-lg border bg-muted/40 px-3 py-2.5">
           <p className="text-sm break-words">
-            <span className="text-muted-foreground">Asked: </span>
-            {askProductText(ask)}
+            Asked: {askProductText(ask)}
+            {ask.product_name ? ` (${ask.product_name})` : ''}
           </p>
           <p className="text-sm break-words">
             <span className="text-muted-foreground">Answered: </span>
             {askAnswerText(ask)}
           </p>
-          <Button type="button" variant="ghost" size="sm" className="-ml-2" onClick={jump} disabled={askMessageId == null}>
+          <Button type="button" variant="ghost" size="sm" className="-ml-2" onClick={(e) => jump(e.detail === 0)} disabled={askMessageId == null}>
             Jump to message
           </Button>
         </div>
@@ -190,7 +198,7 @@ export function AskConversationPanel({
               Save note
             </Button>
             {savedAt ? (
-              <span className="text-xs text-muted-foreground">Saved {formatTimeShortMalaysia(savedAt)}</span>
+              <span className="text-xs text-muted-foreground">Saved {formatDateTimeInMalaysia(savedAt)}</span>
             ) : null}
           </div>
         </section>

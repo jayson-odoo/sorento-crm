@@ -15,12 +15,15 @@ import { askAnswerText, askProductText } from '@/lib/stock-asks-todo';
 export function AskCard({
   ask,
   pending,
+  showAgent = false,
   onOpen,
   onDone,
   onReopen,
 }: {
   ask: StockAsk;
   pending: boolean;
+  /** The CRM's All agents view: the agent code sits on the date line. */
+  showAgent?: boolean;
   onOpen: (ask: StockAsk) => void;
   onDone: (askId: string) => void;
   onReopen: (askId: string) => void;
@@ -33,6 +36,7 @@ export function AskCard({
   return (
     <LandingCardShell
       tintClass={isDone ? 'bg-success/5 border-success/40' : 'bg-primary/5 border-primary/30'}
+      role="button"
       tabIndex={0}
       onClick={() => onOpen(ask)}
       onKeyDown={(e) => {
@@ -67,7 +71,15 @@ export function AskCard({
           <p className="text-sm text-foreground/85 break-words">
             Answered: {askAnswerText(ask)}
           </p>
-          <p className="text-xs text-muted-foreground">{formatDateTimeInMalaysia(ask.created_at)}</p>
+          <p className="text-xs text-muted-foreground">
+            {formatDateTimeInMalaysia(ask.created_at)}
+            {showAgent && ask.agent_code ? (
+              <>
+                {' · '}
+                <span className="font-medium">{ask.agent_code}</span>
+              </>
+            ) : null}
+          </p>
           {isDone ? <p className="text-xs text-success">{doneByText(ask)}</p> : null}
         </div>
       </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,33 +26,30 @@ import type { LandingFilters } from '../lib/landing-fields';
 import { CustomerAsksHistory } from './CustomerAsksHistory';
 import { LandingToolbar } from './LandingToolbar';
 
-/** The landing's own view choice, shared so cards / list stays one setting across the kinds. */
-const PORTAL_VIEW_KEY = 'sorento.portalView';
-
 /**
  * The body of the landing's Customer asks kind: the salesperson's to-do (`AskTodoList`, shared
  * with the CRM's Sales > Customer asks) under the landing's own `LandingToolbar`. A card or row
  * opens the conversation in a bottom Drawer; `Show done` opens the paged done history under it.
  * The landing's search box narrows the to-do; the sort is remembered per contact.
  */
-export function CustomerAsksList({ search, contactId }: { search: string; contactId?: string | null }) {
+export function CustomerAsksList({
+  search,
+  contactId,
+  view,
+  onViewChange,
+}: {
+  search: string;
+  contactId?: string | null;
+  /** The landing owns the cards / list choice, like for every other kind. */
+  view: ListBoardViewMode;
+  onViewChange: (mode: ListBoardViewMode) => void;
+}) {
   const todo = useCustomerAsksTodo();
   const [sort, setSort] = usePortalAsksSort(contactId);
   const [filters, setFilters] = useState<LandingFilters>({});
   const [showDone, setShowDone] = useState(false);
-  const [view, setViewState] = useState<ListBoardViewMode>('board');
   const [opened, setOpened] = useState<StockAsk | null>(null);
   const [wholeDay, setWholeDay] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const stored = window.localStorage.getItem(PORTAL_VIEW_KEY);
-    if (stored === 'list' || stored === 'board') setViewState(stored);
-  }, []);
-  const setView = useCallback((mode: ListBoardViewMode) => {
-    setViewState(mode);
-    if (typeof window !== 'undefined') window.localStorage.setItem(PORTAL_VIEW_KEY, mode);
-  }, []);
 
   const items = useMemo(
     () => (todo.payload ? [...todo.payload.open, ...todo.payload.done_today].map(askToSummary) : []),
@@ -101,13 +98,14 @@ export function CustomerAsksList({ search, contactId }: { search: string; contac
         sort={sort}
         onSortChange={setSort}
         view={view}
-        onViewChange={setView}
+        onViewChange={onViewChange}
       />
       <AskTodoList
         payload={payload}
         loading={todo.loading}
         error={todo.error}
         view={view}
+        filtered={Object.keys(filters).length > 0 || search.trim() !== ''}
         sort={sort}
         onSortChange={setSort}
         onOpen={open}

@@ -175,6 +175,18 @@ describe('PortalLanding - Customer asks is one kind in the selector (fix round 5
     expect(screen.getAllByRole('textbox', { name: /search/i })).toHaveLength(1);
   });
 
+  it('owns the cards / list toggle for the asks body and writes nothing to local storage (item 7)', async () => {
+    searchParams = new URLSearchParams('type=customer_asks');
+    mockContact(['customer_asks']);
+    render(<PortalLanding slug="ah-lim" />);
+    await screen.findByText('Hock Lee Trading');
+    fireEvent.click(screen.getByRole('radio', { name: 'List view' }));
+    const headers = screen.getAllByRole('columnheader').map((h) => (h.textContent ?? '').trim());
+    expect(headers).toEqual(['Asked at', 'Customer', 'Contact', 'Asked', 'Answered', '']); // no Done by
+    expect(screen.getAllByLabelText('View mode')).toHaveLength(1);
+    expect(Object.keys(window.localStorage).filter((k) => k.startsWith('icp:list-board-view:'))).toEqual([]);
+  });
+
   it('narrows the to-do with the landing search box', async () => {
     searchParams = new URLSearchParams('type=customer_asks');
     mockContact(['customer_asks']);
