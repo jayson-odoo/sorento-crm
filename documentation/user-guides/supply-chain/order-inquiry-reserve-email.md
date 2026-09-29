@@ -59,7 +59,8 @@ Reserving stock needs the **Reserve Stock for Order Inquiries** permission
 what lets purchasing send a request in the first place. Grant it to the CS role from [Create or
 edit a role](../user-management/manage-users-and-roles.md#create-or-edit-a-role-and-choose-its-permissions).
 Without it, the Lines tab shows no reserve icons and no **Reserve** button at all - a line only
-shows its plain state pill (**Request to reserve**, **Reserved** or **Not reserved**).
+shows its plain state pill (**Request to reserve**, **Reserved** or **Not reserved**) and its
+**History** icon, whose **Reserve** tab anyone can read.
 
 ## See also
 
