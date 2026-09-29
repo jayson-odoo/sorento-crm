@@ -15,6 +15,7 @@ import EmailPreviewFrame from '../../email-templates/components/EmailPreviewFram
 import { ColorField } from './ColorField';
 import { SocialLinksField } from './SocialLinksField';
 import { useEmailThemePreview, useEmailThemeQuery, useSaveEmailThemeMutation } from '../hooks/useEmailTheme';
+import type { EmailThemeSampleCode } from '../types/emailTheme.types';
 import { draftToPayload, toDraft, type ThemeDraft } from '../lib/themeDraft';
 
 const LOGO_ALIGNMENT_OPTIONS = [
@@ -25,6 +26,13 @@ const LOGO_ALIGNMENT_OPTIONS = [
 const HEADER_STYLE_OPTIONS = [
   { value: 'brand', label: 'Brand colour band' },
   { value: 'white', label: 'White with hairline' },
+];
+
+const SAMPLE_MAIL_OPTIONS: { value: EmailThemeSampleCode; label: string }[] = [
+  { value: 'auth_password_reset', label: 'Password reset' },
+  { value: 'user_invitation', label: 'User invitation' },
+  { value: 'onboarding_intake_link', label: 'Onboarding intake link' },
+  { value: 'purchase_request_approval_link', label: 'Purchase request approval link' },
 ];
 
 const BUTTON_WIDTH_OPTIONS = [
@@ -48,6 +56,8 @@ export default function EmailThemeForm() {
   const saveMut = useSaveEmailThemeMutation();
   const previewMut = useEmailThemePreview();
   const [draft, setDraft] = useState<ThemeDraft | null>(null);
+  // Preview-only: never part of the draft, never sent on Save.
+  const [sampleCode, setSampleCode] = useState<EmailThemeSampleCode>('auth_password_reset');
 
   // Seed the draft once the stored theme arrives; a later refetch (e.g. after
   // save) does not clobber what the admin is mid-typing.
@@ -68,9 +78,9 @@ export default function EmailThemeForm() {
   // last edit so a fast typist doesn't fire one request per keystroke.
   useEffect(() => {
     if (!debouncedDraft) return;
-    previewMut.mutate(draftToPayload(debouncedDraft));
+    previewMut.mutate({ theme: draftToPayload(debouncedDraft), code: sampleCode });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedDraft]);
+  }, [debouncedDraft, sampleCode]);
 
   function patch(fields: Partial<ThemeDraft>) {
     setDraft((prev) => (prev ? { ...prev, ...fields } : prev));
@@ -330,7 +340,16 @@ export default function EmailThemeForm() {
                 <CardHeader>
                   <CardTitle>Live preview</CardTitle>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="theme-sample-mail">Sample mail</Label>
+                    <SearchableSelect
+                      id="theme-sample-mail"
+                      value={sampleCode}
+                      onChange={(value) => setSampleCode(value as EmailThemeSampleCode)}
+                      options={SAMPLE_MAIL_OPTIONS}
+                    />
+                  </div>
                   <EmailPreviewFrame
                     subject={previewMut.data?.subject}
                     html={previewMut.data?.body_html}

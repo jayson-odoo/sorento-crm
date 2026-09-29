@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -110,6 +110,13 @@ class EmailThemeResponse(BaseModel):
 
 class EmailThemePreviewRequest(BaseModel):
     theme: EmailTheme = Field(default_factory=EmailTheme)
+    # Only the four locked credential mails; this is not a general template preview.
+    code: Literal[
+        "auth_password_reset",
+        "user_invitation",
+        "onboarding_intake_link",
+        "purchase_request_approval_link",
+    ] = "auth_password_reset"
 
 
 class EmailTemplatePreviewResponse(BaseModel):

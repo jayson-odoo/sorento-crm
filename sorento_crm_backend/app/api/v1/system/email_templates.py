@@ -99,7 +99,7 @@ def preview_email_theme(
     current_user: dict = Depends(require_permission("email_templates.templates.view")),
     db: Session = Depends(get_db),
 ):
-    return EmailTemplatePreviewResponse(**EmailTemplateService(db).preview_theme(payload.theme))
+    return EmailTemplatePreviewResponse(**EmailTemplateService(db).preview_theme(payload.theme, payload.code))
 
 
 @router.get("/email-templates/{template_id}", response_model=EmailTemplateResponse)

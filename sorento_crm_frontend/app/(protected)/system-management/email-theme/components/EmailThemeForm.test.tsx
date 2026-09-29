@@ -180,8 +180,74 @@ describe('EmailThemeForm', () => {
       vi.advanceTimersByTime(400);
     });
 
-    expect(previewMut.mutate).toHaveBeenCalledWith(
-      expect.objectContaining({ company_name: 'New Co' }),
-    );
+    // The mutation variable is { theme, code } since the Sample mail select (AC-EM032).
+    expect(previewMut.mutate).toHaveBeenCalledWith({
+      theme: expect.objectContaining({ company_name: 'New Co' }),
+      code: 'auth_password_reset',
+    });
+  });
+
+  describe('Sample mail select (AC-EM032)', () => {
+    const LABELS = [
+      'Password reset',
+      'User invitation',
+      'Onboarding intake link',
+      'Purchase request approval link',
+    ];
+
+    it('renders with Password reset selected and offers exactly the four credential mails', () => {
+      render(<EmailThemeForm />);
+
+      const trigger = screen.getByLabelText('Sample mail');
+      expect(trigger).toHaveTextContent('Password reset');
+
+      fireEvent.click(trigger);
+      const options = screen.getAllByRole('option');
+      expect(options.map((o) => o.textContent)).toEqual(LABELS);
+    });
+
+    it('the initial preview request carries the default code', () => {
+      render(<EmailThemeForm />);
+
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(previewMut.mutate).toHaveBeenCalledWith({
+        theme: expect.objectContaining({ primary_color: '#2563EB' }),
+        code: 'auth_password_reset',
+      });
+    });
+
+    it('choosing User invitation previews that mail with the current theme payload', () => {
+      render(<EmailThemeForm />);
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+      previewMut.mutate.mockClear();
+
+      fireEvent.click(screen.getByLabelText('Sample mail'));
+      fireEvent.click(screen.getByRole('option', { name: 'User invitation' }));
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(previewMut.mutate).toHaveBeenCalledWith({
+        theme: expect.objectContaining({ primary_color: '#2563EB', company_name: 'Sorento' }),
+        code: 'user_invitation',
+      });
+    });
+
+    it('Save never sends the sample code', async () => {
+      vi.useRealTimers();
+      render(<EmailThemeForm />);
+
+      fireEvent.click(screen.getByLabelText('Sample mail'));
+      fireEvent.click(screen.getByRole('option', { name: 'User invitation' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => expect(saveMut.mutateAsync).toHaveBeenCalledTimes(1));
+      expect(saveMut.mutateAsync.mock.calls[0][0]).not.toHaveProperty('code');
+    });
   });
 });

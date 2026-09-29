@@ -515,14 +515,14 @@ class EmailTemplateService:
         self._theme_cache = None
         return self.get_theme()
 
-    def preview_theme(self, theme: EmailTheme) -> dict[str, str]:
-        """One sample mail (password reset) under an UNSAVED theme."""
+    def preview_theme(self, theme: EmailTheme, code: str = "auth_password_reset") -> dict[str, str]:
+        """One built-in credential sample mail (default password reset) under an UNSAVED theme."""
         settings = self._settings_row()
         resolved = resolve_theme(
             theme.model_dump(mode="json", exclude_none=True),
             theme_defaults(settings, first_company_logo(self.db)),
         )
-        st = SYSTEM_TEMPLATES["auth_password_reset"]
+        st = SYSTEM_TEMPLATES[code]
         return render_document(
             EmailDocument.model_validate(st.document()),
             subject=st.subject,

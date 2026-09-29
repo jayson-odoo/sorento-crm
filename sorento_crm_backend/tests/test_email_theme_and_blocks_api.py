@@ -159,6 +159,58 @@ def test_theme_preview_uses_unsaved_values(db, stop_patches):  # AC-EM030
     assert s.email_theme == {"primary_color": "#123456"}  # preview never saves
 
 
+SAMPLE_CODES = ["auth_password_reset", "user_invitation", "onboarding_intake_link", "purchase_request_approval_link"]
+PREVIEW_URL = "/api/v1/system/email-theme/preview"
+
+
+def test_theme_preview_without_code_defaults_to_password_reset(db, stop_patches):  # AC-EM030
+    _settings(db)
+    r = _c(db, stop_patches, {VIEW}).post(PREVIEW_URL, json={"theme": {}})
+    assert r.status_code == 200, r.text
+    assert r.json()["subject"] == "Reset your password"
+
+
+def test_theme_preview_each_credential_mail(db, stop_patches):  # AC-EM032
+    _settings(db)
+    c = _c(db, stop_patches, {VIEW})
+    subjects = []
+    for code in SAMPLE_CODES:
+        r = c.post(PREVIEW_URL, json={"theme": {"primary_color": "#ABCDEF"}, "code": code})
+        assert r.status_code == 200, (code, r.text)
+        out = r.json()
+        assert out["subject"], code
+        assert "data-sorento-layout" in out["body_html"], code
+        assert "#ABCDEF" in out["body_html"], code
+        for part in ("subject", "body_html", "body_text"):
+            assert "[template-error" not in out[part], (code, part)
+            assert "[unknown:" not in out[part], (code, part)
+        subjects.append(out["subject"])
+    assert len(set(subjects)) == 4
+
+
+@pytest.mark.parametrize("code", ["sla_daily_summary", "nope"])
+def test_theme_preview_other_code_is_422(db, stop_patches, code):  # AC-EM032
+    _settings(db)
+    r = _c(db, stop_patches, {VIEW}).post(PREVIEW_URL, json={"theme": {}, "code": code})
+    assert r.status_code == 422
+
+
+def test_theme_preview_with_code_needs_view(db, stop_patches):  # AC-EM090
+    _settings(db)
+    r = _c(db, stop_patches, set()).post(PREVIEW_URL, json={"theme": {}, "code": "user_invitation"})
+    assert r.status_code == 403
+
+
+def test_theme_preview_with_code_never_saves(db, stop_patches):  # AC-EM032
+    s = _settings(db)
+    s.email_theme = {"primary_color": "#123456"}
+    db.flush()
+    r = _c(db, stop_patches, {VIEW}).post(PREVIEW_URL, json={"theme": {"primary_color": "#ABCDEF"}, "code": "user_invitation"})
+    assert r.status_code == 200, r.text
+    db.refresh(s)
+    assert s.email_theme == {"primary_color": "#123456"}
+
+
 def test_theme_preview_invalid_is_422(db, stop_patches):
     _settings(db)
     r = _c(db, stop_patches, {VIEW}).post("/api/v1/system/email-theme/preview", json={"theme": {"primary_color": "nope"}})

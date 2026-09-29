@@ -28,6 +28,7 @@ Plan: `PLAN-email-layout-28sep.md`. One AC per behaviour. "The layout" means `ap
 
 - **AC-EM030** The Email Theme page previews one sample mail (password reset) rendered by the backend under the UNSAVED form values, in an iframe at 600px (desktop) and 375px (mobile), refreshing as fields change.
 - **AC-EM031** The template editor previews the unsaved draft (subject, preheader, blocks) through `POST /api/v1/email-templates/preview-draft` in the same iframe, with a desktop 600 / mobile 375 toggle, using the catalog sample context.
+- **AC-EM032** The Email Theme live preview has a "Sample mail" select listing the four credential mails (password reset, user invitation, onboarding intake link, purchase request approval link); choosing one redraws the preview with that mail's built-in document and sample data under the unsaved theme. Any other code returns 422. Nothing is sent or saved.
 
 ## Element order editor
 

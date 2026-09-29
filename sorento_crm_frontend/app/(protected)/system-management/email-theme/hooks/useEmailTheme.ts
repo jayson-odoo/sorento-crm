@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { getEmailTheme, previewEmailTheme, saveEmailTheme } from '../services/emailThemeService';
-import type { EmailTheme, EmailThemeResponse } from '../types/emailTheme.types';
+import type { EmailTheme, EmailThemeResponse, EmailThemeSampleCode } from '../types/emailTheme.types';
 
 const EMAIL_THEME_KEY = ['email-theme'];
 
@@ -28,9 +28,10 @@ export function useSaveEmailThemeMutation() {
   });
 }
 
-/** Live preview (AC-EM030): renders one sample mail under the UNSAVED form values. */
+/** Live preview (AC-EM030): renders one credential sample mail under the UNSAVED form values. */
 export function useEmailThemePreview() {
   return useMutation({
-    mutationFn: (theme: EmailTheme) => previewEmailTheme(theme),
+    mutationFn: ({ theme, code }: { theme: EmailTheme; code: EmailThemeSampleCode }) =>
+      previewEmailTheme(theme, code),
   });
 }

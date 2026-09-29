@@ -1,3 +1,10 @@
+/** The four locked credential mails the live preview can show (AC-EM032). */
+export type EmailThemeSampleCode =
+  | 'auth_password_reset'
+  | 'user_invitation'
+  | 'onboarding_intake_link'
+  | 'purchase_request_approval_link';
+
 export type LogoAlignment = 'left' | 'center';
 export type HeaderStyle = 'brand' | 'white';
 export type ButtonWidth = 'auto' | 'full';
