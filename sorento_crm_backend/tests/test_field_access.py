@@ -304,8 +304,10 @@ def test_the_two_denials_are_distinguishable_on_one_call(db):
 def test_an_ungated_field_is_reported_as_not_gated(db):
     contact, _ = _entitled_contact(db)
 
+    # `shipment_number` is the answer itself and never gated. (The container number
+    # was the example here until #1328 made it deniable for dealers.)
     (decision,) = decide(
-        db, resource=RESOURCE, fields=["shipping_container_number"], contact_id=contact.id
+        db, resource=RESOURCE, fields=["shipment_number"], contact_id=contact.id
     )
 
     assert decision.outcome == NOT_GATED
@@ -634,17 +636,40 @@ def test_the_gate_runs_on_the_route_not_only_in_the_service():
 
     from app.api.v1 import incoming_stock
 
-    source = inspect.getsource(incoming_stock.get_incoming_list)
-    assert "apply_field_access" in source
-    assert "contact_id=contact_id" in source
+    # #1328: every incoming route answering a contact goes through ONE gate,
+    # `_for_contact`, which applies the field reveals for the resolved contact.
+    # `tests/test_incoming_contact_rules.py` pins the behaviour through the routes.
+    gate = inspect.getsource(incoming_stock._for_contact)
+    assert "apply_field_access" in gate
+    assert "contact_id=contact.resolved or _UNRESOLVED_CONTACT" in gate
+    for route in (
+        incoming_stock.get_incoming_list,
+        incoming_stock.get_incoming_for_product,
+        incoming_stock.get_incoming_shipments,
+        incoming_stock.get_incoming_shipment_products,
+        incoming_stock.get_incoming_shipment_attachment,
+    ):
+        assert "_for_contact(" in inspect.getsource(route), route.__name__
+    # The staff (no contact) path on /list still runs the RBAC gate.
+    assert "apply_field_access" in inspect.getsource(incoming_stock.get_incoming_list)
 
 
 def test_every_gated_field_is_a_real_column():
     """A typo in the registry gates nothing and silently leaks the real column."""
-    from app.models.procurement import InboundShipment
+    from app.models.procurement import InboundShipment, InboundShipmentLine
+    from app.services.field_access import NON_CLEARANCE_KEYS
 
     for field in GATED_FIELDS[RESOURCE]:
+        if field in NON_CLEARANCE_KEYS:
+            continue
         assert hasattr(InboundShipment, field), f"{field} is not a column"
+    # #1328: the two non-clearance keys are real too - the container number is a
+    # shipment column, and the quantity is the line's remaining incoming quantity
+    # (computed off `quantity_shipped`; `tests/test_incoming_contact_rules.py` pins
+    # that the payload carries it and that a denial removes it).
+    assert NON_CLEARANCE_KEYS == {"shipping_container_number", "remaining_incoming_quantity"}
+    assert hasattr(InboundShipment, "shipping_container_number")
+    assert hasattr(InboundShipmentLine, "quantity_shipped")
 
 
 # ------------------------------------------------------ workspace disambiguation

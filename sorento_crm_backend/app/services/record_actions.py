@@ -977,6 +977,20 @@ def _remove_stock_visibility_policy(db: Session, payload: dict):
     return delete_policy(db, access_type_code=_entity_id(payload))
 
 
+def _unlink_contact_customer(db: Session, payload: dict):
+    from app.services.contact_customer_service import unlink_by_link_id
+
+    return unlink_by_link_id(db, _entity_id(payload))
+
+
+def _unassign_customer_sales_agent(db: Session, payload: dict):
+    from app.services.order_service import CustomerService
+
+    return CustomerService(db).unassign_sales_agent(
+        _entity_id(payload), payload.get("sales_agent_id")
+    )
+
+
 def _remove_spec_visibility_policy(db: Session, payload: dict):
     from app.services.error_handler import handle_not_found, handle_validation_error
     from app.services.field_access import resolve_contact_id
@@ -1257,6 +1271,31 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="user_management.contacts.edit",
         label="Remove spec visibility",
+    )
+)
+
+register(
+    FormAction(
+        key="contact_customer_link.unlink",
+        # Parked on the LINK row, not the contact or the customer: the pair is what goes.
+        entity_types=("contact_customer_link",),
+        execute=_unlink_contact_customer,
+        # Reversible: both ends survive and the link can be made again in one pick.
+        window=WINDOW_REVERSIBLE,
+        permission="user_management.contacts.edit",
+        label="Unlink customer",
+    )
+)
+
+register(
+    FormAction(
+        key="customer.unassign_sales_agent",
+        entity_types=("customer",),
+        execute=_unassign_customer_sales_agent,
+        # Reversible: the agent can be assigned again from the same tab.
+        window=WINDOW_REVERSIBLE,
+        permission="master_data.sales_agents.edit",
+        label="Unassign customer",
     )
 )
 

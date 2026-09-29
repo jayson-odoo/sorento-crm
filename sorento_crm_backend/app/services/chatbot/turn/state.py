@@ -131,6 +131,8 @@ class Focus:
     # `outstanding_filters` and the two could disagree).
     sales_channel: str | None = None
     date_window: dict[str, Any] | None = None
+    # The PO/SPO sort axis {"by", "dir"} (PLAN-po-spo-warehouse-29sep S5).
+    sort: dict[str, Any] | None = None
     # The twelfth slot (AC-1534, contract 115): the set a too-long counted answer asked
     # "how many should I show?" about, `{"set_key": ...}`, read only by that question's
     # answer (no paging, owner ruling 26 Sep 2026). Its own slot rather than a bag entry:
@@ -232,6 +234,7 @@ def focus_to_wire(focus: Focus) -> dict[str, Any]:
     wire["status"] = focus.status
     wire["sales_channel"] = focus.sales_channel
     wire["date_window"] = focus.date_window
+    wire["sort"] = dict(focus.sort) if focus.sort else None
     wire["set_page"] = focus.set_page
     wire["set_clarify"] = focus.set_clarify
     wire["top_selling"] = dict(focus.top_selling) if focus.top_selling else None
@@ -286,6 +289,8 @@ def focus_from_wire(raw: Any) -> Focus:
     focus.sales_channel = channel if isinstance(channel, str) else None
     window = raw.get("date_window")
     focus.date_window = window if isinstance(window, dict) else None
+    sort = raw.get("sort")
+    focus.sort = dict(sort) if isinstance(sort, dict) else None
     page = raw.get("set_page")
     focus.set_page = page if isinstance(page, dict) else None
     clarify = raw.get("set_clarify")

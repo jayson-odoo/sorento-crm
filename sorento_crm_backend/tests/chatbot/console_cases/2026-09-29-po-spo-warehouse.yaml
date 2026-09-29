@@ -1,0 +1,136 @@
+# Console case for lane PO-SPO-WAREHOUSE (PR #1373, owner rulings 29 Sep 2026).
+#
+# `documentation/plans/chatbot/PLAN-po-spo-warehouse-29sep.md`;
+# `po-spo-warehouse-29sep-acceptance-criteria.md` AC-18. The word "SPO" answers as SPO
+# allocations (never incoming), a short location token filters PO and SPO asks by
+# warehouse, and "latest first" / "biggest quantity first" sort them.
+#
+# NOT collected by pytest. Run with `scripts/chatbot_console_check.py` against the lane
+# stack once the new parser version carries the `production` label (or is selected in the
+# Chatbot Console), per `documentation/agents/chatbot-verification.md`:
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-29-po-spo-warehouse.yaml \
+#       --base-url http://127.0.0.1:8000 --sleep-seconds 8
+#
+# ═══ PUBLISH THE PROMPT FIRST ═══
+# The parser reads the PUBLISHED `chatbot_semantic_parser` version, never the constant.
+# Run `venv/bin/python -m scripts.publish_parser_prompt` (or `alembic upgrade head`) and
+# select the printed version in the Chatbot Console, or every turn below parses with the
+# old body and "SPO for BRW-BB" still routes to incoming.
+#
+# ═══ DATA THE TURNS ASSUME ═══
+# BRW and BRW-BB exist as warehouse codes; SRT79-SS and SRTWC286 exist as product codes
+# with open PO lines / SPO lines (the prod copy has both). A turn whose product has no
+# open line answers a "no PO" / "no SPO line" miss, which is correct, not a defect - swap
+# the code for one that has lines rather than reading the miss as red.
+#
+# `_grade` understands `branch_kind`, `reply_contains`, `reply_not_contains`, `no_uuid`,
+# `pending_kind` and `parser`. The sort ORDER of the rows is graded BY EYE from the printed
+# reply (the grader has no row-order assertion): "latest PO" must print the newest PO Date
+# first, "biggest quantity first" the largest SPO Quantity first.
+contact: "437264483"
+
+cases:
+  - name: PO to BRW filters the open PO book by warehouse
+    cold: true
+    live_only: true
+    text: "PO to BRW"
+    expect:
+      branch_kind: business_query
+      parser:
+        domain_hint: purchase_order
+        intent_hint: check_po
+      reply_contains:
+        - "PO"
+        - "BRW"
+      no_uuid: true
+
+  - name: SPO for BRW-BB is an SPO allocations answer, never incoming
+    cold: true
+    live_only: true
+    text: "SPO for BRW-BB"
+    expect:
+      branch_kind: business_query
+      parser:
+        domain_hint: spo_allocation
+        intent_hint: check_spo
+      reply_contains:
+        - "SPO"
+      reply_not_contains:
+        - "incoming"
+        - "ETA"
+      no_uuid: true
+
+  - name: SPO SRT79-SS routes to the SPO line for the product
+    cold: true
+    live_only: true
+    text: "SPO SRT79-SS"
+    expect:
+      branch_kind: business_query
+      parser:
+        domain_hint: spo_allocation
+        intent_hint: check_spo
+      reply_contains:
+        - "SRT79-SS"
+      reply_not_contains:
+        - "incoming"
+      no_uuid: true
+
+  - name: last in at a warehouse still answers one line per product at that warehouse
+    cold: true
+    live_only: true
+    text: "last in SRTWC286 at BRW"
+    expect:
+      branch_kind: business_query
+      parser:
+        domain_hint: spo_allocation
+        intent_hint: check_spo
+      reply_contains:
+        - "SRTWC286"
+      no_uuid: true
+
+  - name: latest PO sorts newest PO date first, then a bare re-sort keeps the list
+    cold: true
+    live_only: true
+    turns:
+      - text: "latest PO for SRT79-SS"
+        expect:
+          branch_kind: business_query
+          parser:
+            domain_hint: purchase_order
+            intent_hint: check_po
+            sort_by: date
+            sort_dir: desc
+          reply_contains:
+            - "SRT79-SS"
+          no_uuid: true
+      # A sort word alone re-runs the SAME list the other way round: no domain word, no
+      # entity, only the sort keys (PLAN S3, S5).
+      - text: "oldest first"
+        expect:
+          branch_kind: business_query
+          parser:
+            sort_by: date
+            sort_dir: asc
+          reply_contains:
+            - "SRT79-SS"
+          no_uuid: true
+
+  - name: SPO biggest quantity first at BRW lists SPO lines at BRW by quantity
+    cold: true
+    live_only: true
+    text: "SPO biggest quantity first at BRW"
+    expect:
+      branch_kind: business_query
+      parser:
+        domain_hint: spo_allocation
+        intent_hint: check_spo
+        sort_by: quantity
+        sort_dir: desc
+      reply_contains:
+        - "SPO Quantity"
+        - "BRW"
+      reply_not_contains:
+        - "incoming"
+      no_uuid: true

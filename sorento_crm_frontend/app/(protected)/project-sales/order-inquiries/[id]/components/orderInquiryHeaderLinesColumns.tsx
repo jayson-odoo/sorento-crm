@@ -14,7 +14,12 @@ import { ColumnDef } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Popover,
+  PopoverContent,
+  PopoverPortal,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
@@ -131,13 +136,23 @@ function LineDocumentsCell({ line, kind }: { line: OrderInquiryLine; kind: 'po' 
               +{rest.length}
             </Button>
           </PopoverTrigger>
-          <PopoverContent align="start" className="w-auto max-w-xs space-y-1 p-2">
-            {entries.map((entry) => (
-              <div key={entry.document}>
-                <DocumentCell row={entry.row} kind={kind} document={entry.document} />
-              </div>
-            ))}
-          </PopoverContent>
+          {/* Portalled (owner, 29 Sep 2026): unportalled, the content painted inside the
+              table and the next row's own "+N" chip showed through it. At the document
+              root it sits above every row, and `collisionPadding` keeps it inside the
+              viewport the way the shared `PillOverflow` popover does. */}
+          <PopoverPortal>
+            <PopoverContent
+              align="start"
+              collisionPadding={8}
+              className="w-auto max-w-xs space-y-1 p-2"
+            >
+              {entries.map((entry) => (
+                <div key={entry.document}>
+                  <DocumentCell row={entry.row} kind={kind} document={entry.document} />
+                </div>
+              ))}
+            </PopoverContent>
+          </PopoverPortal>
         </Popover>
       ) : null}
     </span>

@@ -12,7 +12,7 @@ import {
 import { AlertCircle, LayoutTemplate, Pencil, Plus, Trash2 } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
+import { PillOverflow, PillOverflowList } from '@/components/common/PillOverflow';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import {
@@ -79,14 +79,18 @@ export function TileDesignsList() {
       {
         id: 'fields',
         header: ({ column }) => <DataGridColumnHeader title="Shows" column={column} />,
+        // One row line (owner rule, 29 Sep 2026): as many fields as the column fits, the
+        // rest behind "+N", every field in the popover (`PillOverflow`).
         cell: ({ row }) => (
-          <div className="flex flex-wrap gap-1">
-            {row.original.fields.map((field) => (
-              <Badge key={field} variant="outline" className="text-xs">
-                {TILE_FIELDS.find((candidate) => candidate.value === field)?.label ?? field}
-              </Badge>
-            ))}
-          </div>
+          <PillOverflow
+            ariaLabel={`Fields shown by ${row.original.name}`}
+            testId={`tile-design-fields-${row.original.id}`}
+            items={row.original.fields.map((field) => ({
+              key: field,
+              label: TILE_FIELDS.find((candidate) => candidate.value === field)?.label ?? field,
+            }))}
+            renderPopover={(items) => <PillOverflowList items={items} />}
+          />
         ),
         size: 360,
         minSize: 200,

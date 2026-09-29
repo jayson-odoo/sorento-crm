@@ -9,6 +9,7 @@ from sqlalchemy import (
     Index,
     ForeignKey,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
@@ -145,4 +146,12 @@ class IntegrationLog(Base):
         Index("ix_integration_log_integration_channel", "integration_channel"),
         Index("ix_integration_log_created_at", "created_at"),
         Index("ix_integration_log_next_retry_at", "next_retry_at"),
+        # #1355: one row per ideation status event (business_id = event_id), so an
+        # at-least-once redelivery can never produce a second send or log row.
+        Index(
+            "uq_integration_log_ideation_status_event",
+            "business_id",
+            unique=True,
+            postgresql_where=text("business_table = 'ideation_status_events'"),
+        ),
     )

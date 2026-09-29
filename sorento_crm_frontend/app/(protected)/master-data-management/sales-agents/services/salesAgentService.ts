@@ -14,6 +14,22 @@
  *           An omitted key is left alone; `null` unsets. An unknown key is a 422, and a
  *           demand class outside the vocabulary is a 400 naming the allowed words.
  *
+ * Customers handled by an agent (PLAN-contact-customers-29sep D2), read `.view`, write `.edit`:
+ *   GET  /api/v1/master-data/sales-agents/{id}/customers?page&limit&query&sort&dir
+ *          -> { data: AgentCustomer[], pagination: { total, page }, empty }
+ *          customers whose sales_agent_id is this agent, under the caller's company scope;
+ *          `query` matches code or name; default sort `customer_code asc`.
+ *   POST /api/v1/master-data/sales-agents/{id}/customers  body { customer_ids: string[] }
+ *          (min 1; any other key is a 422) -> 200 { data: AgentCustomer[] } in request order.
+ *          Moves every customer to this agent (from another agent too), all or nothing like
+ *          bulk-annotate: an unknown or out-of-scope id is a 404, an inactive agent or a
+ *          cross-company customer a 422, and either writes nothing. A customer already on
+ *          this agent is a no-op.
+ *   Unassign has NO route: pending action `customer.unassign_sales_agent`, entity type
+ *   `customer`, entity id = customer id, payload { sales_agent_id: <agent id> }, reversible
+ *   window, permission `master_data.sales_agents.edit`. Parked by `useDeferredRowAction`.
+ *   AgentCustomer is `CustomerResponse`, which carries `region` and `market_segment_code`.
+ *
  * There is no create and no delete: rows appear when an upload meets a code nobody
  * holds, and deleting one would orphan the orders that name it.
  */
@@ -21,6 +37,7 @@ import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 import type {
+  AgentCustomer,
   ContactSelectOption,
   MirrorAnnotationPayload,
   SalesAgent,
@@ -136,4 +153,34 @@ function maskPhone(phone: string | null | undefined): string | null {
   if (!digits) return null;
   if (digits.length <= 4) return digits;
   return `***${digits.slice(-4)}`;
+}
+
+/** The customers this agent handles, one DataGrid page. */
+export async function getSalesAgentCustomers(
+  agentId: string,
+  params: DataGridApiFetchParams,
+): Promise<DataGridApiResponse<AgentCustomer>> {
+  const search = buildDataGridParams(params);
+  const response = await apiFetch(`${BASE}/${agentId}/customers?${search.toString()}`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load customers'));
+  }
+  return response.json();
+}
+
+/** Move several customers to this agent in one request. */
+export async function assignSalesAgentCustomers(
+  agentId: string,
+  customerIds: string[],
+): Promise<AgentCustomer[]> {
+  const response = await apiFetch(`${BASE}/${agentId}/customers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_ids: customerIds }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to assign customers'));
+  }
+  const body: { data?: AgentCustomer[] } = await response.json();
+  return body.data ?? [];
 }

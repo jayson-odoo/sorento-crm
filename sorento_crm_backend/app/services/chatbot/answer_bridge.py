@@ -1645,6 +1645,7 @@ def answer_for(
     carried_pending: Any = None,
     profile: Any = None,
     dealer_stock_ask: bool = False,
+    dealer_incoming_ask: bool = False,
 ) -> turn_compose.Answer | None:
     """The MISS seam (R4): `None` outside its own two triggers (see module docstring),
     so a hit, an `access_denied` refusal, an infrastructure error and a multi-domain plan
@@ -1758,6 +1759,11 @@ def answer_for(
             if isinstance(envelope, Mapping)
             and isinstance(envelope.get("stock_availability"), list)
             and envelope.get("stock_availability")
+            # PR #1329 fix round 2: a dealer's incoming miss is the same rule. The
+            # fetch envelope keeps no `result_type`, so the presenter's own marker for a
+            # dealer's incoming reply is named here from the contact's profile.
+            else {"result_type": "incoming_dealer"}
+            if dealer_incoming_ask
             else None
         ),
     )
