@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { renderTemplateBody, USE_CASES } from './whatsappTemplateService';
+import {
+  BUTTON_LINK_VARIABLES,
+  PARAM_VARIABLES,
+  renderTemplateBody,
+  USE_CASES,
+} from './whatsappTemplateService';
 
 describe('renderTemplateBody', () => {
   it('fills positional params', () => {
@@ -31,5 +36,24 @@ describe('USE_CASES', () => {
     const entry = USE_CASES.find((u) => u.key === 'supplier_request_chat');
     expect(entry?.label).toBe('Supplier Request - Chat Reply');
     expect(entry?.group).toBe('chat');
+  });
+
+  it('lists ideation_status_update with its label, in the status update group (#1355)', () => {
+    const entry = USE_CASES.find((u) => u.key === 'ideation_status_update');
+    expect(entry?.label).toBe('Ideation - Status Update');
+    expect(entry?.group).toBeUndefined();
+  });
+});
+
+describe('PARAM_VARIABLES for ideation_status_update (#1355)', () => {
+  it('offers idea number, new status label and track link', () => {
+    const labels = Object.fromEntries(PARAM_VARIABLES.map((v) => [v.key, v.label]));
+    expect(labels['idea_number']).toBe('Idea number');
+    expect(labels['status_label']).toBe('New status label');
+    expect(labels['track_url']).toBe('Track link');
+  });
+
+  it('offers the track link for a URL button', () => {
+    expect(BUTTON_LINK_VARIABLES).toContain('track_url');
   });
 });
