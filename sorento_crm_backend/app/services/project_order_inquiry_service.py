@@ -1398,6 +1398,14 @@ class ProjectOrderInquiryService:
                     acknowledged_at=acknowledged_at,
                     changed_at=changed_at,
                 )
+                if entry.get("landed_note"):
+                    # #1362 (owner, 29 Sep 2026): planning kept this Buy over goods that
+                    # landed for the line; the link is intact and adjusting it is
+                    # purchasing's call, made on this row they acknowledge anyway.
+                    raised_row.note = (
+                        f"Planning keeps this Buy: {entry['landed_note']} stay linked "
+                        "to this line; adjust the linkage if the Buy replaces them"
+                    )
                 if redirected_this_call:
                     # AC-OH-40..42: the fresh row states, in one place, what old supply it
                     # replaces - the released rows' own qty (summed, AC-OH-42) and the
@@ -1421,6 +1429,8 @@ class ProjectOrderInquiryService:
                     raised_row.note = "; ".join(
                         [f"Replaces {_qty_str(raised_row.previous_qty)} used"]
                         + fragments
+                        # #1362: the landed-goods notice above is kept beside it.
+                        + ([raised_row.note] if raised_row.note else [])
                     )
                     if asked_to_settle:
                         # S2 (Opus review round 1): joined HERE, where the fresh row that

@@ -847,6 +847,10 @@ class StockDebtService:
             {line.key for lines in demand_rows.values() for line in lines},
             include_po=include_po,
         )
+        # #1362 round 5 (owner ruling, 29 Sep 2026): goods that LANDED for a line stay with
+        # that line, so they bind before anybody queues, exactly as a confirmed decision
+        # does. After the decision and placement holds, so nothing is pinned twice.
+        holds = holds + self._landed_holds(supply_rows, demand_rows, holds)
 
         settings = self.supply._fulfilment_settings()
         grace = settings.get("overdue_grace_days")
@@ -1454,6 +1458,72 @@ class StockDebtService:
             "po_id": event.purchase_order_id,
             "po_line_id": line_id,
         }
+
+    def _landed_holds(
+        self,
+        supply_rows: Dict[str, List[SupplyEvent]],
+        demand_rows: Dict[str, List[DemandLine]],
+        holds: Sequence[Hold],
+    ) -> List[Hold]:
+        """#1362 round 5 (owner ruling, 29 Sep 2026): goods ordered against a sales-order
+        line stay with that line.
+
+        Owner, verbatim: "we cannot snatch, what's ordered against the SO should stay
+        belonged to it". What LANDED for a line - its own purchase (`purchase_order_lines
+        .from_so_line_ref` = the line's `source_ref`), received on an SPO
+        (`ProjectSupplyService._po_received_by_so_line_ref`, R7's tier 1) - is pinned to
+        that line on its own bin's floor, before the walk. An earlier-due line of the same
+        product at the same bin used to draw them first through the ordinary queue
+        (SO382618's SRT357: 221 of 261 taken, 40 left of the 100 landed for the line), and
+        every reader of this one assignment - the board walk, the confirm recheck, the
+        order inquiry picker - read those units as free. Now only the truly free stock
+        queues: on hand less what landed for other lines and is still owed to them.
+
+        Pinned ONLY on the floor this read holds (`on_hand:<bin>` in the span): `assign()`
+        caps a pin at what the event has left, so a bin that no longer holds the goods pins
+        nothing, and a pin never stands stock up out of nothing. Less whatever this line's
+        own decisions and placements already hold (`holds`), so nothing is pinned twice.
+        A sibling's tier-2 SPARE is not pinned: it is not owed to the line it was bought
+        for, so it stays free stock the order's own lines are credited from first (R7).
+        """
+        already: Dict[str, float] = {}
+        for hold in holds:
+            already[hold.line_key] = already.get(hold.line_key, 0.0) + float(hold.qty)
+        out: List[Hold] = []
+        for product_id, lines in demand_rows.items():
+            floors = {
+                str(event.warehouse): event.key
+                for event in supply_rows.get(product_id, [])
+                if event.kind == KIND_ON_HAND and event.warehouse and not event.is_pool
+            }
+            wanted = [
+                line for line in lines
+                if line.source_ref and line.warehouse and str(line.warehouse) in floors
+                and not line.is_pool and float(line.open_qty) > EPSILON
+            ]
+            if not wanted:
+                continue
+            received = self.supply._po_received_by_so_line_ref(
+                [line.source_ref for line in wanted], product_id=product_id, company_id=None
+            )
+            for line in wanted:
+                landed, _document = received.get(
+                    str(line.source_ref).strip(), (Decimal("0"), None)
+                )
+                qty = min(_float(landed), float(line.open_qty)) - already.get(line.key, 0.0)
+                if qty <= EPSILON:
+                    continue
+                out.append(
+                    Hold(
+                        line_key=line.key,
+                        supply_key=floors[str(line.warehouse)],
+                        qty=qty,
+                        kind=KIND_ON_HAND,
+                        warehouse=str(line.warehouse),
+                        landed=True,
+                    )
+                )
+        return out
 
     def _book_so_holds(
         self,
