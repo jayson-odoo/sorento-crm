@@ -124,6 +124,10 @@ def test_ac_s3_11_compose_never_covers_the_same_units_twice():
     0. When A is walked, `own_arrival_credit_for` finds nothing left of the physical pile to
     credit, so A's credit is 0 and its 40 composes elsewhere (Buy, since this world offers
     no other rung) - never a second, uncharged Reserve of 40 at the identical bin.
+
+    #1362 round 5 (owner ruling, 29 Sep 2026) AMENDS the winner, not the invariant: A's 40
+    landed for A and is pinned to it in the assignment, so B's ordinary rung finds nothing
+    free and B buys; A is credited its 40. Still never 80 drawn from 40.
     """
     with blank_session() as db:
         group, product = own_arrival_group(db)
@@ -161,24 +165,27 @@ def test_ac_s3_11_compose_never_covers_the_same_units_twice():
             f"A={reserved_a} B={reserved_b}, sources A={by_so[order_a.so_number]['sources']} "
             f"B={by_so[order_b.so_number]['sources']}"
         )
-        # The fixed ladder's actual outcome, pinned exactly so a regression is caught by a
-        # CHANGED number here rather than a silent pass: B wins the tie ordinarily and takes
-        # the whole 40 (rung group_take, no own_arrival source) - the line served first by
-        # the ordinary rung takes the bin, and the credit finds nothing left. A's own-arrival
-        # credit is therefore 0, and its 40 composes as Buy instead of a second Reserve.
-        assert reserved_b == Decimal("40"), by_so[order_b.so_number]["sources"]
-        assert reserved_a == Decimal("0"), by_so[order_a.so_number]["sources"]
+        # The ladder's actual outcome, pinned exactly so a regression is caught by a
+        # CHANGED number here rather than a silent pass. #1362 round 5 (owner ruling, 29 Sep
+        # 2026, "we cannot snatch, what's ordered against the SO should stay belonged to
+        # it") reversed who wins: A's 40 landed for A, so it is pinned to A before anybody
+        # queues, and B - served first by the tie-break - finds nothing free and buys. It
+        # used to be B taking the whole bin and A's credit finding nothing left.
+        assert reserved_b == Decimal("0"), by_so[order_b.so_number]["sources"]
+        assert reserved_a == Decimal("40"), by_so[order_a.so_number]["sources"]
         own_arrival_sources = [
             s
             for s in by_so[order_a.so_number]["sources"]
             if s.get("rung") == "group_take" and s.get("source") == "own_arrival"
         ]
-        assert not own_arrival_sources, own_arrival_sources
+        assert sum(Decimal(s["qty"]) for s in own_arrival_sources) == Decimal("40"), (
+            by_so[order_a.so_number]["sources"]
+        )
         buy_sources = [
-            s for s in by_so[order_a.so_number]["sources"] if s.get("kind") == "buy"
+            s for s in by_so[order_b.so_number]["sources"] if s.get("kind") == "buy"
         ]
         assert buy_sources and Decimal(buy_sources[0]["qty"]) == Decimal("40"), by_so[
-            order_a.so_number
+            order_b.so_number
         ]["sources"]
 
 
