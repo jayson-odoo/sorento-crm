@@ -78,8 +78,9 @@ head still honours the parser verdict (the lane is entered only when the parser 
 - `sorento_crm_mcp/sorento_crm_mcp/ideation.py`, `catalog.py`
 - tests: `tests/test_ideation_turn.py`, `tests/chatbot/test_s3_canned_and_ideate.py`,
   `sorento_crm_mcp/tests/test_ideation_tool.py`
-- docs: `documentation/plans/ideation/PLAN-ideation-capture-n8n.md` section 1 (endpoint
-  body), `PLAN-ideation-ideate-intent.md` section 4 (the section 5.1 create-idea snapshot)
+- docs: `documentation/plans/_archive/ideation/PLAN-ideation-capture-n8n.md` section 1 (endpoint
+  body), `documentation/plans/_archive/ideation/PLAN-ideation-ideate-intent.md` section 4 (the
+  section 5.1 create-idea snapshot)
 
 ## Track
 
