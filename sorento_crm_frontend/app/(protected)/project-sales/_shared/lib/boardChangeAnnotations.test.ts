@@ -348,6 +348,26 @@ describe('the Was / Now table of a changed line', () => {
     ]);
   });
 
+  it('wraps a bare released document number and prints a released notice sentence verbatim', () => {
+    const annotation = annotationOf(
+      row({
+        applied_state: 'applied',
+        result: {
+          executed_reallocations: [],
+          released_documents: [
+            'SPO-2026/08-0061',
+            'SO396347 line 3: 220 of 202607-S0083 received in full, goods are stock now, nothing to move; purchasing adjusts the link at Order Inquiries',
+          ],
+        },
+      }),
+      'SO396347',
+    );
+    expect(annotation.whereItWent).toEqual([
+      'Released SPO-2026/08-0061 for purchasing',
+      'SO396347 line 3: 220 of 202607-S0083 received in full, goods are stock now, nothing to move; purchasing adjusts the link at Order Inquiries',
+    ]);
+  });
+
   it('prints no "Where it went" section on a row Apply has not run yet (result: null)', () => {
     const annotation = annotationOf(
       row({ applied_state: 'pending', result: null }),

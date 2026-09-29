@@ -313,7 +313,9 @@ function proposedParts(row: PlanningChangeRow): SupplyPart[] {
  * The executed sentences are the server's own words, printed verbatim for the same reason the
  * suggestion is - only the engine knows which document covered what, and re-phrasing here
  * could only drift from the record. A released document is a bare document number in the
- * result, so it is the one thing given a sentence around it.
+ * result, so it is the one thing given a sentence around it. A released entry that is already
+ * a sentence (a skipped closed purchase-order line's notice, a "nothing to move" record) is
+ * printed verbatim for the same reason the executed ones are.
  *
  * Takes the RESULT rather than the row: the sales-order detail reads the same fact off a line
  * that carries only the batch row's result (a cancelled line leaves the board once Apply has
@@ -326,8 +328,8 @@ export function whereItWentFrom(
   if (!result) return [];
   return [
     ...(result.executed_reallocations ?? []),
-    ...(result.released_documents ?? []).map(
-      (document) => `Released ${document} for purchasing`,
+    ...(result.released_documents ?? []).map((document) =>
+      /\s/.test(document.trim()) ? document : `Released ${document} for purchasing`,
     ),
   ];
 }

@@ -65,6 +65,7 @@ from sqlalchemy.orm import Session
 from app.models.inventory import Warehouse
 from app.models.stock_transfer import TRANSFER_MOVED, StockTransfer
 from app.models.order import Customer, SalesOrder, SalesOrderLine
+from app.models.procurement import PurchaseOrderLine
 from app.models.planning_change import (
     PLANNING_CHANGE_STATE_APPLIED,
     PLANNING_CHANGE_STATE_FAILED,
@@ -3094,6 +3095,12 @@ def _document_links_by_row(
     at the first one refuses with `order_inquiry_po_line_short` and moves nothing. What is
     kept is the share each line carried, so the freed quantity is re-dealt off exactly the
     purchase-order lines it came off, in the order they were linked.
+
+    Each share also carries the purchase-order line's LIVE `line_status` and `qty_received`
+    (SO396347, 29 Sep 2026): a batch sits for days, and by the time it is confirmed the sync
+    may have received a line in full and closed it. `place_on_po_allocations` refuses a
+    non-open line outright, so `_redeal_document` has to know which shares it may still
+    draw on before it draws.
     """
     line_ids = [str(r.project_line_id) for r in rows if r.project_line_id]
     if not line_ids:
@@ -3104,8 +3111,11 @@ def _document_links_by_row(
             OrderInquiryLink.po_line_id,
             OrderInquiryLink.qty,
             OrderInquiryRow.so_line_id,
+            PurchaseOrderLine.line_status,
+            PurchaseOrderLine.qty_received,
         )
         .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+        .outerjoin(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
         .filter(
             OrderInquiryRow.so_line_id.in_(line_ids),
             OrderInquiryLink.po_line_id.isnot(None),
@@ -3114,11 +3124,13 @@ def _document_links_by_row(
         .all()
     )
     by_line: Dict[str, List[dict]] = defaultdict(list)
-    for document, po_line_id, qty, so_line_id in rows_links:
+    for document, po_line_id, qty, so_line_id, line_status, qty_received in rows_links:
         by_line[str(so_line_id)].append({
             "po_line_id": str(po_line_id),
             "document": document,
             "qty": _dec(qty),
+            "line_status": line_status,
+            "qty_received": _dec(qty_received),
         })
     out: Dict[str, List[dict]] = {}
     for row in rows:
@@ -3267,6 +3279,56 @@ def _unclaim_shares(
     service.refresh_link_state(list(touched.values()))
 
 
+def _split_closed_shares(shares: List[dict]) -> List[dict]:
+    """Take every share on a purchase-order line that is NO LONGER OPEN out of `shares`,
+    in place, and return them.
+
+    In place, because `shares` is the one list every component of a row consumes
+    (`_take_document_shares`): a closed share must be invisible to the second component
+    exactly as it is to the first. A share with no status (the line row is gone) is kept:
+    the placement refusal that follows is the honest answer there, not a silent skip.
+    """
+    closed = [
+        share for share in shares
+        if share.get("line_status") is not None and share.get("line_status") != "open"
+    ]
+    if closed:
+        gone = {id(share) for share in closed}
+        shares[:] = [share for share in shares if id(share) not in gone]
+    return closed
+
+
+def _closed_share_notices(
+    closed: Sequence[dict], short: Decimal, *, so_number: str, row: PlanningChangeRow
+) -> List[str]:
+    """What the batch says about the freed quantity a closed purchase-order line could not
+    carry (SO396347, owner ruling 29 Sep 2026): the order confirms, the share is skipped,
+    and the notice names the AutoCount line, the document and the quantity so purchasing
+    knows exactly which link to adjust. A received line's goods are stock already; a line
+    closed without a receipt is simply no longer a document to move quantity on.
+    """
+    notices: List[str] = []
+    remaining = short
+    where = f"{so_number} line {row.line_no or '?'}"
+    for share in closed:
+        if remaining <= _ZERO:
+            break
+        qty = min(_dec(share.get("qty")), remaining)
+        if qty <= _ZERO:
+            continue
+        remaining -= qty
+        document = share.get("document") or "the purchase order"
+        if _dec(share.get("qty_received")) > _ZERO:
+            state = "received in full, goods are stock now"
+        else:
+            state = f"{share.get('line_status')} without a receipt"
+        notices.append(
+            f"{where}: {qty_text(qty)} of {document} {state}, nothing to move; "
+            "purchasing adjusts the link at Order Inquiries"
+        )
+    return notices
+
+
 def _share_words(taken: Sequence[dict], fallback: Optional[str]) -> str:
     """The documents a take actually came off, named once each, in the order used."""
     seen: List[str] = []
@@ -3406,7 +3468,23 @@ def _redeal_document(
     if freed <= _ZERO:
         return [], []
     shares = document_links.get(str(row.id)) or []
+    released: List[str] = []
+    # A share on a purchase-order line the sync has since closed (SO396347, 29 Sep 2026)
+    # is never drawn on: `place_on_po_allocations` would refuse it and the whole order
+    # would fail over one received line. It comes out of the pool of shares here, and if
+    # the open shares cannot carry the freed quantity without it, the difference is
+    # recorded as a notice rather than raised - the order confirms, the received goods
+    # are stock, and the link that still names the line is purchasing's to adjust (owner
+    # ruling, 29 Sep: one line's stale source must not refuse the order).
+    closed_shares = _split_closed_shares(shares)
     available = sum((_dec(share["qty"]) for share in shares), _ZERO)
+    if closed_shares and freed > available:
+        released.extend(_closed_share_notices(
+            closed_shares, freed - available, so_number=so_number, row=row,
+        ))
+        freed = available
+        if freed <= _ZERO:
+            return [], released
     if row.kind == "cancelled":
         # Blocker B1 (review round): `_shift_links_off_retired_lines` runs first and may
         # already have repointed PART of this placement straight to a same-order survivor,
@@ -3417,13 +3495,13 @@ def _redeal_document(
         # capped to `available` rather than raised over the part the shift already moved.
         freed = min(freed, available)
         if freed <= _ZERO:
-            return [], []
+            return [], released
     elif available <= _ZERO:
         # AC-S1-1 / R3 minimum: the placement this suggestion named is no longer on the
         # line at all (the book moved it, or it was unlinked, between compose and apply).
         # Nothing to fail the order over - the batch records that nothing moved, the same
         # way a cancelled row's own give-back reads.
-        return [], [
+        return [], released + [
             f"{document or 'the document'}: nothing to move, the placement this "
             "suggestion named is no longer on the line"
         ]
@@ -3438,7 +3516,6 @@ def _redeal_document(
         )
 
     executed: List[str] = []
-    released: List[str] = []
     remaining = freed
     if not dealer_hot_selling:
         for waiting_row, unlinked in _waiting_rows(
