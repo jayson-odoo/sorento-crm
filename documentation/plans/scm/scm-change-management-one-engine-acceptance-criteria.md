@@ -72,6 +72,16 @@ no date-wins tie-break.
 
 ## Slice D. Reallocation
 
+> **Superseded for purchase-order quantity, 29 Sep 2026** (owner ruling, PR #1369, lane
+> REDEAL-CLOSED-PO, `PLAN-redeal-closed-po-line.md`): "confirm only records the intent, and
+> purchasing makes every link change in AutoCount, then synced back to order inquiries."
+> AC-D1 to AC-D3, AC-D9 and AC-D10 no longer move, link or release a purchase-order share
+> at apply: the link on the giving line stays as the confirm's own settle left it, no pool
+> row is written, no waiting row is linked, and `result_json["released_documents"]` carries
+> one notice per document naming the AutoCount line (sales order + line number), the
+> quantity and the composed target. AC-D4 (a reserve, a stock hold) and D7 (an SPO
+> give-back) stand. See `redeal-closed-po-line-acceptance-criteria.md` AC-RC-1 to AC-RC-9.
+
 **AC-D1.** Given freed PO / SPO quantity and the product dealer hot-selling, then it is
 reallocated to the dealer pool (a pool-location row linked to the document) even if an
 inquiry row on another order needs it.
