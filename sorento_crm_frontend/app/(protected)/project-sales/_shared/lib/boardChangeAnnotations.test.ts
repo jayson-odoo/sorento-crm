@@ -17,8 +17,14 @@ import {
   preMarkedKeys,
   uncoverChangedLines,
 } from './boardChangeAnnotations';
-import type { BoardCell, BoardContribution } from '../types/fulfilmentPlanning.types';
-import type { PlanningChangeBatch, PlanningChangeRow } from '../types/planningChange.types';
+import type {
+  BoardCell,
+  BoardContribution,
+} from '../types/fulfilmentPlanning.types';
+import type {
+  PlanningChangeBatch,
+  PlanningChangeRow,
+} from '../types/planningChange.types';
 
 function contribution(over: Partial<BoardContribution>): BoardContribution {
   return {
@@ -90,7 +96,8 @@ function row(over: Partial<PlanningChangeRow>): PlanningChangeRow {
     inquiry_rows: [],
     decision: null,
     applied_state: 'pending',
-    board_link: '/project-sales/fulfilment-planning?orders=SO381895&cell=X|2026-08-19',
+    board_link:
+      '/project-sales/fulfilment-planning?orders=SO381895&cell=X|2026-08-19',
     ...over,
   } as PlanningChangeRow;
 }
@@ -100,7 +107,11 @@ function batchOf(rows: PlanningChangeRow[]): PlanningChangeBatch {
     id: 'pcb-9',
     created_at: '2026-08-19T09:23:00Z',
     created_by_name: 'Cyndi',
-    source: { upload_id: 'imp-1', file_name: 'SO book.xlsx', kind: 'so_book_upload' },
+    source: {
+      upload_id: 'imp-1',
+      file_name: 'SO book.xlsx',
+      kind: 'so_book_upload',
+    },
     orders: [
       {
         project_sales_order_id: 'pso-1',
@@ -230,7 +241,13 @@ describe('the Was / Now table of a changed line', () => {
       row({
         suggestion: {
           components: [
-            { action: 'keep', source: 'po', qty_now: '134', document: 'PO-A', label: 'Keep PO-A 134' },
+            {
+              action: 'keep',
+              source: 'po',
+              qty_now: '134',
+              document: 'PO-A',
+              label: 'Keep PO-A 134',
+            },
           ],
           late_days: 3,
         },
@@ -244,7 +261,13 @@ describe('the Was / Now table of a changed line', () => {
       row({
         suggestion: {
           components: [
-            { action: 'use_own', source: 'pool_share', qty_now: '90', location: 'BRW', label: 'Pool share 90 at BRW' },
+            {
+              action: 'use_own',
+              source: 'pool_share',
+              qty_now: '90',
+              location: 'BRW',
+              label: 'Pool share 90 at BRW',
+            },
           ],
           shortfall_qty: '44',
         },
@@ -309,7 +332,11 @@ describe('the Was / Now table of a changed line', () => {
       row({
         held: {
           reserve: [
-            { location: 'BRW', warehouse_id: '21608757-0065-4ef2-bd05-1397452411eb', qty: '8' },
+            {
+              location: 'BRW',
+              warehouse_id: '21608757-0065-4ef2-bd05-1397452411eb',
+              qty: '8',
+            },
           ],
           borrow: [],
           buy_qty: '0',
@@ -319,7 +346,9 @@ describe('the Was / Now table of a changed line', () => {
         composition: {
           project_line_id: 'pl-1',
           timely_spo_qty: '0',
-          reserve: [{ warehouse_id: '21608757-0065-4ef2-bd05-1397452411eb', qty: '15' }],
+          reserve: [
+            { warehouse_id: '21608757-0065-4ef2-bd05-1397452411eb', qty: '15' },
+          ],
           borrow: [],
           buy_qty: '0',
         },
@@ -348,6 +377,26 @@ describe('the Was / Now table of a changed line', () => {
     ]);
   });
 
+  it('wraps a bare released document number and prints a released notice sentence verbatim', () => {
+    const annotation = annotationOf(
+      row({
+        applied_state: 'applied',
+        result: {
+          executed_reallocations: [],
+          released_documents: [
+            'SPO-2026/08-0061',
+            'SO396347 line 3: 220 of 202607-S0083 received in full, goods are stock now, nothing to move; purchasing adjusts the link at Order Inquiries',
+          ],
+        },
+      }),
+      'SO396347',
+    );
+    expect(annotation.whereItWent).toEqual([
+      'Released SPO-2026/08-0061 for purchasing',
+      'SO396347 line 3: 220 of 202607-S0083 received in full, goods are stock now, nothing to move; purchasing adjusts the link at Order Inquiries',
+    ]);
+  });
+
   it('prints no "Where it went" section on a row Apply has not run yet (result: null)', () => {
     const annotation = annotationOf(
       row({ applied_state: 'pending', result: null }),
@@ -364,7 +413,13 @@ describe('the Was / Now table of a changed line', () => {
     const annotation = annotationOf(
       row({
         held: {
-          reserve: [{ location: 'BRW', warehouse_id: 'bb6f3f1e-0a2e-4a1a-9d1e-0c5f5b9f77aa', qty: '2' }],
+          reserve: [
+            {
+              location: 'BRW',
+              warehouse_id: 'bb6f3f1e-0a2e-4a1a-9d1e-0c5f5b9f77aa',
+              qty: '2',
+            },
+          ],
           borrow: [],
           buy_qty: '0',
           timely_spo_qty: '0',
@@ -396,10 +451,15 @@ describe('the Was / Now table of a changed line', () => {
 
   it('carries the moved-transfer phrase when the batch flagged one', () => {
     const annotation = annotationOf(
-      row({ kind: 'cancelled', moved_transfer: '10 moved BRW -> BRW-IB, line cancelled' }),
+      row({
+        kind: 'cancelled',
+        moved_transfer: '10 moved BRW -> BRW-IB, line cancelled',
+      }),
       'SO381895',
     );
-    expect(annotation.movedTransfer).toBe('10 moved BRW -> BRW-IB, line cancelled');
+    expect(annotation.movedTransfer).toBe(
+      '10 moved BRW -> BRW-IB, line cancelled',
+    );
   });
 });
 
@@ -434,12 +494,26 @@ describe('annotationsByCell', () => {
     const map = annotationsByCell(
       batchOf([
         row({}),
-        row({ id: 'pcr-2', project_line_id: 'pl-2', line_no: 2, kind: 'cancelled' }),
-        row({ id: 'pcr-3', project_line_id: 'pl-3', line_no: 3, kind: 'cancelled' }),
+        row({
+          id: 'pcr-2',
+          project_line_id: 'pl-2',
+          line_no: 2,
+          kind: 'cancelled',
+        }),
+        row({
+          id: 'pcr-3',
+          project_line_id: 'pl-3',
+          line_no: 3,
+          kind: 'cancelled',
+        }),
       ]),
       [surviving],
     );
-    expect(map.get(key)?.map((entry) => entry.rowId)).toEqual(['pcr-1', 'pcr-2', 'pcr-3']);
+    expect(map.get(key)?.map((entry) => entry.rowId)).toEqual([
+      'pcr-1',
+      'pcr-2',
+      'pcr-3',
+    ]);
   });
 
   it('lands a proposal-less row on its OWN cell, not the first cell of its product', () => {
@@ -449,7 +523,9 @@ describe('annotationsByCell', () => {
     // second instalment's Was / Now table landed on the first instalment's cell.
     const second = cell({
       bucket_key: '2026-09-07',
-      contributions: [contribution({ key: 'k2', project_line_id: 'pl-2', line_no: 2 })],
+      contributions: [
+        contribution({ key: 'k2', project_line_id: 'pl-2', line_no: 2 }),
+      ],
     });
     const map = annotationsByCell(
       batchOf([
@@ -465,12 +541,16 @@ describe('annotationsByCell', () => {
       [surviving, second],
     );
     expect(map.get(key)?.map((entry) => entry.rowId)).toEqual(['pcr-1']);
-    expect(map.get(cellKeyOf(second))?.map((entry) => entry.rowId)).toEqual(['pcr-2']);
+    expect(map.get(cellKeyOf(second))?.map((entry) => entry.rowId)).toEqual([
+      'pcr-2',
+    ]);
   });
 
   it('drops a row whose product is nowhere on the board', () => {
     const map = annotationsByCell(
-      batchOf([row({ id: 'pcr-9', project_line_id: 'pl-9', item_code: 'NOT-HERE' })]),
+      batchOf([
+        row({ id: 'pcr-9', project_line_id: 'pl-9', item_code: 'NOT-HERE' }),
+      ]),
       [surviving],
     );
     expect(map.size).toBe(0);
@@ -491,11 +571,12 @@ describe('preMarkedKeys', () => {
   });
 
   it('never marks a line whose sales order states no location', () => {
-    const contributions = [contribution({ key: 'k1', project_line_id: 'pl-1', unplannable: true })];
+    const contributions = [
+      contribution({ key: 'k1', project_line_id: 'pl-1', unplannable: true }),
+    ];
     expect(preMarkedKeys(batchOf([row({})]), contributions)).toEqual([]);
   });
 });
-
 
 describe('uncoverChangedLines', () => {
   /**
@@ -514,11 +595,18 @@ describe('uncoverChangedLines', () => {
     sources: [{ kind: 'buy', qty: '10' }],
     qty_proposed_buy: '10',
   } as unknown as Partial<BoardContribution>);
-  const board = { cells: [cell({ contributions: [frozen] })], contributions: [frozen] };
+  const board = {
+    cells: [cell({ contributions: [frozen] })],
+    contributions: [frozen],
+  };
   const withProposal = batchOf([
     row({
       proposal: {
-        ...contribution({ key: 'built-earlier', project_line_id: 'pl-1', qty: '25' }),
+        ...contribution({
+          key: 'built-earlier',
+          project_line_id: 'pl-1',
+          qty: '25',
+        }),
         sources: [{ kind: 'buy', qty: '25' }],
         qty_proposed_buy: '25',
       } as BoardContribution,
@@ -536,7 +624,11 @@ describe('uncoverChangedLines', () => {
   });
 
   it('leaves a line the batch never named exactly as it was', () => {
-    const other = contribution({ key: 'k9', project_line_id: 'pl-other', covered: true });
+    const other = contribution({
+      key: 'k9',
+      project_line_id: 'pl-other',
+      covered: true,
+    });
     const out = uncoverChangedLines(
       { cells: [cell({ contributions: [other] })], contributions: [other] },
       withProposal,
@@ -570,7 +662,9 @@ describe('uncoverChangedLines', () => {
         inquiry_no: 'OI-000539',
         state: 'placed',
         ack_state: 'acknowledged',
-        documents: [{ document: 'SPO-2026/04-0058', kind: 'spo', received: true }],
+        documents: [
+          { document: 'SPO-2026/04-0058', kind: 'spo', received: true },
+        ],
         redirected: false,
       },
     } as unknown as Partial<BoardContribution>);
@@ -621,7 +715,13 @@ describe('uncoverChangedLines', () => {
       trail: [],
     } as unknown as Partial<BoardContribution>);
     const proposedTrail = [
-      { step: 1, kind: 'reserve_own', question: 'Any reserved stock at BRW?', answer: 'yes', took: '5' },
+      {
+        step: 1,
+        kind: 'reserve_own',
+        question: 'Any reserved stock at BRW?',
+        answer: 'yes',
+        took: '5',
+      },
     ];
     const frozenProposalBatch = batchOf([
       row({
@@ -692,7 +792,10 @@ describe('uncoverChangedLines', () => {
         } as BoardContribution,
       }),
     ]);
-    const board = { cells: [cell({ contributions: [live] })], contributions: [live] };
+    const board = {
+      cells: [cell({ contributions: [live] })],
+      contributions: [live],
+    };
 
     const out = uncoverChangedLines(board, supersededBatch);
     expect(out.contributions[0]).toEqual(live);
@@ -700,7 +803,10 @@ describe('uncoverChangedLines', () => {
 
     expect(preMarkedKeys(supersededBatch, [live])).toEqual([]);
     expect(annotationsByLine(supersededBatch).size).toBe(0);
-    expect(annotationsByCell(supersededBatch, [cell({ contributions: [live] })]).size).toBe(0);
+    expect(
+      annotationsByCell(supersededBatch, [cell({ contributions: [live] })])
+        .size,
+    ).toBe(0);
   });
 
   it('T8/AC-14: a line with a superseded row (D1) AND a pending row (D3) uses only the pending row', () => {
@@ -737,7 +843,10 @@ describe('uncoverChangedLines', () => {
         } as BoardContribution,
       }),
     ]);
-    const board = { cells: [cell({ contributions: [live] })], contributions: [live] };
+    const board = {
+      cells: [cell({ contributions: [live] })],
+      contributions: [live],
+    };
 
     const out = uncoverChangedLines(board, supersededFirst);
     expect(out.contributions[0].sources).toEqual([{ kind: 'buy', qty: '5' }]);
@@ -751,7 +860,9 @@ describe('uncoverChangedLines', () => {
     // `FulfilmentBoardPanel.change.test.tsx`) and is not what this test is about.
     expect(preMarkedKeys(supersededFirst, out.contributions)).toEqual(['k1']);
     const byLine = annotationsByLine(supersededFirst);
-    expect(byLine.get('pl-1')?.map((entry) => entry.rowId)).toEqual(['pcr-pending']);
+    expect(byLine.get('pl-1')?.map((entry) => entry.rowId)).toEqual([
+      'pcr-pending',
+    ]);
   });
 
   /**
@@ -785,7 +896,10 @@ describe('uncoverChangedLines', () => {
         } as BoardContribution,
       }),
     ]);
-    const board = { cells: [cell({ contributions: [live] })], contributions: [live] };
+    const board = {
+      cells: [cell({ contributions: [live] })],
+      contributions: [live],
+    };
 
     const out = uncoverChangedLines(board, appliedBatch);
     expect(out.contributions[0].covered).toBe(false);
@@ -796,6 +910,8 @@ describe('uncoverChangedLines', () => {
     // Pre-marked off the ALREADY-UNCOVERED contributions, same as AC-14 above.
     expect(preMarkedKeys(appliedBatch, out.contributions)).toEqual(['k1']);
     const byLine = annotationsByLine(appliedBatch);
-    expect(byLine.get('pl-1')?.map((entry) => entry.rowId)).toEqual(['pcr-applied']);
+    expect(byLine.get('pl-1')?.map((entry) => entry.rowId)).toEqual([
+      'pcr-applied',
+    ]);
   });
 });
