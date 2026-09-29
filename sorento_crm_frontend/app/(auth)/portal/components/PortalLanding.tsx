@@ -78,6 +78,8 @@ import {
 import { useRevisionPolicy } from '../hooks/useRevisions';
 import { ReviseAction } from './ReviseAction';
 import { LandingToolbar } from './LandingToolbar';
+import { CustomerAsksList } from './CustomerAsksList';
+import { listCustomerAsks } from '../lib/customer-asks-service';
 import {
   DEFAULT_LANDING_SORT,
   activeLandingFilterCount,
@@ -123,6 +125,7 @@ const EMPTY_LISTS: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
   sponsorship_form: [],
   price_tag_request: [],
   sales_opportunity: [],
+  customer_asks: [],
 };
 
 type BadgeVariant =
@@ -217,6 +220,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
     useState<Record<PortalLandingKind, PortalSubmissionSummary[]>>(EMPTY_LISTS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [openAskCount, setOpenAskCount] = useState(0);
   const {
     value: search,
     setValue: setSearch,
@@ -368,13 +372,20 @@ export function PortalLanding({ slug }: { slug?: string }) {
         // answering 403 or 500 used to reject the whole load, so the landing
         // showed its error screen and the rest of the kinds that answered
         // perfectly well were unreachable. A leg that fails is that kind empty.
+        // Customer asks (fix round 5) is not a list of submissions: its body pages its own
+        // rows (`CustomerAsksList`), so this leg only reads the open count for the badge.
         const legs = await Promise.allSettled(
           kinds.map((k) =>
             k === 'price_tag_request'
               ? listRequestsAsSummaries(q)
               : k === 'sales_opportunity'
                 ? listOpportunitiesAsSummaries(q)
-                : fetchSubmissions(k, q),
+                : k === 'customer_asks'
+                  ? listCustomerAsks({ page: 1, limit: 1, state: 'open', q }).then((page) => {
+                      setOpenAskCount(page.pagination?.total ?? 0);
+                      return [] as PortalSubmissionSummary[];
+                    })
+                  : fetchSubmissions(k, q),
           ),
         );
 
@@ -454,10 +465,13 @@ export function PortalLanding({ slug }: { slug?: string }) {
       sponsorship_form: 0,
       price_tag_request: 0,
       sales_opportunity: 0,
+      customer_asks: 0,
     };
     for (const t of landingKinds) out[t] = submissions[t]?.length ?? 0;
+    // Its badge is the open count, not a row count (asks are paged server-side).
+    out.customer_asks = openAskCount;
     return out;
-  }, [submissions, landingKinds]);
+  }, [submissions, landingKinds, openAskCount]);
 
   const handleLogout = useCallback(async () => {
     const t = readPortalToken();
@@ -650,6 +664,9 @@ export function PortalLanding({ slug }: { slug?: string }) {
           {/* F2: the logging agent's own target progress, at the top of the kind. */}
           {currentTab === 'sales_opportunity' ? <MyTargetPanel slug={slug} /> : null}
 
+          {currentTab === 'customer_asks' ? (
+            <CustomerAsksList search={debouncedSearch} view={view} onViewChange={setView} />
+          ) : (
           <SubmissionList
             kind={currentTab}
             items={submissions[currentTab] ?? []}
@@ -663,6 +680,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
             search={search}
             onClearSearch={() => setSearch('')}
           />
+          )}
         </>
       )}
     </div>

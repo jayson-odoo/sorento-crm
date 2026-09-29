@@ -57,6 +57,8 @@ const KIND_FIELDS: Record<PortalLandingKind, LandingField[]> = {
     { key: 'customer_name', label: 'Customer or prospect', type: 'text' },
     { key: 'expected_close_date', label: 'Expected close', type: 'date' },
   ],
+  // Never read: Customer asks renders `CustomerAsksList`, which filters server-side.
+  customer_asks: [],
 };
 
 export function landingFieldsFor(kind: PortalLandingKind): LandingField[] {

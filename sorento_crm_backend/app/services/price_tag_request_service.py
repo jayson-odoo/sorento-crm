@@ -106,6 +106,28 @@ _DOC_NUMBER_ATTEMPTS = 5
 _DEFAULT_GUARDED_CLASSES = ("Bathroom Furniture", "Kitchen Sink")
 
 
+def sales_agent_for_contact(db: Session, contact_id: str):
+    """The SalesAgent a portal contact is linked to, or None.
+
+    `sales_agents.contact_id` carries no unique constraint, so an unordered `.first()`
+    let Postgres return either row: the same salesperson could open the form twice and
+    be offered two different debtor books with nothing on screen to explain it. Ordered
+    by the agent code and then the id, so the answer is the same every time, and a
+    second link is logged rather than hidden - linking one contact to two agents is a
+    data problem for a human, not something to guess at here.
+
+    Extracted from `PriceTagRequestService.lookup_debtors_for_agent` (chatbot stock ask
+    v2 S6, AC-SA601): the debtor lookup and the portal's Customer asks page both call it.
+
+    Main's `app.services.sales.portal_agent.agent_for_contact` (sales plan 3.5) lifted
+    the same rule for the portal opportunity form; this delegates to it so there is one
+    copy of the rule, and stays as the module-level seam both S6 callers read at call time.
+    """
+    from app.services.sales.portal_agent import agent_for_contact
+
+    return agent_for_contact(db, contact_id)
+
+
 class PriceTagRequestService:
     """Stateless helpers for price tag requests."""
 
@@ -2375,12 +2397,11 @@ Marketing's own work is not part of the form's payload, so it is captured
         Returns an empty list if the contact has no linked agent.
         """
         from app.models.order import Customer, Order
-        from app.services.sales.portal_agent import agent_for_contact
 
-        # Lifted into `app.services.sales.portal_agent` (plan 3.5) so the portal
-        # opportunity form resolves a contact's agent the same way - ordered by the
-        # agent code and then the id, and a second link logged rather than guessed at.
-        agent = agent_for_contact(db, contact_id)
+        # Chatbot stock ask v2 S6 (AC-SA601): the one agent resolution, shared with the
+        # portal's Customer asks page. Module-level lookup so both callers read the same
+        # function at call time.
+        agent = sales_agent_for_contact(db, contact_id)
         if agent is None:
             return []
 

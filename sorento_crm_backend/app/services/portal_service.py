@@ -83,8 +83,15 @@ SUPPORTED_TYPES = ("complaint", "stock_inquiry", "purchase_request", "sponsorshi
 # The kinds an ADMIN may grant on a contact access type, which is a different
 # question: it is about what the portal LANDING offers a contact, and the price
 # tag request has a landing card like the rest. `portal_form_types` is validated
-# against this one.
-GRANTABLE_PORTAL_FORM_TYPES = SUPPORTED_TYPES + ("price_tag_request", "sales_opportunity")
+# against this one. `customer_asks` (chatbot stock ask v2 fix round 5, owner 29 Sep) is a
+# landing kind with no form behind it: the stock asks of the linked sales agent's customers,
+# switched per contact like Price Tag Request and off until an admin turns it on.
+CUSTOMER_ASKS_FORM_TYPE = "customer_asks"
+GRANTABLE_PORTAL_FORM_TYPES = SUPPORTED_TYPES + (
+    "price_tag_request",
+    "sales_opportunity",
+    CUSTOMER_ASKS_FORM_TYPE,
+)
 PORTAL_ATTACHMENT_TYPE_CODE = "portal_submission"
 
 # Crockford base32 alphabet - excludes I, L, O, U to eliminate look-alike

@@ -176,7 +176,12 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # Merge of main into the #1262 lane (fix lane round 5, 27 Sep 2026): main's -602
 # (63657 -> 63055) and this lane's +54 (63657 -> 63711) touch different spans of the
 # body and both stand: 63055 + 54 = 63109.
-CONSTANT_CHARS = 63109
+# 63109 -> 63358 (issue #1352, 29 Sep 2026, owner ruling "the parser reports, the engine
+# judges"): DOMAIN IN MESSAGE gains the consistency rule "domain_in_message true means
+# domain_hint is never null" with its one example (+249). The open numbered question
+# block and the stock task block also changed, but both sit in addenda this measure
+# subtracts. Measured via `_without_growth_r1_addendum(SEMANTIC_PARSER_PROMPT)`.
+CONSTANT_CHARS = 63358
 
 #: The line the round 8 cut rewrote, as the live file carries it and as the constant does.
 COMPANIES_OFFERED_LIVE = (
