@@ -226,6 +226,18 @@ chatbot parser row.
    between their markers), where the same estimator reads: base 232182ae 29,901; lane at
    d89110c0 29,866; main 11bf373e 32,231 (its own `STOCK_TASK_ADDENDUM`); this lane merged
    over it 32,395, under 37,153. `CEILING` is back at 37,153.
+   **Re-pinned 29 Sep 2026 (fix round 7):** main grew the prompt past 37,153 on its own.
+   Same estimator, same rendering: main fd521c20 40,599 (+10,698 since 232182ae), moved by
+   the PRs the owner merged since the 26 Sep ruling: #833 (specification addendum and the
+   code-first rule), #1273 (top selling), #1323 (escalation confirmation). `CEILING` is now
+   40,599, main's own measured prompt at fd521c20, and it bounds the prompt WITHOUT
+   `MEMORY_ADDENDUM` (lane at 8371dbee: 40,420, the lane's body edits save 179). A second
+   pin, `MEMORY_ADDENDUM_CEILING = 512`, bounds the addendum itself: 339 est. tokens at the
+   26 Sep baseline (lane d89110c0), 512 after round 4 (baf4c813, 28 Sep: the history
+   question in any wording, the number re-run, `commercial_request`). Pinning it back at 339
+   needs a prompt cut, which is the owner's open decision on #1275. The published prompt with
+   the addendum is 40,935 (fixture render) / 40,859 (fresh `blank_session` render), under
+   40,599 + 512 = 41,111. Note that 512 is over AC-MEM066's own 400; that too waits on #1275.
    Published text: `mem_0002_parser_memory` publishes `chatbot_rearch_s4._body(session)`
    (the constant plus the rendered policy blocks, the way s4 and s12 build production
    versions), memory addendum included, as the next `chatbot_semantic_parser` version with

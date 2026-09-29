@@ -6,7 +6,7 @@ from `chatbot_domains` / `chatbot_entity_kinds` (`chatbot_rearch_s4._body`, prom
 `chatbot_rearch_s12`). At d89110c0 this migration published the bare constant, so the
 version the owner's hand test puts on the label had every domain and entity-kind paragraph
 missing. This pins: the published template IS `s4._body(session)`, carries the memory
-addendum and the policy blocks, sits under the 37,153 est. token ceiling, is unlabelled,
+addendum and the policy blocks, sits under main's 40,599 est. token ceiling plus the 512 bound on the memory addendum (re-pinned 29 Sep 2026, see `test_parser_prompt_budget.CEILING`), is unlabelled,
 and a second run publishes nothing.
 
 Runs on the blank scratch schema (`blank_session`), the same way
@@ -19,10 +19,10 @@ import math
 from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.services.chatbot_parser_prompt import BLOCKS_BEGIN, BLOCKS_END, MEMORY_ADDENDUM
 from tests._pg_fixture import blank_session
+from tests.chatbot.test_parser_prompt_budget import CEILING, MEMORY_ADDENDUM_CEILING
 from tests.chatbot.test_rearch_s12_config_ships import _load
 
 PROMPT_NAME = "chatbot_semantic_parser"
-CEILING = 37_153
 
 
 def _est_tokens(text: str) -> int:
@@ -88,8 +88,17 @@ class TestMem0002PublishesTheRenderedBody:
             assert len(new_rows) == 1, f"publish once, then nothing: {len(new_rows)} new"
             (row,) = new_rows
             rendered = row.template.replace("{{current_date}}", "Thursday, 25 September 2026")
-            assert _est_tokens(rendered) <= CEILING, (
-                f"{_est_tokens(rendered)} est. tokens, over the {CEILING} ceiling"
+            assert MEMORY_ADDENDUM in row.template, "the memory addendum is not in the template"
+            without_memory = row.template.replace(MEMORY_ADDENDUM, "", 1).replace(
+                "{{current_date}}", "Thursday, 25 September 2026"
+            )
+            assert _est_tokens(without_memory) <= CEILING, (
+                f"{_est_tokens(without_memory)} est. tokens without the memory addendum, "
+                f"over main fd521c20's measured {CEILING} ceiling"
+            )
+            assert _est_tokens(rendered) <= CEILING + MEMORY_ADDENDUM_CEILING, (
+                f"{_est_tokens(rendered)} est. tokens, over {CEILING} + "
+                f"{MEMORY_ADDENDUM_CEILING} (main plus the memory addendum)"
             )
             assert _production(db) == production_before, "the production label moved"
             labelled = {

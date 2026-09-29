@@ -367,6 +367,11 @@ AC-MEM026 and AC-MEM028.
 - AC-MEM061 [BE][T] (Q8) `tests/chatbot/test_parser_prompt_budget.py` renders the production
   parser prompt (registry fallback plus the policy blocks seed) and fails above 22,100 est.
   tokens. Evidence: the test, and a kill test that appends 1,000 tokens and sees it red.
+  Note (29 Sep 2026, fix round 7 on PR #1304): the ceiling is main fd521c20's own measured
+  production prompt, 40,599 est. tokens (was 37,153 by the 26 Sep coordinator ruling; main
+  grew it through #833, #1273 and #1323), applied to the prompt without the memory addendum;
+  the addendum is pinned separately at 512 (339 at the 26 Sep baseline d89110c0, 512 after
+  round 4 baf4c813). See contract section 8 item 7.
 - AC-MEM062 [BE][T] Every parse records a `context` trace event with est. tokens per layer,
   the total, and what was dropped (layer, count). Evidence: pytest on the trace.
 - AC-MEM063 [BE][T] (Q5) The recall re-parse is gone: no turn makes two parser calls; the
