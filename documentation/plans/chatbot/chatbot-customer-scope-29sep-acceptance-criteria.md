@@ -1,8 +1,8 @@
 # UAC - Chatbot: a linked contact is scoped to its customers; "my" / "me" means them
 
 Plan: `PLAN-chatbot-customer-scope-29sep.md`. Crew lane CHATBOT-CUSTOMER-SCOPE, PR #1365.
-Written under the grill's RECOMMENDED options (Q1a, Q2a, Q3a, Q4a, Q5a, Q6a, Q7b, Q8a); an
-owner ruling that differs changes the AC it names and nothing else.
+Owner rulings 29 Sep 2026: Q1a, Q2a, Q3a, Q4a, Q5a, Q6a, Q7b, Q8a (complaints included,
+filtered by the linked customers' names), exactly the options this file was written under.
 
 ## Journey
 
@@ -131,6 +131,10 @@ that takes `customer_ids` and returns per-customer data (census in the plan, sec
   ids -> 403; none -> forced to the links.
 - **AC-CS-45** `[BE]` A staff contact (active office type) and a request with no contact
   identity are unchanged on every route above (no 403, no forcing).
+- **AC-CS-47** `[BE]` `GET /complaints-management/complaints/` gains `contact_id` / `space_id`
+  (both-or-neither, 422 `contact_identity_required`); with a scoped contact it returns only
+  complaints whose `customer_name` (trimmed, case-insensitive) is one of the linked customers'
+  names; staff and no-identity requests are unchanged.
 - **AC-CS-46** `[BE]` The link lookup on the routes reads with company scope OFF (the sales
   analysis precedent: an API-key request's scope can hide the row for a NULL-workspace
   contact), so a scoped contact is never let through by a hidden link.

@@ -1,6 +1,6 @@
 # PLAN - Chatbot: a linked contact is scoped to its customers; "my" / "me" means them
 
-Status: in build under the grill's recommended options, owner rulings pending (29 Sep 2026; crew lane CHATBOT-CUSTOMER-SCOPE, PR #1365). Standard track:
+Status: in build (29 Sep 2026; crew lane CHATBOT-CUSTOMER-SCOPE, PR #1365). Owner rulings received 29 Sep, all eight as recommended; see Decisions. Standard track:
 this is an authorization boundary (security-reviewer runs). UAC:
 `chatbot-customer-scope-29sep-acceptance-criteria.md` (written under the recommended options).
 
@@ -160,10 +160,17 @@ See the PR comment; the answers are folded into "Decisions" below once they arri
 
 ## Decisions
 
-Built under the grill's recommended options; each is marked "assumed" until the owner
-answers on PR #1365, and a differing ruling changes the AC it names and nothing else.
+Owner rulings, 29 Sep 2026 (relayed by crew on PR #1365), every one the recommended option.
+Verbatim: "Q1 (a) reuse the top-selling rule: office access type = staff sees all; linked
+non-staff scoped to links. Q2 (a) a contact with NO link keeps today's behaviour, can ask
+about any customer (reveal grants stay the gate). Q3 (a) both layers: engine before resolver
++ routes force/403. Q4 (a) other customer's DO/SO number reads as an ordinary miss. Q5 (a)
+parser emits self_reference (my/me/our, incl. Malay/Chinese); engine substitutes linked
+customers, linked staff included. Q6 (a) answer across ALL linked customers. Q7 (b) 'Sorry,
+that isn't under your account. I can only check on <own linked customers>.' Q8 (a) all
+customer-scoped tools incl. debtors, analytics, complaints (filter by linked names)."
 
-| Q | Assumed | What it fixes in the design |
+| Q | Ruled | What it fixes in the design |
 | --- | --- | --- |
 | Q1 | (a) the shipped top selling rule: active office type = staff; else links = scoped | one function, `contact_customer_scope.py` |
 | Q2 | (a) unlinked contact unchanged | `scope.enforced` false when no links |
@@ -172,7 +179,7 @@ answers on PR #1365, and a differing ruling changes the AC it names and nothing 
 | Q5 | (a) `self_reference` substitutes the links for anyone linked, staff included | `scope.linked` read even when not enforced |
 | Q6 | (a) several links = all of them, `is_primary` unread | no picker of own customers |
 | Q7 | (b) refusal names the linked customers | `REFUSED_OTHER_CUSTOMER(names)` |
-| Q8 | (a) every customer-scoped tool | `fetch.CUSTOMER_SCOPED_TOOLS` pinned to the catalogue |
+| Q8 | (a) every customer-scoped tool, complaints included (filtered by the linked customers' names) | `fetch.CUSTOMER_SCOPED_TOOLS` pinned to the catalogue; complaints list route gains the contact filter (D5) |
 
 ## Design
 
@@ -261,7 +268,7 @@ words); the general gate is a no-op on a turn whose customer entities are alread
   outside -> raise `ScopeViolation` (a `ToolNotAllowed` sibling, caught by `run_fetch` into the
   refusal reply, never a tool call); `customer_query` popped.
 - `crm_complaints_list` is not on the chatbot's tool pool (`gate.ALLOWED` has no complaints
-  domain), so nothing to force there; noted, not built.
+  domain), so the lane has nothing to force; the ROUTE carries the filter (D5, owner Q8).
 
 ### D5. Routes: the defensive layer behind the MCP
 
@@ -277,6 +284,13 @@ its own contact block's customer part), debtors (`:653`), analytics (`:942`). `o
 stays as given: the customer filter ANDs onto it, so a foreign number returns no rows (Q4a).
 Top selling keeps its own block (already equivalent).
 
+Complaints (owner Q8): `GET /complaints-management/complaints/` (`complaints.py:220`) gains
+`contact_id` / `space_id` (both-or-neither, 422 `contact_identity_required`); for a scoped
+contact the rows are filtered to `lower(btrim(Complaint.customer_name)) IN (the linked
+customers' names, lowered and trimmed)`. Complaints carry `customer_name` text only
+(`models/complaints.py:34`), so the name is the join; a complaint filed under a misspelt
+name is simply not shown to the contact (fail closed).
+
 ### D6. Tests (Phase 2, tester before coder)
 
 - `tests/chatbot/test_customer_scope_lane.py`: AC-CS-01 to 05, 10 to 15, 22 to 26, 30, 33,
@@ -286,7 +300,7 @@ Top selling keeps its own block (already equivalent).
 - `tests/chatbot/test_customer_scope_fetch.py`: AC-CS-31, 32 (transformer unit + catalogue pin).
 - `tests/chatbot/test_customer_scope_parser.py`: AC-CS-20, 21 (schema, TOLERATED_ABSENT,
   prompt text, migration publish idempotent with label unmoved).
-- `tests/test_customer_scope_routes.py`: AC-CS-40 to 46 through `TestClient` with the
+- `tests/test_customer_scope_routes.py`: AC-CS-40 to 47 through `TestClient` with the
   `test_top_selling_report.py` fixtures (`_contact`, `_link`, `_access`, `_as_contact`).
 - `tests/chatbot/console_cases/2026-09-29-customer-scope.yaml`: AC-CS-50.
 
@@ -295,4 +309,5 @@ Top selling keeps its own block (already equivalent).
 - A picker of the contact's own customers (Q6b) - built if the owner rules (b).
 - Fail-closed for unlinked contacts (Q2b) - flip `enforced` to `not staff` once linking is
   backfilled; the owner's call.
-- Complaints scoping - when a complaints domain joins the chatbot tool pool.
+- Complaints scoping in the LANE - when a complaints domain joins the chatbot tool pool
+  (the route filter ships now, owner Q8).
