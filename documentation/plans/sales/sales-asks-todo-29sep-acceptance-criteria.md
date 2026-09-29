@@ -191,8 +191,9 @@ Agent select unchanged), AC-ST217 (pending state stays on the card's button and 
   `answer` = `askAnswerText(ask)`, `branch`; `askAnswerText` strips the `CODE x Q:` prefix from
   `answer_summary` and upper-cases the first letter ("SRT5674 x 50: yes, we have stock, ..." ->
   "Yes, we have stock, ..."); an `answer_summary` without the prefix is returned as is.
-- **AC-ST302 [FE][T]** `ASK_LANDING_FIELDS` = Customer (text), Answer (text), Created (date, key
-  `created_at`; the word the Sort button prints, ruled 30 Sep), State (status); `applyLandingFilters` over adapted asks with `{customer_name: 'Hock Lee Trading'}`
+- **AC-ST302 [FE][T]** `ASK_LANDING_FIELDS` = Customer (text), Product (text, key `title`), Answer
+  (text), Created (date, key `created_at`; the word the Sort button prints), State (status), in that
+  order (the approved Sort menu; reviewer S3 round); `applyLandingFilters` over adapted asks with `{customer_name: 'Hock Lee Trading'}`
   keeps only that customer's rows; `sortLandingItems` with `{key: 'created_at', dir: 'asc'}` puts
   the oldest first, `{key: 'customer_name', dir: 'asc'}` A to Z.
 - **AC-ST303 [FE][T]** `bucketTodo(payload, sort)`: sections `Needs attention` (open before
@@ -209,11 +210,13 @@ Agent select unchanged), AC-ST217 (pending state stays on the card's button and 
   clicking `Done` calls `onDone(askId)` and does not call `onOpen`.
 - **AC-ST306 [FE]** List view: a `DataGrid` (`tableLayout` fixed, resizable, `listingKey`
   `sales.customer_asks.view::todo` on the CRM and `null` on the portal) with columns Asked at,
-  Customer, Contact, Asked, Answered, (CRM: Agent when `showAgent`, Done by) and the action
-  column LAST holding `Done` / `Reopen`; the groups are section rows in order Needs attention,
+  (CRM, All agents only: Agent, second), Customer, Contact, Asked, Answered, (CRM: Done by,
+  `showDoneBy`) and the action column LAST holding `Done` / `Reopen`; the groups are section rows in order Needs attention,
   Today, Done today; row click calls `onOpen`, the button does not.
-- **AC-ST307 [FE]** The opened card (portal `Drawer`, CRM `Sheet`) renders: customer, contact,
-  asked at (CRM: agent code); the Asked / Answered block with a `Jump to message` button; the
+- **AC-ST307 [FE]** The opened card (portal `Drawer`, CRM `Sheet`) renders: customer, contact and
+  its phone, "Asked <datetime>" (CRM: the agent code); the foot reads `Done` for an open ask and
+  `Reopen` for a done one; `Jump to message` scrolls with `behavior: 'auto'` under reduced motion
+  or a keyboard press, `'smooth'` otherwise; the Asked / Answered block with a `Jump to message` button; the
   conversation from `getAskConversation` with inbound bubbles left and outbound right, the
   `ask_message_id` bubble tagged `This ask`; `Show the whole day` refetches with `whole_day=true`;
   CRM only `Open in Conversations` link to that contact's chat history (the CRM conversation
@@ -223,7 +226,7 @@ Agent select unchanged), AC-ST217 (pending state stays on the card's button and 
   `onDone` (or `Reopen`). Clicking `Jump to message` scrolls the tagged bubble into view (the
   bubble element receives the flash class).
 - **AC-ST308 [FE]** Empty payload: "Nothing waiting" heading + hint, no button; the toolbar still
-  renders. Loading: skeleton. Error: the error block.
+  renders. An active filter or search that hides every row reads "No asks match" instead. Loading: skeleton. Error: the error block.
 - **AC-ST309 [BE]** `GET /api/v1/public/portal/customer-asks/{id}/conversation` as CA for an ask
   of X (contact CX): messages of `chat_histories` for CX with `sent_at` within 30 minutes of the
   ask's `created_at`, oldest first, each `{id, direction in|out, text, at}` and nothing else (no

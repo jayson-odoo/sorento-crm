@@ -412,6 +412,11 @@ its own tests (AC-ST105b).
 - No new preference table for the sort (Q3): the existing view-preference row for the CRM, the
   portal's per-contact local storage for the portal. Trigger: a two-device salesperson.
 - No team hierarchy beyond one level: a leader sees current members, not members' teams (Q7 (c)).
+- A customer-less ask (reached through a contact link, AC-ST105b) shows `-` in the Agent column
+  of the All agents view: it may belong to several agents. Trigger: a manager asks whose it is.
+- `agent_counts` runs one small query per pickable agent (the single scope expression, plan
+  section 4, over a second grouped copy of the rule). Trigger: `/agents` p95 over about 300 ms or
+  more than about 150 `sales_agents` rows.
 - No `Show done` on the CRM mount (reviewer should-fix 2, ruled 29 Sep 2026): it would need a
   cross-customer done-list endpoint, while the CRM already has the customer's Asks tab for
   history and the to-do shows `Done today`. The portal keeps its `Show done` (the salesperson has
