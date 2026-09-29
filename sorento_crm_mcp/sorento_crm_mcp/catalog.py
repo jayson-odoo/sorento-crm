@@ -1289,9 +1289,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "so this tool NEVER subtracts what has already arrived - for that use "
             "crm_procurement_spo_allocations_last_receipt_list, and for Foundre's rule ('no stock, no "
             "incoming, but a PO is placed') the CRM probes this tool itself.\n\n"
-            "FILTER BY UUID: `product_ids` (canonical product UUIDs, csv / JSON / repeated). "
+            "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON / "
+            "repeated; the line's warehouse - an SPO allocation also matches by its book "
+            "location code). "
             "Date window: expected_date_from / expected_date_to (filters only; the expected "
             "date is not rendered in the reply).\n\n"
+            "SORT: `sort` = expected_date | product | supplier | outstanding_qty | po_date | "
+            "ordered_qty, `dir` = asc | desc; an unknown value is a 422.\n\n"
             "GROUPING: `group_by` = product | supplier | date renders headed sections. "
             "`include_summary=true` adds `summary` (po_placed_qty/po_placed_count over the "
             "filtered lines).\n\n"
@@ -1301,7 +1305,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/procurement/purchase-orders/placed",
         (),
         (
-            "limit", "product_ids", "expected_date_from", "expected_date_to",
+            "limit", "product_ids", "warehouse_ids", "expected_date_from", "expected_date_to",
             "group_by", "include_summary", "sort", "dir",
             "contact_id", "space_id",
         ),
@@ -1352,12 +1356,15 @@ CATALOG: tuple[ToolSpec, ...] = (
             "overall - 'last 3 in' for a resolved product FAMILY returns up to `top_n` "
             "lines for EACH member, not `top_n` rows overall; 'last 3 in' with NO product "
             "named returns the 3 newest lines across every product, NOT 3 per product.\n\n"
+            "SORT: `sort` = spo_date (default) | spo_quantity | gr_date | gr_quantity, `dir` = "
+            "asc | desc (default desc); nulls last; `top_n` still means lines per product / "
+            "lines overall.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/procurement/spo-allocations/last-receipt",
         (),
-        ("product_ids", "warehouse_ids", "top_n", "contact_id", "space_id"),
+        ("product_ids", "warehouse_ids", "top_n", "sort", "dir", "contact_id", "space_id"),
         domain="spo_allocation",
         related_tools=("crm_procurement_po_placed_list", "crm_incoming_stock_by_product"),
         escalation_team="procurement",

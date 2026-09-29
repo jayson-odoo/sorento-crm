@@ -32,8 +32,8 @@ RECORD_KEY_KIND: dict[str, str] = {
     "incoming": "inbound_shipment",
     "order": "order",
     # Not exercised by any test this round - no live PO-number resolver path exists
-    # yet (measured: `lanes/business/gate.py::ALLOWED` carries no "purchase_order" row
-    # at all, so nothing types a PO number's own hint today). Named for the day one
+    # yet (`lanes/business/gate.py::ALLOWED["purchase_order"]` since 29 Sep 2026 lists
+    # product/warehouse/category/brand, none of them a PO number's own hint). Named for the day one
     # lands, after the tool's own field key (`crm_procurement_po_placed_list`'s
     # envelope already keys its own number "po_number").
     "purchase_order": "po_number",

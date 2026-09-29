@@ -930,6 +930,13 @@ def _fetch_semantic_input(
         # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 8: the top selling ask's own
         # axes (`turn_runtime.lane_parse_output` projects them off the focus).
         "top_selling": parse_output.get("top_selling"),
+        # PLAN-po-spo-warehouse-29sep S6: the PO/SPO sort axis (the parser's own, or the
+        # focus's carried one projected by `turn_runtime.lane_parse_output`). Named here
+        # for the same reason `group_by`/`top_n` are: `entity_ids_transformer` reads
+        # them off THIS object (reviewer blocker 1, PR #1373: without them the sort never
+        # reached a tool on a live turn).
+        "sort_by": parse_output.get("sort_by"),
+        "sort_dir": parse_output.get("sort_dir"),
         # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
         # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D13/D20:
         # `{product uuid: quantity}`, built by `turn_runtime._spec_quantities` from
