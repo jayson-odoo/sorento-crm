@@ -232,6 +232,22 @@ export function PillOverflow({
 }
 
 /**
+ * The plain popover body a label-only cell wants: every item on its own line. The People
+ * pages (Roles, Access types), the role list's Permissions and the other label-list cells
+ * pass this as `renderPopover` so the same fold reads the same way on every list; a cell
+ * whose items carry more than a label (a link, a tone legend) renders its own.
+ */
+export function PillOverflowList({ items }: { items: PillItem[] }) {
+  return (
+    <ul className="flex flex-col gap-1 text-sm">
+      {items.map((item) => (
+        <li key={item.key}>{item.label}</li>
+      ))}
+    </ul>
+  );
+}
+
+/**
  * One pill. `interactive` pills are keyboard-reachable and dispatch a real `click()` of
  * themselves on Enter/Space, which then bubbles to the `PopoverTrigger` above exactly like a
  * mouse click would - one activation path for both, rather than a second one only keyboard

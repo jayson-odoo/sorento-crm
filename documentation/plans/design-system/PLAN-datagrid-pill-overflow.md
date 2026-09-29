@@ -1,6 +1,6 @@
 # PLAN: DataGrid pill cells fold to one line with a "+N" popover
 
-Status: in progress (small fix track: no migration, no auth change, reuse-only frontend diff)
+Status: in review on PR #1377 (small fix track: no migration, no auth change, reuse-only frontend diff)
 Lane: PILL-OVERFLOW (crew), branch `claude/datagrid-pill-overflow-31ss4p`
 Owner rule (29 Sep 2026, system design principle): every DataGrid row is ONE line. A cell
 with several pills shows as many as fit on one line (at least the first), then a "+N" chip;
@@ -28,9 +28,16 @@ clicking "+N" opens a popover listing the pills.
 2. Users & Access > People > Internal Users, Access types column (`ContactsList.tsx`): same.
 3. OI Lines tab PO/SPO "+N" popover (`orderInquiryHeaderLinesColumns.tsx`): wrap the content
    in `PopoverPortal` and add `collisionPadding`, so it renders on top of the list.
-4. Sweep of other DataGrid list pages with wrapping pill/badge cells: fixed where the cell is
-   a plain list of labels (same pattern), listed as follow-ups otherwise. The list is in the
-   PR body.
+4. Sweep of other DataGrid list pages with wrapping pill/badge cells. Adopted `PillOverflow`
+   (plain label lists): Users & Access > Roles, Permissions column (`role-list.tsx`);
+   SCM > Simulation, Changed groups (`ScenariosGrid.tsx`); Dealer Kit > Tile designs, Shows
+   (`TileDesignsList.tsx`). Portalled an existing one-off "+N" popover (same bug as the OI
+   Lines cell): Drive access levels (`AccessLevelsCell.tsx`), SPO allocations containers
+   (`SPOAllocationsList.tsx`), SCM sales orders delivery dates (`SalesOrdersGrid.tsx`).
+   Follow-ups (cells that mix pills with icons, tooltips, links or remove buttons, so not the
+   plain-label pattern): OI worklist Instruction cell (`orderInquiryWorklistColumns.tsx`),
+   SCM product perspective Status (`ProductPerspectiveGrid.tsx`), PO intake Flag column
+   (`POIntakeLinesGrid.tsx`), import field aliases (`ImportFieldAliasesList.tsx`).
 
 ## Tests (vitest)
 

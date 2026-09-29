@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
+import { PillOverflow, PillOverflowList } from '@/components/common/PillOverflow';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import {
@@ -201,21 +202,19 @@ const RoleList = () => {
             return <span>-</span>;
           }
 
-          const displayedPermissions = permissions.slice(0, 3);
-          const extraPermissionsCount =
-            permissions.length - displayedPermissions.length;
-
+          // One row line (owner rule, 29 Sep 2026): as many slugs as the column fits, the
+          // rest behind "+N", every slug in the popover (`PillOverflow`) - the fixed
+          // "first 3 + 'N more'" still wrapped onto two lines at the default width.
           return (
-            <div className="flex items-center gap-1 flex-wrap">
-              {displayedPermissions.map((permission, index) => (
-                <Badge key={index} variant="outline">
-                  {permission.slug}
-                </Badge>
-              ))}
-              {extraPermissionsCount > 0 && (
-                <span className="text-muted-foreground text-xs ms-1">{`${extraPermissionsCount} more`}</span>
-              )}
-            </div>
+            <PillOverflow
+              ariaLabel={`Permissions of ${info.row.original.name}`}
+              testId={`role-permissions-${info.row.original.id}`}
+              items={permissions.map((permission) => ({
+                key: permission.slug,
+                label: permission.slug,
+              }))}
+              renderPopover={(items) => <PillOverflowList items={items} />}
+            />
           );
         },
         minSize: 350,
