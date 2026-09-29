@@ -207,6 +207,22 @@ def test_ac_is001_use_case_registered_and_listed(db):
     assert any(r["use_case"] == "ideation_status_update" for r in rows)
 
 
+def test_ac_is001_set_default_accepts_the_ideation_variables(db):
+    """The mapping screen saves through ``set_default``, which refuses a variable missing
+    from ``PARAM_VARIABLES``; the other tests insert the row directly and never hit it."""
+    from app.services import respond_template_service as rts
+
+    tpl = _map_template(db)
+    out = rts.set_default(
+        db,
+        "ideation_status_update",
+        template_id=tpl.id,
+        param_mapping={"1": "idea_number", "2": "status_label", "3": "track_url"},
+    )
+    assert out["is_valid"] is True
+    assert out["param_mapping"] == {"1": "idea_number", "2": "status_label", "3": "track_url"}
+
+
 # ---------------------------------------------------------------------------
 # Kinds (AC-IS020 to AC-IS024), send path (AC-IS050), log row (AC-IS060)
 # ---------------------------------------------------------------------------
