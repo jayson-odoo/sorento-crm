@@ -3,7 +3,6 @@ import { extractApiError } from '@/lib/api-client';
 import type { Customer, CustomerFormData, CustomerDetail } from '../types/customer.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
-import { searchMockCustomers } from './customerSelectMock';
 
 
 export async function getCustomers(params: DataGridApiFetchParams & { status?: string }): Promise<DataGridApiResponse<Customer>> {
@@ -82,9 +81,6 @@ export async function getCustomerSalesAgentsSelect(): Promise<CustomerSalesAgent
   return body.data ?? [];
 }
 
-/** PHASE 1 (PLAN-contact-customers-29sep): flip to false in S2 and delete `customerSelectMock.ts`. */
-const USE_MOCK = true;
-
 /** Page size of `searchCustomersSelect`; hand the same number to `SearchableSelect`'s `pageSize`. */
 export const CUSTOMER_SELECT_PAGE_SIZE = 50;
 
@@ -112,22 +108,16 @@ export async function searchCustomersSelect(
     sales_agent_code?: string | null;
     sales_agent_name?: string | null;
   };
-  const offset = pageIndex * CUSTOMER_SELECT_PAGE_SIZE;
-  let rows: Row[];
-  if (USE_MOCK) {
-    rows = searchMockCustomers(query, CUSTOMER_SELECT_PAGE_SIZE, offset);
-  } else {
-    const search = new URLSearchParams({
-      limit: String(CUSTOMER_SELECT_PAGE_SIZE),
-      offset: String(offset),
-    });
-    if (query.trim()) search.set('query', query.trim());
-    const response = await apiFetch(`/api/v1/order-management/customers/select?${search.toString()}`);
-    if (!response.ok) {
-      throw new Error(await extractApiError(response, 'Failed to load customers'));
-    }
-    rows = ((await response.json()) as { data?: Row[] }).data ?? [];
+  const search = new URLSearchParams({
+    limit: String(CUSTOMER_SELECT_PAGE_SIZE),
+    offset: String(pageIndex * CUSTOMER_SELECT_PAGE_SIZE),
+  });
+  if (query.trim()) search.set('query', query.trim());
+  const response = await apiFetch(`/api/v1/order-management/customers/select?${search.toString()}`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load customers'));
   }
+  const rows = ((await response.json()) as { data?: Row[] }).data ?? [];
   return rows.map((c) => ({
     value: c.id,
     label: `${c.customer_code} - ${c.customer_name}`,

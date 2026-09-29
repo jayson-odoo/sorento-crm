@@ -20,6 +20,13 @@ from app.services.user_contact_link import (
 from app.schemas.user import RespondContactResponse, RespondContactCreate, RespondContactUpdate, ContactAgentAccessResponse
 from app.schemas.common import ListResponse
 from app.schemas.market_segment import MarketSegmentCodesUpdate
+from app.schemas.contact_customer import (
+    ContactCustomerLinkCreate,
+    ContactCustomerLinkResponse,
+    ContactCustomerPrimaryUpdate,
+    ContactCustomersResponse,
+)
+from app.services import contact_customer_service
 from app.services.error_handler import handle_internal_error, handle_not_found
 
 logger = logging.getLogger(__name__)
@@ -636,6 +643,92 @@ async def set_contact_attachment_types(
     except HTTPException:
         raise
     except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+def _require_contact(db: Session, contact_id: str) -> None:
+    if contact_customer_service.get_contact(db, contact_id) is None:
+        raise handle_not_found("Contact", contact_id)
+
+
+@router.get("/{contact_id}/customers", response_model=ContactCustomersResponse)
+async def get_contact_customers(
+    contact_id: str,
+    current_user: dict = Depends(require_permission("user_management.contacts.view")),
+    db: Session = Depends(get_db),
+):
+    """The customer accounts this contact belongs to, plus phone-matched suggestions."""
+    try:
+        _require_contact(db, contact_id)
+        return contact_customer_service.contact_customers_payload(db, contact_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post(
+    "/{contact_id}/customers",
+    response_model=ContactCustomerLinkResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def link_contact_customer(
+    contact_id: str,
+    payload: ContactCustomerLinkCreate,
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
+    db: Session = Depends(get_db),
+):
+    """Link a customer to this contact. Repeating the same pair answers the same row."""
+    try:
+        _require_contact(db, contact_id)
+        customer = contact_customer_service.get_customer_in_scope(db, payload.customer_id)
+        if customer is None:
+            # Unknown and out-of-scope are the same answer: scope hides the row.
+            raise handle_not_found("Customer", payload.customer_id)
+        link = contact_customer_service.link_customer(
+            db,
+            contact_id,
+            customer.id,
+            is_primary=payload.is_primary,
+            linked_by=str(current_user.get("id") or current_user.get("sub") or "") or None,
+        )
+        db.commit()
+        db.refresh(link)
+        return contact_customer_service.link_row(link, customer)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise handle_internal_error(str(e))
+
+
+@router.patch(
+    "/{contact_id}/customers/{customer_id}", response_model=ContactCustomerLinkResponse
+)
+async def set_contact_customer_primary(
+    contact_id: str,
+    customer_id: str,
+    payload: ContactCustomerPrimaryUpdate,
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
+    db: Session = Depends(get_db),
+):
+    """Mark or clear the primary customer. Unlink is a pending action, not a route."""
+    try:
+        customer = contact_customer_service.get_customer_in_scope(db, customer_id)
+        link = (
+            contact_customer_service.set_primary(db, contact_id, customer.id, payload.is_primary)
+            if customer is not None
+            else None
+        )
+        if link is None:
+            raise handle_not_found("Customer link", customer_id)
+        db.commit()
+        db.refresh(link)
+        return contact_customer_service.link_row(link, customer)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
         raise handle_internal_error(str(e))
 
 

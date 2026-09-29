@@ -28,8 +28,12 @@ from app.schemas.autocount_mirror import (
     SalesAgentResponse,
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.schemas.order import CustomerResponse
+from app.schemas.contact_customer import AgentCustomerAssign
 from app.services.autocount_mirror_service import MirrorReadService
-from app.services.error_handler import handle_internal_error
+from app.services import contact_customer_service
+from app.services.error_handler import handle_internal_error, handle_not_found
+from app.services.order_service import CustomerService
 from app.services.scm import sales_agent_service
 from app.services.uuid_path_param import validate_uuid_path
 
@@ -146,4 +150,51 @@ async def annotate_sales_agent(
     except HTTPException:
         raise
     except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{sales_agent_id}/customers", response_model=ListResponse[CustomerResponse])
+async def list_sales_agent_customers(
+    sales_agent_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
+    query: Optional[str] = Query(None),
+    sort: str = Query("customer_code"),
+    dir: str = Query("asc"),
+    current_user: dict = Depends(require_permission("master_data.sales_agents.view")),
+    db: Session = Depends(get_db),
+):
+    """The customers this agent handles, under the caller's company scope."""
+    try:
+        validate_uuid_path(sales_agent_id, resource=_RESOURCE)
+        MirrorReadService(db).get(SalesAgent, sales_agent_id, resource=_RESOURCE)
+        return CustomerService(db).list_customers(
+            page=page, limit=limit, query=query, sort_field=sort, sort_dir=dir,
+            sales_agent_id=sales_agent_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{sales_agent_id}/customers", response_model=CustomerResponse)
+async def assign_sales_agent_customer(
+    sales_agent_id: str,
+    payload: AgentCustomerAssign,
+    current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
+    db: Session = Depends(get_db),
+):
+    """Move a customer to this agent, from another agent too."""
+    try:
+        validate_uuid_path(sales_agent_id, resource=_RESOURCE)
+        MirrorReadService(db).get(SalesAgent, sales_agent_id, resource=_RESOURCE)
+        customer = contact_customer_service.get_customer_in_scope(db, payload.customer_id)
+        if customer is None:
+            raise handle_not_found("Customer", payload.customer_id)
+        return CustomerService(db).assign_sales_agent(customer.id, sales_agent_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
         raise handle_internal_error(str(e))

@@ -3498,6 +3498,8 @@ class CustomerService:
         "email": Customer.email,
         "phone_number": Customer.phone_number,
         "is_active": Customer.is_active,
+        "region": Customer.region,
+        "market_segment_code": Customer.market_segment_code,
         "created_at": Customer.created_at,
         "updated_at": Customer.updated_at,
     }
@@ -3507,6 +3509,7 @@ class CustomerService:
         query: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "desc",
+        sales_agent_id: Optional[str] = None,
     ):
         """Build the filtered + sorted customers query shared by ``list_customers``
         and ``neighbours`` so the two can never drift.
@@ -3516,6 +3519,9 @@ class CustomerService:
         primary sort column has equal values.
         """
         q = self.db.query(Customer)
+
+        if sales_agent_id is not None:
+            q = q.filter(Customer.sales_agent_id == sales_agent_id)
 
         if query:
             q = q.filter(
@@ -3539,12 +3545,17 @@ class CustomerService:
         query: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "desc",
+        sales_agent_id: Optional[str] = None,
     ):
-        """List customers with pagination, search, and sorting."""
+        """List customers with pagination, search, and sorting.
+
+        `sales_agent_id` narrows to the customers one agent handles (the agent's
+        Customers tab)."""
         q = self._build_customer_list_query(
             query=query,
             sort_field=sort_field,
             sort_dir=sort_dir,
+            sales_agent_id=sales_agent_id,
         )
 
         total = q.count()
@@ -3666,6 +3677,25 @@ class CustomerService:
         self.db.commit()
         self.db.refresh(customer)
         return customer
+
+    def assign_sales_agent(self, customer_id: str, agent_id: str):
+        """Put a customer under `agent_id`, from whichever agent held it before.
+
+        Goes through `update_customer`, so an inactive agent or a cross-company pair is the
+        same 422 the customer form gets and the audit row is written the same way."""
+        return self.update_customer(customer_id, CustomerUpdate(sales_agent_id=agent_id))
+
+    def unassign_sales_agent(self, customer_id: str, agent_id: Optional[str]) -> bool:
+        """Clear the agent, but only while the customer is still under `agent_id`.
+
+        The unassign is parked for a few seconds; a customer moved to another agent in that
+        window is somebody else's now and is left alone."""
+        customer = self.get_customer(customer_id)
+        if str(customer.sales_agent_id or "") != str(agent_id or ""):
+            return False
+        customer.sales_agent_id = None
+        self.db.commit()
+        return True
 
 
 class OrderStatusService:
