@@ -28,14 +28,17 @@ owner's two workbooks against the real 01-03 Sep snapshot in local ss
 | headers, sheet Master (code as is) | 1,136 of 1,150 | 14 | 49 | 0 |
 
 The 86 are promotion-package `PP` lines with a blank `Total (Ex)`: the alias fallback
-(`_DO_TOTAL_EX_KEYS` ends in `total`) reads the DOCUMENT `Total` column instead. The 30 are
+(`_DO_TOTAL_EX_KEYS` ends in `total`, `autocount_pull_compare.py:239`) reads the DOCUMENT
+`Total` column instead. Verified with the FE's own SheetJS (`node_modules/xlsx`) on the real
+file: `sheet_to_json` names the line total `Total_1`, the document total `Total` (735.3 on
+202609-0076), and omits the blank `Total (Ex)` cell. The 30 are
 lines of cancelled DOs (AutoCount `Cancelled=T`), which the Order Listing excludes.
 
 ## 2. Design
 
 Owner: "I need the mapping to be configurable." One table, one row per workbook kind.
 
-- **Table** `autocount_compare_mappings` (additive migration, `__company_shared__ = True`):
+- **Table** `autocount_compare_mappings` (additive migration; global table, no `company_id`, no `CompanyScopedMixin`: company scope only filters mixin models, `app/services/company_scope.py:9-11,99-122`):
   `id` uuid, `kind` unique (`order_listing` | `order_tracking`; `grn` later), `sheet_name`,
   `columns` JSON `[{excel_header, transform, field}]`, `updated_at`, `updated_by`. JSON, not
   a child table: the rows are only ever read and saved as one set. Migration seeds the
@@ -77,14 +80,44 @@ Cancel->cancel cancel_flag.
 
 ## 4. Grill (30 Sep)
 
-Sent as one crew ask; owner answered "all as recommended" (30 Sep).
+Sent as one crew ask; owner answered "all as recommended" (30 Sep). Premises re-checked
+against code/data after the owner's "get your facts right" ruling; corrections marked
+CORRECTED, anything not proven marked UNVERIFIED.
+
+Evidence per premise:
+- Q1: CORRECTED. The ask said "company-shared"; wrong. `__company_shared__` only changes the
+  predicate for `CompanyScopedMixin` models with a nullable `company_id`
+  (`company_scope.py:99-122`). The mapping table has no `company_id`, so it is global.
+  "CI DB has no seed": `scripts/bootstrap_env.py` builds CI from `create_all` then stamps.
+- Q3: 0 prefix misses holds for 01-03 Sep only (simulation); full month UNVERIFIED.
+- Q4: CORRECTED. The ask said "import-jobs manage permission"; no such check exists on these
+  routes. The DO pull checks `order_management.orders.autocount_pull`
+  (`autocount_pull_service.py:43`, `autocount_pull.py:120-130`); the new routes use it.
+- Q5: products accept `.xlsx,.xls` only (`PullCompareTab.tsx:139`), so the Template rule never
+  reaches a products compare; stock `.xlsm` still goes through `resolveImportSheetName`
+  (`excel-utils.ts:76-86`), which `TemplateUploadDialog.tsx` also uses; both unchanged.
+- Q6: verified with SheetJS on the real file (section 1).
+- Q7: Order Listing Master `Cancelled` column: 21,654 `F`, 1 blank, 0 `T` (openpyxl count);
+  all 30 only-in-AutoCount lines belong to `Cancelled=T` documents (simulation).
+- Q8: CORRECTED wording. Fact: the 49 numbers (RMA-SRT, CG-, RF, RMA-PS, MKTPT, RMA-CG,
+  HQ/IV) are in neither the 01-03 Sep db1 snapshot nor the Order Listing Master. That they
+  are "other document types" is UNVERIFIED. The 13 cancel rows are Excel `F` vs AutoCount
+  `T`; why they differ (stale sheet or later cancel) is UNVERIFIED.
+- Q9: ss `sync.py:2806-2811` (origin/main fa314d19) skips the entity config for a DO snapshot;
+  `doc_feed/snapshot.py:156` stores the vendor records; snapshot row for 202609-0001 carries
+  `"Discount": "37%"`.
+- Also CORRECTED from the first answer: the raw `Discount` read is
+  `autocount_pull_compare.py:465`, not `:417`. The job's Download file
+  (`map_delivery_order_rows`, `autocount_pull_service.py:784-796`) carries no Discount,
+  Cancelled or SubTotalExTax, so a full-month simulation from it can only check keys, qty and
+  unit price.
 
 | # | Question | Answer |
 |---|---|---|
-| Q1 | Storage | new table `autocount_compare_mappings`, one row per kind, columns as JSON, company-shared, seeded Master defaults |
+| Q1 | Storage | new table `autocount_compare_mappings`, one row per kind, columns as JSON, global (no company_id), seeded Master defaults |
 | Q2 | Transforms | fixed list in code (text, number, money, date, percent_text, percent_fraction, cancel_flag); no formula builder |
 | Q3 | Doc-no normaliser | trim + uppercase only; no prefix strip until a measured miss |
-| Q4 | Page | "Mapping" on the Compare tab, the ss Branch mapping table pattern (DataGrid, edit in place, one Save); existing DO pull permission |
+| Q4 | Page | "Mapping" on the Compare tab, the ss Branch mapping table pattern (DataGrid, edit in place, one Save); permission `order_management.orders.autocount_pull` |
 | Q5 | Sheet picking | configured sheet by name, case-insensitive; never `Template` for DO compare; products/stock unchanged |
 | Q6 | Blank line Total (Ex) | no alias fallback; blank stays blank, not compared |
 | Q7 | Cancelled DOs | skipped in the lines compare; headers compare still reports cancel |
