@@ -1,6 +1,6 @@
 # PLAN - a received SPO must not keep covering an SO on Stock Debt (SPO-RECEIVED-PIN)
 
-Status: in progress, 30 Sep 2026, small fix track (no migration, no auth change, backend only). UAC: `spo-received-pin-acceptance-criteria.md`.
+Status: built, PR #1388 open, 30 Sep 2026, small fix track (no migration, no auth change, backend only). UAC: `spo-received-pin-acceptance-criteria.md`. Hand test: `laneboard/scripts/1388.md`.
 Domain: SCM, Stock Debt view and the shared supply assignment.
 
 Owner (30 Sep, Stock debt drawer for SRTSS8710): "for the SPO that is received already, we
@@ -44,6 +44,13 @@ written one and `allocated_quantity` when only the shipment's arrival says the g
 `assign()` then caps it again at what the bin actually holds, so a bin that has since shipped
 the goods pins nothing and the line reads short, which is the truth. The remainder of the
 placement returns to the pool. **No stand-in SPO event is ever built for a received SPO.**
+
+Where the floor is: a bin INSIDE the read's span with no on-hand event is a bin the read
+looked at and found empty, so the converted hold is dropped (`_landed_holds` pins under the
+same rule). A bin OUTSIDE the span (a site pool, an unflagged bin, another group under
+`group=`) is one the read cannot see, so the hold is honoured the way every other out-of-span
+hold is (AC-S2-1b). `_holds` takes the span and the supply events as two new keyword
+arguments for this; its three direct test callers pass neither and get every hold listed.
 
 A partially received, still-open SPO line is unchanged: the SPO hold pins off the netted
 outstanding balance exactly as today, and the received part is free on hand.

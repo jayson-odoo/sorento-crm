@@ -1,6 +1,6 @@
 # UAC - a received SPO must not keep covering an SO on Stock Debt (SPO-RECEIVED-PIN)
 
-Plan: `PLAN-spo-received-pin.md`. Status: in progress, 30 Sep 2026.
+Plan: `PLAN-spo-received-pin.md`. Status: built, PR #1388 open, 30 Sep 2026.
 
 ## Journey
 
