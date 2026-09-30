@@ -1,6 +1,6 @@
 # PLAN: Customer asks view fixes (lane ASKS-UX)
 
-Status: in progress 30 Sep 2026. Track: small fix (no migration, no auth or RBAC change, no new
+Status: items 1 to 3 built and green 30 Sep 2026 (pytest 45 on the three ask suites, vitest on the touched suites), PR #1385, awaiting review, hand test and the owner's item 4 ruling (crew-ask on the PR). Track: small fix (no migration, no auth or RBAC change, no new
 external ingest surface; two new read routes per mount under the EXISTING ask gate, one new key on
 an existing response). Items 1 to 3 build now; item 4 is a scout (section 5), owner decides.
 Plan created: 2026-09-30
