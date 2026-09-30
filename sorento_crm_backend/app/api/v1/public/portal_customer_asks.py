@@ -90,6 +90,42 @@ def portal_customer_ask_conversation(
     return payload
 
 
+@router.get("/customer-asks/{ask_id}/conversation/page")
+def portal_customer_ask_conversation_page(
+    ask_id: str,
+    before: Optional[str] = Query(None, description="Message id to page OLDER than (exclusive)"),
+    after: Optional[str] = Query(None, description="Message id to page NEWER than (exclusive)"),
+    around: Optional[str] = Query(None, description="Message id to centre the window on"),
+    limit: int = Query(50, ge=1, le=200),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """One scroll-back window of the ask's contact thread (ASKS-UX item 3), byte-identical in
+    shape to the ticket-keyed `GET .../conversation-sla-tracking/{id}/conversation/page`. Same
+    gate and scope as the sibling `/conversation`."""
+    agent_id = _agent_id(db, token)
+    validate_uuid_path(ask_id, resource="Stock ask")
+    if len([c for c in (before, after, around) if c]) > 1:
+        raise AppException(status_code=422, message="Pass at most one of before, after, around.", code="VALIDATION_ERROR")
+    ask = stock_ask_service.get_ask_in_scope(db, agent_id, ask_id)
+    return stock_ask_service.conversation_page_for_ask(db, ask, before=before, after=after, around=around, limit=limit)
+
+
+@router.get("/customer-asks/{ask_id}/conversation/search")
+def portal_customer_ask_conversation_search(
+    ask_id: str,
+    q: str = Query("", description="Free text searched inside this contact's messages"),
+    limit: int = Query(100, ge=1, le=200),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """In-thread search over the ask's contact thread, same shape as the ticket-keyed twin."""
+    agent_id = _agent_id(db, token)
+    validate_uuid_path(ask_id, resource="Stock ask")
+    ask = stock_ask_service.get_ask_in_scope(db, agent_id, ask_id)
+    return stock_ask_service.conversation_search_for_ask(db, ask, q=q, limit=limit)
+
+
 @router.patch("/customer-asks/{ask_id}", response_model=StockAskResponse)
 def portal_update_customer_ask(
     ask_id: str,

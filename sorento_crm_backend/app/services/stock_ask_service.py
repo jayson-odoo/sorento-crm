@@ -896,7 +896,7 @@ def conversation_for_ask(db: Session, ask: Any, *, whole_day: bool = False) -> d
     from app.models.access import RespondContact
     from app.models.chat_history import ChatHistory
 
-    empty: dict[str, Any] = {"messages": [], "ask_message_id": None}
+    empty: dict[str, Any] = {"messages": [], "ask_message_id": None, "ask_message_ref": None}
     if not ask.contact_id:
         return empty
     respond_io_id = db.query(RespondContact.respond_io_id).filter(RespondContact.id == ask.contact_id).scalar()
@@ -916,7 +916,7 @@ def conversation_for_ask(db: Session, ask: Any, *, whole_day: bool = False) -> d
         ChatHistory.sent_at < end if whole_day else ChatHistory.sent_at <= end,
     ]
     rows = (
-        db.query(ChatHistory.id, ChatHistory.type, ChatHistory.message, ChatHistory.sent_at)
+        db.query(ChatHistory.id, ChatHistory.type, ChatHistory.message, ChatHistory.sent_at, ChatHistory.message_id)
         .filter(*in_window)
         .order_by(func.abs(func.extract("epoch", ChatHistory.sent_at - created)), ChatHistory.id)
         .limit(cap)
@@ -943,4 +943,66 @@ def conversation_for_ask(db: Session, ask: Any, *, whole_day: bool = False) -> d
     )
     if ask_message_id is None and after:
         ask_message_id = after[0]["id"]
-    return {"messages": messages, "ask_message_id": ask_message_id, "contact_id": ask.contact_id}
+    # ASKS-UX: the shared thread keys its bubbles by the Respond message id (`chat_histories.
+    # message_id`), not by the row id, so the tagged row's Respond id rides along for the
+    # highlight and the jump. None when the row carries none (nothing to jump to).
+    ref = next((r.message_id for r in rows if r.id == ask_message_id), None) if ask_message_id is not None else None
+    return {
+        "messages": messages,
+        "ask_message_id": ask_message_id,
+        "ask_message_ref": str(ref) if ref else None,
+        "contact_id": ask.contact_id,
+    }
+
+
+def _thread_contact_for_ask(db: Session, ask: Any):
+    """The ask's contact as the shared thread's descriptor, or None (no contact, or a contact
+    with no Respond id)."""
+    from app.models.access import RespondContact
+    from app.services.conversation_thread_service import thread_contact_for
+
+    if not ask.contact_id:
+        return None
+    contact = db.query(RespondContact).filter(RespondContact.id == ask.contact_id).first()
+    return thread_contact_for(contact)
+
+
+def conversation_page_for_ask(
+    db: Session,
+    ask: Any,
+    *,
+    before: Optional[str] = None,
+    after: Optional[str] = None,
+    around: Optional[str] = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """One scroll-back window of the ask's contact thread (ASKS-UX item 3): the SAME core and
+    shape as `GET .../conversation-sla-tracking/{id}/conversation/page`, with the same
+    per-contact Respond client wiring (`sla_service._thread_page_for_contact`). The caller has
+    already put the ask in scope. No thread (no contact, no Respond id) answers the empty page,
+    not a 404: the ask exists and the panel still has to render."""
+    from app.services import conversation_thread_service as thread_service
+    from app.services.integration_service import RespondClient
+
+    contact = _thread_contact_for_ask(db, ask)
+    if contact is None:
+        return thread_service.empty_page(limit=limit, error="No Respond.io contact linked")
+    return thread_service.fetch_thread_page(
+        db,
+        contact,
+        before=before,
+        after=after,
+        around=around,
+        limit=limit,
+        client=RespondClient.for_identifier(db, contact.respond_io_id),
+    )
+
+
+def conversation_search_for_ask(db: Session, ask: Any, *, q: str, limit: int = 100) -> dict[str, Any]:
+    """In-thread search over the ask's contact thread, same shape as the ticket-keyed twin."""
+    from app.services import conversation_thread_service as thread_service
+
+    contact = _thread_contact_for_ask(db, ask)
+    if contact is None:
+        return thread_service.empty_search(q=q, error="No Respond.io contact linked")
+    return thread_service.search_thread(db, contact, q=q, limit=limit)

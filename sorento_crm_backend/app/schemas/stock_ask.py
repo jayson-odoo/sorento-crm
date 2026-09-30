@@ -74,6 +74,9 @@ class StockAskMessage(BaseModel):
 class StockAskConversationResponse(BaseModel):
     messages: list[StockAskMessage]
     ask_message_id: Optional[int] = None
+    #: The Respond message id of the `ask_message_id` row, what the shared thread highlights and
+    #: jumps to (ASKS-UX). None when that row has no Respond id.
+    ask_message_ref: Optional[str] = None
     #: The contact's `respond_contacts.id`, only for the CRM's "Open in Conversations" link.
     contact_id: Optional[str] = None
 

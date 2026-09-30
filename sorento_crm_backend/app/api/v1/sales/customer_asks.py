@@ -156,6 +156,40 @@ def customer_asks_conversation(
     return stock_ask_service.conversation_for_ask(db, ask, whole_day=whole_day)
 
 
+@router.get("/{ask_id}/conversation/page")
+def customer_asks_conversation_page(
+    ask_id: str,
+    before: Optional[str] = Query(None, description="Message id to page OLDER than (exclusive)"),
+    after: Optional[str] = Query(None, description="Message id to page NEWER than (exclusive)"),
+    around: Optional[str] = Query(None, description="Message id to centre the window on"),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """One scroll-back window of the ask's contact thread (ASKS-UX item 3), the shape of the
+    ticket-keyed `GET .../conversation-sla-tracking/{id}/conversation/page`. Scope: the PATCH
+    scope, like the sibling `/conversation` (404 outside it)."""
+    validate_uuid_path(ask_id, resource="Stock ask")
+    if len([c for c in (before, after, around) if c]) > 1:
+        raise AppException(status_code=422, message="Pass at most one of before, after, around.", code="VALIDATION_ERROR")
+    ask = stock_ask_service.get_ask_in_scope(db, _patch_scope(db, current_user, ask_id), ask_id)
+    return stock_ask_service.conversation_page_for_ask(db, ask, before=before, after=after, around=around, limit=limit)
+
+
+@router.get("/{ask_id}/conversation/search")
+def customer_asks_conversation_search(
+    ask_id: str,
+    q: str = Query("", description="Free text searched inside this contact's messages"),
+    limit: int = Query(100, ge=1, le=200),
+    current_user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """In-thread search over the ask's contact thread, same shape as the ticket-keyed twin."""
+    validate_uuid_path(ask_id, resource="Stock ask")
+    ask = stock_ask_service.get_ask_in_scope(db, _patch_scope(db, current_user, ask_id), ask_id)
+    return stock_ask_service.conversation_search_for_ask(db, ask, q=q, limit=limit)
+
+
 @router.patch("/{ask_id}", response_model=StockAskResponse)
 def customer_asks_update(
     ask_id: str,
