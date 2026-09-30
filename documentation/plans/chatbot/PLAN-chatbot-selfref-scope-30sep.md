@@ -1,8 +1,9 @@
 # PLAN: a linked contact's sales asks run the customer sales report
 
-Status: in review on PR #1401, small fix track (one additive grant migration, no auth/RBAC
-change to staff, no new ingest surface). The engine/resolver half of the lane is PARKED on
-PR #1403 (owner decision, 30 Sep 2026: the parser prompt is fixed in production first).
+Status: in progress on PR #1401, FULL track (crew relabel, 30 Sep 2026: an additive grant
+migration on an RBAC role plus a diff well over 300 lines; the earlier "small fix" label was
+wrong). The engine/resolver half of the lane is PARKED on PR #1403 (owner decision, 30 Sep
+2026: the parser prompt is fixed in production first).
 Lane: CHATBOT-SELFREF-SCOPE. Parent: `PLAN-chatbot-customer-scope-29sep.md` (PR #1365).
 UAC: `selfref-scope-acceptance-criteria.md`.
 
@@ -69,6 +70,47 @@ resolver work (carried context keeps its kind, typed-word-only refusal) waits on
   console case and the sales report UAC follow. The top selling header is untouched.
 - The failed hand-test run had used a copy contact linked to A/C II only; the script now
   keys its SQL on the console contact's Respond.io id and lists the six accounts.
+
+## Grill (feature skill step 2, run late on crew's instruction, 30 Sep 2026)
+
+Twenty decisions the reshape makes were sent as one crew-ask on PR #1401 (comment
+"crew-ask: GRILL of the sales report reshape"), each with a recommendation. Answers are
+recorded here as they land; until then the recommendation is what is built.
+
+| # | Decision | Recommendation | Owner |
+| --- | --- | --- | --- |
+| 1 | Grain: 1 to 7 days by day, 8 to 31 by week, longer or no window by month | as is | pending |
+| 2 | Week = Monday to Sunday, clipped to the window, `dd/mm to dd/mm` | as is | pending |
+| 3 | Only buckets with a delivery print | yes | pending |
+| 4 | Channel from the linked accounts' demand classes; one class = fixed, no line | as is | pending |
+| 5 | Location capped to the stock visibility policy; line only when named | as is | pending |
+| 6 | Named location outside the policy: report over the allowed ones | report | pending |
+| 7 | Policy `[]` does not cap the sales report | no cap | pending |
+| 8 | SO list no longer offered; DO list replaces it | as is | pending |
+| 9 | Caps of 10 with "and N more"; no "reply all" | as is | pending |
+| 10 | DO rows name the account only when the scope holds several | as is | pending |
+| 11 | A drill prints a one-line title, not the header | as is | pending |
+| 12 | Typed picks via roster aliases plus parser reference_positions | as is | pending |
+| 13 | Out-of-range re-ask wording; aside keeps, new question drops | as is | pending |
+| 14 | One-day reply prints Total and the day line | keep both | pending |
+| 15 | Unpriced DO lines: silent in the reply | silent | pending |
+| 16 | Amount: ex-tax, else total, else qty x unit price (DO, else SO) | ex-tax first | pending |
+| 17 | Cancelled, deleted, undated DOs never count | as is | pending |
+| 18 | A refinement re-runs the default view and re-offers | as is | pending |
+| 19 | Staff and n8n get the same delivered shape (the triple leaves the reply) | one shape | pending |
+| 20 | One account hides By customer; one product hides By product | as is | pending |
+
+## Report shape (owner ruling 30 Sep 2026, mock v2)
+
+`documentation/mockups/sales-report-drilldown.html` @ 044bc23ea is the agreed reply, pending
+"mock ok". Built as: `sales_report_service._delivered_block` (the DO documents by delivery
+date, bucketed by `delivered_bucket_for_window`, the grouped views and the DO list, and the
+numbered `options` roster: ONE writer for the numbering), `SalesReportDelivered` on the route
+body, `presenters._sales_report` (the reply) and `_sales_report_envelope` (`options` for the
+lane), `fetch._sales_report_output` (the roster becomes the `sales_report_detail` open
+question, with typed aliases), `fetch.entity_ids_transformer` (a pick maps to `group_by` /
+`detail=do`; the channel and location rules of grill items 4 to 7), and
+`_outstanding_detail_reoffer` (the re-ask wording).
 
 ## Tests
 

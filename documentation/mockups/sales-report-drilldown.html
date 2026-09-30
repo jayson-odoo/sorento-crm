@@ -27,8 +27,8 @@
 </head>
 <body>
 <header>
-  <h1>Sales report on WhatsApp: default reply and drill-downs (v2)</h1>
-  <p>Mock for alignment (PR #1401), revised for the owner's eight annotations on v1. Contact: Jayson, linked to six HANLIM TRADING accounts, all retail. Copy-DB 2026 facts used: A/C I 164 SOs, A/C III 64, A/C IV 32, A/C II none. Amounts and the split by product are illustrative. Bold in a bubble is WhatsApp <code>*bold*</code>.</p>
+  <h1>Sales report on WhatsApp: default reply and drill-downs (v3)</h1>
+  <p>Mock for alignment (PR #1401), v3: the owner's eight annotations on v1 and three on v2 (numbering continues after list rows; a drill keeps the period; the open-question rule is the existing one). Contact: Jayson, linked to six HANLIM TRADING accounts, all retail. Copy-DB 2026 facts used: A/C I 164 SOs, A/C III 64, A/C IV 32, A/C II none. Amounts and the split by product are illustrative. Bold in a bubble is WhatsApp <code>*bold*</code>.</p>
 </header>
 <main>
 
@@ -128,8 +128,8 @@ Jan 2026: Qty 380, RM 26,800.00
 <b>Total:</b> Qty 1,240, RM 84,320.50
 
 <b>Drill down:</b>
-1. By product
-2. Delivery orders</div>
+4. By product
+5. Delivery orders</div>
     <div class="msg out">by product</div>
     <div class="msg in"><b>By product</b>, delivery date 01/09/2026 to 30/09/2026
 1. SRTWT7445: Qty 450, RM 30,100.00
@@ -139,8 +139,8 @@ Jan 2026: Qty 380, RM 26,800.00
 <b>Total:</b> Qty 1,240, RM 84,320.50
 
 <b>Drill down:</b>
-1. By customer
-2. Delivery orders</div>
+5. By customer
+6. Delivery orders</div>
     <div class="msg out">DO</div>
     <div class="msg in"><b>Delivery orders</b>, 01/09/2026 to 30/09/2026
 1. DO-2026-09-0412, 21/09/2026, HANLIM TRADING SDN BHD [A/C I]: Qty 120, RM 8,900.00
@@ -150,11 +150,78 @@ Jan 2026: Qty 380, RM 26,800.00
 <b>Total:</b> Qty 1,240, RM 84,320.50
 
 <b>Drill down:</b>
-1. By customer
-2. By product</div>
+5. By customer
+6. By product</div>
   </div>
+  <p class="note"><span class="q">v2 annotation 1 (numbering).</span> Numbers never repeat inside one message: the list rows take 1 to N, the drill options continue at N+1. The route numbers both, so what is printed, what is stored as the open question and what a reply resolves against are one list.</p>
   <p class="note"><span class="q">Annotation 8 (single dimension).</span> Every drill is one dimension over the SAME full scope (the six accounts, the same window): By customer, By product, or the delivery order list. The rows of a drill are not picks and nothing nests; after a drill the two other views are offered, so the reader can hop between the three without going back. Accounts with nothing delivered in the window are not listed (A/C II, the plain account, CERAMIC &amp; ELLECI). Rows are ranked by amount; the delivery order list is latest first and names the account when the scope holds more than one; a list longer than 10 rows prints the top 10 and a line "and N more". The DO number, ranks and figures are the route's own; the reply only prints them.</p>
   <p class="note"><span class="q">Annotation 6 (typed words).</span> "by product", "by customer", "DO", "delivery order", "delivery orders" all pick the same option as its number. Two existing mechanisms carry it: the option's own label typed back matches exactly (<code>turn/decide.py::_positions_by_label</code>), and a paraphrase ("the DO list", "show per product") arrives as the parser's <code>reference_positions</code> against the printed roster (<code>turn/decide.py::picked_positions</code>). Short aliases the label match cannot cover ("DO", "delivery order") are added to the option itself, so the match stays a label match and never a word list in the engine.</p>
+</section>
+
+<section>
+  <h2>4b. A drill keeps the period: year, month, week, today (one total per row)</h2>
+  <div class="chat">
+    <div class="msg out">how's my sales this year?</div>
+    <div class="msg in"><b>Customer:</b> HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
+<b>Product:</b> all
+<b>Delivery date:</b> 01/01/2026 to 31/12/2026
+
+<b>Total:</b> Qty 6,931, RM 471,300.00
+Sep 2026: Qty 1,240, RM 84,320.50
+Aug 2026: Qty 980, RM 66,150.00
+(... one line per month ...)
+
+<b>Drill down:</b>
+1. By customer
+2. By product
+3. Delivery orders</div>
+    <div class="msg out">1</div>
+    <div class="msg in"><b>By customer</b>, delivery date 01/01/2026 to 31/12/2026
+1. HANLIM TRADING SDN BHD [A/C I]: Qty 4,560, RM 310,200.00
+2. HANLIM TRADING SDN BHD [A/C III]: Qty 1,690, RM 114,600.00
+3. HANLIM TRADING SDN BHD [A/C IV]: Qty 681, RM 46,500.00
+<b>Total:</b> Qty 6,931, RM 471,300.00
+
+<b>Drill down:</b>
+4. By product
+5. Delivery orders</div>
+    <div class="msg out">my sales this month</div>
+    <div class="msg in">(the section 1 reply: by week)</div>
+    <div class="msg out">by product</div>
+    <div class="msg in"><b>By product</b>, delivery date 01/09/2026 to 30/09/2026
+1. SRTWT7445: Qty 450, RM 30,100.00
+2. SRTKT39SS: Qty 300, RM 24,320.50
+3. SRTBT1010: Qty 280, RM 16,900.00
+4. SRTWC286-SH: Qty 210, RM 13,000.00
+<b>Total:</b> Qty 1,240, RM 84,320.50
+
+<b>Drill down:</b>
+5. By customer
+6. Delivery orders</div>
+    <div class="msg out">my sales this week</div>
+    <div class="msg in">(the section 3 reply: by day)</div>
+    <div class="msg out">1</div>
+    <div class="msg in"><b>By customer</b>, delivery date 28/09/2026 to 04/10/2026
+1. HANLIM TRADING SDN BHD [A/C I]: Qty 55, RM 3,800.00
+2. HANLIM TRADING SDN BHD [A/C III]: Qty 25, RM 1,700.00
+<b>Total:</b> Qty 80, RM 5,500.00
+
+<b>Drill down:</b>
+3. By product
+4. Delivery orders</div>
+    <div class="msg out">my sales today</div>
+    <div class="msg in">(the section 2 reply: one day)</div>
+    <div class="msg out">2</div>
+    <div class="msg in"><b>By product</b>, delivery date 30/09/2026
+1. SRTWT7445: Qty 30, RM 2,010.00
+2. SRTKT39SS: Qty 10, RM 750.00
+<b>Total:</b> Qty 40, RM 2,760.00
+
+<b>Drill down:</b>
+3. By customer
+4. Delivery orders</div>
+  </div>
+  <p class="note"><span class="q">v2 annotation 2 (period under a drill).</span> A drill keeps the period of the ask exactly (the same `Delivery date` window) and prints ONE total per row over that whole period. The time grouping (by month, by week, by day, the day) is the default view's, already on screen one message up; repeating it inside every account or product row would make a year-by-customer reply 3 accounts x 9 months long. This is the simpler of the two readings and the one built. The DO list is per document anyway, so it needs no grouping.</p>
 </section>
 
 <section>
@@ -222,8 +289,8 @@ No sales found.</div>
 <b>Total:</b> Qty 1,240, RM 84,320.50
 
 <b>Drill down:</b>
-1. By product
-2. Delivery orders</div>
+4. By product
+5. Delivery orders</div>
     <div class="msg out">got stock for SRTWT7445?</div>
     <div class="msg in">SRTWT7445 (Wall Tap 7445)
 Stock: 1,250 available
@@ -231,7 +298,7 @@ Stock: 1,250 available
     <div class="msg out">2</div>
     <div class="msg in">Sorry, I did not catch that. What would you like to check?</div>
   </div>
-  <p class="answer"><span class="q">Answer to annotation 5.</span> The new question is answered normally and the drill-down offer is dropped with it; the bot never waits on the offer. That is the existing open-question rule, not a new one: a message that names its own subject or another domain is a NEW ASK (<code>turn/decide.py</code>, the rows <code>entity_op_replace</code>, <code>domain_in_message</code> and <code>names_its_own_entity</code>) and <code>turn/apply.py::_answer_outstanding</code> closes the open offer on it (the trace rule <code>outstanding_pending_dropped</code>). A casual aside ("thanks", "ok") keeps the offer open silently, so "1" still works on the next message; a message the bot cannot read re-prints the offer once, and a second such message closes it. The "2" typed after the stock answer therefore lands on no open question: the bot asks what the reader wants, it does not resurrect the old list. Typing "my sales this month" again re-opens the drill-down fresh.</p>
+  <p class="answer"><span class="q">Answer to annotation 5 (v2 annotation 3: no new logic).</span> Nothing is designed here: this is the engine's existing open-question rule, reused exactly. A message that names its own subject or another domain is a NEW ASK (<code>turn/decide.py</code>, rows <code>entity_op_replace</code>, <code>domain_in_message</code>, <code>names_its_own_entity</code>), answered normally, and <code>turn/apply.py::_answer_outstanding</code> drops the open offer on it (trace rule <code>outstanding_pending_dropped</code>; pinned today by <code>test_sales_report_lane.py::test_a_business_query_with_a_domain_hint_is_a_new_ask_and_drops_the_offer</code>). A casual aside keeps the offer open silently (<code>test_offer_survives_a_casual_turn</code>); a message the bot cannot read re-prints it once and a second one closes it (<code>test_an_unreadable_turn_reprints_once_then_the_second_closes_it</code>). The drill-down roster is a <code>sales_report_detail</code> open question, the same kind the SO list offer used, so every one of those rules applies to it unchanged. The "2" typed after the stock answer lands on no open question and gets the usual clarifier.</p>
 </section>
 
 <section>
