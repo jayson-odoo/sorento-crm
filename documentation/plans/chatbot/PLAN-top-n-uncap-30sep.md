@@ -27,3 +27,21 @@ Supersedes the 26 Sep ruling "a named N is 1 to 100" in
 - AC-2: N=5 reply is unchanged (one message, no marker).
 - AC-3: N above 1000 answers with 1000 rows under the line "I can list at most the top 1,000 in one reply."
 - AC-4: API 422 `invalid_n` only for n < 1 or n > 1000.
+
+## Grill (feature skill Step 2, run late on 30 Sep 2026 after the owner's process audit)
+
+The grill ran AFTER the code, which was built to the recommendation on each question below.
+Asked as one `crew-ask` on PR #1407. Answers are recorded here verbatim when they arrive; a
+different answer than the recommendation is a fix round on the same PR.
+
+| # | Decision | Options | Recommendation | Owner answer |
+|---|----------|---------|----------------|--------------|
+| Q1 | Safety ceiling | (a) 1000 (b) 500 (c) none | (a): 1000 rows is ~12 WhatsApp messages; no ceiling lets "top 50000" flood the chat | pending |
+| Q2 | Named N above the ceiling | (a) answer the top 1000 under "I can list at most the top 1,000 in one reply." (b) ask for a number 1 to 1000 | (a): answers at once, never a silent cut | pending |
+| Q3 | Long list delivery | (a) CRM splits into messages <= 3900 chars, never breaking a row (b) one message, rely on n8n chunking | (a): n8n chunking is unverified, WhatsApp limit is 4096 | pending |
+| Q4 | Part marker | (a) "(1/3)" own line at the top (b) "Part 1 of 3" (c) marker at the end | (a): short, reads first; a reply that fits one message has none | pending |
+| Q5 | Quick replies and the rank pick | (a) last part only (b) every part | (a): the question is asked at the end; a rank typed after any part still picks from the whole list | pending |
+| Q6 | Detail reply (customers and months) splitting | (a) backlog (b) split the same way in this PR | (b): same WhatsApp limit, ~3 lines plus a test | pending |
+| Q7 | Direct API/MCP n above 1000 | (a) 422 "n must be between 1 and 1000" (b) silent clamp | (a): the lane clamps and says so; a raw caller gets a clear error | pending |
+| Q8 | "How many?" offered range | (a) 1 to min(count, 1000) (b) 1 to count | (a): consistent with Q1 | pending |
+| Q9 | `crm_sales_analysis` n (1 to 100) | (a) leave, a different tool (b) uncap too | (a): not in the ruling; a new ask if wanted | pending |
