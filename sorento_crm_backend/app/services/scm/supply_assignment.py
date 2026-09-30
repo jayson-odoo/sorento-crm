@@ -331,8 +331,10 @@ class Assigned:
     lent_from_so: Optional[str] = None
     #: The day IN THE WALK this quantity stopped being free - the drawing line's own date,
     #: or the arrival that later cleared its shortfall. `None` on a pinned hold, which was
-    #: spent before the walk started and is free at no date at all. Read by `free_piles_at`,
-    #: which is the only way to state a pile as it stood on a date somebody is asking about.
+    #: spent before the walk started and is free at no date at all - except a lendable
+    #: landed claim (rule 6), which is taken at the line's own step and carries that day.
+    #: Read by `free_piles_at`, which is the only way to state a pile as it stood on a date
+    #: somebody is asking about.
     at: Optional[date] = None
     #: R29 addendum: the order inquiry a PINNED placement came through - `Hold.oi_number`/
     #: `oi_id`, carried onto the take itself because the SHARED `event` object (drawn by
@@ -361,7 +363,8 @@ class LineResult:
     short_at_date: float = 0.0
     #: STOCK-DEBT-LENDABLE (rule 6): who drew this line's lendable landed goods before
     #: its own date, each with the quantity, in walk order - the "Lent to SO396071 (32)"
-    #: entries and the transfers a Rebalance composes. `lent_qty` is their sum. Empty / 0
+    #: entries. `lent_qty` is their sum, what was lent; what the line is still OWED for it
+    #: is `min(lent_qty, uncovered)`, which is what the `order_back` pill prints. Empty / 0
     #: on every line that lent nothing.
     lent: Tuple["Lent", ...] = ()
     lent_qty: float = 0.0
@@ -374,9 +377,6 @@ class Lent:
     line_key: str
     so_number: str
     qty: float
-    #: The event the goods sit on (`on_hand:<bin>`), so a Rebalance can name the bin.
-    supply_key: str
-    warehouse: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -446,6 +446,16 @@ def parse_supply_key(supply_key: str) -> Tuple[Optional[str], Optional[str]]:
     if not target or kind not in (KIND_SPO, KIND_PO):
         return None, None
     return kind, target
+
+
+def _is_lendable_claim(hold: Hold, left: dict, events: dict) -> bool:
+    """Rule 6: a lendable hold on a COUNTED, walkable floor. A pin-only event is never
+    walked, so a claim on it could never be taken; such a hold pins as any other."""
+    return bool(
+        hold.lendable
+        and hold.supply_key in left
+        and not events[hold.supply_key].pin_only
+    )
 
 
 def _round(value: float) -> float:
@@ -647,14 +657,26 @@ def assign(
     #: Rule 6: event key -> what the lendable claims registered so far already cover of
     #: it, so two far lines cannot both claim the whole floor.
     claimed: Dict[str, float] = {}
-    #: Event key -> the lines claiming it, in the holds' own order (the order a lend is
-    #: charged to them in `_attribute_lends`).
+    #: Event key -> the lines claiming it, in WALK order (the order a lend is charged to
+    #: them in `_attribute_lends`, and the order the walk lets them take their claims).
     claimants: Dict[str, List[_Open]] = {}
-    for hold in pinned:
+    # Lendable holds are registered AFTER every ordinary pin (so a decision's take is
+    # netted from the floor first) and in the LINE's own walk order, never the caller's
+    # hold order: `_landed_holds` reads an unordered query, and charging the claims in row
+    # order let the same book read `short` on one refresh and `order_back` on the next.
+    ordinary = [hold for hold in pinned if not _is_lendable_claim(hold, left, events)]
+    lendable = sorted(
+        (hold for hold in pinned if _is_lendable_claim(hold, left, events)),
+        key=lambda hold: (
+            _identity(states[hold.line_key]) if hold.line_key in states else (),
+            hold.supply_key,
+        ),
+    )
+    for hold in ordinary + lendable:
         state = states.get(hold.line_key)
         if state is None:
             continue
-        if hold.lendable and hold.supply_key in left:
+        if hold in lendable:
             # Rule 6: not spent here. The line takes what is left of the claim at its OWN
             # step (`_walk`), after every nearer line has queued; what they took is lent.
             # Capped exactly as a pin would be - by the line's need and by the floor -
@@ -756,10 +778,12 @@ def assign(
         left=left,
         states=[states[line.key] for line in dated],
         draws=draws,
+        claimed=claimed,
     )
     lent_by_line = _attribute_lends(
         claimants=claimants, free_before=free_before, draws=draws,
     )
+    del claimed
 
     for line in dated:
         state = states[line.key]
@@ -819,6 +843,7 @@ def _walk(
     left: dict,
     states: Sequence[_Open],
     draws: Optional[Dict[str, List[Tuple["_Open", int]]]] = None,
+    claimed: Optional[Dict[str, float]] = None,
 ) -> None:
     """The whole product's book, in date order, with a pile per ownership group.
 
@@ -845,11 +870,17 @@ def _walk(
     take, exactly what step 1 would have given it, less what nearer lines drew first.
     `draws`, when given, is filled with every walk draw off a claimed floor, in walk
     order, as `(state, index into state.taken)`, so the caller can say which of them were
-    lent and by whom (`_attribute_lends`).
+    lent and by whom (`_attribute_lends`). `claimed` is event key -> what is still claimed
+    of it by lines whose step has not come: the pile draw takes the group's FREE stock -
+    every bin's unclaimed part - before it touches anybody's claim, so the lend is the
+    same whatever the bins are called (a bin's ref decides the pile's order), and it is
+    only ever what the group could not cover otherwise. Each claim is released at its
+    line's own step.
 
-    Mutates `left` and the line states.
+    Mutates `left`, `claimed` and the line states.
     """
     draws = {} if draws is None else draws
+    claimed = {} if claimed is None else claimed
     steps: List[Tuple[date, int, int, object]] = []
     for event in events:
         if left.get(event.key, 0.0) <= EPSILON:
@@ -911,6 +942,8 @@ def _walk(
         for key, claim in state.claims.items():
             take = min(claim, left.get(key, 0.0), state.remaining)
             state.lent_by_event[key] = _round(max(claim - take, 0.0))
+            # The claim is over once its line has stepped, taken or not.
+            claimed[key] = claimed.get(key, 0.0) - claim
             if take <= EPSILON:
                 continue
             event = by_key[key]
@@ -922,22 +955,28 @@ def _walk(
             )
         if state.remaining > EPSILON:
             # Its OWN group's pile, in arrival order (it was appended that way), and no
-            # other group's (R40).
+            # other group's (R40). Two passes (rule 6): first every bin's UNCLAIMED part,
+            # then, only if the line is still short, the parts other lines have claimed.
             pile = piles.setdefault(group, [])
-            for event in list(pile):
-                if state.remaining <= EPSILON:
-                    break
-                take = min(state.remaining, left[event.key])
-                if take <= EPSILON:
-                    pile.remove(event)
-                    continue
-                left[event.key] -= take
-                state.remaining -= take
-                state.taken.append(Assigned(event=event, qty=_round(take), at=at))
-                if event.key in draws:
-                    draws[event.key].append((state, len(state.taken) - 1))
-                if left[event.key] <= EPSILON:
-                    pile.remove(event)
+            for free_only in (True, False):
+                for event in list(pile):
+                    if state.remaining <= EPSILON:
+                        break
+                    available = left[event.key]
+                    if free_only:
+                        available -= max(claimed.get(event.key, 0.0), 0.0)
+                    take = min(state.remaining, available)
+                    if take <= EPSILON:
+                        if left[event.key] <= EPSILON:
+                            pile.remove(event)
+                        continue
+                    left[event.key] -= take
+                    state.remaining -= take
+                    state.taken.append(Assigned(event=event, qty=_round(take), at=at))
+                    if event.key in draws:
+                        draws[event.key].append((state, len(state.taken) - 1))
+                    if left[event.key] <= EPSILON:
+                        pile.remove(event)
         # Its own date has now passed in the walk, so whatever is left is what this line
         # went without ON ITS DATE - the figure its month books (R37). Later supply may
         # still clear it (it becomes `late`), and that does not give the month back: the
@@ -1010,8 +1049,6 @@ def _attribute_lends(
                         line_key=state.line.key,
                         so_number=state.line.so_number,
                         qty=_round(part),
-                        supply_key=key,
-                        warehouse=item.event.warehouse,
                     )
                 )
             if qty > EPSILON:

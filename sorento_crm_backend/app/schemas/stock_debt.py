@@ -312,4 +312,3 @@ class StockDebtExportIn(BaseModel):
     supplier_ids: List[str] = []
     book: Book = "all"
     split: ExportSplit = "none"
-

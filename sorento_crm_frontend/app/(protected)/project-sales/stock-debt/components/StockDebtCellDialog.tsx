@@ -434,16 +434,20 @@ export function StockDebtCellDialog({
           const pill = cn(STATUS_PILL_BASE, STATUS_CLASS[status]);
           const shortLabel = `short ${shortQty.toLocaleString()}`;
           // STOCK-DEBT-LENDABLE: a line that lent its landed goods reads "order back N"
-          // (its own status); when it is short beyond what it lent, short outranks and
-          // the lend is still said beside it.
-          const orderBackLabel = `order back ${lentQty.toLocaleString()}`;
+          // (its own status), N being what it is still OWED for the lend - never more
+          // than its own shortfall, so a line that re-covered part of it elsewhere does
+          // not read as owed the whole lend. When it is short beyond that, short outranks
+          // and the two halves are said apart: "short 12 · order back 88" adds up to the
+          // 100 the month books, where "short 100 · order back 88" read as 188.
+          const orderBack = Math.min(lentQty, shortQty);
+          const orderBackLabel = `order back ${orderBack.toLocaleString()}`;
           if (status === 'order_back') {
             return <span className={pill}>{orderBackLabel}</span>;
           }
-          if (shortQty > 0 && status === 'short' && lentQty > 0) {
+          if (shortQty > 0 && status === 'short' && orderBack > 0) {
             return (
               <span className={cn(pill, 'gap-1')}>
-                {shortLabel}
+                {`short ${(shortQty - orderBack).toLocaleString()}`}
                 <span aria-hidden="true">&middot;</span>
                 <span>{orderBackLabel}</span>
               </span>

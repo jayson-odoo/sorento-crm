@@ -55,8 +55,15 @@ whose re-buy is visible, and no stock moved by a filter.
   `assigned_from` entry carries `lent_from_so_number` and the ref "On hand <bin> (from
   SOxxxx)"; a `lent` entry carries `so_number`, `sales_order_id`, `qty`, ref "Lent to SOxxxx
   (N)". Supply tab unchanged.
-- **AC-V1 `[V]` Pill.** Status `order_back` renders "order back N" in the violet pill; `short`
-  with `lent_qty` renders "short N · order back M".
+- **AC-V1 `[V]` Pill.** Status `order_back` renders "order back N" in the violet pill, N being
+  `min(lent_qty, short_qty)` (what is still owed for the lend); `short` with a lend renders
+  "short N · order back M" with the two halves adding up to the line's shortfall ("short 12 ·
+  order back 88" for a line short 100 that lent 88).
+- **AC-9 `[T]` Free stock at any bin of the group is drawn before a lend** (reviewer round):
+  the lend is the same whatever the bins are called.
+- **AC-10 `[T]` The lend does not depend on the order the holds arrive in**; two lenders are
+  charged in walk order (the later-due one first).
+- **AC-11 `[T]` A lendable hold on a pin-only event pins as any other.**
 - **AC-V2 `[V]` Covered by.** Lent entries and the "(from SO...)" on-hand wording render as
   muted text, the lent entry linking the receiving order.
 - **AC-V3 `[B]` 1280 and 375** per the mockup (sections 2, 3 and 6; the Rebalance sections are

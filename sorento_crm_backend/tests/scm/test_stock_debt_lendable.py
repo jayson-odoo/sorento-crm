@@ -8,8 +8,8 @@ caller off the board's own borrow-donor window), the lent quantity walks as free
 its bin so nearer lines draw it first, and the far line keeps its claim as `order_back`.
 
 No database: `assign()` takes plain events and answers plain numbers, the same discipline
-`test_supply_assignment.py` keeps. The route half (which pins are lendable, the wire, the
-rebalance preview) is `test_stock_debt_lendable_routes.py`.
+`test_supply_assignment.py` keeps. The route half (which pins are lendable, the wire) is
+`test_stock_debt_lendable_routes.py`.
 """
 from __future__ import annotations
 
@@ -246,3 +246,83 @@ def test_ac_8_a_lend_never_crosses_an_ownership_group():
     assert rows["ib"].status == STATUS_SHORT
     assert rows["far"].status == STATUS_PINNED
     assert rows["far"].lent_qty == 0
+
+
+# --------------------------------------------------------------------------- review round
+
+
+def test_ac_9_the_groups_free_stock_at_any_bin_is_drawn_before_a_lend():
+    """Reviewer finding 1: the pile is walked in the bins' own order, so a free bin that
+    sorts AFTER the claimed one used to be reached only once the lend was made. The lend
+    is what the group could not cover otherwise, whatever the bins are called."""
+    for free_bin in ("AAA-BB", "ZZZ-BB"):
+        free = SupplyEvent(
+            key=f"on_hand:{free_bin.lower()}", kind=KIND_ON_HAND, warehouse=free_bin,
+            at=AS_OF, qty=30,
+        )
+        result = _walk([_on_hand(88), free], [FAR, SEP], [_landed("far", 88, lendable=True)])
+        rows = _by_key(result)
+        assert rows["sep"].status == STATUS_COVERED, free_bin
+        assert sorted((item.event.warehouse, item.qty, item.lent_from_line_key) for item in rows["sep"].assigned) == sorted([
+            (free_bin, 30, None), ("BRW-BB", 2, "far"),
+        ]), free_bin
+        far = rows["far"]
+        assert far.status == STATUS_ORDER_BACK, free_bin
+        assert far.lent_qty == pytest.approx(2), free_bin
+        assert far.uncovered == pytest.approx(2), free_bin
+        assert _months(result)["2027-03"] == -2, free_bin
+
+
+def test_ac_10_the_lend_does_not_depend_on_the_order_the_holds_arrive_in():
+    """Reviewer finding 3: `_landed_holds` reads an unordered query. Two far lines on one
+    floor, holds given both ways round, read the same: the earlier-due line claims first,
+    and nothing is "lent" between two far lines when no nearer line exists."""
+    far_a = _line("far-a", "SO381065", 60, date(2027, 3, 29))
+    far_b = _line("far-b", "SO381999", 60, date(2027, 4, 15))
+    holds = [_landed("far-a", 60, lendable=True), _landed("far-b", 60, lendable=True)]
+    forwards = _by_key(_walk([_on_hand(100)], [far_a, far_b], holds))
+    backwards = _by_key(_walk([_on_hand(100)], [far_b, far_a], list(reversed(holds))))
+    for rows in (forwards, backwards):
+        assert rows["far-a"].status == STATUS_PINNED
+        assert rows["far-a"].lent_qty == 0
+        assert [(item.qty, item.lent_from_line_key) for item in rows["far-a"].assigned] == [(60, None)]
+        assert rows["far-b"].status == STATUS_SHORT
+        assert rows["far-b"].lent_qty == 0
+        assert rows["far-b"].uncovered == pytest.approx(20)
+
+
+def test_ac_10b_two_lenders_are_charged_in_walk_order_whatever_the_hold_order():
+    """Reviewer kill test K3: two far lines that both lend. The nearer line's draw is
+    charged to the LATER-due lender first (it is the one whose claim comes up short), the
+    same either way round."""
+    far_a = _line("far-a", "SO381065", 50, date(2027, 3, 29))
+    far_b = _line("far-b", "SO381999", 50, date(2027, 4, 15))
+    near = _line("sep", "SO396071", 70, date(2026, 9, 1))
+    holds = [_landed("far-a", 50, lendable=True), _landed("far-b", 50, lendable=True)]
+    for demand, pinned in (
+        ([far_a, far_b, near], holds),
+        ([near, far_b, far_a], list(reversed(holds))),
+    ):
+        rows = _by_key(_walk([_on_hand(100)], demand, pinned))
+        assert rows["sep"].status == STATUS_COVERED
+        # far-a (Mar) steps first and takes what is left (30); far-b gets nothing.
+        assert rows["far-a"].lent_qty == pytest.approx(20)
+        assert rows["far-b"].lent_qty == pytest.approx(50)
+        assert sorted(
+            (item.qty, item.lent_from_line_key) for item in rows["sep"].assigned
+        ) == [(20, "far-a"), (50, "far-b")]
+        assert rows["far-a"].status == STATUS_ORDER_BACK
+        assert rows["far-b"].status == STATUS_ORDER_BACK
+
+
+def test_ac_11_a_lendable_hold_on_a_pin_only_event_pins_as_any_other():
+    """Reviewer nit 4: a claim on an event the walk never sees could never be taken, so
+    such a hold is spent in step 1 exactly as a plain pin (no KeyError in the walk)."""
+    from dataclasses import replace
+
+    floor = replace(_on_hand(88), pin_only=True)
+    result = _walk([floor], [FAR, SEP], [_landed("far", 88, lendable=True)])
+    rows = _by_key(result)
+    assert rows["far"].status == STATUS_PINNED
+    assert rows["far"].lent_qty == 0
+    assert rows["sep"].status == STATUS_SHORT

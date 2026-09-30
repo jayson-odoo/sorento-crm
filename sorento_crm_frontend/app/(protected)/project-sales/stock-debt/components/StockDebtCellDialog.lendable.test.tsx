@@ -1,8 +1,8 @@
 /**
  * STOCK-DEBT-LENDABLE (owner, 30 Sep 2026, option B): the cell dialog's two new things.
  *
- * AC-V1 the `order_back` pill ("order back 88"; "short 100 · order back 88" when short
- * outranks), AC-V2 the Covered by wording (a lent on-hand entry says whose stock it was,
+ * AC-V1 the `order_back` pill ("order back 88"; "short 12 · order back 88" when short
+ * outranks, the two halves adding up to the shortfall), AC-V2 the Covered by wording (a lent on-hand entry says whose stock it was,
  * a lending line lists "Lent to SO... (N)" linking the receiving order). The page stays
  * read-only (owner: "this is a dashboard view only"): no Rebalance, no write.
  *
@@ -174,8 +174,28 @@ describe('StockDebtCellDialog, lendable landed pins', () => {
     const row = (await screen.findByText('SO381065')).closest(
       'tr',
     ) as HTMLElement;
-    expect(within(row).getByText('short 100')).toBeInTheDocument();
+    // The two halves add up to the 100 the month books: 12 never had cover, 88 was lent.
+    expect(within(row).getByText('short 12')).toBeInTheDocument();
     expect(within(row).getByText('order back 88')).toBeInTheDocument();
+    expect(within(row).queryByText('short 100')).not.toBeInTheDocument();
+  });
+
+  it('AC-V1: the order back figure is what is still owed, never more than the shortfall', async () => {
+    // A line that lent 88 and re-covered 86 of it elsewhere is owed 2, not 88.
+    renderDialog(
+      {
+        ...MAR_CELL,
+        demand: [
+          { ...LENDER, assigned_qty: 86, short_qty: 2, status: 'order_back' },
+        ],
+      },
+      '2027-03',
+      -2,
+    );
+    const row = (await screen.findByText('SO381065')).closest(
+      'tr',
+    ) as HTMLElement;
+    expect(within(row).getByText('order back 2')).toBeInTheDocument();
   });
 
   it('AC-V2: a receiving line names whose stock it holds', async () => {

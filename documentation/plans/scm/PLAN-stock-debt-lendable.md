@@ -51,14 +51,17 @@ move stock (R2).
    `_eligible_donor` and by `_landed_holds`, so the view never lends a pin the board would not
    offer as a donor.
 2. **The lendable quantity walks as free on hand at its bin.** Nearer lines of the same
-   ownership group draw it first-come by required date (R40 still seals groups). Free stock
-   at the bin is drawn before the lent part, so a nearer line that only needed the spare 12
-   lends nothing.
+   ownership group draw it first-come by required date (R40 still seals groups). The group's
+   free stock, at ANY of its bins, is drawn before a lent part, so a nearer line that the
+   group could cover otherwise lends nothing, whatever the bins are called (reviewer round).
+   Claims are registered in the lines' own walk order, never the query's row order.
 3. **The far line keeps its claim.** At its own step it takes what is left of its landed
    goods (a pinned, landed take, as today); what nearer lines took is LENT. It reads
    `order_back` for the lent quantity (a planned re-buy at its own date; its month books the
    shortfall, amber because it can still be bought for), and stays `pinned` for the rest.
-   `short` outranks: a line short beyond what it lent reads `short`, `lent_qty` still stated.
+   `short` outranks: a line short beyond what it lent reads `short`, the two halves said apart
+   ("short 12 · order back 88"). The order-back figure is `min(lent, shortfall)`: what the
+   line is still owed for the lend, never more than its own shortfall.
 4. **The receiving line says whose stock it has**: Covered by "On hand BRW-BB (from
    SO381065)" beside plain "On hand BRW-BB" for any free part. The lending line lists
    "Lent to SO396071 (32)" per receiver.
@@ -104,7 +107,7 @@ move stock (R2).
 
 ## Tests
 
-- `tests/scm/test_stock_debt_lendable.py` (pure walk, 11): AC-1 to AC-8.
+- `tests/scm/test_stock_debt_lendable.py` (pure walk, 15): AC-1 to AC-11.
 - `tests/scm/test_stock_debt_lendable_routes.py` (Postgres, 8): the window off the lead
   read, TBA/undated, R2 with and without `date_to`, `date_from`, board parity, the cell wire
   by name.
