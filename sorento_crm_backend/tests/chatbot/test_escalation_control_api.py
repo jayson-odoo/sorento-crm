@@ -8,17 +8,70 @@ that barred it - asserted here because `contact_to_response_dict` is built by ha
 """
 from __future__ import annotations
 
+import json
+import uuid
+
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from tests.chatbot.test_stock_ask_contact_toggles import (  # noqa: F401 - fixtures by name
-    _GRANTS,
-    BASE,
-    _permissions,
-    _seed_contact,
-    client,
-)
+import app.main  # noqa: F401  isort:skip - registers every model before any query
+from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
+from app.main import app
+from app.services.user_service import UserPermissionService
+
 from tests.chatbot.test_turns_admin_api import db  # noqa: F401 - reuses the blank-schema fixture
+
+# Own harness (the shape of `test_stock_ask_contact_toggles.py`), so this module does
+# not depend on another test module's fixtures.
+BASE = "/api/v1/user-management/contacts"
+_GRANTS: set[str] = set()
+_ACTOR: dict = {"id": None, "name": "ZZT Escalation Control Tester"}
+
+
+@pytest.fixture(autouse=True)
+def _permissions(monkeypatch):
+    _GRANTS.clear()
+    _GRANTS.update({"user_management.contacts.view", "user_management.contacts.edit"})
+    monkeypatch.setattr(
+        UserPermissionService, "check_user_has_permission", lambda self, uid, slug: slug in _GRANTS
+    )
+    monkeypatch.setattr(UserPermissionService, "get_user_role_slugs", lambda self, uid: set())
+    yield
+    _GRANTS.clear()
+
+
+@pytest.fixture()
+def client(db):  # noqa: F811 - fixture shadow is the point
+    def _override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = _override_db
+    app.dependency_overrides[get_current_user] = lambda: dict(_ACTOR)
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(_ACTOR)
+    _ACTOR["id"] = str(uuid.uuid4())
+    try:
+        yield TestClient(app, raise_server_exceptions=False)
+    finally:
+        app.dependency_overrides.clear()
+
+
+def _seed_contact(db) -> str:  # noqa: F811
+    contact_id = str(uuid.uuid4())
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+            "VALUES (:id, :cid, :phone, CAST(:sv AS jsonb))"
+        ),
+        {
+            "id": contact_id,
+            "cid": f"ZZT-{uuid.uuid4().hex[:8]}",
+            "phone": f"+6002{uuid.uuid4().hex[:7]}",
+            "sv": json.dumps({}),
+        },
+    )
+    db.commit()
+    return contact_id
 
 
 def _bar_by_dealer_type(db, contact_id: str) -> None:
