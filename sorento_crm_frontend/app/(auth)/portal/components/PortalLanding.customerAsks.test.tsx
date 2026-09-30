@@ -118,7 +118,7 @@ beforeEach(() => {
 
 describe('portal form kinds - Customer asks is one more landing kind', () => {
   it('is in LANDING_KINDS after Sales Opportunity, labelled Customer asks', () => {
-    expect(LANDING_KINDS.slice(-2)).toEqual(['sales_opportunity', 'customer_asks']);
+    expect(LANDING_KINDS.slice(-3)).toEqual(['sales_opportunity', 'customer_asks', 'conversation']);
     // The CRM contact page's Portal forms row reads the same label.
     expect(portalFormKindLabel('customer_asks')).toBe('Customer asks');
   });

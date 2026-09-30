@@ -59,6 +59,8 @@ const KIND_FIELDS: Record<PortalLandingKind, LandingField[]> = {
   ],
   // Never read: Customer asks renders `CustomerAsksList`, which filters server-side.
   customer_asks: [],
+  // Never read either: the Conversation kind's `ConversationList` carries its own field table.
+  conversation: [],
 };
 
 export function landingFieldsFor(kind: PortalLandingKind): LandingField[] {

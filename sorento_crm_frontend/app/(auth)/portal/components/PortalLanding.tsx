@@ -81,6 +81,8 @@ import { LandingCardShell } from './LandingCardShell';
 import { LandingToolbar } from './LandingToolbar';
 import { CustomerAsksList } from './CustomerAsksList';
 import { listCustomerAsks } from '../lib/customer-asks-service';
+import { ConversationList } from './ConversationList';
+import { listConversations } from '../lib/conversations-service';
 import {
   DEFAULT_LANDING_SORT,
   activeLandingFilterCount,
@@ -127,6 +129,7 @@ const EMPTY_LISTS: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
   price_tag_request: [],
   sales_opportunity: [],
   customer_asks: [],
+  conversation: [],
 };
 
 type BadgeVariant =
@@ -222,6 +225,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [openAskCount, setOpenAskCount] = useState(0);
+  const [conversationCount, setConversationCount] = useState(0);
   const {
     value: search,
     setValue: setSearch,
@@ -386,7 +390,14 @@ export function PortalLanding({ slug }: { slug?: string }) {
                       setOpenAskCount(page.pagination?.total ?? 0);
                       return [] as PortalSubmissionSummary[];
                     })
-                  : fetchSubmissions(k, q),
+                  : k === 'conversation'
+                    // Same shape as Customer asks: the body (`ConversationList`) reads its own
+                    // rows, this leg only reads the count for the picker badge.
+                    ? listConversations({ page: 1, limit: 1, q }).then((page) => {
+                        setConversationCount(page.pagination?.total ?? 0);
+                        return [] as PortalSubmissionSummary[];
+                      })
+                    : fetchSubmissions(k, q),
           ),
         );
 
@@ -467,12 +478,14 @@ export function PortalLanding({ slug }: { slug?: string }) {
       price_tag_request: 0,
       sales_opportunity: 0,
       customer_asks: 0,
+      conversation: 0,
     };
     for (const t of landingKinds) out[t] = submissions[t]?.length ?? 0;
     // Its badge is the open count, not a row count (asks are paged server-side).
     out.customer_asks = openAskCount;
+    out.conversation = conversationCount;
     return out;
-  }, [submissions, landingKinds, openAskCount]);
+  }, [submissions, landingKinds, openAskCount, conversationCount]);
 
   const handleLogout = useCallback(async () => {
     const t = readPortalToken();
@@ -667,6 +680,13 @@ export function PortalLanding({ slug }: { slug?: string }) {
 
           {currentTab === 'customer_asks' ? (
             <CustomerAsksList
+              search={debouncedSearch}
+              contactId={contact?.contact_id}
+              view={view}
+              onViewChange={setView}
+            />
+          ) : currentTab === 'conversation' ? (
+            <ConversationList
               search={debouncedSearch}
               contactId={contact?.contact_id}
               view={view}

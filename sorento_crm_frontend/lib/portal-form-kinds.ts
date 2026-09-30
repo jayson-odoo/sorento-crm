@@ -64,11 +64,20 @@ export const SALES_OPPORTUNITY_KIND = 'sales_opportunity' as const;
  */
 export const CUSTOMER_ASKS_KIND = 'customer_asks' as const;
 
+/**
+ * Conversation (lane SALES-CONVO, owner 30 Sep): the WhatsApp conversations of the customers
+ * assigned to the contact's linked sales agent, read-only. Switched per contact exactly like
+ * Customer asks (default off, agents only, resolved server-side). No form, no pages, no New
+ * button: the landing renders `ConversationList` as its body.
+ */
+export const CONVERSATION_KIND = 'conversation' as const;
+
 export type PortalLandingKind =
   | PortalSubmissionKind
   | typeof GATED_FORM_TYPE
   | typeof SALES_OPPORTUNITY_KIND
-  | typeof CUSTOMER_ASKS_KIND;
+  | typeof CUSTOMER_ASKS_KIND
+  | typeof CONVERSATION_KIND;
 
 /** Every kind an access type may be granted, in the order the admin sees them. */
 export const LANDING_KINDS: readonly PortalLandingKind[] = [
@@ -76,6 +85,7 @@ export const LANDING_KINDS: readonly PortalLandingKind[] = [
   GATED_FORM_TYPE,
   SALES_OPPORTUNITY_KIND,
   CUSTOMER_ASKS_KIND,
+  CONVERSATION_KIND,
 ] as const;
 
 /**
@@ -108,6 +118,7 @@ export const LANDING_LABELS: Record<PortalLandingKind, string> = {
   price_tag_request: 'Price Tag Request',
   sales_opportunity: 'Sales Opportunity',
   customer_asks: 'Customer asks',
+  conversation: 'Conversation',
 };
 
 /** The label for any kind, falling back to the raw code for one we do not know. */
