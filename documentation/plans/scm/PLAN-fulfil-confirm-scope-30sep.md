@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning Confirm posts what the planner ticked, and says exactly what it wrote
 
-Status: implemented (v2), PR #1395, hand test pending. Track: feature lane (FE + BE, no migration, no RBAC).
+Status: v3 redesign (preview inside the line grid) on owner hand-test feedback 30 Sep 2026; mock v3 awaiting owner look; v2 backend dry run and echo stand. PR #1395. Track: feature lane (FE + BE, no migration, no RBAC).
 Domain: scm (fulfilment planning board)
 UAC: `fulfil-confirm-scope-30sep-acceptance-criteria.md`
 Lane: `crew/fulfil-confirm-scope` (crew lane FULFIL-CONFIRM-SCOPE), base `origin/main` at e26410c20.
@@ -137,6 +137,34 @@ P4. **Preview panel is inline under the header** (same place as the results bloc
     listed with their reason, untickable. Unticking a row removes its line from the press and
     keeps its saved decision; the Confirm label follows the ticks ("Confirm N lines").
 P5. **Confirm** posts the ticked population; toast and results read the echo (S3 unchanged).
+
+## Design v3 (owner hand test on b51a4a40c, 30 Sep 2026)
+
+Owner, verbatim: "for the preview, actually my idea is to use the same datagrid table at the
+bottom, don't need this extra section at the top, and it is supposed to be CTA (Preview)
+button instead of the Confirm, Confirm should appear after preview, and in preview, the table
+of the list of items should be filtered to whatever will be sent to purchasing after clicking
+Confirm, and what will become stock transfer after confirm, so it needs to be a clear and
+straightforward view on what will be distributed to which flow after clicking confirm".
+
+Supersedes P4 (the inline panel). P1 (no popup), P2 (Preview required), P3 (server dry run)
+and P5 (echo) stand.
+
+Q1. Header CTA is "Preview (N)" alone. After the preview loads it becomes "Confirm N lines"
+    with "Exit preview" beside it; the count follows the ticks. A population change drops
+    Confirm and brings "Preview (N)" back (same fingerprint as v2).
+Q2. Preview mode filters the existing "Every contributing line" grid to the rows the server
+    says the press will post, keeps the tick column (untick = leave out, decision kept) and
+    adds a first column "Flow": one tag per thing the server would write for that line:
+    "Purchasing · <verb> <qty>" per order-inquiry row, "Stock transfer · <from> to <to> <qty>"
+    per transfer. A banner above the grid sums it: "N to Purchasing · T stock transfers · H
+    held back · C carried forward". Held-back rows (reason, no tick) and not-sent rows sit in
+    their own groups under the ticked rows, never mixed in. Decide, Save all suggested and Undo
+    all are disabled in preview. Exit preview restores the full grid.
+Q3. The Stock transfers grid above stays the transfer list; in preview it also lists the
+    transfers the press would propose, marked "proposed on Confirm", greyed when their line is
+    unticked.
+Q4. The v2 inline preview panel is removed. Results block after Confirm unchanged.
 
 ## Autosave audit (owner question, 30 Sep 2026)
 
