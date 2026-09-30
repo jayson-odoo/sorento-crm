@@ -1526,7 +1526,21 @@ export function FulfilmentBoardPanel({
             return false;
           }
           const ids = [...(dryRun?.lines_confirmed ?? []), ...(dryRun?.lines_withdrawn ?? [])];
-          return ids.length > 0 || Boolean(order.batch_id);
+          // An order whose named lines are all already fulfilled confirms nothing new, but the REAL
+          // press clears their stale decisions (the dry run rolled that back), so it is still posted.
+          if (ids.length > 0 || (dryRun?.lines_fulfilled_skipped ?? 0) > 0 || Boolean(order.batch_id)) {
+            return true;
+          }
+          refusals.push({
+            pso_id: order.pso_id,
+            ok: false,
+            heldBack: true,
+            error: 'has nothing to confirm',
+            so_number: board.data?.orders.find(
+              (standing) => standing.project_sales_order_id === order.pso_id,
+            )?.so_number,
+          } as BoardBatchResult);
+          return false;
         })
         .map((order) => {
           const dryRun = answer.get(order.pso_id);
@@ -2380,6 +2394,22 @@ export function FulfilmentBoardPanel({
                         </li>
                       ))}
                     </ul>
+                  )}
+                  {result.ok && (result.lines_fulfilled_skipped ?? 0) > 0 && (
+                    <p data-testid={`board-confirm-fulfilled-${result.pso_id}`} className="text-sm break-words text-muted-foreground">
+                      {`${result.lines_fulfilled_skipped} line${
+                        result.lines_fulfilled_skipped === 1 ? '' : 's'
+                      } already fulfilled, decision cleared`}
+                      {(() => {
+                        const echoed = new Set((result.lines_confirmed ?? []).map((line) => line.project_line_id));
+                        const held = new Set((result.lines_held_back ?? []).map((line) => line.line_no));
+                        const names = (postedLines[result.pso_id] ?? [])
+                          .filter((line) => !echoed.has(line.project_line_id))
+                          .filter((line) => !held.has(Number(line.label.split(' ')[1])))
+                          .map((line) => line.label);
+                        return names.length > 0 ? `: ${names.join(' \u00b7 ')}` : '';
+                      })()}
+                    </p>
                   )}
                   {notices.length > 0 && (
                     <ul

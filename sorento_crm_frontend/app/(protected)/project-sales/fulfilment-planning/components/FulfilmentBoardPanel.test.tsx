@@ -4631,6 +4631,67 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     expect(await screen.findByTestId('board-confirm-results')).toHaveTextContent('Line 6 has no supply.');
   });
 
+  it('still posts an order whose named lines are all already fulfilled, and names them in the results', async () => {
+    getPlanningBoard.mockResolvedValue(twoLines());
+    previewConfirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          preview: true,
+          revision_no: null,
+          lines_confirmed: [],
+          lines_withdrawn: [],
+          lines_fulfilled_skipped: 2,
+        },
+      ],
+    });
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: null,
+          lines_confirmed: [],
+          lines_carried: 0,
+          lines_fulfilled_skipped: 2,
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const block = await screen.findByTestId('board-confirm-results');
+    expect(block).toHaveTextContent('2 lines already fulfilled, decision cleared');
+    expect(block).toHaveTextContent('line 6 SRTWT6808');
+    expect(block).toHaveTextContent('line 9 SRTWT6808');
+  });
+
+  it('shows a "nothing to confirm" entry for an order the dry run answers with nothing at all', async () => {
+    getPlanningBoard.mockResolvedValue(twoLines());
+    previewConfirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          preview: true,
+          lines_confirmed: [],
+          lines_withdrawn: [],
+          lines_fulfilled_skipped: 0,
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+
+    const block = await screen.findByTestId('board-confirm-results');
+    expect(block).toHaveTextContent('SO403340: has nothing to confirm');
+    expect(confirmMany).not.toHaveBeenCalled();
+  });
+
   it('posts nothing when the dry run itself fails', async () => {
     getPlanningBoard.mockResolvedValue(twoLines());
     previewConfirmMany.mockRejectedValue(new Error('Network down'));
