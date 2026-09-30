@@ -52,7 +52,6 @@ from app.services.scm.money import (
     to_base,
 )
 from app.services.scm import plan_grain
-from app.services.scm import plan_scope
 from app.services.scm import product_supplier_service
 from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL, SITE_POOL_SQL
 from app.services.scm.reorder_policy import (
@@ -706,14 +705,13 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
         # per page - a fresh run has decided none of them yet, but its planned figure
         # (by DISTINCT product, R14, the same rec types the decision layer decides on)
         # is known the moment generation finishes, off the rows already in hand.
-        # One scope (AC-12/AC-14, PLAN-reorder-one-formula.md): scoped to the same
-        # `hidden_by_default = false` rows `_refresh_run_counts`'s SQL and `_summarise`'s
-        # `recommendation_count` use, so the plans list's Decided denominator agrees with
-        # this run's own tile total instead of counting hidden-by-default rows too.
+        # Every decidable rec counts (PLAN-lowstock-show-all, owner 30 Sep 2026: the list
+        # shows every planned product, so the tile and this denominator count them all;
+        # the `hidden_by_default` narrowing of PLAN-reorder-one-formula S3 is retired).
         from app.services.scm import decision_service as dsvc
         run.planned_count = len({
             str(r.product_id) for r in recs
-            if r.rec_type in dsvc._PLAN_ROW_DECIDABLE_TYPES and not r.hidden_by_default
+            if r.rec_type in dsvc._PLAN_ROW_DECIDABLE_TYPES
         })
         run.decided_count = 0
         run.confirmed_count = 0
@@ -3409,19 +3407,9 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
     cash_impact = (_cash_impact_in_base(rounded, unit_cost, c.get("currency"),
                                         rate, rate_as_of)
                    if rec_type in ("buy", "covered") else None)
-    # PLAN-reorder-one-formula.md S3: stamped HERE, the one place every recommendation is
-    # built, so the run's own counts, the recommendations serializer and the decisions
-    # total all read this ONE column rather than re-deriving the rule three times over
-    # (the exact drift the plan measured: list 415, tile "0 of 950", sheet 950). The
-    # Python rule (`plan_scope.hidden_by_default`) stays the only RUNTIME source; SQL
-    # readers only ever read what it wrote here.
-    hidden = plan_scope.hidden_by_default(
-        rec_type=rec_type,
-        policy_type=c.get("policy_type"),
-        reorder_level=_fnum(c.get("reorder_level")),
-        master_reorder_level=_fnum(c.get("master_reorder_level")),
-        net_position=_r(c.get("net")),
-    )
+    # `hidden_by_default` is no longer stamped (PLAN-lowstock-show-all, owner 30 Sep
+    # 2026: every planned product is on the buyer's list). The column stays at its
+    # server default (false) until a migration lane drops it; nothing reads it.
 
     inputs = {
         "reason": reason,
@@ -3556,7 +3544,6 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         triggered_reason=(label[:100] if label else None),
         allocation=allocation,
         inputs=inputs,
-        hidden_by_default=hidden,
         status="proposed",
         source_system="scm",
         source_ref=_SEED,
@@ -4151,10 +4138,10 @@ def _summarise(recs: list[ReorderRecommendation]) -> dict:
         "disposition": disposition,
         "exceptions": exceptions,
         "total_cash_impact": round(total_cash, 2),
-        # PLAN-reorder-one-formula.md S3/AC-12: the ONE scope rule, stamped at write time
-        # (`_build_rec`) - a row hidden by default is not on the buyer's business and must
-        # not inflate the count the plan list's Lines column and this run's own tile read.
-        "recommendation_count": sum(1 for r in recs if not r.hidden_by_default),
+        # Every line of the plan (PLAN-lowstock-show-all, owner 30 Sep 2026): the plan
+        # list's Lines column and this run's own tile count what the list shows, and the
+        # list shows every planned product.
+        "recommendation_count": len(recs),
     }
 
 

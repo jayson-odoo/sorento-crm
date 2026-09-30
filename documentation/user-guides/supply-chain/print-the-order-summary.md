@@ -53,9 +53,9 @@ qty**, **BRW incoming qty**, **Last in qty**, **Last in date**, **Remarks**.
 Every figure on the sheet is the plan's own - nothing is typed twice, with one exception:
 **Last cost** is read from current purchase-order data at export time, the same way
 Description and Category are on the low stock report, so it can move between two exports of
-the same run. The sheet prints exactly the rows the list shows (see
-[Run a reorder plan](run-a-reorder-plan.md#filters) for the covered-by-stock rows left off by
-default), so the Excel row count equals the plan's **Decisions** tile total.
+the same run. The sheet prints every product the plan planned, the same rows the list shows
+(see [Run a reorder plan](run-a-reorder-plan.md#filters)), so the Excel row count equals the
+plan's **Decisions** tile total.
 
 ## Getting the file
 

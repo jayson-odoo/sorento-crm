@@ -72,12 +72,11 @@ for status, decided, price answer, suggested action or level answer. Add conditi
 field, including **Rec type** and **Decision state** ("Already decided" / "Still to decide"),
 to slice the grid.
 
-By default the list, the **Decisions** tile and the exported order sheet all count the same
-rows: a covered product on the manual reorder-level basis whose net sits above its level is
-left off all three (not your business until it breaches, the 12 Aug rule). Open **Filters**
-and add a condition **Rec type is Covered by stock** to bring those rows back into the list;
-remove the condition and they're hidden again. The **Decisions** tile keeps counting the
-default list either way.
+The list, the **Decisions** tile, the exported order sheet and the low stock report's **All**
+sheet all hold the same rows: every product the plan planned, including a covered product
+whose net sits above its reorder level. Nothing is hidden by default, so there is no
+condition to add to bring rows back; **Filters** only ever narrows what is already there, and
+the **Decisions** tile keeps counting the whole plan whatever filter is applied.
 
 ### Money and prices
 

@@ -1,7 +1,14 @@
 # PLAN - Low stock report: last in from the last SPO line, All sheet matches the list
 
-Status: implemented - awaiting review
+Status: implemented (PR #919, merged 15 Sep 2026); S2 superseded 30 Sep 2026
 Domain: scm
+
+> **Superseded in part, 30 Sep 2026 (owner ruling 06:30, "SHOW ALL HIDDEN ITEMS AGAIN"):**
+> S2 "All sheet matches the list" and AC-60..AC-64 are reversed by
+> `PLAN-lowstock-show-all.md`. The All sheet, the plan list and the order sheet now print
+> every planned product; `visible_rows` and `plan_scope.hidden_by_default` no longer exist;
+> Low = on hand strictly below reorder level and nothing else. S1 (last in from the newest
+> SPO line) stands.
 Owner ruling source: chat, 15 Sep 2026 (prod run f857ca19-2c11-4a58-a27b-a203cd858b0b, `low-stock-15092026.xlsx`)
 UAC: `low-stock-last-in-and-list-scope-acceptance-criteria.md`
 Parent: `documentation/plans/scm/PLAN-low-stock-report.md` (PR #909, merged 14 Sep)
