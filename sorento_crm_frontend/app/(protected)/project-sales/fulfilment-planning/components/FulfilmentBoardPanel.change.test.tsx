@@ -213,7 +213,6 @@ function defaultPreview(body: {
 }
 
 async function pressPreviewThenConfirm() {
-  fireEvent.click(await screen.findByTestId('board-preview'));
   await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
   fireEvent.click(screen.getByTestId('board-confirm'));
 }
@@ -549,8 +548,8 @@ describe('the pre-marked decision, and Confirm', () => {
     await screen.findByTestId('board-change-icon-pcr-381895-1');
     // Nothing saved yet - the S5 ruling's own premise.
     await waitFor(() =>
-      expect(screen.getByTestId('board-preview')).toHaveTextContent(
-        'Preview (0)',
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent(
+        'Confirm (0)',
       ),
     );
 
@@ -573,8 +572,8 @@ describe('the pre-marked decision, and Confirm', () => {
       ).toHaveTextContent('Saved');
     });
     await waitFor(() =>
-      expect(screen.getByTestId('board-preview')).toHaveTextContent(
-        'Preview (1)',
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent(
+        'Confirm (1)',
       ),
     );
 
@@ -640,10 +639,10 @@ describe('the pre-marked decision, and Confirm', () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (1)'),
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
     );
     expect(screen.queryByTestId('confirm-blocked')).not.toBeInTheDocument();
-    expect(screen.getByTestId('board-preview')).toBeEnabled();
+    expect(screen.getByTestId('board-confirm')).toBeEnabled();
   });
 
   it('refuses Confirm once the batch itself was applied, and says when and by whom', async () => {
@@ -658,7 +657,7 @@ describe('the pre-marked decision, and Confirm', () => {
     const blocked = await screen.findByTestId('confirm-blocked');
     expect(blocked).toHaveTextContent('This planning change was applied');
     expect(blocked).toHaveTextContent('Cyndi Tee');
-    expect(screen.getByTestId('board-preview')).toBeDisabled();
+    expect(screen.getByTestId('board-confirm')).toBeDisabled();
   });
 });
 
@@ -687,8 +686,8 @@ describe('S5: Change proposed is not Saved (owner ruling 25 Sep 2026, issue #124
         '0 to confirm',
       ),
     );
-    expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (0)');
-    expect(screen.getByTestId('board-preview')).toBeDisabled();
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)');
+    expect(screen.getByTestId('board-confirm')).toBeDisabled();
 
     fireEvent.click(
       await screen.findByRole('button', {
@@ -723,7 +722,7 @@ describe('S5: Change proposed is not Saved (owner ruling 25 Sep 2026, issue #124
         '1 to confirm',
       ),
     );
-    expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (1)');
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
 
     fireEvent.click(
       await screen.findByRole('button', {
@@ -774,7 +773,7 @@ describe('S5: Change proposed is not Saved (owner ruling 25 Sep 2026, issue #124
     renderPanel();
     await screen.findByTestId('board-change-icon-pcr-381895-1');
     await waitFor(() =>
-      expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (0)'),
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)'),
     );
 
     fireEvent.click(

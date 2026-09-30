@@ -161,7 +161,7 @@ describe('FulfilmentBoardListView', () => {
 
   it('#1362 item 5: the Line column prints the AutoCount line number, never the row index', async () => {
     // SO382618's January B2154-NL line: planning row 110, AutoCount No. 2912. And the
-    // owner's unnumbered 200-piece line, which AutoCount gave no No.: "row 3".
+    // owner's unnumbered 200-piece line, which AutoCount gave no No.: its position, "3", with a not-synced title.
     renderView({
       contributions: [
         contribution({
@@ -177,7 +177,10 @@ describe('FulfilmentBoardListView', () => {
     expect(within(january).getByText('2912')).toBeInTheDocument();
     expect(within(january).queryByText('110')).not.toBeInTheDocument();
     const unnumbered = screen.getByText('SO382619').closest('tr') as HTMLElement;
-    expect(within(unnumbered).getByText('row 3')).toBeInTheDocument();
+    expect(within(unnumbered).getByText('3')).toHaveAttribute(
+      'title',
+      'AutoCount line number not synced for this order',
+    );
   });
 
   // S6 (PLAN-scm-oi-worklist-excel-parity.md R-J, AC-P2/AC-P3): the board's ONE search
@@ -2141,7 +2144,7 @@ describe('FulfilmentBoardListView: every column sorts (owner ruling 22 Sep)', ()
       'Outstanding qty',
       'Suggested',
       'Decided',
-      'Rank',
+      // Rank is hidden by default (owner, 30 Sep 2026); the Columns menu brings it back.
       'Verdict',
     ];
     for (const title of sortableTitles) {
@@ -2241,5 +2244,56 @@ describe('FulfilmentBoardListView: the header tick box selects every row (FULFIL
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows' }));
 
     expect(await screen.findByText('30 selected')).toBeInTheDocument();
+  });
+});
+
+
+/**
+ * Owner, 30 Sep 2026: a Columns menu, Rank hidden until asked for, and a Status filter over the
+ * same state the Verdict pill shows.
+ */
+describe('FulfilmentBoardListView: Columns and Status filter', () => {
+  it('hides Rank by default and shows it from the Columns menu', async () => {
+    renderView();
+    await screen.findByText('SO397450');
+    expect(screen.queryByRole('button', { name: 'Rank' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Columns' }));
+    await userEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Rank' }));
+    await userEvent.keyboard('{Escape}');
+
+    expect(await screen.findByRole('button', { name: 'Rank' })).toBeInTheDocument();
+  });
+
+  it('the Columns menu hides a column that is showing', async () => {
+    renderView();
+    await screen.findByText('SO397450');
+    expect(screen.getByRole('button', { name: 'Customer' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Columns' }));
+    await userEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Customer' }));
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Customer' })).not.toBeInTheDocument(),
+    );
+  });
+
+  it('the Status filter Saved shows only the saved rows', async () => {
+    const saved = contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 });
+    const plain = contribution({ key: 'so-2:line-20', so_number: 'SO397451', line_no: 20 });
+    renderView({
+      contributions: [saved, plain],
+      draft: { [saved.key]: { verdict: 'approved' } },
+    });
+    await screen.findByText('SO397450');
+    expect(screen.getByText('SO397451')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText('Status'));
+    await userEvent.click(await screen.findByRole('option', { name: /Saved/ }));
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByText('SO397451')).not.toBeInTheDocument());
+    expect(screen.getByText('SO397450')).toBeInTheDocument();
   });
 });

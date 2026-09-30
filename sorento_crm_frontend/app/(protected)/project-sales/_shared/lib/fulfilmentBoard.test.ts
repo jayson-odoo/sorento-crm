@@ -23,8 +23,6 @@ import {
   factorLabel,
   matchesSuggestion,
   plannedLineCount,
-  previewSummaryText,
-  previewViewFor,
   rankingNote,
   rejectedCoveredLineIdsFor,
   rowMatchesSearch,
@@ -2759,10 +2757,12 @@ describe('#1362 item 5: soLineLabel / soLineNoText', () => {
     expect(soLineLabel({ so_line_no: 0, line_no: 4 })).toBe('Line 0');
   });
 
-  it('falls back to "row N" only when AutoCount gave the line no number', async () => {
-    const { soLineLabel, soLineNoText } = await import('./fulfilmentBoard');
-    expect(soLineLabel({ so_line_no: null, line_no: 110 })).toBe('row 110');
-    expect(soLineNoText({ so_line_no: null, line_no: 3 })).toBe('row 3');
+  it('falls back to the plain position only when AutoCount gave the line no number', async () => {
+    const { soLineLabel, soLineNoText, soLineNoIsSynced } = await import('./fulfilmentBoard');
+    expect(soLineLabel({ so_line_no: null, line_no: 110 })).toBe('Line 110');
+    expect(soLineNoText({ so_line_no: null, line_no: 3 })).toBe('3');
+    expect(soLineNoIsSynced({ so_line_no: null })).toBe(false);
+    expect(soLineNoIsSynced({ so_line_no: 2912 })).toBe(true);
     // A payload with no so_line_no key at all predates the field: its number is bare.
     expect(soLineNoText({ line_no: 3 })).toBe('3');
   });
@@ -2809,7 +2809,7 @@ describe('#1362 (owner, 29 Sep 2026): confirmNoticeLines', () => {
         ],
       }),
     ).toEqual([
-      'row 29, B2154-NL: held back, decision kept: The components add up to 50 and the line is open for 100.',
+      'Line 29, B2154-NL: held back, decision kept: The components add up to 50 and the line is open for 100.',
       'Line 2912, B2154-NL: Buy 100 confirmed as decided; 100 landed for this line on SPO-2026/06-0131 stay linked to it, for purchasing to adjust',
     ]);
     expect(confirmNoticeLines({})).toEqual([]);
@@ -3078,218 +3078,5 @@ describe('confirm scope: a naive-UTC saved_at is read as UTC', () => {
     );
     expect(rows[0].savedBefore).toBe(true);
     expect(savedAgoText('2026-09-30T04:50:00')).toBe('just now');
-  });
-});
-
-/**
- * FULFIL-CONFIRM-SCOPE v3.1 (AC-W2/AC-W4): the read-only Preview view's model. The SERVER's
- * per-order answer joined back to the board's contribution; `onlyLineIds` is what Confirm scopes to.
- */
-describe('previewViewFor', () => {
-  const OPENED = new Date('2026-09-30T02:00:00Z');
-  const board = buildBoard(
-    [
-      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 6, qty: '239', item_code: 'SRTWT6808' }),
-      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 9, qty: '436', item_code: 'SRTWT6808' }),
-      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 8, qty: '100', item_code: 'TPE-9204' }),
-    ],
-    { today: TODAY },
-  );
-  const base = board.cells.flatMap((cell) => cell.contributions);
-  const at = (lineNo: number) => base.find((entry) => entry.line_no === lineNo)!;
-  const contributions: BoardContribution[] = [
-    {
-      ...at(6),
-      draft: { decision: { verdict: 'approved' }, saved_by: 'Cyndi', saved_at: '2026-09-30T02:30:00Z' },
-    },
-    {
-      ...at(9),
-      draft: { decision: { verdict: 'approved' }, saved_by: 'Jayson Foundryx', saved_at: '2026-09-22T03:09:00Z' },
-    },
-    {
-      ...at(8),
-      draft: { decision: { verdict: 'approved' }, saved_by: 'Cyndi', saved_at: '2026-09-30T02:31:00Z' },
-    },
-  ];
-  const draft = Object.fromEntries(contributions.map((entry) => [entry.key, entry.draft!.decision]));
-  const context = { currentUserName: 'Cyndi', openedAt: OPENED };
-
-  const inquiryRow = (lineNo: number, qty: string, isNew: boolean) => ({
-    line_no: lineNo,
-    item_code: 'SRTWT6808',
-    verb: 'ORDER',
-    qty,
-    delivery_date: '2026-09-01',
-    stock_location: 'BRW-IB',
-    note: null,
-    is_new: isNew,
-  });
-  const ids = (nos: number[]) =>
-    nos.map((no) => ({ project_line_id: `pl-so-a-${no}`, line_no: no, item_code: null }));
-
-  const results = [
-    {
-      pso_id: 'pso-so-a',
-      ok: true,
-      preview: true,
-      decision_revision: 1,
-      lines_confirmed: ids([6, 9, 8]),
-      lines_carried: 0,
-      lines_held_back: [{ line_no: 112, item_code: 'WESERP20B', reason: 'only 3 free at BRW-IB' }],
-      lines_withdrawn: [],
-      lines_fulfilled_skipped: 0,
-      inquiry_rows: [inquiryRow(6, '239', true), inquiryRow(9, '436', false)],
-      transfers: [
-        { line_no: 8, kind: 'borrow', qty: '100', from_location: 'BRW-BB', to_location: 'BRW-IB', is_new: true },
-      ],
-    },
-  ];
-
-  it('pins two inquiry rows, one transfer, one held back, and the ids Confirm scopes to', () => {
-    const view = previewViewFor(results as never, contributions, draft, context);
-    expect(view.summary).toMatchObject({
-      lines: 3,
-      inquiryRows: 2,
-      transfers: 1,
-      heldBack: 1,
-      carried: 0,
-      withdrawn: 0,
-    });
-    const [order] = view.orders;
-    expect(order).toMatchObject({
-      pso_id: 'pso-so-a',
-      so_number: 'SO000001',
-      ok: true,
-      confirmCount: 3,
-    });
-    expect([...order.onlyLineIds].sort()).toEqual(['pl-so-a-6', 'pl-so-a-8', 'pl-so-a-9']);
-    const row6 = order.inquiry.find((row) => row.line_no === 6)!;
-    expect(row6).toMatchObject({
-      item_code: 'SRTWT6808',
-      so_number: 'SO000001',
-      verb: 'ORDER',
-      qty: '239',
-      delivery_date: '2026-09-01',
-      stock_location: 'BRW-IB',
-      saved_by: 'Cyndi',
-      savedByOther: false,
-      savedBefore: false,
-      is_new: true,
-    });
-    const row9 = order.inquiry.find((row) => row.line_no === 9)!;
-    expect(row9).toMatchObject({
-      is_new: false,
-      saved_by: 'Jayson Foundryx',
-      savedByOther: true,
-      savedBefore: true,
-    });
-    expect(order.transfers).toHaveLength(1);
-    expect(order.transfers[0]).toMatchObject({
-      line_no: 8,
-      kind: 'borrow',
-      qty: '100',
-      from_location: 'BRW-BB',
-      to_location: 'BRW-IB',
-      is_new: true,
-    });
-    expect(order.heldBack).toEqual([
-      expect.objectContaining({ line_no: 112, item_code: 'WESERP20B', reason: 'only 3 free at BRW-IB' }),
-    ]);
-  });
-
-  it('a withdrawal-only order counts one line and scopes to the withdrawn id', () => {
-    const withdrawal = [
-      {
-        pso_id: 'pso-so-a',
-        ok: true,
-        preview: true,
-        lines_confirmed: [],
-        lines_withdrawn: ids([5]),
-        lines_carried: 0,
-        lines_held_back: [],
-        inquiry_rows: [],
-        transfers: [],
-      },
-    ];
-    const view = previewViewFor(withdrawal as never, contributions, draft, context);
-    const [order] = view.orders;
-    expect(order.confirmCount).toBe(1);
-    expect(order.onlyLineIds).toEqual(['pl-so-a-5']);
-    expect(order.inquiry).toEqual([]);
-    expect(view.summary.withdrawn).toBe(1);
-  });
-
-  it('a refused order carries its error and scopes to nothing', () => {
-    const refused = [
-      { pso_id: 'pso-so-a', ok: false, preview: true, error: 'No supply', inquiry_rows: [], transfers: [] },
-    ];
-    const [order] = previewViewFor(refused as never, contributions, draft, context).orders;
-    expect(order).toMatchObject({ pso_id: 'pso-so-a', ok: false, error: 'No supply', onlyLineIds: [] });
-  });
-
-  it('lists a withdrawn line and a raised row for an unknown line, and counts kept transfers apart', () => {
-    const answer = [
-      {
-        pso_id: 'pso-so-a',
-        ok: true,
-        preview: true,
-        lines_confirmed: ids([6]),
-        lines_withdrawn: ids([5]),
-        lines_carried: 0,
-        lines_held_back: [],
-        inquiry_rows: [inquiryRow(77, '12', true)],
-        transfers: [
-          { line_no: 8, kind: 'borrow', qty: '100', from_location: 'A', to_location: 'B', is_new: true },
-          { line_no: 8, kind: 'borrow', qty: '5', from_location: 'A', to_location: 'B', is_new: false },
-        ],
-      },
-    ];
-    const view = previewViewFor(answer as never, contributions, draft, context);
-    const [order] = view.orders;
-    expect(order.withdrawnKeys).toEqual(['preview-pso-so-a-5']);
-    expect(order.lineKeys).toEqual(expect.arrayContaining(['preview-pso-so-a-5', 'preview-pso-so-a-77']));
-    expect(order.extraLines.map((entry) => entry.line_no).sort()).toEqual([5, 77]);
-    expect(view.summary).toMatchObject({ transfers: 1, kept: 1, withdrawn: 1, inquiryRows: 1 });
-    expect(previewSummaryText(view.summary)).toContain('1 withdrawn');
-    expect(previewSummaryText(view.summary)).toContain('1 kept');
-  });
-
-  it('counts every row the press writes, and names the lines of a refused order', () => {
-    const batch = [
-      {
-        pso_id: 'pso-so-a',
-        ok: true,
-        preview: true,
-        lines_confirmed: ids([6]),
-        lines_withdrawn: [],
-        lines_carried: 0,
-        lines_held_back: [],
-        inquiry_rows: [inquiryRow(6, '1', true), inquiryRow(77, '2', true), inquiryRow(78, '3', true)],
-        transfers: [],
-      },
-    ];
-    const view = previewViewFor(batch as never, contributions, draft, context);
-    expect(view.summary.lines).toBe(3);
-    expect(view.orders[0].confirmCount).toBe(1);
-
-    const refused = [
-      {
-        pso_id: 'pso-so-a',
-        ok: false,
-        preview: true,
-        error: 'nope',
-        failing_lines: [{ line_no: 6, item_code: 'SRTWT6808', reason: 'no supply' }],
-        inquiry_rows: [],
-        transfers: [],
-      },
-    ];
-    const bad = previewViewFor(refused as never, contributions, draft, {
-      ...context,
-      orders: [{ sales_order_id: 'so-a', so_number: 'SO000001', project_sales_order_id: 'pso-so-a' }],
-    });
-    expect(bad.summary.lines).toBe(0);
-    expect(bad.orders[0].refused).toEqual([
-      expect.objectContaining({ line_no: 6, reason: 'no supply', key: expect.any(String) }),
-    ]);
   });
 });

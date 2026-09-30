@@ -16,7 +16,10 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { Card, CardFooter, CardHeader, CardTable, CardTitle } from '@/components/ui/card';
+import { Columns3 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -70,6 +73,8 @@ export function PanelDataGrid<TRow extends object>({
   pageResetKey,
   focusRowId,
   focusRequestKey,
+  columnToggle = false,
+  initialColumnVisibility,
 }: {
   /**
    * A plain heading, or a heading with an embedded link (e.g. the record's own number).
@@ -218,6 +223,10 @@ export function PanelDataGrid<TRow extends object>({
    * to re-press, which keeps today's once-per-id behaviour exactly as it is.
    */
   focusRequestKey?: string | number;
+  /** Adds the standard "Columns" visibility menu (the Products in Promotion grid's) to the toolbar. */
+  columnToggle?: boolean;
+  /** Columns hidden until the reader turns them on (a saved column preference still wins). */
+  initialColumnVisibility?: Record<string, boolean>;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -276,6 +285,9 @@ export function PanelDataGrid<TRow extends object>({
     // never touched the page - see PLAN-panel-datagrid-keep-page.md. The
     // render-time clamp above is the only reset this grid wants for that.
     autoResetPageIndex: false,
+    ...(initialColumnVisibility
+      ? { initialState: { columnVisibility: initialColumnVisibility } }
+      : {}),
     state: {
       pagination: tablePagination,
       ...(sortable ? { sorting } : {}),
@@ -396,7 +408,7 @@ export function PanelDataGrid<TRow extends object>({
         {/* flex-col until sm so a title and a toolbar never overlap at phone width. Not
             rendered at all when there is nothing to put in it, so a grid titled by the row
             it expanded from starts at its own column headers. */}
-        {(title || toolbar || searchOf) && (
+        {(title || toolbar || searchOf || columnToggle) && (
           <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
             {title ? (
               <CardTitle className="min-w-0 break-words text-sm">{title}</CardTitle>
@@ -417,6 +429,17 @@ export function PanelDataGrid<TRow extends object>({
                 />
               )}
               {toolbar}
+              {columnToggle && (
+                <DataGridColumnVisibility
+                  table={table}
+                  trigger={
+                    <Button variant="outline" size="sm" className="gap-1">
+                      <Columns3 className="size-4" aria-hidden />
+                      Columns
+                    </Button>
+                  }
+                />
+              )}
             </div>
           </CardHeader>
         )}

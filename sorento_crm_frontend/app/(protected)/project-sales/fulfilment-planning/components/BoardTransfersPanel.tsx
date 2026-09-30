@@ -63,25 +63,9 @@ export function BoardTransfersPanel({
   soNumbers,
   justConfirmed = false,
   inquiryRows = 0,
-  preview,
 }: {
   soNumbers: string[];
-  /**
-   * The Preview view's read-only rendering (FULFIL-CONFIRM-SCOPE v3.2): the transfers a press
-   * WOULD create, as the server answered them. No query, no permission gate, no approve verb,
-   * and the number reads "on Confirm" (or "kept" when the movement already exists).
-   */
-  preview?: {
-    line_no: number | null;
-    kind: string;
-    qty: string;
-    from_location: string | null;
-    to_location: string | null;
-    is_new: boolean;
-    so_number: string | null;
-    item_code: string | null;
-    customer_name: string | null;
-  }[];
+
   /**
    * Whether a confirmation was pressed on this board since it opened.
    *
@@ -111,52 +95,9 @@ export function BoardTransfersPanel({
     null,
   );
 
-  const rows = React.useMemo<StockTransfer[]>(
-    () => [
-      ...(preview ?? []).filter((move) => move.is_new).map((move, index): StockTransfer => ({
-            id: `preview-${index}`,
-            transfer_no: move.is_new ? 'on Confirm' : 'kept',
-            state: 'proposed',
-            kind: move.kind as StockTransfer['kind'],
-            qty: move.qty,
-            product_id: null,
-            item_code: move.item_code,
-            product_name: null,
-            from_warehouse_id: null,
-            from_location: move.from_location,
-            to_warehouse_id: null,
-            to_location: move.to_location,
-            sales_order_id: null,
-            so_number: move.so_number,
-            so_line_no: move.line_no,
-            project_sales_order_id: null,
-            customer_name: move.customer_name,
-            sales_agent_id: null,
-            agent_code: null,
-            agent_name: null,
-            supply_decision_id: null,
-            revision_no: null,
-            proposed_at: null,
-            approved_by: null,
-            approved_by_name: null,
-            approved_at: null,
-            moved_by: null,
-            moved_by_name: null,
-            moved_at: null,
-            cancelled_by: null,
-            cancelled_by_name: null,
-            cancelled_at: null,
-            cancelled_reason: null,
-            autocount_ref: null,
-            created_at: null,
-            updated_at: null,
-          })),
-      ...(data?.data ?? []),
-    ],
-    [data, preview],
-  );
+  const rows = React.useMemo<StockTransfer[]>(() => data?.data ?? [], [data]);
   const proposedRows = React.useMemo(
-    () => rows.filter((row) => row.state === 'proposed' && !row.id.startsWith('preview-')),
+    () => rows.filter((row) => row.state === 'proposed'),
     [rows],
   );
   const proposedIds = React.useMemo(
@@ -174,10 +115,7 @@ export function BoardTransfersPanel({
         ),
         // The document number IS the way to the movement's own record, where it is marked
         // moved or cancelled - the two verbs this panel deliberately does not carry.
-        cell: ({ row }) =>
-          row.original.id.startsWith('preview-') ? (
-            <span className="block truncate text-sm">{row.original.transfer_no}</span>
-          ) : (
+        cell: ({ row }) => (
           <Link
             href={`/inventory-management/stock-transfers/${row.original.id}`}
             onClick={(event) => event.stopPropagation()}
@@ -186,7 +124,7 @@ export function BoardTransfersPanel({
           >
             {row.original.transfer_no}
           </Link>
-          ),
+        ),
         size: 150,
         minSize: 120,
         meta: { headerTitle: 'Transfer no' },
@@ -334,9 +272,7 @@ export function BoardTransfersPanel({
           <span className="block truncate text-sm tabular-nums">
             {row.original.proposed_at
               ? formatDateTimeInMalaysia(row.original.proposed_at)
-              : row.original.id.startsWith('preview-')
-                ? ''
-                : 'Not stated'}
+              : 'Not stated'}
           </span>
         ),
         size: 160,
@@ -350,7 +286,7 @@ export function BoardTransfersPanel({
         // than no button. An approved row keeps its place in the list and simply has no
         // verb left here - marking it moved belongs to the transfer's own record.
         cell: ({ row }) =>
-          canEdit && row.original.state === 'proposed' && !row.original.id.startsWith('preview-') ? (
+          canEdit && row.original.state === 'proposed' ? (
             <div className="flex justify-end">
               <Button
                 type="button"
@@ -378,7 +314,7 @@ export function BoardTransfersPanel({
 
   // No read grant, no panel (D9). Nothing about the movements is stated - not an empty
   // card, not an error - because none of it is this user's to see.
-  if (!canView && !(preview && preview.some((move) => move.is_new))) return null;
+  if (!canView) return null;
   // Nothing raised and nothing pressed: no card. See the `justConfirmed` prop.
   if (!isLoading && !error && rows.length === 0 && !justConfirmed) return null;
 
@@ -387,11 +323,6 @@ export function BoardTransfersPanel({
       <PanelDataGrid<StockTransfer>
         title="Stock transfers"
         columns={columns}
-        rowAttributes={(row) =>
-          row.id.startsWith('preview-')
-            ? { 'data-testid': `board-preview-transfer-row-${row.so_line_no}` }
-            : {}
-        }
         rows={rows}
         getRowId={(row) => row.id}
         listingKey="projects.projects.view::board-stock-transfers"

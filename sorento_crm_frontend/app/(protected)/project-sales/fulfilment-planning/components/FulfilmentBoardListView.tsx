@@ -9,13 +9,14 @@ import {
   ChevronsUpDown,
   PackageSearch,
 } from 'lucide-react';
-import { CellContext, ColumnDef, RowSelectionState } from '@tanstack/react-table';
+import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { SoLineAttachmentsButton } from '../../_shared/components/SoLineAttachmentsButton';
 import type { SoLineAttachmentsByLine } from '../../_shared/services/soLineAttachmentService';
@@ -23,6 +24,7 @@ import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import {
   BoardDecisionPill,
+  VERDICT_FILTER_OPTIONS,
   VERDICT_SORT_RANK,
   verdictOf,
 } from './BoardDecisionPill';
@@ -35,9 +37,8 @@ import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotat
 import { canDecide } from '../../_shared/lib/boardAmend';
 import {
   contributionMatchesSearch,
-  savedAgoText,
-  savedFactsFor,
   soLineLabel,
+  soLineNoIsSynced,
   soLineNoText,
 } from '../../_shared/lib/fulfilmentBoard';
 import { BoardDecideControl } from './BoardDecideControl';
@@ -163,38 +164,6 @@ export interface FulfilmentBoardListViewProps {
    * supplies it.
    */
   attachmentsByLine?: SoLineAttachmentsByLine;
-  /**
-   * The Preview view's read-only rendering (FULFIL-CONFIRM-SCOPE v3.2): the SAME columns over
-   * the lines the press will send, with no select column, toolbar, row expansion or click.
-   * The OI cell shows the inquiry row the press would raise (or "Held back"), and the Verdict
-   * cell who saved the line.
-   */
-  readOnlyPreview?: {
-    infoByKey: ReadonlyMap<
-      string,
-      {
-        inquiry: {
-          verb: string;
-          qty: string;
-          delivery_date: string | null;
-          stock_location: string | null;
-          is_new: boolean;
-        }[];
-        heldBackReason: string | null;
-        /** The press withdraws this line from the confirmation. */
-        withdrawn?: boolean;
-        /** The server refused the order this line is on, and why. */
-        refusedReason?: string | null;
-        /** What a pending planning change does to this line, said in the Decided cell. */
-        pendingChange?: string | null;
-      }
-    >;
-    currentUserName: string | null | undefined;
-    openedAt: Date;
-    /** The "Will be sent (N)" chip: N lines, pressed (it IS the filter), pressing it exits. */
-    willBeSent?: number;
-    onExit?: () => void;
-  };
 }
 
 export function FulfilmentBoardListView({
@@ -211,7 +180,6 @@ export function FulfilmentBoardListView({
   poolSharePct,
   canEditAttachments = false,
   attachmentsByLine = {},
-  readOnlyPreview,
 }: FulfilmentBoardListViewProps) {
   /**
    * AC-RS-42: the Stock button and the "To plan" figure both open the SAME dialog the grid
@@ -237,9 +205,18 @@ export function FulfilmentBoardListView({
   // S6: the row filter itself, off the board's own search box - `contributionMatchesSearch`
   // is the SAME matcher `rowMatchesSearch` reads for the grid's rows, so the two views can
   // never disagree about what one search term narrows to.
+  // The Status filter (owner, 30 Sep 2026): the SAME state the Verdict pill and its sort read
+  // (`verdictOf`), so a status can never be filtered by one rule and shown by another.
+  const [statusFilter, setStatusFilter] = React.useState<string[]>([]);
   const filteredContributions = React.useMemo(
-    () => contributions.filter((contribution) => contributionMatchesSearch(contribution, externalSearch ?? '')),
-    [contributions, externalSearch],
+    () =>
+      contributions.filter(
+        (contribution) =>
+          contributionMatchesSearch(contribution, externalSearch ?? '') &&
+          (statusFilter.length === 0 ||
+            statusFilter.includes(verdictOf(contribution, draft[contribution.key] ?? null))),
+      ),
+    [contributions, externalSearch, statusFilter, draft],
   );
 
   // Should fix 3 (review round 1, fixed again round 2): AC-10's "the order follows the list's
@@ -398,8 +375,7 @@ export function FulfilmentBoardListView({
   );
 
   const columns = React.useMemo<ColumnDef<BoardContribution>[]>(
-    () => {
-    const all: ColumnDef<BoardContribution>[] = [
+    () => [
       // The repo's own select column (the users list uses the same one), so a quick save is
       // a bulk action like any other rather than a second selection mechanism.
       buildSelectColumn<BoardContribution>({
@@ -423,12 +399,22 @@ export function FulfilmentBoardListView({
       // here - the caller's own order IS the default (`PanelDataGrid`'s own contract).
       {
         id: 'line',
+        meta: { headerTitle: 'Line' },
         // #1362 item 5: AutoCount's own line number, never the planning row index;
         // "row N" only where AutoCount gave the line none.
         accessorFn: (row) => row.so_line_no ?? row.line_no,
         header: ({ column }) => <DataGridColumnHeader title="Line" column={column} />,
         cell: ({ row }) => (
-          <span className="block tabular-nums">{soLineNoText(row.original)}</span>
+          <span
+            className="block tabular-nums"
+            title={
+              soLineNoIsSynced(row.original)
+                ? undefined
+                : 'AutoCount line number not synced for this order'
+            }
+          >
+            {soLineNoText(row.original)}
+          </span>
         ),
         size: 70,
         minSize: 60,
@@ -497,6 +483,7 @@ export function FulfilmentBoardListView({
         // Owner ruling, 22 Sep 2026: every column on this list sorts.
         enableSorting: true,
         meta: {
+          headerTitle: 'Sales order',
           // The SAME editor the cell breakdown expands, so a decision reads and is taken
           // identically whichever way the planner came at the line - the per-location
           // Available included (C4). The figures ride on the CONTRIBUTION, netted of this
@@ -524,6 +511,7 @@ export function FulfilmentBoardListView({
       },
       {
         id: 'agent',
+        meta: { headerTitle: 'Agent' },
         accessorFn: (row) => row.agent_code ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
         cell: ({ row }) =>
@@ -543,6 +531,7 @@ export function FulfilmentBoardListView({
       },
       {
         id: 'customer',
+        meta: { headerTitle: 'Customer' },
         accessorFn: (row) => row.customer_name ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
         cell: ({ row }) =>
@@ -559,6 +548,7 @@ export function FulfilmentBoardListView({
       },
       {
         id: 'product',
+        meta: { headerTitle: 'Product' },
         accessorFn: (row) => row.item_code,
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
         cell: ({ row }) => {
@@ -602,6 +592,7 @@ export function FulfilmentBoardListView({
       // reads a plain dash, never a guess.
       {
         id: 'order_inquiry',
+        meta: { headerTitle: 'OI' },
         accessorFn: (row) => row.order_inquiry?.inquiry_no ?? '',
         header: ({ column }) => <DataGridColumnHeader title="OI" column={column} />,
         cell: ({ row }) => {
@@ -638,6 +629,7 @@ export function FulfilmentBoardListView({
       },
       {
         id: 'required_date',
+        meta: { headerTitle: 'Required date' },
         accessorFn: (row) => row.required_date ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Required date" column={column} />,
         cell: ({ row }) => (
@@ -658,6 +650,7 @@ export function FulfilmentBoardListView({
       },
       {
         id: 'owed_qty',
+        meta: { headerTitle: 'Outstanding qty' },
         // Numeric, not the raw string `qty_outstanding`/`qty` ride on - a lexicographic
         // sort would put "20" ahead of "9" (owner ruling, 22 Sep 2026).
         accessorFn: (row) => Number(row.qty_outstanding ?? row.qty ?? 0),
@@ -717,6 +710,7 @@ export function FulfilmentBoardListView({
         // proposal on an undecided one - so the two could never be compared, which is the
         // one thing the planner opens this view to do.
         id: 'suggested',
+        meta: { headerTitle: 'Suggested' },
         // Owner ruling, 22 Sep 2026: sorts on the SAME text the cell prints
         // (`suggestedSortText` below), so the sort order and the words on screen can never
         // disagree.
@@ -759,6 +753,7 @@ export function FulfilmentBoardListView({
       },
       {
         id: 'decided',
+        meta: { headerTitle: 'Decided' },
         // Owner ruling, 22 Sep 2026: sorts on the SAME text the cell prints
         // (`decidedSortText` below).
         accessorFn: (row) => decidedSortText(row, draft[row.key] ?? null),
@@ -813,6 +808,7 @@ export function FulfilmentBoardListView({
       },
       {
         id: 'rank',
+        meta: { headerTitle: 'Rank' },
         accessorFn: (row) => row.rank_score,
         header: ({ column }) => <DataGridColumnHeader title="Rank" column={column} />,
         cell: ({ row }) =>
@@ -829,6 +825,7 @@ export function FulfilmentBoardListView({
       },
       {
         id: 'verdict',
+        meta: { headerTitle: 'Verdict' },
         // AC-7: sorted by the SAME state the pill renders (`verdictOf`, `BoardDecisionPill`) -
         // never a second reading of "how far this line has got", which is exactly how the
         // column and the pill it sorts could come to disagree.
@@ -889,134 +886,8 @@ export function FulfilmentBoardListView({
         size: 240,
         minSize: 170,
       },
-    ];
-    if (!readOnlyPreview) return all;
-    return all
-      .filter((column) => column.id !== 'select')
-      .map((column) => {
-        if (column.id === 'so_number') {
-          return {
-            ...column,
-            cell: ({ row }: { row: { original: BoardContribution } }) => (
-              <span className="block truncate text-sm font-medium tabular-nums">
-                {row.original.so_number}
-              </span>
-            ),
-          };
-        }
-        if (column.id === 'owed_qty') {
-          return {
-            ...column,
-            cell: ({ row }: { row: { original: BoardContribution } }) => (
-              <span className="block truncate tabular-nums">
-                {row.original.qty_outstanding ?? row.original.qty}
-              </span>
-            ),
-          };
-        }
-        if (column.id === 'decided') {
-          return {
-            ...column,
-            cell: (context: CellContext<BoardContribution, unknown>) => {
-              const info = readOnlyPreview.infoByKey.get(context.row.original.key);
-              if (info?.pendingChange) {
-                return (
-                  <span className="block truncate" title={info.pendingChange}>
-                    {info.pendingChange}
-                  </span>
-                );
-              }
-              return typeof column.cell === 'function' ? column.cell(context) : null;
-            },
-          };
-        }
-        if (column.id === 'order_inquiry') {
-          return {
-            ...column,
-            size: 260,
-            cell: ({ row }: { row: { original: BoardContribution } }) => {
-              const info = readOnlyPreview.infoByKey.get(row.original.key);
-              if (info?.withdrawn) {
-                return <span className="block truncate">Withdrawn</span>;
-              }
-              if (info?.refusedReason != null) {
-                return (
-                  <span
-                    data-testid="board-preview-refused-line"
-                    className="block truncate text-muted-foreground"
-                    title={info.refusedReason}
-                  >
-                    {`Refused \u00b7 ${info.refusedReason}`}
-                  </span>
-                );
-              }
-              if (info?.heldBackReason !== null && info?.heldBackReason !== undefined) {
-                return (
-                  <span
-                    data-testid="board-preview-held-back"
-                    className="block truncate text-muted-foreground"
-                    title={info.heldBackReason}
-                  >
-                    {`Held back \u00b7 ${info.heldBackReason}`}
-                  </span>
-                );
-              }
-              if (!info || info.inquiry.length === 0) {
-                return <span className="text-muted-foreground">-</span>;
-              }
-              const text = info.inquiry
-                .map((entry) =>
-                  entry.is_new
-                    ? [
-                        `${entry.verb} ${entry.qty}`,
-                        entry.delivery_date ? formatDateInMalaysia(entry.delivery_date) : null,
-                        entry.stock_location,
-                      ]
-                        .filter(Boolean)
-                        .join(' \u00b7 ')
-                    : `${entry.verb} ${entry.qty} \u00b7 already placed`,
-                )
-                .join(' + ');
-              return (
-                <span className="block truncate tabular-nums" title={text}>
-                  {text}
-                </span>
-              );
-            },
-          };
-        }
-        if (column.id === 'verdict') {
-          return {
-            ...column,
-            size: 220,
-            cell: ({ row }: { row: { original: BoardContribution } }) => {
-              const facts = savedFactsFor(row.original, readOnlyPreview);
-              if (!facts.saved_by) return <span className="text-muted-foreground">-</span>;
-              const flagged = facts.savedByOther || facts.savedBefore;
-              const text = flagged
-                ? `Saved \u00b7 ${facts.savedByOther ? facts.saved_by : 'you'}, ${
-                    facts.saved_at ? savedAgoText(facts.saved_at) : ''
-                  }`
-                : 'Saved \u00b7 you';
-              return flagged ? (
-                <span
-                  data-testid={`board-preview-inquiry-note-${row.original.line_no}`}
-                  className="block truncate rounded-md bg-amber-50 px-2 py-1 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
-                  title={text}
-                >
-                  {text}
-                </span>
-              ) : (
-                <span className="block truncate">{text}</span>
-              );
-            },
-          };
-        }
-        return column;
-      });
-    },
+    ],
     [
-      readOnlyPreview,
       changeIcons,
       dirtySetterFor,
       draft,
@@ -1028,42 +899,6 @@ export function FulfilmentBoardListView({
     ],
   );
 
-  if (readOnlyPreview) {
-    return (
-      <PanelDataGrid
-        columns={columns}
-        rows={filteredContributions}
-        getRowId={(row) => row.key}
-        listingKey="projects.projects.view::project-fulfilment-board-preview-v1"
-        emptyTitle="Nothing to send"
-        rowAttributes={(row) => ({
-          'data-testid': `board-preview-inquiry-row-${row.line_no}`,
-        })}
-        toolbar={
-          readOnlyPreview.onExit ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="primary"
-              aria-pressed
-              data-testid="board-preview-filter"
-              onClick={readOnlyPreview.onExit}
-            >
-              {`Will be sent (${readOnlyPreview.willBeSent ?? 0})`}
-            </Button>
-          ) : undefined
-        }
-        rowClassName={(row) =>
-          readOnlyPreview.infoByKey.get(row.key)?.heldBackReason != null ||
-          readOnlyPreview.infoByKey.get(row.key)?.refusedReason != null
-            ? 'opacity-60'
-            : undefined
-        }
-        pageSize={25}
-      />
-    );
-  }
-
   return (
     <>
     <PanelDataGrid
@@ -1071,7 +906,10 @@ export function FulfilmentBoardListView({
       columns={columns}
       rows={filteredContributions}
       getRowId={(row) => row.key}
-      pageResetKey={pageResetKey ?? externalSearch}
+      pageResetKey={`${pageResetKey ?? externalSearch ?? ''}|${statusFilter.join(',')}`}
+      columnToggle
+      // Rank is a planner's tiebreak, not something to read on every row: hidden until asked.
+      initialColumnVisibility={{ rank: false }}
       listingKey="projects.projects.view::project-fulfilment-board-list-v1"
       emptyTitle="Nothing is outstanding on this board"
       rowSelection={rowSelection}
@@ -1079,6 +917,13 @@ export function FulfilmentBoardListView({
       enableRowSelection={(row) => canDecide(row.original)}
       toolbar={
         <div className="flex flex-wrap items-center gap-2">
+          <SearchableMultiSelect
+            value={statusFilter}
+            onChange={setStatusFilter}
+            options={VERDICT_FILTER_OPTIONS}
+            placeholder="Status"
+            className="w-44"
+          />
           {/* The same pair reorder planning carries, in the same place and the same shape
               (AC-C12): two icon buttons, each dead when it has nothing to do, so the
               control itself says whether the list is open or closed. */}

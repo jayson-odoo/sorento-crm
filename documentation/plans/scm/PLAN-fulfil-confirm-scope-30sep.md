@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning Confirm posts what the planner ticked, and says exactly what it wrote
 
-Status: implemented (v4), PR #1395, hand test pending. Track: feature lane (FE + BE, no migration, no RBAC).
+Status: implemented (v5: no preview step, dry run inside Confirm), PR #1395, hand test pending. Track: feature lane (FE + BE, no migration, no RBAC).
 Domain: scm (fulfilment planning board)
 UAC: `fulfil-confirm-scope-30sep-acceptance-criteria.md`
 Lane: `crew/fulfil-confirm-scope` (crew lane FULFIL-CONFIRM-SCOPE), base `origin/main` at e26410c20.
@@ -242,3 +242,15 @@ The separate Preview view is replaced by a filter mode on the board itself. The 
    ("Preview again") are named in the notes under the header.
 5. Confirm posts the stored previewed body with `only_line_ids`, exits preview mode, and the
    results block and toast read the echo.
+
+## Design v5 (owner, 30 Sep hand test): no preview step; the dry run lives inside Confirm
+
+The owner did not want an extra step ("very troublesome"). The Preview button, the filter mode and
+its read-only columns are removed. The header CTA is "Confirm (N)" again, with no popup. Confirm
+now runs the server dry run first (`previewConfirmMany` with the built body), then posts the same
+stored body narrowed to `only_line_ids` per order (confirmed plus withdrawn ids; batched orders
+whole), so hold-back and the recheck still protect and the toast and results block read the echo.
+An order the dry run refuses is not posted; the others are, and the refusal appears in the results
+block as a refused entry. Also from the hand test: the "Every contributing line" list gets the
+standard Columns menu (Rank hidden by default) and a Status filter over the Verdict states, and the
+Line column prints the plain position with a "not synced" title when AutoCount gave no line number.

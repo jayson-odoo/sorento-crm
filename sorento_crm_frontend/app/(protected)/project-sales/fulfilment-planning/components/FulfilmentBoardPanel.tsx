@@ -28,7 +28,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useSession } from 'next-auth/react';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -68,9 +67,6 @@ import {
   boardAxis,
   bucketLabelText,
   confirmSummaryFor,
-  previewSummaryText,
-  previewViewFor,
-  type PreviewInquiryEntry,
   decisionHeaderText,
   orderListRows,
   rowMatchesSearch,
@@ -1195,149 +1191,12 @@ export function FulfilmentBoardPanel({
 
   const confirmMany = useConfirmManyMutation();
   const previewConfirmMany = usePreviewConfirmManyMutation();
-  const { data: session } = useSession();
-  const currentUserName = session?.user?.name ?? '';
-  // When the board was opened: a draft saved before this is somebody else's earlier work.
-  const openedAt = React.useRef(new Date());
   // The lines each order's press posted, by planning record, so the results block can set
   // them beside what the server says it wrote.
   const [postedLines, setPostedLines] = React.useState<
     Record<string, { project_line_id: string; label: string }[]>
   >({});
 
-
-  // PREVIEW VIEW (FULFIL-CONFIRM-SCOPE v3.2): Preview posts the very body Confirm would post,
-  // with `preview: true`; the server runs it and rolls it back, and a read-only view of its
-  // answer replaces the board content. Confirm lives on that view and is only live while the
-  // population it was computed for still stands: a refetch that brings a new draft changes the
-  // fingerprint and asks for a new preview.
-  const populationFingerprint = React.useMemo(() => {
-    const parts = allContributions
-      .filter((entry) => draftWithoutPreMark[entry.key])
-      .map(
-        (entry) =>
-          `${entry.key}|${draftWithoutPreMark[entry.key].verdict}|${entry.draft?.saved_at ?? ''}`,
-      );
-    return parts.sort().join('\n');
-  }, [allContributions, draftWithoutPreMark]);
-  const [previewState, setPreviewState] = React.useState<{
-    results: ConfirmManyOrderResult[];
-    fingerprint: string;
-    /** The exact orders the preview posted, so Confirm sends what was shown, not a rebuild. */
-    orders: NonNullable<Awaited<ReturnType<typeof buildConfirmOrders>>>['orders'];
-    batchId: string | null;
-    skipped: BoardBatchResult[];
-    contributions: BoardContribution[];
-  } | null>(null);
-  const [previewing, setPreviewing] = React.useState(false);
-  const previewFresh = previewState !== null && previewState.fingerprint === populationFingerprint;
-  const previewView = React.useMemo(
-    () =>
-      previewState
-        ? previewViewFor(previewState.results, allContributions, draftWithoutPreMark, {
-            currentUserName,
-            openedAt: openedAt.current,
-            orders: board.data?.orders,
-            unadoptedSalesOrderIds,
-            batchBlockedSalesOrderIds: pendingBatchSalesOrderIds,
-          })
-        : null,
-    [
-      previewState,
-      allContributions,
-      draftWithoutPreMark,
-      currentUserName,
-      board.data?.orders,
-      unadoptedSalesOrderIds,
-      pendingBatchSalesOrderIds,
-    ],
-  );
-
-  // PREVIEW FILTER MODE (owner decision (b), 30 Sep 2026): while a preview stands, the board's
-  // list shows only what the press will send, in the read-only column set. Nothing unmounts:
-  // only the row source and the columns switch.
-  const previewMode = previewView !== null && previewState !== null;
-  const previewGrid = React.useMemo(() => {
-    if (!previewView) return null;
-    const rowKeys = new Set(
-      previewView.orders.flatMap((order) => [
-        ...order.lineKeys,
-        ...order.heldBack.map((entry) => entry.key).filter((key): key is string => key !== null),
-        ...order.refused.map((entry) => entry.key).filter((key): key is string => key !== null),
-      ]),
-    );
-    const rows = [
-      ...allContributions.filter((entry) => rowKeys.has(entry.key)),
-      ...previewView.orders.flatMap((order) => order.extraLines),
-    ];
-    const pendingLineChange = (soNumber: string, lineNo: number): string | null => {
-      const standing = board.data?.orders.find((order) => order.so_number === soNumber);
-      if (!standing?.pending_change_batch_id) return null;
-      const row = bySoNumber.get(soNumber)?.order.rows?.find((c) => c.line_no === lineNo);
-      return row ? `Pending change: ${row.decision ?? row.kind}` : 'Pending change';
-    };
-    const lineNoOfKey = new Map(rows.map((entry) => [entry.key, entry.line_no]));
-    const infoByKey = new Map<
-      string,
-      {
-        inquiry: PreviewInquiryEntry[];
-        heldBackReason: string | null;
-        withdrawn: boolean;
-        pendingChange: string | null;
-        refusedReason?: string | null;
-      }
-    >();
-    for (const order of previewView.orders) {
-      for (const entry of order.refused) {
-        if (entry.key) {
-          infoByKey.set(entry.key, {
-            inquiry: [],
-            heldBackReason: null,
-            withdrawn: false,
-            pendingChange: null,
-            refusedReason: entry.reason,
-          });
-        }
-      }
-      const withdrawn = new Set(order.withdrawnKeys);
-      for (const key of order.lineKeys) {
-        const lineNo = lineNoOfKey.get(key);
-        infoByKey.set(key, {
-          inquiry: order.inquiry.filter((entry) => entry.key === key),
-          heldBackReason: null,
-          withdrawn: withdrawn.has(key),
-          pendingChange:
-            order.so_number && lineNo != null ? pendingLineChange(order.so_number, lineNo) : null,
-        });
-      }
-      for (const entry of order.heldBack) {
-        if (entry.key) {
-          infoByKey.set(entry.key, {
-            inquiry: [],
-            heldBackReason: entry.reason,
-            withdrawn: false,
-            pendingChange: null,
-          });
-        }
-      }
-    }
-    const unmatchedHeld = previewView.orders.flatMap((order) =>
-      order.heldBack.filter((entry) => entry.key === null),
-    );
-    return { rows, infoByKey, unmatchedHeld };
-  }, [previewView, allContributions, board.data?.orders, bySoNumber]);
-  const previewTransfers = React.useMemo(
-    () => (previewView ? previewView.orders.flatMap((order) => order.transfers) : undefined),
-    [previewView],
-  );
-  const pendingChangeNameOf = (soNumber: string): string | null => {
-    const standing = board.data?.orders.find((order) => order.so_number === soNumber);
-    if (!standing?.pending_change_batch_id) return null;
-    const batch = loadedBatches.find((candidate) => candidate.id === standing.pending_change_batch_id);
-    return (
-      batch?.source?.file_name ?? (batch as { file_name?: string } | undefined)?.file_name ?? ''
-    );
-  };
 
   /**
    * Undo all throws away every decision taken since the board was opened, and there is no way
@@ -1621,22 +1480,41 @@ export function FulfilmentBoardPanel({
     // stays on screen after the fact.
     const leftOutAtConfirm = unpostable.length;
     try {
-      if (!previewState || !previewView) return;
-      const { skipped, contributions } = previewState;
-      // Exactly what the Preview posted, narrowed to what it confirmed: an order it confirmed
-      // nothing for is left out unless it withdraws lines or answers a pending change, and
-      // each sent order names its own lines, so "Posted P" is the previewed count.
-      const scope = new Map(previewView.orders.map((order) => [order.pso_id, order]));
-      const orders = previewState.orders
+      const built = await buildConfirmOrders(new Set());
+      if (!built) return;
+      const { skipped, contributions } = built;
+      if (built.orders.length === 0) {
+        if (skipped.length > 0) setBatchResults(skipped);
+        return;
+      }
+      // DRY RUN FIRST (FULFIL-CONFIRM-SCOPE): the server runs this very body and rolls it back,
+      // answering per order which lines it would confirm or withdraw. The press then posts the
+      // same body narrowed to exactly those lines, so hold-back and the recheck still protect
+      // and "Posted P" is what the server said it would write. No step for the planner.
+      const dry = await previewConfirmMany.mutateAsync(built.body);
+      const answer = new Map(dry.results.map((entry) => [entry.pso_id, entry]));
+      const refusals: BoardBatchResult[] = [];
+      const orders = built.orders
         .filter((order) => {
-          const shown = scope.get(order.pso_id);
-          return (
-            shown?.ok === true &&
-            (shown.confirmCount > 0 || Boolean(order.batch_id))
-          );
+          const dryRun = answer.get(order.pso_id);
+          if (dryRun && !dryRun.ok) {
+            refusals.push({
+              ...dryRun,
+              preview: null,
+              so_number: board.data?.orders.find(
+                (standing) => standing.project_sales_order_id === order.pso_id,
+              )?.so_number,
+            } as BoardBatchResult);
+            return false;
+          }
+          const ids = [...(dryRun?.lines_confirmed ?? []), ...(dryRun?.lines_withdrawn ?? [])];
+          return ids.length > 0 || Boolean(order.batch_id);
         })
         .map((order) => {
-          const only = scope.get(order.pso_id)?.onlyLineIds ?? [];
+          const dryRun = answer.get(order.pso_id);
+          const only = [...(dryRun?.lines_confirmed ?? []), ...(dryRun?.lines_withdrawn ?? [])].map(
+            (entry) => entry.project_line_id,
+          );
           if (only.length === 0 || order.batch_id) return order;
           const keep = new Set(only);
           return {
@@ -1646,14 +1524,13 @@ export function FulfilmentBoardPanel({
             only_line_ids: only,
           };
         });
-      const body = previewState.batchId ? { orders, batch_id: previewState.batchId } : { orders };
+      const body = built.body.batch_id ? { orders, batch_id: built.body.batch_id } : { orders };
       if (orders.length === 0) {
-        if (skipped.length > 0) setBatchResults(skipped);
+        setBatchResults([...skipped, ...refusals]);
         return;
       }
 
       const result = await confirmMany.mutateAsync(body);
-      setPreviewState(null);
       const labelOf = new Map(
         contributions.map((entry) => [
           entry.project_line_id ?? '',
@@ -1671,7 +1548,7 @@ export function FulfilmentBoardPanel({
           ]),
         ),
       );
-      setBatchResults([...skipped, ...result.results]);
+      setBatchResults([...skipped, ...refusals, ...result.results]);
 
       // What the press produced, in the three numbers a planner is about to act on (D3):
       // the promises made, the movements somebody now has to approve (the panel below lists
@@ -1781,34 +1658,8 @@ export function FulfilmentBoardPanel({
     buildConfirmOrders,
     confirmMany,
     unpostable,
-    previewView,
-    previewState,
+    previewConfirmMany,
   ]);
-
-  const runPreview = React.useCallback(async () => {
-    if (!board.data) return;
-    setPreviewing(true);
-    setBatchResults(null);
-    try {
-      const built = await buildConfirmOrders(new Set());
-      if (!built) return;
-      if (built.skipped.length > 0) setBatchResults(built.skipped);
-      if (built.orders.length === 0) return;
-      const result = await previewConfirmMany.mutateAsync(built.body);
-      setPreviewState({
-        results: result.results,
-        fingerprint: populationFingerprint,
-        orders: built.orders,
-        batchId: built.body.batch_id ?? null,
-        skipped: built.skipped,
-        contributions: built.contributions,
-      });
-    } catch {
-      // The mutation's own `onError` already toasted the message.
-    } finally {
-      setPreviewing(false);
-    }
-  }, [board, buildConfirmOrders, previewConfirmMany, populationFingerprint]);
 
   /**
    * The rows on screen, and the rows the selection holds.
@@ -2078,10 +1929,9 @@ export function FulfilmentBoardPanel({
             <Button
               type="button"
               size="sm"
-              variant={view === 'grid' && !previewMode ? 'primary' : 'ghost'}
+              variant={view === 'grid' ? 'primary' : 'ghost'}
               className="rounded-e-none"
-              disabled={previewMode}
-              aria-pressed={view === 'grid' && !previewMode}
+              aria-pressed={view === 'grid'}
               onClick={() => setView('grid')}
             >
               <LayoutGrid className="size-4" aria-hidden />
@@ -2090,10 +1940,9 @@ export function FulfilmentBoardPanel({
             <Button
               type="button"
               size="sm"
-              variant={view === 'list' || previewMode ? 'primary' : 'ghost'}
+              variant={view === 'list' ? 'primary' : 'ghost'}
               className="rounded-s-none border-s border-input"
-              disabled={previewMode}
-              aria-pressed={view === 'list' || previewMode}
+              aria-pressed={view === 'list'}
               onClick={() => setView('list')}
             >
               <List className="size-4" aria-hidden />
@@ -2139,13 +1988,7 @@ export function FulfilmentBoardPanel({
               data-testid="board-decision-header"
               className="whitespace-normal break-words text-sm text-muted-foreground"
             >
-              {previewView ? (
-                <span data-testid="board-preview-summary">
-                  {previewSummaryText(previewView.summary)}
-                </span>
-              ) : (
-                decisionHeader
-              )}
+              {decisionHeader}
             </span>
           </span>
         ) : (
@@ -2160,7 +2003,7 @@ export function FulfilmentBoardPanel({
             type="button"
             size="sm"
             variant="outline"
-            disabled={quickSaveKeys.length === 0 || previewMode}
+            disabled={quickSaveKeys.length === 0}
             onClick={() => void decideMany(quickSaveKeys)}
           >
             {`Save all suggested (${quickSaveKeys.length})`}
@@ -2191,9 +2034,9 @@ export function FulfilmentBoardPanel({
                   key is deleted through `decide(key, null)`, or the next board read would
                   seed the discarded lines straight back in. Nothing CONFIRMED moves. */}
               <DropdownMenuItem
-                disabled={Object.keys(draft).length === 0 || previewMode}
+                disabled={Object.keys(draft).length === 0}
                 onSelect={
-                  Object.keys(draft).length === 0 || previewMode ? undefined : () => setUndoAllOpen(true)
+                  Object.keys(draft).length === 0 ? undefined : () => setUndoAllOpen(true)
                 }
               >
                 <Undo2 className="size-4" aria-hidden />
@@ -2288,113 +2131,26 @@ export function FulfilmentBoardPanel({
               onCancel={undoAction.cancel}
               idle={
                 <>
-                  {previewMode && previewView ? (
-                    <>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        data-testid="board-preview-back"
-                        onClick={() => setPreviewState(null)}
-                      >
-                        Exit preview
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        data-testid="board-confirm"
-                        disabled={
-                          !previewFresh ||
-                          previewView.orders.some((order) => !order.ok) ||
-                          previewView.summary.lines === 0 ||
-                          confirmingAll ||
-                          Boolean(confirmBlockedReason)
-                        }
-                        title={!previewFresh ? 'Preview again' : confirmBlockedReason ?? undefined}
-                        onClick={() => void runConfirmAll()}
-                      >
-                        {`Confirm ${previewView.summary.lines} line${
-                          previewView.summary.lines === 1 ? '' : 's'
-                        }`}
-                      </Button>
-                    </>
-                  ) : (
-                    <Button
-                      type="button"
-                      size="sm"
-                      data-testid="board-preview"
-                      disabled={
-                        confirmSummary.toConfirm === 0 ||
-                        confirmingAll ||
-                        previewing ||
-                        Boolean(confirmBlockedReason)
-                      }
-                      onClick={() => void runPreview()}
-                    >
-                      {`Preview (${confirmSummary.toConfirm})`}
-                    </Button>
-                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    data-testid="board-confirm"
+                    disabled={
+                      confirmSummary.toConfirm === 0 ||
+                      confirmingAll ||
+                      Boolean(confirmBlockedReason)
+                    }
+                    title={confirmBlockedReason ?? undefined}
+                    onClick={() => void runConfirmAll()}
+                  >
+                    {`Confirm (${confirmSummary.toConfirm})`}
+                  </Button>
                 </>
               }
             />
           ) : null}
         </div>
       </div>
-
-      {/* What the preview says beside the board: a refused order, a stale preview, a pending
-          change, a held-back line the board does not show. */}
-      {previewMode && previewView ? (
-        <div data-testid="board-preview-notes" className="space-y-1">
-          {!previewFresh && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              data-testid="board-preview-stale"
-              className="border-amber-300 bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
-              disabled={previewing}
-              onClick={() => void runPreview()}
-            >
-              Preview again
-            </Button>
-          )}
-          {previewView.orders.map((order) => {
-            const heading = [order.so_number, order.customer_name].filter(Boolean).join(' \u00b7 ');
-            if (!order.ok) {
-              return (
-                <p
-                  key={order.pso_id}
-                  data-testid={`board-preview-refused-${order.pso_id}`}
-                  className="text-sm break-words text-destructive"
-                >
-                  {`${heading || 'Order'}: ${order.error ?? 'refused'}`}
-                </p>
-              );
-            }
-            const change = order.so_number ? pendingChangeNameOf(order.so_number) : null;
-            if (change === null) return null;
-            return (
-              <p key={order.pso_id} className="text-sm break-words text-muted-foreground">
-                {`${heading}: ${
-                  change ? `applies pending change ${change}` : 'applies its pending planning change'
-                }`}
-              </p>
-            );
-          })}
-          {previewGrid && previewGrid.unmatchedHeld.length > 0 && (
-            <ul data-testid="board-preview-held-back" className="space-y-0.5">
-              {previewGrid.unmatchedHeld.map((entry, index) => (
-                <li
-                  key={`${entry.line_no}-${index}`}
-                  className="text-sm break-words text-muted-foreground"
-                >
-                  {`Line ${entry.line_no} ${entry.item_code ?? ''} \u00b7 Held back \u00b7 ${entry.reason}`}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : null}
 
       {/* Why Confirm is off, when it is - stated, never a dead button. */}
       {confirmBlockedReason ? (
@@ -2696,14 +2452,13 @@ export function FulfilmentBoardPanel({
                 order it was for. */}
             <BoardTransfersPanel
               soNumbers={soNumbers}
-              preview={previewTransfers}
               justConfirmed={batchResults !== null}
               inquiryRows={(batchResults ?? [])
                 .filter((result) => result.ok)
                 .reduce((total, result) => total + (result.inquiry_rows_created ?? 0), 0)}
             />
 
-            {view === 'list' || previewMode ? (
+            {view === 'list' ? (
               /* D2: one row per contributing line across every cell of the WHOLE selection, not
                  the pivoted/windowed rows the grid shows - the point is an overview, so the row
                  axis and product search that shape the grid do not narrow it.
@@ -2713,18 +2468,7 @@ export function FulfilmentBoardPanel({
                  had every row it needed - the flicker itself. The dim wrapper above says the
                  same thing without discarding what is on screen. */
               <FulfilmentBoardListView
-                contributions={previewGrid ? previewGrid.rows : visibleListContributions}
-                readOnlyPreview={
-                  previewGrid && previewView
-                    ? {
-                        infoByKey: previewGrid.infoByKey,
-                        currentUserName,
-                        openedAt: openedAt.current,
-                        willBeSent: previewView.summary.lines,
-                        onExit: () => setPreviewState(null),
-                      }
-                    : undefined
-                }
+                contributions={visibleListContributions}
                 draft={draft}
                 onDecide={decide}
                 onDecideMany={decideMany}
@@ -2733,7 +2477,7 @@ export function FulfilmentBoardPanel({
                 // S6 (PLAN-scm-oi-worklist-excel-parity.md R-J): the ONE search box,
                 // beside the title, drives Grid and List alike - the panel's own search
                 // box is gone, so there is no second box to disagree with this one.
-                externalSearch={previewMode ? undefined : productSearch}
+                externalSearch={productSearch}
                 // `visibleListContributions` also narrows by `kindFilter` (above), which
                 // is not part of `externalSearch` - so the reset key carries both, or
                 // toggling a kind card while on page 3 would leave the list showing
