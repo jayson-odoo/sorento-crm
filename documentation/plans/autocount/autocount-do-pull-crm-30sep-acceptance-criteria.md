@@ -27,6 +27,10 @@ Actor: the Sorento checker who today uploads the "Import delivery order lines" s
 - **AC-DP-02 [BE]** `POST /api/v1/autocount/pulls {"entity": "delivery_orders"}` without the slug
   is 403 and calls FoundryX nothing; with it, one `import_jobs` row of the DO job type is
   created and FoundryX `POST /snapshots` receives `entity: "delivery_orders"`.
+- **AC-DP-02b [BE]** A start with `scope: {fromDay, toDay}` (or `docNo`) sends those keys FLAT
+  in the FoundryX build body, stores them as `autocount_pull.scope`, and `serialize` returns
+  `scope`; a FoundryX 409 `BUILD_IN_FLIGHT` on build answers 409 with that code and leaves no
+  job row.
 - **AC-DP-03 [BE]** A user holding only the products slug gets 403 on a DO pull they own;
   `GET /current?entity=delivery_orders` finds the caller's open DO pull.
 - **AC-DP-04 [BE]** Migration `do_pull_0001_perm` inserts the slug and grants it to every
@@ -35,9 +39,13 @@ Actor: the Sorento checker who today uploads the "Import delivery order lines" s
 ## Preview
 
 - **AC-DP-10 [BE]** With a snapshot of the live-shape DO sample (two documents, three lines,
-  masters seeded) the preview ends in `review` with counts `received 2, created 2, updated 0,
-  adopted 0, unchanged 0, lines_to_delete 0, failed 0, retryable 0`, two `success` rows, and
-  NO `orders` row written.
+  masters seeded, each row carrying `source_ref` `db1:DO:{DocKey}`) the preview ends in
+  `review` with counts `received 2, created 2, updated 0, adopted 0, unchanged 0,
+  lines_to_delete 0, failed 0, retryable 0, with_warnings 0`, two `success` rows, and NO
+  `orders` row written.
+- **AC-DP-10b [BE]** A record whose `RefDocNo` names no sales order previews as created with
+  `with_warnings 1`; its row's message says "sales order not found" and its identity lists
+  the warning; Confirm is not blocked.
 - **AC-DP-11 [BE]** A DO already in the CRM without `doc_key` and with the same DocNo (a
   tracking upload's row carrying `transporter` and `driver_name`) previews as `adopted 1`,
   one `updated` row whose message names the adoption, and `lines_to_delete` counts its old
@@ -45,8 +53,8 @@ Actor: the Sorento checker who today uploads the "Import delivery order lines" s
 - **AC-DP-12 [BE]** A DocNo held by a row with a DIFFERENT `doc_key` previews as `failed 1`
   with a `fail` row coded `DocNo`; an unknown ItemCode previews as `retryable 1` with a `fail`
   row coded `autocount_retryable` naming the product.
-- **AC-DP-13 [BE]** A ready header without `book` fails the preview with "names no book" and
-  writes nothing.
+- **AC-DP-13 [BE]** Rows without a `source_ref` and a header without `book` fail the preview
+  with "names no book" and write nothing; rows naming two books fail the same way.
 - **AC-DP-14 [BE]** `preview_progress` reaches `(total, total)` for the pull job.
 
 ## Apply

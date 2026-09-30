@@ -46,22 +46,43 @@ existing machinery, plus the DO-shaped preview / apply / rows / compare halves.
 `start_pull`, `find_open_pull`, `refresh_pull_status`, `advance_building_pulls`, `confirm_pull`,
 `discard_pull`, `serialize` and `_resolve_pull` are entity-agnostic already and change nothing.
 
-### 1.2 Snapshot contract this side reads (assumed until DO-PULL-SS lands)
+### 1.2 Snapshot contract this side reads (DO-PULL-SS, relayed 30 Sep)
 
-- `POST /api/v1/autocount/snapshots {"companyCode": "SRT", "entity": "delivery_orders"}`, same
-  build / status / rows calls, same `ready` header fields (`complete`, `recordCount`,
-  `contentHash`, `companyCode`, `extractedAt`, `expiresAt`), same A5 contentHash rule.
-- Header carries **`book`** (the AutoCount book the rows came from, `db1` = Sorento): the DO
-  ingest is keyed per book and the pull has no other source for it. Header without `book` ->
-  the preview fails with "AutoCount snapshot names no book; pull again" (nothing is guessed).
-- Each row is **one DO record exactly as the vendor API returns it**, the same object the push
-  sends as a `records[]` element (contract 2.7 section 13.3: `DocKey`, `DocNo`, `DocDate`,
-  `Cancelled`, `DebtorCode`, ..., `Details[]`). No mapping on either side, so preview and apply
-  hand the rows to the ingest untouched and there is exactly one writer.
-- Which documents the snapshot covers (a DocDate window, LastModified window, everything since
-  1 Jan 2023) is the shared service's decision; this side shows what it receives. If the
-  contract adds start parameters (a date range) they ride in `PullStartBody` as an optional
-  `params` dict passed to `client.build`; not built until the contract says so.
+Contract of record: `foundryx-shared-service` branch `crew/do-pull-snapshot` (28c6f2f7),
+`documentation/plans/sprint-5/16-autocount-do-pull-snapshot-contract.md`. Read here from the
+orchestrator's relay (this sandbox cannot open that repo); the points this side builds on:
+
+- `POST /api/v1/autocount/snapshots {"companyCode", "entity": "delivery_orders", ...scope}`
+  with FLAT optional scope keys `fromDay`, `toDay`, `docNo`; no scope = the last 31 MYT days,
+  `docNo` = that one document. Same build / status / rows calls, same `ready` header fields,
+  same A5 contentHash rule. Cap 10,000 documents.
+- Same scope while a build is in flight re-attaches; a DIFFERENT scope in flight is 409
+  `BUILD_IN_FLIGHT`; the build cooldown applies to the same scope only.
+- Each row is **the raw vendor DO dict verbatim** plus `source_ref` = `{book}:DO:{DocKey}`
+  (the same ref the DO feed and ingest use). The **book is read off the rows' `source_ref`
+  prefix** (header `book` accepted first when present); rows naming two books, or none ->
+  the preview fails with "AutoCount snapshot names no book; pull again". Rows are handed to
+  the ingest untouched (no mapping, one writer; `source_record` keeps `source_ref` exactly as
+  the feed's own push does).
+
+CRM side of the scope: `PullStartBody` gains an optional `scope: {fromDay?, toDay?, docNo?}`
+passed through flat to `client.build` and stored on the pull (`autocount_pull.scope`,
+returned by `serialize`); the review header prints it ("Last 31 days" / "1 Sep to 30 Sep
+2026" / "DO ZZDO-0001"). The button itself starts with NO scope (the 31-day default),
+exactly the products click; a scope picker is new UI and waits for a mock + approval
+(crew-ask). `BUILD_IN_FLIGHT` joins the FE start-error map ("Another AutoCount pull with a
+different scope is still building. Try again shortly.").
+
+**SO links (orchestrator ruling, 30 Sep, code read of `main` 90807ede):** adoption never nulls
+a link (`_changes` skips NULL for `sales_order_id` / `sales_order_line_id`,
+`autocount_doc_ingest_service.py:118-122,652-659`); Excel DO lines never had
+`sales_order_line_id`; SO outstanding reads `SalesOrderLine.qty_ordered - qty_delivered`, not
+DO lines; only sales achievement reads the DO -> SO line link. So: **the apply path is the
+ingest as-is**; the review shows `sales_order_unresolved` / `so_line_unresolved` /
+`line_without_item` (and `customer_unresolved`, `branch_unresolved`) as WARNINGS on the
+record's row, never blockers, plus a `with_warnings` counter; every record row names its
+lines created / adopted / updated / deleted. (Prod dry run for scale: `sales_order_unresolved`
+435 of 948, `so_line_unresolved` 946 lines.)
 
 ### 1.3 Preview (`_preview_delivery_orders`)
 
@@ -83,8 +104,11 @@ existing machinery, plus the DO-shaped preview / apply / rows / compare halves.
 
 `lines_to_delete` = sum of `lines.deleted` over `updated` records (adopted included): the old
 lines the adoption cannot match and the AutoCount lines the document no longer carries.
-`received` = `len(rows)`. Counts stored: `received, created, updated, adopted, unchanged,
-lines_to_delete, failed, retryable`. Every record's warnings ride in the row identity.
+`received` = `len(rows)`; `with_warnings` = records carrying any warning other than
+`adopted_by_doc_no`. Counts stored: `received, created, updated, adopted, unchanged,
+lines_to_delete, failed, retryable, with_warnings`. Every record's warnings ride in the row
+identity and, human-worded, at the end of its message ("warnings: sales order not found, SO
+line not found").
 
 `confirm_blocked_reason` stays `None`: a failed or retryable record is left out by the ingest's
 own per-record SAVEPOINT and the rest lands, exactly as a push behaves. Nothing is written by
