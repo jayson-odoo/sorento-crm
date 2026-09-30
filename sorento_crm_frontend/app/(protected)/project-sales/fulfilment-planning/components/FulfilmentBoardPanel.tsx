@@ -541,6 +541,18 @@ export function FulfilmentBoardPanel({
     return out;
   }, [board.data, batchIdBySoNumber]);
 
+  // Orders with no planning record yet: the press adopts them first, so only there does a
+  // line with no mirror still count as postable.
+  const unadoptedSalesOrderIds = React.useMemo(
+    () =>
+      new Set(
+        (board.data?.orders ?? [])
+          .filter((order) => !order.project_sales_order_id)
+          .map((order) => order.sales_order_id),
+      ),
+    [board.data?.orders],
+  );
+
   /**
    * Move the day window by a whole window at a time.
    *
@@ -868,6 +880,7 @@ export function FulfilmentBoardPanel({
           allContributions,
           draftWithoutPreMarks(appliedNext),
           pendingBatchSalesOrderIds,
+          { unadoptedSalesOrderIds },
         );
         toast.success(
           decision.verdict === 'rejected'
@@ -877,7 +890,7 @@ export function FulfilmentBoardPanel({
       }
       return true;
     },
-    [allContributions, saveLineDraft, removeDraftKey, pendingBatchSalesOrderIds],
+    [allContributions, saveLineDraft, removeDraftKey, pendingBatchSalesOrderIds, unadoptedSalesOrderIds],
   );
 
   /**
@@ -930,6 +943,7 @@ export function FulfilmentBoardPanel({
           allContributions,
           draftWithoutPreMarks(appliedNext),
           pendingBatchSalesOrderIds,
+          { unadoptedSalesOrderIds },
         );
         toast.success(
           `${saved} line${saved === 1 ? '' : 's'} saved · ${toConfirm} to confirm`,
@@ -937,7 +951,7 @@ export function FulfilmentBoardPanel({
       }
       return { saved, failed };
     },
-    [allContributions, decide, draft, pendingBatchSalesOrderIds],
+    [allContributions, decide, draft, pendingBatchSalesOrderIds, unadoptedSalesOrderIds],
   );
 
   /**
@@ -1055,8 +1069,11 @@ export function FulfilmentBoardPanel({
    * board with nothing decided at all.
    */
   const confirmSummary = React.useMemo(
-    () => confirmSummaryFor(allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds),
-    [allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds],
+    () =>
+      confirmSummaryFor(allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds, {
+        unadoptedSalesOrderIds,
+      }),
+    [allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds, unadoptedSalesOrderIds],
   );
 
   /**
@@ -1198,23 +1215,33 @@ export function FulfilmentBoardPanel({
   // cannot post. Computed only while the dialog is open.
   const dialogRows = React.useMemo(() => {
     if (!confirmAllOpen) return null;
-    const unadopted = new Set(
-      (board.data?.orders ?? [])
-        .filter((order) => !order.project_sales_order_id)
-        .map((order) => order.sales_order_id),
-    );
     return confirmDialogRowsFor(allContributions, draftWithoutPreMark, {
       currentUserName,
       openedAt: openedAt.current,
-      unadoptedSalesOrderIds: unadopted,
+      unadoptedSalesOrderIds,
+      batchBlockedSalesOrderIds: pendingBatchSalesOrderIds,
     });
-  }, [confirmAllOpen, allContributions, draftWithoutPreMark, board.data?.orders, currentUserName]);
+  }, [
+    confirmAllOpen,
+    allContributions,
+    draftWithoutPreMark,
+    currentUserName,
+    unadoptedSalesOrderIds,
+    pendingBatchSalesOrderIds,
+  ]);
   const scopedSummary = React.useMemo(
     () =>
       confirmSummaryFor(allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds, {
         excludeKeys: confirmExcluded,
+        unadoptedSalesOrderIds,
       }),
-    [allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds, confirmExcluded],
+    [
+      allContributions,
+      draftWithoutPreMark,
+      pendingBatchSalesOrderIds,
+      confirmExcluded,
+      unadoptedSalesOrderIds,
+    ],
   );
 
   /**
@@ -1274,7 +1301,14 @@ export function FulfilmentBoardPanel({
             if (!contribution.covered && !decision) return false;
             // Covered and untouched: the server carries it, so this press has nothing to
             // post for it and its order is not put in the batch on its account alone.
-            if (contribution.covered && decision?.verdict !== 'amended') return false;
+            // An Approved draft on a covered line IS posted (`lineFor`), so it counts too.
+            if (
+              contribution.covered &&
+              decision?.verdict !== 'amended' &&
+              decision?.verdict !== 'approved'
+            ) {
+              return false;
+            }
             return true;
           })
           .map((contribution) => contribution.sales_order_id),
@@ -1394,6 +1428,7 @@ export function FulfilmentBoardPanel({
               (contribution) =>
                 contribution.sales_order_id === salesOrderId &&
                 contribution.covered &&
+                !confirmExcluded.has(contribution.key) &&
                 draftWithoutPreMark[contribution.key]?.verdict === 'rejected',
             )
           : [];
@@ -2224,9 +2259,11 @@ export function FulfilmentBoardPanel({
                       );
                     }
                     const posted = postedLines[result.pso_id] ?? [];
-                    if (result.lines_confirmed.length >= posted.length) return null;
                     const echoed = new Set(result.lines_confirmed.map((line) => line.project_line_id));
+                    // A posted line the server did not name. Comparing lengths would flag a
+                    // planning-change echo that carries lines the board never posted.
                     const missing = posted.filter((line) => !echoed.has(line.project_line_id));
+                    if (missing.length === 0) return null;
                     return (
                       <p
                         data-testid={`board-confirm-mismatch-${result.pso_id}`}
@@ -2506,10 +2543,10 @@ export function FulfilmentBoardPanel({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {`Confirm ${confirmSummary.toConfirm} line${
-                confirmSummary.toConfirm === 1 ? '' : 's'
-              } across ${confirmSummary.orderCount} order${
-                confirmSummary.orderCount === 1 ? '' : 's'
+              {`Confirm ${scopedSummary.toConfirm} line${
+                scopedSummary.toConfirm === 1 ? '' : 's'
+              } across ${scopedSummary.orderCount} order${
+                scopedSummary.orderCount === 1 ? '' : 's'
               }?`}
             </AlertDialogTitle>
             {/* C4 (code review round 3 batch 2): named here too, not only on the pill - a
@@ -2531,6 +2568,7 @@ export function FulfilmentBoardPanel({
                 const orderIds = [
                   ...new Set([
                     ...dialogRows.rows.map((row) => row.sales_order_id),
+                    ...dialogRows.cancelled.map((row) => row.sales_order_id),
                     ...dialogRows.notPosted.map((row) => row.sales_order_id),
                   ]),
                 ];
@@ -2539,13 +2577,16 @@ export function FulfilmentBoardPanel({
                     (order) => order.sales_order_id === salesOrderId,
                   );
                   const rows = dialogRows.rows.filter((row) => row.sales_order_id === salesOrderId);
+                  const released = dialogRows.cancelled.filter(
+                    (row) => row.sales_order_id === salesOrderId,
+                  );
                   const left = dialogRows.notPosted.filter(
                     (row) => row.sales_order_id === salesOrderId,
                   );
                   return (
                     <div key={salesOrderId} className="space-y-1.5">
                       <p className="text-sm font-medium break-words">
-                        {[standing?.so_number ?? rows[0]?.so_number ?? left[0]?.so_number, standing?.customer_name]
+                        {[standing?.so_number ?? rows[0]?.so_number ?? released[0]?.so_number ?? left[0]?.so_number, standing?.customer_name]
                           .filter(Boolean)
                           .join(' · ')}
                       </p>
@@ -2613,6 +2654,19 @@ export function FulfilmentBoardPanel({
                           );
                         })}
                       </ul>
+                      {released.length > 0 && (
+                        <ul className="space-y-1">
+                          {released.map((row) => (
+                            <li
+                              key={row.key}
+                              data-testid={`board-confirm-dialog-row-${row.key}`}
+                              className="text-sm break-words text-muted-foreground"
+                            >
+                              {`Line ${row.line_no} · ${row.item_code} · Cancelled · released by the book`}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                       {left.length > 0 && (
                         <div className="space-y-1">
                           <p className="text-xs font-medium text-muted-foreground">Not posted</p>

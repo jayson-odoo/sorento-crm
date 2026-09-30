@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning Confirm posts what the planner ticked, and says exactly what it wrote
 
-Status: planned, mock pending owner review (30 Sep 2026). Track: feature lane (FE + BE, no migration, no RBAC).
+Status: implemented, PR #1395 open (30 Sep 2026), reviewer + browser pass pending, owner hand test filed. Track: feature lane (FE + BE, no migration, no RBAC).
 Domain: scm (fulfilment planning board)
 UAC: `fulfil-confirm-scope-30sep-acceptance-criteria.md`
 Lane: `crew/fulfil-confirm-scope` (crew lane FULFIL-CONFIRM-SCOPE), base `origin/main` at e26410c20.

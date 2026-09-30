@@ -16,6 +16,8 @@ Postgres via `tests/_pg_fixture.py`, fixture chain reused from
 """
 from __future__ import annotations
 
+from decimal import Decimal
+
 from .test_fulfilment_line_draft_route import (  # noqa: F401 - `api` is a fixture
     _board,
     _covered_two_line_world,
@@ -179,3 +181,54 @@ def test_a_withdrawal_only_press_echoes_no_confirmed_lines(api):
     body = response.json()
     assert body["lines_confirmed"] == []
     assert body["lines_carried"] == 1
+
+
+def _fulfilled_and_open_order(world):
+    """One order: line 10 has nothing open (plan quantity 0, fulfilled), line 20 open."""
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=1000)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_done = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5")
+    # The board plans a line for `coalesce(qty_required, qty_ordered)` (14 Sep ruling), so a
+    # delivered quantity alone does not make a line fulfilled; a zero plan quantity does.
+    core_done.qty_required = Decimal("0")
+    core_open = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5")
+    done = _project_line(db, order, line_no=10, product=world.product, core_line=core_done)
+    open_line = _project_line(
+        db, order, line_no=20, product=world.product, core_line=core_open
+    )
+    db.commit()
+    return order, done, open_line
+
+
+def test_a_fulfilled_line_is_skipped_and_not_echoed_as_confirmed(api):
+    """The echo is what was FROZEN, not what the payload named: a named line with nothing
+    open on it is skipped (`lines_fulfilled_skipped`) and must not appear."""
+    client, world = api
+    order, done, open_line = _fulfilled_and_open_order(world)
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_reserve(world, done), _reserve(world, open_line)]},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["lines_fulfilled_skipped"] == 1
+    assert body["lines_confirmed"] == [_entry(open_line, world)]
+
+
+def test_a_fulfilled_only_press_writes_nothing_and_echoes_no_lines(api):
+    client, world = api
+    order, done, _open_line = _fulfilled_and_open_order(world)
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_reserve(world, done)]},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["revision_no"] is None
+    assert body["lines_confirmed"] == []

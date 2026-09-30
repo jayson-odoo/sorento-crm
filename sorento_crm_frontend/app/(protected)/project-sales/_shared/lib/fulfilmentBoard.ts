@@ -301,6 +301,49 @@ export function commitPreviewFor(
  */
 export interface ConfirmScopeOptions {
   excludeKeys?: ReadonlySet<string>;
+  /**
+   * Orders with no planning record yet. Given, a `no_mirror` line counts (and is listed) only
+   * on one of these: the press adopts them first and mints the mirror ids, whereas on an
+   * adopted order a line with no mirror is left out and named. Absent, every `no_mirror`
+   * line counts, as it did before this option existed.
+   */
+  unadoptedSalesOrderIds?: ReadonlySet<string>;
+}
+
+/**
+ * What one press does with one contribution: the ONE classification the count, the summary and
+ * the pre-confirm dialog all read, so title, list, button and body are views of one population.
+ * (`confirmLinesFor` builds the body from `lineFor`, which this calls.)
+ */
+type PressRole =
+  | { kind: 'skip' }
+  | { kind: 'cancelled' }
+  | { kind: 'withdraw' }
+  | { kind: 'blocked_reject' }
+  | { kind: 'stale' }
+  | { kind: 'post'; line: ConfirmLine }
+  | { kind: 'unpostable'; reason: UnpostableReason };
+
+function pressRoleFor(
+  contribution: BoardContribution,
+  decision: BoardDecision | undefined,
+  batchBlocked: boolean,
+): PressRole {
+  if (contribution.unplannable) return { kind: 'skip' };
+  // A CANCELLED line is retired by the press (R3); it needs no composition.
+  if (contribution.cancelled) return { kind: 'cancelled' };
+  // A covered reject on an ACTIVE decision is a withdrawal Confirm carries out, unless a
+  // pending planning change holds it back (`rejected_line_ids` is refused beside a batch).
+  if (contribution.decision && decision?.verdict === 'rejected') {
+    return { kind: batchBlocked ? 'blocked_reject' : 'withdraw' };
+  }
+  if (decision && contribution.draft?.stale && decision.verdict !== 'rejected') {
+    return { kind: 'stale' };
+  }
+  const built = lineFor(contribution, decision);
+  if (built === null) return { kind: 'skip' };
+  if (typeof built === 'string') return { kind: 'unpostable', reason: built };
+  return { kind: 'post', line: built };
 }
 
 export function confirmLinesFor(
@@ -691,25 +734,17 @@ export function plannedLineCount(
   options?: ConfirmScopeOptions,
 ): number {
   const batchBlocked = batchBlockedSalesOrderIds.has(salesOrderId);
+  const unadopted = options?.unadoptedSalesOrderIds;
   return contributions.filter((contribution) => {
     if (contribution.sales_order_id !== salesOrderId) return false;
     if (options?.excludeKeys?.has(contribution.key)) return false;
-    if (contribution.unplannable) return false;
-    // A CANCELLED line posts nothing and is still one of the lines this press acts on (R3):
-    // its apply is the retire path, which needs no composition to build.
-    if (contribution.cancelled) return true;
-    // An ACTIVELY covered line (an active decision, not merely a live order-inquiry row -
-    // N1, fix round, `PLAN-board-reject-on-confirmed-line.md`) with a staged reject posts
-    // nothing either (`rejected_line_ids` carries it, not `lines`), and is still one of the
-    // lines THIS press acts on - Confirm is what withdraws it (owner ruling 23 Sep 2026) -
-    // UNLESS a pending batch is holding it back (see `batchBlockedSalesOrderIds` above). An
-    // inquiry-only covered line has no active decision for Confirm to withdraw, so it falls
-    // through to `lineFor` below, which already reads it as nothing to post (not counted).
-    if (contribution.decision && draft[contribution.key]?.verdict === 'rejected') {
-      return !batchBlocked;
+    const role = pressRoleFor(contribution, draft[contribution.key], batchBlocked);
+    if (role.kind === 'cancelled' || role.kind === 'withdraw' || role.kind === 'post') return true;
+    // Only an order that is about to be adopted can mint the missing mirror.
+    if (role.kind === 'unpostable' && role.reason === 'no_mirror') {
+      return unadopted === undefined || unadopted.has(salesOrderId);
     }
-    const built = lineFor(contribution, draft[contribution.key]);
-    return built !== null && (typeof built !== 'string' || built === 'no_mirror');
+    return false;
   }).length;
 }
 
@@ -779,7 +814,10 @@ export function confirmSummaryFor(
       if (contribution.decision) orderIds.add(contribution.sales_order_id);
       continue;
     }
-    if (contribution.covered && decision?.verdict !== 'amended') continue;
+    // An Approved draft on a covered line IS posted (`lineFor`), so it admits its order too.
+    if (contribution.covered && decision?.verdict !== 'amended' && decision?.verdict !== 'approved') {
+      continue;
+    }
     if (contribution.draft?.stale) {
       changed += 1;
       continue;
@@ -863,10 +901,21 @@ function compositionText(
   return parts.join(' \u00b7 ');
 }
 
+/** A cancelled line the press releases by the book: listed, not tickable. */
+export interface ConfirmDialogCancelled {
+  key: string;
+  sales_order_id: string;
+  so_number: string;
+  line_no: number;
+  item_code: string;
+}
+
+const BLOCKED_REJECT_REASON = 'staged rejection is held until the pending change is applied';
+
 /**
- * What the pre-confirm dialog lists: one row per line this press will post (or withdraw),
- * and the saved lines it cannot post, with why. Built off the SAME `lineFor` the body is
- * built by, so the list and the payload cannot disagree.
+ * What the pre-confirm dialog lists: one row per line this press will post (or withdraw), the
+ * cancelled lines it releases, and the saved lines it cannot post, with why. Classified by the
+ * SAME `pressRoleFor` the count reads, so list, count and body cannot disagree.
  */
 export function confirmDialogRowsFor(
   contributions: BoardContribution[],
@@ -874,19 +923,21 @@ export function confirmDialogRowsFor(
   context: {
     currentUserName: string | null | undefined;
     openedAt: Date;
-    /**
-     * Orders with no planning record yet: the press adopts them first, which mints the mirror
-     * ids, so their lines are listed as postable rows rather than as `no_mirror` left-outs.
-     */
+    /** Orders with no planning record yet (see `ConfirmScopeOptions`). */
     unadoptedSalesOrderIds?: ReadonlySet<string>;
+    /** Orders a pending planning change covers: a staged rejection there is held, not posted. */
+    batchBlockedSalesOrderIds?: ReadonlySet<string>;
   },
-): { rows: ConfirmDialogRow[]; notPosted: ConfirmDialogNotPosted[] } {
+): {
+  rows: ConfirmDialogRow[];
+  notPosted: ConfirmDialogNotPosted[];
+  cancelled: ConfirmDialogCancelled[];
+} {
   const rows: ConfirmDialogRow[] = [];
   const notPosted: ConfirmDialogNotPosted[] = [];
+  const cancelled: ConfirmDialogCancelled[] = [];
   for (const contribution of contributions) {
-    if (contribution.unplannable) continue;
     const decision = draft[contribution.key];
-    if (!decision) continue;
     const identity = {
       key: contribution.key,
       sales_order_id: contribution.sales_order_id,
@@ -902,34 +953,49 @@ export function confirmDialogRowsFor(
       composition,
       saved_by: savedBy,
       saved_at: savedAt,
-      savedByOther: !!savedBy && savedBy !== context.currentUserName,
+      // No known current user means nobody can be "somebody else".
+      savedByOther:
+        !!savedBy && !!context.currentUserName && savedBy !== context.currentUserName,
       savedBefore: !!savedAt && new Date(savedAt) < context.openedAt,
     });
-    if (decision.verdict === 'rejected') {
-      // Only an active decision has anything for Confirm to withdraw.
-      if (contribution.decision) rows.push(rowFor('rejected', WITHDRAWN_COMPOSITION));
-      continue;
-    }
-    if (contribution.draft?.stale) {
-      notPosted.push({ ...identity, reason: STALE_NOT_POSTED_REASON });
-      continue;
-    }
     const adoptedLater =
       !contribution.project_line_id &&
       context.unadoptedSalesOrderIds?.has(contribution.sales_order_id);
-    const built = lineFor(
+    const role = pressRoleFor(
       adoptedLater ? { ...contribution, project_line_id: 'pending-adoption' } : contribution,
       decision,
+      context.batchBlockedSalesOrderIds?.has(contribution.sales_order_id) ?? false,
     );
-    if (built === null) continue;
-    if (typeof built === 'string') {
-      const [notice] = unpostableNotices(built, [{ contribution, reason: built }]);
-      notPosted.push({ ...identity, reason: notice?.clause ?? built });
-      continue;
+    switch (role.kind) {
+      case 'cancelled':
+        cancelled.push(identity);
+        break;
+      case 'withdraw':
+        rows.push(rowFor('rejected', WITHDRAWN_COMPOSITION));
+        break;
+      case 'blocked_reject':
+        notPosted.push({ ...identity, reason: BLOCKED_REJECT_REASON });
+        break;
+      case 'stale':
+        notPosted.push({ ...identity, reason: STALE_NOT_POSTED_REASON });
+        break;
+      case 'unpostable': {
+        const [notice] = unpostableNotices(role.reason, [
+          { contribution, reason: role.reason },
+        ]);
+        notPosted.push({ ...identity, reason: notice?.clause ?? role.reason });
+        break;
+      }
+      case 'post':
+        if (decision && decision.verdict !== 'rejected') {
+          rows.push(rowFor(decision.verdict, compositionText(role.line, contribution, decision)));
+        }
+        break;
+      default:
+        break;
     }
-    rows.push(rowFor(decision.verdict, compositionText(built, contribution, decision)));
   }
-  return { rows, notPosted };
+  return { rows, notPosted, cancelled };
 }
 
 /**

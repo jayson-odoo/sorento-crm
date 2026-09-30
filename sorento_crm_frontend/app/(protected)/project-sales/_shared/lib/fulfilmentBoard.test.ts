@@ -2950,3 +2950,105 @@ describe('confirmDialogRowsFor', () => {
     expect(notPosted[0].reason).toContain('Suggestion changed');
   });
 });
+
+/**
+ * FULFIL-CONFIRM-SCOPE fix round 1: title, dialog rows, button and body are views of ONE
+ * population. For every kind of line, the rows the dialog lists equal what the body posts
+ * (lines plus withdrawals), and rows plus cancelled rows equal `plannedLineCount`.
+ */
+describe('confirm scope: one population for dialog, count and body', () => {
+  const board = buildBoard(
+    [line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '100' })],
+    { today: TODAY, freeStock: { 'WESERP10B|BRW-BB': '100' } },
+  );
+  const base = board.cells.flatMap((cell) => cell.contributions)[0];
+  const OPENED = new Date('2026-09-30T02:00:00Z');
+  const covered = { covered: true, decision: {} as never };
+
+  type Case = {
+    name: string;
+    contribution: Partial<BoardContribution>;
+    decision: ({ verdict: 'approved' | 'amended' | 'rejected' } & Record<string, unknown>) | null;
+    blocked?: boolean;
+    unadopted?: boolean;
+    listed: boolean;
+    counted: number;
+  };
+  const amended = {
+    verdict: 'amended' as const,
+    reserve_qty: '0',
+    reserve: [],
+    borrow: [],
+    buy_qty: '100',
+    reason: 'Late.',
+  };
+  const cases: Case[] = [
+    { name: 'covered + approved', contribution: covered, decision: { verdict: 'approved' }, listed: true, counted: 1 },
+    { name: 'covered + amended', contribution: covered, decision: amended, listed: true, counted: 1 },
+    { name: 'covered + rejected (withdrawal)', contribution: covered, decision: { verdict: 'rejected' }, listed: true, counted: 1 },
+    { name: 'batch-blocked rejection', contribution: covered, decision: { verdict: 'rejected' }, blocked: true, listed: false, counted: 0 },
+    { name: 'stale draft', contribution: { draft: { decision: { verdict: 'approved' }, saved_by: 'x', saved_at: '2026-09-29T00:00:00Z', stale: true } }, decision: { verdict: 'approved' }, listed: false, counted: 0 },
+    { name: 'no_mirror on an adopted order', contribution: { project_line_id: null }, decision: { verdict: 'approved' }, listed: false, counted: 0 },
+    { name: 'no_mirror on an unadopted order', contribution: { project_line_id: null }, decision: { verdict: 'approved' }, unadopted: true, listed: true, counted: 1 },
+    { name: 'cancelled', contribution: { cancelled: true }, decision: null, listed: false, counted: 1 },
+  ];
+
+  it.each(cases)('$name', (entry) => {
+    const contribution = { ...base, ...entry.contribution } as BoardContribution;
+    const draft = entry.decision ? { [contribution.key]: entry.decision as never } : {};
+    const blocked = new Set(entry.blocked ? ['so-a'] : []);
+    const unadopted = new Set(entry.unadopted ? ['so-a'] : []);
+    const dialog = confirmDialogRowsFor([contribution], draft, {
+      currentUserName: 'Cyndi',
+      openedAt: OPENED,
+      unadoptedSalesOrderIds: unadopted,
+      batchBlockedSalesOrderIds: blocked,
+    });
+    const posted = confirmLinesFor([contribution], 'so-a', draft).map((row) => row.project_line_id);
+    // A rejection under a pending change is zeroed out of the body by the caller.
+    const withdrawn = entry.blocked
+      ? []
+      : rejectedCoveredLineIdsFor([contribution], 'so-a', draft);
+    const bodyCount = posted.length + withdrawn.length;
+    expect(dialog.rows.length).toBe(entry.listed ? 1 : 0);
+    if (!entry.unadopted) expect(dialog.rows.length).toBe(bodyCount);
+    expect(
+      dialog.rows.length + dialog.cancelled.length,
+    ).toBe(
+      plannedLineCount([contribution], 'so-a', draft, blocked, { unadoptedSalesOrderIds: unadopted }),
+    );
+    expect(dialog.rows.length + dialog.cancelled.length).toBe(entry.counted);
+    // A line the press leaves out is named, never silent.
+    if (!entry.listed && !entry.counted) expect(dialog.notPosted.length).toBe(1);
+  });
+
+  it('confirmSummaryFor admits an order whose only posted line is a covered approved one', () => {
+    const contribution = { ...base, ...covered } as BoardContribution;
+    const summary = confirmSummaryFor([contribution], { [contribution.key]: { verdict: 'approved' } });
+    expect(summary.toConfirm).toBe(1);
+    expect(summary.orderCount).toBe(1);
+  });
+
+  it('an unticked covered-rejected line leaves the withdrawal out', () => {
+    const contribution = { ...base, ...covered } as BoardContribution;
+    const draft = { [contribution.key]: { verdict: 'rejected' as const, reason: 'No.' } };
+    expect(
+      rejectedCoveredLineIdsFor([contribution], 'so-a', draft, {
+        excludeKeys: new Set([contribution.key]),
+      }),
+    ).toEqual([]);
+  });
+
+  it('flags nobody as somebody else when the current user is unknown', () => {
+    const contribution = {
+      ...base,
+      draft: { decision: { verdict: 'approved' }, saved_by: 'Jayson', saved_at: '2026-09-29T00:00:00Z' },
+    } as BoardContribution;
+    const { rows } = confirmDialogRowsFor(
+      [contribution],
+      { [contribution.key]: { verdict: 'approved' } },
+      { currentUserName: '', openedAt: OPENED },
+    );
+    expect(rows[0].savedByOther).toBe(false);
+  });
+});

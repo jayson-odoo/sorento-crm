@@ -4475,6 +4475,8 @@ def _apply_one_order(
             # REPLANNED line is the genuinely undecided one, back on the board for CS.
             "lines_decided": retired,
             "lines_undecided": replanned,
+            "lines_confirmed": [],
+            "lines_carried": 0,
             "transfers_written": 0,
             "transfers_failed": 0,
         }

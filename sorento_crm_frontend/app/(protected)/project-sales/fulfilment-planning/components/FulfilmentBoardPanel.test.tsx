@@ -1801,13 +1801,9 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     expect(
       within(banner).getByRole('button', { name: 'TPE-9204 line 2' }),
     ).toBeInTheDocument();
-    // `plannedLineCount` still counts it here: it cannot tell "adopted, but this one line's
-    // mirror lags" from "not adopted at all", where the count DOES have to include a
-    // not-yet-mirrored line (see "adopts, refetches, then posts..." below) - so the aggregate
-    // reads 2 while the notice above still names the one line that will not post.
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent(
-      'Confirm (2)',
-    );
+    // FULFIL-CONFIRM-SCOPE fix round 1: on an ADOPTED order a line with no mirror is left out
+    // and named, so the count no longer includes it - title, list, button and body agree.
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
 
     await openConfirmDialog();
     fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
@@ -2385,21 +2381,15 @@ describe('FulfilmentBoardPanel: a Confirm that posts nothing says so', () => {
     await screen.findByRole('alertdialog');
   }
 
-  it('names SO419852 and says nothing was posted, rather than ending the press with nothing shown', async () => {
+  it('names SO419852 in the banner and offers no press that would post nothing', async () => {
     getPlanningBoard.mockResolvedValue(boardAdoptedNoMirror());
 
     renderPanel(['SO419852']);
-    await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
-
-    await waitFor(() => {
-      const match = screen.queryAllByText(/SO419852/).find((node) =>
-        /not on the planning record|nothing (was )?posted/i.test(
-          node.textContent ?? '',
-        ),
-      );
-      expect(match).toBeTruthy();
-    });
+    const banner = await screen.findByTestId('board-left-out-banner');
+    expect(banner).toHaveTextContent(/not on the planning record yet/i);
+    // FULFIL-CONFIRM-SCOPE fix round 1: the count excludes a no-mirror line on an adopted
+    // order, so there is nothing to press: the button is disabled at 0.
+    expect(screen.getByTestId('board-confirm')).toBeDisabled();
     expect(adoptSalesOrder).not.toHaveBeenCalled();
     expect(confirmMany).not.toHaveBeenCalled();
   });
@@ -4625,5 +4615,54 @@ describe('FulfilmentBoardPanel: the toast and results block read the server echo
     await waitFor(() => expect(pillFor('WESERP10B')).not.toHaveTextContent('Saved'));
     expect(pillFor('TPE-9204')).not.toHaveTextContent('Saved');
     expect(pillFor('WESERP20B')).toHaveTextContent('Saved');
+  });
+});
+
+describe('FulfilmentBoardPanel: confirm scope fix round 1 (FULFIL-CONFIRM-SCOPE)', () => {
+  const CONFIRM_ACTION = /^Confirm( \d+ lines?)?$/;
+  const threeLines = () =>
+    allSaved(
+      boardOf([
+        demand({ line_no: 1, item_code: 'WESERP10B' }),
+        demand({ line_no: 2, item_code: 'TPE-9204' }),
+        demand({ line_no: 3, item_code: 'WESERP20B' }),
+      ]),
+    );
+
+  it('falls back to the posted count and says the server named no lines (AC-R1 fallback)', async () => {
+    getPlanningBoard.mockResolvedValue(threeLines());
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 1, inquiry_rows_created: 0 }],
+    });
+
+    renderPanel(['SO403340']);
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: CONFIRM_ACTION }));
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(
+      String((toast.success as unknown as { mock: { calls: unknown[][] } }).mock.calls.at(-1)?.[0]),
+    ).toMatch(/^3 lines confirmed/);
+    const block = await screen.findByTestId('board-confirm-results');
+    expect(block).toHaveTextContent('The server did not name the lines it confirmed.');
+  });
+
+  it('keeps the dialog title and the action button in step after an untick (AC-D1)', async () => {
+    const board = threeLines();
+    getPlanningBoard.mockResolvedValue(board);
+
+    renderPanel(['SO403340']);
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Confirm 3 lines across 1 order?')).toBeInTheDocument();
+    const key = board.contributions.find((entry) => entry.line_no === 1)!.key;
+    fireEvent.click(
+      within(within(dialog).getByTestId(`board-confirm-dialog-row-${key}`)).getByRole('checkbox'),
+    );
+
+    expect(within(dialog).getByText('Confirm 2 lines across 1 order?')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Confirm 2 lines' })).toBeInTheDocument();
   });
 });
