@@ -8,9 +8,10 @@ assigned to that agent and reads one thread at a time through the SAME service c
 ticket drawer and Conversations inbox read (`ConversationSLATrackingService`), after its own
 scope check. Read-only: no reply, no note (owner ruling 30 Sep, Q1). Messages only: the staff
 internal notes on a contact are NOT served here (security review 30 Sep: a portal token is not a
-staff session, and the notes table is not company-scoped), so there is no `/comments` twin. A contact linked to no agent gets 403 `NOT_A_SALES_AGENT`; the per-contact
-`conversation` switch off gets 403 `FORM_TYPE_NOT_VISIBLE`; a contact outside the agent's
-customers is a 404 on every thread read.
+staff session, and the notes table is not company-scoped), so there is no `/comments` twin.
+A contact linked to no agent gets 403 `NOT_A_SALES_AGENT`; the per-contact `conversation`
+switch off gets 403 `FORM_TYPE_NOT_VISIBLE`; a contact outside the agent's customers is a 404
+on every thread read.
 """
 from __future__ import annotations
 

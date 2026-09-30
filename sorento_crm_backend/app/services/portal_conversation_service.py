@@ -12,7 +12,8 @@ Scope chain, each link read from where it already lives:
 - customer -> contact: `respond_contact_customers`, company-scoped, tied to the customer's own
   company (a link in another company never puts a stranger on an agent's list);
 - contact -> thread: `respond_contacts.respond_io_id` is `chat_histories.contact_id`, and the
-  latest row per contact is the same `DISTINCT ON` the CRM inbox runs.
+  latest row per contact is the same `DISTINCT ON` the CRM inbox runs, narrowed to the agent's
+  own contacts first.
 
 `contact_in_scope` is the same query narrowed to one contact, so "may open this thread" and
 "is a row of the list" can never disagree.
@@ -26,8 +27,9 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.access import RespondContact, RespondContactCustomer
+from app.models.chat_history import ChatHistory
 from app.models.order import Customer
-from app.services.conversation_inbox_service import _last_message_cte, _like_pattern, _snippet
+from app.services.conversation_inbox_service import _like_pattern, _snippet
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -63,7 +65,27 @@ def _rows_query(db: Session, agent_id: str, *, q: Optional[str] = None, contact_
         )
         .cte("agent_link")
     )
-    last_msg = _last_message_cte()
+    # The inbox's "latest message per contact" DISTINCT ON, narrowed to THIS agent's contacts
+    # before it runs (review 30 Sep, finding 2): the portal polls this every 30s per open tab, so
+    # it must not walk every contact's messages the way the staff inbox can afford to.
+    agent_contacts = (
+        select(RespondContact.respond_io_id)
+        .select_from(link)
+        .join(RespondContact, RespondContact.id == link.c.contact_id)
+        .where(RespondContact.respond_io_id.isnot(None))
+    )
+    last_msg = (
+        select(
+            ChatHistory.contact_id.label("contact_key"),
+            ChatHistory.sent_at.label("last_at"),
+            ChatHistory.message.label("last_message"),
+            ChatHistory.type.label("last_direction"),
+        )
+        .where(ChatHistory.contact_id.in_(agent_contacts))
+        .distinct(ChatHistory.contact_id)
+        .order_by(ChatHistory.contact_id, ChatHistory.sent_at.desc(), ChatHistory.id.desc())
+        .cte("last_msg")
+    )
 
     stmt = (
         select(

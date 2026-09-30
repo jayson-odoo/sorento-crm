@@ -368,6 +368,39 @@ def test_ac_cv4_no_chat_no_respond_link_other_agent_and_other_company_are_not_ro
         assert world[key] not in ids, key
 
 
+def test_security_a_link_in_another_company_never_lists_under_a_two_company_scope(world):
+    """Review 30 Sep, finding 1: under the single-company scope the ORM filter alone hides the
+    MOCHA link row, so the explicit `Customer.company_id == RespondContactCustomer.company_id`
+    join was untested. A caller scoped to BOTH companies still never sees a Mocha link to a
+    Sorento customer as a row, nor its thread."""
+    from app.api.v1.public.portal import get_portal_token
+    from app.database import get_db
+    from app.models.portal import PortalToken
+    from app.services.company_scope_resolver import apply_company_scope
+
+    db = world["db"]
+    both = frozenset({SORENTO, MOCHA})
+
+    def _override_get_db():
+        set_company_scope(db, both)
+        yield db
+
+    async def _override_scope():
+        set_company_scope(db, both)
+        return both
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[apply_company_scope] = _override_scope
+    app.dependency_overrides[get_portal_token] = lambda: PortalToken(
+        id=_uid(), contact_id=world["agent_contact"], space_id="zzt-space"
+    )
+    client = TestClient(app, headers={"X-Portal-Token": "zzt-token"}, raise_server_exceptions=False)
+    ids = [r["contact_id"] for r in client.get(BASE).json()["data"]]
+    assert world["mocha_only"] not in ids
+    assert ids == [world["chin"], world["lim"], world["tan"]]
+    assert client.get(f"{BASE}/{world['mocha_only']}/page").status_code == 404
+
+
 def test_ac_cv4_an_agent_with_no_conversations_gets_an_empty_list(world):
     db = world["db"]
     lonely_contact = _contact(db, "Agent Lonely")

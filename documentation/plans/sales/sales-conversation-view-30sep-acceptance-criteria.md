@@ -1,7 +1,7 @@
 # UAC: Conversation view for sales agents in the sales portal (lane SALES-CONVO)
 
-Status: draft under the plan's recommendations (Q1 read-only, Q2 latest first, Q3 cards + list);
-each criterion marked `[Q<n>]` changes if the owner rules otherwise. Plan:
+Status: settled 30 Sep 2026 (owner rulings Q1 read-only, Q2 latest first, Q3 cards + list; crew
+ruling: messages only, no internal notes); built and hand-tested against these criteria. Plan:
 `PLAN-sales-conversation-view-30sep.md`. Mock: `mockups/sales-conversation-30sep-mockup.html`.
 
 ## A. Who sees the kind
@@ -26,15 +26,16 @@ each criterion marked `[Q<n>]` changes if the owner rules otherwise. Plan:
   (relative for today, the date otherwise; full Malaysia date-time on hover).
 - AC-CV6: a row whose last message is incoming is tinted and labelled "Customer wrote last"; an
   outgoing last message is a plain card.
-- AC-CV7 `[Q2]`: default order is last message newest first. The Sort button offers Last message
-  and Customer; the choice is remembered per contact (same mechanism as Customer asks) and
-  survives a reload.
+- AC-CV7 `[Q2]`: default order is last message newest first. The Sort button offers every field
+  of the kind (Customer, Contact, Last message from, Last message), the way the shared toolbar
+  does for every kind; the choice is remembered per contact (same mechanism as Customer asks)
+  and survives a reload.
 - AC-CV8 `[Q3]`: the landing's Cards / List toggle applies; List is the landing DataGrid with the
   columns Customer, Contact, Last message, When, header click sorts the same state, and a row
   opens the same Drawer as a card. Cards is the default at every width.
 - AC-CV9: the landing search box narrows the rows by customer name, contact name, phone or last
-  message text, server-side, debounced like the other kinds. Filter offers Customer, Contact and
-  a Last message date range.
+  message text, server-side, debounced like the other kinds. Filter offers Customer, Contact,
+  Last message from (Customer / Us) and a Last message date range.
 - AC-CV10: no New button. Empty state "No conversations yet" with the hint; a search or filter
   with no match shows "No conversation matches ..." with Clear filters.
 - AC-CV11: usable and unclipped at 375px and 1280px.

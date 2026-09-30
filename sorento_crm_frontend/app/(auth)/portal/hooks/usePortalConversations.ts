@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LandingSort } from '../lib/landing-fields';
 import { NotASalesAgentError } from '../lib/customer-asks-service';
 import {
@@ -27,25 +27,33 @@ export function usePortalConversations(search: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notAgent, setNotAgent] = useState(false);
+  // A poll that started before a search change must not overwrite the searched list when it
+  // lands late: only the newest request's answer is kept.
+  const requestSeq = useRef(0);
 
   const load = useCallback(() => {
+    const seq = ++requestSeq.current;
     return listConversations({
       page: 1,
       limit: CONVERSATION_LIST_LIMIT,
       q: search,
     })
       .then((page) => {
+        if (seq !== requestSeq.current) return;
         setRows(page.data);
         setError(null);
       })
       .catch((e: unknown) => {
+        if (seq !== requestSeq.current) return;
         if (e instanceof NotASalesAgentError) setNotAgent(true);
         else
           setError(
             e instanceof Error ? e.message : 'Failed to load conversations',
           );
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (seq === requestSeq.current) setLoading(false);
+      });
   }, [search]);
 
   useEffect(() => {
