@@ -39,7 +39,7 @@
 #   `scripts/chatbot_console_check.py`). The trace line that WOULD show `tool=crm_sales_report
 #   args={"channel": "dealer", ...}` is only printed by `--say` mode (`_run_ad_hoc`), never by a
 #   YAML case run (`_run_cases`). So "tool X called with arg Y" in the captain's list is graded
-#   here by PROXY through the presenter's own header echo (the `Channel:` / `Delivery date:`
+#   here by PROXY through the presenter's own header echo (the `Channel:` / `Required date (or order date):`
 #   lines are built from exactly those tool args, per AC-1603/AC-1623/AC-1625) rather than
 #   directly. A direct assertion would need a new `expect.tool_name` / `expect.tool_args` key on
 #   the runner - out of this file's scope to add.
@@ -87,7 +87,7 @@ cases:
     cold: true
     turns:
       # 1. "give me the dealer sales report for hanlim" - Journey step 1-2. No date named =
-      # all dates. Header in order Customer/Product/Channel/Location/Delivery date (AC-1601),
+      # all dates. Header in order Customer/Product/Channel/Location/Required date (or order date) (AC-1601),
       # at least one month block (AC-1602), By product (customer subject, S6/AC-1604), closing
       # offer line (AC-1605), offer armed under its own kind (AC-1654, S11).
       - text: "give me the dealer sales report for hanlim"
@@ -99,7 +99,7 @@ cases:
               Product: all
               Channel: Dealer
               Location: all
-              Delivery date: all
+              Required date (or order date): all
             - "Sales orders:"
             - "Ordered: RM"
             - "Confirmed (DO): RM"
@@ -131,10 +131,10 @@ cases:
           branch_kind: business_query
           reply_contains:
             - "*_Jun 2026_*"
-            - "Delivery date: 01/06/2026 to 30/06/2026"
+            - "Required date (or order date): 01/06/2026 to 30/06/2026"
             - "Channel: Dealer"
             - "Reply 1 for the sales order list."
-          reply_not_contains: ["Delivery date: all", "Outstanding for which document?"]
+          reply_not_contains: ["Required date (or order date): all", "Outstanding for which document?"]
           pending_kind: sales_report_detail
           no_uuid: true
 
@@ -147,7 +147,7 @@ cases:
           branch_kind: business_query
           reply_contains:
             - "Product: SRTWT7445"
-            - "Delivery date: 01/06/2026 to 30/06/2026"
+            - "Required date (or order date): 01/06/2026 to 30/06/2026"
             - "Channel: Dealer"
             - "*_By product_*"
           reply_not_contains: ["*_By customer_*"]
@@ -167,10 +167,10 @@ cases:
             - "Product: SRTWT7445"
             - "Channel: all"
             # Current calendar year (Malaysia time), today is 19 Sep 2026. BUMP EVERY JANUARY.
-            - "Delivery date: 01/01/2026 to 31/12/2026"
+            - "Required date (or order date): 01/01/2026 to 31/12/2026"
             - "*_By product_*"
             - "*_By customer_*"
-          reply_not_contains: ["Delivery date: all"]
+          reply_not_contains: ["Required date (or order date): all"]
           no_uuid: true
 
   - name: S18 - saying "all dates" turns the current-year default off
@@ -180,8 +180,8 @@ cases:
       - text: "sales report for SRTWT7445 all dates"
         expect:
           branch_kind: business_query
-          reply_contains: ["Product: SRTWT7445", "Delivery date: all"]
-          reply_not_contains: ["Delivery date: 01/01/2026 to 31/12/2026"]
+          reply_contains: ["Product: SRTWT7445", "Required date (or order date): all"]
+          reply_not_contains: ["Required date (or order date): 01/01/2026 to 31/12/2026"]
           no_uuid: true
 
   - name: Journey 6 - project sales report for hanlim sets Channel Project
@@ -207,7 +207,7 @@ cases:
           reply_contains:
             - "Sales orders:"
             - "Confirmed (DO): RM"
-            - "Delivery date: 01/01/2026 to 31/12/2026"
+            - "Required date (or order date): 01/01/2026 to 31/12/2026"
           reply_not_contains:
             - "Sales order outstanding"
             - "Delivery order outstanding"

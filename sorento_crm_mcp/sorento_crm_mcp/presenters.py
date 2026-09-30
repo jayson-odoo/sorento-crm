@@ -2538,7 +2538,11 @@ def _sales_report(report: dict) -> str:
             f"Product: {_sales_product_header(report.get('product_code'), report.get('product_codes'))}",
             f"Channel: {_sales_channel_header(report.get('channel'))}",
             f"Location: {_outstanding_location_header(report.get('location_token'), report.get('warehouse_codes'))}",
-            f"Delivery date: {_outstanding_date_range(report.get('date_from'), report.get('date_to'))}",
+            # CHATBOT-SELFREF-SCOPE (owner hand test, 30 Sep 2026): the window is on the
+            # report's BUCKET, a line's required date else its SO's order date
+            # (`sales_report_service._bucket_expr`), never a delivery date; the header
+            # says so, or "no sales this year" reads as "nothing delivered".
+            f"Required date (or order date): {_outstanding_date_range(report.get('date_from'), report.get('date_to'))}",
         )
     )
     months = report.get("months") if isinstance(report.get("months"), list) else []

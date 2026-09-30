@@ -2,7 +2,7 @@ Customer: HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I]
 Product: all
 Channel: Dealer
 Location: all
-Delivery date: all
+Required date (or order date): all
 
 *_Sep 2026_*
 Sales orders: 31

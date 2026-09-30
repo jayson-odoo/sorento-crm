@@ -53,7 +53,7 @@ def _golden(name: str) -> str:
 def test_customer_subject_golden():
     """AC-1601: a customer-subject body with two months renders byte-equal to
     the golden - five header lines in the order Customer / Product / Channel /
-    Location / Delivery date, a blank line, then month blocks in the order
+    Location / Required date (or order date), a blank line, then month blocks in the order
     given."""
     assert _sales_report(_mock("customer")) == _golden("customer")
 
@@ -86,7 +86,7 @@ def test_absent_axis_prints_all():
         "Product: all\n"
         "Channel: Dealer\n"
         "Location: all\n"
-        "Delivery date: all\n"
+        "Required date (or order date): all\n"
     )
     both_absent = _sales_report(_mock("miss"))
     assert both_absent.startswith(
@@ -94,7 +94,7 @@ def test_absent_axis_prints_all():
         "Product: SRTWT9999\n"
         "Channel: all\n"
         "Location: all\n"
-        "Delivery date: all\n"
+        "Required date (or order date): all\n"
     )
 
 

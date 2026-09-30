@@ -2,6 +2,6 @@ Customer: all
 Product: SRTWT9999
 Channel: all
 Location: all
-Delivery date: all
+Required date (or order date): all
 
 No sales found.

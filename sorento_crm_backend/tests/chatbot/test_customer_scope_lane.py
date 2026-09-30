@@ -781,3 +781,50 @@ class TestScopeDecisionsAreTraced:
         assert event["refused"] == "customer_not_permitted", event
         assert event["reason"] == "resolver_matched_only_other_customers", event
         assert sorted(event["dropped"]) == sorted([HANLIM_UUID_1, HANLIM_UUID_2]), event
+
+
+class TestOwnAccountMissIsAFinalAnswer:
+    def test_no_sales_on_my_accounts_says_so_and_offers_nothing(self, session_factory, monkeypatch) -> None:
+        """Owner hand test (30 Sep 2026): "how's my sales this year?" with no month on the
+        linked accounts answers the header plus "No sales found." and arms nothing - no
+        escalation picker, no open question. The header names every linked account."""
+        from tests.chatbot.test_sales_report_lane import SALES_REPORT_MISS
+
+        _seed_contact(session_factory, variables={})
+        links = _link_customers(session_factory, *HANLIM_LINKS, codes=HANLIM_CODES)
+        result, reply, captured = _run(
+            session_factory, monkeypatch,
+            _owner_verdict(order_status="sales_report", group_by=None, date_filter_start="2026-01-01", date_filter_end="2026-12-31"),
+            "how's my sales this year?", mcp_response={**SALES_REPORT_MISS, "customer_name": ", ".join(HANLIM_LINKS)},
+        )
+        (args,) = _calls(captured, SALES)
+        assert args["customer_ids"] == links, args
+        assert "No sales found." in reply, reply
+        assert "escalate" not in reply.lower(), reply
+        assert "Which" not in reply, reply
+        assert not _open_question(session_factory), _open_question(session_factory)
+
+    def test_a_carried_own_account_never_narrows_my_sales(self, session_factory, monkeypatch) -> None:
+        """Q6a through the engine: a report about one own account, then "how's my sales
+        this year?" runs over ALL the links, whatever the earlier turn carried."""
+        from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
+
+        _seed_contact(session_factory, variables={})
+        links = _link_customers(session_factory, *HANLIM_LINKS, codes=HANLIM_CODES)
+        _r1, _reply1, cap1 = _run(
+            session_factory, monkeypatch,
+            _ask([_ent("a/c iv")], order_status="sales_report", self_reference=True,
+                 date_filter_start="2026-09-01", date_filter_end="2026-09-30"),
+            "my sales for a/c iv this month", mcp_response=SALES_REPORT_HIT,
+        )
+        (first,) = _calls(cap1, SALES)
+        assert first["customer_ids"] == [links[4]], first
+        _r2, reply2, cap2 = _run(
+            session_factory, monkeypatch,
+            _owner_verdict(order_status="sales_report", group_by=None, date_filter_start="2026-01-01", date_filter_end="2026-12-31"),
+            "how's my sales this year?", mcp_response=SALES_REPORT_HIT,
+        )
+        (second,) = _calls(cap2, SALES)
+        assert second["customer_ids"] == links, second
+        assert second["date_from"] == "2026-01-01" and second["date_to"] == "2026-12-31", second
+        assert "under your account" not in reply2, reply2

@@ -917,6 +917,11 @@ def _fetch_semantic_input(
         # delivered) and the company the contact named, straight to the tool's params.
         "sales_basis": parse_output.get("sales_basis"),
         "sales_company": parse_output.get("sales_company"),
+        # CHATBOT-SELFREF-SCOPE (owner rule Q6a): "my" / "me" / "our" means ALL the
+        # asker's linked accounts. Read by `entity_ids_transformer`'s two report arms
+        # (a carried account never narrows a self-reference ask) and by
+        # `_sales_report_output` (a miss on the asker's own accounts is a final answer).
+        "self_reference": parse_output.get("self_reference") is True,
         # R-B3 (reviewer finding, Phase 3 fix round): the sales_report_detail
         # offer's stored channel, restored by `head/output_exchange.py::
         # _apply_outstanding_pending` - `fetch.py` reads this ONLY when THIS
@@ -1840,6 +1845,25 @@ def run_fetch(
                 },
             )
         return _fixed_reply(str(customer_scope.get("refusal") or ""))
+    # CHATBOT-SELFREF-SCOPE (owner rule Q6a): on a self-reference turn a carried account
+    # did not narrow the report (`fetch._self_reference`); say so on the trace.
+    carried_ids = [u for u in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if fetch_mod.is_uuid(u)]
+    if (
+        trace is not None
+        and semantic_input.get("self_reference") is True
+        and carried_ids
+        and isinstance(args.get("customer_ids"), list)
+        and args["customer_ids"] != carried_ids
+    ):
+        trace.add(
+            "customer_scope",
+            {
+                "decision": "self_reference_uses_own_ids_not_the_carry",
+                "tool": tool_name,
+                "ids": list(args["customer_ids"]),
+                "dropped": [u for u in carried_ids if u not in args["customer_ids"]],
+            },
+        )
     if (
         tool_name in policy_rows.ENTITY_FILTER_REQUIRED_TOOLS
         and not fetch_mod.has_narrowing_filter(args, tool_name=tool_name)

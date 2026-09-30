@@ -2,7 +2,7 @@ Customer: all
 Product: SRT5674, SRT5674-N
 Channel: all
 Location: all
-Delivery date: 01/01/2026 to 31/12/2026
+Required date (or order date): 01/01/2026 to 31/12/2026
 
 *_Sep 2026_*
 Sales orders: 12

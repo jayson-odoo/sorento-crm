@@ -625,6 +625,16 @@ def _rendered_product_count(items: list[Any]) -> int | None:
     return len(codes) if codes else None
 
 
+def _self_reference(semantic_input: Any) -> bool:
+    """CHATBOT-SELFREF-SCOPE (owner rule Q6a, hand test 30 Sep 2026): "my sales" means
+    ALL the asker's linked accounts. An account the conversation carried from an earlier
+    report (`outstanding_carried_customer_ids`, the offer's own subject) is what a "1" or
+    "this month only" narrows, never what "my" means, so on a self-reference turn the
+    carry does not replace this turn's own ids (the links, or the account the message
+    itself named)."""
+    return jsc.get(semantic_input, "self_reference") is True
+
+
 def entity_ids_transformer(
     trigger: dict[str, Any] | None, *, space_id: str | None = None
 ) -> dict[str, Any]:
@@ -767,7 +777,7 @@ def entity_ids_transformer(
         carried_customers = [
             u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
         ]
-        if carried_customers:
+        if carried_customers and not _self_reference(semantic_input):
             out["customer_ids"] = carried_customers
         # AC-1138 (D10 on main): "1"/"2" against an open detail offer re-runs THIS
         # SAME tool with `detail=so|do` - the MCP layer swaps in the numbered list
@@ -799,7 +809,7 @@ def entity_ids_transformer(
         carried_customers = [
             u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
         ]
-        if carried_customers:
+        if carried_customers and not _self_reference(semantic_input):
             out["customer_ids"] = carried_customers
         # R-B3 (reviewer finding, Phase 3 fix round): the turn's OWN sales_channel wins
         # when given; a pick or a refinement of an open sales_report_detail offer names
@@ -2326,6 +2336,20 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     if "response" in envelope:
         text = jsc.js_string(envelope.get("response") or "")
         has_result = envelope.get("has_result") is True
+        # CHATBOT-SELFREF-SCOPE (owner hand test, 30 Sep 2026): a rendered report with
+        # no month on the asker's OWN accounts ("my sales this year", or any ask of a
+        # customer-scoped contact) is a final answer - "No sales found." - never the
+        # miss lane's escalate offer: there is nothing to escalate about one's own
+        # account. A miss on a NAMED product or customer keeps AC-1658's offer, since a
+        # wrong code is worth a person's look.
+        semantic_input = ctx.get("semantic_input")
+        if isinstance(semantic_input, str):
+            semantic_input = _safe_json(semantic_input)
+        own_accounts = isinstance(semantic_input, dict) and (
+            semantic_input.get("self_reference") is True or bool(semantic_input.get("scope_customer_ids"))
+        )
+        if not has_result and own_accounts and text.strip().endswith(SALES_REPORT_MISS_MESSAGE):
+            has_result = True
     else:
         # Mirrors `_outstanding_report_output`'s own fix (#1262 slice 1, F2): a bare
         # string here is never a rendered report, so it is never treated as a result.
@@ -2377,6 +2401,9 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
 _LOW_STOCK_ERROR_TEXT = "Could not run the low stock report right now."
 #: The presenter's own error line for `crm_sales_analysis`, for a body it never rendered.
 _SALES_ANALYSIS_ERROR_TEXT = "Could not run the sales report right now."
+#: The presenter's own miss line for `crm_sales_report` (`presenters.SALES_REPORT_MISS_MESSAGE`,
+#: AC-1607): the one way a rendered report says it found no month.
+SALES_REPORT_MISS_MESSAGE = "No sales found."
 
 
 def _low_stock_report_output(result: Any, *, fallback: str = _LOW_STOCK_ERROR_TEXT) -> dict[str, Any]:

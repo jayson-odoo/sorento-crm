@@ -237,3 +237,31 @@ class TestRefusalsAreTraced:
         (event,) = [e for e in trace.events if e.get("kind") == "customer_scope"]
         assert event["reason"] == "tier_probe_customer_ids_outside_links"
         assert event["dropped"] == [z]
+
+
+class TestMyMeansAllLinkedAccounts:
+    """Owner rule Q6a (hand test, 30 Sep 2026): a carried account never narrows a
+    self-reference ask; the turn's own ids (the links) stand on both reports."""
+
+    @pytest.mark.parametrize("tool", ["crm_sales_report", "crm_outstanding_report"])
+    def test_a_carried_own_account_does_not_narrow_my_report(self, tool, ids) -> None:
+        a, b, _z = ids
+        out = fetch.entity_ids_transformer(
+            _trigger(tool, [a, b], [], self_reference=True, outstanding_carried_customer_ids=[a])
+        )
+        assert out["customer_ids"] == [a, b], out
+
+    @pytest.mark.parametrize("tool", ["crm_sales_report", "crm_outstanding_report"])
+    def test_without_self_reference_the_carry_still_narrows(self, tool, ids) -> None:
+        a, b, _z = ids
+        out = fetch.entity_ids_transformer(_trigger(tool, [a, b], [], outstanding_carried_customer_ids=[a]))
+        assert out["customer_ids"] == [a], out
+
+    def test_the_account_the_message_itself_named_stands(self, ids) -> None:
+        """"my sales for a/c ii": the engine hands the named link as the entity; the
+        carry is ignored, the named account is the subject."""
+        a, b, _z = ids
+        out = fetch.entity_ids_transformer(
+            _trigger("crm_sales_report", [a, b], [_customer(b)], self_reference=True, outstanding_carried_customer_ids=[a])
+        )
+        assert out["customer_ids"] == [b], out
