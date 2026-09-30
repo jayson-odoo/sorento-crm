@@ -1425,6 +1425,10 @@ def run_fetch(
         if need not in granted:
             if trace is not None:
                 trace.add("domain_grant", {"domain": domain, "skipped": "not_granted", "needs": need})
+            if need == _SALES_REPORT_GRANT:
+                # R7 (PLAN-prompt-dynamic-30sep D9): the `sales` domain is refused in the
+                # words every sales figure ask was refused in under `order`.
+                return _sales_report_not_enabled()
             return _error_fragment(
                 f"{domain} needs the {need} grant, which this contact does not hold",
                 outcome="access_denied",
@@ -1670,13 +1674,14 @@ def run_fetch(
         tool_name = _SALES_ANALYSIS_TOOL
         tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_analysis_override"}}
     elif (
-        domain == "order"
+        domain in contracts.ORDER_OR_SALES_DOMAINS
         and (has_product or has_customer or carried_subject)
         and order_status_raw == "sales_report"
     ):
         # S4 wiring point 3 (AC-1650): domain "order" + a resolved product OR
         # customer + `order_status: "sales_report"` picks THIS tool - one more
-        # branch beside the outstanding override above, never `tools[0]`.
+        # branch beside the outstanding override above, never `tools[0]`. R7
+        # (PLAN-prompt-dynamic-30sep D9): the `sales` domain is the same ask.
         tool_name = "crm_sales_report"
         tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_report_override"}}
 
@@ -1693,7 +1698,7 @@ def run_fetch(
         # resolution the outstanding override above uses, fixed once at this one
         # seam for both tools. --------------------------------------------------- #
         _resolve_report_product_and_location(parse_output, entities, semantic_input, db=db)
-    elif domain == "order" and order_status_raw == "top_selling":
+    elif domain in contracts.ORDER_OR_SALES_DOMAINS and order_status_raw == "top_selling":
         # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 5 (AC-1950): the ranking needs
         # no subject, so no subject rule; never `tools[0]`. Gated on the sales report's
         # own key (owner ruling 26 Sep: no new key), checked above for every sales

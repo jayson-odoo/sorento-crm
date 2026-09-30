@@ -26,7 +26,7 @@ from app.services.chatbot.turn.state import focus_row_label
 # a DELIVERY ORDER search specifically - it used to gate on "domains the CRM
 # date-filters", which let it render "Customer: all customers" on an inbound
 # shipment answer, meaningless (a container has no customer).
-_DATE_SCOPE_DOMAINS = frozenset({"order"})
+_DATE_SCOPE_DOMAINS = frozenset({"order", "sales"})  # R7: a sales ask was an order ask
 
 # Main's own `_AXES`, verbatim (`origin/main:tail/compile_state.py`), including its
 # note that the list is a DELIBERATE DUPLICATE kept in lockstep with

@@ -1195,7 +1195,8 @@ def _narrows_the_ranking(verdict: dict[str, Any]) -> bool:
     status = verdict.get("order_status")
     if status not in (None, "", TOP_SELLING_STATUS):
         return False
-    if verdict.get("domain_hint") not in (None, "", "order"):
+    # R7 (PLAN-prompt-dynamic-30sep D9): the ranking is the `sales` domain's own ask.
+    if verdict.get("domain_hint") not in (None, "", *contracts.ORDER_OR_SALES_DOMAINS):
         return False
     if any(verdict.get(k) is not None for k in ("rank_by", "basis", "rank_group", "rank_direction")):
         return True
@@ -1555,7 +1556,7 @@ def _answer_top_selling_pick(pending: Pending, decision: Decision, focus: Focus,
         slot["detail_code"] = code
     focus.top_selling = slot
     focus.status = TOP_SELLING_STATUS
-    focus.domains = ["order"]
+    focus.domains = [contracts.SALES_DOMAIN]
     trace.rules_fired.append("answer_top_selling_pick")
     return focus, with_answered_positions(pending, positions), None, True
 
