@@ -4,10 +4,11 @@ Mounted at ``/api/v1/public/portal`` beside the Customer asks routes. Auth: the 
 
 The view belongs to a portal contact linked to a sales agent (`sales_agent_for_contact`, the
 same resolution Customer asks uses). It lists the WhatsApp conversations of the customers
-assigned to that agent and reads one thread at a time through the SAME service cores the CRM's
-ticket drawer and Conversations inbox read (`ConversationSLATrackingService`,
-`TicketCommentService`), after its own scope check. Read-only: no reply, no note (owner ruling
-30 Sep, Q1). A contact linked to no agent gets 403 `NOT_A_SALES_AGENT`; the per-contact
+assigned to that agent and reads one thread at a time through the SAME service core the CRM's
+ticket drawer and Conversations inbox read (`ConversationSLATrackingService`), after its own
+scope check. Read-only: no reply, no note (owner ruling 30 Sep, Q1). Messages only: the staff
+internal notes on a contact are NOT served here (security review 30 Sep: a portal token is not a
+staff session, and the notes table is not company-scoped), so there is no `/comments` twin. A contact linked to no agent gets 403 `NOT_A_SALES_AGENT`; the per-contact
 `conversation` switch off gets 403 `FORM_TYPE_NOT_VISIBLE`; a contact outside the agent's
 customers is a 404 on every thread read.
 """
@@ -23,13 +24,11 @@ from app.database import get_db
 from app.models.portal import PortalToken
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.portal_conversation import PortalConversationRow
-from app.schemas.ticket_comment import TicketCommentResponse
 from app.services import portal_conversation_service, price_tag_request_service
 from app.services.error_handler import AppException, handle_not_found
 from app.services.portal_form_visibility_service import switched_form_types
 from app.services.portal_service import CONVERSATION_FORM_TYPE
 from app.services.sla_service import ConversationSLATrackingService
-from app.services.ticket_comment_service import TicketCommentService
 
 router = APIRouter(tags=["public-portal-conversations"])
 
@@ -110,15 +109,3 @@ def portal_conversation_search(
     agent_id = _agent_id(db, token)
     contact_pk = _contact_in_scope(db, agent_id, contact_id)
     return ConversationSLATrackingService(db).search_contact_thread(contact_pk, q=q, limit=limit)
-
-
-@router.get("/conversations/{contact_id}/comments", response_model=list[TicketCommentResponse])
-def portal_conversation_comments(
-    contact_id: str,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    """The internal notes on this contact, oldest first, as the ticket drawer shows them."""
-    agent_id = _agent_id(db, token)
-    contact_pk = _contact_in_scope(db, agent_id, contact_id)
-    return TicketCommentService(db).list_for_contact(contact_pk)

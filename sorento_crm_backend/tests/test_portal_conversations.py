@@ -27,7 +27,6 @@ from app.models.chat_history import ChatHistory
 from app.models.order import Customer
 from app.models.price_tag import ContactPortalFormOverride
 from app.models.sales_agent import SalesAgent
-from app.models.ticket_comment import ConversationTicketComment
 
 from ._pg_fixture import blank_session
 
@@ -299,7 +298,6 @@ def _every_route(world):
         BASE,
         f"{BASE}/{chin}/page",
         f"{BASE}/{chin}/search?q=tile",
-        f"{BASE}/{chin}/comments",
     )
 
 
@@ -438,35 +436,13 @@ def test_ac_cv14_the_search_finds_messages_in_the_thread(world):
     assert sorted(i["message_id"] for i in got.json()["items"]) == ["1700000000000", "1700000000090"]
 
 
-def test_ac_cv12_comments_on_the_contact_come_back_and_another_contacts_do_not(world):
-    db = world["db"]
-    db.add(
-        ConversationTicketComment(
-            id=_uid(),
-            tracking_id=None,
-            respond_contact_id=world["chin"],
-            author_name="Aina",
-            body="Chin usually orders 40+ boxes.",
-            mentioned_user_ids=[],
-            source="crm",
-            created_at=BASE_TIME + timedelta(minutes=5),
-        )
-    )
-    db.add(
-        ConversationTicketComment(
-            id=_uid(),
-            tracking_id=None,
-            respond_contact_id=world["lim"],
-            author_name="Aina",
-            body="not for this thread",
-            mentioned_user_ids=[],
-            source="crm",
-        )
-    )
-    db.flush()
+def test_security_internal_notes_are_not_served_to_the_portal(world):
+    """Security review 30 Sep: staff notes (author names, mentions, other companies' notes on a
+    shared contact) never reach a portal token holder. There is no `/comments` twin at all."""
     got = _client(world, world["agent_contact"]).get(f"{BASE}/{world['chin']}/comments")
-    assert got.status_code == 200, got.text
-    assert [c["body"] for c in got.json()] == ["Chin usually orders 40+ boxes."]
+    assert got.status_code == 404
+    page = _client(world, world["agent_contact"]).get(f"{BASE}/{world['chin']}/page").json()
+    assert "comments" not in page
 
 
 def test_ac_cv16_a_contact_outside_my_scope_is_404_on_every_thread_read(world):
@@ -475,7 +451,6 @@ def test_ac_cv16_a_contact_outside_my_scope_is_404_on_every_thread_read(world):
         for path in (
             f"{BASE}/{world[who]}/page",
             f"{BASE}/{world[who]}/search?q=hello",
-            f"{BASE}/{world[who]}/comments",
         ):
             assert client.get(path).status_code == 404, (who, path)
 

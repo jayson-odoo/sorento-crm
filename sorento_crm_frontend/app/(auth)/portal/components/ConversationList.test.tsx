@@ -44,7 +44,6 @@ vi.mock('@/lib/toast', () => ({
 const listConversations = vi.fn();
 const getConversationPage = vi.fn();
 const searchConversation = vi.fn();
-const getConversationComments = vi.fn();
 vi.mock('../lib/conversations-service', async () => {
   const actual = await vi.importActual<
     typeof import('../lib/conversations-service')
@@ -54,7 +53,6 @@ vi.mock('../lib/conversations-service', async () => {
     listConversations: (...a: unknown[]) => listConversations(...a),
     getConversationPage: (...a: unknown[]) => getConversationPage(...a),
     searchConversation: (...a: unknown[]) => searchConversation(...a),
-    getConversationComments: (...a: unknown[]) => getConversationComments(...a),
   };
 });
 
@@ -148,7 +146,6 @@ beforeEach(() => {
   });
   getConversationPage.mockResolvedValue(PAGE);
   searchConversation.mockResolvedValue([]);
-  getConversationComments.mockResolvedValue([]);
 });
 
 describe('ConversationList - cards (AC-CV5, AC-CV6, AC-CV7)', () => {
@@ -299,7 +296,6 @@ describe('ConversationList - the opened thread (AC-CV12, AC-CV15)', () => {
     expect(
       within(dialog).getByRole('button', { name: 'Search messages' }),
     ).toBeInTheDocument();
-    expect(getConversationComments).toHaveBeenCalledWith('c-chin');
     // Read-only (Q1): no composer, no mode switch, no note.
     expect(within(dialog).queryByRole('tab', { name: 'Reply' })).toBeNull();
     expect(within(dialog).queryByRole('tab', { name: 'Comment' })).toBeNull();

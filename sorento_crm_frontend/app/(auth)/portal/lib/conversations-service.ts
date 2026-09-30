@@ -11,15 +11,14 @@
  *     -> the CRM's contact thread page (ConversationThreadPage), same core, same shape
  *   GET /api/v1/public/portal/conversations/{contact_id}/search?q=&limit=
  *     -> { items: ConversationSearchMatch[] }
- *   GET /api/v1/public/portal/conversations/{contact_id}/comments -> ConversationCommentRenderable[]
- * A contact outside the agent's customers is a 404 on the three thread reads.
+ * A contact outside the agent's customers is a 404 on the two thread reads. Messages only: staff
+ * internal notes are never served to the portal (security review 30 Sep).
  */
 import { buildDataGridParams } from '@/lib/api-client';
 import type {
   ConversationSearchMatch,
   ConversationThreadPage,
 } from '@/components/common/conversation/useConversationThread';
-import type { ConversationCommentRenderable } from '@/components/common/RespondChatList';
 import { NotASalesAgentError } from './customer-asks-service';
 import { portalFetch, unwrap } from './portal-client';
 
@@ -98,17 +97,4 @@ export async function searchConversation(
     'Search failed',
   );
   return body.items ?? [];
-}
-
-export async function getConversationComments(
-  contactId: string,
-): Promise<ConversationCommentRenderable[]> {
-  const res = await portalFetch(
-    `${BASE}/${encodeURIComponent(contactId)}/comments`,
-  );
-  if (res.status === 403) throw new NotASalesAgentError();
-  return unwrap<ConversationCommentRenderable[]>(
-    res,
-    'Failed to load the notes',
-  );
 }

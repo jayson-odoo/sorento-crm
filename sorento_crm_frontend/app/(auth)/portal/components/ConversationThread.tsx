@@ -11,7 +11,6 @@ import { useConversationThread } from '@/components/common/conversation/useConve
 import { cn } from '@/lib/utils';
 
 import {
-  getConversationComments,
   getConversationPage,
   searchConversation,
   type PortalConversation,
@@ -22,13 +21,12 @@ const THREAD_POLL_MS = 10_000;
 
 export const portalThreadKey = (contactId: string | null) =>
   ['portal-conversation-thread', contactId] as const;
-export const portalCommentsKey = (contactId: string | null) =>
-  ['portal-conversation-comments', contactId] as const;
 
 /**
  * The opened conversation (AC-CV12 to AC-CV15): the SAME shared thread the ticket drawer and
  * the CRM inbox render, driven by portal-token loaders. Read-only by owner ruling (30 Sep, Q1):
- * no composer, no note, no reply action on a bubble.
+ * no composer, no note, no reply action on a bubble. Messages only: the staff internal notes are
+ * not served to the portal (security review 30 Sep), so no `comments` prop.
  */
 export function ConversationThread({
   contact,
@@ -50,12 +48,6 @@ export function ConversationThread({
     staleTime: 30_000,
     refetchInterval: THREAD_POLL_MS,
     refetchIntervalInBackground: false,
-    retry: 1,
-  });
-  const commentsQuery = useQuery({
-    queryKey: portalCommentsKey(contactId),
-    queryFn: () => getConversationComments(contactId as string),
-    enabled: !!contactId,
     retry: 1,
   });
 
@@ -148,7 +140,6 @@ export function ConversationThread({
             highlightTerm={thread.highlightTerm}
             focusMessageId={thread.focusMessageId}
             focusNonce={thread.focusNonce}
-            comments={commentsQuery.data ?? []}
             onJumpToMessage={thread.jumpToMessage}
             // No `onReply`: read-only (Q1). Copy on a bubble stays.
           />

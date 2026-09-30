@@ -132,8 +132,14 @@ twins already share one core.
 - The list carries `contact_id` (`respond_contacts.id`) as the only key; the thread routes accept
   that id only (a phone number or a Respond id is 404), and every thread read re-runs the list's
   own scope query for that one contact, so "may open" and "is a row" cannot disagree.
-- Internal notes render in the thread as in the ticket drawer (the mock the owner approved shows
-  one); they are read through `TicketCommentService.list_for_contact` after the scope check.
+- Internal notes are NOT served to the portal (security review 30 Sep, findings 1 and 2: a
+  portal token is not a staff session, and `conversation_ticket_comments` is not company-scoped,
+  so a shared contact's notes from another company would reach the agent). The approved mock's
+  drawer frame shows one note; the shipped thread is messages only. Bringing notes back needs an
+  owner ruling plus a company-scoped, portal-shaped comment read (crew-ask filed on PR #1384).
+- Follow-up (security review finding 4, not blocking): the thread page read reaches Respond.io
+  and fills the local cache on every call; a per-token rate limit on the two thread routes is a
+  ticket, the exposure is bounded to the caller's own scoped contacts.
 - Process note: the red tests were written first (backend commit 1c9d... `test(portal)`, then the
   FE specs) and made green in the same session rather than by separate tester / coder agents; the
   reviewer and security-reviewer passes ran as agents (Phase 3).

@@ -43,14 +43,14 @@ each criterion marked `[Q<n>]` changes if the owner rules otherwise. Plan:
 
 - AC-CV12: tapping a card opens the bottom Drawer (`max-h-[90dvh]`) with `RespondChatList`: the
   WhatsApp header (avatar initial, customer and contact name, phone), date pills, incoming and
-  outgoing bubbles with the sender label and receipt ticks the ticket drawer shows, and the
-  contact's internal notes in amber.
+  outgoing bubbles with the sender label and receipt ticks the ticket drawer shows. Messages
+  only: staff internal notes are never served to the portal (security review 30 Sep).
 - AC-CV13: scrolling up loads older pages until "Beginning of this conversation"; the
   jump-to-latest button appears when scrolled up and shows the count of newer messages.
 - AC-CV14: the header search finds messages in the whole thread (server search), steps between
   matches and jumps to a match outside the loaded window, exactly as in the ticket drawer.
 - AC-CV15 `[Q1]`: no composer, no reply, no note writing; nothing in the Drawer sends anything.
-- AC-CV16: the thread and search routes are portal-token routes that apply the same agent scope
+- AC-CV16: the thread page and search routes are portal-token routes that apply the same agent scope
   as the list (AC-CV4); a contact id outside the scope is 404, never a thread.
 
 ## D. Admin
