@@ -489,10 +489,8 @@ def top_selling_ceiling_note(slot: dict[str, Any]) -> str | None:
         return None
     if int(top_n) <= TOP_SELLING_N_CEILING:
         return None
-    return (
-        f"I can list at most the top {TOP_SELLING_N_CEILING:,} in one reply, "
-        f"so here are the top {TOP_SELLING_N_CEILING:,}."
-    )
+    # Promises no count: fewer items than the ceiling may have sold.
+    return f"I can list at most the top {TOP_SELLING_N_CEILING:,} in one reply."
 
 
 def _top_selling_question(slot: dict[str, Any]) -> tuple[str, str] | None:

@@ -314,7 +314,7 @@ class TestArgs:
         reply, captured = _turn(session_factory, monkeypatch, _ts(top_n=1500), "top 1500 by quantity")
         assert _calls(captured)[0]["n"] == 1000
         assert reply.startswith(
-            "I can list at most the top 1,000 in one reply, so here are the top 1,000.\n\n"
+            "I can list at most the top 1,000 in one reply.\n\n"
         ), reply[:200]
 
     def test_param_mapping_and_date_default(self, session_factory, monkeypatch, route) -> None:
@@ -1145,7 +1145,7 @@ class TestLongRankingParts:
         texts = self._send_texts(result)
         assert len(texts) > 1
         assert texts[0].startswith(
-            f"I can list at most the top 1,000 in one reply, so here are the top 1,000.\n\n(1/{len(texts)})\n"
+            f"I can list at most the top 1,000 in one reply.\n\n(1/{len(texts)})\n"
         ), texts[0][:200]
         assert all(len(t) <= 4096 for t in texts)
         assert "\n1000. SRTWC1000: " in texts[-1] and "SRTWC1001" not in texts[-1]
@@ -1196,3 +1196,12 @@ class TestSplitMarkedMessage:
             {"kind": "send_message", "text": "(2/2)\nb", "quick_replies": "x", "result_set": [1], "dry_run": False},
             attach,
         ]
+
+
+def test_complete_result_splits_its_send_actions_too() -> None:
+    """`/complete` serialises through `CompleteResult`, the other path n8n executes."""
+    from app.services.chatbot.engine import CompleteResult
+
+    action = {"kind": "send_message", "text": "(1/2)\na\n\n(2/2)\nb", "quick_replies": None, "result_set": None}
+    out = CompleteResult(turn_id="t", actions=[action]).as_dict()["actions"]
+    assert [a["text"] for a in out] == ["(1/2)\na", "(2/2)\nb"]

@@ -2602,7 +2602,7 @@ TOP_SELLING_REFUSED_OTHER_CUSTOMER = "Sorry, I can only share sales figures for 
 
 # The shared safety ceiling on a named N (owner, 30 Sep 2026: no 100 cap, "100, 200").
 # A COPY of the backend's `sales_report_service.TOP_SELLING_N_CEILING` (this package cannot
-# import the backend); `tests/test_top_selling_presenter.py` pins the two equal.
+# import the backend); `tests/test_presenters_top_selling.py` pins the two equal.
 TOP_SELLING_N_CEILING = 1000
 # One WhatsApp message's budget: the platform limit is 4096 characters, and the headroom
 # is for the line the lane may put above the first part and the "(k/m)" marker.
