@@ -111,3 +111,23 @@ describe('PromptChipEditor', () => {
     expect(editor().contains(window.getSelection()!.anchorNode)).toBe(true);
   });
 });
+
+describe('PromptChipEditor drop (security pass 2 nit)', () => {
+  it('a drop inserts plain text only, at the caret', () => {
+    render(<Harness initial={'Hello world'} />);
+    const textNode = editor().firstChild as Text;
+    const range = document.createRange();
+    range.setStart(textNode, 6);
+    range.collapse(true);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const html = '<b onmouseover="x">bold</b>';
+    const ev = fireEvent.drop(editor(), {
+      dataTransfer: { getData: (type: string) => (type === 'text/plain' ? 'dropped ' : html) },
+    });
+    expect(ev).toBe(false); // default prevented
+    expect(last).toBe('Hello dropped world');
+    expect(editor().querySelector('b')).toBeNull();
+  });
+});
