@@ -827,3 +827,203 @@ def test_compare_delivery_orders_is_pure_and_case_insensitive():
     assert result["differences"] == []
     assert result["only_in_excel"] == []
     assert sorted(result["only_in_pull"]) == ["ZZDO-0001|ZZAC-P2|ZZAC-WH1", "ZZDO-0002|ZZAC-P1|ZZAC-WH1"]
+
+
+# ================================================== security review fix round (30 Sep)
+
+
+class TestSecurityFixRound:
+    """Security-reviewer findings on 69c1f263: B1 (unbounded quantity), S1 (module gate
+    per entity), S2 (CSV formula guard), S3 (book validation), N1 (scope values), N2 (odd
+    vendor cells), N3 (document cap), N5 (test gaps)."""
+
+    def test_b1_compare_quantities_are_bounded_and_finite(self):
+        import json
+        import time
+
+        from app.services.autocount_pull_compare import compare_delivery_orders
+
+        pull_rows = _do_rows()
+        hostile = [
+            {"Doc No": "ZZDO-0001", "Item Code": "ZZAC-P1", "Location": "ZZAC-WH1", "Qty": q}
+            for q in ("1e3000000", "NaN", "sNaN", "Infinity", "-Infinity", "1e-3000000")
+        ]
+        started = time.monotonic()
+        result = compare_delivery_orders(hostile, pull_rows)
+        assert time.monotonic() - started < 2.0
+        json.dumps(result)  # serialisable: no NaN, no Infinity
+        # Every hostile value reads as 0 (the "not a quantity" rule), against the pull's 10.
+        assert result["differences"][-1]["excel"] == 0
+        assert result["differences"][-1]["pull"] == 10
+
+    def test_b1_compare_route_answers_200_on_hostile_quantity(self, env):
+        owner = env.user(SLUG)
+        env.as_user(owner)
+        job_id, _ = _seed_do_review_job(env, owner=owner)
+        resp = env.client.post(
+            f"{PULLS_URL}/{job_id}/compare",
+            json={"filename": "x.xlsx", "rows": [
+                {"Doc No": "ZZDO-0001", "Item Code": "ZZAC-P1", "Location": "ZZAC-WH1",
+                 "Qty": "1e3000000"},
+            ]},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["summary"]["different"] == 1
+
+    def test_s1_disabled_order_module_blocks_the_do_pull_under_strict_guard(self, env, monkeypatch):
+        from app.config import settings
+        from app.models.app_modules import AppModuleCatalog, TenantModule
+        from app.modules.runtime.installer import DEFAULT_TENANT_ID
+
+        monkeypatch.setattr(settings, "module_guard_strict", True)
+        for key, enabled in (("product", True), ("inventory", True), ("order", False)):
+            if not env.db.query(AppModuleCatalog).filter_by(module_key=key).first():
+                env.db.add(AppModuleCatalog(module_key=key, display_name=key, dependencies=[]))
+                env.db.flush()
+            env.db.add(TenantModule(tenant_id=DEFAULT_TENANT_ID, module_key=key, enabled=enabled))
+        env.db.commit()
+
+        owner = env.user(SLUG)
+        env.as_user(owner)
+        before = _job_count(env.db)
+        resp = env.post_pull(ENTITY)
+        assert resp.status_code == 403, resp.text
+        assert resp.json().get("code") == "MODULE_DISABLED"
+        assert env.fake.calls == [] and _job_count(env.db) == before
+
+        row = env.db.query(TenantModule).filter_by(tenant_id=DEFAULT_TENANT_ID, module_key="order").one()
+        row.enabled = True
+        env.db.commit()
+        assert env.post_pull(ENTITY).status_code == 200
+
+    def test_s2_csv_export_guards_formula_prefixes(self):
+        from app.api.v1.system.jobs import _csv_safe
+
+        assert _csv_safe("=cmd|' /C calc'!A0") == "'=cmd|' /C calc'!A0"
+        assert _csv_safe("+1+cmd") == "'+1+cmd"
+        assert _csv_safe("@SUM(1)") == "'@SUM(1)"
+        assert _csv_safe("\tx") == "'\tx"
+        assert _csv_safe("-2+3") == "-2+3"
+        assert _csv_safe("-5") == "-5"
+        assert _csv_safe("-.5") == "-.5"
+        assert _csv_safe("-cmd") == "'-cmd"
+        assert _csv_safe("DO-2609/0077") == "DO-2609/0077"
+        assert _csv_safe(None) == ""
+
+    def test_s3_book_must_match_the_ingest_pattern_and_the_rows(self, task_db, monkeypatch):
+        db, factory = task_db
+        fake = _FakeFoundryX()
+        _patch_foundryx(monkeypatch, fake, db)
+        _seed_masters(db)
+
+        rows = _do_rows()
+        header = _do_header(rows)
+        header["book"] = "db2"  # rows say db1
+        job_id = _prepare_do_preview(db, fake, rows=rows, header=header)
+        _run_preview(monkeypatch, factory, job_id)
+        row = _job_row(db, job_id)
+        assert row["status"] == "failed"
+        assert "more than one book" in (row["error"] or "")
+
+        bad = _do_rows(book="a-book-name-far-longer-than-twenty")
+        job_id = _prepare_do_preview(db, fake, rows=bad)
+        _run_preview(monkeypatch, factory, job_id)
+        row = _job_row(db, job_id)
+        assert row["status"] == "failed"
+        assert "cannot store" in (row["error"] or "")
+        assert _orders(db, 900001, 900002) == []
+
+    def test_n1_scope_values_are_validated(self, env):
+        owner = env.user(SLUG, "master_data.products.autocount_pull")
+        env.as_user(owner)
+        bad_day = env.client.post(PULLS_URL, json={"entity": ENTITY, "scope": {"fromDay": "01/09/2026"}})
+        assert bad_day.status_code == 422, bad_day.text
+        long_doc = env.client.post(PULLS_URL, json={"entity": ENTITY, "scope": {"docNo": "X" * 51}})
+        assert long_doc.status_code == 422, long_doc.text
+        on_products = env.client.post(
+            PULLS_URL, json={"entity": "products", "scope": {"fromDay": "2026-09-01"}}
+        )
+        assert on_products.status_code == 422, on_products.text
+        assert env.fake.calls == []
+
+    def test_n2_rows_and_download_tolerate_odd_vendor_cells(self, env):
+        owner = env.user(SLUG)
+        env.as_user(owner)
+        rows = _do_rows()
+        rows[0]["DocNo"] = 12345  # not a string
+        rows[0]["Details"][0]["Qty"] = "nan"
+        rows[0]["Details"][0]["Description"] = {"nested": "object"}
+        rows[0]["Details"][1]["UnitPrice"] = "not a number"
+        job_id, _ = _seed_do_review_job(env, owner=owner, rows=rows)
+
+        listed = env.client.get(f"{PULLS_URL}/{job_id}/rows", params={"query": "12345"})
+        assert listed.status_code == 200, listed.text
+        data = listed.json()["data"]
+        assert [r["doc_no"] for r in data] == ["12345", "12345"]
+        assert data[0]["qty"] is None and data[0]["description"] is None
+        assert data[1]["unit_price"] is None
+        assert env.client.get(f"{PULLS_URL}/{job_id}/download.xlsx").status_code == 200
+
+    def test_n3_snapshot_past_the_document_cap_is_refused(self, task_db, monkeypatch):
+        from app.services.autocount_pull_service import MAX_DELIVERY_ORDER_DOCS
+
+        db, factory = task_db
+        fake = _FakeFoundryX()
+        _patch_foundryx(monkeypatch, fake, db)
+        rows = [
+            {"source_ref": f"{BOOK}:DO:{i}", "DocKey": i, "DocNo": f"ZZCAP-{i}",
+             "DocDate": "2026-09-27", "Details": []}
+            for i in range(1, MAX_DELIVERY_ORDER_DOCS + 2)
+        ]
+        job_id = _prepare_do_preview(db, fake, rows=rows)
+        _run_preview(monkeypatch, factory, job_id)
+        row = _job_row(db, job_id)
+        assert row["status"] == "failed"
+        assert "narrower window" in (row["error"] or "")
+        assert _job_rows(db, job_id) == []
+
+    def test_n5_company_b_row_with_the_same_number_is_never_adopted(self, task_db, monkeypatch):
+        from app.models.company import Company
+        from app.models.order import Order
+
+        db, factory = task_db
+        fake = _FakeFoundryX()
+        _patch_foundryx(monkeypatch, fake, db)
+        ids = _seed_masters(db)
+        other = Company(id=str(uuid.uuid4()), name=f"{MARKER} B", code=f"ZB{uuid.uuid4().hex[:6]}")
+        db.add(other)
+        db.flush()
+        foreign = Order(order_number="ZZDO-0001", company_id=str(other.id),
+                        order_date=date(2026, 9, 26), transporter="B TRANS",
+                        order_status_id=ids["new_status"])
+        db.add(foreign)
+        db.commit()
+        foreign_id = str(foreign.id)
+        job_id = _prepare_do_apply(db, fake, rows=_do_rows())
+
+        _run_apply(monkeypatch, factory, job_id)
+
+        row = _job_row(db, job_id)
+        assert row["status"] == "finished", row["error"]
+        assert row["metadata"]["autocount_apply"]["counts"]["created"] == 2
+        assert row["metadata"]["autocount_apply"]["counts"]["adopted"] == 0
+        untouched = db.execute(
+            text("SELECT doc_key, transporter, company_id FROM orders WHERE id = :id"),
+            {"id": foreign_id},
+        ).mappings().one()
+        assert untouched["doc_key"] is None and untouched["transporter"] == "B TRANS"
+        assert str(untouched["company_id"]) == str(other.id)
+
+    def test_n5_xlsx_neutralises_a_formula_shaped_document_number(self, env):
+        owner = env.user(SLUG)
+        env.as_user(owner)
+        rows = _do_rows()
+        rows[0]["DocNo"] = "=cmd|' /C calc'!A0"
+        job_id, _ = _seed_do_review_job(env, owner=owner, rows=rows)
+
+        resp = env.client.get(f"{PULLS_URL}/{job_id}/download.xlsx")
+        assert resp.status_code == 200, resp.text
+        sheet = openpyxl.load_workbook(io.BytesIO(resp.content)).active
+        cell = sheet["A2"]
+        assert cell.value == "=cmd|' /C calc'!A0"
+        assert cell.data_type == "s"

@@ -251,15 +251,34 @@ def _do_label(doc_no: Any, item_code: Any, location: Any) -> str:
     return f"{str(doc_no or '').strip()}|{str(item_code or '').strip()}|{str(location or '').strip()}"
 
 
+#: The largest exponent a DO line quantity may carry before it reads as "not a quantity"
+#: (security review B1): `Decimal("1e3000000")` parses in microseconds but `int()` of it
+#: runs for minutes under the GIL, and a NaN/Infinity is not a quantity either. Anything a
+#: real delivery order could carry sits far below 10^15.
+_MAX_QTY_EXPONENT = 15
+
+
 def _do_qty(value: Any) -> Decimal:
+    """A bounded, finite quantity, else 0 - the same "unparseable reads as 0" rule
+    `_stock_qty` uses, tightened so a hostile or malformed cell can never cost more
+    than a normal one."""
     try:
-        return Decimal(str(value).strip())
+        parsed = Decimal(str(value).strip())
     except (InvalidOperation, ValueError, TypeError, AttributeError):
         return Decimal("0")
+    if not parsed.is_finite() or parsed == 0:
+        return Decimal("0")
+    if abs(parsed.adjusted()) > _MAX_QTY_EXPONENT:
+        return Decimal("0")
+    return parsed
 
 
 def _json_number(value: Decimal):
-    return int(value) if value == value.to_integral_value() else float(value)
+    """A JSON number for a quantity `_do_qty` already bounded - `int` only for a whole
+    value, never for anything with more than `_MAX_QTY_EXPONENT` digits."""
+    if value == value.to_integral_value():
+        return int(value)
+    return float(value)
 
 
 def compare_delivery_orders(excel_rows: list[dict], pull_rows: list[dict]) -> dict:

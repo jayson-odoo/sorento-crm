@@ -504,8 +504,8 @@ def paginate_rows(mapped_rows: list[dict], *, page: int, limit: int, query: Opti
     if needle:
         rows = [
             r for r in rows
-            if needle in (r.get("item_code") or "").lower()
-            or needle in (r.get("doc_no") or "").lower()
+            if needle in str(r.get("item_code") or "").lower()
+            or needle in str(r.get("doc_no") or "").lower()
         ]
     total = len(rows)
     total_pages = max(1, (total + limit - 1) // limit)
@@ -682,27 +682,42 @@ class SnapshotBookUnknown(ValueError):
     nothing can be previewed or applied. The message is safe to store as `import_jobs.error`."""
 
 
+#: FoundryX's own cap on a delivery-orders snapshot (DO-PULL-SS contract 16). Enforced here
+#: too (security review N3), so the preview and apply never trust the far side for the one
+#: bound that decides how long one transaction runs.
+MAX_DELIVERY_ORDER_DOCS = 10_000
+
+
 def snapshot_book(header: dict, rows: list[dict]) -> str:
     """The AutoCount book a delivery-orders snapshot came from (DO-PULL-SS contract): the
     header's own `book` when it carries one, else the prefix every row's `source_ref`
-    (`{book}:DO:{DocKey}`) agrees on. Rows naming two books, or none at all, raise - the
-    book is never guessed."""
-    from_header = str((header or {}).get("book") or "").strip()
-    if from_header:
-        return from_header
+    (`{book}:DO:{DocKey}`) agrees on. The book must satisfy the ingest's own `BOOK_PATTERN`
+    (security review S3: `source_book` is 20 characters and the key is case-sensitive), and
+    a header book must agree with the rows'. Rows naming two books, or none at all, raise -
+    the book is never guessed."""
+    from app.services.autocount_doc_ingest_service import BOOK_PATTERN
+
     books = set()
     for row in rows:
         ref = str((row or {}).get("source_ref") or "")
         prefix = ref.split(":", 1)[0].strip() if ":" in ref else ""
         if prefix:
             books.add(prefix)
-    if len(books) == 1:
-        return books.pop()
+    from_header = str((header or {}).get("book") or "").strip()
+    if from_header:
+        books.add(from_header)
     if not books:
         raise SnapshotBookUnknown("AutoCount snapshot names no book; pull again.")
-    raise SnapshotBookUnknown(
-        f"AutoCount snapshot names more than one book ({', '.join(sorted(books))}); pull again."
-    )
+    if len(books) > 1:
+        raise SnapshotBookUnknown(
+            f"AutoCount snapshot names more than one book ({', '.join(sorted(books))}); pull again."
+        )
+    book = books.pop()
+    if not BOOK_PATTERN.match(book):
+        raise SnapshotBookUnknown(
+            f"AutoCount snapshot names a book the CRM cannot store ({book[:40]!r}); pull again."
+        )
+    return book
 
 
 def _iso_day(value) -> Optional[str]:
@@ -719,16 +734,30 @@ def _iso_day(value) -> Optional[str]:
 
 
 def _number(value):
-    """A JSON number for the rows view - `None` stays `None`, a numeric string becomes a
-    float, anything else is left as it came."""
+    """A finite JSON number for the rows view, else `None` (security review N2): a vendor
+    cell that is not a number - text, a nested object, `nan`/`inf` - must neither crash the
+    xlsx builder nor fail JSON serialisation."""
     if value is None or isinstance(value, bool):
-        return value
+        return None
     if isinstance(value, (int, float)):
-        return value
-    try:
-        return float(str(value).strip())
-    except (TypeError, ValueError):
-        return value
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _cell_text(value) -> Optional[str]:
+    """A vendor cell as display text, else `None` - never a dict or list (openpyxl raises
+    on those), never a string longer than a spreadsheet cell can hold."""
+    if value is None or isinstance(value, (dict, list)):
+        return None
+    text_value = str(value).strip()
+    return text_value[:255] if text_value else None
 
 
 def map_delivery_order_rows(rows: list[dict]) -> list[dict]:
@@ -743,19 +772,19 @@ def map_delivery_order_rows(rows: list[dict]) -> list[dict]:
         for line in rec.get("Details") or []:
             if not isinstance(line, dict):
                 continue
-            item_code = str(line.get("ItemCode") or "").strip()
+            item_code = _cell_text(line.get("ItemCode"))
             if not item_code:
                 continue
             out.append({
-                "doc_no": rec.get("DocNo"),
-                "doc_date": _iso_day(rec.get("DocDate")),
-                "debtor_code": rec.get("DebtorCode"),
-                "debtor_name": rec.get("DebtorName"),
+                "doc_no": _cell_text(rec.get("DocNo")) or "",
+                "doc_date": _iso_day(_cell_text(rec.get("DocDate"))),
+                "debtor_code": _cell_text(rec.get("DebtorCode")),
+                "debtor_name": _cell_text(rec.get("DebtorName")),
                 "item_code": item_code,
-                "description": line.get("Description"),
-                "location": line.get("Location"),
+                "description": _cell_text(line.get("Description")),
+                "location": _cell_text(line.get("Location")),
                 "qty": _number(line.get("Qty")),
-                "uom": line.get("UOM"),
+                "uom": _cell_text(line.get("UOM")),
                 "unit_price": _number(line.get("UnitPrice")),
                 "sub_total": _number(line.get("SubTotal")),
             })

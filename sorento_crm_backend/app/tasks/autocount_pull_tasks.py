@@ -51,6 +51,7 @@ from app.services.autocount_doc_ingest_service import (
     AutocountDocIngestService,
 )
 from app.services.autocount_pull_service import (
+    MAX_DELIVERY_ORDER_DOCS,
     build_stock_workbook,
     classify_stock_rows,
     snapshot_book,
@@ -645,7 +646,13 @@ def _do_warning_suffix(warnings: list[str]) -> str:
 def _do_ingest(db, job: ImportJob, *, header: dict, rows: list[dict]) -> AutocountDocIngestService:
     """The ONE writer for a delivery-orders pull, preview and apply alike: the DO ingest,
     keyed to the pull's company and the snapshot's book. `snapshot_book` raises (a stored
-    `ValueError` subclass, "pull again") when the snapshot names no single book."""
+    `ValueError` subclass, "pull again") when the snapshot names no single valid book; a
+    snapshot past FoundryX's own document cap is refused here too (security review N3)."""
+    if len(rows) > MAX_DELIVERY_ORDER_DOCS:
+        raise ValueError(
+            f"AutoCount snapshot holds {len(rows)} documents, more than the "
+            f"{MAX_DELIVERY_ORDER_DOCS} a pull may cover; pull a narrower window."
+        )
     book = snapshot_book(header, rows)
     company_id = str(job.company_id) if job.company_id else None
     return AutocountDocIngestService(db, None, company_id=company_id, book=book)

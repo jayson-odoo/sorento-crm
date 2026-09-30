@@ -17,12 +17,14 @@ route reveals nothing about a pull the caller does not already own.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Response, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.base import get_company_scope
@@ -46,11 +48,18 @@ router = APIRouter()
 _XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
+_SCOPE_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+#: The ingest's own `DocNo` ceiling (`autocount_doc_ingest_service._parse`).
+_SCOPE_DOC_NO_MAX = 50
+
+
 class PullStartBody(BaseModel):
     entity: str
     # DO-PULL-SS contract (delivery orders): a day window or one document, sent FLAT to the
     # FoundryX build. Keys outside `SCOPE_KEYS` are 422 rather than silently dropped, so a
-    # misspelt `fromDate` never becomes a 31-day pull nobody asked for.
+    # misspelt `fromDate` never becomes a 31-day pull nobody asked for; a day must be
+    # `YYYY-MM-DD`, a document number at most 50 characters (security review N1), and the
+    # two entities whose snapshot takes no scope refuse one rather than forward it.
     scope: Optional[dict[str, str]] = Field(default=None, max_length=3)
 
     @field_validator("scope")
@@ -64,7 +73,19 @@ class PullStartBody(BaseModel):
                 f"unknown scope key(s) {', '.join(unknown)}; expected "
                 f"{', '.join(pull_service.SCOPE_KEYS)}"
             )
-        return {k: str(v).strip() for k, v in value.items() if str(v).strip()} or None
+        cleaned = {k: str(v).strip() for k, v in value.items() if str(v).strip()}
+        for key in ("fromDay", "toDay"):
+            if key in cleaned and not _SCOPE_DAY.match(cleaned[key]):
+                raise ValueError(f"{key} must be a day as YYYY-MM-DD")
+        if len(cleaned.get("docNo", "")) > _SCOPE_DOC_NO_MAX:
+            raise ValueError(f"docNo is longer than {_SCOPE_DOC_NO_MAX} characters")
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def _scope_only_for_delivery_orders(self):
+        if self.scope and self.entity != "delivery_orders":
+            raise ValueError("scope is accepted for delivery_orders only")
+        return self
 
 
 class ComparePostBody(BaseModel):
@@ -90,13 +111,40 @@ def _permission_slug(entity: str) -> str:
 
 
 def _require_entity_permission(db: Session, user: dict, entity: str) -> None:
+    """The entity's own slug, AND (security review S1) the module that slug maps to when
+    the module guard is strict - the same check `dependencies.require_permission` runs,
+    which these routes bypass because the entity is only known once the pull is resolved.
+    The router-level `require_any_module_enabled("product", "inventory", "order")` cannot
+    do this: it passes when ANY of the three is enabled, so without this a tenant with
+    `order` switched off could still pull delivery orders into it."""
     slug = _permission_slug(entity)
-    if not UserPermissionService(db).check_user_has_permission(user["id"], slug):
+    service = UserPermissionService(db)
+    if not service.check_user_has_permission(user["id"], slug):
         raise AppException(
             status_code=status.HTTP_403_FORBIDDEN,
             message=f"Permission required: {slug}",
             code="FORBIDDEN",
         )
+    if getattr(settings, "module_guard_strict", False):
+        from app.modules.runtime.installer import (
+            DEFAULT_TENANT_ID,
+            is_module_enabled,
+            tenant_has_any_module_row,
+        )
+        from app.modules.runtime.permission_module_map import module_for_permission
+
+        if not (
+            service.get_user_role_slugs(user["id"])
+            & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}
+        ):
+            module = module_for_permission(slug)
+            if module and tenant_has_any_module_row(db, DEFAULT_TENANT_ID):
+                if not is_module_enabled(db, DEFAULT_TENANT_ID, module):
+                    raise AppException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        message=f"Module not enabled: {module}",
+                        code="MODULE_DISABLED",
+                    )
 
 
 def _resolve_pull(db: Session, current_user: dict, job_id: str) -> ImportJob:

@@ -226,6 +226,34 @@ advisory (P11), the headline says the differences change nothing**. Q5 a DO only
 AutoCount still lands on Confirm: **yes**. Q6 `Overall Tracking` not compared: **yes, the
 tracking upload stays the writer for those columns**.
 
+## 1.9 Phase 3 security review (30 Sep, on 69c1f263) and what changed
+
+Verdict "needs work", one blocker, all taken in the fix round (`TestSecurityFixRound`):
+
+- **B1** the DO compare parsed a quantity into an unbounded `Decimal` and called `int()` on
+  it; `"1e3000000"` pinned the API process under the GIL. Now bounded (`_MAX_QTY_EXPONENT`
+  15, finite only), anything past it reads as 0.
+- **S1** the entity permission check never looked at the module guard, while the router gate
+  passes when ANY of product / inventory / order is enabled. `_require_entity_permission` now
+  runs the same module check `dependencies.require_permission` runs (strict mode, admin and
+  superadmin bypass). Products and stock gain the same check.
+- **S2** the job rows CSV export wrote `value` / `message` raw; a DocNo shaped like a formula
+  would run when opened. `_csv_safe` prefixes formula-shaped cells (a negative number stays
+  a number).
+- **S3** the snapshot book is checked against the ingest's `BOOK_PATTERN`, and a header book
+  must agree with the rows'.
+- **N1** scope days must be `YYYY-MM-DD`, `docNo` at most 50 characters, scope refused on
+  products / stock. **N2** the rows view and workbook tolerate non-string, nested and
+  non-finite vendor cells. **N3** a snapshot past 10,000 documents is refused CRM-side.
+  **N5** tests added: company B's same-numbered DO never adopted, formula-shaped DocNo
+  neutralised in the xlsx, the hostile quantities.
+- **N4** (apply failure handler logs `exc_info`, shared with products and stock): left as
+  is; the per-record SAVEPOINTs flush before the batch commit, so a commit-time driver
+  message carrying a record is improbable. Recorded, not changed in this lane.
+
+Clean: multi-company scoping (every ingest lookup filters `company_id`), owner-only routes,
+the scope dict (allow-listed twice, JSON body only, never the URL), the migration's sweep.
+
 ## 2. Build order (tests first)
 
 1. This plan + UAC, first commit, draft PR (`crew-lane: DO-PULL-CRM`).

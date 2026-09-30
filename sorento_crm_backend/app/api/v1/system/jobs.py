@@ -173,6 +173,22 @@ async def get_job(
         raise handle_internal_error(str(e))
 
 
+#: Cell prefixes a spreadsheet reads as a formula when a CSV is opened (DO-PULL-CRM
+#: security review S2: an AutoCount document number or message is untrusted text that
+#: lands in `value` / `message`). A leading `-` is guarded only when what follows is not a
+#: number, so a negative quantity still exports as a number.
+_CSV_FORMULA_PREFIXES = ("=", "+", "@", "\t", "\r")
+
+
+def _csv_safe(value) -> str:
+    text_value = str(value) if value is not None else ""
+    if text_value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + text_value
+    if text_value.startswith("-") and not text_value[1:2].isdigit() and text_value[1:2] != ".":
+        return "'" + text_value
+    return text_value
+
+
 def _resolve_owned_job(db: Session, job_id: str, current_user: dict) -> ImportJob:
     """Job lookup + ownership check shared by the row endpoints (mirrors get_job).
 
@@ -317,8 +333,8 @@ async def export_job_rows(
                             r.outcome,
                             r.code,
                             label_for(r.code),
-                            r.message or "",
-                            r.value or "",
+                            _csv_safe(r.message or ""),
+                            _csv_safe(r.value or ""),
                             json.dumps(r.identity, ensure_ascii=False) if r.identity else "",
                             r.entity_id or "",
                         ]
