@@ -1530,7 +1530,27 @@ export function FulfilmentBoardPanel({
         return;
       }
 
-      const result = await confirmMany.mutateAsync(body);
+      const posted = await confirmMany.mutateAsync(body);
+      // Lines the dry run held back were never posted, so the real press cannot name them:
+      // carry them into the displayed entry (union by line no) so the scope is never silent.
+      const result = {
+        ...posted,
+        results: posted.results.map((entry) => {
+          const dryRun = answer.get(entry.pso_id);
+          if (!entry.ok || !dryRun) return entry;
+          const seen = new Set((entry.lines_held_back ?? []).map((line) => line.line_no));
+          const heldBack = [
+            ...(entry.lines_held_back ?? []),
+            ...(dryRun.lines_held_back ?? []).filter((line) => !seen.has(line.line_no)),
+          ];
+          return {
+            ...entry,
+            lines_held_back: heldBack.length > 0 ? heldBack : entry.lines_held_back,
+            lines_fulfilled_skipped:
+              entry.lines_fulfilled_skipped ?? dryRun.lines_fulfilled_skipped ?? null,
+          };
+        }),
+      };
       const labelOf = new Map(
         contributions.map((entry) => [
           entry.project_line_id ?? '',

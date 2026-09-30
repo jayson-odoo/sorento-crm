@@ -4638,4 +4638,44 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     expect(confirmMany).not.toHaveBeenCalled();
   });
 
+
+  it('names the lines the dry run held back in the results, and counts them in the toast', async () => {
+    getPlanningBoard.mockResolvedValue(twoLines());
+    previewConfirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          preview: true,
+          lines_confirmed: [{ project_line_id: 'pl-so-a-6', line_no: 6, item_code: 'SRTWT6808' }],
+          lines_withdrawn: [],
+          lines_held_back: [{ line_no: 9, item_code: 'SRTWT6808', reason: 'only 3 free' }],
+        },
+      ],
+    });
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 2,
+          lines_confirmed: [{ project_line_id: 'pl-so-a-6', line_no: 6, item_code: 'SRTWT6808' }],
+          lines_carried: 0,
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+
+    const block = await screen.findByTestId('board-confirm-results');
+    expect(block).toHaveTextContent('only 3 free');
+    expect(block).toHaveTextContent('Line 9');
+    const toasts = [
+      ...(toast.success as unknown as { mock: { calls: unknown[][] } }).mock.calls,
+      ...(toast.warning as unknown as { mock: { calls: unknown[][] } }).mock.calls,
+    ].map((call) => String(call[0]));
+    expect(toasts.some((text) => text.includes('1 held back'))).toBe(true);
+  });
+
 });
