@@ -1144,7 +1144,7 @@ describe('FulfilmentBoardPanel: a background refetch dims the board, never blank
 
     fireEvent.click(screen.getByTestId('board-confirm'));
     await screen.findByRole('alertdialog');
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
 
     // In flight: the row already on screen stays mounted and dims - never a skeleton, never
@@ -1658,7 +1658,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
 
     renderPanel(['SO403340']);
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0];
@@ -1687,7 +1687,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
 
     renderPanel(['SO403340']);
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith(
@@ -1713,7 +1713,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
 
     renderPanel(['SO403340']);
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith(
@@ -1733,7 +1733,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     const boardCallsBefore = getPlanningBoard.mock.calls.length;
 
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     await waitFor(() =>
@@ -1757,7 +1757,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
 
     renderPanel(['SO403340']);
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     expect(
       await screen.findByText(
@@ -1810,7 +1810,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     );
 
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     expect(confirmMany.mock.calls[0][0].orders[0].lines).toHaveLength(1);
   });
@@ -1891,7 +1891,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)');
 
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     expect(
       confirmMany.mock.calls[0][0].orders[0].lines
@@ -2079,7 +2079,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     // S4: a press that left something out is not an unqualified success (the owner's own
@@ -2174,7 +2174,7 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
 
     renderPanel(['SO403340']);
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(adoptSalesOrder).toHaveBeenCalledWith('so-a'));
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
@@ -2199,7 +2199,7 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
 
     renderPanel(['SO403340']);
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     expect(adoptSalesOrder).not.toHaveBeenCalled();
@@ -2213,7 +2213,7 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
 
     renderPanel(['SO403340']);
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(adoptSalesOrder).toHaveBeenCalledWith('so-a'));
     expect(confirmMany).not.toHaveBeenCalled();
@@ -2304,7 +2304,7 @@ describe('FulfilmentBoardPanel: Confirm posts against the id adopt itself return
 
     renderPanel(['SO419851']);
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() =>
       expect(adoptSalesOrder).toHaveBeenCalledWith('so-419851'),
@@ -2334,7 +2334,7 @@ describe('FulfilmentBoardPanel: Confirm posts against the id adopt itself return
     expect(screen.queryByText(/SO419851/)).not.toBeInTheDocument();
 
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() =>
       expect(adoptSalesOrder).toHaveBeenCalledWith('so-419851'),
@@ -2390,7 +2390,7 @@ describe('FulfilmentBoardPanel: a Confirm that posts nothing says so', () => {
 
     renderPanel(['SO419852']);
     await openConfirmDialog();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => {
       const match = screen.queryAllByText(/SO419852/).find((node) =>
@@ -3092,7 +3092,7 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
     fireEvent.click(screen.getByTestId('board-confirm'));
     await screen.findByText('Confirm 2 lines across 2 orders?');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const body = confirmMany.mock.calls[0][0] as {
@@ -3210,7 +3210,7 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
       await screen.findByText('Confirm 2 lines across 2 orders?'),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const body = confirmMany.mock.calls[0][0] as {
       orders: { pso_id: string }[];
@@ -3261,7 +3261,7 @@ describe('FulfilmentBoardPanel: Confirm counts only saved lines (8 Sep 2026 ruli
     );
 
     fireEvent.click(screen.getByTestId('board-confirm'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const body = confirmMany.mock.calls[0][0] as {
@@ -3592,7 +3592,7 @@ describe('FulfilmentBoardPanel: an order whose change is already applied is not 
     await screen.findByTestId('fulfilment-board-matrix');
 
     fireEvent.click(screen.getByTestId('board-confirm'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     expect(
       await screen.findByText(
@@ -4190,7 +4190,7 @@ describe('FulfilmentBoardPanel: a local draft is dropped once the server confirm
 
     fireEvent.click(await screen.findByTestId('board-confirm'));
     await screen.findByRole('alertdialog');
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
 
     await waitFor(() =>
@@ -4245,7 +4245,7 @@ describe('FulfilmentBoardPanel: a local draft is dropped once the server confirm
     // the wire underneath it, and its own confirm attempt was refused, never committed.
     fireEvent.click(await screen.findByTestId('board-confirm'));
     await screen.findByRole('alertdialog');
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(getPlanningBoard).toHaveBeenCalledTimes(2));
 
@@ -4307,7 +4307,7 @@ describe("FulfilmentBoardPanel: Confirm carries a covered line's staged reject (
     await screen.findByTestId('fulfilment-board-matrix');
     fireEvent.click(screen.getByTestId('board-confirm'));
     await screen.findByRole('alertdialog');
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0] as [
@@ -4338,7 +4338,7 @@ describe("FulfilmentBoardPanel: Confirm carries a covered line's staged reject (
     await screen.findByTestId('fulfilment-board-matrix');
     fireEvent.click(screen.getByTestId('board-confirm'));
     await screen.findByRole('alertdialog');
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('· 1 withdrawn')),
@@ -4380,7 +4380,7 @@ describe('FulfilmentBoardPanel: line attachments lookup (#1312, AC-U2, fix round
  * the lines it will post with a tick box each (AC-D1..D3), and the toast and results block
  * read the lines the SERVER says it wrote (AC-R1..R4).
  *
- * The existing tests above press the dialog action through `{ name: 'Confirm' }`; the action
+ * The existing tests above press the dialog action through `{ name: /^Confirm( \d+ lines?)?$/ }`; the action
  * reads "Confirm N lines" from here on, so the coder switches those to
  * `{ name: /^Confirm( \d+ lines?)?$/ }`. They are deliberately not edited by this file.
  */

@@ -871,7 +871,15 @@ function compositionText(
 export function confirmDialogRowsFor(
   contributions: BoardContribution[],
   draft: BoardDraft,
-  context: { currentUserName: string | null | undefined; openedAt: Date },
+  context: {
+    currentUserName: string | null | undefined;
+    openedAt: Date;
+    /**
+     * Orders with no planning record yet: the press adopts them first, which mints the mirror
+     * ids, so their lines are listed as postable rows rather than as `no_mirror` left-outs.
+     */
+    unadoptedSalesOrderIds?: ReadonlySet<string>;
+  },
 ): { rows: ConfirmDialogRow[]; notPosted: ConfirmDialogNotPosted[] } {
   const rows: ConfirmDialogRow[] = [];
   const notPosted: ConfirmDialogNotPosted[] = [];
@@ -906,7 +914,13 @@ export function confirmDialogRowsFor(
       notPosted.push({ ...identity, reason: STALE_NOT_POSTED_REASON });
       continue;
     }
-    const built = lineFor(contribution, decision);
+    const adoptedLater =
+      !contribution.project_line_id &&
+      context.unadoptedSalesOrderIds?.has(contribution.sales_order_id);
+    const built = lineFor(
+      adoptedLater ? { ...contribution, project_line_id: 'pending-adoption' } : contribution,
+      decision,
+    );
     if (built === null) continue;
     if (typeof built === 'string') {
       const [notice] = unpostableNotices(built, [{ contribution, reason: built }]);

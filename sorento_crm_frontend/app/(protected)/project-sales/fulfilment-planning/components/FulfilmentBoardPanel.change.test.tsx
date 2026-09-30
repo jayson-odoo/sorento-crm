@@ -537,7 +537,7 @@ describe('the pre-marked decision, and Confirm', () => {
     );
 
     fireEvent.click(screen.getByTestId('board-confirm'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0];
@@ -761,7 +761,7 @@ describe('S5: Change proposed is not Saved (owner ruling 25 Sep 2026, issue #124
     ).toHaveTextContent('Change proposed');
 
     fireEvent.click(screen.getByTestId('board-confirm'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0];

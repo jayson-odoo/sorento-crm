@@ -28,8 +28,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { useSession } from 'next-auth/react';
 import { AlertTriangle } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   DropdownMenu,
@@ -41,7 +44,7 @@ import {
 import DeferredActionButton from '@/components/common/DeferredActionButton';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, timeAgo } from '@/lib/helpers';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -65,6 +68,7 @@ import {
 import {
   boardAxis,
   bucketLabelText,
+  confirmDialogRowsFor,
   confirmSummaryFor,
   decisionHeaderText,
   orderListRows,
@@ -1172,7 +1176,47 @@ export function FulfilmentBoardPanel({
   );
 
   const confirmMany = useConfirmManyMutation();
-  const [confirmAllOpen, setConfirmAllOpen] = React.useState(false);
+  const [confirmAllOpenState, setConfirmAllOpenState] = React.useState(false);
+  // Lines the planner unticked in the pre-confirm dialog: left out of the body, drafts kept.
+  const [confirmExcluded, setConfirmExcluded] = React.useState<ReadonlySet<string>>(new Set());
+  const confirmAllOpen = confirmAllOpenState;
+  const setConfirmAllOpen = React.useCallback((open: boolean) => {
+    if (open) setConfirmExcluded(new Set());
+    setConfirmAllOpenState(open);
+  }, []);
+  const { data: session } = useSession();
+  const currentUserName = session?.user?.name ?? '';
+  // When the board was opened: a draft saved before this is somebody else's earlier work.
+  const openedAt = React.useRef(new Date());
+  // The lines each order's press posted, by planning record, so the results block can set
+  // them beside what the server says it wrote.
+  const [postedLines, setPostedLines] = React.useState<
+    Record<string, { project_line_id: string; label: string }[]>
+  >({});
+
+  // The pre-confirm dialog: one row per line this press will post, and the saved lines it
+  // cannot post. Computed only while the dialog is open.
+  const dialogRows = React.useMemo(() => {
+    if (!confirmAllOpen) return null;
+    const unadopted = new Set(
+      (board.data?.orders ?? [])
+        .filter((order) => !order.project_sales_order_id)
+        .map((order) => order.sales_order_id),
+    );
+    return confirmDialogRowsFor(allContributions, draftWithoutPreMark, {
+      currentUserName,
+      openedAt: openedAt.current,
+      unadoptedSalesOrderIds: unadopted,
+    });
+  }, [confirmAllOpen, allContributions, draftWithoutPreMark, board.data?.orders, currentUserName]);
+  const scopedSummary = React.useMemo(
+    () =>
+      confirmSummaryFor(allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds, {
+        excludeKeys: confirmExcluded,
+      }),
+    [allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds, confirmExcluded],
+  );
+
   /**
    * Undo all throws away every decision taken since the board was opened, and there is no way
    * back to them: it is destructive in the only sense a client draft can be, so it is
@@ -1217,6 +1261,7 @@ export function FulfilmentBoardPanel({
         contributions
           .filter((contribution) => {
             if (contribution.unplannable) return false;
+            if (confirmExcluded.has(contribution.key)) return false;
             const decision = draftWithoutPreMark[contribution.key];
             // A COVERED reject is a WITHDRAWAL this press carries out (owner ruling 23 Sep
             // 2026, `PLAN-board-reject-on-confirmed-line.md`: "we should confirm the
@@ -1316,7 +1361,9 @@ export function FulfilmentBoardPanel({
           } as ConfirmManyOrderResult);
           continue;
         }
-        const lines = confirmLinesFor(contributions, salesOrderId, draftWithoutPreMark);
+        const lines = confirmLinesFor(contributions, salesOrderId, draftWithoutPreMark, {
+          excludeKeys: confirmExcluded,
+        });
         // AC-B3/AC-B5: THIS order's own batch, not the board-wide `batchId` - two orders on
         // two different pending batches each answer their own. The batches the screen LOADED
         // first (it was opened on one), and the BOARD'S own statement of the newest pending
@@ -1332,7 +1379,9 @@ export function FulfilmentBoardPanel({
         // scope") - an order on one never carries `rejected_line_ids` from here.
         const rejectedLineIds = orderBatchId
           ? []
-          : rejectedCoveredLineIdsFor(contributions, salesOrderId, draftWithoutPreMark);
+          : rejectedCoveredLineIdsFor(contributions, salesOrderId, draftWithoutPreMark, {
+              excludeKeys: confirmExcluded,
+            });
         // S4 (fix round, review): the covered-rejected lines THIS order's own batch just
         // zeroed out of `rejectedLineIds` above, so the planner is told what did not ride
         // along rather than the counter simply promising it and the press posting nothing
@@ -1425,6 +1474,23 @@ export function FulfilmentBoardPanel({
       const result = await confirmMany.mutateAsync(
         bodyBatchId ? { orders, batch_id: bodyBatchId } : { orders },
       );
+      const labelOf = new Map(
+        contributions.map((entry) => [
+          entry.project_line_id ?? '',
+          `line ${entry.line_no} ${entry.item_code}`,
+        ]),
+      );
+      setPostedLines(
+        Object.fromEntries(
+          orders.map((order) => [
+            order.pso_id,
+            order.lines.map((line) => ({
+              project_line_id: line.project_line_id,
+              label: labelOf.get(line.project_line_id) ?? 'a line',
+            })),
+          ]),
+        ),
+      );
       setBatchResults([...skipped, ...result.results]);
 
       // What the press produced, in the three numbers a planner is about to act on (D3):
@@ -1447,12 +1513,13 @@ export function FulfilmentBoardPanel({
         (total, entry) => total + (entry.landed_buy_notices?.length ?? 0),
         0,
       );
-      const linesConfirmed =
-        orders
-          .filter((order) => ok.some((entry) => entry.pso_id === order.pso_id))
-          .reduce((total, order) => total + order.lines.length, 0) -
-        fulfilled -
-        heldBack;
+      // The server's own echo of the lines it wrote; only a server that predates the field
+      // falls back to what this press posted.
+      const linesConfirmed = ok.reduce((total, entry) => {
+        if (entry.lines_confirmed) return total + entry.lines_confirmed.length;
+        const posted = orders.find((order) => order.pso_id === entry.pso_id)?.lines.length ?? 0;
+        return total + posted - (entry.lines_fulfilled_skipped ?? 0) - (entry.lines_held_back?.length ?? 0);
+      }, 0);
       const transfers = ok.reduce((total, entry) => total + (entry.transfers_written ?? 0), 0);
       // What was already on a warehouse's list and stayed there (R16). Said only when there
       // IS one: on a first confirmation it is always zero, and a zero in the sentence would
@@ -1491,10 +1558,24 @@ export function FulfilmentBoardPanel({
       const committedPsoIds = new Set(
         result.results.filter((entry) => entry.ok).map((entry) => entry.pso_id),
       );
+      // Only the lines the server says it wrote lose their local draft; a posted line it did
+      // not name keeps its Saved pill. A server with no echo keeps the all-posted behaviour.
+      const echoedByPso = new Map(
+        result.results
+          .filter((entry) => entry.ok && entry.lines_confirmed)
+          .map((entry) => [
+            entry.pso_id,
+            new Set((entry.lines_confirmed ?? []).map((line) => line.project_line_id)),
+          ]),
+      );
       const committedLineIds = new Set(
         orders
           .filter((order) => committedPsoIds.has(order.pso_id))
-          .flatMap((order) => order.lines.map((line) => line.project_line_id)),
+          .flatMap((order) =>
+            order.lines
+              .map((line) => line.project_line_id)
+              .filter((id) => echoedByPso.get(order.pso_id)?.has(id) ?? true),
+          ),
       );
       setDraft((current) => {
         const next = { ...current };
@@ -1524,6 +1605,8 @@ export function FulfilmentBoardPanel({
     appliedSoNumbers,
     batchIdBySoNumber,
     unpostable,
+    confirmExcluded,
+    setConfirmAllOpen,
   ]);
 
   /**
@@ -2114,6 +2197,47 @@ export function FulfilmentBoardPanel({
                       ? `${label}: confirmed as revision ${result.decision_revision} (${result.inquiry_rows_created ?? 0} purchase row${(result.inquiry_rows_created ?? 0) === 1 ? '' : 's'} handed over)`
                       : `${label}: ${result.error ?? 'refused'}`}
                   </span>
+                  {result.ok && result.lines_confirmed && result.lines_confirmed.length > 0 && (
+                    <ul
+                      data-testid={`board-confirm-lines-${result.pso_id}`}
+                      className="space-y-0.5"
+                    >
+                      <li className="text-sm break-words">
+                        {`Confirmed: ${result.lines_confirmed
+                          .map((line) => `line ${line.line_no ?? '?'} ${line.item_code ?? ''}`.trim())
+                          .join(' · ')}`}
+                      </li>
+                      {(result.lines_carried ?? 0) > 0 && (
+                        <li className="text-sm text-muted-foreground">
+                          {`${result.lines_carried} carried forward unchanged`}
+                        </li>
+                      )}
+                    </ul>
+                  )}
+                  {(() => {
+                    if (!result.ok) return null;
+                    if (!result.lines_confirmed) {
+                      return (
+                        <p className="text-sm text-muted-foreground">
+                          The server did not name the lines it confirmed.
+                        </p>
+                      );
+                    }
+                    const posted = postedLines[result.pso_id] ?? [];
+                    if (result.lines_confirmed.length >= posted.length) return null;
+                    const echoed = new Set(result.lines_confirmed.map((line) => line.project_line_id));
+                    const missing = posted.filter((line) => !echoed.has(line.project_line_id));
+                    return (
+                      <p
+                        data-testid={`board-confirm-mismatch-${result.pso_id}`}
+                        className="rounded-md bg-amber-50 px-2 py-1.5 text-sm break-words text-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
+                      >
+                        {`Posted ${posted.length}, server confirmed ${result.lines_confirmed.length}: ${missing
+                          .map((line) => line.label)
+                          .join(' · ')}`}
+                      </p>
+                    );
+                  })()}
                   {failing.length > 0 && (
                     <ul
                       className={`space-y-0.5 rounded-md px-2 py-1.5 ${
@@ -2401,9 +2525,120 @@ export function FulfilmentBoardPanel({
               </AlertDialogDescription>
             ) : null}
           </AlertDialogHeader>
+          {dialogRows && (
+            <div className="max-h-[50vh] space-y-3 overflow-y-auto" data-testid="board-confirm-dialog-list">
+              {(() => {
+                const orderIds = [
+                  ...new Set([
+                    ...dialogRows.rows.map((row) => row.sales_order_id),
+                    ...dialogRows.notPosted.map((row) => row.sales_order_id),
+                  ]),
+                ];
+                return orderIds.map((salesOrderId) => {
+                  const standing = board.data?.orders.find(
+                    (order) => order.sales_order_id === salesOrderId,
+                  );
+                  const rows = dialogRows.rows.filter((row) => row.sales_order_id === salesOrderId);
+                  const left = dialogRows.notPosted.filter(
+                    (row) => row.sales_order_id === salesOrderId,
+                  );
+                  return (
+                    <div key={salesOrderId} className="space-y-1.5">
+                      <p className="text-sm font-medium break-words">
+                        {[standing?.so_number ?? rows[0]?.so_number ?? left[0]?.so_number, standing?.customer_name]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </p>
+                      <ul className="space-y-1.5">
+                        {rows.map((row) => {
+                          const ticked = !confirmExcluded.has(row.key);
+                          const flagged = row.savedByOther || row.savedBefore;
+                          const when = row.saved_at ? timeAgo(row.saved_at) : '';
+                          const mine = !row.savedByOther;
+                          return (
+                            <li
+                              key={row.key}
+                              data-testid={`board-confirm-dialog-row-${row.key}`}
+                              className="flex items-start gap-2 text-sm"
+                            >
+                              <Checkbox
+                                checked={ticked}
+                                aria-label={`Line ${row.line_no} ${row.item_code}`}
+                                onCheckedChange={(value) =>
+                                  setConfirmExcluded((current) => {
+                                    const next = new Set(current);
+                                    if (value) next.delete(row.key);
+                                    else next.add(row.key);
+                                    return next;
+                                  })
+                                }
+                                className="mt-0.5"
+                              />
+                              <div className="min-w-0 flex-1 space-y-0.5">
+                                <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 break-words">
+                                  <span>{`Line ${row.line_no} · ${row.item_code}`}</span>
+                                  <Badge
+                                    size="sm"
+                                    variant={
+                                      row.verdict === 'rejected'
+                                        ? 'destructive'
+                                        : row.verdict === 'amended'
+                                          ? 'warning'
+                                          : 'success'
+                                    }
+                                    appearance="light"
+                                  >
+                                    {row.verdict === 'approved'
+                                      ? 'Approved'
+                                      : row.verdict === 'amended'
+                                        ? 'Amended'
+                                        : 'Rejected'}
+                                  </Badge>
+                                  {row.composition && <span>{`· ${row.composition}`}</span>}
+                                  {!flagged && row.saved_by && (
+                                    <span className="text-muted-foreground">
+                                      {`· saved by ${mine ? 'you' : row.saved_by}${when ? `, ${when}` : ''}`}
+                                    </span>
+                                  )}
+                                </p>
+                                {flagged && row.saved_by && (
+                                  <p className="rounded-md bg-amber-50 px-2 py-1 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                                    {`Saved by ${row.savedByOther ? row.saved_by : 'you'}, ${when}${
+                                      row.saved_at ? ` (${formatDateTimeInMalaysia(row.saved_at)})` : ''
+                                    }`}
+                                  </p>
+                                )}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      {left.length > 0 && (
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium text-muted-foreground">Not posted</p>
+                          <ul className="space-y-1">
+                            {left.map((row) => (
+                              <li key={row.key} className="text-sm break-words text-muted-foreground">
+                                {`Line ${row.line_no} · ${row.item_code}: ${row.reason}`}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void runConfirmAll()}>Confirm</AlertDialogAction>
+            <AlertDialogAction
+              disabled={scopedSummary.toConfirm === 0}
+              onClick={() => void runConfirmAll()}
+            >
+              {`Confirm ${scopedSummary.toConfirm} line${scopedSummary.toConfirm === 1 ? '' : 's'}`}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

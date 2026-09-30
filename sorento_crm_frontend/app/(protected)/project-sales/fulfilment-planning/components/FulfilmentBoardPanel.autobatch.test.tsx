@@ -281,7 +281,7 @@ describe('AC-B3: two orders, two batches', () => {
     );
 
     fireEvent.click(await screen.findByTestId('board-confirm'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0];
@@ -349,7 +349,7 @@ describe('AC-B6: an applied batch skips only its own order', () => {
     );
 
     fireEvent.click(await screen.findByTestId('board-confirm'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0];
@@ -431,7 +431,7 @@ describe('B1: the confirm-all body never lets a body-level batch_id contradict a
     );
 
     fireEvent.click(await screen.findByTestId('board-confirm'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0];
@@ -501,7 +501,7 @@ describe('S1: a URL-applied batch and a board-pending batch on the same order', 
     );
 
     fireEvent.click(await screen.findByTestId('board-confirm'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0];
@@ -733,7 +733,7 @@ describe("S4: a covered line's staged reject on a batched order does not ride al
     );
 
     fireEvent.click(screen.getByTestId('board-confirm'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0];
@@ -770,7 +770,7 @@ describe("S4: a covered line's staged reject on a batched order does not ride al
     );
 
     fireEvent.click(screen.getByTestId('board-confirm'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
 
