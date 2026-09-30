@@ -133,9 +133,9 @@ scroll. Security reviewer (the two portal routes are a new external read surface
 after all): one blocker fixed, thread cursors were spliced unvalidated into the Respond URL path
 (`conversation_thread_service.py` `_cursor`, `RespondClient.get_message` quotes the id); the
 portal page read is projected through `portal_thread_item` (no staff identity, no transport
-ids); search text capped at 200. Open for the owner (crew-ask on PR #1385): how much of the
-contact's thread an ask may reveal, and to whom (as built, a window, or the inbox permission on
-the CRM).
+ids); search text capped at 200. Owner ruling 30 Sep 2026 ("for privacy, okay a"): option (a)
+as built, the whole thread of the ask's contact under the agent-handles-customer rule, with staff
+names and transport ids stripped on the portal. No window, no extra CRM permission.
 
 ## 4. Out of scope
 
@@ -150,4 +150,4 @@ of one shop (`ledger_family_key`, the chatbot's rule) is named by `ledger_family
 ("HANLIM TRADING SDN BHD"); links to two shops keep the contact fallback; an ask written against
 a customer is untouched. No schema, no UI. Tests: `tests/test_stock_ask_family_label.py`.
 Hand test of items 1 to 3 PASSED on 10ec2f86 (owner: "#1385 UIX is okay"). The thread exposure
-question (section 3b) stays as built pending the owner's answer.
+question (section 3b) is ruled: as built.
