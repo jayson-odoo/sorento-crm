@@ -79,8 +79,11 @@ no date-wins tie-break.
 > at apply: the link on the giving line stays as the confirm's own settle left it, no pool
 > row is written, no waiting row is linked, and `result_json["released_documents"]` carries
 > one notice per document naming the AutoCount line (sales order + line number), the
-> quantity and the composed target. AC-D4 (a reserve, a stock hold) and D7 (an SPO
-> give-back) stand. See `redeal-closed-po-line-acceptance-criteria.md` AC-RC-1 to AC-RC-9.
+> quantity and the composed target. AC-D4 (a reserve, a stock hold) stands. D7 (an SPO
+> give-back) stood under PR #1369 and is superseded by PR #1371 the same day
+> (`PLAN-oi-links-intent-only.md` AC-IO-6): the SPO link stays and the release is
+> recorded for purchasing. See `redeal-closed-po-line-acceptance-criteria.md` AC-RC-1 to
+> AC-RC-9 and `oi-links-intent-only-acceptance-criteria.md`.
 
 **AC-D1.** Given freed PO / SPO quantity and the product dealer hot-selling, then it is
 reallocated to the dealer pool (a pool-location row linked to the document) even if an

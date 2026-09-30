@@ -36,7 +36,9 @@ from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
 from app.models.project_so import (
     DECISION_ACTIVE,
     DECISION_SUPERSEDED,
+    INQUIRY_CANCELLED,
     OrderInquiryLink,
+    OrderInquiryRow,
     ProjectSalesOrder,
     SOSupplyDecision,
 )
@@ -384,9 +386,13 @@ def test_apply_retires_the_step_3_placement_of_a_line_the_batch_cancels():
             .filter(OrderInquiryLink.spo_allocation_id == str(allocation.id))
             .all()
         )
-        assert links_after == [], (
-            "the step-3 placement of a line the batch cancels must not stay pinned"
-        )
+        # Owner ruling 29 Sep 2026 (PR #1371, `PLAN-oi-links-intent-only.md` AC-IO-3): the
+        # planning side no longer unlinks a cancelled line's placement; it stays on the
+        # cancelled row for purchasing to release in AutoCount, and the batch records
+        # that intent. (This test used to pin the opposite: "must not stay pinned".)
+        assert [str(l.qty) for l in links_after] == ["234.0000"], links_after
+        cancelled_row = db.get(OrderInquiryRow, links_after[0].row_id)
+        assert cancelled_row.state == INQUIRY_CANCELLED, cancelled_row.state
 
 
 def test_apply_keeps_a_step_3_supply_borrow_the_new_composition_still_carries():

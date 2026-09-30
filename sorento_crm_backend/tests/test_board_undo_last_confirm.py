@@ -390,15 +390,22 @@ def test_undo_of_revision_one_leaves_no_active_decision_and_returns_the_drafts(a
 # --------------------------------------------------------------------------- AC-UC-18
 
 
-def test_undo_re_inserts_a_removed_link_and_its_claim_with_original_ids(api):
+def test_undo_leaves_a_link_the_settle_no_longer_removes_untouched(api):
+    """Was `test_undo_re_inserts_a_removed_link_and_its_claim_with_original_ids`: a
+    second confirm with Buy 0 used to cancel the row and remove its link, and undo
+    re-inserted the link and claim with their original ids. Owner ruling 29 Sep 2026
+    (PR #1371, AC-IO-2): the settle keeps the link, so there is nothing to re-insert -
+    the link and its claim survive the confirm AND the undo with their ids, quantity and
+    `auto` intact."""
     fixture = _confirm_linked_world(api, second_buy_qty="0")
     db = fixture["db"]
     order = fixture["order"]
     link_id = fixture["link"].id
     claim_id = fixture["claim"].id
 
-    assert db.query(OrderInquiryLink).filter(OrderInquiryLink.id == link_id).first() is None
-    assert db.query(OrderLinkClaim).filter(OrderLinkClaim.id == claim_id).first() is None
+    kept_link = db.query(OrderInquiryLink).filter(OrderInquiryLink.id == link_id).one()
+    assert kept_link.qty == Decimal("20"), "the settle never removes a document link"
+    assert db.query(OrderLinkClaim).filter(OrderLinkClaim.id == claim_id).first() is not None
 
     from app.services.project_supply_undo_service import undo_last_confirm
 
@@ -446,10 +453,12 @@ def test_undo_restores_a_settled_rows_note_previous_values_and_ack_stamps(api):
 # --------------------------------------------------------------------------- AC-UC-20
 
 
-def test_undo_clears_the_redirect_flag_and_re_inserts_the_removed_open_links(api):
+def test_undo_clears_the_redirect_flag_and_the_open_link_is_never_removed(api):
     """A row linked to BOTH a fully-received document and a still-open one: the received
-    document redirects the row to the pool and frees the open link (AC-RL-10..12,
-    `_redirect_row_if_received`); undo restores the flag and the open link both."""
+    document redirects the row to the pool (AC-RL-10..12, `_redirect_row_if_received`).
+    Owner ruling 29 Sep 2026 (PR #1371, AC-IO-4): the open link is no longer freed by the
+    redirect, so undo has only the flag to restore; the open link is present throughout.
+    Was `..._and_re_inserts_the_removed_open_links`."""
     client, world = api
     db = world.db
     _stock(db, world.product, world.pool_wh, on_hand=200)
@@ -500,8 +509,9 @@ def test_undo_clears_the_redirect_flag_and_re_inserts_the_removed_open_links(api
     redirected_row = db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row.id).one()
     assert redirected_row.redirected_to_pool is True, "the setup this test needs"
     assert (
-        db.query(OrderInquiryLink).filter(OrderInquiryLink.id == link_open.id).first() is None
-    ), "the open link was freed - the setup this test needs"
+        db.query(OrderInquiryLink).filter(OrderInquiryLink.id == link_open.id).first()
+        is not None
+    ), "the open link stays as AutoCount has it (owner ruling 29 Sep 2026)"
     assert (
         db.query(OrderInquiryLink).filter(OrderInquiryLink.id == link_received.id).first()
         is not None

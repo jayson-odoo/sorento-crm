@@ -3245,29 +3245,34 @@ def _release_spo_share(
     )
     if document:
         links = [link for link in links if (link.document or "") == document] or links
+    # Owner ruling 29 Sep 2026 (`PLAN-oi-links-intent-only.md`): the SPO link is not
+    # deleted or trimmed here any more - an SPO is an AutoCount document like a PO, and
+    # purchasing releases the allocation there; the next sync brings it back. What is
+    # written is the release as an instruction, one notice per document.
+    where = f"{so_number} line {row.line_no or '?'}"
     remaining = freed
-    touched: List[OrderInquiryRow] = []
     released: List[str] = []
+    by_document: Dict[str, Decimal] = {}
     for link in links:
         if remaining <= _ZERO:
             break
-        qty = _dec(link.qty)
-        owner = db.get(OrderInquiryRow, link.row_id)
-        if qty <= remaining:
-            db.delete(link)
-            remaining -= qty
-        else:
-            link.qty = qty - remaining
-            remaining = _ZERO
-        if link.document and link.document not in released:
-            released.append(link.document)
-        if owner is not None:
-            touched.append(owner)
-    if not touched:
-        return []
-    db.flush()
-    service.refresh_link_state(touched)
-    return released or ([document] if document else [])
+        take = min(_dec(link.qty), remaining)
+        if take <= _ZERO:
+            continue
+        remaining -= take
+        name = link.document or document or "the SPO"
+        by_document[name] = by_document.get(name, _ZERO) + take
+    for name, qty in by_document.items():
+        released.append(
+            f"{where}: {qty_text(qty)} of {name} stays linked; purchasing releases it in "
+            "AutoCount, the next sync brings it back to Order Inquiries"
+        )
+    if not released and document:
+        released.append(
+            f"{where}: {qty_text(freed)} of {document} is no longer linked, nothing to "
+            "release"
+        )
+    return released
 
 
 def _move_reserve(
@@ -3737,27 +3742,23 @@ def _retire_inquiry_rows(
     return cancelled
 
 
-def _took_note(
-    note: Optional[str], qty: Decimal, document: Optional[str], who: Optional[str]
-) -> str:
-    """What a survivor's row says about a placement it inherited, and who applied it."""
-    stamp = (
-        f"Took {qty_text(qty)} on {document or 'an unnamed document'} from a line the "
-        "book closed"
-    )
-    if who:
-        stamp = f"{stamp} ({who})"
-    return f"{note}; {stamp}" if note else stamp
-
-
 def _shift_links_off_retired_lines(
     db: Session,
     order: ProjectSalesOrder,
     cancelled_row_ids: Sequence[str],
     actor: Optional[str],
     rule_six_line_ids: Sequence[str] = (),
+    so_number: Optional[str] = None,
 ) -> Dict[str, Dict[str, List[str]]]:
-    """A closed line's placements move to the row that still needs them (AC-P3-6).
+    """A closed line's placements are RECORDED for purchasing, never moved (AC-P3-6,
+    superseded by the owner's ruling of 29 Sep 2026, `PLAN-oi-links-intent-only.md`: "a
+    cancelled line shouldn't directly hand its PO link to its sibling ... the PO link is
+    based on autocount linkage as source of truth"). The name is kept so every caller and
+    test that cites it still finds the seam; what it does is below, and the history above
+    the ruling follows.
+
+    Until 29 Sep the docstring below was the behaviour: a closed line's placements moved
+    to the row that still needed them.
 
     The captain, 25 August 2026: "PO / SPO allocated to the 0 lines shift to the 25 line".
     A closed line's row is cancelled rather than deleted, so its links would otherwise sit
@@ -3857,94 +3858,39 @@ def _shift_links_off_retired_lines(
     done: Dict[str, Dict[str, List[str]]] = defaultdict(
         lambda: {"executed_reallocations": [], "released_documents": []}
     )
-    who = _user_name(db, actor)
-    touched: List[OrderInquiryRow] = []
+    line_no_by_id = {
+        str(line.id): line.line_no for line in order_lines
+    }
     for cancelled in cancelled_rows:
         links = service._links_of(cancelled.id)
         if not links:
             continue
         line_key = str(cancelled.so_line_id) if cancelled.so_line_id else None
+        if not line_key or line_key in rule_six_lines:
+            # A line whose own suggestion names where the quantity goes is recorded by
+            # `_record_redeal_intent` (rule 6), with the composed target in its words;
+            # two notices about one link would read as two instructions.
+            continue
         product_id = product_by_line.get(str(cancelled.so_line_id))
         candidates = survivors_by_product.get(product_id or "", [])
+        where = f"{so_number} line {line_no_by_id.get(line_key) or '?'}"
         for link in links:
-            whole = _dec(link.qty)
-            remaining = whole
-            repointed = False
+            qty = _dec(link.qty)
+            if qty <= _ZERO:
+                continue
+            # The survivor a buyer would pick, named for them - never linked for them.
+            taker_words = None
             for taker in candidates:
-                if remaining <= _ZERO:
-                    break
                 headroom = service._unlinked_need(taker)
-                if headroom <= _ZERO:
-                    continue
-                take = min(headroom, remaining)
-                if take == whole:
-                    # One survivor holds the whole placement: the link itself moves, id,
-                    # claim and linking history intact. Nothing is split, so nothing is
-                    # rewritten.
-                    link.row_id = taker.id
-                    repointed = True
-                else:
-                    db.add(
-                        OrderInquiryLink(
-                            company_id=link.company_id,
-                            row_id=taker.id,
-                            po_line_id=link.po_line_id,
-                            spo_allocation_id=link.spo_allocation_id,
-                            document=link.document,
-                            qty=take,
-                            linked_by=actor,
-                            linked_at=datetime.utcnow(),
-                            auto=bool(link.auto),
-                            # The SAME claim: it is the document's, not the row's, and two
-                            # links on one document already share one.
-                            claim_id=link.claim_id,
-                        )
-                    )
-                remaining -= take
-                db.flush()
-                service._invalidate_link_cache()
-                taker.note = _took_note(taker.note, take, link.document, who)
-                if taker not in touched:
-                    touched.append(taker)
-                if line_key:
-                    done[line_key]["executed_reallocations"].append(
-                        f"Reallocate {link.document or 'the document'} {qty_text(take)} to "
-                        f"{_row_target_words(db, taker, take)}"
-                    )
-            leave_for_rule_six = (
-                not repointed and remaining >= whole and line_key in rule_six_lines
+                if headroom > _ZERO:
+                    taker_words = _row_target_words(db, taker, min(headroom, qty))
+                    break
+            done[line_key]["released_documents"].append(
+                f"{where}: {qty_text(qty)} of {link.document or 'the document'} stays "
+                "linked on the cancelled line; purchasing moves it in AutoCount ("
+                + (f"for {taker_words}" if taker_words else "nothing else on this order needs it")
+                + "), the next sync brings the new link to Order Inquiries"
             )
-            if not repointed and not leave_for_rule_six:
-                # Whatever the survivors did not take goes back to the cascade the
-                # ordinary way (unlinked here, free for the next raised row's own re-run to
-                # notice) - a PARTIAL take's own leftover always lands here (rule 6 was
-                # never asked to reach a partial remainder), and so does a placement with
-                # NO same-order survivor at all whose line's own suggestion has nothing
-                # `_execute_reallocations` can act on (`rule_six_lines` excludes it -
-                # review round, a `release`/`borrow` release has no executor there, and
-                # leaving its link untouched would strand it, pinned to a row purchasing
-                # can no longer act on). The part a survivor DID take now lives on a link
-                # of its own either way, so the original is removed regardless.
-                if line_key and remaining > _ZERO:
-                    done[line_key]["released_documents"].append(
-                        link.document or "the document"
-                    )
-                service._remove_links(cancelled, [link])
-            # else (leave_for_rule_six): NO same-order survivor took anything AND rule 6 has
-            # an executor for this line's own suggestion - the link is left exactly as it
-            # stands, untouched, for `_execute_reallocations` to settle (a cross-order
-            # waiting row, else the pool - review round, second re-walk). It is left
-            # PER LINK, not per line (blocker B1): one link of a row can be repointed here
-            # while another is left for that cascade, so `_apply_one_order` re-reads
-            # `document_links` for the whole cancelled row live, AFTER this function
-            # returns, rather than reading this function's own wording keys to decide
-            # what still needs the cascade.
-        if cancelled not in touched:
-            touched.append(cancelled)
-
-    if touched:
-        service.refresh_link_state(touched)
-        db.flush()
     return {key: val for key, val in done.items() if any(val.values())}
 
 
@@ -4419,6 +4365,7 @@ def _apply_one_order(
         }
         shifted_by_line = _shift_links_off_retired_lines(
             db, order, cancelled_row_ids, actor, rule_six_line_ids=rule_six_line_ids,
+            so_number=so_number,
         )
         # Blocker B1 (review round): the shift above may have just repointed part of a
         # cancelled row's placement straight onto a same-order survivor's OWN link, live -

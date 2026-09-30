@@ -2327,9 +2327,12 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_is_cancelled_and_un
     assert all_rows[0].id == row.id
     assert all_rows[0].state == INQUIRY_CANCELLED
     assert all_rows[0].redirected_to_pool is not True
+    # Owner ruling 29 Sep 2026 (PR #1371, AC-IO-2): the cancelled row KEEPS its PO link;
+    # purchasing releases it in AutoCount and the note says so.
     links = ProjectOrderInquiryService(db)._links_of(all_rows[0].id)
-    assert links == [], "the PO link is removed - purchasing's own PO history is untouched"
+    assert sum(Decimal(str(l.qty)) for l in links) == Decimal("5"), links
     assert "the book left nothing to buy" in (all_rows[0].note or "")
+    assert "AutoCount" in (all_rows[0].note or ""), all_rows[0].note
 
     # Owner ruling 29 Sep 2026 (PR #1369, option (c)): the freed document quantity is NOT
     # re-dealt by the planning side (was D2: a pool row or a raised row of another order).
@@ -2340,7 +2343,7 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_is_cancelled_and_un
     all_links_on_po_line = (
         db.query(OrderInquiryLink).filter(OrderInquiryLink.po_line_id == po_line.id).all()
     )
-    assert all_links_on_po_line == [], all_links_on_po_line
+    assert {str(l.row_id) for l in all_links_on_po_line} == {str(row.id)}, all_links_on_po_line
     applied = planning_change_service.get_batch(db, str(batch.id))
     said = applied["orders"][0]["rows"][0]["result"] or {}
     assert not (said.get("executed_reallocations") or []), said
@@ -2494,10 +2497,10 @@ def test_apply_advance_with_pool_available_records_the_freed_placed_qty_for_purc
     assert original.id == placed_row.id
     assert original.state == INQUIRY_CANCELLED
     assert original.redirected_to_pool is not True
-    assert ProjectOrderInquiryService(db)._links_of(original.id) == [], (
-        "unlinked - the two purchase orders' own history is untouched, only this line's "
-        "claim on them is"
-    )
+    # Owner ruling 29 Sep 2026 (PR #1371, AC-IO-2): the cancelled row keeps both links;
+    # purchasing releases them in AutoCount.
+    kept = ProjectOrderInquiryService(db)._links_of(original.id)
+    assert sum(Decimal(str(l.qty)) for l in kept) == Decimal("432"), kept
 
     # Option (c): no pool-location row is written for the freed 432 and nothing is linked
     # by the planning side. Both purchase-order lines read unclaimed until purchasing
@@ -2512,10 +2515,12 @@ def test_apply_advance_with_pool_available_records_the_freed_placed_qty_for_purc
     from app.models.project_so import OrderInquiryLink
 
     for po_line in (po_line_a, po_line_b):
-        assert (
-            db.query(OrderInquiryLink).filter(OrderInquiryLink.po_line_id == po_line.id).all()
-            == []
-        )
+        assert {
+            str(l.row_id)
+            for l in db.query(OrderInquiryLink)
+            .filter(OrderInquiryLink.po_line_id == po_line.id)
+            .all()
+        } == {str(original.id)}, "each PO line stays claimed by the cancelled row only"
 
     # The batch row records the intent, one notice per purchase order, naming the
     # AutoCount line and the quantity, for purchasing to carry out in AutoCount.
