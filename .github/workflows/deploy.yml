@@ -227,6 +227,22 @@ jobs:
   #    notify-owner (about 15 job-minutes instead of ~190). It is the
   #    dispatcher's call, made per release; nothing here infers it.
   #
+  # 4. `backend_tests`: the backend test FILES a PULL REQUEST changes
+  #    (`BACKEND_TESTS_RE`: `sorento_crm_backend/tests/**/test_*.py`, minus
+  #    `tests/scm/`, which the SCM shards already run), space-separated, for
+  #    `test-backend-changed`. The six main backend shards never run on a
+  #    PR (owner ruling 2026-09-29), so before this a PR that only changed
+  #    `tests/test_media_job_lifecycle.py` (#1387, run 36665697605) ran the
+  #    alembic gate, this job and validate-backend (collect-only plus the
+  #    regression guards) and never executed the test it changed: the
+  #    first execution was the merge queue or the release. Now the changed
+  #    files themselves run on the PR, serially, and nothing else changes:
+  #    the label gating, the area flags and the queue's full run are as
+  #    before. Empty off a PR (the full shards run there) and on every
+  #    early exit above. Deleted and renamed-away paths are in the list too
+  #    (a PR's file list names them); the job drops what the checkout does
+  #    not hold, and the ci_excluded.txt entries, before it runs pytest.
+  #
   # This job does not run on a push to main at all (see the `push` trigger
   # comment): nothing downstream of it does either, so there is nothing to
   # classify.
@@ -261,6 +277,7 @@ jobs:
       mcp: ${{ steps.filter.outputs.mcp }}
       scm: ${{ steps.filter.outputs.scm }}
       docs_only: ${{ steps.filter.outputs.docs_only }}
+      backend_tests: ${{ steps.filter.outputs.backend_tests }}
     steps:
       - name: Detect changed areas
         id: filter
@@ -345,8 +362,12 @@ jobs:
           fi
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
 
+          # `backend_tests` is written on every path out of this step, empty
+          # unless a pull_request's own file list reaches the flags below:
+          # off a PR the full shards run and the changed-files job must not.
           if [ "$docs_only" = "true" ]; then
             for area in backend frontend mcp scm; do echo "$area=false"; done | tee -a "$GITHUB_OUTPUT"
+            echo "backend_tests=" >> "$GITHUB_OUTPUT"
             echo "docs-only change: no service area counts as changed"
             exit 0
           fi
@@ -355,6 +376,7 @@ jobs:
           # areas.
           if [ "$EVENT" = "workflow_dispatch" ] && [ "$SKIP_TESTS" = "true" ]; then
             for area in backend frontend mcp scm; do echo "$area=false"; done | tee -a "$GITHUB_OUTPUT"
+            echo "backend_tests=" >> "$GITHUB_OUTPUT"
             echo "release with skip_tests=true: no test job runs"
             exit 0
           fi
@@ -364,6 +386,7 @@ jobs:
           # failure must never turn into an all-flags-false green run.
           if [ "$EVENT" != "pull_request" ] || [ -n "$why" ]; then
             for area in backend frontend mcp scm; do echo "$area=true"; done | tee -a "$GITHUB_OUTPUT"
+            echo "backend_tests=" >> "$GITHUB_OUTPUT"
             echo "${why:-$EVENT is not a pull_request}: every area counts as changed"
             exit 0
           fi
@@ -383,6 +406,19 @@ jobs:
             flag mcp      '^(sorento_crm_mcp/|\.github/workflows/deploy\.yml$)'
             flag scm      "$SCM_RE"
           } | tee -a "$GITHUB_OUTPUT"
+          # BACKEND_TESTS_RE: the backend test files this PR changes, for
+          # `test-backend-changed` (point 4 of the job comment). `test_*.py`
+          # only, pytest's own collection pattern: a helper module or a
+          # fixture file handed to pytest collects nothing and exits 5. Not
+          # tests/scm/: the SCM shards run those whenever `scm` is true. The
+          # character class is deliberate: the list becomes a pytest
+          # argument line, so a path holding anything a shell would parse
+          # (a space, a quote, a backtick) is simply not in it.
+          BACKEND_TESTS_RE='^sorento_crm_backend/tests/([A-Za-z0-9_.-]+/)*test_[A-Za-z0-9_.-]*\.py$'
+          backend_tests=$(printf '%s\n' "$files" | { grep -E "$BACKEND_TESTS_RE" || true; } \
+                            | { grep -Ev '^sorento_crm_backend/tests/scm/' || true; } \
+                            | tr '\n' ' ' | sed 's/ $//')
+          echo "backend_tests=$backend_tests" | tee -a "$GITHUB_OUTPUT"
 
   validate-backend:
     name: Validate backend imports
@@ -776,7 +812,8 @@ jobs:
   # entry (the exact merge result) and for a release (workflow_dispatch
   # without skip_tests). A skipped job still reports, as "skipped", which a
   # ruleset's required status check accepts, so listing these six as
-  # required blocks nothing on the PR and gates the queue for real.
+  # required blocks nothing on the PR and gates the queue for real. The
+  # test files a PR changes do run on the PR: `test-backend-changed` below.
   test-backend:
     name: Backend test suite (Postgres, xdist)
     needs: [changes]
@@ -983,6 +1020,144 @@ jobs:
           python -m pytest -q -p no:cacheprovider -p no:xdist --durations=10 \
             -m serial_ddl --ignore-glob='tests/test_migration_*.py' \
             $IGNORES --ignore=tests/scm tests/
+
+  # The backend test files a `ci`-labelled PR changes, executed on the PR.
+  #
+  # `test-backend` never runs on a pull_request (above), so until this job a
+  # PR that changed a test outside tests/scm never executed it before the
+  # merge queue or the release: #1387 changed only
+  # tests/test_media_job_lifecycle.py (a de-flake of a test that had just
+  # failed a release run) and its `ci` run (36665697605) was the alembic
+  # gate, `changes` and validate-backend's collect-only. `changes` lists the
+  # changed `tests/**/test_*.py` files (`backend_tests`, point 4 of its
+  # comment); this job runs exactly those, on the same Postgres + Redis
+  # bootstrap as the shards. Serial (`-p no:xdist`): a PR changes a few
+  # files, and one process at a time is what makes a changed
+  # tests/test_migration_*.py or a `serial_ddl` test safe to run here
+  # without the shards' two-pass split. The list is trimmed first: a deleted
+  # or renamed-away path is in the PR's file list but not in the checkout,
+  # and a ci_excluded.txt entry asserts against business data an empty
+  # database does not hold (that file says why); either would fail pytest on
+  # collection, not on the test. An empty list after trimming is a pass with
+  # nothing run, printed as such.
+  #
+  # Off a PR the list is empty by construction and the full shards cover
+  # every file, so this job is skipped there; the label gating and the area
+  # flags are untouched.
+  test-backend-changed:
+    name: Backend changed tests (Postgres)
+    needs: [changes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.backend_tests != ''
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: sorento
+          POSTGRES_PASSWORD: sorento
+          POSTGRES_DB: sorento_changed_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://sorento:sorento@localhost:5432/sorento_changed_ci
+      DIRECT_URL: postgresql://sorento:sorento@localhost:5432/sorento_changed_ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: ci-dummy-secret
+      JWT_ALGORITHM: HS256
+      # No frontend in this job either - see the same note on `test-backend`.
+      DEALER_KIT_RENDER_TESTS: skip
+      BACKEND_TESTS: ${{ needs.changes.outputs.backend_tests }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Before the Python setup on purpose: a list that trims to nothing
+      # (every changed test file deleted, or excluded) needs no database.
+      # Asserted by sorento_crm_backend/tests/test_ci_docs_only_filter.py
+      # (test_changed_tests_step_*), which runs this step's shell against a
+      # scratch checkout.
+      - name: Select the changed test files to run
+        id: select
+        run: |
+          # Repo-relative paths in, sorento_crm_backend-relative paths out:
+          # pytest runs from that directory, like the shards.
+          excluded=$(grep -vE '^\s*#|^\s*$' sorento_crm_backend/tests/ci_excluded.txt || true)
+          run=""; dropped=""
+          for path in $BACKEND_TESTS; do
+            rel="${path#sorento_crm_backend/}"
+            if [ ! -f "$path" ]; then
+              dropped="$dropped  $rel (not in the checkout: deleted or renamed away)"$'\n'
+            elif printf '%s\n' "$excluded" | grep -qxF "$rel"; then
+              dropped="$dropped  $rel (listed in tests/ci_excluded.txt)"$'\n'
+            else
+              run="$run $rel"
+            fi
+          done
+          run="${run# }"
+          [ -z "$dropped" ] || { echo "not run:"; printf '%s' "$dropped"; }
+          if [ -n "$run" ]; then
+            echo "changed test files to run:"; printf '%s\n' $run | sed 's/^/  /'
+          else
+            echo "no changed test file left to run"
+          fi
+          echo "files=$run" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        if: steps.select.outputs.files != ''
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sorento_crm_backend/requirements.txt
+
+      - name: Install dependencies
+        if: steps.select.outputs.files != ''
+        working-directory: sorento_crm_backend
+        run: pip install -r requirements.txt
+
+      # Same as the shards: durability off for a throwaway database, and the
+      # lock table sized for the scratch schemas the fixtures create.
+      - name: Relax Postgres durability for the test run
+        if: steps.select.outputs.files != ''
+        run: |
+          PSQL="psql $DATABASE_URL -v ON_ERROR_STOP=1"
+          $PSQL -c "ALTER SYSTEM SET fsync = off" \
+                -c "ALTER SYSTEM SET synchronous_commit = off" \
+                -c "ALTER SYSTEM SET full_page_writes = off" \
+                -c "ALTER SYSTEM SET max_locks_per_transaction = 1024" \
+                -c "SELECT pg_reload_conf()"
+          docker restart ${{ job.services.postgres.id }}
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -p 5432 -U sorento && break
+            sleep 1
+          done
+          $PSQL -c "SHOW fsync" -c "SHOW synchronous_commit" -c "SHOW full_page_writes" \
+                -c "SHOW max_locks_per_transaction"
+
+      - name: Bootstrap the database
+        if: steps.select.outputs.files != ''
+        working-directory: sorento_crm_backend
+        run: python -m scripts.bootstrap_env
+
+      - name: Run the changed test files (executing gate)
+        if: steps.select.outputs.files != ''
+        working-directory: sorento_crm_backend
+        env:
+          FILES: ${{ steps.select.outputs.files }}
+        run: |
+          python -m pytest -q -p no:cacheprovider -p no:xdist --durations=10 $FILES
 
   validate-frontend:
     name: Validate frontend (vitest)
