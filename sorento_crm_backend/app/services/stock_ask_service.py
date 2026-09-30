@@ -28,9 +28,14 @@ from app.services.respond_messaging_service import send_text_or_template
 logger = logging.getLogger(__name__)
 
 USE_CASE = "stock_ask_salesman"
-#: R6: B1, B2 and B4 notify the agent; B3 (`incoming`) never does.
+#: R6: B1, B2 and B4 notify the agent; B3 (`incoming`) never does, and neither do the
+#: REFER-SALESMAN branches (30 Sep 2026: the rule adds rows to the Customer asks view only).
 NOTIFIED_BRANCHES = frozenset({"too_big", "in_stock", "no_incoming"})
+#: The stock ask's own branches: each carries the dealer's quantity.
 ANSWERED_BRANCHES = frozenset({"too_big", "in_stock", "incoming", "no_incoming"})
+#: REFER-SALESMAN: a dealer's incoming ETA reply, and every other refer reply. No quantity
+#: is owed; a declined did-you-mean may still carry one.
+REFER_BRANCHES = frozenset({"incoming_eta", "referred"})
 #: A to-do is not paged: a salesperson's open asks are tens. The cap and `truncated` are the guard.
 TODO_CAP = 500
 
@@ -67,16 +72,20 @@ def default_text(ctx: dict[str, Any]) -> str:
 
 
 def answered_entries(entries: Iterable[Any]) -> list[dict[str, Any]]:
-    """The `stock_availability` entries that carry an answer: a branch and the dealer's
-    quantity. An entry still owing a quantity has no branch and is not an ask yet."""
+    """The entries that carry an answer: a stock ask's `stock_availability` entry with a
+    branch and the dealer's quantity (one still owing a quantity has no branch and is not an
+    ask yet), or a REFER-SALESMAN entry (`chatbot/refer_asks.py`), whose quantity is optional."""
     out = []
     for entry in entries or []:
-        if not isinstance(entry, dict) or entry.get("branch") not in ANSWERED_BRANCHES:
+        if not isinstance(entry, dict):
             continue
+        branch = entry.get("branch")
         qty = entry.get("requested_qty")
-        if not isinstance(qty, int) or isinstance(qty, bool) or qty < 1:
-            continue
-        out.append(entry)
+        has_qty = isinstance(qty, int) and not isinstance(qty, bool) and qty >= 1
+        if branch in REFER_BRANCHES and (has_qty or qty is None):
+            out.append(entry)
+        elif branch in ANSWERED_BRANCHES and has_qty:
+            out.append(entry)
     return out
 
 
@@ -118,9 +127,11 @@ def after_answered_turn(
     turn records and notifies too, and its rows say so on the Asks tab and portal page).
 
     S5: one `stock_asks` row per answered entry, state open, with the exact line the dealer
-    was sent. S4: one `notify_salesman` job per B1 / B2 / B4 row when the contact's toggle
-    is on and a customer is known; every other row records why it was not sent. Returns the
-    facts it enqueued. The dealer's reply has already been handed back by then.
+    was sent (a REFER-SALESMAN entry brings its own `answer_summary`, and its `product_id`
+    is resolved by code within the ask's company when the entry has none). S4: one
+    `notify_salesman` job per B1 / B2 / B4 row when the contact's toggle is on and a customer
+    is known; every other row records why it was not sent. Returns the facts it enqueued.
+    The dealer's reply has already been handed back by then.
     """
     from app.models.order import Customer
     from app.models.stock_ask import StockAsk
@@ -135,6 +146,7 @@ def after_answered_turn(
         db.query(Customer).filter(Customer.id == customer_id).first() if customer_id else None
     )
     company_id = _write_company_id(db, customer)
+    _resolve_product_ids(db, answered, company_id)
     # Fix round 2 (AC-SA411): the salesperson's own allowed-to-send flag, checked here so
     # no job is enqueued for a contact the send path would refuse anyway.
     blocked_agent: Optional[str] = None
@@ -164,9 +176,9 @@ def after_answered_turn(
             contact_id=contact_id,
             product_id=entry.get("product_id"),
             product_code=(entry.get("product_code") or entry.get("product_name") or "")[:100],
-            quantity=entry["requested_qty"],
+            quantity=entry.get("requested_qty"),
             branch=branch,
-            answer_summary=answer_line(reply_text, entry),
+            answer_summary=entry.get("answer_summary") or answer_line(reply_text, entry),
             notified_agent=False,
             notify_skip_reason=reason,
             state="open",
@@ -210,6 +222,35 @@ def after_answered_turn(
 
 
 NOT_ALLOWED_TO_SEND = "contact_not_allowed_to_send"
+
+
+def _resolve_product_ids(db: Session, entries: list[dict[str, Any]], company_id: Optional[str]) -> None:
+    """REFER-SALESMAN: an entry built from the reply (no `product_id`) is matched to the
+    product of that code in the ask's company, so the row names the product. A code that
+    matches nothing (a typo the resolver could not place) stays a bare code."""
+    from app.models.product import Product
+
+    wanted = {
+        str(e.get("product_code")).strip()
+        for e in entries
+        if not e.get("product_id") and isinstance(e.get("product_code"), str) and e.get("product_code").strip()
+    }
+    if not wanted:
+        return
+    from sqlalchemy import func
+
+    # Case-insensitive on both sides: a dealer types "elp3754" as often as "ELP3754".
+    query = db.query(Product.id, Product.product_code).filter(
+        func.lower(Product.product_code).in_([w.lower() for w in wanted])
+    )
+    if company_id:
+        query = query.filter(Product.company_id == company_id)
+    by_code = {code.casefold(): pid for pid, code in query.all()}
+    for entry in entries:
+        if not entry.get("product_id") and isinstance(entry.get("product_code"), str):
+            pid = by_code.get(entry["product_code"].strip().casefold())
+            if pid:
+                entry["product_id"] = pid
 
 
 def _agent_not_allowed_to_send(
@@ -470,6 +511,31 @@ def notify_salesman(db: Session, facts: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------- #
 
 
+def _family_names_by_contact(db: Session, contact_ids: set[str]) -> dict[str, str]:
+    """contact id -> the trading name of the customers it is linked to, for the contacts whose
+    links are all ledgers of ONE shop (`ledger_family_key`); a contact linked to two shops, or
+    to nothing, is absent. Read under the caller's company scope, like the links themselves."""
+    if not contact_ids:
+        return {}
+    from app.models.access import RespondContactCustomer
+    from app.models.order import Customer
+    from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
+
+    keys: dict[str, set[str]] = {}
+    labels: dict[str, str] = {}
+    for contact_id, name in (
+        db.query(RespondContactCustomer.contact_id, Customer.customer_name)
+        .join(Customer, Customer.id == RespondContactCustomer.customer_id)
+        .filter(RespondContactCustomer.contact_id.in_(contact_ids))
+    ):
+        key = ledger_family_key(name or "")
+        if not key:
+            continue
+        keys.setdefault(contact_id, set()).add(key)
+        labels.setdefault(contact_id, ledger_family_label(name))
+    return {cid: labels[cid] for cid, found in keys.items() if len(found) == 1}
+
+
 def serialize(db: Session, rows: list[Any], *, with_agent: bool = False) -> list[Any]:
     """Rows as `StockAskResponse`: the contact, customer and product NAMED, never their ids.
     `with_agent` also names the customer's sales agent (`agent_code`), for the CRM manager view."""
@@ -504,6 +570,12 @@ def serialize(db: Session, rows: list[Any], *, with_agent: bool = False) -> list
         if product_ids
         else {}
     )
+    # ASKS-UX item 4 (owner, 30 Sep 2026, option a): an ask written against NO customer (its
+    # contact links to several ledgers and no primary was chosen, `resolve_customer`) is named
+    # after the TRADING NAME those ledgers share, so the card reads "HANLIM TRADING SDN BHD"
+    # rather than the contact. Links to two different shops name nothing (the card falls back
+    # to the contact). The family rule is the chatbot's, not a second one.
+    family_names = _family_names_by_contact(db, {r.contact_id for r in rows if r.contact_id and not r.customer_id})
     done_user_ids = {r.done_by_user_id for r in rows if r.done_by_user_id}
     done_contact_ids = {r.done_by_contact_id for r in rows if r.done_by_contact_id} - set(contacts)
     from app.models.user import User
@@ -541,7 +613,7 @@ def serialize(db: Session, rows: list[Any], *, with_agent: bool = False) -> list
     return [
         StockAskResponse(
             id=str(r.id),
-            customer_name=customers.get(r.customer_id),
+            customer_name=customers.get(r.customer_id) if r.customer_id else family_names.get(r.contact_id),
             contact_name=contacts.get(r.contact_id),
             contact_phone=getattr(contact_rows.get(r.contact_id), "phone_number", None),
             product_code=r.product_code,
@@ -896,7 +968,7 @@ def conversation_for_ask(db: Session, ask: Any, *, whole_day: bool = False) -> d
     from app.models.access import RespondContact
     from app.models.chat_history import ChatHistory
 
-    empty: dict[str, Any] = {"messages": [], "ask_message_id": None}
+    empty: dict[str, Any] = {"messages": [], "ask_message_id": None, "ask_message_ref": None}
     if not ask.contact_id:
         return empty
     respond_io_id = db.query(RespondContact.respond_io_id).filter(RespondContact.id == ask.contact_id).scalar()
@@ -916,7 +988,7 @@ def conversation_for_ask(db: Session, ask: Any, *, whole_day: bool = False) -> d
         ChatHistory.sent_at < end if whole_day else ChatHistory.sent_at <= end,
     ]
     rows = (
-        db.query(ChatHistory.id, ChatHistory.type, ChatHistory.message, ChatHistory.sent_at)
+        db.query(ChatHistory.id, ChatHistory.type, ChatHistory.message, ChatHistory.sent_at, ChatHistory.message_id)
         .filter(*in_window)
         .order_by(func.abs(func.extract("epoch", ChatHistory.sent_at - created)), ChatHistory.id)
         .limit(cap)
@@ -943,4 +1015,87 @@ def conversation_for_ask(db: Session, ask: Any, *, whole_day: bool = False) -> d
     )
     if ask_message_id is None and after:
         ask_message_id = after[0]["id"]
-    return {"messages": messages, "ask_message_id": ask_message_id, "contact_id": ask.contact_id}
+    # ASKS-UX: the shared thread keys its bubbles by the Respond message id (`chat_histories.
+    # message_id`), not by the row id, so the tagged row's Respond id rides along for the
+    # highlight and the jump. None when the row carries none (nothing to jump to).
+    ref = next((r.message_id for r in rows if r.id == ask_message_id), None) if ask_message_id is not None else None
+    return {
+        "messages": messages,
+        "ask_message_id": ask_message_id,
+        "ask_message_ref": str(ref) if ref else None,
+        "contact_id": ask.contact_id,
+    }
+
+
+def _thread_contact_for_ask(db: Session, ask: Any):
+    """The ask's contact as the shared thread's descriptor, or None (no contact, or a contact
+    with no Respond id)."""
+    from app.models.access import RespondContact
+    from app.services.conversation_thread_service import thread_contact_for
+
+    if not ask.contact_id:
+        return None
+    contact = db.query(RespondContact).filter(RespondContact.id == ask.contact_id).first()
+    return thread_contact_for(contact)
+
+
+#: What a portal reader gets of each thread item (security review, 30 Sep 2026): the message,
+#: its direction, clock and receipts, the quote it answers and its lane. Never the staff member
+#: behind a send (`sender.userId` / `sender.name`, resolved by `_attach_sender_names`), nor the
+#: transport ids (`channelMessageId`, `contactId`, `channelId`).
+_PORTAL_ITEM_KEYS = ("messageId", "traffic", "message", "status", "replyTo", "source")
+
+
+def portal_thread_item(item: dict[str, Any]) -> dict[str, Any]:
+    """One thread item as the portal may see it: `sender` reduced to its `source`."""
+    out = {k: item[k] for k in _PORTAL_ITEM_KEYS if k in item}
+    sender = item.get("sender") if isinstance(item.get("sender"), dict) else {}
+    out["sender"] = {"source": sender.get("source")}
+    return out
+
+
+def conversation_page_for_ask(
+    db: Session,
+    ask: Any,
+    *,
+    before: Optional[str] = None,
+    after: Optional[str] = None,
+    around: Optional[str] = None,
+    limit: int = 50,
+    portal: bool = False,
+) -> dict[str, Any]:
+    """One scroll-back window of the ask's contact thread (ASKS-UX item 3): the SAME core and
+    shape as `GET .../conversation-sla-tracking/{id}/conversation/page`, with the same
+    per-contact Respond client wiring (`sla_service._thread_page_for_contact`). The caller has
+    already put the ask in scope. No thread (no contact, no Respond id) answers the empty page,
+    not a 404: the ask exists and the panel still has to render. A cursor that is not a message
+    id raises ValueError (the core's rule); the route answers 422. `portal=True` projects each
+    item through `portal_thread_item`."""
+    from app.services import conversation_thread_service as thread_service
+    from app.services.integration_service import RespondClient
+
+    contact = _thread_contact_for_ask(db, ask)
+    if contact is None:
+        return thread_service.empty_page(limit=limit, error="No Respond.io contact linked")
+    page = thread_service.fetch_thread_page(
+        db,
+        contact,
+        before=before,
+        after=after,
+        around=around,
+        limit=limit,
+        client=RespondClient.for_identifier(db, contact.respond_io_id),
+    )
+    if portal:
+        page["items"] = [portal_thread_item(i) for i in page["items"]]
+    return page
+
+
+def conversation_search_for_ask(db: Session, ask: Any, *, q: str, limit: int = 100) -> dict[str, Any]:
+    """In-thread search over the ask's contact thread, same shape as the ticket-keyed twin."""
+    from app.services import conversation_thread_service as thread_service
+
+    contact = _thread_contact_for_ask(db, ask)
+    if contact is None:
+        return thread_service.empty_search(q=q, error="No Respond.io contact linked")
+    return thread_service.search_thread(db, contact, q=q, limit=limit)

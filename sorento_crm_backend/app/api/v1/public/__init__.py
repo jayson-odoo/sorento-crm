@@ -9,6 +9,7 @@ from app.api.v1.public import (
     geo,
     onboarding,
     portal,
+    portal_conversations,
     portal_customer_asks,
     portal_price_tag,
     portal_sales_opportunity,
@@ -38,6 +39,11 @@ router.include_router(
 # generic portal router for the same reason as the price tag router above.
 router.include_router(
     portal_customer_asks.router, prefix="/portal", tags=["public-portal-customer-asks"]
+)
+# SALES-CONVO: literal `/conversations` paths only, mounted before the generic portal router
+# for the same reason.
+router.include_router(
+    portal_conversations.router, prefix="/portal", tags=["public-portal-conversations"]
 )
 # Same reasoning as portal_price_tag above (D49): declares only literal
 # `/sales-opportunities...` paths, mounted before the generic handler so it captures

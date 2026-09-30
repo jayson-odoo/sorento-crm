@@ -298,6 +298,39 @@ all of them read `_assignments(view=True)`):
 Pinned by `tests/scm/test_stock_debt_overdue_not_applied.py` (the issue's case: cell +41, row
 total +41, the 41 line Free 41, at 0 / 0, 14 / 90 and 45 / 45, and the export).
 
+#### R45: a document covers a sales order only through its link (owner, 30 Sep 2026, PO-NO-AUTO-ASSIGN)
+
+Status: built on PR #1389. Small fix track (no migration, no auth/RBAC change, no new ingest
+surface, backend only). Plan `PLAN-po-no-auto-assign.md`, UAC alongside.
+
+**The owner's words, verbatim (30 Sep 2026, B2155-NL-BLUE, PO 202609-S0109 line 8 = 15,000
+spread by the walk over SO373923 line 224 and SO382618 lines 2776/2864/3072/3168):** "we cannot
+distribute the PO quantity like that, cause the PO quantity is ordered for a reason, and the user
+is yet to do linking in AutoCount, so it will be premature to allocate to other SO by our
+calculation." Asked the three questions the lane put back: "i think this applies for SPO also
+though, most SPO should have linkage already but we shouldn't prematurely auto assign the SPO,
+unlinked PO quantity count based on the delivery date of the PO line lor, it should still
+contribute to the stock debt quantity, yeah SO line should show short".
+
+**R45.** For the Stock Debt VIEW only (the board and the ladder do not change):
+1. **A PO line and an SPO line are pin-only supply** (`SupplyEvent.pin_only`, stamped by the
+   view's `_supply`). A document reaches a line only through a link: an OI placement, the
+   AutoCount S/O reference on the line (`purchase_order_lines.from_so_line_ref`, and now
+   `spo_allocations.from_so_line_ref` read the same way through `book_so_pins`) or the
+   landed-goods pin. The walk never hands a document to a line and a document never clears a
+   shortfall, so a line only an unlinked document could have covered reads `short`, never
+   `late`.
+2. **Unlinked quantity is still supply in its month.** What no link took stays free on the PO
+   line's Delivery date (R42) or the SPO's arrival date, credits its month as before (R37), and
+   the Supply tab lists it with its Free quantity. Nothing is excluded from the balance.
+3. **On hand is unchanged**: drawn first-come by required date, its pins binding first.
+4. **Supersedes, for the view only:** R42 point 3's "the remainder ... assigned first-come by
+   required date like any other supply", AC-PO-1's walk draw and AC-PO-4's "assigned
+   first-come". The board half of every one of them stands (AC-PO-8, AC-PO-15).
+
+Pinned by `tests/scm/test_stock_debt_routes.py` (the R45 block) and
+`tests/scm/test_supply_assignment.py::test_a_pin_only_event_is_drawn_by_nobody_and_still_credits_its_month`.
+
 ### 3.5 Flag and policy (S1, R17, R20)
 
 Migration `443_fulfilment_planning_flag_tba_date`: `warehouses.fulfilment_planning boolean not null default false`, seeded true where `is_active and warehouse_code ~ '-(BB|IB|IR|NTC|AM)$'`; `scm.priority_policy.tba_date_from date not null default '2029-01-01'`; drop the two cap columns; permission row + sweep. Downgrade mirrors. Bootstrap_env mirrors the seed (CI DB is bootstrap, not migrations; lesson from #363). Both seed ONCE - the migration inside its `add_column` branch, bootstrap only on a database `alembic_version` has never been stamped for - because from there the flag is configuration and a replay would turn back on every bin an admin turned off.

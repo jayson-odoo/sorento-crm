@@ -716,6 +716,25 @@ def mirror_outgoing_send(
 # ---------------------------------------------------------------------------
 
 
+def _cursor(name: str, value: Optional[str]) -> Optional[str]:
+    """A thread cursor is a Respond message id: digits, nothing else.
+
+    Security review (ASKS-UX, 30 Sep 2026): `around` is spliced into the Respond URL path by
+    `RespondClient.get_message`, and httpx normalises `..`, so a crafted cursor could read another
+    contact's message (and, through the best-effort backfill, write it into this contact's
+    history) or probe a phone number as a workspace contact. Refused here, once, for every route
+    that pages a thread; the caller maps the ValueError to its own 4xx.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if not text.isdigit():
+        raise ValueError(f"{name} must be a message id.")
+    return text
+
+
 def fetch_thread_page(
     db: Session,
     contact: ThreadContact,
@@ -732,9 +751,9 @@ def fetch_thread_page(
     precedence order (the route rejects more than one before we get here).
     """
     limit = max(1, min(int(DEFAULT_LIMIT if limit is None else limit), MAX_LIMIT))
-    before = str(before).strip() if before else None
-    after = str(after).strip() if after else None
-    around = str(around).strip() if around else None
+    before = _cursor("before", before)
+    after = _cursor("after", after)
+    around = _cursor("around", around)
 
     if client is not None:
         try:

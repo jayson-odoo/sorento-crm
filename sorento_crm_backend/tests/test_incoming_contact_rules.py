@@ -773,7 +773,9 @@ def test_dealer_list_is_one_row_per_product_with_deduped_padded_etas(client, db)
     body = _list(client, p, _dealer(db, salesperson="ZZT Sean"))
     assert body["dealer_view"] is True
     assert body["data"] == [{"product_code": p.product_code, "etas": [PADDED, "2026-12-06"]}]
-    assert body["salesperson_name"] == "ZZT Sean"
+    # REFER-SALESMAN (30 Sep 2026): the reply never names the salesperson, so the payload
+    # does not carry the name either.
+    assert "salesperson_name" not in body
 
 
 def test_dealer_list_carries_no_container_quantity_allocation_or_file(client, db):
@@ -789,12 +791,6 @@ def test_dealer_list_with_the_offset_off_reads_the_exact_date(client, db):
     p, _ = _seed(db)
     body = _list(client, p, _dealer(db, offset_applied=False))
     assert body["data"][0]["etas"] == [EXACT]
-
-
-def test_dealer_with_no_salesperson_has_a_null_name(client, db):
-    p, _ = _seed(db)
-    body = _list(client, p, _dealer(db))
-    assert body["salesperson_name"] is None
 
 
 def test_dealer_by_product_is_the_same_view(client, db):

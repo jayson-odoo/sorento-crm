@@ -7,7 +7,10 @@ import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { Skeleton } from '@/components/ui/skeleton';
+import { AskCard } from '@/components/stock-asks/AskCard';
 import { AskDoneByCell, AskedAtCell, AskNoteCell, AskStateCell } from '@/components/stock-asks/AskEditCells';
+import type { ListBoardViewMode } from '@/hooks/useListBoardViewPreference';
 import { toast } from '@/lib/toast';
 import {
   BRANCH_LABEL,
@@ -25,10 +28,27 @@ import {
 
 /**
  * Sales-asks-todo S1: the "Show done" history under the portal to-do. It is the #1333 list
- * (DataGrid, paged) fixed to `state=done`; the to-do above owns everything still open. Reloads
- * when the to-do writes (`refreshKey`), so a Reopen leaves this list at once.
+ * (paged) fixed to `state=done`; the to-do above owns everything still open. Reloads when the
+ * to-do writes (`refreshKey`), so a Reopen leaves this list at once. ASKS-UX item 2: it follows
+ * the landing's view, the grid in List and the to-do's own `AskCard`s in Cards (a card opens the
+ * conversation, its Reopen goes through the to-do so both lists move); the DataGrid provider
+ * stays around both so the pager is one component.
  */
-export function CustomerAsksHistory({ search, refreshKey }: { search: string; refreshKey: number }) {
+export function CustomerAsksHistory({
+  search,
+  refreshKey,
+  view,
+  onOpen,
+  onReopen,
+  pendingAskId = null,
+}: {
+  search: string;
+  refreshKey: number;
+  view: ListBoardViewMode;
+  onOpen: (ask: StockAsk) => void;
+  onReopen: (askId: string) => void;
+  pendingAskId?: string | null;
+}) {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 20 });
   const [page, setPage] = useState<StockAskPage | null>(null);
   const [loading, setLoading] = useState(true);
@@ -120,7 +140,7 @@ export function CustomerAsksHistory({ search, refreshKey }: { search: string; re
         id: 'quantity',
         header: 'Qty',
         size: 60,
-        cell: ({ row }) => <span className="tabular-nums">{row.original.quantity}</span>,
+        cell: ({ row }) => <span className="tabular-nums">{row.original.quantity ?? '-'}</span>,
       },
       {
         id: 'branch',
@@ -203,16 +223,51 @@ export function CustomerAsksHistory({ search, refreshKey }: { search: string; re
       listingKey={null}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
     >
-      <Card>
-        <CardHeader>
-          <CardTable>
-            <DataGridTable />
-          </CardTable>
-        </CardHeader>
-        <CardFooter className="flex justify-between border-t px-4 py-3">
-          <DataGridPagination />
-        </CardFooter>
-      </Card>
+      {view === 'board' ? (
+        <section aria-labelledby="ask-history-done" className="space-y-2">
+          <h2 id="ask-history-done" className="text-sm font-semibold">
+            Done
+          </h2>
+          {loading && !page ? (
+            <div className="space-y-2" role="status" aria-label="Loading">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+          ) : rows.length === 0 ? (
+            <p className="rounded-lg border px-6 py-8 text-center text-sm text-muted-foreground">No done asks yet</p>
+          ) : (
+            <ul className="space-y-2.5">
+              {rows.map((ask) => (
+                <li key={ask.id}>
+                  <AskCard
+                    ask={ask}
+                    pending={pendingAskId === ask.id}
+                    onOpen={onOpen}
+                    onReopen={onReopen}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+          {/* Also past page 1: a Reopen that empties the last page must leave a way back. */}
+          {total > pagination.pageSize || pagination.pageIndex > 0 ? (
+            <div className="flex justify-between border-t pt-3">
+              <DataGridPagination />
+            </div>
+          ) : null}
+        </section>
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTable>
+              <DataGridTable />
+            </CardTable>
+          </CardHeader>
+          <CardFooter className="flex justify-between border-t px-4 py-3">
+            <DataGridPagination />
+          </CardFooter>
+        </Card>
+      )}
     </DataGrid>
   );
 }

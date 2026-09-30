@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const apiFetch = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/api', () => ({ apiFetch }));
 
-import { getAskConversation, getCustomerAsksTodo, listAskAgents, updateSalesAsk } from './stockAskService';
+import { getAskConversation, getAskConversationPage, getCustomerAsksTodo, listAskAgents, searchAskConversation, updateSalesAsk } from './stockAskService';
 
 function jsonResponse(body: unknown, init: { ok?: boolean; status?: number } = {}): Response {
   return {
@@ -102,20 +102,39 @@ describe('getAskConversation', () => {
 
   it('GETs /api/v1/sales/customer-asks/{id}/conversation and returns the payload', async () => {
     apiFetch.mockResolvedValue(jsonResponse(CONVERSATION));
-    await expect(getAskConversation('ask-1', { wholeDay: false })).resolves.toEqual(CONVERSATION);
+    await expect(getAskConversation('ask-1')).resolves.toEqual(CONVERSATION);
     const url = String(apiFetch.mock.calls[0][0]);
-    expect(url.startsWith('/api/v1/sales/customer-asks/ask-1/conversation')).toBe(true);
-    expect(url).not.toContain('whole_day=true');
-  });
-
-  it('adds whole_day=true when the whole day is asked for', async () => {
-    apiFetch.mockResolvedValue(jsonResponse(CONVERSATION));
-    await getAskConversation('ask-1', { wholeDay: true });
-    expect(String(apiFetch.mock.calls[0][0])).toBe('/api/v1/sales/customer-asks/ask-1/conversation?whole_day=true');
+    expect(url).toBe('/api/v1/sales/customer-asks/ask-1/conversation');
   });
 
   it('throws the extracted API message', async () => {
     apiFetch.mockResolvedValue(jsonResponse({ detail: 'Stock ask not found' }, { ok: false, status: 404 }));
-    await expect(getAskConversation('ask-9', { wholeDay: false })).rejects.toThrow('Stock ask not found');
+    await expect(getAskConversation('ask-9')).rejects.toThrow('Stock ask not found');
+  });
+});
+
+// ASKS-UX item 3 (AC-AU12): the shared thread's two loaders, CRM-keyed.
+describe('getAskConversationPage / searchAskConversation', () => {
+  const PAGE = { items: [], has_more_older: false, has_more_newer: false, oldest_message_id: null, newest_message_id: null };
+
+  it('GETs /api/v1/sales/customer-asks/{id}/conversation/page with the one cursor given', async () => {
+    apiFetch.mockResolvedValue(jsonResponse(PAGE));
+    await expect(getAskConversationPage('ask-1', { limit: 50 })).resolves.toEqual(PAGE);
+    expect(String(apiFetch.mock.calls[0][0])).toBe('/api/v1/sales/customer-asks/ask-1/conversation/page?limit=50');
+    await getAskConversationPage('ask-1', { after: '7', limit: 20 });
+    expect(String(apiFetch.mock.calls[1][0])).toBe('/api/v1/sales/customer-asks/ask-1/conversation/page?after=7&limit=20');
+  });
+
+  it('GETs .../conversation/search and returns the items', async () => {
+    const hit = { message_id: '5', sent_at: null, direction: 'incoming', snippet: 'stock?' };
+    apiFetch.mockResolvedValue(jsonResponse({ items: [hit], total: 1, truncated: false, query: 'stock' }));
+    await expect(searchAskConversation('ask-1', 'stock')).resolves.toEqual([hit]);
+    expect(String(apiFetch.mock.calls[0][0])).toBe('/api/v1/sales/customer-asks/ask-1/conversation/search?q=stock&limit=100');
+  });
+
+  it('throws the extracted API message', async () => {
+    apiFetch.mockResolvedValue(jsonResponse({ detail: 'Stock ask not found' }, { ok: false, status: 404 }));
+    await expect(getAskConversationPage('ask-9', {})).rejects.toThrow('Stock ask not found');
+    await expect(searchAskConversation('ask-9', 'x')).rejects.toThrow('Stock ask not found');
   });
 });

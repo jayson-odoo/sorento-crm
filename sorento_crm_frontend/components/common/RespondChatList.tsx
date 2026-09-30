@@ -45,6 +45,7 @@ import {
 import { linkifySegments } from '@/lib/linkifySegments';
 import { parseWhatsAppText } from '@/lib/whatsappText';
 import { cn } from '@/lib/utils';
+import { useReducedMotion } from '@/lib/motion';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -586,13 +587,16 @@ export default function RespondChatList({
    * the BOTTOM needs no such guard: it ends far from the top threshold.
    */
   const lastProgrammaticScrollAt = useRef(0);
+  // DESIGN-LANGUAGE: a reader who asked for reduced motion gets an instant jump on every
+  // programmatic scroll (highlight on mount, a search match, a focus jump, the tail pin).
+  const reducedMotion = useReducedMotion();
   const scrollBubbleIntoView = useCallback(
     (node: HTMLElement | null | undefined, options: ScrollIntoViewOptions) => {
       if (!node?.scrollIntoView) return;
       lastProgrammaticScrollAt.current = Date.now();
-      node.scrollIntoView(options);
+      node.scrollIntoView(reducedMotion ? { ...options, behavior: 'auto' } : options);
     },
-    [],
+    [reducedMotion],
   );
 
   // The enquiry bubble is scrolled to ONCE per highlighted message, not on every
@@ -651,8 +655,8 @@ export default function RespondChatList({
       if (distanceFromBottom > PIN_TO_BOTTOM_SLACK_PX) return;
     }
     pinnedOnce.current = true;
-    messagesEndRef.current?.scrollIntoView?.({ behavior: firstPin ? 'auto' : 'smooth' });
-  }, [sortedItems, normalizedHighlightId, activeMatchId, pinToBottom]);
+    messagesEndRef.current?.scrollIntoView?.({ behavior: firstPin || reducedMotion ? 'auto' : 'smooth' });
+  }, [sortedItems, normalizedHighlightId, activeMatchId, pinToBottom, reducedMotion]);
 
   // Scroll anchoring: restore the reader's distance from the OLD top edge.
   useLayoutEffect(() => {
@@ -1138,7 +1142,7 @@ export default function RespondChatList({
               onJumpToLatest();
               return;
             }
-            messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
+            messagesEndRef.current?.scrollIntoView?.({ behavior: reducedMotion ? 'auto' : 'smooth' });
             setScrolledUp(false);
           }}
           className="absolute bottom-3 end-3 z-20 inline-flex size-9 items-center justify-center rounded-full border bg-white text-zinc-700 shadow-md hover:bg-zinc-50 dark:border-zinc-700 dark:bg-[#202c33] dark:text-zinc-200 dark:hover:bg-[#2a3942]"

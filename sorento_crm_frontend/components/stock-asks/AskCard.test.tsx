@@ -18,7 +18,7 @@ const ASK: StockAsk = {
   product_name: 'Wiper Blade 24in',
   quantity: 50,
   branch: 'in_stock',
-  answer_summary: 'SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed.',
+  answer_summary: 'SRT5674 x 50: yes, we have stock. Please refer to your salesman.',
   notified_agent: true,
   notify_skip_reason: null,
   state: 'open',
@@ -41,7 +41,7 @@ describe('AskCard content (AC-ST305)', () => {
     expect(screen.getByText('Ah Seng')).toBeInTheDocument();
     const text = (container.textContent ?? '').replace(/\s+/g, ' ');
     expect(text).toContain('Asked: SRT5674 x 50');
-    expect(text).toContain('Answered: Yes, we have stock, please refer to your salesman to proceed.');
+    expect(text).toContain('Answered: Yes, we have stock. Please refer to your salesman.');
     expect(text).toContain(formatDateTimeInMalaysia(ASK.created_at));
   });
 

@@ -11,7 +11,7 @@ definition migration 305 gave it. A no-op on main; it puts a dev database that a
 earlier, parked version of this lane had dropped it from back in step with main.
 
 Revision ID: sdn_0001_so_debtor_name
-Revises: lsa_0001_show_all_counts
+Revises: rs_0001_stock_ask_referred
 Create Date: 2026-09-30
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "sdn_0001_so_debtor_name"
-down_revision = "lsa_0001_show_all_counts"
+down_revision = "rs_0001_stock_ask_referred"
 branch_labels = None
 depends_on = None
 

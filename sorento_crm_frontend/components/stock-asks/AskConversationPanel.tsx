@@ -5,29 +5,27 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
-import { formatChatDayPillMalaysia, formatDateInMalaysia, formatDateTimeInMalaysia, formatTimeShortMalaysia } from '@/lib/helpers';
+import RespondChatList from '@/components/common/RespondChatList';
+import { useConversationThread } from '@/components/common/conversation/useConversationThread';
+import type { AskThreadSource } from '@/hooks/useAskThread';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { StockAsk } from '@/lib/stock-asks';
-import {
-  askAnswerText,
-  askProductText,
-  utcMs,
-  type AskConversation,
-} from '@/lib/stock-asks-todo';
-import { useReducedMotion } from '@/lib/motion';
-import { cn } from '@/lib/utils';
+import { askAnswerText, askProductText, type AskConversation } from '@/lib/stock-asks-todo';
 
 /** Where the CRM's chat history for one contact lives. */
 const CONVERSATIONS_PATH = '/sla-management/conversations';
 
+export type { AskThreadSource } from '@/hooks/useAskThread';
+
 export interface AskConversationPanelProps {
   ask: StockAsk;
+  /** The anchor read: `ask_message_ref` tags the bubble; `contact_id` feeds the CRM link. */
   conversation: AskConversation | undefined;
-  loading: boolean;
+  thread: AskThreadSource;
   /** CRM only: the link to that contact's chat history. */
   showOpenInConversations: boolean;
   /** CRM only: the agent's code, on the header line. */
   agentCode?: string | null;
-  onWholeDay: () => void;
   /** Saves the note; a rejection is the caller's to report, "Saved" shows only after it resolves. */
   onNote: (askId: string, note: string) => Promise<unknown> | void;
   onDone: (askId: string) => void;
@@ -37,17 +35,17 @@ export interface AskConversationPanelProps {
 
 /**
  * The body of the opened card (portal Drawer, CRM Sheet): who and when, the Asked / Answered
- * block, the messages around the ask, an explicit-save Note and the Done / Reopen foot. Nothing
- * technical: no turn ids, parser output or delivery status. Presentational: the mount fetches
- * the conversation and owns the drawer.
+ * block, the contact's whole thread (the SAME `RespondChatList` + `useConversationThread` the
+ * ticket drawer mounts: scroll-back, search, jump to latest, the anchor tagged "This enquiry"),
+ * an explicit-save Note and the Done / Reopen foot. Read-only: no composer. Presentational:
+ * the mount fetches and owns the drawer.
  */
 export function AskConversationPanel({
   ask,
   conversation,
-  loading,
+  thread: source,
   showOpenInConversations,
   agentCode,
-  onWholeDay,
   onNote,
   onDone,
   onReopen,
@@ -56,25 +54,27 @@ export function AskConversationPanel({
   const [note, setNote] = useState(ask.note ?? '');
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [saving, setSaving] = useState(false);
-  const [flash, setFlash] = useState(false);
-  const reduced = useReducedMotion();
-  const taggedRef = useRef<HTMLDivElement | null>(null);
-  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (flashTimer.current) clearTimeout(flashTimer.current);
-  }, []);
 
   const isDone = ask.state === 'done';
-  const messages = conversation?.messages ?? [];
-  const askMessageId = conversation?.ask_message_id ?? null;
+  const anchor = conversation?.ask_message_ref ?? null;
 
-  // A keyboard click (detail 0) or reduced motion jumps at once; only a pointer click glides.
-  const jump = (fromKeyboard: boolean) => {
-    taggedRef.current?.scrollIntoView({ block: 'center', behavior: reduced || fromKeyboard ? 'auto' : 'smooth' });
-    setFlash(true);
-    if (flashTimer.current) clearTimeout(flashTimer.current);
-    flashTimer.current = setTimeout(() => setFlash(false), 1800);
-  };
+  const thread = useConversationThread({
+    liveItems: source.liveItems,
+    loadPage: source.loadPage,
+    searchMessages: source.searchMessages,
+    resetKey: ask.id,
+  });
+  const { jumpToMessage } = thread;
+
+  // On open the thread lands on the anchor once the tail is in: a scroll when the tail holds it,
+  // the page around it (a detached window with "Jump to latest") when it does not. Waiting for
+  // the tail is what stops an empty window from fetching the around-page for nothing.
+  const jumpedTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (!anchor || source.loading || jumpedTo.current === anchor) return;
+    jumpedTo.current = anchor;
+    jumpToMessage(anchor);
+  }, [anchor, source.loading, jumpToMessage]);
 
   const saveNote = async () => {
     setSaving(true);
@@ -88,7 +88,6 @@ export function AskConversationPanel({
     }
   };
 
-  let lastDay = '';
   const href = conversation?.contact_id
     ? `${CONVERSATIONS_PATH}?contact=${encodeURIComponent(conversation.contact_id)}`
     : CONVERSATIONS_PATH;
@@ -120,64 +119,63 @@ export function AskConversationPanel({
             <span className="text-muted-foreground">Answered: </span>
             {askAnswerText(ask)}
           </p>
-          <Button type="button" variant="ghost" size="sm" className="-ml-2" onClick={(e) => jump(e.detail === 0)} disabled={askMessageId == null}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="-ml-2"
+            onClick={() => jumpToMessage(anchor)}
+            disabled={anchor == null}
+          >
             Jump to message
           </Button>
         </div>
 
         <section className="space-y-2" aria-label="Conversation">
           <h3 className="text-sm font-semibold">Conversation</h3>
-          {loading && !conversation ? (
+          {source.loading && source.liveItems.length === 0 ? (
             <div className="space-y-2" role="status" aria-label="Loading">
               <Skeleton className="h-9 w-2/3" />
               <Skeleton className="ml-auto h-9 w-2/3" />
               <Skeleton className="h-9 w-1/2" />
             </div>
-          ) : messages.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No messages around this ask.</p>
+          ) : source.error ? (
+            <p className="text-sm text-destructive">{source.error}</p>
           ) : (
-            <div className="space-y-2">
-              {messages.map((m) => {
-                const day = formatDateInMalaysia(utcMs(m.at));
-                const separator = day !== lastDay;
-                lastDay = day;
-                const isAsk = m.id === askMessageId;
-                return (
-                  <div key={m.id} className="space-y-2">
-                    {separator ? (
-                      <p className="text-center text-xs text-muted-foreground">{formatChatDayPillMalaysia(utcMs(m.at))}</p>
-                    ) : null}
-                    <div
-                      ref={isAsk ? taggedRef : undefined}
-                      data-testid="conversation-bubble"
-                      data-direction={m.direction}
-                      className={cn(
-                        'max-w-[85%] rounded-lg px-3 py-2 text-sm break-words whitespace-pre-wrap',
-                        m.direction === 'in' ? 'mr-auto bg-muted' : 'ml-auto bg-primary/10',
-                        isAsk && flash && 'ask-bubble-flash ring-2 ring-primary',
-                      )}
-                    >
-                      {isAsk ? <p className="mb-0.5 text-xs font-medium text-primary">This ask</p> : null}
-                      <p>{m.text}</p>
-                      <p className="mt-0.5 text-right text-[0.6875rem] text-muted-foreground">
-                        {formatTimeShortMalaysia(utcMs(m.at))}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <>
+              {thread.error ? <p className="text-xs text-destructive">{thread.error}</p> : null}
+              <RespondChatList
+                items={thread.items}
+                contactName={ask.contact_name}
+                contactPhone={ask.contact_phone}
+                emptyHint="No messages in this conversation yet."
+                // dvh, not vh: the portal drawer is phone-facing (M6-02) and a vh cap sits under Safari's chrome.
+                maxHeightClass="max-h-[50dvh]"
+                highlightMessageId={anchor}
+                highlightLabel="This enquiry"
+                onLoadOlder={thread.loadOlder}
+                hasMoreOlder={thread.hasMoreOlder}
+                isLoadingOlder={thread.isLoadingOlder}
+                atConversationStart={thread.atConversationStart}
+                isDetached={thread.isDetached}
+                onJumpToLatest={thread.jumpToLatest}
+                newerUnseenCount={thread.newerUnseenCount}
+                onLoadNewer={thread.loadNewer}
+                hasMoreNewer={thread.hasMoreNewer}
+                isLoadingNewer={thread.isLoadingNewer}
+                searchController={thread.search}
+                highlightTerm={thread.highlightTerm}
+                focusMessageId={thread.focusMessageId}
+                focusNonce={thread.focusNonce}
+                onJumpToMessage={thread.jumpToMessage}
+              />
+            </>
           )}
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={onWholeDay}>
-              Show the whole day
-            </Button>
-            {showOpenInConversations ? (
-              <Link href={href} className="text-sm text-primary underline-offset-4 hover:underline">
-                Open in Conversations
-              </Link>
-            ) : null}
-          </div>
+          {showOpenInConversations ? (
+            <Link href={href} className="inline-block text-sm text-primary underline-offset-4 hover:underline">
+              Open in Conversations
+            </Link>
+          ) : null}
         </section>
 
         <section className="space-y-1.5">

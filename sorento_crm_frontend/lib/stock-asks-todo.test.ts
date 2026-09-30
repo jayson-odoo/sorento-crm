@@ -8,8 +8,10 @@ import type { StockAsk } from '@/lib/stock-asks';
 import {
   ASK_LANDING_FIELDS,
   askAnswerText,
+  askProductText,
   askToSummary,
   bucketTodo,
+  filterTodoPayload,
   type AskTodoPayload,
 } from '@/lib/stock-asks-todo';
 import { applyLandingFilters, sortLandingItems } from '@/app/(auth)/portal/lib/landing-fields';
@@ -134,13 +136,22 @@ describe('bucketTodo sort inside a section (AC-ST303, AC-ST304)', () => {
 
 // ---- AC-ST301 -----------------------------------------------------------------------------
 
-const ANSWER = 'SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed.';
+const ANSWER = 'SRT5674 x 50: yes, we have stock. Please refer to your salesman.';
 
 describe('askAnswerText (AC-ST301)', () => {
   it('strips the "CODE x Q:" prefix and upper-cases the first letter', () => {
     expect(askAnswerText(ask('t', '2026-09-29T01:00:00Z', { answer_summary: ANSWER }))).toBe(
-      'Yes, we have stock, please refer to your salesman to proceed.',
+      'Yes, we have stock. Please refer to your salesman.',
     );
+  });
+
+  // REFER-SALESMAN (AC-RS22): the new rows store the answer without a "CODE x Q:" prefix.
+  it.each([
+    'ETA: 2026-09-08. Please refer to your salesman.',
+    "Here's what you want:\n• product: SRT1\n\nBut no incoming matched these.\n\nPlease refer to your salesman.",
+    'Please refer to your salesman.',
+  ])('returns a referred or incoming_eta answer as stored: %s', (answer_summary) => {
+    expect(askAnswerText(ask('t', '2026-09-29T01:00:00Z', { answer_summary }))).toBe(answer_summary);
   });
 
   it.each([
@@ -175,9 +186,17 @@ describe('askToSummary (AC-ST301)', () => {
       contact_name: 'Ah Seng',
       created_at: '2026-09-29T01:00:00Z',
       status: 'open',
-      answer: 'Yes, we have stock, please refer to your salesman to proceed.',
+      answer: 'Yes, we have stock. Please refer to your salesman.',
       branch: 'in_stock',
     });
+  });
+
+  // REFER-SALESMAN (AC-RS21): an incoming or referred ask has no quantity.
+  it('titles a quantity-less ask by its code alone, never "CODE x null"', () => {
+    const row = ask('s3', '2026-09-29T01:00:00Z', { product_code: 'SRTWC286-SH-NEW', quantity: null, branch: 'incoming_eta' });
+    expect(askProductText(row)).toBe('SRTWC286-SH-NEW');
+    expect(askToSummary(row).title).toBe('SRTWC286-SH-NEW');
+    expect(askProductText(ask('s4', '2026-09-29T01:00:00Z', { product_code: 'SRT5674', quantity: 50 }))).toBe('SRT5674 x 50');
   });
 
   it('carries a done ask as status done', () => {
@@ -188,9 +207,10 @@ describe('askToSummary (AC-ST301)', () => {
 // ---- AC-ST302 -----------------------------------------------------------------------------
 
 describe('ASK_LANDING_FIELDS (AC-ST302)', () => {
-  it('is Customer, Product, Answer, Created, State in that order, with their types and keys', () => {
+  it('is Customer, Contact, Product, Answer, Created, State in that order, with their types and keys', () => {
     expect(ASK_LANDING_FIELDS.map((f) => [f.label, f.type])).toEqual([
       ['Customer', 'text'],
+      ['Contact', 'text'],
       ['Product', 'text'],
       ['Answer', 'text'],
       ['Created', 'date'],
@@ -198,6 +218,7 @@ describe('ASK_LANDING_FIELDS (AC-ST302)', () => {
     ]);
     const key = (label: string) => ASK_LANDING_FIELDS.find((f) => f.label === label)!.key;
     expect(key('Customer')).toBe('customer_name');
+    expect(key('Contact')).toBe('contact_name'); // ASKS-UX item 1: filter by the asker
     expect(key('Product')).toBe('title');
     expect(key('Created')).toBe('created_at');
   });
@@ -212,6 +233,20 @@ describe('ASK_LANDING_FIELDS (AC-ST302)', () => {
   it('a Customer filter keeps only that customer', () => {
     const kept = applyLandingFilters(rowsOf(), ASK_LANDING_FIELDS, { customer_name: 'Hock Lee Trading' });
     expect(kept.map((r) => r.id).sort()).toEqual(['f1', 'f4']);
+  });
+
+  // ASKS-UX item 1 (AC-AU01): the asker is a filter on both mounts.
+  it('a Contact filter keeps only that contact, in open and done_today alike', () => {
+    const jayson = { contact_name: 'Jayson' };
+    const out = filterTodoPayload(
+      payload(
+        [ask('j1', '2026-09-29T03:00:00Z', jayson), ask('s1', '2026-09-29T03:00:00Z', { contact_name: 'Ah Seng' })],
+        [ask('j2', '2026-09-28T03:00:00Z', { ...jayson, state: 'done' }), ask('s2', '2026-09-28T03:00:00Z', { state: 'done' })],
+      ),
+      { contact_name: 'Jayson' },
+    );
+    expect(out.open.map((a) => a.id)).toEqual(['j1']);
+    expect(out.done_today.map((a) => a.id)).toEqual(['j2']);
   });
 
   it('sorts by Product (the CODE x Q title) A to Z', () => {

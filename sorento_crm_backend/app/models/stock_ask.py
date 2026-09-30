@@ -10,6 +10,11 @@ out, and why not when it did not.
 customer still gets its row, with reason `no_customer`, and that row hangs on no customer tab
 and no portal page. No `sales_agent_id` snapshot: the portal scope reads the customer's
 CURRENT agent (R9).
+
+REFER-SALESMAN (owner ruling 30 Sep 2026): every reply that refers a dealer to their salesman
+is a row here too. `incoming_eta` is a dealer's incoming ETA reply, `referred` every other
+refer reply (a miss, a not-found code, a declined did-you-mean); neither carries the dealer's
+quantity, so `quantity` is nullable. Neither notifies the salesman on WhatsApp.
 """
 import uuid
 
@@ -30,7 +35,7 @@ from sqlalchemy.sql import func, text
 from app.database import Base
 from app.models.base import CompanyScopedMixin
 
-STOCK_ASK_BRANCHES = ("too_big", "in_stock", "incoming", "no_incoming")
+STOCK_ASK_BRANCHES = ("too_big", "in_stock", "incoming", "no_incoming", "incoming_eta", "referred")
 STOCK_ASK_STATES = ("open", "done")
 #: `console`: written by a chat console hand test (owner ruling 28 Sep 2026), not a dealer.
 STOCK_ASK_SOURCES = ("live", "console")
@@ -40,7 +45,7 @@ class StockAsk(Base, CompanyScopedMixin):
     __tablename__ = "stock_asks"
     __table_args__ = (
         CheckConstraint(
-            "branch IN ('too_big', 'in_stock', 'incoming', 'no_incoming')",
+            "branch IN ('too_big', 'in_stock', 'incoming', 'no_incoming', 'incoming_eta', 'referred')",
             name="ck_stock_asks_branch",
         ),
         CheckConstraint("state IN ('open', 'done')", name="ck_stock_asks_state"),
@@ -55,7 +60,7 @@ class StockAsk(Base, CompanyScopedMixin):
     contact_id = Column(Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     product_code = Column(String(100), nullable=False)
-    quantity = Column(Integer, nullable=False)
+    quantity = Column(Integer, nullable=True)
     branch = Column(String(20), nullable=False)
     answer_summary = Column(Text, nullable=False)
     notified_agent = Column(Boolean, nullable=False, default=False, server_default=text("false"))

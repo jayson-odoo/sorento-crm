@@ -15,7 +15,8 @@ class StockAskResponse(BaseModel):
     contact_phone: Optional[str] = None
     product_code: str
     product_name: Optional[str] = None
-    quantity: int
+    #: None on an `incoming_eta` / `referred` row (REFER-SALESMAN): the ask named no quantity.
+    quantity: Optional[int] = None
     branch: str
     answer_summary: str
     notified_agent: bool
@@ -74,6 +75,9 @@ class StockAskMessage(BaseModel):
 class StockAskConversationResponse(BaseModel):
     messages: list[StockAskMessage]
     ask_message_id: Optional[int] = None
+    #: The Respond message id of the `ask_message_id` row, what the shared thread highlights and
+    #: jumps to (ASKS-UX). None when that row has no Respond id.
+    ask_message_ref: Optional[str] = None
     #: The contact's `respond_contacts.id`, only for the CRM's "Open in Conversations" link.
     contact_id: Optional[str] = None
 

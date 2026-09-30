@@ -109,7 +109,7 @@ def test_send_actions_emits_send_attachments_when_answer_files_carries_the_packi
 
 def test_send_actions_emits_no_attachment_action_without_one():
     reply = {
-        "text": "SRT5674 x 150: no stock and no incoming at the moment, please refer to your salesman.",
+        "text": "SRT5674 x 150: no stock and no incoming at the moment. Please refer to your salesman.",
         "quick_replies": None,
         "result_set": None,
         "attachments_src": None,

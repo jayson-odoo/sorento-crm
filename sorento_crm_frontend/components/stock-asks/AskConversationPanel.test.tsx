@@ -1,17 +1,17 @@
 /**
- * AC-ST307: the body of the opened card (portal Drawer, CRM Sheet). Presentational: the mount
- * fetches the conversation and owns the drawer.
- *
- * Pinned hooks (the coder must honour them): every message bubble is
- * `data-testid="conversation-bubble"` with `data-direction="in" | "out"`; the flash on Jump to
- * message is a class whose name contains `flash`.
+ * AC-ST307 as reshaped by ASKS-UX item 3 (AC-AU10 to AC-AU12): the body of the opened card
+ * (portal Drawer, CRM Sheet). The conversation is the SHARED thread (`RespondChatList` driven by
+ * `useConversationThread`), fed by the mount's loaders and live tail; the panel owns nothing
+ * about fetching. Bubbles carry `data-message-id` (the shared list's own hook); the tagged one
+ * reads "This enquiry".
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { AskConversationPanel } from './AskConversationPanel';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { AskConversationPanel, type AskThreadSource } from './AskConversationPanel';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { StockAsk } from '@/lib/stock-asks';
+import type { RespondMessageRenderable } from '@/lib/respondIoChatRender';
 
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
@@ -20,7 +20,7 @@ vi.mock('next/link', () => ({
     </a>
   ),
 }));
-
+vi.mock('@/components/common/AttachmentPreviewModal', () => ({ __esModule: true, default: () => null }));
 const motion = vi.hoisted(() => ({ reduced: false }));
 vi.mock('@/lib/motion', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/motion')>();
@@ -36,7 +36,7 @@ const ASK: StockAsk & { contact_phone?: string | null } = {
   product_name: 'Wiper Blade 24in',
   quantity: 50,
   branch: 'in_stock',
-  answer_summary: 'SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed.',
+  answer_summary: 'SRT5674 x 50: yes, we have stock. Please refer to your salesman.',
   notified_agent: true,
   notify_skip_reason: null,
   state: 'open',
@@ -46,53 +46,59 @@ const ASK: StockAsk & { contact_phone?: string | null } = {
 };
 const DONE: StockAsk = { ...ASK, state: 'done', done_by: 'Sean Ibrahim', done_at: '2026-09-29T02:00:00Z' };
 
-const CONVERSATION = {
-  messages: [
-    { id: 1, direction: 'in', text: 'Boss, SRT5674 ada stock?', at: '2026-09-27T02:58:00' },
-    { id: 2, direction: 'out', text: 'How many units do you need?', at: '2026-09-27T02:58:30' },
-    { id: 3, direction: 'out', text: 'SRT5674 x 50: yes, we have stock', at: '2026-09-27T03:00:00' },
-    { id: 4, direction: 'in', text: 'ok tq, I call Sean', at: '2026-09-27T03:01:00' },
-  ],
-  ask_message_id: 3,
-};
-
-const scrolled: Element[] = [];
-const scrollArgs: unknown[] = [];
-
-beforeEach(() => {
-  scrolled.length = 0;
-  scrollArgs.length = 0;
-  motion.reduced = false;
-  Element.prototype.scrollIntoView = vi.fn(function (this: Element, arg?: unknown) {
-    scrolled.push(this);
-    scrollArgs.push(arg);
-  }) as never;
-});
-afterEach(() => {
-  delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
-});
-
-function setup(over: Partial<React.ComponentProps<typeof AskConversationPanel>> = {}) {
-  const handlers = {
-    onWholeDay: vi.fn(),
-    onNote: vi.fn().mockResolvedValue(undefined),
-    onDone: vi.fn(),
-    onReopen: vi.fn(),
-  };
-  const view = render(
-    <AskConversationPanel
-      ask={ASK}
-      conversation={CONVERSATION}
-      loading={false}
-      showOpenInConversations={false}
-      {...handlers}
-      {...over}
-    />,
-  );
-  return { ...handlers, ...view };
+/** Respond message ids are epoch microseconds; the list reads the bubble clock off them. */
+const BASE_US = 1_790_000_000_000_000;
+const idOf = (i: number) => String(BASE_US + i * 60_000_000);
+function msg(i: number, text: string, traffic: 'incoming' | 'outgoing' = 'incoming'): RespondMessageRenderable {
+  return { messageId: BASE_US + i * 60_000_000, traffic, message: { type: 'text', text }, status: [] };
 }
 
-const bubbles = () => screen.getAllByTestId('conversation-bubble');
+const TAIL = [
+  msg(1, 'Boss, SRT5674 ada stock?'),
+  msg(2, 'How many units do you need?', 'outgoing'),
+  msg(3, 'SRT5674 x 50: yes, we have stock', 'outgoing'),
+  msg(4, 'ok tq, I call Sean'),
+];
+const ANCHOR = { messages: [], ask_message_id: 3, ask_message_ref: idOf(3) };
+
+let scrollIntoView: ReturnType<typeof vi.fn>;
+beforeEach(() => {
+  motion.reduced = false;
+  scrollIntoView = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { value: scrollIntoView, configurable: true, writable: true });
+});
+afterEach(() => {
+  Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+});
+/** Only the centre scrolls are a jump; the list also pins itself to the tail on the end marker. */
+const centreScrolls = () =>
+  scrollIntoView.mock.calls.filter(([opts]) => (opts as ScrollIntoViewOptions | undefined)?.block === 'center').length;
+
+function thread(over: Partial<AskThreadSource> = {}): AskThreadSource {
+  return {
+    liveItems: TAIL,
+    loading: false,
+    error: null,
+    loadPage: vi.fn().mockResolvedValue({
+      items: TAIL,
+      has_more_older: false,
+      has_more_newer: false,
+      oldest_message_id: idOf(1),
+      newest_message_id: idOf(4),
+    }),
+    searchMessages: vi.fn().mockResolvedValue([]),
+    ...over,
+  };
+}
+
+function setup(over: Partial<React.ComponentProps<typeof AskConversationPanel>> = {}) {
+  const handlers = { onNote: vi.fn().mockResolvedValue(undefined), onDone: vi.fn(), onReopen: vi.fn() };
+  const props = { ask: ASK, conversation: ANCHOR, thread: thread(), showOpenInConversations: false, ...handlers, ...over };
+  const view = render(<AskConversationPanel {...props} />);
+  return { ...handlers, ...view, props };
+}
+
+const bubble = (container: HTMLElement, i: number) => container.querySelector(`[data-message-id="${idOf(i)}"]`) as HTMLElement | null;
 
 describe('AskConversationPanel header and block (AC-ST307)', () => {
   it('shows customer, contact with its phone, and "Asked <datetime>"', () => {
@@ -105,7 +111,7 @@ describe('AskConversationPanel header and block (AC-ST307)', () => {
   });
 
   it('shows the agent code only when agentCode is passed', () => {
-    const { unmount } = setup({ agentCode: 'SEAN I' } as never);
+    const { unmount } = setup({ agentCode: 'SEAN I' });
     expect(screen.getByText(/SEAN I/)).toBeInTheDocument();
     unmount();
     const { container } = setup();
@@ -115,50 +121,90 @@ describe('AskConversationPanel header and block (AC-ST307)', () => {
   it('shows the Asked / Answered block with a Jump to message button', () => {
     const { container } = setup();
     const text = (container.textContent ?? '').replace(/\s+/g, ' ');
-    expect(text).toContain('Asked');
-    expect(text).toContain('SRT5674 x 50');
+    expect(text).toContain('SRT5674 x 50 (Wiper Blade 24in)');
     expect(text).toContain('Answered');
-    expect(text).toContain('Yes, we have stock, please refer to your salesman to proceed.');
+    expect(text).toContain('Yes, we have stock. Please refer to your salesman.');
     expect(screen.getByRole('button', { name: /Jump to message/ })).toBeInTheDocument();
   });
 
-  it('puts the product name in brackets after the code when there is one, and nothing when there is not', () => {
-    const { container, unmount } = setup();
-    expect((container.textContent ?? '').replace(/\s+/g, ' ')).toContain('SRT5674 x 50 (Wiper Blade 24in)');
-    unmount();
-    const bare = setup({ ask: { ...ASK, product_name: null } });
-    expect(bare.container.textContent).not.toMatch(/\(\s*\)|\(null\)/);
-    expect(bare.container.textContent).not.toContain('Wiper Blade');
+  it('puts nothing after the code when there is no product name', () => {
+    const { container } = setup({ ask: { ...ASK, product_name: null } });
+    expect(container.textContent).not.toMatch(/\(\s*\)|\(null\)/);
+    expect(container.textContent).not.toContain('Wiper Blade');
   });
 });
 
-describe('AskConversationPanel conversation (AC-ST307)', () => {
-  it('renders inbound bubbles left and outbound right, oldest first', () => {
+describe('AskConversationPanel conversation is the shared thread (AC-AU10, AC-AU11)', () => {
+  it('renders the live tail as the shared chat list with the search affordance, and no "Show the whole day"', () => {
+    const { container } = setup();
+    expect(screen.getByTestId('chat-scroll-container')).toBeInTheDocument();
+    for (const i of [1, 2, 3, 4]) expect(bubble(container, i)).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Search messages' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show the whole day' })).toBeNull();
+    // The chat header names the contact, never the customer.
+    expect(within(screen.getByTestId('chat-scroll-container').parentElement as HTMLElement).getAllByText('Ah Seng').length).toBeGreaterThan(0);
+  });
+
+  it('tags only the anchor bubble "This enquiry" and jumps to it on open', async () => {
+    const { container } = setup();
+    expect(screen.getAllByText('This enquiry')).toHaveLength(1);
+    expect(bubble(container, 3)!.textContent).toContain('This enquiry');
+    expect(bubble(container, 3)!.textContent).toContain('SRT5674 x 50: yes, we have stock');
+    await waitFor(() => expect(centreScrolls()).toBeGreaterThanOrEqual(1));
+  });
+
+  it('tags nothing and disables Jump to message without an anchor', () => {
+    setup({ conversation: { messages: [], ask_message_id: null, ask_message_ref: null } });
+    expect(screen.queryByText('This enquiry')).toBeNull();
+    expect(screen.getByRole('button', { name: /Jump to message/ })).toBeDisabled();
+  });
+
+  it('Jump to message scrolls to the anchor again when it is loaded', async () => {
     setup();
-    expect(bubbles().map((b) => [b.getAttribute('data-direction'), (b.textContent ?? '').replace('This ask', '').trim().slice(0, 12)])).toEqual([
-      ['in', 'Boss, SRT567'],
-      ['out', 'How many uni'],
-      ['out', 'SRT5674 x 50'],
-      ['in', 'ok tq, I cal'],
-    ]);
+    await waitFor(() => expect(centreScrolls()).toBeGreaterThanOrEqual(1));
+    const before = centreScrolls();
+    fireEvent.click(screen.getByRole('button', { name: /Jump to message/ }));
+    await waitFor(() => expect(centreScrolls()).toBe(before + 1));
   });
 
-  it('tags only the ask_message_id bubble "This ask"', () => {
+  it('jumps without motion when the reader asked for reduced motion (DESIGN-LANGUAGE)', async () => {
+    motion.reduced = true;
     setup();
-    const tagged = bubbles().filter((b) => (b.textContent ?? '').includes('This ask'));
-    expect(tagged).toHaveLength(1);
-    expect(tagged[0].textContent).toContain('SRT5674 x 50: yes, we have stock');
+    await waitFor(() => expect(centreScrolls()).toBeGreaterThanOrEqual(1));
+    fireEvent.click(screen.getByRole('button', { name: /Jump to message/ }));
+    await waitFor(() => expect(centreScrolls()).toBeGreaterThanOrEqual(2));
+    for (const [opts] of scrollIntoView.mock.calls) {
+      expect((opts as ScrollIntoViewOptions | undefined)?.behavior ?? 'auto').toBe('auto');
+    }
   });
 
-  it('tags nothing when ask_message_id is null', () => {
-    setup({ conversation: { ...CONVERSATION, ask_message_id: null } });
-    expect(screen.queryByText('This ask')).toBeNull();
+  it('loads the page around the anchor when the tail does not hold it (an old ask)', async () => {
+    const around = [msg(-40, 'long ago'), msg(-39, 'SRT5674 x 50: yes, we have stock', 'outgoing'), msg(-38, 'noted')];
+    const loadPage = vi.fn().mockResolvedValue({
+      items: around,
+      has_more_older: true,
+      has_more_newer: true,
+      oldest_message_id: idOf(-40),
+      newest_message_id: idOf(-38),
+      anchor_message_id: idOf(-39),
+    });
+    const { container } = setup({
+      conversation: { messages: [], ask_message_id: 9, ask_message_ref: idOf(-39) },
+      thread: thread({ loadPage }),
+    });
+    await waitFor(() => expect(loadPage).toHaveBeenCalledWith({ around: idOf(-39), limit: 50 }));
+    await waitFor(() => expect(bubble(container, -39)).not.toBeNull());
+    expect(bubble(container, -39)!.textContent).toContain('This enquiry');
+    // The reader is in the past: the way back to the live tail is offered.
+    expect(screen.getByTestId('chat-jump-to-latest')).toBeInTheDocument();
   });
 
-  it('shows a loading state while the conversation loads and no bubbles', () => {
-    setup({ conversation: undefined, loading: true });
+  it('shows a loading state while the tail loads, and the thread error when it fails', () => {
+    const { unmount } = setup({ thread: thread({ liveItems: [], loading: true }) });
     expect(screen.getByRole('status')).toBeInTheDocument();
-    expect(screen.queryAllByTestId('conversation-bubble')).toHaveLength(0);
+    unmount();
+    setup({ thread: thread({ liveItems: [], error: 'Server down' }) });
+    expect(screen.getByText('Server down')).toBeInTheDocument();
   });
 
   it('shows no technical fields: no turn ids, delivery status or Respond ids', () => {
@@ -167,46 +213,14 @@ describe('AskConversationPanel conversation (AC-ST307)', () => {
       expect((container.textContent ?? '').toLowerCase()).not.toContain(gone);
     }
   });
-
-  it('Jump to message scrolls the tagged bubble into view and flashes it', () => {
-    setup();
-    const tagged = bubbles().find((b) => (b.textContent ?? '').includes('This ask'))!;
-    const before = tagged.className;
-    expect(before).not.toMatch(/flash/i);
-    fireEvent.click(screen.getByRole('button', { name: /Jump to message/ }), { detail: 1 });
-    expect(scrolled).toEqual([tagged]);
-    expect(tagged.className).toMatch(/flash/i);
-    const others = bubbles().filter((b) => b !== tagged);
-    for (const b of others) expect(b.className).not.toMatch(/flash/i);
-  });
-
-  it('scrolls smoothly for a pointer click, and with behavior auto for a keyboard click or reduced motion', () => {
-    const { unmount } = setup();
-    fireEvent.click(screen.getByRole('button', { name: /Jump to message/ }), { detail: 1 });
-    expect(scrollArgs.at(-1)).toMatchObject({ behavior: 'smooth' });
-    fireEvent.click(screen.getByRole('button', { name: /Jump to message/ }), { detail: 0 }); // Enter / Space
-    expect(scrollArgs.at(-1)).toMatchObject({ behavior: 'auto' });
-    unmount();
-    motion.reduced = true;
-    setup();
-    fireEvent.click(screen.getByRole('button', { name: /Jump to message/ }), { detail: 1 });
-    expect(scrollArgs.at(-1)).toMatchObject({ behavior: 'auto' });
-  });
-
-  it('Show the whole day calls onWholeDay', () => {
-    const { onWholeDay } = setup();
-    fireEvent.click(screen.getByRole('button', { name: 'Show the whole day' }));
-    expect(onWholeDay).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe('AskConversationPanel Open in Conversations (AC-ST307)', () => {
   it('is a link only when showOpenInConversations is set (the CRM)', () => {
-    const { unmount } = setup({ showOpenInConversations: true });
-    expect(screen.getByRole('link', { name: 'Open in Conversations' })).toBeInTheDocument();
+    const { unmount } = setup({ showOpenInConversations: true, conversation: { ...ANCHOR, contact_id: 'contact-7' } });
+    expect(screen.getByRole('link', { name: 'Open in Conversations' })).toHaveAttribute('href', '/sla-management/conversations?contact=contact-7');
     unmount();
     setup({ showOpenInConversations: false });
-    expect(screen.queryByRole('link', { name: 'Open in Conversations' })).toBeNull();
     expect(screen.queryByText('Open in Conversations')).toBeNull();
   });
 });
@@ -223,12 +237,11 @@ describe('AskConversationPanel note (AC-ST307)', () => {
 
   it('Save note calls onNote(askId, text) and then shows Saved with a time', async () => {
     const { onNote } = setup();
-    expect(screen.queryByText(/Saved\s/)).toBeNull();
     fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'Called Ah Seng, delivery Thursday' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
     expect(onNote).toHaveBeenCalledWith('ask-1', 'Called Ah Seng, delivery Thursday');
     const saved = await screen.findByText(/Saved\s+\S+/);
-    expect(saved.textContent).toMatch(/Saved\s+\d{2}\/\d{2}\/\d{4},?\s+\d{1,2}:\d{2}/); // date and time
+    expect(saved.textContent).toMatch(/Saved\s+\d{2}\/\d{2}\/\d{4},?\s+\d{1,2}:\d{2}/);
   });
 });
 

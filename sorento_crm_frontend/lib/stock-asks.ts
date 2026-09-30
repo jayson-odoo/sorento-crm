@@ -4,7 +4,11 @@
  * same labels.
  */
 
-export type StockAskBranch = 'too_big' | 'in_stock' | 'incoming' | 'no_incoming';
+/**
+ * `incoming_eta` and `referred` (REFER-SALESMAN, 30 Sep 2026): a dealer's incoming ETA reply and
+ * every other reply that refers the dealer to their salesman. Neither carries a quantity.
+ */
+export type StockAskBranch = 'too_big' | 'in_stock' | 'incoming' | 'no_incoming' | 'incoming_eta' | 'referred';
 export type StockAskState = 'open' | 'done';
 
 export interface StockAsk {
@@ -15,7 +19,8 @@ export interface StockAsk {
   contact_phone?: string | null;
   product_code: string;
   product_name: string | null;
-  quantity: number;
+  /** null on an `incoming_eta` / `referred` row: the ask named no quantity. */
+  quantity: number | null;
   branch: StockAskBranch | string;
   answer_summary: string;
   notified_agent: boolean;
@@ -49,6 +54,8 @@ export const BRANCH_LABEL: Record<string, string> = {
   in_stock: 'In stock',
   incoming: 'Incoming',
   no_incoming: 'No stock, no incoming',
+  incoming_eta: 'Incoming ETA',
+  referred: 'Referred',
 };
 
 export const BRANCH_VARIANT: Record<string, 'success' | 'warning' | 'info' | 'destructive' | 'secondary'> = {
@@ -56,11 +63,13 @@ export const BRANCH_VARIANT: Record<string, 'success' | 'warning' | 'info' | 'de
   in_stock: 'success',
   incoming: 'info',
   no_incoming: 'destructive',
+  incoming_eta: 'info',
+  referred: 'secondary',
 };
 
 export const SKIP_REASON_LABEL: Record<string, string> = {
   toggle_off: 'Notify salesman is off for this contact',
-  not_notified_branch: 'Incoming answers do not notify the salesman',
+  not_notified_branch: 'This kind of answer does not notify the salesman',
   no_customer: 'The contact is not linked to one customer',
   no_sales_agent: 'The customer has no sales agent',
   agent_has_no_contact: 'The sales agent has no contact',

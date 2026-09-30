@@ -1,5 +1,7 @@
 """Chatbot stock ask v2 S3, R14 (lavish review): the four fixed sentences.
 AC-SA312, AC-SA313, chatbot-stock-ask-v2-24sep-acceptance-criteria.md.
+REFER-SALESMAN (owner ruling 30 Sep 2026, AC-RS01): the verdict closes as its own sentence
+and the refer is exactly "Please refer to your salesman." on every branch that refers.
 """
 from __future__ import annotations
 
@@ -28,8 +30,8 @@ def _entry(**over):
 def test_too_big_sentence():
     line = _availability_line(_entry(product_code="CWCX604", requested_qty=300, branch="too_big"))
     assert line == (
-        "CWCX604 x 300: the quantity is more than what I can confirm here, please "
-        "refer to your salesman."
+        "CWCX604 x 300: the quantity is more than what I can confirm here. "
+        "Please refer to your salesman."
     )
 
 
@@ -44,7 +46,7 @@ def test_too_big_sentence_identical_when_cap_unset():
 
 def test_in_stock_sentence():
     line = _availability_line(_entry(product_code="SRT5674", requested_qty=50, branch="in_stock"))
-    assert line == "SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed."
+    assert line == "SRT5674 x 50: yes, we have stock. Please refer to your salesman."
 
 
 def test_incoming_sentence_names_the_eta():
@@ -57,8 +59,7 @@ def test_incoming_sentence_names_the_eta():
 def test_no_incoming_sentence():
     line = _availability_line(_entry(product_code="SRT5674", requested_qty=150, branch="no_incoming"))
     assert line == (
-        "SRT5674 x 150: no stock and no incoming at the moment, please refer to "
-        "your salesman."
+        "SRT5674 x 150: no stock and no incoming at the moment. Please refer to your salesman."
     )
 
 
@@ -81,9 +82,9 @@ def test_asked_order_multi_product_reply_reads_line_by_line():
     ]
     lines = [_availability_line(e) for e in entries]
     assert lines == [
-        "SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed.",
-        "CWCX604 x 300: the quantity is more than what I can confirm here, please "
-        "refer to your salesman.",
+        "SRT5674 x 50: yes, we have stock. Please refer to your salesman.",
+        "CWCX604 x 300: the quantity is more than what I can confirm here. "
+        "Please refer to your salesman.",
     ]
 
 
@@ -119,3 +120,12 @@ def test_ac_sa312_no_digit_of_ours_besides_qty_and_eta_date():
     for branch in ("too_big", "in_stock", "no_incoming"):
         line = _availability_line(_entry(product_code="SRT-ABC", requested_qty=42, branch=branch))
         assert re.findall(r"\d+", line) == ["42"]
+
+
+def test_every_refer_line_ends_with_the_one_refer_sentence():
+    """AC-RS01 / AC-RS03: no "to proceed", no "salesperson", no name, on any branch."""
+    for branch in ("too_big", "in_stock", "no_incoming"):
+        line = _availability_line(_entry(product_code="SRT1", requested_qty=3, branch=branch))
+        assert line.endswith(". Please refer to your salesman."), line
+        assert "to proceed" not in line and "salesperson" not in line
+        assert line.count("Please refer") == 1

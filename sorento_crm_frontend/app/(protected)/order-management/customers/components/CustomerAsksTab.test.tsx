@@ -66,7 +66,7 @@ const ROW = {
   product_name: 'Wiper Blade 24in',
   quantity: 50,
   branch: 'in_stock',
-  answer_summary: 'SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed.',
+  answer_summary: 'SRT5674 x 50: yes, we have stock. Please refer to your salesman.',
   notified_agent: false,
   notify_skip_reason: 'toggle_off',
   state: 'open',
@@ -118,6 +118,31 @@ describe('CustomerAsksTab', () => {
     const badges = screen.getAllByText('Console');
     expect(badges).toHaveLength(1);
     expect(badges[0]).toHaveAttribute('title', 'Written by a chat console hand test, not by a dealer');
+  });
+
+  // REFER-SALESMAN (AC-RS21): an incoming ETA or referred ask carries no quantity.
+  it('renders a quantity-less referred ask with a dash in Qty and its branch label', async () => {
+    listCustomerAsks.mockResolvedValue({
+      data: [
+        {
+          ...ROW,
+          id: 'ask-3',
+          product_code: 'SRTWC286-SH-NEW',
+          quantity: null,
+          branch: 'incoming_eta',
+          answer_summary: 'ETA: 2026-10-19. Please refer to your salesman.',
+          notify_skip_reason: 'not_notified_branch',
+        },
+      ],
+      pagination: { total: 1, page: 1, limit: 20 },
+    });
+    render(<CustomerAsksTab customerId="cust-1" />);
+    await waitFor(() => expect(screen.getByText('SRTWC286-SH-NEW')).toBeInTheDocument());
+    expect(screen.getByText('Incoming ETA')).toBeInTheDocument();
+    expect(screen.getByText('ETA: 2026-10-19. Please refer to your salesman.')).toBeInTheDocument();
+    expect(screen.getByText('Not sent')).toHaveAttribute('title', 'This kind of answer does not notify the salesman');
+    expect(screen.queryByText('null')).not.toBeInTheDocument();
+    expect(screen.getByText('-', { selector: 'span.tabular-nums' })).toBeInTheDocument();
   });
 
   it('shows an explicit empty state', async () => {

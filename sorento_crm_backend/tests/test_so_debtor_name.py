@@ -96,6 +96,53 @@ class TestSoIngestStoresTheOrderName:
         env.post(INGEST_SO, [_so_record(env, ref=ref, customer_code=code)])
         assert env.header("sales_orders", ref)["debtor_name"] == "Beta"
 
+    def test_an_identical_re_push_fills_a_missing_name_on_an_existing_order(self, env):
+        """Owner's rollout ("repush all" from the shared service after deploy): an
+        order ingested BEFORE the column existed carries no name; the re-push of the
+        very same payload writes it even though nothing else differs - the update
+        path sets every header value it was sent, it never skips on an empty diff."""
+        code = unique_code(MARKER)
+        _customer(env.db, env.company_a, code=code, name="ALPHA SDN BHD")
+        ref = f"{MARKER}-SO-{uuid.uuid4().hex[:8]}"
+        record = _so_record(env, ref=ref, customer_code=code, customer_name="Issued Under")
+        assert env.post(INGEST_SO, [record]).status_code == 200
+        env.db.execute(
+            text("UPDATE sales_orders SET debtor_name = NULL WHERE source_ref = :r"), {"r": ref}
+        )
+        assert env.header("sales_orders", ref)["debtor_name"] is None
+
+        res = env.post(INGEST_SO, [record])
+
+        assert res.status_code == 200, res.text
+        assert res.json()["records"][0]["outcome"] == "updated"
+        assert env.header("sales_orders", ref)["debtor_name"] == "Issued Under"
+
+    def test_an_adopted_ref_less_order_takes_the_name_too(self, env):
+        """A row the xlsx era created (no integration reference) is adopted by its
+        SO number on the first push and takes the pushed name like any update."""
+        code = unique_code(MARKER)
+        master = _customer(env.db, env.company_a, code=code, name="ALPHA SDN BHD")
+        legacy = SalesOrder(
+            so_number=f"{MARKER}-LEGACY-{uuid.uuid4().hex[:6]}",
+            status="open",
+            customer_id=str(master.id),
+            company_id=env.company_a,
+        )
+        env.db.add(legacy)
+        env.db.flush()
+        ref = f"{MARKER}-SO-{uuid.uuid4().hex[:8]}"
+
+        res = env.post(
+            INGEST_SO,
+            [_so_record(env, ref=ref, number=legacy.so_number, customer_code=code, customer_name="Adopted Name")],
+        )
+
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "updated", entry
+        assert str(entry["entity_id"]) == str(legacy.id)
+        assert env.header("sales_orders", ref)["debtor_name"] == "Adopted Name"
+
     def test_the_dry_run_reports_the_name_change_and_persists_nothing(self, env):
         code = unique_code(MARKER)
         _customer(env.db, env.company_a, code=code, name="ALPHA SDN BHD")

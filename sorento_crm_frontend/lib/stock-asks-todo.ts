@@ -53,6 +53,11 @@ export interface AskConversation {
   messages: AskConversationMessage[];
   /** The outgoing message that carries the ask's answer, when there is one. */
   ask_message_id: number | null;
+  /**
+   * The Respond message id of that row: what the shared thread highlights ("This enquiry") and
+   * jumps to (ASKS-UX item 3). null when the row has no Respond id, so nothing to jump to.
+   */
+  ask_message_ref?: string | null;
   /** The contact's row id (respond_contacts.id), only for the CRM's "Open in Conversations" link (`?contact=` on the conversations page); absent on an empty answer. */
   contact_id?: string | null;
 }
@@ -95,8 +100,9 @@ export function askAnswerText(ask: Pick<StockAsk, 'answer_summary'>): string {
   return stripped.charAt(0).toUpperCase() + stripped.slice(1);
 }
 
+/** "SRT5674 x 50"; a quantity-less ask (incoming ETA, referred) is its code alone. */
 export function askProductText(ask: Pick<StockAsk, 'product_code' | 'quantity'>): string {
-  return `${ask.product_code} x ${ask.quantity}`;
+  return ask.quantity == null ? ask.product_code : `${ask.product_code} x ${ask.quantity}`;
 }
 
 export function askToSummary(ask: StockAsk): AskSummary {
@@ -122,6 +128,8 @@ export function askToSummary(ask: StockAsk): AskSummary {
  */
 export const ASK_LANDING_FIELDS: LandingField[] = [
   { key: 'customer_name', label: 'Customer', type: 'text' },
+  // ASKS-UX item 1: the asker. Filter and Sort share the table, so Sort offers it too.
+  { key: 'contact_name', label: 'Contact', type: 'text' },
   // Keyed `title` (the `CODE x Q` line of the summary), so Product filters and sorts by it.
   { key: 'title', label: 'Product', type: 'text' },
   { key: 'answer', label: 'Answer', type: 'text' },

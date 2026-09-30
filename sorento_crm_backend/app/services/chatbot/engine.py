@@ -4284,6 +4284,9 @@ def _run_stages(  # noqa: PLR0915
         # Chatbot stock ask v2 S4: the answered `stock_availability` entries of this
         # turn's fetch, acted on by `_run_answer` once the turn row is closed.
         stock_ask_entries: list[dict[str, Any]] = []
+        # The fetch's envelopes, empty on a turn that fetched nothing (REFER-SALESMAN reads
+        # them below the fetch section, on every dealer refer reply).
+        envelopes: list[dict[str, Any]] = []
 
         # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
         # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3. -- the OPEN TASK's own
@@ -5030,6 +5033,24 @@ def _run_stages(  # noqa: PLR0915
             # PR #1329 (ETA policy): a dealer's incoming reply is the same, so an
             # incoming miss no longer offers the purchasing team.
             answer = _dealer_refers_to_salesman(answer)
+            # REFER-SALESMAN (owner ruling 30 Sep 2026): every reply that refers the dealer
+            # to their salesman is a Customer asks row. The stock ask's own entries are
+            # already in `stock_ask_entries`; this adds the incoming ETA lines, the misses
+            # and a declined did-you-mean, read off what the turn already knows, and
+            # `_run_answer` writes them through the same `stock_ask_service` road.
+            from app.services.chatbot import refer_asks
+
+            stock_ask_entries = [
+                *stock_ask_entries,
+                *refer_asks.referred_entries(
+                    reply_text=getattr(answer, "text", "") or "",
+                    envelopes=envelopes,
+                    plan=plan,
+                    pending_before=state_in.pending,
+                    message_text=latest_user_message,
+                    answered=stock_ask_entries,
+                ),
+            ]
         elif in_ranking_conversation:
             answer = _without_escalation_offer(answer)
         return _run_answer(
