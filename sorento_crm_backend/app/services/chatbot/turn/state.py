@@ -199,7 +199,7 @@ class Profile:
 def offers_escalation(profile: "Profile | None") -> bool:
     """The ONE check every bot-initiated escalation offer site reads: no offer to staff
     (`is_staff_profile`, #1262 slice 11) and none to a contact whose escalation is
-    barred (ESCALATION-CONTROL). A missing profile offers, as before."""
+    barred (ESCALATION-CONTROL). A missing profile still offers (the old default)."""
     return not is_staff_profile(profile) and not escalation_barred(profile)
 
 
