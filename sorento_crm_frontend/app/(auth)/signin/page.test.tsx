@@ -150,21 +150,21 @@ describe('AC-20: /signin phone entry', () => {
     expect(screen.getByPlaceholderText('Your email')).toBeInTheDocument();
   });
 
-  it('Email mode shows Email, Password, Forgot Password, Remember me and Continue in that DOM order', () => {
+  it('Email mode shows Email, Password, Forgot Password and Continue in that DOM order, and no Remember me', () => {
     renderSignin();
 
     const emailInput = screen.getByPlaceholderText('Your email');
     const passwordInput = screen.getByPlaceholderText('Your password');
     const forgotLink = screen.getByRole('link', { name: 'Forgot Password?' });
-    const rememberCheckbox = screen.getByRole('checkbox');
     const continueButton = screen.getByRole('button', { name: 'Continue' });
 
     const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING;
     expect(emailInput.compareDocumentPosition(passwordInput) & FOLLOWING).toBeTruthy();
     expect(emailInput.compareDocumentPosition(forgotLink) & FOLLOWING).toBeTruthy();
-    expect(forgotLink.compareDocumentPosition(rememberCheckbox) & FOLLOWING).toBeTruthy();
-    expect(passwordInput.compareDocumentPosition(rememberCheckbox) & FOLLOWING).toBeTruthy();
-    expect(rememberCheckbox.compareDocumentPosition(continueButton) & FOLLOWING).toBeTruthy();
+    expect(forgotLink.compareDocumentPosition(continueButton) & FOLLOWING).toBeTruthy();
+    // SIGNIN-ALWAYS-SLIDE: every sign-in is the 30-day sliding session, so there is no box to tick.
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(screen.queryByText('Remember me')).toBeNull();
   });
 
   it('Phone mode shows Phone number and Continue, and no Remember me', () => {
@@ -467,7 +467,8 @@ describe('AC-29: the Email form carries no change beyond the phone entry below i
     expect(scoped.getByPlaceholderText('Your password')).toBeInTheDocument();
     expect(scoped.getAllByRole('link')).toHaveLength(1);
     expect(scoped.getByRole('link', { name: 'Forgot Password?' })).toBeInTheDocument();
-    expect(scoped.getAllByRole('checkbox')).toHaveLength(1);
+    // No Remember me box since SIGNIN-ALWAYS-SLIDE: every sign-in is the 30-day slide.
+    expect(scoped.queryAllByRole('checkbox')).toHaveLength(0);
     // The eye/show-password toggle plus "Continue" - nothing else.
     expect(scoped.getAllByRole('button')).toHaveLength(2);
     expect(scoped.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
