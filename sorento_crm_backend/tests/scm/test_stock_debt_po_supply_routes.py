@@ -123,9 +123,10 @@ def _by_so(cell, suffix):
 def test_a_po_line_naming_a_sales_order_covers_it_first_at_14_90(scm_app):
     """AC-PO-3 + AC-PO-5 + AC-PO-6 (recommended policy). The book S/O pins 1,305 and the
     placement 4 to SO419208 - 1,309 in all, never counted twice - even though another
-    order is due earlier and would take the PO first-come; the 41 with no S/O is free and
-    covers that earlier order. All three are late; R44 (#1359) lands them today on this
-    page whatever the policy's grace, with the paperwork's own date beside it."""
+    order is due earlier; the 41 with no S/O is FREE and covers nobody (R45, 30 Sep 2026:
+    before it the walk handed the 41 to that earlier order). All three are late; R44
+    (#1359) lands them today on this page whatever the policy's grace, with the paperwork's
+    own date beside it."""
     app, db = _client(scm_app)
     seed = _csk14a(db, grace=14, dead=90)
     assumed = TODAY
@@ -172,11 +173,10 @@ def test_a_po_line_naming_a_sales_order_covers_it_first_at_14_90(scm_app):
     assert entries[str(seed["named"].id)]["oi_number"] is None
 
     other = _by_so(earlier, "SO-OTHER")
-    assert other["assigned_qty"] == 41
-    assert other["short_qty"] == 59, "the free 41 lands today, before it is due"
-    assert [entry["po_line_id"] for entry in other["assigned_from"]] == [
-        str(seed["free"].id)
-    ]
+    assert other["status"] == "short"
+    assert other["assigned_qty"] == 0
+    assert other["short_qty"] == 100, "the free 41 is nobody's without a link (R45)"
+    assert other["assigned_from"] == []
 
     rows = {row["po_line_id"]: row for row in landing["supply"] if row["kind"] == "po"}
     assert set(rows) == {str(seed["free"].id), str(seed["named"].id), str(seed["placed"].id)}
@@ -188,6 +188,8 @@ def test_a_po_line_naming_a_sales_order_covers_it_first_at_14_90(scm_app):
     assert (named["qty"], named["received_qty"], named["outstanding_qty"]) == (1305, 0, 1305)
     assert named["free_qty"] == 0
     assert rows[str(seed["free"].id)]["days_late"] == 18
+    assert rows[str(seed["free"].id)]["free_qty"] == 41
+    assert rows[str(seed["free"].id)]["assigned_to"] == []
 
 
 def test_at_the_shipped_0_0_a_late_po_naming_the_order_still_fulfils_it(scm_app):
@@ -195,7 +197,8 @@ def test_at_the_shipped_0_0_a_late_po_naming_the_order_still_fulfils_it(scm_app)
     dead line of 0, which the stock debt page no longer applies, so all three PO lines are
     listed in the CURRENT month, not overdue, and count as supply. SO419208 is pinned
     1,305 from the book and 4 from the placement, short nothing. The 41 with no S/O is
-    free supply, so the earlier order (due today) takes it and is short 59."""
+    free supply and stays free (R45): the earlier order (due today) is short its whole
+    100."""
     app, db = _client(scm_app)
     seed = _csk14a(db, grace=0, dead=0)
 
@@ -217,17 +220,21 @@ def test_at_the_shipped_0_0_a_late_po_naming_the_order_still_fulfils_it(scm_app)
 
     other = _by_so(today, "SO-OTHER")
     assert other["status"] == "short"
-    assert other["assigned_qty"] == 41
-    assert other["short_qty"] == 59
+    assert other["assigned_qty"] == 0
+    assert other["short_qty"] == 100
 
-    rows = [row for row in today["supply"] if row["kind"] == "po"]
+    rows = {row["po_line_id"]: row for row in today["supply"] if row["kind"] == "po"}
     assert len(rows) == 3
-    assert all(row["overdue"] is False and row["free_qty"] == 0 for row in rows)
+    assert all(row["overdue"] is False for row in rows.values())
+    assert rows[str(seed["free"].id)]["free_qty"] == 41
+    assert rows[str(seed["named"].id)]["free_qty"] == 0
+    assert rows[str(seed["placed"].id)]["free_qty"] == 0
 
 
 def test_an_s_o_that_names_no_sales_order_held_here_leaves_the_po_free(scm_app):
     """AC-PO-4: "Linked, not held" pins nothing, so the whole line is free supply on its
-    delivery date and the walk gives it first-come to whoever is due first."""
+    delivery date. R45 (30 Sep 2026): free means free - the walk hands it to nobody, so
+    the line here reads short and the PO's month credits the 30."""
     app, db = _client(scm_app)
     _policy(db, 0, 0)
     marker = f"ZZTPO{_u()[:6]}".upper()
@@ -245,10 +252,16 @@ def test_an_s_o_that_names_no_sales_order_held_here_leaves_the_po_free(scm_app):
 
     with TestClient(app) as c:
         cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+        landing = c.get(
+            f"{BASE}/{product.id}/cell", params={"month": month_key(delivery)}
+        ).json()
 
     line = cell["demand"][0]
-    assert line["status"] == "covered"
-    assert line["assigned_qty"] == 30
+    assert line["status"] == "short"
+    assert line["assigned_qty"] == 0
+    [row] = landing["supply"]
+    assert row["free_qty"] == 30
+    assert row["assigned_to"] == []
 
 
 def test_a_po_line_with_no_date_at_all_is_listed_uncounted_and_still_fulfils(scm_app):

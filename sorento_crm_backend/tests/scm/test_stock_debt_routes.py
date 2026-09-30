@@ -743,10 +743,15 @@ def test_a_po_line_hold_pins_the_line_in_stock_debt(scm_app):
     ]
 
 
-def test_a_line_covered_only_by_a_free_po_reads_covered(scm_app):
-    """R42 supersedes R23's "a line covered only by a PO reads short": a FREE (unpinned,
-    no S/O) PO line dated on its Delivery date before the line's due date covers it
-    first-come, and the PO's own month lists it with Qty, Received and Outstanding."""
+def test_an_unlinked_po_line_covers_no_line_and_stays_free_in_its_month(scm_app):
+    """R45 (owner, 30 Sep 2026, PO-NO-AUTO-ASSIGN; AC-1) supersedes R42's "a FREE PO line
+    covers first-come" on this page: "the PO quantity is ordered for a reason, and the user
+    is yet to do linking in AutoCount, so it will be premature to allocate to other SO by
+    our calculation". A PO line with no S/O and no placement covers nobody: the line reads
+    short for the whole 50, the PO's own month still lists the line with Qty, Received and
+    Outstanding, its whole outstanding is FREE ("it should still contribute to the stock
+    debt quantity"), and the two month cells foot with their drills: +60 in the delivery
+    month, -50 in the line's."""
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -764,38 +769,256 @@ def test_a_line_covered_only_by_a_free_po_reads_covered(scm_app):
         supply_cell = c.get(
             f"{BASE}/{product.id}/cell", params={"month": month_key(delivery)}
         ).json()
+        board = c.get(BASE, params={"query": marker, "only_debt": False}).json()
 
     line = cell["demand"][0]
-    assert line["status"] == "covered"
-    assert line["assigned_qty"] == 50
-    assert [entry["kind"] for entry in line["assigned_from"]] == ["po"]
+    assert line["status"] == "short"
+    assert line["assigned_qty"] == 0
+    assert line["assigned_from"] == []
+    assert line["short_qty"] == 50
     [row] = supply_cell["supply"]
     assert row["kind"] == "po"
     assert row["date"] == delivery.isoformat()
     assert (row["qty"], row["received_qty"], row["outstanding_qty"]) == (80, 20, 60)
-    assert row["free_qty"] == 10
+    assert row["free_qty"] == 60
+    assert row["assigned_to"] == []
     assert supply_cell["supply_total_qty"] == 60
+    months = {m["key"]: m["balance"] for m in _row_of(board, product.product_code)["months"]}
+    assert months[month_key(delivery)] == 60
+    assert months[month_key(due)] == -50
 
 
-def test_a_line_covered_by_an_spo_reads_covered_as_before(scm_app):
-    """R23's other half: an SPO (not a PO) is still real supply, exactly as before this
-    ruling - the walk narrows to on hand + SPO, it does not stop covering with SPOs.
+def test_an_unlinked_spo_line_covers_no_line_either(scm_app):
+    """R45, AC-2: "i think this applies for SPO also though ... we shouldn't prematurely
+    auto assign the SPO". An SPO allocation with no placement and no S/O is listed free in
+    its arrival month and covers nobody."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(2)
+    arrives = _months_ahead(1)
+    _demand(db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1")
+    _spo(db, product, warehouse, qty=50, arrives=arrives)
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+        supply_cell = c.get(
+            f"{BASE}/{product.id}/cell", params={"month": month_key(arrives)}
+        ).json()
+
+    line = cell["demand"][0]
+    assert line["status"] == "short"
+    assert line["assigned_qty"] == 0
+    assert line["short_qty"] == 50
+    [row] = supply_cell["supply"]
+    assert row["kind"] == "spo"
+    assert row["free_qty"] == 50
+    assert row["assigned_to"] == []
+
+
+def test_a_placement_still_pins_and_only_the_placed_part_leaves_the_free_pile(scm_app):
+    """R45, AC-3: the link is the ONLY way a document reaches a line. A placement of 30 on
+    a PO line of 80 pins 30 to the line; the line is short its other 20 (the walk does not
+    top it up from the same document), and the PO's unplaced 50 stays free."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(2)
+    delivery = _months_ahead(1)
+    _order, core_line = _demand(
+        db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1"
+    )
+    project_order, project_line = _project_line_for(db, core_line)
+    po, po_line = _po_line_for_hold(db, product, warehouse, qty=80, issue_date=TODAY)
+    po_line.expected_date = delivery
+    _order_back_link_on_po(db, project_order, project_line, po_line=po_line, qty=30)
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+        supply_cell = c.get(
+            f"{BASE}/{product.id}/cell", params={"month": month_key(delivery)}
+        ).json()
+
+    line = cell["demand"][0]
+    assert line["status"] == "short"
+    assert line["assigned_qty"] == 30
+    assert line["short_qty"] == 20
+    [entry] = line["assigned_from"]
+    assert (entry["kind"], entry["po_line_id"], entry["qty"]) == ("po", str(po_line.id), 30)
+    [row] = supply_cell["supply"]
+    assert row["free_qty"] == 50
+    assert row["assigned_to"] == [{"so_number": f"{marker}-SO1", "line_no": None, "qty": 30}]
+
+
+def test_an_spo_line_naming_the_order_pins_it_through_its_s_o(scm_app):
+    """R45, AC-4: "most SPO should have linkage already". The AutoCount S/O reference on a
+    shipping-order line (`spo_allocations.from_so_line_ref`) is a link, read the way a PO
+    line's already is (R42 point 3): the named order's line is pinned to the SPO, and what
+    the order does not need stays free."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(2)
+    arrives = _months_ahead(1)
+    order, core_line = _demand(
+        db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1"
+    )
+    order.source_ref = f"ZZTBOOK:{marker}"
+    core_line.source_ref = f"ZZTBOOK:{marker}:1"
+    _demand(
+        db, product, warehouse, qty=40, required_date=_months_ahead(1) + timedelta(days=1),
+        so_number=f"{marker}-SO-EARLIER",
+    )
+    allocation = _spo(db, product, warehouse, qty=70, arrives=arrives)
+    allocation.from_so_line_ref = f"ZZTBOOK:{marker}:1"
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+        supply_cell = c.get(
+            f"{BASE}/{product.id}/cell", params={"month": month_key(arrives)}
+        ).json()
+
+    by_so = {row["so_number"]: row for row in cell["demand"]}
+    named = by_so[f"{marker}-SO1"]
+    assert named["status"] == "pinned"
+    assert named["assigned_qty"] == 50
+    assert named["short_qty"] == 0
+    [entry] = named["assigned_from"]
+    assert (entry["kind"], entry["spo_number"], entry["qty"]) == (
+        "spo", allocation.spo_number, 50,
+    )
+    earlier = [row for row in supply_cell["demand"] if row["so_number"].endswith("EARLIER")]
+    assert earlier[0]["status"] == "short", "the S/O names SO1; the earlier line gets nothing"
+    [row] = supply_cell["supply"]
+    assert row["kind"] == "spo"
+    assert row["free_qty"] == 20
+    assert row["assigned_to"] == [{"so_number": f"{marker}-SO1", "line_no": None, "qty": 50}]
+
+
+def test_a_document_landing_after_the_line_never_clears_its_shortfall_in_the_view(scm_app):
+    """R45, AC-5: a line due before an unlinked document used to read `late` once the
+    document landed (it cleared the group's open shortfall). A document nobody linked
+    clears nothing: the line is `short`, never `late`, and the document is free in its own
+    month."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    lands = _months_ahead(2)
+    _demand(db, product, warehouse, qty=30, required_date=due, so_number=f"{marker}-SO1")
+    _po, po_line = _po_line_for_hold(db, product, warehouse, qty=30, issue_date=TODAY)
+    po_line.expected_date = lands
+    _spo(db, product, warehouse, qty=30, arrives=lands)
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+        board = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+
+    assert cell["demand"][0]["status"] == "short"
+    assert cell["demand"][0]["assigned_qty"] == 0
+    months = {m["key"]: m["balance"] for m in _row_of(board, product.product_code)["months"]}
+    assert months[month_key(due)] == -30
+    assert months[month_key(lands)] == 60
+
+
+def test_on_hand_is_still_drawn_first_come_by_required_date(scm_app):
+    """R45, AC-6: the rule is about DOCUMENTS. Stock on the floor is drawn by the walk
+    exactly as before - the earlier line takes it, the later one is short the rest."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    _stock(db, product, warehouse, 100)
+    due = _months_ahead(1)
+    _demand(db, product, warehouse, qty=60, required_date=due, so_number=f"{marker}-SO1")
+    _demand(
+        db, product, warehouse, qty=60, required_date=due + timedelta(days=1),
+        so_number=f"{marker}-SO2",
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+
+    by_so = {row["so_number"]: row for row in cell["demand"]}
+    assert by_so[f"{marker}-SO1"]["status"] == "covered"
+    assert by_so[f"{marker}-SO1"]["assigned_qty"] == 60
+    assert by_so[f"{marker}-SO2"]["status"] == "short"
+    assert by_so[f"{marker}-SO2"]["assigned_qty"] == 40
+    assert by_so[f"{marker}-SO2"]["short_qty"] == 20
+
+
+def test_the_board_path_still_walks_an_unlinked_po_first_come(scm_app):
+    """R45, AC-7: the view's own reading, never the board's. `assignments_for` (the ladder
+    and the board) still nets an unlinked PO as free supply the walk hands out (plan v7
+    R29; AC-PO-8 / AC-PO-15), so the same fixture reads `covered` there and `short` here."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    # Due well after `issue + lead` (the board's own PO date, 90 days by default) so the
+    # board covers the line on time rather than late.
+    due = _months_ahead(5)
+    _demand(db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1")
+    _po, po_line = _po_line_for_hold(db, product, warehouse, qty=80, issue_date=TODAY)
+    po_line.expected_date = _months_ahead(1)
+    db.flush()
+
+    from app.services.scm.stock_debt_service import StockDebtService
+
+    span = {str(warehouse.id): warehouse}
+    service = StockDebtService(db)
+    board = service.assignments_for([str(product.id)], span)[str(product.id)]
+    view = service._assignments(
+        [(str(product.id), "", None)], span, view=True
+    )[str(product.id)]
+
+    [board_line] = board.lines
+    assert board_line.status == "covered"
+    assert [(item.event.key, item.qty) for item in board_line.assigned] == [
+        (f"po:{po_line.id}", 50.0)
+    ]
+    assert board.free[f"po:{po_line.id}"] == 30
+    [view_line] = view.lines
+    assert view_line.status == "short"
+    assert view_line.assigned == ()
+    assert view.free[f"po:{po_line.id}"] == 80
+
+
+def test_an_spo_reaches_a_line_only_through_its_placement_in_the_view(scm_app):
+    """R23's other half, as R45 (owner, 30 Sep 2026) re-reads it for this page: an SPO is
+    still real supply, and it reaches a line only through a LINK. The same SPO covers the
+    line once a placement names it, and covers nobody without one (its quantity stays
+    free - `test_an_unlinked_spo_line_covers_no_line_either`).
     """
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
     product = _product(db, f"{marker}-A")
     due = _months_ahead(1)
-    _demand(db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1")
-    _spo(db, product, warehouse, qty=50, arrives=due)
+    _order, core_line = _demand(
+        db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1"
+    )
+    project_order, project_line = _project_line_for(db, core_line)
+    allocation = _spo(db, product, warehouse, qty=50, arrives=due)
+    _order_back_link_on_spo(db, project_order, project_line, allocation=allocation, qty=50)
     db.flush()
 
     with TestClient(app) as c:
         cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
 
     line = cell["demand"][0]
-    assert line["status"] == "covered"
+    assert line["status"] == "pinned"
     assert line["assigned_qty"] == 50
+    assert [entry["kind"] for entry in line["assigned_from"]] == ["spo"]
 
 
 def test_the_cell_envelope_carries_total_quantities_for_the_tab_labels(scm_app):
@@ -837,14 +1060,24 @@ def test_the_cell_states_spo_qty_received_and_outstanding(scm_app):
     is the two NEW WIRE FIELDS only: the route's single `qty` on a supply row is already
     the netted Outstanding value, not the SPO line's raw ordered quantity, and
     `received_qty` does not exist on the schema at all.
+
+    R45 (30 Sep 2026): the line holds the SPO through a placement of the full 100 - on
+    this page nothing but a link spends a document - and the cap at Outstanding is the
+    walk's own (`assign()` caps a pin at what the event has left).
     """
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
     product = _product(db, f"{marker}-A")
     due = _months_ahead(1)
-    _demand(db, product, warehouse, qty=100, required_date=due, so_number=f"{marker}-SO1")
-    _spo(db, product, warehouse, qty=100, received=30, arrives=due)
+    _order, core_line = _demand(
+        db, product, warehouse, qty=100, required_date=due, so_number=f"{marker}-SO1"
+    )
+    project_order, project_line = _project_line_for(db, core_line)
+    allocation = _spo(db, product, warehouse, qty=100, received=30, arrives=due)
+    _order_back_link_on_spo(
+        db, project_order, project_line, allocation=allocation, qty=100
+    )
     db.flush()
 
     with TestClient(app) as c:
@@ -872,8 +1105,9 @@ def test_the_cell_carries_linked_documents_and_named_lines(scm_app):
       `assigned_from` - `assigned_source` (free text) split into
       `[{kind, ref, spo_number, spo_line_number, qty, oi_number, oi_id}]`, one entry per
       source. `oi_number`/`oi_id` (addendum, same day) name the order inquiry a PLACED
-      source came through; this line's own source is a plain WALK assignment (no
-      placement), so both are `None` here - the pinned case is its own test below.
+      source came through; this line's own source is the book's S/O pin (R45: the SPO's
+      `from_so_line_ref` names the line, no placement), so both are `None` here - the
+      placed case is its own test below.
 
     Asserted by NAME through the route (a `response_model` that has not declared a field
     drops it silently) - RED today because none of `spo_number`, `spo_line_number`,
@@ -888,7 +1122,10 @@ def test_the_cell_carries_linked_documents_and_named_lines(scm_app):
         db, product, warehouse, qty=100, required_date=due, so_number=f"{marker}-SO1",
     )
     core_line.line_no = 2
+    order.source_ref = f"ZZTBOOK:{marker}"
+    core_line.source_ref = f"ZZTBOOK:{marker}:2"
     allocation = _spo(db, product, warehouse, qty=100, arrives=due, spo_number=f"ZZT-SPO-{_u()[:6]}")
+    allocation.from_so_line_ref = f"ZZTBOOK:{marker}:2"
     db.flush()
 
     with TestClient(app) as c:
@@ -993,12 +1230,14 @@ def test_the_cell_lists_the_demand_with_its_bin_and_the_supply_with_its_assignme
     assert line["warehouse_code"] == warehouse.warehouse_code
     assert line["required_date"] == due.isoformat()
     assert line["open_qty"] == 100
-    # 40 on hand at its date, the other 60 off an SPO that lands a month after it: whole,
-    # and late. Short would outrank late if anything were left over (`supply_assignment`).
-    assert line["assigned_qty"] == 100
-    assert line["status"] == "late"
+    # 40 on hand at its date; the SPO that lands a month after it is nobody's without a
+    # link (R45, 30 Sep 2026), so the other 60 is short. Before R45 the SPO cleared it and
+    # the line read `late` for the whole 100.
+    assert line["assigned_qty"] == 40
+    assert line["status"] == "short"
+    assert line["short_qty"] == 60
     # R29: `assigned_source` (free text) is replaced by `assigned_from`, one linked entry
-    # per source - two here, the on-hand bin and the SPO.
+    # per source - one here, the on-hand bin.
     on_hand_sources = [e for e in line["assigned_from"] if e["kind"] == "on_hand"]
     assert len(on_hand_sources) == 1
     assert warehouse.warehouse_code in on_hand_sources[0]["ref"]
@@ -1088,7 +1327,8 @@ def test_a_120_day_late_document_is_still_supply_on_the_page(scm_app):
     """AC-S2-4b / R31 as R44 (owner, 29 Sep 2026, #1359) leaves it for THIS page: the
     arrival passed 120 days ago with nothing received, past any dead line, and the stock
     debt page still counts it - supply is the purchased quantity, whatever its date. It is
-    listed today with `overdue: false`, named late (`days_late`), and it covers the line.
+    listed today with `overdue: false`, named late (`days_late`), and its whole quantity is
+    FREE: it covers no line without a link (R45, 30 Sep 2026), so the line reads short.
     The dead rule itself stays the board's and the ladder's (`test_overdue_grace_ladder.py`).
     """
     app, db = _client(scm_app)
@@ -1117,16 +1357,18 @@ def test_a_120_day_late_document_is_still_supply_on_the_page(scm_app):
     assert row["date"] == TODAY.isoformat()
     assert row["stated_date"] == stated.isoformat()
     assert row["days_late"] == 120
-    assert cell["demand"][0]["status"] == "covered"
-    assert cell["demand"][0]["assigned_qty"] == 50
+    assert row["free_qty"] == 50
+    assert cell["demand"][0]["status"] == "short"
+    assert cell["demand"][0]["assigned_qty"] == 0
 
 
 def test_a_late_document_lands_today_whatever_the_policy_grace(scm_app):
     """AC-O.3's other half as R44 (#1359) leaves it for this page: 41 days late under a
     14 / 90 policy. The page ignores the grace, so the ledger row is filed TODAY (the axis
     starts today, so that is the month it arrived in), prints the date the paperwork
-    states beside it, and is not marked overdue - it is supply, and the line it covers is
-    not short. The grace itself stays the board's (`test_overdue_grace_ladder.py`).
+    states beside it, and is not marked overdue - it is supply, free in today's month.
+    R45 (30 Sep 2026): free, not assigned - without a link it covers nobody, so the line
+    reads short. The grace itself stays the board's (`test_overdue_grace_ladder.py`).
 
     `stated_date` / `days_late` are asserted BY NAME: `response_model` drops what a schema
     does not declare, and a field the walk computes and the wire never carries is a field
@@ -1162,8 +1404,9 @@ def test_a_late_document_lands_today_whatever_the_policy_grace(scm_app):
     assert rows[0]["stated_date"] == stated.isoformat()
     assert rows[0]["days_late"] == 41
     assert rows[0]["overdue"] is False
-    assert cell["demand"][0]["status"] == "covered"
-    assert cell["demand"][0]["assigned_qty"] == 50
+    assert rows[0]["free_qty"] == 50
+    assert cell["demand"][0]["status"] == "short"
+    assert cell["demand"][0]["assigned_qty"] == 0
 
 
 def test_the_cell_answers_the_tba_and_the_undated_bucket(scm_app):
@@ -1819,8 +2062,9 @@ def test_a_debt_stays_in_the_month_it_was_raised_in(scm_app):
 
 def test_supply_arriving_after_the_debt_is_spare_in_its_own_month(scm_app):
     """The other half of R37: 10 arriving next month against a 4 due this one reads -4 then
-    +6. The arrival clears the earlier line (it is `late`), so 4 of it is spent and only the
-    6 nobody took is spare - counted once, in the month it lands in."""
+    +10. R45 (30 Sep 2026): the arrival clears nothing without a link, so the line stays
+    `short` in its own month and the whole 10 is spare - counted once, in the month it
+    lands in. (Before R45 the walk cleared the 4 late and only 6 was spare.)"""
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -1843,22 +2087,23 @@ def test_supply_arriving_after_the_debt_is_spare_in_its_own_month(scm_app):
         m["key"]: m["balance"] for m in _row_of(board, product.product_code)["months"]
     }
     assert balances[due] == -4
-    assert balances[arrives] == 6
+    assert balances[arrives] == 10
 
-    # The line ends covered and its month still owes the 4: it went without on the date it
-    # was promised, which is the fact the planner acts on.
-    assert short_cell["demand"][0]["status"] == "late"
+    # The line's month owes the 4: it went without on the date it was promised, which is
+    # the fact the planner acts on, and nobody linked the SPO to it.
+    assert short_cell["demand"][0]["status"] == "short"
     assert short_cell["demand"][0]["short_qty"] == 4
     assert short_cell["supply"] == []
     assert spare_cell["demand"] == []
     assert spare_cell["supply"][0]["qty"] == 10
-    assert spare_cell["supply"][0]["free_qty"] == 6
+    assert spare_cell["supply"][0]["free_qty"] == 10
 
 
 def test_every_cell_foots_with_its_drill(scm_app):
     """The identity R37 is worth having: for every month, the drill's free supply less its
     short-at-date demand IS the balance the cell prints. 20 on hand, 30 due next month (20
-    now, 10 late off the SPO), 50 arriving the month after, 5 due the month after that."""
+    now, 10 short), 50 arriving the month after (free: nobody linked it, R45), 5 due the
+    month after that (short, for the same reason)."""
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -1894,8 +2139,8 @@ def test_every_cell_foots_with_its_drill(scm_app):
     # And the figures themselves, so the identity cannot be satisfied by two zeroes.
     assert balances[month_key(TODAY)] == 0
     assert balances[month_key(_months_ahead(1))] == -10
-    assert balances[month_key(_months_ahead(2))] == 35
-    assert balances[month_key(_months_ahead(3))] == 0
+    assert balances[month_key(_months_ahead(2))] == 50
+    assert balances[month_key(_months_ahead(3))] == -5
 
 
 def test_the_tba_undated_and_unlocated_cells_are_unchanged_by_the_month_rule(scm_app):
@@ -2151,13 +2396,12 @@ def test_cutoff_keeps_undated_and_unlocated(scm_app):
 
 
 def test_cutoff_supply_after_due_still_covers(scm_app):
-    """AC-3/A2/R14: a line due 10 Nov, covered by an SPO landing 20 Nov, ends `late` - R37
-    books the shortfall in the line's OWN month regardless of the fact it is eventually
-    covered (`test_supply_arriving_after_the_debt_is_spare_in_its_own_month` proves the
-    same rule), so November reads -20 whether or not `date_to` is applied. AC-3's actual
-    claim is narrower than "the month reads 0": `date_to` must not change how the walk
-    ASSIGNS - the SPO still covers the line, and the range leaves the Nov balance exactly
-    as it is without one."""
+    """AC-3/A2/R14: a line due 10 Nov and an SPO landing 20 Nov. R37 books the shortfall in
+    the line's OWN month, and R45 (30 Sep 2026) leaves the unlinked SPO free in its own
+    month (`test_supply_arriving_after_the_debt_is_spare_in_its_own_month` proves the same
+    rule), so November reads -20 + 20 = 0 whether or not `date_to` is applied. AC-3's
+    actual claim: `date_to` must not change how the walk ASSIGNS - the range leaves the
+    Nov balance and the line exactly as they are without one."""
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -2189,16 +2433,18 @@ def test_cutoff_supply_after_due_still_covers(scm_app):
         m["key"]: m["balance"]
         for m in _row_of(without_date_to, product.product_code)["months"]
     }
-    assert balances_with["2026-11"] == -20
-    assert balances_without["2026-11"] == -20
+    assert balances_with["2026-11"] == 0
+    assert balances_without["2026-11"] == 0
     assert balances_with["2026-11"] == balances_without["2026-11"]
 
     assert len(cell["demand"]) == 1
     line = cell["demand"][0]
     assert line["so_number"] == f"{marker}-SO1"
-    assert line["status"] == "late"
-    assert line["assigned_qty"] == 20
+    assert line["status"] == "short"
+    assert line["assigned_qty"] == 0
     assert line["short_qty"] == 20
+    [spo_row] = cell["supply"]
+    assert spo_row["free_qty"] == 20
 
 
 def test_supplier_filter_reads_newest_po_line(scm_app):
