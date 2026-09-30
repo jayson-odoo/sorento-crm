@@ -3253,4 +3253,43 @@ describe('previewViewFor', () => {
     expect(previewSummaryText(view.summary)).toContain('1 withdrawn');
     expect(previewSummaryText(view.summary)).toContain('1 kept');
   });
+
+  it('counts every row the press writes, and names the lines of a refused order', () => {
+    const batch = [
+      {
+        pso_id: 'pso-so-a',
+        ok: true,
+        preview: true,
+        lines_confirmed: ids([6]),
+        lines_withdrawn: [],
+        lines_carried: 0,
+        lines_held_back: [],
+        inquiry_rows: [inquiryRow(6, '1', true), inquiryRow(77, '2', true), inquiryRow(78, '3', true)],
+        transfers: [],
+      },
+    ];
+    const view = previewViewFor(batch as never, contributions, draft, context);
+    expect(view.summary.lines).toBe(3);
+    expect(view.orders[0].confirmCount).toBe(1);
+
+    const refused = [
+      {
+        pso_id: 'pso-so-a',
+        ok: false,
+        preview: true,
+        error: 'nope',
+        failing_lines: [{ line_no: 6, item_code: 'SRTWT6808', reason: 'no supply' }],
+        inquiry_rows: [],
+        transfers: [],
+      },
+    ];
+    const bad = previewViewFor(refused as never, contributions, draft, {
+      ...context,
+      orders: [{ sales_order_id: 'so-a', so_number: 'SO000001', project_sales_order_id: 'pso-so-a' }],
+    });
+    expect(bad.summary.lines).toBe(0);
+    expect(bad.orders[0].refused).toEqual([
+      expect.objectContaining({ line_no: 6, reason: 'no supply', key: expect.any(String) }),
+    ]);
+  });
 });

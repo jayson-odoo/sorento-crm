@@ -1580,6 +1580,10 @@ export interface PreviewViewOrder {
   inquiry: PreviewInquiryEntry[];
   transfers: PreviewTransferEntry[];
   heldBack: { key: string | null; line_no: number | null; item_code: string | null; reason: string }[];
+  /** The lines of a refused order, shown greyed with the server's reason. */
+  refused: { key: string | null; line_no: number | null; item_code: string | null; reason: string }[];
+  /** Rows shown that the press writes: confirmed, withdrawn and every line it raises a row for. */
+  writeCount: number;
 }
 
 export interface PreviewView {
@@ -1652,22 +1656,11 @@ export function previewViewFor(
       inquiry: [],
       transfers: [],
       heldBack: [],
+      refused: [],
+      writeCount: 0,
     };
-    if (!result.ok) return base;
-
     const byLineNo = (lineNo: number | null | undefined) =>
       own.find((entry) => entry.line_no === lineNo);
-    const savedFacts = (contribution: BoardContribution | undefined) =>
-      savedFactsFor(contribution, context);
-
-    const keyOfLine = (line: { project_line_id: string; line_no?: number | null }) =>
-      (
-        own.find((entry) => entry.project_line_id === line.project_line_id) ??
-        byLineNo(line.line_no)
-      )?.key;
-    const confirmedKeys = confirmed
-      .map(keyOfLine)
-      .filter((key): key is string => Boolean(key));
     const extraLines: BoardContribution[] = [];
     const extraLineFor = (
       lineNo: number,
@@ -1695,6 +1688,29 @@ export function previewViewFor(
       }
       return key;
     };
+    if (!result.ok) {
+      // A refused order still names its lines: each is shown greyed with the reason.
+      const refused = (result.failing_lines ?? []).map((line) => ({
+        key:
+          byLineNo(line.line_no)?.key ??
+          (line.line_no != null ? extraLineFor(line.line_no, line.item_code, null, null) : null),
+        line_no: line.line_no ?? null,
+        item_code: line.item_code ?? null,
+        reason: line.reason ?? '',
+      }));
+      return { ...base, refused, extraLines };
+    }
+    const savedFacts = (contribution: BoardContribution | undefined) =>
+      savedFactsFor(contribution, context);
+
+    const keyOfLine = (line: { project_line_id: string; line_no?: number | null }) =>
+      (
+        own.find((entry) => entry.project_line_id === line.project_line_id) ??
+        byLineNo(line.line_no)
+      )?.key;
+    const confirmedKeys = confirmed
+      .map(keyOfLine)
+      .filter((key): key is string => Boolean(key));
     // A withdrawn line the board no longer shows still gets its row.
     const withdrawnKeys = withdrawn
       .map(
@@ -1750,17 +1766,22 @@ export function previewViewFor(
       item_code: entry.item_code ?? null,
       reason: entry.reason ?? '',
     }));
+    const lineKeys = [
+      ...new Set([
+        ...confirmedKeys,
+        ...withdrawnKeys,
+        ...inquiry.map((entry) => entry.key).filter((key): key is string => key !== null),
+      ]),
+    ];
     return {
       ...base,
       confirmCount: confirmed.length + withdrawn.length,
+      // Every shown row the press writes: a confirmed or withdrawn line, or one it raises a
+      // row for (a batch-applied line, a line the board does not show). Held-back and refused
+      // rows are not writes.
+      writeCount: lineKeys.length,
       onlyLineIds: [...confirmed, ...withdrawn].map((entry) => entry.project_line_id),
-      lineKeys: [
-        ...new Set([
-          ...confirmedKeys,
-          ...withdrawnKeys,
-          ...inquiry.map((entry) => entry.key).filter((key): key is string => key !== null),
-        ]),
-      ],
+      lineKeys,
       withdrawnKeys,
       extraLines,
       inquiry,
@@ -1772,7 +1793,7 @@ export function previewViewFor(
     orders.reduce((total, order) => total + pick(order), 0);
   return {
     summary: {
-      lines: sum((order) => order.confirmCount),
+      lines: sum((order) => order.writeCount),
       inquiryRows: sum((order) => order.inquiry.length),
       transfers: sum((order) => order.transfers.filter((move) => move.is_new).length),
       kept: sum((order) => order.transfers.filter((move) => !move.is_new).length),

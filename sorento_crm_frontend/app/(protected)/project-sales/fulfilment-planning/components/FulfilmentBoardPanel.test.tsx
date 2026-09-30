@@ -4894,6 +4894,39 @@ describe('FulfilmentBoardPanel: Preview filter mode (v4)', () => {
     expect(extra).toHaveTextContent('WESERP20B');
     expect(extra).toHaveTextContent('ORDER 12');
     expect(screen.getByTestId('board-preview-summary')).toHaveTextContent('2 Order Inquiry rows');
+    // Lines 6, 9, 8 are confirmed and line 77 is written by the press too: four rows are sent.
+    expect(screen.getByTestId('board-preview-filter')).toHaveTextContent('Will be sent (4)');
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm 4 lines');
+  });
+
+  it('a refused order shows its lines greyed with the reason, and nothing is counted as sent', async () => {
+    getPlanningBoard.mockResolvedValue(savedBoard());
+    previewConfirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: false,
+          preview: true,
+          error: '2 lines cannot be confirmed. Nothing was written.',
+          failing_lines: [
+            { line_no: 6, item_code: 'SRTWT6808', reason: 'no supply here' },
+            { line_no: 9, item_code: 'SRTWT6808', reason: 'no supply here' },
+          ],
+          inquiry_rows: [],
+          transfers: [],
+        },
+      ],
+    });
+    renderPanel(['SO403340']);
+    const view = await openView();
+
+    const row = within(view).getByTestId('board-preview-inquiry-row-6');
+    expect(row).toHaveTextContent('Refused \u00b7 no supply here');
+    expect(row.className).toMatch(/opacity-60/);
+    expect(within(view).getByTestId('board-preview-inquiry-row-9')).toBeInTheDocument();
+    expect(screen.getByTestId('board-preview-filter')).toHaveTextContent('Will be sent (0)');
+    expect(screen.getByTestId('board-preview-refused-pso-so-a')).toHaveTextContent('Nothing was written');
+    expect(screen.getByTestId('board-confirm')).toBeDisabled();
   });
 
   it('S-1: Confirm posts the previewed lines only, so held-back lines never read as a mismatch', async () => {

@@ -1263,6 +1263,7 @@ export function FulfilmentBoardPanel({
       previewView.orders.flatMap((order) => [
         ...order.lineKeys,
         ...order.heldBack.map((entry) => entry.key).filter((key): key is string => key !== null),
+        ...order.refused.map((entry) => entry.key).filter((key): key is string => key !== null),
       ]),
     );
     const rows = [
@@ -1283,9 +1284,21 @@ export function FulfilmentBoardPanel({
         heldBackReason: string | null;
         withdrawn: boolean;
         pendingChange: string | null;
+        refusedReason?: string | null;
       }
     >();
     for (const order of previewView.orders) {
+      for (const entry of order.refused) {
+        if (entry.key) {
+          infoByKey.set(entry.key, {
+            inquiry: [],
+            heldBackReason: null,
+            withdrawn: false,
+            pendingChange: null,
+            refusedReason: entry.reason,
+          });
+        }
+      }
       const withdrawn = new Set(order.withdrawnKeys);
       for (const key of order.lineKeys) {
         const lineNo = lineNoOfKey.get(key);

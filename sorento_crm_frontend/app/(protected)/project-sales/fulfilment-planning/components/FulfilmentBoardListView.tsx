@@ -183,6 +183,8 @@ export interface FulfilmentBoardListViewProps {
         heldBackReason: string | null;
         /** The press withdraws this line from the confirmation. */
         withdrawn?: boolean;
+        /** The server refused the order this line is on, and why. */
+        refusedReason?: string | null;
         /** What a pending planning change does to this line, said in the Decided cell. */
         pendingChange?: string | null;
       }
@@ -937,6 +939,17 @@ export function FulfilmentBoardListView({
               if (info?.withdrawn) {
                 return <span className="block truncate">Withdrawn</span>;
               }
+              if (info?.refusedReason != null) {
+                return (
+                  <span
+                    data-testid="board-preview-refused-line"
+                    className="block truncate text-muted-foreground"
+                    title={info.refusedReason}
+                  >
+                    {`Refused \u00b7 ${info.refusedReason}`}
+                  </span>
+                );
+              }
               if (info?.heldBackReason !== null && info?.heldBackReason !== undefined) {
                 return (
                   <span
@@ -1041,7 +1054,10 @@ export function FulfilmentBoardListView({
           ) : undefined
         }
         rowClassName={(row) =>
-          readOnlyPreview.infoByKey.get(row.key)?.heldBackReason != null ? 'opacity-60' : undefined
+          readOnlyPreview.infoByKey.get(row.key)?.heldBackReason != null ||
+          readOnlyPreview.infoByKey.get(row.key)?.refusedReason != null
+            ? 'opacity-60'
+            : undefined
         }
         pageSize={25}
       />
