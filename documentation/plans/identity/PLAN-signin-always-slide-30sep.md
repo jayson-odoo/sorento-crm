@@ -15,6 +15,30 @@ questions to grill (owner ruling is explicit and matches the archived staff-sess
 Owner, 30 Sep 2026: "sign in, be it phone or email, needs the same mechanism as portal; I don't want
 the user to tick remember me; when there is activity on continuous days the session just continues".
 
+## Grill (feature skill step 2, run late on the 30 Sep process audit)
+
+The code was written before this grill, so every question below is asked against a change that
+already implements the recommendation. Sent to the owner as one `crew-ask` on PR #1404
+(30 Sep 2026). An answer that differs from the recommendation reopens the lane.
+
+| # | Decision | Options | Recommendation (implemented) | Owner answer |
+| --- | --- | --- | --- | --- |
+| G1 | Absolute cap | (a) pure sliding, no cap; (b) hard cap e.g. 90d | (a): owner asked for "exactly like portal", which has no cap | pending |
+| G2 | Idle window | (a) 30d without a request; (b) shorter e.g. 7d | (a): matches portal and phone today | pending |
+| G3 | Existing 8h (`rolling=false`) rows | (a) lapse within 8h; (b) migration flips them | (a): at most one extra sign-in, no migration | pending |
+| G4 | Legacy `remember_me` in the login body | (a) accept and ignore; (b) 422 | (a): a cached old bundle keeps signing in | pending |
+| G5 | Shared/kiosk devices (30d session left behind) | (a) accept, rely on logout / sign out other devices / admin force logout; (b) idle timeout or "public computer" option | (a); trigger for (b): a real shared-device incident | pending |
+| G6 | Impersonation has no TTL of its own (was implicitly 8h for unticked admins) | (a) backlog a follow-up for an 8h impersonation TTL; (b) in this PR; (c) leave | (a): predates the lane, keeps this PR to sign-in | pending |
+| G7 | Tell users they stay signed in | (a) no UI text, one line in the Outline guide batch; (b) hint under Continue | (a): CLAUDE.md "no feature explanations inside the UI" | pending |
+| G8 | Phone sign-in and portal | no change, both already slide 30d | confirm no change | pending |
+
+## TDD note
+
+Order was code first, tests second, on the small-fix track. Rules allow that track to write tests
+and fix in one pass, but still require reds shown red. Once re-tracked to FULL, each behaviour was
+proven with a kill test instead: break the implementing line, show the named test go red, restore.
+Results are in the PR's DoD gate comment and in the table below.
+
 ## Facts (b8cdbebe4)
 
 - Sessions already slide: `user_session_service.resolve_session` re-extends a `rolling` row to now+30d
@@ -58,6 +82,13 @@ with named sessions `slide` (signed in) and `slideout` (signed out). No shared D
    select, the Phone number input, Continue and Back to email. The DOM check in all four
    states (email/phone x 1280/375) is `{checkboxes: 0, rememberText: false, overflowX: false}`.
    The 375 screenshot shows the card unclipped.
+5. Screenshots committed (repo cap: two per lane, each under 200 KB):
+   `evidence/signin-always-slide-email-1280.png` (email mode, 1280) and
+   `evidence/signin-always-slide-phone-375.png` (phone mode, 375). The other two states are
+   covered by the DOM check in step 4.
+
+Stack note: this ran on the branch's own stack in the cloud sandbox, not on the crew test copy.
+The worker cannot reach the owner's machine; the owner's hand test on the crew copy passed.
 
 Phone OTP end-to-end is not walked in the browser. It needs a Respond.io send, which the sandbox
 must not call. It is covered by `test_regression_phone_otp_session_is_30d_and_slides_after_a_day`
