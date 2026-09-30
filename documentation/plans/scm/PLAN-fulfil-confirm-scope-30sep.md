@@ -254,3 +254,27 @@ An order the dry run refuses is not posted; the others are, and the refusal appe
 block as a refused entry. Also from the hand test: the "Every contributing line" list gets the
 standard Columns menu (Rank hidden by default) and a Status filter over the Verdict states, and the
 Line column prints the plain position with a "not synced" title when AutoCount gave no line number.
+
+## DoD gate (PRINCIPLES.md "Definition of Done gate", checked 30 Sep 2026 on PR #1395)
+
+Track: full track (diff far above 300 lines across FE and BE), no migration, no auth/RBAC change,
+no new external ingest surface; security-reviewer not run, diff outside its surface (owner
+ruling on the skip rule).
+
+1. Mock swapped to real: no in-memory service; Confirm and its dry run hit `confirm-all` on the
+   real backend; verified on the crew test copy against the shared dev DB.
+2. Backfill: no new column, nothing to backfill.
+3. New permission: none (existing `EDIT` on the route).
+4. New DB column reaching the FE: none (response fields only, declared on `ConfirmResult` /
+   `ConfirmManyOrderResult`, asserted on the HTTP body in pytest).
+5. User-perspective verification at 375px and 1280px on the crew copy (`npm run dev`, HMR, one
+   dev server): evidence run in `evidence/fulfil-confirm-scope/EVIDENCE-30sep.md` (list, grid,
+   toggle, Confirm), two screenshots under 200 KB beside it. Earlier browser passes v3 to v8
+   are logged in the crew reports.
+
+Red-first: backend contract slices (echo, preview, notification guard, only_line_ids) and the
+FE preview slices were tester-first; the toolbar and toggle polish rounds (8 to 12) were
+test-with-code, which is a process deviation named here. Kill tests: reviewer rounds 1 to 6
+(round 6 mutates the Saved/Others filter, the Confirm-only-saved rule in `lineFor`, the
+preview commit and notification guards; results recorded in the crew report). Reviewer: six
+rounds, all findings fixed on the branch.
