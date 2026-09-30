@@ -395,6 +395,27 @@ def test_scroll_back_when_respond_fails_answers_what_is_stored(db, scheduled):
     assert _state(db).oldest_reached is False
 
 
+def test_scroll_back_after_a_failed_older_read_waits_out_the_interval(db, scheduled):
+    """Security review finding 4: a contact whose key 404s on Respond must not cost one
+    live call per scroll-back. The next attempt waits SYNC_MIN_INTERVAL_SECONDS."""
+    _seed(db, [3, 4, 5])
+    # Committed: the failed read rolls the session back, which under the blank session
+    # would discard a merely flushed seed (in production nothing else is pending there).
+    db.commit()
+    client = FakeRespondClient([], fail=RuntimeError("404 not found"))
+
+    svc.fetch_thread_page(db, CONTACT, before=str(_mid(3)), limit=2, client=client)
+    svc.fetch_thread_page(db, CONTACT, before=str(_mid(3)), limit=2, client=client)
+    svc.fetch_thread_page(db, CONTACT, before=str(_mid(3)), limit=2, client=client)
+
+    assert len(client.calls) == 1
+    state = _state(db)
+    state.last_error_at = sync._now() - timedelta(seconds=sync.SYNC_MIN_INTERVAL_SECONDS + 1)
+    db.flush()
+    svc.fetch_thread_page(db, CONTACT, before=str(_mid(3)), limit=2, client=client)
+    assert len(client.calls) == 2
+
+
 def test_sync_older_on_a_full_page_keeps_asking_next_time(db):
     _seed(db, [60])
     client = FakeRespondClient([_item(i) for i in range(61)])

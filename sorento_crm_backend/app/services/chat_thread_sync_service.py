@@ -206,6 +206,25 @@ def oldest_reached(db: Session, contact: ThreadContact) -> bool:
     return bool(state and state.oldest_reached)
 
 
+def older_read_allowed(db: Session, contact: ThreadContact, now: Optional[datetime] = None) -> bool:
+    """May a scroll-back make its inline older read now?
+
+    Not once the start was reached, and not within :data:`SYNC_MIN_INTERVAL_SECONDS` of
+    the last failed read: the newer side is throttled by the claim, and without this the
+    older side of a contact whose key 404s or 401s on Respond would cost one live call per
+    scroll-back, at whatever rate the viewer scrolls (security review, finding 4).
+    """
+    state = get_state(db, contact)
+    if state is None:
+        return True
+    if state.oldest_reached:
+        return False
+    if state.last_error_at is None:
+        return True
+    now = now or _now()
+    return (now - state.last_error_at) >= timedelta(seconds=SYNC_MIN_INTERVAL_SECONDS)
+
+
 def should_sync_newer(db: Session, contact: ThreadContact, now: Optional[datetime] = None) -> bool:
     """False while the last delta read is younger than :data:`SYNC_MIN_INTERVAL_SECONDS`."""
     state = get_state(db, contact)

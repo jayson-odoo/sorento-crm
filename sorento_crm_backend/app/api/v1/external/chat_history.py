@@ -36,6 +36,7 @@ from app.services.integration_service import (
     IntegrationLogService,
     sanitize_request_headers,
 )
+from app.services.otp_redaction import mask_otp_text
 from app.services.ticket_comment_service import TicketCommentService
 
 logger = logging.getLogger(__name__)
@@ -133,8 +134,16 @@ def ingest_chat_message(
                 request_headers=json.dumps(request_headers),
                 # Exclude state_trace: it is already persisted as jsonb on the row.
                 # integration_logs has no purge, so logging it here would store the
-                # whole trace a second time, as text, write-only, forever.
-                request_payload=payload.model_dump_json(exclude={"state_trace"}),
+                # whole trace a second time, as text, write-only, forever. The text is
+                # masked like the row's (security review, CHAT-LOCAL-FIRST): the log must
+                # not keep a sign-in code the row itself refuses to.
+                request_payload=json.dumps(
+                    {
+                        **payload.model_dump(exclude={"state_trace"}),
+                        "message": mask_otp_text(payload.message),
+                        "reply_to_message": mask_otp_text(payload.reply_to_message),
+                    }
+                ),
                 status_code=status_code,
                 status="success" if status_code < 400 else "failed",
                 error_message=error_message,

@@ -27,6 +27,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -43,6 +44,8 @@ from app.services.chat_history_ingest_service import (
     upsert_message_row,
 )
 from app.services.integration_service import IntegrationLogService, sanitize_request_headers
+from app.services.media_proxy_service import allowed_hosts
+from app.services.otp_redaction import otp_template_code_slots, redact_otp_item
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +55,9 @@ SIGNATURE_HEADERS = ("x-respond-signature", "x-webhook-signature")
 SHARED_SECRET_HEADER = "x-respond-webhook-secret"
 MESSAGE_EVENTS = frozenset({"message.received", "message.sent"})
 INTEGRATION_CHANNEL = "respond_webhook"
+# A Respond message event is a few KB. The body is buffered before the signature can be
+# checked, so the cap is what stops an unauthenticated caller from spending API memory.
+MAX_BODY_BYTES = 256 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -59,13 +65,19 @@ INTEGRATION_CHANNEL = "respond_webhook"
 # ---------------------------------------------------------------------------
 
 
-def _signatures_for(secret: str, raw: bytes) -> set[str]:
+def _signatures_for(secret: str, raw: bytes) -> set[bytes]:
     digest = hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).digest()
     return {
-        digest.hex(),
-        base64.b64encode(digest).decode("ascii"),
-        base64.urlsafe_b64encode(digest).decode("ascii").rstrip("="),
+        digest.hex().encode("ascii"),
+        base64.b64encode(digest),
+        base64.urlsafe_b64encode(digest).rstrip(b"="),
     }
+
+
+def _same(presented: str, expected: bytes) -> bool:
+    # Bytes on both sides: `compare_digest` refuses non-ASCII str, and a header value is
+    # whatever the caller sent (security review: a stray byte must be a 401, not a 500).
+    return hmac.compare_digest(presented.encode("utf-8"), expected)
 
 
 def verify_request(raw: bytes, headers: Any, secret: Optional[str]) -> bool:
@@ -80,13 +92,26 @@ def verify_request(raw: bytes, headers: Any, secret: Optional[str]) -> bool:
             break
     if presented:
         # `sha256=<hex>` is a common prefix convention; accept it too.
-        if "=" in presented and presented.lower().startswith("sha256="):
+        if presented.lower().startswith("sha256="):
             presented = presented.split("=", 1)[1]
-        return any(hmac.compare_digest(presented, expected) for expected in _signatures_for(secret, raw))
+        return any(_same(presented, expected) for expected in _signatures_for(secret, raw))
     shared = headers.get(SHARED_SECRET_HEADER)
     if shared:
-        return hmac.compare_digest(str(shared).strip(), secret)
+        return _same(str(shared).strip(), secret.encode("utf-8"))
     return False
+
+
+def _allowed_media_url(url: Optional[str]) -> Optional[str]:
+    """Only a URL on a known Respond media host is kept (security review, finding 7): the
+    thread renders `media_url` straight into an image tag, and the proxy would refuse any
+    other host anyway, so a forged host is dropped rather than stored."""
+    if not url:
+        return None
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return None
+    return url if host and host in allowed_hosts() else None
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +199,7 @@ def map_webhook_message(payload: dict, db: Session) -> Optional[ChatMessageRow]:
             str(reply_to.get("messageId"))[:64] if reply_to and reply_to.get("messageId") else None
         ),
         reply_to_message=thread_service._respond_item_text(reply_to) if reply_to else None,
-        media_url=media_url,
+        media_url=_allowed_media_url(media_url),
         media_type=media_type,
         media_file_name=media_file_name,
         sender_source=sender_source,
@@ -226,13 +251,21 @@ def _handle(db: Session, request: Request, raw: bytes) -> dict:
         _log(db, request, text_body, "", status.HTTP_400_BAD_REQUEST, "Body is not a JSON object.")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Body is not a JSON object.")
 
+    # Reviewer B2 (#1280), security review of this lane (finding 1): no sign-in code
+    # reaches chat_histories OR integration_logs from this lane either. The OTP template's
+    # parameters are scrubbed in place BEFORE anything is mapped or logged, exactly as the
+    # Respond-read lane does through `redact_otp_payload`.
+    if isinstance(payload.get("message"), dict):
+        redact_otp_item(payload["message"], otp_template_code_slots(db))
+    logged = json.dumps(payload)
+
     event_type = str(payload.get("event_type") or payload.get("event") or "").strip().lower()
     if event_type and event_type not in MESSAGE_EVENTS:
         return {"status": "ignored", "event_type": event_type}
 
     row = map_webhook_message(payload, db)
     if row is None:
-        _log(db, request, text_body, "", status.HTTP_400_BAD_REQUEST, "No message in payload.")
+        _log(db, request, logged, "", status.HTTP_400_BAD_REQUEST, "No message in payload.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Payload carries no message (messageId, traffic, contact).",
@@ -243,10 +276,10 @@ def _handle(db: Session, request: Request, raw: bytes) -> dict:
     except Exception:  # noqa: BLE001
         db.rollback()
         logger.exception("Respond webhook: failed to store message %s", row.message_id)
-        _log(db, request, text_body, row.contact_id, 500, "Failed to store the message.")
+        _log(db, request, logged, row.contact_id, 500, "Failed to store the message.")
         raise HTTPException(status_code=500, detail="Failed to store the message.")
 
-    _log(db, request, text_body, row.contact_id, status.HTTP_200_OK, None)
+    _log(db, request, logged, row.contact_id, status.HTTP_200_OK, None)
     if not already_existed:
         announce_new_row(db, message_pk=message_pk, contact_id=row.contact_id, traffic=row.type)
     return {"id": message_pk, "status": "duplicate" if already_existed else "created"}
@@ -261,7 +294,27 @@ async def respond_message_webhook(request: Request, db: Session = Depends(get_db
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Respond.io webhook is not configured (RESPOND_WEBHOOK_SECRET).",
         )
-    raw = await request.body()
+    raw = await _read_capped_body(request)
     if not verify_request(raw, request.headers, secret):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bad webhook signature.")
     return await run_in_threadpool(lambda: _handle(db, request, raw))
+
+
+async def _read_capped_body(request: Request) -> bytes:
+    """The raw body, refused with 413 past MAX_BODY_BYTES. The header is checked first
+    and the stream is capped as it arrives, so a chunked request cannot get around it."""
+    too_large = HTTPException(
+        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        detail=f"Body exceeds {MAX_BODY_BYTES} bytes.",
+    )
+    declared = (request.headers.get("content-length") or "").strip()
+    if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        raise too_large
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > MAX_BODY_BYTES:
+            raise too_large
+        chunks.append(chunk)
+    return b"".join(chunks)

@@ -974,7 +974,7 @@ def _fill_older_if_needed(
         .limit(limit)
         .count()
     )
-    if stored_older >= limit or sync_service.oldest_reached(db, contact):
+    if stored_older >= limit or not sync_service.older_read_allowed(db, contact):
         return
     sync_service.sync_older(db, contact, client)
 

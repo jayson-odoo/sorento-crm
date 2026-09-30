@@ -269,7 +269,7 @@ def test_an_attachment_event_stores_the_media_columns(client, db, transport):
     body["message"]["messageId"] = MESSAGE_ID + 1_000_000
     body["message"]["message"] = {
         "type": "attachment",
-        "attachment": {"type": "file", "url": "https://cdn.respond.io/q.pdf", "fileName": "Quote%2042.pdf"},
+        "attachment": {"type": "file", "url": "https://cdn.chatapi.net/q.pdf", "fileName": "Quote%2042.pdf"},
     }
     body["message"]["sender"] = {"source": "user", "userId": 9911}
 
@@ -277,12 +277,83 @@ def test_an_attachment_event_stores_the_media_columns(client, db, transport):
     assert r.status_code == 200, r.text
     (row,) = _rows(db, MESSAGE_ID + 1_000_000)
     assert row.type == "outgoing"
-    assert row.media_url == "https://cdn.respond.io/q.pdf"
+    assert row.media_url == "https://cdn.chatapi.net/q.pdf"
     assert row.media_type == "file"
     assert row.media_file_name == "Quote 42.pdf"
     assert row.message == "[file] Quote 42.pdf"
     assert row.sender_source == "user"
     assert row.sender_user_id == "9911"
+
+
+def test_a_media_url_on_an_unknown_host_is_dropped_not_stored(client, db, transport):
+    """Security review finding 7: the thread renders media_url into an image tag, so a
+    forged host must not be stored. The type and file name still describe the message."""
+    body = _event()
+    body["message"]["message"] = {
+        "type": "attachment",
+        "attachment": {"type": "image", "url": "https://attacker.example/beacon.png", "fileName": "x.png"},
+    }
+    r = _post(client, body)
+    assert r.status_code == 200, r.text
+    (row,) = _rows(db)
+    assert row.media_url is None
+    assert row.media_type == "image"
+    assert row.media_file_name == "x.png"
+
+
+def test_an_otp_template_code_reaches_neither_the_row_nor_the_log(client, db, transport):
+    """Security review finding 1 (reviewer B2, #1280, applied to this lane): the sign-in
+    template's code is scrubbed before the row and before the integration log."""
+    from app.models.integration import IntegrationLog
+    from app.models.respond_template import RespondTemplateDefault
+
+    db.add(
+        RespondTemplateDefault(
+            use_case="login_otp", template_name_snapshot="login_otp_v1", param_mapping={"1": "otp_code"}
+        )
+    )
+    db.flush()
+    body = _event()
+    body["event_type"] = "message.sent"
+    body["message"]["traffic"] = "outgoing"
+    body["message"]["sender"] = {"source": "api"}
+    body["message"]["message"] = {
+        "type": "whatsapp_template",
+        "text": "Your sign-in code is 483920",
+        "template": {
+            "name": "login_otp_v1",
+            "components": [{"type": "body", "parameters": [{"type": "text", "text": "483920"}]}],
+        },
+    }
+
+    r = _post(client, body)
+    assert r.status_code == 200, r.text
+    (row,) = _rows(db)
+    assert "483920" not in (row.message or "")
+    logs = db.query(IntegrationLog).filter(IntegrationLog.integration_channel == "respond_webhook").all()
+    assert logs, "the delivery is logged"
+    assert all("483920" not in (log.request_payload or "") for log in logs)
+
+
+def test_a_signature_header_with_a_stray_byte_is_401_not_500(client, db):
+    raw = json.dumps(_event()).encode()
+    r = client.post(
+        WEBHOOK_URL,
+        content=raw,
+        headers={b"x-respond-signature": b"caf\xe9", b"content-type": b"application/json"},
+    )
+    assert r.status_code == 401
+
+
+def test_a_body_past_the_cap_is_413_before_any_signature_work(client, db):
+    from app.api.v1.public.respond_webhook import MAX_BODY_BYTES
+
+    body = _event()
+    body["padding"] = "x" * (MAX_BODY_BYTES + 10)
+    raw, headers = _signed(body)
+    r = client.post(WEBHOOK_URL, content=raw, headers=headers)
+    assert r.status_code == 413
+    assert _rows(db) == []
 
 
 def test_n8n_can_send_the_media_columns_too(client, db, transport):
