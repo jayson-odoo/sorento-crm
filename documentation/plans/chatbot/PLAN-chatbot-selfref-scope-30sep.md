@@ -53,6 +53,21 @@ resolver work (carried context keeps its kind, typed-word-only refusal) waits on
   history turn drawer prints a "Customer scope" panel: the event existed before but no panel
   read it, which is why the owner's trace showed nothing for it.
 
+## Hand test follow-ups (owner, 30 Sep 2026, crew test copy)
+
+- "my sales" means ALL the asker's linked accounts (parent plan Q6a): a customer id the
+  conversation carried from an earlier report never narrows a self-reference ask on either
+  report (`fetch._self_reference`, both report arms); traced as
+  `customer_scope` `decision: self_reference_uses_own_ids_not_the_carry`.
+- A rendered sales report with no month on the asker's OWN accounts is a final answer,
+  "No sales found.", and arms nothing (`fetch._sales_report_output`); a miss on a named
+  product or customer keeps AC-1658's escalate offer.
+- The header line "Delivery date" is now "Required date (or order date)", the bucket the
+  report filters on (`sales_report_service._bucket_expr`): fixtures, doc samples, the
+  console case and the sales report UAC follow. The top selling header is untouched.
+- The failed hand-test run had used a copy contact linked to A/C II only; the script now
+  keys its SQL on the console contact's Respond.io id and lists the six accounts.
+
 ## Tests
 
 - `tests/chatbot/test_customer_scope_lane.py`: B2 (linked, unlinked, staff), the trace

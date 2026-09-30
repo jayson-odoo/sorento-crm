@@ -299,6 +299,6 @@ cases:
             - "Which customer do you mean?"
             - "Customer:"
             - "Product:"
-            - "Delivery date:"
+            - "Required date (or order date):"
             - "Sales orders:"
           no_uuid: true
