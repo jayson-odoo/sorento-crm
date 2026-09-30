@@ -631,3 +631,22 @@ class TestAmbiguousContact:
         profile, _ = load_profile(session_factory(), str(CONTACT_ID))
         assert profile.stock_allowed is False and profile.escalation_allowed is True
 
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        {"message_type": "request_for_help"},
+        {"message_type": "escalation"},
+        {"escalation": {"is_escalation_confirmation": True}},
+    ],
+)
+def test_lane_blocks_every_forced_door_for_a_barred_contact(shape) -> None:
+    """R3 at `_lane` itself (kill-matrix K8): the three doors into the escalation lane
+    all land on "escalation_barred"; an unbarred contact still gets "escalation"."""
+    from app.services.chatbot.turn.apply import _lane
+    from tests.chatbot._turn_helpers import build_policy
+
+    v = verdict(entities=[], domain_hint=None, intent_hint=None, **shape)
+    assert _lane(v, [], build_policy(), barred=True) == "escalation_barred"
+    assert _lane(v, [], build_policy()) == "escalation"
