@@ -44,3 +44,23 @@ or per access type.
   placeholder names the inherited value); access-type editor checkbox.
 
 See `escalation-control-acceptance-criteria.md`.
+
+## Grill (post-hoc, 30 Sep 2026)
+
+The feature skill's grill (step 2) was skipped at the start of this lane; it was run after
+the owner's process audit and sent as one crew-ask on PR #1406. Answers are recorded here as
+they arrive.
+
+| # | Decision | Recommendation | Owner answer |
+| --- | --- | --- | --- |
+| R-a | Blocked reply wording | "Please refer to your salesman." (`turn/task.py::REFER_TO_SALESMAN`) | Ruled (b), 30 Sep |
+| R-b | Which access types are seeded blocked | Every type whose name ends in "Dealer" | Ruled, 30 Sep |
+| R-c | Merge across a contact's access types | Allowed if ANY type allows; the override wins | Ruled after the Mr Loo hand test, 30 Sep |
+| Q1 | Scope: all hand-offs vs customer service only; label wording | All hand-offs; rename the label to "Can escalate to a person" | pending |
+| Q2 | A blocked miss that would have offered escalation | End it with "Please refer to your salesman." | pending |
+| Q3 | Dealer + End User | Allowed (End User allows) | pending |
+| Q4 | Dealer types created later | Default allowed; the admin unticks the box | pending |
+| Q5 | Policy read error | Fail open (allowed) | pending |
+| Q6 | Reporting for blocked turns | Keep branch kind out_of_scope with lane escalation_barred; exclude it in the monitoring query | pending |
+| Q7 | Staff (office tier) | Unchanged: never offered, may ask; the override can block | pending |
+| Q8 | Did-you-mean / product pickers for blocked contacts | Still asked; only the escalation half goes | pending |
