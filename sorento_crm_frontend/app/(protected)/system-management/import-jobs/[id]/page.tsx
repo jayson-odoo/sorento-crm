@@ -28,18 +28,33 @@ import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import { AutocountPullReview } from '../autocount-pull/components/AutocountPullReview';
 import { usePull } from '../autocount-pull/hooks/useAutocountPull';
 
-/** The two pull job types get the review header/counters/tabs above the usual cards
- *  (PLAN-autocount-pull-review.md) - every other job type renders exactly as before. */
-const AUTOCOUNT_PULL_JOB_TYPES = new Set(['autocount_products_pull', 'autocount_stock_pull']);
+/** The pull job types get the review header/counters/tabs above the usual cards
+ *  (PLAN-autocount-pull-review.md; delivery orders joined in
+ *  PLAN-autocount-do-pull-crm-30sep.md) - every other job type renders exactly as before. */
+const AUTOCOUNT_PULL_JOB_TYPES = new Set([
+  'autocount_products_pull',
+  'autocount_stock_pull',
+  'autocount_delivery_orders_pull',
+]);
+
+type PullEntity = 'products' | 'stock_balances' | 'delivery_orders';
 
 /** AC-DS-12: the entity a pull job's OWN `job_type` names, for the main header's Back
  *  button - a fallback for the (rare) render where `pullStatus` has not loaded yet, so
  *  the pull's own metadata `entity` is the preferred source wherever it is available. */
-function pullEntityFromJobType(jobType: string): 'products' | 'stock_balances' | null {
+function pullEntityFromJobType(jobType: string): PullEntity | null {
   if (jobType === 'autocount_products_pull') return 'products';
   if (jobType === 'autocount_stock_pull') return 'stock_balances';
+  if (jobType === 'autocount_delivery_orders_pull') return 'delivery_orders';
   return null;
 }
+
+/** Where a pull job's Back button goes: the list it was pulled FROM (AC-DS-12). */
+const PULL_BACK: Record<PullEntity, { label: string; href: string }> = {
+  products: { label: 'Back to Products', href: '/master-data-management/products' },
+  stock_balances: { label: 'Back to Stock', href: '/inventory-management/stock' },
+  delivery_orders: { label: 'Back to Delivery Orders', href: '/order-management/orders' },
+};
 
 const JOB_TYPE_LABELS: Record<string, string> = {
   order_import: 'Order Import',
@@ -58,6 +73,10 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   order_inquiry_import: 'Order Inquiry Import',
   autocount_products_pull: 'AutoCount Products Pull',
   autocount_stock_pull: 'AutoCount Stock Pull',
+  autocount_delivery_orders_pull: 'AutoCount Delivery Orders Pull',
+  autocount_products_apply: 'AutoCount Products Apply',
+  autocount_stock_apply: 'AutoCount Stock Apply',
+  autocount_delivery_orders_apply: 'AutoCount Delivery Orders Apply',
 };
 
 function getJobTypeLabel(jobType: string): string {
@@ -216,16 +235,10 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   // two can never disagree, and reading it straight off `job` needs no extra `usePull`
   // fetch to have resolved first.
   const pullEntity = isPullJob ? pullEntityFromJobType(job.job_type) : null;
-  const backToOwnList = isPullJob && pageIndex === null && pullEntity;
-  const backLabel = backToOwnList
-    ? pullEntity === 'products'
-      ? 'Back to Products'
-      : 'Back to Stock'
-    : 'Back to Import Jobs';
+  const backToOwnList = isPullJob && pageIndex === null && pullEntity ? PULL_BACK[pullEntity] : null;
+  const backLabel = backToOwnList ? backToOwnList.label : 'Back to Import Jobs';
   const backHref = backToOwnList
-    ? pullEntity === 'products'
-      ? '/master-data-management/products'
-      : '/inventory-management/stock'
+    ? backToOwnList.href
     : pageIndex !== null
       ? `/system-management/import-jobs?page=${pageIndex + 1}&pageSize=${pageSize}`
       : '/system-management/import-jobs';

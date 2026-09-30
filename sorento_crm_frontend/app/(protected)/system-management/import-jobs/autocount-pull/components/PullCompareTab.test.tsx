@@ -73,7 +73,7 @@ async function dropFile(rows: Record<string, unknown>[] = [{ 'Item Code': 'X' }]
 
 /** The differences DataGrid needs a QueryClient (`useListingColumnPreferences`) even
  *  though this tab does not itself use react-query for that grid's data. */
-function renderTab(entity: 'products' | 'stock_balances' = 'products') {
+function renderTab(entity: 'products' | 'stock_balances' | 'delivery_orders' = 'products') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     React.createElement(
@@ -415,5 +415,78 @@ describe('PullCompareTab - only-in rows in the grid (CT-3, CT-4)', () => {
     expect(typedRows[1]).toMatchObject({
       item_code: 'SRT-2', field: 'Only in your Excel', excel: 'Present', pull: 'Missing',
     });
+  });
+});
+
+describe('PullCompareTab - delivery orders, two files (AC-DP-42, owner decision 30 Sep)', () => {
+  function doResult(source: 'lines' | 'headers', overrides: Record<string, unknown> = {}) {
+    return {
+      summary: {
+        filename: source === 'lines' ? 'Order Listing 2026-09.xlsm and Order Tracking 2026-09.xlsm' : 'Order Tracking 2026-09.xlsm',
+        compared_at: source === 'lines' ? '2026-09-30T00:01:00Z' : '2026-09-30T00:00:00Z',
+        total: 2, matched: 1, different: 1, only_in_excel: 1, only_in_pull: 0,
+      },
+      source,
+      window: { fromDay: '2026-09-01', toDay: '2026-09-30' },
+      ignored_outside_window: 61,
+      rows_in_window: 2214,
+      differences: source === 'lines'
+        ? [{ item_code: 'ZZAC-P1', doc_no: 'ZZDO-0001', location: 'ZZAC-WH1', field: 'qty', excel: 11, pull: 10 }]
+        : [{ item_code: '', doc_no: 'ZZDO-0131', location: '', field: 'cancel', excel: true, pull: false }],
+      only_in_excel: source === 'lines' ? ['ZZDO-0009|ZZAC-P2|ZZAC-WH1'] : ['ZZDO-0142'],
+      only_in_pull: [],
+      ...overrides,
+    };
+  }
+
+  it('shows two dropzones, the window line, and one grid with Doc No, Location and Source columns', async () => {
+    const posted: unknown[] = [];
+    useComparePull.mockReturnValue({
+      mutate: (vars: { source?: string }, opts?: { onSuccess?: (data: unknown) => void }) => {
+        posted.push(vars);
+        opts?.onSuccess?.(doResult(vars.source === 'headers' ? 'headers' : 'lines'));
+      },
+      isPending: false,
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client },
+        React.createElement(PullCompareTab, {
+          jobId: JOB_ID, entity: 'delivery_orders', window: { fromDay: '2026-09-01', toDay: '2026-09-30' },
+        }),
+      ),
+    );
+
+    expect(screen.getByLabelText('Order Listing sheet to compare')).toBeInTheDocument();
+    expect(screen.getByLabelText('Order Tracking sheet to compare')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Excel file to compare')).not.toBeInTheDocument();
+    expect(screen.getByText(/Compared inside the pulled window only, 01\/09\/2026 to 30\/09\/2026/)).toBeInTheDocument();
+
+    parseExcelFile.mockResolvedValueOnce([{ 'Doc No': 'ZZDO-0001', 'Item Code': 'ZZAC-P1', Location: 'ZZAC-WH1', Qty: 11 }]);
+    fireEvent.change(screen.getByLabelText('Order Listing sheet to compare'), { target: { files: [xlsxFile('Order Listing 2026-09.xlsm')] } });
+    await waitFor(() => expect(parseExcelFile).toHaveBeenCalledTimes(1));
+    parseExcelFile.mockResolvedValueOnce([{ 'Doc. No.': 'ZZDO-0131', Cancel: 'Y' }]);
+    fireEvent.change(screen.getByLabelText('Order Tracking sheet to compare'), { target: { files: [xlsxFile('Order Tracking 2026-09.xlsm')] } });
+    await waitFor(() => expect(parseExcelFile).toHaveBeenCalledTimes(2));
+
+    expect(posted.map((v) => (v as { source?: string }).source)).toEqual(['lines', 'headers']);
+    expect(screen.getAllByText(/2,214 lines in the window, 61 outside it ignored/).length).toBe(1);
+
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    expect(headers.indexOf('Doc No')).toBeGreaterThanOrEqual(0);
+    expect(headers.indexOf('Doc No')).toBeLessThan(headers.indexOf('Item Code'));
+    expect(headers).toContain('Location');
+    expect(headers).toContain('Source');
+    expect(screen.getByText('ZZDO-0001')).toBeInTheDocument();
+    expect(screen.getByText('ZZDO-0131')).toBeInTheDocument();
+    expect(screen.getByText('ZZDO-0142')).toBeInTheDocument();
+    expect(screen.getAllByText('Lines').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Headers').length).toBeGreaterThan(0);
+    expect(screen.getByText('Cancel')).toBeInTheDocument();
+    expect(screen.getByText('Yes')).toBeInTheDocument();
+    // One headline over both files, the advisory sentence included (owner Q4, advisory default).
+    expect(screen.getByText(/Confirm applies the AutoCount pull as it is/)).toBeInTheDocument();
   });
 });

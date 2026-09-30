@@ -12,18 +12,25 @@ import type { DataGridApiResponse } from '@/components/ui/data-grid';
 import type {
   AutocountComparePullResult,
   AutocountPull,
+  AutocountPullCompareSource,
   AutocountPullEntity,
   AutocountPullExcelRow,
   AutocountPullRowsQuery,
+  AutocountPullScope,
 } from '../types/autocountPull.types';
 
 // ---- Public service functions ----------------------------------------------------------
 
-export async function startPull(entity: AutocountPullEntity): Promise<AutocountPull> {
+/** `scope` (delivery orders only, DO-PULL-SS contract): the DocDate window the checker named
+ *  in the dialog; omitted = the gateway's default, the last 31 days. */
+export async function startPull(
+  entity: AutocountPullEntity,
+  scope?: AutocountPullScope | null,
+): Promise<AutocountPull> {
   const response = await apiFetch('/api/v1/autocount/pulls', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ entity }),
+    body: JSON.stringify(scope ? { entity, scope } : { entity }),
   });
   if (!response.ok) throw await codedError(response, 'Could not start the pull.');
   return response.json();
@@ -84,15 +91,17 @@ export async function downloadPullXlsx(jobId: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
+/** `source` (delivery orders only): which of the two macro files `rows` came from. */
 export async function comparePull(
   jobId: string,
   filename: string,
   rows: Record<string, unknown>[],
+  source?: AutocountPullCompareSource,
 ): Promise<AutocountComparePullResult> {
   const response = await apiFetch(`/api/v1/autocount/pulls/${jobId}/compare`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filename, rows }),
+    body: JSON.stringify(source ? { filename, rows, source } : { filename, rows }),
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Could not compare the file.'));
   return response.json();
@@ -118,6 +127,9 @@ const START_ERROR_MESSAGES: Record<string, string> = {
   PULL_NOT_ENABLED: 'AutoCount pull is not switched on for this company.',
   PUSH_ACTIVE: 'This book now updates automatically.',
   TOO_MANY_BUILDS: 'A pull was just started. Try again in a minute.',
+  // DO-PULL-SS: a delivery-orders build with a DIFFERENT scope is still running for this
+  // company (the same scope re-attaches instead).
+  BUILD_IN_FLIGHT: 'Another AutoCount pull with a different scope is still building. Try again shortly.',
   NOT_CONFIGURED: 'AutoCount connection is not set up for this company.',
   UNREACHABLE: 'AutoCount could not be reached. Try again.',
 };

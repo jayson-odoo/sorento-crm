@@ -118,7 +118,13 @@ def _load_rows(company_code: str, entity: str) -> list[dict]:
             )
         return json.loads(path.read_text())
 
-    fixture_name = "products-rows-page1.json" if entity == "products" else "stock-rows-page1.json"
+    fixture_name = {
+        "products": "products-rows-page1.json",
+        "stock_balances": "stock-rows-page1.json",
+        # DO-PULL-CRM: the two live-shape DO records (raw vendor dicts + `source_ref`),
+        # the same documents `tests/fixtures/autocount/do_live_sample.json` pushes.
+        "delivery_orders": "delivery-orders-rows-page1.json",
+    }.get(entity, "stock-rows-page1.json")
     return json.loads((FIXTURE_DIR / fixture_name).read_text())["rows"]
 
 
@@ -180,6 +186,11 @@ def _ready_header(record: dict) -> dict:
         # asserts an exact split here).
         header["zeroListPriceCount"] = sum(1 for r in rows if _is_zero_price(r.get("list_price")))
         header["negativeListPriceCount"] = 0
+    elif record["entity"] == "delivery_orders":
+        # DO-PULL-SS contract 16: the scope the build was asked for is echoed on the
+        # header (flat keys), and the book rides on every row's `source_ref`.
+        header.update(record.get("scope") or {})
+        header["book"] = "db1"
     else:
         header["zeroPairs"] = 0
         header["negativePairs"] = 0
@@ -192,11 +203,17 @@ def _ready_header(record: dict) -> dict:
 class SnapshotBuildBody(BaseModel):
     companyCode: str
     entity: str
+    # DO-PULL-SS contract 16 (delivery orders): the flat scope keys. Echoed on the ready
+    # header; this fake serves the same fixture rows whatever the window.
+    fromDay: Optional[str] = None  # noqa: N815 - FoundryX's own casing
+    toDay: Optional[str] = None  # noqa: N815
+    docNo: Optional[str] = None  # noqa: N815
 
 
 @app.post("/api/v1/autocount/snapshots", status_code=202)
 def build_snapshot(body: SnapshotBuildBody, _auth: None = Depends(_require_api_key)) -> dict:
-    key = (body.companyCode, body.entity)
+    scope = {k: v for k, v in (("fromDay", body.fromDay), ("toDay", body.toDay), ("docNo", body.docNo)) if v}
+    key = (body.companyCode, body.entity, json.dumps(scope, sort_keys=True))
     existing_id = _in_flight.get(key)
     if existing_id is not None:
         existing = _snapshots.get(existing_id)
@@ -209,6 +226,7 @@ def build_snapshot(body: SnapshotBuildBody, _auth: None = Depends(_require_api_k
         "company_code": body.companyCode,
         "entity": body.entity,
         "rows": _load_rows(body.companyCode, body.entity),
+        "scope": scope,
         "started_at": time.monotonic(),
     }
     _snapshots[snapshot_id] = record
