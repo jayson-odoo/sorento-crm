@@ -83,7 +83,7 @@ def portal_conversation_page(
     before: Optional[str] = Query(None, description="Message id to page OLDER than (exclusive)"),
     after: Optional[str] = Query(None, description="Message id to page NEWER than (exclusive)"),
     around: Optional[str] = Query(None, description="Message id to centre the window on"),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
@@ -102,7 +102,7 @@ def portal_conversation_page(
 def portal_conversation_search(
     contact_id: str,
     q: str = Query(..., min_length=1, max_length=200),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(100, ge=1, le=MAX_PAGE_LIMIT),
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
