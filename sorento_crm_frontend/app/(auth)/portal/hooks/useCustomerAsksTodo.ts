@@ -4,8 +4,23 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from '@/lib/toast';
 import { DEFAULT_ASK_SORT, normalizeAskSort, type AskTodoPayload } from '@/lib/stock-asks-todo';
 import type { LandingSort } from '../lib/landing-fields';
-import { NotASalesAgentError, getCustomerAsksTodo, updateCustomerAsk } from '../lib/customer-asks-service';
+import {
+  NotASalesAgentError,
+  getAskConversationPage,
+  getCustomerAsksTodo,
+  searchAskConversation,
+  updateCustomerAsk,
+} from '../lib/customer-asks-service';
 import type { StockAskPatch } from '@/lib/stock-asks';
+import { useAskThread, type AskThreadService } from '@/hooks/useAskThread';
+
+/** The portal-keyed pair of thread loaders (a module constant, so the hook sees one identity). */
+const PORTAL_ASK_THREAD: AskThreadService = { getPage: getAskConversationPage, search: searchAskConversation };
+
+/** The opened ask's contact thread, read on the portal token (ASKS-UX item 3). */
+export function usePortalAskThread(askId: string | null) {
+  return useAskThread(askId, PORTAL_ASK_THREAD, 'portal-customer-ask');
+}
 
 /**
  * The portal's to-do state: plain state over the service (the portal runs on a portal token,

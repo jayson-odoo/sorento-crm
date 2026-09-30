@@ -10,6 +10,7 @@ import {
   askAnswerText,
   askToSummary,
   bucketTodo,
+  filterTodoPayload,
   type AskTodoPayload,
 } from '@/lib/stock-asks-todo';
 import { applyLandingFilters, sortLandingItems } from '@/app/(auth)/portal/lib/landing-fields';
@@ -188,9 +189,10 @@ describe('askToSummary (AC-ST301)', () => {
 // ---- AC-ST302 -----------------------------------------------------------------------------
 
 describe('ASK_LANDING_FIELDS (AC-ST302)', () => {
-  it('is Customer, Product, Answer, Created, State in that order, with their types and keys', () => {
+  it('is Customer, Contact, Product, Answer, Created, State in that order, with their types and keys', () => {
     expect(ASK_LANDING_FIELDS.map((f) => [f.label, f.type])).toEqual([
       ['Customer', 'text'],
+      ['Contact', 'text'],
       ['Product', 'text'],
       ['Answer', 'text'],
       ['Created', 'date'],
@@ -198,6 +200,7 @@ describe('ASK_LANDING_FIELDS (AC-ST302)', () => {
     ]);
     const key = (label: string) => ASK_LANDING_FIELDS.find((f) => f.label === label)!.key;
     expect(key('Customer')).toBe('customer_name');
+    expect(key('Contact')).toBe('contact_name'); // ASKS-UX item 1: filter by the asker
     expect(key('Product')).toBe('title');
     expect(key('Created')).toBe('created_at');
   });
@@ -212,6 +215,20 @@ describe('ASK_LANDING_FIELDS (AC-ST302)', () => {
   it('a Customer filter keeps only that customer', () => {
     const kept = applyLandingFilters(rowsOf(), ASK_LANDING_FIELDS, { customer_name: 'Hock Lee Trading' });
     expect(kept.map((r) => r.id).sort()).toEqual(['f1', 'f4']);
+  });
+
+  // ASKS-UX item 1 (AC-AU01): the asker is a filter on both mounts.
+  it('a Contact filter keeps only that contact, in open and done_today alike', () => {
+    const jayson = { contact_name: 'Jayson' };
+    const out = filterTodoPayload(
+      payload(
+        [ask('j1', '2026-09-29T03:00:00Z', jayson), ask('s1', '2026-09-29T03:00:00Z', { contact_name: 'Ah Seng' })],
+        [ask('j2', '2026-09-28T03:00:00Z', { ...jayson, state: 'done' }), ask('s2', '2026-09-28T03:00:00Z', { state: 'done' })],
+      ),
+      { contact_name: 'Jayson' },
+    );
+    expect(out.open.map((a) => a.id)).toEqual(['j1']);
+    expect(out.done_today.map((a) => a.id)).toEqual(['j2']);
   });
 
   it('sorts by Product (the CODE x Q title) A to Z', () => {

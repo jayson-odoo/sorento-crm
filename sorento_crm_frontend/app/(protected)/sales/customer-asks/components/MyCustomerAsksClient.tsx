@@ -21,7 +21,7 @@ import {
 import { LandingToolbar } from '@/app/(auth)/portal/components/LandingToolbar';
 import type { LandingFilters } from '@/app/(auth)/portal/lib/landing-fields';
 import { getAskConversation } from '@/services/stockAskService';
-import { useAskAgentsQuery, useAskDoneMutation, useCustomerAsksTodoQuery } from '../hooks/useCustomerAsksTodo';
+import { useAskAgentsQuery, useAskDoneMutation, useCustomerAsksTodoQuery, useSalesAskThread } from '../hooks/useCustomerAsksTodo';
 
 const ALL_AGENTS = 'all';
 /** The remembered sort lives in the existing per-user view preference row (plan 3.2). */
@@ -38,7 +38,6 @@ export function MyCustomerAsksClient() {
   const [agentId, setAgentId] = useState('');
   const [filters, setFilters] = useState<LandingFilters>({});
   const [opened, setOpened] = useState<StockAsk | null>(null);
-  const [wholeDay, setWholeDay] = useState(false);
   const todo = useCustomerAsksTodoQuery(agentId);
   const agents = useAskAgentsQuery();
   const prefs = useListingViewPreferences({
@@ -65,11 +64,14 @@ export function MyCustomerAsksClient() {
     return all.find((a) => a.id === opened.id) ?? opened;
   }, [opened, todo.data]);
 
+  // The anchor (`ask_message_ref`, `contact_id`) and the contact's thread, both keyed on the
+  // opened ask; the thread is the ticket drawer's shared component fed by the CRM loaders.
   const conversation = useQuery({
-    queryKey: ['customer-ask-conversation', opened?.id, wholeDay],
-    queryFn: () => getAskConversation(opened!.id, { wholeDay }),
+    queryKey: ['customer-ask-conversation', opened?.id],
+    queryFn: () => getAskConversation(opened!.id),
     enabled: Boolean(opened),
   });
+  const thread = useSalesAskThread(opened?.id ?? null);
 
   const agentOptions = useMemo(
     () => [
@@ -138,10 +140,7 @@ export function MyCustomerAsksClient() {
             view={view.mode}
             sort={sort}
             onSortChange={(next) => prefs.setSorting(askSortToSorting(next))}
-            onOpen={(ask) => {
-              setWholeDay(false);
-              setOpened(ask);
-            }}
+            onOpen={setOpened}
             onDone={done}
             onReopen={reopen}
             showAgent={agentId === ALL_AGENTS}
@@ -164,10 +163,9 @@ export function MyCustomerAsksClient() {
               key={current.id}
               ask={current}
               conversation={conversation.data}
-              loading={conversation.isLoading}
+              thread={thread}
               showOpenInConversations
               agentCode={current.agent_code ?? todo.data?.agent?.code ?? null}
-              onWholeDay={() => setWholeDay(true)}
               onNote={(askId, note) => save.mutateAsync({ askId, patch: { note } })}
               onDone={(askId) => {
                 done(askId);
