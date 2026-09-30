@@ -176,5 +176,16 @@ describe('PortalLanding - Conversation is one kind in the selector', () => {
         expect.objectContaining({ q: 'chin', limit: 200 }),
       ),
     );
+    // Clear search (the landing's own X) reads the whole list again: one more full read with
+    // an empty term (the mount already made one).
+    const fullReads = () =>
+      listConversations.mock.calls.filter(
+        ([p]) =>
+          (p as { limit?: number; q?: string }).limit === 200 &&
+          (p as { q?: string }).q === '',
+      ).length;
+    const before = fullReads();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    await waitFor(() => expect(fullReads()).toBe(before + 1));
   });
 });
