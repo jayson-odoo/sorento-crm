@@ -154,7 +154,7 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
     setFiles((prev) => ({ ...prev, [source ?? 'single']: next }));
     const file = next[0];
     if (!file) return;
-    if (isDeliveryOrders && !mappings.data) {
+    if (isDeliveryOrders && mappings.isLoading) {
       toast.error('The mapping is still loading. Try again in a moment.');
       return;
     }
