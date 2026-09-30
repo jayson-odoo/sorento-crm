@@ -78,7 +78,7 @@ class ContactAccessType(Base):
     # AI / user phrasing against the canonical code.
     keywords = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     # ESCALATION-CONTROL (owner, 30 Sep 2026): may a contact holding this type be offered,
-    # or force, a hand-off to customer service. Seeded false for "Sorento Dealer" (their
+    # or force, a hand-off to customer service. Seeded false for every "... Dealer" type (their
     # contact point is the salesperson). A contact's own `respond_contacts.
     # escalation_allowed` overrides it; `app/services/escalation_policy.py` resolves both.
     escalation_allowed = Column(Boolean, nullable=False, server_default=text("true"), default=True)

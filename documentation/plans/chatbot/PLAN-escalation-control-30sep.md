@@ -15,8 +15,12 @@ or per access type.
 
 ## Design
 - Migration `esc1_0001_escalation_allowed`: `contact_access_types.escalation_allowed` BOOLEAN
-  NOT NULL DEFAULT TRUE, seeded FALSE for the type named "Sorento Dealer" (admin-created, so
-  matched by name); `respond_contacts.escalation_allowed` BOOLEAN NULL (override, NULL = inherit).
+  NOT NULL DEFAULT TRUE, seeded FALSE for EVERY dealer type (owner, 30 Sep 2026: "all dealer
+  block escalation by default"; dev has Sorento, Cabana, Mocha and NL Dealer). The table has no
+  kind or tier column (`app/models/access.py::ContactAccessType`) and the chatbot's own tier
+  reading parses the name (`lanes/business/tier_gate.py::parse_level`), so a dealer type is one
+  whose name's last word is "Dealer", any case (`name ~* '(^|\s)dealer\s*$'`).
+  `respond_contacts.escalation_allowed` BOOLEAN NULL (override, NULL = inherit).
 - `app/services/escalation_policy.py::resolve`: contact override wins, else the contact's
   access types merged most-restrictive-first (any barring type bars, the direction
   `stock_visibility._merge_access_type_rows` ranks in), else allowed.
