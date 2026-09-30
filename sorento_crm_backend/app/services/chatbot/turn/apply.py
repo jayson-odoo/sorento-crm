@@ -50,11 +50,18 @@ from app.services.chatbot.turn.pending import (
     is_roster,
     offered_companies,
     with_answered_positions,
+    without_escalation,
 )
 from app.services.chatbot.turn.plan import FetchSpec, Plan, Trace
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.reconcile import apply_reconciliation
-from app.services.chatbot.turn.state import EXTRA_KIND_ALIASES, KIND_FIELD_MAP, Focus, State
+from app.services.chatbot.turn.state import (
+    EXTRA_KIND_ALIASES,
+    KIND_FIELD_MAP,
+    Focus,
+    State,
+    escalation_barred,
+)
 
 RESET_KEEPS = {"tier", "brands"}
 
@@ -1886,13 +1893,26 @@ def _names_an_unresolved_product(verdict: dict[str, Any]) -> bool:
     )
 
 
-def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | None:
+def _lane(
+    verdict: dict[str, Any], domains: list[str], policy: Policy, *, barred: bool = False
+) -> str | None:
     """Which NON-business lane this turn belongs to, or None for a business question.
 
     Read off the verdict's own structured signals and the policy's `supported` flag -
     never off the message. `route()` is the only reader (AC-1528: the router takes a plan
     and nothing else), so the decision is made here, where the verdict is.
+
+    ESCALATION-CONTROL: `barred` (the contact may not force a hand-off) turns every
+    "escalation" answer into "escalation_barred", which the engine answers with the
+    salesperson referral instead of a hand-off.
     """
+    lane = _lane_of(verdict, domains, policy)
+    if barred and lane == "escalation":
+        return "escalation_barred"
+    return lane
+
+
+def _lane_of(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | None:
     escalation = verdict.get("escalation") or {}
     message_type = verdict.get("message_type")
 
@@ -3025,6 +3045,44 @@ def apply(
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
 ):
+    """`_apply`, and for a contact whose escalation is barred (ESCALATION-CONTROL, owner
+    30 Sep 2026) no offer survives it: an escalation offer still open from an earlier
+    turn is closed on the way in (a stale "yes" has nothing to accept), and no offer is
+    asked, carried or routed to on the way out. The forced path (`_lane`) lands on
+    "escalation_barred" whichever door it came through."""
+    if not escalation_barred(state.profile):
+        return _apply(state, verdict, policy, resolved, candidates, unplaced)
+    open_question, _dropped = without_escalation(state.pending)
+    closed = open_question is not state.pending
+    if closed:
+        state = replace(state, pending=open_question)
+    new_state, plan = _apply(state, verdict, policy, resolved, candidates, unplaced)
+    if closed:
+        plan.trace.rules_fired.append("escalation_barred_offer_closed")
+    ask, _asked = without_escalation(plan.ask)
+    if ask is not plan.ask:
+        plan.ask = ask
+        plan.trace.rules_fired.append("escalation_barred_offer_withheld")
+    carried, _carried = without_escalation(new_state.pending)
+    if carried is not new_state.pending:
+        new_state = replace(new_state, pending=carried)
+    if plan.trace.lane == "escalation":
+        plan.trace.lane = "escalation_barred"
+    if plan.trace.lane == "escalation_barred":
+        plan.trace.team = None
+        plan.trace.assignee = None
+        plan.trace.company = None
+    return new_state, plan
+
+
+def _apply(
+    state: State,
+    verdict: dict[str, Any],
+    policy: Policy,
+    resolved: dict[str, dict[str, int]] | None = None,
+    candidates: dict[str, list[dict[str, Any]]] | None = None,
+    unplaced: frozenset[str] | set[str] | None = None,
+):
     """`unplaced` is the resolver's own verdict about the tokens THIS message named and
     could not place (`turn_runtime.unplaced_tokens`, folded). It is read at one seam
     only: a roster is never built out of a word that matched nothing."""
@@ -3318,7 +3376,7 @@ def apply(
         turn_no=state.turn_no,
         ideation=state.ideation,
     )
-    trace.lane = _lane(verdict, domains, policy)
+    trace.lane = _lane(verdict, domains, policy, barred=escalation_barred(state.profile))
 
     if _continues_open_draft(state.ideation, verdict, decision, focus, trace.lane, policy):
         # Issue #1178: a question about the intake's own question ("what do you mean

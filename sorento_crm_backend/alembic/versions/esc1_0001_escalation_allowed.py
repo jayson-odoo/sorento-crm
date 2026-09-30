@@ -7,14 +7,14 @@ migration-seeded, so it is matched by name. `respond_contacts.escalation_allowed
 NULL is the contact's own override (NULL = inherit). Additive and re-runnable.
 
 Revision ID: esc1_0001_escalation_allowed
-Revises: HEAD_PLACEHOLDER
+Revises: oihr_0004_wide_line_table
 Create Date: 2026-09-30
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "esc1_0001_escalation_allowed"
-down_revision = "HEAD_PLACEHOLDER"
+down_revision = "oihr_0004_wide_line_table"
 branch_labels = None
 depends_on = None
 

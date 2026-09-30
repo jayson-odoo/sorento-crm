@@ -25,7 +25,7 @@ from app.services.chatbot.turn.state import (
     State,
     focus_row_label,
     fold_token,
-    is_staff_profile,
+    offers_escalation,
 )
 
 _ATTACHED_SENTENCE = "I have attached the file(s) below."
@@ -484,7 +484,8 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             #   carried in, never resolved by `_lane_question` above because it is
             #   not THIS turn's own ask) must stay the only open question - a
             #   second one piled on top is what the finding measured.
-            is_staff = is_staff_profile(getattr(state, "profile", None))
+            # ESCALATION-CONTROL: staff and a barred contact alike get no offer.
+            is_staff = not offers_escalation(getattr(state, "profile", None))
             # Phase 3 fix round (26 Sep 2026), review B1/B2: "a clarifying question
             # open" means a question ASKED THIS TURN (a fresh kind pick / did-you-mean
             # / roster the lane just armed), never any carried pending regardless of

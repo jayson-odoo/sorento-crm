@@ -4808,6 +4808,7 @@ def _run_stages(  # noqa: PLR0915
                         # single-company turn.
                         answer = answer_bridge.apply_silent_company_offer(
                             answer,
+                            profile=state_out.profile,
                             envelope=envelopes[0],
                             parser=answer_parse_output,
                             # For the silent company's own `brand_code`, off the gate's
@@ -5241,6 +5242,37 @@ def _run_stages(  # noqa: PLR0915
     if hard_failure is not None:
         return hard_failure
 
+    if (
+        branch_kind == "out_of_scope"
+        and completes_here
+        and turn_state.escalation_barred(getattr(state_out, "profile", None))
+    ):
+        # ESCALATION-CONTROL (owner, 30 Sep 2026): a barred contact asking for a person,
+        # or answering an old offer, gets the salesperson referral and no hand-off.
+        # `apply()` already routed it here as "escalation_barred"; this is the guard in
+        # front of `_run_escalation_arm` whichever way the turn arrived.
+        from app.services.chatbot import escalation_control
+
+        turn_trace.add("escalation_barred", {"branch_kind": branch_kind})
+        return _run_answer(
+            turn_id=turn_id,
+            ctx=ctx,
+            item=item,
+            branch_kind=branch_kind,
+            actions=actions,
+            answer=turn_compose.Answer(text=escalation_control.barred_reply(state_out.profile)),
+            state=state_out,
+            remembered_before=remembered_before,
+            dry_run=dry_run,
+            session_factory=session_factory,
+            turn_trace=turn_trace,
+            stage=stage,
+            contact_respond_id=contact_respond_id,
+            verdict=verdict,
+            recalled=recalled,
+            chat_console=_chat_console(envelope),
+        )
+
     if branch_kind == "out_of_scope" and completes_here:
         # Owner correction, 21 Sep (hand pass 12 round 3): reverts hand pass 12 round
         # 2's `_run_member_offer_arm` detour (commit 8e4ecdac7). A "yes" accepting a
@@ -5458,6 +5490,12 @@ def _run_answer(
     turn's memory must not depend on which of them ran - the `Answer` carries the text,
     the actions and the question, and this writes exactly that.
     """
+    # ESCALATION-CONTROL: the backstop behind every offer site's own gate - whatever
+    # composed this reply, a barred contact is offered no hand-off.
+    if turn_state.escalation_barred(getattr(state, "profile", None)):
+        from app.services.chatbot import escalation_control
+
+        answer = escalation_control.strip_offers(answer, state.profile)
     # AC-MEM083 (S4): an answer whose subject was carried from memory opens with the
     # one line naming what was carried, built in `_carried_line` before the fetch.
     carried = remembered_before.get("_carried_line")
@@ -7416,6 +7454,17 @@ def run_tail(
         # A lane may have composed quick replies of its own before the tail ran: the
         # escalation clarifies name the teams so the answer is a tap.
         quick_replies = lane_quick_replies
+    barred_profile = getattr(state, "profile", None)
+    if turn_state.escalation_barred(barred_profile):
+        # ESCALATION-CONTROL: the same backstop `_run_answer` runs, for the lanes this
+        # tail composes (canned, escalation, casual).
+        from app.services.chatbot import escalation_control
+
+        stripped_text, question, offered = escalation_control.strip_text(
+            jsc.js_string(composed.get("text") or ""), question, barred_profile
+        )
+        if offered:
+            composed = {**composed, "text": stripped_text}
     reply = {
         "text": composed.get("text"),
         "quick_replies": quick_replies,

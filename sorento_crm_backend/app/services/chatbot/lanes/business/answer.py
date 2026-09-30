@@ -3017,9 +3017,10 @@ def not_found_error_message(
     q = parser if isinstance(parser, dict) else {}
     r = resolved if isinstance(resolved, dict) else {}
     g = gate if isinstance(gate, dict) else {}
-    from app.services.chatbot.turn.state import is_staff_profile
+    from app.services.chatbot.turn.state import offers_escalation
 
-    is_staff = is_staff_profile(profile)
+    # ESCALATION-CONTROL: staff and a barred contact alike get no offer.
+    is_staff = not offers_escalation(profile)
 
     by_entity_type = jsc.get(r, "by_entity_type")
     resolved_types = list(by_entity_type.keys()) if isinstance(by_entity_type, dict) else []
@@ -4307,9 +4308,10 @@ def build_suggest_offer(
         routing = jsc.get(q, "routing")
         company_team = jsc.get(routing, "suggested_team") if jsc.truthy(routing) else None
     team = _pretty_team(company_team if jsc.truthy(company_team) else "customer_service")
-    from app.services.chatbot.turn.state import is_staff_profile
+    from app.services.chatbot.turn.state import offers_escalation
 
-    is_staff = is_staff_profile(profile)
+    # ESCALATION-CONTROL: staff and a barred contact alike get no offer.
+    is_staff = not offers_escalation(profile)
 
     def _cont(lead_in: str, escalate_suffix: str) -> str:
         """`lead_in + escalate_suffix` (the ", or ...escalate..." tail, several wordings
