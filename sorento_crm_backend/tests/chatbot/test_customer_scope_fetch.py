@@ -154,3 +154,161 @@ class TestRunFetchAnswersAScopeViolationWithTheRefusal:
         assert calls == []
         assert (fragment.get("fetch") or {}).get("response") == refusal, fragment
         assert "escalate" not in str(fragment).lower()
+
+
+# --------------------------------------------------------------------------- #
+# CHATBOT-SELFREF-SCOPE R1/R4: a self-reference turn clamps a carried id to the links
+# --------------------------------------------------------------------------- #
+
+
+class TestSelfReferenceClampsInsteadOfRaising:
+    def test_a_carried_id_outside_the_links_is_clamped_on_a_self_reference_turn(self, ids) -> None:
+        """"my sales" over an offer that carried another customer's id: the id is dropped,
+        the links are the subject, and the decision is reported for the trace."""
+        a, b, z = ids
+        events: list[dict[str, Any]] = []
+        out = fetch.entity_ids_transformer(
+            _trigger("crm_sales_report", [a, b], [_customer(z)], self_reference=True), scope_events=events
+        )
+        assert out["customer_ids"] == [a, b], out
+        (event,) = events
+        assert event["decision"] == "clamped_to_links"
+        assert event["dropped"] == [z] and event["kept"] == []
+        assert event["tool"] == "crm_sales_report"
+
+    def test_a_kept_subset_survives_the_clamp(self, ids) -> None:
+        a, b, z = ids
+        events: list[dict[str, Any]] = []
+        out = fetch.entity_ids_transformer(
+            _trigger("crm_outstanding_report", [a, b], [_customer(a), _customer(z)], self_reference=True),
+            scope_events=events,
+        )
+        assert out["customer_ids"] == [a], out
+        assert events[0]["dropped"] == [z] and events[0]["kept"] == [a]
+
+    def test_without_self_reference_the_violation_names_the_dropped_ids(self, ids) -> None:
+        """R2: any other turn keeps the refusal, and the exception carries the ids."""
+        a, _b, z = ids
+        events: list[dict[str, Any]] = []
+        with pytest.raises(fetch.ScopeViolation) as raised:
+            fetch.entity_ids_transformer(_trigger("crm_sales_report", [a], [_customer(z)]), scope_events=events)
+        assert raised.value.dropped == [z]
+        assert events == []
+
+    def test_nothing_to_clamp_records_nothing(self, ids) -> None:
+        a, _b, _z = ids
+        events: list[dict[str, Any]] = []
+        fetch.entity_ids_transformer(_trigger("crm_sales_report", [a], [_customer(a)], self_reference=True), scope_events=events)
+        assert events == []
+
+
+def _scoped_payload(*, scope: list[str], entities: list[dict[str, Any]], parse: dict[str, Any], tier_gate=None):
+    return {
+        "gate": {"compatible_entities": entities},
+        "tier_gate": tier_gate,
+        "ctx": {
+            "contact": {"id": "1"},
+            "access": {"attributes": ["sales_orders.outstanding", "sales_orders.sales_report"]},
+            "parse": {"output": {"domain_hint": "order", "intent_hint": "check_order", "message_type": "business_query", "entities": [], **parse}},
+            "customer_scope": {
+                "ids": scope, "enforced": True,
+                "refusal": "Sorry, that isn't under your account. I can only check on ZZT OWN A.",
+            },
+        },
+    }
+
+
+class TestRunFetchTracesEveryScopeDecision:
+    def test_self_reference_over_a_foreign_carried_id_runs_on_the_links_and_traces_the_clamp(self, session_factory) -> None:
+        """R1 at the fetch seam, R4 on the trace: `run_fetch` given `self_reference` and a
+        compatible entity naming customer Z calls the tool on [A] and writes the clamp."""
+        from app.services.chatbot.lanes.business import run_fetch
+        from app.services.chatbot.lanes.business.services import FetchServices
+        from app.services.chatbot.trace import TurnTrace
+
+        a, z = str(uuid.uuid4()), str(uuid.uuid4())
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def _mcp(name: str, args: dict[str, Any]) -> Any:
+            calls.append((name, args))
+            return '{"has_result": false, "items": []}'
+
+        trace = TurnTrace()
+        payload = _scoped_payload(
+            scope=[a],
+            entities=[{"uuid": z, "entity_type": "customer", "code": "ZZT-Z"}],
+            parse={"order_status": "outstanding_both", "self_reference": True},
+        )
+        db = session_factory()
+        try:
+            fragment = run_fetch(payload, services=FetchServices(mcp_call=_mcp), db=db, trace=trace)
+        finally:
+            db.close()
+        assert calls and calls[0][0] == "crm_outstanding_report", calls
+        assert calls[0][1]["customer_ids"] == [a], calls
+        assert fragment["kind"] == "result", fragment
+        assert not (fragment.get("fetch") or {}).get("response", "").startswith("Sorry, that isn't under your account")
+        scope_events = [e for e in trace.events if e.get("kind") == "customer_scope"]
+        assert any(e.get("decision") == "clamped_to_links" and e.get("dropped") == [z] for e in scope_events), scope_events
+
+    def test_the_fetch_refusal_traces_the_dropped_ids(self, session_factory) -> None:
+        """R4: the D4 refusal (no `self_reference`) names the ids it refused."""
+        from app.services.chatbot.lanes.business import run_fetch
+        from app.services.chatbot.lanes.business.services import FetchServices
+        from app.services.chatbot.trace import TurnTrace
+
+        a, z = str(uuid.uuid4()), str(uuid.uuid4())
+        trace = TurnTrace()
+        payload = _scoped_payload(
+            scope=[a],
+            entities=[{"uuid": z, "entity_type": "customer", "code": "ZZT-Z"}],
+            parse={"order_status": "outstanding_both"},
+        )
+        db = session_factory()
+        try:
+            fragment = run_fetch(payload, services=FetchServices(mcp_call=lambda n, a_: "{}"), db=db, trace=trace)
+        finally:
+            db.close()
+        assert (fragment.get("fetch") or {}).get("response", "").startswith("Sorry, that isn't under your account")
+        (event,) = [e for e in trace.events if e.get("kind") == "customer_scope"]
+        assert event["refused"] == "customer_not_permitted"
+        assert event["dropped"] == [z]
+        assert event["reason"] == "fetch_customer_ids_outside_links"
+
+    def test_the_tier_probe_refusal_writes_the_trace_event_it_omitted(self, session_factory, monkeypatch) -> None:
+        """R1/R4 at the tier-probe seam: the same refusal, now with a `customer_scope`
+        event naming the seam and the ids. The probe tool takes no customer ids, so the
+        violation is raised by a stubbed transformer - the seam's own handling is what is
+        under test."""
+        from app.services.chatbot.lanes.business import fetch as fetch_mod
+        from app.services.chatbot.lanes.business import run_fetch
+        from app.services.chatbot.lanes.business.services import FetchServices
+        from app.services.chatbot.trace import TurnTrace
+
+        a, z = str(uuid.uuid4()), str(uuid.uuid4())
+
+        def _raise(trigger, *, space_id=None, scope_events=None):
+            raise fetch_mod.ScopeViolation("probe asked outside the scope", dropped=[z])
+
+        monkeypatch.setattr(fetch_mod, "entity_ids_transformer", _raise)
+        calls: list[Any] = []
+        trace = TurnTrace()
+        payload = _scoped_payload(
+            scope=[a],
+            entities=[],
+            parse={"domain_hint": "promotion", "intent_hint": "check_promotion"},
+            tier_gate={"tier_ask": True, "tier_probe_plan": [{"tier": "dealer", "access_levels": ["Sorento Dealer"]}]},
+        )
+        db = session_factory()
+        try:
+            fragment = run_fetch(
+                payload, services=FetchServices(mcp_call=lambda n, a_: calls.append(n) or "{}"), db=db, trace=trace
+            )
+        finally:
+            db.close()
+        assert calls == []
+        assert (fragment.get("fetch") or {}).get("response", "").startswith("Sorry, that isn't under your account")
+        (event,) = [e for e in trace.events if e.get("kind") == "customer_scope"]
+        assert event["refused"] == "customer_not_permitted"
+        assert event["reason"] == "tier_probe_customer_ids_outside_links"
+        assert event["dropped"] == [z]

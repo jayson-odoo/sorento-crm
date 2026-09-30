@@ -187,6 +187,44 @@ def _canonical_entity_type(et: str) -> str:
     return _ENTITY_TYPE_ALIASES.get(key, key)
 
 
+def _context_token_kinds(
+    context_token_types: Optional[Mapping[str, Iterable[str]]], tokens: Iterable[str]
+) -> dict[str, frozenset[str]]:
+    """The kinds a CONTEXT token keeps, canonicalised and NEVER expanded.
+
+    CHATBOT-SELFREF-SCOPE (owner ruling, 30 Sep 2026): what the conversation remembers is
+    context, not a new claim. A word stored as a category stays a category; it is never
+    re-typed through `_DOMAIN_HINT_EXPANSIONS` or `_ENTITY_TYPE_EXPANSIONS` into another
+    kind ("water tap", remembered as a category, was re-typed as a customer under `order`
+    and opened a picker of accounts nobody named). A pinned token is probed only by the
+    probes that produce one of its own kinds; a kind no probe produces means the token is
+    left alone, reported as `context_tokens_skipped`, never counted as unresolved. Keys
+    are matched case-insensitively against the tokens actually being resolved.
+    """
+    if not context_token_types:
+        return {}
+    by_norm = {(t or "").strip().lower(): t for t in tokens}
+    out: dict[str, frozenset[str]] = {}
+    for key, kinds in context_token_types.items():
+        tok = by_norm.get((key or "").strip().lower())
+        if tok is None:
+            continue
+        canon = frozenset(_canonical_entity_type(k) for k in (kinds or []) if k and str(k).strip())
+        out[tok] = canon
+    return out
+
+
+def _split_context_tokens(
+    tokens: list[str], pinned: dict[str, frozenset[str]], probes: Iterable[tuple[Any, frozenset[str]]]
+) -> tuple[list[str], list[str]]:
+    """`(tokens to probe, context tokens no probe can look up)`."""
+    produced: set[str] = set()
+    for _probe, produces in probes:
+        produced.update(produces)
+    skipped = [t for t in tokens if t in pinned and pinned[t].isdisjoint(produced)]
+    return [t for t in tokens if t not in skipped], skipped
+
+
 def _build_token_type_map(
     tokens: list[str] | None,
     allowed_entity_types: Iterable[str] | None,
@@ -563,6 +601,9 @@ class ResolutionResult:
     tokens: list[str]
     resolutions: list[TokenResolution]
     elapsed_ms: float
+    #: Context tokens (`context_token_types`) whose pinned kinds no probe produces: left
+    #: alone, never guessed, never unresolved.
+    context_tokens_skipped: list[str] = field(default_factory=list)
 
     @property
     def unresolved_tokens(self) -> list[str]:
@@ -691,6 +732,7 @@ class ResolutionResult:
                 for tr in self.resolutions
             ],
             "unresolved_tokens": self.unresolved_tokens,
+            "context_tokens_skipped": list(self.context_tokens_skipped),
         }
 
 
@@ -4737,8 +4779,15 @@ def resolve_references(
     domain_hint: Optional[str] = None,
     entity_pins: Optional[dict[str, str]] = None,
     raw_tokens: Optional[list[str]] = None,
+    context_token_types: Optional[Mapping[str, Iterable[str]]] = None,
 ) -> ResolutionResult:
     """Main entry point.
+
+    `context_token_types` ({token: [kind, ...]}) pins a token the CALLER already knows the
+    kind of (a word the conversation carried from an earlier turn) to exactly those kinds,
+    with no expansion of any sort - see `_context_token_kinds`. Such a token is probed only
+    by the probes producing its kinds; one no probe can look up is skipped and listed on
+    `context_tokens_skipped`, never in `unresolved_tokens`.
 
     Runs three tiers in order, stopping per-token as soon as a tier yields a match:
 
@@ -4810,7 +4859,15 @@ def resolve_references(
     else:
         allowed = None
 
+    # Context tokens keep their own kinds (no expansion); one no probe produces is
+    # left alone rather than guessed at.
+    pinned = _context_token_kinds(context_token_types, tokens)
+    tokens, context_skipped = _split_context_tokens(tokens, pinned, _TIER1_PROBES)
+    raw_by_token = {t: r for t, r in raw_by_token.items() if t in tokens}
+
     def _types_for(tok: str) -> Optional[frozenset[str]]:
+        if tok in pinned:
+            return pinned[tok]
         if pair_map is not None:
             paired = pair_map.get(tok)
             return frozenset({paired}) if paired else frozenset()
@@ -4845,14 +4902,21 @@ def resolve_references(
     ambiguous_tokens: set[str] = set()
     if tokens:
         for probe, produces in _TIER1_PROBES:
-            if allowed is not None and produces.isdisjoint(allowed):
+            if allowed is not None and produces.isdisjoint(allowed) and not any(
+                not produces.isdisjoint(kinds) for kinds in pinned.values()
+            ):
                 continue
             if pair_map is not None:
                 probe_tokens = [t for t in tokens if pair_map.get(t) in produces]
-                if not probe_tokens:
-                    continue
             else:
-                probe_tokens = tokens
+                probe_tokens = [
+                    t
+                    for t in tokens
+                    if (t not in pinned and (allowed is None or not produces.isdisjoint(allowed)))
+                    or (t in pinned and not produces.isdisjoint(pinned[t]))
+                ]
+            if not probe_tokens:
+                continue
             try:
                 hits = probe(db, probe_tokens)
             except Exception:
@@ -5151,7 +5215,12 @@ def resolve_references(
 
     final_tokens = list(tokens) + [r.token for r in freeword_resolutions]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    return ResolutionResult(tokens=final_tokens, resolutions=resolutions, elapsed_ms=elapsed_ms)
+    return ResolutionResult(
+        tokens=final_tokens,
+        resolutions=resolutions,
+        elapsed_ms=elapsed_ms,
+        context_tokens_skipped=context_skipped,
+    )
 
 
 # --------------------------------------------------------------------------- #
