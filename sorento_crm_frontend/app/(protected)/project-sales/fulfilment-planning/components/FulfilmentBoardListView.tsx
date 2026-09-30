@@ -33,7 +33,13 @@ import { BoardChangeTable } from './BoardChangeTable';
 import { changedFieldsOf, lineKeyOf } from '../../_shared/lib/boardChangeAnnotations';
 import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
 import { canDecide } from '../../_shared/lib/boardAmend';
-import { contributionMatchesSearch, soLineLabel, soLineNoText } from '../../_shared/lib/fulfilmentBoard';
+import {
+  contributionMatchesSearch,
+  savedAgoText,
+  savedFactsFor,
+  soLineLabel,
+  soLineNoText,
+} from '../../_shared/lib/fulfilmentBoard';
 import { BoardDecideControl } from './BoardDecideControl';
 import {
   boardOrderInquiryWord,
@@ -157,6 +163,29 @@ export interface FulfilmentBoardListViewProps {
    * supplies it.
    */
   attachmentsByLine?: SoLineAttachmentsByLine;
+  /**
+   * The Preview view's read-only rendering (FULFIL-CONFIRM-SCOPE v3.2): the SAME columns over
+   * the lines the press will send, with no select column, toolbar, row expansion or click.
+   * The OI cell shows the inquiry row the press would raise (or "Held back"), and the Verdict
+   * cell who saved the line.
+   */
+  readOnlyPreview?: {
+    infoByKey: ReadonlyMap<
+      string,
+      {
+        inquiry: {
+          verb: string;
+          qty: string;
+          delivery_date: string | null;
+          stock_location: string | null;
+          is_new: boolean;
+        }[];
+        heldBackReason: string | null;
+      }
+    >;
+    currentUserName: string | null | undefined;
+    openedAt: Date;
+  };
 }
 
 export function FulfilmentBoardListView({
@@ -173,6 +202,7 @@ export function FulfilmentBoardListView({
   poolSharePct,
   canEditAttachments = false,
   attachmentsByLine = {},
+  readOnlyPreview,
 }: FulfilmentBoardListViewProps) {
   /**
    * AC-RS-42: the Stock button and the "To plan" figure both open the SAME dialog the grid
@@ -359,7 +389,8 @@ export function FulfilmentBoardListView({
   );
 
   const columns = React.useMemo<ColumnDef<BoardContribution>[]>(
-    () => [
+    () => {
+    const all: ColumnDef<BoardContribution>[] = [
       // The repo's own select column (the users list uses the same one), so a quick save is
       // a bulk action like any other rather than a second selection mechanism.
       buildSelectColumn<BoardContribution>({
@@ -849,8 +880,84 @@ export function FulfilmentBoardListView({
         size: 240,
         minSize: 170,
       },
-    ],
+    ];
+    if (!readOnlyPreview) return all;
+    return all
+      .filter((column) => column.id !== 'select')
+      .map((column) => {
+        if (column.id === 'order_inquiry') {
+          return {
+            ...column,
+            size: 260,
+            cell: ({ row }: { row: { original: BoardContribution } }) => {
+              const info = readOnlyPreview.infoByKey.get(row.original.key);
+              if (info?.heldBackReason !== null && info?.heldBackReason !== undefined) {
+                return (
+                  <span
+                    data-testid="board-preview-held-back"
+                    className="block truncate text-muted-foreground"
+                    title={info.heldBackReason}
+                  >
+                    {`Held back \u00b7 ${info.heldBackReason}`}
+                  </span>
+                );
+              }
+              if (!info || info.inquiry.length === 0) {
+                return <span className="text-muted-foreground">-</span>;
+              }
+              const text = info.inquiry
+                .map((entry) =>
+                  entry.is_new
+                    ? [
+                        `${entry.verb} ${entry.qty}`,
+                        entry.delivery_date ? formatDateInMalaysia(entry.delivery_date) : null,
+                        entry.stock_location,
+                      ]
+                        .filter(Boolean)
+                        .join(' \u00b7 ')
+                    : `${entry.verb} ${entry.qty} \u00b7 already placed`,
+                )
+                .join(' + ');
+              return (
+                <span className="block truncate tabular-nums" title={text}>
+                  {text}
+                </span>
+              );
+            },
+          };
+        }
+        if (column.id === 'verdict') {
+          return {
+            ...column,
+            size: 220,
+            cell: ({ row }: { row: { original: BoardContribution } }) => {
+              const facts = savedFactsFor(row.original, readOnlyPreview);
+              if (!facts.saved_by) return <span className="text-muted-foreground">-</span>;
+              const flagged = facts.savedByOther || facts.savedBefore;
+              const text = flagged
+                ? `Saved \u00b7 ${facts.savedByOther ? facts.saved_by : 'you'}, ${
+                    facts.saved_at ? savedAgoText(facts.saved_at) : ''
+                  }`
+                : 'Saved \u00b7 you';
+              return flagged ? (
+                <span
+                  data-testid={`board-preview-inquiry-note-${row.original.line_no}`}
+                  className="block truncate rounded-md bg-amber-50 px-2 py-1 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
+                  title={text}
+                >
+                  {text}
+                </span>
+              ) : (
+                <span className="block truncate">{text}</span>
+              );
+            },
+          };
+        }
+        return column;
+      });
+    },
     [
+      readOnlyPreview,
       changeIcons,
       dirtySetterFor,
       draft,
@@ -861,6 +968,22 @@ export function FulfilmentBoardListView({
       canEditAttachments,
     ],
   );
+
+  if (readOnlyPreview) {
+    return (
+      <PanelDataGrid
+        columns={columns}
+        rows={filteredContributions}
+        getRowId={(row) => row.key}
+        listingKey="projects.projects.view::project-fulfilment-board-preview-v1"
+        emptyTitle="Nothing to send"
+        rowAttributes={(row) => ({
+          'data-testid': `board-preview-inquiry-row-${row.line_no}`,
+        })}
+        pageSize={25}
+      />
+    );
+  }
 
   return (
     <>

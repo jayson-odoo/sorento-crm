@@ -678,6 +678,7 @@ export interface ConfirmResult {
   /** The lines this press froze, in payload order, and how many covered lines rode forward. */
   lines_confirmed?: ConfirmedLine[] | null;
   lines_carried?: number | null;
+  lines_withdrawn?: ConfirmedLine[] | null;
   /** How many of the confirmed lines were flagged as a suspected system problem (R10). */
   suspected_issues?: number | null;
   /**
@@ -2519,6 +2520,8 @@ export interface ConfirmManyOrderBody {
   /** This order's own half of `ConfirmSupplyBody.rejected_line_ids` (owner ruling 23 Sep
    * 2026). Same rule, same refusal alongside a batch. */
   rejected_line_ids?: string[];
+  /** Scope this order's press to exactly these mirror line ids (what a Preview showed). */
+  only_line_ids?: string[];
 }
 
 export interface ConfirmManyBody {
@@ -2539,6 +2542,8 @@ export interface PreviewInquiryRow {
   line_no?: number | null;
   item_code?: string | null;
   verb: string;
+  /** False: the row already exists and is only settled by this press. */
+  is_new?: boolean;
   qty: string | number;
   delivery_date?: string | null;
   stock_location?: string | null;
@@ -2549,6 +2554,7 @@ export interface PreviewInquiryRow {
 export interface PreviewTransfer {
   line_no?: number | null;
   kind: string;
+  is_new?: boolean;
   qty: string | number;
   from_location?: string | null;
   to_location?: string | null;
@@ -2559,6 +2565,8 @@ export interface ConfirmManyOrderResult {
   /** True on a preview: nothing below was committed. */
   preview?: boolean | null;
   inquiry_rows?: PreviewInquiryRow[] | null;
+  /** The covered lines this press took out of the confirmation. */
+  lines_withdrawn?: ConfirmedLine[] | null;
   transfers?: PreviewTransfer[] | null;
   pso_id: string;
   ok: boolean;

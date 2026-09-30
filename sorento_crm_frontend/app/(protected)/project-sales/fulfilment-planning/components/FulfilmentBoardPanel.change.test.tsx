@@ -185,7 +185,7 @@ function renderPanel(
  * names (line number read off the fixture's `pl-<so>-<line_no>` ids), with no purchase rows.
  */
 function defaultPreview(body: {
-  orders: { pso_id: string; lines: { project_line_id: string }[] }[];
+  orders: { pso_id: string; lines: { project_line_id: string }[]; rejected_line_ids?: string[] }[];
 }) {
   return Promise.resolve({
     results: body.orders.map((order) => ({
@@ -200,6 +200,11 @@ function defaultPreview(body: {
       })),
       lines_carried: 0,
       lines_held_back: [],
+      lines_withdrawn: (order.rejected_line_ids ?? []).map((id) => ({
+        project_line_id: id,
+        line_no: null,
+        item_code: null,
+      })),
       lines_fulfilled_skipped: 0,
       inquiry_rows: [],
       transfers: [],
@@ -544,8 +549,8 @@ describe('the pre-marked decision, and Confirm', () => {
     await screen.findByTestId('board-change-icon-pcr-381895-1');
     // Nothing saved yet - the S5 ruling's own premise.
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent(
-        'Confirm (0)',
+      expect(screen.getByTestId('board-preview')).toHaveTextContent(
+        'Preview (0)',
       ),
     );
 
@@ -568,8 +573,8 @@ describe('the pre-marked decision, and Confirm', () => {
       ).toHaveTextContent('Saved');
     });
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent(
-        'Confirm (1)',
+      expect(screen.getByTestId('board-preview')).toHaveTextContent(
+        'Preview (1)',
       ),
     );
 
@@ -635,7 +640,7 @@ describe('the pre-marked decision, and Confirm', () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+      expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (1)'),
     );
     expect(screen.queryByTestId('confirm-blocked')).not.toBeInTheDocument();
     expect(screen.getByTestId('board-preview')).toBeEnabled();
@@ -653,7 +658,7 @@ describe('the pre-marked decision, and Confirm', () => {
     const blocked = await screen.findByTestId('confirm-blocked');
     expect(blocked).toHaveTextContent('This planning change was applied');
     expect(blocked).toHaveTextContent('Cyndi Tee');
-    expect(screen.getByTestId('board-confirm')).toBeDisabled();
+    expect(screen.getByTestId('board-preview')).toBeDisabled();
   });
 });
 
@@ -682,8 +687,8 @@ describe('S5: Change proposed is not Saved (owner ruling 25 Sep 2026, issue #124
         '0 to confirm',
       ),
     );
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)');
-    expect(screen.getByTestId('board-confirm')).toBeDisabled();
+    expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (0)');
+    expect(screen.getByTestId('board-preview')).toBeDisabled();
 
     fireEvent.click(
       await screen.findByRole('button', {
@@ -718,7 +723,7 @@ describe('S5: Change proposed is not Saved (owner ruling 25 Sep 2026, issue #124
         '1 to confirm',
       ),
     );
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
+    expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (1)');
 
     fireEvent.click(
       await screen.findByRole('button', {
@@ -769,7 +774,7 @@ describe('S5: Change proposed is not Saved (owner ruling 25 Sep 2026, issue #124
     renderPanel();
     await screen.findByTestId('board-change-icon-pcr-381895-1');
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)'),
+      expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (0)'),
     );
 
     fireEvent.click(

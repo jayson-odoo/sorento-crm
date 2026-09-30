@@ -31,7 +31,6 @@ import {
 import { useSession } from 'next-auth/react';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   DropdownMenu,
@@ -69,8 +68,10 @@ import {
   boardAxis,
   bucketLabelText,
   confirmSummaryFor,
-  previewRowsFor,
-  savedAgoText,
+  previewSummaryText,
+  previewViewFor,
+  type PreviewInquiryEntry,
+  type PreviewView,
   decisionHeaderText,
   orderListRows,
   rowMatchesSearch,
@@ -1195,8 +1196,6 @@ export function FulfilmentBoardPanel({
 
   const confirmMany = useConfirmManyMutation();
   const previewConfirmMany = usePreviewConfirmManyMutation();
-  // Lines the planner unticked in the preview: left out of the Confirm body, drafts kept.
-  const [confirmExcluded, setConfirmExcluded] = React.useState<ReadonlySet<string>>(new Set());
   const { data: session } = useSession();
   const currentUserName = session?.user?.name ?? '';
   // When the board was opened: a draft saved before this is somebody else's earlier work.
@@ -1207,25 +1206,12 @@ export function FulfilmentBoardPanel({
     Record<string, { project_line_id: string; label: string }[]>
   >({});
 
-  const scopedSummary = React.useMemo(
-    () =>
-      confirmSummaryFor(allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds, {
-        excludeKeys: confirmExcluded,
-        unadoptedSalesOrderIds,
-      }),
-    [
-      allContributions,
-      draftWithoutPreMark,
-      pendingBatchSalesOrderIds,
-      confirmExcluded,
-      unadoptedSalesOrderIds,
-    ],
-  );
 
-  // PREVIEW THEN CONFIRM (FULFIL-CONFIRM-SCOPE v2): Preview posts the very body Confirm would
-  // post, with `preview: true`; the server runs it and rolls it back, and the panel below
-  // shows its answer. Confirm is only offered while the population it was computed for still
-  // stands: any save, undo or fresh draft changes the fingerprint and asks for a new preview.
+  // PREVIEW VIEW (FULFIL-CONFIRM-SCOPE v3.2): Preview posts the very body Confirm would post,
+  // with `preview: true`; the server runs it and rolls it back, and a read-only view of its
+  // answer replaces the board content. Confirm lives on that view and is only live while the
+  // population it was computed for still stands: a refetch that brings a new draft changes the
+  // fingerprint and asks for a new preview.
   const populationFingerprint = React.useMemo(() => {
     const parts = allContributions
       .filter((entry) => draftWithoutPreMark[entry.key])
@@ -1237,22 +1223,21 @@ export function FulfilmentBoardPanel({
   }, [allContributions, draftWithoutPreMark]);
   const [previewState, setPreviewState] = React.useState<{
     results: ConfirmManyOrderResult[];
-    batchedPsoIds: string[];
     fingerprint: string;
   } | null>(null);
   const [previewing, setPreviewing] = React.useState(false);
   const previewFresh = previewState !== null && previewState.fingerprint === populationFingerprint;
-  const previewOrders = React.useMemo(
+  const previewView = React.useMemo(
     () =>
       previewState
-        ? previewRowsFor(previewState.results, allContributions, draftWithoutPreMark, {
+        ? previewViewFor(previewState.results, allContributions, draftWithoutPreMark, {
             currentUserName,
             openedAt: openedAt.current,
             orders: board.data?.orders,
             unadoptedSalesOrderIds,
             batchBlockedSalesOrderIds: pendingBatchSalesOrderIds,
           })
-        : [],
+        : null,
     [
       previewState,
       allContributions,
@@ -1546,9 +1531,16 @@ export function FulfilmentBoardPanel({
     // stays on screen after the fact.
     const leftOutAtConfirm = unpostable.length;
     try {
-      const built = await buildConfirmOrders(confirmExcluded);
+      const built = await buildConfirmOrders(new Set());
       if (!built) return;
-      const { orders, skipped, contributions, body } = built;
+      const { skipped, contributions } = built;
+      // Scoped to exactly what the Preview showed: an order the preview did not confirm
+      // anything for is not sent, and each sent order names its own lines.
+      const scope = new Map((previewView?.orders ?? []).map((order) => [order.pso_id, order]));
+      const orders = built.orders
+        .filter((order) => (scope.get(order.pso_id)?.confirmCount ?? 0) > 0)
+        .map((order) => ({ ...order, only_line_ids: scope.get(order.pso_id)?.onlyLineIds ?? [] }));
+      const body = built.body.batch_id ? { orders, batch_id: built.body.batch_id } : { orders };
       if (orders.length === 0) {
         if (skipped.length > 0) setBatchResults(skipped);
         return;
@@ -1556,7 +1548,6 @@ export function FulfilmentBoardPanel({
 
       const result = await confirmMany.mutateAsync(body);
       setPreviewState(null);
-      setConfirmExcluded(new Set());
       const labelOf = new Map(
         contributions.map((entry) => [
           entry.project_line_id ?? '',
@@ -1684,7 +1675,7 @@ export function FulfilmentBoardPanel({
     buildConfirmOrders,
     confirmMany,
     unpostable,
-    confirmExcluded,
+    previewView,
   ]);
 
   const runPreview = React.useCallback(async () => {
@@ -1696,21 +1687,8 @@ export function FulfilmentBoardPanel({
       if (!built) return;
       if (built.skipped.length > 0) setBatchResults(built.skipped);
       if (built.orders.length === 0) return;
-      // An order answering a pending planning change is applied whole and cannot be rolled
-      // back, so the server does not preview it: it is left out of the preview body and named
-      // beside the rows, and Confirm still applies it.
-      const previewable = built.orders.filter((order) => !order.batch_id);
-      const batchedPsoIds = built.orders.filter((order) => order.batch_id).map((order) => order.pso_id);
-      const result =
-        previewable.length > 0
-          ? await previewConfirmMany.mutateAsync({ orders: previewable })
-          : { results: [] };
-      setConfirmExcluded(new Set());
-      setPreviewState({
-        results: result.results,
-        batchedPsoIds,
-        fingerprint: populationFingerprint,
-      });
+      const result = await previewConfirmMany.mutateAsync(built.body);
+      setPreviewState({ results: result.results, fingerprint: populationFingerprint });
     } catch {
       // The mutation's own `onError` already toasted the message.
     } finally {
@@ -2191,7 +2169,6 @@ export function FulfilmentBoardPanel({
                   <Button
                     type="button"
                     size="sm"
-                    variant="outline"
                     data-testid="board-preview"
                     disabled={
                       confirmSummary.toConfirm === 0 ||
@@ -2202,27 +2179,6 @@ export function FulfilmentBoardPanel({
                     onClick={() => void runPreview()}
                   >
                     {`Preview (${confirmSummary.toConfirm})`}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    data-testid="board-confirm"
-                    disabled={
-                      !previewFresh ||
-                      previewOrders.some((order) => !order.ok) ||
-                      scopedSummary.toConfirm === 0 ||
-                      confirmingAll ||
-                      Boolean(confirmBlockedReason)
-                    }
-                    title={
-                      confirmBlockedReason ??
-                      (previewFresh ? undefined : previewState ? 'Preview again' : 'Preview first')
-                    }
-                    onClick={() => void runConfirmAll()}
-                  >
-                    {previewFresh
-                      ? `Confirm ${scopedSummary.toConfirm} line${scopedSummary.toConfirm === 1 ? '' : 's'}`
-                      : `Confirm (${confirmSummary.toConfirm})`}
                   </Button>
                 </>
               }
@@ -2286,135 +2242,6 @@ export function FulfilmentBoardPanel({
             })}
           </AlertContent>
         </Alert>
-      )}
-
-      {previewState && (
-        <div
-          data-testid="board-preview-panel"
-          className="space-y-3 rounded-lg border border-border px-3 py-2.5"
-        >
-          {!previewFresh && (
-            <p
-              data-testid="board-preview-stale"
-              className="rounded-md bg-amber-50 px-2 py-1.5 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
-            >
-              Preview again
-            </p>
-          )}
-          {previewState.batchedPsoIds.map((psoId) => (
-            <p
-              key={psoId}
-              data-testid={`board-preview-batched-${psoId}`}
-              className="text-sm break-words text-muted-foreground"
-            >
-              {`${
-                board.data?.orders.find((order) => order.project_sales_order_id === psoId)
-                  ?.so_number ?? 'Order'
-              }: not previewed, its pending planning change is applied when you confirm`}
-            </p>
-          ))}
-          {previewOrders.map((order) => {
-            const ticked = order.rows.filter((row) => !confirmExcluded.has(row.key)).length;
-            const heading = [order.so_number, order.customer_name].filter(Boolean).join(' \u00b7 ');
-            if (!order.ok) {
-              return (
-                <p
-                  key={order.pso_id}
-                  data-testid={`board-preview-refused-${order.pso_id}`}
-                  className="text-sm break-words text-destructive"
-                >
-                  {`${heading || 'Order'}: ${order.error ?? 'refused'}`}
-                </p>
-              );
-            }
-            return (
-              <div key={order.pso_id} className="space-y-2">
-                <p className="text-sm font-medium break-words">
-                  {`${heading} \u00b7 ${ticked} of ${order.rows.length} lines ticked${
-                    order.carried > 0 ? ` \u00b7 ${order.carried} lines carried forward unchanged` : ''
-                  }`}
-                </p>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[40rem] text-sm">
-                    <tbody>
-                      {order.rows.map((row) => {
-                        const flagged = row.savedByOther || row.savedBefore;
-                        const when = row.saved_at ? savedAgoText(row.saved_at) : '';
-                        return (
-                          <tr key={row.key} data-testid={`board-preview-row-${row.key}`} className="align-top">
-                            <td className="w-8 py-1 pr-2">
-                              <Checkbox
-                                checked={!confirmExcluded.has(row.key)}
-                                aria-label={`Line ${row.line_no} ${row.item_code}`}
-                                onCheckedChange={(value) =>
-                                  setConfirmExcluded((current) => {
-                                    const next = new Set(current);
-                                    if (value) next.delete(row.key);
-                                    else next.add(row.key);
-                                    return next;
-                                  })
-                                }
-                              />
-                            </td>
-                            <td className="py-1 pr-3 whitespace-nowrap">{`Line ${row.line_no}`}</td>
-                            <td className="py-1 pr-3 whitespace-nowrap">{row.item_code}</td>
-                            <td className="py-1 pr-3 whitespace-nowrap">{row.verb}</td>
-                            <td className="py-1 pr-3 whitespace-nowrap">{row.qty}</td>
-                            <td className="py-1 pr-3 whitespace-nowrap">{row.delivery_date ?? ''}</td>
-                            <td className="py-1 pr-3 whitespace-nowrap">{row.stock_location ?? ''}</td>
-                            <td className="py-1 pr-3 break-words">
-                              {[row.decision, row.transfer].filter(Boolean).join(' \u00b7 ')}
-                            </td>
-                            <td className="py-1 break-words">
-                              {flagged && row.saved_by ? (
-                                <span
-                                  data-testid={`board-preview-row-note-${row.key}`}
-                                  className="block rounded-md bg-amber-50 px-2 py-1 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
-                                >
-                                  {`Saved by ${row.savedByOther ? row.saved_by : 'you'}, ${when}${
-                                    row.saved_at ? ` (${formatDateTimeInMalaysia(row.saved_at)})` : ''
-                                  }`}
-                                </span>
-                              ) : row.saved_by ? (
-                                <span className="text-muted-foreground">
-                                  {`saved by ${row.savedByOther ? row.saved_by : 'you'}${when ? `, ${when}` : ''}`}
-                                </span>
-                              ) : null}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                {order.heldBack.length > 0 && (
-                  <ul data-testid="board-preview-held-back" className="space-y-0.5">
-                    {order.heldBack.map((entry, index) => (
-                      <li
-                        key={`${entry.line_no}-${index}`}
-                        className="text-sm break-words text-muted-foreground"
-                      >
-                        {`Held back: line ${entry.line_no} ${entry.item_code ?? ''} \u00b7 ${entry.reason}`}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {order.notSent.length > 0 && (
-                  <div data-testid="board-preview-not-sent" className="space-y-0.5">
-                    <p className="text-xs font-medium text-muted-foreground">Not sent</p>
-                    <ul className="space-y-0.5">
-                      {order.notSent.map((entry) => (
-                        <li key={entry.key} className="text-sm break-words text-muted-foreground">
-                          {`Line ${entry.line_no} ${entry.item_code} \u00b7 ${entry.reason}`}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
       )}
 
       {batchResults && (
@@ -2638,6 +2465,31 @@ export function FulfilmentBoardPanel({
               asking for a refetch. A granularity/day-window turn is a DIFFERENT selection and
               still shows the true skeleton (`board.isLoading` above) - see the note on
               `usePlanningBoard`. */}
+          {previewView && previewState ? (
+            <PreviewViewBody
+              view={previewView}
+              fresh={previewFresh}
+              confirming={confirmingAll}
+              contributions={allContributions}
+              draft={draftWithoutPreMark}
+              currentUserName={currentUserName}
+              openedAt={openedAt.current}
+              pendingChangeOf={(soNumber) => {
+                const standing = board.data?.orders.find((order) => order.so_number === soNumber);
+                if (!standing?.pending_change_batch_id) return null;
+                const batch = loadedBatches.find(
+                  (candidate) => candidate.id === standing.pending_change_batch_id,
+                );
+                return (
+                  batch?.source?.file_name ??
+                  (batch as { file_name?: string } | undefined)?.file_name ??
+                  ''
+                );
+              }}
+              onBack={() => setPreviewState(null)}
+              onConfirm={() => void runConfirmAll()}
+            />
+          ) : (
           <div
             data-testid="board-content"
             className={`space-y-4 transition-opacity ${
@@ -2743,6 +2595,7 @@ export function FulfilmentBoardPanel({
               </>
             )}
           </div>
+          )}
 
           {/* NO COMMIT SECTION (R13). It was one card per sales order carrying a Confirm,
               a "N of M lines decided" counter and a paragraph explaining where Buy rows and
@@ -2891,3 +2744,176 @@ export function FulfilmentBoardPanel({
 
 const UNPOSTABLE_REASONS: UnpostableReason[] = ['no_mirror', 'no_reserve_warehouse'];
 
+
+/**
+ * The read-only Preview view (FULFIL-CONFIRM-SCOPE v3.2): what Confirm will send, as the server
+ * answered it. The Order Inquiry grid and the transfers grid are the board's own, read-only.
+ */
+function PreviewViewBody({
+  view,
+  fresh,
+  confirming,
+  contributions,
+  draft,
+  currentUserName,
+  openedAt,
+  pendingChangeOf,
+  onBack,
+  onConfirm,
+}: {
+  view: PreviewView;
+  fresh: boolean;
+  confirming: boolean;
+  contributions: BoardContribution[];
+  draft: BoardDraft;
+  currentUserName: string;
+  openedAt: Date;
+  /** The pending planning change an order answers: its file name, '' when unnamed, null when none. */
+  pendingChangeOf: (soNumber: string) => string | null;
+  onBack: () => void;
+  onConfirm: () => void;
+}) {
+  const refused = view.orders.some((order) => !order.ok);
+  const rowKeys = new Set(
+    view.orders.flatMap((order) => [
+      ...order.lineKeys,
+      ...order.heldBack.map((entry) => entry.key).filter((key): key is string => key !== null),
+    ]),
+  );
+  const rows = contributions.filter((entry) => rowKeys.has(entry.key));
+  const infoByKey = new Map<
+    string,
+    {
+      inquiry: PreviewInquiryEntry[];
+      heldBackReason: string | null;
+    }
+  >();
+  for (const order of view.orders) {
+    for (const key of order.lineKeys) {
+      infoByKey.set(key, {
+        inquiry: order.inquiry.filter((entry) => entry.key === key),
+        heldBackReason: null,
+      });
+    }
+    for (const entry of order.heldBack) {
+      if (entry.key) infoByKey.set(entry.key, { inquiry: [], heldBackReason: entry.reason });
+    }
+  }
+  const unmatchedHeld = view.orders.flatMap((order) =>
+    order.heldBack.filter((entry) => entry.key === null),
+  );
+  const transfers = view.orders.flatMap((order) => order.transfers);
+  const notSent = view.orders.flatMap((order) => order.notSent);
+
+  return (
+    <div data-testid="board-preview-view" className="space-y-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold">Preview: what Confirm will send</h2>
+          <p className="text-sm break-words text-muted-foreground">
+            {previewSummaryText(view.summary)}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="board-preview-back"
+            onClick={onBack}
+          >
+            <ArrowLeft className="size-4" aria-hidden />
+            Back to planning
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            data-testid="board-confirm"
+            disabled={!fresh || refused || view.summary.lines === 0 || confirming}
+            title={!fresh ? 'Preview again' : undefined}
+            onClick={onConfirm}
+          >
+            {`Confirm ${view.summary.lines} line${view.summary.lines === 1 ? '' : 's'}`}
+          </Button>
+        </div>
+      </div>
+
+      {!fresh && (
+        <p
+          data-testid="board-preview-stale"
+          className="rounded-md bg-amber-50 px-2 py-1.5 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
+        >
+          Preview again
+        </p>
+      )}
+
+      {view.orders.map((order) => {
+        const heading = [order.so_number, order.customer_name].filter(Boolean).join(' \u00b7 ');
+        if (!order.ok) {
+          return (
+            <p
+              key={order.pso_id}
+              data-testid={`board-preview-refused-${order.pso_id}`}
+              className="text-sm break-words text-destructive"
+            >
+              {`${heading || 'Order'}: ${order.error ?? 'refused'}`}
+            </p>
+          );
+        }
+        const change = order.so_number ? pendingChangeOf(order.so_number) : null;
+        if (change === null) return null;
+        return (
+          <p key={order.pso_id} className="text-sm break-words text-muted-foreground">
+            {`${heading}: ${
+              change ? `applies pending change ${change}` : 'applies its pending planning change'
+            }`}
+          </p>
+        );
+      })}
+
+      <section className="space-y-2">
+        <h3 className="text-sm font-semibold">Order Inquiry</h3>
+        <div data-testid="board-preview-inquiry">
+          <FulfilmentBoardListView
+            contributions={rows}
+            draft={draft}
+            onDecide={() => undefined}
+            onDecideMany={async () => ({ saved: 0, failed: 0 })}
+            onDecideBatch={async () => ({ savedKeys: [], failed: [] })}
+            readOnlyPreview={{ infoByKey, currentUserName, openedAt }}
+          />
+        </div>
+        {unmatchedHeld.length > 0 && (
+          <ul data-testid="board-preview-held-back" className="space-y-0.5">
+            {unmatchedHeld.map((entry, index) => (
+              <li
+                key={`${entry.line_no}-${index}`}
+                className="text-sm break-words text-muted-foreground"
+              >
+                {`Line ${entry.line_no} ${entry.item_code ?? ''} \u00b7 Held back \u00b7 ${entry.reason}`}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="space-y-2">
+        <h3 className="text-sm font-semibold">Stock transfer</h3>
+        <BoardTransfersPanel soNumbers={[]} preview={transfers} />
+      </section>
+
+      {notSent.length > 0 && (
+        <div data-testid="board-preview-not-sent" className="space-y-0.5">
+          <p className="text-xs font-medium text-muted-foreground">Not sent</p>
+          <ul className="space-y-0.5">
+            {notSent.map((entry) => (
+              <li key={entry.key} className="text-sm break-words text-muted-foreground">
+                {`Line ${entry.line_no} ${entry.item_code} \u00b7 ${entry.reason}`}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}

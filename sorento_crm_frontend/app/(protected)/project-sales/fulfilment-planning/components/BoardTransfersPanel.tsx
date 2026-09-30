@@ -63,8 +63,25 @@ export function BoardTransfersPanel({
   soNumbers,
   justConfirmed = false,
   inquiryRows = 0,
+  preview,
 }: {
   soNumbers: string[];
+  /**
+   * The Preview view's read-only rendering (FULFIL-CONFIRM-SCOPE v3.2): the transfers a press
+   * WOULD create, as the server answered them. No query, no permission gate, no approve verb,
+   * and the number reads "on Confirm" (or "kept" when the movement already exists).
+   */
+  preview?: {
+    line_no: number | null;
+    kind: string;
+    qty: string;
+    from_location: string | null;
+    to_location: string | null;
+    is_new: boolean;
+    so_number: string | null;
+    item_code: string | null;
+    customer_name: string | null;
+  }[];
   /**
    * Whether a confirmation was pressed on this board since it opened.
    *
@@ -81,7 +98,7 @@ export function BoardTransfersPanel({
   // Not merely a hidden panel: the QUERY is off too (D9). A user with no read grant would
   // otherwise fire a request that comes back 403 on every board they open.
   const canView = useHasPermission(VIEW_PERMISSION);
-  const { data, isLoading, error } = useBoardTransfers(soNumbers, canView);
+  const { data, isLoading, error } = useBoardTransfers(soNumbers, canView && !preview);
   const { approve, approveAll } = useBoardTransferMutations();
   /**
    * The approval waiting on its confirmation - one row, or every proposed row.
@@ -94,7 +111,50 @@ export function BoardTransfersPanel({
     null,
   );
 
-  const rows = React.useMemo<StockTransfer[]>(() => data?.data ?? [], [data]);
+  const rows = React.useMemo<StockTransfer[]>(
+    () =>
+      preview
+        ? preview.map((move, index): StockTransfer => ({
+            id: `preview-${index}`,
+            transfer_no: move.is_new ? 'on Confirm' : 'kept',
+            state: 'proposed',
+            kind: move.kind as StockTransfer['kind'],
+            qty: move.qty,
+            product_id: null,
+            item_code: move.item_code,
+            product_name: null,
+            from_warehouse_id: null,
+            from_location: move.from_location,
+            to_warehouse_id: null,
+            to_location: move.to_location,
+            sales_order_id: null,
+            so_number: move.so_number,
+            so_line_no: move.line_no,
+            project_sales_order_id: null,
+            customer_name: move.customer_name,
+            sales_agent_id: null,
+            agent_code: null,
+            agent_name: null,
+            supply_decision_id: null,
+            revision_no: null,
+            proposed_at: null,
+            approved_by: null,
+            approved_by_name: null,
+            approved_at: null,
+            moved_by: null,
+            moved_by_name: null,
+            moved_at: null,
+            cancelled_by: null,
+            cancelled_by_name: null,
+            cancelled_at: null,
+            cancelled_reason: null,
+            autocount_ref: null,
+            created_at: null,
+            updated_at: null,
+          }))
+        : (data?.data ?? []),
+    [data, preview],
+  );
   const proposedRows = React.useMemo(
     () => rows.filter((row) => row.state === 'proposed'),
     [rows],
@@ -310,18 +370,38 @@ export function BoardTransfersPanel({
     ],
     [canEdit, approve, approveAll.isPending],
   );
+  const shownColumns = React.useMemo<ColumnDef<StockTransfer>[]>(() => {
+    if (!preview) return columns;
+    return columns
+      .filter((column) => column.id !== 'proposed_at' && column.id !== 'action')
+      .map((column) =>
+        column.id === 'transfer_no'
+          ? {
+              ...column,
+              cell: ({ row }: { row: { original: StockTransfer } }) => (
+                <span className="block truncate text-sm">{row.original.transfer_no}</span>
+              ),
+            }
+          : column,
+      );
+  }, [columns, preview]);
 
   // No read grant, no panel (D9). Nothing about the movements is stated - not an empty
   // card, not an error - because none of it is this user's to see.
-  if (!canView) return null;
+  if (!canView && !preview) return null;
   // Nothing raised and nothing pressed: no card. See the `justConfirmed` prop.
-  if (!isLoading && !error && rows.length === 0 && !justConfirmed) return null;
+  if (!isLoading && !error && rows.length === 0 && !justConfirmed && !preview) return null;
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-1" data-testid={preview ? 'board-preview-transfers' : undefined}>
       <PanelDataGrid<StockTransfer>
-        title="Stock transfers"
-        columns={columns}
+        title={preview ? undefined : 'Stock transfers'}
+        columns={shownColumns}
+        rowAttributes={
+          preview
+            ? (row) => ({ 'data-testid': `board-preview-transfer-row-${row.so_line_no}` })
+            : undefined
+        }
         rows={rows}
         getRowId={(row) => row.id}
         listingKey="projects.projects.view::board-stock-transfers"
@@ -330,7 +410,7 @@ export function BoardTransfersPanel({
         emptyTitle="Nothing has to move"
         emptyBody="Every confirmed line is served from its own location."
         toolbar={
-          canEdit && proposedIds.length > 0 ? (
+          !preview && canEdit && proposedIds.length > 0 ? (
             <Button
               type="button"
               size="sm"

@@ -1513,28 +1513,53 @@ export function confirmNoticeLines(result: {
   return [...held, ...landed];
 }
 
-/** One previewed row: what the SERVER says the press would raise, plus the board's decision behind it. */
-export interface PreviewRow {
-  /** The board contribution behind the line: what an untick excludes. */
-  key: string;
+/** Who saved a line's draft and when, flagged when it is somebody else's or older than this board. */
+export function savedFactsFor(
+  contribution: BoardContribution | undefined,
+  context: { currentUserName: string | null | undefined; openedAt: Date },
+) {
+  const savedBy = contribution?.draft?.saved_by ?? null;
+  const savedAt = contribution?.draft?.saved_at ?? null;
+  return {
+    saved_by: savedBy,
+    saved_at: savedAt,
+    savedByOther: !!savedBy && !!context.currentUserName && savedBy !== context.currentUserName,
+    savedBefore: savedBeforeOpen(savedAt, context.openedAt),
+  };
+}
+
+/** One inquiry row the press would raise (or settle), joined to the board's own line. */
+export interface PreviewInquiryEntry {
+  key: string | null;
   line_no: number | null;
   item_code: string | null;
+  so_number: string | null;
   verb: string;
   qty: string;
   delivery_date: string | null;
   stock_location: string | null;
   note: string | null;
-  /** The decision that produced it, in board words (`Buy 239`, `Borrow 43 + 57 from BRW-BB`). */
-  decision: string;
+  /** False: the row already exists (an earlier revision raised it) and is only settled. */
+  is_new: boolean;
   saved_by: string | null;
   saved_at: string | null;
   savedByOther: boolean;
   savedBefore: boolean;
-  /** The transfer the press would propose for this line, `BRW-BB to BRW-IB 100`. */
-  transfer?: string;
 }
 
-export interface PreviewOrder {
+export interface PreviewTransferEntry {
+  line_no: number | null;
+  kind: string;
+  qty: string;
+  from_location: string | null;
+  to_location: string | null;
+  is_new: boolean;
+  so_number: string | null;
+  item_code: string | null;
+  customer_name: string | null;
+}
+
+export interface PreviewViewOrder {
   pso_id: string;
   sales_order_id: string | null;
   so_number: string | null;
@@ -1542,24 +1567,43 @@ export interface PreviewOrder {
   ok: boolean;
   error: string | null;
   carried: number;
-  rows: PreviewRow[];
-  heldBack: { line_no: number | null; item_code: string | null; reason: string }[];
+  /** Lines confirmed plus lines withdrawn: what Confirm posts for this order. */
+  confirmCount: number;
+  /** Exactly the ids Confirm scopes the order to (`only_line_ids`). */
+  onlyLineIds: string[];
+  /** Board contribution keys of the lines the press sends, for the read-only grid. */
+  lineKeys: string[];
+  inquiry: PreviewInquiryEntry[];
+  transfers: PreviewTransferEntry[];
+  heldBack: { key: string | null; line_no: number | null; item_code: string | null; reason: string }[];
   notSent: ConfirmDialogNotPosted[];
 }
 
+export interface PreviewView {
+  summary: {
+    lines: number;
+    inquiryRows: number;
+    transfers: number;
+    heldBack: number;
+    carried: number;
+    withdrawn: number;
+  };
+  orders: PreviewViewOrder[];
+}
+
 /**
- * The panel's preview: the SERVER's per-order answer joined back to the board's own
- * contribution (by project line id, else line no within the order) for the decision behind
- * each row and who saved it and when. Nothing about what would be sent is derived here.
+ * The read-only Preview view's model: the SERVER's per-order answer joined back to the board's
+ * own contribution (project line id, else line no within the order) for who saved each line and
+ * when. Nothing about what would be sent is derived here; `onlyLineIds` is what Confirm sends.
  */
-export function previewRowsFor(
+export function previewViewFor(
   results: ConfirmManyOrderResult[],
   contributions: BoardContribution[],
   draft: BoardDraft,
   context: {
     currentUserName: string | null | undefined;
     openedAt: Date;
-    /** The board's orders, to name a refused order that echoed no lines. */
+    /** The board's orders, to name an order that echoed no lines. */
     orders?: {
       sales_order_id: string;
       so_number: string;
@@ -1569,97 +1613,92 @@ export function previewRowsFor(
     unadoptedSalesOrderIds?: ReadonlySet<string>;
     batchBlockedSalesOrderIds?: ReadonlySet<string>;
   },
-): PreviewOrder[] {
-  return results.map((result) => {
+): PreviewView {
+  const orders: PreviewViewOrder[] = results.map((result) => {
     const confirmed = result.lines_confirmed ?? [];
-    const ids = new Set(confirmed.map((entry) => entry.project_line_id));
+    const withdrawn = result.lines_withdrawn ?? [];
+    const ids = new Set([...confirmed, ...withdrawn].map((entry) => entry.project_line_id));
     const standing = context.orders?.find(
       (order) => order.project_sales_order_id === result.pso_id,
     );
     const salesOrderId =
       standing?.sales_order_id ??
-      contributions.find(
-        (entry) => entry.project_line_id && ids.has(entry.project_line_id),
-      )?.sales_order_id ??
+      contributions.find((entry) => entry.project_line_id && ids.has(entry.project_line_id))
+        ?.sales_order_id ??
       null;
     const own = salesOrderId
       ? contributions.filter((entry) => entry.sales_order_id === salesOrderId)
       : [];
     const soNumber = standing?.so_number ?? own[0]?.so_number ?? null;
-    const base: PreviewOrder = {
+    const customer = standing?.customer_name ?? own[0]?.customer_name ?? null;
+    const base: PreviewViewOrder = {
       pso_id: result.pso_id,
       sales_order_id: salesOrderId,
       so_number: soNumber,
-      customer_name: standing?.customer_name ?? own[0]?.customer_name ?? null,
+      customer_name: customer,
       ok: result.ok,
       error: result.error ?? null,
       carried: result.lines_carried ?? 0,
-      rows: [],
+      confirmCount: 0,
+      onlyLineIds: [],
+      lineKeys: [],
+      inquiry: [],
+      transfers: [],
       heldBack: [],
       notSent: [],
     };
     if (!result.ok) return base;
 
+    const byLineNo = (lineNo: number | null | undefined) =>
+      own.find((entry) => entry.line_no === lineNo);
+    const savedFacts = (contribution: BoardContribution | undefined) =>
+      savedFactsFor(contribution, context);
+
+    const lineKeys = confirmed
+      .map(
+        (line) =>
+          own.find((entry) => entry.project_line_id === line.project_line_id) ??
+          byLineNo(line.line_no),
+      )
+      .filter((entry): entry is BoardContribution => Boolean(entry))
+      .map((entry) => entry.key);
+    const inquiry: PreviewInquiryEntry[] = (result.inquiry_rows ?? []).map((row) => {
+      const contribution = byLineNo(row.line_no);
+      return {
+        key: contribution?.key ?? null,
+        line_no: row.line_no ?? null,
+        item_code: row.item_code ?? contribution?.item_code ?? null,
+        so_number: contribution?.so_number ?? soNumber,
+        verb: row.verb,
+        qty: String(row.qty),
+        delivery_date: row.delivery_date ?? null,
+        stock_location: row.stock_location ?? null,
+        note: row.note ?? null,
+        is_new: row.is_new !== false,
+        ...savedFacts(contribution),
+      };
+    });
+    const transfers: PreviewTransferEntry[] = (result.transfers ?? []).map((move) => {
+      const contribution = byLineNo(move.line_no);
+      return {
+        line_no: move.line_no ?? null,
+        kind: move.kind,
+        qty: String(move.qty),
+        from_location: move.from_location ?? null,
+        to_location: move.to_location ?? null,
+        is_new: move.is_new !== false,
+        so_number: contribution?.so_number ?? soNumber,
+        item_code: contribution?.item_code ?? null,
+        customer_name: customer,
+      };
+    });
     const heldBack = (result.lines_held_back ?? []).map((entry) => ({
+      key: byLineNo(entry.line_no)?.key ?? null,
       line_no: entry.line_no ?? null,
       item_code: entry.item_code ?? null,
       reason: entry.reason ?? '',
     }));
     const heldNos = new Set(heldBack.map((entry) => entry.line_no));
-    const inquiry = result.inquiry_rows ?? [];
-    const transfers = result.transfers ?? [];
-
-    const rows: PreviewRow[] = confirmed.map((line) => {
-      const contribution =
-        own.find((entry) => entry.project_line_id === line.project_line_id) ??
-        own.find((entry) => entry.line_no === line.line_no);
-      const decision = contribution ? draft[contribution.key] : undefined;
-      const role = contribution
-        ? pressRoleFor(
-            contribution,
-            decision,
-            context.batchBlockedSalesOrderIds?.has(contribution.sales_order_id) ?? false,
-          )
-        : null;
-      const savedBy = contribution?.draft?.saved_by ?? null;
-      const savedAt = contribution?.draft?.saved_at ?? null;
-      const mine = inquiry.filter((row) => row.line_no === line.line_no);
-      const moves = transfers.filter((move) => move.line_no === line.line_no);
-      const joined = (values: (string | number | null | undefined)[]) =>
-        values.map((value) => String(value ?? '')).join(' + ');
-      return {
-        key: contribution?.key ?? `line-${line.project_line_id}`,
-        line_no: line.line_no ?? null,
-        item_code: line.item_code ?? contribution?.item_code ?? null,
-        verb: joined(mine.map((row) => row.verb)),
-        qty: joined(mine.map((row) => row.qty)),
-        delivery_date: mine[0]?.delivery_date ?? null,
-        stock_location: mine[0]?.stock_location ?? null,
-        note: mine[0]?.note ?? null,
-        decision:
-          role?.kind === 'post' && contribution && decision && decision.verdict !== 'rejected'
-            ? compositionText(role.line, contribution, decision)
-            : role?.kind === 'withdraw'
-              ? WITHDRAWN_COMPOSITION
-              : '',
-        saved_by: savedBy,
-        saved_at: savedAt,
-        savedByOther:
-          !!savedBy && !!context.currentUserName && savedBy !== context.currentUserName,
-        savedBefore: savedBeforeOpen(savedAt, context.openedAt),
-        ...(moves.length > 0
-          ? {
-              transfer: moves
-                .map(
-                  (move) =>
-                    `${move.from_location ?? '?'} to ${move.to_location ?? '?'} ${move.qty}`,
-                )
-                .join(' + '),
-            }
-          : {}),
-      };
-    });
-
     const notSent = salesOrderId
       ? confirmDialogRowsFor(own, draft, {
           currentUserName: context.currentUserName,
@@ -1668,6 +1707,45 @@ export function previewRowsFor(
           batchBlockedSalesOrderIds: context.batchBlockedSalesOrderIds,
         }).notPosted.filter((entry) => !heldNos.has(entry.line_no))
       : [];
-    return { ...base, rows, heldBack, notSent };
+    return {
+      ...base,
+      confirmCount: confirmed.length + withdrawn.length,
+      onlyLineIds: [...confirmed, ...withdrawn].map((entry) => entry.project_line_id),
+      lineKeys,
+      inquiry,
+      transfers,
+      heldBack,
+      notSent,
+    };
   });
+  const sum = (pick: (order: PreviewViewOrder) => number) =>
+    orders.reduce((total, order) => total + pick(order), 0);
+  return {
+    summary: {
+      lines: sum((order) => order.confirmCount),
+      inquiryRows: sum((order) => order.inquiry.length),
+      transfers: sum((order) => order.transfers.length),
+      heldBack: sum((order) => order.heldBack.length),
+      carried: sum((order) => order.carried),
+      withdrawn: results.reduce(
+        (total, result) => total + (result.ok ? (result.lines_withdrawn?.length ?? 0) : 0),
+        0,
+      ),
+    },
+    orders,
+  };
+}
+
+/** "3 lines · 2 Order Inquiry rows · 1 stock transfer", plus held back / carried when present. */
+export function previewSummaryText(summary: PreviewView['summary']): string {
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  return [
+    plural(summary.lines, 'line', 'lines'),
+    plural(summary.inquiryRows, 'Order Inquiry row', 'Order Inquiry rows'),
+    plural(summary.transfers, 'stock transfer', 'stock transfers'),
+    summary.heldBack > 0 ? `${summary.heldBack} held back` : null,
+    summary.carried > 0 ? `${summary.carried} carried forward unchanged` : null,
+  ]
+    .filter(Boolean)
+    .join(' \u00b7 ');
 }

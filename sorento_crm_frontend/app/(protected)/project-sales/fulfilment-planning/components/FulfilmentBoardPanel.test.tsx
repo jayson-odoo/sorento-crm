@@ -313,7 +313,7 @@ function openLinesTab() {
  * names (line number read off the fixture's `pl-<so>-<line_no>` ids), with no purchase rows.
  */
 function defaultPreview(body: {
-  orders: { pso_id: string; lines: { project_line_id: string }[] }[];
+  orders: { pso_id: string; lines: { project_line_id: string }[]; rejected_line_ids?: string[] }[];
 }) {
   return Promise.resolve({
     results: body.orders.map((order) => ({
@@ -328,6 +328,11 @@ function defaultPreview(body: {
       })),
       lines_carried: 0,
       lines_held_back: [],
+      lines_withdrawn: (order.rejected_line_ids ?? []).map((id) => ({
+        project_line_id: id,
+        line_no: null,
+        item_code: null,
+      })),
       lines_fulfilled_skipped: 0,
       inquiry_rows: [],
       transfers: [],
@@ -1796,7 +1801,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     ).toBeInTheDocument();
     // FULFIL-CONFIRM-SCOPE fix round 1: on an ADOPTED order a line with no mirror is left out
     // and named, so the count no longer includes it - title, list, button and body agree.
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
+    expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (1)');
 
     await openConfirmDialog();
     fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
@@ -1841,8 +1846,8 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     expect(
       within(banner).getByRole('button', { name: 'TPE-9204 line 2' }),
     ).toBeInTheDocument();
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent(
-      'Confirm (1)',
+    expect(screen.getByTestId('board-preview')).toHaveTextContent(
+      'Preview (1)',
     );
   });
 
@@ -1877,7 +1882,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     // AC-20: no banner renders for a discontinued Buy with no reason - it is no longer
     // "left out" for that cause.
     expect(screen.queryByTestId('board-left-out-banner')).not.toBeInTheDocument();
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)');
+    expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (2)');
 
     await openConfirmDialog();
     fireEvent.click(screen.getByRole('button', { name: /^Confirm( \d+ lines?)?$/ }));
@@ -2138,8 +2143,8 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
 
     // Both lines are SAVED (8 Sep 2026 ruling, reverses R11), so both plannable lines post
     // as their own suggestion.
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent(
-      'Confirm (2)',
+    expect(screen.getByTestId('board-preview')).toHaveTextContent(
+      'Preview (2)',
     );
     // Confirm waits for a Preview (v2); Preview itself is on offer.
     expect(screen.getByTestId('board-preview')).toBeEnabled();
@@ -2377,7 +2382,7 @@ describe('FulfilmentBoardPanel: a Confirm that posts nothing says so', () => {
     expect(banner).toHaveTextContent(/not on the planning record yet/i);
     // FULFIL-CONFIRM-SCOPE fix round 1: the count excludes a no-mirror line on an adopted
     // order, so there is nothing to press: the button is disabled at 0.
-    expect(screen.getByTestId('board-confirm')).toBeDisabled();
+    expect(screen.getByTestId('board-preview')).toBeDisabled();
     expect(adoptSalesOrder).not.toHaveBeenCalled();
     expect(confirmMany).not.toHaveBeenCalled();
   });
@@ -3106,10 +3111,10 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
     });
     closeDialog();
 
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent(
-      'Confirm (0)',
+    expect(screen.getByTestId('board-preview')).toHaveTextContent(
+      'Preview (0)',
     );
-    expect(screen.getByTestId('board-confirm')).toBeDisabled();
+    expect(screen.getByTestId('board-preview')).toBeDisabled();
   });
 
   /**
@@ -3159,8 +3164,8 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
     await screen.findByTestId('fulfilment-board-matrix');
 
     // The counter reads both lines, not only the one the window shows.
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent(
-      'Confirm (2)',
+    expect(screen.getByTestId('board-preview')).toHaveTextContent(
+      'Preview (2)',
     );
 
     await pressPreviewThenConfirm();
@@ -3209,8 +3214,8 @@ describe('FulfilmentBoardPanel: Confirm counts only saved lines (8 Sep 2026 ruli
     expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
       '17 to confirm · 0 rejected',
     );
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent(
-      'Confirm (17)',
+    expect(screen.getByTestId('board-preview')).toHaveTextContent(
+      'Preview (17)',
     );
 
     await pressPreviewThenConfirm();
@@ -3233,8 +3238,8 @@ describe('FulfilmentBoardPanel: Confirm counts only saved lines (8 Sep 2026 ruli
     expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
       '0 to confirm · 0 rejected',
     );
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)');
-    expect(screen.getByTestId('board-confirm')).toBeDisabled();
+    expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (0)');
+    expect(screen.getByTestId('board-preview')).toBeDisabled();
   });
 });
 
@@ -4241,7 +4246,7 @@ describe("FulfilmentBoardPanel: Confirm carries a covered line's staged reject (
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
+    expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (1)');
     expect(screen.getByTestId('board-preview')).toBeEnabled();
   });
 
@@ -4497,25 +4502,24 @@ describe('FulfilmentBoardPanel: confirm scope fix round 1 (FULFIL-CONFIRM-SCOPE)
 });
 
 /**
- * FULFIL-CONFIRM-SCOPE v2 (owner, 30 Sep 2026): no confirm popup. Preview is a required step
- * that shows the server's own answer inline; Confirm posts the ticked rows of THAT preview.
+ * FULFIL-CONFIRM-SCOPE v3.1 (owner, 30 Sep 2026; AC-W1..W6): Preview opens a READ-ONLY view in
+ * place of the board content; Confirm lives on that view and posts `only_line_ids`.
  */
-describe('FulfilmentBoardPanel: Preview then Confirm (v2)', () => {
+describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
   const DAY_MS = 24 * 60 * 60 * 1000;
 
-  /** Lines 6 and 9 (same product) plus 24 saved; 9 by another planner 8 days ago; 6 by me now. */
-  function savedBoard(extra: BoardDemandLine[] = []) {
+  /** Lines 6, 9 and 8 saved; 9 by another planner 8 days ago; the rest by me just now. */
+  function savedBoard() {
     const base = allSaved(
       boardOf([
         demand({ line_no: 6, item_code: 'SRTWT6808', qty: '239' }),
         demand({ line_no: 9, item_code: 'SRTWT6808', qty: '436' }),
-        demand({ line_no: 24, item_code: 'TPE-9204', qty: '10' }),
-        ...extra,
+        demand({ line_no: 8, item_code: 'TPE-9204', qty: '100' }),
       ]),
     );
     const own = withContribution(
       base,
-      (entry) => entry.line_no === 6,
+      (entry) => entry.line_no !== 9,
       (entry) => ({
         ...entry,
         draft: {
@@ -4539,39 +4543,53 @@ describe('FulfilmentBoardPanel: Preview then Confirm (v2)', () => {
     );
   }
 
-  const keyOfLine = (board: PlanningBoard, lineNo: number) =>
-    board.contributions.find((entry) => entry.line_no === lineNo)!.key;
+  const confirmed = (nos: number[]) =>
+    nos.map((no) => ({ project_line_id: `pl-so-a-${no}`, line_no: no, item_code: null }));
 
-  const inquiryRow = (lineNo: number, itemCode: string, qty: string) => ({
-    line_no: lineNo,
-    item_code: itemCode,
-    verb: 'ORDER',
-    qty,
-    delivery_date: '2026-09-01',
-    stock_location: 'BRW-IB',
-    note: null,
-  });
-
-  const previewOf = (
-    overrides: Record<string, unknown> = {},
-    rows = [inquiryRow(6, 'SRTWT6808', '239'), inquiryRow(9, 'SRTWT6808', '436')],
-  ) => ({
+  const previewResult = (overrides: Record<string, unknown> = {}) => ({
     results: [
       {
         pso_id: 'pso-so-a',
         ok: true,
         preview: true,
         decision_revision: 1,
-        lines_confirmed: rows.map((row) => ({
-          project_line_id: `pl-so-a-${row.line_no}`,
-          line_no: row.line_no,
-          item_code: row.item_code,
-        })),
+        lines_confirmed: confirmed([6, 9, 8]),
         lines_carried: 0,
-        lines_held_back: [],
+        lines_held_back: [{ line_no: 112, item_code: 'WESERP20B', reason: 'only 3 free at BRW-IB' }],
+        lines_withdrawn: [],
         lines_fulfilled_skipped: 0,
-        inquiry_rows: rows,
-        transfers: [],
+        inquiry_rows: [
+          {
+            line_no: 6,
+            item_code: 'SRTWT6808',
+            verb: 'ORDER',
+            qty: '239',
+            delivery_date: '2026-09-01',
+            stock_location: 'BRW-IB',
+            note: null,
+            is_new: true,
+          },
+          {
+            line_no: 9,
+            item_code: 'SRTWT6808',
+            verb: 'ORDER',
+            qty: '436',
+            delivery_date: '2026-09-01',
+            stock_location: 'BRW-IB',
+            note: null,
+            is_new: false,
+          },
+        ],
+        transfers: [
+          {
+            line_no: 8,
+            kind: 'borrow',
+            qty: '100',
+            from_location: 'BRW-BB',
+            to_location: 'BRW-IB',
+            is_new: true,
+          },
+        ],
         ...overrides,
       },
     ],
@@ -4583,202 +4601,181 @@ describe('FulfilmentBoardPanel: Preview then Confirm (v2)', () => {
         pso_id: 'pso-so-a',
         ok: true,
         decision_revision: 2,
-        inquiry_rows_created: 2,
+        inquiry_rows_created: 1,
         lines_confirmed: [
           { project_line_id: 'pl-so-a-6', line_no: 6, item_code: 'SRTWT6808' },
-          { project_line_id: 'pl-so-a-9', line_no: 9, item_code: 'SRTWT6808' },
         ],
-        lines_carried: 4,
+        lines_carried: 0,
       },
     ],
   };
 
-  const threeRowPreview = () =>
-    previewOf({}, [
-      inquiryRow(6, 'SRTWT6808', '239'),
-      inquiryRow(9, 'SRTWT6808', '436'),
-      inquiryRow(24, 'TPE-9204', '10'),
-    ]);
-
-  async function pressPreview() {
+  async function openView() {
     fireEvent.click(await screen.findByTestId('board-preview'));
-    return screen.findByTestId('board-preview-panel');
+    return screen.findByTestId('board-preview-view');
   }
 
-  it('AC-V1: shows Preview (3) and a Confirm that says Preview first, and nothing pops up', async () => {
+  it('AC-W1: the header offers Preview (3) and no Confirm on the board, and nothing pops up', async () => {
     getPlanningBoard.mockResolvedValue(savedBoard());
-    previewConfirmMany.mockResolvedValue(threeRowPreview());
-    confirmMany.mockResolvedValue(okConfirm);
-
     renderPanel(['SO403340']);
     const preview = await screen.findByTestId('board-preview');
-    expect(screen.getByRole('button', { name: 'Preview (3)' })).toBe(preview);
-    const confirm = screen.getByTestId('board-confirm');
-    expect(confirm).toBeDisabled();
-    const hintId = confirm.getAttribute('aria-describedby');
-    const hint = confirm.getAttribute('title') ?? (hintId ? document.getElementById(hintId)?.textContent : null);
-    expect(hint).toBe('Preview first');
-
-    fireEvent.click(confirm);
+    expect(preview).toHaveTextContent('Preview (3)');
+    expect(screen.queryByTestId('board-confirm')).toBeNull();
     expect(screen.queryByRole('alertdialog')).toBeNull();
-    expect(previewConfirmMany).not.toHaveBeenCalled();
-    expect(confirmMany).not.toHaveBeenCalled();
-
-    await pressPreview();
-    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-    expect(screen.queryByRole('alertdialog')).toBeNull();
-    fireEvent.click(screen.getByTestId('board-confirm'));
-    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole('alertdialog')).toBeNull();
-    expect(screen.queryAllByTestId(/^board-confirm-dialog-row-/)).toHaveLength(0);
   });
 
-  it('AC-V2: Preview posts the confirm body with preview and renders the server rows inline', async () => {
-    const board = savedBoard([demand({ line_no: 30, item_code: 'WESERP20B' })]);
-    // Line 30's saved draft has gone stale: unpostable, so it is "Not sent".
-    const withStale = withContribution(
-      board,
-      (entry) => entry.line_no === 30,
-      (entry) => ({ ...entry, draft: { ...entry.draft!, stale: true } }),
-    );
-    getPlanningBoard.mockResolvedValue(withStale);
-    previewConfirmMany.mockResolvedValue(
-      previewOf(
-        {
-          lines_held_back: [{ line_no: 24, item_code: 'TPE-9204', reason: 'only 3 free at BRW' }],
-        },
-        [
-          { ...inquiryRow(6, 'SRTWT6808', '239'), stock_location: 'BRW-IB' },
-          inquiryRow(9, 'SRTWT6808', '436'),
-        ],
-      ),
-    );
-
+  it('AC-W2: Preview posts the confirm body once and opens a read-only view of the server answer', async () => {
+    getPlanningBoard.mockResolvedValue(savedBoard());
+    previewConfirmMany.mockResolvedValue(previewResult());
     renderPanel(['SO403340']);
-    const panel = await pressPreview();
+    const view = await openView();
 
-    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(1));
+    expect(previewConfirmMany).toHaveBeenCalledTimes(1);
     const [body] = previewConfirmMany.mock.calls[0] as [
-      { orders: { pso_id: string; lines: { project_line_id: string }[] }[]; preview?: boolean },
+      { orders: { pso_id: string; lines: { project_line_id: string }[] }[] },
     ];
     expect(body.orders[0].pso_id).toBe('pso-so-a');
-    expect(body.orders[0].lines.map((entry) => entry.project_line_id).sort()).toEqual([
-      'pl-so-a-24',
+    expect(body.orders[0].lines.map((l) => l.project_line_id).sort()).toEqual([
       'pl-so-a-6',
+      'pl-so-a-8',
       'pl-so-a-9',
     ]);
 
-    const row6 = within(panel).getByTestId(`board-preview-row-${keyOfLine(withStale, 6)}`);
-    expect(row6).toHaveTextContent('ORDER');
-    expect(row6).toHaveTextContent('239');
-    expect(row6).toHaveTextContent('SRTWT6808');
-    expect(row6).toHaveTextContent(/Buy|Reserve|Borrow|Incoming/);
-    expect(row6).toHaveTextContent('saved by you, just now');
+    expect(screen.queryByTestId('board-content')).toBeNull();
+    expect(view).toHaveTextContent('Preview: what Confirm will send');
+    expect(view).toHaveTextContent('3 lines');
+    expect(view).toHaveTextContent('2 Order Inquiry rows');
+    expect(view).toHaveTextContent('1 stock transfer');
+    expect(view).toHaveTextContent('1 held back');
 
-    const row9 = within(panel).getByTestId(`board-preview-row-${keyOfLine(withStale, 9)}`);
-    expect(row9).toHaveTextContent('436');
-    const note = within(panel).getByTestId(`board-preview-row-note-${keyOfLine(withStale, 9)}`);
-    expect(note).toHaveTextContent(/Jayson Foundryx/);
-    expect(note.className).toMatch(/amber/);
+    const inquiry = within(view).getByTestId('board-preview-inquiry');
+    const row6 = within(inquiry).getByTestId('board-preview-inquiry-row-6');
+    for (const text of ['SRTWT6808', 'ORDER', '239', 'BRW-IB']) {
+      expect(row6).toHaveTextContent(text);
+    }
+    expect(row6).not.toHaveTextContent('already placed');
+    expect(within(inquiry).getByTestId('board-preview-inquiry-row-9')).toHaveTextContent(
+      'already placed',
+    );
+    expect(within(view).getByTestId('board-preview-inquiry-note-9')).toHaveTextContent(
+      /Jayson Foundryx/,
+    );
 
-    const held = within(panel).getByTestId('board-preview-held-back');
-    expect(held).toHaveTextContent('TPE-9204');
-    expect(held).toHaveTextContent('only 3 free at BRW');
-    expect(within(held).queryByRole('checkbox')).toBeNull();
+    const transfers = within(view).getByTestId('board-preview-transfers');
+    const move = within(transfers).getByTestId('board-preview-transfer-row-8');
+    for (const text of ['BRW-BB', 'BRW-IB', '100']) {
+      expect(move).toHaveTextContent(text);
+    }
 
-    const notSent = within(panel).getByTestId('board-preview-not-sent');
-    expect(notSent).toHaveTextContent('Not sent');
-    expect(notSent).toHaveTextContent('WESERP20B');
-    expect(within(notSent).queryByRole('checkbox')).toBeNull();
+    const held = within(view).getByTestId('board-preview-held-back');
+    expect(held).toHaveTextContent('112');
+    expect(held).toHaveTextContent('only 3 free at BRW-IB');
+    expect(within(view).queryAllByRole('checkbox')).toHaveLength(0);
   });
 
-  it('AC-V3: Confirm follows the ticks and posts only the ticked lines, with no preview key', async () => {
+  it('AC-W3: Back to planning returns to the board as it was', async () => {
     getPlanningBoard.mockResolvedValue(savedBoard());
-    previewConfirmMany.mockResolvedValue(threeRowPreview());
-    confirmMany.mockResolvedValue(okConfirm);
-
+    previewConfirmMany.mockResolvedValue(previewResult());
     renderPanel(['SO403340']);
-    await pressPreview();
-    await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm 3 lines'),
-    );
-    expect(screen.getByTestId('board-confirm')).toBeEnabled();
+    await openView();
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Line 9 SRTWT6808' }));
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm 2 lines');
+    fireEvent.click(screen.getByTestId('board-preview-back'));
+    expect(await screen.findByTestId('board-content')).toBeVisible();
+    expect(screen.queryByTestId('board-preview-view')).toBeNull();
+    expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (3)');
+  });
 
-    fireEvent.click(screen.getByTestId('board-confirm'));
+  it('AC-W4: Confirm 3 lines posts only_line_ids of the previewed lines and no preview key', async () => {
+    getPlanningBoard.mockResolvedValue(savedBoard());
+    previewConfirmMany.mockResolvedValue(previewResult());
+    confirmMany.mockResolvedValue(okConfirm);
+    renderPanel(['SO403340']);
+    await openView();
+
+    const confirm = screen.getByTestId('board-confirm');
+    expect(confirm).toHaveTextContent('Confirm 3 lines');
+    expect(confirm).toBeEnabled();
+    fireEvent.click(confirm);
+
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0] as [
-      { orders: { lines: { project_line_id: string }[] }[]; preview?: boolean },
+      { orders: { only_line_ids?: string[] }[]; preview?: boolean },
     ];
     expect(body).not.toHaveProperty('preview');
-    const ids = body.orders[0].lines.map((entry) => entry.project_line_id);
-    expect(ids).toHaveLength(2);
-    expect(ids).not.toContain('pl-so-a-9');
+    expect([...(body.orders[0].only_line_ids ?? [])].sort()).toEqual([
+      'pl-so-a-6',
+      'pl-so-a-8',
+      'pl-so-a-9',
+    ]);
   });
 
-  it('AC-V3: unticking every row disables Confirm', async () => {
+  it('AC-W4: withdrawn lines count and are scoped in', async () => {
     getPlanningBoard.mockResolvedValue(savedBoard());
-    previewConfirmMany.mockResolvedValue(threeRowPreview());
-
+    previewConfirmMany.mockResolvedValue(
+      previewResult({
+        lines_confirmed: confirmed([6]),
+        lines_withdrawn: confirmed([5]),
+        lines_held_back: [],
+        inquiry_rows: [],
+        transfers: [],
+      }),
+    );
+    confirmMany.mockResolvedValue(okConfirm);
     renderPanel(['SO403340']);
-    await pressPreview();
-    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    await openView();
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Line 6 SRTWT6808' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Line 9 SRTWT6808' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Line 24 TPE-9204' }));
-
-    expect(screen.getByTestId('board-confirm')).toBeDisabled();
-    expect(confirmMany).not.toHaveBeenCalled();
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm 2 lines');
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [{ orders: { only_line_ids?: string[] }[] }];
+    expect(body.orders[0].only_line_ids).toEqual(
+      expect.arrayContaining(['pl-so-a-6', 'pl-so-a-5']),
+    );
+    expect(body.orders[0].only_line_ids).toHaveLength(2);
   });
 
-  it('AC-V4: a save after the preview disables Confirm and says Preview again, until re-previewed', async () => {
-    // `allSaved` (inside `savedBoard`) saves every line, extras included, so line 40's draft is
-    // stripped here: it must be genuinely unsaved for a quick save to change the population.
+  it('AC-W4: a new server draft after the preview disables Confirm and says Preview again', async () => {
+    const board = savedBoard();
+    getPlanningBoard.mockResolvedValue(board);
+    previewConfirmMany.mockResolvedValue(previewResult());
+    renderPanel(['SO403340']);
+    await openView();
+    expect(screen.getByTestId('board-confirm')).toBeEnabled();
+
+    // A different planner saves a further line while the view is open.
     getPlanningBoard.mockResolvedValue(
-      withContribution(
-        savedBoard([demand({ line_no: 40, item_code: 'WESERP20B' })]),
-        (entry) => entry.line_no === 40,
-        (entry) => ({ ...entry, draft: undefined }),
+      allSaved(
+        boardOf([
+          demand({ line_no: 6, item_code: 'SRTWT6808', qty: '239' }),
+          demand({ line_no: 9, item_code: 'SRTWT6808', qty: '436' }),
+          demand({ line_no: 8, item_code: 'TPE-9204', qty: '100' }),
+          demand({ line_no: 40, item_code: 'WESERP20B', qty: '5' }),
+        ]),
       ),
     );
-    previewConfirmMany.mockResolvedValue(threeRowPreview());
-
-    renderPanel(['SO403340']);
-    await pressPreview();
-    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-
-    fireEvent.click(screen.getByRole('button', { name: /^Save all suggested \(\d+\)$/ }));
-    await waitFor(() => expect(putLineDraft).toHaveBeenCalled());
+    window.dispatchEvent(new Event('focus'));
+    window.dispatchEvent(new Event('visibilitychange'));
+    document.dispatchEvent(new Event('visibilitychange'));
 
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeDisabled());
     expect(screen.getByTestId('board-preview-stale')).toHaveTextContent('Preview again');
-
-    fireEvent.click(screen.getByTestId('board-preview'));
-    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-    expect(screen.queryByTestId('board-preview-stale')).toBeNull();
   });
 
-  it('AC-V5: after Confirm the results read the server echo and no second preview is made', async () => {
+  it('AC-W5: after Confirm the view closes and the results read the server echo, with no second preview', async () => {
     getPlanningBoard.mockResolvedValue(savedBoard());
-    previewConfirmMany.mockResolvedValue(threeRowPreview());
+    previewConfirmMany.mockResolvedValue(previewResult());
     confirmMany.mockResolvedValue(okConfirm);
-
     renderPanel(['SO403340']);
-    await pressPreview();
-    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    await openView();
     fireEvent.click(screen.getByTestId('board-confirm'));
 
     const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('line 6 SRTWT6808');
-    expect(block).toHaveTextContent('4 carried forward');
+    expect(screen.queryByTestId('board-preview-view')).toBeNull();
     expect(previewConfirmMany).toHaveBeenCalledTimes(1);
   });
 
-  it('shows an order the preview refused and keeps Confirm disabled', async () => {
+  it('AC-W5: an order the preview refused shows its error and keeps Confirm disabled', async () => {
     getPlanningBoard.mockResolvedValue(savedBoard());
     previewConfirmMany.mockResolvedValue({
       results: [
@@ -4786,19 +4783,38 @@ describe('FulfilmentBoardPanel: Preview then Confirm (v2)', () => {
           pso_id: 'pso-so-a',
           ok: false,
           preview: true,
-          error: 'Line 24 has no supply to confirm',
+          error: 'Line 8 has no supply to confirm',
           inquiry_rows: [],
           transfers: [],
         },
       ],
     });
-
     renderPanel(['SO403340']);
-    const panel = await pressPreview();
+    const view = await openView();
 
-    const refused = await within(panel).findByTestId('board-preview-refused-pso-so-a');
-    expect(refused).toHaveTextContent('Line 24 has no supply to confirm');
+    expect(await within(view).findByTestId('board-preview-refused-pso-so-a')).toHaveTextContent(
+      'Line 8 has no supply to confirm',
+    );
     expect(screen.getByTestId('board-confirm')).toBeDisabled();
     expect(confirmMany).not.toHaveBeenCalled();
+  });
+
+  it('AC-W6: an order on a pending planning change says it applies that change', async () => {
+    const board = savedBoard();
+    getPlanningBoard.mockResolvedValue({
+      ...board,
+      orders: board.orders.map((order) => ({ ...order, pending_change_batch_id: 'pcb-1' })),
+    });
+    getPlanningChangeBatch.mockResolvedValue({
+      id: 'pcb-1',
+      file_name: 'change-30sep.xlsx',
+      applied_at: null,
+      applied_by_name: null,
+      orders: [],
+    });
+    previewConfirmMany.mockResolvedValue(previewResult());
+    renderPanel(['SO403340']);
+    const view = await openView();
+    expect(view).toHaveTextContent(/applies pending change/);
   });
 });

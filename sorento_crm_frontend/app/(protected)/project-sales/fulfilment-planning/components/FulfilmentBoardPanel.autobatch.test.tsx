@@ -226,7 +226,7 @@ function renderPanel(
  * names (line number read off the fixture's `pl-<so>-<line_no>` ids), with no purchase rows.
  */
 function defaultPreview(body: {
-  orders: { pso_id: string; lines: { project_line_id: string }[] }[];
+  orders: { pso_id: string; lines: { project_line_id: string }[]; rejected_line_ids?: string[] }[];
 }) {
   return Promise.resolve({
     results: body.orders.map((order) => ({
@@ -241,6 +241,11 @@ function defaultPreview(body: {
       })),
       lines_carried: 0,
       lines_held_back: [],
+      lines_withdrawn: (order.rejected_line_ids ?? []).map((id) => ({
+        project_line_id: id,
+        line_no: null,
+        item_code: null,
+      })),
       lines_fulfilled_skipped: 0,
       inquiry_rows: [],
       transfers: [],
@@ -314,7 +319,7 @@ describe('AC-B3: two orders, two batches', () => {
     // something of each order's own to post.
     fireEvent.click(await screen.findByRole('button', { name: /^Save all suggested/ }));
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)'),
+      expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (2)'),
     );
 
     await pressPreviewThenConfirm();
@@ -381,7 +386,7 @@ describe('AC-B6: an applied batch skips only its own order', () => {
     // is the whole point of this test: saving it changes nothing about that.
     fireEvent.click(await screen.findByRole('button', { name: /^Save all suggested/ }));
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)'),
+      expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (2)'),
     );
 
     await pressPreviewThenConfirm();
@@ -462,7 +467,7 @@ describe('B1: the confirm-all body never lets a body-level batch_id contradict a
     // effect reads straight into `draft` with no `preMarked` flag, so B needs no click here.
     fireEvent.click(await screen.findByRole('button', { name: /^Save all suggested/ }));
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)'),
+      expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (2)'),
     );
 
     await pressPreviewThenConfirm();
@@ -531,7 +536,7 @@ describe('S1: a URL-applied batch and a board-pending batch on the same order', 
     // line, so it needs saving before Confirm has anything of A's to post.
     fireEvent.click(await screen.findByRole('button', { name: /^Save all suggested/ }));
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+      expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (1)'),
     );
 
     await pressPreviewThenConfirm();
@@ -606,7 +611,7 @@ describe('S1: a URL-applied batch and a board-pending batch on the same order', 
     // S5 (owner ruling 25 Sep 2026, issue #1245): nothing has been saved, so Confirm itself
     // reads 0 regardless of dedup - a bare pre-mark no longer counts on its own.
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)'),
+      expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (0)'),
     );
 
     fireEvent.click(
@@ -747,7 +752,7 @@ describe("S4: a covered line's staged reject on a batched order does not ride al
     // 1 (B's own saved line) - NOT 2, which is what `plannedLineCount` counted before this
     // fix by including A's covered-rejected line regardless of the batch blocking it.
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+      expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (1)'),
     );
   });
 
@@ -762,7 +767,7 @@ describe("S4: a covered line's staged reject on a batched order does not ride al
     await screen.findByTestId('fulfilment-board-matrix');
     await waitFor(() => expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_A.id));
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+      expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (1)'),
     );
 
     await pressPreviewThenConfirm();
@@ -798,7 +803,7 @@ describe("S4: a covered line's staged reject on a batched order does not ride al
     await screen.findByTestId('fulfilment-board-matrix');
     await waitFor(() => expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_A.id));
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+      expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (1)'),
     );
 
     await pressPreviewThenConfirm();
