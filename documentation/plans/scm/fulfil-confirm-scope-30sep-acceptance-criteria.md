@@ -106,22 +106,22 @@ the cards and transfers stay on screen, and "Exit preview" or the chip returns t
   line "Posted P, server confirmed C: <missing lines>".
 - AC-R4 Drafts are cleared locally only for lines the server echoed as confirmed.
 
-## Board toolbar and Saved | Others (v6, owner hand tests 30 Sep 2026)
+## Board toolbar and Saved | All (v6 30 Sep 2026, v7 owner hand test 1 Oct 2026)
 
-- AC-T1 The list has no title row. Its toolbar is `DataGridListToolbar`: board search, Saved | Others,
+- AC-T1 The list has no title row. Its toolbar is `DataGridListToolbar`: board search, Saved | All,
   Filters (Status, chips), Columns (Rank hidden by default), Expand all / Collapse all, Decide; one
   row at 1280. The page header carries no search.
-- AC-T2 The grid shows the same search, Saved | Others and Status in a strip under the summary cards,
+- AC-T2 The grid shows the same search, Saved | All and Status in a strip under the summary cards,
   inside the same Card > CardHeader shell, with no Columns, Expand/Collapse or Decide.
 - AC-T3 Saved = the lines Confirm posts plus the covered rejections it withdraws (one predicate);
-  Others = the rest. Default Others; the choice survives a Confirm press; the counts ignore the
-  Status filter; Status combines with the segment; a segment change returns to page 1 and drops
+  All = every line (saved included), so a line does not vanish when it is saved. Default All
+  (`?scope=saved` still opens Saved); the choice survives a Confirm press; counts read "Saved (N) |
+  All (M)", M = every line under the product search, never the Status filter; Status combines with the segment; a segment change returns to page 1 and drops
   ticks on hidden rows.
 - AC-T4 The pressed segment uses the system primary variant, like the Grid | List switch.
 - AC-T5 Empty texts: "Nothing to confirm yet" (Saved), "No saved decisions match the filter" (Saved
-  with a Status matching nothing), "No other lines" (Others).
-- AC-T6 With Others (the default) the left-out banner link still reaches its line (`?scope=all` is an
-  internal, unpressed state).
+  with a Status matching nothing). There is no "No other lines" text.
+- AC-T6 The left-out banner link sets All and still reaches its line.
 
 ## Board list, selection
 

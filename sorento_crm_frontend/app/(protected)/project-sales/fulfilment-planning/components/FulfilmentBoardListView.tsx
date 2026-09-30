@@ -175,15 +175,15 @@ export interface FulfilmentBoardListViewProps {
   /** The Status filter's state, when the board owns it (shared with the grid view). */
   status?: { value: string[]; onChange: (next: string[]) => void };
   /**
-   * The Saved | Others toggle (owner, 30 Sep 2026), drawn after the search box. Saved = the lines
-   * whose verdict is `saved` (what Confirm sends), Others = every other verdict. Omitted, the list
+   * The Saved | All toggle (owner hand test, 1 Oct 2026), drawn after the search box. Saved = the
+   * lines Confirm sends, All = every line. Omitted, the list
    * shows every line and draws no toggle.
    */
   scope?: {
     value: BoardScope;
     onChange: (next: BoardScope) => void;
     savedCount: number;
-    othersCount: number;
+    allCount: number;
     /** Whether Confirm sends this line: the board's ONE `pressPostsContribution` predicate. */
     isSaved: (contribution: BoardContribution) => boolean;
   };
@@ -963,15 +963,13 @@ export function FulfilmentBoardListView({
           ? statusFilter.length > 0
             ? 'No saved decisions match the filter'
             : 'Nothing to confirm yet'
-          : scope?.value === 'others'
-            ? 'No other lines'
-            : 'Nothing is outstanding on this board'
+          : 'Nothing is outstanding on this board'
       }
       rowSelection={rowSelection}
       onRowSelectionChange={setRowSelection}
       enableRowSelection={(row) => canDecide(row.original)}
       // The app's own list toolbar (`DataGridListToolbar`, PLAN-unified-list-toolbar-UAC.md D2/D3):
-      // search, the Saved | Others toggle, Filters (Status) and Columns on the left, Expand and
+      // search, the Saved | All toggle, Filters (Status) and Columns on the left, Expand and
       // Collapse as `leftActions` (the component's own slot for a grid whose rows expand, since
       // they change what the table shows), Decide as the primary action. While rows are ticked
       // its bulk strip ("N selected", Clear) replaces the left cluster, so Decide keeps its place.
@@ -998,7 +996,7 @@ export function FulfilmentBoardListView({
                     value={scope.value}
                     onChange={scope.onChange}
                     savedCount={scope.savedCount}
-                    othersCount={scope.othersCount}
+                    allCount={scope.allCount}
                   />
                 )}
               </>

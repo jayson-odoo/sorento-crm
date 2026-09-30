@@ -307,13 +307,9 @@ export function FulfilmentBoardPanel({
   const [kindFilter, setKindFilter] = React.useState<SupplyKind | null>(null);
   /** The Status filter, shared by the list's Filters control and the grid's filter strip. */
   const [statusFilter, setStatusFilter] = React.useState<string[]>([]);
-  /** Saved | Others (owner, 30 Sep 2026): Others by default, kept across a Confirm press. */
+  /** Saved | All (owner hand test, 1 Oct 2026): All by default, kept across a Confirm press. */
   const [scope, setScope] = React.useState<BoardScope>(() =>
-    searchParams.get('scope') === 'saved'
-      ? 'saved'
-      : searchParams.get('scope') === 'all'
-        ? 'all'
-        : 'others',
+    searchParams.get('scope') === 'saved' ? 'saved' : 'all',
   );
   const [openCell, setOpenCell] = React.useState<BoardCell | null>(null);
   /** Which 30-day window the day view is showing. Undefined lets the server choose the first. */
@@ -343,8 +339,8 @@ export function FulfilmentBoardPanel({
       setView('list');
       setKindFilter(null);
       setStatusFilter([]);
-      // A left-out line is one Confirm will not post, so it sits under Others; showing every line
-      // (no segment pressed) is what guarantees the link reaches it.
+      // A left-out line is one Confirm will not post, so it is not under Saved; All is what
+      // guarantees the link reaches it.
       setScope('all');
       resetProductSearch('');
       setFocusKey(contribution.key);
@@ -1833,17 +1829,17 @@ export function FulfilmentBoardPanel({
       }),
     [draftWithoutPreMark, pendingBatchSalesOrderIds, unadoptedSalesOrderIds],
   );
-  // The Saved | Others counts: the board's lines under the product search (and the day window,
+  // The Saved | All counts: the board's lines under the product search (and the day window,
   // through the list's whole-selection population), never under the Status filter.
   const scopeCounts = React.useMemo(() => {
     let saved = 0;
-    let others = 0;
+    let all = 0;
     for (const line of listContributions) {
       if (!contributionMatchesSearch(line, productSearch)) continue;
+      all += 1;
       if (isSavedLine(line)) saved += 1;
-      else others += 1;
     }
-    return { saved, others };
+    return { saved, all };
   }, [listContributions, productSearch, isSavedLine]);
   const visibleProductRows = React.useMemo(
     () =>
@@ -1864,8 +1860,8 @@ export function FulfilmentBoardPanel({
 
   const otherFilters =
     productSearch.trim().length > 0 || kindFilter !== null || statusFilter.length > 0;
-  // The Saved | Others segment narrows the rows too, so the board says so ("N of M").
-  const filtering = otherFilters || scope !== 'all';
+  // The Saved segment narrows the rows too, so the board says so ("N of M").
+  const filtering = otherFilters || scope === 'saved';
 
   /**
    * Every key the board-wide "Save all suggested" button would post (D15): whichever lines the
@@ -2581,7 +2577,7 @@ export function FulfilmentBoardPanel({
                   value: scope,
                   onChange: setScope,
                   savedCount: scopeCounts.saved,
-                  othersCount: scopeCounts.others,
+                  allCount: scopeCounts.all,
                   isSaved: isSavedLine,
                 }}
                 search={{
@@ -2611,7 +2607,7 @@ export function FulfilmentBoardPanel({
               />
             ) : (
               <>
-                {/* The grid's filter strip: the same search box, Saved | Others toggle and Status filter
+                {/* The grid's filter strip: the same search box, Saved | All toggle and Status filter
                     the list's toolbar carries, inside the same Card > CardHeader shell so the box
                     keeps its left edge between views. No Columns, Expand/Collapse or Decide. */}
                 <Card>
@@ -2631,7 +2627,7 @@ export function FulfilmentBoardPanel({
                         value={scope}
                         onChange={setScope}
                         savedCount={scopeCounts.saved}
-                        othersCount={scopeCounts.others}
+                        allCount={scopeCounts.all}
                       />
                       <SearchableMultiSelect
                         value={statusFilter}
@@ -2663,9 +2659,7 @@ export function FulfilmentBoardPanel({
                           ? otherFilters
                             ? 'No saved decisions match the filter'
                             : 'Nothing to confirm yet'
-                          : scope === 'others' && !otherFilters
-                            ? 'No other lines'
-                            : 'No products match'}
+                          : 'No products match'}
                       </h3>
                     </CardContent>
                   </Card>

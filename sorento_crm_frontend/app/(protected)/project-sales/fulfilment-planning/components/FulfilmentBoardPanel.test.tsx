@@ -4790,7 +4790,7 @@ describe('FulfilmentBoardPanel: search and Status live under the cards, not in t
     expect(strip.closest('[data-slot="card-header"]')).not.toBeNull();
     expect(strip.className).toMatch(/\bflex\b/);
     expect(strip.className).not.toMatch(/flex-col/);
-    // Search, the Saved | Others toggle, then the compact Status control: siblings in one row.
+    // Search, the Saved | All toggle, then the compact Status control: siblings in one row.
     expect(strip.children).toHaveLength(3);
     expect(within(strip.children[0] as HTMLElement).getByPlaceholderText(SEARCH)).toBeInTheDocument();
     expect(strip.children[1]).toHaveAttribute('data-testid', 'board-scope-toggle');
@@ -4837,7 +4837,7 @@ describe('FulfilmentBoardPanel: search and Status live under the cards, not in t
   });
 });
 
-describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
+describe('FulfilmentBoardPanel: Saved | All toggle, carried-over behaviour (owner, 30 Sep)', () => {
   /** A saved, B suggested (no draft), C confirmed (covered by an active decision). */
   const threeStates = () => {
     const base = boardOf([
@@ -4873,56 +4873,6 @@ describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
     currentSearchParams = new URLSearchParams('view=grid');
   });
 
-  it('shows Saved (1) | Others (2) in the grid strip and in the list toolbar', async () => {
-    getPlanningBoard.mockResolvedValue(threeStates());
-    renderPanel(['SO403340']);
-    await screen.findByTestId('fulfilment-board-matrix');
-
-    const strip = screen.getByTestId('board-grid-filter-strip');
-    expect(within(strip).getByRole('button', { name: 'Saved (1)' })).toBeInTheDocument();
-    expect(within(strip).getByRole('button', { name: 'Others (2)' })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'List' }));
-    const toolbar = await waitFor(() => {
-      const found = document.querySelector('[data-slot="data-grid-list-toolbar"]');
-      if (!found) throw new Error('toolbar not yet mounted');
-      return found as HTMLElement;
-    });
-    expect(within(toolbar).getByRole('button', { name: 'Saved (1)' })).toBeInTheDocument();
-    expect(within(toolbar).getByRole('button', { name: 'Others (2)' })).toBeInTheDocument();
-  });
-
-  it('defaults to Others: the saved row is hidden, and Saved shows only the saved row', async () => {
-    getPlanningBoard.mockResolvedValue(threeStates());
-    renderPanel(['SO403340']);
-    await screen.findByTestId('fulfilment-board-matrix');
-
-    expect(segment(/^Others/)).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.queryByText('WESERP10B')).not.toBeInTheDocument();
-    expect(screen.getByText('TPE-9204')).toBeInTheDocument();
-    expect(screen.getByText('WESERP20B')).toBeInTheDocument();
-
-    await userEvent.click(segment(/^Saved/));
-
-    await waitFor(() => expect(screen.getByText('WESERP10B')).toBeInTheDocument());
-    expect(screen.queryByText('TPE-9204')).not.toBeInTheDocument();
-    expect(screen.queryByText('WESERP20B')).not.toBeInTheDocument();
-  });
-
-  it('combines with the Status filter: Others AND Confirmed leaves only the confirmed row', async () => {
-    getPlanningBoard.mockResolvedValue(threeStates());
-    renderPanel(['SO403340']);
-    await screen.findByTestId('fulfilment-board-matrix');
-
-    const strip = screen.getByTestId('board-grid-filter-strip');
-    await userEvent.click(within(strip).getByText('Status'));
-    await userEvent.click(await screen.findByRole('option', { name: /Confirmed/ }));
-    await userEvent.keyboard('{Escape}');
-
-    await waitFor(() => expect(screen.queryByText('TPE-9204')).not.toBeInTheDocument());
-    expect(screen.getByText('WESERP20B')).toBeInTheDocument();
-  });
-
   it('keeps the chosen segment across a Confirm press', async () => {
     getPlanningBoard.mockResolvedValue(threeStates());
     confirmMany.mockResolvedValue({
@@ -4948,12 +4898,12 @@ describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
     expect(pressedHeaderItem).toHaveAttribute('aria-pressed', 'true');
     const primaryToken = 'bg-primary';
     expect(pressedHeaderItem.className).toContain(primaryToken);
-    expect(segment(/^Others/).className).toContain(primaryToken);
+    expect(segment(/^All/).className).toContain(primaryToken);
     expect(segment(/^Saved/).className).not.toContain(primaryToken);
 
     await userEvent.click(segment(/^Saved/));
     await waitFor(() => expect(segment(/^Saved/).className).toContain(primaryToken));
-    expect(segment(/^Others/).className).not.toContain(primaryToken);
+    expect(segment(/^All/).className).not.toContain(primaryToken);
   });
 
   it('reads "Nothing to confirm yet" in the grid and in the list when Saved has nothing', async () => {
@@ -4972,28 +4922,7 @@ describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
   });
 
 
-  it('reads "No other lines" in the grid and the list under Others when every line is saved', async () => {
-    getPlanningBoard.mockResolvedValue(
-      allSaved(boardOf([demand({ line_no: 1, item_code: 'WESERP10B' })])),
-    );
-    renderPanel(['SO403340']);
-    await screen.findByTestId('board-grid-filter-strip');
-    expect(await screen.findByText('No other lines')).toBeInTheDocument();
-    expect(screen.queryByText('No products match')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'List' }));
-    expect(await screen.findByText('No other lines')).toBeInTheDocument();
-  });
-
-  it('says how many products are shown when only a segment narrows the board', async () => {
-    getPlanningBoard.mockResolvedValue(threeStates());
-    renderPanel(['SO403340']);
-    await screen.findByTestId('fulfilment-board-matrix');
-
-    expect(screen.getByText(/^2 of 3 /)).toBeInTheDocument();
-  });
-
-  it('leaves the Saved and Others counts alone when a Status is chosen', async () => {
+  it('leaves the Saved and All counts alone when a Status is chosen', async () => {
     getPlanningBoard.mockResolvedValue(threeStates());
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
@@ -5004,10 +4933,10 @@ describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
     await userEvent.keyboard('{Escape}');
 
     expect(segment(/^Saved/)).toHaveTextContent('Saved (1)');
-    expect(segment(/^Others/)).toHaveTextContent('Others (2)');
+    expect(segment(/^All/)).toHaveTextContent('All (3)');
   });
 
-  it('the left-out link reaches a saved line under the default Others segment', async () => {
+  it('the left-out link reaches a saved line from the Saved segment', async () => {
     const board = allSaved(
       boardOf([
         demand({ line_no: 1, item_code: 'WESERP10B' }),
@@ -5023,15 +4952,16 @@ describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
     );
     renderPanel(['SO403340']);
     await screen.findByTestId('board-grid-filter-strip');
+    await userEvent.click(segment(/^Saved/));
 
     const banner = await screen.findByTestId('board-left-out-banner');
     fireEvent.click(within(banner).getByRole('button', { name: 'TPE-9204 line 2' }));
 
     expect(await screen.findByTestId(/^line-decision-so-a\|2\|TPE-9204/)).toBeInTheDocument();
-    // Every line is shown so the link reaches the row: no segment is pressed.
+    // The link sets All so it reaches the row.
     const toggle = within(screen.getByTestId('board-scope-toggle'));
     expect(toggle.getByRole('button', { name: /^Saved/ })).toHaveAttribute('aria-pressed', 'false');
-    expect(toggle.getByRole('button', { name: /^Others/ })).toHaveAttribute('aria-pressed', 'false');
+    expect(toggle.getByRole('button', { name: /^All/ })).toHaveAttribute('aria-pressed', 'true');
   });
 
 });
@@ -5066,7 +4996,9 @@ describe('FulfilmentBoardPanel: Saved | All toggle (owner hand test, 1 Oct)', ()
       }),
     );
   };
-  const segment = (name: RegExp) => screen.getByRole('button', { name });
+  // Inside the toggle: a saved row's "Saved by ..." pill is also a button starting with Saved.
+  const segment = (name: RegExp) =>
+    within(screen.getByTestId('board-scope-toggle')).getByRole('button', { name });
   // The list shows order numbers, not item codes: a row is told by its select box.
   const rowOf = (line: number, query = false) =>
     query

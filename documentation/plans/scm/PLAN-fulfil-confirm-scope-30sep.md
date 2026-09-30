@@ -274,6 +274,17 @@ Line column prints the plain position with a "not synced" title when AutoCount g
 - `?scope=all` (no segment pressed, every line shown) is internal: the left-out banner link uses it
   to reach a line Confirm will not post, and the panel tests use it for mixed fixtures.
 
+## Design v7 (owner hand test 1 Oct): Saved | All, default All
+
+The Others segment hid a line the moment it was saved, which read as the line disappearing. The
+toggle is now Saved | All: All lists every line (saved included), default All, `?scope=saved` still
+read once from the URL. Saved stays exactly Confirm's posting set (`pressPostsContribution`,
+unchanged). Counts read "Saved (N) | All (M)", M = every line under the product search, never the
+Status filter. The pressed segment stays the primary variant. "No other lines" is gone; the Saved
+empty texts stay. The grid "N of M" fraction shows only when Saved or another filter narrows. The
+left-out banner link sets All. `BoardScope` is `'saved' | 'all'`; the list view's `scope` prop carries
+`allCount` in place of `othersCount`.
+
 ## DoD gate (PRINCIPLES.md "Definition of Done gate", checked 30 Sep 2026 on PR #1395)
 
 Track: full track (diff far above 300 lines across FE and BE), no migration, no auth/RBAC change,

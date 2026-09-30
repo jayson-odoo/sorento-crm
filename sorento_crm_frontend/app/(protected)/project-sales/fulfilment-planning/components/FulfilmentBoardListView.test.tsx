@@ -2406,72 +2406,42 @@ describe('FulfilmentBoardListView: Columns and Status filter', () => {
   });
 
 
-  it('the Saved | Others scope shows only the matching rows, and Others hides the saved one', async () => {
+  it('the Saved scope shows only the saved rows', async () => {
     const saved = contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 });
     const plain = contribution({ key: 'so-2:line-20', so_number: 'SO397451', line_no: 20 });
-    const props = {
-      contributions: [saved, plain],
-      draft: { [saved.key]: { verdict: 'approved' as const } },
-      onDecide: vi.fn(),
-      onDecideMany: vi.fn(),
-      onDecideBatch: vi.fn(),
-    };
-    const { rerender } = render(
+    render(
       <FulfilmentBoardListView
-        {...props}
-        scope={{
-          value: 'others',
-          onChange: vi.fn(),
-          savedCount: 1,
-          othersCount: 1,
-          isSaved: (line) => line.key === saved.key,
-        }}
-      />,
-    );
-    await screen.findByText('SO397451');
-    expect(screen.queryByText('SO397450')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Others (1)' })).toHaveAttribute('aria-pressed', 'true');
-
-    rerender(
-      <FulfilmentBoardListView
-        {...props}
+        contributions={[saved, plain]}
+        draft={{ [saved.key]: { verdict: 'approved' as const } }}
+        onDecide={vi.fn()}
+        onDecideMany={vi.fn()}
+        onDecideBatch={vi.fn()}
         scope={{
           value: 'saved',
           onChange: vi.fn(),
           savedCount: 1,
-          othersCount: 1,
+          allCount: 2,
           isSaved: (line) => line.key === saved.key,
         }}
       />,
     );
     await screen.findByText('SO397450');
     expect(screen.queryByText('SO397451')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Saved (1)' })).toHaveAttribute('aria-pressed', 'true');
   });
 
 
   // The board hands in Confirm's own predicate; here it is stood in for by a plain function.
   const scopeProps = (
-    value: 'saved' | 'others' | 'all',
+    value: 'saved' | 'all',
     isSaved: (line: BoardContribution) => boolean = (line) => line.key === 'so-1:line-10',
-  ) => ({ value, onChange: vi.fn(), savedCount: 1, othersCount: 1, isSaved });
+  ) => ({ value, onChange: vi.fn(), savedCount: 1, allCount: 1, isSaved });
   const viewProps = (rows: BoardContribution[], draft: BoardDraft) => ({
     contributions: rows,
     draft,
     onDecide: vi.fn(),
     onDecideMany: vi.fn(),
     onDecideBatch: vi.fn(),
-  });
-
-  it('reads "No other lines" under Others when every line is saved', async () => {
-    const saved = contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 });
-    render(
-      <FulfilmentBoardListView
-        {...viewProps([saved], { [saved.key]: { verdict: 'approved' } })}
-        scope={scopeProps('others')}
-      />,
-    );
-    expect(await screen.findByText('No other lines')).toBeInTheDocument();
-    expect(screen.queryByText('Nothing is outstanding on this board')).not.toBeInTheDocument();
   });
 
   it('reads "No saved decisions match the filter" under Saved when a Status matches nothing', async () => {
