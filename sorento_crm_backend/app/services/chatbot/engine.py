@@ -7488,6 +7488,8 @@ def run_tail(
         )
         if offered:
             composed = {**composed, "text": stripped_text}
+            # Security review N2: the offer's team buttons go with it.
+            quick_replies = None
     reply = {
         "text": composed.get("text"),
         "quick_replies": quick_replies,

@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import text
 
 from tests.chatbot.test_stock_ask_contact_toggles import (  # noqa: F401 - fixtures by name
+    _GRANTS,
     BASE,
     _permissions,
     _seed_contact,
@@ -70,7 +71,17 @@ def test_put_sets_the_override_and_null_clears_it(db, client, value):
     assert stored is None
 
 
+ACCESS_TYPES = "/api/v1/user-management/contact-access-types"
+
+
+def _grant_access_type_writes() -> None:
+    _GRANTS.update(
+        {"user_management.access_agents.add", "user_management.access_agents.edit", "user_management.access_agents.delete"}
+    )
+
+
 def test_the_access_type_attribute_round_trips(db, client):
+    _grant_access_type_writes()
     resp = client.post(
         "/api/v1/user-management/contact-access-types",
         json={"code": "zzt_esc", "name": "ZZT Esc", "escalation_allowed": False},
@@ -107,3 +118,50 @@ def test_a_mixed_office_and_dealer_contact_inherits_allowed_via_the_office_type(
     body = client.get(f"{BASE}/{contact_id}").json()
     assert body["escalation_allowed_inherited"] is True
     assert body["escalation_allowed_inherited_from"] == "Sorento Office"
+
+
+def test_writing_an_access_type_needs_the_access_agents_grant(db, client):
+    """Security review S1: the switch bars every contact holding the type, so a login
+    alone no longer writes it (superadmin / admin still bypass)."""
+    db.execute(
+        text(
+            "INSERT INTO contact_access_types (code, name, is_active, escalation_allowed) "
+            "VALUES ('zzt_gate', 'ZZT Gate', true, true) ON CONFLICT (code) DO NOTHING"
+        )
+    )
+    db.commit()
+    assert client.put(f"{ACCESS_TYPES}/zzt_gate", json={"escalation_allowed": False}).status_code == 403
+    assert client.post(ACCESS_TYPES, json={"code": "zzt_gate2", "name": "ZZT Gate 2"}).status_code == 403
+    assert client.delete(f"{ACCESS_TYPES}/zzt_gate").status_code == 403
+    _grant_access_type_writes()
+    assert client.put(f"{ACCESS_TYPES}/zzt_gate", json={"escalation_allowed": False}).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "name, sent, expected",
+    [
+        ("ZZT NL Dealer", None, False),
+        ("zzt cabana DEALER", None, False),
+        ("ZZT End User", None, True),
+        ("ZZT Dealer Office", None, True),
+        ("ZZT Mocha Dealer", True, True),
+    ],
+)
+def test_a_new_dealer_type_starts_blocked(db, client, name, sent, expected):
+    """Grill Q4 (owner, 30 Sep 2026): a dealer type created later starts blocked, by the
+    seed's rule; an explicit value from the admin still wins."""
+    _grant_access_type_writes()
+    body = {"code": f"zzt_{abs(hash(name)) % 10**8}", "name": name}
+    if sent is not None:
+        body["escalation_allowed"] = sent
+    resp = client.post(ACCESS_TYPES, json=body)
+    assert resp.status_code in (200, 201), resp.text
+    assert resp.json()["escalation_allowed"] is expected
+
+
+def test_the_python_dealer_rule_matches_the_seed_migration():
+    from app.services.escalation_policy import is_dealer_type_name
+    from tests.test_migration_esc1_0001_escalation_allowed import DEALERS, NOT_DEALERS
+
+    assert all(is_dealer_type_name(n) for n in DEALERS)
+    assert not any(is_dealer_type_name(n) for n in NOT_DEALERS)

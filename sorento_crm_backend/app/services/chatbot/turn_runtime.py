@@ -440,7 +440,14 @@ def load_profile(
             contact_respond_id,
             len(rows),
         )
-        return _fail_closed_profile()
+        profile, recall = _fail_closed_profile()
+        # ESCALATION-CONTROL security review S2: the ambiguity denies stock, and must not
+        # hand a barred dealer a hand-off either. Barred only when EVERY matching row is
+        # barred, the same permissive reading `escalation_policy.merge` gives access types.
+        facts = [_escalation_facts(db, row[4] if len(row) > 4 else None) for row in rows]
+        if facts and all(f.get("escalation_allowed") is False for f in facts):
+            profile.escalation_allowed = False
+        return profile, recall
     row = rows[0]
     raw = row[0] if isinstance(row[0], dict) else {}
     ledgers = raw.get("default_ledgers")
@@ -654,7 +661,7 @@ def _escalation_facts(db: Session, contact_pk: Any) -> dict[str, Any]:
         with db.begin_nested():
             policy = resolve(db, str(contact_pk))
     except Exception:  # noqa: BLE001 - a policy read is a profile fact, not the turn
-        logger.warning("chatbot: escalation policy unreadable for %s", contact_pk)
+        logger.warning("chatbot: escalation policy unreadable for %s", contact_pk, exc_info=True)
         return {}
     return {"escalation_allowed": policy.allowed}
 

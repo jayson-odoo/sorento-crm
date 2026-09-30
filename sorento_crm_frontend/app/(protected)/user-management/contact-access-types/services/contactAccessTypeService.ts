@@ -29,6 +29,15 @@ export interface ContactAccessTypeAdmin {
   updated_at: string;
 }
 
+/**
+ * ESCALATION-CONTROL: a dealer access type is one whose name's last word is "Dealer", any
+ * case - the rule the seed migration (`esc1_0001_escalation_allowed`) and the backend's
+ * `escalation_policy.is_dealer_type_name` apply. A new dealer type starts blocked.
+ */
+export function isDealerTypeName(name: string): boolean {
+  return /(^|\s)dealer\s*$/i.test(name ?? '');
+}
+
 const base = '/api/user-management/contact-access-types';
 
 export async function getContactAccessTypes(): Promise<ContactAccessTypeOption[]> {

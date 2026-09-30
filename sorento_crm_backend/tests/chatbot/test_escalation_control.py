@@ -570,3 +570,64 @@ def test_apply_plans_a_barred_named_team_escalation_with_no_kind_menu_and_no_fet
     assert plan.ask is None, plan.ask
     assert plan.fetch == []
     assert plan.trace.lane == "escalation_barred"
+
+
+def test_apply_closes_an_open_escalation_offer_on_entry_for_a_barred_contact() -> None:
+    """Kill-matrix K6: the entry close is its own guard (the `_lane` bar and the engine
+    guard also stop a stale "yes", so the engine test alone cannot see it)."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus, State
+    from tests.chatbot._turn_helpers import build_policy
+
+    offer = pending_ask(
+        "team_pick",
+        [{"position": 1, "label": "Yes", "entity_type": "team", "payload": {"team": "purchasing"}}],
+        team="purchasing",
+        asked_at_turn=2,
+    )
+    state = State(focus=Focus(), pending=offer, profile=Profile(escalation_allowed=False), turn_no=3)
+    new_state, plan = apply(state, verdict(message_type="casual", entities=[]), build_policy())
+    assert "escalation_barred_offer_closed" in plan.trace.rules_fired, plan.trace.rules_fired
+    assert new_state.pending is None
+
+
+class TestAmbiguousContact:
+    """Security review S2: one respond.io id on two rows in the workspace. Stock is denied
+    (today's rule); escalation is barred only when every row is barred."""
+
+    def _two_rows(self, session_factory, *, second_barred: bool) -> None:
+        _seed_contact(session_factory, phone="+60000009401")
+        db = session_factory()
+        db.execute(
+            text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, workspace_id) "
+                "SELECT gen_random_uuid()::text, respond_io_id, '+60000009402', '{}'::jsonb, workspace_id "
+                "FROM respond_contacts WHERE phone_number = '+60000009401'"
+            )
+        )
+        db.commit()
+        rows = [
+            r[0]
+            for r in session_factory().execute(
+                text("SELECT id FROM respond_contacts WHERE respond_io_id = :c ORDER BY phone_number"),
+                {"c": str(CONTACT_ID)},
+            )
+        ]
+        _give_types(session_factory, rows[0], [("Sorento Dealer", False, 2)])
+        if second_barred:
+            _give_types(session_factory, rows[1], [("Sorento Dealer", False, 2)])
+
+    def test_every_row_barred_is_barred(self, session_factory) -> None:
+        from app.services.chatbot.turn_runtime import load_profile
+
+        self._two_rows(session_factory, second_barred=True)
+        profile, _ = load_profile(session_factory(), str(CONTACT_ID))
+        assert profile.stock_allowed is False and profile.escalation_allowed is False
+
+    def test_one_allowed_row_allows(self, session_factory) -> None:
+        from app.services.chatbot.turn_runtime import load_profile
+
+        self._two_rows(session_factory, second_barred=False)
+        profile, _ = load_profile(session_factory(), str(CONTACT_ID))
+        assert profile.stock_allowed is False and profile.escalation_allowed is True
+

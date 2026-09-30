@@ -528,7 +528,9 @@ class ContactAccessTypeBase(BaseModel):
 
 
 class ContactAccessTypeCreate(ContactAccessTypeBase):
-    pass
+    # ESCALATION-CONTROL: absent = decided by the dealer rule (a "... Dealer" type starts
+    # blocked, `escalation_policy.is_dealer_type_name`).
+    escalation_allowed: Optional[bool] = None
 
 
 class ContactAccessTypeUpdate(BaseModel):

@@ -13,9 +13,20 @@ which the first cut copied and which barred him. No types at all = allowed.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
+
+#: A dealer access type: a name whose last word is "Dealer", any case. The seed migration
+#: (`esc1_0001_escalation_allowed.DEALER_NAME_SQL`) applies the same rule in SQL; the
+#: access-type editor applies it too (`contactAccessTypeService.isDealerTypeName`).
+_DEALER_NAME = re.compile(r"(^|\s)dealer\s*$", re.IGNORECASE)
+
+
+def is_dealer_type_name(name: str | None) -> bool:
+    """Owner ruling 30 Sep 2026: every dealer type blocks escalation by default."""
+    return bool(_DEALER_NAME.search(name or ""))
 
 SOURCE_CONTACT = "contact"
 SOURCE_ACCESS_TYPE = "access_type"

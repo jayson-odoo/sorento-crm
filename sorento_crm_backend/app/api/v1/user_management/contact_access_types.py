@@ -76,7 +76,10 @@ async def get_contact_access_type(
 @router.post("/", response_model=ContactAccessTypeResponse, status_code=status.HTTP_201_CREATED)
 async def create_contact_access_type(
     data: ContactAccessTypeCreate,
-    current_user: dict = Depends(get_current_user),
+    # ESCALATION-CONTROL security review S1: a type now carries `escalation_allowed`,
+    # which bars or unbars every contact holding it, so writes need the grant, not only
+    # a login (superadmin / admin bypass, as everywhere).
+    current_user: dict = Depends(require_permission("user_management.access_agents.add")),
     db: Session = Depends(get_db),
 ):
     """Create a new contact access type."""
@@ -92,7 +95,10 @@ async def create_contact_access_type(
 async def update_contact_access_type(
     code: str,
     data: ContactAccessTypeUpdate,
-    current_user: dict = Depends(get_current_user),
+    # ESCALATION-CONTROL security review S1: a type now carries `escalation_allowed`,
+    # which bars or unbars every contact holding it, so writes need the grant, not only
+    # a login (superadmin / admin bypass, as everywhere).
+    current_user: dict = Depends(require_permission("user_management.access_agents.edit")),
     db: Session = Depends(get_db),
 ):
     """Update a contact access type."""
@@ -107,7 +113,10 @@ async def update_contact_access_type(
 @router.delete("/{code}", status_code=status.HTTP_200_OK)
 async def delete_contact_access_type(
     code: str,
-    current_user: dict = Depends(get_current_user),
+    # ESCALATION-CONTROL security review S1: a type now carries `escalation_allowed`,
+    # which bars or unbars every contact holding it, so writes need the grant, not only
+    # a login (superadmin / admin bypass, as everywhere).
+    current_user: dict = Depends(require_permission("user_management.access_agents.delete")),
     db: Session = Depends(get_db),
 ):
     """Delete a contact access type."""

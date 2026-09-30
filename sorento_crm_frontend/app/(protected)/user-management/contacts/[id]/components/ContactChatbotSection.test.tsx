@@ -270,7 +270,7 @@ describe('ContactChatbotSection - ETA buffer days switch (#1328)', () => {
  * inherit / allow / block. Inherit is the cleared select, whose placeholder names the
  * value the contact's access types give it.
  */
-describe('ContactChatbotSection - Can escalate to customer service', () => {
+describe('ContactChatbotSection - Can escalate to a person', () => {
   const DEALER = {
     ...BASE_PROFILE,
     escalation_allowed: null,

@@ -22,6 +22,7 @@ from app.models.access import (
     respond_contact_access_types,
 )
 from app.models.respond_workspace import RespondWorkspace
+from app.services.escalation_policy import is_dealer_type_name
 from app.services.error_handler import handle_validation_error, handle_conflict, handle_not_found
 
 logger = logging.getLogger(__name__)
@@ -196,7 +197,13 @@ class ContactAccessTypeService:
             is_active=data.get("is_active", True),
             sort_order=data.get("sort_order"),
             keywords=_clean_keywords(data.get("keywords")),
-            escalation_allowed=data.get("escalation_allowed") is not False,
+            # ESCALATION-CONTROL (owner, 30 Sep 2026): a dealer type starts blocked unless
+            # the admin said otherwise.
+            escalation_allowed=(
+                bool(data["escalation_allowed"])
+                if data.get("escalation_allowed") is not None
+                else not is_dealer_type_name(data.get("name"))
+            ),
         )
         self.db.add(row)
         self.db.commit()

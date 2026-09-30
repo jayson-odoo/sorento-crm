@@ -218,7 +218,7 @@ function ChatbotSettingsCard({
             />
           </div>
           <div className="space-y-1.5">
-            <Label>Can escalate to customer service</Label>
+            <Label>Can escalate to a person</Label>
             <SearchableSelect
               value={escalationValue}
               onChange={(v) =>
