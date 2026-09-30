@@ -203,6 +203,15 @@ class SupplyEvent:
     po_number: Optional[str] = None
     po_line_number: Optional[int] = None
     purchase_order_id: Optional[str] = None
+    #: R45 (owner, 30 Sep 2026, PO-NO-AUTO-ASSIGN; Stock Debt view only): a document only
+    #: a LINK may spend. "The PO quantity is ordered for a reason, and the user is yet to
+    #: do linking in AutoCount, so it will be premature to allocate to other SO by our
+    #: calculation." A pin-only event enters no group's pile and clears no shortfall - the
+    #: pinned holds (a placement, the book's S/O, landed goods) take from it in step 1 and
+    #: nothing else does - and what they leave is FREE in its own month exactly as any
+    #: other free supply ("it should still contribute to the stock debt quantity"). The
+    #: board and the ladder never set it, so their walk is unchanged.
+    pin_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -651,9 +660,17 @@ def assign(
         )
 
     # 2. ONE chronological walk, with a pile per ownership group ---------------------------
+    #
+    # R45: a `pin_only` event stays out of the walk. The pins above have already taken
+    # what a link gave them; nobody queues for the rest, which stays in `left` and so in
+    # `free`, credited to its own month by `_months` below.
     _walk(
         as_of=as_of,
-        events=[event for event in counted if left.get(event.key, 0.0) > EPSILON],
+        events=[
+            event
+            for event in counted
+            if left.get(event.key, 0.0) > EPSILON and not event.pin_only
+        ],
         left=left,
         states=[states[line.key] for line in dated],
     )

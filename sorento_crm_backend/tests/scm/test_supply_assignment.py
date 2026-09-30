@@ -482,6 +482,78 @@ def test_a_pinned_hold_larger_than_the_lines_open_qty_leaves_the_excess_in_the_p
     assert later_line.uncovered == 0
 
 
+# --------------------------------------------------------------------------- R45:
+# a pin-only event is drawn by nobody
+
+
+def test_a_pin_only_event_is_drawn_by_nobody_and_still_credits_its_month():
+    """R45 (owner, 30 Sep 2026, PO-NO-AUTO-ASSIGN; AC-8). A `pin_only` event enters no
+    pile and clears no shortfall: only a pinned hold may take from it, and whatever the
+    pins leave is free in its own month exactly as any other free supply ("it should still
+    contribute to the stock debt quantity"). An event without the flag walks as before, so
+    the board's reading (`assignments_for`) is untouched."""
+    document = SupplyEvent(
+        key="po:line-1",
+        kind="po",
+        warehouse="BRW-BB",
+        at=date(2026, 9, 10),
+        qty=100,
+        ref="PO 202609-S0109 line 8",
+        pin_only=True,
+    )
+    result = assign(
+        "p",
+        as_of=AS_OF,
+        tba_from=TBA,
+        lead_days=90,
+        supply=[document],
+        demand=[
+            # Due BEFORE the document lands: the walk used to clear it (`late`).
+            _line("early", "BRW-BB", date(2026, 9, 5), 30),
+            # Linked: the pin takes 25 of the document.
+            _line("linked", "BRW-BB", date(2026, 9, 20), 25),
+            # Due AFTER the document lands: the walk used to draw it (`covered`).
+            _line("later", "BRW-BB", date(2026, 9, 25), 40),
+        ],
+        pinned=[Hold(line_key="linked", supply_key="po:line-1", qty=25, kind="po")],
+    )
+    by_key = {line.line.key: line for line in result.lines}
+    assert by_key["early"].status == "short"
+    assert by_key["early"].assigned == ()
+    assert by_key["early"].short_at_date == 30
+    assert by_key["linked"].status == "pinned"
+    assert [(item.event.key, item.qty, item.pinned) for item in by_key["linked"].assigned] == [
+        ("po:line-1", 25.0, True)
+    ]
+    assert by_key["later"].status == "short"
+    assert by_key["later"].assigned == ()
+    assert by_key["later"].short_at_date == 40
+    # 100 less the 25 the pin took: free, and credited to September (R37), which then
+    # nets 75 free against 70 short.
+    assert result.free == {"po:line-1": 75.0}
+    assert [(m.key, m.balance) for m in result.months] == [("2026-09", 5.0)]
+
+    # The same book with the flag off is the walk everybody else reads: the early line is
+    # cleared late, the later line draws, and nothing is left free.
+    walked = assign(
+        "p",
+        as_of=AS_OF,
+        tba_from=TBA,
+        lead_days=90,
+        supply=[SupplyEvent(**{**document.__dict__, "pin_only": False})],
+        demand=[
+            _line("early", "BRW-BB", date(2026, 9, 5), 30),
+            _line("linked", "BRW-BB", date(2026, 9, 20), 25),
+            _line("later", "BRW-BB", date(2026, 9, 25), 40),
+        ],
+        pinned=[Hold(line_key="linked", supply_key="po:line-1", qty=25, kind="po")],
+    )
+    walked_by_key = {line.line.key: line for line in walked.lines}
+    assert walked_by_key["early"].status == "late"
+    assert walked_by_key["later"].status == "covered"
+    assert walked.free == {"po:line-1": 5.0}
+
+
 # --------------------------------------------------------------------------- AC-S2-1b:
 # a pin outranks the span it was read in
 

@@ -236,9 +236,12 @@ def book_so_pins(
                 line_key=line.key,
                 supply_key=event.key,
                 qty=take,
-                kind=KIND_PO,
+                # R45: the event's own kind - an SPO line's S/O pins exactly as a PO line's.
+                kind=event.kind,
                 warehouse=event.warehouse,
                 ref=event.ref,
+                spo_number=event.spo_number,
+                spo_line_number=event.spo_line_number,
                 po_number=event.po_number,
                 purchase_order_id=event.purchase_order_id,
                 fulfils=True,
@@ -838,6 +841,8 @@ class StockDebtService:
         supply_rows = self._supply(
             product_ids, warehouse_ids, codes, pools, as_of=as_of, include_po=include_po,
             delivery_dated=view,
+            # R45: on the page a document is spent by its links and nothing else.
+            documents_pin_only=view,
         )
         demand_rows = self._demand(
             product_ids, warehouse_ids, codes, pools, date_from=date_from, date_to=date_to,
@@ -858,7 +863,7 @@ class StockDebtService:
         if view:
             # R44 (#1359): the overdue rule stays out of the view, see the constants.
             grace, dead = VIEW_OVERDUE_GRACE_DAYS, VIEW_OVERDUE_DEAD_DAYS
-        if view and include_po:
+        if view:
             # R43 (#1346): in the view a hold on a PO line fulfils its line whatever the PO's
             # date - a placement as much as the book's S/O below. The board never gets here.
             holds = [
@@ -866,7 +871,9 @@ class StockDebtService:
                 for hold in holds
             ]
             # R42: AFTER the confirmed holds, so a placement binds first and the book's S/O
-            # takes only what is left of the PO line (and of the sales-order line).
+            # takes only what is left of the PO line (and of the sales-order line). R45:
+            # an SPO line's S/O is read the same way, and on this page it is the only way
+            # an unplaced SPO reaches a line at all.
             holds = holds + self._book_so_holds(supply_rows, demand_rows, holds, tba_from)
 
         out: Dict[str, Assignment] = {}
@@ -913,6 +920,7 @@ class StockDebtService:
         as_of: Optional[date] = None,
         include_po: bool = True,
         delivery_dated: bool = False,
+        documents_pin_only: bool = False,
     ) -> Dict[str, List[SupplyEvent]]:
         """On hand and SPO for the whole page - two reads, neither of them per product.
         A THIRD, PO, joins them when `include_po` is set (the board/ladder's own path,
@@ -946,6 +954,14 @@ class StockDebtService:
         `delivery_dated` parks each line on its Delivery date (`expected_date`, the column
         the PO lines tab labels so), falling back to R29's `issue + lead` only when the line
         states none. The board keeps `issue + lead` (`delivery_dated=False`).
+
+        R45 (owner, 30 Sep 2026, PO-NO-AUTO-ASSIGN): `documents_pin_only` (the view's own
+        reading, `_assignments(view=True)`) stamps every SPO and PO event `pin_only`, so the
+        walk never hands a document to a line: "we cannot distribute the PO quantity like
+        that, cause the PO quantity is ordered for a reason, and the user is yet to do
+        linking in AutoCount" - and, asked, "this applies for SPO also". A document covers
+        a line only through a link (a placement, the book's S/O, landed goods); what no
+        link took is free in its own month. On hand is walked as before.
         """
         as_of = as_of or date.today()
         out: Dict[str, List[SupplyEvent]] = {}
@@ -1002,6 +1018,7 @@ class StockDebtService:
                         # R29: the wire fields the Document cell links off.
                         spo_number=ref.spo_number,
                         spo_line_number=ref.spo_line_no,
+                        pin_only=documents_pin_only,
                     )
                 )
 
@@ -1034,6 +1051,7 @@ class StockDebtService:
                             po_number=line.po_number,
                             po_line_number=line.po_line_no,
                             purchase_order_id=line.purchase_order_id,
+                            pin_only=documents_pin_only,
                         )
                     )
         return out
@@ -1553,62 +1571,114 @@ class StockDebtService:
         rule a PO past its Delivery date pinned nothing. R44 (#1359): the UNPINNED rest of
         the line is free supply in `assign()`, the view walking no overdue rule.
         """
+        #: R45 (30 Sep 2026): the SPO line's own `from_so_line_ref` (`spo_allocations`,
+        #: the same `{database}:{DocKey}:{DtlKey}` shape) is read beside the PO line's -
+        #: "most SPO should have linkage already", and on this page that link is the only
+        #: way an unplaced SPO reaches a line. Keyed by the EVENT key (`po:<id>` /
+        #: `spo:<id>`), so the two document kinds never collide on an id.
         po_events: Dict[str, Tuple[str, SupplyEvent]] = {}
+        spo_events: Dict[str, Tuple[str, SupplyEvent]] = {}
         for product_id, events in supply_rows.items():
             for event in events:
-                if event.kind != KIND_PO or float(event.qty) <= EPSILON:
+                if float(event.qty) <= EPSILON:
                     continue
-                _kind, line_id = parse_supply_key(event.key)
-                if line_id:
+                kind, line_id = parse_supply_key(event.key)
+                if not line_id:
+                    continue
+                if kind == KIND_PO:
                     po_events[line_id] = (product_id, event)
-        if not po_events:
+                elif kind == KIND_SPO:
+                    spo_events[line_id] = (product_id, event)
+        if not po_events and not spo_events:
             return []
-        ids = list(po_events)
-        refs = {
-            str(line_id): ref
-            for line_id, ref in self.db.query(
-                PurchaseOrderLine.id, PurchaseOrderLine.from_so_line_ref
+        refs: Dict[str, str] = {}
+        if po_events:
+            refs.update(
+                {
+                    po_events[str(line_id)][1].key: ref
+                    for line_id, ref in self.db.query(
+                        PurchaseOrderLine.id, PurchaseOrderLine.from_so_line_ref
+                    )
+                    .filter(
+                        PurchaseOrderLine.id.in_(list(po_events)),
+                        PurchaseOrderLine.from_so_line_ref.isnot(None),
+                    )
+                    .all()
+                    if ref
+                }
             )
-            .filter(
-                PurchaseOrderLine.id.in_(ids),
-                PurchaseOrderLine.from_so_line_ref.isnot(None),
+        if spo_events:
+            refs.update(
+                {
+                    spo_events[str(allocation_id)][1].key: ref
+                    for allocation_id, ref in self.db.query(
+                        SPOAllocation.id, SPOAllocation.from_so_line_ref
+                    )
+                    .filter(
+                        SPOAllocation.id.in_(list(spo_events)),
+                        SPOAllocation.from_so_line_ref.isnot(None),
+                    )
+                    .all()
+                    if ref
+                }
             )
-            .all()
-            if ref
-        }
         if not refs:
             return []
         orders = order_link_service.book_sales_orders_by_ref(
             self.db, sorted(set(refs.values()))
         )
-        named = {
-            line_id: orders[ref][0] for line_id, ref in refs.items() if ref in orders
-        }
+        named = {key: orders[ref][0] for key, ref in refs.items() if ref in orders}
         if not named:
             return []
-        placed = {
-            str(line_id): _float(qty)
-            for line_id, qty in self.db.query(
-                OrderInquiryLink.po_line_id, func.sum(OrderInquiryLink.qty)
-            )
-            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
-            .filter(
-                OrderInquiryLink.po_line_id.in_(list(named)),
-                OrderInquiryRow.state != INQUIRY_CANCELLED,
-            )
-            .group_by(OrderInquiryLink.po_line_id)
-            .all()
+        events_by_key = {
+            event.key: (product_id, event)
+            for product_id, event in (*po_events.values(), *spo_events.values())
         }
+        named_po_ids = [parse_supply_key(key)[1] for key in named if key.startswith("po:")]
+        named_spo_ids = [parse_supply_key(key)[1] for key in named if key.startswith("spo:")]
+        placed: Dict[str, float] = {}
+        if named_po_ids:
+            placed.update(
+                {
+                    f"po:{line_id}": _float(qty)
+                    for line_id, qty in self.db.query(
+                        OrderInquiryLink.po_line_id, func.sum(OrderInquiryLink.qty)
+                    )
+                    .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+                    .filter(
+                        OrderInquiryLink.po_line_id.in_(named_po_ids),
+                        OrderInquiryRow.state != INQUIRY_CANCELLED,
+                    )
+                    .group_by(OrderInquiryLink.po_line_id)
+                    .all()
+                }
+            )
+        if named_spo_ids:
+            placed.update(
+                {
+                    f"spo:{allocation_id}": _float(qty)
+                    for allocation_id, qty in self.db.query(
+                        OrderInquiryLink.spo_allocation_id, func.sum(OrderInquiryLink.qty)
+                    )
+                    .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+                    .filter(
+                        OrderInquiryLink.spo_allocation_id.in_(named_spo_ids),
+                        OrderInquiryRow.state != INQUIRY_CANCELLED,
+                    )
+                    .group_by(OrderInquiryLink.spo_allocation_id)
+                    .all()
+                }
+            )
         return book_so_pins(
             [
-                (po_events[line_id][0], po_events[line_id][1], sales_order_id,
-                 placed.get(line_id, 0.0))
-                for line_id, sales_order_id in named.items()
+                (events_by_key[key][0], events_by_key[key][1], sales_order_id,
+                 placed.get(key, 0.0))
+                for key, sales_order_id in named.items()
             ],
             demand_rows,
             holds,
             tba_from=tba_from,
-            line_refs={po_events[line_id][1].key: refs[line_id] for line_id in named},
+            line_refs={key: refs[key] for key in named},
         )
 
     def _source_text(self, line) -> Optional[str]:
