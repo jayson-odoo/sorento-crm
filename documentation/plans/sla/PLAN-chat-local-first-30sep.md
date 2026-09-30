@@ -1,7 +1,7 @@
 # PLAN: conversation thread reads local first; Respond.io only for delta sync and backfill
 
 Lane: CHAT-LOCAL-FIRST. Owner approved 30 Sep 2026 ("go for the chat histories lane").
-Status: in progress. Track: feature (migration, new external ingest surface: security reviewer runs).
+Status: PR open (#1402), built and tested, awaiting review + owner hand test. Track: feature (migration, new external ingest surface: security reviewer runs).
 UAC: `chat-local-first-acceptance-criteria.md` alongside.
 
 ## 1. Problem
@@ -47,35 +47,50 @@ will fail"), so local must be a cache that self-heals, never one that is blindly
   rows the next scroll reads. `has_more_older` stays true while the sync cursor says the oldest
   Respond page was not yet reached.
 
-### R2 Delta sync cursor (new table `chat_thread_sync_cursors`, additive)
-- One row per `(channel, contact_id)`: `newest_message_id`, `newest_sent_at`,
-  `oldest_message_id`, `oldest_sent_at`, `oldest_reached` (bool), `last_synced_at`,
-  `last_error`, `last_error_at`, `updated_at`.
-- `sync_newer(db, contact, client)`: ONE `list_messages(cursor=f"-{newest_message_id}")` call
-  (or the newest page when no cursor), `persist_messages`, publish `EVENT_MESSAGE` when rows were
-  written, advance the cursor. `sync_older(db, contact, client)`: ONE call with
-  `cursor=oldest_message_id`, same store, sets `oldest_reached` when fewer than 50 came back.
-- Triggered from the thread page routes as a FastAPI `BackgroundTask` after the local page is
-  returned (never blocks the render). Throttled per contact through the cursor row's
-  `last_synced_at` (a poll within `chat_sync_min_interval_seconds`, default 30 s, schedules
-  nothing) so a 10 s poll costs zero Respond calls.
+### R2 Delta sync state (new table `chat_thread_sync_state`, additive)
+- One row per `(channel, contact_id)`: `oldest_reached`, `last_activity_at`, `last_synced_at`,
+  `last_error`, `last_error_at`. The newest / oldest stored message ids are NOT copied here:
+  `chat_histories` is the truth for those (n8n, the webhook and a CRM send all write rows
+  directly, and a copied cursor would lag every one of them).
+- `sync_newer(db, contact, client)`: ONE `list_messages(cursor=f"-{newest stored id}")` call,
+  `persist_messages`, publish `EVENT_MESSAGE` when rows were written, stamp `last_synced_at`.
+  `sync_older(db, contact, client)`: ONE call with `cursor=<oldest stored id>`, same store, sets
+  `oldest_reached` when fewer than 50 came back.
+- Newer: queued from `fetch_thread_page` on an in-process 2-thread pool after the local page is
+  built (never blocks the render), at most once per 30 s per contact
+  (`SYNC_MIN_INTERVAL_SECONDS`, a constant: one preference does not need a setting), with a
+  conditional UPDATE on the state row as the race guard between processes. Older: runs INLINE in
+  the scroll-back request that would run past the oldest stored row, because the page being
+  asked for is the data being fetched; it is user-driven, never a poll, and the rows it fills are
+  kept for ever.
 
 ### R3 Direct Respond.io webhook
-- `POST /api/v1/external/chat-history/respond-webhook`, mounted beside the n8n ingest, auth by
-  Respond's webhook signature (`X-Webhook-Signature`, HMAC-SHA256 of the raw body with the
-  workspace signing key; the exact header name is verified against Respond's docs in the build
-  and recorded in section 6) with a shared-secret header as the fallback when no signing key is
-  configured. Maps the `message.received` / `message.sent` event body to the same row
-  `ingest_chat_message` writes (one shared function `_upsert_chat_history_row`), so dedupe with
-  the n8n lane is the existing partial unique index.
-- Owner-side setup steps documented in `documentation/reference/RESPOND-WEBHOOK-SETUP.md`.
+- `POST /api/v1/public/respond/webhook` (`app/api/v1/public/respond_webhook.py`), under the
+  public router because Respond.io cannot send the CRM's `X-API-Key`: auth is the webhook's own
+  signature (HMAC-SHA256 of the raw body with `RESPOND_WEBHOOK_SECRET`, header
+  `x-respond-signature` or `x-webhook-signature`, hex or base64) or, for a webhook set up with a
+  custom header, `X-Respond-Webhook-Secret` equal to the secret. Unset secret = 503. The sandbox
+  could not reach `docs.respond.io`, so the header names are the documented convention; the
+  setup doc asks the owner to confirm them on the Respond.io page.
+- Maps `message.received` / `message.sent` to the same row the n8n ingest writes through one
+  shared writer (`app/services/chat_history_ingest_service.py`), so dedupe with the n8n lane is
+  the existing partial unique index. Secret in the environment rather than on the workspace
+  row: one deployment has one Respond.io webhook today; the second workspace pays for the
+  per-row generalisation.
+- Owner-side setup steps: `documentation/reference/RESPOND-WEBHOOK-SETUP.md`.
 
 ### R4 Background reconcile
-- Fixed APScheduler tick `_chat_history_reconcile_tick` every `chat_reconcile_interval_minutes`
-  (default 5): contacts with a `chat_histories` row in the last `chat_reconcile_activity_days`
-  (default 7) get `sync_newer`, `chat_reconcile_concurrency` (default 2) at a time per workspace
-  token, with exponential backoff on 429 honouring `Retry-After` (`respond_rate_limit.py`).
-- Load scales with contacts that had activity, never with viewers.
+- A `scheduled_tasks` row `chat_history_reconcile` (the existing DB-configured scheduler,
+  `app/scheduler/task_scheduler.py` `register_handler`, seeded by the migration like
+  `chat_message_resolver` in 291): every 5 minutes (the row's interval), contacts whose
+  `chat_thread_sync_state.last_activity_at` is within `activity_days` (task metadata, default 7)
+  get `sync_newer`, `concurrency` (metadata, default 2) calls in flight per workspace key, with
+  `respond_rate_limit.py` backoff: `Retry-After` honoured, else 1, 2, 4 ... 60 s doubling per
+  consecutive 429; 5xx and transport errors arm the same window; a 404 does not.
+- `last_activity_at` is stamped by every lane that writes a row (n8n, webhook, CRM send mirror,
+  delta reads) and seeded from the last 7 days at deploy, so load scales with contacts that had
+  activity, never with viewers. A contact whose every feed is silent for `activity_days` drops
+  out of the window until it is opened or a message lands.
 
 ### R5 Local gaps (additive migration on `chat_histories`)
 - `media_url`, `media_type`, `media_file_name`, `sender_source`, `sender_user_id`. Filled by
@@ -85,9 +100,11 @@ will fail"), so local must be a cache that self-heals, never one that is blindly
   re-reads them (fill-if-null upsert), no one-shot script.
 
 ### R6 Observability
-- `respond_call_counter`: every `RespondClient` HTTP call increments a per-minute counter
-  (Redis `INCR` with 120 s TTL, in-process fallback) and logs at INFO with the path. Read through
-  `GET /api/v1/system/respond-io-calls` (admin) so the hand test can show "open = 1, polls = 0".
+- `respond_call_counter`: every `RespondClient` HTTP call (one `_http()` builder with an httpx
+  request hook) increments a per-minute counter (Redis `INCR`, 15 min TTL, in-process fallback)
+  and logs at INFO with method and path. Read through
+  `GET /api/v1/system/chat-history/respond-io-calls` (`system.chat_history.view`) so the hand
+  test can show "open = at most 1, polls = 0".
 
 ### R7 UI
 - No new screen. Portal and CRM inbox both read through `_thread_page_for_contact`.
@@ -103,4 +120,25 @@ will fail"), so local must be a cache that self-heals, never one that is blindly
 - Configuring Respond.io itself (owner does that from the setup doc).
 
 ## 5. Build notes
-(filled as work lands)
+
+- Files: migration `alembic/versions/clf_0001_chat_local_first.py`; models `chat_history.py`
+  (5 columns), `chat_thread_sync_state.py`; services `conversation_thread_service.py`
+  (local-first `fetch_thread_page`, `_row_to_item` media + sender, `persist_messages` fill-if-null,
+  `_fill_older_if_needed`), `chat_thread_sync_service.py`, `respond_rate_limit.py`,
+  `respond_call_counter.py`, `chat_history_ingest_service.py`; routes
+  `public/respond_webhook.py`, `external/chat_history.py` (refactored onto the shared writer),
+  `system/chat_history.py` (counter read); `scheduler/task_scheduler.py` (handler);
+  `config.py` (`respond_webhook_secret`); `schemas/external/chat_history.py` (optional media and
+  sender fields for n8n).
+- Tests: `tests/test_chat_local_first.py` (A, B, E), `tests/test_respond_webhook_ingest.py` (C),
+  `tests/test_chat_reconcile.py` (D). 56 tests. Existing thread, ingest, portal, inbox and
+  Respond client suites re-run green.
+- No frontend change: both the portal thread and the CRM inbox read through
+  `sla_service._thread_page_for_contact`; media renders through the existing
+  `describeMessageAttachments` shapes (`message.attachment.{type,url,fileName}`).
+- Deviation from the ticket's first wording: the older read on scroll-back runs inline rather
+  than in the background (section 3, R2) because a background fill would leave the requested page
+  empty and the client with no reason to ask again.
+- Process note: the migration, service and tests were written in one session (cloud sandbox,
+  crew lane) rather than by separate tester / coder agents; the reviewer and security-reviewer
+  passes ran as Opus agents (Phase 3) before the PR left draft.
