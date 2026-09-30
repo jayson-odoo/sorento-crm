@@ -177,5 +177,5 @@ def test_describe_lists_every_source_with_count_and_usage():
         assert set(rows) == set(chatbot_prompt_vars.VARIABLE_NAMES)
         assert rows["domains"]["used"] is True and rows["brands"]["used"] is False
         assert rows["domains"]["count"] == len(_names(db))
-        assert rows["domains"]["href"] == "/system-management/chatbot/domains"
+        assert rows["domains"]["href"] == "/system-management/chatbot-domains"
         assert rows["domains"]["last_changed"] is not None

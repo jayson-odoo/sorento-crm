@@ -929,6 +929,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'system.chat_history.view',
           },
           {
+            title: 'Status Words',
+            path: '/system-management/chatbot-status-words',
+            permission: 'system.chat_history.view',
+          },
+          {
             title: 'Email Event Configs',
             path: '/system-management/email-event-configs',
             permission: 'system.email_event_configs.view',
@@ -2217,6 +2222,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Entity Kinds',
         path: '/system-management/chatbot-entity-kinds',
+        permission: 'system.chat_history.view',
+      },
+      {
+        title: 'Status Words',
+        path: '/system-management/chatbot-status-words',
         permission: 'system.chat_history.view',
       },
       {

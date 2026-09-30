@@ -203,8 +203,8 @@ def _count(query: str) -> Callable[[Session], int]:
     return lambda db: int(db.execute(sql(query)).scalar() or 0)
 
 
-_DOMAINS_HREF = "/system-management/chatbot/domains"
-_STATUS_HREF = "/system-management/chatbot/status-words"
+_DOMAINS_HREF = "/system-management/chatbot-domains"
+_STATUS_HREF = "/system-management/chatbot-status-words"
 
 VARIABLES: dict[str, RegistryVariable] = {
     v.name: v
@@ -233,36 +233,36 @@ VARIABLES: dict[str, RegistryVariable] = {
             lambda db: len(_status_rows(db)),
         ),
         RegistryVariable(
-            "entity_kinds", "Entity kinds", "Chatbot Entity Kinds", "/system-management/chatbot/entity-kinds",
+            "entity_kinds", "Entity kinds", "Chatbot Entity Kinds", "/system-management/chatbot-entity-kinds",
             ("chatbot_entity_kinds",), lambda db: "|".join(_entity_kinds(db)),
             lambda db: len(_entity_kinds(db)),
         ),
         RegistryVariable(
             "entity_kinds_detail", "Entity kinds - detail", "Chatbot Entity Kinds",
-            "/system-management/chatbot/entity-kinds", ("chatbot_entity_kinds",),
+            "/system-management/chatbot-entity-kinds", ("chatbot_entity_kinds",),
             _render_entity_kinds_detail, lambda db: len(_entity_kinds(db)),
         ),
         RegistryVariable(
-            "specs", "Specifications", "Product Specifications", "/products/specifications",
+            "specs", "Specifications", "Product Specifications", "/master-data-management/product-specifications",
             ("product_spec_registry",), _render_specs,
             _count("SELECT count(*) FROM product_spec_registry WHERE is_active"),
         ),
         RegistryVariable(
-            "brands", "Brands", "Brands", "/master-data/brands", ("brands",),
+            "brands", "Brands", "Brands", "/master-data-management/brands", ("brands",),
             lambda db: ", ".join(_brands(db)), lambda db: len(_brands(db)),
         ),
         RegistryVariable(
-            "teams", "Teams", "Agents and Teams", "/access-control/agents",
+            "teams", "Teams", "Agents and Teams", "/user-management/access-agents",
             ("agent_teams", "access_agents"), lambda db: "|".join(_teams(db)),
             lambda db: len(_teams(db)),
         ),
         RegistryVariable(
-            "agents", "Agents", "Agents and Teams", "/access-control/agents", ("access_agents",),
+            "agents", "Agents", "Agents and Teams", "/user-management/access-agents", ("access_agents",),
             lambda db: "|".join(_agents(db)), lambda db: len(_agents(db)),
         ),
         RegistryVariable(
             "access_levels", "Access levels", "Contact Access Types",
-            "/master-data/contact-access-types", ("contact_access_types",),
+            "/user-management/contact-access-types", ("contact_access_types",),
             lambda db: json.dumps(_access_levels(db), ensure_ascii=False, separators=(",", ":")),
             lambda db: len(_access_levels(db)),
         ),
