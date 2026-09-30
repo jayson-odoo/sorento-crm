@@ -23,6 +23,8 @@ export interface ContactAccessTypeAdmin {
   is_active: boolean;
   sort_order: number | null;
   keywords: string[];
+  /** ESCALATION-CONTROL: a contact holding this type may be offered, or force, a hand-off. */
+  escalation_allowed: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -64,7 +66,10 @@ export async function createContactAccessType(
 export async function updateContactAccessType(
   code: string,
   body: Partial<
-    Pick<ContactAccessTypeAdmin, 'name' | 'description' | 'is_active' | 'sort_order' | 'keywords'>
+    Pick<
+      ContactAccessTypeAdmin,
+      'name' | 'description' | 'is_active' | 'sort_order' | 'keywords' | 'escalation_allowed'
+    >
   >
 ): Promise<ContactAccessTypeAdmin> {
   const response = await apiFetch(`${base}/${encodeURIComponent(code)}`, {

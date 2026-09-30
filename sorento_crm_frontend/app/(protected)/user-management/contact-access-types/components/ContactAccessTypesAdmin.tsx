@@ -97,6 +97,7 @@ export default function ContactAccessTypesAdmin() {
     is_active: true,
     sort_order: '' as string | number,
     keywords: '',
+    escalation_allowed: true,
   });
 
   function resetTypeForm() {
@@ -107,6 +108,7 @@ export default function ContactAccessTypesAdmin() {
       is_active: true,
       sort_order: '',
       keywords: '',
+      escalation_allowed: true,
     });
     setEditingType(null);
   }
@@ -125,6 +127,7 @@ export default function ContactAccessTypesAdmin() {
       is_active: row.is_active,
       sort_order: row.sort_order ?? '',
       keywords: (row.keywords ?? []).join(', '),
+      escalation_allowed: row.escalation_allowed !== false,
     });
     setTypeDialogOpen(true);
   }
@@ -153,6 +156,7 @@ export default function ContactAccessTypesAdmin() {
           is_active: typeForm.is_active,
           sort_order: sort,
           keywords,
+          escalation_allowed: typeForm.escalation_allowed,
         },
       });
     } else {
@@ -169,6 +173,7 @@ export default function ContactAccessTypesAdmin() {
         is_active: typeForm.is_active,
         sort_order: sort ?? null,
         keywords,
+        escalation_allowed: typeForm.escalation_allowed,
       });
     }
   }
@@ -399,6 +404,14 @@ export default function ContactAccessTypesAdmin() {
                 onCheckedChange={(v) => setTypeForm((f) => ({ ...f, is_active: v === true }))}
               />
               <Label htmlFor="type-active">Active</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="type-escalation"
+                checked={typeForm.escalation_allowed}
+                onCheckedChange={(v) => setTypeForm((f) => ({ ...f, escalation_allowed: v === true }))}
+              />
+              <Label htmlFor="type-escalation">Can escalate to customer service</Label>
             </div>
           </div>
           <DialogFooter>
