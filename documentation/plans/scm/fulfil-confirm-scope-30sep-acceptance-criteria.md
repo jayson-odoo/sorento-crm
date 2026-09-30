@@ -14,7 +14,34 @@ Plan: `PLAN-fulfil-confirm-scope-30sep.md`
   `lines_confirmed: []`; a withdrawal-only press answers `lines_confirmed: []`.
 - AC-S4 `lines_decided` still equals `lines_confirmed.length + lines_carried`.
 
-## Board, pre-confirm dialog
+## Server, preview (`POST .../fulfilment-planning/confirm-all` with `preview: true`)
+
+- AC-P1 A preview press writes nothing: after it, `so_supply_decisions`, `order_inquiry_rows`,
+  `stock_transfers` and `so_supply_decision_drafts` are unchanged (row counts and max ids).
+- AC-P2 The preview answer per order carries the same `lines_confirmed`, `lines_carried`,
+  `lines_held_back` and `lines_fulfilled_skipped` a real press would, plus `inquiry_rows`
+  (verb, line_no, item_code, qty, delivery_date, stock_location, note) and `transfers`
+  (kind, qty, from_location, to_location, line_no) the press would raise.
+- AC-P3 A real press right after the preview, same body, writes exactly the previewed
+  `lines_confirmed` and raises exactly the previewed inquiry rows and transfers.
+
+## Board, Preview then Confirm (v2, supersedes AC-D1..D5 below, which are retired)
+
+- AC-V1 The header shows "Preview (N)" (N = saved lines the press would send) and Confirm,
+  disabled with the hint "Preview first", until a preview for the current board state has
+  loaded. There is no confirm popup.
+- AC-V2 Preview renders inline under the header, grouped per order: one row per previewed
+  inquiry row (line, item, verb, qty, delivery date, location, the decision behind it, saved by
+  whom and when). A decision saved by another planner or before this board was opened carries
+  that fact in amber. Held-back and not-sent lines are listed with their reason, untickable.
+- AC-V3 Every row starts ticked. Unticking removes that line from the press (its draft is left
+  alone) and the Confirm label follows: "Confirm N lines". Unticking every row disables Confirm.
+- AC-V4 Any change to the postable population after a preview (save, undo, board refetch that
+  changes drafts) disables Confirm until Preview is pressed again; the stale preview says so.
+- AC-V5 Confirm posts exactly the ticked previewed lines; results block and toast read the
+  server echo (AC-R1..R4 unchanged).
+
+## Board, pre-confirm dialog (v1, RETIRED by owner feedback 30 Sep 2026)
 
 - AC-D1 Pressing "Confirm (N)" opens the dialog listing N rows grouped by sales order:
   "line <no> <item> · <Approved|Amended|Rejected> · <composition> · saved by <name>
