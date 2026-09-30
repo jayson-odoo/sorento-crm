@@ -5035,3 +5035,145 @@ describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
   });
 
 });
+
+describe('FulfilmentBoardPanel: Saved | All toggle (owner hand test, 1 Oct)', () => {
+  /** A saved, B suggested (no draft), C confirmed (covered by an active decision). */
+  const threeStates = () => {
+    const base = boardOf([
+      demand({ line_no: 1, item_code: 'WESERP10B' }),
+      demand({ line_no: 2, item_code: 'TPE-9204' }),
+      demand({ line_no: 3, item_code: 'WESERP20B' }),
+    ]);
+    const saved = withContribution(
+      base,
+      (entry) => entry.item_code === 'WESERP10B',
+      (entry) => ({
+        ...entry,
+        draft: {
+          decision: { verdict: 'approved' as const },
+          saved_by: 'Test Planner',
+          saved_at: '2026-09-08T00:00:00Z',
+        },
+      }),
+    );
+    return withContribution(
+      saved,
+      (entry) => entry.item_code === 'WESERP20B',
+      (entry) => ({
+        ...entry,
+        covered: true,
+        decision: { revision_no: 1, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '100' },
+      }),
+    );
+  };
+  const segment = (name: RegExp) => screen.getByRole('button', { name });
+  // The list shows order numbers, not item codes: a row is told by its select box.
+  const rowOf = (line: number, query = false) =>
+    query
+      ? screen.queryByRole('checkbox', { name: `Select SO403340 line ${line}` })
+      : screen.getByRole('checkbox', { name: `Select SO403340 line ${line}` });
+  const toList = async () => {
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+  };
+  const findRow = (line: number) =>
+    screen.findByRole('checkbox', { name: `Select SO403340 line ${line}` });
+
+  beforeEach(() => {
+    // No `scope=` at all: the default segment is what is under test.
+    currentSearchParams = new URLSearchParams('view=grid');
+  });
+
+  it('AC-ALL-1: defaults to All: Saved (1) | All (3), All pressed and primary, every row visible', async () => {
+    getPlanningBoard.mockResolvedValue(threeStates());
+    renderPanel(['SO403340']);
+    await toList();
+
+    expect(await findRow(1)).toBeInTheDocument();
+    expect(rowOf(2)).toBeInTheDocument();
+    expect(rowOf(3)).toBeInTheDocument();
+    expect(segment(/^Saved/)).toHaveTextContent('Saved (1)');
+    expect(segment(/^All/)).toHaveTextContent('All (3)');
+    expect(segment(/^All/)).toHaveAttribute('aria-pressed', 'true');
+    expect(segment(/^All/).className).toContain('bg-primary');
+    expect(segment(/^Saved/)).toHaveAttribute('aria-pressed', 'false');
+    expect(segment(/^Saved/).className).not.toContain('bg-primary');
+    expect(screen.queryByRole('button', { name: /^Others/ })).not.toBeInTheDocument();
+  });
+
+  it('AC-ALL-2: a line stays visible after it is saved; Saved goes 0 to 1, All stays 2', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf([
+        demand({ line_no: 1, item_code: 'WESERP10B' }),
+        demand({ line_no: 2, item_code: 'TPE-9204' }),
+      ]),
+    );
+    renderPanel(['SO403340']);
+    await toList();
+
+    expect(await findRow(1)).toBeInTheDocument();
+    expect(segment(/^Saved/)).toHaveTextContent('Saved (0)');
+    expect(segment(/^All/)).toHaveTextContent('All (2)');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save SO403340 line 1 as suggested' }));
+
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(segment(/^Saved/)).toHaveTextContent('Saved (1)'));
+    expect(segment(/^All/)).toHaveTextContent('All (2)');
+    expect(rowOf(1)).toBeInTheDocument();
+    expect(rowOf(2)).toBeInTheDocument();
+  });
+
+  it('AC-ALL-3: Saved shows only the posting set; All shows every row again', async () => {
+    getPlanningBoard.mockResolvedValue(threeStates());
+    renderPanel(['SO403340']);
+    await toList();
+    await findRow(1);
+
+    await userEvent.click(segment(/^Saved/));
+    await waitFor(() => expect(rowOf(2, true)).not.toBeInTheDocument());
+    expect(rowOf(1)).toBeInTheDocument();
+    expect(rowOf(3, true)).not.toBeInTheDocument();
+    expect(segment(/^Saved/)).toHaveAttribute('aria-pressed', 'true');
+
+    await userEvent.click(segment(/^All/));
+    await waitFor(() => expect(rowOf(2)).toBeInTheDocument());
+    expect(rowOf(1)).toBeInTheDocument();
+    expect(rowOf(3)).toBeInTheDocument();
+    expect(segment(/^All/)).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('AC-ALL-4: the grid strip reads Saved (1) | All (3) and All shows every matrix row', async () => {
+    currentSearchParams = new URLSearchParams('view=grid');
+    getPlanningBoard.mockResolvedValue(threeStates());
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const strip = screen.getByTestId('board-grid-filter-strip');
+    expect(within(strip).getByRole('button', { name: 'Saved (1)' })).toBeInTheDocument();
+    expect(within(strip).getByRole('button', { name: 'All (3)' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+    expect(screen.getByText('TPE-9204')).toBeInTheDocument();
+    expect(screen.getByText('WESERP20B')).toBeInTheDocument();
+  });
+
+  it('AC-ALL-5: under All the "No other lines" copy never appears, a fully saved board shows its rows', async () => {
+    getPlanningBoard.mockResolvedValue(
+      allSaved(boardOf([demand({ line_no: 1, item_code: 'WESERP10B' })])),
+    );
+    renderPanel(['SO403340']);
+    await toList();
+
+    expect(await findRow(1)).toBeInTheDocument();
+    expect(screen.queryByText('No other lines')).not.toBeInTheDocument();
+    expect(segment(/^All/)).toHaveTextContent('All (1)');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+    expect(screen.queryByText('No other lines')).not.toBeInTheDocument();
+  });
+});

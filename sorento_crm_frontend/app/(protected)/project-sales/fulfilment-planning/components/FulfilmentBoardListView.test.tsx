@@ -2523,4 +2523,20 @@ describe('FulfilmentBoardListView: Columns and Status filter', () => {
     expect(await screen.findByText('SO500000')).toBeInTheDocument();
   });
 
+
+  it('AC-ALL-6: the All scope shows saved and unsaved rows and reads "All (2)" pressed', async () => {
+    const saved = contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 });
+    const plain = contribution({ key: 'so-2:line-20', so_number: 'SO397451', line_no: 20 });
+    render(
+      <FulfilmentBoardListView
+        {...viewProps([saved, plain], { [saved.key]: { verdict: 'approved' } })}
+        scope={{ ...scopeProps('all'), allCount: 2 }}
+      />,
+    );
+    expect(await screen.findByText('SO397450')).toBeInTheDocument();
+    expect(screen.getByText('SO397451')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All (2)' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Saved (1)' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
 });
