@@ -15,6 +15,7 @@ const useSaveVersion = vi.fn();
 const useSetLabel = vi.fn();
 const useDryRun = vi.fn();
 const useHasPermission = vi.fn();
+const useRegistryVariables = vi.fn();
 
 vi.mock('../../hooks/useAIAssistantPrompts', () => ({
   usePromptVersions: () => usePromptVersions(),
@@ -27,6 +28,7 @@ vi.mock('../../hooks/useAIAssistantPrompts', () => ({
   // from the versions response.
   usePromptKeys: () => usePromptKeys(),
   useSetAgentModel: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useRegistryVariables: () => useRegistryVariables(),
 }));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => useHasPermission(),
@@ -109,6 +111,7 @@ beforeEach(() => {
   useSaveVersion.mockReturnValue({ mutate: saveMutate, isPending: false });
   useSetLabel.mockReturnValue({ mutate: labelMutate, isPending: false });
   useDryRun.mockReturnValue({ mutate: vi.fn(), isPending: false, data: undefined, isError: false });
+  useRegistryVariables.mockReset().mockReturnValue({ data: [], isLoading: false, isError: false });
 });
 afterEach(() => cleanup());
 
@@ -252,5 +255,53 @@ describe('PromptDetail', () => {
 
     const editor = screen.getByTestId('prompt-editor') as HTMLTextAreaElement;
     expect(editor.value).toBe('Classify {{current_date}}.');
+  });
+});
+
+describe('PromptDetail with registry variables (PROMPT-DYNAMIC R5a)', () => {
+  const REG_META: PromptVersionsResponse = {
+    ...META,
+    name: 'chatbot_semantic_parser',
+    registry_variables: ['domains', 'statuses'],
+  };
+  const REG_BASE: PromptVersionDetail = { ...BASE, template: 'ONE of: {{domains}} | null {{current_date}}' };
+  const REG_ROWS = [
+    { name: 'domains', label: 'Domains', source: 'Chatbot Domains', href: '/system-management/chatbot-domains', count: 3, last_changed: null, rendered: 'order | sales | inventory', used: true },
+    { name: 'statuses', label: 'Status words', source: 'Chatbot Status Words', href: '/system-management/chatbot-status-words', count: 8, last_changed: null, rendered: 'S', used: false },
+  ];
+
+  beforeEach(() => {
+    usePromptVersions.mockReturnValue({ data: REG_META, isLoading: false, isError: false });
+    usePromptVersion.mockReturnValue({ data: REG_BASE, isLoading: false, isError: false });
+    useRegistryVariables.mockReturnValue({ data: REG_ROWS, isLoading: false, isError: false });
+  });
+
+  it('edits in the chip editor, not the plain textarea', () => {
+    renderDetail();
+    expect(screen.queryByTestId('prompt-editor')).toBeNull();
+    const chipEditor = screen.getByTestId('prompt-chip-editor');
+    expect(chipEditor.querySelector('[data-chip="domains"]')).not.toBeNull();
+  });
+
+  it('shows the wired panel', () => {
+    renderDetail();
+    expect(screen.getByTestId('wired-row-domains')).toHaveTextContent('In wording');
+    expect(screen.getByTestId('wired-row-statuses')).toHaveTextContent('not in wording');
+  });
+
+  it('registry tokens never block saving', () => {
+    renderDetail();
+    expect(screen.queryByTestId('var-unknown-error')).toBeNull();
+  });
+
+  it('Preview rendered prompt shows the text the model receives, read-only', () => {
+    renderDetail();
+    fireEvent.click(screen.getByTestId('editor-mode-preview'));
+    const preview = screen.getByTestId('prompt-preview');
+    expect(preview.textContent).toContain('ONE of: order | sales | inventory | null');
+    expect(preview.textContent).not.toContain('{{domains}}');
+    expect(screen.queryByTestId('prompt-chip-editor')).toBeNull();
+    fireEvent.click(screen.getByTestId('editor-mode-edit'));
+    expect(screen.getByTestId('prompt-chip-editor')).toBeInTheDocument();
   });
 });
