@@ -301,10 +301,12 @@ export function FulfilmentBoardListView({
    * below): there is nothing a quick save would change on either.
    */
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
-  const selectedKeys = React.useMemo(
-    () => Object.keys(rowSelection).filter((key) => rowSelection[key]),
-    [rowSelection],
-  );
+  // Only rows on screen: a row ticked and then hidden by the Status filter is not part of what
+  // Decide would act on, so it is not counted or saved (its tick is kept for when it returns).
+  const selectedKeys = React.useMemo(() => {
+    const visible = new Set(filteredContributions.map((entry) => entry.key));
+    return Object.keys(rowSelection).filter((key) => rowSelection[key] && visible.has(key));
+  }, [rowSelection, filteredContributions]);
   // S3 (D1, R9): saved rows untick, skipped rows stay ticked - so a Decide press narrows the
   // selection to exactly what it could not cover, ready for a second pick.
   const untickSaved = React.useCallback((savedKeys: string[]) => {
@@ -910,7 +912,7 @@ export function FulfilmentBoardListView({
       columnToggle
       // Rank is a planner's tiebreak, not something to read on every row: hidden until asked.
       initialColumnVisibility={{ rank: false }}
-      listingKey="projects.projects.view::project-fulfilment-board-list-v1"
+      listingKey="projects.projects.view::project-fulfilment-board-list-v2"
       emptyTitle="Nothing is outstanding on this board"
       rowSelection={rowSelection}
       onRowSelectionChange={setRowSelection}

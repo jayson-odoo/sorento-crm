@@ -4557,4 +4557,85 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     expect(block).toHaveTextContent('Nothing was written');
     expect(confirmMany).not.toHaveBeenCalled();
   });
+
+  const twoOrders = () =>
+    allSaved(
+      boardOf([
+        demand({ line_no: 6, item_code: 'SRTWT6808' }),
+        demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 1, item_code: 'WESERP20B' }),
+      ]),
+    );
+
+  it('posts only the order the dry run confirmed something for, not one that only held lines back', async () => {
+    getPlanningBoard.mockResolvedValue(twoOrders());
+    previewConfirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          preview: true,
+          lines_confirmed: [],
+          lines_withdrawn: [],
+          lines_held_back: [{ line_no: 6, item_code: 'SRTWT6808', reason: 'only 3 free' }],
+        },
+        {
+          pso_id: 'pso-so-b',
+          ok: true,
+          preview: true,
+          lines_confirmed: [{ project_line_id: 'pl-so-b-1', line_no: 1, item_code: 'WESERP20B' }],
+          lines_withdrawn: [],
+        },
+      ],
+    });
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-b', ok: true, decision_revision: 1, lines_confirmed: [], lines_carried: 0 }],
+    });
+
+    renderPanel(['SO403340', 'SO398322']);
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [{ orders: { pso_id: string }[] }];
+    expect(body.orders.map((order) => order.pso_id)).toEqual(['pso-so-b']);
+  });
+
+  it('posts the ok order and shows the refusal of the other in the results', async () => {
+    getPlanningBoard.mockResolvedValue(twoOrders());
+    previewConfirmMany.mockResolvedValue({
+      results: [
+        { pso_id: 'pso-so-a', ok: false, preview: true, error: 'Line 6 has no supply.' },
+        {
+          pso_id: 'pso-so-b',
+          ok: true,
+          preview: true,
+          lines_confirmed: [{ project_line_id: 'pl-so-b-1', line_no: 1, item_code: 'WESERP20B' }],
+          lines_withdrawn: [],
+        },
+      ],
+    });
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-b', ok: true, decision_revision: 1, lines_confirmed: [], lines_carried: 0 }],
+    });
+
+    renderPanel(['SO403340', 'SO398322']);
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [{ orders: { pso_id: string }[] }];
+    expect(body.orders.map((order) => order.pso_id)).toEqual(['pso-so-b']);
+    expect(await screen.findByTestId('board-confirm-results')).toHaveTextContent('Line 6 has no supply.');
+  });
+
+  it('posts nothing when the dry run itself fails', async () => {
+    getPlanningBoard.mockResolvedValue(twoLines());
+    previewConfirmMany.mockRejectedValue(new Error('Network down'));
+
+    renderPanel(['SO403340']);
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+
+    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    expect(confirmMany).not.toHaveBeenCalled();
+  });
+
 });

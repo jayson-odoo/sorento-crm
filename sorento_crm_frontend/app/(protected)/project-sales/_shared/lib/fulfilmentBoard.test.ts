@@ -2763,6 +2763,7 @@ describe('#1362 item 5: soLineLabel / soLineNoText', () => {
     expect(soLineNoText({ so_line_no: null, line_no: 3 })).toBe('3');
     expect(soLineNoIsSynced({ so_line_no: null })).toBe(false);
     expect(soLineNoIsSynced({ so_line_no: 2912 })).toBe(true);
+    expect(soLineNoIsSynced({})).toBe(false);
     // A payload with no so_line_no key at all predates the field: its number is bare.
     expect(soLineNoText({ line_no: 3 })).toBe('3');
   });

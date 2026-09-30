@@ -2296,4 +2296,54 @@ describe('FulfilmentBoardListView: Columns and Status filter', () => {
     await waitFor(() => expect(screen.queryByText('SO397451')).not.toBeInTheDocument());
     expect(screen.getByText('SO397450')).toBeInTheDocument();
   });
+
+  it('the Status filter reads the verdict, not "has a draft": Rejected shows only the rejected row', async () => {
+    const rejected = contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 });
+    const saved = contribution({ key: 'so-2:line-20', so_number: 'SO397451', line_no: 20 });
+    renderView({
+      contributions: [rejected, saved],
+      draft: {
+        [rejected.key]: { verdict: 'rejected', reason: 'No.' },
+        [saved.key]: { verdict: 'approved' },
+      },
+    });
+    await screen.findByText('SO397450');
+
+    await userEvent.click(screen.getByText('Status'));
+    await userEvent.click(await screen.findByRole('option', { name: /Rejected/ }));
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByText('SO397451')).not.toBeInTheDocument());
+    expect(screen.getByText('SO397450')).toBeInTheDocument();
+  });
+
+  it('a row ticked and then hidden by the Status filter is not counted as selected', async () => {
+    renderView({
+      contributions: [
+        contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 }),
+        contribution({ key: 'so-2:line-20', so_number: 'SO397451', line_no: 20 }),
+        contribution({ key: 'so-3:line-30', so_number: 'SO397452', line_no: 30 }),
+      ],
+    });
+    await screen.findByText('SO397450');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO397451 line 20' }));
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText('Status'));
+    await userEvent.click(await screen.findByRole('option', { name: /Confirmed/ }));
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByText(/selected/)).not.toBeInTheDocument());
+  });
+
+  it('a line with an AutoCount number carries no not-synced title', async () => {
+    renderView({
+      contributions: [
+        contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10, so_line_no: 2912 }),
+      ],
+    });
+    expect(await screen.findByText('2912')).not.toHaveAttribute('title');
+  });
+
 });

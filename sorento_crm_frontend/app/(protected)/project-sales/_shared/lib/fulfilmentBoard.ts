@@ -1473,7 +1473,7 @@ export function soLineNoText(line: {
 
 /** False when AutoCount gave the line no number (`so_line_no: null`) and the position is shown. */
 export function soLineNoIsSynced(line: { so_line_no?: number | null }): boolean {
-  return line.so_line_no !== null;
+  return line.so_line_no != null;
 }
 
 /**
