@@ -720,13 +720,47 @@ class TestScopedSalesAnalysisRunsTheSalesReport:
         )
         assert [name for name, _ in captured] == ["crm_sales_analysis"], captured
 
-    def test_a_staff_contact_with_links_keeps_the_sales_analysis(self, session_factory, monkeypatch) -> None:
-        """B2 is for a SCOPED contact only: an office contact, linked or not, still gets
-        the company's own analysis (AC-CS-02: an active office type is staff)."""
+    def test_a_staff_contact_with_links_gets_the_sales_report_over_its_links(self, session_factory, monkeypatch) -> None:
+        """Owner hand test ("Mr Loo", 30 Sep 2026): an office contact that is ALSO linked
+        to an account asked "what's my sales this month" and got "Sorry, I can only share
+        sales figures for your own account" - the analysis route refuses any linked
+        contact (AC-S1-23) and B2 only re-routed enforced contacts. Links win: the
+        customer sales report over them, never that line."""
+        from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
+
+        _seed_contact(session_factory, variables={})
+        (own_id,) = _link_customers(session_factory, OWN_A)
+        _give_access_type(session_factory, "Sorento Office")
+        _result, reply, captured = _run(
+            session_factory, monkeypatch, _owner_verdict(), "what is my sales this month",
+            mcp_response=SALES_REPORT_HIT,
+        )
+        assert _calls(captured, "crm_sales_analysis") == [], captured
+        (args,) = _calls(captured, SALES)
+        assert args["customer_ids"] == [own_id], args
+        assert "own account" not in reply, reply
+
+    def test_a_linked_staff_contact_asking_sales_without_my_still_gets_its_own_report(self, session_factory, monkeypatch) -> None:
+        """"sales this month" (no self-reference) from a linked office contact: the
+        analysis route would refuse it for having links, so the links are the subject."""
+        from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
+
+        _seed_contact(session_factory, variables={})
+        (own_id,) = _link_customers(session_factory, OWN_A)
+        _give_access_type(session_factory, "Sorento Office")
+        _result, reply, captured = _run(
+            session_factory, monkeypatch, _owner_verdict(self_reference=False), "sales this month",
+            mcp_response=SALES_REPORT_HIT,
+        )
+        assert _calls(captured, "crm_sales_analysis") == [], captured
+        (args,) = _calls(captured, SALES)
+        assert args["customer_ids"] == [own_id], args
+        assert "own account" not in reply, reply
+
+    def test_a_staff_contact_without_links_keeps_the_sales_analysis(self, session_factory, monkeypatch) -> None:
         from tests.chatbot.test_sales_analysis_lane import ROUTE_HIT, _rendered
 
         _seed_contact(session_factory, variables={})
-        _link_customers(session_factory, OWN_A)
         _give_access_type(session_factory, "Sorento Office")
         _result, _reply, captured = _run(
             session_factory, monkeypatch, _owner_verdict(), "what is my sales this month",

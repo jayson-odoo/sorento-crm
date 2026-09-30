@@ -35,8 +35,10 @@ resolver work (carried context keeps its kind, typed-word-only refusal) waits on
 - B2 Even once granted, the analysis route refuses any contact linked to a customer
   (AC-S1-23): a company's totals are not a linked contact's figures. `run_fetch` now
   answers a customer-scoped contact's `sales_analysis` ask with `crm_sales_report` over the
-  linked customer ids (parent plan Q6a, Q8a); staff and unlinked contacts keep
-  `crm_sales_analysis`.
+  linked customer ids (parent plan Q6a, Q8a). Links win whatever the tier (owner hand
+  test "Mr Loo", an office contact also linked to A/C II): a linked staff contact is not
+  forced by the engine, so the lane hands its links over as the subject itself; only a
+  contact with NO links keeps `crm_sales_analysis`.
 - B3 `sorento_crm_mcp.http_client` returned the 403 body verbatim and
   `presenters._sales_analysis_envelope` rendered any non-status body as "Could not run the
   sales report right now." with `has_result: true`. `http_error_body` now stamps

@@ -1316,6 +1316,13 @@ def run_fetch(
     scoped_to_links = bool(customer_scope.get("enforced") and customer_scope.get("ids"))
     if scoped_to_links:
         semantic_input["scope_customer_ids"] = list(customer_scope["ids"])
+    # CHATBOT-SELFREF-SCOPE (owner hand test, 30 Sep 2026, "Mr Loo"): a contact WITH linked
+    # accounts asking for sales is asking about those accounts, staff tier or not - the
+    # company analysis route refuses any linked contact outright (`analysis.py:253-258`,
+    # AC-S1-23), so sending a linked staff contact there answers "Sorry, I can only share
+    # sales figures for your own account" to the very person whose own accounts exist.
+    # Links win: the customer sales report over them. Staff without links keep the analysis.
+    has_own_accounts = bool(customer_scope.get("ids"))
     # #1262 fix lane round 3, B1-r2: an order turn's brand ids are resolved ONCE, by
     # `turn_runtime.order_brand_filter` in the tool runner (typed words first, else the
     # brand the conversation carries), and the header names the same ids. Taken as is,
@@ -1672,7 +1679,7 @@ def run_fetch(
             so_refused = order_status_raw != "outstanding"
         semantic_input["outstanding_scope"] = scope
         semantic_input["outstanding_so_refused"] = so_refused
-    elif order_status_raw == "sales_analysis" and not scoped_to_links:
+    elif order_status_raw == "sales_analysis" and not has_own_accounts:
         # PLAN-retail-sales-reports-26sep S1: a sales ANALYSIS (a company's sales by
         # month, by year, by channel) is the reports kernel's own query, answered as the
         # whole table in text and the same query as an Excel (Owner ruling 26 Sep 07:16
@@ -1689,7 +1696,7 @@ def run_fetch(
         domain == "order"
         and (has_product or has_customer or carried_subject)
         and order_status_raw == "sales_report"
-    ) or (order_status_raw == "sales_analysis" and scoped_to_links):
+    ) or (order_status_raw == "sales_analysis" and has_own_accounts):
         # S4 wiring point 3 (AC-1650): domain "order" + a resolved product OR
         # customer + `order_status: "sales_report"` picks THIS tool - one more
         # branch beside the outstanding override above, never `tools[0]`.
@@ -1705,6 +1712,18 @@ def run_fetch(
         tool_name = "crm_sales_report"
         if order_status_raw == "sales_analysis":
             tool_item = {"name": tool_name, "_tool_pick": {"source": "customer_scope_sales_report"}}
+            # A linked STAFF contact is not forced by the engine (not enforced), so its
+            # links may not have been handed over as entities ("sales this month" with no
+            # "my" resolves no customer at all): the links are the report's subject either
+            # way, or the route answers 422 `subject_required`.
+            if not any(isinstance(e, dict) and e.get("entity_type") == "customer" for e in entities):
+                entities = [
+                    *[e for e in entities if isinstance(e, dict)],
+                    *[
+                        {"uuid": cid, "entity_type": "customer", "code": code or name, "display_name": name, "scope": True}
+                        for cid, name, code in (customer_scope.get("linked") or [])
+                    ],
+                ]
             if trace is not None:
                 trace.add(
                     "customer_scope",
