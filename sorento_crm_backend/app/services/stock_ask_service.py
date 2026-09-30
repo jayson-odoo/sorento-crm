@@ -470,6 +470,31 @@ def notify_salesman(db: Session, facts: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------- #
 
 
+def _family_names_by_contact(db: Session, contact_ids: set[str]) -> dict[str, str]:
+    """contact id -> the trading name of the customers it is linked to, for the contacts whose
+    links are all ledgers of ONE shop (`ledger_family_key`); a contact linked to two shops, or
+    to nothing, is absent. Read under the caller's company scope, like the links themselves."""
+    if not contact_ids:
+        return {}
+    from app.models.access import RespondContactCustomer
+    from app.models.order import Customer
+    from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
+
+    keys: dict[str, set[str]] = {}
+    labels: dict[str, str] = {}
+    for contact_id, name in (
+        db.query(RespondContactCustomer.contact_id, Customer.customer_name)
+        .join(Customer, Customer.id == RespondContactCustomer.customer_id)
+        .filter(RespondContactCustomer.contact_id.in_(contact_ids))
+    ):
+        key = ledger_family_key(name or "")
+        if not key:
+            continue
+        keys.setdefault(contact_id, set()).add(key)
+        labels.setdefault(contact_id, ledger_family_label(name))
+    return {cid: labels[cid] for cid, found in keys.items() if len(found) == 1}
+
+
 def serialize(db: Session, rows: list[Any], *, with_agent: bool = False) -> list[Any]:
     """Rows as `StockAskResponse`: the contact, customer and product NAMED, never their ids.
     `with_agent` also names the customer's sales agent (`agent_code`), for the CRM manager view."""
@@ -504,6 +529,12 @@ def serialize(db: Session, rows: list[Any], *, with_agent: bool = False) -> list
         if product_ids
         else {}
     )
+    # ASKS-UX item 4 (owner, 30 Sep 2026, option a): an ask written against NO customer (its
+    # contact links to several ledgers and no primary was chosen, `resolve_customer`) is named
+    # after the TRADING NAME those ledgers share, so the card reads "HANLIM TRADING SDN BHD"
+    # rather than the contact. Links to two different shops name nothing (the card falls back
+    # to the contact). The family rule is the chatbot's, not a second one.
+    family_names = _family_names_by_contact(db, {r.contact_id for r in rows if r.contact_id and not r.customer_id})
     done_user_ids = {r.done_by_user_id for r in rows if r.done_by_user_id}
     done_contact_ids = {r.done_by_contact_id for r in rows if r.done_by_contact_id} - set(contacts)
     from app.models.user import User
@@ -541,7 +572,7 @@ def serialize(db: Session, rows: list[Any], *, with_agent: bool = False) -> list
     return [
         StockAskResponse(
             id=str(r.id),
-            customer_name=customers.get(r.customer_id),
+            customer_name=customers.get(r.customer_id) if r.customer_id else family_names.get(r.contact_id),
             contact_name=contacts.get(r.contact_id),
             contact_phone=getattr(contact_rows.get(r.contact_id), "phone_number", None),
             product_code=r.product_code,

@@ -1,6 +1,6 @@
 # PLAN: Customer asks view fixes (lane ASKS-UX)
 
-Status: items 1 to 3 built and green 30 Sep 2026 (pytest 45 on the three ask suites, vitest on the touched suites), PR #1385, awaiting review, hand test and the owner's item 4 ruling (crew-ask on the PR). Track: small fix (no migration, no auth or RBAC change, no new
+Status: items 1 to 4 built and green 30 Sep 2026 (item 4 = option a, owner ruling) (pytest 45 on the three ask suites, vitest on the touched suites), PR #1385, hand test PASSED, awaiting CI and merge. Track: small fix (no migration, no auth or RBAC change, no new
 external ingest surface; two new read routes per mount under the EXISTING ask gate, one new key on
 an existing response). Items 1 to 3 build now; item 4 is a scout (section 5), owner decides.
 Plan created: 2026-09-30
@@ -141,6 +141,13 @@ the CRM).
 
 Sending from the ask panel; media proxy on the portal; removing `messages` from `/conversation`.
 
-## 5. Item 4 scout: customer shown on the card, and grouping the six Hanlim customers
+## 5. Item 4: customer shown on the card, and grouping the six Hanlim customers
 
-Reported separately in the PR (`crew-ask`), with file:line evidence. Not built in this lane.
+Scouted and reported on PR #1385 (crew-ask, file:line evidence). Owner ruling 30 Sep 2026:
+option (a), the derived trading-name label. Built in `stock_ask_service._family_names_by_contact`
+(read by `serialize`): an ask written against no customer whose contact's links are all ledgers
+of one shop (`ledger_family_key`, the chatbot's rule) is named by `ledger_family_label`
+("HANLIM TRADING SDN BHD"); links to two shops keep the contact fallback; an ask written against
+a customer is untouched. No schema, no UI. Tests: `tests/test_stock_ask_family_label.py`.
+Hand test of items 1 to 3 PASSED on 10ec2f86 (owner: "#1385 UIX is okay"). The thread exposure
+question (section 3b) stays as built pending the owner's answer.
