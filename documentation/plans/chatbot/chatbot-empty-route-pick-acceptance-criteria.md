@@ -19,9 +19,14 @@ when nothing was asked changes nothing.
   `test_owner_turn_inside_the_open_list_asks_which_customer`.
 - AC-2 With an open question the declared answer is untouched.
   Test: `test_an_open_question_keeps_the_answer`.
-- AC-3 While the ideation media menu is outstanding (`ideation.pending_media`),
-  `reference_positions` stay (the ideate lane reads them); only the declared answer goes.
-  Test: `test_the_ideation_media_menu_keeps_the_positions`.
+- AC-3 Two questions are answered by a position without being an `Open question:` object:
+  the ideation media menu (`ideation.pending_media`, read by `lanes/ideate.py`) and the top
+  selling questions ("How many?", "By quantity or by amount?", "Customer or sales agent?",
+  `focus.top_selling.asked`, read by `turn/apply.py`). While one is outstanding
+  `reference_positions` stay; only the declared answer goes.
+  Test: `test_a_question_answered_by_a_position_elsewhere_keeps_the_positions`,
+  `test_positions_read_elsewhere_names_the_two_questions`,
+  `test_the_first_one_answers_the_top_selling_who_question`.
 - AC-4 Inside an open order list (R6), when the routing picker's question is taken out, its
   header, its numbered rows, its close line, the escalate offer sentence and the
   multi-company group lines all leave the text; no blank line stands where they were, and

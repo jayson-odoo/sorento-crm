@@ -206,7 +206,12 @@ def list_reply(answer: Any, *, was_open: bool, fetch_plan: Any, envelopes: list[
         elif (question.payload or {}).get("escalate_offered") is True:
             question = replace(question, payload={**question.payload, "escalate_offered": False})
     if dropped_options is not None:
-        text = _without_picker(text, dropped_options)
+        companies = [
+            str(row.get("company_name"))
+            for row in ((answer.question.payload or {}).get("roster_plan") or [])
+            if isinstance(row, dict) and row.get("company_name")
+        ]
+        text = _without_picker(text, dropped_options, companies=companies)
     envelope = envelopes[0]
     if envelope_missed(envelope) and not envelope.get("denied"):
         text = _one_line_miss(text)
@@ -220,9 +225,10 @@ def list_reply(answer: Any, *, was_open: bool, fetch_plan: Any, envelopes: list[
 #: at the end of a line or alone on it.
 _OFFER_SENTENCE = re.compile(r"\s*Would you like me to escalate to .+? team\?\s*$")
 #: The multi-company picker's own lines (`tail/member_offer.build_cs_member_offer`,
-#: `tail/reply_ladder`): a `*Company:*` group header, a "[ Company: no customer-service
-#: members are configured ... omitted. ]" note, and a row's "(Company / Company)" tail.
-_GROUP_HEADER = re.compile(r"^\*[^*]+:\*$")
+#: `tail/reply_ladder`): a "[ Company: no customer-service members are configured ...
+#: omitted. ]" note and a row's "(Company / Company)" tail. Its `*Company:*` group header
+#: is matched by the company names the dropped question's `roster_plan` carries, never by
+#: shape: a field whose value is empty renders as `*Label:*` too (`lanes/business/fetch.py`).
 _NO_MEMBERS_NOTE = re.compile(r"^\[ .+ omitted\.? \]$")
 _COMPANIES_TAIL = re.compile(r"\s*\([^()]*\)$")
 
@@ -245,7 +251,7 @@ def _picker_frame_lines() -> tuple[frozenset[str], tuple[str, ...]]:
     )
 
 
-def _without_picker(text: str, options: list[dict[str, Any]]) -> str:
+def _without_picker(text: str, options: list[dict[str, Any]], *, companies: list[str] = ()) -> str:
     """`text` without the routing picker whose question was taken out: its numbered rows,
     its header and close, and the escalate offer sentence the picker hangs off.
 
@@ -261,21 +267,32 @@ def _without_picker(text: str, options: list[dict[str, Any]]) -> str:
         if jsc.js_string(o.get("label") or "").strip()
     }
     whole, prefixes = _picker_frame_lines()
+    group_headers = {f"*{name}:*" for name in companies} | ({"*Other:*"} if companies else set())
     kept: list[str] = []
+    removed = False  # was the line before this one taken out (a blank next to it goes too)
     for line in (text or "").splitlines():
         bare = line.strip()
-        if bare in whole or bare.startswith(prefixes):
-            continue
-        if options and (_GROUP_HEADER.match(bare) or _NO_MEMBERS_NOTE.match(bare)):
-            # The multi-company picker's `*Company:*` group headers and its "[ X: no
-            # customer-service members are configured ... omitted. ]" notes.
-            continue
         m = re.match(r"^\s*(\d+)[.)]\s*(.+?)\s*$", line)
-        if m and ((m.group(1), m.group(2)) in labels or (m.group(1), _without_companies(m.group(2))) in labels):
+        if (
+            bare in whole
+            or bare.startswith(prefixes)
+            or bare in group_headers
+            or (options and _NO_MEMBERS_NOTE.match(bare))
+            or (m and ((m.group(1), m.group(2)) in labels or (m.group(1), _without_companies(m.group(2))) in labels))
+        ):
+            removed = True
             continue
-        line = _OFFER_SENTENCE.sub("", line)
-        if line.strip() or (kept and kept[-1].strip()):
-            kept.append(line.rstrip())
+        stripped = _OFFER_SENTENCE.sub("", line)
+        if stripped != line:
+            removed = True
+            if not stripped.strip():
+                continue
+            line = stripped
+        if not line.strip() and (removed or not kept or not kept[-1].strip()):
+            # A blank beside a removed line, a blank on top, or a second blank in a row.
+            continue
+        removed = False
+        kept.append(line.rstrip())
     while kept and not kept[-1].strip():
         kept.pop()
     return "\n".join(kept)

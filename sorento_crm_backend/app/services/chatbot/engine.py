@@ -1748,6 +1748,15 @@ def _as_ranking_answer(verdict: dict[str, Any], **keys: Any) -> dict[str, Any]:
 
 _NO_OPEN_QUESTION_ANSWER = turn_question.NO_ANSWER
 
+
+def _positions_read_elsewhere(state: Any) -> bool:
+    """Is a question that is NOT an `Open question:` object still waiting on a position
+    (`turn_question.without_phantom_answer`): the ideation media menu, or one of the top
+    selling questions the last reply asked (`focus.top_selling.asked`)."""
+    ideation = state.ideation if isinstance(state.ideation, dict) else {}
+    asked = (state.focus.top_selling or {}).get("asked") if isinstance(state.focus.top_selling, dict) else None
+    return bool(ideation.get("pending_media")) or bool(asked)
+
 #: Ranking words (PR #1273 round 7: "top 10 hot selling item by william in q1 2026" was
 #: read as an order ask and fell into "Could not find order"). A rank word, an optional
 #: count and up to two more words, then a selling word: "top 10 hot selling", "worst 20
@@ -3371,9 +3380,7 @@ def _run_stages(  # noqa: PLR0915
         verdict, phantom_answer = turn_question.without_phantom_answer(
             verdict,
             open_question=open_question,
-            media_menu_open=bool((state_in.ideation or {}).get("pending_media"))
-            if isinstance(state_in.ideation, dict)
-            else False,
+            positions_read_elsewhere=_positions_read_elsewhere(state_in),
         )
     except parser.ParserError as exc:
         # R5 / H44: no soft default and no default routing. A failed understanding is a

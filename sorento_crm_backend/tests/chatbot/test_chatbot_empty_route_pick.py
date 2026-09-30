@@ -43,6 +43,7 @@ from tests.chatbot.test_samantha_27sep_r7_owner_replay import (  # noqa: F401 - 
     _header,
     owner_chat,
 )
+from tests.chatbot.test_top_selling_round5 import cat, route  # noqa: F401 - fixtures
 
 PICKER_HEADER = "Please choose who to route to (reply with the number):"
 PICKER_CLOSE = "If you have no preference, just reply 'yes' and we'll assign automatically."
@@ -73,7 +74,7 @@ def _zhin_heng_ask(**extra: Any) -> dict[str, Any]:
 class TestPhantomAnswerIsDropped:
     def test_no_open_question_drops_the_pick_and_the_positions(self) -> None:
         verdict = _parser_output(open_question_answer=dict(PHANTOM_PICK), reference_positions=[1])
-        out, dropped = question_mod.without_phantom_answer(verdict, open_question=None, media_menu_open=False)
+        out, dropped = question_mod.without_phantom_answer(verdict, open_question=None, positions_read_elsewhere=False)
         assert dropped is True
         assert out["open_question_answer"] == question_mod.NO_ANSWER
         assert out["reference_positions"] == []
@@ -84,25 +85,52 @@ class TestPhantomAnswerIsDropped:
     def test_an_open_question_keeps_the_answer(self) -> None:
         verdict = _parser_output(open_question_answer=dict(PHANTOM_PICK), reference_positions=[1])
         question = {"kind": "pick_one", "options": [{"position": 1, "code": "A"}], "owed": ["pick"]}
-        out, dropped = question_mod.without_phantom_answer(verdict, open_question=question, media_menu_open=False)
+        out, dropped = question_mod.without_phantom_answer(verdict, open_question=question, positions_read_elsewhere=False)
         assert dropped is False
         assert out is verdict
 
     def test_a_null_answer_with_no_question_is_left_alone(self) -> None:
         verdict = _parser_output(open_question_answer=dict(question_mod.NO_ANSWER), reference_positions=[])
-        out, dropped = question_mod.without_phantom_answer(verdict, open_question=None, media_menu_open=False)
+        out, dropped = question_mod.without_phantom_answer(verdict, open_question=None, positions_read_elsewhere=False)
         assert dropped is False
         assert out is verdict
 
-    def test_the_ideation_media_menu_keeps_the_positions(self) -> None:
-        """`lanes/ideate.py::build_reply` reads `reference_positions` as the media
-        selection while `ideation.pending_media` is outstanding, and that menu is not an
+    def test_a_question_answered_by_a_position_elsewhere_keeps_the_positions(self) -> None:
+        """`lanes/ideate.py::build_arguments` reads `reference_positions` as the media
+        selection while `ideation.pending_media` is outstanding, and `turn/apply.py`'s
+        top selling rules read them while `focus.top_selling.asked` is set; neither is an
         `Open question:` object - the positions stay, only the declared answer goes."""
         verdict = _parser_output(open_question_answer=dict(PHANTOM_PICK), reference_positions=[1, 3])
-        out, dropped = question_mod.without_phantom_answer(verdict, open_question=None, media_menu_open=True)
+        out, dropped = question_mod.without_phantom_answer(verdict, open_question=None, positions_read_elsewhere=True)
         assert dropped is True
         assert out["open_question_answer"] == question_mod.NO_ANSWER
         assert out["reference_positions"] == [1, 3]
+
+    def test_positions_read_elsewhere_names_the_two_questions(self) -> None:
+        from app.services.chatbot.engine import _positions_read_elsewhere
+        from app.services.chatbot.turn.state import Focus, State
+
+        assert _positions_read_elsewhere(State(focus=Focus())) is False
+        assert _positions_read_elsewhere(State(focus=Focus(), ideation={"pending_media": [{"id": "m1"}]})) is True
+        assert _positions_read_elsewhere(State(focus=Focus(top_selling={"asked": "who"}))) is True
+        assert _positions_read_elsewhere(State(focus=Focus(top_selling={"rank_by": "amount"}))) is False
+
+
+def test_the_first_one_answers_the_top_selling_who_question(session_factory, monkeypatch, cat) -> None:
+    """Reviewer B1 on this lane: "the first one" under "Do you mean customer SAMPLE -
+    FANNY NG or sales agent ...? Reply 1 for the customer, 2 for the sales agent." arrives
+    as `reference_positions: [1]` (and, on a newer prompt, as a declared pick). That
+    question is `focus.top_selling.asked`, not an `Open question:` object, so the drop
+    must leave the positions to `turn/apply.py`'s `top_selling_who_is_the_customer`."""
+    from tests.chatbot.test_top_selling_round5 import _asked_who, _calls, _position, _turn
+
+    _asked_who(session_factory, monkeypatch)
+    text, captured = _turn(
+        session_factory, monkeypatch, _position(1, open_question_answer=dict(PHANTOM_PICK)), "the first one"
+    )
+    (args,) = _calls(captured)
+    assert args["customer_ids"] == [cat.customers["SAMPLE - FANNY NG"]], (text, args)
+    assert "sales_agent_ids" not in args, args
 
 
 # --------------------------------------------------------------------------- #
@@ -196,12 +224,64 @@ class TestListReplyDropsTheWholePicker:
         out = self._reply(text, [{"position": 1, "label": "Maryam Ariffin", "entity_type": "member"}])
         assert out.text == f"Customer: Zhin heng / Product: all products\n{EMPTY_LIST_LINE}", out.text
 
+    def test_a_group_header_that_is_a_data_field_stays(self) -> None:
+        """`lanes/business/fetch.py` renders a field as `*Label:* value`, and an empty
+        value leaves exactly `*Label:*` - only the dropped question's own company group
+        headers go (reviewer N3)."""
+        text = (
+            "Customer: Zhin heng / Product: all products\n"
+            "*Remarks:*\n\n"
+            "Here's what you want: delivery orders for Zhin heng\n\n"
+            "But no order matched these. Would you like me to escalate to customer service team?\n\n"
+            f"{PICKER_HEADER}\n*Sorento:*\n1. Maryam Ariffin\n*Mocha:*\n2. Ah Chong\n\n{PICKER_CLOSE}"
+        )
+        question = pending_mod.ask(
+            "member_offer",
+            [{"position": 1, "label": "Maryam Ariffin"}, {"position": 2, "label": "Ah Chong"}],
+            team="customer_service", asked_at_turn=1,
+            payload={"roster_plan": [{"company_name": "Sorento"}, {"company_name": "Mocha"}]},
+        )
+        answer = Answer(text=text, question=question)
+        out = order_list.list_reply(
+            answer, was_open=True, fetch_plan=_Plan(), envelopes=[{"has_result": False}], order_status="delivered"
+        )
+        assert out.text == f"Customer: Zhin heng / Product: all products\n*Remarks:*\n{EMPTY_LIST_LINE}", out.text
+
     def test_a_first_ask_is_untouched(self) -> None:
         answer = Answer(text=OWNER_MISS_TEXT, question=_member_offer([{"position": 1, "label": "Maryam Ariffin"}]))
         out = order_list.list_reply(
             answer, was_open=False, fetch_plan=_Plan(), envelopes=[{"has_result": False}], order_status="delivered"
         )
         assert out is answer
+
+
+class TestNoPickerWithZeroRows:
+    """AC-5: `answer_bridge._miss_company_picker` never prints the frame over nothing."""
+
+    def _picker(self, monkeypatch, *, rows_become_options: bool):
+        from app.services.chatbot import answer_bridge
+        from app.services.chatbot.tail import member_offer as member_mod
+
+        monkeypatch.setattr(
+            member_mod, "fetch_rosters",
+            lambda db, plan, ctx: [{"body": [{"user_id": "u1", "respond_user_id": "ru1", "name": "Maryam Ariffin"}]}],
+        )
+        if not rows_become_options:
+            monkeypatch.setattr(answer_bridge, "member_option", lambda row, position: None)
+        return answer_bridge._miss_company_picker(
+            "Customer: Zhin heng", "Would you like me to escalate to *Sorento* customer service team?",
+            company={"id": "c1", "name": "Sorento"},
+            routing={"suggested_team": "customer_service", "suggested_agent": "order_enquiries"},
+            db=object(), ctx={}, asked_at_turn=1, brand=None,
+        )
+
+    def test_a_roster_with_rows_prints_them(self, monkeypatch) -> None:
+        text, question = self._picker(monkeypatch, rows_become_options=True)
+        assert f"{PICKER_HEADER}\n1. Maryam Ariffin\n\n{PICKER_CLOSE}" in text, text
+        assert question.kind == "member_offer" and len(question.options) == 1
+
+    def test_no_option_means_no_picker(self, monkeypatch) -> None:
+        assert self._picker(monkeypatch, rows_become_options=False) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -353,7 +433,9 @@ def test_owner_turn_as_a_first_ask_answers_the_ask_not_the_pick(owner_chat, one_
     derived = (_understood(_trace_of(chat)).get("raw") or {}).get("derived") or {}
     assert derived.get("open_question_answer") == question_mod.NO_ANSWER, derived
     assert derived.get("reference_positions") == [], derived
-    # A picker that renders has rows: never the header over nothing.
-    if PICKER_HEADER in reply:
-        after = reply.split(PICKER_HEADER, 1)[1]
-        assert after.lstrip().startswith("1. "), reply
+    # AC-7: a first ask keeps its escalate offer and its picker, rows and all.
+    assert reply == (
+        'Couldn\'t find: "Zhin heng" (customer). Would you like me to escalate to customer service team?\n\n'
+        f"{PICKER_HEADER}\n1. Maryam Ariffin\n\n{PICKER_CLOSE}"
+    ), reply
+    assert (_open_question(chat) or {}).get("kind") == "member_offer", _open_question(chat)

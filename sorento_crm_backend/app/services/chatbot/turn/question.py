@@ -112,7 +112,7 @@ POSITIONS_KEY = "reference_positions"
 
 
 def without_phantom_answer(
-    verdict: dict[str, Any], *, open_question: dict[str, Any] | None, media_menu_open: bool
+    verdict: dict[str, Any], *, open_question: dict[str, Any] | None, positions_read_elsewhere: bool
 ) -> tuple[dict[str, Any], bool]:
     """The verdict with a declared answer to a question that was never asked taken out.
 
@@ -127,18 +127,22 @@ def without_phantom_answer(
     `reference_positions` suppresses "Which customer do you mean?") and the stock and
     top-selling position readers do not all share that guard.
 
-    `media_menu_open`: the ideation lane's media menu (`ideation.pending_media`, read by
-    `lanes/ideate.py::build_reply` as `reference_positions`) is not an `Open question:`
-    object, so while it is outstanding the positions stay and only the declared answer
-    goes. Returns `(verdict, dropped)`; the same object, untouched, when there is nothing
-    to drop.
+    `positions_read_elsewhere`: two questions are not `Open question:` objects yet are
+    answered by a position - the ideation lane's media menu (`ideation.pending_media`,
+    read by `lanes/ideate.py::build_arguments` as `reference_positions`) and the top
+    selling questions ("How many?", "By quantity or by amount?", "Customer or sales
+    agent?", `focus.top_selling.asked`, read by `turn/apply.py::record_top_selling_asked`
+    and its `top_selling_position_is_*` rules, so "the first one" answers them). While
+    one of those is outstanding the positions stay and only the declared answer goes.
+    Returns `(verdict, dropped)`; the same object, untouched, when there is nothing to
+    drop.
     """
     if open_question is not None:
         return verdict, False
     answer = verdict.get(ANSWER_KEY)
     declared = isinstance(answer, dict) and answer.get("mode") is not None
     raw = verdict.get(POSITIONS_KEY)
-    positions = bool(raw) and isinstance(raw, list) and not media_menu_open
+    positions = bool(raw) and isinstance(raw, list) and not positions_read_elsewhere
     if not declared and not positions:
         return verdict, False
     out = dict(verdict)
