@@ -157,7 +157,7 @@ def contact_phone(db: Session, contact_respond_id: str) -> str | None:
 
 _PROFILE_COLUMNS = (
     "c.chatbot_profile, c.chatbot_stock_allowed, "
-    "c.notify_salesman, c.packing_list_allowed "
+    "c.notify_salesman, c.packing_list_allowed, c.id "
     "FROM respond_contacts c"
 )
 
@@ -461,6 +461,7 @@ def load_profile(
             stock_availability_only=_stock_availability_only(
                 db, contact_respond_id, space_id
             ),
+            **_escalation_facts(db, row[4] if len(row) > 4 else None),
         ),
         False,
     )
@@ -639,6 +640,28 @@ def order_brand_filter(
         jsc.nullish_str(live[b].get("brand_name") or live[b].get("brand_code")).strip() for b in ids
     ]
     return ids, [n for n in names if n]
+
+
+def _escalation_facts(db: Session, contact_pk: Any) -> dict[str, Any]:
+    """ESCALATION-CONTROL: `escalation_allowed` and, when barred, the salesperson the
+    contact is referred to instead. A read that fails keeps today's behaviour (allowed),
+    the same fail-open reading `_stock_availability_only` takes."""
+    if not contact_pk:
+        return {}
+    try:
+        from app.services.escalation_policy import resolve
+        from app.services.chatbot.turn import profile_facts
+
+        with db.begin_nested():
+            policy = resolve(db, str(contact_pk))
+            if policy.allowed:
+                return {"escalation_allowed": True}
+            row = profile_facts.primary_customer(db, str(contact_pk))
+    except Exception:  # noqa: BLE001 - a policy read is a profile fact, not the turn
+        logger.warning("chatbot: escalation policy unreadable for %s", contact_pk)
+        return {}
+    salesperson = profile_facts.salesperson_name(row[1]) if row is not None else None
+    return {"escalation_allowed": False, "salesperson": salesperson}
 
 
 def _stock_availability_only(db: Session, contact_respond_id: str, space_id: str | None) -> bool:

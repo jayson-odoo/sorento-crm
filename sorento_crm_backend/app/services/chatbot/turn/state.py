@@ -189,6 +189,26 @@ class Profile:
     # rest of the profile so the stock ask can refer them to their salesman instead of
     # offering a team. Default OFF: an unresolved contact keeps today's behaviour.
     stock_availability_only: bool = False
+    # ESCALATION-CONTROL (owner, 30 Sep 2026): may this contact be offered, or force, a
+    # hand-off to customer service (`app/services/escalation_policy.resolve`: the
+    # contact's override, else its access types; "Sorento Dealer" is seeded barred).
+    # Default ON: an unresolved contact keeps today's behaviour.
+    escalation_allowed: bool = True
+    # The salesperson a barred contact is referred to instead (`profile_facts.
+    # salesperson_name` off the primary customer), read only when escalation is barred.
+    salesperson: str | None = None
+
+
+def offers_escalation(profile: "Profile | None") -> bool:
+    """The ONE check every bot-initiated escalation offer site reads: no offer to staff
+    (`is_staff_profile`, #1262 slice 11) and none to a contact whose escalation is
+    barred (ESCALATION-CONTROL). A missing profile offers, as before."""
+    return not is_staff_profile(profile) and not escalation_barred(profile)
+
+
+def escalation_barred(profile: "Profile | None") -> bool:
+    """ESCALATION-CONTROL: this contact may not be offered, nor force, a hand-off."""
+    return getattr(profile, "escalation_allowed", True) is False
 
 
 def is_staff_profile(profile: "Profile | None") -> bool:

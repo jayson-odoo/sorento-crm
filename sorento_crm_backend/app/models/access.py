@@ -77,6 +77,11 @@ class ContactAccessType(Base):
     # ContactAccessTypeService.enforce_access_levels_for_contact to resolve free-text
     # AI / user phrasing against the canonical code.
     keywords = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # ESCALATION-CONTROL (owner, 30 Sep 2026): may a contact holding this type be offered,
+    # or force, a hand-off to customer service. Seeded false for "Sorento Dealer" (their
+    # contact point is the salesperson). A contact's own `respond_contacts.
+    # escalation_allowed` overrides it; `app/services/escalation_policy.py` resolves both.
+    escalation_allowed = Column(Boolean, nullable=False, server_default=text("true"), default=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -281,6 +286,9 @@ class RespondContact(Base):
     # stock ask and the incoming routes, `app/services/eta_policy.py`). Default ON: the
     # stock ask padded the ETA for everyone before the switch existed.
     chatbot_eta_offset_applied = Column(Boolean, nullable=False, server_default=text("true"), default=True)
+    # ESCALATION-CONTROL: the contact's own override of its access types'
+    # `escalation_allowed`. NULL = inherit (`app/services/escalation_policy.py`).
+    escalation_allowed = Column(Boolean, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)
