@@ -1205,3 +1205,27 @@ def test_complete_result_splits_its_send_actions_too() -> None:
     action = {"kind": "send_message", "text": "(1/2)\na\n\n(2/2)\nb", "quick_replies": None, "result_set": None}
     out = CompleteResult(turn_id="t", actions=[action]).as_dict()["actions"]
     assert [a["text"] for a in out] == ["(1/2)\na", "(2/2)\nb"]
+
+
+class TestConsoleShowsTheParts:
+    """The console shows what the customer gets: a split reply is one bubble PER PART,
+    in order, never the whole text once (TOP-N-UNCAP, 30 Sep 2026)."""
+
+    def test_a_split_reply_is_one_bubble_per_part(self) -> None:
+        from app.services.chatbot.console_service import _customer_texts
+
+        whole = "note\n\n(1/2)\n*Top*\n1. A\n\n(2/2)\n2. B\nReply."
+        body = {
+            "reply": {"text": whole},
+            "actions": [
+                {"kind": "send_message", "text": "note\n\n(1/2)\n*Top*\n1. A"},
+                {"kind": "send_message", "text": "(2/2)\n2. B\nReply."},
+            ],
+        }
+        assert _customer_texts(body) == ("note\n\n(1/2)\n*Top*\n1. A", ["(2/2)\n2. B\nReply."])
+
+    def test_an_unsplit_reply_is_unchanged(self) -> None:
+        from app.services.chatbot.console_service import _customer_texts
+
+        body = {"reply": {"text": "one"}, "actions": [{"kind": "send_message", "text": "one"}, {"kind": "send_message", "text": "two"}]}
+        assert _customer_texts(body) == ("one", ["two"])
