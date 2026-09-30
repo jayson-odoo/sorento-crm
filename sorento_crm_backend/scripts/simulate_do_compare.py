@@ -14,7 +14,8 @@ no network. The owner's workbooks are passed by path and never copied into the r
 `Details[]`), e.g. exported from a local ss `ac_pull_snapshot_row.payload_json`.
 `--sheet` picks the workbook sheet the way the browser would: `template` reproduces the
 pre-fix browser rule (any `.xlsm` -> sheet `Template`), `master` reads sheet `Master`,
-`auto` uses the browser's current rule (`resolveCompareSheetName` in lib/excel-utils.ts).
+`auto` reads the sheet the default compare mapping names (`DEFAULT_MAPPINGS`), which is what
+the browser does with the seeded mapping (`resolveNamedSheet` in lib/excel-utils.ts).
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.services.autocount_compare_mapping import DEFAULT_MAPPINGS  # noqa: E402
 from app.services.autocount_pull_compare import (  # noqa: E402
     compare_delivery_order_headers,
     compare_delivery_orders,
@@ -92,11 +94,15 @@ def pick_sheet(path: str, mode: str, source: str) -> str:
         return "Template"
     if mode == "master":
         return "Master"
-    # auto: the browser's DO compare rule - sheet Master by name, case-insensitive.
+    # auto: the configured sheet by name, case-insensitive (the seeded default mapping).
+    wanted = DEFAULT_MAPPINGS[_KIND[source]]["sheet_name"]
     for n in names:
-        if n.lower() == "master":
+        if n.lower() == wanted.lower():
             return n
-    return names[0]
+    raise SystemExit(f"Sheet '{wanted}' not found (found sheets: {', '.join(names)}).")
+
+
+_KIND = {"lines": "order_listing", "headers": "order_tracking"}
 
 
 def _doc_shape(doc_no: str) -> str:
@@ -183,9 +189,10 @@ def main() -> None:
             print(f"\n[{source}] PARSE ERROR: {exc}")
             continue
         rows = sheet_rows(path, sheet)
-        kept, ignored = window_excel_rows(rows, args.from_day, args.to_day)
+        mapping = DEFAULT_MAPPINGS[_KIND[source]]
+        kept, ignored = window_excel_rows(rows, args.from_day, args.to_day, mapping)
         fn = compare_delivery_order_headers if source == "headers" else compare_delivery_orders
-        result = fn(kept, ac)
+        result = fn(kept, ac, mapping)
         s = result["summary"]
         print(f"\n[{source}] sheet {sheet!r}: {len(rows)} rows, {len(kept)} in window, {ignored} ignored")
         print(f"  {s['matched']} of {s['total']} match. {s['different']} differ "

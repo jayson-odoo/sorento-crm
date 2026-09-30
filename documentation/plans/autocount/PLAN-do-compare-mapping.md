@@ -34,6 +34,17 @@ file: `sheet_to_json` names the line total `Total_1`, the document total `Total`
 202609-0076), and omits the blank `Total (Ex)` cell. The 30 are
 lines of cancelled DOs (AutoCount `Cancelled=T`), which the Order Listing excludes.
 
+After the fix (default mapping, same data, `scripts/simulate_do_compare.py`):
+
+| 01-03 Sep | match | differ | only Excel | only AutoCount |
+|---|---|---|---|---|
+| lines, mapping `order_listing` (sheet Master) | 3,362 of 3,362 | 0 | 0 | 0 |
+| headers, mapping `order_tracking` (sheet Master) | 1,136 of 1,150 | 14 | 49 | 0 |
+
+Remaining header rows, reported as-is (Q8): 13 `cancel` (sheet F, AutoCount T), 1
+`debtor_code` (202609-0021: 300-W021 vs 300-W028), 49 numbers absent from the db1 snapshot
+(RMA-SRT 22, CG- 11, RF 7, RMA-PS 4, MKTPT 2, RMA-CG 2, HQ/IV 1).
+
 ## 2. Design
 
 Owner: "I need the mapping to be configurable." One table, one row per workbook kind.
