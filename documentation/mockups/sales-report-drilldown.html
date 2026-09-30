@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sales report drill-down mock</title>
+<style>
+  :root { --bg: #e5ddd5; --in: #ffffff; --out: #dcf8c6; --ink: #111; --muted: #667; --note: #fff4cc; }
+  body { margin: 0; background: #f2f2f2; font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--ink); }
+  header { padding: 16px 20px; background: #075e54; color: #fff; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header p { margin: 4px 0 0; font-size: 13px; opacity: .9; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  section { margin: 0 0 28px; }
+  h2 { font-size: 15px; margin: 0 0 8px; color: #075e54; }
+  .chat { background: var(--bg); border-radius: 10px; padding: 12px; }
+  .msg { max-width: 88%; margin: 6px 0; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; font-size: 14px; line-height: 1.35; box-shadow: 0 1px 0 rgba(0,0,0,.08); }
+  .out { background: var(--out); margin-left: auto; }
+  .in { background: var(--in); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+  .note { background: var(--note); border-left: 4px solid #e0b100; padding: 8px 10px; font-size: 13px; margin: 8px 0 0; border-radius: 4px; }
+  .q { font-weight: 600; }
+  footer { max-width: 760px; margin: 0 auto 32px; padding: 0 16px; font-size: 12px; color: var(--muted); }
+  .num { color: #0a6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sales report on WhatsApp: default reply and drill-downs</h1>
+  <p>Mock for alignment (PR #1401). Contact: Jayson, linked to six HANLIM TRADING accounts. Copy-DB 2026 facts used: A/C I 164 SOs, A/C III 64, A/C IV 32, A/C II none. Amounts and the split by product are illustrative.</p>
+</header>
+<main>
+
+<section>
+  <h2>1. Default reply: "what's my sales this month"</h2>
+  <div class="chat">
+    <div class="msg out">what's my sales this month</div>
+    <div class="msg in">Customer: HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
+Product: all
+Channel: all
+Location: all
+Delivery date: 01/09/2026 to 30/09/2026
+
+Total: 1,240 qty, RM 84,320.50
+Sep 2026: 1,240 qty, RM 84,320.50
+
+Drill down:
+1. By customer
+2. By product
+3. Delivery orders</div>
+  </div>
+  <p class="note"><span class="q">Question for the owner.</span> The third option: the crew message said "By month detail". This mock reads it as the delivery order list for the period (the DO documents behind the figures). Say if it should be something else. An option is offered only when it has more than one group (one account linked: no "By customer"; one product: no "By product"; one DO: still offered, it is a list).</p>
+</section>
+
+<section>
+  <h2>2. Pick "1" (By customer): rows are numbered so the next pick drills into one account</h2>
+  <div class="chat">
+    <div class="msg out">1</div>
+    <div class="msg in">By customer, delivery date 01/09/2026 to 30/09/2026
+1. HANLIM TRADING SDN BHD [A/C I]: 820 qty, RM 55,900.00
+2. HANLIM TRADING SDN BHD [A/C III]: 300 qty, RM 20,120.50
+3. HANLIM TRADING SDN BHD [A/C IV]: 120 qty, RM 8,300.00
+Total: 1,240 qty, RM 84,320.50
+
+Reply a number to drill into that account, or:
+4. By product
+5. Delivery orders</div>
+  </div>
+  <p class="note">Accounts with nothing delivered in the window are not listed (A/C II, the plain account, CERAMIC &amp; ELLECI). "By customer" is consumed: the remaining options are the other axes, numbered after the rows so every number on screen means one thing.</p>
+</section>
+
+<section>
+  <h2>3. Two-step drill: pick "1" (A/C I), then "By product" inside it</h2>
+  <div class="chat">
+    <div class="msg out">1</div>
+    <div class="msg in">HANLIM TRADING SDN BHD [A/C I], delivery date 01/09/2026 to 30/09/2026
+Total: 820 qty, RM 55,900.00
+Sep 2026: 820 qty, RM 55,900.00
+
+Drill down:
+1. By product
+2. Delivery orders</div>
+    <div class="msg out">1</div>
+    <div class="msg in">HANLIM TRADING SDN BHD [A/C I], by product, delivery date 01/09/2026 to 30/09/2026
+1. SRTWT7445: 300 qty, RM 20,100.00
+2. SRTKT39SS: 180 qty, RM 15,300.00
+3. SRTWC286-SH: 140 qty, RM 9,800.00
+4. SRTBT1010: 200 qty, RM 10,700.00
+Total: 820 qty, RM 55,900.00
+
+Reply a number to drill into that product, or:
+5. Delivery orders</div>
+    <div class="msg out">5</div>
+    <div class="msg in">Delivery orders, HANLIM TRADING SDN BHD [A/C I], 01/09/2026 to 30/09/2026
+1. DO-2026-09-0412, 21/09/2026: 120 qty, RM 8,900.00
+2. DO-2026-09-0398, 18/09/2026: 300 qty, RM 20,100.00
+3. DO-2026-09-0371, 12/09/2026: 400 qty, RM 26,900.00
+Total: 820 qty, RM 55,900.00</div>
+  </div>
+  <p class="note">Each pick keeps the period and the scope (the six accounts, then one account, then one product) and re-offers only what is left. The delivery order list is the last rung: nothing below it to drill into. A product pick after "by product" would show that product's total and month lines with "Delivery orders" as the one option left.</p>
+</section>
+
+<section>
+  <h2>4. "this year": months become lines, the same options follow</h2>
+  <div class="chat">
+    <div class="msg out">how's my sales this year?</div>
+    <div class="msg in">Customer: HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
+Product: all
+Channel: all
+Location: all
+Delivery date: 01/01/2026 to 31/12/2026
+
+Total: 6,931 qty, RM 471,300.00
+Sep 2026: 1,240 qty, RM 84,320.50
+Aug 2026: 980 qty, RM 66,150.00
+Jul 2026: 1,105 qty, RM 75,010.00
+Jun 2026: 760 qty, RM 51,400.00
+May 2026: 690 qty, RM 46,900.00
+Apr 2026: 810 qty, RM 55,060.00
+Mar 2026: 540 qty, RM 36,700.00
+Feb 2026: 426 qty, RM 28,960.00
+Jan 2026: 380 qty, RM 26,800.00
+
+Drill down:
+1. By customer
+2. By product
+3. Delivery orders</div>
+    <div class="msg out">2</div>
+    <div class="msg in">By product, delivery date 01/01/2026 to 31/12/2026
+1. SRTWT7445: 2,410 qty, RM 161,470.00
+2. SRTKT39SS: 1,530 qty, RM 130,050.00
+3. SRTWC286-SH: 1,220 qty, RM 85,400.00
+4. SRTBT1010: 1,771 qty, RM 94,380.00
+Total: 6,931 qty, RM 471,300.00
+
+Reply a number to drill into that product, or:
+5. By customer
+6. Delivery orders</div>
+  </div>
+  <p class="note">The year view keeps one line per month by default (the owner's shape); a product list longer than 10 rows prints the top 10 by amount and a line "and N more products; reply 'all products' to list every one" (same cap the header uses today).</p>
+</section>
+
+<section>
+  <h2>5. No sales on the asker's own accounts: a final answer, no escalation</h2>
+  <div class="chat">
+    <div class="msg out">what's my sales this month</div>
+    <div class="msg in">Customer: HANLIM TRADING SDN BHD [A/C II]
+Product: all
+Channel: all
+Location: all
+Delivery date: 01/09/2026 to 30/09/2026
+
+No sales found.</div>
+  </div>
+  <p class="note">Nothing offered, nothing armed, no "would you like me to escalate". (Shown for Mr Loo, linked to A/C II only, which has no 2026 delivery on the copy.)</p>
+</section>
+
+<section>
+  <h2>6. Out-of-range pick: the same question is asked again</h2>
+  <div class="chat">
+    <div class="msg out">9</div>
+    <div class="msg in">Please reply with a number from 1 to 3.
+1. By customer
+2. By product
+3. Delivery orders</div>
+    <div class="msg out">thanks</div>
+    <div class="msg in">You're welcome. The drill-down options above are still open if you want them.</div>
+  </div>
+  <p class="note">An out-of-range number re-asks with the same options (the existing re-ask path). A casual aside carries the open options silently (the standing rule for every open question), so "1" still works on the next message.</p>
+</section>
+
+</main>
+<footer>
+  Header lines and money format are the presenter's own (RM with thousands separators, dates dd/mm/yyyy, months "Sep 2026", latest first). Every number on a screen is a reply option once, never two lists with overlapping numbers.
+</footer>
+</body>
+</html>
