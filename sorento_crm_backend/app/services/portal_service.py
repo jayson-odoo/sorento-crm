@@ -87,10 +87,16 @@ SUPPORTED_TYPES = ("complaint", "stock_inquiry", "purchase_request", "sponsorshi
 # landing kind with no form behind it: the stock asks of the linked sales agent's customers,
 # switched per contact like Price Tag Request and off until an admin turns it on.
 CUSTOMER_ASKS_FORM_TYPE = "customer_asks"
+# `conversation` (lane SALES-CONVO, owner 30 Sep): the WhatsApp threads of the linked sales
+# agent's customers, read-only. Same switch and the same agent rule as `customer_asks`.
+CONVERSATION_FORM_TYPE = "conversation"
+# The kinds only a contact linked to a sales agent can hold, whatever the switch says.
+AGENT_ONLY_FORM_TYPES = (CUSTOMER_ASKS_FORM_TYPE, CONVERSATION_FORM_TYPE)
 GRANTABLE_PORTAL_FORM_TYPES = SUPPORTED_TYPES + (
     "price_tag_request",
     "sales_opportunity",
     CUSTOMER_ASKS_FORM_TYPE,
+    CONVERSATION_FORM_TYPE,
 )
 PORTAL_ATTACHMENT_TYPE_CODE = "portal_submission"
 

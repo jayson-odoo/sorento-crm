@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conversation view (portal mockup)</title>
+<style>
+:root{--bg:#f7f7f8;--card:#fff;--fg:#18181b;--muted:#71717a;--border:#e4e4e7;--muted-bg:#f4f4f5;
+--primary:#1b84ff;--primary-soft:#eef5ff;--primary-border:#b9d6ff;--success:#17c653;--success-soft:#eafff1;--success-border:#a7e9bd;
+--warn:#f6b100;--warn-soft:#fff8dd;--danger:#f8285a;
+--wa-head:#f0f2f5;--wa-bg:#efeae2;--wa-out:#d9fdd3;--wa-in:#fff;--wa-pill:#e1f3fb;--wa-avatar:#059669;--wa-tick:#0ea5e9;
+--note-bg:#fffbeb;--note-border:#fcd34d;--note-fg:#451a03;--note-head:#92400e;
+--radius:8px;--shadow:0 8px 24px rgba(0,0,0,.12)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b0b0d;--card:#141417;--fg:#f4f4f5;--muted:#a1a1aa;--border:#2e2e33;--muted-bg:#18181b;
+--primary-soft:#0f2742;--primary-border:#1e3a5f;--success-soft:#0d2d1a;--success-border:#14532d;--warn-soft:#332600;
+--wa-head:#202c33;--wa-bg:#0b141a;--wa-out:#005c4b;--wa-in:#202c33;--wa-pill:#1d282f;
+--note-bg:#3a2a08;--note-border:#b45309;--note-fg:#fef3c7;--note-head:#fcd34d;--shadow:0 8px 24px rgba(0,0,0,.5)}}
+:root[data-theme="dark"]{--bg:#0b0b0d;--card:#141417;--fg:#f4f4f5;--muted:#a1a1aa;--border:#2e2e33;--muted-bg:#18181b;
+--primary-soft:#0f2742;--primary-border:#1e3a5f;--success-soft:#0d2d1a;--success-border:#14532d;--warn-soft:#332600;
+--wa-head:#202c33;--wa-bg:#0b141a;--wa-out:#005c4b;--wa-in:#202c33;--wa-pill:#1d282f;
+--note-bg:#3a2a08;--note-border:#b45309;--note-fg:#fef3c7;--note-head:#fcd34d;--shadow:0 8px 24px rgba(0,0,0,.5)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.page{max-width:1240px;margin:0 auto;padding:16px}
+.page>h1{font-size:20px;font-weight:600;margin:4px 0 4px}
+.lead{color:var(--muted);margin:0 0 18px;max-width:80ch}
+.frames{display:grid;gap:24px;grid-template-columns:1fr}
+@media(min-width:900px){.frames{grid-template-columns:repeat(2,minmax(0,1fr))}.frames .wide{grid-column:1/-1}}
+.frame{min-width:0}
+.frame>h2{font-size:14px;font-weight:600;margin:0 0 8px}
+.frame>h2 small{font-weight:400;color:var(--muted)}
+.screen{border:1px solid var(--border);border-radius:14px;background:var(--bg);overflow:hidden;box-shadow:var(--shadow)}
+.phone{width:375px;max-width:100%;margin:0 auto}
+.desk{width:100%}
+.wrap{max-width:768px;margin:0 auto;padding:12px}
+.h1{position:relative;font-size:18px;font-weight:600;text-align:center;min-height:44px;display:flex;align-items:center;justify-content:center}
+.logout{position:absolute;right:0;top:50%;transform:translateY(-50%);width:36px;height:36px;border:1px solid var(--border);border-radius:8px;background:var(--card);display:flex;align-items:center;justify-content:center}
+.search{height:48px;border:1px solid var(--border);border-radius:8px;background:var(--card);padding:0 12px;display:flex;align-items:center;gap:8px;color:var(--muted);margin:8px 0 12px;font-size:16px}
+.kindrow{display:flex;gap:8px;margin-bottom:12px}
+.kind{flex:1;height:48px;border:1px solid var(--border);border-radius:8px;background:var(--card);padding:0 12px;display:flex;align-items:center;gap:8px;font-size:16px}
+.kind .chev{margin-left:auto;color:var(--muted)}
+.star{width:48px;height:48px;border:1px solid var(--border);border-radius:8px;background:var(--card);display:flex;align-items:center;justify-content:center;color:#eab308}
+.badge{background:var(--muted-bg);border-radius:6px;padding:0 6px;font-size:12px;line-height:18px}
+.toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.btn{height:32px;border:1px solid var(--border);border-radius:6px;background:var(--card);padding:0 10px;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500;color:var(--fg)}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.ghost{border-color:transparent;background:transparent}
+.toggle{margin-left:auto;display:inline-flex;border:1px solid var(--border);border-radius:8px;background:var(--muted-bg);padding:2px}
+.toggle span{width:34px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:6px;color:var(--muted)}
+.toggle span.on{background:var(--card);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+svg{width:16px;height:16px;flex:none}
+.cards{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.c{position:relative;border:1px solid var(--border);border-radius:8px;background:var(--card);padding:12px 14px}
+.c.attn{background:var(--primary-soft);border-color:var(--primary-border)}
+.c .who{display:flex;align-items:baseline;gap:6px;padding-right:64px}
+.c .who b{font-size:16px}
+.c .who span{font-size:13px;color:var(--muted)}
+.c .when{position:absolute;top:10px;right:12px;font-size:11px;color:var(--muted)}
+.c .phone{font-size:12px;color:var(--muted);margin-top:2px}
+.c .snip{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:13px;color:var(--fg);opacity:.85;min-width:0}
+.c .snip span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.c .snip svg{width:14px;height:14px;color:var(--muted)}
+.c .pill{display:inline-block;margin-top:6px;font-size:10px;font-weight:600;border-radius:999px;padding:2px 7px;background:var(--warn-soft);color:#92400e}
+.empty{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:32px 16px;text-align:center;color:var(--muted);font-size:13px}
+.empty h3{margin:0 0 4px;font-size:14px;font-weight:600;color:var(--fg)}
+/* list view (DataGrid) */
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden;font-size:13px}
+th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0}
+th{font-weight:500;color:var(--muted);background:var(--muted-bg);font-size:12px}
+th .sort{display:inline-flex;align-items:center;gap:3px}
+tr.attn td{background:var(--primary-soft)}
+td.snip svg{width:12px;height:12px;vertical-align:-2px;color:var(--muted);margin-right:4px}
+.count{color:var(--muted);font-size:12px;padding:8px 2px}
+/* drawer */
+.dim{background:rgba(0,0,0,.35);padding:34px 0 0}
+.drawer{background:var(--card);border-radius:14px 14px 0 0;padding:10px 12px 12px;max-height:100%}
+.handle{width:64px;height:5px;border-radius:3px;background:var(--border);margin:0 auto 10px}
+.thread{display:flex;flex-direction:column;position:relative}
+.wa-head{display:flex;align-items:center;gap:10px;background:var(--wa-head);border:1px solid var(--border);border-bottom:0;border-radius:6px 6px 0 0;padding:8px 12px}
+.ava{width:36px;height:36px;border-radius:50%;background:var(--wa-avatar);color:#fff;font-weight:600;display:flex;align-items:center;justify-content:center;font-size:14px}
+.wa-head .n{min-width:0}
+.wa-head .n b{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wa-head .n span{font-size:12px;color:var(--muted)}
+.wa-head .ic{margin-left:auto;color:var(--muted)}
+.wa-search{display:flex;align-items:center;gap:8px;background:var(--wa-head);border:1px solid var(--border);border-top:0;padding:6px 10px;font-size:13px}
+.wa-search .box{flex:1;height:30px;border:1px solid var(--border);border-radius:6px;background:var(--card);display:flex;align-items:center;padding:0 8px;color:var(--fg)}
+.wa-search .box i{font-style:normal;color:var(--muted);margin-left:auto;font-size:12px}
+.wa-body{background:var(--wa-bg);border:1px solid var(--border);border-radius:0 0 6px 6px;padding:12px;display:flex;flex-direction:column;gap:8px;height:640px;padding-bottom:56px;overflow:hidden;position:relative}
+.dp{align-self:center;background:var(--wa-pill);border-radius:6px;padding:2px 12px;font-size:12px;font-weight:500;box-shadow:0 1px 1px rgba(0,0,0,.08)}
+.b{max-width:85%;border-radius:8px;padding:6px 10px;font-size:14px;line-height:1.35;box-shadow:0 1px 1px rgba(0,0,0,.08);position:relative}
+.b.in{align-self:flex-start;background:var(--wa-in)}
+.b.out{align-self:flex-end;background:var(--wa-out)}
+.b .from{font-size:11px;font-weight:600;color:#047857;margin-bottom:2px}
+:root[data-theme="dark"] .b .from{color:#6ee7b7}
+.b .t{display:flex;justify-content:flex-end;align-items:center;gap:3px;font-size:10px;color:var(--muted);margin-top:3px}
+.b .t svg{width:13px;height:13px}
+.b mark{background:#fcd34d;color:#18181b;border-radius:2px;padding:0 1px}
+.b.hit{outline:2px solid #0ea5e9;outline-offset:1px}
+.note{align-self:center;max-width:92%;background:var(--note-bg);border:1px solid var(--note-border);color:var(--note-fg);border-radius:8px;padding:6px 10px;font-size:13px;box-shadow:0 1px 1px rgba(0,0,0,.08)}
+.note .h{display:flex;gap:8px;font-size:11px;font-weight:600;color:var(--note-head);margin-bottom:2px;align-items:center}
+.note .h svg{width:12px;height:12px}
+.note .h em{font-style:normal;font-weight:400;opacity:.8}
+.fab{position:absolute;right:12px;bottom:12px;width:36px;height:36px;border-radius:50%;background:var(--card);border:1px solid var(--border);box-shadow:0 4px 10px rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center}
+.fab i{position:absolute;top:-8px;right:-8px;background:var(--wa-avatar);color:#fff;font-style:normal;font-size:10px;font-weight:600;border-radius:999px;padding:2px 6px;line-height:1}
+.fade{position:absolute;left:0;right:0;top:0;height:22px;background:linear-gradient(var(--wa-bg),transparent)}
+.composer{margin-top:10px;border:1px solid var(--border);border-radius:8px;background:var(--card);padding:8px}
+.composer .ta{min-height:60px;color:var(--muted);font-size:14px;padding:4px 6px}
+.composer .row{display:flex;align-items:center;gap:4px;border-top:1px solid var(--border);padding-top:8px;margin-top:6px}
+.composer .row .ico{width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.composer .row .btn{margin-left:auto}
+.closed{margin-top:10px;border:1px solid var(--border);border-radius:8px;background:var(--muted-bg);padding:10px 12px;font-size:13px;color:var(--muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.closed .btn{margin-left:auto}
+/* notes below the frames */
+.notes{margin-top:28px;border-top:1px solid var(--border);padding-top:18px;max-width:90ch}
+.notes h2{font-size:16px;margin:18px 0 6px}
+.notes h3{font-size:14px;margin:14px 0 4px}
+.notes p,.notes li{font-size:14px}
+.notes code{font-size:12px;background:var(--muted-bg);border-radius:4px;padding:1px 5px}
+.rec{border-left:3px solid var(--primary);padding-left:10px;margin:6px 0 10px}
+.rec b{color:var(--primary)}
+</style>
+</head>
+<body>
+<div class="page">
+<h1>Sales portal: Conversation view</h1>
+<p class="lead">The landing's kind dropdown gains <b>Conversation</b>. A sales agent sees one card per customer assigned to them, latest message first, and opens a card to read that customer's WhatsApp thread in the same chat component the CRM's ticket drawer uses. Sample data below is invented.</p>
+
+<div class="frames">
+
+<!-- ================= FRAME A: landing, cards, 375px ================= -->
+<div class="frame">
+<h2>A. Landing, Cards view <small>(375px, the default view)</small></h2>
+<div class="screen phone">
+<div class="wrap">
+  <div class="h1">Welcome, Jayson<span class="logout"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></span></div>
+  <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>Search...</div>
+  <div class="kindrow">
+    <div class="kind">Conversation <span class="badge">5</span><svg viewBox="0 0 24 24" fill="#eab308" stroke="#eab308" style="width:14px;height:14px"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></svg><span class="chev">&#9662;</span></div>
+    <div class="star"><svg viewBox="0 0 24 24" fill="#eab308" stroke="#eab308"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></svg></div>
+  </div>
+  <div class="toolbar">
+    <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 3H2l8 9.5V19l4 2v-8.5z"/></svg></span>
+    <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21 16-4 4-4-4M17 20V4M3 8l4-4 4 4M7 4v16"/></svg>Last message</span>
+    <span class="toggle"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg></span><span class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span></span>
+  </div>
+  <ul class="cards">
+    <li class="c attn"><div class="who"><b>Chin Chun Hardware</b><span>Mr. Chin</span></div><span class="when">12 min ago</span><div class="phone">+60 12-345 6789</div>
+      <div class="snip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 7 7 17M17 17H7V7"/></svg><span>Boss, the 60x60 grey tile got stock or not? Need 40 boxes by Friday</span></div><span class="pill">Customer wrote last</span></li>
+    <li class="c attn"><div class="who"><b>Lim Tiles Sdn Bhd</b><span>Ms. Lim</span></div><span class="when">1 h ago</span><div class="phone">+60 16-222 3344</div>
+      <div class="snip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 7 7 17M17 17H7V7"/></svg><span>ok noted, I will confirm with my client tomorrow</span></div><span class="pill">Customer wrote last</span></li>
+    <li class="c"><div class="who"><b>Tan Home Living</b><span>Mr. Tan</span></div><span class="when">Yesterday</span><div class="phone">+60 19-887 7001</div>
+      <div class="snip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17 17 7M7 7h10v10"/></svg><span>Your price tag request PT-202609-0031 is ready. Download: https://...</span></div></li>
+    <li class="c"><div class="who"><b>Wong Sanitary</b><span>Ah Wong</span></div><span class="when">Mon</span><div class="phone">+60 11-2020 9090</div>
+      <div class="snip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17 17 7M7 7h10v10"/></svg><span>Basin BS-220 white: 18 in stock at Sorento. Want me to reserve?</span></div></li>
+    <li class="c"><div class="who"><b>Kedai Paip Ali</b><span>Ali</span></div><span class="when">22 Sep</span><div class="phone">+60 13-456 7890</div>
+      <div class="snip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17 17 7M7 7h10v10"/></svg><span>Thanks Ali, your order SO-202609-0142 is out for delivery today.</span></div></li>
+  </ul>
+</div>
+</div>
+</div>
+
+<!-- ================= FRAME C: drawer, read-only ================= -->
+<div class="frame">
+<h2>C. A card opened: the thread <small>(recommended: read, search, jump; no reply)</small></h2>
+<div class="screen phone dim">
+<div class="drawer">
+  <div class="handle"></div>
+  <div class="thread">
+    <div class="wa-head"><div class="ava">C</div><div class="n"><b>Chin Chun Hardware · Mr. Chin</b><span>+60 12-345 6789</span></div>
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></div>
+    <div class="wa-search"><div class="box">60x60<i>2 of 3</i></div><span class="btn ghost" style="height:28px;padding:0 6px">&#9650;</span><span class="btn ghost" style="height:28px;padding:0 6px">&#9660;</span><span class="btn ghost" style="height:28px;padding:0 6px">&#10005;</span></div>
+    <div class="wa-body">
+      <div class="fade"></div>
+      <div class="dp">Yesterday</div>
+      <div class="b in">Hi, <mark>60x60</mark> grey matt tile SR-6060-GM still have?<div class="t">16:42</div></div>
+      <div class="b out"><div class="from">Sorento bot</div>SR-6060-GM Grey Matt 60x60: 32 boxes in stock at Sorento. Incoming: 120 boxes on 3 Oct.<div class="t">16:42 <svg viewBox="0 0 24 24" fill="none" stroke="var(--wa-tick)" stroke-width="2"><path d="M18 6 7 17l-4-4M22 10l-7.5 7.5"/></svg></div></div>
+      <div class="note"><div class="h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3v5h5M8 3h8l4 4v14H4V3z"/></svg>Internal <span>Aina (Sales)</span><em>16:50</em></div>Chin usually orders 40+ boxes. Reserve from the 3 Oct incoming if he confirms.</div>
+      <div class="dp">Today</div>
+      <div class="b in hit">Boss, the <mark>60x60</mark> grey tile got stock or not? Need 40 boxes by Friday<div class="t">09:14</div></div>
+      <div class="b out"><div class="from">Aina (Sales)</div>Morning Mr. Chin, 32 boxes on hand now, another 120 arriving 3 Oct. I can hold 40 for you, ok?<div class="t">09:20 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7"><path d="M18 6 7 17l-4-4M22 10l-7.5 7.5"/></svg></div></div>
+      <div class="b in">Ok hold for me first. Price same as last time?<div class="t">09:26</div></div>
+      <div class="fab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17V3M6 11l6 6 6-6M19 21H5"/></svg><i>2 new</i></div>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<!-- ================= FRAME B: landing, list view, 768px ================= -->
+<div class="frame wide">
+<h2>B. Landing, List view <small>(768px, the portal's max width; the same rows as the cards, in the DataGrid)</small></h2>
+<div class="screen desk">
+<div class="wrap">
+  <div class="h1">Welcome, Jayson<span class="logout"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></span></div>
+  <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>Search...</div>
+  <div class="kindrow">
+    <div class="kind">Conversation <span class="badge">5</span><svg viewBox="0 0 24 24" fill="#eab308" stroke="#eab308" style="width:14px;height:14px"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></svg><span class="chev">&#9662;</span></div>
+    <div class="star"><svg viewBox="0 0 24 24" fill="#eab308" stroke="#eab308"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></svg></div>
+  </div>
+  <div class="toolbar">
+    <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 3H2l8 9.5V19l4 2v-8.5z"/></svg><span class="badge">1</span></span>
+    <span class="toggle"><span class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg></span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span></span>
+  </div>
+  <table>
+    <colgroup><col style="width:24%"><col style="width:16%"><col style="width:42%"><col style="width:18%"></colgroup>
+    <thead><tr><th>Customer</th><th>Contact</th><th>Last message</th><th><span class="sort">When <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M12 5v14M5 12l7 7 7-7"/></svg></span></th></tr></thead>
+    <tbody>
+      <tr class="attn"><td>Chin Chun Hardware</td><td>Mr. Chin</td><td class="snip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 7 7 17M17 17H7V7"/></svg>Boss, the 60x60 grey tile got stock or not? Need 40 boxes by Friday</td><td>Today 09:26</td></tr>
+      <tr class="attn"><td>Lim Tiles Sdn Bhd</td><td>Ms. Lim</td><td class="snip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 7 7 17M17 17H7V7"/></svg>ok noted, I will confirm with my client tomorrow</td><td>Today 08:31</td></tr>
+      <tr><td>Tan Home Living</td><td>Mr. Tan</td><td class="snip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17 17 7M7 7h10v10"/></svg>Your price tag request PT-202609-0031 is ready. Download: https://...</td><td>29 Sep 17:05</td></tr>
+      <tr><td>Wong Sanitary</td><td>Ah Wong</td><td class="snip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17 17 7M7 7h10v10"/></svg>Basin BS-220 white: 18 in stock at Sorento. Want me to reserve?</td><td>28 Sep 11:12</td></tr>
+      <tr><td>Kedai Paip Ali</td><td>Ali</td><td class="snip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17 17 7M7 7h10v10"/></svg>Thanks Ali, your order SO-202609-0142 is out for delivery today.</td><td>22 Sep 09:40</td></tr>
+    </tbody>
+  </table>
+  <div class="count">5 conversations</div>
+</div>
+</div>
+</div>
+
+<!-- ================= FRAME D: option (b) reply composer ================= -->
+<div class="frame">
+<h2>D. Option (b): the same drawer with a Reply composer <small>(not recommended for the first cut)</small></h2>
+<div class="screen phone dim">
+<div class="drawer">
+  <div class="handle"></div>
+  <div class="thread">
+    <div class="wa-head"><div class="ava">C</div><div class="n"><b>Chin Chun Hardware · Mr. Chin</b><span>+60 12-345 6789</span></div>
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></div>
+    <div class="wa-body" style="height:250px">
+      <div class="fade"></div>
+      <div class="dp">Today</div>
+      <div class="b out"><div class="from">Aina (Sales)</div>Morning Mr. Chin, 32 boxes on hand now, another 120 arriving 3 Oct. I can hold 40 for you, ok?<div class="t">09:20 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7"><path d="M18 6 7 17l-4-4M22 10l-7.5 7.5"/></svg></div></div>
+      <div class="b in">Ok hold for me first. Price same as last time?<div class="t">09:26</div></div>
+    </div>
+  </div>
+  <div class="composer">
+    <div class="ta">Message Mr. Chin</div>
+    <div class="row">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.4 11.05-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg></span>
+      <span class="btn primary">Send</span>
+    </div>
+  </div>
+  <div class="closed">The 24-hour window is closed.<span class="btn">Send template</span></div>
+</div>
+</div>
+</div>
+
+<!-- ================= FRAME E: empty state ================= -->
+<div class="frame">
+<h2>E. Empty states <small>(no customers with chats; a search with no match)</small></h2>
+<div class="screen phone"><div class="wrap">
+  <div class="toolbar"><span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 3H2l8 9.5V19l4 2v-8.5z"/></svg></span><span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21 16-4 4-4-4M17 20V4M3 8l4-4 4 4M7 4v16"/></svg>Last message</span><span class="toggle"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg></span><span class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span></span></div>
+  <div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:32px;height:32px;margin:0 auto 8px;display:block"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z"/></svg><h3>No conversations yet</h3>None of your customers has messaged us on WhatsApp.</div>
+  <div style="height:12px"></div>
+  <div class="empty"><h3>No conversation matches "paip"</h3>Try the customer's name, the contact's name or their phone number.</div>
+</div></div>
+</div>
+
+</div><!-- /frames -->
+
+<div class="notes">
+<h2>What is on the screen</h2>
+<ul>
+  <li><b>One card per customer assigned to me.</b> Customer name, contact name, phone, the last message (arrow in = customer wrote, arrow out = we wrote) and when. A card whose last message came from the customer is tinted and carries "Customer wrote last": that is the one that needs me. No unread counts: the CRM does not track reads per agent.</li>
+  <li><b>Same toolbar as Price Tag Request and Customer asks.</b> Filter (Customer, Contact, Last message date range), Sort (Last message, Customer), Cards / List toggle; the sort is remembered per contact like Customer asks. The landing's search box matches customer name, contact name, phone and the last message text. No New button: a conversation is not something you create here.</li>
+  <li><b>Tap a card: the thread opens in the bottom sheet</b> (the same sheet Customer asks uses), showing the CRM's chat component exactly as the ticket drawer does: WhatsApp look, date pills, bot and colleague sender labels on outgoing bubbles, delivery ticks, internal notes in amber, in-thread search with match stepping, scroll back for older messages, and the "jump to latest" button with the count of new messages that arrived while reading.</li>
+  <li><b>Empty state</b> when none of my customers has a chat, and a "no match" state for a search.</li>
+</ul>
+
+<h2>The three open questions, with a recommendation each</h2>
+<h3>1. Read-only, or reply from the portal?</h3>
+<div class="rec"><b>Recommendation: (a) read-only for this lane.</b> Frame C.</div>
+<p>(a) Read, search and jump only. (b) Frame D: the ticket drawer's reply composer too, sending on the business WhatsApp number.</p>
+<p>Why (a): a reply from the portal goes out on the company's WhatsApp number, as the CRM, not from the salesman's own phone, and the customer sees it as the business writing back. Outside the 24-hour window WhatsApp only allows a pre-approved template, so the composer has to carry the template rule and the sender identity, and the audit trail has to name the salesman behind a portal token (only some of them are CRM users). That is a second lane's worth of contract. Reading is what the owner asked for; the reply can follow once the first cut is in use and we know who wants to send. If (b) is wanted now, the composer already exists and is reused as-is.</p>
+
+<h3>2. How is the list sorted?</h3>
+<div class="rec"><b>Recommendation: (a) latest message first, with the Sort button to change it.</b></div>
+<p>(a) Latest message first, the way the CRM inbox and WhatsApp itself order chats; the Sort menu offers Customer A to Z too, and the choice is remembered per contact. (b) Customers who wrote last pinned on top, then latest first. (c) Customer A to Z.</p>
+<p>Why (a): it is what every chat app does, so nothing to learn, and the tint plus "Customer wrote last" already lifts the ones waiting on us. (b) is one filter away (Filter: Customer wrote last) without reordering the rest.</p>
+
+<h3>3. Card or list?</h3>
+<div class="rec"><b>Recommendation: (a) both, cards by default, one toggle.</b> Frames A and B.</div>
+<p>(a) The landing's existing Cards / List toggle, cards by default at every width, list as the same DataGrid the other kinds use (Customer, Contact, Last message, When). (b) Cards only. (c) A split screen with the list on the left and the thread on the right, like the CRM's Conversations page.</p>
+<p>Why (a): it is the pattern the owner already ruled for Customer asks (reuse the Price Tag Request list), it costs nothing extra, and the portal is phone-first: a split screen would not fit 375px, and at 768px the bottom sheet still reads as one thing at a time.</p>
+
+<h2>What the build reuses</h2>
+<ul>
+  <li>Thread: <code>components/common/RespondChatList.tsx</code> through <code>useConversationThread</code> (scroll back, search, jump), the same wiring as <code>TicketConversationPanel.tsx</code>, mounted in the Customer asks bottom <code>Drawer</code>.</li>
+  <li>List: <code>LandingToolbar</code>, <code>LandingCardShell</code>, the landing's DataGrid list, the per-contact remembered sort from <code>useCustomerAsksTodo.ts</code>.</li>
+  <li>Scope: the portal contact's linked sales agent (<code>sales_agent_for_contact</code>), that agent's customers (<code>customers.sales_agent_id</code>), their WhatsApp contacts (<code>respond_contact_customers</code>), and the last message per contact the CRM inbox already computes (<code>conversation_inbox_service</code>).</li>
+  <li>Switch: the same per-contact portal form switch Customer asks uses (Contact page, Portal forms), off by default.</li>
+</ul>
+</div>
+</div>
+</body>
+</html>
