@@ -507,6 +507,12 @@ def confirm_all(
             can_hold_back=lambda entry: not (
                 entry.batch_id or (None if any_per_order else payload.batch_id)
             ),
+            preview=payload.preview,
+            # A planning-change apply notifies after its own savepoint commits, so it cannot
+            # be rolled back cleanly: an order answering a batch is not previewed.
+            preview_unavailable=lambda entry: bool(
+                entry.batch_id or (None if any_per_order else payload.batch_id)
+            ),
         )
         return {"results": results}
     except Exception as exc:

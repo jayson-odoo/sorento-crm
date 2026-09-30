@@ -37,7 +37,7 @@ import {
   confirmLineFrom,
   suggestionWithReasons,
 } from './boardAmend';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, parseDateTimeAsUTC, timeAgo } from '@/lib/helpers';
 import { fromMinor, toMinor } from './supplyComposition';
 import { unpostableNotices } from './unpostableNotices';
 
@@ -833,6 +833,11 @@ export function confirmSummaryFor(
   return { toConfirm, rejected, orderCount: orderIds.size, changed };
 }
 
+/** How long ago a draft was saved, reading the server's naive-UTC stamp as UTC. */
+export function savedAgoText(savedAt: string): string {
+  return timeAgo(parseDateTimeAsUTC(savedAt));
+}
+
 /** One line the pre-confirm dialog lists: what this press will write for it. */
 export interface ConfirmDialogRow {
   key: string;
@@ -956,7 +961,8 @@ export function confirmDialogRowsFor(
       // No known current user means nobody can be "somebody else".
       savedByOther:
         !!savedBy && !!context.currentUserName && savedBy !== context.currentUserName,
-      savedBefore: !!savedAt && new Date(savedAt) < context.openedAt,
+      // The server sends naive UTC (no Z); `new Date()` would read it as local time.
+      savedBefore: !!savedAt && parseDateTimeAsUTC(savedAt) < context.openedAt,
     });
     const adoptedLater =
       !contribution.project_line_id &&

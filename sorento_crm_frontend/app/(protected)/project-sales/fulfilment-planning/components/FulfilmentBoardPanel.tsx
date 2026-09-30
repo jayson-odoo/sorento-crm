@@ -44,7 +44,7 @@ import {
 import DeferredActionButton from '@/components/common/DeferredActionButton';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { formatDateTimeInMalaysia, timeAgo } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -70,6 +70,7 @@ import {
   bucketLabelText,
   confirmDialogRowsFor,
   confirmSummaryFor,
+  savedAgoText,
   decisionHeaderText,
   orderListRows,
   rowMatchesSearch,
@@ -2594,7 +2595,7 @@ export function FulfilmentBoardPanel({
                         {rows.map((row) => {
                           const ticked = !confirmExcluded.has(row.key);
                           const flagged = row.savedByOther || row.savedBefore;
-                          const when = row.saved_at ? timeAgo(row.saved_at) : '';
+                          const when = row.saved_at ? savedAgoText(row.saved_at) : '';
                           const mine = !row.savedByOther;
                           return (
                             <li

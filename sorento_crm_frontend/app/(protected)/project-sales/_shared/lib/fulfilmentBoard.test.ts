@@ -5,7 +5,7 @@
  * asserted directly: which column a line lands in (13.3), the order competing lines are served
  * in (13.5), and when an order becomes confirmable (13.4). None of them needs a grid mounted.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   BoardCell,
   BoardContribution,
@@ -26,6 +26,7 @@ import {
   rankingNote,
   rejectedCoveredLineIdsFor,
   rowMatchesSearch,
+  savedAgoText,
   shiftedDayWindow,
   unpostableDecidedFor,
   standingsFor,
@@ -3050,5 +3051,30 @@ describe('confirm scope: one population for dialog, count and body', () => {
       { currentUserName: '', openedAt: OPENED },
     );
     expect(rows[0].savedByOther).toBe(false);
+  });
+});
+
+describe('confirm scope: a naive-UTC saved_at is read as UTC', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('a draft saved a moment ago reads "just now" and not before the board opened', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-30T04:50:40Z'));
+    const board = buildBoard(
+      [line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1 })],
+      { today: TODAY },
+    );
+    const base = board.cells.flatMap((cell) => cell.contributions)[0];
+    const contribution = {
+      ...base,
+      draft: { decision: { verdict: 'approved' }, saved_by: 'Jayson', saved_at: '2026-09-30T04:50:00' },
+    } as BoardContribution;
+    const { rows } = confirmDialogRowsFor(
+      [contribution],
+      { [contribution.key]: { verdict: 'approved' } },
+      { currentUserName: 'Cyndi', openedAt: new Date('2026-09-30T04:50:30Z') },
+    );
+    expect(rows[0].savedBefore).toBe(true);
+    expect(savedAgoText('2026-09-30T04:50:00')).toBe('just now');
   });
 });

@@ -574,6 +574,27 @@ class ConfirmManyBody(BaseModel):
     #: the only shape the board had before this slice: opened at `?orders=...&batch=<id>`,
     #: every order on it belonging to that one batch. Absent on every ordinary board Confirm.
     batch_id: Optional[str] = None
+    #: Run every order exactly as a real press and roll it back instead of committing; each
+    #: ok order then answers with the order inquiry rows and transfers it would raise.
+    preview: bool = False
+
+
+class PreviewInquiryRow(BaseModel):
+    line_no: Optional[int] = None
+    item_code: Optional[str] = None
+    verb: str
+    qty: Decimal
+    delivery_date: Optional[date] = None
+    stock_location: Optional[str] = None
+    note: Optional[str] = None
+
+
+class PreviewTransfer(BaseModel):
+    line_no: Optional[int] = None
+    kind: str
+    qty: Decimal
+    from_location: Optional[str] = None
+    to_location: Optional[str] = None
 
 
 class ConfirmManyOrderResult(BaseModel):
@@ -583,6 +604,10 @@ class ConfirmManyOrderResult(BaseModel):
 
     pso_id: str
     ok: bool
+    #: True on a preview: nothing below was committed.
+    preview: Optional[bool] = None
+    inquiry_rows: Optional[List[PreviewInquiryRow]] = None
+    transfers: Optional[List[PreviewTransfer]] = None
     decision_revision: Optional[int] = None
     inquiry_rows_created: Optional[int] = None
     lines_decided: Optional[int] = None
