@@ -2,7 +2,7 @@
 NAME behind the customers its contact is linked to, when they are the ledgers of one shop.
 
 "HANLIM TRADING SDN BHD [A/C I]", "[A/C II]" and "(CERAMIC & ELLECI)" share the chatbot's ledger
-family (`ledger_family_key`, `app/services/chatbot/turn/narrow.py`), so the card reads "HANLIM
+family (`ledger_family_key`, `app/services/ledger_family.py`), so the card reads "HANLIM
 TRADING SDN BHD" instead of the contact's name. Links to two different shops name nothing (the
 card falls back to the contact, as before); an ask written against a customer is untouched.
 """
