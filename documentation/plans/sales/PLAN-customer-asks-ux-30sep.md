@@ -125,6 +125,18 @@ Frontend (vitest):
 - `MyCustomerAsksClient.test.tsx` / portal list: opening a card fetches the tail page and the
   anchor.
 
+## 3b. Review rounds (30 Sep 2026)
+
+Reviewer: no blockers; applied: a failed tail poll keeps the loaded thread, the done-history
+pager also shows past page 1, `RespondChatList` honours reduced motion on every programmatic
+scroll. Security reviewer (the two portal routes are a new external read surface, so it ran
+after all): one blocker fixed, thread cursors were spliced unvalidated into the Respond URL path
+(`conversation_thread_service.py` `_cursor`, `RespondClient.get_message` quotes the id); the
+portal page read is projected through `portal_thread_item` (no staff identity, no transport
+ids); search text capped at 200. Open for the owner (crew-ask on PR #1385): how much of the
+contact's thread an ask may reveal, and to whom (as built, a window, or the inbox permission on
+the CRM).
+
 ## 4. Out of scope
 
 Sending from the ask panel; media proxy on the portal; removing `messages` from `/conversation`.
