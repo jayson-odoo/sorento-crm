@@ -316,7 +316,7 @@ _HANDOVER_VERB_LABEL = {
 
 
 def _handover_settle_diff(
-    row: Any, was: Optional[Dict[str, Any]]
+    row: Any, was: Optional[Dict[str, Any]], qty: Optional[Decimal] = None
 ) -> Tuple[Optional[str], Optional[str], Optional[Decimal]]:
     """The date verb and the qty verb a settle earns, read off the row's CURRENT values
     against the `was` a settle-in-place captured before overwriting them.
@@ -324,6 +324,11 @@ def _handover_settle_diff(
     Shared by `handover_remark` (which turns this into the sentence purchasing reads) and
     the handover drain (which turns it into the `verbs` bucket) so the two can never read
     a settle differently.
+
+    `qty` (EMAIL-HANDOVER-QTY, PR #1392): the LINE'S new total when the line is told as
+    one settled line off a row whose own `qty` never moved - `_write`'s declined-settle
+    path, where the existing placed row keeps its quantity and the netting raises the
+    remainder as its own row. `None` reads `row.qty`, as every settle-in-place does.
     """
     date_key: Optional[str] = None
     old_date = (was or {}).get("delivery_date")
@@ -336,7 +341,7 @@ def _handover_settle_diff(
     qty_diff: Optional[Decimal] = None
     old_qty = (was or {}).get("qty")
     if old_qty is not None:
-        diff = _dec(row.qty) - _dec(old_qty)
+        diff = _dec(row.qty if qty is None else qty) - _dec(old_qty)
         if diff < _ZERO:
             qty_key, qty_diff = IV_CANCEL_BALANCE, -diff
         elif diff > _ZERO:
@@ -345,21 +350,22 @@ def _handover_settle_diff(
 
 
 def _handover_verb_keys(
-    kind: str, row: Any, was: Optional[Dict[str, Any]]
+    kind: str, row: Any, was: Optional[Dict[str, Any]], qty: Optional[Decimal] = None
 ) -> List[str]:
-    """Which entries of `_HANDOVER_VERB_ORDER` this one handover line earns."""
+    """Which entries of `_HANDOVER_VERB_ORDER` this one handover line earns. `qty` as
+    `_handover_settle_diff` reads it."""
     if kind == "raised":
         return [row.verb] if row.verb else []
     if kind == "cancelled":
         return [IV_CANCEL_BALANCE]
     if kind == "settled":
-        date_key, qty_key, _qty_diff = _handover_settle_diff(row, was)
+        date_key, qty_key, _qty_diff = _handover_settle_diff(row, was, qty)
         return [key for key in (date_key, qty_key) if key]
     return []
 
 
 def handover_remark(
-    kind: str, row: Any, was: Optional[Dict[str, Any]]
+    kind: str, row: Any, was: Optional[Dict[str, Any]], qty: Optional[Decimal] = None
 ) -> str:
     """The REMARK cell of the handover email, table-tested (AC-H2/H3/H4/H5, PLAN 3.3).
 
@@ -373,6 +379,9 @@ def handover_remark(
       N NOS` / `ORDER N`), whichever of the two actually moved, joined by ", " when both did.
     * `kind="cancelled"`: `CANCEL BALANCE <old qty> NOS` - the honest end of a line the book
       reduced to nothing.
+
+    `qty` as `_handover_settle_diff` reads it: the line's new total for a settled line
+    told off a row whose own quantity did not move.
     """
     if kind == "raised":
         label = REMARK_SPELLING.get(row.verb, row.verb or "")
@@ -390,7 +399,7 @@ def handover_remark(
             label = f"{label} - {note}"
         return label
     if kind == "settled":
-        date_key, qty_key, qty_diff = _handover_settle_diff(row, was)
+        date_key, qty_key, qty_diff = _handover_settle_diff(row, was, qty)
         parts: List[str] = []
         if date_key:
             parts.append(REMARK_SPELLING.get(date_key, date_key))
@@ -1155,6 +1164,17 @@ class ProjectOrderInquiryService:
             # netting loop's own PARTLY_LINKED branch redirects it further down.
             previously_redirected_ids = {row.id for row in rows if row.redirected_to_pool}
             asked_to_settle = str(line.id) in settle_in_place
+            # EMAIL-HANDOVER-QTY: set below when the declined-settle path tells the
+            # email this line's total change as ONE settled line (recorded after the
+            # netting loop, off `deferred_settle`) - the netting loop then still WRITES
+            # its rows (the worklist is unchanged) but prints none of them as separate
+            # lines for this line. `deferred_cancels` holds the superseded rows' own
+            # lines back until the loop has run: a row the netting REDIRECTS changes
+            # what "before" means, and then today's per-row lines print instead.
+            line_total_told = False
+            deferred_settle: Dict[str, Any] = {}
+            deferred_cancels: List[Tuple[OrderInquiryRow, Any]] = []
+            held_qty = _ZERO
             if (asked_to_settle or drafted) and self._settle_row_in_place(
                 inquiry, entry, rows, need, decision, actor_user_id=actor_user_id
             ):
@@ -1185,28 +1205,60 @@ class ProjectOrderInquiryService:
                 # A line with NO existing buy row at all still falls through on its own:
                 # `_stamp_date_move` finds no target and returns False, and the netting
                 # raises its fresh row exactly as it always has (AC-B2-4).
-                live_buy_qty = sum(
-                    (
-                        _dec(r.qty)
-                        for r in rows
-                        if r.verb in (IV_ORDER, IV_ORDER_BACK)
-                        and r.state in (
-                            INQUIRY_RAISED, INQUIRY_PARTLY_LINKED,
-                            INQUIRY_PLACED, INQUIRY_ACTIONED,
-                        )
-                        and not r.redirected_to_pool
-                    ),
-                    _ZERO,
+                live_rows = [
+                    r
+                    for r in rows
+                    if r.verb in (IV_ORDER, IV_ORDER_BACK)
+                    and r.state in (
+                        INQUIRY_RAISED, INQUIRY_PARTLY_LINKED,
+                        INQUIRY_PLACED, INQUIRY_ACTIONED,
+                    )
+                    and not r.redirected_to_pool
+                ]
+                live_buy_qty = sum((_dec(r.qty) for r in live_rows), _ZERO)
+                # EMAIL-HANDOVER-QTY (owner, 30 Sep; `PLAN-oi-handover-qty-change-
+                # 30sep.md` S1): the line's TOTAL is about to change under the netting
+                # below, and purchasing already holds something for it. No row of this
+                # path carries that change on its own `qty` (the placed row keeps what
+                # it holds, the remainder is raised fresh), so the email is told once,
+                # in `_settle_row_in_place`'s own shape: QTY = what they held, QTY
+                # CHANGE TO = the new Buy, remark = the difference. What they HELD
+                # leaves out a raised row purchasing refused (review, should-fix 4):
+                # a refused instruction is not one they hold. A line with NO held row
+                # has no "before" to print and stays a plain raise. An ORDER BACK line
+                # keeps today's per-row lines (review, should-fix 2): its remainder
+                # names the cited document, which a totals line has no cell for.
+                held_rows = [r for r in live_rows if r.ack_state != ACK_REJECTED]
+                held_qty = sum((_dec(r.qty) for r in held_rows), _ZERO)
+                total_moved = (
+                    bool(held_rows) and live_buy_qty != need and not order_back
                 )
                 stamped = self._stamp_date_move(
                     inquiry, rows, entry, decision, actor_user_id=actor_user_id,
                     will_net=(live_buy_qty != need),
+                    defer=deferred_settle if total_moved else None,
                 )
                 if stamped and live_buy_qty == need:
                     # Nothing but the date moved, so the netting has nothing left to say
                     # about this line and the caller is told it is settled.
                     settled_in_place.append(str(line.id))
                     continue
+                if total_moved:
+                    if not stamped:
+                        # No date to move (or every row already carries it), so
+                        # `_stamp_date_move` picked nothing: the total change is told
+                        # off the same representative it would have picked - a row
+                        # that survives the netting first (raised rows are seconds
+                        # from being cancelled by it).
+                        deferred_settle = {
+                            "row": next(
+                                (r for r in held_rows if r.state != INQUIRY_RAISED),
+                                held_rows[0],
+                            ),
+                            "previous_date": None,
+                            "stamped": False,
+                        }
+                    line_total_told = True
             # Read BEFORE the loop below cancels anything: what purchasing had already
             # taken on for this line, off the rows that are still LIVE. Taken afterwards it
             # would read the rows this loop has just cancelled, which is every superseded
@@ -1234,7 +1286,7 @@ class ProjectOrderInquiryService:
                     superseded_cancelled_rows.append(row)
                     if row.verb in (IV_ORDER, IV_ORDER_BACK) and cancelled_owned_row is None:
                         cancelled_owned_row = row
-                    if not carried:
+                    if not carried and not line_total_told:
                         # AC-H23, narrowed by AC-R2-12 (S2): a single-raised-row same-
                         # verb line is caught by `named_raised` above now, so what
                         # reaches here is only a genuine supersede - two still-owed
@@ -1247,6 +1299,13 @@ class ProjectOrderInquiryService:
                             was={"qty": was_qty},
                             actor_user_id=actor_user_id,
                         )
+                    elif not carried:
+                        # EMAIL-HANDOVER-QTY: the line's total is being told as ONE
+                        # settled line whose QTY is the sum of exactly these rows, so
+                        # "CANCEL BALANCE <this row>" would say it a second time, per
+                        # row - held back until the loop has shown whether it
+                        # redirected anything (then today's lines print after all).
+                        deferred_cancels.append((row, was_qty))
                     continue
                 if row.verb not in owned_verbs or row.verb == IV_CANCEL_BALANCE:
                     continue
@@ -1339,6 +1398,46 @@ class ProjectOrderInquiryService:
                 ),
                 key=lambda row: (row.delivery_date or date.max, str(row.id)),
             )
+            if line_total_told:
+                if redirected_this_call:
+                    # Review (blocking 1): a row the netting just REDIRECTED left this
+                    # line's "before" - `placed` no longer counts it, so the fresh row
+                    # below is `need - placed`, not `need - held`, and a totals line
+                    # would tell purchasing to buy less than the row asks for. The
+                    # redirect has its own wording (AC-OH-40..42, the fresh row's
+                    # "Replaces N used"), so this line prints today's per-row lines:
+                    # the date-only settle, each superseded row, and the fresh row.
+                    line_total_told = False
+                    if deferred_settle.get("stamped"):
+                        previous_date = deferred_settle.get("previous_date")
+                        self._record_handover(
+                            deferred_settle["row"],
+                            kind="settled",
+                            was={"delivery_date": previous_date} if previous_date else {},
+                            actor_user_id=actor_user_id,
+                        )
+                    for cancelled_row, cancelled_qty in deferred_cancels:
+                        self._record_handover(
+                            cancelled_row,
+                            kind="cancelled",
+                            was={"qty": cancelled_qty},
+                            actor_user_id=actor_user_id,
+                        )
+                else:
+                    # The ONE line for this line: QTY = what purchasing held, QTY
+                    # CHANGE TO = the new Buy, remark = the date verb (when the date
+                    # moved) and the difference.
+                    handover_was: Dict[str, Any] = {}
+                    if deferred_settle.get("previous_date"):
+                        handover_was["delivery_date"] = deferred_settle["previous_date"]
+                    handover_was["qty"] = held_qty
+                    self._record_handover(
+                        deferred_settle["row"],
+                        kind="settled",
+                        was=handover_was,
+                        qty=need,
+                        actor_user_id=actor_user_id,
+                    )
             # Did purchasing already take this line's instruction on, and is this
             # confirmation actually changing it?
             #
@@ -1466,7 +1565,10 @@ class ProjectOrderInquiryService:
                         self._record_handover(
                             raised_row, kind="raised", actor_user_id=actor_user_id
                         )
-                else:
+                elif not line_total_told:
+                    # EMAIL-HANDOVER-QTY: a line already told as one settled line
+                    # (`ORDER n` in its remark IS this row's quantity) prints no bare
+                    # ORDER line beside it.
                     self._record_handover(raised_row, kind="raised", actor_user_id=actor_user_id)
                 raised += 1
                 if not carried:
@@ -1496,9 +1598,12 @@ class ProjectOrderInquiryService:
                     acknowledged_at=None,
                 )
                 self.db.add(cancel_balance_row)
-                self._record_handover(
-                    cancel_balance_row, kind="raised", actor_user_id=actor_user_id
-                )
+                if not line_total_told:
+                    # EMAIL-HANDOVER-QTY: the settled line's `CANCEL BALANCE n NOS`
+                    # already says what this exception row says.
+                    self._record_handover(
+                        cancel_balance_row, kind="raised", actor_user_id=actor_user_id
+                    )
                 exceptions.append(
                     {
                         "line_no": entry.get("line_no"),
@@ -1839,6 +1944,7 @@ class ProjectOrderInquiryService:
         *,
         actor_user_id: Optional[str] = None,
         will_net: bool = False,
+        defer: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """The DATE half of a change `_settle_row_in_place` declined to read as one
         instruction - two still-owed rows, a lone placed row with no link, or every row
@@ -1958,6 +2064,16 @@ class ProjectOrderInquiryService:
         # AC-H3/AC-H4, as `_settle_row_in_place` reads them: only the field that actually
         # moved. A row that carried NO previous date states none rather than a blank one -
         # "Was <nothing>" is a handover line nobody can act on.
+        if defer is not None:
+            # EMAIL-HANDOVER-QTY: the caller is about to change the LINE'S total under
+            # the netting and wants to tell the email once, off this same
+            # representative, AFTER the netting has said what it did (a row the netting
+            # redirects changes what "before" honestly means) - so nothing is recorded
+            # here; the caller reads these two facts back and records the line itself.
+            defer["row"] = handover_pool[0]
+            defer["previous_date"] = previous_date
+            defer["stamped"] = True
+            return True
         self._record_handover(
             handover_pool[0],
             kind="settled",
@@ -3234,6 +3350,7 @@ class ProjectOrderInquiryService:
         kind: str,
         was: Optional[Dict[str, Any]] = None,
         actor_user_id: Optional[str] = None,
+        qty: Optional[Decimal] = None,
     ) -> None:
         """Queue one line of the `order_inquiry_handover` parallel-run email
         (`PLAN-scm-oi-handover-email.md` S0-S3), fired post-commit by
@@ -3260,6 +3377,10 @@ class ProjectOrderInquiryService:
 
         `actor_user_id` falls back to the inquiry header's `raised_by` (AC-H18) when the
         write seam received none.
+
+        `qty` (EMAIL-HANDOVER-QTY): what the line PRINTS as its quantity instead of
+        `row.qty` - the line's new total, for a settled line told off a row whose own
+        quantity never moved (see `_handover_settle_diff`). `None` reads the row.
         """
         # One round trip for both inquiry scalars (AC-H25), not two: `raised_by` is only
         # READ when the seam gave no actor, but `project_sales_order_id` is needed either
@@ -3276,7 +3397,9 @@ class ProjectOrderInquiryService:
         # A row `_settle_row_in_place`'s zero-need branch cancels never has its OWN `qty`
         # column zeroed (that column is the record of what it once asked for) - the
         # handover line still has to say "0" (AC-H5), which no read of `row.qty` gives.
-        qty_str = "0" if kind == "cancelled" else _qty_str(_dec(row.qty))
+        qty_str = (
+            "0" if kind == "cancelled" else _qty_str(_dec(row.qty if qty is None else qty))
+        )
         # AC-2 (24 Sep, owner ruling): the AutoCount SO line sequence this row's own
         # line carries, read off `sales_order_lines.line_no` rather than
         # `FulfilmentBoardService._line_numbers`'s positional renumbering (that
@@ -3308,7 +3431,7 @@ class ProjectOrderInquiryService:
             # when the row carries no stock location (`_build_handover_context`'s own
             # subject-scope reduction already treats a blank the same way).
             "location": row.stock_location or "",
-            "remark": handover_remark(kind, row, was),
+            "remark": handover_remark(kind, row, was, qty),
             "was": _format_handover_was(was),
         }
         self.db.info.setdefault(_HANDOVER_PENDING_KEY, []).append(
@@ -3333,7 +3456,7 @@ class ProjectOrderInquiryService:
                 #: `line_no` above.
                 "core_line_id": core_line_id,
                 "item_code": row.item_code,
-                "verb_keys": _handover_verb_keys(kind, row, was),
+                "verb_keys": _handover_verb_keys(kind, row, was, qty),
                 "line": line,
                 "actor": self._handover_actor(resolved_actor_id),
                 #: Which savepoint this was earned under (C2, `_notify_purchasing`'s own

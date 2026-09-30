@@ -5,11 +5,14 @@
     cannot parse, so nothing here depends on the one in base.html except the phone
     breakpoint. -#}
 {% set font = theme.font_stack %}
+{#- Side gutter of every content cell: 40 on the standard 600 card, 24 on the wide 900 one
+    (EMAIL-HANDOVER-QTY). `side` is what email_layout._layout resolved off the document's `width`. -#}
+{% set side = gutter %}
 {% block card %}
 {%- for block in blocks %}
 {%- if block.type == "brand_header" %}
         <tr>
-          <td align="{{ theme.logo_alignment }}" style="padding:24px 40px;background-color:{{ theme.header_background }};{% if theme.header_style == 'white' %}border-bottom:1px solid #eef0f3;{% endif %}" class="em-pad">
+          <td align="{{ theme.logo_alignment }}" style="padding:24px {{ side }}px;background-color:{{ theme.header_background }};{% if theme.header_style == 'white' %}border-bottom:1px solid #eef0f3;{% endif %}" class="em-pad">
             {%- if theme.logo_url %}
             <img src="{{ theme.logo_url }}" alt="{{ theme.company_name }}" height="{{ theme.logo_height }}" style="display:inline-block;height:{{ theme.logo_height }}px;width:auto;max-width:240px;border:0;outline:none;text-decoration:none;">
             {%- else %}
@@ -19,19 +22,19 @@
         </tr>
 {%- elif block.type == "heading" %}
         <tr>
-          <td class="em-pad" align="{{ block.align }}" style="padding:{{ '36px' if loop.index0 <= first_content_index else '20px' }} 40px 0 40px;font-family:{{ font }};">
+          <td class="em-pad" align="{{ block.align }}" style="padding:{{ '36px' if loop.index0 <= first_content_index else '20px' }} {{ side }}px 0 {{ side }}px;font-family:{{ font }};">
             <h1 style="margin:0;font-family:{{ font }};font-size:24px;line-height:32px;font-weight:700;color:#111827;">{{ block.text }}</h1>
           </td>
         </tr>
 {%- elif block.type == "intro" %}
         <tr>
-          <td class="em-pad" align="{{ block.align }}" style="padding:{{ '36px' if loop.index0 <= first_content_index else '16px' }} 40px 0 40px;font-family:{{ font }};font-size:16px;line-height:26px;color:#374151;">
+          <td class="em-pad" align="{{ block.align }}" style="padding:{{ '36px' if loop.index0 <= first_content_index else '16px' }} {{ side }}px 0 {{ side }}px;font-family:{{ font }};font-size:16px;line-height:26px;color:#374151;">
             {{ block.html }}
           </td>
         </tr>
 {%- elif block.type == "facts" and block.rows %}
         <tr>
-          <td class="em-pad" style="padding:20px 40px 0 40px;">
+          <td class="em-pad" style="padding:20px {{ side }}px 0 {{ side }}px;">
             <table role="presentation" class="em-facts" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:#f9fafb;border:1px solid #eef0f3;border-radius:8px;border-collapse:separate;">
               {%- for row in block.rows %}
               <tr>
@@ -44,7 +47,7 @@
         </tr>
 {%- elif block.type == "button" and block.url %}
         <tr>
-          <td class="em-pad" align="center" style="padding:32px 40px 8px 40px;">
+          <td class="em-pad" align="center" style="padding:32px {{ side }}px 8px {{ side }}px;">
             <table role="presentation" class="em-btn-table" cellpadding="0" cellspacing="0" border="0" {% if theme.button_width == 'full' %}width="100%" style="width:100%;"{% endif %}>
               <tr>
                 <td align="center" bgcolor="{{ theme.button_color }}" style="border-radius:{{ theme.button_radius }}px;background-color:{{ theme.button_color }};">
@@ -56,23 +59,23 @@
         </tr>
 {%- elif block.type == "link" and block.url %}
         <tr>
-          <td class="em-pad" align="center" style="padding:12px 40px 0 40px;font-family:{{ font }};font-size:13px;line-height:20px;color:#6b7280;">
+          <td class="em-pad" align="center" style="padding:12px {{ side }}px 0 {{ side }}px;font-family:{{ font }};font-size:13px;line-height:20px;color:#6b7280;">
             {{ block.label }}<br>
             <a href="{{ block.url }}" target="_blank" style="color:{{ theme.accent_color }};text-decoration:underline;word-break:break-all;">{{ block.url }}</a>
           </td>
         </tr>
 {%- elif block.type == "custom_text" and block.html %}
         <tr>
-          <td class="em-pad" style="padding:20px 40px 0 40px;font-family:{{ font }};font-size:15px;line-height:24px;color:#374151;">
+          <td class="em-pad" style="padding:20px {{ side }}px 0 {{ side }}px;font-family:{{ font }};font-size:15px;line-height:24px;color:#374151;">
             <!--block:custom_text-->{{ block.html }}<!--/block:custom_text-->
           </td>
         </tr>
 {%- elif block.type == "footer" %}
         <tr>
-          <td class="em-pad" style="padding:36px 40px 0 40px;"><div style="height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;">&nbsp;</div></td>
+          <td class="em-pad" style="padding:36px {{ side }}px 0 {{ side }}px;"><div style="height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;">&nbsp;</div></td>
         </tr>
         <tr>
-          <td class="em-pad" align="center" style="padding:20px 40px 32px 40px;font-family:{{ font }};font-size:12px;line-height:18px;color:#9ca3af;">
+          <td class="em-pad" align="center" style="padding:20px {{ side }}px 32px {{ side }}px;font-family:{{ font }};font-size:12px;line-height:18px;color:#9ca3af;">
             {%- if theme.company_name %}<div style="font-weight:600;color:#6b7280;">{{ theme.company_name }}</div>{% endif %}
             {%- if theme.address %}<div>{{ theme.address }}</div>{% endif %}
             {%- if theme.help_email or theme.help_url %}
