@@ -31,13 +31,15 @@ from app.services.portal_service import GRANTABLE_PORTAL_FORM_TYPES
 
 router = APIRouter()
 
-# GRANTABLE_PORTAL_FORM_TYPES minus sales_opportunity and customer_asks (no form at all):
-# sales_opportunity has no revision-engine
+# GRANTABLE_PORTAL_FORM_TYPES minus sales_opportunity, customer_asks and conversation (no form
+# at all): sales_opportunity has no revision-engine
 # wiring at all (no PortalRevisionService dispatch, no revise/save-draft route), so a
 # settings row for it would configure nothing - exactly the trap the SUPPORTED_TYPES
 # comment in portal_service.py warns about. Add it back here the day it gets one.
 REVISABLE_PORTAL_FORM_TYPES = tuple(
-    kind for kind in GRANTABLE_PORTAL_FORM_TYPES if kind not in ("sales_opportunity", "customer_asks")
+    kind
+    for kind in GRANTABLE_PORTAL_FORM_TYPES
+    if kind not in ("sales_opportunity", "customer_asks", "conversation")
 )
 
 

@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from app.models.access import MarketSegment, respond_contact_market_segments
 from app.models.price_tag import ContactPortalFormOverride
 from app.services.error_handler import AppException
-from app.services.portal_service import CUSTOMER_ASKS_FORM_TYPE, SUPPORTED_TYPES
+from app.services.portal_service import AGENT_ONLY_FORM_TYPES, SUPPORTED_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ _KIND_LABELS: dict[str, str] = {
     "price_tag_request": "Price Tag Request",
     "sales_opportunity": "Sales Opportunities",
     "customer_asks": "Customer asks",
+    "conversation": "Conversation",
 }
 
 
@@ -99,12 +100,14 @@ def switched_form_types(db: Session, contact_id: str) -> set[str]:
 def resolve_visible_form_types(db: Session, contact_id: str) -> set[str]:
     """Return the set of portal form type strings visible to ``contact_id``."""
     visible = switched_form_types(db, contact_id)
-    # Step 4. Imported here: price_tag_request_service imports half the portal.
-    if CUSTOMER_ASKS_FORM_TYPE in visible:
+    # Step 4: the agent-only kinds (Customer asks, Conversation) need a linked sales agent on
+    # top of their switch. Imported here: price_tag_request_service imports half the portal.
+    agent_only = [kind for kind in AGENT_ONLY_FORM_TYPES if kind in visible]
+    if agent_only:
         from app.services import price_tag_request_service
 
         if price_tag_request_service.sales_agent_for_contact(db, contact_id) is None:
-            visible.discard(CUSTOMER_ASKS_FORM_TYPE)
+            visible.difference_update(agent_only)
     return visible
 
 
