@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sales report drill-down mock</title>
 <style>
-  :root { --bg: #e5ddd5; --in: #ffffff; --out: #dcf8c6; --ink: #111; --muted: #667; --note: #fff4cc; }
+  :root { --bg: #e5ddd5; --in: #ffffff; --out: #dcf8c6; --ink: #111; --muted: #667; --note: #fff4cc; --ans: #e6f4ea; }
   body { margin: 0; background: #f2f2f2; font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--ink); }
   header { padding: 16px 20px; background: #075e54; color: #fff; }
   header h1 { margin: 0; font-size: 18px; font-weight: 600; }
@@ -17,137 +17,194 @@
   .msg { max-width: 88%; margin: 6px 0; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; font-size: 14px; line-height: 1.35; box-shadow: 0 1px 0 rgba(0,0,0,.08); }
   .out { background: var(--out); margin-left: auto; }
   .in { background: var(--in); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+  .in b { font-weight: 700; }
   .note { background: var(--note); border-left: 4px solid #e0b100; padding: 8px 10px; font-size: 13px; margin: 8px 0 0; border-radius: 4px; }
+  .answer { background: var(--ans); border-left: 4px solid #1a7f37; padding: 8px 10px; font-size: 13px; margin: 8px 0 0; border-radius: 4px; }
   .q { font-weight: 600; }
   footer { max-width: 760px; margin: 0 auto 32px; padding: 0 16px; font-size: 12px; color: var(--muted); }
-  .num { color: #0a6; }
+  code { font-size: 12px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Sales report on WhatsApp: default reply and drill-downs</h1>
-  <p>Mock for alignment (PR #1401). Contact: Jayson, linked to six HANLIM TRADING accounts. Copy-DB 2026 facts used: A/C I 164 SOs, A/C III 64, A/C IV 32, A/C II none. Amounts and the split by product are illustrative.</p>
+  <h1>Sales report on WhatsApp: default reply and drill-downs (v2)</h1>
+  <p>Mock for alignment (PR #1401), revised for the owner's eight annotations on v1. Contact: Jayson, linked to six HANLIM TRADING accounts, all retail. Copy-DB 2026 facts used: A/C I 164 SOs, A/C III 64, A/C IV 32, A/C II none. Amounts and the split by product are illustrative. Bold in a bubble is WhatsApp <code>*bold*</code>.</p>
 </header>
 <main>
 
 <section>
-  <h2>1. Default reply: "what's my sales this month"</h2>
+  <h2>1. Default reply: "what's my sales this month" (a month is shown by week)</h2>
   <div class="chat">
     <div class="msg out">what's my sales this month</div>
-    <div class="msg in">Customer: HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
-Product: all
-Channel: all
-Location: all
-Delivery date: 01/09/2026 to 30/09/2026
+    <div class="msg in"><b>Customer:</b> HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
+<b>Product:</b> all
+<b>Delivery date:</b> 01/09/2026 to 30/09/2026
 
-Total: 1,240 qty, RM 84,320.50
-Sep 2026: 1,240 qty, RM 84,320.50
+<b>Total:</b> Qty 1,240, RM 84,320.50
+01/09 to 06/09: Qty 310, RM 21,080.00
+07/09 to 13/09: Qty 345, RM 23,410.50
+14/09 to 20/09: Qty 290, RM 19,700.00
+21/09 to 27/09: Qty 215, RM 14,630.00
+28/09 to 30/09: Qty 80, RM 5,500.00
 
-Drill down:
+<b>Drill down:</b>
 1. By customer
 2. By product
 3. Delivery orders</div>
   </div>
-  <p class="note"><span class="q">Question for the owner.</span> The third option: the crew message said "By month detail". This mock reads it as the delivery order list for the period (the DO documents behind the figures). Say if it should be something else. An option is offered only when it has more than one group (one account linked: no "By customer"; one product: no "By product"; one DO: still offered, it is a list).</p>
+  <p class="note"><span class="q">Annotation 2 (line format).</span> Every figure line is <code>Qty n, RM x</code>, the top selling ranking's own row format (<code>presenters.py::_top_selling_row</code>: <code>CODE: Qty q, RM v</code>), so the two reports read the same. <span class="q">Annotation 3.</span> Header labels, <b>Total</b> and section titles are bold.</p>
+  <p class="note"><span class="q">Annotation 4 (channel and location).</span> No <b>Channel</b> line here: Jayson's six accounts are all retail, so the channel is fixed to retail in code and there is nothing to choose. Source: each linked account's <code>customers.market_segment_code</code>, read through <code>app/services/scm/demand_class.py::class_of</code> (a segment named project or contract is the project channel, every other segment is retail, the same rule the SO import uses to class demand). One class across the links: channel fixed, header hidden. Two classes: the header shows (section 5). No <b>Location</b> line either: the location filter is capped at the warehouses the contact may see, from <code>app/services/stock_visibility.py::resolve_policy</code> (the <code>stock_visibility_policies</code> table, per-contact override, then access type, then the global default, the same policy the stock ask already applies), and the line prints only when that policy is narrower than every warehouse or the asker named a location.</p>
+  <p class="note"><span class="q">Annotation 7 (period granularity).</span> The parser gives only the window; the grouping is decided in code from the window: one day prints that date, up to 7 days prints by day, up to a calendar month prints by week (Monday to Sunday, clipped to the window), longer prints by month, latest first. Only buckets with a delivery print.</p>
 </section>
 
 <section>
-  <h2>2. Pick "1" (By customer): rows are numbered so the next pick drills into one account</h2>
+  <h2>2. "what's my sales today" (one day: one line with the date)</h2>
   <div class="chat">
-    <div class="msg out">1</div>
-    <div class="msg in">By customer, delivery date 01/09/2026 to 30/09/2026
-1. HANLIM TRADING SDN BHD [A/C I]: 820 qty, RM 55,900.00
-2. HANLIM TRADING SDN BHD [A/C III]: 300 qty, RM 20,120.50
-3. HANLIM TRADING SDN BHD [A/C IV]: 120 qty, RM 8,300.00
-Total: 1,240 qty, RM 84,320.50
+    <div class="msg out">what's my sales today</div>
+    <div class="msg in"><b>Customer:</b> HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
+<b>Product:</b> all
+<b>Delivery date:</b> 30/09/2026
 
-Reply a number to drill into that account, or:
-4. By product
-5. Delivery orders</div>
+<b>Total:</b> Qty 40, RM 2,760.00
+30/09/2026: Qty 40, RM 2,760.00
+
+<b>Drill down:</b>
+1. By customer
+2. By product
+3. Delivery orders</div>
   </div>
-  <p class="note">Accounts with nothing delivered in the window are not listed (A/C II, the plain account, CERAMIC &amp; ELLECI). "By customer" is consumed: the remaining options are the other axes, numbered after the rows so every number on screen means one thing.</p>
+  <p class="note"><span class="q">Annotation 1.</span> "today" is a one-day window: the header prints the single date and the body one line for it (the Total repeats it on purpose, so every reply has the same two-part shape). A day with nothing delivered is section 6's miss.</p>
 </section>
 
 <section>
-  <h2>3. Two-step drill: pick "1" (A/C I), then "By product" inside it</h2>
+  <h2>3. "this week" (by day) and "this year" (by month)</h2>
+  <div class="chat">
+    <div class="msg out">how's my sales this week</div>
+    <div class="msg in"><b>Customer:</b> HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
+<b>Product:</b> all
+<b>Delivery date:</b> 28/09/2026 to 04/10/2026
+
+<b>Total:</b> Qty 80, RM 5,500.00
+30/09/2026: Qty 40, RM 2,760.00
+29/09/2026: Qty 25, RM 1,690.00
+28/09/2026: Qty 15, RM 1,050.00
+
+<b>Drill down:</b>
+1. By customer
+2. By product
+3. Delivery orders</div>
+    <div class="msg out">how's my sales this year?</div>
+    <div class="msg in"><b>Customer:</b> HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
+<b>Product:</b> all
+<b>Delivery date:</b> 01/01/2026 to 31/12/2026
+
+<b>Total:</b> Qty 6,931, RM 471,300.00
+Sep 2026: Qty 1,240, RM 84,320.50
+Aug 2026: Qty 980, RM 66,150.00
+Jul 2026: Qty 1,105, RM 75,010.00
+Jun 2026: Qty 760, RM 51,400.00
+May 2026: Qty 690, RM 46,900.00
+Apr 2026: Qty 810, RM 55,060.00
+Mar 2026: Qty 540, RM 36,700.00
+Feb 2026: Qty 426, RM 28,960.00
+Jan 2026: Qty 380, RM 26,800.00
+
+<b>Drill down:</b>
+1. By customer
+2. By product
+3. Delivery orders</div>
+  </div>
+  <p class="note">The week runs Monday to Sunday (Malaysia time); the days after today have nothing yet and do not print. The year keeps one line per month, latest first.</p>
+</section>
+
+<section>
+  <h2>4. One drill dimension at a time: "1" (By customer), then "by product" typed in words</h2>
   <div class="chat">
     <div class="msg out">1</div>
-    <div class="msg in">HANLIM TRADING SDN BHD [A/C I], delivery date 01/09/2026 to 30/09/2026
-Total: 820 qty, RM 55,900.00
-Sep 2026: 820 qty, RM 55,900.00
+    <div class="msg in"><b>By customer</b>, delivery date 01/09/2026 to 30/09/2026
+1. HANLIM TRADING SDN BHD [A/C I]: Qty 820, RM 55,900.00
+2. HANLIM TRADING SDN BHD [A/C III]: Qty 300, RM 20,120.50
+3. HANLIM TRADING SDN BHD [A/C IV]: Qty 120, RM 8,300.00
+<b>Total:</b> Qty 1,240, RM 84,320.50
 
-Drill down:
+<b>Drill down:</b>
 1. By product
 2. Delivery orders</div>
-    <div class="msg out">1</div>
-    <div class="msg in">HANLIM TRADING SDN BHD [A/C I], by product, delivery date 01/09/2026 to 30/09/2026
-1. SRTWT7445: 300 qty, RM 20,100.00
-2. SRTKT39SS: 180 qty, RM 15,300.00
-3. SRTWC286-SH: 140 qty, RM 9,800.00
-4. SRTBT1010: 200 qty, RM 10,700.00
-Total: 820 qty, RM 55,900.00
+    <div class="msg out">by product</div>
+    <div class="msg in"><b>By product</b>, delivery date 01/09/2026 to 30/09/2026
+1. SRTWT7445: Qty 450, RM 30,100.00
+2. SRTKT39SS: Qty 300, RM 24,320.50
+3. SRTBT1010: Qty 280, RM 16,900.00
+4. SRTWC286-SH: Qty 210, RM 13,000.00
+<b>Total:</b> Qty 1,240, RM 84,320.50
 
-Reply a number to drill into that product, or:
-5. Delivery orders</div>
-    <div class="msg out">5</div>
-    <div class="msg in">Delivery orders, HANLIM TRADING SDN BHD [A/C I], 01/09/2026 to 30/09/2026
-1. DO-2026-09-0412, 21/09/2026: 120 qty, RM 8,900.00
-2. DO-2026-09-0398, 18/09/2026: 300 qty, RM 20,100.00
-3. DO-2026-09-0371, 12/09/2026: 400 qty, RM 26,900.00
-Total: 820 qty, RM 55,900.00</div>
+<b>Drill down:</b>
+1. By customer
+2. Delivery orders</div>
+    <div class="msg out">DO</div>
+    <div class="msg in"><b>Delivery orders</b>, 01/09/2026 to 30/09/2026
+1. DO-2026-09-0412, 21/09/2026, HANLIM TRADING SDN BHD [A/C I]: Qty 120, RM 8,900.00
+2. DO-2026-09-0398, 18/09/2026, HANLIM TRADING SDN BHD [A/C III]: Qty 300, RM 20,100.00
+3. DO-2026-09-0371, 12/09/2026, HANLIM TRADING SDN BHD [A/C I]: Qty 400, RM 26,900.00
+4. DO-2026-09-0355, 08/09/2026, HANLIM TRADING SDN BHD [A/C IV]: Qty 420, RM 28,420.50
+<b>Total:</b> Qty 1,240, RM 84,320.50
+
+<b>Drill down:</b>
+1. By customer
+2. By product</div>
   </div>
-  <p class="note">Each pick keeps the period and the scope (the six accounts, then one account, then one product) and re-offers only what is left. The delivery order list is the last rung: nothing below it to drill into. A product pick after "by product" would show that product's total and month lines with "Delivery orders" as the one option left.</p>
+  <p class="note"><span class="q">Annotation 8 (single dimension).</span> Every drill is one dimension over the SAME full scope (the six accounts, the same window): By customer, By product, or the delivery order list. The rows of a drill are not picks and nothing nests; after a drill the two other views are offered, so the reader can hop between the three without going back. Accounts with nothing delivered in the window are not listed (A/C II, the plain account, CERAMIC &amp; ELLECI). Rows are ranked by amount; the delivery order list is latest first and names the account when the scope holds more than one; a list longer than 10 rows prints the top 10 and a line "and N more". The DO number, ranks and figures are the route's own; the reply only prints them.</p>
+  <p class="note"><span class="q">Annotation 6 (typed words).</span> "by product", "by customer", "DO", "delivery order", "delivery orders" all pick the same option as its number. Two existing mechanisms carry it: the option's own label typed back matches exactly (<code>turn/decide.py::_positions_by_label</code>), and a paraphrase ("the DO list", "show per product") arrives as the parser's <code>reference_positions</code> against the printed roster (<code>turn/decide.py::picked_positions</code>). Short aliases the label match cannot cover ("DO", "delivery order") are added to the option itself, so the match stays a label match and never a word list in the engine.</p>
 </section>
 
 <section>
-  <h2>4. "this year": months become lines, the same options follow</h2>
+  <h2>5. A contact serving two market segments: the Channel line appears and can be narrowed</h2>
   <div class="chat">
-    <div class="msg out">how's my sales this year?</div>
-    <div class="msg in">Customer: HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
-Product: all
-Channel: all
-Location: all
-Delivery date: 01/01/2026 to 31/12/2026
+    <div class="msg out">my sales this month</div>
+    <div class="msg in"><b>Customer:</b> ACME RETAIL SDN BHD, ACME PROJECTS SDN BHD
+<b>Product:</b> all
+<b>Channel:</b> all
+<b>Delivery date:</b> 01/09/2026 to 30/09/2026
 
-Total: 6,931 qty, RM 471,300.00
-Sep 2026: 1,240 qty, RM 84,320.50
-Aug 2026: 980 qty, RM 66,150.00
-Jul 2026: 1,105 qty, RM 75,010.00
-Jun 2026: 760 qty, RM 51,400.00
-May 2026: 690 qty, RM 46,900.00
-Apr 2026: 810 qty, RM 55,060.00
-Mar 2026: 540 qty, RM 36,700.00
-Feb 2026: 426 qty, RM 28,960.00
-Jan 2026: 380 qty, RM 26,800.00
+<b>Total:</b> Qty 2,050, RM 141,900.00
+01/09 to 06/09: Qty 500, RM 34,000.00
+07/09 to 13/09: Qty 620, RM 43,100.00
+14/09 to 20/09: Qty 480, RM 33,600.00
+21/09 to 27/09: Qty 350, RM 24,700.00
+28/09 to 30/09: Qty 100, RM 6,500.00
 
-Drill down:
+<b>Drill down:</b>
 1. By customer
 2. By product
 3. Delivery orders</div>
-    <div class="msg out">2</div>
-    <div class="msg in">By product, delivery date 01/01/2026 to 31/12/2026
-1. SRTWT7445: 2,410 qty, RM 161,470.00
-2. SRTKT39SS: 1,530 qty, RM 130,050.00
-3. SRTWC286-SH: 1,220 qty, RM 85,400.00
-4. SRTBT1010: 1,771 qty, RM 94,380.00
-Total: 6,931 qty, RM 471,300.00
+    <div class="msg out">project only</div>
+    <div class="msg in"><b>Customer:</b> ACME RETAIL SDN BHD, ACME PROJECTS SDN BHD
+<b>Product:</b> all
+<b>Channel:</b> Project
+<b>Delivery date:</b> 01/09/2026 to 30/09/2026
 
-Reply a number to drill into that product, or:
-5. By customer
-6. Delivery orders</div>
+<b>Total:</b> Qty 1,100, RM 88,400.00
+01/09 to 06/09: Qty 260, RM 21,000.00
+07/09 to 13/09: Qty 340, RM 27,500.00
+14/09 to 20/09: Qty 280, RM 22,300.00
+21/09 to 27/09: Qty 170, RM 13,900.00
+28/09 to 30/09: Qty 50, RM 3,700.00
+
+<b>Drill down:</b>
+1. By customer
+2. By product
+3. Delivery orders</div>
   </div>
-  <p class="note">The year view keeps one line per month by default (the owner's shape); a product list longer than 10 rows prints the top 10 by amount and a line "and N more products; reply 'all products' to list every one" (same cap the header uses today).</p>
+  <p class="note"><span class="q">Annotation 4, the two-segment case.</span> This contact's linked accounts fall in two demand classes (one retail segment, one project segment), so the <b>Channel</b> line prints and "project only" narrows it (the parser's own <code>sales_channel</code> field, the existing refinement path, which re-runs the report and re-offers the drill-downs). A retail-only contact who types "project sales" gets the retail report with no Channel line: the channel is not theirs to choose. The Location line follows the same rule with the contact's warehouse policy.</p>
 </section>
 
 <section>
-  <h2>5. No sales on the asker's own accounts: a final answer, no escalation</h2>
+  <h2>6. No sales on the asker's own accounts: a final answer, no escalation</h2>
   <div class="chat">
-    <div class="msg out">what's my sales this month</div>
-    <div class="msg in">Customer: HANLIM TRADING SDN BHD [A/C II]
-Product: all
-Channel: all
-Location: all
-Delivery date: 01/09/2026 to 30/09/2026
+    <div class="msg out">what's my sales today</div>
+    <div class="msg in"><b>Customer:</b> HANLIM TRADING SDN BHD [A/C II]
+<b>Product:</b> all
+<b>Delivery date:</b> 30/09/2026
 
 No sales found.</div>
   </div>
@@ -155,7 +212,30 @@ No sales found.</div>
 </section>
 
 <section>
-  <h2>6. Out-of-range pick: the same question is asked again</h2>
+  <h2>7. The reader asks something else while the drill-down is open</h2>
+  <div class="chat">
+    <div class="msg out">1</div>
+    <div class="msg in"><b>By customer</b>, delivery date 01/09/2026 to 30/09/2026
+1. HANLIM TRADING SDN BHD [A/C I]: Qty 820, RM 55,900.00
+2. HANLIM TRADING SDN BHD [A/C III]: Qty 300, RM 20,120.50
+3. HANLIM TRADING SDN BHD [A/C IV]: Qty 120, RM 8,300.00
+<b>Total:</b> Qty 1,240, RM 84,320.50
+
+<b>Drill down:</b>
+1. By product
+2. Delivery orders</div>
+    <div class="msg out">got stock for SRTWT7445?</div>
+    <div class="msg in">SRTWT7445 (Wall Tap 7445)
+Stock: 1,250 available
+...</div>
+    <div class="msg out">2</div>
+    <div class="msg in">Sorry, I did not catch that. What would you like to check?</div>
+  </div>
+  <p class="answer"><span class="q">Answer to annotation 5.</span> The new question is answered normally and the drill-down offer is dropped with it; the bot never waits on the offer. That is the existing open-question rule, not a new one: a message that names its own subject or another domain is a NEW ASK (<code>turn/decide.py</code>, the rows <code>entity_op_replace</code>, <code>domain_in_message</code> and <code>names_its_own_entity</code>) and <code>turn/apply.py::_answer_outstanding</code> closes the open offer on it (the trace rule <code>outstanding_pending_dropped</code>). A casual aside ("thanks", "ok") keeps the offer open silently, so "1" still works on the next message; a message the bot cannot read re-prints the offer once, and a second such message closes it. The "2" typed after the stock answer therefore lands on no open question: the bot asks what the reader wants, it does not resurrect the old list. Typing "my sales this month" again re-opens the drill-down fresh.</p>
+</section>
+
+<section>
+  <h2>8. Out-of-range pick: the same options are re-asked</h2>
   <div class="chat">
     <div class="msg out">9</div>
     <div class="msg in">Please reply with a number from 1 to 3.
@@ -165,12 +245,16 @@ No sales found.</div>
     <div class="msg out">thanks</div>
     <div class="msg in">You're welcome. The drill-down options above are still open if you want them.</div>
   </div>
-  <p class="note">An out-of-range number re-asks with the same options (the existing re-ask path). A casual aside carries the open options silently (the standing rule for every open question), so "1" still works on the next message.</p>
+  <p class="note">An out-of-range number re-asks with the same options (the existing re-ask path, <code>lanes/business/__init__.py::_outstanding_detail_reoffer</code>). A casual aside carries the open options silently (the standing rule for every open question), so "1" still works on the next message.</p>
+</section>
+
+<section>
+  <h2>Answers to the two questions left open in v1</h2>
+  <p class="answer"><span class="q">Third option.</span> Kept as the delivery order list ("Delivery orders", also reachable by typing "DO" or "delivery order", annotation 6). It is the last rung: nothing below it to drill into, and after it the two other dimensions are offered again.</p>
+  <p class="answer"><span class="q">Nested drilling.</span> Withdrawn per annotation 8: no drilling inside a drill. The three views (By customer, By product, Delivery orders) always run over the full scope of the original ask, and each reply offers the other two.</p>
 </section>
 
 </main>
-<footer>
-  Header lines and money format are the presenter's own (RM with thousands separators, dates dd/mm/yyyy, months "Sep 2026", latest first). Every number on a screen is a reply option once, never two lists with overlapping numbers.
-</footer>
+<footer>Header lines and money format are the presenter's own (RM with thousands separators, dates dd/mm/yyyy, months "Sep 2026", latest first). Every number on a screen is a reply option once, never two lists with overlapping numbers. Rows inside a drill are numbered for reading only; the reply options are the ones under "Drill down:".</footer>
 </body>
 </html>
