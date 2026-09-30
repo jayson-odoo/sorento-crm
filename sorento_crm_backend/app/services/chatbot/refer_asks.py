@@ -97,10 +97,10 @@ def referred_entries(
             code, when = _dealer_line(jsc.get(item, "title"))
             if code:
                 add(code, branch=BRANCH_INCOMING_ETA, answer=f"{when}. {REFER_TO_SALESMAN}" if when else REFER_TO_SALESMAN)
-    if out:
-        return out
 
-    # 2. A miss: the codes the fetch found nothing for, and the tokens it could not place.
+    # 2. A miss: the codes the fetch found nothing for, and the tokens it could not place
+    #    (read beside step 1 too: "incoming SRT1 XYZ9" answers SRT1's ETA and cannot find
+    #    XYZ9, and both are the dealer's asks - review round 1, finding 2).
     for envelope in envelopes:
         for code in [*_strings(envelope.get("miss")), *_strings(envelope.get("unresolved"))]:
             add(code, branch=BRANCH_REFERRED, answer=text)
@@ -108,8 +108,12 @@ def referred_entries(
         return out
 
     # 3. A "no" to a did-you-mean: the code the dealer typed, and the quantity it carried.
+    #    Only on the decline itself (`turn/apply.py` fires `stock_pick_declined`): a "yes"
+    #    answers the suggested code through the stock ask, and the typed code is not an
+    #    ask of its own (review round 1, finding 1).
     payload = getattr(pending_before, "payload", None) if pending_before is not None else None
-    if isinstance(payload, dict) and payload.get("did_you_mean") is True and payload.get("typed"):
+    declined = "stock_pick_declined" in (getattr(getattr(plan, "trace", None), "rules_fired", None) or [])
+    if declined and isinstance(payload, dict) and payload.get("did_you_mean") is True and payload.get("typed"):
         add(str(payload["typed"]), branch=BRANCH_REFERRED, answer=text, qty=_quantity(payload.get("stock_qty")))
     if out:
         return out

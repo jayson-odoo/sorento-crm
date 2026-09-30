@@ -193,8 +193,8 @@ def test_ac_rs12_a_stock_miss_names_the_typed_code_the_resolver_could_not_place(
     assert out[0]["answer_summary"] == reply
 
 
-def test_ac_rs13_a_declined_did_you_mean_carries_the_typed_code_and_quantity():
-    pending = Pending(
+def _did_you_mean_pending() -> Pending:
+    return Pending(
         kind="product_pick",
         expects="position",
         options=[{"position": 1, "label": "ELP3754", "code": "ELP3754", "uuid": "u2", "entity_type": "product"}],
@@ -202,7 +202,13 @@ def test_ac_rs13_a_declined_did_you_mean_carries_the_typed_code_and_quantity():
         payload={"stock_pick": True, "did_you_mean": True, "typed": "ELP3753", "stock_qty": 10},
         asked_at_turn=3,
     )
-    out = _build(REFER_TO_SALESMAN, [], _plan(domain="inventory"), pending=pending, message="no")
+
+
+def test_ac_rs13_a_declined_did_you_mean_carries_the_typed_code_and_quantity():
+    plan = _plan(domain="inventory")
+    plan.fetch = []
+    plan.trace.rules_fired.append("stock_pick_declined")  # `turn/apply.py` on the "no"
+    out = _build(REFER_TO_SALESMAN, [], plan, pending=_did_you_mean_pending(), message="no")
     assert out == [
         {
             "product_code": "ELP3753",
@@ -212,6 +218,25 @@ def test_ac_rs13_a_declined_did_you_mean_carries_the_typed_code_and_quantity():
             "answer_summary": REFER_TO_SALESMAN,
         }
     ]
+
+
+def test_a_yes_to_a_did_you_mean_writes_no_row_for_the_typed_code():
+    """Review round 1, finding 1: the "yes" answers ELP3754 through the stock ask (its own
+    in_stock row); the typo the dealer first typed is not an ask of its own."""
+    answered = [{"product_code": "ELP3754", "requested_qty": 10, "branch": "in_stock"}]
+    reply = f"ELP3754 x 10: yes, we have stock. {REFER_TO_SALESMAN}"
+    env = _envelope("inventory", entities=["ELP3754"])
+    plan = _plan("ELP3754", domain="inventory", uuids={"ELP3754": "u2"})
+    plan.trace.rules_fired.append("stock_pick_yes")
+    assert _build(reply, [env], plan, pending=_did_you_mean_pending(), message="yes", answered=answered) == []
+
+
+def test_an_eta_reply_that_also_could_not_place_a_token_records_both():
+    """Review round 1, finding 2: "incoming SRT1 XYZ9" is two asks."""
+    reply = f"SRT1\nETA: 2026-09-08\n\nI could not find XYZ9.\n\n{REFER_TO_SALESMAN}"
+    env = _envelope("incoming", figures=[_eta_item("SRT1", ["2026-09-08"])], unresolved=["XYZ9"], entities=["SRT1"])
+    out = _build(reply, [env], _plan("SRT1"))
+    assert [(e["product_code"], e["branch"]) for e in out] == [("SRT1", "incoming_eta"), ("XYZ9", "referred")]
 
 
 def test_a_refer_reply_with_no_product_at_all_still_records_the_ask_as_typed():

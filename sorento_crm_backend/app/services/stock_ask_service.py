@@ -237,7 +237,12 @@ def _resolve_product_ids(db: Session, entries: list[dict[str, Any]], company_id:
     }
     if not wanted:
         return
-    query = db.query(Product.id, Product.product_code).filter(Product.product_code.in_(list(wanted)))
+    from sqlalchemy import func
+
+    # Case-insensitive on both sides: a dealer types "elp3754" as often as "ELP3754".
+    query = db.query(Product.id, Product.product_code).filter(
+        func.lower(Product.product_code).in_([w.lower() for w in wanted])
+    )
     if company_id:
         query = query.filter(Product.company_id == company_id)
     by_code = {code.casefold(): pid for pid, code in query.all()}

@@ -36,8 +36,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
-    # Rows the new branches wrote cannot satisfy the old shape: take them out first.
+    # Rows the new branches wrote cannot satisfy the old shape: take them out first (every
+    # stock-branch row carries a quantity, so nothing null is left after this).
     bind.execute(sa.text("DELETE FROM stock_asks WHERE branch IN ('incoming_eta', 'referred')"))
-    bind.execute(sa.text("DELETE FROM stock_asks WHERE quantity IS NULL"))
     _branch_check(bind, _OLD)
     bind.execute(sa.text("ALTER TABLE stock_asks ALTER COLUMN quantity SET NOT NULL"))
