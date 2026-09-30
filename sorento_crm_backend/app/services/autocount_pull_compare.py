@@ -418,9 +418,8 @@ def _sum_money(current: Optional[Decimal], value: Optional[Decimal]) -> Optional
 def compare_delivery_orders(
     excel_rows: list[dict], pull_rows: list[dict], mapping: Optional[dict] = None
 ) -> dict:
-    """AC-DP-32 (the LINES half): the Order Listing macro's `Master` sheet (or the DO lines
-    import sheet) against the pull's raw DO records, keyed by (Doc No, Item Code, Location)
-    trimmed and case-insensitive. Each sheet row goes through the `mapping` (default: the
+    """AC-DP-32 (the LINES half): the Order Listing macro's `Master` sheet against the pull's raw DO
+    records, keyed by (Doc No, Item Code, Location) trimmed and case-insensitive. Each sheet row goes through the `mapping` (default: the
     Order Listing mapping) into canonical fields first; a blank or unmapped cell is not
     compared. Fields (owner Q3): `qty` and `total_ex` summed per key, `unit_price` and
     `discount` from the first line of the key on each side. `pull_rows` are the raw vendor

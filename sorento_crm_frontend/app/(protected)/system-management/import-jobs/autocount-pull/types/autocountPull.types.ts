@@ -280,7 +280,6 @@ export interface CompareMappingBody {
 
 export interface CompareMapping extends CompareMappingBody {
   kind: CompareMappingKind;
-  updated_at?: string | null;
 }
 
 export interface CompareMappingsResponse {

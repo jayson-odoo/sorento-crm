@@ -261,13 +261,13 @@ def get_current_pull(
 
 class CompareMappingColumn(BaseModel):
     excel_header: str = Field(max_length=200)
-    transform: str
-    field: str
+    transform: str = Field(max_length=40)
+    field: str = Field(max_length=40)
 
 
 class CompareMappingBody(BaseModel):
-    sheet_name: str
-    columns: list[CompareMappingColumn] = Field(max_length=200)
+    sheet_name: str = Field(max_length=100)
+    columns: list[CompareMappingColumn] = Field(max_length=compare_mapping.MAX_COLUMNS)
 
 
 # Declared before `/{job_id}` so `compare-mappings` is never read as a job id.

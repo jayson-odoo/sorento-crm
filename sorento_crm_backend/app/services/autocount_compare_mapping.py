@@ -21,13 +21,20 @@ FIELDS_BY_KIND: dict[str, tuple[str, ...]] = {
                       "discount", "total_ex"),
     "order_tracking": ("doc_no", "doc_date", "debtor_code", "cancel"),
 }
+#: The transforms that read each field sensibly; a pairing outside this table is refused.
+TRANSFORMS_BY_FIELD: dict[str, tuple[str, ...]] = {
+    "doc_no": ("text",), "item_code": ("text",), "location": ("text",),
+    "debtor_code": ("text",), "doc_date": ("date",), "qty": ("number",),
+    "unit_price": ("money",), "total_ex": ("money",),
+    "discount": ("percent_text", "percent_fraction"), "cancel": ("cancel_flag",),
+}
 REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "order_listing": ("doc_no", "item_code"),
     "order_tracking": ("doc_no",),
 }
 #: The `kind` a compare `source` reads.
 KIND_BY_SOURCE = {"lines": "order_listing", "headers": "order_tracking"}
-_MAX_COLUMNS = 100
+MAX_COLUMNS = 100
 
 
 def _cols(triples: tuple[tuple[str, str, str], ...]) -> list[dict]:
@@ -73,8 +80,8 @@ def list_mappings(db: Session) -> list[dict]:
 def validate_columns(kind: str, columns: list[dict]) -> list[dict]:
     """The cleaned column rows, or a 422 `INVALID_MAPPING` naming the first fault."""
     allowed = FIELDS_BY_KIND[kind]
-    if len(columns) > _MAX_COLUMNS:
-        raise _invalid(f"At most {_MAX_COLUMNS} columns.")
+    if len(columns) > MAX_COLUMNS:
+        raise _invalid(f"At most {MAX_COLUMNS} columns.")
     cleaned: list[dict] = []
     seen: set[str] = set()
     for col in columns:
@@ -85,8 +92,12 @@ def validate_columns(kind: str, columns: list[dict]) -> list[dict]:
             raise _invalid("Every row needs an Excel column name.")
         if transform not in TRANSFORMS:
             raise _invalid(f"Unknown transform '{transform}'.")
+        if not field:
+            raise _invalid("A Sorento field is required on every row.")
         if field not in allowed:
             raise _invalid(f"'{field}' is not a field of this workbook.")
+        if transform not in TRANSFORMS_BY_FIELD[field]:
+            raise _invalid(f"'{transform}' cannot read '{field}'.")
         if field in seen:
             raise _invalid(f"'{field}' is mapped more than once.")
         seen.add(field)
@@ -104,8 +115,10 @@ def save_mapping(
     if kind not in KINDS:
         raise _unknown_kind(kind)
     sheet = str(sheet_name or "").strip()
-    if not sheet or len(sheet) > 100:
+    if not sheet:
         raise _invalid("A sheet name is required.")
+    if len(sheet) > 100:
+        raise _invalid("The sheet name is too long.")
     cleaned = validate_columns(kind, columns)
     row = db.query(AutocountCompareMapping).filter(AutocountCompareMapping.kind == kind).first()
     if row is None:

@@ -60,6 +60,18 @@ const FIELD_OPTIONS: Record<CompareMappingKind, Array<{ value: string; label: st
   ],
 };
 
+/** Mirrors the backend `TRANSFORMS_BY_FIELD`: the transforms that can read each field. */
+const TRANSFORMS_BY_FIELD: Record<string, string[]> = {
+  doc_no: ['text'], item_code: ['text'], location: ['text'], debtor_code: ['text'],
+  doc_date: ['date'], qty: ['number'], unit_price: ['money'], total_ex: ['money'],
+  discount: ['percent_text', 'percent_fraction'], cancel: ['cancel_flag'],
+};
+
+function transformOptionsFor(field: string) {
+  const allowed = TRANSFORMS_BY_FIELD[field];
+  return allowed ? TRANSFORM_OPTIONS.filter((o) => allowed.includes(o.value)) : TRANSFORM_OPTIONS;
+}
+
 type Drafts = Partial<Record<CompareMappingKind, CompareMappingBody>>;
 
 export interface CompareMappingDialogProps {
@@ -135,7 +147,7 @@ export function CompareMappingDialog({ open, onOpenChange }: CompareMappingDialo
           <SearchableSelect
             aria-label="Transform"
             value={row.original.transform}
-            options={TRANSFORM_OPTIONS}
+            options={transformOptionsFor(row.original.field)}
             onChange={(value) => updateColumn(row.index, { transform: value })}
             truncateTriggerLabel
           />
@@ -151,7 +163,15 @@ export function CompareMappingDialog({ open, onOpenChange }: CompareMappingDialo
             aria-label="Sorento field"
             value={row.original.field}
             options={FIELD_OPTIONS[kind]}
-            onChange={(value) => updateColumn(row.index, { field: value })}
+            onChange={(value) => {
+              const allowed = TRANSFORMS_BY_FIELD[value];
+              updateColumn(
+                row.index,
+                allowed && !allowed.includes(row.original.transform)
+                  ? { field: value, transform: allowed[0] }
+                  : { field: value },
+              );
+            }}
             truncateTriggerLabel
           />
         ),
@@ -238,10 +258,12 @@ export function CompareMappingDialog({ open, onOpenChange }: CompareMappingDialo
               variant="outline"
               size="sm"
               onClick={() =>
-                updateDraft((current) => ({
-                  ...current,
-                  columns: [...current.columns, { excel_header: '', transform: 'text', field: '' }],
-                }))
+                updateDraft((current) => {
+                  const used = new Set(current.columns.map((c) => c.field));
+                  const field = FIELD_OPTIONS[kind].find((o) => !used.has(o.value))?.value ?? '';
+                  const transform = TRANSFORMS_BY_FIELD[field]?.[0] ?? 'text';
+                  return { ...current, columns: [...current.columns, { excel_header: '', transform, field }] };
+                })
               }
             >
               <Plus className="size-4" />

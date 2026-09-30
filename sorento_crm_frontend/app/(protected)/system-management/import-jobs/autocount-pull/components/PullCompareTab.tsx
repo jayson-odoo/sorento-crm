@@ -48,7 +48,6 @@ const COMPARE_LISTING_KEY: Record<AutocountPullEntity, string> = {
 const DO_SOURCES: Array<{
   source: AutocountPullCompareSource;
   title: string;
-  hint: string;
   ariaLabel: string;
   unit: string;
   /** The saved mapping this file is read with. */
@@ -57,7 +56,6 @@ const DO_SOURCES: Array<{
   {
     source: 'lines',
     title: 'Order Listing (macro)',
-    hint: 'DO lines: Doc No, Doc Date, Item Code, Qty, Location, Unit Price, Discount, Total (Ex). Drop the .xlsm here, or click to browse.',
     ariaLabel: 'Order Listing sheet to compare',
     unit: 'lines',
     kind: 'order_listing',
@@ -65,7 +63,6 @@ const DO_SOURCES: Array<{
   {
     source: 'headers',
     title: 'Order Tracking (macro)',
-    hint: 'DO headers: Doc. No., Date, Debtor Code, Cancel. The Overall Tracking sheet is not compared; AutoCount does not carry it.',
     ariaLabel: 'Order Tracking sheet to compare',
     unit: 'documents',
     kind: 'order_tracking',
@@ -143,6 +140,12 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
   const compareMutation = useComparePull(jobId);
   const mappings = useCompareMappings(isDeliveryOrders);
   const [mappingOpen, setMappingOpen] = useState(false);
+  const hintFor = (kind: 'order_listing' | 'order_tracking'): string => {
+    const headers = mappings.data?.items.find((m) => m.kind === kind)?.columns.map((c) => c.excel_header);
+    return headers?.length
+      ? `Columns read: ${headers.join(', ')}. Drop the .xlsm here, or click to browse.`
+      : 'Drop the .xlsm here, or click to browse.';
+  };
   const sheetFor = (kind: 'order_listing' | 'order_tracking'): string =>
     mappings.data?.items.find((m) => m.kind === kind)?.sheet_name ?? 'Master';
   const accept = entity === 'products' ? '.xlsx,.xls' : '.xlsx,.xls,.xlsm';
@@ -151,6 +154,10 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
     setFiles((prev) => ({ ...prev, [source ?? 'single']: next }));
     const file = next[0];
     if (!file) return;
+    if (isDeliveryOrders && !mappings.data) {
+      toast.error('The mapping is still loading. Try again in a moment.');
+      return;
+    }
     try {
       const entry = DO_SOURCES.find((d) => d.source === source);
       const rows = entry
@@ -345,7 +352,7 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
                   `autocount-compare-${jobId}-${entry.source}`,
                   entry.ariaLabel,
                   `${entry.title}, sheet ${sheetFor(entry.kind)}`,
-                  entry.hint,
+                  hintFor(entry.kind),
                   files[entry.source] ?? [],
                   entry.source,
                 )}
