@@ -1558,6 +1558,20 @@ def test_a_placement_on_a_landed_shipment_pins_the_bins_on_hand_before_the_recei
         _assert_pinned_on_the_bin(c, marker=marker, warehouse=warehouse, product=product, due=due)
 
 
+def test_a_placement_on_a_line_received_in_full_by_quantity_alone_pins_the_bin(scm_app):
+    """The quantity half of the rule, on its own: `quantity_received` has reached
+    `allocated_quantity` while `receipt_status` still says `pending` and the line is still
+    `open`. `_supply` drops that line (`incoming_by_location`'s `balance <= 0`), so `_holds`
+    has to convert it too, or the hold and the event disagree. The statuses alone would
+    keep it an SPO hold; this is the test the reviewer's kill run found nothing guarding."""
+    app, db = _client(scm_app)
+    marker, warehouse, product, _allocation, due = _received_spo_case(
+        db, on_hand=50, received=50, receipt_status="pending",
+    )
+    with TestClient(app) as c:
+        _assert_pinned_on_the_bin(c, marker=marker, warehouse=warehouse, product=product, due=due)
+
+
 def test_a_placement_on_a_received_spo_whose_goods_are_gone_pins_nothing(scm_app):
     """A received SPO placement is a promise about STOCK, and stock that has left the bin
     covers nobody: no stand-in SPO event, no on-hand stood up out of nothing. The line

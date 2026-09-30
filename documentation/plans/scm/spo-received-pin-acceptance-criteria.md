@@ -38,6 +38,9 @@ supply. The placement link is still on the OI row.
 - **AC-4 Partial receipt still pins the SPO.** SPO 100, received 30, `receipt_status pending`,
   placement 50. SO1 `pinned`, `assigned_from` one entry `kind spo` for 50. The SPO row shows
   `qty 100`, `received_qty 30`, `outstanding_qty 70`.
+- **AC-6 Received in full by quantity alone.** Same as AC-1 but `receipt_status` stays
+  `pending` and `line_status` stays `open`; only `quantity_received = allocated`. Same outcome
+  as AC-1.
 - **AC-5 Both readers.** The conversion happens in `_holds`, so the board path
   (`assignments_for`) reads the same hold. Covered by the route tests through the shared code,
   no separate board test.

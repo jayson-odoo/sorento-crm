@@ -67,19 +67,35 @@ and the board / ladder through `assignments_for`) see the same picture.
 - AC-2: a landed shipment (arrival date, nothing received yet) converts the same way.
 - AC-3: a received SPO whose goods are gone from the bin pins nothing and the line reads short.
 - AC-4: a partially received open SPO still pins as an SPO hold (regression guard).
+- AC-6 (reviewer kill test): a line received in full by quantity alone, statuses still
+  `pending` / `open`, converts too. The only branch the four above left unguarded.
 
 ### S2 - `_holds` conversion (`stock_debt_service.py`)
 
-- Select the SPO line's `allocated_quantity`, `quantity_received`, `receipt_status`,
-  `line_status`, `warehouse_id`, its warehouse code and the shipment's `actual_arrival_date`
-  alongside the placement.
-- Decide "still incoming" in Python with the same three tests as `open_incoming_clauses()`
-  (a small helper beside it in `spo_supply.py` so there is one spelling) plus the quantity
-  test. Incoming: SPO hold as today. Not incoming: on-hand hold as above.
+- The links query outer-joins `InboundShipment` and the SPO's `Warehouse` (direct joins, not
+  aliases: the company-scope listener rewrites the un-aliased table name and an alias broke
+  the query) and selects, beside the placement, `and_(*spo_supply.open_incoming_clauses())`
+  as a `spo_incoming` label evaluated in SQL on the row (the way `spo_history_for_product`
+  labels it), plus the line's `allocated_quantity`, `quantity_received`, `receipt_status`,
+  `product_id`, `warehouse_id`, its warehouse code and the shipment's `actual_arrival_date`.
+  No Python restatement of the three status tests and no new helper in `spo_supply.py`: the
+  shared rule is reused unchanged.
+- The quantity test (`allocated > received`) is applied in Python beside the arithmetic, as
+  `open_incoming_clauses()`'s docstring asks of every reader. Incoming: SPO hold as today.
+  Not incoming: on-hand hold as above, via the module helper `_landed_qty`.
+- Also converted, because it follows from the rule rather than from "received": a placement
+  on a line CLOSED with nothing received and no landed shipment now pins nothing (the
+  document brought no stock anywhere); before, it stood up an SPO event and read `pinned`.
 
 ### S3 - hand-test script `laneboard/scripts/<PR>.md` (SRTSS8710 / SPO-2026/05-0001 case).
 
 ## Out of scope
 
-- The stock-balance timing double count (noted above).
+- The stock-balance timing double count (noted above), and its mirror image: a shipment
+  whose arrival date lands before the stock-balance upload puts the goods on hand pins
+  `allocated` on the bin, so for that window the line is covered by whatever else sits free
+  there. Totals stay right (nothing is counted twice); only the attribution is early.
+- The converted hold names no order inquiry (an on-hand hold is a decision on stock, and
+  `StockDebtAssignedFromOnHand` carries none). The `order_inquiry_links` row itself is
+  untouched, so the Order Inquiry screens still show the placement on the received SPO.
 - Any frontend change: the Covered by entry already prints `On hand <bin>` for an on-hand hold.
