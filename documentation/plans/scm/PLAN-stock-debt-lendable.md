@@ -84,9 +84,20 @@ move stock (R2).
   splitting a receiving take where it straddles; `LineResult.lent` / `lent_qty`,
   `Assigned.lent_from_line_key` / `lent_from_so`, `STATUS_ORDER_BACK`.
 - `front_planning_engine.later_order_can_wait`; `_eligible_donor` calls it.
-- `stock_debt_service.py`: `_assignments(view=True)` hands `_landed_holds` the per-product
-  window off the batched `lead_times` read (R7: no extra query); `cell()` adds `lent_qty`
+- `stock_debt_service.py`: `_assignments(view=True)` decides ONCE which lines can wait
+  (`later_order_can_wait` off the batched `lead_times` read, R7: no extra query) and hands
+  that set to BOTH readers of a line's landed goods: `_holds`' received-SPO placement branch
+  (SPO-RECEIVED-PIN) and `_landed_holds` (R7's own-purchase read). `cell()` adds `lent_qty`
   and the two Covered by shapes.
+- Owner hand test 1 (30 Sep 2026) FAILED on the dev copy: "no lend, Sep 26 still -76,
+  SO381065 still pinned 88". Crew's diagnosis: SO381065's 88 reach the assignment through
+  the AUTO placement on its received SPO-2026/05-0001 (`order_inquiry_links`), which
+  `_holds` pinned as a plain on-hand hold; `_landed_holds` then netted its own read to
+  nothing, so no claim was ever registered and nearly every real received SPO (all have an
+  auto link) lent nothing. Fixed by marking that placement pin lendable too;
+  `test_the_far_lines_placement_on_its_received_spo_lends_too` reproduces the shape. A
+  confirmed Reserve (`so_line_allocations`) is still never lent: it is a decision, not
+  landed goods.
 - `schemas/stock_debt.py`: `order_back` status, `lent_from_so_number` on the on-hand entry,
   the `lent` entry, `lent_qty`.
 - No route change, no write.

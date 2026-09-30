@@ -34,8 +34,11 @@ from tests.scm.test_stock_debt_routes import (  # noqa: F401 (helpers, not tests
     BASE,
     VIEW,
     _demand,
+    _order_back_link_on_spo,
     _product,
+    _project_line_for,
     _row_of,
+    _spo,
     _stock,
     _u,
     _warehouse,
@@ -372,3 +375,112 @@ def test_the_board_path_still_pins_the_landed_goods(scm_app):
     assert far.status == "pinned"
     assert far.lent_qty == 0
     assert near.status == "short"
+
+
+# --------------------------------------------------------------------------- the real book
+
+
+def _placed_received_spo_case(db, *, far_due, near_qty=32):
+    """SO381065's ACTUAL shape on the dev copy (owner hand test, 30 Sep 2026): the far
+    line's landed goods reach the assignment through the AUTO PLACEMENT on its received
+    SPO (`order_inquiry_links` on the mirror line -> `_holds`' SPO-RECEIVED-PIN branch),
+    not through R7's own-purchase read - there is no `from_so_line_ref` chain here at all.
+    The bin holds the 88 the SPO brought in; a nearer line is short."""
+    marker = f"ZZTLEND{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-SRTSS8710")
+    _stock(db, product, warehouse, 88)
+    far_order, far_line = _demand(
+        db, product, warehouse, qty=88, required_date=far_due,
+        so_number=f"{marker}-SO381065",
+    )
+    near_order, _near_line = _demand(
+        db, product, warehouse, qty=near_qty, required_date=TODAY + timedelta(days=20),
+        so_number=f"{marker}-SO396071",
+    )
+    project_order, project_line = _project_line_for(db, far_line)
+    allocation = _spo(
+        db, product, warehouse, qty=88, arrives=TODAY - timedelta(days=120),
+        received=88, receipt_status="fully_received", spo_number=f"{marker}-SPO-2026/05-0001",
+    )
+    _order_back_link_on_spo(db, project_order, project_line, allocation=allocation, qty=88)
+    db.flush()
+    return {"marker": marker, "warehouse": warehouse, "product": product, "near": near_order}
+
+
+def test_the_far_lines_placement_on_its_received_spo_lends_too(scm_app):
+    """Owner hand test FAIL, 30 Sep 2026: "no lend. Sep 26 still -76, SO381065 still
+    pinned 88". The 88 were pinned by the placement branch of `_holds` as a plain on-hand
+    hold, `_landed_holds` netted its own read to nothing, and no claim was ever
+    registered. The placement pin is the line's landed goods and lends like one."""
+    app, db, _uid = _client(scm_app, VIEW)
+    far_due = DEFAULT_WINDOW + timedelta(days=60)
+    world = _placed_received_spo_case(db, far_due=far_due)
+    product, marker = world["product"], world["marker"]
+
+    with TestClient(app) as c:
+        near_cell = _cell(c, product, month_key(TODAY + timedelta(days=20)))
+        far_cell = _cell(c, product, month_key(far_due))
+        board = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+
+    near = _by_so(near_cell, "SO396071")
+    assert near["status"] == "covered"
+    assert near["assigned_qty"] == 32
+    assert near["assigned_from"][0]["lent_from_so_number"] == f"{marker}-SO381065"
+
+    far = _by_so(far_cell, "SO381065")
+    assert far["status"] == "order_back"
+    assert far["lent_qty"] == 32
+    assert far["assigned_qty"] == 56
+    kinds = {entry["kind"]: entry for entry in far["assigned_from"]}
+    assert kinds["lent"]["so_number"] == f"{marker}-SO396071"
+    assert kinds["lent"]["sales_order_id"] == str(world["near"].id)
+
+    balances = {m["key"]: m["balance"] for m in _row_of(board, product.product_code)["months"]}
+    assert balances[month_key(TODAY + timedelta(days=20))] == 0
+    assert balances[month_key(far_due)] == -32
+
+
+def test_the_far_lines_placement_inside_the_window_stays_pinned(scm_app):
+    """The same shape with a line that cannot wait: the placement pins as before."""
+    app, db, _uid = _client(scm_app, VIEW)
+    far_due = DEFAULT_WINDOW - timedelta(days=1)
+    world = _placed_received_spo_case(db, far_due=far_due)
+    with TestClient(app) as c:
+        near_cell = _cell(c, world["product"], month_key(TODAY + timedelta(days=20)))
+        far_cell = _cell(c, world["product"], month_key(far_due))
+    assert _by_so(near_cell, "SO396071")["status"] == "short"
+    far = _by_so(far_cell, "SO381065")
+    assert far["status"] == "pinned"
+    assert far["assigned_qty"] == 88
+    assert far["lent_qty"] == 0
+
+
+def test_a_confirmed_reserve_on_a_far_line_is_never_lent(scm_app):
+    """A decision hold (`so_line_allocations`, a Reserve somebody confirmed on the board)
+    is not landed goods: it stays pinned however far out the line is due."""
+    from tests.scm.test_stock_debt_routes import _confirmed_hold
+
+    app, db, _uid = _client(scm_app, VIEW)
+    marker = f"ZZTLEND{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-RESERVED")
+    _stock(db, product, warehouse, 88)
+    far_due = DEFAULT_WINDOW + timedelta(days=60)
+    _far_order, far_line = _demand(
+        db, product, warehouse, qty=88, required_date=far_due, so_number=f"{marker}-FAR",
+    )
+    _demand(
+        db, product, warehouse, qty=32, required_date=TODAY + timedelta(days=20),
+        so_number=f"{marker}-NEAR",
+    )
+    _pso, mirror = _project_line_for(db, far_line)
+    _confirmed_hold(db, mirror, warehouse, 88)
+    db.flush()
+    with TestClient(app) as c:
+        near_cell = _cell(c, product, month_key(TODAY + timedelta(days=20)))
+        far_cell = _cell(c, product, month_key(far_due))
+    assert _by_so(near_cell, "NEAR")["status"] == "short"
+    far = _by_so(far_cell, "FAR")
+    assert far["status"] == "pinned"
+    assert far["lent_qty"] == 0

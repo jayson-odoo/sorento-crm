@@ -879,6 +879,31 @@ class StockDebtService:
         demand_rows = self._demand(
             product_ids, warehouse_ids, codes, pools, date_from=date_from, date_to=date_to,
         )
+        # STOCK-DEBT-LENDABLE (owner, 30 Sep 2026, option B): in the VIEW alone, the lines
+        # that CAN WAIT - due on or after `as_of + lead + 14`, the board's own borrow-donor
+        # window, off the SAME batched lead read as the red horizon, and before the TBA
+        # line (`later_order_can_wait`, shared with `_eligible_donor`). Their landed goods,
+        # however they reach the assignment (a placement on the received SPO in `_holds`,
+        # or R7's own-purchase read in `_landed_holds`), are `lendable`: nearer lines draw
+        # them first and the far line reads `order_back`. The board and the ladder
+        # (`assignments_for`) never lend; their Borrow step is where the same window turns
+        # into a decision. This page stays read-only (owner, 30 Sep 2026: "this is a
+        # dashboard view only") and points the planner at that board.
+        lendable_lines: Optional[Set[str]] = None
+        if view:
+            lendable_lines = set()
+            for product_id, lines in demand_rows.items():
+                lead = leads.get(product_id)
+                window = reserve_window_end(
+                    as_of, DEFAULT_LEAD_TIME_DAYS if lead is None else lead
+                )
+                lendable_lines.update(
+                    line.key
+                    for line in lines
+                    if later_order_can_wait(
+                        line.required_date, window=window, tba_from=tba_from
+                    )
+                )
         holds = self._holds(
             product_ids,
             {line.key for lines in demand_rows.values() for line in lines},
@@ -886,32 +911,13 @@ class StockDebtService:
             # SPO-RECEIVED-PIN: what a placement on a received SPO may pin on, see `_holds`.
             span=set(warehouse_ids),
             supply_rows=supply_rows,
+            lendable_lines=lendable_lines,
         )
         # #1362 round 5 (owner ruling, 29 Sep 2026): goods that LANDED for a line stay with
         # that line, so they bind before anybody queues, exactly as a confirmed decision
         # does. After the decision and placement holds, so nothing is pinned twice.
-        #
-        # STOCK-DEBT-LENDABLE (owner, 30 Sep 2026, option B): in the VIEW alone, a landed
-        # pin whose line is due on or after `as_of + lead + 14` - the board's own
-        # borrow-donor window, off the SAME batched lead read as the red horizon - is
-        # `lendable`: nearer lines draw it first and the far line reads `order_back`. The
-        # board and the ladder (`assignments_for`) never lend; their Borrow step is where
-        # the same window turns into a decision. This page stays read-only (owner, 30 Sep
-        # 2026: "this is a dashboard view only") and points the planner at that board.
-        lendable_from = (
-            {
-                product_id: reserve_window_end(
-                    as_of,
-                    DEFAULT_LEAD_TIME_DAYS if leads.get(product_id) is None
-                    else leads.get(product_id),
-                )
-                for product_id in product_ids
-            }
-            if view
-            else None
-        )
         holds = holds + self._landed_holds(
-            supply_rows, demand_rows, holds, lendable_from=lendable_from, tba_from=tba_from,
+            supply_rows, demand_rows, holds, lendable_lines=lendable_lines,
         )
 
         settings = self.supply._fulfilment_settings()
@@ -1223,6 +1229,7 @@ class StockDebtService:
         include_po: bool = True,
         span: Optional[Set[str]] = None,
         supply_rows: Optional[Dict[str, List[SupplyEvent]]] = None,
+        lendable_lines: Optional[Set[str]] = None,
     ) -> List[Hold]:
         """What is already promised: confirmed allocations and placement links (R21).
 
@@ -1269,6 +1276,14 @@ class StockDebtService:
         `group=`) is one the read cannot see, and the promise is honoured the way every other
         out-of-span hold is (AC-S2-1b). Neither given (a caller that only wants the holds
         listed), every converted hold is returned.
+
+        `lendable_lines` (STOCK-DEBT-LENDABLE, the view only): the line keys that can wait
+        for a re-buy. A converted received-SPO placement on such a line is `lendable` - it
+        IS the line's landed goods (SO381065's 88 at BRW-BB reach the assignment this way,
+        through the auto placement on SPO-2026/05-0001, and `_landed_holds` then nets its
+        own read to nothing), so without the mark here the feature lent nothing on the real
+        book. A decision hold (`so_line_allocations`) is never lendable: it is a Reserve
+        somebody confirmed, not goods that landed for the line. `None` marks nothing.
         """
         if not line_keys:
             return []
@@ -1430,6 +1445,9 @@ class StockDebtService:
                         qty=take,
                         kind=KIND_ON_HAND,
                         warehouse=row.spo_warehouse_code,
+                        # STOCK-DEBT-LENDABLE: the line's landed goods, lendable when the
+                        # line can wait (see the docstring).
+                        lendable=str(row[0]) in (lendable_lines or ()),
                     )
                 )
                 continue
@@ -1643,8 +1661,7 @@ class StockDebtService:
         demand_rows: Dict[str, List[DemandLine]],
         holds: Sequence[Hold],
         *,
-        lendable_from: Optional[Dict[str, date]] = None,
-        tba_from: Optional[date] = None,
+        lendable_lines: Optional[Set[str]] = None,
     ) -> List[Hold]:
         """#1362 round 5 (owner ruling, 29 Sep 2026): goods ordered against a sales-order
         line stay with that line.
@@ -1667,12 +1684,10 @@ class StockDebtService:
         A sibling's tier-2 SPARE is not pinned: it is not owed to the line it was bought
         for, so it stays free stock the order's own lines are credited from first (R7).
 
-        `lendable_from` (STOCK-DEBT-LENDABLE, the view only): product id -> the day from
-        which a line can wait for a re-buy (`reserve_window_end`). A pin whose line is due
-        on or after it, and before `tba_from`, is marked `lendable`
-        (`front_planning_engine.later_order_can_wait`, the board's own donor test) and
-        `assign()` lets nearer lines draw it first. `None` (the board path) marks nothing.
-        No extra read: the lead came in with `lead_times`, the date is on the demand row.
+        `lendable_lines` (STOCK-DEBT-LENDABLE, the view only): the line keys that can wait
+        for a re-buy (`later_order_can_wait` off the batched lead read, decided once in
+        `_assignments`). A pin on such a line is `lendable` and `assign()` lets nearer
+        lines draw it first. `None` (the board path) marks nothing. No extra read.
         """
         already: Dict[str, float] = {}
         for hold in holds:
@@ -1701,7 +1716,6 @@ class StockDebtService:
                 qty = min(_float(landed), float(line.open_qty)) - already.get(line.key, 0.0)
                 if qty <= EPSILON:
                     continue
-                window = (lendable_from or {}).get(product_id)
                 out.append(
                     Hold(
                         line_key=line.key,
@@ -1710,13 +1724,7 @@ class StockDebtService:
                         kind=KIND_ON_HAND,
                         warehouse=str(line.warehouse),
                         landed=True,
-                        lendable=bool(
-                            window is not None
-                            and tba_from is not None
-                            and later_order_can_wait(
-                                line.required_date, window=window, tba_from=tba_from
-                            )
-                        ),
+                        lendable=line.key in (lendable_lines or ()),
                     )
                 )
         return out

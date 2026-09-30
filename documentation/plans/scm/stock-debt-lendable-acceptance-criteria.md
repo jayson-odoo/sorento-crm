@@ -64,6 +64,10 @@ whose re-buy is visible, and no stock moved by a filter.
 - **AC-10 `[T]` The lend does not depend on the order the holds arrive in**; two lenders are
   charged in walk order (the later-due one first).
 - **AC-11 `[T]` A lendable hold on a pin-only event pins as any other.**
+- **AC-R6 `[T]` The real book's shape lends** (owner hand test 1): a far line whose landed
+  goods reach the assignment through the auto placement on its received SPO reads
+  `order_back`, the nearer line covered off it; inside the window it stays `pinned`; a
+  confirmed Reserve on a far line is never lent.
 - **AC-V2 `[V]` Covered by.** Lent entries and the "(from SO...)" on-hand wording render as
   muted text, the lent entry linking the receiving order.
 - **AC-V3 `[B]` 1280 and 375** per the mockup (sections 2, 3 and 6; the Rebalance sections are
