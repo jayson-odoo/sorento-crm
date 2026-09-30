@@ -558,3 +558,43 @@ def test_only_line_ids_confirms_just_the_named_lines_that_are_in_the_list(api):
             fresh.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line_b.id).count()
             == 0
         ), "line 20 is outside the scope: neither confirmed nor raised"
+
+
+def test_a_rejected_line_outside_only_line_ids_is_not_withdrawn(api):
+    client, world, order, line_1, line_2 = _staged_withdrawal_world(api)
+    body = _withdraw_body(order, [_reserve(world, line_2, 6)], [str(line_1.id)])
+    body["orders"][0]["only_line_ids"] = [str(line_2.id)]
+
+    response = client.post(URL, json=body)
+
+    assert response.status_code == 200, response.text
+    result = response.json()["results"][0]
+    assert result["ok"] is True, result
+    assert result["lines_withdrawn"] == [], result
+    assert [row["line_no"] for row in result["lines_confirmed"]] == [line_2.line_no]
+
+
+def test_a_preview_leaves_the_changed_with_links_queue_untouched(api, monkeypatch):
+    """The `order_inquiry_changed_with_links` drain fires on a SAVEPOINT commit too, so a
+    previewed write would dispatch it mid-preview. The flag keeps the queue for the rollback."""
+    from app.services.automation_service import AutomationService
+
+    client, world = api
+    spy_on_purchasing_notifications(world, monkeypatch)
+    dispatched = []
+    monkeypatch.setattr(
+        AutomationService,
+        "dispatch_event",
+        lambda self, trigger, *, context, source_kind, source_id: dispatched.append(trigger),
+    )
+    key = "oi_changed_with_links_pending"
+    world.db.info[key] = [{"context": {}, "source_id": "row-1"}]
+
+    world.db.info["confirm_preview"] = True
+    world.db.begin_nested().commit()
+    assert dispatched == []
+    assert world.db.info.get(key), "the queue is kept for the root rollback to discard"
+
+    world.db.info.pop("confirm_preview")
+    world.db.begin_nested().commit()
+    assert dispatched == ["order_inquiry_changed_with_links"]

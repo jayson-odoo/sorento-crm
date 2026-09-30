@@ -23,6 +23,7 @@ import {
   factorLabel,
   matchesSuggestion,
   plannedLineCount,
+  previewSummaryText,
   previewViewFor,
   rankingNote,
   rejectedCoveredLineIdsFor,
@@ -3224,5 +3225,32 @@ describe('previewViewFor', () => {
     ];
     const [order] = previewViewFor(refused as never, contributions, draft, context).orders;
     expect(order).toMatchObject({ pso_id: 'pso-so-a', ok: false, error: 'No supply', onlyLineIds: [] });
+  });
+
+  it('lists a withdrawn line and a raised row for an unknown line, and counts kept transfers apart', () => {
+    const answer = [
+      {
+        pso_id: 'pso-so-a',
+        ok: true,
+        preview: true,
+        lines_confirmed: ids([6]),
+        lines_withdrawn: ids([5]),
+        lines_carried: 0,
+        lines_held_back: [],
+        inquiry_rows: [inquiryRow(77, '12', true)],
+        transfers: [
+          { line_no: 8, kind: 'borrow', qty: '100', from_location: 'A', to_location: 'B', is_new: true },
+          { line_no: 8, kind: 'borrow', qty: '5', from_location: 'A', to_location: 'B', is_new: false },
+        ],
+      },
+    ];
+    const view = previewViewFor(answer as never, contributions, draft, context);
+    const [order] = view.orders;
+    expect(order.withdrawnKeys).toEqual(['preview-pso-so-a-5']);
+    expect(order.lineKeys).toEqual(expect.arrayContaining(['preview-pso-so-a-5', 'preview-pso-so-a-77']));
+    expect(order.extraLines.map((entry) => entry.line_no).sort()).toEqual([5, 77]);
+    expect(view.summary).toMatchObject({ transfers: 1, kept: 1, withdrawn: 1, inquiryRows: 1 });
+    expect(previewSummaryText(view.summary)).toContain('1 withdrawn');
+    expect(previewSummaryText(view.summary)).toContain('1 kept');
   });
 });

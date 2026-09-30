@@ -1571,8 +1571,12 @@ export interface PreviewViewOrder {
   confirmCount: number;
   /** Exactly the ids Confirm scopes the order to (`only_line_ids`). */
   onlyLineIds: string[];
-  /** Board contribution keys of the lines the press sends, for the read-only grid. */
+  /** Board contribution keys of every line the grid lists: confirmed, withdrawn, or raising a row. */
   lineKeys: string[];
+  /** The subset of `lineKeys` the press withdraws from the confirmation. */
+  withdrawnKeys: string[];
+  /** A line the press raises a row for that is not on the board: built from the row's own fields. */
+  extraLines: BoardContribution[];
   inquiry: PreviewInquiryEntry[];
   transfers: PreviewTransferEntry[];
   heldBack: { key: string | null; line_no: number | null; item_code: string | null; reason: string }[];
@@ -1587,6 +1591,8 @@ export interface PreviewView {
     heldBack: number;
     carried: number;
     withdrawn: number;
+    /** Transfers that already exist and are only settled by this press. */
+    kept: number;
   };
   orders: PreviewViewOrder[];
 }
@@ -1642,6 +1648,8 @@ export function previewViewFor(
       confirmCount: 0,
       onlyLineIds: [],
       lineKeys: [],
+      withdrawnKeys: [],
+      extraLines: [],
       inquiry: [],
       transfers: [],
       heldBack: [],
@@ -1654,18 +1662,64 @@ export function previewViewFor(
     const savedFacts = (contribution: BoardContribution | undefined) =>
       savedFactsFor(contribution, context);
 
-    const lineKeys = confirmed
+    const keyOfLine = (line: { project_line_id: string; line_no?: number | null }) =>
+      (
+        own.find((entry) => entry.project_line_id === line.project_line_id) ??
+        byLineNo(line.line_no)
+      )?.key;
+    const confirmedKeys = confirmed
+      .map(keyOfLine)
+      .filter((key): key is string => Boolean(key));
+    const extraLines: BoardContribution[] = [];
+    const extraLineFor = (
+      lineNo: number,
+      itemCode: string | null | undefined,
+      qty: string | null,
+      date: string | null,
+    ): string => {
+      const key = `preview-${result.pso_id}-${lineNo}`;
+      if (!extraLines.some((entry) => entry.key === key)) {
+        extraLines.push({
+          key,
+          sales_order_id: salesOrderId ?? result.pso_id,
+          so_number: soNumber ?? '',
+          customer_name: customer,
+          line_no: lineNo,
+          item_code: itemCode ?? '',
+          qty: qty ?? '0',
+          qty_outstanding: qty ?? '0',
+          required_date: date,
+          unplannable: false,
+          rank_score: 0,
+          rank_factors: [],
+          sources: [],
+        } as unknown as BoardContribution);
+      }
+      return key;
+    };
+    // A withdrawn line the board no longer shows still gets its row.
+    const withdrawnKeys = withdrawn
       .map(
         (line) =>
-          own.find((entry) => entry.project_line_id === line.project_line_id) ??
-          byLineNo(line.line_no),
+          keyOfLine(line) ??
+          (line.line_no != null ? extraLineFor(line.line_no, line.item_code, null, null) : null),
       )
-      .filter((entry): entry is BoardContribution => Boolean(entry))
-      .map((entry) => entry.key);
+      .filter((key): key is string => Boolean(key));
     const inquiry: PreviewInquiryEntry[] = (result.inquiry_rows ?? []).map((row) => {
       const contribution = byLineNo(row.line_no);
+      let key = contribution?.key ?? null;
+      if (!contribution && row.line_no != null) {
+        // A raised row for a line the board does not show (a pending change's batch row):
+        // built from the row's own fields so the grid lists everything the press raises.
+        key = extraLineFor(
+          row.line_no,
+          row.item_code,
+          String(row.qty),
+          row.delivery_date ?? null,
+        );
+      }
       return {
-        key: contribution?.key ?? null,
+        key,
         line_no: row.line_no ?? null,
         item_code: row.item_code ?? contribution?.item_code ?? null,
         so_number: contribution?.so_number ?? soNumber,
@@ -1711,7 +1765,15 @@ export function previewViewFor(
       ...base,
       confirmCount: confirmed.length + withdrawn.length,
       onlyLineIds: [...confirmed, ...withdrawn].map((entry) => entry.project_line_id),
-      lineKeys,
+      lineKeys: [
+        ...new Set([
+          ...confirmedKeys,
+          ...withdrawnKeys,
+          ...inquiry.map((entry) => entry.key).filter((key): key is string => key !== null),
+        ]),
+      ],
+      withdrawnKeys,
+      extraLines,
       inquiry,
       transfers,
       heldBack,
@@ -1724,7 +1786,8 @@ export function previewViewFor(
     summary: {
       lines: sum((order) => order.confirmCount),
       inquiryRows: sum((order) => order.inquiry.length),
-      transfers: sum((order) => order.transfers.length),
+      transfers: sum((order) => order.transfers.filter((move) => move.is_new).length),
+      kept: sum((order) => order.transfers.filter((move) => !move.is_new).length),
       heldBack: sum((order) => order.heldBack.length),
       carried: sum((order) => order.carried),
       withdrawn: results.reduce(
@@ -1743,6 +1806,8 @@ export function previewSummaryText(summary: PreviewView['summary']): string {
     plural(summary.lines, 'line', 'lines'),
     plural(summary.inquiryRows, 'Order Inquiry row', 'Order Inquiry rows'),
     plural(summary.transfers, 'stock transfer', 'stock transfers'),
+    summary.kept > 0 ? `${summary.kept} kept` : null,
+    summary.withdrawn > 0 ? `${summary.withdrawn} withdrawn` : null,
     summary.heldBack > 0 ? `${summary.heldBack} held back` : null,
     summary.carried > 0 ? `${summary.carried} carried forward unchanged` : null,
   ]

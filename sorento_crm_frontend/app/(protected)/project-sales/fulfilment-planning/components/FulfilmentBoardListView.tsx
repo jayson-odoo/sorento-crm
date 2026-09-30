@@ -9,7 +9,7 @@ import {
   ChevronsUpDown,
   PackageSearch,
 } from 'lucide-react';
-import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
+import { CellContext, ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -181,6 +181,10 @@ export interface FulfilmentBoardListViewProps {
           is_new: boolean;
         }[];
         heldBackReason: string | null;
+        /** The press withdraws this line from the confirmation. */
+        withdrawn?: boolean;
+        /** What a pending planning change does to this line, said in the Decided cell. */
+        pendingChange?: string | null;
       }
     >;
     currentUserName: string | null | undefined;
@@ -885,12 +889,51 @@ export function FulfilmentBoardListView({
     return all
       .filter((column) => column.id !== 'select')
       .map((column) => {
+        if (column.id === 'so_number') {
+          return {
+            ...column,
+            cell: ({ row }: { row: { original: BoardContribution } }) => (
+              <span className="block truncate text-sm font-medium tabular-nums">
+                {row.original.so_number}
+              </span>
+            ),
+          };
+        }
+        if (column.id === 'owed_qty') {
+          return {
+            ...column,
+            cell: ({ row }: { row: { original: BoardContribution } }) => (
+              <span className="block truncate tabular-nums">
+                {row.original.qty_outstanding ?? row.original.qty}
+              </span>
+            ),
+          };
+        }
+        if (column.id === 'decided') {
+          return {
+            ...column,
+            cell: (context: CellContext<BoardContribution, unknown>) => {
+              const info = readOnlyPreview.infoByKey.get(context.row.original.key);
+              if (info?.pendingChange) {
+                return (
+                  <span className="block truncate" title={info.pendingChange}>
+                    {info.pendingChange}
+                  </span>
+                );
+              }
+              return typeof column.cell === 'function' ? column.cell(context) : null;
+            },
+          };
+        }
         if (column.id === 'order_inquiry') {
           return {
             ...column,
             size: 260,
             cell: ({ row }: { row: { original: BoardContribution } }) => {
               const info = readOnlyPreview.infoByKey.get(row.original.key);
+              if (info?.withdrawn) {
+                return <span className="block truncate">Withdrawn</span>;
+              }
               if (info?.heldBackReason !== null && info?.heldBackReason !== undefined) {
                 return (
                   <span
@@ -980,6 +1023,9 @@ export function FulfilmentBoardListView({
         rowAttributes={(row) => ({
           'data-testid': `board-preview-inquiry-row-${row.line_no}`,
         })}
+        rowClassName={(row) =>
+          readOnlyPreview.infoByKey.get(row.key)?.heldBackReason != null ? 'opacity-60' : undefined
+        }
         pageSize={25}
       />
     );

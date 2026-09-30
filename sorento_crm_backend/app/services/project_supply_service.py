@@ -10837,7 +10837,7 @@ class ProjectSupplyService:
                         "lines_undecided": body.get("lines_undecided"),
                         "lines_confirmed": body.get("lines_confirmed"),
                         "lines_carried": body.get("lines_carried"),
-                        "lines_withdrawn": body.get("lines_withdrawn"),
+                        "lines_withdrawn": body.get("lines_withdrawn") or [],
                         # The board confirms every order in one press and reports one toast,
                         # so the movements and the flags have to come back PER ORDER or the
                         # toast has nothing to add up. `.get`, because the planning-change

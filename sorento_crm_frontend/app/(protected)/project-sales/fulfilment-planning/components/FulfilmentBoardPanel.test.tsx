@@ -4641,7 +4641,8 @@ describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
       'pl-so-a-9',
     ]);
 
-    expect(screen.queryByTestId('board-content')).toBeNull();
+    // The board stays mounted underneath (Back returns to it as it was), hidden.
+    expect(screen.getByTestId('board-content')).not.toBeVisible();
     expect(view).toHaveTextContent('Preview: what Confirm will send');
     expect(view).toHaveTextContent('3 lines');
     expect(view).toHaveTextContent('2 Order Inquiry rows');
@@ -4817,4 +4818,170 @@ describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
     const view = await openView();
     expect(view).toHaveTextContent(/applies pending change/);
   });
+
+  // ---- fix round 3 --------------------------------------------------------------------------
+
+  it('B-1: a withdrawn line is listed as Withdrawn and counted in the subtitle', async () => {
+    getPlanningBoard.mockResolvedValue(savedBoard());
+    previewConfirmMany.mockResolvedValue(
+      previewResult({
+        lines_confirmed: confirmed([6]),
+        lines_withdrawn: confirmed([5]),
+        lines_held_back: [],
+        inquiry_rows: [],
+        transfers: [],
+      }),
+    );
+    renderPanel(['SO403340']);
+    const view = await openView();
+
+    expect(within(view).getByTestId('board-preview-inquiry-row-5')).toHaveTextContent('Withdrawn');
+    expect(view).toHaveTextContent('1 withdrawn');
+  });
+
+  it('B-2: Back to planning restores the board with its ticks intact', async () => {
+    getPlanningBoard.mockResolvedValue(savedBoard());
+    previewConfirmMany.mockResolvedValue(previewResult());
+    renderPanel(['SO403340']);
+    fireEvent.click(await screen.findByRole('button', { name: 'List' }));
+    const box = await screen.findByRole('checkbox', { name: /Select SO403340 line 6/i });
+    fireEvent.click(box);
+    expect(box).toBeChecked();
+
+    await openView();
+    fireEvent.click(screen.getByTestId('board-preview-back'));
+
+    expect(await screen.findByRole('checkbox', { name: /Select SO403340 line 6/i })).toBeChecked();
+  });
+
+  it('lists every line the press raises a row for, even one not confirmed and not on the board', async () => {
+    getPlanningBoard.mockResolvedValue(savedBoard());
+    previewConfirmMany.mockResolvedValue(
+      previewResult({
+        inquiry_rows: [
+          {
+            line_no: 6,
+            item_code: 'SRTWT6808',
+            verb: 'ORDER',
+            qty: '239',
+            delivery_date: '2026-09-01',
+            stock_location: 'BRW-IB',
+            note: null,
+            is_new: true,
+          },
+          {
+            line_no: 77,
+            item_code: 'WESERP20B',
+            verb: 'ORDER',
+            qty: '12',
+            delivery_date: '2026-10-01',
+            stock_location: 'BRW-BB',
+            note: null,
+            is_new: true,
+          },
+        ],
+      }),
+    );
+    renderPanel(['SO403340']);
+    const view = await openView();
+
+    const extra = within(view).getByTestId('board-preview-inquiry-row-77');
+    expect(extra).toHaveTextContent('WESERP20B');
+    expect(extra).toHaveTextContent('ORDER 12');
+    expect(view).toHaveTextContent('2 Order Inquiry rows');
+  });
+
+  it('S-1: Confirm posts the previewed lines only, so held-back lines never read as a mismatch', async () => {
+    getPlanningBoard.mockResolvedValue(savedBoard());
+    previewConfirmMany.mockResolvedValue(
+      previewResult({
+        lines_confirmed: confirmed([6, 9]),
+        lines_held_back: [
+          { line_no: 8, item_code: 'TPE-9204', reason: 'only 3 free' },
+          { line_no: 112, item_code: 'WESERP20B', reason: 'only 3 free' },
+        ],
+      }),
+    );
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 2,
+          lines_confirmed: confirmed([6, 9]),
+          lines_carried: 0,
+        },
+      ],
+    });
+    renderPanel(['SO403340']);
+    await openView();
+    fireEvent.click(screen.getByTestId('board-confirm'));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [
+      { orders: { lines: { project_line_id: string }[] }[] },
+    ];
+    expect(body.orders[0].lines.map((line) => line.project_line_id).sort()).toEqual([
+      'pl-so-a-6',
+      'pl-so-a-9',
+    ]);
+    await screen.findByTestId('board-confirm-results');
+    expect(screen.queryByTestId('board-confirm-mismatch-pso-so-a')).toBeNull();
+  });
+
+  it('S-2: an order that only withdraws a line is still posted', async () => {
+    const board = savedBoard();
+    getPlanningBoard.mockResolvedValue(board);
+    previewConfirmMany.mockResolvedValue(
+      previewResult({
+        lines_confirmed: [],
+        lines_withdrawn: confirmed([6]),
+        lines_held_back: [],
+        inquiry_rows: [],
+        transfers: [],
+      }),
+    );
+    confirmMany.mockResolvedValue(okConfirm);
+    renderPanel(['SO403340']);
+    await openView();
+    fireEvent.click(screen.getByTestId('board-confirm'));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [
+      { orders: { pso_id: string; only_line_ids?: string[] }[] },
+    ];
+    expect(body.orders).toHaveLength(1);
+    expect(body.orders[0].only_line_ids).toEqual(['pl-so-a-6']);
+  });
+
+  it('F4: one refused order among several keeps Confirm disabled', async () => {
+    const base = savedBoard();
+    getPlanningBoard.mockResolvedValue({
+      ...base,
+      orders: [...base.orders, { ...base.orders[0], sales_order_id: 'so-b', so_number: 'SO398322', project_sales_order_id: 'pso-so-b' }],
+    });
+    const ok = previewResult().results[0];
+    previewConfirmMany.mockResolvedValue({
+      results: [
+        ok,
+        { pso_id: 'pso-so-b', ok: false, preview: true, error: 'No supply', inquiry_rows: [], transfers: [] },
+      ],
+    });
+    renderPanel(['SO403340']);
+    const view = await openView();
+
+    expect(within(view).getByTestId('board-preview-refused-pso-so-b')).toBeInTheDocument();
+    expect(screen.getByTestId('board-confirm')).toBeDisabled();
+  });
+
+  it('P-1: the board toolbar is hidden while the view is open', async () => {
+    getPlanningBoard.mockResolvedValue(savedBoard());
+    previewConfirmMany.mockResolvedValue(previewResult());
+    renderPanel(['SO403340']);
+    await openView();
+
+    expect(screen.queryByTestId('board-action-bar')).toBeNull();
+    expect(screen.queryByTestId('board-header-actions')).toBeNull();
+  });
+
 });

@@ -1224,6 +1224,11 @@ export function FulfilmentBoardPanel({
   const [previewState, setPreviewState] = React.useState<{
     results: ConfirmManyOrderResult[];
     fingerprint: string;
+    /** The exact orders the preview posted, so Confirm sends what was shown, not a rebuild. */
+    orders: NonNullable<Awaited<ReturnType<typeof buildConfirmOrders>>>['orders'];
+    batchId: string | null;
+    skipped: BoardBatchResult[];
+    contributions: BoardContribution[];
   } | null>(null);
   const [previewing, setPreviewing] = React.useState(false);
   const previewFresh = previewState !== null && previewState.fingerprint === populationFingerprint;
@@ -1531,16 +1536,32 @@ export function FulfilmentBoardPanel({
     // stays on screen after the fact.
     const leftOutAtConfirm = unpostable.length;
     try {
-      const built = await buildConfirmOrders(new Set());
-      if (!built) return;
-      const { skipped, contributions } = built;
-      // Scoped to exactly what the Preview showed: an order the preview did not confirm
-      // anything for is not sent, and each sent order names its own lines.
-      const scope = new Map((previewView?.orders ?? []).map((order) => [order.pso_id, order]));
-      const orders = built.orders
-        .filter((order) => (scope.get(order.pso_id)?.confirmCount ?? 0) > 0)
-        .map((order) => ({ ...order, only_line_ids: scope.get(order.pso_id)?.onlyLineIds ?? [] }));
-      const body = built.body.batch_id ? { orders, batch_id: built.body.batch_id } : { orders };
+      if (!previewState || !previewView) return;
+      const { skipped, contributions } = previewState;
+      // Exactly what the Preview posted, narrowed to what it confirmed: an order it confirmed
+      // nothing for is left out unless it withdraws lines or answers a pending change, and
+      // each sent order names its own lines, so "Posted P" is the previewed count.
+      const scope = new Map(previewView.orders.map((order) => [order.pso_id, order]));
+      const orders = previewState.orders
+        .filter((order) => {
+          const shown = scope.get(order.pso_id);
+          return (
+            shown?.ok === true &&
+            (shown.confirmCount > 0 || Boolean(order.batch_id))
+          );
+        })
+        .map((order) => {
+          const only = scope.get(order.pso_id)?.onlyLineIds ?? [];
+          if (only.length === 0 || order.batch_id) return order;
+          const keep = new Set(only);
+          return {
+            ...order,
+            lines: order.lines.filter((line) => keep.has(line.project_line_id)),
+            rejected_line_ids: order.rejected_line_ids.filter((id) => keep.has(id)),
+            only_line_ids: only,
+          };
+        });
+      const body = previewState.batchId ? { orders, batch_id: previewState.batchId } : { orders };
       if (orders.length === 0) {
         if (skipped.length > 0) setBatchResults(skipped);
         return;
@@ -1676,6 +1697,7 @@ export function FulfilmentBoardPanel({
     confirmMany,
     unpostable,
     previewView,
+    previewState,
   ]);
 
   const runPreview = React.useCallback(async () => {
@@ -1688,7 +1710,14 @@ export function FulfilmentBoardPanel({
       if (built.skipped.length > 0) setBatchResults(built.skipped);
       if (built.orders.length === 0) return;
       const result = await previewConfirmMany.mutateAsync(built.body);
-      setPreviewState({ results: result.results, fingerprint: populationFingerprint });
+      setPreviewState({
+        results: result.results,
+        fingerprint: populationFingerprint,
+        orders: built.orders,
+        batchId: built.body.batch_id ?? null,
+        skipped: built.skipped,
+        contributions: built.contributions,
+      });
     } catch {
       // The mutation's own `onError` already toasted the message.
     } finally {
@@ -1915,6 +1944,7 @@ export function FulfilmentBoardPanel({
           className="w-full sm:w-64"
         />
 
+        {!(previewView && previewState) && (
         <div
           data-testid="board-header-actions"
           className="flex w-full flex-wrap items-center gap-2 sm:w-auto"
@@ -1988,6 +2018,7 @@ export function FulfilmentBoardPanel({
               this row is the controls that decide what the board SHOWS, and a way off the
               screen sitting among them competed with them for the same glance. */}
         </div>
+        )}
       </div>
 
       {/* THE ONE ACTION BAR (D1). Its own row above the grid/list so it is visible whichever
@@ -1999,6 +2030,7 @@ export function FulfilmentBoardPanel({
           (the comment above it) - a board slow to load, or with nothing to plan, still needs
           an exit. Confirm and its counter stay gated on real data: there is nothing to
           confirm before there is a board. */}
+      {!(previewView && previewState) && (
       <div
         data-testid="board-action-bar"
         className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
@@ -2186,6 +2218,7 @@ export function FulfilmentBoardPanel({
           ) : null}
         </div>
       </div>
+      )}
 
       {/* Why Confirm is off, when it is - stated, never a dead button. */}
       {confirmBlockedReason ? (
@@ -2474,6 +2507,14 @@ export function FulfilmentBoardPanel({
               draft={draftWithoutPreMark}
               currentUserName={currentUserName}
               openedAt={openedAt.current}
+              pendingLineChange={(soNumber, lineNo) => {
+                const standing = board.data?.orders.find((order) => order.so_number === soNumber);
+                if (!standing?.pending_change_batch_id) return null;
+                const row = bySoNumber
+                  .get(soNumber)
+                  ?.order.rows?.find((candidate) => candidate.line_no === lineNo);
+                return row ? `Pending change: ${row.decision ?? row.kind}` : 'Pending change';
+              }}
               pendingChangeOf={(soNumber) => {
                 const standing = board.data?.orders.find((order) => order.so_number === soNumber);
                 if (!standing?.pending_change_batch_id) return null;
@@ -2489,9 +2530,12 @@ export function FulfilmentBoardPanel({
               onBack={() => setPreviewState(null)}
               onConfirm={() => void runConfirmAll()}
             />
-          ) : (
+          ) : null}
+          {/* Kept MOUNTED while the Preview view is open, so Back to planning returns to the
+              board exactly as it was: ticks, page, open rows and an unsaved edit survive. */}
           <div
             data-testid="board-content"
+            hidden={Boolean(previewView && previewState)}
             className={`space-y-4 transition-opacity ${
               boardRefreshing ? 'opacity-60' : 'opacity-100'
             }`}
@@ -2595,7 +2639,6 @@ export function FulfilmentBoardPanel({
               </>
             )}
           </div>
-          )}
 
           {/* NO COMMIT SECTION (R13). It was one card per sales order carrying a Confirm,
               a "N of M lines decided" counter and a paragraph explaining where Buy rows and
@@ -2758,6 +2801,7 @@ function PreviewViewBody({
   currentUserName,
   openedAt,
   pendingChangeOf,
+  pendingLineChange,
   onBack,
   onConfirm,
 }: {
@@ -2770,6 +2814,8 @@ function PreviewViewBody({
   openedAt: Date;
   /** The pending planning change an order answers: its file name, '' when unnamed, null when none. */
   pendingChangeOf: (soNumber: string) => string | null;
+  /** What a pending planning change does to one line ("Pending change: release"), or null. */
+  pendingLineChange: (soNumber: string, lineNo: number) => string | null;
   onBack: () => void;
   onConfirm: () => void;
 }) {
@@ -2780,23 +2826,40 @@ function PreviewViewBody({
       ...order.heldBack.map((entry) => entry.key).filter((key): key is string => key !== null),
     ]),
   );
-  const rows = contributions.filter((entry) => rowKeys.has(entry.key));
+  const extraLines = view.orders.flatMap((order) => order.extraLines);
+  const rows = [...contributions.filter((entry) => rowKeys.has(entry.key)), ...extraLines];
   const infoByKey = new Map<
     string,
     {
       inquiry: PreviewInquiryEntry[];
       heldBackReason: string | null;
+      withdrawn: boolean;
+      pendingChange: string | null;
     }
   >();
+  const lineNoOfKey = new Map(rows.map((entry) => [entry.key, entry.line_no]));
   for (const order of view.orders) {
+    const withdrawn = new Set(order.withdrawnKeys);
     for (const key of order.lineKeys) {
       infoByKey.set(key, {
         inquiry: order.inquiry.filter((entry) => entry.key === key),
         heldBackReason: null,
+        withdrawn: withdrawn.has(key),
+        pendingChange:
+          order.so_number && lineNoOfKey.get(key) != null
+            ? pendingLineChange(order.so_number, lineNoOfKey.get(key) as number)
+            : null,
       });
     }
     for (const entry of order.heldBack) {
-      if (entry.key) infoByKey.set(entry.key, { inquiry: [], heldBackReason: entry.reason });
+      if (entry.key) {
+        infoByKey.set(entry.key, {
+          inquiry: [],
+          heldBackReason: entry.reason,
+          withdrawn: false,
+          pendingChange: null,
+        });
+      }
     }
   }
   const unmatchedHeld = view.orders.flatMap((order) =>

@@ -12,7 +12,7 @@ of `tests/test_planning_change_apply_on_board.py`, which clashes by name with th
 from __future__ import annotations
 
 from app.models.planning_change import PlanningChangeRow
-from app.models.project_so import SOSupplyDecision
+from app.models.project_so import OrderInquiryLink, SOSupplyDecision
 
 from .test_confirm_all_preview import spy_on_purchasing_notifications
 from .test_planning_change_apply_on_board import (  # noqa: F401 - fixtures
@@ -36,6 +36,12 @@ def _snapshot(fixture):
             (str(r.id), r.applied_state)
             for r in db.query(PlanningChangeRow).filter(PlanningChangeRow.batch_id == batch.id)
         ),
+        # A leaked `set_row_decision` write would move these without touching applied_state.
+        "row_decisions": sorted(
+            (str(r.id), r.decision, repr(r.composition_json), repr(r.result_json), r.applied_reason)
+            for r in db.query(PlanningChangeRow).filter(PlanningChangeRow.batch_id == batch.id)
+        ),
+        "links": db.query(OrderInquiryLink).count(),
         "decisions": db.query(SOSupplyDecision)
         .filter(SOSupplyDecision.project_sales_order_id == fixture["order"].id)
         .count(),
