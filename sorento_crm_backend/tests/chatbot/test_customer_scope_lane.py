@@ -633,3 +633,296 @@ class TestReviewRound1:
             "incoming stock and orders for hanlim", attributes=(), resolve_services=_hanlim_services(),
         )
         assert reply.count("Sorry, that isn't under your account") == 1, reply
+
+
+# --------------------------------------------------------------------------- #
+# CHATBOT-SELFREF-SCOPE (production, 30 Sep 2026): carried non-customer focus must
+# never feed the customer screen; a self-reference turn never refuses
+# --------------------------------------------------------------------------- #
+
+#: A customer nobody is linked to whose NAME the carried category word fuzzy-matches
+#: (`entity_resolver._probe_customer`, ILIKE on `customer_name`): under `order` the
+#: resolver re-types a category token as a customer (`_DOMAIN_HINT_EXPANSIONS`).
+WATER_TAP_FOREIGN = "ZZT WATER TAP SDN BHD"
+
+#: The owner's six links (duplicate codes as in production: two 300-H030, two 300-H118).
+HANLIM_LINKS = (
+    "ZZT HANLIM TRADING SDN BHD",
+    "ZZT HANLIM TRADING SDN BHD (A/C I)",
+    "ZZT HANLIM TRADING SDN BHD (A/C II)",
+    "ZZT HANLIM TRADING SDN BHD (A/C III)",
+    "ZZT HANLIM TRADING SDN BHD (A/C IV)",
+    "ZZT HANLIM TRADING (CERAMIC & ELLECI)",
+)
+HANLIM_CODES = {
+    HANLIM_LINKS[0]: "ZZT-H030", HANLIM_LINKS[1]: "ZZT-H030",
+    HANLIM_LINKS[2]: "ZZT-H118", HANLIM_LINKS[3]: "ZZT-H118",
+    HANLIM_LINKS[4]: "ZZT-H200", HANLIM_LINKS[5]: "ZZT-H201",
+}
+
+
+def _owner_focus() -> dict[str, Any]:
+    """`received.session_vars.focus` of the refused production turn, verbatim: a carried
+    category word, a carried sales_report status and channel, NO customer."""
+    return {
+        "sort": None, "tier": [], "tasks": [], "brands": [], "products": [], "customers": [],
+        "warehouse": [], "document": [], "domains": ["order"], "status": "sales_report",
+        "extra": {
+            "category": [
+                {
+                    "raw": "water tap", "hint": "category", "confident": True, "hint_confident": True,
+                    "current_message": False, "canonical_code": None,
+                }
+            ],
+            "inbound_shipment": [],
+        },
+        "date_window": {"start": "2026-09-30", "end": "2026-09-30", "mode": None},
+        "sales_channel": "project", "top_selling": None, "outstanding_brand_ids": [],
+    }
+
+
+def _owner_verdict(**over: Any) -> dict[str, Any]:
+    """`understood.derived` of the same turn: "I want to check my sales for this month"."""
+    base: dict[str, Any] = dict(
+        message_type="business_query", intent_hint="check_order", domain_hint="order",
+        domain_in_message=False, order_status="sales_report", self_reference=True, entities=[],
+        entity_op="reuse", group_by="month", date_filter_start="2026-09-01",
+        date_filter_end="2026-09-30", sales_channel=None, continuation=False, topic_reset=False,
+        user_goal="trying to check my sales for this month",
+    )
+    base.update(over)
+    return _parser_output(**base)
+
+
+def _scope_events(session_factory, result) -> list[dict[str, Any]]:
+    from tests.chatbot.test_engine import _turn_row
+
+    return [r for r in (_turn_row(session_factory, result.turn_id).trace or []) if r.get("kind") == "customer_scope"]
+
+
+def _replay(session_factory, monkeypatch, qf: dict[str, Any], body: str, **kw):
+    result, captured = _run_turn(
+        session_factory, monkeypatch, qf=qf, text_body=body,
+        msg_id=f"ZZT-selfref-{uuid.uuid4().hex[:10]}", attributes=[SALES_KEY], real_resolver=True, **kw,
+    )
+    return result, ((result.reply or {}).get("text") or ""), captured
+
+
+class TestCarriedFocusNeverFeedsTheCustomerScreen:
+    """A turn that typed no customer word is never refused by what the conversation
+    carries. The refusal line is for a TYPED foreign customer word only (parent plan Q7b)."""
+
+    def test_my_sales_with_a_carried_category_word_runs_on_the_links(self, session_factory, monkeypatch) -> None:
+        """The production turn, replayed. Before the fix the carried category word
+        "water tap" reached the resolver, which re-typed it as a customer under `order`
+        and fuzzy-matched TWO customers nobody is linked to; that picker tripped the
+        screen's offer rule and the turn was refused at 0 ms. Now the carried word never
+        reaches the resolver at all: `crm_sales_report` runs on the six links, the other
+        customers appear nowhere, and the trace says the turn was scoped to the links."""
+        from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
+
+        _seed_contact(session_factory, variables={"focus": _owner_focus()})
+        foreign = [
+            _other_customer(session_factory, WATER_TAP_FOREIGN),
+            _other_customer(session_factory, "ZZT WATER TAP ENTERPRISE"),
+        ]
+        links = _link_customers(session_factory, *HANLIM_LINKS, codes=HANLIM_CODES)
+        result, reply, captured = _replay(
+            session_factory, monkeypatch, _owner_verdict(), "I want to check my sales for this month",
+            mcp_response=SALES_REPORT_HIT,
+        )
+        assert "under your account" not in reply, reply
+        assert "Which customer" not in reply, reply
+        (args,) = _calls(captured, SALES)
+        assert args["customer_ids"] == links, args
+        assert not any(f in str(captured) for f in foreign)
+        events = _scope_events(session_factory, result)
+        assert any(e.get("decision") == "scoped_to_links" and e.get("ids") == links for e in events), events
+        assert not any(e.get("refused") for e in events), events
+        assert not any(f in str(events) for f in foreign), events
+
+    def test_bare_sales_ask_with_a_carried_category_word_runs_on_the_links(self, session_factory, monkeypatch) -> None:
+        """The same state without `self_reference` ("sales this month"): still no customer
+        word was typed, so still no refusal - the links are the subject."""
+        from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
+
+        _seed_contact(session_factory, variables={"focus": _owner_focus()})
+        _other_customer(session_factory, WATER_TAP_FOREIGN)
+        links = _link_customers(session_factory, *HANLIM_LINKS, codes=HANLIM_CODES)
+        _result, reply, captured = _replay(
+            session_factory, monkeypatch, _owner_verdict(self_reference=False), "sales this month",
+            mcp_response=SALES_REPORT_HIT,
+        )
+        assert "under your account" not in reply, reply
+        (args,) = _calls(captured, SALES)
+        assert args["customer_ids"] == links, args
+
+    def test_typed_foreign_word_under_self_reference_still_refuses(self, session_factory, monkeypatch) -> None:
+        """R2: the same words typed THIS message ("my sales for water tap", hinted as a
+        category the way the parser hinted it) open the same picker of customers outside
+        the links (R-B2's shape), so the refusal stands under "my" too, and the trace
+        names the typed word and the ids it dropped."""
+        _seed_contact(session_factory, variables={})
+        foreign = [
+            _other_customer(session_factory, WATER_TAP_FOREIGN),
+            _other_customer(session_factory, "ZZT WATER TAP ENTERPRISE"),
+        ]
+        _link_customers(session_factory, *HANLIM_LINKS[:2], codes=HANLIM_CODES)
+        result, reply, captured = _replay(
+            session_factory, monkeypatch,
+            _owner_verdict(entities=[_ent("water tap", "category")], entity_op="replace_combine"),
+            "my sales for water tap",
+        )
+        assert reply.strip() == refusal(*HANLIM_LINKS[:2]), reply
+        assert captured == []
+        (event,) = _scope_events(session_factory, result)
+        assert event["refused"] == "customer_not_permitted", event
+        assert event["reason"] == "typed_word_matched_only_other_customers", event
+        assert sorted(event["dropped"]) == sorted(foreign), event
+        assert "water tap" in event["typed"], event
+        assert event["self_reference"] is True, event
+
+    def test_a_clean_self_reference_turn_traces_the_scope_decision(self, session_factory, monkeypatch) -> None:
+        """R4: the cold path (no carry) records that the turn was scoped to the links."""
+        from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
+
+        _seed_contact(session_factory, variables={})
+        links = _link_customers(session_factory, *HANLIM_LINKS, codes=HANLIM_CODES)
+        result, reply, captured = _replay(
+            session_factory, monkeypatch, _owner_verdict(), "what is my sales this month",
+            mcp_response=SALES_REPORT_HIT,
+        )
+        assert "under your account" not in reply, reply
+        (args,) = _calls(captured, SALES)
+        assert args["customer_ids"] == links, args
+        events = _scope_events(session_factory, result)
+        assert any(e.get("ids") == links and e.get("self_reference") is True for e in events), events
+
+
+class TestScreenRefusesTypedWordsOnly:
+    """`engine._screen_resolver_for_scope` (owner ruling on this lane, 30 Sep 2026, option
+    b): the refusal is for a TYPED word's foreign matches; a carried word's are dropped
+    and reported. Payload shaped as the real resolver's (spied in the replay)."""
+
+    OWN = "aaaaaaaa-0000-0000-0000-00000000000a"
+    F1 = "ffffffff-0000-0000-0000-00000000000f"
+    F2 = "ffffffff-0000-0000-0000-000000000010"
+
+    def _offer_payload(self):
+        rows = [
+            {"uuid": self.F1, "entity_type": "customer", "code": "ZZT-F1", "display_name": "ZZT WATER TAP SDN BHD"},
+            {"uuid": self.F2, "entity_type": "customer", "code": "ZZT-F2", "display_name": "ZZT WATER TAP ENTERPRISE"},
+        ]
+        payload = {
+            "resolved": {"tokens": ["water tap"]},
+            "gate": {
+                "gate_passed": False,
+                "gate_reason": "'order' customer token matches 2 different companies; user must pick",
+                "gate_clarification": "Which customer do you mean?",
+                "compatible_entities": list(rows),
+                "customer_probe_entities": list(rows),
+            },
+            "_exit_kind": "offer",
+        }
+        return payload, list(rows), {"customer": list(rows)}
+
+    def test_a_carried_words_picker_is_dropped_not_refused(self) -> None:
+        from app.services.chatbot import engine as engine_mod
+
+        payload, compatible, candidates = self._offer_payload()
+        refused, kept, cands, dropped = engine_mod._screen_resolver_for_scope(
+            {"ids": [self.OWN]}, payload, compatible, candidates, typed_tokens=set()
+        )
+        assert refused is False
+        assert kept == [] and cands == {"customer": []}
+        assert sorted(dropped) == sorted([self.F1, self.F2])
+        assert payload["gate"]["compatible_entities"] == []
+
+    def test_a_typed_words_picker_still_refuses(self) -> None:
+        from app.services.chatbot import engine as engine_mod
+
+        payload, compatible, candidates = self._offer_payload()
+        refused, _kept, _cands, dropped = engine_mod._screen_resolver_for_scope(
+            {"ids": [self.OWN]}, payload, compatible, candidates, typed_tokens={"water tap"}
+        )
+        assert refused is True
+        assert sorted(dropped) == sorted([self.F1, self.F2])
+
+    def test_no_typed_token_set_reads_every_token_as_typed(self) -> None:
+        from app.services.chatbot import engine as engine_mod
+
+        payload, compatible, candidates = self._offer_payload()
+        refused, *_ = engine_mod._screen_resolver_for_scope({"ids": [self.OWN]}, payload, compatible, candidates)
+        assert refused is True
+
+    def test_an_all_foreign_resolution_refuses_only_for_a_typed_token(self) -> None:
+        from app.services.chatbot import engine as engine_mod
+
+        def _payload():
+            return {
+                "resolved": {
+                    "tokens": ["hanlim"],
+                    "resolutions": [{"token": "hanlim", "matches": [{"uuid": self.F1, "entity_type": "customer"}]}],
+                },
+                "gate": {"compatible_entities": []},
+                "_exit_kind": "continue",
+            }
+
+        refused, *_ = engine_mod._screen_resolver_for_scope({"ids": [self.OWN]}, _payload(), [], {}, typed_tokens={"hanlim"})
+        assert refused is True
+        refused, _k, _c, dropped = engine_mod._screen_resolver_for_scope(
+            {"ids": [self.OWN]}, _payload(), [], {}, typed_tokens={"other"}
+        )
+        assert refused is False and dropped == [self.F1]
+
+    def test_typed_tokens_read_the_current_message_only(self) -> None:
+        from app.services.chatbot import engine as engine_mod
+
+        typed = engine_mod._typed_tokens(
+            {
+                "entities": [
+                    {"raw": "Water Tap", "canonical_code": None, "current_message": False},
+                    {"raw": "hanlim", "canonical_code": "300-H070", "current_message": True},
+                    {"raw": "bare"},
+                ]
+            }
+        )
+        assert typed == {"hanlim", "300-h070", "bare"}
+
+
+class TestScopedSalesAnalysisRunsTheSalesReport:
+    def test_my_sales_this_month_parsed_as_analysis_runs_the_sales_report_on_the_links(self, session_factory, monkeypatch) -> None:
+        """CHATBOT-SELFREF-SCOPE B2 (the owner's second trace, clean path): "what is my
+        sales this month" parsed as `order_status="sales_analysis"` from a linked contact
+        is answered by `crm_sales_report` over the six links - `crm_sales_analysis` is a
+        company's own totals and its route refuses a linked contact - and the trace says
+        so."""
+        from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
+
+        _seed_contact(session_factory, variables={})
+        links = _link_customers(session_factory, *HANLIM_LINKS, codes=HANLIM_CODES)
+        result, reply, captured = _replay(
+            session_factory, monkeypatch,
+            _owner_verdict(order_status="sales_analysis", sales_basis="delivered", group_by="month"),
+            "what is my sales this month", mcp_response=SALES_REPORT_HIT,
+        )
+        assert "under your account" not in reply, reply
+        assert "Could not run the sales report" not in reply, reply
+        assert _calls(captured, "crm_sales_analysis") == [], captured
+        (args,) = _calls(captured, SALES)
+        assert args["customer_ids"] == links, args
+        assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
+        events = _scope_events(session_factory, result)
+        assert any(e.get("decision") == "sales_analysis_answered_as_sales_report" and e.get("ids") == links for e in events), events
+
+    def test_an_unlinked_contact_keeps_the_sales_analysis(self, session_factory, monkeypatch) -> None:
+        """B2 changes nothing for a contact nobody linked: the company totals as today."""
+        from tests.chatbot.test_sales_analysis_lane import ROUTE_HIT, _rendered
+
+        _seed_contact(session_factory, variables={})
+        _result, reply, captured = _replay(
+            session_factory, monkeypatch,
+            _owner_verdict(order_status="sales_analysis", sales_basis="delivered", group_by="month", self_reference=False),
+            "sales this month", mcp_response=_rendered(ROUTE_HIT),
+        )
+        assert [name for name, _ in captured] == ["crm_sales_analysis"], captured

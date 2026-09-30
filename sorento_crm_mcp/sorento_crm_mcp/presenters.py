@@ -1655,6 +1655,29 @@ def _stock_mode(tool_name: str, data: dict[str, Any]) -> str:
 # --------------------------------------------------------------------------
 # dispatcher
 # --------------------------------------------------------------------------
+def _http_error_envelope(tool_name: str, data: dict) -> dict:
+    """The render envelope for a non-2xx route answer (CHATBOT-SELFREF-SCOPE B3): no
+    text, `has_result: false`, and the failure spelled out - `error` (one line: method,
+    path, status, the route's own code or message), `status_code`, and the body the route
+    sent as `detail` - so the chatbot's turn trace carries the reason instead of a
+    rendered line that reads as an answer."""
+    status = int(data.get("status_code") or 0)
+    detail = {
+        k: v for k, v in data.items()
+        if k not in ("status_code", "error", "http_error", "path", "method", "suggested_escalation")
+    }
+    return {
+        "result_type": tool_name,
+        "error": str(data.get("http_error") or data.get("error") or f"{tool_name} returned HTTP {status}"),
+        "status_code": status,
+        "detail": detail,
+        "response": "",
+        "answers": [],
+        "attachments": [],
+        "has_result": False,
+    }
+
+
 def present_response(tool_name: str, raw: str) -> str:
     """Transform a sanitized tool JSON string into the render envelope JSON string.
 
@@ -1667,6 +1690,15 @@ def present_response(tool_name: str, raw: str) -> str:
         return raw
     if not isinstance(data, dict):
         return raw
+
+    # CHATBOT-SELFREF-SCOPE B3: a non-2xx answer (`http_client.http_error_body` stamps
+    # `status_code`) is an ERROR envelope for every presenter tool, never a rendered
+    # "could not run" line with `has_result: true`. The chatbot lane reads `error` off
+    # the envelope (`lanes/business/__init__.py`, the check before `output_structurer`)
+    # and writes the whole envelope to the turn trace, so the status and the route's
+    # own `code` / `detail` are what the operator reads.
+    if isinstance(data.get("status_code"), int) and data["status_code"] >= 400:
+        return json.dumps(_http_error_envelope(tool_name, data))
 
     # S4 point 5 (AC-1114b): `crm_outstanding_report` never goes through the
     # generic item/field envelope below - the report's shape (two named
