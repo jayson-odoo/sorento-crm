@@ -479,6 +479,8 @@ class ConfirmResult(BaseModel):
     #: forward untouched. `lines_decided == len(lines_confirmed) + lines_carried`.
     lines_confirmed: List[ConfirmedLine] = []
     lines_carried: int = 0
+    #: The covered lines this press took OUT of the confirmation (staged rejections).
+    lines_withdrawn: List[ConfirmedLine] = []
     #: The physical movements this confirmation raised, and how many it could NOT write
     #: (`PLAN-scm-cs-planning-uat.md` section E). The transfer write is best-effort so a
     #: failure cannot fail a promise already made, but a movement nobody was told about is
@@ -561,6 +563,10 @@ class ConfirmManyOrderBody(BaseModel):
     #: refusal alongside a batch (owner ruling 23 Sep 2026,
     #: `PLAN-board-reject-on-confirmed-line.md`).
     rejected_line_ids: List[str] = Field(default_factory=list)
+    #: Scope this order's press to exactly these mirror line ids: a line outside the list is
+    #: neither confirmed, held back nor echoed, and a staged rejection outside it is left
+    #: alone. What a Preview showed is what Confirm sends.
+    only_line_ids: Optional[List[str]] = None
 
 
 class ConfirmManyBody(BaseModel):
@@ -583,6 +589,9 @@ class PreviewInquiryRow(BaseModel):
     line_no: Optional[int] = None
     item_code: Optional[str] = None
     verb: str
+    #: True when this press raised the row; False when it only settles a row an earlier
+    #: revision already raised.
+    is_new: bool = True
     qty: Decimal
     delivery_date: Optional[date] = None
     stock_location: Optional[str] = None
@@ -591,6 +600,7 @@ class PreviewInquiryRow(BaseModel):
 
 class PreviewTransfer(BaseModel):
     line_no: Optional[int] = None
+    is_new: bool = True
     kind: str
     qty: Decimal
     from_location: Optional[str] = None
@@ -614,6 +624,7 @@ class ConfirmManyOrderResult(BaseModel):
     lines_undecided: Optional[int] = None
     lines_confirmed: Optional[List[ConfirmedLine]] = None
     lines_carried: Optional[int] = None
+    lines_withdrawn: Optional[List[ConfirmedLine]] = None
     #: The movements this order's confirmation raised, and how many could NOT be written -
     #: the same pair the single-order `ConfirmResult` carries. The board's toast reads "N
     #: lines confirmed, T transfers proposed", and T comes from here.

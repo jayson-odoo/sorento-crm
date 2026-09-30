@@ -492,7 +492,11 @@ def confirm_all(
                 actor_user_id=actor_id,
                 batch_id=resolved_batch_id,
                 confirm_batch=lambda: _confirm_a_planning_change(
-                    db, order, _BatchedEntry(list(entry.lines), resolved_batch_id), actor_id
+                    db,
+                    order,
+                    _BatchedEntry(list(entry.lines), resolved_batch_id),
+                    actor_id,
+                    preview=payload.preview,
                 ),
             )
 
@@ -508,11 +512,6 @@ def confirm_all(
                 entry.batch_id or (None if any_per_order else payload.batch_id)
             ),
             preview=payload.preview,
-            # A planning-change apply notifies after its own savepoint commits, so it cannot
-            # be rolled back cleanly: an order answering a batch is not previewed.
-            preview_unavailable=lambda entry: bool(
-                entry.batch_id or (None if any_per_order else payload.batch_id)
-            ),
         )
         return {"results": results}
     except Exception as exc:
@@ -854,6 +853,35 @@ def _withdrawal_only_result(
     }
 
 
+def _withdrawn_entries(db: Session, service: ProjectSupplyService, order, line_ids: list) -> list:
+    """The lines a press took out of the confirmation, named the way `lines_confirmed` is."""
+    from app.models.product import Product
+
+    wanted = {str(x) for x in line_ids}
+    by_id = {str(line.id): line for line in service.lines_of(str(order.id)) if str(line.id) in wanted}
+    product_ids = [line.product_id for line in by_id.values() if line.product_id]
+    codes = (
+        {
+            str(row.id): row.product_code
+            for row in db.query(Product.id, Product.product_code).filter(
+                Product.id.in_(product_ids)
+            )
+        }
+        if product_ids
+        else {}
+    )
+    return [
+        {
+            "project_line_id": str(line_id),
+            "line_no": by_id[str(line_id)].line_no if str(line_id) in by_id else None,
+            "item_code": codes.get(str(by_id[str(line_id)].product_id or ""))
+            if str(line_id) in by_id
+            else None,
+        }
+        for line_id in line_ids
+    ]
+
+
 def _confirm_with_possible_rejects(
     db: Session,
     service: ProjectSupplyService,
@@ -940,6 +968,7 @@ def _confirm_with_possible_rejects(
             if rejected_line_ids:
                 _restamp_superseded_reason(db, before_id, joined_reason)
                 body["rejected_count"] = len(rejected_line_ids)
+                body["lines_withdrawn"] = _withdrawn_entries(db, service, order, rejected_line_ids)
         _attach_undo_journal(db, order, journal, before_id)
     elif rejected_line_ids:
         # NOT wrapped in `UndoJournal` - see this function's own docstring.
@@ -961,6 +990,7 @@ def _confirm_with_possible_rejects(
                 code="board_line_withdrawal_not_covered",
             )
         body = _withdrawal_only_result(db, service, order, rejected_line_ids)
+        body["lines_withdrawn"] = _withdrawn_entries(db, service, order, rejected_line_ids)
     else:
         with UndoJournal(db) as journal:
             body = service.confirm(order, payload, actor_user_id=actor_user_id)
@@ -1029,7 +1059,9 @@ class _BatchedEntry:
     batch_id: str
 
 
-def _confirm_a_planning_change(db, order, payload, actor_user_id: str) -> dict:
+def _confirm_a_planning_change(
+    db, order, payload, actor_user_id: str, *, preview: bool = False
+) -> dict:
     """The board's Confirm, pressed on a board opened at `?batch=<id>` (part 3, AC-P3-4).
 
     ONE press, ONE call, ONE revision: the lines the planner composed become the batch
@@ -1101,6 +1133,7 @@ def _confirm_a_planning_change(db, order, payload, actor_user_id: str) -> dict:
         extra_confirm_lines={str(order.id): extra},
         refuse_if_applied=True,
         only_pso_ids={str(order.id)},
+        notify=not preview,
     )
     failed = [
         entry for entry in result["failed_orders"]

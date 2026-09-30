@@ -4624,6 +4624,7 @@ def apply(
     extra_confirm_lines: Optional[Dict[str, List[dict]]] = None,
     refuse_if_applied: bool = False,
     only_pso_ids: Optional[Sequence[str]] = None,
+    notify: bool = True,
 ) -> dict:
     """AC-R05: one new revision per affected order, atomic per order. Applying twice is a
     no-op (`already_applied`).
@@ -4771,7 +4772,9 @@ def apply(
         # `savepoint.commit()` raises `ResourceClosedError` and an order that applied cleanly
         # gets reported as failed. Still best-effort - a notify failure here cannot undo the
         # order, which is already committed by this point.
-        notified = _notify_purchasing(db, order, so_number, batch)
+        # `notify=False` is a Preview: the notification service commits, and a preview
+        # writes nothing that outlives its rollback.
+        notified = _notify_purchasing(db, order, so_number, batch) if notify else False
 
         applied_orders.append(so_number)
         outcomes[pso_id] = outcome

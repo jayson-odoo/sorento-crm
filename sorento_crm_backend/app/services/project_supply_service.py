@@ -10731,7 +10731,6 @@ class ProjectSupplyService:
         write: Optional[Callable[[ProjectSalesOrder, Any], Dict[str, Any]]] = None,
         can_hold_back: Optional[Callable[[Any], bool]] = None,
         preview: bool = False,
-        preview_unavailable: Optional[Callable[[Any], bool]] = None,
     ) -> List[Dict[str, Any]]:
         """"Confirm all approved" (D3): every order's Confirm, each in its OWN transaction.
 
@@ -10755,9 +10754,12 @@ class ProjectSupplyService:
 
         `preview` runs the very same per-order write and ROLLS BACK instead of committing,
         answering each ok order with the order inquiry rows and stock transfers the press
-        raised, read inside the transaction (`_preview_of`). `preview_unavailable(entry)`
-        names an order that cannot be rolled back cleanly (a planning-change apply notifies
-        after its own savepoint commits), which is refused rather than previewed.
+        raised, read inside the transaction (`_preview_of`). The session is flagged
+        (`info["confirm_preview"]`) for the whole order so the post-commit drains keep their
+        queues, which the root rollback then discards: a preview notifies nobody.
+
+        An entry's `only_line_ids` scopes the order to exactly those lines BEFORE the write:
+        a line outside the list is neither confirmed, held back nor echoed.
         """
         write = write or (
             lambda order, entry: self.confirm(order, entry, actor_user_id=actor_user_id)
@@ -10784,28 +10786,43 @@ class ProjectSupplyService:
                 )
                 continue
             held_back: List[Dict[str, Any]] = []
-            if preview and preview_unavailable is not None and preview_unavailable(entry):
-                results.append(
-                    {
-                        "pso_id": pso_id,
-                        "ok": False,
-                        "preview": True,
-                        "error": (
-                            "Preview is not available for a pending planning change; "
-                            "confirm it directly."
-                        ),
-                        "failing_lines": None,
-                    }
-                )
-                continue
+            if preview:
+                self.db.info["confirm_preview"] = True
             try:
                 order = self.get_order(pso_id)
                 assert_can_act(self.db, order)
+                only = getattr(entry, "only_line_ids", None)
+                if only is not None:
+                    keep = {str(x) for x in only}
+                    entry = entry.model_copy(
+                        update={
+                            "lines": [
+                                line for line in entry.lines if str(line.project_line_id) in keep
+                            ],
+                            "rejected_line_ids": [
+                                x for x in (entry.rejected_line_ids or []) if str(x) in keep
+                            ],
+                        }
+                    )
+                before_decision_id = None
+                before_rows: Set[str] = set()
+                before_moves: Set[str] = set()
+                if preview:
+                    active = self.active_decision(str(order.id))
+                    before_decision_id = str(active.id) if active is not None else None
+                    before_rows, before_moves = self._preview_baseline(order)
                 body, entry, held_back = self._write_holding_back(
                     order, entry, write, can_hold_back(entry)
                 )
-                previewed = self._preview_of(order) if preview else None
+                previewed = None
                 if preview:
+                    now_active = self.active_decision(str(order.id))
+                    changed = now_active is not None and str(now_active.id) != before_decision_id
+                    previewed = (
+                        self._preview_of(order, before_rows, before_moves)
+                        if changed
+                        else {"inquiry_rows": [], "transfers": []}
+                    )
                     self.db.rollback()
                 else:
                     self.db.commit()
@@ -10820,6 +10837,7 @@ class ProjectSupplyService:
                         "lines_undecided": body.get("lines_undecided"),
                         "lines_confirmed": body.get("lines_confirmed"),
                         "lines_carried": body.get("lines_carried"),
+                        "lines_withdrawn": body.get("lines_withdrawn"),
                         # The board confirms every order in one press and reports one toast,
                         # so the movements and the flags have to come back PER ORDER or the
                         # toast has nothing to add up. `.get`, because the planning-change
@@ -10838,7 +10856,7 @@ class ProjectSupplyService:
                         "lines_fulfilled_skipped": body.get("lines_fulfilled_skipped"),
                         # #1362 hold-back: lines the recheck refused, left out so the rest
                         # of the order confirmed; each keeps its saved decision.
-                        "lines_held_back": held_back or None,
+                        "lines_held_back": held_back,
                         # #1362: Buys confirmed over goods that landed for their line.
                         "landed_buy_notices": body.get("landed_buy_notices"),
                     }
@@ -10855,23 +10873,55 @@ class ProjectSupplyService:
                         **({"preview": True} if preview else {}),
                     }
                 )
+            finally:
+                if preview:
+                    self.db.info.pop("confirm_preview", None)
         return results
 
-    def _preview_of(self, order: ProjectSalesOrder) -> Dict[str, Any]:
+    def _preview_baseline(self, order: ProjectSalesOrder) -> Tuple[Set[str], Set[str]]:
+        """The ids of the order's inquiry rows and transfers BEFORE a press writes, so the
+        preview can tell a row this press raised from one it only settles."""
+        from app.models.stock_transfer import StockTransfer
+
+        line_ids = [str(line.id) for line in self.lines_of(str(order.id))]
+        rows = (
+            {
+                str(row_id)
+                for (row_id,) in self.db.query(OrderInquiryRow.id).filter(
+                    OrderInquiryRow.so_line_id.in_(line_ids)
+                )
+            }
+            if line_ids
+            else set()
+        )
+        moves = {
+            str(move_id)
+            for (move_id,) in self.db.query(StockTransfer.id).filter(
+                StockTransfer.project_sales_order_id == str(order.id)
+            )
+        }
+        return rows, moves
+
+    def _preview_of(
+        self,
+        order: ProjectSalesOrder,
+        before_rows: Set[str],
+        before_moves: Set[str],
+    ) -> Dict[str, Any]:
         """The order inquiry rows and stock transfers the press just wrote, read INSIDE its
         transaction (before the caller rolls it back). The new revision is the active one
-        until that rollback, so its id names exactly what this press raised."""
+        until that rollback, so its id names exactly what this press raised; `is_new` is
+        false for a row or transfer that already existed before the write."""
         from app.models.stock_transfer import StockTransfer
 
         decision = self.active_decision(str(order.id))
         if decision is None:
             return {"inquiry_rows": [], "transfers": []}
-        line_no_of = {
-            str(line.id): line.line_no for line in self.lines_of(str(order.id))
-        }
+        lines = self.lines_of(str(order.id))
+        line_no_of = {str(line.id): line.line_no for line in lines}
         line_no_by_core = {
             str(line.core_sales_order_line_id): line.line_no
-            for line in self.lines_of(str(order.id))
+            for line in lines
             if line.core_sales_order_line_id
         }
         inquiry_rows = [
@@ -10879,6 +10929,7 @@ class ProjectSupplyService:
                 "line_no": line_no_of.get(str(row.so_line_id or "")),
                 "item_code": row.item_code,
                 "verb": row.verb,
+                "is_new": str(row.id) not in before_rows,
                 "qty": row.qty,
                 "delivery_date": row.delivery_date,
                 "stock_location": row.stock_location,
@@ -10889,21 +10940,35 @@ class ProjectSupplyService:
             .all()
         ]
         inquiry_rows.sort(key=lambda entry: (entry["line_no"] is None, entry["line_no"] or 0))
-        codes = {
-            str(w.id): w.warehouse_code
-            for w in self.db.query(Warehouse).all()
+        moves = (
+            self.db.query(StockTransfer)
+            .filter(StockTransfer.supply_decision_id == str(decision.id))
+            .all()
+        )
+        warehouse_ids = {
+            str(w)
+            for move in moves
+            for w in (move.from_warehouse_id, move.to_warehouse_id)
+            if w
         }
+        codes = (
+            {
+                str(w.id): w.warehouse_code
+                for w in self.db.query(Warehouse).filter(Warehouse.id.in_(warehouse_ids))
+            }
+            if warehouse_ids
+            else {}
+        )
         transfers = [
             {
                 "line_no": line_no_by_core.get(str(move.so_line_id or "")),
+                "is_new": str(move.id) not in before_moves,
                 "kind": move.kind,
                 "qty": move.qty,
                 "from_location": codes.get(str(move.from_warehouse_id or "")),
                 "to_location": codes.get(str(move.to_warehouse_id or "")),
             }
-            for move in self.db.query(StockTransfer)
-            .filter(StockTransfer.supply_decision_id == str(decision.id))
-            .all()
+            for move in moves
         ]
         transfers.sort(key=lambda entry: (entry["line_no"] is None, entry["line_no"] or 0))
         return {"inquiry_rows": inquiry_rows, "transfers": transfers}
