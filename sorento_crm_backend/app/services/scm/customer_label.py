@@ -22,8 +22,14 @@ from typing import Any
 #: is company-guarded (`CUSTOMER_JOIN_ON`): the label is printed on a plan screen, so a
 #: customers row belonging to another company would name that company's buyer on this
 #: company's order.
+#:
+#: The order's OWN name first (CUSTOMER-CODE-IDENTITY, owner decision 30 Sep 2026):
+#: `sales_orders.debtor_name` is the name the SO was issued under, per document, and
+#: is what every SO-facing screen shows; the master name is the fallback for an order
+#: that carries none (every SO ingested before the column existed).
 CUSTOMER_LABEL_SQL = (
-    "COALESCE(c.customer_name, 'Debtor ' || so.debtor_code, 'No customer on order')"
+    "COALESCE(NULLIF(btrim(so.debtor_name), ''), c.customer_name, "
+    "'Debtor ' || so.debtor_code, 'No customer on order')"
 )
 
 #: The join condition that guard lives in. One constant, because a query that took the

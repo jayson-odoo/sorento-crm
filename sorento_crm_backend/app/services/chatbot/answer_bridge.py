@@ -525,11 +525,12 @@ def _miss_company_picker(
         for option in (member_option({**row, "idx": offset + i + 1}, offset + i + 1) for i, row in enumerate(rows))
         if option
     ]
+    if not options:
+        # CHATBOT-EMPTY-ROUTE-PICK: a picker never renders with zero rows; the plain
+        # offer stands.
+        return None
     lines = "\n".join(f"{o['position']}. {o['label']}" for o in options)
-    picker_text = (
-        f"{offer}\n\nPlease choose who to route to (reply with the number):\n{lines}\n\n"
-        "If you have no preference, just reply 'yes' and we'll assign automatically."
-    )
+    picker_text = f"{offer}\n\n{member_mod.PICKER_HEADER}\n{lines}\n\n{member_mod.PICKER_CLOSE}"
     question = pending.ask(
         "member_offer",
         options,
@@ -919,11 +920,10 @@ def _cs_roster_text_block(member_options: list[dict[str, Any]]) -> str:
     number or name: ... Or just reply 'yes' and we'll assign automatically." Positions
     are read straight off the ALREADY-COMBINED options, so the printed numbers and the
     pending's own `option.position` can never disagree."""
+    from app.services.chatbot.tail import member_offer as member_mod
+
     lines = "\n".join(f"{o.get('position')}. {o.get('label')}" for o in member_options)
-    return (
-        "\n\nTo escalate, choose who to route to. Reply the number or name:\n"
-        f"{lines}\n\nOr just reply 'yes' and we'll assign automatically."
-    )
+    return f"\n\n{member_mod.ROSTER_HEADER}\n{lines}\n\n{member_mod.ROSTER_CLOSE}"
 
 
 def _stamped_roster_options(rows: list[Any], *, kind: str, text: str) -> list[dict[str, Any]]:

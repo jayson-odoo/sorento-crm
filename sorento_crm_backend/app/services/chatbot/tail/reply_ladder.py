@@ -182,11 +182,9 @@ def _merged_offer(sug: Any, mem: Any) -> str:
                 )
     picker = "\n".join(lines)
     multi_close = jsc.get(mem, "cs_multi_close")
-    close = (
-        multi_close
-        if (multi_co and isinstance(multi_close, str) and multi_close)
-        else "Or just reply 'yes' and we'll assign automatically."
-    )
+    from app.services.chatbot.tail.member_offer import ROSTER_CLOSE, ROSTER_HEADER
+
+    close = multi_close if (multi_co and isinstance(multi_close, str) and multi_close) else ROSTER_CLOSE
     offer_company = jsc.get(mem, "cs_offer_company")
     suggest_response = jsc.get(sug, "suggest_response")
     if isinstance(offer_company, str) and offer_company and isinstance(suggest_response, str):
@@ -195,7 +193,4 @@ def _merged_offer(sug: Any, mem: Any) -> str:
         )
     else:
         words = suggest_response
-    return (
-        f"{jsc.js_string(words)}\n\nTo escalate, choose who to route to. "
-        f"Reply the number or name:\n{picker}\n\n{jsc.js_string(close)}"
-    )
+    return f"{jsc.js_string(words)}\n\n{ROSTER_HEADER}\n{picker}\n\n{jsc.js_string(close)}"
