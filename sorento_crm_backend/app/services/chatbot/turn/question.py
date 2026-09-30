@@ -102,6 +102,53 @@ def open_question(pending: Pending | None, tasks: Any) -> dict[str, Any] | None:
     return task_mod.open_question(tasks)
 
 
+#: The parser's answer when there is no `Open question:` line, as the prompt states it
+#: ("mode null, picked [], items [], qty_for_all null when there is no Open question
+#: line or the message does not answer it").
+NO_ANSWER: dict[str, Any] = {"mode": None, "picked": [], "items": [], "qty_for_all": None}
+
+ANSWER_KEY = "open_question_answer"
+POSITIONS_KEY = "reference_positions"
+
+
+def without_phantom_answer(
+    verdict: dict[str, Any], *, open_question: dict[str, Any] | None, media_menu_open: bool
+) -> tuple[dict[str, Any], bool]:
+    """The verdict with a declared answer to a question that was never asked taken out.
+
+    CHATBOT-EMPTY-ROUTE-PICK (owner console, 30 Sep 2026, parser v37): "Zhin heng
+    delivered on 23/9" arrived with `open_question_answer {"mode": "pick", "picked":
+    [1]}` while the previous bot turn was a data answer and nothing was open. The
+    parser answers the `Open question:` object this module builds (`open_question`);
+    when that object is None no line was shown, so a non-null answer answers nothing
+    that exists, and the positions that ride with a pick index nothing either. Both
+    go, here, before any reader: `apply._open_pick_answer` and `decide.picked_positions`
+    already guard on `state.pending`, but `gate.py`'s `pick_applied` (a non-empty
+    `reference_positions` suppresses "Which customer do you mean?") and the stock and
+    top-selling position readers do not all share that guard.
+
+    `media_menu_open`: the ideation lane's media menu (`ideation.pending_media`, read by
+    `lanes/ideate.py::build_reply` as `reference_positions`) is not an `Open question:`
+    object, so while it is outstanding the positions stay and only the declared answer
+    goes. Returns `(verdict, dropped)`; the same object, untouched, when there is nothing
+    to drop.
+    """
+    if open_question is not None:
+        return verdict, False
+    answer = verdict.get(ANSWER_KEY)
+    declared = isinstance(answer, dict) and answer.get("mode") is not None
+    raw = verdict.get(POSITIONS_KEY)
+    positions = bool(raw) and isinstance(raw, list) and not media_menu_open
+    if not declared and not positions:
+        return verdict, False
+    out = dict(verdict)
+    if declared:
+        out[ANSWER_KEY] = dict(NO_ANSWER)
+    if positions:
+        out[POSITIONS_KEY] = []
+    return out, True
+
+
 def is_the_stock_question(obj: dict[str, Any] | None) -> bool:
     """Does this object state the stock task (so its `Open task:` hint is redundant)?"""
     return bool(obj) and obj.get("kind") in (QUANTITIES, LAST_ANSWER)

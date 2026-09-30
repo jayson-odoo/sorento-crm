@@ -1746,7 +1746,7 @@ def _as_ranking_answer(verdict: dict[str, Any], **keys: Any) -> dict[str, Any]:
     return out
 
 
-_NO_OPEN_QUESTION_ANSWER = {"mode": None, "picked": [], "items": [], "qty_for_all": None}
+_NO_OPEN_QUESTION_ANSWER = turn_question.NO_ANSWER
 
 #: Ranking words (PR #1273 round 7: "top 10 hot selling item by william in q1 2026" was
 #: read as an order ask and fell into "Could not find order"). A rank word, an optional
@@ -3365,6 +3365,16 @@ def _run_stages(  # noqa: PLR0915
             # because this is the seam that skipped it.
             parser.assert_emission(parser_raw)
         verdict: dict[str, Any] = dict(parser_raw)
+        # CHATBOT-EMPTY-ROUTE-PICK: a declared answer to a question that was never
+        # asked (no `Open question:` line went to the parser) is dropped before any
+        # reader, and the `understood` record below shows the drop as `derived`.
+        verdict, phantom_answer = turn_question.without_phantom_answer(
+            verdict,
+            open_question=open_question,
+            media_menu_open=bool((state_in.ideation or {}).get("pending_media"))
+            if isinstance(state_in.ideation, dict)
+            else False,
+        )
     except parser.ParserError as exc:
         # R5 / H44: no soft default and no default routing. A failed understanding is a
         # failed turn with today's error reply.
@@ -3450,6 +3460,15 @@ def _run_stages(  # noqa: PLR0915
         raw={"parser_raw": parser_raw, "derived": verdict},
     )
     turn_trace.add("prompt_text", {"text": user_block})
+    if phantom_answer:
+        turn_trace.add(
+            "phantom_answer",
+            {
+                "open_question_answer": parser_raw.get("open_question_answer"),
+                "reference_positions": parser_raw.get("reference_positions"),
+                "why": "No question was open, so the parser's declared answer and positions were dropped.",
+            },
+        )
     # Chatbot memory lane A (contract section 6): once per successful parse, never
     # on a failed one - `TurnTrace.persisted()` places every `.add()` event AFTER
     # every `.record()` stage, so an event added before a parse failure would
