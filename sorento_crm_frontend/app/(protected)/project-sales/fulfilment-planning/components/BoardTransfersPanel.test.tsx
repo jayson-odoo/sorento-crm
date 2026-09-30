@@ -293,3 +293,32 @@ describe('BoardTransfersPanel: the inquiry footer (D10)', () => {
     expect(screen.getByText(/1 order inquiry row raised/)).toBeInTheDocument();
   });
 });
+
+describe('BoardTransfersPanel: preview rows (FULFIL-CONFIRM-SCOPE v4)', () => {
+  const previewRow = (isNew: boolean) => ({
+    line_no: 22,
+    kind: 'borrow',
+    qty: '100',
+    from_location: 'BRW-BB',
+    to_location: 'BRW-IB',
+    is_new: isNew,
+    so_number: 'SO404352',
+    item_code: 'SRTWB7518',
+    customer_name: 'ABC SDN BHD',
+  });
+
+  it('lists only the "on Confirm" preview rows and leaves them out of Approve all proposed', () => {
+    mockData([transferOf()]);
+
+    render(
+      <BoardTransfersPanel
+        soNumbers={['SO404352']}
+        preview={[previewRow(true), previewRow(false)]}
+      />,
+    );
+
+    expect(screen.getAllByText('on Confirm')).toHaveLength(1);
+    expect(screen.queryByText('kept')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve all proposed (1)' })).toBeInTheDocument();
+  });
+});

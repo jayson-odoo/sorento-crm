@@ -2065,9 +2065,10 @@ export function FulfilmentBoardPanel({
             <Button
               type="button"
               size="sm"
-              variant={view === 'grid' ? 'primary' : 'ghost'}
+              variant={view === 'grid' && !previewMode ? 'primary' : 'ghost'}
               className="rounded-e-none"
-              aria-pressed={view === 'grid'}
+              disabled={previewMode}
+              aria-pressed={view === 'grid' && !previewMode}
               onClick={() => setView('grid')}
             >
               <LayoutGrid className="size-4" aria-hidden />
@@ -2076,9 +2077,10 @@ export function FulfilmentBoardPanel({
             <Button
               type="button"
               size="sm"
-              variant={view === 'list' ? 'primary' : 'ghost'}
+              variant={view === 'list' || previewMode ? 'primary' : 'ghost'}
               className="rounded-s-none border-s border-input"
-              aria-pressed={view === 'list'}
+              disabled={previewMode}
+              aria-pressed={view === 'list' || previewMode}
               onClick={() => setView('list')}
             >
               <List className="size-4" aria-hidden />
@@ -2718,7 +2720,7 @@ export function FulfilmentBoardPanel({
                 // S6 (PLAN-scm-oi-worklist-excel-parity.md R-J): the ONE search box,
                 // beside the title, drives Grid and List alike - the panel's own search
                 // box is gone, so there is no second box to disagree with this one.
-                externalSearch={productSearch}
+                externalSearch={previewMode ? undefined : productSearch}
                 // `visibleListContributions` also narrows by `kindFilter` (above), which
                 // is not part of `externalSearch` - so the reset key carries both, or
                 // toggling a kind card while on page 3 would leave the list showing

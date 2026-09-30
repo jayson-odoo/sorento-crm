@@ -1580,7 +1580,6 @@ export interface PreviewViewOrder {
   inquiry: PreviewInquiryEntry[];
   transfers: PreviewTransferEntry[];
   heldBack: { key: string | null; line_no: number | null; item_code: string | null; reason: string }[];
-  notSent: ConfirmDialogNotPosted[];
 }
 
 export interface PreviewView {
@@ -1653,7 +1652,6 @@ export function previewViewFor(
       inquiry: [],
       transfers: [],
       heldBack: [],
-      notSent: [],
     };
     if (!result.ok) return base;
 
@@ -1752,15 +1750,6 @@ export function previewViewFor(
       item_code: entry.item_code ?? null,
       reason: entry.reason ?? '',
     }));
-    const heldNos = new Set(heldBack.map((entry) => entry.line_no));
-    const notSent = salesOrderId
-      ? confirmDialogRowsFor(own, draft, {
-          currentUserName: context.currentUserName,
-          openedAt: context.openedAt,
-          unadoptedSalesOrderIds: context.unadoptedSalesOrderIds,
-          batchBlockedSalesOrderIds: context.batchBlockedSalesOrderIds,
-        }).notPosted.filter((entry) => !heldNos.has(entry.line_no))
-      : [];
     return {
       ...base,
       confirmCount: confirmed.length + withdrawn.length,
@@ -1777,7 +1766,6 @@ export function previewViewFor(
       inquiry,
       transfers,
       heldBack,
-      notSent,
     };
   });
   const sum = (pick: (order: PreviewViewOrder) => number) =>

@@ -4502,8 +4502,8 @@ describe('FulfilmentBoardPanel: confirm scope fix round 1 (FULFIL-CONFIRM-SCOPE)
 });
 
 /**
- * FULFIL-CONFIRM-SCOPE v3.1 (owner, 30 Sep 2026; AC-W1..W6): Preview opens a READ-ONLY view in
- * place of the board content; Confirm lives on that view and posts `only_line_ids`.
+ * FULFIL-CONFIRM-SCOPE v4 (owner decision (b), 30 Sep 2026; AC-W1..W6): Preview is a FILTER MODE
+ * on the board list (read-only columns, "Will be sent (N)" chip); Confirm posts `only_line_ids`.
  */
 describe('FulfilmentBoardPanel: Preview filter mode (v4)', () => {
   const DAY_MS = 24 * 60 * 60 * 1000;
@@ -4623,6 +4623,7 @@ describe('FulfilmentBoardPanel: Preview filter mode (v4)', () => {
     const preview = await screen.findByTestId('board-preview');
     expect(preview).toHaveTextContent('Preview (3)');
     expect(screen.queryByTestId('board-confirm')).toBeNull();
+    expect(screen.queryByTestId('board-preview-filter')).toBeNull();
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
@@ -4654,13 +4655,12 @@ describe('FulfilmentBoardPanel: Preview filter mode (v4)', () => {
     expect(summary).toHaveTextContent('1 stock transfer');
     expect(summary).toHaveTextContent('1 held back');
 
-    const inquiry = view;
-    const row6 = within(inquiry).getByTestId('board-preview-inquiry-row-6');
+    const row6 = within(view).getByTestId('board-preview-inquiry-row-6');
     for (const text of ['SRTWT6808', 'ORDER', '239', 'BRW-IB']) {
       expect(row6).toHaveTextContent(text);
     }
     expect(row6).not.toHaveTextContent('already placed');
-    expect(within(inquiry).getByTestId('board-preview-inquiry-row-9')).toHaveTextContent(
+    expect(within(view).getByTestId('board-preview-inquiry-row-9')).toHaveTextContent(
       'already placed',
     );
     expect(within(view).getByTestId('board-preview-inquiry-note-9')).toHaveTextContent(
@@ -4820,9 +4820,8 @@ describe('FulfilmentBoardPanel: Preview filter mode (v4)', () => {
     });
     previewConfirmMany.mockResolvedValue(previewResult());
     renderPanel(['SO403340']);
-    const view = await openView();
+    await openView();
     expect(screen.getByTestId('board-preview-notes')).toHaveTextContent(/applies pending change/);
-    expect(view).toBeTruthy();
   });
 
   // ---- fix round 3 --------------------------------------------------------------------------
@@ -4980,13 +4979,47 @@ describe('FulfilmentBoardPanel: Preview filter mode (v4)', () => {
     expect(screen.getByTestId('board-confirm')).toBeDisabled();
   });
 
-  it('P-1: Save all suggested and Undo all are disabled while the filter is on', async () => {
-    getPlanningBoard.mockResolvedValue(savedBoard());
+  it('P-1: Save all suggested, Undo all and the view toggle are locked while the filter is on', async () => {
+    // Line 8 has no saved draft, so "Save all suggested" would pick it up outside preview mode.
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        savedBoard(),
+        (entry) => entry.line_no === 8,
+        (entry) => ({ ...entry, draft: undefined }),
+      ),
+    );
     previewConfirmMany.mockResolvedValue(previewResult());
     renderPanel(['SO403340']);
+    await screen.findByTestId('board-preview');
+    expect(screen.getByRole('button', { name: 'Save all suggested (1)' })).toBeEnabled();
+
     await openView();
 
     expect(screen.getByRole('button', { name: /^Save all suggested/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'List' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), { key: 'Enter' });
+    expect(await screen.findByRole('menuitem', { name: 'Undo all' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+  });
+
+  it("the board's product search does not narrow the previewed rows", async () => {
+    getPlanningBoard.mockResolvedValue(savedBoard());
+    previewConfirmMany.mockResolvedValue(previewResult());
+    renderPanel(['SO403340']);
+    fireEvent.change(
+      await screen.findByPlaceholderText('Search sales order, customer, project or product'),
+      { target: { value: 'TPE-9204' } },
+    );
+
+    const view = await openView();
+
+    expect(screen.getByTestId('board-preview-filter')).toHaveTextContent('Will be sent (3)');
+    for (const lineNo of [6, 9, 8]) {
+      expect(within(view).getByTestId(`board-preview-inquiry-row-${lineNo}`)).toBeInTheDocument();
+    }
   });
 
 

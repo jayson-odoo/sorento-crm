@@ -113,7 +113,7 @@ export function BoardTransfersPanel({
 
   const rows = React.useMemo<StockTransfer[]>(
     () => [
-      ...(preview ?? []).map((move, index): StockTransfer => ({
+      ...(preview ?? []).filter((move) => move.is_new).map((move, index): StockTransfer => ({
             id: `preview-${index}`,
             transfer_no: move.is_new ? 'on Confirm' : 'kept',
             state: 'proposed',
@@ -378,7 +378,7 @@ export function BoardTransfersPanel({
 
   // No read grant, no panel (D9). Nothing about the movements is stated - not an empty
   // card, not an error - because none of it is this user's to see.
-  if (!canView && !(preview && preview.length > 0)) return null;
+  if (!canView && !(preview && preview.some((move) => move.is_new))) return null;
   // Nothing raised and nothing pressed: no card. See the `justConfirmed` prop.
   if (!isLoading && !error && rows.length === 0 && !justConfirmed) return null;
 
