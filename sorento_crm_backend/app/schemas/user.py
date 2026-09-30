@@ -71,7 +71,7 @@ class RespondContactResponse(RespondContactBase):
     # Issue #1328: the ETA this contact is told carries the +x days offset. Default on.
     chatbot_eta_offset_applied: bool = True
     # ESCALATION-CONTROL: the contact's override (null = inherit from its access types),
-    # the inherited value, and the access type that barred it when one did.
+    # the inherited value, and the access type that decided it (null with no types).
     escalation_allowed: Optional[bool] = None
     escalation_allowed_inherited: bool = True
     escalation_allowed_inherited_from: Optional[str] = None

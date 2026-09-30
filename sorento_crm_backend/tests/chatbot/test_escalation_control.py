@@ -161,6 +161,79 @@ class TestResolution:
         assert profile.escalation_allowed is False
 
 
+#: Mr Loo (respond 487555417, owner hand test of #1406): office, dealer and end-user
+#: types across three brands. (name, escalation_allowed, sort_order) as the seed leaves them.
+MR_LOO_TYPES = [
+    ("Sorento Office", True, 1),
+    ("Sorento Dealer", False, 2),
+    ("Mocha Dealer", False, 3),
+    ("Mocha Office", True, 4),
+    ("Cabana Office", True, 5),
+    ("Cabana Dealer", False, 6),
+    ("End User", True, 7),
+]
+
+
+def _give_types(session_factory, pk: str, types: list[tuple[str, bool, int]]) -> None:
+    db = session_factory()
+    for name, allowed, order in types:
+        code = f"zzt_{name.lower().replace(' ', '_')}"
+        db.execute(
+            text(
+                "INSERT INTO contact_access_types (code, name, is_active, escalation_allowed, sort_order) "
+                "VALUES (:code, :name, true, :allowed, :order) ON CONFLICT (code) DO NOTHING"
+            ),
+            {"code": code, "name": name, "allowed": allowed, "order": order},
+        )
+        db.execute(
+            text("INSERT INTO respond_contact_access_types (contact_id, access_type_code) VALUES (:c, :t)"),
+            {"c": pk, "t": code},
+        )
+    db.commit()
+
+
+class TestMergeAcrossAccessTypes:
+    """Owner hand test, 30 Sep 2026 ("why doesn't it allow to escalate to human?"): allowed
+    when ANY of the contact's types allows, blocked only when EVERY type blocks."""
+
+    def test_office_plus_dealer_is_allowed_via_the_office_type(self, session_factory) -> None:
+        _seed_contact(session_factory, phone="+60000009011")
+        pk = _contact_pk(session_factory)
+        _give_types(session_factory, pk, MR_LOO_TYPES)
+        policy = resolve_policy(session_factory(), pk)
+        assert (policy.allowed, policy.source, policy.source_label) == (True, "access_type", "Sorento Office")
+
+    def test_dealer_only_is_blocked(self, session_factory) -> None:
+        _seed_contact(session_factory, phone="+60000009012")
+        pk = _contact_pk(session_factory)
+        _give_types(session_factory, pk, [("Sorento Dealer", False, 2), ("Mocha Dealer", False, 3)])
+        policy = resolve_policy(session_factory(), pk)
+        assert (policy.allowed, policy.source_label) == (False, "Sorento Dealer")
+
+    def test_an_override_block_on_a_mixed_contact_blocks(self, session_factory) -> None:
+        _seed_contact(session_factory, phone="+60000009013")
+        pk = _contact_pk(session_factory)
+        _give_types(session_factory, pk, MR_LOO_TYPES)
+        db = session_factory()
+        db.execute(text("UPDATE respond_contacts SET escalation_allowed = false WHERE id = :c"), {"c": pk})
+        db.commit()
+        policy = resolve_policy(session_factory(), pk)
+        assert (policy.allowed, policy.source) == (False, "contact")
+
+    def test_mr_loo_asking_for_a_person_is_handed_over(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        _seed_contact(session_factory, phone="+60000009014")
+        _give_types(session_factory, _contact_pk(session_factory), MR_LOO_TYPES)
+        bodies = _capture_next_assignee(monkeypatch)
+        _capture_sla(monkeypatch)
+        stub_parser(_help_verdict())
+        stub_access()
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        assert result.branch_kind == "out_of_scope" and len(bodies) == 1, (result.branch_kind, bodies)
+        assert REFER_TO_SALESMAN not in _reply(result)
+
+
 # --------------------------------------------------------------------------- #
 # The helper every offer site reads (R2)
 # --------------------------------------------------------------------------- #

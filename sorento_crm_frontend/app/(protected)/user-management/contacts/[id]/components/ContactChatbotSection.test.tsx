@@ -283,8 +283,33 @@ describe('ContactChatbotSection - Can escalate to customer service', () => {
     renderWithClient(<ContactChatbotSection contactId="c1" />);
     // The stub is a native <select> with no blank option, so an empty value cannot be
     // read back; the placeholder is what names the inherited value.
-    const select = screen.getByLabelText('(inherit: Blocked (Sorento Dealer))');
+    const select = screen.getByLabelText('(inherit: blocked via Sorento Dealer)');
     expect(select).toHaveAttribute('data-clearable', 'true');
+  });
+
+  it('names the access type that allowed it (owner hand test, Mr Loo)', () => {
+    useContactChatbotProfile.mockReturnValue({
+      data: {
+        ...DEALER,
+        escalation_allowed_inherited: true,
+        escalation_allowed_inherited_from: 'Sorento Office',
+      },
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    expect(screen.getByText('Inherited: allowed via Sorento Office')).toBeInTheDocument();
+    expect(screen.getByLabelText('(inherit: allowed via Sorento Office)')).toBeInTheDocument();
+  });
+
+  it('with an override, the line still shows what it would inherit', () => {
+    useContactChatbotProfile.mockReturnValue({
+      data: { ...DEALER, escalation_allowed: false },
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    expect(screen.getByText('Own setting · inherited: blocked via Sorento Dealer')).toBeInTheDocument();
   });
 
   it('allow saves true, block saves false, clearing saves null (inherit)', () => {
@@ -294,7 +319,7 @@ describe('ContactChatbotSection - Can escalate to customer service', () => {
       isError: false,
     });
     renderWithClient(<ContactChatbotSection contactId="c1" />);
-    const select = screen.getByLabelText('(inherit: Blocked (Sorento Dealer))');
+    const select = screen.getByLabelText('(inherit: blocked via Sorento Dealer)');
     expect(select).toHaveValue('allow');
     fireEvent.change(select, { target: { value: 'block' } });
     fireEvent.change(select, { target: { value: '' } });

@@ -640,6 +640,11 @@ class ContactService:
     def contact_to_response_dict(contact: RespondContact, db: Optional[Session] = None) -> dict:
         ws = getattr(contact, "workspace", None)
         access_types = list(getattr(contact, "access_types", []) or [])
+        from app.services.escalation_policy import merge as merge_escalation
+
+        inherited_escalation = merge_escalation(
+            [(a.name, getattr(a, "escalation_allowed", True), a.sort_order) for a in access_types]
+        )
         chatbot_profile = dict(getattr(contact, "chatbot_profile", None) or {})
         if db is not None:
             # AC-MEM041: both dict builders carry facts, the live CRM ones (never
@@ -688,17 +693,13 @@ class ContactService:
             "packing_list_allowed": bool(getattr(contact, "packing_list_allowed", False)),
             # Issue #1328: default ON, like chatbot_stock_allowed.
             "chatbot_eta_offset_applied": bool(getattr(contact, "chatbot_eta_offset_applied", True)),
-            # ESCALATION-CONTROL: the contact's own override (null = inherit) and what
-            # its access types say without it, off the types already loaded above - the
-            # same most-restrictive merge `escalation_policy.inherited_policy` runs.
+            # ESCALATION-CONTROL: the contact's own override (null = inherit), what its
+            # access types say without it, and the type that decided that, off the types
+            # already loaded above through the one merge the chatbot runs
+            # (`escalation_policy.merge`: allowed when any type allows).
             "escalation_allowed": getattr(contact, "escalation_allowed", None),
-            "escalation_allowed_inherited": not any(
-                getattr(a, "escalation_allowed", True) is False for a in access_types
-            ),
-            "escalation_allowed_inherited_from": next(
-                iter(sorted(str(a.name) for a in access_types if getattr(a, "escalation_allowed", True) is False)),
-                None,
-            ),
+            "escalation_allowed_inherited": inherited_escalation.allowed,
+            "escalation_allowed_inherited_from": inherited_escalation.source_label,
             "created_at": contact.created_at,
             "updated_at": contact.updated_at,
             "created_by": contact.created_by,

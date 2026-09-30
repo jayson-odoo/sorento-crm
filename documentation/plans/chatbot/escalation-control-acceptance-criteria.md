@@ -11,3 +11,6 @@
    with the inherited value; access-type editor shows the attribute.
 8. The migration seeds every access type whose name ends in the word "Dealer" (any case) as
    barred, and leaves every other type allowed.
+9. A contact holding office and dealer types (Mr Loo) is ALLOWED, and the Chatbot tab reads
+   "Inherited: allowed via Sorento Office". Dealer-only is blocked. A contact override of
+   block on that mixed contact blocks.

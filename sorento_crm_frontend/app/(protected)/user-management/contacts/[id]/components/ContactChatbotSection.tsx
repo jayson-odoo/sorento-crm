@@ -95,9 +95,11 @@ function escalationInheritedLabel(profile: {
   escalation_allowed_inherited: boolean;
   escalation_allowed_inherited_from: string | null;
 }) {
-  if (profile.escalation_allowed_inherited) return 'Allowed';
+  // The access type that decided it: the first allowing type, or, when every type
+  // blocks, the first blocking one (`escalation_policy.merge`).
+  const value = profile.escalation_allowed_inherited ? 'allowed' : 'blocked';
   const from = profile.escalation_allowed_inherited_from;
-  return from ? `Blocked (${from})` : 'Blocked';
+  return from ? `${value} via ${from}` : value;
 }
 
 const TIER_OPTIONS = [
@@ -232,8 +234,8 @@ function ChatbotSettingsCard({
             />
             <p className="text-xs text-muted-foreground">
               {profile.escalation_allowed != null
-                ? `Own setting · access type: ${escalationInherited}`
-                : `Access type: ${escalationInherited}`}
+                ? `Own setting · inherited: ${escalationInherited}`
+                : `Inherited: ${escalationInherited}`}
             </p>
           </div>
         </div>

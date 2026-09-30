@@ -22,8 +22,13 @@ or per access type.
   whose name's last word is "Dealer", any case (`name ~* '(^|\s)dealer\s*$'`).
   `respond_contacts.escalation_allowed` BOOLEAN NULL (override, NULL = inherit).
 - `app/services/escalation_policy.py::resolve`: contact override wins, else the contact's
-  access types merged most-restrictive-first (any barring type bars, the direction
-  `stock_visibility._merge_access_type_rows` ranks in), else allowed.
+  access types merged PERMISSIVELY by `merge`: allowed when ANY type allows, blocked only
+  when EVERY type blocks, else (no types) allowed. Owner hand test 30 Sep 2026 (Mr Loo,
+  respond 487555417, Sorento/Mocha/Cabana Office + Dealer + End User): "why doesn't it
+  allow to escalate to human?". The first cut copied `stock_visibility.
+  _merge_access_type_rows`'s most-restrictive rule and barred him; reversed. The deciding
+  type (first in catalogue order among the allowing types, else among all) is shown on the
+  Chatbot tab: "Inherited: allowed via Sorento Office".
 - `turn_runtime.load_profile` puts it on `Profile.escalation_allowed` (fail-open on a read error).
 - `turn/state.py::offers_escalation(profile)` replaces `is_staff_profile` at every offer gate
   (composer offer, cross-domain ladder rung, miss composer, suggest-offer `_cont`, CS roster

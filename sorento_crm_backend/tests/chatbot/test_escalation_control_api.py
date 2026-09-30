@@ -87,3 +87,23 @@ def test_the_access_type_attribute_round_trips(db, client):
         "/api/v1/user-management/contact-access-types/zzt_esc", json={"escalation_allowed": None}
     )
     assert resp.status_code == 200 and resp.json()["escalation_allowed"] is True, resp.text
+
+
+def test_a_mixed_office_and_dealer_contact_inherits_allowed_via_the_office_type(db, client):
+    """Owner hand test (Mr Loo): the Chatbot tab says which type decided it."""
+    contact_id = _seed_contact(db)
+    _bar_by_dealer_type(db, contact_id)
+    db.execute(
+        text(
+            "INSERT INTO contact_access_types (code, name, is_active, escalation_allowed, sort_order) "
+            "VALUES ('zzt_so', 'Sorento Office', true, true, 1) ON CONFLICT (code) DO NOTHING"
+        )
+    )
+    db.execute(
+        text("INSERT INTO respond_contact_access_types (contact_id, access_type_code) VALUES (:c, 'zzt_so')"),
+        {"c": contact_id},
+    )
+    db.commit()
+    body = client.get(f"{BASE}/{contact_id}").json()
+    assert body["escalation_allowed_inherited"] is True
+    assert body["escalation_allowed_inherited_from"] == "Sorento Office"
