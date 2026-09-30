@@ -112,7 +112,11 @@ POSITIONS_KEY = "reference_positions"
 
 
 def without_phantom_answer(
-    verdict: dict[str, Any], *, open_question: dict[str, Any] | None, positions_read_elsewhere: bool
+    verdict: dict[str, Any],
+    *,
+    open_question: dict[str, Any] | None,
+    positions_read_elsewhere: bool,
+    focus_has_product: bool,
 ) -> tuple[dict[str, Any], bool]:
     """The verdict with a declared answer to a question that was never asked taken out.
 
@@ -134,6 +138,15 @@ def without_phantom_answer(
     agent?", `focus.top_selling.asked`, read by `turn/apply.py::record_top_selling_asked`
     and its `top_selling_position_is_*` rules, so "the first one" answers them). While
     one of those is outstanding the positions stay and only the declared answer goes.
+
+    `focus_has_product`: a bare number with nothing open and a product in focus is
+    "that product again" (owner ruling, round 4 hand test: "1" after the escalation
+    of MWC-SC8609-PP went out is the product answered again, `business_query`). The
+    positions are the one signal that keeps a casual-typed "1" out of idle chat
+    (`turn/apply.py::_IDLE_CHAT_DISQUALIFIERS`), so with a product in focus they stay
+    unless the parser ALSO declared a pick - a declared pick with nothing open is the
+    v37 phantom above, and its positions index nothing. With no product in focus a
+    bare number answers nothing either way and the positions go.
     Returns `(verdict, dropped)`; the same object, untouched, when there is nothing to
     drop.
     """
@@ -142,7 +155,12 @@ def without_phantom_answer(
     answer = verdict.get(ANSWER_KEY)
     declared = isinstance(answer, dict) and answer.get("mode") is not None
     raw = verdict.get(POSITIONS_KEY)
-    positions = bool(raw) and isinstance(raw, list) and not positions_read_elsewhere
+    positions = (
+        bool(raw)
+        and isinstance(raw, list)
+        and not positions_read_elsewhere
+        and (declared or not focus_has_product)
+    )
     if not declared and not positions:
         return verdict, False
     out = dict(verdict)

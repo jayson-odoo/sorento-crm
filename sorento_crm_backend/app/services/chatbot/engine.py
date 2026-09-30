@@ -3381,6 +3381,7 @@ def _run_stages(  # noqa: PLR0915
             verdict,
             open_question=open_question,
             positions_read_elsewhere=_positions_read_elsewhere(state_in),
+            focus_has_product=bool(_focus_products(state_in)),
         )
     except parser.ParserError as exc:
         # R5 / H44: no soft default and no default routing. A failed understanding is a
@@ -3468,12 +3469,20 @@ def _run_stages(  # noqa: PLR0915
     )
     turn_trace.add("prompt_text", {"text": user_block})
     if phantom_answer:
+        raw_positions = parser_raw.get("reference_positions")
+        positions_kept = bool(raw_positions) and verdict.get("reference_positions") == raw_positions
         turn_trace.add(
             "phantom_answer",
             {
                 "open_question_answer": parser_raw.get("open_question_answer"),
                 "reference_positions": parser_raw.get("reference_positions"),
-                "why": "No question was open, so the parser's declared answer and positions were dropped.",
+                "why": (
+                    "No question was open, so the parser's declared answer was dropped; "
+                    "the positions stay because they still have a reader (a question "
+                    "answered by a position elsewhere, or the product in focus)."
+                    if positions_kept
+                    else "No question was open, so the parser's declared answer and positions were dropped."
+                ),
             },
         )
     # Chatbot memory lane A (contract section 6): once per successful parse, never

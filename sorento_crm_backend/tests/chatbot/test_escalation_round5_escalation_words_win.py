@@ -292,6 +292,38 @@ class TestTheOwnersRound4HandTestReplayed:
         ), one.trace_summary
         _no_customer_service_offer(one)
 
+    def test_a_bare_number_with_nothing_open_and_a_product_in_focus_is_the_product_again(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """RELEASE-HOTFIX-0930B: the sixth message on its own. "1" typed casual with only
+        a position, nothing open and SRTWC286 in focus is "that product again" (owner
+        ruling, round 4): the phantom-answer guard (`turn/question.without_phantom_answer`,
+        #1391) must leave the position alone, since it is what keeps the number out of
+        idle chat, and the turn carries the focus domain to `business_query` instead of
+        `casual` -> `low_signal` (release run 36675584567)."""
+        from app.models.chatbot_turn import ChatbotTurn
+
+        messages = [OWNERS_28SEP_ROUND5[0], ("1", _position(1))]
+        (spec, _), (one, one_calls) = _replay(session_factory, monkeypatch, stub_parser, stub_access, messages)
+        assert spec.branch_kind == "business_query", spec.branch_kind
+        assert (spec.session_vars.get("focus") or {}).get("products"), spec.session_vars
+        assert spec.session_vars.get("open_question") is None, spec.session_vars
+
+        assert one.branch_kind == "business_query", (one.branch_kind, one.reply_text)
+        assert one_calls == []
+        assert one.session_vars.get("open_question") is None, one.session_vars
+        _no_customer_service_offer(one)
+        db = session_factory()
+        try:
+            row = db.query(ChatbotTurn).filter(ChatbotTurn.id == one.turn_id).first()
+            trace = list(row.trace or []) if row is not None else []
+        finally:
+            db.close()
+        understood = next(r for r in trace if r.get("stage") == "understood")
+        derived = (understood.get("raw") or {}).get("derived") or {}
+        assert derived.get("reference_positions") == [1], derived
+        assert [r for r in trace if r.get("kind") == "phantom_answer"] == [], trace
+
     @pytest.mark.parametrize(
         "message_type", ["business_query", "request_for_help", "clarification", "casual"]
     )

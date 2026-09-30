@@ -71,10 +71,16 @@ def _zhin_heng_ask(**extra: Any) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
+def _drop(verdict: dict[str, Any], **flags: Any) -> tuple[dict[str, Any], bool]:
+    """`without_phantom_answer` with nothing open and every flag off unless named."""
+    flags = {"positions_read_elsewhere": False, "focus_has_product": False, **flags}
+    return question_mod.without_phantom_answer(verdict, open_question=None, **flags)
+
+
 class TestPhantomAnswerIsDropped:
     def test_no_open_question_drops_the_pick_and_the_positions(self) -> None:
         verdict = _parser_output(open_question_answer=dict(PHANTOM_PICK), reference_positions=[1])
-        out, dropped = question_mod.without_phantom_answer(verdict, open_question=None, positions_read_elsewhere=False)
+        out, dropped = _drop(verdict)
         assert dropped is True
         assert out["open_question_answer"] == question_mod.NO_ANSWER
         assert out["reference_positions"] == []
@@ -82,16 +88,52 @@ class TestPhantomAnswerIsDropped:
         assert out["entities"] == verdict["entities"]
         assert out["message_type"] == verdict["message_type"]
 
+    def test_a_declared_pick_drops_its_positions_even_with_a_product_in_focus(self) -> None:
+        """The v37 phantom itself: a pick declared against no question indexes nothing,
+        whatever the focus carries, so the positions that ride with it go too."""
+        verdict = _parser_output(open_question_answer=dict(PHANTOM_PICK), reference_positions=[1])
+        out, dropped = _drop(verdict, focus_has_product=True)
+        assert dropped is True
+        assert out["open_question_answer"] == question_mod.NO_ANSWER
+        assert out["reference_positions"] == []
+
+    def test_a_bare_number_with_a_product_in_focus_keeps_its_positions(self) -> None:
+        """RELEASE-HOTFIX-0930B (owner ruling, round 4 hand test): "1" after the
+        escalation of MWC-SC8609-PP went out, nothing open, is "that product again".
+        The parser declared no pick (`open_question_answer` null), only a position;
+        `reference_positions` is what keeps a casual-typed "1" out of idle chat
+        (`turn/apply.py::_IDLE_CHAT_DISQUALIFIERS`), so with a product in focus the
+        verdict is left exactly as it was."""
+        verdict = _parser_output(
+            message_type="casual", open_question_answer=dict(question_mod.NO_ANSWER), reference_positions=[1]
+        )
+        out, dropped = _drop(verdict, focus_has_product=True)
+        assert dropped is False
+        assert out is verdict
+        assert out["reference_positions"] == [1]
+
+    def test_a_bare_number_with_no_product_in_focus_loses_its_positions(self) -> None:
+        """The same bare number with nothing in focus answers nothing: the positions go."""
+        verdict = _parser_output(
+            message_type="casual", open_question_answer=dict(question_mod.NO_ANSWER), reference_positions=[1]
+        )
+        out, dropped = _drop(verdict, focus_has_product=False)
+        assert dropped is True
+        assert out["open_question_answer"] == question_mod.NO_ANSWER
+        assert out["reference_positions"] == []
+
     def test_an_open_question_keeps_the_answer(self) -> None:
         verdict = _parser_output(open_question_answer=dict(PHANTOM_PICK), reference_positions=[1])
         question = {"kind": "pick_one", "options": [{"position": 1, "code": "A"}], "owed": ["pick"]}
-        out, dropped = question_mod.without_phantom_answer(verdict, open_question=question, positions_read_elsewhere=False)
+        out, dropped = question_mod.without_phantom_answer(
+            verdict, open_question=question, positions_read_elsewhere=False, focus_has_product=False
+        )
         assert dropped is False
         assert out is verdict
 
     def test_a_null_answer_with_no_question_is_left_alone(self) -> None:
         verdict = _parser_output(open_question_answer=dict(question_mod.NO_ANSWER), reference_positions=[])
-        out, dropped = question_mod.without_phantom_answer(verdict, open_question=None, positions_read_elsewhere=False)
+        out, dropped = _drop(verdict)
         assert dropped is False
         assert out is verdict
 
@@ -101,7 +143,7 @@ class TestPhantomAnswerIsDropped:
         top selling rules read them while `focus.top_selling.asked` is set; neither is an
         `Open question:` object - the positions stay, only the declared answer goes."""
         verdict = _parser_output(open_question_answer=dict(PHANTOM_PICK), reference_positions=[1, 3])
-        out, dropped = question_mod.without_phantom_answer(verdict, open_question=None, positions_read_elsewhere=True)
+        out, dropped = _drop(verdict, positions_read_elsewhere=True)
         assert dropped is True
         assert out["open_question_answer"] == question_mod.NO_ANSWER
         assert out["reference_positions"] == [1, 3]
@@ -309,6 +351,26 @@ def _open_question(chat) -> dict[str, Any] | None:
     return q or None
 
 
+def _focus_products_of(chat) -> list[dict[str, Any]]:
+    """The persisted focus's product entries (`session_vars.focus.products`), or `[]`."""
+    import json
+
+    from sqlalchemy import text
+
+    from tests.chatbot.test_engine import CONTACT_ID
+
+    db = chat.session_factory()
+    try:
+        row = db.execute(
+            text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :cid"), {"cid": str(CONTACT_ID)}
+        ).first()
+    finally:
+        db.close()
+    raw = row.session_vars if row is not None else {}
+    parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    return list((parsed.get("focus") or {}).get("products") or [])
+
+
 @pytest.fixture
 def one_cs_member(monkeypatch):
     """The customer service roster the owner's contact sees: one member, so the miss
@@ -376,11 +438,14 @@ def test_owner_turn_inside_the_open_list_asks_which_customer(owner_chat, one_cs_
     reads a non-empty `reference_positions` as "a pick was already applied" and skips
     "Which customer do you mean?" - which is how an ambiguous "Zhin heng" fell through
     to a fetch it could not scope and "No orders matched these." (item 3 of the lane).
-    With the phantom answer dropped, v37's emission asks the same question v40's did."""
+    With the phantom answer dropped, v37's emission asks the same question v40's did.
+    The positions go with the DECLARED pick (RELEASE-HOTFIX-0930B: a bare number with a
+    product in focus keeps them; a declared pick against nothing never does)."""
     chat = owner_chat
     # The list is open: the previous bot turn was a data answer, no question.
     chat.turn(OWNER_TURNS[5][0], OWNER_TURNS[5][1])
     assert _open_question(chat) in (None, {}), "test setup: nothing is open before the owner's turn"
+    assert _focus_products_of(chat) == [], "test setup: the open list carries a customer, no product"
 
     reply, calls, _ = chat.turn("Zhin heng delivered on 23/9", _zhin_heng_ask(reference_positions=[1]))
 
@@ -426,10 +491,12 @@ def test_an_empty_list_inside_the_open_list_has_no_picker_frame(owner_chat, one_
 def test_owner_turn_as_a_first_ask_answers_the_ask_not_the_pick(owner_chat, one_cs_member) -> None:
     """The same emission with no list open and a customer nobody resolves: the pick is
     dropped all the same and the turn is answered as the order ask it is (a first ask
-    keeps its escalate offer)."""
+    keeps its escalate offer). Nothing is in focus on a first ask, so the positions go
+    on both counts (RELEASE-HOTFIX-0930B: declared pick, and no product in focus)."""
     chat = owner_chat
     reply, calls, _ = chat.turn("Zhin heng delivered on 23/9", _zhin_heng_ask(reference_positions=[1]))
     assert chat.kind() == "business_query", reply
+    assert _focus_products_of(chat) == [], "a first ask carries no product into focus"
     derived = (_understood(_trace_of(chat)).get("raw") or {}).get("derived") or {}
     assert derived.get("open_question_answer") == question_mod.NO_ANSWER, derived
     assert derived.get("reference_positions") == [], derived
