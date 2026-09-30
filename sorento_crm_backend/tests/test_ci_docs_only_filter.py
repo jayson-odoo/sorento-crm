@@ -16,6 +16,12 @@ Three rules live in that workflow and are pinned here:
    a `ci`-labelled PR runs the fast gates and the SCM shards only when SCM
    paths changed, the six backend shards run in the merge queue and in a
    release, and only a `ci` label run joins the per-PR concurrency group.
+4. Changed tests on a PR (`backend_tests` output of `changes`, and job
+   `test-backend-changed` with its "Select the changed test files to run"
+   step): the backend test files a `ci`-labelled PR changes run on the PR
+   itself, serially, minus tests/scm (the SCM shards' job), minus what the
+   checkout no longer holds and minus tests/ci_excluded.txt. #1387 changed
+   one test file and its `ci` run executed no test at all (CI-TESTS-ONLY).
 
 The shell steps are extracted from the workflow file and executed under the
 same bash flags GitHub uses, with a stub `gh` that answers every API call from
@@ -137,7 +143,7 @@ def _run_shell(tmp_path: Path, script: str, env: dict, fixtures: dict, *, gh_fai
 # Step "Detect changed areas"
 # ---------------------------------------------------------------------------
 
-AREA_KEYS = {"docs_only", "backend", "frontend", "mcp", "scm"}
+AREA_KEYS = {"docs_only", "backend", "frontend", "mcp", "scm", "backend_tests"}
 
 
 def run_step(
@@ -192,9 +198,11 @@ DOCS_ONLY = [
     ".github/PULL_REQUEST_TEMPLATE.md",
 ]
 
-FULL_PIPELINE = {"docs_only": "false", "backend": "true", "frontend": "true", "mcp": "true", "scm": "true"}
-DOCS_SKIP = {"docs_only": "true", "backend": "false", "frontend": "false", "mcp": "false", "scm": "false"}
-NO_AREA = {"backend": "false", "frontend": "false", "mcp": "false", "scm": "false"}
+# `backend_tests` is empty in all three: off a PR the full shards run every
+# file, and a docs-only or skip_tests run tests nothing.
+FULL_PIPELINE = {"docs_only": "false", "backend": "true", "frontend": "true", "mcp": "true", "scm": "true", "backend_tests": ""}
+DOCS_SKIP = {"docs_only": "true", "backend": "false", "frontend": "false", "mcp": "false", "scm": "false", "backend_tests": ""}
+NO_AREA = {"backend": "false", "frontend": "false", "mcp": "false", "scm": "false", "backend_tests": ""}
 
 
 @pytest.mark.parametrize("event", ["pull_request", "push", "merge_group"])
@@ -261,11 +269,11 @@ def test_one_non_docs_path_keeps_the_full_pipeline(tmp_path, path):
 
 def test_pull_request_area_flags_still_follow_the_service_trees(tmp_path):
     out = run_step(tmp_path, "pull_request", DOCS_ONLY + ["sorento_crm_backend/app/main.py"])
-    assert out == {"docs_only": "false", "backend": "true", "frontend": "false", "mcp": "false", "scm": "false"}
+    assert out == {"docs_only": "false", "backend": "true", "frontend": "false", "mcp": "false", "scm": "false", "backend_tests": ""}
     out = run_step(tmp_path, "pull_request", ["sorento_crm_frontend/app/page.tsx"])
-    assert out == {"docs_only": "false", "backend": "false", "frontend": "true", "mcp": "false", "scm": "false"}
+    assert out == {"docs_only": "false", "backend": "false", "frontend": "true", "mcp": "false", "scm": "false", "backend_tests": ""}
     out = run_step(tmp_path, "pull_request", ["sorento_crm_mcp/pyproject.toml"])
-    assert out == {"docs_only": "false", "backend": "false", "frontend": "false", "mcp": "true", "scm": "false"}
+    assert out == {"docs_only": "false", "backend": "false", "frontend": "false", "mcp": "true", "scm": "false", "backend_tests": ""}
 
 
 SCM_PATHS = [
@@ -333,11 +341,11 @@ def test_rename_on_a_pull_request_flags_the_tree_it_left(tmp_path):
     """On a PR the area flags follow the trees; the old path of a rename counts."""
     moved_out = [("documentation/plans/scm/old-notes.md", "sorento_crm_backend/docs/old-notes.md")]
     assert run_step(tmp_path, "pull_request", moved_out) == {
-        "docs_only": "false", "backend": "true", "frontend": "false", "mcp": "false", "scm": "false",
+        "docs_only": "false", "backend": "true", "frontend": "false", "mcp": "false", "scm": "false", "backend_tests": "",
     }
     moved_in = [("sorento_crm_mcp/tests/fixtures/x.md", "documentation/plans/scm/x.md")]
     assert run_step(tmp_path, "pull_request", moved_in) == {
-        "docs_only": "false", "backend": "false", "frontend": "false", "mcp": "true", "scm": "false",
+        "docs_only": "false", "backend": "false", "frontend": "false", "mcp": "true", "scm": "false", "backend_tests": "",
     }
     fixture_moved = [("documentation/plans/scm/notes/x.xlsx", "documentation/plans/scm/fixtures/x.xlsx")]
     assert run_step(tmp_path, "pull_request", fixture_moved)["docs_only"] == "false"
@@ -378,6 +386,182 @@ def test_release_with_skip_tests_zeroes_every_area_but_is_not_docs_only(tmp_path
     # event, and even a stray "true" must not silence a PR or queue run.
     assert run_step(tmp_path, "pull_request", ["sorento_crm_frontend/x.ts"], skip_tests="true")["frontend"] == "true"
     assert run_step(tmp_path, "merge_group", ["sorento_crm_backend/app/main.py"], skip_tests="true") == FULL_PIPELINE
+
+
+# ---------------------------------------------------------------------------
+# Changed tests on a PR: the `backend_tests` output (CI-TESTS-ONLY, #1387).
+# ---------------------------------------------------------------------------
+
+TESTS_ONLY_1387 = ["sorento_crm_backend/tests/test_media_job_lifecycle.py"]
+
+
+def test_tests_only_pull_request_is_not_docs_and_lists_the_changed_test(tmp_path):
+    """#1387 as the workflow classified it (run 36665697605), plus the new output.
+
+    The docs filter never treated tests/ as docs: docs_only was false and
+    backend true on that run. What was missing is the list, which is what
+    lets the changed file execute on the PR.
+    """
+    assert run_step(tmp_path, "pull_request", TESTS_ONLY_1387) == {
+        "docs_only": "false", "backend": "true", "frontend": "false", "mcp": "false", "scm": "false",
+        "backend_tests": "sorento_crm_backend/tests/test_media_job_lifecycle.py",
+    }
+
+
+def test_changed_test_files_are_listed_beside_code_changes(tmp_path):
+    """The list is the changed test files whatever else the PR touches, in sorted order, space-separated."""
+    out = run_step(tmp_path, "pull_request", [
+        "sorento_crm_backend/tests/test_rbac.py",
+        "sorento_crm_backend/app/services/media_service.py",
+        "sorento_crm_backend/tests/chatbot/test_attribute_asks_round5.py",
+        "sorento_crm_frontend/app/page.tsx",
+        "documentation/plans/ci/PLAN-x.md",
+    ])
+    assert out["backend_tests"] == (
+        "sorento_crm_backend/tests/chatbot/test_attribute_asks_round5.py "
+        "sorento_crm_backend/tests/test_rbac.py"
+    )
+    assert out["backend"] == "true" and out["frontend"] == "true" and out["scm"] == "false"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # the SCM shards' job runs these whenever `scm` is true
+        "sorento_crm_backend/tests/scm/test_committed_v.py",
+        "sorento_crm_backend/tests/scm/nested/test_x.py",
+        # harness and helper modules: pytest collects nothing from them (exit 5)
+        "sorento_crm_backend/tests/conftest.py",
+        "sorento_crm_backend/tests/_pg_fixture.py",
+        "sorento_crm_backend/tests/chatbot/helpers.py",
+        "sorento_crm_backend/tests/ci_excluded.txt",
+        "sorento_crm_backend/tests/chatbot/replay_turns/turn_01.md",
+        "sorento_crm_backend/tests/scm/fixtures/golden_m2.json",
+        "sorento_crm_backend/.test_durations",
+        # not a backend test
+        "sorento_crm_backend/app/tests/test_x.py",
+        "sorento_crm_mcp/tests/test_presenters_top_selling.py",
+        "sorento_crm_frontend/lib/test_utils.py",
+        # a test named to break a shell line is not handed to one
+        "sorento_crm_backend/tests/test_a b.py",
+        "sorento_crm_backend/tests/test_$(x).py",
+        "sorento_crm_backend/tests/sub dir/test_x.py",
+    ],
+)
+def test_paths_that_are_not_a_runnable_backend_test_file_are_not_listed(tmp_path, path):
+    out = run_step(tmp_path, "pull_request", [path])
+    assert out["backend_tests"] == "", out
+
+
+def test_scm_test_change_runs_the_scm_shards_not_the_changed_files_job(tmp_path):
+    out = run_step(tmp_path, "pull_request", ["sorento_crm_backend/tests/scm/test_committed_v.py"])
+    assert out["scm"] == "true" and out["backend_tests"] == ""
+    both = run_step(tmp_path, "pull_request", [
+        "sorento_crm_backend/tests/scm/test_committed_v.py", "sorento_crm_backend/tests/test_rbac.py",
+    ])
+    assert both["scm"] == "true" and both["backend_tests"] == "sorento_crm_backend/tests/test_rbac.py"
+
+
+def test_rename_of_a_test_file_lists_both_ends(tmp_path):
+    """The old path is in the PR's list too; the job drops it when it is not in the checkout."""
+    out = run_step(tmp_path, "pull_request", [
+        ("sorento_crm_backend/tests/test_media_jobs.py", "sorento_crm_backend/tests/test_media_job_lifecycle.py"),
+    ])
+    assert out["backend_tests"] == (
+        "sorento_crm_backend/tests/test_media_job_lifecycle.py sorento_crm_backend/tests/test_media_jobs.py"
+    )
+
+
+@pytest.mark.parametrize("event", ["push", "merge_group", "workflow_dispatch"])
+def test_changed_tests_are_never_listed_off_a_pull_request(tmp_path, event):
+    """The full shards run there; the list must not make the changed-files job run twice."""
+    out = run_step(tmp_path, event, TESTS_ONLY_1387)
+    assert out["backend_tests"] == ""
+    assert out["backend"] == "true"
+
+
+def test_changed_tests_list_is_empty_on_every_early_exit(tmp_path):
+    assert run_step(tmp_path, "pull_request", DOCS_ONLY)["backend_tests"] == ""
+    assert run_step(tmp_path, "pull_request", TESTS_ONLY_1387, gh_fails=True) == FULL_PIPELINE
+    assert run_step(tmp_path, "workflow_dispatch", [], skip_tests="true")["backend_tests"] == ""
+
+
+# The "Select the changed test files to run" step of `test-backend-changed`,
+# run against a scratch checkout: the workflow's own ci_excluded.txt, and the
+# files each case says exist.
+
+
+def run_select(tmp_path: Path, backend_tests: str, present: list[str]) -> tuple[str, str]:
+    """Run the real step in a scratch checkout; return (files output, stdout)."""
+    checkout = tmp_path / "checkout"
+    (checkout / "sorento_crm_backend" / "tests").mkdir(parents=True)
+    shutil.copy(REPO / "sorento_crm_backend" / "tests" / "ci_excluded.txt", checkout / "sorento_crm_backend" / "tests")
+    for path in present:
+        (checkout / path).parent.mkdir(parents=True, exist_ok=True)
+        (checkout / path).write_text("def test_x():\n    pass\n")
+    output = tmp_path / "select-output.txt"
+    output.write_text("")
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script("Select the changed test files to run")],
+        cwd=checkout,
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GITHUB_OUTPUT": str(output), "BACKEND_TESTS": backend_tests},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"step failed\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    outputs = dict(line.split("=", 1) for line in output.read_text().splitlines() if "=" in line)
+    assert set(outputs) == {"files"}, outputs
+    return outputs["files"], result.stdout
+
+
+def test_changed_tests_step_runs_the_files_the_checkout_holds_relative_to_the_backend(tmp_path):
+    files, stdout = run_select(
+        tmp_path,
+        "sorento_crm_backend/tests/test_media_job_lifecycle.py sorento_crm_backend/tests/chatbot/test_attribute_asks_round5.py",
+        ["sorento_crm_backend/tests/test_media_job_lifecycle.py", "sorento_crm_backend/tests/chatbot/test_attribute_asks_round5.py"],
+    )
+    assert files == "tests/test_media_job_lifecycle.py tests/chatbot/test_attribute_asks_round5.py"
+    assert "changed test files to run:" in stdout
+    assert "not run:" not in stdout
+
+
+def test_changed_tests_step_drops_a_deleted_or_renamed_away_file(tmp_path):
+    files, stdout = run_select(
+        tmp_path,
+        "sorento_crm_backend/tests/test_media_job_lifecycle.py sorento_crm_backend/tests/test_media_jobs.py",
+        ["sorento_crm_backend/tests/test_media_job_lifecycle.py"],
+    )
+    assert files == "tests/test_media_job_lifecycle.py"
+    assert "tests/test_media_jobs.py (not in the checkout" in stdout
+
+
+def test_changed_tests_step_drops_a_ci_excluded_file(tmp_path):
+    """tests/test_rbac.py is in ci_excluded.txt: it asserts against business rows CI does not seed."""
+    files, stdout = run_select(
+        tmp_path,
+        "sorento_crm_backend/tests/test_rbac.py sorento_crm_backend/tests/test_media_job_lifecycle.py",
+        ["sorento_crm_backend/tests/test_rbac.py", "sorento_crm_backend/tests/test_media_job_lifecycle.py"],
+    )
+    assert files == "tests/test_media_job_lifecycle.py"
+    assert "tests/test_rbac.py (listed in tests/ci_excluded.txt)" in stdout
+
+
+def test_changed_tests_step_with_nothing_left_passes_and_runs_nothing(tmp_path):
+    files, stdout = run_select(tmp_path, "sorento_crm_backend/tests/test_rbac.py sorento_crm_backend/tests/test_gone.py", ["sorento_crm_backend/tests/test_rbac.py"])
+    assert files == ""
+    assert "no changed test file left to run" in stdout
+
+
+def test_changed_tests_job_steps_after_select_gate_on_its_output():
+    """Every step after the select step, pytest included, skips on an empty list."""
+    text = _workflow_text()
+    block = re.search(r"\n  test-backend-changed:\n(.*?)\n  [a-z][\w-]*:\n", text, re.S).group(1)
+    steps = re.split(r"\n      - name: ", block)[1:]
+    names = [s.splitlines()[0] for s in steps]
+    assert names[:2] == ["Checkout", "Select the changed test files to run"], names
+    for step in steps[2:]:
+        assert "        if: steps.select.outputs.files != ''" in step, step.splitlines()[0]
+    assert re.search(r"-p no:xdist .*\$FILES", steps[-1]), "runs serially, over the selected files via env"
 
 
 # ---------------------------------------------------------------------------
@@ -536,6 +720,43 @@ def test_pull_request_fast_gate_frontend_and_mcp():
 def test_pull_request_docs_only_runs_the_root_jobs_only():
     ran = _ran(_simulate("pull_request", outputs={**NO_AREA, "docs_only": "true"}))
     assert ran == GATES_ON_PR
+
+
+TESTS_ONLY_OUTPUTS = {
+    "backend": "true", "scm": "false", "frontend": "false", "mcp": "false", "docs_only": "false",
+    "backend_tests": "sorento_crm_backend/tests/test_media_job_lifecycle.py",
+}
+
+
+def test_pull_request_that_changes_a_test_file_runs_it(tmp_path):
+    """#1387: the light checks AND the changed test, never the six shards.
+
+    `outputs` here is what the real step produced for that PR's file list,
+    so the job set follows from the shell that ships, not from a hand-typed
+    flag set.
+    """
+    outputs = run_step(tmp_path, "pull_request", TESTS_ONLY_1387)
+    assert outputs == TESTS_ONLY_OUTPUTS
+    ran = _ran(_simulate("pull_request", outputs=outputs))
+    assert ran == GATES_ON_PR | {"validate-backend", "test-backend-changed"}
+    assert "test-backend" not in ran
+
+
+def test_pull_request_with_code_and_a_test_file_runs_both_gates():
+    outputs = {**TESTS_ONLY_OUTPUTS, "scm": "true", "frontend": "true"}
+    ran = _ran(_simulate("pull_request", outputs=outputs))
+    assert ran == GATES_ON_PR | {
+        "validate-backend", "test-backend-scm", "test-backend-changed", "validate-frontend", "typecheck-frontend",
+    }
+
+
+def test_changed_tests_job_never_runs_off_a_pull_request_or_with_another_label():
+    for event in ("merge_group", "workflow_dispatch", "push"):
+        results = _simulate(event, outputs={**FULL_PIPELINE, "backend_tests": "sorento_crm_backend/tests/test_x.py"})
+        assert results["test-backend-changed"] == "skipped", (event, results)
+    for label in ("needs-hand-test", "lane-running"):
+        results = _simulate("pull_request", label=label, outputs=TESTS_ONLY_OUTPUTS)
+        assert results["test-backend-changed"] == "skipped", label
 
 
 def test_pull_request_with_another_label_runs_nothing():

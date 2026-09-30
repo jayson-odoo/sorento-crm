@@ -6,7 +6,8 @@ Three layers, the dreamz-ems split without its multi-tenant model:
    singleton (`system_settings.email_theme`) and merged over defaults derived from the
    fields that singleton already carries (name, logo, address, support email, socials).
 2. **Base layout** - `app/templates/email/base.html` + `layout.html` (Jinja inheritance,
-   a SandboxedEnvironment, every style inline, 600px table card, phone breakpoint at 620px).
+   a SandboxedEnvironment, every style inline, 600px table card, phone breakpoint at 620px;
+   a document that says `width: "wide"` gets the 900px card with 24px gutters instead).
 3. **Block document** - `EmailDocument`: an ordered list of blocks (brand header, heading,
    intro, facts table, CTA button, secondary link, custom text, footer). Each block's
    admin-authored Jinja renders in the SAME sandbox `templating.py` uses for templates,
@@ -384,9 +385,21 @@ BLOCK_TYPES = (
 )
 
 
+#: The two card widths the shell renders (EMAIL-HANDOVER-QTY, owner 30 Sep: the OI
+#: handover's nine-column line table was "cramped" in the 600 card). `wide` is for a
+#: table email: 900px card, 24px side gutters, phone breakpoint at 920. Every other mail,
+#: and every stored document that says nothing, is `standard` - exactly the shell #1349
+#: shipped. A third width has no trigger today; two named ones are the whole surface.
+DocumentWidth = Literal["standard", "wide"]
+
+_CARD_WIDTH: dict[str, int] = {"standard": 600, "wide": 900}
+_SIDE_GUTTER: dict[str, int] = {"standard": 40, "wide": 24}
+
+
 class EmailDocument(BaseModel):
     version: Literal[1] = 1
     blocks: list[EmailBlock] = Field(default_factory=list, max_length=40)
+    width: DocumentWidth = "standard"
 
 
 def implicit_document(body_html: str) -> EmailDocument:
@@ -566,10 +579,12 @@ def _layout(
     preheader: str,
     blocks: list[dict[str, Any]],
     theme: ResolvedTheme,
+    width: str = "standard",
 ) -> str:
     first_content = next(
         (i for i, b in enumerate(blocks) if b["type"] != "brand_header"), 0
     )
+    card_width = _CARD_WIDTH.get(width, _CARD_WIDTH["standard"])
     template = _layout_env.get_template("layout.html")
     return template.render(
         subject=subject,
@@ -579,6 +594,10 @@ def _layout(
         theme=theme.layout_vars(),
         first_content_index=first_content,
         has_footer=any(b["type"] == "footer" for b in blocks),
+        card_width=card_width,
+        # The phone breakpoint sits 20px past the card, as 620 did past 600.
+        breakpoint=card_width + 20,
+        gutter=_SIDE_GUTTER.get(width, _SIDE_GUTTER["standard"]),
     )
 
 
@@ -639,7 +658,9 @@ def _render_document_inner(
             )
             if s
         ).strip()
-    html = _layout(subject=rendered_subject, preheader=pre, blocks=blocks, theme=theme)
+    html = _layout(
+        subject=rendered_subject, preheader=pre, blocks=blocks, theme=theme, width=doc.width
+    )
     return RenderedEmail(subject=rendered_subject, body_html=html, body_text=text)
 
 

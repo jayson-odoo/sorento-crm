@@ -151,6 +151,7 @@ from app.services.scm.front_planning_engine import (
     group_take_reason,
     group_water_reason,
     landed_on,
+    later_order_can_wait,
     pool_reserve_capacity,
     pool_share_reason,
     qty_text,
@@ -3705,9 +3706,12 @@ class ProjectSupplyService:
             return False
         if row.status not in (SA_STATUS_COVERED, SA_STATUS_PINNED):
             return False
-        if line.required_date is None or line.required_date >= tba_from:
-            return False
-        if line.required_date < window:
+        # The date half is SHARED with the Stock Debt view's lendable pin
+        # (STOCK-DEBT-LENDABLE): one predicate, so a pin the view lends is a donor the
+        # board offers, and the Rebalance the view runs is the borrow the board would make.
+        if not later_order_can_wait(
+            line.required_date, window=window, tba_from=tba_from
+        ):
             return False
         if my_so and (line.so_number or "") == my_so:
             return False

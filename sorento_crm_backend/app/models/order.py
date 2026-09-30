@@ -507,6 +507,12 @@ class SalesOrder(Base, CompanyScopedMixin):
     # is what makes the link fixable. Never a substitute for the FK - `customer_id` stays
     # the link, this is the evidence behind it.
     debtor_code = Column(String(64), nullable=True)
+    # The customer name the source document was issued under (CUSTOMER-CODE-IDENTITY,
+    # owner decision 30 Sep 2026): AutoCount lets a user edit the debtor name on the SO
+    # itself, so it is per document, and it is what every SO-facing screen shows, with
+    # the master name only as the fallback for an order that carries none. The master
+    # `customers.customer_name` is never written from a document. Migration sdn_0001.
+    debtor_name = Column(String(255), nullable=True)
     # Who sold it, as the salesperson master (`sales_agents`), resolved from the agent code
     # the extract states. Nullable because most orders predate the column and no export is
     # required to carry an agent; `SET NULL` because deleting a salesperson must not delete

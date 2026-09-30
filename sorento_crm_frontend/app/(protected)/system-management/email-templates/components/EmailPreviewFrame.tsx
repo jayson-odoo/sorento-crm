@@ -19,6 +19,11 @@ export interface EmailPreviewFrameProps {
    * the last good frame on screen instead of blanking it every keystroke. */
   isLoading?: boolean;
   className?: string;
+  /**
+   * The desktop pane's width. 600 (the standard card) unless the document being
+   * previewed is `width: 'wide'`, whose 900px card would otherwise be cut off.
+   */
+  desktopWidth?: number;
 }
 
 /**
@@ -28,9 +33,15 @@ export interface EmailPreviewFrameProps {
  * variant="default"` per DESIGN-LANGUAGE.md - over a sandboxed iframe fed by
  * `srcDoc`.
  */
-export function EmailPreviewFrame({ subject, html, isLoading, className }: EmailPreviewFrameProps) {
+export function EmailPreviewFrame({
+  subject,
+  html,
+  isLoading,
+  className,
+  desktopWidth = WIDTH_BY_MODE.desktop,
+}: EmailPreviewFrameProps) {
   const [mode, setMode] = useState<PreviewMode>('desktop');
-  const width = WIDTH_BY_MODE[mode];
+  const width = mode === 'desktop' ? desktopWidth : WIDTH_BY_MODE[mode];
 
   return (
     <div className={cn('space-y-3', className)} data-slot="email-preview-frame">

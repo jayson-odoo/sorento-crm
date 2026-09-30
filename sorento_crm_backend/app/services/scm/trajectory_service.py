@@ -187,7 +187,12 @@ WITH pairs AS (
 SELECT product_id, segment, customer_name, customer_key, qty, last_order_date FROM (
     SELECT sol.product_id::text AS product_id,
            COALESCE(w.segment, 'project') AS segment,
-           {CUSTOMER_LABEL_SQL} AS customer_name,
+           -- One row per customer KEY; the label is per ORDER now (`sales_orders
+           -- .debtor_name`, CUSTOMER-CODE-IDENTITY), so the row prints the name on the
+           -- customer's most recent order in the window rather than splitting one
+           -- customer into a row per spelling.
+           (array_agg({CUSTOMER_LABEL_SQL}
+                      ORDER BY so.order_date DESC NULLS LAST, so.id DESC))[1] AS customer_name,
            {CUSTOMER_KEY_SQL} AS customer_key,
            SUM(sol.qty_ordered) AS qty,
            MAX(so.order_date) AS last_order_date,
@@ -205,8 +210,7 @@ SELECT product_id, segment, customer_name, customer_key, qty, last_order_date FR
       {{co}}
     -- Grouped on the KEY, not the printed name: two customers can share a name, and the
     -- drill below has to be able to open exactly the row that was clicked.
-    GROUP BY sol.product_id, COALESCE(w.segment, 'project'),
-             {CUSTOMER_LABEL_SQL}, {CUSTOMER_KEY_SQL}
+    GROUP BY sol.product_id, COALESCE(w.segment, 'project'), {CUSTOMER_KEY_SQL}
 ) t WHERE rn <= :sample
 """
 
