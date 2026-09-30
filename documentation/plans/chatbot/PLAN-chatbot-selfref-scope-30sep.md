@@ -57,6 +57,9 @@ Part A (R1 to R5 of the brief):
 - `lanes/business.run_fetch`: every scope decision (gate, screen, fetch clamp, fetch refusal,
   tier probe refusal, the B2 re-route) writes a `customer_scope` trace event with the reason
   and the ids.
+- `trace_detail.compose_trace_detail` projects those events as `customer_scope`, and the
+  chat history turn drawer prints them in a "Customer scope" panel (the event existed on the
+  trace before but no panel read it, which is why the owner's trace showed nothing for it).
 
 Part B (crew instruction on PR #1401):
 
