@@ -278,3 +278,23 @@ test-with-code, which is a process deviation named here. Kill tests: reviewer ro
 (round 6 mutates the Saved/Others filter, the Confirm-only-saved rule in `lineFor`, the
 preview commit and notification guards; results recorded in the crew report). Reviewer: six
 rounds, all findings fixed on the branch.
+
+## Grill (feature skill step, run 30 Sep 2026 after the owner's process ruling; answers recorded as crew relays them)
+
+| # | Decision or assumption | Recommendation | Owner answer |
+|---|---|---|---|
+| G1 | Confirm scope = every SAVED line on the board (all orders in the selection, any saver, any age); unsaved Suggested lines never post | keep | pending |
+| G2 | Confirm runs the server dry run first, then posts only what passed (two round trips) | keep | pending |
+| G3 | A line the dry run holds back stays Saved and is named in the results with its reason | keep | pending |
+| G4 | Confirm on a never-planned order adopts it first (committed write before the dry run) | keep | pending |
+| G5 | An order on a pending planning change is applied whole (no per-line scope), previewed with notifications off | keep | pending |
+| G6 | One refused order does not stop the others; reported in the results block | keep | pending |
+| G7 | Saved / Others default Others; `?scope=all` shows every line | keep; drop `?scope=all` on request | pending |
+| G8 | Rank hidden by default through a bumped listing key (saved column maps reset once) | keep | pending |
+| G9 | Status filter offers the four owner values plus Rejected, Suggestion changed, Cancelled, Needs a location | keep | pending |
+| G10 | Expand all / Collapse all under the toolbar's Actions menu | keep | pending |
+| G11 | While rows are ticked the shared toolbar shows N selected + Clear and hides Filters / Columns | keep (design-system behaviour) | pending |
+| G12 | A saved Approved decision is re-derived from the live suggestion at press time; the results name what was written | leave this lane; separate ruling for "post what was saved" | pending |
+| G13 | Line column: AutoCount number when synced, else the positional number with a hover note; ingest gap filed separately | keep | pending |
+| G14 | Retired mocks stay in `documentation/mockups` as the record | keep | pending |
+| G15 | No security-reviewer: no auth / RBAC / permission / webhook surface in the diff | keep | pending |
