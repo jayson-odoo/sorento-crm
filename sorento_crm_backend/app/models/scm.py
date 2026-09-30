@@ -428,14 +428,9 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
     )
     pool_warehouse_code = Column(String(50), nullable=True)
-    # PLAN-reorder-one-formula.md S3: the ONE scope rule (`plan_scope.hidden_by_default`),
-    # stamped at write time so every SQL reader (the run's own counts, the recommendations
-    # serializer, the decisions total) reads the SAME answer the Python rule already gives -
-    # never a fourth re-derivation. The Python rule stays the only RUNTIME source; this
-    # column is a cache of its own answer, not a second rule.
-    hidden_by_default = Column(
-        Boolean, nullable=False, default=False, server_default=text("false")
-    )
+    # `hidden_by_default` (migration 512, PLAN-reorder-one-formula S3) is GONE: migration
+    # `lsa_0001_show_all_counts` dropped it (PLAN-lowstock-show-all, owner 30 Sep 2026,
+    # "show all hidden items again"). Every planned row is on the buyer's list.
 
     run = relationship("ReorderRun", back_populates="recommendations")
     overrides = relationship(

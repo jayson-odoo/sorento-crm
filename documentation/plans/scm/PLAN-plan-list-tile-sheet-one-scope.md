@@ -5,6 +5,12 @@ into PR #828 on the same lane (issue #829).
 UAC: `plan-list-tile-sheet-one-scope-acceptance-criteria.md` (same folder).
 Domain: scm. Lane branch: `feat/po-spo-site-pool-downloads` (PR #828), slices S6-S8 there.
 
+> **Superseded, 30 Sep 2026** (owner ruling, `PLAN-lowstock-show-all.md`): the "one rule"
+> itself is retired - nothing is hidden by default any more, so the list, the tile and the
+> sheet agree by all reading every planned row. `plan_scope.py`, `visible_rows`, the FE
+> `defaultVisibleLines` / AC-5b reveal and `lib/planLineFilters.ts` are deleted. What stays
+> from this plan is the principle it established: the three surfaces count the same rows.
+
 ## Problem, measured
 
 Plan of 10 Sep 19:39 on the prod copy: 950 recs; the list shows 415 because
