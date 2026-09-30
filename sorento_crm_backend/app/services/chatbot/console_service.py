@@ -286,13 +286,15 @@ def _customer_texts(body: dict[str, Any]) -> tuple[str, list[str]]:
         for a in (body.get("actions") or [])
         if isinstance(a, dict) and a.get("kind") == "send_message" and isinstance(a.get("text"), str) and a.get("text")
     ]
-    # A long reply goes out as its marked parts (`engine.split_send_actions`), which
-    # together are the same text as `reply.text`, so they are the same one bubble.
+    # A long reply goes out as its marked parts (`engine.split_send_actions`): the
+    # console shows them the way the customer gets them, one bubble per part.
     from app.services.chatbot.engine import split_marked_message
 
     parts = split_marked_message(reply_text) if reply_text else []
-    if parts and action_texts[: len(parts)] == parts:
-        action_texts = action_texts[len(parts) :]
+    if len(parts) > 1 and action_texts[: len(parts)] == parts:
+        return parts[0], action_texts[1:]
+    if reply_text and action_texts and action_texts[0] == reply_text:
+        action_texts = action_texts[1:]
     return reply_text, action_texts
 
 
