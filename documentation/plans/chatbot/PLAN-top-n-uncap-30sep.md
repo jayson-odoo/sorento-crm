@@ -1,6 +1,6 @@
 # PLAN - Top selling: a named N is no longer capped at 100 (TOP-N-UNCAP)
 
-Status: in build (small fix track: no migration, no auth/RBAC change, no UI).
+Status: in review on PR #1407 (small fix track: no migration, no auth/RBAC change, no UI).
 
 Owner, 30 Sep 2026: "top 100 selling ... remove the cap, there is a use case of 100, 200".
 Supersedes the 26 Sep ruling "a named N is 1 to 100" in
@@ -25,5 +25,5 @@ Supersedes the 26 Sep ruling "a named N is 1 to 100" in
 - AC-1: N=200 returns 200 rows end to end (fetch -> API -> presenter), split into ordered
   chunks each <= 3900 chars, markers "(k/m)", no row split across chunks.
 - AC-2: N=5 reply is unchanged (one message, no marker).
-- AC-3: N above 1000 answers with 1000 rows and a line stating the 1000 ceiling.
+- AC-3: N above 1000 answers with 1000 rows under the line "I can list at most the top 1,000 in one reply."
 - AC-4: API 422 `invalid_n` only for n < 1 or n > 1000.
