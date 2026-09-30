@@ -28,6 +28,8 @@ import type {
   AutocountPull,
   AutocountPullEntity,
   AutocountPullPhase,
+  AutocountPullScope,
+  DeliveryOrderPullCounts,
   ProductPullCounts,
   StockPullCounts,
 } from '../types/autocountPull.types';
@@ -58,6 +60,7 @@ const PHASE_VARIANT: Record<
 const ENTITY_LABEL: Record<AutocountPullEntity, string> = {
   products: 'AutoCount products pull',
   stock_balances: 'AutoCount stock pull',
+  delivery_orders: 'AutoCount delivery orders pull',
 };
 
 /** Known `pull.warnings` codes only - an unrecognised code renders nothing rather than a
@@ -108,6 +111,45 @@ function stockCounters(counts: StockPullCounts) {
     { label: 'Skipped, product not found', value: counts.skipped_product_not_found },
     { label: 'Negative in AutoCount', value: counts.negative_in_autocount },
   ];
+}
+
+function deliveryOrderCounters(counts: DeliveryOrderPullCounts) {
+  return [
+    { label: 'Received', value: counts.received },
+    { label: 'New', value: counts.created },
+    { label: 'Updated', value: counts.updated },
+    { label: 'Adopted by number', value: counts.adopted },
+    { label: 'Unchanged', value: counts.unchanged },
+    { label: 'Lines to delete', value: counts.lines_to_delete },
+    { label: 'Failed', value: counts.failed },
+    { label: 'Retry later', value: counts.retryable },
+    { label: 'With warnings', value: counts.with_warnings },
+  ];
+}
+
+/** dd/MM/yyyy for a `YYYY-MM-DD` scope day - text, never a Date (a day has no zone). */
+function formatScopeDay(day: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : day;
+}
+
+/** What a delivery-orders snapshot was asked to cover (DO-PULL-SS contract): one document,
+ *  a day window, or the gateway's own default of the last 31 days - printed with the actual
+ *  days once the snapshot is read (`window`, the same days the compare cuts the files to). */
+function scopeLine(
+  scope: AutocountPullScope | null | undefined,
+  window?: { fromDay: string | null; toDay: string | null } | null,
+): string {
+  if (scope?.docNo) return `Scope: DO ${scope.docNo}`;
+  const fromDay = scope?.fromDay || window?.fromDay;
+  const toDay = scope?.toDay || window?.toDay;
+  if (fromDay || toDay) {
+    const from = fromDay ? formatScopeDay(fromDay) : 'start';
+    const to = toDay ? formatScopeDay(toDay) : 'today';
+    const suffix = scope?.fromDay || scope?.toDay ? '' : ' (last 31 days)';
+    return `Scope: ${from} to ${to}${suffix}`;
+  }
+  return 'Scope: Last 31 days';
 }
 
 function compareSummaryLine(pull: AutocountPull): string | null {
@@ -173,9 +215,11 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
   const counters = counts
     ? pull.entity === 'products'
       ? productCounters(counts as ProductPullCounts)
-      : stockCounters(counts as StockPullCounts)
+      : pull.entity === 'delivery_orders'
+        ? deliveryOrderCounters(counts as DeliveryOrderPullCounts)
+        : stockCounters(counts as StockPullCounts)
     : [];
-  const downloadLabel = pull.entity === 'products' ? 'Download xlsx' : 'Download Stock List';
+  const downloadLabel = pull.entity === 'stock_balances' ? 'Download Stock List' : 'Download xlsx';
   const summaryLine = compareSummaryLine(pull);
 
   return (
@@ -193,6 +237,9 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
               Snapshot {formatSnapshotTime(pull.header?.extractedAt)}, valid until{' '}
               {formatSnapshotTime(pull.header?.expiresAt)}
             </span>
+          )}
+          {pull.entity === 'delivery_orders' && (
+            <span className="text-xs text-muted-foreground">{scopeLine(pull.scope, pull.window)}</span>
           )}
           <span className="grow" />
           {(pull.phase === 'review' || pull.phase === 'confirmed') && (
@@ -318,7 +365,7 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
                 <PullExcelViewTab jobId={jobId} entity={pull.entity} />
               </TabsContent>
               <TabsContent value="compare" className="mt-3 focus-visible:outline-none">
-                <PullCompareTab jobId={jobId} entity={pull.entity} />
+                <PullCompareTab jobId={jobId} entity={pull.entity} window={pull.window} />
               </TabsContent>
             </Tabs>
           </>

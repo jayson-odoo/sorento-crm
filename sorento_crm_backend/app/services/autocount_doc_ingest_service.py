@@ -33,7 +33,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
@@ -485,19 +485,35 @@ class AutocountDocIngestService(MasterRefResolver):
         self.touched_allocation_ids: set[str] = set()
         self.released_allocation_ids: set[str] = set()
 
+    #: How often `on_progress` fires mid-batch - the same cadence `MasterIngestService`
+    #: uses (B3): a pull snapshot can run to thousands of documents.
+    PROGRESS_REPORT_EVERY = 100
+
     # ------------------------------------------------------------------ the batch
     def ingest(
-        self, entity_type: str, records: list[Any], *, dry_run: bool = False
+        self,
+        entity_type: str,
+        records: list[Any],
+        *,
+        dry_run: bool = False,
+        on_progress: Optional[Callable[[int, int], None]] = None,
     ) -> IngestResult:
+        """``on_progress`` (DO-PULL-CRM, the pull preview's "N of M"): called with
+        ``(processed, total)`` every `PROGRESS_REPORT_EVERY` records and once more at the
+        end with ``(total, total)``. Best-effort: a failing callback is logged, never
+        raised, and the push path (no callback) is untouched."""
         if entity_type not in AUTOCOUNT_DOC_ENTITIES | AUTOCOUNT_BRANCH_ENTITIES:
             raise UnsupportedIngestEntity(f"Unsupported AutoCount entity {entity_type!r}")
         result = IngestResult(dry_run=dry_run)
+        total = len(records)
         try:
-            for raw in records:
+            for index, raw in enumerate(records, start=1):
                 if entity_type == BRANCHES_ENTITY:
                     result.records.append(self._ingest_branch(raw))
                 else:
                     result.records.append(self._ingest_one(entity_type, raw))
+                if on_progress is not None and index % self.PROGRESS_REPORT_EVERY == 0:
+                    self._report_progress(on_progress, index, total)
             if not dry_run and entity_type in AUTOCOUNT_DOC_ENTITIES:
                 # Best effort in its own savepoint: a failure here must not roll back the
                 # records that already landed; the next batch retries it.
@@ -513,6 +529,8 @@ class AutocountDocIngestService(MasterRefResolver):
         finally:
             if dry_run:
                 self.db.rollback()
+        if on_progress is not None:
+            self._report_progress(on_progress, total, total)
         unlinked = sum((r.lines or {}).get("unlinked", 0) for r in result.records)
         if unlinked and not dry_run:
             logger.info(
@@ -520,6 +538,13 @@ class AutocountDocIngestService(MasterRefResolver):
                 entity_type, self.company_id, unlinked,
             )
         return result
+
+    @staticmethod
+    def _report_progress(on_progress: Callable[[int, int], None], processed: int, total: int) -> None:
+        try:
+            on_progress(processed, total)
+        except Exception:  # pragma: no cover - defensive by design
+            logger.warning("ingest progress callback failed", exc_info=True)
 
     def _ingest_one(self, entity: str, raw: Any) -> RecordResult:
         source_ref = _source_ref(self.book, entity, raw.get("DocKey")) if isinstance(raw, dict) else None
