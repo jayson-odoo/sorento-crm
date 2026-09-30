@@ -563,7 +563,10 @@ class SalesOrderService:
             "order_type": so.order_type or "",
             "order_type_label": self._order_type_label(so.order_type),
             "customer_code": customer.customer_code if customer else "",
-            "customer_name": customer.customer_name if customer else "",
+            # The name the SO was issued under (`debtor_name`, per document) first; the
+            # master name only for an order that carries none (CUSTOMER-CODE-IDENTITY).
+            "customer_name": (so.debtor_name or "").strip()
+            or (customer.customer_name if customer else ""),
             "market_segment": self._market_segment_name(customer),
             "priority": so.priority or "normal",
             "status": so.status,
@@ -1343,6 +1346,7 @@ class SalesOrderService:
             )
             q = q.filter(
                 (SalesOrder.so_number.ilike(like))
+                | (SalesOrder.debtor_name.ilike(like))
                 | (SalesOrder.customer.has(Customer.customer_name.ilike(like)))
                 | on_a_line
                 | sold_by

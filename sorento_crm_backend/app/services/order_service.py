@@ -329,7 +329,11 @@ def so_outstanding_rows(
                 "product_name": product.product_name,
                 "outstanding_qty": _plain_number(line.qty_ordered - line.qty_delivered),
                 "order_date": so.order_date.isoformat() if so.order_date else None,
-                "customer": (customer.customer_name if customer else None) or so.debtor_code,
+                # The order's own name first (CUSTOMER-CODE-IDENTITY), the master's
+                # for an order that carries none, the bare code for one nobody holds.
+                "customer": (so.debtor_name or "").strip()
+                or (customer.customer_name if customer else None)
+                or so.debtor_code,
                 "requested_delivery_date": (
                     so.requested_delivery_date.isoformat() if so.requested_delivery_date else None
                 ),
