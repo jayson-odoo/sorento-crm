@@ -2564,7 +2564,7 @@ export function FulfilmentBoardPanel({
             ) : null}
           </AlertDialogHeader>
           {dialogRows && (
-            <div className="max-h-[50vh] space-y-3 overflow-y-auto" data-testid="board-confirm-dialog-list">
+            <div className="max-h-[50dvh] space-y-3 overflow-y-auto" data-testid="board-confirm-dialog-list">
               {(() => {
                 const orderIds = [
                   ...new Set([
