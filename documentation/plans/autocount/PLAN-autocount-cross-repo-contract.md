@@ -753,3 +753,24 @@ yesterday and today (Malaysia time); backfill by DocDate one day per call from 1
 branches daily and before the backfill; the deletion sweep over a trailing DocDate window
 (45 days, scout Q9); push each record verbatim with the envelope above; the per-entity pull /
 push switch (ruling Q5).
+
+## 14. Contract v2.8 (customer code identity) (30 Sep 2026, `documentation/plans/master-data/PLAN-customer-code-identity.md`)
+
+Within a company the debtor code identifies the customer; names are labels (owner decision,
+30 Sep 2026). What changes on the wire:
+
+- `sales_orders` resolution: `customer_ref`, else `customer_code` matched on the code ALONE
+  (case/whitespace-insensitive, per company), else back-create when a `customer_name` is sent
+  too. A later push naming a known code under ANY name lands on that row; nothing is created
+  for a name change and the master name is never written from a document.
+- `sales_orders.customer_name` is stored on the order itself (`sales_orders.debtor_name`) on
+  every push that sends it, and is what the CRM shows for that order.
+- Warning added: `customer_ambiguous` - the code is still held by more than one row (legacy
+  duplicates the merge migration has not folded); the row the integration already knows wins,
+  else the one with orders, else the oldest. Unreachable once the unique index is in place.
+- `customers` masters push: adoption matches on the code alone; a new name renames the row
+  and the former name is kept on it (`name_aliases`). A code-adopted row already linked under
+  a same-source ref (the SO/PO feeds' `AED_SORENTO:<AutoKey>`) is updated, keeps that ref,
+  never links the AccNo ref, and the verdict carries `ref_mismatch` instead of failing - the
+  same rule `products` got in 2.4 (CUSTOMER-KEY-AUTOKEY decision (a)).
+- `version` reads `"2.8"`.
