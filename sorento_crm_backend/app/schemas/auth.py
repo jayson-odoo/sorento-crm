@@ -5,8 +5,9 @@ from typing import Optional
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
-    # "Remember me": True → 30-day rolling session; False → 8h, no slide.
-    remember_me: bool = False
+    # Legacy field from the retired "Remember me" box: accepted so an older client
+    # still signs in, and ignored - every sign-in is the 30-day sliding session.
+    remember_me: Optional[bool] = None
 
 
 class LoginResponse(BaseModel):
