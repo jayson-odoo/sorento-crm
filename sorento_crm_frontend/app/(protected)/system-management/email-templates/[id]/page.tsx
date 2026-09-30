@@ -22,7 +22,8 @@ import {
   useTemplateVariableCatalog,
   useUpdateEmailTemplate,
 } from '../hooks/useEmailTemplates';
-import type { EmailBlock, EmailTemplate } from '../types/emailTemplate.types';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import type { EmailBlock, EmailLayoutWidth, EmailTemplate } from '../types/emailTemplate.types';
 import { buildImplicitBlocks, withBlockIds } from '../lib/emailBlocks';
 import BlockListEditor from '../components/BlockListEditor';
 import BlockListReadOnly from '../components/BlockListReadOnly';
@@ -36,12 +37,29 @@ interface TemplateDraft {
   bodyText: string;
   isActive: boolean;
   blocks: EmailBlock[];
+  width: EmailLayoutWidth;
+}
+
+// The two card widths the shell renders (EMAIL-HANDOVER-QTY): the standard 600px
+// card, or the 900px one a table email such as the order inquiry handover needs.
+const WIDTH_OPTIONS: { value: EmailLayoutWidth; label: string }[] = [
+  { value: 'standard', label: 'Standard (600px)' },
+  { value: 'wide', label: 'Wide (900px)' },
+];
+const DESKTOP_PREVIEW_WIDTH: Record<EmailLayoutWidth, number> = { standard: 600, wide: 900 };
+
+function widthLabel(width: EmailLayoutWidth): string {
+  return WIDTH_OPTIONS.find((o) => o.value === width)?.label ?? width;
 }
 
 function blocksFor(template: EmailTemplate): EmailBlock[] {
   return template.layout_json
     ? withBlockIds(template.layout_json.blocks)
     : buildImplicitBlocks(template);
+}
+
+function widthFor(template: EmailTemplate): EmailLayoutWidth {
+  return template.layout_json?.width ?? 'standard';
 }
 
 function draftFor(template: EmailTemplate): TemplateDraft {
@@ -53,6 +71,7 @@ function draftFor(template: EmailTemplate): TemplateDraft {
     bodyText: template.body_text ?? '',
     isActive: template.is_active,
     blocks: blocksFor(template),
+    width: widthFor(template),
   };
 }
 
@@ -83,7 +102,7 @@ export default function EmailTemplateDetailPage() {
     draftPreviewMut.mutate({
       subject: debouncedDraft.subject,
       preheader: debouncedDraft.preheader || null,
-      layout_json: { version: 1, blocks: debouncedDraft.blocks },
+      layout_json: { version: 1, blocks: debouncedDraft.blocks, width: debouncedDraft.width },
       body_text: debouncedDraft.bodyText || null,
       code: template.code,
     });
@@ -111,7 +130,7 @@ export default function EmailTemplateDetailPage() {
         preheader: draft.preheader.trim() || null,
         body_text: draft.bodyText.trim() || null,
         is_active: draft.isActive,
-        layout_json: { version: 1, blocks: draft.blocks },
+        layout_json: { version: 1, blocks: draft.blocks, width: draft.width },
       });
       toast.success('Email template updated');
       setEditing(false);
@@ -244,6 +263,20 @@ export default function EmailTemplateDetailPage() {
                     )}
                   </div>
                   <div className="space-y-1">
+                    <Label htmlFor="et-width">Width</Label>
+                    {editing && draft ? (
+                      <SearchableSelect
+                        id="et-width"
+                        aria-label="Width"
+                        value={draft.width}
+                        onChange={(v) => patchDraft({ width: (v as EmailLayoutWidth) || 'standard' })}
+                        options={WIDTH_OPTIONS}
+                      />
+                    ) : (
+                      <p className="text-sm text-muted-foreground">{widthLabel(widthFor(template))}</p>
+                    )}
+                  </div>
+                  <div className="space-y-1">
                     <Label htmlFor="et-body-text">Plain text (optional)</Label>
                     {editing && draft ? (
                       <Textarea
@@ -330,7 +363,14 @@ export default function EmailTemplateDetailPage() {
                   <CardTitle>Preview (sample data)</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <EmailPreviewFrame subject={previewSubject} html={previewHtml} isLoading={previewLoading} />
+                  <EmailPreviewFrame
+                    subject={previewSubject}
+                    html={previewHtml}
+                    isLoading={previewLoading}
+                    desktopWidth={
+                      DESKTOP_PREVIEW_WIDTH[editing && draft ? draft.width : widthFor(template)]
+                    }
+                  />
                 </CardContent>
               </Card>
             </div>
