@@ -125,6 +125,52 @@ CHAT_QUEUE = "chat"
 WORKER_POLL_INTERVAL_SECONDS = 0.25
 
 
+# A long reply the MCP presenter already split into WhatsApp-sized parts
+# (`sorento_crm_mcp.presenters.whatsapp_parts`): each part after the first opens with
+# its own "(k/m)" line, after a blank line.
+_MARKED_PART_BREAK = re.compile(r"\n\n(?=\(\d+/\d+\)\n)")
+_MARKED_PART_HEAD = re.compile(r"\((\d+)/(\d+)\)\n")
+
+
+def split_marked_message(text: str) -> list[str]:
+    """The presenter's marked parts of `text`, in order, or `[text]` when it carries
+    none (TOP-N-UNCAP, owner 30 Sep 2026: a top 200 goes out as several messages, so
+    delivery never leans on n8n chunking one over WhatsApp's 4096 characters).
+
+    Only a COMPLETE run splits: "(1/m)" on a line of the first piece (a lane note may
+    sit above it) and "(2/m)" to "(m/m)" opening the rest. Anything else is text that
+    merely looks like a marker and goes out whole, as before."""
+    pieces = _MARKED_PART_BREAK.split(text)
+    if len(pieces) < 2:
+        return [text]
+    total = len(pieces)
+    for k, piece in enumerate(pieces[1:], start=2):
+        head = _MARKED_PART_HEAD.match(piece)
+        if head is None or int(head.group(1)) != k or int(head.group(2)) != total:
+            return [text]
+    first = pieces[0]
+    marker = f"(1/{total})\n"
+    if not (first.startswith(marker) or f"\n{marker}" in first):
+        return [text]
+    return pieces
+
+
+def split_send_actions(actions: list[Any]) -> list[Any]:
+    """Each `send_message` whose text is a marked run becomes one action per part, in
+    order. The quick replies and the result set ride on the LAST part only: they belong
+    to the question the reply ends on. Every other action passes through untouched."""
+    out: list[Any] = []
+    for action in actions:
+        text = action.get("text") if isinstance(action, dict) and action.get("kind") == "send_message" else None
+        parts = split_marked_message(text) if isinstance(text, str) else []
+        if len(parts) < 2:
+            out.append(action)
+            continue
+        out.extend({**action, "text": part, "quick_replies": None, "result_set": None} for part in parts[:-1])
+        out.append({**action, "text": parts[-1]})
+    return out
+
+
 class TurnResult:
     """What the endpoint serialises. A plain object so the route stays a thin adapter."""
 
@@ -163,7 +209,7 @@ class TurnResult:
             "delegate": self.delegate,
             "delegate_payload": self.delegate_payload,
             "reply": self.reply,
-            "actions": self.actions,
+            "actions": split_send_actions(self.actions),
             "session_patch": self.session_patch,
             "duplicate": self.duplicate,
         }
@@ -7083,7 +7129,7 @@ class CompleteResult:
         return {
             "turn_id": self.turn_id,
             "reply": self.reply,
-            "actions": self.actions,
+            "actions": split_send_actions(self.actions),
             "session_patch": self.session_patch,
             # The ROW's `is_test`, so the caller's test-guard reads one field here instead
             # of remembering what `/turn` said about this turn two calls ago.

@@ -2600,8 +2600,13 @@ TOP_SELLING_ASK_GROUP = (
 TOP_SELLING_ASK_BASIS = "Delivered (transferred to DO) or ordered?"
 TOP_SELLING_REFUSED_OTHER_CUSTOMER = "Sorry, I can only share sales figures for your own account."
 
-# The owner's "top 100": the route caps a named N here, the presenter never prints past it.
-_TOP_SELLING_MAX_ROWS = 100
+# The shared safety ceiling on a named N (owner, 30 Sep 2026: no 100 cap, "100, 200").
+# A COPY of the backend's `sales_report_service.TOP_SELLING_N_CEILING` (this package cannot
+# import the backend); `tests/test_top_selling_presenter.py` pins the two equal.
+TOP_SELLING_N_CEILING = 1000
+# One WhatsApp message's budget: the platform limit is 4096 characters, and the headroom
+# is for the line the lane may put above the first part and the "(k/m)" marker.
+WHATSAPP_MESSAGE_MAX_CHARS = 3900
 # The agent fill-rate note prints below this share (plan "The reply": the route
 # sends the rate whenever an agent filter is used, the presenter decides).
 _TOP_SELLING_AGENT_NOTE_BELOW = 0.95
@@ -2721,7 +2726,40 @@ def _top_selling_row(row: dict) -> str:
 
 def _top_selling_rows(report: dict) -> list[dict]:
     rows = report.get("rows") if isinstance(report.get("rows"), list) else []
-    return [r for r in rows if isinstance(r, dict)][:_TOP_SELLING_MAX_ROWS]
+    return [r for r in rows if isinstance(r, dict)][:TOP_SELLING_N_CEILING]
+
+
+def whatsapp_parts(text: str, limit: int = WHATSAPP_MESSAGE_MAX_CHARS) -> list[str]:
+    """`text` as WhatsApp-sized messages, in order. One part when it fits (unmarked,
+    so a short reply reads exactly as before); otherwise lines are packed greedily,
+    never splitting a line (one row is one line), and every part opens with its own
+    ``(k/m)`` line. The caller joins the parts with a blank line; the backend engine
+    (`engine.split_marked_message`) sends each marked part as its own message.
+
+    The marker's width is reserved in every part's budget, so a part plus its marker
+    stays within `limit`. A single line longer than the budget goes out on its own."""
+    if len(text) <= limit:
+        return [text]
+    budget = limit - len("(9999/9999)\n")
+    parts: list[list[str]] = [[]]
+    size = 0
+    for line in text.split("\n"):
+        if not parts[-1] and not line.strip():
+            continue  # a part never opens on a blank line
+        grown = size + len(line) + (1 if parts[-1] else 0)
+        if parts[-1] and grown > budget:
+            while parts[-1] and not parts[-1][-1].strip():
+                parts[-1].pop()  # nor closes on one
+            parts.append([])
+            size = 0
+            if not line.strip():
+                continue
+            grown = len(line)
+        parts[-1].append(line)
+        size = grown
+    chunks = ["\n".join(p) for p in parts if p]
+    total = len(chunks)
+    return [f"({i}/{total})\n{chunk}" for i, chunk in enumerate(chunks, start=1)]
 
 
 def _top_selling_detail(report: dict) -> str:
@@ -2770,8 +2808,9 @@ def _top_selling(report: dict) -> str:
       26 Sep: no default N, no partial list, no "more");
     * no rows and no count: the miss line.
 
-    Length is never a reason here: n8n already chunks a long WhatsApp message
-    (owner, PR #1258 05:32Z), so a named N up to 100 goes out whole."""
+    Length never cuts the list (owner, 30 Sep 2026: "100, 200"): a ranking longer
+    than one WhatsApp message is split here, between rows (`whatsapp_parts`), so the
+    delivery does not lean on n8n chunking it."""
     if isinstance(report.get("detail"), dict):
         return _top_selling_detail(report)
     header = _top_selling_header(report)
@@ -2783,7 +2822,7 @@ def _top_selling(report: dict) -> str:
             noun = "categories" if category else "items"
             return (
                 header + f"\n\nHow many {noun} do you want to see? "
-                f"Reply with a number from 1 to {min(total, _TOP_SELLING_MAX_ROWS)}."
+                f"Reply with a number from 1 to {min(total, TOP_SELLING_N_CEILING)}."
             )
         return header + "\n\n" + SALES_REPORT_MISS_MESSAGE
     offer = (
@@ -2792,7 +2831,7 @@ def _top_selling(report: dict) -> str:
         else "Reply with a rank number to see that item's customers and months."
     )
     body = "\n".join(_top_selling_row(r) for r in rows)
-    return header + "\n\n" + body + "\n\n" + offer
+    return "\n\n".join(whatsapp_parts(header + "\n\n" + body + "\n\n" + offer))
 
 
 def _top_selling_pick_row(row: dict, *, category: bool) -> dict:
