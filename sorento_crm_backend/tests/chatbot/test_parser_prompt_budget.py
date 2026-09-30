@@ -87,7 +87,11 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # (SELF_REFERENCE beneath ESCALATION_CONFIRMATION, PO_SPO_WAREHOUSE beneath that, MEMORY the
 # tail) measure 42,906 without the memory addendum and 43,421 with it; CEILING is
 # 43,421 - 512 = 42,909 so both assertions hold on the combined prompt.
-CEILING = 42_909
+# Fifth re-pin, 30 Sep 2026 (PROMPT-DYNAMIC, PLAN-prompt-dynamic-30sep D9): the owner's new
+# `sales` domain row adds one domain line to the policy blocks (+85). Measured 42,994 without
+# the memory addendum and 43,510 with it; CEILING is 43,510 - 512 = 42,998 so both
+# assertions hold on the combined prompt. Nothing else grew.
+CEILING = 42_998
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is
