@@ -1002,7 +1002,9 @@ const ProductsList = () => {
                       key: 'autocount-pull',
                       label: autocountPull.label,
                       icon: CloudDownload,
-                      onClick: autocountPull.onSelect,
+                      // Zero-arg on purpose: the toolbar passes the click event to `onClick`,
+                      // and a pull takes an optional scope object, not an event.
+                      onClick: () => void autocountPull.onSelect(),
                     },
                   ]
                 : []),
