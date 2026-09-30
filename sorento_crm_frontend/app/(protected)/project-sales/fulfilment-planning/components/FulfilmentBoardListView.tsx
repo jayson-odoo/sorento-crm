@@ -937,7 +937,11 @@ export function FulfilmentBoardListView({
       // Rank is a planner's tiebreak, not something to read on every row: hidden until asked.
       initialColumnVisibility={{ rank: false }}
       listingKey="projects.projects.view::project-fulfilment-board-list-v2"
-      emptyTitle="Nothing is outstanding on this board"
+      emptyTitle={
+        scope?.value === 'saved'
+          ? 'No saved decisions yet'
+          : 'Nothing is outstanding on this board'
+      }
       rowSelection={rowSelection}
       onRowSelectionChange={setRowSelection}
       enableRowSelection={(row) => canDecide(row.original)}

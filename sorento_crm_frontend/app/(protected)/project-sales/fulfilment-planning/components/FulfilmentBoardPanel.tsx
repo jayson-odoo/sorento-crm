@@ -2613,7 +2613,9 @@ export function FulfilmentBoardPanel({
                       <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
                       {/* NOT the "owes nothing" copy: the selection owes plenty, the filter
                           simply matched none of it. */}
-                      <h3 className="mt-2 text-sm font-semibold">No products match</h3>
+                      <h3 className="mt-2 text-sm font-semibold">
+                        {scope === 'saved' && !filtering ? 'No saved decisions yet' : 'No products match'}
+                      </h3>
                     </CardContent>
                   </Card>
                 ) : (

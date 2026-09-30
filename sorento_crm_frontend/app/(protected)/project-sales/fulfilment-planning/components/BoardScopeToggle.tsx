@@ -1,16 +1,15 @@
 'use client';
 
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Button } from '@/components/ui/button';
 
 /** `all` is only reached from a link (`?scope=all`): no segment pressed, every line shown. */
 export type BoardScope = 'saved' | 'others' | 'all';
 
 /**
- * Saved | Others, the quick check of what Confirm will send against everything else. The design
- * system's own segmented control (`components/ui/toggle-group.tsx`, single select, outline, `sm`
- * = the 28 px height of the toolbar buttons beside it), never a hand-rolled pair of buttons.
- * A single-select Radix group reports an empty value when the pressed segment is pressed again;
- * that is ignored so one segment is always on.
+ * Saved | Others, the quick check of what Confirm will send against everything else. Built the
+ * same way as the board's own Grid | List switch (`FulfilmentBoardPanel`, the "Board view"
+ * group): two `Button size="sm"` in a bordered inline group, the pressed one `variant="primary"`
+ * (the system's filled blue), the other `ghost`. No custom colour classes.
  */
 export function BoardScopeToggle({
   value,
@@ -24,23 +23,32 @@ export function BoardScopeToggle({
   othersCount: number;
 }) {
   return (
-    <ToggleGroup
-      type="single"
-      variant="outline"
-      size="sm"
-      value={value === 'all' ? '' : value}
-      onValueChange={(next) => {
-        if (next === 'saved' || next === 'others') onChange(next);
-      }}
+    <div
+      className="inline-flex rounded-md border border-input"
+      role="group"
       aria-label="Saved or others"
       data-testid="board-scope-toggle"
     >
-      <ToggleGroupItem value="saved" aria-label={`Saved (${savedCount})`}>
+      <Button
+        type="button"
+        size="sm"
+        variant={value === 'saved' ? 'primary' : 'ghost'}
+        className="rounded-e-none"
+        aria-pressed={value === 'saved'}
+        onClick={() => onChange('saved')}
+      >
         {`Saved (${savedCount})`}
-      </ToggleGroupItem>
-      <ToggleGroupItem value="others" aria-label={`Others (${othersCount})`}>
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant={value === 'others' ? 'primary' : 'ghost'}
+        className="rounded-s-none border-s border-input"
+        aria-pressed={value === 'others'}
+        onClick={() => onChange('others')}
+      >
         {`Others (${othersCount})`}
-      </ToggleGroupItem>
-    </ToggleGroup>
+      </Button>
+    </div>
   );
 }

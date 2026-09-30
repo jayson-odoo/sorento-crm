@@ -4805,7 +4805,7 @@ describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
       }),
     );
   };
-  const segment = (name: RegExp) => screen.getByRole('radio', { name });
+  const segment = (name: RegExp) => screen.getByRole('button', { name });
 
   beforeEach(() => {
     currentSearchParams = new URLSearchParams('view=grid');
@@ -4817,8 +4817,8 @@ describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
     await screen.findByTestId('fulfilment-board-matrix');
 
     const strip = screen.getByTestId('board-grid-filter-strip');
-    expect(within(strip).getByRole('radio', { name: 'Saved (1)' })).toBeInTheDocument();
-    expect(within(strip).getByRole('radio', { name: 'Others (2)' })).toBeInTheDocument();
+    expect(within(strip).getByRole('button', { name: 'Saved (1)' })).toBeInTheDocument();
+    expect(within(strip).getByRole('button', { name: 'Others (2)' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
     const toolbar = await waitFor(() => {
@@ -4826,8 +4826,8 @@ describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
       if (!found) throw new Error('toolbar not yet mounted');
       return found as HTMLElement;
     });
-    expect(within(toolbar).getByRole('radio', { name: 'Saved (1)' })).toBeInTheDocument();
-    expect(within(toolbar).getByRole('radio', { name: 'Others (2)' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Saved (1)' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Others (2)' })).toBeInTheDocument();
   });
 
   it('defaults to Others: the saved row is hidden, and Saved shows only the saved row', async () => {
@@ -4835,7 +4835,7 @@ describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
-    expect(segment(/^Others/)).toHaveAttribute('aria-checked', 'true');
+    expect(segment(/^Others/)).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByText('WESERP10B')).not.toBeInTheDocument();
     expect(screen.getByText('TPE-9204')).toBeInTheDocument();
     expect(screen.getByText('WESERP20B')).toBeInTheDocument();
@@ -4874,6 +4874,39 @@ describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     await screen.findByTestId('board-confirm-results');
 
-    expect(segment(/^Saved/)).toHaveAttribute('aria-checked', 'true');
+    expect(segment(/^Saved/)).toHaveAttribute('aria-pressed', 'true');
   });
+
+  it('the pressed segment uses the same primary variant as the Grid | List switch', async () => {
+    getPlanningBoard.mockResolvedValue(threeStates());
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const pressedHeaderItem = screen.getByRole('button', { name: 'Grid' });
+    expect(pressedHeaderItem).toHaveAttribute('aria-pressed', 'true');
+    const primaryToken = 'bg-primary';
+    expect(pressedHeaderItem.className).toContain(primaryToken);
+    expect(segment(/^Others/).className).toContain(primaryToken);
+    expect(segment(/^Saved/).className).not.toContain(primaryToken);
+
+    await userEvent.click(segment(/^Saved/));
+    await waitFor(() => expect(segment(/^Saved/).className).toContain(primaryToken));
+    expect(segment(/^Others/).className).not.toContain(primaryToken);
+  });
+
+  it('reads "No saved decisions yet" in the grid and in the list when Saved has nothing', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf([demand({ line_no: 1, item_code: 'WESERP10B' })]),
+    );
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    await userEvent.click(segment(/^Saved/));
+    expect(await screen.findByText('No saved decisions yet')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    expect(await screen.findByText('No saved decisions yet')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing is outstanding on this board')).not.toBeInTheDocument();
+  });
+
 });

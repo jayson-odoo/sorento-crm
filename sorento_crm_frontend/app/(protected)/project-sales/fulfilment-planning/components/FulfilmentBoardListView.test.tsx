@@ -2430,7 +2430,7 @@ describe('FulfilmentBoardListView: Columns and Status filter', () => {
     );
     await screen.findByText('SO397451');
     expect(screen.queryByText('SO397450')).not.toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: 'Others (1)' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('button', { name: 'Others (1)' })).toHaveAttribute('aria-pressed', 'true');
 
     rerender(
       <FulfilmentBoardListView
