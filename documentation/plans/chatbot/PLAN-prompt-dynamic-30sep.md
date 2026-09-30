@@ -1,6 +1,6 @@
 # PLAN - parser prompt wired to its registries + prompt editor that shows it (PROMPT-DYNAMIC)
 
-Status: Build. Track: full (migration, new admin table, new admin page). Grill run late (see "Grill"). R5c shipped (7f004bf0);
+Status: Review. Track: full (migration, new admin table, new admin page). Grill run late (see "Grill"). R5c shipped (7f004bf0);
 backend S2-S4 under TDD; R5a/b wait on the mock
 (`documentation/mockups/prompt-editor-dynamic.html`). Lane `crew-lane: PROMPT-DYNAMIC`, PR #1405.
 UAC: `prompt-dynamic-30sep-acceptance-criteria.md`.
@@ -196,5 +196,42 @@ was by sidebar clicks from `/`.
    is 1357px wide at 375. That overflow is identical with main b8cdbebe's files, so it is
    pre-existing: BL-068.
 
-Screenshots (under 200 KB each): `documentation/plans/evidence/prompt-dynamic-status-words-1280.png`
-and `documentation/plans/evidence/prompt-dynamic-search-375.png`.
+(The two screenshots of this first run were replaced by the R5a/b run below, per the
+two-per-lane cap.)
+
+## Browser evidence run, R5a/b editor (agent-browser 0.27.0, session `pdyn2`, 30 Sep 2026)
+
+Same sandbox stack, rebooted after a container restart. Navigation by sidebar: System > AI
+Assistant > Prompts > chatbot_semantic_parser. v4, the unlabelled wording layer, was loaded
+from the version list.
+
+1. 1280x800: the editor shows 12 chips and no raw `{{domains}}`. "Wired to this agent" lists 12
+   sources with counts, for example Domains 15, Domain words 96, Status words 8, Teams 8 "Escalation
+   lane (code list)". Brands shows "not in wording", Insert and "Also sent every turn".
+2. The Domains chip's toggle shows the live list ("master_products | product_attachment |
+   ..."). Its x removes it, the wired row flips to "not in wording" and the draft reads
+   "unsaved changes". Undo restores the chip, and the draft is clean again.
+3. Caret at offset 4, real keyboard "XY ", then Insert variable > Brands. The text starts "You XY
+   [Brands chip] are the Sorento...". The chip sits exactly at the caret, and the wired Brands
+   row now reads "In wording".
+4. Preview rendered prompt shows 0 literal `{{`, `domain_hint = ONE of: master_products | ...`,
+   and today in Malaysia time ("Thursday, 01 October 2026"). Edit brings the chips back.
+5. Diff against v3 shows "Change 1 of 11". Next x2 gives "Change 3 of 11" (the domain-words
+   hunk is outlined). Alt+ArrowUp gives "Change 2 of 11" (the `{{domains}}` line). Changes only
+   gives 6 gaps, the first "... 67 unchanged lines".
+6. Overflow. The first pass showed a horizontal scrollbar inside the editor: block chips
+   carried side margins. Fixed with no margin plus `overflow-x-hidden`, then re-measured: editor
+   scrollWidth equals clientWidth at 375 and at 1280, with 0 overflowing children.
+7. Layout. The third column squeezed the editor to 286px at 1280, so the side-by-side panel now
+   starts at 2xl. At 1280 the editor is 582px wide, with the panel below it.
+8. 375x812: the document is 360px wide (no page overflow: BL-068 is fixed by the `min-w-0` grid
+   columns). The wired panel stacks under the editor. The Insert variable menu ends at x=325.
+
+Screenshots (quantised, under 200 KB each): `documentation/plans/evidence/prompt-dynamic-editor-1280.png`
+(Status words chip expanded, showing the owner's added word "jualan bulan ini") and
+`documentation/plans/evidence/prompt-dynamic-editor-375.png` (the variable picker).
+
+Kill tests, R5a/b (each restored after):
+- chip serialisation dropped: 2 red;
+- validateVars without the registry names: 2 red;
+- diff step frozen: 2 red.

@@ -15,7 +15,7 @@ const BLOCK_VARIABLES = new Set(['statuses', 'domains_detail', 'entity_kinds_det
 
 const CHIP_CLASS =
   'mx-0.5 inline-flex max-w-full flex-wrap items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-1.5 py-px align-baseline font-sans text-2xs leading-5 text-primary';
-const BLOCK_CHIP_CLASS = 'my-0.5 flex w-full';
+const BLOCK_CHIP_CLASS = 'mx-0 my-0.5 flex w-full';
 const RENDERED_CLASS =
   'basis-full whitespace-pre-wrap break-words rounded border border-primary/20 bg-background px-2 py-1 font-mono text-2xs text-foreground';
 
@@ -423,7 +423,7 @@ export function PromptChipEditor({
           suppressContentEditableWarning
           spellCheck={false}
           data-testid="prompt-chip-editor"
-          className="max-h-[70vh] min-h-[320px] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-background p-3 font-mono text-xs leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="max-h-[70vh] min-h-[320px] overflow-y-auto overflow-x-hidden whitespace-pre-wrap [overflow-wrap:anywhere] rounded-md border bg-background p-3 font-mono text-xs leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onInput={() => {
             // Typing after a removal makes the removal final: Undo would roll the typing back.
             setUndoValue(null);

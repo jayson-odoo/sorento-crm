@@ -265,7 +265,7 @@ export function PromptDetail({ name }: { name: string }) {
       <div
         className={cn(
           'grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]',
-          hasRegistry && 'xl:grid-cols-[260px_minmax(0,1fr)_300px]',
+          hasRegistry && '2xl:grid-cols-[260px_minmax(0,1fr)_300px]',
         )}
       >
         <div className="flex min-w-0 flex-col gap-4">
@@ -515,7 +515,7 @@ export function PromptDetail({ name }: { name: string }) {
         </div>
 
         {hasRegistry ? (
-          <div className="min-w-0 lg:col-span-2 xl:col-span-1">
+          <div className="min-w-0 lg:col-span-2 2xl:col-span-1">
             <WiredPanel
               variables={registryRows}
               draft={draft}
