@@ -486,6 +486,8 @@ export interface TurnDetailCustomerScope {
   dropped?: string[];
   kept?: string[];
   typed?: string[];
+  /** Carried brand/category words the gate kept away from the resolver. */
+  carried_words_kept_off_resolver?: string[];
   self_reference?: boolean;
   tool?: string;
   offer_passed?: boolean;

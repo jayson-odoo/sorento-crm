@@ -793,6 +793,13 @@ function CustomerScopeSection({ events }: { events: NonNullable<TurnDetail['cust
           {event.typed && event.typed.length > 0 ? (
             <ChipRow label="Typed this message" chips={event.typed} tone="secondary" />
           ) : null}
+          {event.carried_words_kept_off_resolver && event.carried_words_kept_off_resolver.length > 0 ? (
+            <ChipRow
+              label="Carried words kept off the resolver"
+              chips={event.carried_words_kept_off_resolver}
+              tone="secondary"
+            />
+          ) : null}
           {(event.dropped?.length ?? 0) > 0 || (event.ids?.length ?? 0) > 0 ? (
             <Code value={{ ids: event.ids ?? [], dropped: event.dropped ?? [], kept: event.kept ?? [] }} />
           ) : null}

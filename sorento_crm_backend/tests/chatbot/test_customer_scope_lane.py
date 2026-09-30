@@ -737,7 +737,9 @@ class TestCarriedFocusNeverFeedsTheCustomerScreen:
         assert args["customer_ids"] == links, args
         assert not any(f in str(captured) for f in foreign)
         events = _scope_events(session_factory, result)
-        assert any(e.get("decision") == "scoped_to_links" and e.get("ids") == links for e in events), events
+        (scoped,) = [e for e in events if e.get("decision") == "scoped_to_links"]
+        assert scoped["ids"] == links, scoped
+        assert scoped["carried_words_kept_off_resolver"] == ["water tap"], scoped
         assert not any(e.get("refused") for e in events), events
         assert not any(f in str(events) for f in foreign), events
 

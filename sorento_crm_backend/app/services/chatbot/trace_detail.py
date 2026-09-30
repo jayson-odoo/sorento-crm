@@ -213,7 +213,8 @@ def _reveals(records: list[dict[str, Any]]) -> dict[str, Any]:
 #: and scoped-to-links pass, the fetch clamp and refusal, the tier-probe refusal, and the
 #: B2 re-route - so a refusal explains itself on the trace.
 _CUSTOMER_SCOPE_FIELDS = (
-    "decision", "refused", "reason", "ids", "dropped", "kept", "typed", "self_reference", "tool", "offer_passed",
+    "decision", "refused", "reason", "ids", "dropped", "kept", "typed", "carried_words_kept_off_resolver",
+    "self_reference", "tool", "offer_passed",
 )
 
 

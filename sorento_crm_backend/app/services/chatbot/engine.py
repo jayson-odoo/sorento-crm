@@ -3975,9 +3975,21 @@ def _run_stages(  # noqa: PLR0915
                 )
             elif isinstance(state_out.focus.top_selling, dict) and state_out.focus.top_selling.get("hop"):
                 resolver_parse_output = _without_carried_words(resolver_parse_output)
+            entities_before_gate = [
+                e for e in (resolver_parse_output.get("entities") or []) if isinstance(e, dict)
+            ]
             resolver_parse_output, scope_ids, scope_refused = _customer_scope_gate(
                 customer_scope, verdict, state_out.focus, resolver_parse_output, plan.domains
             )
+            # CHATBOT-SELFREF-SCOPE R4: the carried words the gate kept off the resolver
+            # (a category or brand token the focus held), named on the trace so the panel
+            # says what the turn chose not to look up.
+            carried_kept_off = [
+                jsc.js_string(e.get("raw") or e.get("canonical_code") or "")
+                for e in entities_before_gate
+                if e.get("current_message") is False
+                and e not in (resolver_parse_output.get("entities") or [])
+            ]
             if (
                 len(plan.domains) > 1
                 and resolver_parse_output.get("entities")
@@ -4094,6 +4106,7 @@ def _run_stages(  # noqa: PLR0915
                         "decision": "scoped_to_links",
                         "ids": list(scope_ids),
                         "self_reference": scope_self_reference,
+                        **({"carried_words_kept_off_resolver": carried_kept_off} if carried_kept_off else {}),
                         **({"dropped": screened_dropped, "reason": "carried_word_matched_other_customers"} if screened_dropped else {}),
                         **({"offer_passed": True} if spent_offer else {}),
                     },
