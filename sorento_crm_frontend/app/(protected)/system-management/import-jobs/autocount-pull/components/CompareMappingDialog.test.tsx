@@ -170,3 +170,16 @@ describe('CompareMappingDialog transform per field (fix round 1)', () => {
     expect(columns[columns.length - 1]).toEqual({ excel_header: '', transform: 'date', field: 'doc_date' });
   });
 });
+
+describe('CompareMappingDialog accessibility (fix round 2)', () => {
+  it('opens without the Radix "Missing Description" warning', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    renderDialog();
+    await screen.findByLabelText('Sheet name');
+    const seen = [...error.mock.calls, ...warn.mock.calls].map((c) => c.join(' '));
+    error.mockRestore();
+    warn.mockRestore();
+    expect(seen.filter((m) => m.includes('Missing `Description`'))).toEqual([]);
+  });
+});
