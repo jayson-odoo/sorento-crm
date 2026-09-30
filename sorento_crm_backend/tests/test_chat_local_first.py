@@ -180,8 +180,8 @@ def test_stored_rows_are_served_locally_with_no_respond_call(db, scheduled):
     assert page["source"] == "local"
     assert _ids(page) == [str(_mid(i)) for i in range(4)]
     assert client.calls == [], "the request path must not read Respond"
-    assert page["sync_scheduled"] is True
     assert scheduled == [CONTACT]
+    assert "sync_scheduled" not in page, "bookkeeping never reaches the wire"
 
 
 def test_a_poll_inside_the_interval_schedules_nothing(db, scheduled):
@@ -193,7 +193,6 @@ def test_a_poll_inside_the_interval_schedules_nothing(db, scheduled):
     page = svc.fetch_thread_page(db, CONTACT, limit=50, client=client)
 
     assert page["source"] == "local"
-    assert page["sync_scheduled"] is False
     assert scheduled == []
     assert client.calls == []
 
@@ -239,6 +238,7 @@ def test_an_empty_thread_reads_one_live_page_and_stores_it(db, scheduled):
     state = _state(db)
     assert state is not None and state.last_synced_at is not None
     assert state.oldest_reached is True, "a short newest page IS the whole thread"
+    assert state.newest_synced_message_id == str(_mid(3)), "the watermark is what Respond said"
     assert scheduled == [], "the live page is the sync; nothing more is queued"
 
 
@@ -288,20 +288,69 @@ def test_respond_failing_with_stored_rows_is_invisible(db, scheduled):
 # ---------------------------------------------------------------------------
 
 
-def test_sync_newer_reads_once_past_the_newest_stored_row_and_pokes(db, transport):
-    """AC-DS1 / AC-DS2 / AC-DS4."""
+def test_sync_newer_reads_once_past_the_watermark_and_pokes(db, transport):
+    """AC-DS1 / AC-DS2 / AC-DS4: the cursor is the Respond-side watermark, not the newest
+    row any lane wrote. First ever read: the newest page. Then one read newer than it."""
     _seed(db, range(4))
     client = FakeRespondClient([_item(i) for i in range(6)])
 
-    result = sync.sync_newer(db, CONTACT, client)
+    first = sync.sync_newer(db, CONTACT, client)
 
-    assert client.calls == [{"identifier": CONTACT.respond_io_id, "limit": 50, "cursor": f"-{_mid(3)}"}]
-    assert result["fetched"] == 2 and result["written"] == 2 and result["error"] is None
+    assert client.calls == [{"identifier": CONTACT.respond_io_id, "limit": 50, "cursor": None}]
+    assert first["fetched"] == 6 and first["written"] == 2 and first["error"] is None
     assert _stored_ids(db) == [str(_mid(i)) for i in range(6)]
     assert [e["type"] for e in transport.published] == ["message"]
     assert transport.published[0]["contact_id"] == CONTACT.respond_io_id
     state = _state(db)
     assert state.last_synced_at is not None and state.last_error is None
+    assert state.newest_synced_message_id == str(_mid(5))
+
+    client.items.append(_item(6))
+    second = sync.sync_newer(db, CONTACT, client)
+    assert client.calls[-1]["cursor"] == f"-{_mid(5)}"
+    assert second["written"] == 1
+    assert _state(db).newest_synced_message_id == str(_mid(6))
+
+
+def test_a_message_n8n_missed_is_healed_because_other_lanes_do_not_move_the_watermark(db, transport):
+    """The owner's case: n8n dropped m2, then the agent's reply m3 was mirrored by the CRM.
+    The watermark still sits at m1 (the last Respond read), so the next read recovers m2
+    and fills m3's sender from Respond (review B2 / B3)."""
+    _seed(db, [0, 1])
+    client = FakeRespondClient([_item(i) for i in range(2)])
+    sync.sync_newer(db, CONTACT, client)  # watermark -> m1
+    (mirrored,) = _seed(db, [3])
+    mirrored.type = "outgoing"
+    db.flush()
+    client.items = [_item(i) for i in range(3)] + [_item(3, traffic="outgoing", sender={"source": "user", "userId": 77})]
+
+    result = sync.sync_newer(db, CONTACT, client)
+
+    assert client.calls[-1]["cursor"] == f"-{_mid(1)}"
+    assert result["written"] == 1
+    assert _stored_ids(db) == [str(_mid(i)) for i in (0, 1, 2, 3)]
+    db.expire_all()
+    healed = db.query(ChatHistory).filter(ChatHistory.message_id == str(_mid(3))).one()
+    assert (healed.sender_source, healed.sender_user_id) == ("user", "77")
+    assert _state(db).newest_synced_message_id == str(_mid(3))
+
+
+def test_a_fresh_incoming_row_the_sync_stored_first_gets_the_phone_push(db, transport, monkeypatch):
+    """Review S6: when the sync beats n8n, the push n8n would have queued still happens.
+    Only for a message younger than PUSH_FRESHNESS; a recovered old one buzzes nobody."""
+    pushed: list[int] = []
+    monkeypatch.setattr(sync, "_enqueue_push", pushed.append)
+    now_id = int(datetime.utcnow().timestamp() * 1_000_000)
+    fresh = _item(0, text="just now")
+    fresh["messageId"] = now_id
+    stale = _item(1, text="last month")
+    client = FakeRespondClient([stale, fresh])
+
+    result = sync.sync_newer(db, CONTACT, client)
+
+    assert result["written"] == 2
+    rows = {r.message_id: r for r in db.query(ChatHistory).filter(ChatHistory.contact_id == CONTACT.respond_io_id).all()}
+    assert pushed == [rows[str(now_id)].id]
 
 
 def test_sync_newer_with_nothing_new_writes_nothing_and_pokes_nobody(db, transport):
@@ -374,6 +423,39 @@ def test_scroll_back_past_the_oldest_stored_row_reads_one_older_page(db, schedul
     assert len(client.calls) == 1, "the start was reached; Respond is not asked again"
 
 
+def test_a_short_local_thread_still_offers_older_history(db, scheduled):
+    """Review B1: three n8n rows and sixty messages on Respond must not read as the start
+    of the conversation, or the scroll-back that fills it never runs."""
+    _seed(db, [57, 58, 59])
+    client = FakeRespondClient([_item(i) for i in range(60)])
+
+    page = svc.fetch_thread_page(db, CONTACT, limit=50, client=client)
+    assert page["has_more_older"] is True
+    assert client.calls == [], "still no read on the request path"
+
+    older = svc.fetch_thread_page(db, CONTACT, before=str(_mid(57)), limit=50, client=client)
+    assert len(client.calls) == 1, "the scroll-back is what reads"
+    assert _ids(older) == [str(_mid(i)) for i in range(7, 57)]
+    assert older["has_more_older"] is True, "a full older page claims more"
+    assert _state(db).oldest_reached is False
+
+    last = svc.fetch_thread_page(db, CONTACT, before=str(_mid(7)), limit=50, client=client)
+    assert len(client.calls) == 2
+    assert _ids(last) == [str(_mid(i)) for i in range(7)]
+    assert last["has_more_older"] is False, "a short older page IS the start"
+    assert _state(db).oldest_reached is True
+
+    again = svc.fetch_thread_page(db, CONTACT, limit=50, client=client)
+    assert again["has_more_older"] is True, "60 stored: a full newest window claims more"
+    assert len(client.calls) == 2
+
+
+def test_a_short_local_thread_without_a_client_reads_as_before(db, scheduled):
+    _seed(db, range(3))
+    page = svc.fetch_thread_page(db, CONTACT, limit=50)
+    assert page["has_more_older"] is False
+
+
 def test_scroll_back_with_enough_stored_rows_reads_nothing(db, scheduled):
     _seed(db, range(6))
     client = FakeRespondClient([_item(i) for i in range(6)])
@@ -409,9 +491,13 @@ def test_scroll_back_after_a_failed_older_read_waits_out_the_interval(db, schedu
     svc.fetch_thread_page(db, CONTACT, before=str(_mid(3)), limit=2, client=client)
 
     assert len(client.calls) == 1
+    throttled = svc.fetch_thread_page(db, CONTACT, limit=50, client=client)
+    assert throttled["has_more_older"] is False, "nothing more can be offered right now"
     state = _state(db)
     state.last_error_at = sync._now() - timedelta(seconds=sync.SYNC_MIN_INTERVAL_SECONDS + 1)
     db.flush()
+    db.commit()
+    assert svc.fetch_thread_page(db, CONTACT, limit=50, client=client)["has_more_older"] is True
     svc.fetch_thread_page(db, CONTACT, before=str(_mid(3)), limit=2, client=client)
     assert len(client.calls) == 2
 
@@ -509,6 +595,58 @@ def test_an_existing_row_is_filled_in_from_a_later_read(db):
     assert row.media_type == "image"
     assert row.sender_source == "contact"
     assert row.message == "[image] x.jpg"
+
+
+def test_fill_if_null_never_overwrites_what_a_row_already_holds(db):
+    """Kill test from review: `COALESCE(col, :col)` is the contract, not `:col`."""
+    (row,) = _seed(db, [1], media_url="https://cdn/original.jpg", media_type="image", sender_source="contact")
+    db.flush()
+    item = _item(
+        1,
+        message={"type": "attachment", "attachment": {"type": "video", "url": "https://cdn/other.mp4", "fileName": "o.mp4"}},
+        sender={"source": "bot"},
+    )
+
+    svc.persist_messages(db, CONTACT, [item])
+    db.flush()
+    db.expire_all()
+
+    row = db.query(ChatHistory).filter(ChatHistory.message_id == str(_mid(1))).one()
+    assert row.media_url == "https://cdn/original.jpg"
+    assert row.media_type == "image"
+    assert row.sender_source == "contact"
+    assert row.media_file_name == "o.mp4", "the one NULL column is what got filled"
+
+
+def test_run_sync_newer_job_takes_the_claim_once_per_interval(db, monkeypatch):
+    """Kill test from review (AC-LF4 across processes): the job's DB claim, not only the
+    in-process interval check, is what stops two API processes syncing the same contact."""
+    import app.database as database
+
+    class _SameSession:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def close(self):
+            pass
+
+    _seed(db, range(2))
+    db.commit()
+    client = FakeRespondClient([_item(i) for i in range(3)])
+    monkeypatch.setattr(database, "SessionLocal", lambda: _SameSession(db))
+    from app.services.integration_service import RespondClient
+
+    monkeypatch.setattr(RespondClient, "for_identifier", classmethod(lambda cls, _db, _ident: client))
+
+    first = sync.run_sync_newer_job(CONTACT)
+    second = sync.run_sync_newer_job(CONTACT)
+
+    assert first["written"] == 1
+    assert second == {"skipped": "claimed elsewhere"}
+    assert len(client.calls) == 1
 
 
 def test_a_stored_row_keeps_its_activity_stamp_for_the_reconcile(db):

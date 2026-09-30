@@ -6,12 +6,17 @@ the only place that asks Respond.io for messages once a contact has local rows, 
 asks for exactly one page per call:
 
 ``sync_newer``
-    One ``list_messages(cursorId=-<newest stored id>)`` read: everything Respond holds
-    that is newer than the newest row we have. Stored through ``persist_messages`` (which
-    also fills media / sender on rows that lacked them), then the open threads are poked
-    on the event bus. Runs (a) in the background after a thread page was served, at most
+    One ``list_messages(cursorId=-<watermark>)`` read: everything Respond holds that is
+    newer than the last message a Respond read confirmed (``newest_synced_message_id`` on
+    the state row; the newest page with no cursor when there is none yet). The watermark
+    is advanced ONLY here, never by a row n8n, the webhook or a CRM send wrote, so a
+    message one of those lanes missed is still behind it and gets recovered, and rows they
+    wrote after it are re-read and have their media / sender filled in. Stored through
+    ``persist_messages``, then the open threads are poked on the event bus and a phone push
+    is queued for a fresh incoming message (the same push the n8n ingest queues; deduped on
+    the message id). Runs (a) in the background after a thread page was served, at most
     once per :data:`SYNC_MIN_INTERVAL_SECONDS` per contact, and (b) from the reconcile
-    tick for every contact with recent activity.
+    for every contact with recent activity.
 
 ``sync_older``
     One ``list_messages(cursorId=<oldest stored id>)`` read, when a reader scrolls past
@@ -20,15 +25,19 @@ asks for exactly one page per call:
     the data being fetched, so there is nothing to serve until it lands.
 
 ``run_reconcile``
-    The ``chat_history_reconcile`` scheduled task (seeded by migration clf_0001, driven by
-    ``app/scheduler/task_scheduler.py``): ``sync_newer`` for every contact whose
-    ``last_activity_at`` is within ``activity_days``, ``concurrency`` calls in flight per
+    The body of the ``chat_history_reconcile`` scheduled task (seeded by migration
+    clf_0001, driven by ``app/scheduler/task_scheduler.py``). The handler only enqueues it
+    on the ``respond_io`` RQ queue (``app/tasks/chat_reconcile_tasks.py``): the scheduler
+    heartbeat runs handlers one after another, and a tick of a few hundred Respond calls
+    inline there would stall every other scheduled task behind it. ``sync_newer`` for every
+    contact whose ``last_activity_at`` is within ``activity_days``, spaced out by how long
+    the contact has been quiet (``_sync_due``), ``concurrency`` calls in flight per
     workspace key, backing off through ``respond_rate_limit``. Respond load therefore
     follows message activity, never the number of people looking.
 
-The newest / oldest stored ids are read from ``chat_histories`` every time rather than
-kept on the state row: n8n, the webhook and a CRM send all write rows directly, and a
-copied cursor would lag every one of them.
+The oldest stored id is read from ``chat_histories`` (a scroll-back continues from
+whatever is oldest locally); the newest-side watermark lives on the state row because it
+must NOT move when another lane writes a row.
 """
 from __future__ import annotations
 
@@ -58,6 +67,14 @@ RESPOND_PAGE = 50
 DEFAULT_ACTIVITY_DAYS = 7
 DEFAULT_CONCURRENCY = 2
 DEFAULT_BATCH_LIMIT = 500
+# Reconcile spacing: a contact is re-read no more often than a quarter of the time it has
+# been quiet (a contact active 10 min ago every tick, one quiet for 2 h every 30 min, one
+# quiet for 6 days every 36 h), so a 7-day window does not cost one call per contact per
+# tick. Only new activity, from any lane, brings a contact back to every tick.
+RECONCILE_SPACING_DIVISOR = 4
+# A message the sync stored first (n8n late or missing) gets the phone push n8n would have
+# queued, but only when it is this fresh: a recovered week-old message buzzes nobody.
+PUSH_FRESHNESS = timedelta(hours=1)
 # Background sync threads per API process. Two is plenty: a job is one HTTP call and
 # one small insert, and anything queued behind them is the same contact's next poll.
 REQUEST_SYNC_WORKERS = 2
@@ -74,14 +91,6 @@ def _now() -> datetime:
 
 def _with_id(db: Session, contact: ThreadContact):
     return thread_service._base_query(db, contact).filter(ChatHistory.message_id.isnot(None))
-
-
-def newest_stored(db: Session, contact: ThreadContact) -> Optional[ChatHistory]:
-    return (
-        _with_id(db, contact)
-        .order_by(ChatHistory.sent_at.desc(), ChatHistory.id.desc())
-        .first()
-    )
 
 
 def oldest_stored(db: Session, contact: ThreadContact) -> Optional[ChatHistory]:
@@ -170,6 +179,40 @@ def _mark_synced(db: Session, contact: ThreadContact, *, error: Optional[str] = 
     db.execute(text(sql), params)
 
 
+def watermark(db: Session, contact: ThreadContact) -> Optional[str]:
+    state = get_state(db, contact)
+    return state.newest_synced_message_id if state is not None else None
+
+
+def _advance_watermark(db: Session, contact: ThreadContact, items: list[dict]) -> None:
+    """Move the Respond-side watermark to the newest id a Respond read returned. Only a
+    Respond read may call this; a monotonic GREATEST so an older page never moves it back."""
+    ids = [thread_service._message_id_to_ms(i.get("messageId")) for i in items]
+    newest = max((int(str(i.get("messageId"))) for i, ms in zip(items, ids) if ms is not None), default=None)
+    if newest is None:
+        return
+    _ensure_state(db, contact.channel, contact.respond_io_id)
+    db.execute(
+        text(
+            """
+            UPDATE chat_thread_sync_state
+            SET newest_synced_message_id = CASE
+                    WHEN newest_synced_message_id IS NULL
+                      OR newest_synced_message_id::numeric < :newest THEN :newest_text
+                    ELSE newest_synced_message_id END,
+                updated_at = NOW()
+            WHERE channel = :channel AND contact_id = :contact_id
+            """
+        ),
+        {
+            "channel": contact.channel,
+            "contact_id": contact.respond_io_id,
+            "newest": newest,
+            "newest_text": str(newest),
+        },
+    )
+
+
 def _set_oldest_reached(db: Session, contact: ThreadContact, reached: bool) -> None:
     _ensure_state(db, contact.channel, contact.respond_io_id)
     db.execute(
@@ -184,12 +227,16 @@ def _set_oldest_reached(db: Session, contact: ThreadContact, reached: bool) -> N
     )
 
 
-def note_first_page(db: Session, contact: ThreadContact, *, oldest_reached: bool) -> None:
-    """The live page that filled an empty thread counts as its first sync: no delta
-    read for the next interval, and a short newest page means the start was reached.
-    Best-effort, commits its own work."""
+def note_first_page(
+    db: Session, contact: ThreadContact, *, oldest_reached: bool, items: Optional[list[dict]] = None
+) -> None:
+    """The live page that filled an empty thread counts as its first sync: the watermark
+    moves to its newest id, no delta read for the next interval, and a short newest page
+    means the start was reached. Best-effort, commits its own work."""
     try:
         _mark_synced(db, contact)
+        if items:
+            _advance_watermark(db, contact, items)
         if oldest_reached:
             _set_oldest_reached(db, contact, True)
         db.commit()
@@ -303,20 +350,22 @@ def _record_failure(db: Session, contact: ThreadContact, exc: Exception, what: s
 def sync_newer(
     db: Session, contact: ThreadContact, client: Any, *, otp_slots: Optional[dict] = None
 ) -> dict:
-    """ONE delta read newer than the newest stored row. Never raises.
+    """ONE delta read newer than the Respond-side watermark. Never raises.
 
-    With no stored row it reads the newest page (the empty-local first open goes
-    through ``fetch_thread_page``'s live fallback instead, so this arm is the
-    reconcile's, for a contact whose rows were purged).
+    No watermark yet (a contact whose rows all came from n8n before this lane, or whose
+    rows were purged) reads the newest page with no cursor: that also fills the media and
+    sender of the last 50 rows and heals any gap inside them.
     """
     if otp_slots is None:
         otp_slots = otp_template_code_slots(db)
     try:
-        newest = newest_stored(db, contact)
-        cursor = f"-{newest.message_id}" if newest is not None else None
+        mark = watermark(db, contact)
+        cursor = f"-{mark}" if mark else None
         items = _read_page(client, contact, cursor=cursor, otp_slots=otp_slots)
         written = thread_service.persist_messages(db, contact, items)
+        _advance_watermark(db, contact, items)
         _mark_synced(db, contact)
+        to_push = _fresh_incoming_ids(db, contact, items) if written else []
         db.commit()
     except Exception as exc:  # noqa: BLE001 - a sync must never break a read or a tick
         return _record_failure(db, contact, exc, "delta sync")
@@ -324,7 +373,42 @@ def sync_newer(
         conversation_event_bus.publish(
             conversation_event_bus.EVENT_MESSAGE, contact_id=contact.respond_io_id
         )
+        for row_id in to_push:
+            _enqueue_push(row_id)
     return {"fetched": len(items), "written": written, "error": None, "rate_limited": False}
+
+
+def _fresh_incoming_ids(db: Session, contact: ThreadContact, items: list[dict]) -> list[int]:
+    """`chat_histories.id` of the incoming rows among ``items`` that are younger than
+    :data:`PUSH_FRESHNESS` and were never pushed. The push itself dedupes on the Respond
+    message id, so a row n8n already announced is queued again harmlessly."""
+    ids = [str(i.get("messageId")) for i in items if i.get("messageId") is not None]
+    if not ids:
+        return []
+    since = _now() - PUSH_FRESHNESS
+    rows = (
+        db.query(ChatHistory.id)
+        .filter(
+            ChatHistory.channel == contact.channel,
+            ChatHistory.contact_id == contact.respond_io_id,
+            ChatHistory.message_id.in_(ids),
+            ChatHistory.type == "incoming",
+            ChatHistory.sent_at >= since,
+        )
+        .all()
+    )
+    return [int(r[0]) for r in rows]
+
+
+def _enqueue_push(row_id: int) -> None:
+    """The same AC-M20 push the n8n ingest queues (best-effort, post-commit)."""
+    try:
+        from app.services.queue_service import enqueue_job
+        from app.tasks import message_push_tasks
+
+        enqueue_job(message_push_tasks.send_message_push, row_id, queue_name="notifications")
+    except Exception as push_error:  # noqa: BLE001
+        logger.warning("sync: failed to enqueue message push for chat_histories.id=%s: %s", row_id, push_error)
 
 
 def sync_older(
@@ -457,23 +541,38 @@ def _task_int(metadata: Any, key: str, default: int, *, minimum: int = 1) -> int
     return max(minimum, value)
 
 
+def _sync_due(state: ChatThreadSyncState, now: datetime) -> bool:
+    """Is this contact's next reconcile read due? Never synced: yes. Otherwise the gap
+    since the last sync must be at least a quarter of the time the contact has been quiet
+    (see RECONCILE_SPACING_DIVISOR)."""
+    if state.last_synced_at is None:
+        return True
+    quiet = now - (state.last_activity_at or now)
+    return (now - state.last_synced_at) >= quiet / RECONCILE_SPACING_DIVISOR
+
+
 def active_contacts(
-    db: Session, *, since: datetime, limit: int
+    db: Session, *, since: datetime, limit: int, now: Optional[datetime] = None
 ) -> list[ThreadContact]:
-    """Contacts with a message in the window, newest activity first, as thread contacts.
+    """Contacts with a message in the window whose next read is due, newest activity
+    first, as thread contacts.
 
     Phone and names come from ``respond_contacts`` where a row exists, else from the
     contact's newest chat row (``chat_histories`` carries them on every row).
     """
     from app.models.access import RespondContact
 
-    states = (
-        db.query(ChatThreadSyncState)
-        .filter(ChatThreadSyncState.last_activity_at >= since)
-        .order_by(ChatThreadSyncState.last_activity_at.desc())
-        .limit(limit)
-        .all()
-    )
+    now = now or _now()
+    states = [
+        s
+        for s in (
+            db.query(ChatThreadSyncState)
+            .filter(ChatThreadSyncState.last_activity_at >= since)
+            .order_by(ChatThreadSyncState.last_activity_at.desc())
+            .all()
+        )
+        if _sync_due(s, now)
+    ][:limit]
     if not states:
         return []
     ids = sorted({s.contact_id for s in states})
@@ -556,7 +655,7 @@ def run_reconcile(
 
         session_factory = SessionLocal
 
-    contacts = active_contacts(db, since=now - timedelta(days=days), limit=batch_limit)
+    contacts = active_contacts(db, since=now - timedelta(days=days), limit=batch_limit, now=now)
 
     # Group by API key so the concurrency cap is per workspace token, not global.
     groups: dict[str, tuple[Any, list[ThreadContact]]] = {}

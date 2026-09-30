@@ -400,6 +400,51 @@ def test_a_non_message_event_is_ignored_with_200(client, db, transport):
     assert transport.published == []
 
 
+def test_a_stored_row_enters_the_reconcile_window(client, db, transport):
+    """Kill test from review (AC-RC1): both feeds stamp the contact's activity."""
+    from app.models.chat_thread_sync_state import ChatThreadSyncState
+
+    _post(client, _event())
+    state = db.query(ChatThreadSyncState).filter(ChatThreadSyncState.contact_id == CONTACT_ID).one()
+    assert state.last_activity_at is not None
+    assert state.newest_synced_message_id is None, "a webhook row never moves the Respond watermark"
+
+    client.post(
+        INGEST_URL,
+        json={
+            "channel": "whatsapp",
+            "contact_id": CONTACT_ID,
+            "phone_number": "+60166753328",
+            "message": "later",
+            "sent_at": 1786751991000,
+            "type": "incoming",
+            "message_id": str(MESSAGE_ID + 100_000_000),
+        },
+    )
+    db.expire_all()
+    state = db.query(ChatThreadSyncState).filter(ChatThreadSyncState.contact_id == CONTACT_ID).one()
+    assert state.last_activity_at.timestamp() >= 1786751991
+
+
+def test_the_clock_is_the_message_id_and_a_seconds_timestamp_is_not_1970(client, db, transport):
+    """Review S8: `sent_at` comes from the message id like every other lane; a bare
+    seconds `timestamp` on an id that is not a clock is scaled, not read as milliseconds."""
+    body = _event()
+    body["message"]["timestamp"] = 1786751000000  # ms, deliberately different from the id
+    r = _post(client, body)
+    assert r.status_code == 200
+    (row,) = _rows(db)
+    assert row.sent_at.year == 2026 and int(row.sent_at.timestamp()) == MESSAGE_ID // 1_000_000
+
+    body = _event()
+    body["message"]["messageId"] = "abc-not-a-clock"
+    body["message"]["timestamp"] = 1786751891  # seconds
+    r = _post(client, body)
+    assert r.status_code == 200
+    (row,) = _rows(db, "abc-not-a-clock")
+    assert row.sent_at.year == 2026
+
+
 def test_a_message_event_with_no_message_id_is_400(client, db):
     body = _event()
     del body["message"]["messageId"]

@@ -12,12 +12,14 @@ Create Date: 2026-09-30
    `sender_user_id`). All nullable; old rows fill in as the delta / reconcile path re-reads
    them (fill-if-null), never by a one-shot script.
 2. `chat_thread_sync_state`, one row per (channel, contact_id): what a `chat_histories` row
-   cannot say for itself - whether the oldest Respond page was reached, when the contact was
-   last delta-synced, when it last had activity (what the reconcile selects on), and the last
-   sync error. The newest / oldest stored message ids are NOT copied here: the rows are the
-   truth for those, and a copy would go stale the moment n8n or the webhook wrote a row.
-   Seeded from the last 7 days of `chat_histories` so the first reconcile tick after the
-   deploy already covers everyone recently active.
+   cannot say for itself - the Respond-side watermark the delta read continues from
+   (`newest_synced_message_id`, advanced ONLY by a Respond read, never by an n8n / webhook /
+   CRM-send row, so a message one of those lanes missed is still behind the watermark and
+   gets read), whether the oldest Respond page was reached, when the contact was last
+   delta-synced, when it last had activity (what the reconcile selects on), and the last
+   sync error. The oldest stored id is read from the rows (a scroll-back continues from
+   whatever is oldest locally). Seeded from the last 7 days of `chat_histories` so the first
+   reconcile tick after the deploy already covers everyone recently active.
 3. A `chat_history_reconcile` row in `scheduled_tasks` (every 5 minutes), the existing
    DB-configured scheduler (`app/scheduler/task_scheduler.py`). Its knobs are the row's
    `metadata` (activity_days, concurrency, batch_limit), editable on the Scheduled Tasks page.
@@ -52,7 +54,7 @@ def upgrade() -> None:
         for r in conn.execute(
             sa.text(
                 "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'chat_histories'"
+                "WHERE table_schema = current_schema() AND table_name = 'chat_histories'"
             )
         )
     }
@@ -60,39 +62,45 @@ def upgrade() -> None:
         if name not in present:
             op.add_column("chat_histories", sa.Column(name, type_, nullable=True))
 
-    op.create_table(
-        "chat_thread_sync_state",
-        sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
-        sa.Column("channel", sa.String(32), nullable=False),
-        sa.Column("contact_id", sa.String(128), nullable=False),
-        sa.Column(
-            "oldest_reached", sa.Boolean(), nullable=False, server_default=sa.text("false")
-        ),
-        sa.Column("last_activity_at", sa.DateTime(timezone=False), nullable=True),
-        sa.Column("last_synced_at", sa.DateTime(timezone=False), nullable=True),
-        sa.Column("last_error", sa.Text(), nullable=True),
-        sa.Column("last_error_at", sa.DateTime(timezone=False), nullable=True),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=False),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=False),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
-        sa.UniqueConstraint("channel", "contact_id", name="uq_chat_thread_sync_state_contact"),
-        if_not_exists=True,
-    )
-    op.create_index(
-        "ix_chat_thread_sync_state_activity",
-        "chat_thread_sync_state",
-        ["last_activity_at"],
-        if_not_exists=True,
-    )
+    # A probe rather than `if_not_exists=` on create_table: the shared dev DB converges
+    # through create_all and may already hold the table, and requirements.txt allows an
+    # alembic older than that keyword.
+    exists = conn.execute(sa.text("SELECT to_regclass('chat_thread_sync_state')")).scalar()
+    if not exists:
+        op.create_table(
+            "chat_thread_sync_state",
+            sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
+            sa.Column("channel", sa.String(32), nullable=False),
+            sa.Column("contact_id", sa.String(128), nullable=False),
+            sa.Column("newest_synced_message_id", sa.String(64), nullable=True),
+            sa.Column(
+                "oldest_reached", sa.Boolean(), nullable=False, server_default=sa.text("false")
+            ),
+            sa.Column("last_activity_at", sa.DateTime(timezone=False), nullable=True),
+            sa.Column("last_synced_at", sa.DateTime(timezone=False), nullable=True),
+            sa.Column("last_error", sa.Text(), nullable=True),
+            sa.Column("last_error_at", sa.DateTime(timezone=False), nullable=True),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=False),
+                server_default=sa.func.now(),
+                nullable=False,
+            ),
+            sa.Column(
+                "updated_at",
+                sa.DateTime(timezone=False),
+                server_default=sa.func.now(),
+                nullable=False,
+            ),
+            sa.UniqueConstraint(
+                "channel", "contact_id", name="uq_chat_thread_sync_state_contact"
+            ),
+        )
+        op.create_index(
+            "ix_chat_thread_sync_state_activity",
+            "chat_thread_sync_state",
+            ["last_activity_at"],
+        )
 
     # Bootstrap the reconcile's selection: everyone active in the last 7 days. One scan,
     # once, at deploy; afterwards every ingest lane keeps `last_activity_at` current.

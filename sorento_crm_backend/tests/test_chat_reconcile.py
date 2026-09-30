@@ -172,7 +172,13 @@ def _seed_contact(db, i: int, *, activity: datetime, n_rows: int = 2):
             )
         )
     db.add(
-        ChatThreadSyncState(channel="whatsapp", contact_id=_contact(i), last_activity_at=activity)
+        ChatThreadSyncState(
+            channel="whatsapp",
+            contact_id=_contact(i),
+            last_activity_at=activity,
+            # The Respond-side watermark: the newest id a Respond read confirmed.
+            newest_synced_message_id=str(BASE + i * 100_000_000 + (n_rows - 1) * 1_000_000),
+        )
     )
     db.flush()
 
@@ -248,7 +254,7 @@ def test_the_tick_reads_one_delta_page_per_active_contact(db):
     assert summary["selected"] == 2 and summary["synced"] == 2
     assert summary["written"] == 2
     assert sorted(c["identifier"] for c in client.calls) == [_contact(1), _contact(2)]
-    assert all(str(c["cursor"]).startswith("-") for c in client.calls), "newer than the stored edge"
+    assert all(str(c["cursor"]).startswith("-") for c in client.calls), "newer than the watermark"
     stored = db.query(ChatHistory).filter(ChatHistory.message_id == str(new_item["messageId"])).all()
     assert sorted(r.contact_id for r in stored) == [_contact(1), _contact(2)]
 
@@ -347,6 +353,120 @@ def test_a_contact_whose_client_has_no_key_is_counted_not_called(db):
 
     assert client.calls == []
     assert summary["no_api_key"] == 1
+
+
+def test_spacing_follows_how_long_the_contact_has_been_quiet():
+    """Review S9: a 7-day window must not cost one call per contact per tick."""
+    now = datetime(2026, 9, 30, 12, 0, 0)
+
+    def state(activity_ago, synced_ago):
+        return ChatThreadSyncState(
+            channel="whatsapp",
+            contact_id="x",
+            last_activity_at=now - activity_ago,
+            last_synced_at=None if synced_ago is None else now - synced_ago,
+        )
+
+    assert sync._sync_due(state(timedelta(days=6), None), now) is True, "never synced"
+    assert sync._sync_due(state(timedelta(minutes=10), timedelta(minutes=5)), now) is True
+    assert sync._sync_due(state(timedelta(hours=2), timedelta(minutes=5)), now) is False
+    assert sync._sync_due(state(timedelta(hours=2), timedelta(minutes=31)), now) is True
+    assert sync._sync_due(state(timedelta(days=6), timedelta(hours=35)), now) is False
+    assert sync._sync_due(state(timedelta(days=6), timedelta(hours=37)), now) is True
+
+
+def test_a_contact_synced_recently_for_how_quiet_it_is_waits(db):
+    now = datetime(2026, 9, 30, 12, 0, 0)
+    _seed_contact(db, 1, activity=now - timedelta(hours=2))
+    _seed_contact(db, 2, activity=now - timedelta(minutes=10))
+    for i, synced in ((1, timedelta(minutes=5)), (2, timedelta(minutes=5))):
+        st = db.query(ChatThreadSyncState).filter(ChatThreadSyncState.contact_id == _contact(i)).one()
+        st.last_synced_at = now - synced
+    db.flush()
+
+    contacts = sync.active_contacts(db, since=now - timedelta(days=7), limit=100, now=now)
+    assert [c.respond_io_id for c in contacts] == [_contact(2)]
+
+
+def test_at_most_concurrency_contacts_are_in_flight_per_key(db, monkeypatch):
+    """AC-RC2, measured: the per-key pool never runs more than `concurrency` reads at
+    once, whatever the batch size. No database in the measured path."""
+    import threading
+    import time
+
+    now = datetime(2026, 9, 30, 12, 0, 0)
+    for i in range(1, 7):
+        _seed_contact(db, i, activity=now - timedelta(hours=i))
+    lock = threading.Lock()
+    in_flight = {"now": 0, "max": 0}
+
+    def fake_reconcile_one(contact, client, session_factory):
+        with lock:
+            in_flight["now"] += 1
+            in_flight["max"] = max(in_flight["max"], in_flight["now"])
+        time.sleep(0.03)
+        with lock:
+            in_flight["now"] -= 1
+        return {"fetched": 0, "written": 0, "error": None, "rate_limited": False}
+
+    monkeypatch.setattr(sync, "_reconcile_one", fake_reconcile_one)
+    client = FakeClient("key-a")
+
+    for concurrency in (1, 2):
+        in_flight["max"] = 0
+        summary = sync.run_reconcile(
+            db, _task(concurrency=concurrency), client_for=lambda _db, _c: client,
+            session_factory=lambda: None, now=now,
+        )
+        assert summary["synced"] == 6
+        assert in_flight["max"] == concurrency
+
+
+def test_the_handler_enqueues_the_run_instead_of_blocking_the_heartbeat(monkeypatch):
+    """Review B5: the heartbeat runs handlers one after another, so the tick is an RQ job."""
+    from app.scheduler import task_scheduler
+    from app.services import queue_service
+
+    captured = {}
+
+    def fake_enqueue(func, *args, queue_name=None, job_timeout=None, **kwargs):
+        captured.update(func=func, args=args, queue_name=queue_name, job_timeout=job_timeout)
+        return SimpleNamespace(id="job-1")
+
+    monkeypatch.setattr(queue_service, "enqueue_job", fake_enqueue)
+    task = SimpleNamespace(metadata_={"activity_days": 3, "concurrency": 1})
+
+    out = task_scheduler._handler_chat_history_reconcile(None, task)
+
+    from app.tasks.chat_reconcile_tasks import run_chat_history_reconcile
+
+    assert out == {"enqueued": "job-1", "queue": "respond_io"}
+    assert captured["func"] is run_chat_history_reconcile
+    assert captured["args"] == ({"activity_days": 3, "concurrency": 1},)
+    assert captured["queue_name"] == "respond_io"
+
+
+def test_the_job_runs_once_at_a_time(monkeypatch):
+    from app.services import queue_service
+    from app.tasks import chat_reconcile_tasks as tasks
+
+    class FakeRedis:
+        def __init__(self):
+            self.held = False
+
+        def set(self, key, value, nx=False, ex=None):
+            if self.held:
+                return None
+            self.held = True
+            return True
+
+        def delete(self, key):
+            self.held = False
+
+    fake = FakeRedis()
+    monkeypatch.setattr(queue_service, "redis_conn", fake)
+    fake.held = True
+    assert tasks.run_chat_history_reconcile({}) == {"skipped": "in progress"}
 
 
 def test_the_scheduler_registers_the_handler():

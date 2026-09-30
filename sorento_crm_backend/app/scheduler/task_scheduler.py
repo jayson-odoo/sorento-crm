@@ -298,11 +298,14 @@ def _handler_chat_history_reconcile(db, task):
     """One Respond.io delta read per recently active contact (lane CHAT-LOCAL-FIRST, R4).
 
     The thread renders from `chat_histories`; this is what keeps that table honest when
-    the n8n or webhook feed missed a message. Knobs on the task's `metadata`:
-    `activity_days` (7), `concurrency` per workspace key (2), `batch_limit` (500)."""
-    from app.services.chat_thread_sync_service import run_reconcile
+    the n8n or webhook feed missed a message. Enqueued on the `respond_io` RQ queue rather
+    than run inline: this heartbeat runs handlers one after another, and a few hundred
+    Respond calls here would stall every scheduled task behind them (review B5). Knobs on
+    the task's `metadata`: `activity_days` (7), `concurrency` per workspace key (2),
+    `batch_limit` (500). The run's own counts are in the worker log."""
+    from app.tasks.chat_reconcile_tasks import enqueue_reconcile
 
-    return run_reconcile(db, task)
+    return enqueue_reconcile(getattr(task, "metadata_", None))
 
 
 def _handler_chat_latency_watchdog(db, task):

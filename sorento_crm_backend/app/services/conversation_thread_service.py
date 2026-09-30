@@ -728,8 +728,11 @@ def persist_messages(db: Session, contact: ThreadContact, items: Iterable[dict])
                     sender_source = COALESCE(sender_source, :sender_source),
                     sender_user_id = COALESCE(sender_user_id, :sender_user_id)
                 WHERE contact_id = :contact_id AND message_id = :message_id
-                  AND (media_url IS NULL OR media_type IS NULL OR sender_source IS NULL
-                       OR sender_user_id IS NULL)
+                  AND ((media_url IS NULL AND CAST(:media_url AS TEXT) IS NOT NULL)
+                       OR (media_type IS NULL AND CAST(:media_type AS TEXT) IS NOT NULL)
+                       OR (media_file_name IS NULL AND CAST(:media_file_name AS TEXT) IS NOT NULL)
+                       OR (sender_source IS NULL AND CAST(:sender_source AS TEXT) IS NOT NULL)
+                       OR (sender_user_id IS NULL AND CAST(:sender_user_id AS TEXT) IS NOT NULL))
                 """
             ),
             held,
@@ -918,8 +921,13 @@ def fetch_thread_page(
         page = _local_page(db, contact, before=before, after=after, around=around, limit=limit)
         _attach_sender_names(db, page["items"])
         page["backfilled"] = 0
+        # A short local page is the start of the thread only once Respond said so: a
+        # contact with three n8n rows and a thousand messages on Respond must keep
+        # offering older history, or the scroll-back that fills it never runs (review B1).
+        if not page["has_more_older"] and usable_client is not None and not after:
+            page["has_more_older"] = sync_service.older_read_allowed(db, contact)
         if usable_client is not None and not before and not around:
-            page["sync_scheduled"] = sync_service.schedule_sync_newer(db, contact)
+            sync_service.schedule_sync_newer(db, contact)
         return page
 
     if usable_client is not None:
@@ -943,10 +951,14 @@ def fetch_thread_page(
             _attach_sender_names(db, page["items"])
             page["backfilled"] = _persist_best_effort(db, contact, page["items"])
             if page["backfilled"]:
-                # The live page IS this contact's first sync: no delta read for 30 s,
-                # and a short newest page means the whole thread is already here.
+                # The live page IS this contact's first sync: the watermark moves to its
+                # newest id, no delta read for 30 s, and a short newest page means the
+                # whole thread is already here.
                 sync_service.note_first_page(
-                    db, contact, oldest_reached=not page["has_more_older"]
+                    db,
+                    contact,
+                    oldest_reached=not before and not around and not page["has_more_older"],
+                    items=page["items"] if not before and not around else None,
                 )
             return page
 

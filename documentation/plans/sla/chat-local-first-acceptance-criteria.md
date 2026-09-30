@@ -10,17 +10,23 @@ Plan: `PLAN-chat-local-first-30sep.md`.
 - AC-LF3 A Respond.io failure (timeout, 5xx, 429) on the AC-LF2 path still returns the (empty)
   local page with `source: local`; the request never 500s.
 - AC-LF4 The 10 s poll (portal thread, CRM inbox thread) costs zero Respond.io calls while the
-  contact's cursor was synced within the last `chat_sync_min_interval_seconds`.
+  contact was synced within the last `SYNC_MIN_INTERVAL_SECONDS` (30 s, a constant).
 
 ## B. Delta sync
-- AC-DS1 Opening a thread schedules at most ONE Respond.io delta call (newer than the stored
-  cursor) after the local page has been returned.
+- AC-DS1 Opening a thread schedules at most ONE Respond.io delta call (newer than the Respond-side
+  watermark, the newest id a Respond read confirmed) after the local page has been returned.
+- AC-DS1b A row n8n, the webhook or a CRM send wrote never moves the watermark, so a message one of
+  those lanes missed is recovered by the next delta read, and rows they wrote after it are re-read
+  (that is how AC-RF3 fills them).
 - AC-DS2 New rows from a delta fetch are upserted by `(contact_id, message_id)` and a `message`
   event is published on the conversation event bus for that contact.
 - AC-DS3 Scrolling past the oldest stored row schedules at most one Respond.io call older than
   the stored oldest id; when fewer than a full page returns, `oldest_reached` is set and no more
   older calls are made for that contact.
-- AC-DS4 The cursor row records `last_synced_at`, `newest_message_id`, `oldest_message_id`.
+- AC-DS4 The state row records `last_synced_at`, `newest_synced_message_id` (the watermark) and
+  `oldest_reached`; the oldest stored id is read from the rows.
+- AC-DS5 A local page shorter than the window offers older history (`has_more_older: true`) until
+  Respond has said the start was reached, or while the last older read failed within the interval.
 
 ## C. Direct webhook
 - AC-WH1 A Respond.io message webhook with a valid signature writes the same row the n8n ingest
@@ -31,9 +37,14 @@ Plan: `PLAN-chat-local-first-30sep.md`.
 - AC-WH4 A new row from the webhook publishes the `message` event; a duplicate does not.
 
 ## D. Reconcile
-- AC-RC1 The reconcile tick selects contacts with a `chat_histories` row within
-  `chat_reconcile_activity_days` and runs `sync_newer` for each.
-- AC-RC2 At most `chat_reconcile_concurrency` Respond.io calls are in flight per workspace token.
+- AC-RC1 The reconcile selects contacts whose activity (stamped by every lane that writes a row)
+  is within `activity_days` (task metadata) and runs `sync_newer` for each that is due: never
+  synced, or not synced for at least a quarter of the time the contact has been quiet.
+- AC-RC1b The scheduled-task handler enqueues the run on the `respond_io` RQ queue and returns at
+  once; one run at a time (Redis lock); the heartbeat is never blocked by it.
+- AC-RC2 At most `concurrency` (task metadata) Respond.io calls are in flight per workspace key.
+- AC-RC5 An incoming message the sync stored first, younger than one hour, gets the same phone
+  push the n8n ingest would have queued (deduped on the message id).
 - AC-RC3 A 429 with `Retry-After: N` pauses that token for N seconds; without the header the
   wait doubles per consecutive 429 (1, 2, 4, ... capped at 60 s) and resets on success.
 - AC-RC4 The tick never raises out of the scheduler; a failing contact is recorded on its cursor
@@ -44,15 +55,20 @@ Plan: `PLAN-chat-local-first-30sep.md`.
   `type`, `fileName`) from the new columns when present, text otherwise.
 - AC-RF2 `_row_to_item` renders `sender.source` from `sender_source` (`contact` for incoming
   rows with no stored source, as today).
-- AC-RF3 A row stored before this lane (no media columns) is filled on the next delta/reconcile
-  read of that message (fill-if-null), not by a one-shot script.
+- AC-RF3 A row stored without media / sender (n8n, before this lane) is filled on the next delta or
+  reconcile read that returns that message (fill-if-null, never an overwrite), not by a one-shot
+  script. Coverage: everything newer than the watermark, the newest 50 on a contact's first read,
+  and older history as scroll-back reaches it; rows deeper than that stay text until reached.
 
 ## F. Observability
 - AC-OB1 Every Respond.io HTTP call increments a per-minute counter and logs its path.
-- AC-OB2 `GET /api/v1/system/respond-io-calls` returns the current and previous minute's counts.
+- AC-OB2 `GET /api/v1/system/chat-history/respond-io-calls?minutes=N` (N up to 15, the counter's
+  Redis TTL) returns per-minute counts and their total.
 - AC-OB3 Hand test: opening a portal thread with history reads instantly, the counter shows at most
   1 call for the open and 0 for the following polls.
 
 ## G. Migration
-- AC-MG1 One additive migration: new columns on `chat_histories`, new table
-  `chat_thread_sync_cursors`, three settings columns on `system_settings`. Single alembic head.
+- AC-MG1 One additive migration: five nullable columns on `chat_histories`, new table
+  `chat_thread_sync_state` (seeded from the last 7 days), one `scheduled_tasks` row. No
+  `system_settings` change: the knobs are the task row's interval and metadata. Single alembic
+  head.

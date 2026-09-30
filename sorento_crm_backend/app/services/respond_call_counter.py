@@ -50,7 +50,16 @@ def _redis_client():
         try:
             import redis as _redis_lib
 
-            _redis.append(_redis_lib.from_url(settings.redis_url, decode_responses=True))
+            _redis.append(
+                _redis_lib.from_url(
+                    settings.redis_url,
+                    decode_responses=True,
+                    # On the path of every Respond call, sends included: a hung broker
+                    # must cost a second, not a request.
+                    socket_timeout=1,
+                    socket_connect_timeout=1,
+                )
+            )
         except Exception:  # noqa: BLE001 - counting is best-effort
             _redis.append(None)
     return _redis[0]
@@ -102,7 +111,8 @@ def counts(minutes: int = 10, now: Optional[datetime] = None) -> list[dict]:
     process's own counts. Each entry: ``{"minute": "<UTC minute>Z", "calls": n}``.
     """
     now = now or datetime.now(tz=timezone.utc)
-    minutes = max(1, min(int(minutes), 60))
+    # Never further back than the Redis TTL keeps: a minute past it would read as 0.
+    minutes = max(1, min(int(minutes), TTL_SECONDS // 60))
     keys = [minute_key(now - timedelta(minutes=i)) for i in range(minutes - 1, -1, -1)]
     values: Optional[list] = None
     client = _redis_client()

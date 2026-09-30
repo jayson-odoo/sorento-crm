@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -28,8 +28,6 @@ from app.services.chat_message_resolver import respond_ts_from_message_id
 from app.services.otp_redaction import mask_otp_text
 
 logger = logging.getLogger(__name__)
-
-INBOUND_TYPE = "incoming"
 
 
 @dataclass
@@ -53,7 +51,6 @@ class ChatMessageRow:
     media_file_name: Optional[str] = None
     sender_source: Optional[str] = None
     sender_user_id: Optional[str] = None
-    extra: dict = field(default_factory=dict)
 
 
 # AC-J5: a CRM drawer send reaches the ingest TWICE (the direct respond-send-user
@@ -168,14 +165,14 @@ def announce_new_row(db: Session, *, message_pk: int, contact_id: str, traffic: 
     """
     _ = db
     conversation_event_bus.publish(conversation_event_bus.EVENT_MESSAGE, contact_id=contact_id)
-    if str(traffic or "").lower() != INBOUND_TYPE:
-        return
     try:
-        from app.services.message_push_service import INBOUND_TYPE as PUSH_INBOUND
+        # Off the same constant the push service compares against, so the two cannot
+        # drift onto different spellings of "from the contact".
+        from app.services.message_push_service import INBOUND_TYPE
         from app.services.queue_service import enqueue_job
         from app.tasks import message_push_tasks
 
-        if str(traffic).lower() == PUSH_INBOUND:
+        if str(traffic or "").lower() == INBOUND_TYPE:
             enqueue_job(message_push_tasks.send_message_push, message_pk, queue_name="notifications")
     except Exception as push_error:  # noqa: BLE001
         logger.warning(

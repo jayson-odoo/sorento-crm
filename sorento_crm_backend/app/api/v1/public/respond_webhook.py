@@ -164,15 +164,22 @@ def map_webhook_message(payload: dict, db: Session) -> Optional[ChatMessageRow]:
             first_name = first_name or row.first_name
             last_name = last_name or row.last_name
 
+    # The message id IS Respond's clock (epoch microseconds), the same source the n8n
+    # ingest's `respond_ts` and the delta read's `sent_at` use, so rows from every lane
+    # sort alike. `timestamp` is the fallback, normalised by its size: seconds below
+    # 1e11, milliseconds below 1e14, microseconds above (review S8).
     ms = thread_service._message_id_to_ms(message_id)
     stamp = message.get("timestamp")
     try:
         stamp_ms = int(stamp) if stamp not in (None, "") else None
     except (TypeError, ValueError):
         stamp_ms = None
-    if stamp_ms is not None and stamp_ms > 1e14:
-        stamp_ms //= 1000
-    when_ms = stamp_ms or ms
+    if stamp_ms is not None:
+        if stamp_ms > 1e14:
+            stamp_ms //= 1000
+        elif stamp_ms < 1e11:
+            stamp_ms *= 1000
+    when_ms = ms or stamp_ms
     sent_at = (
         datetime.fromtimestamp(when_ms / 1000, tz=timezone.utc).replace(tzinfo=None)
         if when_ms

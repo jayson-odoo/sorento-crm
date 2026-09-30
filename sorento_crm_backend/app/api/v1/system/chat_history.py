@@ -89,7 +89,7 @@ def list_chat_messages(
 
 @router.get("/chat-history/respond-io-calls")
 def get_respond_io_call_counts(
-    minutes: int = Query(10, ge=1, le=60),
+    minutes: int = Query(10, ge=1, le=15),
     current_user: dict = Depends(require_permission("system.chat_history.view")),
 ):
     """Respond.io HTTP calls per minute, oldest first (lane CHAT-LOCAL-FIRST, R6).

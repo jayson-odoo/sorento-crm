@@ -42,18 +42,24 @@ will fail"), so local must be a cache that self-heals, never one that is blindly
   local keyset lane. The Respond client is not called on the request path.
 - If the contact has no local row: today's behaviour (live Respond page, then stored), so a
   first open of a never-ingested contact still renders the real thread.
-- `before` (scroll past the oldest stored row) when the local lane runs dry: the local page is
-  returned and a delta fetch "older than the oldest stored id" is scheduled (R2), which fills the
-  rows the next scroll reads. `has_more_older` stays true while the sync cursor says the oldest
-  Respond page was not yet reached.
+- `before` (scroll past the oldest stored row) when the local lane runs dry: ONE inline Respond
+  read older than the oldest stored id fills the rows, then the local page answers (R2).
+  `has_more_older` stays true on a short local page until Respond has said the start was
+  reached (a contact with three n8n rows and a long thread on Respond must keep offering
+  history), except while the last older read failed within the interval.
 
 ### R2 Delta sync state (new table `chat_thread_sync_state`, additive)
-- One row per `(channel, contact_id)`: `oldest_reached`, `last_activity_at`, `last_synced_at`,
-  `last_error`, `last_error_at`. The newest / oldest stored message ids are NOT copied here:
-  `chat_histories` is the truth for those (n8n, the webhook and a CRM send all write rows
-  directly, and a copied cursor would lag every one of them).
-- `sync_newer(db, contact, client)`: ONE `list_messages(cursor=f"-{newest stored id}")` call,
-  `persist_messages`, publish `EVENT_MESSAGE` when rows were written, stamp `last_synced_at`.
+- One row per `(channel, contact_id)`: `newest_synced_message_id` (the watermark), `oldest_reached`,
+  `last_activity_at`, `last_synced_at`, `last_error`, `last_error_at`. The oldest stored id is
+  read from the rows (a scroll-back continues from whatever is oldest locally).
+- `sync_newer(db, contact, client)`: ONE `list_messages(cursor=f"-{watermark}")` call, where the
+  watermark (`newest_synced_message_id`) is the newest id a Respond read confirmed and is advanced
+  ONLY by a Respond read: a row n8n, the webhook or a CRM send wrote never moves it, so a message
+  one of those lanes missed is still behind it and gets recovered, and rows they wrote after it
+  are re-read and have media / sender filled in (review B2 / B3). No watermark yet: the newest
+  page with no cursor. Then `persist_messages`, publish `EVENT_MESSAGE` when rows were written,
+  queue the phone push for a fresh (under 1 h) incoming row the sync stored first, stamp
+  `last_synced_at`.
   `sync_older(db, contact, client)`: ONE call with `cursor=<oldest stored id>`, same store, sets
   `oldest_reached` when fewer than 50 came back.
 - Newer: queued from `fetch_thread_page` on an in-process 2-thread pool after the local page is
@@ -82,9 +88,14 @@ will fail"), so local must be a cache that self-heals, never one that is blindly
 ### R4 Background reconcile
 - A `scheduled_tasks` row `chat_history_reconcile` (the existing DB-configured scheduler,
   `app/scheduler/task_scheduler.py` `register_handler`, seeded by the migration like
-  `chat_message_resolver` in 291): every 5 minutes (the row's interval), contacts whose
+  `chat_message_resolver` in 291). The handler enqueues the run on the `respond_io` RQ queue
+  (`app/tasks/chat_reconcile_tasks.py`, one run at a time through a Redis lock) because the
+  heartbeat runs handlers one after another and a few hundred Respond calls inline would stall
+  every task behind them (review B5). Every 5 minutes (the row's interval), contacts whose
   `chat_thread_sync_state.last_activity_at` is within `activity_days` (task metadata, default 7)
-  get `sync_newer`, `concurrency` (metadata, default 2) calls in flight per workspace key, with
+  and whose next read is due (not synced for at least a quarter of the time they have been quiet,
+  so a contact idle for 6 days is read every 36 h, one active 10 min ago every tick) get
+  `sync_newer`, `concurrency` (metadata, default 2) calls in flight per workspace key, with
   `respond_rate_limit.py` backoff: `Retry-After` honoured, else 1, 2, 4 ... 60 s doubling per
   consecutive 429; 5xx and transport errors arm the same window; a 404 does not.
 - `last_activity_at` is stamped by every lane that writes a row (n8n, webhook, CRM send mirror,
@@ -131,7 +142,7 @@ will fail"), so local must be a cache that self-heals, never one that is blindly
   `config.py` (`respond_webhook_secret`); `schemas/external/chat_history.py` (optional media and
   sender fields for n8n).
 - Tests: `tests/test_chat_local_first.py` (A, B, E), `tests/test_respond_webhook_ingest.py` (C),
-  `tests/test_chat_reconcile.py` (D). 56 tests. Existing thread, ingest, portal, inbox and
+  `tests/test_chat_reconcile.py` (D). 79 tests after the two review rounds. Existing thread, ingest, portal, inbox and
   Respond client suites re-run green.
 - No frontend change: both the portal thread and the CRM inbox read through
   `sla_service._thread_page_for_contact`; media renders through the existing
@@ -139,6 +150,11 @@ will fail"), so local must be a cache that self-heals, never one that is blindly
 - Deviation from the ticket's first wording: the older read on scroll-back runs inline rather
   than in the background (section 3, R2) because a background fill would leave the requested page
   empty and the client with no reason to ask again.
+- Review rounds (Opus reviewer + security-reviewer, findings in PR #1402): watermark instead of
+  "newest stored row" as the delta cursor, `has_more_older` on short local pages, reconcile
+  offloaded to RQ, phone push from the sync lane, OTP template redaction and a body cap on the
+  webhook, byte-wise signature compare, older-read throttle after a failure, media host
+  allowlist, tighter fill-if-null UPDATE, seconds timestamps.
 - Process note: the migration, service and tests were written in one session (cloud sandbox,
   crew lane) rather than by separate tester / coder agents; the reviewer and security-reviewer
   passes ran as Opus agents (Phase 3) before the PR left draft.
