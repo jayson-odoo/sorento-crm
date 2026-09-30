@@ -734,6 +734,7 @@ def seed_chatbot_policy() -> None:
     spk = _load("_spk_0001_specification_kind", "spk_0001_specification_kind.py")
     top_selling = _load("_chatbot_top_selling_tool", "chatbot_top_selling_tool.py")
     sales_s1 = _load("_sales_s1_reports_module", "sales_s1_reports_module.py")
+    pdyn1 = _load("_pdyn_0001_status_words_sales", "pdyn_0001_status_words_sales.py")
 
     with engine.begin() as conn:
         domains_inserted, kinds_inserted = s0.seed_domains_and_kinds(conn)
@@ -758,6 +759,9 @@ def seed_chatbot_policy() -> None:
         s11.apply_narrowing(conn)
     with engine.begin() as conn:
         s12.apply_narrowing(conn)
+    # After every narrowing step: the `sales` row copies the `order` row's narrowing.
+    with engine.begin() as conn:
+        pdyn1.apply(conn)
     # LAST, and after every narrowing step: it renders the blocks from the tables as
     # they now stand and leaves `production` on that version.
     with engine.begin() as conn:

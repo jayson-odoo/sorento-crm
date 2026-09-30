@@ -77,3 +77,30 @@ class ChatbotEntityKind(Base):
     updated_at = Column(
         DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class ChatbotStatusWord(Base):
+    """One status value a domain's asks can carry, and the customer words that set it
+    (PLAN-prompt-dynamic-30sep D6).
+
+    The parser prompt's status bullets and its `status` / `order_status` value list are
+    rendered from these rows at request time (`chatbot/prompt_registry_vars.py`), so a
+    word added here reaches the next turn without a prompt publish. Audited for the same
+    reason as ``ChatbotDomain``: one row changes what every future turn is told.
+    """
+
+    __tablename__ = "chatbot_status_words"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # `chatbot_domains.name`, not its id: the prompt, the parser output and every lane
+    # speak the name, and a renamed domain is a new domain everywhere else too.
+    domain = Column(Text, nullable=False)
+    value = Column(Text, nullable=False, unique=True)
+    label = Column(Text, nullable=False)
+    trigger_words = Column(ARRAY(Text), nullable=False, server_default="{}")
+    sort_order = Column(Integer, nullable=False, server_default="0")
+    created_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
