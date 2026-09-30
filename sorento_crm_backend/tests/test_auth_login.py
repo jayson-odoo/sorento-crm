@@ -111,50 +111,92 @@ def _session_for(client, token: str):
         db.close()
 
 
-@pytest.mark.parametrize("extra", [{}, {"remember_me": False}, {"remember_me": True}])
-def test_email_login_always_mints_30d_sliding_session(client, extra):
-    """SIGNIN-ALWAYS-SLIDE: no remember-me choice. A legacy `remember_me` (even
-    False) is accepted and ignored; every email sign-in is the 30-day slide."""
+def _pull_back_one_day(client, token: str):
+    """Simulate more than a day passing: under 29 days remain, so the slide must fire."""
+    from app.models.user_session import UserSession
+
+    db = client._session_factory()  # type: ignore[attr-defined]
+    try:
+        row = db.query(UserSession).filter(UserSession.token == token).one()
+        row.expires_at = row.expires_at - timedelta(days=1, hours=1)
+        db.commit()
+        return row.expires_at
+    finally:
+        db.close()
+
+
+# SIGNIN-ALWAYS-SLIDE regression (owner, 30 Sep 2026): no remember-me choice. An
+# older client may still send `remember_me`; it is accepted and ignored.
+LOGIN_PAYLOAD_VARIANTS = pytest.mark.parametrize(
+    "extra",
+    [{}, {"remember_me": False}, {"remember_me": None}, {"remember_me": True}],
+    ids=["no_remember_me", "remember_me_false", "remember_me_null", "remember_me_true"],
+)
+
+
+@pytest.mark.parametrize(
+    "extra", [{}, {"remember_me": False}], ids=["no_remember_me", "remember_me_false"]
+)
+def test_regression_login_mints_30d_session_that_slides_after_a_day(client, extra):
+    """(1) POST /auth/login without remember_me AND with remember_me=false both mint a
+    30-day session, and a request more than a day later moves expires_at forward."""
     from app.services.user_session_service import _utcnow
 
     email = f"slide-{uuid.uuid4().hex[:8]}@example.com"
     _make_user(client, email=email)
 
     res = _login(client, email, PASSWORD, **extra)
-
     assert res.status_code == 200, res.text
-    row = _session_for(client, res.json()["token"])
-    assert row.rolling is True
-    assert row.auth_method == "password"
-    remaining = row.expires_at - _utcnow()
+    token = res.json()["token"]
+
+    minted = _session_for(client, token)
+    assert minted.rolling is True
+    assert minted.auth_method == "password"
+    remaining = minted.expires_at - _utcnow()
     assert timedelta(days=29, hours=23) < remaining <= timedelta(days=30, minutes=1)
 
+    pulled_back = _pull_back_one_day(client, token)
+    auth = {"Authorization": f"Bearer {token}"}
+    assert client.get("/api/v1/auth/sessions", headers=auth).status_code == 200
 
-def test_email_session_slides_on_activity_and_revoke_still_ends_it(client):
-    """A day later the session is used, its expiry moves forward; logout revokes it."""
-    from app.services.user_session_service import _utcnow
+    slid = _session_for(client, token).expires_at
+    assert slid > pulled_back, "expires_at did not move forward on activity"
+    assert slid - _utcnow() > timedelta(days=29, hours=23)
 
-    email = f"slide2-{uuid.uuid4().hex[:8]}@example.com"
+
+@LOGIN_PAYLOAD_VARIANTS
+def test_regression_login_never_mints_a_session_shorter_than_30d(client, extra):
+    """(2) The old 8h path is unreachable from /auth/login: whatever remember_me says,
+    no session it mints is fixed-lifetime or has a TTL under 30 days."""
+    from app.models.user_session import UserSession
+    from app.services import user_session_service as svc
+
+    assert not hasattr(svc, "SHORT_TTL"), "the 8h TTL came back"
+
+    email = f"nottl-{uuid.uuid4().hex[:8]}@example.com"
+    user_id = _make_user(client, email=email)
+
+    res = _login(client, email, PASSWORD, **extra)
+    assert res.status_code == 200, res.text
+
+    db = client._session_factory()  # type: ignore[attr-defined]
+    try:
+        rows = db.query(UserSession).filter(UserSession.user_id == user_id).all()
+    finally:
+        db.close()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.rolling is True
+    ttl = row.expires_at - row.created_at
+    assert ttl >= svc.REMEMBER_TTL - timedelta(seconds=5), f"minted TTL {ttl} < 30d"
+
+
+def test_email_session_revoke_still_ends_it(client):
+    """Revocation is still checked on every request: after logout the token is 401."""
+    email = f"revoke-{uuid.uuid4().hex[:8]}@example.com"
     _make_user(client, email=email)
     token = _login(client, email, PASSWORD).json()["token"]
     auth = {"Authorization": f"Bearer {token}"}
-
-    # Simulate a day passing: pull the expiry back so under 29 days remain.
-    db = client._session_factory()  # type: ignore[attr-defined]
-    try:
-        from app.models.user_session import UserSession
-
-        row = db.query(UserSession).filter(UserSession.token == token).one()
-        row.expires_at = row.expires_at - timedelta(days=1, hours=1)
-        db.commit()
-        pulled_back = row.expires_at
-    finally:
-        db.close()
-
-    assert client.get("/api/v1/auth/sessions", headers=auth).status_code == 200
-    slid = _session_for(client, token).expires_at
-    assert slid > pulled_back
-    assert slid - _utcnow() > timedelta(days=29, hours=23)
 
     assert client.post("/api/v1/auth/logout", headers=auth).status_code in (200, 204)
     res = client.get("/api/v1/auth/sessions", headers=auth)

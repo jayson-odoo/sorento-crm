@@ -177,6 +177,31 @@ describe('AC-20: /signin phone entry', () => {
     expect(screen.queryByText('Remember me')).toBeNull();
   });
 
+  it('SIGNIN-ALWAYS-SLIDE regression: the email submit payload carries no rememberMe', async () => {
+    mockSignIn.mockResolvedValue({ error: null, ok: true } as Awaited<ReturnType<typeof signIn>>);
+    mockGetSession.mockResolvedValue(null);
+    renderSignin();
+
+    fireEvent.change(screen.getByPlaceholderText('Your email'), {
+      target: { value: 'staff@example.com' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Your password'), {
+      target: { value: 'correct-horse' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => expect(mockSignIn).toHaveBeenCalledWith('credentials', expect.anything()));
+    const call = mockSignIn.mock.calls.find(([provider]) => provider === 'credentials');
+    const payload = call?.[1] as Record<string, unknown>;
+    expect(payload).not.toHaveProperty('rememberMe');
+    expect(payload).not.toHaveProperty('remember_me');
+    expect(payload).toEqual({
+      redirect: false,
+      email: 'staff@example.com',
+      password: 'correct-horse',
+    });
+  });
+
   it('the phone field is the shared PhoneInput, Malaysia (+60) by default', () => {
     renderSignin();
     openPhone();
