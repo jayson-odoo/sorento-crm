@@ -190,6 +190,10 @@ AUTOCOUNT_NEGATIVE = "AUTOCOUNT_NEGATIVE"
 #: A DO detail row whose delivery order the AutoCount DO ingest owns (`doc_key` set, #1354
 #: S2): its lines are AutoCount's, so the upload leaves them alone.
 AUTOCOUNT_OWNED = "autocount_owned"
+#: A pulled AutoCount document the DO ingest answered `retryable` for (DO-PULL-CRM): a
+#: product or warehouse it names is not in the CRM yet. Left out of this pull's apply;
+#: the feed re-sends it once the master arrives.
+AUTOCOUNT_RETRYABLE = "autocount_retryable"
 
 LABELS: dict[str, str] = {
     CREATED: "Created",
@@ -247,6 +251,7 @@ LABELS: dict[str, str] = {
     AUTOCOUNT_NOT_APPLIED_UNKNOWN: "Not applied: unknown location",
     AUTOCOUNT_NEGATIVE: "AutoCount reports a negative on-hand quantity",
     AUTOCOUNT_OWNED: "Left alone: AutoCount sends this delivery order's lines",
+    AUTOCOUNT_RETRYABLE: "Retry later: a product or warehouse it names is not in the CRM yet",
 }
 
 

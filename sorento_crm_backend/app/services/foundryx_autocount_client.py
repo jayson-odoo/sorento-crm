@@ -163,14 +163,19 @@ class FoundryxAutocountClient:
 
     # ------------------------------------------------------------- calls
 
-    def build(self, company_code: str, entity: str) -> dict:
+    def build(self, company_code: str, entity: str, scope: Optional[dict] = None) -> dict:
         """``POST /api/v1/autocount/snapshots`` - starts (or reuses, on FoundryX's own
-        side) a snapshot build."""
+        side) a snapshot build. ``scope`` (DO-PULL-SS contract, delivery orders only so
+        far) rides FLAT beside ``companyCode`` / ``entity``: ``fromDay`` / ``toDay`` /
+        ``docNo``; absent means the gateway's own default window."""
+        body = {"companyCode": company_code, "entity": entity}
+        if scope:
+            body.update(scope)
         return self._request(
             "POST",
             "/api/v1/autocount/snapshots",
             timeout=_BUILD_TIMEOUT_SECONDS,
-            json={"companyCode": company_code, "entity": entity},
+            json=body,
         )
 
     def status(self, snapshot_id: str) -> dict:

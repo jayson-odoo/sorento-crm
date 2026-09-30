@@ -513,13 +513,14 @@ def notify_salesman(db: Session, facts: dict[str, Any]) -> dict[str, Any]:
 
 def _family_names_by_contact(db: Session, contact_ids: set[str]) -> dict[str, str]:
     """contact id -> the trading name of the customers it is linked to, for the contacts whose
-    links are all ledgers of ONE shop (`ledger_family_key`); a contact linked to two shops, or
+    links are all ledgers of ONE shop (`ledger_family_key`, `app/services/ledger_family.py`,
+    the rule the chatbot's narrower groups its roster by); a contact linked to two shops, or
     to nothing, is absent. Read under the caller's company scope, like the links themselves."""
     if not contact_ids:
         return {}
     from app.models.access import RespondContactCustomer
     from app.models.order import Customer
-    from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
+    from app.services.ledger_family import ledger_family_key, ledger_family_label
 
     keys: dict[str, set[str]] = {}
     labels: dict[str, str] = {}

@@ -35,16 +35,24 @@ from app.services.queue_service import enqueue_job
 logger = logging.getLogger(__name__)
 
 #: Entity name (as the FE/route spells it) -> the permission slug that gates it.
+#: `delivery_orders` (PLAN-autocount-do-pull-crm-30sep.md) is the third entity on this
+#: machinery; its preview and apply run the DO ingest, never a writer of their own.
 ENTITY_PERMISSIONS = {
     "products": "master_data.products.autocount_pull",
     "stock_balances": "inventory.stock.autocount_pull",
+    "delivery_orders": "order_management.orders.autocount_pull",
 }
 
 #: Entity name -> the `import_jobs.job_type` a pull of it is stored under.
 JOB_TYPES = {
     "products": "autocount_products_pull",
     "stock_balances": "autocount_stock_pull",
+    "delivery_orders": "autocount_delivery_orders_pull",
 }
+
+#: The flat scope keys a delivery-orders build accepts (DO-PULL-SS contract): a day window,
+#: or one document by number; none = the gateway's own default (the last 31 MYT days).
+SCOPE_KEYS = ("fromDay", "toDay", "docNo")
 
 #: D3 (small-fix track, browser e2e run 3): "date of the apply" is the LOCAL calendar day,
 #: same convention every other module in this file's neighbourhood uses for a user-facing
@@ -56,6 +64,7 @@ _MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 APPLY_JOB_TYPES = {
     "products": "autocount_products_apply",
     "stock_balances": "autocount_stock_apply",
+    "delivery_orders": "autocount_delivery_orders_apply",
 }
 
 #: A pull is visible on the review page (rows / download / compare) once the preview has
@@ -181,11 +190,17 @@ def get_owned_pull(db: Session, *, job_id: str, user_id: str) -> Optional[Import
     return job
 
 
-def start_pull(db: Session, *, user_id: str, company_id: str, entity: str) -> ImportJob:
+def start_pull(
+    db: Session, *, user_id: str, company_id: str, entity: str, scope: Optional[dict] = None
+) -> ImportJob:
     """Reuses an open pull; otherwise asks FoundryX to build a snapshot and creates the
     pending row (AC-PL-3, AC-PL-4). Raises `FoundryxPullError` on any FoundryX refusal -
     the caller is responsible for leaving no job row behind on that path, which is true
     here because the row is only ever constructed AFTER `client.build` returns.
+
+    `scope` (delivery orders, DO-PULL-SS contract) is passed to the build flat and kept
+    on the pull for the review header; an open pull is reused whatever scope the second
+    click names - one open pull per company + entity + caller is the rule (AC-PL-4).
     """
     existing = find_open_pull(db, user_id=user_id, company_id=company_id, entity=entity)
     if existing is not None:
@@ -193,12 +208,14 @@ def start_pull(db: Session, *, user_id: str, company_id: str, entity: str) -> Im
 
     company_code = _company_code(db, company_id)
     client = FoundryxAutocountClient(db)  # raises FoundryxPullError(NOT_CONFIGURED) if unset
-    body = client.build(company_code, entity)
+    scope = {k: v for k, v in (scope or {}).items() if k in SCOPE_KEYS and v not in (None, "")}
+    body = client.build(company_code, entity, scope or None)
 
     pull = {
         "entity": entity,
         "company_code": company_code,
         "snapshot_id": body.get("snapshotId"),
+        "scope": scope or None,
         "phase": "building",
         "progress": None,
         "header": None,
@@ -389,13 +406,20 @@ def serialize(job: ImportJob, db: Session) -> dict:
         "job_id": str(job.id),
         "entity": pull.get("entity"),
         "company_code": pull.get("company_code"),
+        "scope": pull.get("scope"),
         "phase": phase,
         "progress": pull.get("progress"),
         "preview_progress": preview_progress,
         "header": pull.get("header"),
         "counts": pull.get("counts") or {},
-        "confirm_blocked_reason": pull.get("confirm_blocked_reason"),
+        "confirm_blocked_reason": pull.get("confirm_blocked_reason") or match_gate_reason(pull),
+        "confirm_requires_match": match_gate_reason(pull) is not None,
         "compare": pull.get("compare"),
+        "compare_sources": pull.get("compare_sources"),
+        "window": (
+            dict(zip(("fromDay", "toDay"), pull_window(pull)))
+            if pull.get("entity") == "delivery_orders" else None
+        ),
         "apply_job_id": apply_job_id,
         "apply_status": apply_status,
         "warnings": pull.get("warnings") or [],
@@ -477,13 +501,18 @@ def _row_price(raw_list_price) -> float:
 
 
 def paginate_rows(mapped_rows: list[dict], *, page: int, limit: int, query: Optional[str]) -> dict:
-    """AC-RV-3: `query` filters by item code, contains, case-insensitive - applied before
-    paging, over the whole assembled set (plan: "no cache", the FoundryX side is the one
-    that pages 1000 at a time; this is the already-assembled view)."""
+    """AC-RV-3: `query` filters by item code (and, on a delivery-orders row, by its
+    document number too), contains, case-insensitive - applied before paging, over the
+    whole assembled set (plan: "no cache", the FoundryX side is the one that pages 1000 at
+    a time; this is the already-assembled view)."""
     rows = mapped_rows
     needle = (query or "").strip().lower()
     if needle:
-        rows = [r for r in rows if needle in (r.get("item_code") or "").lower()]
+        rows = [
+            r for r in rows
+            if needle in str(r.get("item_code") or "").lower()
+            or needle in str(r.get("doc_no") or "").lower()
+        ]
     total = len(rows)
     total_pages = max(1, (total + limit - 1) // limit)
     start = (page - 1) * limit
@@ -651,17 +680,186 @@ def build_stock_workbook(template_rows: list[dict]) -> bytes:
     return buffer.getvalue()
 
 
-def store_compare_summary(db: Session, job: ImportJob, *, filename: str, result: dict) -> ImportJob:
-    """AC-CM-5: only the summary is kept on the job - the uploaded rows and the
-    difference list are returned to the browser and never stored.
+# ============================================================ delivery orders rows
 
-    `qty_total_excel`/`qty_total_pull` (AC-CM-3, stock only) come straight through from
-    `compare_stock`'s own summary; absent (products) they stay `None`, matching the
-    plan's metadata shape.
-    """
-    pull = _pull_meta(job)
+
+class SnapshotBookUnknown(ValueError):
+    """The snapshot names no single AutoCount book - the DO ingest is keyed per book, so
+    nothing can be previewed or applied. The message is safe to store as `import_jobs.error`."""
+
+
+#: FoundryX's own cap on a delivery-orders snapshot (DO-PULL-SS contract 16). Enforced here
+#: too (security review N3), so the preview and apply never trust the far side for the one
+#: bound that decides how long one transaction runs.
+MAX_DELIVERY_ORDER_DOCS = 10_000
+
+
+def snapshot_book(header: dict, rows: list[dict]) -> str:
+    """The AutoCount book a delivery-orders snapshot came from (DO-PULL-SS contract): the
+    header's own `book` when it carries one, else the prefix every row's `source_ref`
+    (`{book}:DO:{DocKey}`) agrees on. The book must satisfy the ingest's own `BOOK_PATTERN`
+    (security review S3: `source_book` is 20 characters and the key is case-sensitive), and
+    a header book must agree with the rows'. Rows naming two books, or none at all, raise -
+    the book is never guessed."""
+    from app.services.autocount_doc_ingest_service import BOOK_PATTERN
+
+    books = set()
+    for row in rows:
+        ref = str((row or {}).get("source_ref") or "")
+        prefix = ref.split(":", 1)[0].strip() if ":" in ref else ""
+        if prefix:
+            books.add(prefix)
+    from_header = str((header or {}).get("book") or "").strip()
+    if from_header:
+        books.add(from_header)
+    if not books:
+        raise SnapshotBookUnknown("AutoCount snapshot names no book; pull again.")
+    if len(books) > 1:
+        raise SnapshotBookUnknown(
+            f"AutoCount snapshot names more than one book ({', '.join(sorted(books))}); pull again."
+        )
+    book = books.pop()
+    if not BOOK_PATTERN.match(book):
+        raise SnapshotBookUnknown(
+            f"AutoCount snapshot names a book the CRM cannot store ({book[:40]!r}); pull again."
+        )
+    return book
+
+
+def _iso_day(value) -> Optional[str]:
+    """`DocDate` as the vendor sends it (`2026-09-27T00:00:00`, or `yyyyMMdd`) -> `YYYY-MM-DD`;
+    anything unparseable is passed through as text rather than dropped."""
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+    if len(text_value) == 8 and text_value.isdigit():
+        return f"{text_value[:4]}-{text_value[4:6]}-{text_value[6:]}"
+    return text_value[:10]
+
+
+def _number(value):
+    """A finite JSON number for the rows view, else `None` (security review N2): a vendor
+    cell that is not a number - text, a nested object, `nan`/`inf` - must neither crash the
+    xlsx builder nor fail JSON serialisation."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _cell_text(value) -> Optional[str]:
+    """A vendor cell as display text, else `None` - never a dict or list (openpyxl raises
+    on those), never a string longer than a spreadsheet cell can hold."""
+    if value is None or isinstance(value, (dict, list)):
+        return None
+    text_value = str(value).strip()
+    return text_value[:255] if text_value else None
+
+
+def map_delivery_order_rows(rows: list[dict]) -> list[dict]:
+    """AC-DP-30: one row per DO LINE, in the shape of the "Import delivery order lines"
+    sheet the checker uploads today (`Doc No` / `Item Code` / `Location` are its keys). A
+    `Details` row with no `ItemCode` is not a line (the DO ingest's own rule) and is left
+    out. Snapshot order is kept: documents as served, lines as listed."""
+    out: list[dict] = []
+    for rec in rows:
+        if not isinstance(rec, dict):
+            continue
+        for line in rec.get("Details") or []:
+            if not isinstance(line, dict):
+                continue
+            item_code = _cell_text(line.get("ItemCode"))
+            if not item_code:
+                continue
+            out.append({
+                "doc_no": _cell_text(rec.get("DocNo")) or "",
+                "doc_date": _iso_day(_cell_text(rec.get("DocDate"))),
+                "debtor_code": _cell_text(rec.get("DebtorCode")),
+                "debtor_name": _cell_text(rec.get("DebtorName")),
+                "item_code": item_code,
+                "description": _cell_text(line.get("Description")),
+                "location": _cell_text(line.get("Location")),
+                "qty": _number(line.get("Qty")),
+                "uom": _cell_text(line.get("UOM")),
+                "unit_price": _number(line.get("UnitPrice")),
+                "sub_total": _number(line.get("SubTotal")),
+            })
+    return out
+
+
+_DELIVERY_ORDERS_TEMPLATE_HEADER = (
+    "Doc No", "Doc Date", "Debtor Code", "Debtor Name", "Item Code", "Description",
+    "Location", "Qty", "UOM", "Unit Price", "Sub Total",
+)
+
+
+def build_delivery_orders_workbook(mapped_rows: list[dict]) -> bytes:
+    """AC-DP-31: the DO lines sheet's own header row, one row per line."""
+    import io
+
+    import openpyxl
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "AutoCount pull"
+    sheet.append(list(_DELIVERY_ORDERS_TEMPLATE_HEADER))
+    for row in mapped_rows:
+        sheet.append([
+            row.get("doc_no"), row.get("doc_date"), row.get("debtor_code"),
+            row.get("debtor_name"), row.get("item_code"), row.get("description"),
+            row.get("location"), row.get("qty"), row.get("uom"), row.get("unit_price"),
+            row.get("sub_total"),
+        ])
+    _neutralize_formula_cells(sheet)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+#: The two Excel files a delivery-orders pull is compared with (owner decision 30 Sep):
+#: the Order Listing macro's `Master` sheet (DO lines) and the Order Tracking macro's
+#: `Master` sheet (DO headers).
+COMPARE_SOURCES = ("lines", "headers")
+
+#: The gateway's default window when a pull names none (DO-PULL-SS contract 16).
+DEFAULT_WINDOW_DAYS = 31
+
+
+def pull_window(pull: dict) -> tuple[Optional[str], Optional[str]]:
+    """(fromDay, toDay) the pull covered, as `YYYY-MM-DD` text: the scope the checker asked
+    for, else the window the ready header echoes, else the gateway's default (the 31 MYT
+    days ending on the snapshot's own day). A scope naming one document has no window."""
+    scope = pull.get("scope") or {}
+    if scope.get("docNo") and not (scope.get("fromDay") or scope.get("toDay")):
+        return None, None
+    if scope.get("fromDay") or scope.get("toDay"):
+        return scope.get("fromDay"), scope.get("toDay")
+    header = pull.get("header") or {}
+    if header.get("fromDay") or header.get("toDay"):
+        return header.get("fromDay"), header.get("toDay")
+    extracted = header.get("extractedAt")
+    if not extracted:
+        return None, None
+    try:
+        snapshot_day = datetime.fromisoformat(str(extracted).replace("Z", "+00:00")).astimezone(_MY_TZ).date()
+    except ValueError:
+        return None, None
+    return (snapshot_day - timedelta(days=DEFAULT_WINDOW_DAYS - 1)).isoformat(), snapshot_day.isoformat()
+
+
+def _summary_of(filename: str, result: dict) -> dict:
     summary = result.get("summary") or {}
-    pull["compare"] = {
+    return {
         "filename": filename,
         "compared_at": datetime.utcnow().isoformat(),
         "total": summary.get("total", 0),
@@ -672,11 +870,75 @@ def store_compare_summary(db: Session, job: ImportJob, *, filename: str, result:
         "qty_total_excel": summary.get("qty_total_excel"),
         "qty_total_pull": summary.get("qty_total_pull"),
     }
+
+
+def store_compare_summary(
+    db: Session, job: ImportJob, *, filename: str, result: dict, source: Optional[str] = None
+) -> ImportJob:
+    """AC-CM-5: only the summary is kept on the job - the uploaded rows and the
+    difference list are returned to the browser and never stored.
+
+    `qty_total_excel`/`qty_total_pull` (AC-CM-3, stock only) come straight through from
+    `compare_stock`'s own summary; absent (products) they stay `None`, matching the
+    plan's metadata shape.
+
+    `source` (delivery orders): the summary is kept per file under `compare_sources`, and
+    `compare` becomes the two added up (one headline: "x of y agree with A and B"), so the
+    review header and the confirm gate read one shape whatever the entity.
+    """
+    pull = _pull_meta(job)
+    if source is None:
+        pull["compare"] = _summary_of(filename, result)
+    else:
+        sources = dict(pull.get("compare_sources") or {})
+        sources[source] = _summary_of(filename, result)
+        pull["compare_sources"] = sources
+        ordered = [sources[s] for s in COMPARE_SOURCES if s in sources]
+        pull["compare"] = {
+            "filename": " and ".join(s["filename"] for s in ordered),
+            "compared_at": datetime.utcnow().isoformat(),
+            "total": sum(s["total"] for s in ordered),
+            "matched": sum(s["matched"] for s in ordered),
+            "different": sum(s["different"] for s in ordered),
+            "only_in_excel": sum(s["only_in_excel"] for s in ordered),
+            "only_in_pull": sum(s["only_in_pull"] for s in ordered),
+            "qty_total_excel": None,
+            "qty_total_pull": None,
+        }
     job.job_metadata = _with_pull(job, pull)
     job.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(job)
     return job
+
+
+#: Owner Q4 wording, one place: the review header prints it under Confirm and
+#: `confirm_pull` refuses with it.
+CONFIRM_REQUIRES_MATCH_REASON = (
+    "Compare both Excel files (Order Listing and Order Tracking) with no differences before confirming."
+)
+
+
+def match_gate_reason(pull: dict) -> Optional[str]:
+    """The Q4 switch (`settings.autocount_do_pull_confirm_requires_match`, default off):
+    for a delivery-orders pull, the reason Confirm is held until both files have been
+    compared and neither shows a difference or an only-in row; None when the switch is off,
+    the entity is another, or the gate is satisfied. Computed on read, never stored, so
+    flipping the setting changes every open pull at once."""
+    from app.config import settings
+
+    if pull.get("entity") != "delivery_orders":
+        return None
+    if not getattr(settings, "autocount_do_pull_confirm_requires_match", False):
+        return None
+    sources = pull.get("compare_sources") or {}
+    for source in COMPARE_SOURCES:
+        summary = sources.get(source)
+        if not summary:
+            return CONFIRM_REQUIRES_MATCH_REASON
+        if summary.get("different") or summary.get("only_in_excel") or summary.get("only_in_pull"):
+            return CONFIRM_REQUIRES_MATCH_REASON
+    return None
 
 
 # ======================================================================== SR3 - confirm
@@ -713,6 +975,10 @@ def confirm_pull(db: Session, job: ImportJob, *, user_id: str) -> dict:
         # AC-SP-1: entity-agnostic - products never sets this, stock does when the
         # fetched header reports excludedNonzeroCount > 0.
         raise PullNotReadyForConfirm(str(pull["confirm_blocked_reason"]))
+    gate = match_gate_reason(pull)
+    if gate:
+        # Owner Q4 (delivery orders, switch on): both files compared clean, or no Confirm.
+        raise PullNotReadyForConfirm(gate)
 
     entity = pull.get("entity")
     # Generated up front so the ONE conditional UPDATE can write phase + apply_job_id

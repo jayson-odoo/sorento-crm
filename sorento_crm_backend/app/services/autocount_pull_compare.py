@@ -27,8 +27,11 @@ actually differs), so there is nothing left for this tab to forgive.
 """
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
-from typing import Any
+import math
+import re
+from datetime import date, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from typing import Any, Optional
 
 from app.services.product_service import (
     is_active_from_manual_value,
@@ -215,6 +218,337 @@ def compare_stock(excel_rows: list[dict], fed_rows: list[dict]) -> dict:
             "qty_total_excel": sum(_stock_qty(r) for r in excel_rows),
             "qty_total_pull": sum(_stock_qty(r) for r in fed_rows),
         },
+        "differences": differences,
+        "only_in_excel": only_in_excel,
+        "only_in_pull": only_in_pull,
+    }
+
+
+# ===================================================================== delivery orders
+
+#: The DO lines import's own header aliases (`order_service.validate_delivery_order_detail_
+#: excel`), lower-cased, plus the Order Listing macro's `Master` sheet and the Order Tracking
+#: macro's `Master` sheet (owner decision 30 Sep, plan 1.8): what a checker's sheet may call
+#: each column.
+_DO_DOC_NO_KEYS = ("doc no", "doc. no.", "doc no.", "doc number", "order number")
+_DO_ITEM_KEYS = ("item code", "product code")
+_DO_LOCATION_KEYS = ("location", "warehouse", "warehouse code")
+_DO_QTY_KEYS = ("qty", "quantity")
+_DO_UNIT_PRICE_KEYS = ("unit price",)
+_DO_DISCOUNT_KEYS = ("discount",)
+_DO_TOTAL_EX_KEYS = ("total (ex)", "total ex", "total excluding tax", "total")
+_DO_DATE_KEYS = ("doc date", "date", "doc. date")
+_DO_DEBTOR_KEYS = ("debtor code", "customer code")
+_DO_CANCEL_KEYS = ("cancel", "cancelled")
+
+#: Money on both sides is compared at two decimals (the sheet prints two).
+_MONEY = Decimal("0.01")
+_EXCEL_EPOCH = date(1899, 12, 30)
+
+
+def _excel_day(value: Any) -> Optional[date]:
+    """A sheet cell as a calendar day, or None when it carries none. `sheet_to_json` hands a
+    date cell over as an Excel serial number (days since 1899-12-30) unless the sheet stored
+    text; a typed cell may read `27/09/2026`, `2026-09-27`, `2026-09-27T00:00:00` or
+    `20260927`. A vendor `DocDate` comes through the same function."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value) or not 20_000 <= value <= 80_000:
+            return None
+        return _EXCEL_EPOCH + timedelta(days=int(value))
+    text = str(value).strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d{8}", text):
+        text = f"{text[:4]}-{text[4:6]}-{text[6:]}"
+    match = re.match(r"^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})", text)
+    if match:
+        day, month, year = (int(g) for g in match.groups())
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+    try:
+        return datetime.fromisoformat(text[:19]).date() if "T" in text or " " in text \
+            else date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def window_excel_rows(
+    excel_rows: list[dict], from_day: Optional[str], to_day: Optional[str]
+) -> tuple[list[dict], int]:
+    """(rows inside the pulled DocDate window, count left out). The macro files hold extra
+    days (owner decision 30 Sep, item 4): a row dated outside the window is ignored, never
+    reported; a row with no readable date stays in. No window = every row stays."""
+    start = _excel_day(from_day) if from_day else None
+    end = _excel_day(to_day) if to_day else None
+    if start is None and end is None:
+        return list(excel_rows), 0
+    kept: list[dict] = []
+    ignored = 0
+    for row in excel_rows:
+        day = _excel_day(_excel_value(row, _DO_DATE_KEYS))
+        if day is None or (start is None or day >= start) and (end is None or day <= end):
+            kept.append(row)
+        else:
+            ignored += 1
+    return kept, ignored
+
+
+def _money(value: Any) -> Optional[Decimal]:
+    """Two-decimal money, None when the cell carries no number (a blank stays a blank, and a
+    blank against 0.00 is not a difference)."""
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    try:
+        parsed = Decimal(text)
+    except (InvalidOperation, ValueError):
+        return None
+    if not parsed.is_finite() or abs(parsed.adjusted()) > _MAX_QTY_EXPONENT:
+        return None
+    return parsed.quantize(_MONEY, rounding=ROUND_HALF_UP)
+
+
+def _discount(value: Any) -> str:
+    """A discount as AutoCount and the sheet both write it: text such as `5%`, or a number.
+    Compared as text once trimmed, with a bare number and its `%` form read the same and a
+    zero read as blank."""
+    if value is None or isinstance(value, bool):
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    number = _money(text[:-1] if text.endswith("%") else text)
+    if number is not None:
+        return "" if number == 0 else f"{number.normalize():f}"
+    return text.upper()
+
+
+def _cancel_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().upper() in {"T", "Y", "1", "TRUE", "YES", "CANCELLED", "CANCEL"}
+
+
+def _plain_number(value: Optional[Decimal]):
+    if value is None:
+        return None
+    return int(value) if value == value.to_integral_value() else float(value)
+
+
+def _excel_value(row: dict, keys: tuple[str, ...]) -> Any:
+    lowered = {str(k).strip().lower(): v for k, v in row.items()}
+    for key in keys:
+        if key in lowered:
+            return lowered[key]
+    return None
+
+
+def _do_excel_key(row: dict) -> tuple[str, str, str]:
+    return (
+        _key(_excel_value(row, _DO_DOC_NO_KEYS)),
+        _key(_excel_value(row, _DO_ITEM_KEYS)),
+        _key(_excel_value(row, _DO_LOCATION_KEYS)),
+    )
+
+
+def _do_label(doc_no: Any, item_code: Any, location: Any) -> str:
+    return f"{str(doc_no or '').strip()}|{str(item_code or '').strip()}|{str(location or '').strip()}"
+
+
+#: The largest exponent a DO line quantity may carry before it reads as "not a quantity"
+#: (security review B1): `Decimal("1e3000000")` parses in microseconds but `int()` of it
+#: runs for minutes under the GIL, and a NaN/Infinity is not a quantity either. Anything a
+#: real delivery order could carry sits far below 10^15.
+_MAX_QTY_EXPONENT = 15
+
+
+def _do_qty(value: Any) -> Decimal:
+    """A bounded, finite quantity, else 0 - the same "unparseable reads as 0" rule
+    `_stock_qty` uses, tightened so a hostile or malformed cell can never cost more
+    than a normal one."""
+    try:
+        parsed = Decimal(str(value).strip())
+    except (InvalidOperation, ValueError, TypeError, AttributeError):
+        return Decimal("0")
+    if not parsed.is_finite() or parsed == 0:
+        return Decimal("0")
+    if abs(parsed.adjusted()) > _MAX_QTY_EXPONENT:
+        return Decimal("0")
+    return parsed
+
+
+def _json_number(value: Decimal):
+    """A JSON number for a quantity `_do_qty` already bounded - `int` only for a whole
+    value, never for anything with more than `_MAX_QTY_EXPONENT` digits."""
+    if value == value.to_integral_value():
+        return int(value)
+    return float(value)
+
+
+def _sum_money(current: Optional[Decimal], value: Optional[Decimal]) -> Optional[Decimal]:
+    if value is None:
+        return current
+    return (current or Decimal("0.00")) + value
+
+
+def compare_delivery_orders(excel_rows: list[dict], pull_rows: list[dict]) -> dict:
+    """AC-DP-32 (the LINES half): the Order Listing macro's `Master` sheet (or the DO lines
+    import sheet) against the pull's raw DO records, keyed by (Doc No, Item Code, Location)
+    trimmed and case-insensitive. Fields (owner Q3): `qty` and `total_ex` summed per key,
+    `unit_price` and `discount` from the first line of the key on each side. `pull_rows` are
+    the raw vendor records (one per document, `Details[]`); a Details row with no `ItemCode`
+    is not a line, the DO ingest's own rule. Only-in labels are `DOCNO|ITEM|LOCATION`. Same
+    summary shape as the other two comparisons; no quantity totals."""
+    # One entry per (Doc No, Item Code, Location) on each side, quantities SUMMED (review
+    # S2): the same item can sit twice on one document (two batches), and the sheet and
+    # the pull may split it differently. The first row seen keeps the labels.
+    excel_by_key: dict[tuple[str, str, str], dict] = {}
+    excel_qty: dict[tuple[str, str, str], Decimal] = {}
+    excel_total: dict[tuple[str, str, str], Optional[Decimal]] = {}
+    for row in excel_rows:
+        key = _do_excel_key(row)
+        if key[0] and key[1]:
+            excel_by_key.setdefault(key, row)
+            excel_qty[key] = excel_qty.get(key, Decimal("0")) + _do_qty(_excel_value(row, _DO_QTY_KEYS))
+            excel_total[key] = _sum_money(excel_total.get(key), _money(_excel_value(row, _DO_TOTAL_EX_KEYS)))
+
+    pull_by_key: dict[tuple[str, str, str], tuple[dict, dict]] = {}
+    pull_qty: dict[tuple[str, str, str], Decimal] = {}
+    pull_total: dict[tuple[str, str, str], Optional[Decimal]] = {}
+    for rec in pull_rows:
+        if not isinstance(rec, dict):
+            continue
+        for line in rec.get("Details") or []:
+            if not isinstance(line, dict) or not str(line.get("ItemCode") or "").strip():
+                continue
+            key = (_key(rec.get("DocNo")), _key(line.get("ItemCode")), _key(line.get("Location")))
+            pull_by_key.setdefault(key, (rec, line))
+            pull_qty[key] = pull_qty.get(key, Decimal("0")) + _do_qty(line.get("Qty"))
+            # The sheet's Total (Ex) is the line before tax: AutoCount's SubTotalExTax when
+            # the record carries it, else SubTotal.
+            ex_tax = line.get("SubTotalExTax") if line.get("SubTotalExTax") is not None else line.get("SubTotal")
+            pull_total[key] = _sum_money(pull_total.get(key), _money(ex_tax))
+
+    only_in_excel = sorted(
+        _do_label(
+            _excel_value(excel_by_key[k], _DO_DOC_NO_KEYS),
+            _excel_value(excel_by_key[k], _DO_ITEM_KEYS),
+            _excel_value(excel_by_key[k], _DO_LOCATION_KEYS),
+        )
+        for k in excel_by_key if k not in pull_by_key
+    )
+    only_in_pull = sorted(
+        _do_label(rec.get("DocNo"), line.get("ItemCode"), line.get("Location"))
+        for k, (rec, line) in pull_by_key.items() if k not in excel_by_key
+    )
+
+    common_keys = [k for k in excel_by_key if k in pull_by_key]
+    differences: list[dict] = []
+    matched = 0
+    for key in common_keys:
+        rec, line = pull_by_key[key]
+        excel_row = excel_by_key[key]
+        row_diffs: list[tuple[str, Any, Any]] = []
+        if excel_qty[key] != pull_qty[key]:
+            row_diffs.append(("qty", _json_number(excel_qty[key]), _json_number(pull_qty[key])))
+        excel_price = _money(_excel_value(excel_row, _DO_UNIT_PRICE_KEYS))
+        pull_price = _money(line.get("UnitPrice"))
+        if excel_price is not None and pull_price is not None and excel_price != pull_price:
+            row_diffs.append(("unit_price", _plain_number(excel_price), _plain_number(pull_price)))
+        excel_discount = _discount(_excel_value(excel_row, _DO_DISCOUNT_KEYS))
+        pull_discount = _discount(line.get("Discount"))
+        if excel_discount != pull_discount:
+            row_diffs.append(("discount", excel_discount or None, pull_discount or None))
+        if (
+            excel_total[key] is not None and pull_total[key] is not None
+            and excel_total[key] != pull_total[key]
+        ):
+            row_diffs.append(("total_ex", _plain_number(excel_total[key]), _plain_number(pull_total[key])))
+        if row_diffs:
+            for field, excel_value, pull_value in row_diffs:
+                differences.append({
+                    "item_code": str(line.get("ItemCode") or "").strip(),
+                    "doc_no": str(rec.get("DocNo") or "").strip(),
+                    "location": str(line.get("Location") or "").strip(),
+                    "field": field, "excel": excel_value, "pull": pull_value,
+                })
+        else:
+            matched += 1
+
+    total = len(common_keys)
+    return {
+        "summary": {"total": total, "matched": matched, "different": total - matched},
+        "differences": differences,
+        "only_in_excel": only_in_excel,
+        "only_in_pull": only_in_pull,
+    }
+
+
+def compare_delivery_order_headers(excel_rows: list[dict], pull_rows: list[dict]) -> dict:
+    """The HEADERS half (owner decision 30 Sep): the Order Tracking macro's `Master` sheet,
+    one row per DO (`Doc. No.`, `Date`, `Debtor Code`, `Cancel`, ...), against the pull's
+    documents, keyed by document number trimmed and case-insensitive. Fields (owner Q3):
+    `doc_date` as a calendar day, `debtor_code`, `cancel` as a flag. Not compared, by ruling:
+    Created Time, Debtor Name, Agent, Remarks CS, Type, and the whole Overall Tracking sheet.
+    Only-in labels are the bare document number; a DO the pull did not bring back is a
+    difference to check, never something Confirm deletes."""
+    excel_by_key: dict[str, dict] = {}
+    for row in excel_rows:
+        key = _key(_excel_value(row, _DO_DOC_NO_KEYS))
+        if key:
+            excel_by_key.setdefault(key, row)
+    pull_by_key: dict[str, dict] = {}
+    for rec in pull_rows:
+        if isinstance(rec, dict) and _key(rec.get("DocNo")):
+            pull_by_key.setdefault(_key(rec.get("DocNo")), rec)
+
+    only_in_excel = sorted(
+        str(_excel_value(excel_by_key[k], _DO_DOC_NO_KEYS) or "").strip()
+        for k in excel_by_key if k not in pull_by_key
+    )
+    only_in_pull = sorted(
+        str(pull_by_key[k].get("DocNo") or "").strip() for k in pull_by_key if k not in excel_by_key
+    )
+
+    common_keys = [k for k in excel_by_key if k in pull_by_key]
+    differences: list[dict] = []
+    matched = 0
+    for key in common_keys:
+        excel_row = excel_by_key[key]
+        rec = pull_by_key[key]
+        doc_no = str(rec.get("DocNo") or "").strip()
+        row_diffs: list[tuple[str, Any, Any]] = []
+        excel_day = _excel_day(_excel_value(excel_row, _DO_DATE_KEYS))
+        pull_day = _excel_day(rec.get("DocDate"))
+        if excel_day is not None and pull_day is not None and excel_day != pull_day:
+            row_diffs.append(("doc_date", excel_day.isoformat(), pull_day.isoformat()))
+        excel_debtor = _key(_excel_value(excel_row, _DO_DEBTOR_KEYS))
+        pull_debtor = _key(rec.get("DebtorCode"))
+        if excel_debtor and pull_debtor and excel_debtor != pull_debtor:
+            row_diffs.append(("debtor_code", str(_excel_value(excel_row, _DO_DEBTOR_KEYS)).strip(),
+                              str(rec.get("DebtorCode") or "").strip()))
+        excel_cancel = _cancel_flag(_excel_value(excel_row, _DO_CANCEL_KEYS))
+        pull_cancel = _cancel_flag(rec.get("Cancelled"))
+        if excel_cancel != pull_cancel:
+            row_diffs.append(("cancel", excel_cancel, pull_cancel))
+        if row_diffs:
+            for field, excel_value, pull_value in row_diffs:
+                differences.append({
+                    "item_code": "", "doc_no": doc_no, "location": "",
+                    "field": field, "excel": excel_value, "pull": pull_value,
+                })
+        else:
+            matched += 1
+
+    total = len(common_keys)
+    return {
+        "summary": {"total": total, "matched": matched, "different": total - matched},
         "differences": differences,
         "only_in_excel": only_in_excel,
         "only_in_pull": only_in_pull,
