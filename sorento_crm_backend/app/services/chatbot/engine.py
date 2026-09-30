@@ -141,6 +141,9 @@ def split_marked_message(text: str) -> list[str]:
     sit above it) and "(2/m)" to "(m/m)" opening the rest. Anything else is text that
     merely looks like a marker and goes out whole, as before."""
     pieces = _MARKED_PART_BREAK.split(text)
+    if len(pieces) > 2 and pieces[1].startswith("(1/"):
+        # A lane note above part 1 ("I can list at most ...") travels with part 1.
+        pieces = [pieces[0] + "\n\n" + pieces[1], *pieces[2:]]
     if len(pieces) < 2:
         return [text]
     total = len(pieces)

@@ -1134,6 +1134,22 @@ class TestLongRankingParts:
         actions = [a for a in result.as_dict()["actions"] if a.get("kind") == "send_message"]
         assert all(a["result_set"] is None and a["quick_replies"] is None for a in actions[:-1])
 
+    def test_past_the_ceiling_the_note_opens_part_one(self, session_factory, monkeypatch, route) -> None:
+        route.codes = [f"SRTWC{i:04d}" for i in range(1, 1201)]
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory, monkeypatch, qf=_ts(top_n=1500), text_body="top 1500 by quantity",
+            msg_id=f"ZZT-top-selling-{uuid.uuid4().hex[:10]}", attributes=[GRANT],
+        )
+        assert _calls(captured)[0]["n"] == 1000
+        texts = self._send_texts(result)
+        assert len(texts) > 1
+        assert texts[0].startswith(
+            f"I can list at most the top 1,000 in one reply, so here are the top 1,000.\n\n(1/{len(texts)})\n"
+        ), texts[0][:200]
+        assert all(len(t) <= 4096 for t in texts)
+        assert "\n1000. SRTWC1000: " in texts[-1] and "SRTWC1001" not in texts[-1]
+
     def test_top_5_is_one_message_as_before(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         result, _captured = _run_turn(
