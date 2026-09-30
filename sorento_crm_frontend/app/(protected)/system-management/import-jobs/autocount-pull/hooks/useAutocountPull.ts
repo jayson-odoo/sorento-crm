@@ -18,9 +18,11 @@ import {
 import {
   AUTOCOUNT_PULL_PERMISSION,
   type AutocountPull,
+  type AutocountPullCompareSource,
   type AutocountPullEntity,
   type AutocountPullPhase,
   type AutocountPullRowsQuery,
+  type AutocountPullScope,
 } from '../types/autocountPull.types';
 
 /**
@@ -29,10 +31,23 @@ import {
  * an error toast needs the start-specific error-code mapping (`startPullErrorMessage`), so it
  * is left to the call site (the list's button) rather than duplicated here.
  */
+export interface StartPullVariables {
+  entity: AutocountPullEntity;
+  /** Delivery orders only: the DocDate window from the dialog; absent = last 31 days. */
+  scope?: AutocountPullScope | null;
+}
+
 export function useStartPull() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (entity: AutocountPullEntity) => startPull(entity),
+    // A bare entity keeps every existing caller (and its pinned `startPull(entity)` call
+    // shape); the object form carries the delivery-orders scope.
+    mutationFn: (variables: AutocountPullEntity | StartPullVariables) =>
+      typeof variables === 'string'
+        ? startPull(variables)
+        : variables.scope
+          ? startPull(variables.entity, variables.scope)
+          : startPull(variables.entity),
     onSuccess: (pull) => {
       queryClient.setQueryData(['autocount-pull', pull.job_id], pull);
       queryClient.invalidateQueries({ queryKey: ['autocount-pull-current', pull.entity] });
@@ -142,8 +157,16 @@ export function useDownloadPullXlsx() {
 export function useComparePull(jobId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ filename, rows }: { filename: string; rows: Record<string, unknown>[] }) =>
-      comparePull(jobId, filename, rows),
+    mutationFn: ({
+      filename,
+      rows,
+      source,
+    }: {
+      filename: string;
+      rows: Record<string, unknown>[];
+      /** Delivery orders only: which of the two macro files this is. */
+      source?: AutocountPullCompareSource;
+    }) => (source ? comparePull(jobId, filename, rows, source) : comparePull(jobId, filename, rows)),
     onSuccess: (result) => {
       queryClient.setQueryData(['autocount-pull', jobId], (prev: AutocountPull | undefined) =>
         prev ? { ...prev, compare: result.summary } : prev,
@@ -213,9 +236,13 @@ export interface AutocountPullAction {
   visible: boolean;
   /** "Pull from AutoCount" with no open pull, "Review pull" once one exists (AC-PL-5). */
   label: string;
+  /** True once the caller has an open pull for this entity: the click then reviews it, so a
+   *  list that asks for a scope first (Delivery Orders) knows to skip its dialog. */
+  hasOpenPull: boolean;
   /** With an open pull: navigates straight to it, no `startPull` call. Otherwise: starts one
-   *  and navigates to the new job, or toasts the mapped refusal (AC-PL-6). */
-  onSelect: () => Promise<void>;
+   *  (with the delivery-orders `scope` when given) and navigates to the new job, or toasts
+   *  the mapped refusal (AC-PL-6). */
+  onSelect: (scope?: AutocountPullScope | null) => Promise<void>;
 }
 
 /**
@@ -235,18 +262,21 @@ export function useAutocountPullAction(
 
   const label = currentPull ? 'Review pull' : 'Pull from AutoCount';
 
-  const onSelect = useCallback(async () => {
-    if (currentPull) {
-      router.push(`/system-management/import-jobs/${currentPull.job_id}`);
-      return;
-    }
-    try {
-      const pull = await startMutation.mutateAsync(entity);
-      router.push(`/system-management/import-jobs/${pull.job_id}`);
-    } catch (error) {
-      toast.error(startPullErrorMessage(error));
-    }
-  }, [currentPull, entity, router, startMutation]);
+  const onSelect = useCallback(
+    async (scope?: AutocountPullScope | null) => {
+      if (currentPull) {
+        router.push(`/system-management/import-jobs/${currentPull.job_id}`);
+        return;
+      }
+      try {
+        const pull = await startMutation.mutateAsync(scope ? { entity, scope } : entity);
+        router.push(`/system-management/import-jobs/${pull.job_id}`);
+      } catch (error) {
+        toast.error(startPullErrorMessage(error));
+      }
+    },
+    [currentPull, entity, router, startMutation],
+  );
 
-  return { visible, label, onSelect };
+  return { visible, label, hasOpenPull: Boolean(currentPull), onSelect };
 }

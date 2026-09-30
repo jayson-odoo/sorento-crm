@@ -154,15 +154,28 @@ export interface AutocountCompareDifference {
   pull: string | number | boolean | null;
 }
 
+/** Delivery orders compare with the two macro files the checker uses today (owner decision
+ *  30 Sep): `lines` = Order Listing, sheet Master (one row per DO line); `headers` = Order
+ *  Tracking, sheet Master (one row per DO). */
+export type AutocountPullCompareSource = 'lines' | 'headers';
+
 /** `POST /api/v1/autocount/pulls/{job_id}/compare` response. `summary` is the STORED
  *  compare summary (same shape `GET /{job_id}` returns as `compare`); `only_in_excel` /
  *  `only_in_pull` here are the item-code LISTS the comparison just computed - distinct
- *  from `summary.only_in_excel` / `summary.only_in_pull`, which are counts. */
+ *  from `summary.only_in_excel` / `summary.only_in_pull`, which are counts. Delivery
+ *  orders add `source`, that file's own `source_summary`, the pulled DocDate `window` the
+ *  rows were cut to, and how many rows sat outside it. */
 export interface AutocountComparePullResult {
   summary: AutocountPullCompareSummary;
   differences: AutocountCompareDifference[];
   only_in_excel: string[];
   only_in_pull: string[];
+  source?: AutocountPullCompareSource | null;
+  source_summary?: AutocountPullCompareSummary | null;
+  confirm_blocked_reason?: string | null;
+  window?: { fromDay: string | null; toDay: string | null } | null;
+  ignored_outside_window?: number;
+  rows_in_window?: number;
 }
 
 /** The apply job's own `import_jobs.status` (backend `JobStatus`). */
@@ -181,9 +194,18 @@ export interface AutocountPull {
   /** The FoundryX ready header (camelCase), once the snapshot has been read; `null` before. */
   header?: AutocountPullHeader | null;
   counts?: AutocountPullCounts | null;
-  /** Set only when Confirm is blocked (e.g. stock AC-SP-1); Confirm stays enabled otherwise. */
+  /** Set only when Confirm is blocked (e.g. stock AC-SP-1, or a delivery-orders pull under
+   *  the "compare must match" switch); Confirm stays enabled otherwise. */
   confirm_blocked_reason?: string | null;
+  /** Delivery orders, owner Q4: true while the switch holds Confirm until both files
+   *  compare clean (the reason above says so); false = the compare is advisory. */
+  confirm_requires_match?: boolean;
   compare?: AutocountPullCompareSummary | null;
+  /** Delivery orders: each file's own last summary; `compare` above is the two added up. */
+  compare_sources?: Partial<Record<AutocountPullCompareSource, AutocountPullCompareSummary>> | null;
+  /** Delivery orders: the DocDate window the compare cuts the files to (the scope, else the
+   *  snapshot's default 31 days); `null` on the other entities. */
+  window?: { fromDay: string | null; toDay: string | null } | null;
   /** Set once Confirm has been clicked - the apply job the page links to. */
   apply_job_id?: string | null;
   /** The apply job's own status (fix round 3, item 2); `null` while there is no apply job

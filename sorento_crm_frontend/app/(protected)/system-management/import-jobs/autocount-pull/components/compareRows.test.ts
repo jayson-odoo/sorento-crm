@@ -145,3 +145,35 @@ describe('buildCompareRows - delivery orders (AC-DP-42, review S6)', () => {
     expect(rows[0]).toMatchObject({ item_code: 'A|B|C', doc_no: undefined, location: undefined });
   });
 });
+
+describe('buildCompareRows - the two delivery-orders sources', () => {
+  const base: AutocountComparePullResult = {
+    summary: { filename: 'x', compared_at: '2026-09-30T00:00:00Z', total: 1, matched: 0, different: 1, only_in_excel: 1, only_in_pull: 0 },
+    differences: [{ item_code: '', doc_no: 'ZZDO-0131', location: '', field: 'cancel', excel: true, pull: false }],
+    only_in_excel: ['ZZDO-0142'],
+    only_in_pull: [],
+  };
+
+  it('labels headers rows "Headers", reads Cancel as Yes / No, and keeps a bare document number whole', () => {
+    const rows = buildCompareRows(base, 'delivery_orders', 'headers');
+    expect(rows[0]).toEqual({ item_code: '', doc_no: 'ZZDO-0131', location: '', field: 'Cancel', excel: 'Yes', pull: 'No', source: 'Headers' });
+    expect(rows[1]).toMatchObject({ doc_no: 'ZZDO-0142', item_code: '', field: 'Only in your Excel', source: 'Headers' });
+  });
+
+  it('labels lines rows "Lines" and the Q3 fields by their sheet headers', () => {
+    const lines = buildCompareRows(
+      { ...base, differences: [
+        { item_code: 'P', doc_no: 'D', location: 'W', field: 'unit_price', excel: 13, pull: 12.5 },
+        { item_code: 'P', doc_no: 'D', location: 'W', field: 'total_ex', excel: 130, pull: 125 },
+        { item_code: 'P', doc_no: 'D', location: 'W', field: 'discount', excel: '5', pull: null },
+      ], only_in_excel: [] },
+      'delivery_orders',
+      'lines',
+    );
+    expect(lines.map((r) => [r.field, r.excel, r.pull, r.source])).toEqual([
+      ['Unit Price', '13', '12.5', 'Lines'],
+      ['Total (Ex)', '130', '125', 'Lines'],
+      ['Discount', '5', '-', 'Lines'],
+    ]);
+  });
+});

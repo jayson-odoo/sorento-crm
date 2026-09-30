@@ -107,3 +107,37 @@ describe('useAutocountPullAction - Delivery Orders (AC-DP-40)', () => {
     expect(push).toHaveBeenCalledWith('/system-management/import-jobs/open-do-job');
   });
 });
+
+describe('useAutocountPullAction - the delivery-orders scope (mock section 1)', () => {
+  it('passes the dialog\'s window to startPull and reports hasOpenPull', async () => {
+    useHasPermission.mockReturnValue(true);
+    getCurrentPull.mockResolvedValue(null);
+    startPull.mockResolvedValue({ job_id: 'scoped-job', entity: 'delivery_orders', phase: 'building' });
+
+    const { result } = renderHook(() => useAutocountPullAction('delivery_orders'), { wrapper });
+    await waitFor(() => expect(result.current.visible).toBe(true));
+    expect(result.current.hasOpenPull).toBe(false);
+
+    await act(async () => {
+      await result.current.onSelect({ fromDay: '2026-09-01', toDay: '2026-09-30' });
+    });
+
+    expect(startPull).toHaveBeenCalledWith('delivery_orders', { fromDay: '2026-09-01', toDay: '2026-09-30' });
+    expect(push).toHaveBeenCalledWith('/system-management/import-jobs/scoped-job');
+  });
+
+  it('with an open pull, hasOpenPull is true and a scope is ignored (the click reviews)', async () => {
+    useHasPermission.mockReturnValue(true);
+    getCurrentPull.mockResolvedValue({ job_id: 'open-do', entity: 'delivery_orders', phase: 'building' });
+
+    const { result } = renderHook(() => useAutocountPullAction('delivery_orders'), { wrapper });
+    await waitFor(() => expect(result.current.hasOpenPull).toBe(true));
+
+    await act(async () => {
+      await result.current.onSelect({ fromDay: '2026-09-01', toDay: '2026-09-30' });
+    });
+
+    expect(startPull).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith('/system-management/import-jobs/open-do');
+  });
+});

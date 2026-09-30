@@ -1122,3 +1122,207 @@ class TestCorrectnessFixRound:
         assert counts["unchanged"] == 2
         assert counts["with_warnings"] == 0
         assert _job_rows(db, job_id) == []
+
+
+# ========================================= two-file compare + Q4 switch (owner, 30 Sep)
+
+
+def _lines_sheet(rows: list[dict], doc_date="27/09/2026") -> list[dict]:
+    """The Order Listing macro's `Master` sheet, one row per DO line, as `sheet_to_json`
+    hands it over (a date as text here; the serial-number form is pinned separately)."""
+    out = []
+    for rec, line in _lines(rows):
+        out.append({
+            "Doc No": rec["DocNo"], "Doc Date": doc_date, "Created Time": "09:12",
+            "Cancelled": "F", "Item Code": line["ItemCode"], "Qty": line["Qty"],
+            "Location": line["Location"], "Unit Price": line["UnitPrice"], "Discount": "",
+            "Total (Ex)": line["SubTotal"], "Total (Inc)": line["SubTotal"],
+        })
+    return out
+
+
+def _headers_sheet(rows: list[dict], date="27/09/2026") -> list[dict]:
+    """The Order Tracking macro's `Master` sheet, one row per DO."""
+    return [
+        {"Doc. No.": rec["DocNo"], "Date": date, "Created Time": "09:12",
+         "Debtor Code": rec["DebtorCode"], "Debtor Name": rec["DebtorName"],
+         "Agent": rec["SalesAgent"], "Cancel": "F", "Remarks CS": "", "Type": "Normal"}
+        for rec in rows
+    ]
+
+
+class TestTwoFileCompare:
+    def test_excel_day_reads_serials_and_text(self):
+        from datetime import date as _date
+
+        from app.services.autocount_pull_compare import _excel_day
+
+        assert _excel_day(46292) == _date(2026, 9, 27)  # sheet_to_json's serial number
+        assert _excel_day(46292.0) == _date(2026, 9, 27)
+        assert _excel_day("27/09/2026") == _date(2026, 9, 27)
+        assert _excel_day("2026-09-27T00:00:00") == _date(2026, 9, 27)
+        assert _excel_day("20260927") == _date(2026, 9, 27)
+        assert _excel_day("") is None and _excel_day(None) is None
+        assert _excel_day("not a date") is None and _excel_day(5) is None
+
+    def test_lines_source_is_windowed_and_compares_the_q3_fields(self, env):
+        owner = env.user(SLUG)
+        env.as_user(owner)
+        job_id, rows = _seed_do_review_job(env, owner=owner)
+        env.db.execute(
+            text("UPDATE import_jobs SET metadata = jsonb_set(metadata, '{autocount_pull,scope}', "
+                 "'{\"fromDay\": \"2026-09-01\", \"toDay\": \"2026-09-30\"}') WHERE id = :id"),
+            {"id": str(job_id)},
+        )
+        env.db.commit()
+        sheet = _lines_sheet(rows)
+        sheet[0]["Unit Price"] = 13  # 12.5 in the pull
+        sheet[0]["Discount"] = "5%"  # blank in the pull
+        sheet[0]["Total (Ex)"] = 130  # 125 in the pull
+        sheet.append({**sheet[1], "Doc No": "ZZDO-AUG", "Doc Date": "15/08/2026"})  # outside
+        sheet.append({**sheet[1], "Doc No": "ZZDO-OCT", "Doc Date": 46296})  # 1 Oct, outside
+
+        resp = env.client.post(
+            f"{PULLS_URL}/{job_id}/compare",
+            json={"filename": "Order Listing 2026-09.xlsm", "rows": sheet, "source": "lines"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["source"] == "lines"
+        assert body["window"] == {"fromDay": "2026-09-01", "toDay": "2026-09-30"}
+        assert body["ignored_outside_window"] == 2 and body["rows_in_window"] == 3
+        assert body["only_in_excel"] == [] and body["only_in_pull"] == []
+        fields = {(d["doc_no"], d["field"]): (d["excel"], d["pull"]) for d in body["differences"]}
+        assert fields == {
+            ("ZZDO-0001", "unit_price"): (13, 12.5),
+            ("ZZDO-0001", "discount"): ("5", None),
+            ("ZZDO-0001", "total_ex"): (130, 125),
+        }
+        assert body["source_summary"]["matched"] == 2 and body["source_summary"]["different"] == 1
+        # The stored combined summary is the lines file alone until the headers file lands.
+        assert body["summary"]["filename"] == "Order Listing 2026-09.xlsm"
+        assert body["summary"]["total"] == 3
+
+    def test_headers_source_compares_date_debtor_and_cancel(self, env):
+        owner = env.user(SLUG)
+        env.as_user(owner)
+        job_id, rows = _seed_do_review_job(env, owner=owner)
+        sheet = _headers_sheet(rows)
+        sheet[0]["Cancel"] = "Y"
+        sheet[1]["Debtor Code"] = "300-OTHER"
+        sheet[1]["Date"] = "28/09/2026"
+        sheet.append({**sheet[0], "Doc. No.": "ZZDO-0142", "Cancel": "F"})  # not in the pull
+
+        resp = env.client.post(
+            f"{PULLS_URL}/{job_id}/compare",
+            json={"filename": "Order Tracking 2026-09.xlsm", "rows": sheet, "source": "headers"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["source"] == "headers"
+        fields = {(d["doc_no"], d["field"]): (d["excel"], d["pull"]) for d in body["differences"]}
+        assert fields == {
+            ("ZZDO-0001", "cancel"): (True, False),
+            ("ZZDO-0002", "doc_date"): ("2026-09-28", "2026-09-27"),
+            ("ZZDO-0002", "debtor_code"): ("300-OTHER", "300-ZZAC01"),
+        }
+        assert all(d["item_code"] == "" for d in body["differences"])
+        assert body["only_in_excel"] == ["ZZDO-0142"]
+        assert body["only_in_pull"] == []
+        assert body["source_summary"]["different"] == 2
+
+    def test_both_sources_add_up_in_the_stored_summary(self, env):
+        owner = env.user(SLUG)
+        env.as_user(owner)
+        job_id, rows = _seed_do_review_job(env, owner=owner)
+        env.client.post(f"{PULLS_URL}/{job_id}/compare",
+                        json={"filename": "lines.xlsm", "rows": _lines_sheet(rows), "source": "lines"})
+        resp = env.client.post(f"{PULLS_URL}/{job_id}/compare",
+                               json={"filename": "tracking.xlsm", "rows": _headers_sheet(rows), "source": "headers"})
+        assert resp.status_code == 200, resp.text
+        summary = resp.json()["summary"]
+        assert summary["filename"] == "lines.xlsm and tracking.xlsm"
+        assert summary["total"] == 5 and summary["matched"] == 5 and summary["different"] == 0
+        pull = env.client.get(f"{PULLS_URL}/{job_id}").json()
+        assert set(pull["compare_sources"]) == {"lines", "headers"}
+        assert pull["compare_sources"]["headers"]["filename"] == "tracking.xlsm"
+        assert pull["window"] == {"fromDay": None, "toDay": None} or set(pull["window"]) == {"fromDay", "toDay"}
+
+    def test_source_is_refused_on_products(self, env):
+        owner = env.user("master_data.products.autocount_pull")
+        env.as_user(owner)
+        from tests.test_autocount_pull_sr3 import _seed_review_job
+
+        job_id, _ = _seed_review_job(env, owner=owner)
+        resp = env.client.post(f"{PULLS_URL}/{job_id}/compare",
+                               json={"filename": "x.xlsx", "rows": [], "source": "lines"})
+        assert resp.status_code == 422
+
+    def test_default_window_is_the_31_days_ending_on_the_snapshot_day(self):
+        from app.services.autocount_pull_service import pull_window
+
+        pull = {"entity": ENTITY, "scope": None, "header": {"extractedAt": "2026-09-30T01:12:00Z"}}
+        assert pull_window(pull) == ("2026-08-31", "2026-09-30")
+        pull["header"]["fromDay"], pull["header"]["toDay"] = "2026-09-01", "2026-09-30"
+        assert pull_window(pull) == ("2026-09-01", "2026-09-30")
+        pull["scope"] = {"docNo": "ZZDO-0001"}
+        assert pull_window(pull) == (None, None)
+        pull["scope"] = {"fromDay": "2026-09-10", "toDay": "2026-09-20"}
+        assert pull_window(pull) == ("2026-09-10", "2026-09-20")
+
+
+class TestConfirmRequiresMatchSwitch:
+    """Owner Q4: one cheap switch, default advisory. On: Confirm is held until BOTH files
+    compare clean; off: the compare never gates Confirm (the Products / Stock rule)."""
+
+    def test_default_is_advisory(self, env, monkeypatch):
+        owner = env.user(SLUG)
+        env.as_user(owner)
+        job_id, rows = _seed_do_review_job(env, owner=owner)
+        monkeypatch.setattr("app.services.autocount_pull_service.enqueue_job",
+                            lambda *a, **k: MagicMock(id=str(uuid.uuid4())))
+        assert env.get_pull(job_id).json()["confirm_blocked_reason"] is None
+        assert env.get_pull(job_id).json()["confirm_requires_match"] is False
+        assert env.client.post(f"{PULLS_URL}/{job_id}/confirm").status_code == 200
+
+    def test_switch_on_holds_confirm_until_both_files_compare_clean(self, env, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "autocount_do_pull_confirm_requires_match", True)
+        owner = env.user(SLUG)
+        env.as_user(owner)
+        job_id, rows = _seed_do_review_job(env, owner=owner)
+        monkeypatch.setattr("app.services.autocount_pull_service.enqueue_job",
+                            lambda *a, **k: MagicMock(id=str(uuid.uuid4())))
+
+        before = env.get_pull(job_id).json()
+        assert before["confirm_requires_match"] is True
+        assert "both Excel files" in before["confirm_blocked_reason"]
+        refused = env.client.post(f"{PULLS_URL}/{job_id}/confirm")
+        assert refused.status_code == 409 and refused.json()["code"] == "NOT_READY"
+
+        lines = _lines_sheet(rows)
+        lines[0]["Qty"] = 99
+        env.client.post(f"{PULLS_URL}/{job_id}/compare",
+                        json={"filename": "lines.xlsm", "rows": lines, "source": "lines"})
+        env.client.post(f"{PULLS_URL}/{job_id}/compare",
+                        json={"filename": "tracking.xlsm", "rows": _headers_sheet(rows), "source": "headers"})
+        assert env.client.post(f"{PULLS_URL}/{job_id}/confirm").status_code == 409
+
+        clean = env.client.post(f"{PULLS_URL}/{job_id}/compare",
+                                json={"filename": "lines.xlsm", "rows": _lines_sheet(rows), "source": "lines"})
+        assert clean.json()["confirm_blocked_reason"] is None
+        assert env.get_pull(job_id).json()["confirm_blocked_reason"] is None
+        assert env.client.post(f"{PULLS_URL}/{job_id}/confirm").status_code == 200
+
+    def test_switch_on_never_touches_a_products_pull(self, env, monkeypatch):
+        from app.config import settings
+        from tests.test_autocount_pull_sr3 import _seed_review_job
+
+        monkeypatch.setattr(settings, "autocount_do_pull_confirm_requires_match", True)
+        owner = env.user("master_data.products.autocount_pull")
+        env.as_user(owner)
+        job_id, _ = _seed_review_job(env, owner=owner)
+        assert env.get_pull(job_id).json()["confirm_blocked_reason"] is None

@@ -92,6 +92,31 @@ Actor: the Sorento checker who today uploads the "Import delivery order lines" s
   review; the Excel view renders the DO columns (quantities at their own precision, dates
   as dd/MM/yyyy); the Compare tab shows a Doc No column and splits a three-part only-in label.
 
+## Two-file compare and the DocDate window (owner decision 30 Sep, mock approved)
+
+- **AC-DP-60 [FE]** Delivery Orders > Pull from AutoCount opens "Pull delivery orders from
+  AutoCount" with From day / To day prefilled to the last 31 Malaysian days (Q1), no
+  document field (Q2); Pull posts `scope {fromDay, toDay}`; both cleared posts no scope;
+  Cancel pulls nothing; with an open pull the click reviews it and no dialog shows.
+- **AC-DP-61 [BE]** `POST /compare` on a DO pull takes `source` `lines` (default) or
+  `headers`; the rows are cut to the pull's window (`scope`, else the header's, else the 31
+  days ending on the snapshot day) by their Doc Date / Date, serial numbers included; the
+  response carries `source`, `window`, `rows_in_window`, `ignored_outside_window`.
+- **AC-DP-62 [BE]** Lines (Order Listing, sheet Master) compare by (Doc No, Item Code,
+  Location) on Qty and Total (Ex) summed per key, Unit Price and Discount (Q3); headers
+  (Order Tracking, sheet Master) compare by Doc No on Date, Debtor Code and Cancel; a DO
+  only in the sheet is an only-in row, never a delete (Q5 the other way round still lands).
+- **AC-DP-63 [BE]** Each file's summary is stored under `compare_sources`; `compare` is the
+  two added up with both filenames; `source` on a products or stock pull is 422.
+- **AC-DP-64 [BE]** `AUTOCOUNT_DO_PULL_CONFIRM_REQUIRES_MATCH` (default off): off, Confirm is
+  never gated by the compare; on, `confirm_blocked_reason` names the rule and Confirm is 409
+  until both files compared with zero differences and only-ins; a products pull is never
+  gated (Q4, one switch).
+- **AC-DP-65 [FE]** The Compare tab for a DO pull shows two dropzones (Order Listing, Order
+  Tracking), the window line, one headline over both files with the advisory sentence, one
+  grid with Doc No, Item Code, Location, Difference, Your Excel, AutoCount pull, Source; a
+  headers difference on Cancel reads Yes / No; the Overall Tracking sheet is never read (Q6).
+
 ## Hand test
 
 - **AC-DP-50 [HT]** From Delivery Orders, Pull from AutoCount reaches the review page, the

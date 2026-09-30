@@ -134,13 +134,20 @@ function formatScopeDay(day: string): string {
 }
 
 /** What a delivery-orders snapshot was asked to cover (DO-PULL-SS contract): one document,
- *  a day window, or the gateway's own default of the last 31 days. */
-function scopeLine(scope: AutocountPullScope | null | undefined): string {
+ *  a day window, or the gateway's own default of the last 31 days - printed with the actual
+ *  days once the snapshot is read (`window`, the same days the compare cuts the files to). */
+function scopeLine(
+  scope: AutocountPullScope | null | undefined,
+  window?: { fromDay: string | null; toDay: string | null } | null,
+): string {
   if (scope?.docNo) return `Scope: DO ${scope.docNo}`;
-  if (scope?.fromDay || scope?.toDay) {
-    const from = scope.fromDay ? formatScopeDay(scope.fromDay) : 'start';
-    const to = scope.toDay ? formatScopeDay(scope.toDay) : 'today';
-    return `Scope: ${from} to ${to}`;
+  const fromDay = scope?.fromDay || window?.fromDay;
+  const toDay = scope?.toDay || window?.toDay;
+  if (fromDay || toDay) {
+    const from = fromDay ? formatScopeDay(fromDay) : 'start';
+    const to = toDay ? formatScopeDay(toDay) : 'today';
+    const suffix = scope?.fromDay || scope?.toDay ? '' : ' (last 31 days)';
+    return `Scope: ${from} to ${to}${suffix}`;
   }
   return 'Scope: Last 31 days';
 }
@@ -232,7 +239,7 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
             </span>
           )}
           {pull.entity === 'delivery_orders' && (
-            <span className="text-xs text-muted-foreground">{scopeLine(pull.scope)}</span>
+            <span className="text-xs text-muted-foreground">{scopeLine(pull.scope, pull.window)}</span>
           )}
           <span className="grow" />
           {(pull.phase === 'review' || pull.phase === 'confirmed') && (
@@ -358,7 +365,7 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
                 <PullExcelViewTab jobId={jobId} entity={pull.entity} />
               </TabsContent>
               <TabsContent value="compare" className="mt-3 focus-visible:outline-none">
-                <PullCompareTab jobId={jobId} entity={pull.entity} />
+                <PullCompareTab jobId={jobId} entity={pull.entity} window={pull.window} />
               </TabsContent>
             </Tabs>
           </>

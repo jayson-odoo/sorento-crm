@@ -12,18 +12,25 @@ import type { DataGridApiResponse } from '@/components/ui/data-grid';
 import type {
   AutocountComparePullResult,
   AutocountPull,
+  AutocountPullCompareSource,
   AutocountPullEntity,
   AutocountPullExcelRow,
   AutocountPullRowsQuery,
+  AutocountPullScope,
 } from '../types/autocountPull.types';
 
 // ---- Public service functions ----------------------------------------------------------
 
-export async function startPull(entity: AutocountPullEntity): Promise<AutocountPull> {
+/** `scope` (delivery orders only, DO-PULL-SS contract): the DocDate window the checker named
+ *  in the dialog; omitted = the gateway's default, the last 31 days. */
+export async function startPull(
+  entity: AutocountPullEntity,
+  scope?: AutocountPullScope | null,
+): Promise<AutocountPull> {
   const response = await apiFetch('/api/v1/autocount/pulls', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ entity }),
+    body: JSON.stringify(scope ? { entity, scope } : { entity }),
   });
   if (!response.ok) throw await codedError(response, 'Could not start the pull.');
   return response.json();
@@ -84,15 +91,17 @@ export async function downloadPullXlsx(jobId: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
+/** `source` (delivery orders only): which of the two macro files `rows` came from. */
 export async function comparePull(
   jobId: string,
   filename: string,
   rows: Record<string, unknown>[],
+  source?: AutocountPullCompareSource,
 ): Promise<AutocountComparePullResult> {
   const response = await apiFetch(`/api/v1/autocount/pulls/${jobId}/compare`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filename, rows }),
+    body: JSON.stringify(source ? { filename, rows, source } : { filename, rows }),
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Could not compare the file.'));
   return response.json();

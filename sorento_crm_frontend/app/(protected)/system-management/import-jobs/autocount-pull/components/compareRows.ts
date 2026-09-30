@@ -6,6 +6,7 @@
 import type {
   AutocountCompareDifference,
   AutocountComparePullResult,
+  AutocountPullCompareSource,
   AutocountPullEntity,
 } from '../types/autocountPull.types';
 
@@ -15,9 +16,10 @@ import type {
  *  missing field does); everything else -> its string form (`0` stays `"0"`, never a dash).
  *  Shared by the grid cells, their `title`, and the download rows, so what is shown is what
  *  is exported. */
-export function formatCompareValue(value: string | number | boolean | null): string {
+export function formatCompareValue(value: string | number | boolean | null, field?: string): string {
   if (value === null || value === undefined || value === '') return '-';
-  if (typeof value === 'boolean') return value ? 'Active' : 'Inactive';
+  // The headers compare's `cancel` flag reads Yes / No; `is_active` keeps Active / Inactive.
+  if (typeof value === 'boolean') return field === 'cancel' ? (value ? 'Yes' : 'No') : value ? 'Active' : 'Inactive';
   return String(value);
 }
 
@@ -30,8 +32,15 @@ const FIELD_LABELS: Record<string, string> = {
   // collide with the Active/Inactive VALUE cells next to it in the same row.
   is_active: 'Is Active',
   on_hand_qty: 'On Hand Qty',
-  // The DO lines sheet's own column header (`compare_delivery_orders`).
+  // The two macro sheets' own column headers (`compare_delivery_orders`,
+  // `compare_delivery_order_headers`).
   qty: 'Qty',
+  unit_price: 'Unit Price',
+  discount: 'Discount',
+  total_ex: 'Total (Ex)',
+  doc_date: 'Date',
+  debtor_code: 'Debtor Code',
+  cancel: 'Cancel',
 };
 
 /** Human label for a backend field key (cursor rule: no snake_case in the UI). Unknown keys
@@ -50,7 +59,16 @@ export interface CompareRow {
   field: string;
   excel: string;
   pull: string;
+  /** Delivery orders only: which of the two macro files the row came from ("Lines" for
+   *  Order Listing, "Headers" for Order Tracking). */
+  source?: string;
 }
+
+/** Human label for a delivery-orders compare source (cursor rule: no raw key in the UI). */
+export const COMPARE_SOURCE_LABEL: Record<AutocountPullCompareSource, string> = {
+  lines: 'Lines',
+  headers: 'Headers',
+};
 
 /** Stock only-in labels are `code|location` (`autocount_pull_compare.py`'s `_stock_pair_label`);
  *  delivery-orders labels are `docno|code|location` (`_do_label`), split on the FIRST and
@@ -77,29 +95,39 @@ function splitOnlyInLabel(
   return { item_code: label.slice(0, separatorIndex), location: label.slice(separatorIndex + 1) };
 }
 
-function differenceRow(difference: AutocountCompareDifference): CompareRow {
+function differenceRow(difference: AutocountCompareDifference, source?: string): CompareRow {
   return {
     item_code: difference.item_code,
     doc_no: difference.doc_no,
     location: difference.location,
     field: fieldLabel(difference.field),
-    excel: formatCompareValue(difference.excel),
-    pull: formatCompareValue(difference.pull),
+    excel: formatCompareValue(difference.excel, difference.field),
+    pull: formatCompareValue(difference.pull, difference.field),
+    source,
   };
 }
 
 /** Combines `differences` + `only_in_excel` + `only_in_pull` into the ONE array the grid's
- *  `recordCount` and the download both use, so what is counted is what is downloaded (CT-4). */
-export function buildCompareRows(result: AutocountComparePullResult, entity: AutocountPullEntity): CompareRow[] {
-  const rows: CompareRow[] = result.differences.map(differenceRow);
+ *  `recordCount` and the download both use, so what is counted is what is downloaded (CT-4).
+ *  `source` (delivery orders): labels every row with the file it came from; the headers
+ *  file's only-in labels are bare document numbers, never split. */
+export function buildCompareRows(
+  result: AutocountComparePullResult,
+  entity: AutocountPullEntity,
+  source?: AutocountPullCompareSource,
+): CompareRow[] {
+  const sourceLabel = source ? COMPARE_SOURCE_LABEL[source] : undefined;
+  const rows: CompareRow[] = result.differences.map((d) => differenceRow(d, sourceLabel));
+  const split = (label: string) =>
+    source === 'headers' ? { item_code: '', doc_no: label, location: undefined } : splitOnlyInLabel(label, entity);
 
   for (const label of result.only_in_excel) {
-    const { item_code, doc_no, location } = splitOnlyInLabel(label, entity);
-    rows.push({ item_code, doc_no, location, field: 'Only in your Excel', excel: 'Present', pull: 'Missing' });
+    const { item_code, doc_no, location } = split(label);
+    rows.push({ item_code, doc_no, location, field: 'Only in your Excel', excel: 'Present', pull: 'Missing', source: sourceLabel });
   }
   for (const label of result.only_in_pull) {
-    const { item_code, doc_no, location } = splitOnlyInLabel(label, entity);
-    rows.push({ item_code, doc_no, location, field: 'Only in AutoCount', excel: 'Missing', pull: 'Present' });
+    const { item_code, doc_no, location } = split(label);
+    rows.push({ item_code, doc_no, location, field: 'Only in AutoCount', excel: 'Missing', pull: 'Present', source: sourceLabel });
   }
 
   return rows;

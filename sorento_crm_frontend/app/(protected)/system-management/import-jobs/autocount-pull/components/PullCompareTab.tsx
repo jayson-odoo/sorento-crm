@@ -19,11 +19,18 @@ import { generateExcelFile, parseExcelFile, type ColumnOption } from '@/lib/exce
 import { useComparePull } from '../hooks/useAutocountPull';
 import { isCompareFullMatch } from '../types/compareMatch';
 import { buildCompareRows, type CompareRow } from './compareRows';
-import type { AutocountComparePullResult, AutocountPullEntity } from '../types/autocountPull.types';
+import type {
+  AutocountComparePullResult,
+  AutocountPullCompareSource,
+  AutocountPullCompareSummary,
+  AutocountPullEntity,
+} from '../types/autocountPull.types';
 
 export interface PullCompareTabProps {
   jobId: string;
   entity: AutocountPullEntity;
+  /** Delivery orders: the DocDate window the compare cuts the files to (from the pull). */
+  window?: { fromDay: string | null; toDay: string | null } | null;
 }
 
 /** D4 (small-fix track): same reasoning as `PullExcelViewTab`'s own constant - a stable
@@ -35,13 +42,45 @@ const COMPARE_LISTING_KEY: Record<AutocountPullEntity, string> = {
   delivery_orders: 'order_management.orders.autocount_pull::compare',
 };
 
-function summaryHeadline(result: AutocountComparePullResult): { title: string; body: string; ok: boolean } {
-  const { summary, differences } = result;
+/** The two macro files a delivery-orders pull is compared with (owner decision 30 Sep, mock
+ *  section 2). `Overall Tracking` is not compared (owner Q6): AutoCount has none of it. */
+const DO_SOURCES: Array<{
+  source: AutocountPullCompareSource;
+  title: string;
+  hint: string;
+  ariaLabel: string;
+  unit: string;
+}> = [
+  {
+    source: 'lines',
+    title: 'Order Listing (macro), sheet Master',
+    hint: 'DO lines: Doc No, Doc Date, Item Code, Qty, Location, Unit Price, Discount, Total (Ex). Drop the .xlsm here, or click to browse.',
+    ariaLabel: 'Order Listing sheet to compare',
+    unit: 'lines',
+  },
+  {
+    source: 'headers',
+    title: 'Order Tracking (macro), sheet Master',
+    hint: 'DO headers: Doc. No., Date, Debtor Code, Cancel. The Overall Tracking sheet is not compared; AutoCount does not carry it.',
+    ariaLabel: 'Order Tracking sheet to compare',
+    unit: 'documents',
+  },
+];
+
+function noun(entity: AutocountPullEntity): string {
+  return entity === 'delivery_orders' ? 'delivery order lines and documents' : 'items';
+}
+
+function summaryHeadline(
+  summary: AutocountPullCompareSummary,
+  differencesCount: number,
+  entity: AutocountPullEntity,
+): { title: string; body: string; ok: boolean } {
   const ok = isCompareFullMatch(summary);
   if (ok) {
     return {
       title: '100% match.',
-      body: `${summary.matched} of ${summary.total} items agree with ${summary.filename}.`,
+      body: `${summary.matched} of ${summary.total} ${noun(entity)} agree with ${summary.filename}.`,
       ok: true,
     };
   }
@@ -51,38 +90,56 @@ function summaryHeadline(result: AutocountComparePullResult): { title: string; b
   // it is. Dropped entirely when there are no per-field differences at all (only-in-only
   // result) - the only-in clauses below still say what changed.
   const itemsDiffer = summary.different;
-  const fieldDifferences = differences.length;
   const parts: string[] = [];
   if (itemsDiffer > 0) {
     const itemWord = itemsDiffer === 1 ? 'item' : 'items';
     const verb = itemsDiffer === 1 ? 'differs' : 'differ';
     parts.push(
-      itemsDiffer === fieldDifferences
+      itemsDiffer === differencesCount
         ? `${itemsDiffer} ${itemWord} ${verb}`
-        : `${itemsDiffer} ${itemWord} ${verb} (${fieldDifferences} differences)`,
+        : `${itemsDiffer} ${itemWord} ${verb} (${differencesCount} differences)`,
     );
   }
   if (summary.only_in_excel) parts.push(`${summary.only_in_excel} only in your Excel`);
   if (summary.only_in_pull) parts.push(`${summary.only_in_pull} only in AutoCount`);
+  const advisory =
+    entity === 'delivery_orders'
+      ? ' Confirm applies the AutoCount pull as it is; the differences are for you to check.'
+      : '';
   return {
     title: `${summary.matched} of ${summary.total} match.`,
-    body: `${parts.join(', ')}.`,
+    body: `${parts.join(', ')}.${advisory}`,
     ok: false,
   };
 }
 
+/** dd/MM/yyyy for a `YYYY-MM-DD` day (the same rule the review header's scope line uses). */
+function formatDay(day: string | null | undefined): string {
+  if (!day) return '';
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : day;
+}
+
+type SourceResults = Partial<Record<AutocountPullCompareSource, AutocountComparePullResult>>;
+
 /**
  * Drops the same file the checker would have uploaded by hand and lines it up against the
- * pull server-side. Advisory only (P11) - the result is shown, never used to gate Confirm.
+ * pull server-side. Advisory only (P11) - the result is shown, never used to gate Confirm
+ * (a delivery-orders pull may be held by the owner's Q4 switch, which the header's Confirm
+ * reads off the pull itself). Delivery orders take the two macro files, one dropzone each,
+ * cut to the pulled DocDate window, one headline and one grid grouped by a Source column.
  */
-export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
-  const [files, setFiles] = useState<File[]>([]);
-  const [result, setResult] = useState<AutocountComparePullResult | null>(null);
+export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
+  const isDeliveryOrders = entity === 'delivery_orders';
+  const sources = isDeliveryOrders ? DO_SOURCES : [];
+  const [files, setFiles] = useState<Partial<Record<AutocountPullCompareSource | 'single', File[]>>>({});
+  const [single, setSingle] = useState<AutocountComparePullResult | null>(null);
+  const [results, setResults] = useState<SourceResults>({});
   const compareMutation = useComparePull(jobId);
-  const accept = entity === 'stock_balances' ? '.xlsx,.xls,.xlsm' : '.xlsx,.xls';
+  const accept = entity === 'products' ? '.xlsx,.xls' : '.xlsx,.xls,.xlsm';
 
-  const handleFilesChange = async (next: File[]) => {
-    setFiles(next);
+  const handleFilesChange = async (next: File[], source?: AutocountPullCompareSource) => {
+    setFiles((prev) => ({ ...prev, [source ?? 'single']: next }));
     const file = next[0];
     if (!file) return;
     try {
@@ -92,8 +149,13 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
         return;
       }
       compareMutation.mutate(
-        { filename: file.name, rows: rows as Record<string, unknown>[] },
-        { onSuccess: (data) => setResult(data) },
+        { filename: file.name, rows: rows as Record<string, unknown>[], source },
+        {
+          onSuccess: (data) => {
+            if (source) setResults((prev) => ({ ...prev, [source]: data }));
+            else setSingle(data);
+          },
+        },
       );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not read that file.');
@@ -102,7 +164,7 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
 
   const columns = useMemo<ColumnDef<CompareRow>[]>(() => {
     const base: ColumnDef<CompareRow>[] = [];
-    if (entity === 'delivery_orders') {
+    if (isDeliveryOrders) {
       base.push({
         accessorKey: 'doc_no',
         header: ({ column }) => <DataGridColumnHeader title="Doc No" column={column} />,
@@ -119,12 +181,12 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
       header: ({ column }) => <DataGridColumnHeader title="Item Code" column={column} />,
       cell: ({ row }) => (
         <span className="truncate" title={row.original.item_code}>
-          {row.original.item_code}
+          {row.original.item_code || '-'}
         </span>
       ),
       size: 140,
     });
-    if (entity === 'stock_balances' || entity === 'delivery_orders') {
+    if (entity === 'stock_balances' || isDeliveryOrders) {
       base.push({
         accessorKey: 'location',
         header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
@@ -164,18 +226,33 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
         size: 220,
       },
     );
+    if (isDeliveryOrders) {
+      base.push({
+        accessorKey: 'source',
+        header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
+        cell: ({ row }) => <span>{row.original.source || '-'}</span>,
+        size: 100,
+      });
+    }
     return base;
-  }, [entity]);
+  }, [entity, isDeliveryOrders]);
 
   // Differences + only_in_excel + only_in_pull, formatted and labelled - the SAME array the
-  // grid's recordCount and the download both use (CT-4).
-  const rows = useMemo<CompareRow[]>(() => (result ? buildCompareRows(result, entity) : []), [result, entity]);
+  // grid's recordCount and the download both use (CT-4). Delivery orders: the lines file's
+  // rows first, then the headers file's, each labelled by its Source.
+  const rows = useMemo<CompareRow[]>(() => {
+    if (!isDeliveryOrders) return single ? buildCompareRows(single, entity) : [];
+    return DO_SOURCES.flatMap(({ source }) => {
+      const result = results[source];
+      return result ? buildCompareRows(result, entity, source) : [];
+    });
+  }, [single, results, entity, isDeliveryOrders]);
 
   const table = useReactTable({
     columns,
     data: rows,
     getRowId: (row, index) =>
-      `${row.doc_no ?? ''}-${row.item_code}-${row.location ?? ''}-${row.field}-${index}`,
+      `${row.source ?? ''}-${row.doc_no ?? ''}-${row.item_code}-${row.location ?? ''}-${row.field}-${index}`,
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: 'onChange',
   });
@@ -183,41 +260,119 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
   const handleDownloadDifferences = async () => {
     if (rows.length === 0) return;
     const cols: ColumnOption[] = [
-      ...(entity === 'delivery_orders'
-        ? [{ key: 'doc_no', label: 'Doc No', selected: true } satisfies ColumnOption]
-        : []),
+      ...(isDeliveryOrders ? [{ key: 'doc_no', label: 'Doc No', selected: true } satisfies ColumnOption] : []),
       { key: 'item_code', label: 'Item Code', selected: true },
-      ...(entity === 'stock_balances' || entity === 'delivery_orders'
+      ...(entity === 'stock_balances' || isDeliveryOrders
         ? [{ key: 'location', label: 'Location', selected: true } satisfies ColumnOption]
         : []),
       { key: 'field', label: 'Difference', selected: true },
       { key: 'excel', label: 'Your Excel', selected: true },
       { key: 'pull', label: 'AutoCount pull', selected: true },
+      ...(isDeliveryOrders ? [{ key: 'source', label: 'Source', selected: true } satisfies ColumnOption] : []),
     ];
     // No UUID in the filename the user sees (cursor rule) - the entity, not the job id.
     await generateExcelFile(rows, cols, `autocount-${entity}-differences.xlsx`);
   };
 
-  const headline = result ? summaryHeadline(result) : null;
+  // Delivery orders: one headline over both files - the latest response's `summary` is
+  // already the two added up (the server stores them per source and sums them).
+  const latest = isDeliveryOrders
+    ? DO_SOURCES.map(({ source }) => results[source]).filter(Boolean).sort(
+        (a, b) => (a!.summary.compared_at < b!.summary.compared_at ? 1 : -1),
+      )[0] ?? null
+    : single;
+  const differencesCount = isDeliveryOrders
+    ? DO_SOURCES.reduce((n, { source }) => n + (results[source]?.differences.length ?? 0), 0)
+    : single?.differences.length ?? 0;
+  const headline = latest ? summaryHeadline(latest.summary, differencesCount, entity) : null;
+  const windowLine =
+    isDeliveryOrders && (window?.fromDay || window?.toDay)
+      ? `Compared inside the pulled window only, ${formatDay(window?.fromDay) || 'start'} to ${formatDay(window?.toDay) || 'today'}, by document number and line. Rows outside the window are ignored.`
+      : isDeliveryOrders
+        ? 'Compared by document number and line.'
+        : null;
+
+  const renderDropzone = (
+    id: string,
+    label: string,
+    title: string,
+    hint: string,
+    current: File[],
+    source?: AutocountPullCompareSource,
+  ) => (
+    <FileDropzone
+      id={id}
+      accept={accept}
+      files={current}
+      onFilesChange={(next) => void handleFilesChange(next, source)}
+      onReject={() => toast.error(`Invalid file type. Please use: ${accept}`)}
+      title={title}
+      hint={hint}
+      disabled={compareMutation.isPending}
+      aria-label={label}
+    />
+  );
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <FileDropzone
-          id={`autocount-compare-${jobId}`}
-          accept={accept}
-          files={files}
-          onFilesChange={handleFilesChange}
-          onReject={() => toast.error(`Invalid file type. Please use: ${accept}`)}
-          title="Drop the Excel file here, or click to browse"
-          hint={`Accepted formats: ${accept}`}
-          disabled={compareMutation.isPending}
-          aria-label="Excel file to compare"
-        />
-        <div className="space-y-2">
-          {compareMutation.isPending && (
-            <p className="text-sm text-muted-foreground">Comparing…</p>
+      {isDeliveryOrders ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {sources.map((entry) => {
+            const result = results[entry.source];
+            return (
+              <div key={entry.source} className="space-y-2">
+                {renderDropzone(
+                  `autocount-compare-${jobId}-${entry.source}`,
+                  entry.ariaLabel,
+                  entry.title,
+                  entry.hint,
+                  files[entry.source] ?? [],
+                  entry.source,
+                )}
+                {result && (
+                  <p className="text-xs text-muted-foreground">
+                    {result.rows_in_window?.toLocaleString() ?? result.summary.total} {entry.unit} in the window
+                    {result.ignored_outside_window
+                      ? `, ${result.ignored_outside_window.toLocaleString()} outside it ignored`
+                      : ''}
+                    .
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {renderDropzone(
+            `autocount-compare-${jobId}`,
+            'Excel file to compare',
+            'Drop the Excel file here, or click to browse',
+            `Accepted formats: ${accept}`,
+            files.single ?? [],
           )}
+          <div className="space-y-2">
+            {compareMutation.isPending && <p className="text-sm text-muted-foreground">Comparing…</p>}
+            {headline && (
+              <Alert
+                className={
+                  headline.ok
+                    ? 'border-green-200 bg-green-50 text-green-900'
+                    : 'border-amber-200 bg-amber-50 text-amber-900'
+                }
+              >
+                <AlertTitle>{headline.title}</AlertTitle>
+                <AlertDescription>{headline.body}</AlertDescription>
+              </Alert>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isDeliveryOrders && (
+        <>
+          {windowLine && <p className="text-xs text-muted-foreground">{windowLine}</p>}
+          {compareMutation.isPending && <p className="text-sm text-muted-foreground">Comparing…</p>}
           {headline && (
             <Alert
               className={
@@ -230,8 +385,8 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
               <AlertDescription>{headline.body}</AlertDescription>
             </Alert>
           )}
-        </div>
-      </div>
+        </>
+      )}
 
       {rows.length > 0 && (
         <DataGrid

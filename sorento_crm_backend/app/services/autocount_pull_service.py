@@ -412,8 +412,14 @@ def serialize(job: ImportJob, db: Session) -> dict:
         "preview_progress": preview_progress,
         "header": pull.get("header"),
         "counts": pull.get("counts") or {},
-        "confirm_blocked_reason": pull.get("confirm_blocked_reason"),
+        "confirm_blocked_reason": pull.get("confirm_blocked_reason") or match_gate_reason(pull),
+        "confirm_requires_match": match_gate_reason(pull) is not None,
         "compare": pull.get("compare"),
+        "compare_sources": pull.get("compare_sources"),
+        "window": (
+            dict(zip(("fromDay", "toDay"), pull_window(pull)))
+            if pull.get("entity") == "delivery_orders" else None
+        ),
         "apply_job_id": apply_job_id,
         "apply_status": apply_status,
         "warnings": pull.get("warnings") or [],
@@ -820,17 +826,40 @@ def build_delivery_orders_workbook(mapped_rows: list[dict]) -> bytes:
     return buffer.getvalue()
 
 
-def store_compare_summary(db: Session, job: ImportJob, *, filename: str, result: dict) -> ImportJob:
-    """AC-CM-5: only the summary is kept on the job - the uploaded rows and the
-    difference list are returned to the browser and never stored.
+#: The two Excel files a delivery-orders pull is compared with (owner decision 30 Sep):
+#: the Order Listing macro's `Master` sheet (DO lines) and the Order Tracking macro's
+#: `Master` sheet (DO headers).
+COMPARE_SOURCES = ("lines", "headers")
 
-    `qty_total_excel`/`qty_total_pull` (AC-CM-3, stock only) come straight through from
-    `compare_stock`'s own summary; absent (products) they stay `None`, matching the
-    plan's metadata shape.
-    """
-    pull = _pull_meta(job)
+#: The gateway's default window when a pull names none (DO-PULL-SS contract 16).
+DEFAULT_WINDOW_DAYS = 31
+
+
+def pull_window(pull: dict) -> tuple[Optional[str], Optional[str]]:
+    """(fromDay, toDay) the pull covered, as `YYYY-MM-DD` text: the scope the checker asked
+    for, else the window the ready header echoes, else the gateway's default (the 31 MYT
+    days ending on the snapshot's own day). A scope naming one document has no window."""
+    scope = pull.get("scope") or {}
+    if scope.get("docNo") and not (scope.get("fromDay") or scope.get("toDay")):
+        return None, None
+    if scope.get("fromDay") or scope.get("toDay"):
+        return scope.get("fromDay"), scope.get("toDay")
+    header = pull.get("header") or {}
+    if header.get("fromDay") or header.get("toDay"):
+        return header.get("fromDay"), header.get("toDay")
+    extracted = header.get("extractedAt")
+    if not extracted:
+        return None, None
+    try:
+        snapshot_day = datetime.fromisoformat(str(extracted).replace("Z", "+00:00")).astimezone(_MY_TZ).date()
+    except ValueError:
+        return None, None
+    return (snapshot_day - timedelta(days=DEFAULT_WINDOW_DAYS - 1)).isoformat(), snapshot_day.isoformat()
+
+
+def _summary_of(filename: str, result: dict) -> dict:
     summary = result.get("summary") or {}
-    pull["compare"] = {
+    return {
         "filename": filename,
         "compared_at": datetime.utcnow().isoformat(),
         "total": summary.get("total", 0),
@@ -841,11 +870,75 @@ def store_compare_summary(db: Session, job: ImportJob, *, filename: str, result:
         "qty_total_excel": summary.get("qty_total_excel"),
         "qty_total_pull": summary.get("qty_total_pull"),
     }
+
+
+def store_compare_summary(
+    db: Session, job: ImportJob, *, filename: str, result: dict, source: Optional[str] = None
+) -> ImportJob:
+    """AC-CM-5: only the summary is kept on the job - the uploaded rows and the
+    difference list are returned to the browser and never stored.
+
+    `qty_total_excel`/`qty_total_pull` (AC-CM-3, stock only) come straight through from
+    `compare_stock`'s own summary; absent (products) they stay `None`, matching the
+    plan's metadata shape.
+
+    `source` (delivery orders): the summary is kept per file under `compare_sources`, and
+    `compare` becomes the two added up (one headline: "x of y agree with A and B"), so the
+    review header and the confirm gate read one shape whatever the entity.
+    """
+    pull = _pull_meta(job)
+    if source is None:
+        pull["compare"] = _summary_of(filename, result)
+    else:
+        sources = dict(pull.get("compare_sources") or {})
+        sources[source] = _summary_of(filename, result)
+        pull["compare_sources"] = sources
+        ordered = [sources[s] for s in COMPARE_SOURCES if s in sources]
+        pull["compare"] = {
+            "filename": " and ".join(s["filename"] for s in ordered),
+            "compared_at": datetime.utcnow().isoformat(),
+            "total": sum(s["total"] for s in ordered),
+            "matched": sum(s["matched"] for s in ordered),
+            "different": sum(s["different"] for s in ordered),
+            "only_in_excel": sum(s["only_in_excel"] for s in ordered),
+            "only_in_pull": sum(s["only_in_pull"] for s in ordered),
+            "qty_total_excel": None,
+            "qty_total_pull": None,
+        }
     job.job_metadata = _with_pull(job, pull)
     job.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(job)
     return job
+
+
+#: Owner Q4 wording, one place: the review header prints it under Confirm and
+#: `confirm_pull` refuses with it.
+CONFIRM_REQUIRES_MATCH_REASON = (
+    "Compare both Excel files (Order Listing and Order Tracking) with no differences before confirming."
+)
+
+
+def match_gate_reason(pull: dict) -> Optional[str]:
+    """The Q4 switch (`settings.autocount_do_pull_confirm_requires_match`, default off):
+    for a delivery-orders pull, the reason Confirm is held until both files have been
+    compared and neither shows a difference or an only-in row; None when the switch is off,
+    the entity is another, or the gate is satisfied. Computed on read, never stored, so
+    flipping the setting changes every open pull at once."""
+    from app.config import settings
+
+    if pull.get("entity") != "delivery_orders":
+        return None
+    if not getattr(settings, "autocount_do_pull_confirm_requires_match", False):
+        return None
+    sources = pull.get("compare_sources") or {}
+    for source in COMPARE_SOURCES:
+        summary = sources.get(source)
+        if not summary:
+            return CONFIRM_REQUIRES_MATCH_REASON
+        if summary.get("different") or summary.get("only_in_excel") or summary.get("only_in_pull"):
+            return CONFIRM_REQUIRES_MATCH_REASON
+    return None
 
 
 # ======================================================================== SR3 - confirm
@@ -882,6 +975,10 @@ def confirm_pull(db: Session, job: ImportJob, *, user_id: str) -> dict:
         # AC-SP-1: entity-agnostic - products never sets this, stock does when the
         # fetched header reports excludedNonzeroCount > 0.
         raise PullNotReadyForConfirm(str(pull["confirm_blocked_reason"]))
+    gate = match_gate_reason(pull)
+    if gate:
+        # Owner Q4 (delivery orders, switch on): both files compared clean, or no Confirm.
+        raise PullNotReadyForConfirm(gate)
 
     entity = pull.get("entity")
     # Generated up front so the ONE conditional UPDATE can write phase + apply_job_id

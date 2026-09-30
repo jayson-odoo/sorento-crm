@@ -57,6 +57,7 @@ import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useAutocountPullAction } from '@/app/(protected)/system-management/import-jobs/autocount-pull/hooks/useAutocountPull';
+import { PullScopeDialog } from '@/app/(protected)/system-management/import-jobs/autocount-pull/components/PullScopeDialog';
 
 export default function OrdersList() {
   const router = useRouter();
@@ -84,6 +85,9 @@ export default function OrdersList() {
   // AutoCount pull - one more secondary action beside the two imports, the same shared
   // hook Products and Stock Balance use (PLAN-autocount-do-pull-crm-30sep.md).
   const autocountPull = useAutocountPullAction('delivery_orders');
+  // A DO snapshot is a DocDate window (owner decision 30 Sep, mock section 1), so the click
+  // asks for it first; with an open pull the click reviews it and the dialog never shows.
+  const [pullScopeOpen, setPullScopeOpen] = useState(false);
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -396,7 +400,10 @@ export default function OrdersList() {
                       key: 'autocount-pull',
                       label: autocountPull.label,
                       icon: CloudDownload,
-                      onClick: autocountPull.onSelect,
+                      onClick: () => {
+                        if (autocountPull.hasOpenPull) void autocountPull.onSelect();
+                        else setPullScopeOpen(true);
+                      },
                     },
                   ]
                 : []),
@@ -507,6 +514,13 @@ export default function OrdersList() {
           queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
         }}
       />
+      {autocountPull.visible && (
+        <PullScopeDialog
+          open={pullScopeOpen}
+          onOpenChange={setPullScopeOpen}
+          onPull={(scope) => autocountPull.onSelect(scope)}
+        />
+      )}
     </DataGrid>
   );
 }

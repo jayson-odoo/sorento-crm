@@ -283,6 +283,34 @@ Verdict "needs work"; kill tests 12 of 16 backend mutations killed, 1 of 6 front
 - **N3** (an open pull is reused whatever scope the second click names): left as is; the
   trigger is the scope dialog (1.8), where the click will name a window.
 
+## 1.11 Built after the mock approval (owner "okay" on Q1 to Q6, 30 Sep)
+
+- **Start dialog** `PullScopeDialog` (From day / To day prefilled to the last 31 MYT days, no
+  document field); OrdersList opens it unless the caller has an open pull;
+  `useAutocountPullAction.onSelect(scope)` posts `scope` (the `PullStartBody.scope` built in
+  1.2). Products and Stock never see it.
+- **Compare route** `source` (`lines` default, `headers`), rows cut to `pull_window(pull)`
+  (scope, else the header's `fromDay`/`toDay`, else the 31 days ending on the snapshot's MYT
+  day) by `_excel_day` (serials, dd/MM/yyyy, ISO, yyyyMMdd). Lines fields per Q3: `qty` and
+  `total_ex` (SubTotalExTax, else SubTotal) summed per key, `unit_price`, `discount` (text,
+  `5%` and `5` read the same, zero as blank). Headers (`compare_delivery_order_headers`):
+  `doc_date`, `debtor_code`, `cancel`. Not compared: Created Time, Debtor Name, Agent, Total
+  (Inc), Overall Tracking (Q6). Per-file summaries in `compare_sources`, `compare` = both
+  added up (one headline). `serialize` adds `compare_sources`, `window`,
+  `confirm_requires_match`.
+- **Q4 switch** `settings.autocount_do_pull_confirm_requires_match` (env
+  `AUTOCOUNT_DO_PULL_CONFIRM_REQUIRES_MATCH`, default False = advisory). On:
+  `match_gate_reason` fills `confirm_blocked_reason` (read-time, never stored) and
+  `confirm_pull` refuses 409 until both files compared with zero differences and only-ins.
+  One switch, one sentence, the FE needs nothing beyond the existing disabled Confirm +
+  reason line. Crew is confirming the owner's intent; flipping it is an env change.
+- **Compare tab** two dropzones, the window line, per-file "N in the window, M outside it
+  ignored", one headline (advisory sentence), one grid with a Source column ("Lines" /
+  "Headers") instead of the mock's group rows (the shared DataGrid has no group-row
+  primitive; same information, one column).
+- Not changed: Q5 (a DO only in AutoCount still lands on Confirm, it is the ingest's
+  behaviour); the Changes and Excel view tabs.
+
 ## 2. Build order (tests first)
 
 1. This plan + UAC, first commit, draft PR (`crew-lane: DO-PULL-CRM`).

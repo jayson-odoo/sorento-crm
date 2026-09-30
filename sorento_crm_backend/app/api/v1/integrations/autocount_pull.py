@@ -31,9 +31,11 @@ from app.models.base import get_company_scope
 from app.models.job import ImportJob
 from app.services import autocount_pull_service as pull_service
 from app.services.autocount_pull_compare import (
+    compare_delivery_order_headers,
     compare_delivery_orders,
     compare_products,
     compare_stock,
+    window_excel_rows,
 )
 from app.services.error_handler import AppException
 from app.services.foundryx_autocount_client import FoundryxPullError
@@ -96,6 +98,11 @@ class ComparePostBody(BaseModel):
     # rows) and stops a malformed/hostile body from being read into memory unbounded.
     filename: str = Field(max_length=255)
     rows: list[dict[str, Any]] = Field(max_length=200_000)
+    # Delivery orders only (owner decision 30 Sep): which of the two macro files this is,
+    # `lines` (Order Listing, sheet Master) or `headers` (Order Tracking, sheet Master).
+    # Absent = `lines`, the DO lines sheet shape the tab compared before the two-file
+    # design. Refused on products / stock, which take one file.
+    source: Optional[str] = Field(default=None, pattern="^(lines|headers)$")
 
 
 def _permission_slug(entity: str) -> str:
@@ -342,25 +349,53 @@ def compare_pull(
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
     entity = pull_service.entity_of(job)
+    extra: dict[str, Any] = {}
     if entity == "products":
+        if body.source:
+            raise AppException(status_code=422, message="source is for delivery_orders only", code="INVALID_BODY")
         result = compare_products(body.rows, pull_rows)
+        source = None
     elif entity == "delivery_orders":
-        result = compare_delivery_orders(body.rows, pull_rows)
+        # Owner decision 30 Sep: two files, each compared inside the pulled DocDate window
+        # (the macro files hold extra days); a row outside it is ignored, never reported.
+        source = body.source or "lines"
+        from_day, to_day = pull_service.pull_window(pull_service._pull_meta(job))
+        rows_in_window, ignored = window_excel_rows(body.rows, from_day, to_day)
+        if source == "headers":
+            result = compare_delivery_order_headers(rows_in_window, pull_rows)
+        else:
+            result = compare_delivery_orders(rows_in_window, pull_rows)
+        extra = {
+            "source": source,
+            "window": {"fromDay": from_day, "toDay": to_day},
+            "ignored_outside_window": ignored,
+            "rows_in_window": len(rows_in_window),
+        }
     else:
+        if body.source:
+            raise AppException(status_code=422, message="source is for delivery_orders only", code="INVALID_BODY")
         fed = pull_service.classify_stock_rows(db, str(job.company_id), pull_rows)["fed"]
         result = compare_stock(body.rows, fed)
-    job = pull_service.store_compare_summary(db, job, filename=body.filename, result=result)
+        source = None
+    job = pull_service.store_compare_summary(
+        db, job, filename=body.filename, result=result, source=source
+    )
     # AC-CM-5 / Phase 3 fix round (F-10): `summary` in the response is the SAME shape
     # `GET /{job_id}` returns as `compare` - what got stored, not the raw comparison
     # function's own summary (which carries `only_in_excel`/`only_in_pull` as COUNTS
     # under different keys than the stored one and no `filename`/`compared_at` at all).
     # `differences` and the top-level `only_in_excel`/`only_in_pull` stay the raw LISTS
-    # the comparison just computed - never stored (AC-CM-5).
+    # the comparison just computed - never stored (AC-CM-5). For delivery orders
+    # `summary` is the two files added up and `source_summary` this file's own.
+    serialized = pull_service.serialize(job, db)
     return {
-        "summary": pull_service.serialize(job, db)["compare"],
+        "summary": serialized["compare"],
+        "source_summary": (serialized.get("compare_sources") or {}).get(source) if source else None,
+        "confirm_blocked_reason": serialized["confirm_blocked_reason"],
         "differences": result.get("differences", []),
         "only_in_excel": result.get("only_in_excel", []),
         "only_in_pull": result.get("only_in_pull", []),
+        **extra,
     }
 
 
