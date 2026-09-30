@@ -8,6 +8,7 @@ import type { StockAsk } from '@/lib/stock-asks';
 import {
   ASK_LANDING_FIELDS,
   askAnswerText,
+  askProductText,
   askToSummary,
   bucketTodo,
   type AskTodoPayload,
@@ -134,13 +135,22 @@ describe('bucketTodo sort inside a section (AC-ST303, AC-ST304)', () => {
 
 // ---- AC-ST301 -----------------------------------------------------------------------------
 
-const ANSWER = 'SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed.';
+const ANSWER = 'SRT5674 x 50: yes, we have stock. Please refer to your salesman.';
 
 describe('askAnswerText (AC-ST301)', () => {
   it('strips the "CODE x Q:" prefix and upper-cases the first letter', () => {
     expect(askAnswerText(ask('t', '2026-09-29T01:00:00Z', { answer_summary: ANSWER }))).toBe(
-      'Yes, we have stock, please refer to your salesman to proceed.',
+      'Yes, we have stock. Please refer to your salesman.',
     );
+  });
+
+  // REFER-SALESMAN (AC-RS22): the new rows store the answer without a "CODE x Q:" prefix.
+  it.each([
+    'ETA: 2026-09-08. Please refer to your salesman.',
+    "Here's what you want:\n• product: SRT1\n\nBut no incoming matched these.\n\nPlease refer to your salesman.",
+    'Please refer to your salesman.',
+  ])('returns a referred or incoming_eta answer as stored: %s', (answer_summary) => {
+    expect(askAnswerText(ask('t', '2026-09-29T01:00:00Z', { answer_summary }))).toBe(answer_summary);
   });
 
   it.each([
@@ -175,9 +185,17 @@ describe('askToSummary (AC-ST301)', () => {
       contact_name: 'Ah Seng',
       created_at: '2026-09-29T01:00:00Z',
       status: 'open',
-      answer: 'Yes, we have stock, please refer to your salesman to proceed.',
+      answer: 'Yes, we have stock. Please refer to your salesman.',
       branch: 'in_stock',
     });
+  });
+
+  // REFER-SALESMAN (AC-RS21): an incoming or referred ask has no quantity.
+  it('titles a quantity-less ask by its code alone, never "CODE x null"', () => {
+    const row = ask('s3', '2026-09-29T01:00:00Z', { product_code: 'SRTWC286-SH-NEW', quantity: null, branch: 'incoming_eta' });
+    expect(askProductText(row)).toBe('SRTWC286-SH-NEW');
+    expect(askToSummary(row).title).toBe('SRTWC286-SH-NEW');
+    expect(askProductText(ask('s4', '2026-09-29T01:00:00Z', { product_code: 'SRT5674', quantity: 50 }))).toBe('SRT5674 x 50');
   });
 
   it('carries a done ask as status done', () => {

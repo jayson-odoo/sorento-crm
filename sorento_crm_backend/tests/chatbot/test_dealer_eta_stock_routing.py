@@ -62,7 +62,7 @@ def _mcp():
     return {t.name: t for t in CATALOG}, present_response
 
 
-def _seed(sf, *, dealer: bool, salesperson: bool, later_shipment: bool = False) -> None:
+def _seed(sf, *, dealer: bool, salesperson: bool, later_shipment: bool = False, shipments: bool = True) -> None:
     from app.models.access import RespondContact, RespondContactCustomer, StockVisibilityPolicy
     from app.models.resources import Attachment
     from app.models.order import Customer
@@ -127,6 +127,8 @@ def _seed(sf, *, dealer: bool, salesperson: bool, later_shipment: bool = False) 
     )
     db.flush()
     etas = [REAL_ETA, REAL_ETA] + ([LATER_REAL_ETA] if later_shipment else [])
+    if not shipments:
+        etas = []  # REFER-SALESMAN: a product with nothing incoming, for the miss reply
     # Listed out of order on purpose: the dealer reply sorts.
     for n, eta in enumerate(reversed(etas)):
         # A packing list on each, so the stock ask's own `incoming` branch (R5: the
@@ -169,10 +171,13 @@ def _seed(sf, *, dealer: bool, salesperson: bool, later_shipment: bool = False) 
 
 
 class Console:
-    """One contact on the Chatbot Console, turn by turn, through `engine.run_turn`."""
+    """One contact on the Chatbot Console, turn by turn, through `engine.run_turn`.
+    `live=True` (REFER-SALESMAN) sends the envelope a dealer on WhatsApp sends (`is_test`
+    false), so the tail writes its `stock_asks` rows."""
 
-    def __init__(self, session_factory, monkeypatch, stub_access) -> None:
+    def __init__(self, session_factory, monkeypatch, stub_access, *, live: bool = False) -> None:
         self.sf = session_factory
+        self.live = live
         self.state: dict[str, Any] | None = None
         self.tools: list[str] = []
         self._next: dict[str, Any] | None = None
@@ -230,7 +235,7 @@ class Console:
         self.tools = []
         out = engine_mod.run_turn(
             _envelope(
-                is_test=True,
+                is_test=not self.live,
                 previous_conversation_state=self.state,
                 message={
                     "event_type": "message.received",
@@ -271,13 +276,10 @@ def _v(domain: str | None, intent: str | None = None, **extra: Any) -> dict[str,
 INCOMING = _v("incoming", "check_incoming")
 
 
-def _dealer_reply(etas: list[str], salesperson: str | None = SALESPERSON) -> str:
-    refer = (
-        f"Please refer to your salesperson, {salesperson}."
-        if salesperson
-        else "Please refer to your salesperson."
-    )
-    return f"{CODE}\nETA: {', '.join(etas)}\n\n{refer}"
+def _dealer_reply(etas: list[str]) -> str:
+    # REFER-SALESMAN (30 Sep 2026): the one refer sentence, with or without a salesperson
+    # on the customer; the name is never printed.
+    return f"{CODE}\nETA: {', '.join(etas)}\n\nPlease refer to your salesman."
 
 
 # --------------------------------------------------------- the dealer stock ask
@@ -314,7 +316,16 @@ def test_dealer_incoming_reply_sorts_distinct_etas(console):
 def test_dealer_with_no_salesperson_is_still_referred(console):
     c = console(dealer=True, salesperson=False)
     reply = c.say(f"incoming {CODE}", INCOMING)
-    assert reply == _dealer_reply([TOLD_ETA], salesperson=None)
+    assert reply == _dealer_reply([TOLD_ETA])
+
+
+def test_dealer_reply_never_names_the_salesperson(console):
+    """AC-RS02: the customer's sales agent is on file, and still no name is printed."""
+    c = console(dealer=True, salesperson=True)
+    reply = c.say(f"incoming {CODE}", INCOMING)
+    assert SALESPERSON not in reply
+    assert "salesperson" not in reply
+    assert reply.endswith("\n\nPlease refer to your salesman.")
 
 
 def test_dealer_reply_carries_no_allocation_quantity_or_container(console):

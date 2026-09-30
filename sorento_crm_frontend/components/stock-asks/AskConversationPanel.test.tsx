@@ -36,7 +36,7 @@ const ASK: StockAsk & { contact_phone?: string | null } = {
   product_name: 'Wiper Blade 24in',
   quantity: 50,
   branch: 'in_stock',
-  answer_summary: 'SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed.',
+  answer_summary: 'SRT5674 x 50: yes, we have stock. Please refer to your salesman.',
   notified_agent: true,
   notify_skip_reason: null,
   state: 'open',
@@ -118,7 +118,7 @@ describe('AskConversationPanel header and block (AC-ST307)', () => {
     expect(text).toContain('Asked');
     expect(text).toContain('SRT5674 x 50');
     expect(text).toContain('Answered');
-    expect(text).toContain('Yes, we have stock, please refer to your salesman to proceed.');
+    expect(text).toContain('Yes, we have stock. Please refer to your salesman.');
     expect(screen.getByRole('button', { name: /Jump to message/ })).toBeInTheDocument();
   });
 

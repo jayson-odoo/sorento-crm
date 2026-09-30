@@ -1801,37 +1801,39 @@ def test_product_attachment_with_no_link_is_listed_with_the_unavailable_note_and
 # --- PR #1329 fix round: the dealer's incoming reply ---------------------------------
 
 
-def test_dealer_view_is_one_line_per_product_and_the_salesperson():
+def test_dealer_view_is_one_line_per_product_and_the_refer_line():
     """The backend's dealer view (an "Availability only" contact): the product code once,
-    its distinct ETAs, and who to ask. No intro, no numbering, no field of ours."""
+    its distinct ETAs, and the one refer sentence (REFER-SALESMAN, 30 Sep 2026: never a
+    name, never "salesperson"). No intro, no numbering, no field of ours."""
     for tool in ("crm_incoming_stock_list", "crm_incoming_stock_by_product"):
         out = env(tool, {
             "data": [
                 {"product_code": "SRTWC286-SH-NEW", "etas": ["2026-09-08", "2026-09-20"]},
             ],
             "dealer_view": True,
-            "salesperson_name": "Sean",
         })
         assert out["result_type"] == "incoming_dealer"
         assert out["intro"] == ""
         assert [i["title"] for i in out["items"]] == ["SRTWC286-SH-NEW\nETA: 2026-09-08, 2026-09-20"]
         assert out["items"][0]["fields"] == []
-        assert out["closing"] == "Please refer to your salesperson, Sean."
+        assert out["closing"] == "Please refer to your salesman."
         assert out["has_result"] is True
 
 
-def test_dealer_view_without_a_salesperson_still_refers():
+def test_dealer_view_ignores_a_salesperson_name_the_payload_still_carries():
+    """An older backend that still sends `salesperson_name` gets the same one sentence."""
     out = env("crm_incoming_stock_list", {
         "data": [{"product_code": "A", "etas": ["2026-09-08"]}],
         "dealer_view": True,
-        "salesperson_name": None,
+        "salesperson_name": "Sean",
     })
-    assert out["closing"] == "Please refer to your salesperson."
+    assert out["closing"] == "Please refer to your salesman."
+    assert "Sean" not in str(out)
 
 
 def test_dealer_view_with_nothing_incoming_is_a_miss():
     out = env("crm_incoming_stock_list", {
-        "data": [], "empty": True, "dealer_view": True, "salesperson_name": "Sean",
+        "data": [], "empty": True, "dealer_view": True,
     })
     assert out["has_result"] is False
     assert out["items"] == []

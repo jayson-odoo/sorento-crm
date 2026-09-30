@@ -91,7 +91,7 @@ def _ask(db, customer: Customer | None, contact_id: str | None, *, code="SRT5674
         product_code=code,
         quantity=50,
         branch="in_stock",
-        answer_summary=f"{code} x 50: yes, we have stock, please refer to your salesman to proceed.",
+        answer_summary=f"{code} x 50: yes, we have stock. Please refer to your salesman.",
         created_at=datetime.utcnow() - timedelta(minutes=minutes_ago),
         **fields,
     )
