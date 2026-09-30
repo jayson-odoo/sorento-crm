@@ -28,9 +28,14 @@ from app.services.respond_messaging_service import send_text_or_template
 logger = logging.getLogger(__name__)
 
 USE_CASE = "stock_ask_salesman"
-#: R6: B1, B2 and B4 notify the agent; B3 (`incoming`) never does.
+#: R6: B1, B2 and B4 notify the agent; B3 (`incoming`) never does, and neither do the
+#: REFER-SALESMAN branches (30 Sep 2026: the rule adds rows to the Customer asks view only).
 NOTIFIED_BRANCHES = frozenset({"too_big", "in_stock", "no_incoming"})
+#: The stock ask's own branches: each carries the dealer's quantity.
 ANSWERED_BRANCHES = frozenset({"too_big", "in_stock", "incoming", "no_incoming"})
+#: REFER-SALESMAN: a dealer's incoming ETA reply, and every other refer reply. No quantity
+#: is owed; a declined did-you-mean may still carry one.
+REFER_BRANCHES = frozenset({"incoming_eta", "referred"})
 #: A to-do is not paged: a salesperson's open asks are tens. The cap and `truncated` are the guard.
 TODO_CAP = 500
 
@@ -67,16 +72,20 @@ def default_text(ctx: dict[str, Any]) -> str:
 
 
 def answered_entries(entries: Iterable[Any]) -> list[dict[str, Any]]:
-    """The `stock_availability` entries that carry an answer: a branch and the dealer's
-    quantity. An entry still owing a quantity has no branch and is not an ask yet."""
+    """The entries that carry an answer: a stock ask's `stock_availability` entry with a
+    branch and the dealer's quantity (one still owing a quantity has no branch and is not an
+    ask yet), or a REFER-SALESMAN entry (`chatbot/refer_asks.py`), whose quantity is optional."""
     out = []
     for entry in entries or []:
-        if not isinstance(entry, dict) or entry.get("branch") not in ANSWERED_BRANCHES:
+        if not isinstance(entry, dict):
             continue
+        branch = entry.get("branch")
         qty = entry.get("requested_qty")
-        if not isinstance(qty, int) or isinstance(qty, bool) or qty < 1:
-            continue
-        out.append(entry)
+        has_qty = isinstance(qty, int) and not isinstance(qty, bool) and qty >= 1
+        if branch in REFER_BRANCHES and (has_qty or qty is None):
+            out.append(entry)
+        elif branch in ANSWERED_BRANCHES and has_qty:
+            out.append(entry)
     return out
 
 
@@ -118,9 +127,11 @@ def after_answered_turn(
     turn records and notifies too, and its rows say so on the Asks tab and portal page).
 
     S5: one `stock_asks` row per answered entry, state open, with the exact line the dealer
-    was sent. S4: one `notify_salesman` job per B1 / B2 / B4 row when the contact's toggle
-    is on and a customer is known; every other row records why it was not sent. Returns the
-    facts it enqueued. The dealer's reply has already been handed back by then.
+    was sent (a REFER-SALESMAN entry brings its own `answer_summary`, and its `product_id`
+    is resolved by code within the ask's company when the entry has none). S4: one
+    `notify_salesman` job per B1 / B2 / B4 row when the contact's toggle is on and a customer
+    is known; every other row records why it was not sent. Returns the facts it enqueued.
+    The dealer's reply has already been handed back by then.
     """
     from app.models.order import Customer
     from app.models.stock_ask import StockAsk
@@ -135,6 +146,7 @@ def after_answered_turn(
         db.query(Customer).filter(Customer.id == customer_id).first() if customer_id else None
     )
     company_id = _write_company_id(db, customer)
+    _resolve_product_ids(db, answered, company_id)
     # Fix round 2 (AC-SA411): the salesperson's own allowed-to-send flag, checked here so
     # no job is enqueued for a contact the send path would refuse anyway.
     blocked_agent: Optional[str] = None
@@ -164,9 +176,9 @@ def after_answered_turn(
             contact_id=contact_id,
             product_id=entry.get("product_id"),
             product_code=(entry.get("product_code") or entry.get("product_name") or "")[:100],
-            quantity=entry["requested_qty"],
+            quantity=entry.get("requested_qty"),
             branch=branch,
-            answer_summary=answer_line(reply_text, entry),
+            answer_summary=entry.get("answer_summary") or answer_line(reply_text, entry),
             notified_agent=False,
             notify_skip_reason=reason,
             state="open",
@@ -210,6 +222,30 @@ def after_answered_turn(
 
 
 NOT_ALLOWED_TO_SEND = "contact_not_allowed_to_send"
+
+
+def _resolve_product_ids(db: Session, entries: list[dict[str, Any]], company_id: Optional[str]) -> None:
+    """REFER-SALESMAN: an entry built from the reply (no `product_id`) is matched to the
+    product of that code in the ask's company, so the row names the product. A code that
+    matches nothing (a typo the resolver could not place) stays a bare code."""
+    from app.models.product import Product
+
+    wanted = {
+        str(e.get("product_code")).strip()
+        for e in entries
+        if not e.get("product_id") and isinstance(e.get("product_code"), str) and e.get("product_code").strip()
+    }
+    if not wanted:
+        return
+    query = db.query(Product.id, Product.product_code).filter(Product.product_code.in_(list(wanted)))
+    if company_id:
+        query = query.filter(Product.company_id == company_id)
+    by_code = {code.casefold(): pid for pid, code in query.all()}
+    for entry in entries:
+        if not entry.get("product_id") and isinstance(entry.get("product_code"), str):
+            pid = by_code.get(entry["product_code"].strip().casefold())
+            if pid:
+                entry["product_id"] = pid
 
 
 def _agent_not_allowed_to_send(

@@ -120,7 +120,7 @@ export function CustomerAsksHistory({ search, refreshKey }: { search: string; re
         id: 'quantity',
         header: 'Qty',
         size: 60,
-        cell: ({ row }) => <span className="tabular-nums">{row.original.quantity}</span>,
+        cell: ({ row }) => <span className="tabular-nums">{row.original.quantity ?? '-'}</span>,
       },
       {
         id: 'branch',

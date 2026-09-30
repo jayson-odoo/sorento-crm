@@ -62,7 +62,7 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
         id: 'quantity',
         header: 'Qty',
         size: 70,
-        cell: ({ row }) => <span className="tabular-nums">{row.original.quantity}</span>,
+        cell: ({ row }) => <span className="tabular-nums">{row.original.quantity ?? '-'}</span>,
       },
       {
         id: 'branch',

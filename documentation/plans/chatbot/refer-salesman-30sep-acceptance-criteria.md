@@ -22,7 +22,7 @@ Plan: `PLAN-refer-salesman-30sep.md`.
 - **AC-RS10 [BE]** A dealer incoming ask answered with ETAs writes one `stock_asks` row per
   product line: `branch = incoming_eta`, `quantity` null, `product_code` = the line's code,
   `product_id` resolved by code within the ask's company, `answer_summary` =
-  `<code> ETA: <dates>. Please refer to your salesman.`, state open, `notified_agent` false,
+  `ETA: <dates>. Please refer to your salesman.`, state open, `notified_agent` false,
   `notify_skip_reason = not_notified_branch`.
 - **AC-RS11 [BE]** A dealer incoming miss ("But no incoming matched these." + the refer line)
   writes one row per resolved product entity, `branch = referred`, `quantity` null,
@@ -32,6 +32,8 @@ Plan: `PLAN-refer-salesman-30sep.md`.
 - **AC-RS13 [BE]** A dealer's "no" to a did-you-mean writes one row, `branch = referred`,
   `product_code` = the typed code, `quantity` = the carried quantity, `answer_summary` =
   `Please refer to your salesman.`
+- **AC-RS13b [BE]** A refer reply that names no product at all writes one `referred` row whose
+  `product_code` is the dealer's message text (capped at 100), per the crew-ask recommendation.
 - **AC-RS14 [BE]** A stock ask answered with a `stock_availability` entry writes exactly the rows
   it writes today (no duplicate `referred` row for a product that already has a branch row).
 - **AC-RS15 [BE]** A staff (non-dealer) turn never writes a `referred` or `incoming_eta` row; a

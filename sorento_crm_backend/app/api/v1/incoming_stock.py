@@ -32,7 +32,6 @@ from app.services.eta_policy import (
     query_eta_from,
     resolve_request_contact,
     rules_for_contact,
-    salesperson_name,
 )
 from app.services.field_access import CLEARANCE_PERMISSION, apply_field_access
 from app.services.error_handler import handle_internal_error
@@ -133,9 +132,10 @@ def _for_contact(
         staff_permission=CLEARANCE_PERMISSION,
     )
     if is_dealer(db, contact.resolved):
-        # PR #1329 fix round: a dealer is told each product once, its distinct ETAs and
-        # who to ask - after the reveals, so a date the contact may not see is not told.
-        result = dealer_view(result, salesperson=salesperson_name(db, contact.resolved))
+        # PR #1329 fix round: a dealer is told each product once and its distinct ETAs -
+        # after the reveals, so a date the contact may not see is not told. Who to ask
+        # is the presenter's one refer sentence (REFER-SALESMAN).
+        result = dealer_view(result)
     return result
 
 

@@ -1,6 +1,6 @@
 # PLAN: one "refer to your salesman" wording, and every such reply is a Customer ask (REFER-SALESMAN)
 
-Status: Planning (small fix track: no auth/RBAC change, no new ingest surface; one additive migration on `stock_asks`)
+Status: Built, in review on PR #1386 (small fix track: no auth/RBAC change, no new ingest surface; one additive migration on `stock_asks`)
 Owner ruling: 30 Sep 2026, WhatsApp transcript review.
 UAC: `refer-salesman-30sep-acceptance-criteria.md` alongside.
 
@@ -63,7 +63,8 @@ the existing `stock_ask_entries` list, so `after_answered_turn` stays the one wr
 New `branch` values (the CHECK constraint and `STOCK_ASK_BRANCHES` grow):
 
 - `incoming_eta`: a dealer incoming ask answered with ETAs (row 4). One row per dealer line;
-  `product_code` from the line, `answer_summary` = `<code> ETA: <dates>. Please refer to your salesman.`
+  `product_code` from the line, `answer_summary` = `ETA: <dates>. Please refer to your salesman.`
+  (the code is the row's own Product column, as on every other row).
 - `referred`: every other refer reply (rows 5-7): an incoming or stock miss, a not-found code, a
   declined did-you-mean. One row per resolved product entity when the plan has any; else one row
   whose `product_code` is what the dealer typed (the pending's `typed` for row 7, else the
@@ -71,7 +72,9 @@ New `branch` values (the CHECK constraint and `STOCK_ASK_BRANCHES` grow):
   text as sent (capped).
 
 `quantity` becomes nullable (an incoming ask and a miss carry none; a declined did-you-mean
-carries the pending's `stock_qty`). Neither new branch notifies the salesman on WhatsApp
+carries the pending's `stock_qty`). `product_id` comes from the plan's resolved entity when it
+has one, else the writer resolves it by code within the ask's company
+(`stock_ask_service._resolve_product_ids`), so the row names the product. Neither new branch notifies the salesman on WhatsApp
 (`NOTIFIED_BRANCHES` unchanged; the row records `not_notified_branch`): R6 B3's "incoming never
 notifies" extends to them, and the owner rule speaks of the Customer asks view only.
 
@@ -89,13 +92,13 @@ notifies" extends to them, and the owner rule speaks of the Customer asks view o
 replace `ck_stock_asks_branch` with the six values. Idempotent (drop-if-exists, add), re-parented
 onto main's head before the PR is labelled.
 
-## Ambiguity to raise (crew-ask)
+## Ambiguity raised (crew-ask on PR #1386)
 
 A refer reply with no identifiable product (a described set like "gunmetal water closets" that
 matched nothing, or a typed code the resolver could not map). Options: (a) still write one row
 carrying what the dealer typed as `product_code` (recommended: the rule says EVERY reply, and the
 salesman still needs to see the ask); (b) skip the row when no product resolves. Built as (a)
-unless the owner rules (b).
+(`refer_asks.referred_entries` step 5); (b) is the deletion of that step.
 
 ## Out of scope
 
