@@ -198,14 +198,20 @@ def list_reply(answer: Any, *, was_open: bool, fetch_plan: Any, envelopes: list[
 
     text, _had = refers_to_salesman(getattr(answer, "text", "") or "")
     question = answer.question
-    dropped_options: list[dict[str, Any]] = []
+    dropped_options: list[dict[str, Any]] | None = None
     if question is not None:
         if question.kind in ESCALATION_OFFER_KINDS:
             dropped_options = [o for o in (question.options or []) if isinstance(o, dict)]
             question = None
         elif (question.payload or {}).get("escalate_offered") is True:
             question = replace(question, payload={**question.payload, "escalate_offered": False})
-    text = _without_options(text, dropped_options)
+    if dropped_options is not None:
+        companies = [
+            str(row.get("company_name"))
+            for row in ((answer.question.payload or {}).get("roster_plan") or [])
+            if isinstance(row, dict) and row.get("company_name")
+        ]
+        text = _without_picker(text, dropped_options, companies=companies)
     envelope = envelopes[0]
     if envelope_missed(envelope) and not envelope.get("denied"):
         text = _one_line_miss(text)
@@ -214,22 +220,82 @@ def list_reply(answer: Any, *, was_open: bool, fetch_plan: Any, envelopes: list[
     return replace(answer, text=text, question=question, offer=None)
 
 
-def _without_options(text: str, options: list[dict[str, Any]]) -> str:
-    """`text` without the numbered lines of a routing picker that was taken out."""
-    if not options:
-        return text
+#: The escalate offer sentence the miss composer and the silent-company offer print
+#: (`lanes/business/answer.py::what_you_want_reply`, `answer_bridge._silent_company_offer`),
+#: at the end of a line or alone on it.
+_OFFER_SENTENCE = re.compile(r"\s*Would you like me to escalate to .+? team\?\s*$")
+#: The multi-company picker's own lines (`tail/member_offer.build_cs_member_offer`,
+#: `tail/reply_ladder`): a "[ Company: no customer-service members are configured ...
+#: omitted. ]" note and a row's "(Company / Company)" tail. Its `*Company:*` group header
+#: is matched by the company names the dropped question's `roster_plan` carries, never by
+#: shape: a field whose value is empty renders as `*Label:*` too (`lanes/business/fetch.py`).
+_NO_MEMBERS_NOTE = re.compile(r"^\[ .+ omitted\.? \]$")
+_COMPANIES_TAIL = re.compile(r"\s*\([^()]*\)$")
+
+
+def _without_companies(row_text: str) -> str:
+    return _COMPANIES_TAIL.sub("", row_text).strip()
+
+
+def _picker_frame_lines() -> tuple[frozenset[str], tuple[str, ...]]:
+    """The whole lines a routing picker prints besides its rows, and the opening words
+    of the one whose tail names the companies - the same strings the printing sites
+    use (`tail/member_offer.py`), never a second copy."""
+    from app.services.chatbot.tail import member_offer as member_mod
+
+    return (
+        frozenset(
+            {member_mod.PICKER_HEADER, member_mod.PICKER_CLOSE, member_mod.ROSTER_HEADER, member_mod.ROSTER_CLOSE}
+        ),
+        (member_mod.PICKER_MULTI_CLOSE_PREFIX,),
+    )
+
+
+def _without_picker(text: str, options: list[dict[str, Any]], *, companies: list[str] = ()) -> str:
+    """`text` without the routing picker whose question was taken out: its numbered rows,
+    its header and close, and the escalate offer sentence the picker hangs off.
+
+    CHATBOT-EMPTY-ROUTE-PICK (owner console, 30 Sep 2026): only the rows went, so the
+    customer read "Please choose who to route to (reply with the number):", nothing, and
+    "If you have no preference, just reply 'yes' ..." over a list that was not there -
+    and a "yes" would have answered a question that no longer existed. Nothing here
+    prints; the strings are the printing sites' own.
+    """
     labels = {
         (str(o.get("position")), jsc.js_string(o.get("label") or "").strip())
         for o in options
         if jsc.js_string(o.get("label") or "").strip()
     }
-    kept = []
+    whole, prefixes = _picker_frame_lines()
+    group_headers = {f"*{name}:*" for name in companies} | ({"*Other:*"} if companies else set())
+    kept: list[str] = []
+    removed = False  # was the line before this one taken out (a blank next to it goes too)
     for line in (text or "").splitlines():
+        bare = line.strip()
         m = re.match(r"^\s*(\d+)[.)]\s*(.+?)\s*$", line)
-        if m and (m.group(1), m.group(2)) in labels:
+        if (
+            bare in whole
+            or bare.startswith(prefixes)
+            or bare in group_headers
+            or (options and _NO_MEMBERS_NOTE.match(bare))
+            or (m and ((m.group(1), m.group(2)) in labels or (m.group(1), _without_companies(m.group(2))) in labels))
+        ):
+            removed = True
             continue
-        kept.append(line)
-    return "\n".join(kept).rstrip()
+        stripped = _OFFER_SENTENCE.sub("", line)
+        if stripped != line:
+            removed = True
+            if not stripped.strip():
+                continue
+            line = stripped
+        if not line.strip() and (removed or not kept or not kept[-1].strip()):
+            # A blank beside a removed line, a blank on top, or a second blank in a row.
+            continue
+        removed = False
+        kept.append(line.rstrip())
+    while kept and not kept[-1].strip():
+        kept.pop()
+    return "\n".join(kept)
 
 
 def _one_line_miss(text: str) -> str:

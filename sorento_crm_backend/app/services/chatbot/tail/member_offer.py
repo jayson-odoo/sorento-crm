@@ -65,6 +65,22 @@ def cs_roster_plan(gate: Any) -> list[dict[str, Any]]:
     ]
 
 
+#: The routing picker's frame, ONE copy: the line over the numbered members and the line
+#: under them. Every site that prints the frame reads these, and `order_list.list_reply`
+#: (R6: no routing picker inside an open order list) takes the frame out by the same
+#: strings - CHATBOT-EMPTY-ROUTE-PICK: the header and the close once stood over an empty
+#: list because only the rows were taken out.
+PICKER_HEADER = "Please choose who to route to (reply with the number):"
+PICKER_CLOSE = "If you have no preference, just reply 'yes' and we'll assign automatically."
+#: The multi-company close's opening words (`build_cs_member_offer`'s `cs_multi_close`
+#: names the companies after them).
+PICKER_MULTI_CLOSE_PREFIX = "If you have no preference, reply with the company name"
+#: The combined did-you-mean + roster wording (`answer_bridge._cs_roster_text_block`,
+#: `reply_ladder`): production text verbatim off turn 99c114fd.
+ROSTER_HEADER = "To escalate, choose who to route to. Reply the number or name:"
+ROSTER_CLOSE = "Or just reply 'yes' and we'll assign automatically."
+
+
 def fetch_rosters(
     db: Any,
     plan: Sequence[Mapping[str, Any]],
@@ -293,12 +309,8 @@ def build_cs_member_offer(
     catalog_response = jsc.get(catalog, "response")
     base = catalog_response if jsc.truthy(catalog_response) else "Would you like me to escalate to customer service team?"
     named = _name_company(base, offer_company)
-    tail_close = multi_close or "If you have no preference, just reply 'yes' and we'll assign automatically."
-    out["response"] = (
-        f"{named}\n\n"
-        f"Please choose who to route to (reply with the number):\n{numbered}\n\n"
-        f"{tail_close}"
-    )
+    tail_close = multi_close or PICKER_CLOSE
+    out["response"] = f"{named}\n\n{PICKER_HEADER}\n{numbered}\n\n{tail_close}"
     out["member_offer"] = True
     out["selection_context"] = "member_offer"
     out["cs_last_result_set"] = [
