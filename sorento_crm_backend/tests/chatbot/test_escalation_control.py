@@ -446,3 +446,127 @@ class TestUnbarredContactsAreUnchanged:
         result = _incoming_miss(session_factory, monkeypatch, stub_parser, stub_access)
         assert "escalate" in _reply(result).lower(), _reply(result)
         assert (_open_question(session_factory) or {}).get("kind") == "team_pick"
+
+
+# --------------------------------------------------------------------------- #
+# Review B1 / S2: the small-talk fallback's "pass this to the ... team" offer
+# --------------------------------------------------------------------------- #
+
+from tests.chatbot.test_memory_s4_fallback_replay import (  # noqa: E402
+    CASES_DIR,
+    _load_case,
+    _run_turn as _fallback_turn,
+    _seed_contact as _seed_fallback_contact,
+    lane,  # noqa: F401 - fixture by name
+    sent_text,
+)
+
+_CUSTOMER_OFFER_CASE = CASES_DIR / "06-frustration-offers-the-customers-orders.json"
+
+
+def _play_fallback(session_factory, stub_access, lane, *, barred: bool, clarifier: dict | None = None):
+    case = _load_case(_CUSTOMER_OFFER_CASE)
+    pk = _seed_fallback_contact(session_factory, case["given"], level=case["given"]["memory_level"])
+    if barred:
+        db = session_factory()
+        db.execute(text("UPDATE respond_contacts SET escalation_allowed = false WHERE id = :c"), {"c": pk})
+        db.commit()
+    lane.clarifier_answer = dict(clarifier or case["turn"]["clarifier"])
+    result, _prompt = _fallback_turn(
+        session_factory,
+        stub_access,
+        message=case["turn"]["message"],
+        verdict_overrides=case["turn"]["verdict"],
+        n=20,
+        console=False,
+    )
+    return result
+
+
+class TestFallbackLane:
+    def test_an_unbarred_contact_is_still_offered_the_customer_service_team(
+        self, session_factory, stub_access, lane
+    ) -> None:
+        sent = sent_text(_play_fallback(session_factory, stub_access, lane, barred=False))
+        assert "Customer Service team" in sent, sent
+
+    def test_a_barred_contact_is_offered_no_team(self, session_factory, stub_access, lane) -> None:
+        sent = sent_text(_play_fallback(session_factory, stub_access, lane, barred=True))
+        assert "team" not in sent.lower() and "pass this" not in sent.lower(), sent
+
+    def test_a_clarifier_that_writes_an_escalate_sentence_is_stripped_before_sending(
+        self, session_factory, stub_access, lane
+    ) -> None:
+        """The casual lane builds its send action before the tail, so the backstop runs
+        in `_run_casual_lane` itself."""
+        result = _play_fallback(
+            session_factory,
+            stub_access,
+            lane,
+            barred=True,
+            clarifier={"ack": "Sorry about that. Would you like me to escalate to customer service team?", "language": "en"},
+        )
+        sent = sent_text(result)
+        assert "escalate" not in sent.lower(), sent
+        assert REFER_TO_SALESMAN in sent, sent
+
+
+class TestNamedTeamAndTrace:
+    def test_a_named_team_escalation_with_a_product_word_gets_the_referral_not_a_roster(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """Review S3: `apply`'s named-team rule (no fetch, no roster) holds for the barred
+        lane too, so "escalate ZZT... to purchasing team" is answered with the referral."""
+        _seed_contact(session_factory, phone="+60000009301")
+        _make_dealer(session_factory)
+        # Near neighbours, so the business lane has a did-you-mean roster to ask.
+        _seed_product(session_factory, code="ZZTNOPE10")
+        _seed_product(session_factory, code="ZZTNOPE11")
+        bodies = _capture_next_assignee(monkeypatch)
+        _capture_sla(monkeypatch)
+        stub_parser(
+            verdict(
+                message_type="request_for_help",
+                domain_hint=None,
+                intent_hint=None,
+                user_goal="trying to escalate ZZTNOPE1 to the purchasing team",
+                entities=[entity("ZZTNOPE1", hint="product", confident=False)],
+                routing={"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
+                escalation={"is_escalation_confirmation": False, "company_pick": None},
+            )
+        )
+        stub_access()
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        assert bodies == [], bodies
+        assert (result.reply or {}).get("text") == REFER_TO_SALESMAN, _reply(result)
+
+    def test_the_trace_says_the_escalation_was_withheld(self) -> None:
+        """Review S4: a barred turn keeps branch kind `out_of_scope`; the routed line must
+        not claim it was routed to a person."""
+        from app.services.chatbot import trace as trace_mod
+
+        why = trace_mod.routed_why("out_of_scope", {}, True, lane="escalation_barred")
+        assert why.startswith("Escalation withheld"), why
+        assert trace_mod.routed_why("out_of_scope", {}, True).startswith("Routed to escalation")
+
+
+def test_apply_plans_a_barred_named_team_escalation_with_no_kind_menu_and_no_fetch() -> None:
+    """Review S3 at `apply()`: round 5's named-team rule (`test_escalation_round5_escalation_
+    words_win.py::TestApplyPlansTheEscalationOnly`) holds for a barred contact, so the
+    turn reaches the referral instead of a kind menu over "water closet"."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus, State
+    from app.services.chatbot.turn_runtime import with_named_team_escalation
+    from tests.chatbot._turn_helpers import build_policy
+    from tests.chatbot.test_escalation_round5_escalation_words_win import _fixed_code_verdict
+
+    state = State(focus=Focus(), pending=None, profile=Profile(escalation_allowed=False), turn_no=3)
+    _state, plan = apply(
+        state,
+        with_named_team_escalation(_fixed_code_verdict()),
+        build_policy(),
+        {"water closet": {"promotion": 1, "attachment_type": 1}},
+    )
+    assert plan.ask is None, plan.ask
+    assert plan.fetch == []
+    assert plan.trace.lane == "escalation_barred"

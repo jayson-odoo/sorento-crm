@@ -3509,7 +3509,9 @@ def _apply(
     )
     _exact_code_when_a_quantity_is_named(plan, verdict, trace)
 
-    if _named_teams(verdict) and trace.lane == "escalation":
+    # ESCALATION-CONTROL: a barred contact's named-team escalation is still the escalation
+    # lane's (answered with the salesman referral), never a business roster.
+    if _named_teams(verdict) and trace.lane in ("escalation", "escalation_barred"):
         # #865 round 5 (R1): an escalate word plus a named team is the escalation lane's,
         # whatever product words ride along. They are its focus (already on `focus`), not
         # a question: no fetch, no roster, no did-you-mean from the business lane (the

@@ -2846,6 +2846,7 @@ def _fallback_context(
     dry_run: bool,
     turn_id: str,
     policy: Any,
+    profile: Any = None,
 ) -> Any:
     """Everything the graceful fallback reply needs from the database, read while the
     routing session is still open (S4, plan 7.1 and 7.2). Each memory field is filled
@@ -2883,7 +2884,13 @@ def _fallback_context(
     if contact_pk:
         first_name = db.query(RespondContact.first_name).filter(RespondContact.id == contact_pk).scalar()
     order_domain = policy.domain("order") if policy is not None else None
-    team_code = getattr(order_domain, "escalation_team_code", None)
+    # ESCALATION-CONTROL: no team to "pass this to" for a barred contact, so the fallback
+    # takes its ordinary offer instead of `fallback_offer_customer`.
+    team_code = (
+        None
+        if turn_state.escalation_barred(profile)
+        else getattr(order_domain, "escalation_team_code", None)
+    )
 
     statements = verdict.get("profile_statements")
     noted = [
@@ -4077,6 +4084,7 @@ def _run_stages(  # noqa: PLR0915
                     dry_run=dry_run,
                     turn_id=turn_id,
                     policy=policy,
+                    profile=getattr(state_out, "profile", None),
                 )
             except Exception:  # noqa: BLE001 - the clarifier still answers, memory-less
                 logger.warning("chatbot: the fallback context did not build", exc_info=True)
@@ -4222,7 +4230,9 @@ def _run_stages(  # noqa: PLR0915
         turn_trace.record(
             "routed",
             summary=f"Routed to {trace_mod.lane_words(branch_kind, verdict.get('domain_hint'))}.",
-            why=trace_mod.routed_why(branch_kind, verdict, bool(access.get("allowed"))),
+            why=trace_mod.routed_why(
+                branch_kind, verdict, bool(access.get("allowed")), lane=plan.trace.lane
+            ),
             facts={
                 "lane": branch_kind,
                 "domains": list(plan.domains),
@@ -6306,6 +6316,14 @@ def _run_casual_lane(
         )
         answer_shape = "canned"
         failed = None
+    if turn_state.escalation_barred(getattr(state, "profile", None)):
+        # ESCALATION-CONTROL: this lane's send action is built HERE, before the tail runs,
+        # so the backstop runs here too (a clarifier that wrote an escalate sentence).
+        from app.services.chatbot import escalation_control
+
+        stripped, _question, offered = escalation_control.strip_text(text, None, state.profile)
+        if offered:
+            text = stripped
     actions = [
         *actions,
         # AC-507: `quick_replies` is n8n's comma-joined string or null, never a list -
@@ -7434,7 +7452,11 @@ def run_tail(
             }
         producers["escalate-catalog"] = catalog
         outcome_input = catalog
-        if outcome_mod.cs_offer_gate(catalog, ctx, values["gate"]):
+        # ESCALATION-CONTROL: no CS roster is built for a barred contact at all (its rows
+        # would ride on `result_set` even after the text is stripped).
+        if not turn_state.escalation_barred(getattr(state, "profile", None)) and outcome_mod.cs_offer_gate(
+            catalog, ctx, values["gate"]
+        ):
             plan = member_mod.cs_roster_plan(values["gate"])
             rosters = member_mod.fetch_rosters(db, plan, ctx)
             offer = member_mod.build_cs_member_offer(catalog, plan, rosters)
@@ -7457,7 +7479,8 @@ def run_tail(
     barred_profile = getattr(state, "profile", None)
     if turn_state.escalation_barred(barred_profile):
         # ESCALATION-CONTROL: the same backstop `_run_answer` runs, for the lanes this
-        # tail composes (canned, escalation, casual).
+        # tail composes (canned, escalation). The casual lane builds its send action
+        # before the tail and runs the same strip in `_run_casual_lane`.
         from app.services.chatbot import escalation_control
 
         stripped_text, question, offered = escalation_control.strip_text(
