@@ -2795,7 +2795,8 @@ def _top_selling_detail(report: dict) -> str:
                 for r in months
             )
         )
-    return "\n\n".join(blocks)
+    # Grill Q6 (owner, 30 Sep 2026): a code bought by hundreds of customers is split too.
+    return "\n\n".join(whatsapp_parts("\n\n".join(blocks)))
 
 
 def _top_selling(report: dict) -> str:
