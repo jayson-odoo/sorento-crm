@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning Confirm posts what the planner ticked, and says exactly what it wrote
 
-Status: v3 redesign (preview inside the line grid) on owner hand-test feedback 30 Sep 2026; mock v3 awaiting owner look; v2 backend dry run and echo stand. PR #1395. Track: feature lane (FE + BE, no migration, no RBAC).
+Status: v3.1 redesign (Preview = read-only view, two sections, Back to planning) on owner hand-test feedback 30 Sep 2026; mock v3 awaiting owner look; v2 backend dry run and echo stand. PR #1395. Track: feature lane (FE + BE, no migration, no RBAC).
 Domain: scm (fulfilment planning board)
 UAC: `fulfil-confirm-scope-30sep-acceptance-criteria.md`
 Lane: `crew/fulfil-confirm-scope` (crew lane FULFIL-CONFIRM-SCOPE), base `origin/main` at e26410c20.
@@ -153,7 +153,19 @@ and P5 (echo) stand.
 Q1. Header CTA is "Preview (N)" alone. After the preview loads it becomes "Confirm N lines"
     with "Exit preview" beside it; the count follows the ticks. A population change drops
     Confirm and brings "Preview (N)" back (same fingerprint as v2).
-Q2. Preview mode filters the existing "Every contributing line" grid to the rows the server
+Q2 (v3.1, owner refinement, verbatim: "i think you put 2 sections: order inquiry and stock
+    transfer, read only sections, then i can always escape the preview to come back to the
+    fulfilment planning page existingly to make any adjustment"). Preview is a READ-ONLY view
+    replacing the board content, with two sections built from the dry run using the board's
+    datagrid components: "Order Inquiry" (every row sent to purchasing: line, sales order,
+    product, verb, qty, delivery date, location, decision, saved by whom and when, amber when
+    another planner or before this board opened) and "Stock transfer" (every transfer created:
+    product, from, to, qty, kind, for which line, the order-back note). A short third note lists
+    held-back and not-sent lines with reasons. No ticks, no editing. "Back to planning" returns
+    to the unchanged board for adjustments (undo, re-save, decide); "Confirm N lines" lives on
+    the Preview view only. Retired with this: the Flow column and the filtered grid of Q2 v3,
+    and per-row ticks (leaving a line out = Undo its decision on the board, then Preview again).
+    Q2 v3 text, superseded: Preview mode filters the existing "Every contributing line" grid to the rows the server
     says the press will post, keeps the tick column (untick = leave out, decision kept) and
     adds a first column "Flow": one tag per thing the server would write for that line:
     "Purchasing · <verb> <qty>" per order-inquiry row, "Stock transfer · <from> to <to> <qty>"
@@ -161,9 +173,8 @@ Q2. Preview mode filters the existing "Every contributing line" grid to the rows
     held back · C carried forward". Held-back rows (reason, no tick) and not-sent rows sit in
     their own groups under the ticked rows, never mixed in. Decide, Save all suggested and Undo
     all are disabled in preview. Exit preview restores the full grid.
-Q3. The Stock transfers grid above stays the transfer list; in preview it also lists the
-    transfers the press would propose, marked "proposed on Confirm", greyed when their line is
-    unticked.
+Q3 (v3.1). The board's Stock transfers grid is untouched; the Preview view's own Stock
+    transfer section is the list of transfers the press would create.
 Q4. The v2 inline preview panel is removed. Results block after Confirm unchanged.
 
 ## Autosave audit (owner question, 30 Sep 2026)

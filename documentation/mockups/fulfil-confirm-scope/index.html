@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Preview in the grid (mockup v3)</title>
+<title>Preview in the grid (mockup v3.1)</title>
 <style>
 /* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme) */
 :root{--background:#fff;--foreground:#09090b;--card:#fff;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-fg:#fff;--primary-soft:#eff6ff;--secondary:#f4f4f5;--destructive:#dc2626;--destructive-soft:#fef2f2;--success:#15803d;--success-soft:#f0fdf4;--warning:#a16207;--warning-soft:#fefce8;--warning-line:#fde68a;--radius:8px;--page:#f7f7f8}
@@ -82,76 +82,70 @@ th{font-size:12px;color:var(--muted-fg);font-weight:500;background:#fff}
 </head>
 <body>
 <div class="doc">
-<h1>Fulfilment planning: Preview inside the line grid, then Confirm</h1>
-<p class="intro">Mock v3 after the owner's hand test on build b51a4a40c (30 Sep): no extra section above the summary cards. The header CTA is <b>Preview (N)</b>; <b>Confirm N lines</b> appears only after a preview has run. Preview mode filters the existing "Every contributing line" grid to exactly the rows the press will post and adds a <b>Flow</b> column: what goes to Purchasing (Order Inquiry) and what becomes a Stock transfer. Held-back rows are grouped apart with a tag. The Stock transfers grid above stays the transfer list and shows the transfers the press would propose. Exit preview returns the full list. Nothing writes until Confirm. No popup, no autosave.</p>
-<div class="nav"><a href="#s1">1 Header before / after Preview</a><a href="#s2">2 Preview mode in the grid (1280)</a><a href="#s3">3 Preview at 375</a><a href="#s4">4 After Confirm</a></div>
+<h1>Fulfilment planning: Preview is a read-only view with two sections, then Confirm</h1>
+<p class="intro">Mock v3.1 (owner refinement, 30 Sep): Preview opens a <b>read-only view</b> in place of the board with two sections built from the server's dry run: <b>Order Inquiry</b> (the rows that will be sent to purchasing) and <b>Stock transfer</b> (the transfers that will be created), same datagrid components as the board, no editing, no ticks. A small third note lists lines the server would hold back or not send. <b>Back to planning</b> returns to the normal board, unchanged, for any adjustment (undo a draft, re-save, decide); <b>Confirm N lines</b> lives on the Preview view only. No popup, no autosave, nothing written until Confirm.</p>
+<div class="nav"><a href="#s1">1 Board header: Preview CTA</a><a href="#s2">2 Preview view (1280)</a><a href="#s3">3 Preview at 375</a><a href="#s4">4 After Confirm</a></div>
 
 <section id="s1">
-<h2><span class="nb">1</span>Header: Preview is the CTA; Confirm appears after it</h2>
-<p class="why">Before a preview the header has one primary button, "Preview (3)". After the preview loads, it becomes "Confirm 3 lines" (primary) with "Exit preview" beside it; the count follows the ticks in the grid. Any change to the board after the preview (save, undo, refetch) drops Confirm and brings "Preview (N)" back.</p>
-<div class="row"><div class="desk"><div class="screen" style="height:260px"><div class="main">
+<h2><span class="nb">1</span>Board: Preview (N) is the only CTA</h2>
+<p class="why">The board is exactly today's page. The header's primary button is "Preview (N)" (N = saved lines the press would send). There is no Confirm on the board.</p>
+<div class="row"><div class="desk"><div class="screen" style="height:330px"><div class="main">
  <div class="pagehead"><div><div class="t">Fulfilment planning</div><div class="sub">SO402757 · OIB CONSTRUCTION SDN BHD (PROJECT) · Revision 1, confirmed by Jayson Foundryx, 4 lines</div></div>
  <div style="display:flex;gap:8px;align-items:center"><span class="btn">Save all suggested (41)</span><span class="btn">Undo all</span><span class="btn pri">Preview (3)</span></div></div>
- <div class="sub">Before a preview: one CTA. No Confirm button on screen.</div>
- <div class="pagehead" style="margin-top:22px"><div><div class="t">Fulfilment planning</div><div class="sub">SO402757 · Revision 1, confirmed by Jayson Foundryx, 4 lines · <b>Preview: 2 of 3 lines ticked</b></div></div>
- <div style="display:flex;gap:8px;align-items:center"><span class="btn">Exit preview</span><span class="btn pri">Confirm 2 lines</span></div></div>
- <div class="sub">After the preview: Confirm replaces Preview; Exit preview restores the full grid and the Preview (3) CTA.</div>
-</div></div><div class="cap">1280 · the two header states</div></div></div>
+ <div class="cards"><div class="card"><div class="l">Lines</div><div class="v">79</div></div><div class="card"><div class="l">Past due</div><div class="v">12</div></div><div class="card"><div class="l">Contested</div><div class="v">3</div></div><div class="card"><div class="l">Unplannable</div><div class="v">0</div></div></div>
+ <div class="toolbar"><span class="btn sm">Expand all</span><span class="btn sm">Collapse all</span><span class="btn sm">Decide</span><span class="chip">0 selected</span></div>
+ <table><tr><th><span class="cb"></span></th><th>Line</th><th>Product</th><th>Required</th><th>Owed qty</th><th>Suggested</th><th>Decision</th></tr>
+ <tr><td><span class="cb"></span></td><td>6</td><td>SRTWT6808</td><td>1 Sep 2026</td><td>239</td><td>Buy 239</td><td><span class="pill saved">Saved · Buy 239</span></td></tr>
+ <tr><td><span class="cb"></span></td><td>8</td><td>SRTSH1040</td><td>1 Nov 2026</td><td>100</td><td>Borrow 43 + 57 from BRW-BB</td><td><span class="pill saved">Saved · Approved</span></td></tr>
+ <tr><td><span class="cb"></span></td><td>9</td><td>SRTWT6808</td><td>1 Nov 2026</td><td>436</td><td>Buy 436</td><td><span class="pill saved">Saved · Buy 436</span></td></tr></table>
+</div></div><div class="cap">1280 · unchanged board, one CTA</div></div></div>
 </section>
 
 <section id="s2">
-<h2><span class="nb">2</span>Preview mode: the same grid, filtered to what will be sent, with a Flow column</h2>
-<p class="why">Summary cards and the Stock transfers grid stay where they are. The line grid is filtered to the rows the server says the press will post (the same dry run as v2, so it is the server's answer, not a client guess). A new first column <b>Flow</b> says where each row goes on Confirm: "Purchasing · ORDER 239" (an Order Inquiry row) and/or "Stock transfer · BRW-BB to BRW-IB 100". Held-back rows sit in their own group at the bottom with the reason and no tick box. The tick box on a row leaves it out of the press and keeps its saved decision.</p>
+<h2><span class="nb">2</span>Preview view: two read-only sections, Back to planning, Confirm</h2>
+<p class="why">Pressing Preview posts the same body Confirm will post with <code>preview: true</code>; the server runs the press and rolls it back. The view replaces the board content. Section 1 lists every Order Inquiry row the press would raise; section 2 every stock transfer it would create; a short note lists what the server would hold back or not send. Nothing here is editable. "Back to planning" returns to the board as it was, where the planner undoes or re-saves a decision; a changed board needs a fresh Preview before Confirm.</p>
 <div class="row"><div class="desk"><div class="screen"><div class="main">
- <div class="pagehead"><div><div class="t">Fulfilment planning</div><div class="sub">SO402757 · Revision 1, confirmed by Jayson Foundryx, 4 lines · <b>Preview: 2 of 3 lines ticked</b></div></div>
- <div style="display:flex;gap:8px;align-items:center"><span class="btn">Exit preview</span><span class="btn pri">Confirm 2 lines</span></div></div>
- <div class="cards"><div class="card"><div class="l">Lines</div><div class="v">79</div></div><div class="card"><div class="l">Past due</div><div class="v">12</div></div><div class="card"><div class="l">Contested</div><div class="v">3</div></div><div class="card"><div class="l">Unplannable</div><div class="v">0</div></div></div>
- <div class="sect">Stock transfers</div>
- <table><tr><th>Transfer no</th><th>Product</th><th>From</th><th>To</th><th>Qty</th><th>State</th><th>For</th></tr>
- <tr><td class="dim">proposed on Confirm</td><td>SRTSH1040</td><td>BRW-BB</td><td>BRW-IB</td><td>100</td><td><span class="flow tr">Stock transfer</span></td><td>SO402757 line 8</td></tr>
- <tr><td>TR-000051</td><td>C-FH16</td><td>DC1</td><td>BRW-IB</td><td>82</td><td><span class="pill">Approved</span></td><td>SO402757 line 13</td></tr></table>
- <div class="sect">Every contributing line <span class="dim" style="font-weight:400">· preview: 3 of 79 rows, what this press sends</span></div>
- <div class="banner"><b>Preview</b> 2 to Purchasing · 1 stock transfer · 1 held back · 4 confirmed lines carried forward unchanged <span class="dim">· server answer, nothing written yet</span></div>
- <div class="toolbar"><span class="btn sm">Expand all</span><span class="btn sm">Collapse all</span><span class="btn sm" disabled>Decide</span><span class="chip">preview</span></div>
- <table><tr><th><span class="cb on"></span></th><th>Flow</th><th>Line</th><th>Product</th><th>Order inquiry</th><th>Required</th><th>Owed qty</th><th>Suggested</th><th>Decided</th><th>Saved by</th></tr>
- <tr><td><span class="cb on"></span></td><td><span class="flow buy">Purchasing · ORDER 239</span></td><td>6</td><td>SRTWT6808</td><td>1 Sep 2026 · BRW-IB</td><td>1 Sep 2026</td><td>239</td><td>Buy 239</td><td>Buy 239 (amended)</td><td>you, just now</td></tr>
- <tr><td><span class="cb on"></span></td><td><span class="flow buy">Purchasing · ORDER 436</span></td><td>9</td><td>SRTWT6808</td><td>1 Nov 2026 · BRW-IB</td><td>1 Nov 2026</td><td>436</td><td>Buy 436</td><td>Buy 436 (amended)</td><td>you, just now</td></tr>
- <tr><td><span class="cb"></span></td><td><span class="flow tr">Stock transfer · BRW-BB to BRW-IB 100</span><br><span class="flow buy">Purchasing · ORDER_BACK 100</span></td><td>8</td><td>SRTSH1040</td><td>1 Nov 2026 · BRW-IB</td><td>1 Nov 2026</td><td>100</td><td>Borrow 43 + 57 from BRW-BB</td><td>Approved</td><td><span class="amberbox">Jayson Foundryx, 1 week ago</span></td></tr>
- <tr><td colspan="10" class="dim" style="background:var(--muted);font-size:12px">Held back by the server (not sent, decision kept)</td></tr>
- <tr class="np"><td></td><td><span class="flow hb">Held back · only 3 free at BRW-IB</span></td><td>112</td><td>MWB242</td><td></td><td>21 Dec 2026</td><td>4</td><td>Reserve 4 BRW-IB</td><td>Approved</td><td>you, just now</td></tr>
- <tr><td colspan="10" class="dim" style="background:var(--muted);font-size:12px">Not sent (re-save first)</td></tr>
- <tr class="np"><td></td><td><span class="flow hb">Suggestion changed</span></td><td>24</td><td>TPE-9204</td><td></td><td>1 Sep 2026</td><td>99</td><td>Borrow 99 from BRW</td><td>Saved</td><td>you, 2 days ago</td></tr>
- </table>
- <div class="sub" style="margin-top:8px">3 of 3 · preview rows only · Exit preview to see all 79</div>
-</div></div><div class="cap">1280 · line 8 unticked (its transfer row above greys out with it); Confirm reads "Confirm 2 lines"</div></div></div>
-<p class="note">Flow column rule: one tag per thing the server would write for that line. An Order Inquiry row = "Purchasing · &lt;verb&gt; &lt;qty&gt;" (ORDER, ORDER_BACK, RESERVE ...). A stock transfer = "Stock transfer · &lt;from&gt; to &lt;to&gt; &lt;qty&gt;". A line can carry both. The held-back and not-sent groups are never mixed into the ticked rows. Decide, Save all suggested and Undo all are disabled while in preview; Exit preview brings them back.</p>
+ <div class="pagehead"><div><div class="t">Preview: what Confirm will send</div><div class="sub">SO402757 · OIB CONSTRUCTION SDN BHD (PROJECT) · 3 saved lines · server answer, nothing written yet</div></div>
+ <div style="display:flex;gap:8px;align-items:center"><span class="btn">Back to planning</span><span class="btn pri">Confirm 3 lines</span></div></div>
+ <div class="banner"><b>3 lines</b> · 3 Order Inquiry rows to Purchasing · 1 stock transfer · 1 held back · 4 confirmed lines carried forward unchanged</div>
+ <div class="sect">Order Inquiry <span class="dim" style="font-weight:400">· sent to Purchasing on Confirm</span></div>
+ <table><tr><th>Line</th><th>Sales order</th><th>Product</th><th>Verb</th><th>Qty</th><th>Delivery</th><th>Location</th><th>Decision</th><th>Saved by</th></tr>
+ <tr><td>6</td><td>SO402757</td><td>SRTWT6808</td><td>ORDER</td><td>239</td><td>1 Sep 2026</td><td>BRW-IB</td><td>Buy 239 (amended)</td><td>you, just now</td></tr>
+ <tr><td>9</td><td>SO402757</td><td>SRTWT6808</td><td>ORDER</td><td>436</td><td>1 Nov 2026</td><td>BRW-IB</td><td>Buy 436 (amended)</td><td>you, just now</td></tr>
+ <tr><td>8</td><td>SO402757</td><td>SRTSH1040</td><td>ORDER_BACK</td><td>100</td><td>1 Nov 2026</td><td>BRW-IB</td><td>Borrow 43 + 57 from BRW-BB (approved)</td><td><span class="amberbox">Jayson Foundryx, 1 week ago</span></td></tr></table>
+ <div class="sect">Stock transfer <span class="dim" style="font-weight:400">· created on Confirm</span></div>
+ <table><tr><th>Product</th><th>From</th><th>To</th><th>Qty</th><th>Kind</th><th>For</th><th>Decision</th></tr>
+ <tr><td>SRTSH1040</td><td>BRW-BB</td><td>BRW-IB</td><td>100</td><td>borrow</td><td>SO402757 line 8</td><td>Order-back: SO396347 line 8 lent 43, SO396350 line 8 lent 57</td></tr></table>
+ <div class="sect">Held back or not sent <span class="dim" style="font-weight:400">· decisions kept, nothing raised</span></div>
+ <ul class="dim" style="font-size:13px;margin:0;padding-left:18px"><li>Line 112 MWB242: held back by the server, only 3 free at BRW-IB.</li><li>Line 24 TPE-9204: suggestion changed since it was saved; re-save it first.</li></ul>
+ <div class="note">To leave line 8 out: Back to planning, Undo its saved decision (or re-save it), then Preview again. The Preview view never edits.</div>
+</div></div><div class="cap">1280 · read-only; Confirm 3 lines writes exactly these rows and transfers</div></div></div>
 </section>
 
 <section id="s3">
 <h2><span class="nb">3</span>Preview at 375</h2>
 <div class="row"><div class="phone"><div class="screen"><div class="main" style="padding:14px">
- <div class="pagehead"><div class="t" style="font-size:18px">Fulfilment planning</div></div>
- <div style="display:flex;gap:8px;margin-bottom:10px"><span class="btn">Exit preview</span><span class="btn pri">Confirm 2 lines</span></div>
- <div class="banner" style="font-size:12px"><b>Preview</b> 2 to Purchasing · 1 stock transfer · 1 held back</div>
- <div class="ln"><span class="cb on"></span><div><div class="h">Line 6 · SRTWT6808</div><div class="m"><span class="flow buy">Purchasing · ORDER 239</span></div><div class="m">1 Sep 2026 · BRW-IB · Buy 239 · you, just now</div></div></div>
- <div class="ln"><span class="cb on"></span><div><div class="h">Line 9 · SRTWT6808</div><div class="m"><span class="flow buy">Purchasing · ORDER 436</span></div><div class="m">1 Nov 2026 · BRW-IB · Buy 436 · you, just now</div></div></div>
- <div class="ln"><span class="cb"></span><div><div class="h">Line 8 · SRTSH1040</div><div class="m"><span class="flow tr">Stock transfer · BRW-BB to BRW-IB 100</span> <span class="flow buy">Purchasing · ORDER_BACK 100</span></div><div class="m">Borrow 43 + 57 from BRW-BB</div><div class="amberbox">Jayson Foundryx, 1 week ago</div></div></div>
- <div class="grp">Held back by the server</div>
- <div class="ln np"><span></span><div><div class="h">Line 112 · MWB242</div><div class="m"><span class="flow hb">Held back · only 3 free at BRW-IB</span></div></div></div>
-</div></div><div class="cap">375 · the grid's card layout in preview, no horizontal scroll</div></div></div>
+ <div class="pagehead"><div class="t" style="font-size:18px">Preview: what Confirm will send</div></div>
+ <div style="display:flex;gap:8px;margin-bottom:10px"><span class="btn">Back to planning</span><span class="btn pri">Confirm 3 lines</span></div>
+ <div class="banner" style="font-size:12px"><b>3 lines</b> · 3 to Purchasing · 1 transfer · 1 held back</div>
+ <div class="sect">Order Inquiry</div>
+ <div class="ln"><span></span><div><div class="h">Line 6 · SRTWT6808 · ORDER 239</div><div class="m">1 Sep 2026 · BRW-IB · Buy 239 · you, just now</div></div></div>
+ <div class="ln"><span></span><div><div class="h">Line 9 · SRTWT6808 · ORDER 436</div><div class="m">1 Nov 2026 · BRW-IB · Buy 436 · you, just now</div></div></div>
+ <div class="ln"><span></span><div><div class="h">Line 8 · SRTSH1040 · ORDER_BACK 100</div><div class="m">1 Nov 2026 · BRW-IB · Borrow 43 + 57 from BRW-BB</div><div class="amberbox">Jayson Foundryx, 1 week ago</div></div></div>
+ <div class="sect">Stock transfer</div>
+ <div class="ln"><span></span><div><div class="h">SRTSH1040 · BRW-BB to BRW-IB · 100</div><div class="m">borrow · for SO402757 line 8</div></div></div>
+ <div class="sect">Held back or not sent</div>
+ <div class="ln np"><span></span><div><div class="h">Line 112 · MWB242</div><div class="m">held back, only 3 free at BRW-IB</div></div></div>
+</div></div><div class="cap">375 · the grids fall to their card layout, no horizontal scroll</div></div></div>
 </section>
 
 <section id="s4">
-<h2><span class="nb">4</span>After Confirm</h2>
-<p class="why">Unchanged: the toast and the results block read the server's own list; the grid leaves preview mode and shows every row again with the confirmed pills; the transfer proposed on Confirm now has a number.</p>
-<div class="row"><div class="desk"><div class="screen" style="height:420px"><div class="main">
- <div class="pagehead"><div><div class="t">Fulfilment planning</div><div class="sub">SO402757 · Revision 2, confirmed by Cyndi, 6 lines</div></div><div style="display:flex;gap:8px"><span class="btn pri">Preview (1)</span></div></div>
- <div class="results"><div class="t">1 of 1 orders confirmed</div><div class="o">SO402757: confirmed as revision 2 (2 purchase rows handed over)</div><ul><li>Confirmed: line 6 SRTWT6808 · line 9 SRTWT6808</li><li class="k">4 carried forward unchanged</li></ul></div>
- <div class="sect">Stock transfers</div>
- <table><tr><th>Transfer no</th><th>Product</th><th>From</th><th>To</th><th>Qty</th><th>State</th><th>For</th></tr>
- <tr><td>TR-000051</td><td>C-FH16</td><td>DC1</td><td>BRW-IB</td><td>82</td><td><span class="pill">Approved</span></td><td>SO402757 line 13</td></tr></table>
- <div class="toast">2 lines confirmed · 0 transfers proposed · 2 inquiry rows</div>
-</div></div><div class="cap">1280 · line 8 was unticked, so no transfer was raised and Preview (1) is back for it</div></div></div>
+<h2><span class="nb">4</span>After Confirm: back on the board, with the server's own list</h2>
+<div class="row"><div class="desk"><div class="screen" style="height:360px"><div class="main">
+ <div class="pagehead"><div><div class="t">Fulfilment planning</div><div class="sub">SO402757 · Revision 2, confirmed by Cyndi, 7 lines</div></div><div style="display:flex;gap:8px"><span class="btn pri" disabled>Preview (0)</span></div></div>
+ <div class="results"><div class="t">1 of 1 orders confirmed</div><div class="o">SO402757: confirmed as revision 2 (3 purchase rows handed over)</div><ul><li>Confirmed: line 6 SRTWT6808 · line 8 SRTSH1040 · line 9 SRTWT6808</li><li class="k">4 carried forward unchanged</li></ul></div>
+ <div class="toast">3 lines confirmed · 1 transfer proposed · 3 inquiry rows</div>
+</div></div><div class="cap">1280 · the board returns; the toast and results read the server echo</div></div></div>
 </section>
 </div>
 </body>
