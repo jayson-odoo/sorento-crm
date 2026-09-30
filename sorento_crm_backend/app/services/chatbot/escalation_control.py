@@ -2,8 +2,8 @@
 # that they cannot access the escalation: cannot force escalate, won't be offered
 # escalation; this is for dealer".
 #
-# A barred contact (`turn.state.escalation_barred`, resolved by `app/services/
-# escalation_policy.py`) is never offered a hand-off and cannot force one. The offer
+# A barred contact (`turn.state.escalation_barred`: the contact page's switch unticked,
+# `respond_contacts.escalation_allowed`) is never offered a hand-off and cannot force one. The offer
 # sites read `turn.state.offers_escalation` at source; this module is the backstop the
 # engine runs on every composed reply (`strip_offers`), and the reply the forced path
 # gives instead of a hand-off (`barred_reply`).

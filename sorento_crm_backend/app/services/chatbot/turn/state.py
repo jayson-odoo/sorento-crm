@@ -190,9 +190,9 @@ class Profile:
     # offering a team. Default OFF: an unresolved contact keeps today's behaviour.
     stock_availability_only: bool = False
     # ESCALATION-CONTROL (owner, 30 Sep 2026): may this contact be offered, or force, a
-    # hand-off to customer service (`app/services/escalation_policy.resolve`: the
-    # contact's override, else its access types; "Sorento Dealer" is seeded barred).
-    # Default ON: an unresolved contact keeps today's behaviour.
+    # hand-off to a person: `respond_contacts.escalation_allowed`, the one per-contact
+    # switch (`turn_runtime._escalation_allowed`). Default ON: an unresolved contact keeps
+    # today's behaviour.
     escalation_allowed: bool = True
 
 

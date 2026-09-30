@@ -77,6 +77,7 @@ const BASE_PROFILE = {
   notify_salesman: false,
   packing_list_allowed: false,
   eta_offset_applied: true,
+  escalation_allowed: true,
 };
 
 function renderWithClient(ui: React.ReactElement) {
@@ -266,64 +267,37 @@ describe('ContactChatbotSection - ETA buffer days switch (#1328)', () => {
 });
 
 /**
- * ESCALATION-CONTROL (owner, 30 Sep 2026): "Can escalate to customer service" is
- * inherit / allow / block. Inherit is the cleared select, whose placeholder names the
- * value the contact's access types give it.
+ * ESCALATION-CONTROL (owner change, 30 Sep 2026): one per-contact switch, "Can escalate to
+ * a person", default on; access types no longer decide it.
  */
-describe('ContactChatbotSection - Can escalate to a person', () => {
-  const DEALER = {
-    ...BASE_PROFILE,
-    escalation_allowed: null,
-    escalation_allowed_inherited: false,
-    escalation_allowed_inherited_from: 'Sorento Dealer',
-  };
-
-  it('shows the inherited value when the contact has no override', () => {
-    useContactChatbotProfile.mockReturnValue({ data: DEALER, isLoading: false, isError: false });
+describe('ContactChatbotSection - Can escalate to a person switch', () => {
+  it('renders checked for a contact that may escalate', () => {
+    useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
     renderWithClient(<ContactChatbotSection contactId="c1" />);
-    // The stub is a native <select> with no blank option, so an empty value cannot be
-    // read back; the placeholder is what names the inherited value.
-    const select = screen.getByLabelText('(inherit: blocked via Sorento Dealer)');
-    expect(select).toHaveAttribute('data-clearable', 'true');
+    expect(screen.getByLabelText('Can escalate to a person')).toHaveAttribute('data-state', 'checked');
   });
 
-  it('names the access type that allowed it (owner hand test, Mr Loo)', () => {
+  it('renders unchecked for a blocked contact', () => {
     useContactChatbotProfile.mockReturnValue({
-      data: {
-        ...DEALER,
-        escalation_allowed_inherited: true,
-        escalation_allowed_inherited_from: 'Sorento Office',
-      },
+      data: { ...BASE_PROFILE, escalation_allowed: false },
       isLoading: false,
       isError: false,
     });
     renderWithClient(<ContactChatbotSection contactId="c1" />);
-    expect(screen.getByText('Inherited: allowed via Sorento Office')).toBeInTheDocument();
-    expect(screen.getByLabelText('(inherit: allowed via Sorento Office)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Can escalate to a person')).toHaveAttribute('data-state', 'unchecked');
   });
 
-  it('with an override, the line still shows what it would inherit', () => {
-    useContactChatbotProfile.mockReturnValue({
-      data: { ...DEALER, escalation_allowed: false },
-      isLoading: false,
-      isError: false,
-    });
+  it('unticking saves escalation_allowed false with every other field unchanged', () => {
+    useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
     renderWithClient(<ContactChatbotSection contactId="c1" />);
-    expect(screen.getByText('Own setting · inherited: blocked via Sorento Dealer')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Can escalate to a person'));
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0]).toEqual({ ...BASE_PROFILE, escalation_allowed: false });
   });
 
-  it('allow saves true, block saves false, clearing saves null (inherit)', () => {
-    useContactChatbotProfile.mockReturnValue({
-      data: { ...DEALER, escalation_allowed: true },
-      isLoading: false,
-      isError: false,
-    });
+  it('shows no inherited-from-access-type text any more', () => {
+    useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
     renderWithClient(<ContactChatbotSection contactId="c1" />);
-    const select = screen.getByLabelText('(inherit: blocked via Sorento Dealer)');
-    expect(select).toHaveValue('allow');
-    fireEvent.change(select, { target: { value: 'block' } });
-    fireEvent.change(select, { target: { value: '' } });
-    expect(mutate.mock.calls.map((c) => c[0].escalation_allowed)).toEqual([false, null]);
-    expect(mutate.mock.calls[0][0]).toEqual({ ...DEALER, escalation_allowed: false });
+    expect(screen.queryByText(/Inherited/)).not.toBeInTheDocument();
   });
 });

@@ -28,9 +28,7 @@ const BASE_INPUT = {
   notify_salesman: false,
   packing_list_allowed: false,
   eta_offset_applied: true,
-  escalation_allowed: null,
-  escalation_allowed_inherited: true,
-  escalation_allowed_inherited_from: null,
+  escalation_allowed: true,
 };
 
 beforeEach(() => {

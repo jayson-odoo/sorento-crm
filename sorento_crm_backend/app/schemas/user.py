@@ -70,11 +70,8 @@ class RespondContactResponse(RespondContactBase):
     packing_list_allowed: bool = False
     # Issue #1328: the ETA this contact is told carries the +x days offset. Default on.
     chatbot_eta_offset_applied: bool = True
-    # ESCALATION-CONTROL: the contact's override (null = inherit from its access types),
-    # the inherited value, and the access type that decided it (null with no types).
-    escalation_allowed: Optional[bool] = None
-    escalation_allowed_inherited: bool = True
-    escalation_allowed_inherited_from: Optional[str] = None
+    # ESCALATION-CONTROL: may the chatbot hand this contact to a person. Default on.
+    escalation_allowed: bool = True
     # Identity S3 1.7. List rows: linked_user_id/name only (one batched query per
     # page - see `ContactService.list_contacts`). Detail additionally carries
     # is_salesperson/suggested_role_slug and the full linked_user. Both the id/name
@@ -522,15 +519,10 @@ class ContactAccessTypeBase(BaseModel):
     sort_order: Optional[int] = None
     # Admin-curated synonyms for fuzzy resolution (e.g. ["customer","homeowner"] → end_user).
     keywords: List[str] = []
-    # ESCALATION-CONTROL: may a contact holding this type be offered, or force, a
-    # hand-off to customer service. A contact's own override wins.
-    escalation_allowed: bool = True
 
 
 class ContactAccessTypeCreate(ContactAccessTypeBase):
-    # ESCALATION-CONTROL: absent = decided by the dealer rule (a "... Dealer" type starts
-    # blocked, `escalation_policy.is_dealer_type_name`).
-    escalation_allowed: Optional[bool] = None
+    pass
 
 
 class ContactAccessTypeUpdate(BaseModel):
@@ -539,7 +531,6 @@ class ContactAccessTypeUpdate(BaseModel):
     is_active: Optional[bool] = None
     sort_order: Optional[int] = None
     keywords: Optional[List[str]] = None
-    escalation_allowed: Optional[bool] = None
 
 
 class ContactAccessTypeResponse(ContactAccessTypeBase):

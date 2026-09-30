@@ -35,7 +35,6 @@ import {
   createContactAccessType,
   updateContactAccessType,
   deleteContactAccessType,
-  isDealerTypeName,
   type ContactAccessTypeAdmin,
 } from '../services/contactAccessTypeService';
 
@@ -98,14 +97,7 @@ export default function ContactAccessTypesAdmin() {
     is_active: true,
     sort_order: '' as string | number,
     keywords: '',
-    // null = untouched: a new type follows the dealer rule (`isDealerTypeName`) until
-    // the admin sets the box.
-    escalation_allowed: null as boolean | null,
   });
-
-  // ESCALATION-CONTROL (owner, 30 Sep 2026): a dealer type starts blocked, decided by the
-  // same rule as the seed migration (`escalation_policy.is_dealer_type_name`).
-  const escalationChecked = typeForm.escalation_allowed ?? !isDealerTypeName(typeForm.name);
 
   function resetTypeForm() {
     setTypeForm({
@@ -115,7 +107,6 @@ export default function ContactAccessTypesAdmin() {
       is_active: true,
       sort_order: '',
       keywords: '',
-      escalation_allowed: null,
     });
     setEditingType(null);
   }
@@ -134,7 +125,6 @@ export default function ContactAccessTypesAdmin() {
       is_active: row.is_active,
       sort_order: row.sort_order ?? '',
       keywords: (row.keywords ?? []).join(', '),
-      escalation_allowed: row.escalation_allowed !== false,
     });
     setTypeDialogOpen(true);
   }
@@ -163,7 +153,6 @@ export default function ContactAccessTypesAdmin() {
           is_active: typeForm.is_active,
           sort_order: sort,
           keywords,
-          escalation_allowed: escalationChecked,
         },
       });
     } else {
@@ -180,7 +169,6 @@ export default function ContactAccessTypesAdmin() {
         is_active: typeForm.is_active,
         sort_order: sort ?? null,
         keywords,
-        escalation_allowed: escalationChecked,
       });
     }
   }
@@ -411,14 +399,6 @@ export default function ContactAccessTypesAdmin() {
                 onCheckedChange={(v) => setTypeForm((f) => ({ ...f, is_active: v === true }))}
               />
               <Label htmlFor="type-active">Active</Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="type-escalation"
-                checked={escalationChecked}
-                onCheckedChange={(v) => setTypeForm((f) => ({ ...f, escalation_allowed: v === true }))}
-              />
-              <Label htmlFor="type-escalation">Can escalate to a person</Label>
             </div>
           </div>
           <DialogFooter>

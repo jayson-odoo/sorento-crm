@@ -323,9 +323,12 @@ class TestDealerIsNeverOfferedAndCannotForce:
         assert "escalate" not in reply.lower(), reply
         assert "route to" not in reply.lower(), reply
         # Owner ruling Q2: the miss is said, then the salesman line; never the bare line.
-        text_ = (result.reply or {}).get("text") or ""
-        assert text_.endswith(REFER_TO_SALESMAN), text_
-        assert text_.strip() != REFER_TO_SALESMAN, text_
+        # The allowed contact's reply is the same with "Would you like me to escalate to
+        # purchasing team?" where the salesman line is (measured 30 Sep 2026).
+        assert (result.reply or {}).get("text") == (
+            "Here's what you want:\n\u2022 product: ZZTSC07\n\nBut no incoming matched these.\n"
+            "No incoming and no stock for ZZTSC07.\n\nPlease refer to your salesman."
+        )
         oq = _open_question(session_factory)
         assert oq is None or oq.get("kind") not in {"team_pick", "member_offer", "company_pick"}, oq
 

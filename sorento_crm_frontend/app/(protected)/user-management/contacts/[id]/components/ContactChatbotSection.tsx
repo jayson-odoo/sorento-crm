@@ -86,22 +86,6 @@ const LEVEL_LABEL: Record<ChatbotMemoryLevel, string> = LEVEL_OPTIONS.reduce(
   {} as Record<ChatbotMemoryLevel, string>,
 );
 
-const ESCALATION_OPTIONS = [
-  { value: 'allow', label: 'Allowed' },
-  { value: 'block', label: 'Blocked' },
-];
-
-function escalationInheritedLabel(profile: {
-  escalation_allowed_inherited: boolean;
-  escalation_allowed_inherited_from: string | null;
-}) {
-  // The access type that decided it: the first allowing type, or, when every type
-  // blocks, the first blocking one (`escalation_policy.merge`).
-  const value = profile.escalation_allowed_inherited ? 'allowed' : 'blocked';
-  const from = profile.escalation_allowed_inherited_from;
-  return from ? `${value} via ${from}` : value;
-}
-
 const TIER_OPTIONS = [
   { value: 'dealer', label: 'Dealer' },
   { value: 'office', label: 'Office' },
@@ -176,9 +160,6 @@ function ChatbotSettingsCard({
 
   const ownSet = profile.chatbot_memory_level != null;
   const systemDefaultLabel = LEVEL_LABEL[systemDefault ?? 'off'];
-  const escalationInherited = escalationInheritedLabel(profile);
-  const escalationValue =
-    profile.escalation_allowed == null ? '' : profile.escalation_allowed ? 'allow' : 'block';
 
   return (
     <Card>
@@ -217,27 +198,6 @@ function ChatbotSettingsCard({
               options={TIER_OPTIONS}
             />
           </div>
-          <div className="space-y-1.5">
-            <Label>Can escalate to a person</Label>
-            <SearchableSelect
-              value={escalationValue}
-              onChange={(v) =>
-                save.mutate({
-                  ...profile,
-                  escalation_allowed: v === 'allow' ? true : v === 'block' ? false : null,
-                })
-              }
-              clearable
-              disabled={save.isPending}
-              placeholder={`(inherit: ${escalationInherited})`}
-              options={ESCALATION_OPTIONS}
-            />
-            <p className="text-xs text-muted-foreground">
-              {profile.escalation_allowed != null
-                ? `Own setting · inherited: ${escalationInherited}`
-                : `Inherited: ${escalationInherited}`}
-            </p>
-          </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <SwitchRow
@@ -267,6 +227,13 @@ function ChatbotSettingsCard({
             checked={profile.eta_offset_applied}
             disabled={save.isPending}
             onCheckedChange={(checked) => save.mutate({ ...profile, eta_offset_applied: checked })}
+          />
+          <SwitchRow
+            id="contact-chatbot-escalation"
+            label="Can escalate to a person"
+            checked={profile.escalation_allowed}
+            disabled={save.isPending}
+            onCheckedChange={(checked) => save.mutate({ ...profile, escalation_allowed: checked })}
           />
         </div>
       </CardContent>

@@ -1,10 +1,13 @@
-"""ESCALATION-CONTROL - per access type / per contact escalation switch.
+"""ESCALATION-CONTROL - the per-contact "Can escalate to a person" flag.
 
-`contact_access_types.escalation_allowed` BOOLEAN NOT NULL DEFAULT true, seeded false for
-EVERY dealer type (owner, 30 Sep 2026: "all dealer block escalation by default"; their
-contact point is the salesperson). The table carries no kind or tier column, so a dealer
-type is one whose name ends in the word "Dealer", any case (`DEALER_NAME_SQL`). `respond_contacts.escalation_allowed` BOOLEAN
-NULL is the contact's own override (NULL = inherit). Additive and re-runnable.
+Owner change, 30 Sep 2026: escalation is controlled PER CONTACT, not by access type.
+`respond_contacts.escalation_allowed` BOOLEAN NOT NULL DEFAULT true; every existing contact
+is backfilled allowed (owner ruling: no dealer-blocked backfill, blocking is only by
+unticking the contact page). New contacts default allowed too. Access types get no column.
+
+Additive and re-runnable. It also converges a copy that ran this lane's earlier SQL, where
+the column was a NULLable override: a NULL there meant "inherit", which is now "allowed",
+and a contact already set to false keeps false.
 
 Revision ID: esc1_0001_escalation_allowed
 Revises: oihr_0004_wide_line_table
@@ -18,35 +21,20 @@ down_revision = "oihr_0004_wide_line_table"
 branch_labels = None
 depends_on = None
 
-#: Every dealer type: a name whose last word is "Dealer", any case ("Dealer", "Sorento
-#: Dealer", "Cabana Dealer", "Mocha Dealer", "NL Dealer"). `contact_access_types` has no
-#: kind or tier column (`app/models/access.py::ContactAccessType`); the chatbot's own tier
-#: reading parses the name too (`lanes/business/tier_gate.py::parse_level`).
-DEALER_NAME_SQL = "name ~* '(^|\\s)dealer\\s*$'"
-
 
 def upgrade() -> None:
     bind = op.get_bind()
     bind.execute(
         sa.text(
-            "ALTER TABLE contact_access_types ADD COLUMN IF NOT EXISTS escalation_allowed "
+            "ALTER TABLE respond_contacts ADD COLUMN IF NOT EXISTS escalation_allowed "
             "BOOLEAN NOT NULL DEFAULT true"
         )
     )
-    bind.execute(
-        sa.text(
-            "UPDATE contact_access_types SET escalation_allowed = false "
-            f"WHERE {DEALER_NAME_SQL}"
-        )
-    )
-    bind.execute(
-        sa.text(
-            "ALTER TABLE respond_contacts ADD COLUMN IF NOT EXISTS escalation_allowed BOOLEAN NULL"
-        )
-    )
+    # A copy that ran the earlier NULLable column: NULL (inherit) reads as allowed.
+    bind.execute(sa.text("UPDATE respond_contacts SET escalation_allowed = true WHERE escalation_allowed IS NULL"))
+    bind.execute(sa.text("ALTER TABLE respond_contacts ALTER COLUMN escalation_allowed SET DEFAULT true"))
+    bind.execute(sa.text("ALTER TABLE respond_contacts ALTER COLUMN escalation_allowed SET NOT NULL"))
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    bind.execute(sa.text("ALTER TABLE respond_contacts DROP COLUMN IF EXISTS escalation_allowed"))
-    bind.execute(sa.text("ALTER TABLE contact_access_types DROP COLUMN IF EXISTS escalation_allowed"))
+    op.get_bind().execute(sa.text("ALTER TABLE respond_contacts DROP COLUMN IF EXISTS escalation_allowed"))

@@ -55,32 +55,24 @@ describe('contactChatbotService - ETA offset switch (#1328)', () => {
   });
 });
 
-describe('contactChatbotService - escalation override (ESCALATION-CONTROL)', () => {
-  it('reads the override and the inherited value; a contact without them inherits allowed', async () => {
-    getContact.mockResolvedValueOnce({
-      escalation_allowed: null,
-      escalation_allowed_inherited: false,
-      escalation_allowed_inherited_from: 'Sorento Dealer',
-    });
-    const dealer = await getContactChatbotProfile('c1');
-    expect(dealer.escalation_allowed).toBeNull();
-    expect(dealer.escalation_allowed_inherited).toBe(false);
-    expect(dealer.escalation_allowed_inherited_from).toBe('Sorento Dealer');
+describe('contactChatbotService - escalation switch (ESCALATION-CONTROL)', () => {
+  it('reads the switch off the contact, and a contact without the field defaults on', async () => {
+    getContact.mockResolvedValueOnce({ escalation_allowed: false });
+    expect((await getContactChatbotProfile('c1')).escalation_allowed).toBe(false);
 
     getContact.mockResolvedValueOnce({});
-    const plain = await getContactChatbotProfile('c1');
-    expect(plain.escalation_allowed).toBeNull();
-    expect(plain.escalation_allowed_inherited).toBe(true);
+    expect((await getContactChatbotProfile('c1')).escalation_allowed).toBe(true);
   });
 
-  it('sends null for inherit so the route clears the override', async () => {
-    getContact.mockResolvedValueOnce({ escalation_allowed: false });
+  it('sends the switch as escalation_allowed on save', async () => {
+    getContact.mockResolvedValueOnce({});
     const profile = await getContactChatbotProfile('c1');
-    apiFetch.mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }));
+    apiFetch.mockResolvedValueOnce(new Response(JSON.stringify({ escalation_allowed: false }), { status: 200 }));
 
-    await saveContactChatbotProfile('c1', { ...profile, escalation_allowed: null });
+    const saved = await saveContactChatbotProfile('c1', { ...profile, escalation_allowed: false });
 
     const body = JSON.parse(apiFetch.mock.calls[0][1].body);
-    expect(body).toHaveProperty('escalation_allowed', null);
+    expect(body.escalation_allowed).toBe(false);
+    expect(saved.escalation_allowed).toBe(false);
   });
 });

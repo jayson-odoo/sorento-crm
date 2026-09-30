@@ -59,12 +59,8 @@ export interface ContactChatbotProfile {
   packing_list_allowed: boolean;
   /** #1328: the ETA this contact is told carries the +x days offset. Default on. */
   eta_offset_applied: boolean;
-  /** ESCALATION-CONTROL: the contact's own override; null = inherit from its access types. */
-  escalation_allowed: boolean | null;
-  /** Read-only: what the access types say without the override. */
-  escalation_allowed_inherited: boolean;
-  /** Read-only: the access type that bars escalation, when one does. */
-  escalation_allowed_inherited_from: string | null;
+  /** ESCALATION-CONTROL: may the chatbot hand this contact to a person. Default on. */
+  escalation_allowed: boolean;
 }
 
 export type ChatbotFactSource = 'crm' | 'tallied' | 'stated' | 'staff';
@@ -166,9 +162,7 @@ function profileFromContact(contact: {
   notify_salesman?: boolean;
   packing_list_allowed?: boolean;
   chatbot_eta_offset_applied?: boolean;
-  escalation_allowed?: boolean | null;
-  escalation_allowed_inherited?: boolean;
-  escalation_allowed_inherited_from?: string | null;
+  escalation_allowed?: boolean;
 }): ContactChatbotProfile {
   const profile = contact.chatbot_profile ?? null;
   return {
@@ -179,9 +173,7 @@ function profileFromContact(contact: {
     notify_salesman: Boolean(contact.notify_salesman),
     packing_list_allowed: Boolean(contact.packing_list_allowed),
     eta_offset_applied: contact.chatbot_eta_offset_applied !== false,
-    escalation_allowed: contact.escalation_allowed ?? null,
-    escalation_allowed_inherited: contact.escalation_allowed_inherited !== false,
-    escalation_allowed_inherited_from: contact.escalation_allowed_inherited_from ?? null,
+    escalation_allowed: contact.escalation_allowed !== false,
   };
 }
 
@@ -209,7 +201,6 @@ export async function saveContactChatbotProfile(
       notify_salesman: input.notify_salesman,
       packing_list_allowed: input.packing_list_allowed,
       chatbot_eta_offset_applied: input.eta_offset_applied,
-      // Sent as null to inherit: the route reads a present null as "inherit".
       escalation_allowed: input.escalation_allowed,
     }),
   });

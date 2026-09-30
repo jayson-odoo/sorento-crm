@@ -23,19 +23,8 @@ export interface ContactAccessTypeAdmin {
   is_active: boolean;
   sort_order: number | null;
   keywords: string[];
-  /** ESCALATION-CONTROL: a contact holding this type may be offered, or force, a hand-off. */
-  escalation_allowed: boolean;
   created_at: string;
   updated_at: string;
-}
-
-/**
- * ESCALATION-CONTROL: a dealer access type is one whose name's last word is "Dealer", any
- * case - the rule the seed migration (`esc1_0001_escalation_allowed`) and the backend's
- * `escalation_policy.is_dealer_type_name` apply. A new dealer type starts blocked.
- */
-export function isDealerTypeName(name: string): boolean {
-  return /(^|\s)dealer\s*$/i.test(name ?? '');
 }
 
 const base = '/api/user-management/contact-access-types';
@@ -75,10 +64,7 @@ export async function createContactAccessType(
 export async function updateContactAccessType(
   code: string,
   body: Partial<
-    Pick<
-      ContactAccessTypeAdmin,
-      'name' | 'description' | 'is_active' | 'sort_order' | 'keywords' | 'escalation_allowed'
-    >
+    Pick<ContactAccessTypeAdmin, 'name' | 'description' | 'is_active' | 'sort_order' | 'keywords'>
   >
 ): Promise<ContactAccessTypeAdmin> {
   const response = await apiFetch(`${base}/${encodeURIComponent(code)}`, {

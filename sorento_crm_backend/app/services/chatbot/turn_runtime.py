@@ -157,7 +157,7 @@ def contact_phone(db: Session, contact_respond_id: str) -> str | None:
 
 _PROFILE_COLUMNS = (
     "c.chatbot_profile, c.chatbot_stock_allowed, "
-    "c.notify_salesman, c.packing_list_allowed, c.id "
+    "c.notify_salesman, c.packing_list_allowed, c.escalation_allowed "
     "FROM respond_contacts c"
 )
 
@@ -442,10 +442,9 @@ def load_profile(
         )
         profile, recall = _fail_closed_profile()
         # ESCALATION-CONTROL security review S2: the ambiguity denies stock, and must not
-        # hand a barred dealer a hand-off either. Barred only when EVERY matching row is
-        # barred, the same permissive reading `escalation_policy.merge` gives access types.
-        facts = [_escalation_facts(db, row[4] if len(row) > 4 else None) for row in rows]
-        if facts and all(f.get("escalation_allowed") is False for f in facts):
+        # hand a blocked contact a hand-off either. Blocked only when EVERY matching row is
+        # unticked, so a namesake who is allowed is never stranded.
+        if all(_escalation_allowed(row) is False for row in rows):
             profile.escalation_allowed = False
         return profile, recall
     row = rows[0]
@@ -468,7 +467,7 @@ def load_profile(
             stock_availability_only=_stock_availability_only(
                 db, contact_respond_id, space_id
             ),
-            **_escalation_facts(db, row[4] if len(row) > 4 else None),
+            escalation_allowed=_escalation_allowed(row),
         ),
         False,
     )
@@ -649,21 +648,11 @@ def order_brand_filter(
     return ids, [n for n in names if n]
 
 
-def _escalation_facts(db: Session, contact_pk: Any) -> dict[str, Any]:
-    """ESCALATION-CONTROL: `escalation_allowed` off `escalation_policy.resolve` (the
-    contact's override, else its access types). A read that fails keeps today's
-    behaviour (allowed), the same fail-open reading `_stock_availability_only` takes."""
-    if not contact_pk:
-        return {}
-    try:
-        from app.services.escalation_policy import resolve
-
-        with db.begin_nested():
-            policy = resolve(db, str(contact_pk))
-    except Exception:  # noqa: BLE001 - a policy read is a profile fact, not the turn
-        logger.warning("chatbot: escalation policy unreadable for %s", contact_pk, exc_info=True)
-        return {}
-    return {"escalation_allowed": policy.allowed}
+def _escalation_allowed(row: Any) -> bool:
+    """ESCALATION-CONTROL: `respond_contacts.escalation_allowed`, the one per-contact
+    switch. NOT NULL default true; `is not False` keeps the fail-open reading (allowed) if
+    it were ever NULL or missing from the row."""
+    return (row[4] if len(row) > 4 else None) is not False
 
 
 def _stock_availability_only(db: Session, contact_respond_id: str, space_id: str | None) -> bool:

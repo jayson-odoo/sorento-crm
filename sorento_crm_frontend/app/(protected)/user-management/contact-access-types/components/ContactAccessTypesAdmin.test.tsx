@@ -25,10 +25,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const getAllContactAccessTypes = vi.fn();
 const updateContactAccessType = vi.fn();
 const createContactAccessType = vi.fn();
-vi.mock('../services/contactAccessTypeService', async (importOriginal) => ({
-  // The dealer-name rule is pure: the real one, so the create default is exercised.
-  isDealerTypeName: (await importOriginal<typeof import('../services/contactAccessTypeService')>())
-    .isDealerTypeName,
+vi.mock('../services/contactAccessTypeService', () => ({
   getAllContactAccessTypes: (...a: unknown[]) => getAllContactAccessTypes(...a),
   updateContactAccessType: (...a: unknown[]) => updateContactAccessType(...a),
   createContactAccessType: (...a: unknown[]) => createContactAccessType(...a),
@@ -109,67 +106,5 @@ describe('ContactAccessTypesAdmin - no Portal forms column or field (AC-M3)', ()
 
     await waitFor(() => expect(createContactAccessType).toHaveBeenCalled());
     expect(createContactAccessType.mock.calls[0][0]).not.toHaveProperty('portal_form_types');
-  });
-});
-
-describe('ContactAccessTypesAdmin - Can escalate to a person (ESCALATION-CONTROL)', () => {
-  it('shows the type\'s value and saves the flipped one', async () => {
-    getAllContactAccessTypes.mockResolvedValue([{ ...ROWS[0], escalation_allowed: false }]);
-    render();
-    await screen.findByText('Dealer');
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    await screen.findByText('Edit access type');
-
-    const box = screen.getByLabelText('Can escalate to a person');
-    expect(box).toHaveAttribute('data-state', 'unchecked');
-    fireEvent.click(box);
-    fireEvent.click(screen.getByRole('button', { name: 'Update' }));
-
-    await waitFor(() => expect(updateContactAccessType).toHaveBeenCalled());
-    expect(updateContactAccessType.mock.calls[0][1]).toHaveProperty('escalation_allowed', true);
-  });
-
-  it.each(['Sorento Dealer', 'NL Dealer', 'mocha DEALER'])(
-    'a new dealer type (%s) starts blocked (owner ruling: all dealers blocked by default)',
-    async (name) => {
-      render();
-      await screen.findByText('Dealer');
-      fireEvent.click(screen.getByRole('button', { name: /add type/i }));
-      await screen.findByText('Add access type');
-      fireEvent.change(screen.getByLabelText('Code'), { target: { value: 'zzt_new_dealer' } });
-      fireEvent.change(screen.getByLabelText('Name'), { target: { value: name } });
-      expect(screen.getByLabelText('Can escalate to a person')).toHaveAttribute('data-state', 'unchecked');
-      fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-
-      await waitFor(() => expect(createContactAccessType).toHaveBeenCalled());
-      expect(createContactAccessType.mock.calls[0][0]).toHaveProperty('escalation_allowed', false);
-    },
-  );
-
-  it('an admin can still allow a new dealer type by ticking the box', async () => {
-    render();
-    await screen.findByText('Dealer');
-    fireEvent.click(screen.getByRole('button', { name: /add type/i }));
-    await screen.findByText('Add access type');
-    fireEvent.change(screen.getByLabelText('Code'), { target: { value: 'zzt_new_dealer' } });
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Cabana Dealer' } });
-    fireEvent.click(screen.getByLabelText('Can escalate to a person'));
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-
-    await waitFor(() => expect(createContactAccessType).toHaveBeenCalled());
-    expect(createContactAccessType.mock.calls[0][0]).toHaveProperty('escalation_allowed', true);
-  });
-
-  it('a new non-dealer type defaults to allowed', async () => {
-    render();
-    await screen.findByText('Dealer');
-    fireEvent.click(screen.getByRole('button', { name: /add type/i }));
-    await screen.findByText('Add access type');
-    fireEvent.change(screen.getByLabelText('Code'), { target: { value: 'zzt_new' } });
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'ZZT New' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-
-    await waitFor(() => expect(createContactAccessType).toHaveBeenCalled());
-    expect(createContactAccessType.mock.calls[0][0]).toHaveProperty('escalation_allowed', true);
   });
 });
