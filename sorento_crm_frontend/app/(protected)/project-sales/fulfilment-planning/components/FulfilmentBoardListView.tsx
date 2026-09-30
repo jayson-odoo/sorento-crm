@@ -179,7 +179,14 @@ export interface FulfilmentBoardListViewProps {
    * whose verdict is `saved` (what Confirm sends), Others = every other verdict. Omitted, the list
    * shows every line and draws no toggle.
    */
-  scope?: { value: BoardScope; onChange: (next: BoardScope) => void; savedCount: number; othersCount: number };
+  scope?: {
+    value: BoardScope;
+    onChange: (next: BoardScope) => void;
+    savedCount: number;
+    othersCount: number;
+    /** Whether Confirm sends this line: the board's ONE `pressPostsContribution` predicate. */
+    isSaved: (contribution: BoardContribution) => boolean;
+  };
 }
 
 export function FulfilmentBoardListView({
@@ -237,8 +244,7 @@ export function FulfilmentBoardListView({
           contributionMatchesSearch(contribution, externalSearch ?? '') &&
           (!scope ||
             scope.value === 'all' ||
-            (verdictOf(contribution, draft[contribution.key] ?? null) === 'saved') ===
-              (scope.value === 'saved')) &&
+            scope.isSaved(contribution) === (scope.value === 'saved')) &&
           (statusFilter.length === 0 ||
             statusFilter.includes(verdictOf(contribution, draft[contribution.key] ?? null))),
       ),
@@ -333,6 +339,21 @@ export function FulfilmentBoardListView({
     const visible = new Set(filteredContributions.map((entry) => entry.key));
     return Object.keys(rowSelection).filter((key) => rowSelection[key] && visible.has(key));
   }, [rowSelection, filteredContributions]);
+  // A tick on a row the segment, the Status filter or the search has since hidden is dropped, so
+  // the strip's "N selected" is exactly the rows Decide would act on.
+  React.useEffect(() => {
+    const visible = new Set(filteredContributions.map((entry) => entry.key));
+    setRowSelection((current) => {
+      const next: RowSelectionState = {};
+      let dropped = false;
+      for (const key of Object.keys(current)) {
+        if (!current[key]) continue;
+        if (visible.has(key)) next[key] = true;
+        else dropped = true;
+      }
+      return dropped ? next : current;
+    });
+  }, [filteredContributions]);
   // S3 (D1, R9): saved rows untick, skipped rows stay ticked - so a Decide press narrows the
   // selection to exactly what it could not cover, ready for a second pick.
   const untickSaved = React.useCallback((savedKeys: string[]) => {
@@ -933,25 +954,27 @@ export function FulfilmentBoardListView({
       columns={columns}
       rows={filteredContributions}
       getRowId={(row) => row.key}
-      pageResetKey={`${pageResetKey ?? externalSearch ?? ''}|${statusFilter.join(',')}`}
+      pageResetKey={`${pageResetKey ?? externalSearch ?? ''}|${statusFilter.join(',')}|${scope?.value ?? ''}`}
       // Rank is a planner's tiebreak, not something to read on every row: hidden until asked.
       initialColumnVisibility={{ rank: false }}
       listingKey="projects.projects.view::project-fulfilment-board-list-v2"
       emptyTitle={
         scope?.value === 'saved'
-          ? 'No saved decisions yet'
-          : 'Nothing is outstanding on this board'
+          ? statusFilter.length > 0
+            ? 'No saved decisions match the filter'
+            : 'Nothing to confirm yet'
+          : scope?.value === 'others'
+            ? 'No other lines'
+            : 'Nothing is outstanding on this board'
       }
       rowSelection={rowSelection}
       onRowSelectionChange={setRowSelection}
       enableRowSelection={(row) => canDecide(row.original)}
-      // ONE row (owner, 30 Sep 2026): Status, Columns, Expand all, Collapse all, Decide. The
-      // Columns trigger is handed in by the grid so it sits in this row in order, the same
-      // title-left / actions-right shape as PromotionProductsGrid's CardHeader.
       // The app's own list toolbar (`DataGridListToolbar`, PLAN-unified-list-toolbar-UAC.md D2/D3):
-      // Filters (Status) and Columns on the left, Expand/Collapse as left actions, Decide as the
-      // primary action. While rows are ticked its bulk strip ("N selected", Clear) replaces the
-      // left cluster, so Decide keeps its place on the right.
+      // search, the Saved | Others toggle, Filters (Status) and Columns on the left, Expand and
+      // Collapse as `leftActions` (the component's own slot for a grid whose rows expand, since
+      // they change what the table shows), Decide as the primary action. While rows are ticked
+      // its bulk strip ("N selected", Clear) replaces the left cluster, so Decide keeps its place.
       toolbar={({ table }) => (
         <DataGridListToolbar
           table={table}
@@ -970,7 +993,14 @@ export function FulfilmentBoardListView({
                     className="w-64"
                   />
                 )}
-                {scope && <BoardScopeToggle {...scope} />}
+                {scope && (
+                  <BoardScopeToggle
+                    value={scope.value}
+                    onChange={scope.onChange}
+                    savedCount={scope.savedCount}
+                    othersCount={scope.othersCount}
+                  />
+                )}
               </>
             ) : undefined
           }
@@ -1001,26 +1031,36 @@ export function FulfilmentBoardListView({
               />
             ),
           }}
-          // Expand all / Collapse all are the toolbar's secondary actions (two of them collapse
-          // into its "Actions" menu, D7); each is dead when it has nothing to do.
-          secondaryActions={[
-            {
-              key: 'expand-all',
-              label: 'Expand all',
-              icon: ChevronsUpDown,
-              disabled: openKeys.length >= filteredContributions.length,
-              onClick: () => expandAll(filteredContributions.map((row) => row.key)),
-            },
-            {
-              key: 'collapse-all',
-              label: 'Collapse all',
-              icon: ChevronsDownUp,
-              disabled: openKeys.length === 0,
-              onClick: requestCollapseAll,
-            },
-          ]}
-          // Suppresses the toolbar's own bulk buttons: the strip keeps "N selected" and Clear.
-          bulkActionsSlot={<></>}
+          leftActions={
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                mode="icon"
+                data-testid="board-list-expand-all"
+                title="Expand all"
+                aria-label="Expand all"
+                disabled={openKeys.length >= filteredContributions.length}
+                onClick={() => expandAll(filteredContributions.map((row) => row.key))}
+              >
+                <ChevronsUpDown className="size-4" aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                mode="icon"
+                data-testid="board-list-collapse-all"
+                title="Collapse all"
+                aria-label="Collapse all"
+                disabled={openKeys.length === 0}
+                onClick={requestCollapseAll}
+              >
+                <ChevronsDownUp className="size-4" aria-hidden />
+              </Button>
+            </>
+          }
           // S3 (D1, R1, R4): Decide replaces the old "Save as suggested" button - As suggested
           // is its first menu item, and Decide itself is ALWAYS rendered, disabled with a
           // tooltip while nothing is ticked.

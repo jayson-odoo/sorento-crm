@@ -4714,7 +4714,7 @@ describe('FulfilmentBoardPanel: search and Status live under the cards, not in t
     expect(within(strip).getByPlaceholderText(SEARCH)).toBeInTheDocument();
     expect(within(strip).getByText('Status')).toBeInTheDocument();
     expect(within(strip).queryByRole('button', { name: 'Columns' })).toBeNull();
-    expect(within(strip).queryByRole('button', { name: 'Actions' })).toBeNull();
+    expect(within(strip).queryByRole('button', { name: 'Expand all' })).toBeNull();
     expect(within(strip).queryByTestId('board-decide-button')).toBeNull();
   });
 
@@ -4754,7 +4754,8 @@ describe('FulfilmentBoardPanel: search and Status live under the cards, not in t
     expect(within(toolbar).getByPlaceholderText(SEARCH)).toBeInTheDocument();
     expect(within(toolbar).getByRole('button', { name: /^Filters/ })).toBeInTheDocument();
     expect(within(toolbar).getByRole('button', { name: 'Columns' })).toBeInTheDocument();
-    expect(within(toolbar).getByRole('button', { name: 'Actions' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Expand all' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Collapse all' })).toBeInTheDocument();
     expect(within(toolbar).getByTestId('board-decide-button')).toBeInTheDocument();
     expect(screen.queryByText('Every contributing line')).toBeNull();
   });
@@ -4894,7 +4895,7 @@ describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
     expect(segment(/^Others/).className).not.toContain(primaryToken);
   });
 
-  it('reads "No saved decisions yet" in the grid and in the list when Saved has nothing', async () => {
+  it('reads "Nothing to confirm yet" in the grid and in the list when Saved has nothing', async () => {
     getPlanningBoard.mockResolvedValue(
       boardOf([demand({ line_no: 1, item_code: 'WESERP10B' })]),
     );
@@ -4902,11 +4903,74 @@ describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
     await screen.findByTestId('fulfilment-board-matrix');
 
     await userEvent.click(segment(/^Saved/));
-    expect(await screen.findByText('No saved decisions yet')).toBeInTheDocument();
+    expect(await screen.findByText('Nothing to confirm yet')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
-    expect(await screen.findByText('No saved decisions yet')).toBeInTheDocument();
+    expect(await screen.findByText('Nothing to confirm yet')).toBeInTheDocument();
     expect(screen.queryByText('Nothing is outstanding on this board')).not.toBeInTheDocument();
+  });
+
+
+  it('reads "No other lines" in the grid and the list under Others when every line is saved', async () => {
+    getPlanningBoard.mockResolvedValue(
+      allSaved(boardOf([demand({ line_no: 1, item_code: 'WESERP10B' })])),
+    );
+    renderPanel(['SO403340']);
+    await screen.findByTestId('board-grid-filter-strip');
+    expect(await screen.findByText('No other lines')).toBeInTheDocument();
+    expect(screen.queryByText('No products match')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    expect(await screen.findByText('No other lines')).toBeInTheDocument();
+  });
+
+  it('says how many products are shown when only a segment narrows the board', async () => {
+    getPlanningBoard.mockResolvedValue(threeStates());
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.getByText(/^2 of 3 /)).toBeInTheDocument();
+  });
+
+  it('leaves the Saved and Others counts alone when a Status is chosen', async () => {
+    getPlanningBoard.mockResolvedValue(threeStates());
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const strip = screen.getByTestId('board-grid-filter-strip');
+    await userEvent.click(within(strip).getByText('Status'));
+    await userEvent.click(await screen.findByRole('option', { name: /Confirmed/ }));
+    await userEvent.keyboard('{Escape}');
+
+    expect(segment(/^Saved/)).toHaveTextContent('Saved (1)');
+    expect(segment(/^Others/)).toHaveTextContent('Others (2)');
+  });
+
+  it('the left-out link reaches a saved line under the default Others segment', async () => {
+    const board = allSaved(
+      boardOf([
+        demand({ line_no: 1, item_code: 'WESERP10B' }),
+        demand({ line_no: 2, item_code: 'TPE-9204' }),
+      ]),
+    );
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        board,
+        (entry) => entry.item_code === 'TPE-9204',
+        (entry) => ({ ...entry, project_line_id: null }),
+      ),
+    );
+    renderPanel(['SO403340']);
+    await screen.findByTestId('board-grid-filter-strip');
+
+    const banner = await screen.findByTestId('board-left-out-banner');
+    fireEvent.click(within(banner).getByRole('button', { name: 'TPE-9204 line 2' }));
+
+    expect(await screen.findByTestId(/^line-decision-so-a\|2\|TPE-9204/)).toBeInTheDocument();
+    // Every line is shown so the link reaches the row: no segment is pressed.
+    const toggle = within(screen.getByTestId('board-scope-toggle'));
+    expect(toggle.getByRole('button', { name: /^Saved/ })).toHaveAttribute('aria-pressed', 'false');
+    expect(toggle.getByRole('button', { name: /^Others/ })).toHaveAttribute('aria-pressed', 'false');
   });
 
 });

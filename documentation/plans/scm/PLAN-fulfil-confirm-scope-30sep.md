@@ -255,6 +255,25 @@ block as a refused entry. Also from the hand test: the "Every contributing line"
 standard Columns menu (Rank hidden by default) and a Status filter over the Verdict states, and the
 Line column prints the plain position with a "not synced" title when AutoCount gave no line number.
 
+## Design v6 (owner hand tests, 30 Sep): the list toolbar, the grid strip and Saved | Others
+
+- The "Every contributing line" list uses the app's own `DataGridListToolbar`: the board search
+  (`searchSlot`), the Saved | Others toggle, Filters (Status, with active chips), Columns
+  (`showColumns`, Rank hidden by default, listing key `-list-v2`), Expand all and Collapse all as
+  `leftActions`, Decide as `primaryAction`. The page header keeps only the title, Rows / By date,
+  Grid | List and Confirm.
+- The grid has no table, so it gets a filter strip under the summary cards inside the same
+  Card > CardHeader shell: the same search box, the same toggle, the same Status control.
+- Saved | Others: Saved is exactly what Confirm posts (`pressPostsContribution`, the one predicate
+  `confirmLinesFor`, `rejectedCoveredLineIdsFor` and `plannedLineCount` read); Others is every other
+  line. Default Others, kept across a Confirm press, counts from the whole selection under the
+  product search (never the Status filter), Status combines as AND, the segment resets the page and
+  drops ticks on hidden rows. The active segment is the system primary variant, like Grid | List.
+- Empty texts: Saved empty "Nothing to confirm yet"; Saved with a Status matching nothing "No saved
+  decisions match the filter"; Others empty "No other lines".
+- `?scope=all` (no segment pressed, every line shown) is internal: the left-out banner link uses it
+  to reach a line Confirm will not post, and the panel tests use it for mixed fixtures.
+
 ## DoD gate (PRINCIPLES.md "Definition of Done gate", checked 30 Sep 2026 on PR #1395)
 
 Track: full track (diff far above 300 lines across FE and BE), no migration, no auth/RBAC change,
@@ -276,8 +295,9 @@ Red-first: backend contract slices (echo, preview, notification guard, only_line
 FE preview slices were tester-first; the toolbar and toggle polish rounds (8 to 12) were
 test-with-code, which is a process deviation named here. Kill tests: reviewer rounds 1 to 6
 (round 6 mutates the Saved/Others filter, the Confirm-only-saved rule in `lineFor`, the
-preview commit and notification guards; results recorded in the crew report). Reviewer: six
-rounds, all findings fixed on the branch.
+preview commit and notification guards). Round 6 kill results: filter a(i)(ii)(iv) red, only-saved
+b(i)-(v) red, backend c(i)-(iii) red; a(iii) and the left-out link gap closed in round 13.
+Reviewer: seven rounds, all findings fixed on the branch.
 
 ## Grill (feature skill step, run 30 Sep 2026 after the owner's process ruling; answers recorded as crew relays them)
 

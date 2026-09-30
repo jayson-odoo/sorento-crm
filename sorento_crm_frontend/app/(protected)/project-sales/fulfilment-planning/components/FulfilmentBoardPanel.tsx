@@ -66,6 +66,7 @@ import {
 import {
   boardAxis,
   bucketLabelText,
+  pressPostsContribution,
   contributionMatchesSearch,
   confirmSummaryFor,
   decisionHeaderText,
@@ -342,12 +343,13 @@ export function FulfilmentBoardPanel({
       setView('list');
       setKindFilter(null);
       setStatusFilter([]);
-      // Whichever segment holds the row, so the link can reach it.
-      setScope(verdictOf(contribution, draft[contribution.key] ?? null) === 'saved' ? 'saved' : 'others');
+      // A left-out line is one Confirm will not post, so it sits under Others; showing every line
+      // (no segment pressed) is what guarantees the link reaches it.
+      setScope('all');
       resetProductSearch('');
       setFocusKey(contribution.key);
     },
-    [resetProductSearch, draft],
+    [resetProductSearch],
   );
   /**
    * Fired by `FulfilmentBoardListView` once it has actually scrolled to `focusKey` (S3) - a
@@ -1806,6 +1808,17 @@ export function FulfilmentBoardPanel({
   // The Status filter, shared by the list (its Filters control) and the grid (the strip below the
   // cards). In the grid a row stays when ANY of its lines has one of the chosen states, read off
   // `verdictOf` - the same state the pill shows - never off "has a draft".
+  // "Saved" is exactly what Confirm posts: the ONE `pressPostsContribution` predicate, read over the
+  // same draft Confirm reads (`draftWithoutPreMark`), the orders about to be adopted and the
+  // orders a pending planning change holds back.
+  const isSavedLine = React.useCallback(
+    (line: BoardContribution) =>
+      pressPostsContribution(line, draftWithoutPreMark[line.key], {
+        batchBlocked: pendingBatchSalesOrderIds.has(line.sales_order_id),
+        unadopted: unadoptedSalesOrderIds.has(line.sales_order_id),
+      }),
+    [draftWithoutPreMark, pendingBatchSalesOrderIds, unadoptedSalesOrderIds],
+  );
   // The Saved | Others counts: the board's lines under the product search (and the day window,
   // through the list's whole-selection population), never under the Status filter.
   const scopeCounts = React.useMemo(() => {
@@ -1813,11 +1826,11 @@ export function FulfilmentBoardPanel({
     let others = 0;
     for (const line of listContributions) {
       if (!contributionMatchesSearch(line, productSearch)) continue;
-      if (verdictOf(line, draft[line.key] ?? null) === 'saved') saved += 1;
+      if (isSavedLine(line)) saved += 1;
       else others += 1;
     }
     return { saved, others };
-  }, [listContributions, productSearch, draft]);
+  }, [listContributions, productSearch, isSavedLine]);
   const visibleProductRows = React.useMemo(
     () =>
       axis.rows.filter(
@@ -1825,18 +1838,20 @@ export function FulfilmentBoardPanel({
           (!kindFilter || linesByRow.has(row.key)) &&
           rowMatchesSearch(row, linesByRow.get(row.key) ?? [], productSearch) &&
           (linesByRow.get(row.key) ?? []).some((line) => {
-            const verdict = verdictOf(line, draft[line.key] ?? null);
             return (
-              (scope === 'all' || (verdict === 'saved') === (scope === 'saved')) &&
-              (statusFilter.length === 0 || statusFilter.includes(verdict))
+              (scope === 'all' || isSavedLine(line) === (scope === 'saved')) &&
+              (statusFilter.length === 0 ||
+                statusFilter.includes(verdictOf(line, draft[line.key] ?? null)))
             );
           }),
       ),
-    [axis, linesByRow, productSearch, kindFilter, statusFilter, scope, draft],
+    [axis, linesByRow, productSearch, kindFilter, statusFilter, scope, draft, isSavedLine],
   );
 
-  const filtering =
+  const otherFilters =
     productSearch.trim().length > 0 || kindFilter !== null || statusFilter.length > 0;
+  // The Saved | Others segment narrows the rows too, so the board says so ("N of M").
+  const filtering = otherFilters || scope !== 'all';
 
   /**
    * Every key the board-wide "Save all suggested" button would post (D15): whichever lines the
@@ -2528,9 +2543,8 @@ export function FulfilmentBoardPanel({
                 onDecideMany={decideMany}
                 onDecideBatch={decideBatch}
                 annotations={changeAnnotationsByLine}
-                // S6 (PLAN-scm-oi-worklist-excel-parity.md R-J): the ONE search box,
-                // beside the title, drives Grid and List alike - the panel's own search
-                // box is gone, so there is no second box to disagree with this one.
+                // The ONE board search (S6, R-J) drives Grid and List alike: this list draws it in
+                // its own toolbar (`search` below), the grid in its filter strip.
                 externalSearch={productSearch}
                 status={{ value: statusFilter, onChange: setStatusFilter }}
                 scope={{
@@ -2538,6 +2552,7 @@ export function FulfilmentBoardPanel({
                   onChange: setScope,
                   savedCount: scopeCounts.saved,
                   othersCount: scopeCounts.others,
+                  isSaved: isSavedLine,
                 }}
                 search={{
                   value: productSearchInput,
@@ -2548,7 +2563,7 @@ export function FulfilmentBoardPanel({
                 // is not part of `externalSearch` - so the reset key carries both, or
                 // toggling a kind card while on page 3 would leave the list showing
                 // whatever landed there instead of the top of the narrowed set.
-                pageResetKey={`${productSearch}|${kindFilter ?? ''}`}
+                pageResetKey={`${productSearch}|${kindFilter ?? ''}|${scope}`}
                 // AC-5: which row the left-out banner asked to see, opened and scrolled to
                 // once. Cleared once handled so a second click on the SAME line still fires
                 // the effect the list reads it with.
@@ -2566,9 +2581,9 @@ export function FulfilmentBoardPanel({
               />
             ) : (
               <>
-                {/* The grid's filter strip: the same search box and Status filter the list's toolbar
-                    carries, at the same vertical position (`py-5`, `gap-2`) so the box does not
-                    jump between views. No Columns, Expand/Collapse or Decide here. */}
+                {/* The grid's filter strip: the same search box, Saved | Others toggle and Status filter
+                    the list's toolbar carries, inside the same Card > CardHeader shell so the box
+                    keeps its left edge between views. No Columns, Expand/Collapse or Decide. */}
                 <Card>
                   <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div
@@ -2614,7 +2629,13 @@ export function FulfilmentBoardPanel({
                       {/* NOT the "owes nothing" copy: the selection owes plenty, the filter
                           simply matched none of it. */}
                       <h3 className="mt-2 text-sm font-semibold">
-                        {scope === 'saved' && !filtering ? 'No saved decisions yet' : 'No products match'}
+                        {scope === 'saved'
+                          ? otherFilters
+                            ? 'No saved decisions match the filter'
+                            : 'Nothing to confirm yet'
+                          : scope === 'others' && !otherFilters
+                            ? 'No other lines'
+                            : 'No products match'}
                       </h3>
                     </CardContent>
                   </Card>

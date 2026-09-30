@@ -122,12 +122,6 @@ function renderView(
   return { ...utils, onDecide, onDecideMany, onDecideBatch };
 }
 
-/** Expand all / Collapse all live in the shared toolbar's "Actions" menu. */
-async function pickAction(label: string) {
-  await userEvent.click(screen.getByRole('button', { name: 'Actions' }));
-  await userEvent.click(await screen.findByRole('menuitem', { name: label }));
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -1399,21 +1393,20 @@ describe('FulfilmentBoardListView: Expand all / Collapse all (owner feedback 13 
     renderView({ contributions: twoRows() });
     await screen.findByText('SO397450');
 
-    await userEvent.click(screen.getByRole('button', { name: 'Actions' }));
-    expect(await screen.findByRole('menuitem', { name: 'Expand all' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Collapse all' })).toBeInTheDocument();
+    expect(screen.getByTestId('board-list-expand-all')).toBeInTheDocument();
+    expect(screen.getByTestId('board-list-collapse-all')).toBeInTheDocument();
   });
 
   it('Expand all opens every row’s decision panel; Collapse all closes them all', async () => {
     renderView({ contributions: twoRows() });
     await screen.findByText('SO397450');
 
-    await pickAction('Expand all');
+    fireEvent.click(screen.getByTestId('board-list-expand-all'));
     expect(
       await screen.findAllByRole('button', { name: 'Save decision' }),
     ).toHaveLength(2);
 
-    await pickAction('Collapse all');
+    fireEvent.click(screen.getByTestId('board-list-collapse-all'));
     await waitFor(() =>
       expect(
         screen.queryAllByRole('button', { name: 'Save decision' }),
@@ -1431,7 +1424,7 @@ describe('FulfilmentBoardListView: Expand all / Collapse all (owner feedback 13 
     renderView({ contributions: twoRows() });
     await screen.findByText('SO397450');
 
-    await pickAction('Expand all');
+    fireEvent.click(screen.getByTestId('board-list-expand-all'));
     await screen.findAllByRole('button', { name: 'Save decision' });
 
     // An edit nobody has saved, on ONE of the two open panels - both are open after Expand
@@ -1440,7 +1433,7 @@ describe('FulfilmentBoardListView: Expand all / Collapse all (owner feedback 13 
       target: { value: 'The group is short' },
     });
 
-    await pickAction('Collapse all');
+    fireEvent.click(screen.getByTestId('board-list-collapse-all'));
 
     expect(await screen.findByRole('alertdialog')).toHaveTextContent(
       'Leave this decision unsaved?',
@@ -1463,7 +1456,7 @@ describe('FulfilmentBoardListView: Expand all / Collapse all (owner feedback 13 
     );
 
     // Collapse all again, and this time answer Discard.
-    await pickAction('Collapse all');
+    fireEvent.click(screen.getByTestId('board-list-collapse-all'));
     fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
     await waitFor(() =>
       expect(
@@ -1476,10 +1469,10 @@ describe('FulfilmentBoardListView: Expand all / Collapse all (owner feedback 13 
     renderView({ contributions: twoRows() });
     await screen.findByText('SO397450');
 
-    await pickAction('Expand all');
+    fireEvent.click(screen.getByTestId('board-list-expand-all'));
     await screen.findAllByRole('button', { name: 'Save decision' });
 
-    await pickAction('Collapse all');
+    fireEvent.click(screen.getByTestId('board-list-collapse-all'));
 
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     await waitFor(() =>
@@ -2370,7 +2363,8 @@ describe('FulfilmentBoardListView: Columns and Status filter', () => {
     expect(toolbar).not.toBeNull();
     expect(within(toolbar).getByRole('button', { name: /^Filters/ })).toBeInTheDocument();
     expect(within(toolbar).getByRole('button', { name: 'Columns' })).toBeInTheDocument();
-    expect(within(toolbar).getByRole('button', { name: 'Actions' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Expand all' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Collapse all' })).toBeInTheDocument();
     expect(within(toolbar).getByTestId('board-decide-button')).toBeInTheDocument();
     // One toolbar only: the grid does not draw a second row of controls of its own.
     expect(container.querySelectorAll('[data-slot="data-grid-list-toolbar"]')).toHaveLength(1);
@@ -2401,14 +2395,14 @@ describe('FulfilmentBoardListView: Columns and Status filter', () => {
     expect(onChange).toHaveBeenCalledWith('cks');
   });
 
-  it('the toolbar controls share one height: Actions and Columns carry the same size token', async () => {
+  it('the toolbar controls share one height: the Expand all icon button and Columns carry the same size token', async () => {
     renderView();
     await screen.findByText('SO397450');
     const heightOf = (name: string) =>
       (screen.getByRole('button', { name }).className.match(/\bh-\d+(\.\d+)?\b/) ?? [])[0];
 
-    expect(heightOf('Actions')).toBeDefined();
-    expect(heightOf('Actions')).toBe(heightOf('Columns'));
+    expect(heightOf('Expand all')).toBeDefined();
+    expect(heightOf('Expand all')).toBe(heightOf('Columns'));
   });
 
 
@@ -2425,7 +2419,13 @@ describe('FulfilmentBoardListView: Columns and Status filter', () => {
     const { rerender } = render(
       <FulfilmentBoardListView
         {...props}
-        scope={{ value: 'others', onChange: vi.fn(), savedCount: 1, othersCount: 1 }}
+        scope={{
+          value: 'others',
+          onChange: vi.fn(),
+          savedCount: 1,
+          othersCount: 1,
+          isSaved: (line) => line.key === saved.key,
+        }}
       />,
     );
     await screen.findByText('SO397451');
@@ -2435,11 +2435,92 @@ describe('FulfilmentBoardListView: Columns and Status filter', () => {
     rerender(
       <FulfilmentBoardListView
         {...props}
-        scope={{ value: 'saved', onChange: vi.fn(), savedCount: 1, othersCount: 1 }}
+        scope={{
+          value: 'saved',
+          onChange: vi.fn(),
+          savedCount: 1,
+          othersCount: 1,
+          isSaved: (line) => line.key === saved.key,
+        }}
       />,
     );
     await screen.findByText('SO397450');
     expect(screen.queryByText('SO397451')).not.toBeInTheDocument();
+  });
+
+
+  // The board hands in Confirm's own predicate; here it is stood in for by a plain function.
+  const scopeProps = (
+    value: 'saved' | 'others' | 'all',
+    isSaved: (line: BoardContribution) => boolean = (line) => line.key === 'so-1:line-10',
+  ) => ({ value, onChange: vi.fn(), savedCount: 1, othersCount: 1, isSaved });
+  const viewProps = (rows: BoardContribution[], draft: BoardDraft) => ({
+    contributions: rows,
+    draft,
+    onDecide: vi.fn(),
+    onDecideMany: vi.fn(),
+    onDecideBatch: vi.fn(),
+  });
+
+  it('reads "No other lines" under Others when every line is saved', async () => {
+    const saved = contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 });
+    render(
+      <FulfilmentBoardListView
+        {...viewProps([saved], { [saved.key]: { verdict: 'approved' } })}
+        scope={scopeProps('others')}
+      />,
+    );
+    expect(await screen.findByText('No other lines')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing is outstanding on this board')).not.toBeInTheDocument();
+  });
+
+  it('reads "No saved decisions match the filter" under Saved when a Status matches nothing', async () => {
+    const saved = contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 });
+    render(
+      <FulfilmentBoardListView
+        {...viewProps([saved], { [saved.key]: { verdict: 'approved' } })}
+        scope={scopeProps('saved')}
+        status={{ value: ['confirmed'], onChange: vi.fn() }}
+      />,
+    );
+    expect(await screen.findByText('No saved decisions match the filter')).toBeInTheDocument();
+  });
+
+  it('drops ticks on rows a segment change hides, so "N selected" is what Decide acts on', async () => {
+    const saved = contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 });
+    const plain = contribution({ key: 'so-2:line-20', so_number: 'SO397451', line_no: 20 });
+    const props = viewProps([saved, plain], { [saved.key]: { verdict: 'approved' } });
+    const { rerender } = render(<FulfilmentBoardListView {...props} scope={scopeProps('all')} />);
+    await screen.findByText('SO397450');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO397451 line 20' }));
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
+
+    rerender(<FulfilmentBoardListView {...props} scope={scopeProps('saved')} />);
+
+    await waitFor(() => expect(screen.getByText('1 selected')).toBeInTheDocument());
+  });
+
+  it('goes back to page 1 when the segment changes', async () => {
+    const rows = Array.from({ length: 30 }, (_, index) =>
+      contribution({
+        key: `so-${index}:line-${index}`,
+        so_number: `SO${String(500000 + index)}`,
+        line_no: index + 1,
+      }),
+    );
+    const draft: BoardDraft = Object.fromEntries(
+      rows.map((row) => [row.key, { verdict: 'approved' as const }]),
+    );
+    const props = viewProps(rows, draft);
+    const { rerender } = render(<FulfilmentBoardListView {...props} scope={scopeProps('saved', () => true)} />);
+    await screen.findByText('SO500000');
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+    await waitFor(() => expect(screen.queryByText('SO500000')).not.toBeInTheDocument());
+
+    rerender(<FulfilmentBoardListView {...props} scope={scopeProps('all')} />);
+
+    expect(await screen.findByText('SO500000')).toBeInTheDocument();
   });
 
 });

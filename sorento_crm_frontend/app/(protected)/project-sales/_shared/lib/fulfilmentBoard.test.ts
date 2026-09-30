@@ -23,6 +23,7 @@ import {
   factorLabel,
   matchesSuggestion,
   plannedLineCount,
+  pressPostsContribution,
   rankingNote,
   rejectedCoveredLineIdsFor,
   rowMatchesSearch,
@@ -32,6 +33,7 @@ import {
   standingsFor,
 } from './fulfilmentBoard';
 import { amendDraftFrom, suggestionDraftFrom } from './boardAmend';
+import { verdictOf } from '../../fulfilment-planning/components/BoardDecisionPill';
 import {
   bucketKeyFor,
   buildBoard,
@@ -3079,5 +3081,80 @@ describe('confirm scope: a naive-UTC saved_at is read as UTC', () => {
     );
     expect(rows[0].savedBefore).toBe(true);
     expect(savedAgoText('2026-09-30T04:50:00')).toBe('just now');
+  });
+});
+
+/**
+ * Saved | Others is Confirm's own posting set: `pressPostsContribution` is true exactly for the
+ * lines `confirmLinesFor` posts and the covered rejections `rejectedCoveredLineIdsFor` withdraws.
+ */
+describe('pressPostsContribution: Saved is exactly what Confirm posts', () => {
+  const board = buildBoard(
+    [line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '100' })],
+    { today: TODAY, freeStock: { 'WESERP10B|BRW-BB': '100' } },
+  );
+  const base = board.cells.flatMap((cell) => cell.contributions)[0];
+  const covered = { covered: true, decision: {} as never };
+  const amended = {
+    verdict: 'amended' as const,
+    reserve_qty: '0',
+    reserve: [],
+    borrow: [],
+    buy_qty: '100',
+    reason: 'Late.',
+  };
+
+  type Case = {
+    name: string;
+    contribution: Partial<BoardContribution>;
+    decision?: { verdict: 'approved' | 'amended' | 'rejected' } & Record<string, unknown>;
+    saved: boolean;
+  };
+  const cases: Case[] = [
+    { name: 'saved, uncovered', contribution: {}, decision: { verdict: 'approved' }, saved: true },
+    { name: 'covered + amended', contribution: covered, decision: amended, saved: true },
+    { name: 'covered + approved', contribution: covered, decision: { verdict: 'approved' }, saved: true },
+    { name: 'staged reject on a covered line', contribution: covered, decision: { verdict: 'rejected' }, saved: true },
+    {
+      name: 'stale draft',
+      contribution: { draft: { decision: { verdict: 'approved' }, saved_by: 'x', saved_at: '2026-09-29T00:00:00Z', stale: true } },
+      decision: { verdict: 'approved' },
+      saved: false,
+    },
+    { name: 'no mirror on an adopted order', contribution: { project_line_id: null }, decision: { verdict: 'approved' }, saved: false },
+    { name: 'unplannable', contribution: { unplannable: true }, decision: { verdict: 'approved' }, saved: false },
+    { name: 'suggested (no decision)', contribution: {}, saved: false },
+  ];
+
+  it.each(cases)('$name', (entry) => {
+    const contribution = { ...base, ...entry.contribution } as BoardContribution;
+    const draft = entry.decision ? { [contribution.key]: entry.decision as never } : {};
+    const posted = confirmLinesFor([contribution], 'so-a', draft).map((row) => row.project_line_id);
+    const withdrawn = rejectedCoveredLineIdsFor([contribution], 'so-a', draft);
+    const inConfirm = [...posted, ...withdrawn].includes(contribution.project_line_id ?? '__none__');
+
+    expect(pressPostsContribution(contribution, draft[contribution.key])).toBe(entry.saved);
+    expect(pressPostsContribution(contribution, draft[contribution.key])).toBe(inConfirm);
+  });
+
+  it('follows the predicate, not the pill: a staged reject reads Rejected yet is in Saved', () => {
+    const contribution = { ...base, ...covered } as BoardContribution;
+    const decision = { verdict: 'rejected' as const, reason: 'No.' };
+    // The old rule (`verdictOf === "saved"`) would have put this line under Others.
+    expect(verdictOf(contribution, decision)).toBe('rejected');
+    expect(pressPostsContribution(contribution, decision)).toBe(true);
+  });
+
+  it('counts a no-mirror line as saved only on an order about to be adopted', () => {
+    const contribution = { ...base, project_line_id: null } as BoardContribution;
+    const decision = { verdict: 'approved' as const };
+    expect(pressPostsContribution(contribution, decision, { unadopted: true })).toBe(true);
+    expect(pressPostsContribution(contribution, decision, { unadopted: false })).toBe(false);
+  });
+
+  it('a staged reject held back by a pending planning change is not a write', () => {
+    const contribution = { ...base, ...covered } as BoardContribution;
+    const decision = { verdict: 'rejected' as const, reason: 'No.' };
+    expect(pressPostsContribution(contribution, decision, { batchBlocked: true })).toBe(false);
   });
 });

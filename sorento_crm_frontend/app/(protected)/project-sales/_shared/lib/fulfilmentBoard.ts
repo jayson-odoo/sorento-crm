@@ -330,8 +330,14 @@ function pressRoleFor(
   batchBlocked: boolean,
 ): PressRole {
   if (contribution.unplannable) return { kind: 'skip' };
-  // A CANCELLED line is retired by the press (R3); it needs no composition.
-  if (contribution.cancelled) return { kind: 'cancelled' };
+  // A CANCELLED line is retired by the press (R3); it needs no composition. One that also
+  // carries a saved decision still posts it, as the body always did.
+  if (contribution.cancelled) {
+    const built = lineFor(contribution, decision);
+    return built !== null && typeof built !== 'string'
+      ? { kind: 'post', line: built }
+      : { kind: 'cancelled' };
+  }
   // A covered reject on an ACTIVE decision is a withdrawal Confirm carries out, unless a
   // pending planning change holds it back (`rejected_line_ids` is refused beside a batch).
   if (contribution.decision && decision?.verdict === 'rejected') {
@@ -346,6 +352,24 @@ function pressRoleFor(
   return { kind: 'post', line: built };
 }
 
+/**
+ * Whether one press sends this line: the ONE predicate the Saved | Others toggle, `confirmLinesFor`,
+ * `rejectedCoveredLineIdsFor` and `plannedLineCount` all read, so "Saved" is exactly what Confirm
+ * posts. True for a line `lineFor` builds a body line for, a covered line whose staged rejection
+ * the press withdraws, and (on an order about to be adopted) a line whose mirror adoption mints.
+ * A saved line the press will not post (no mirror on an adopted order, stale, unplannable) and a
+ * rejection held back by a pending planning change are not.
+ */
+export function pressPostsContribution(
+  contribution: BoardContribution,
+  decision: BoardDecision | undefined,
+  options?: { batchBlocked?: boolean; unadopted?: boolean },
+): boolean {
+  const role = pressRoleFor(contribution, decision, options?.batchBlocked ?? false);
+  if (role.kind === 'post' || role.kind === 'withdraw') return true;
+  return role.kind === 'unpostable' && role.reason === 'no_mirror' && Boolean(options?.unadopted);
+}
+
 export function confirmLinesFor(
   contributions: BoardContribution[],
   salesOrderId: string,
@@ -357,8 +381,8 @@ export function confirmLinesFor(
   for (const contribution of contributions) {
     if (contribution.sales_order_id !== salesOrderId) continue;
     if (options?.excludeKeys?.has(contribution.key)) continue;
-    const built = lineFor(contribution, draft[contribution.key]);
-    if (built && typeof built !== 'string') lines.push(built);
+    const role = pressRoleFor(contribution, draft[contribution.key], false);
+    if (role.kind === 'post') lines.push(role.line);
   }
   return lines;
 }
@@ -388,8 +412,7 @@ export function rejectedCoveredLineIdsFor(
     // (`inquiry_decided`, #875). Only the first has a `line_snapshots` entry Confirm's
     // `rejected_line_ids` could ever name, so this reads `decision` (non-null exactly
     // then), not `covered`.
-    if (!contribution.decision) continue;
-    if (draft[contribution.key]?.verdict !== 'rejected') continue;
+    if (pressRoleFor(contribution, draft[contribution.key], false).kind !== 'withdraw') continue;
     if (contribution.project_line_id) ids.push(contribution.project_line_id);
   }
   return ids;
