@@ -189,6 +189,9 @@ export interface FulfilmentBoardListViewProps {
     >;
     currentUserName: string | null | undefined;
     openedAt: Date;
+    /** The "Will be sent (N)" chip: N lines, pressed (it IS the filter), pressing it exits. */
+    willBeSent?: number;
+    onExit?: () => void;
   };
 }
 
@@ -1023,6 +1026,20 @@ export function FulfilmentBoardListView({
         rowAttributes={(row) => ({
           'data-testid': `board-preview-inquiry-row-${row.line_no}`,
         })}
+        toolbar={
+          readOnlyPreview.onExit ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="primary"
+              aria-pressed
+              data-testid="board-preview-filter"
+              onClick={readOnlyPreview.onExit}
+            >
+              {`Will be sent (${readOnlyPreview.willBeSent ?? 0})`}
+            </Button>
+          ) : undefined
+        }
         rowClassName={(row) =>
           readOnlyPreview.infoByKey.get(row.key)?.heldBackReason != null ? 'opacity-60' : undefined
         }

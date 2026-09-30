@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning Confirm posts what the planner ticked, and says exactly what it wrote
 
-Status: implemented (v3.2), PR #1395, hand test pending. Track: feature lane (FE + BE, no migration, no RBAC).
+Status: implemented (v4), PR #1395, hand test pending. Track: feature lane (FE + BE, no migration, no RBAC).
 Domain: scm (fulfilment planning board)
 UAC: `fulfil-confirm-scope-30sep-acceptance-criteria.md`
 Lane: `crew/fulfil-confirm-scope` (crew lane FULFIL-CONFIRM-SCOPE), base `origin/main` at e26410c20.
@@ -220,3 +220,25 @@ There is no autosave. Every server draft write goes through one route, reached o
 4. FE list: `selectAllRows` on the board's select column; vitest.
 5. Review + browser pass + hand-test script (`laneboard/scripts/<PR>.md`) reproducing A and B
    on the crew test copy.
+
+## Design v4 (owner decision (b), 30 Sep): Preview is a filter mode on the board grid
+
+The separate Preview view is replaced by a filter mode on the board itself. The server contract
+(dry run, echo, `only_line_ids`) is unchanged.
+
+1. "Preview (N)" in the board header runs the dry run (adopt-if-needed, the shared
+   `buildConfirmOrders`, `previewConfirmMany`) and switches the board into preview mode. No new
+   page: the cards and the Stock transfers grid stay on screen.
+2. On the list a chip "Will be sent (N)" (pressed) shows only the previewed population
+   (confirmed, withdrawn, every line with a previewed inquiry row, held-back lines) in the
+   read-only column set (no select column, expansion, Decide, chips or Undo). The OI cell reads
+   the raised row, "Withdrawn", or "Held back" with the reason; held-back rows are greyed. Save
+   all suggested and Undo all are disabled. The board subtitle shows the preview summary. The
+   grid view (matrix) is left untouched: preview mode always renders the list.
+3. The Stock transfers grid lists the previewed transfers at the top ("on Confirm" or "kept",
+   State Proposed) beside its real rows, read-only.
+4. The header shows "Confirm N lines" (disabled when stale, when an order is refused, or at 0)
+   and "Exit preview". The chip toggles the filter off too. A refused order and a stale preview
+   ("Preview again") are named in the notes under the header.
+5. Confirm posts the stored previewed body with `only_line_ids`, exits preview mode, and the
+   results block and toast read the echo.

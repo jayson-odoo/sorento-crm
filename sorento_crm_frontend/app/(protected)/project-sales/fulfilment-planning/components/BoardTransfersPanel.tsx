@@ -98,7 +98,7 @@ export function BoardTransfersPanel({
   // Not merely a hidden panel: the QUERY is off too (D9). A user with no read grant would
   // otherwise fire a request that comes back 403 on every board they open.
   const canView = useHasPermission(VIEW_PERMISSION);
-  const { data, isLoading, error } = useBoardTransfers(soNumbers, canView && !preview);
+  const { data, isLoading, error } = useBoardTransfers(soNumbers, canView);
   const { approve, approveAll } = useBoardTransferMutations();
   /**
    * The approval waiting on its confirmation - one row, or every proposed row.
@@ -112,9 +112,8 @@ export function BoardTransfersPanel({
   );
 
   const rows = React.useMemo<StockTransfer[]>(
-    () =>
-      preview
-        ? preview.map((move, index): StockTransfer => ({
+    () => [
+      ...(preview ?? []).map((move, index): StockTransfer => ({
             id: `preview-${index}`,
             transfer_no: move.is_new ? 'on Confirm' : 'kept',
             state: 'proposed',
@@ -151,12 +150,13 @@ export function BoardTransfersPanel({
             autocount_ref: null,
             created_at: null,
             updated_at: null,
-          }))
-        : (data?.data ?? []),
+          })),
+      ...(data?.data ?? []),
+    ],
     [data, preview],
   );
   const proposedRows = React.useMemo(
-    () => rows.filter((row) => row.state === 'proposed'),
+    () => rows.filter((row) => row.state === 'proposed' && !row.id.startsWith('preview-')),
     [rows],
   );
   const proposedIds = React.useMemo(
@@ -174,7 +174,10 @@ export function BoardTransfersPanel({
         ),
         // The document number IS the way to the movement's own record, where it is marked
         // moved or cancelled - the two verbs this panel deliberately does not carry.
-        cell: ({ row }) => (
+        cell: ({ row }) =>
+          row.original.id.startsWith('preview-') ? (
+            <span className="block truncate text-sm">{row.original.transfer_no}</span>
+          ) : (
           <Link
             href={`/inventory-management/stock-transfers/${row.original.id}`}
             onClick={(event) => event.stopPropagation()}
@@ -183,7 +186,7 @@ export function BoardTransfersPanel({
           >
             {row.original.transfer_no}
           </Link>
-        ),
+          ),
         size: 150,
         minSize: 120,
         meta: { headerTitle: 'Transfer no' },
@@ -331,7 +334,9 @@ export function BoardTransfersPanel({
           <span className="block truncate text-sm tabular-nums">
             {row.original.proposed_at
               ? formatDateTimeInMalaysia(row.original.proposed_at)
-              : 'Not stated'}
+              : row.original.id.startsWith('preview-')
+                ? ''
+                : 'Not stated'}
           </span>
         ),
         size: 160,
@@ -345,7 +350,7 @@ export function BoardTransfersPanel({
         // than no button. An approved row keeps its place in the list and simply has no
         // verb left here - marking it moved belongs to the transfer's own record.
         cell: ({ row }) =>
-          canEdit && row.original.state === 'proposed' ? (
+          canEdit && row.original.state === 'proposed' && !row.original.id.startsWith('preview-') ? (
             <div className="flex justify-end">
               <Button
                 type="button"
@@ -370,37 +375,22 @@ export function BoardTransfersPanel({
     ],
     [canEdit, approve, approveAll.isPending],
   );
-  const shownColumns = React.useMemo<ColumnDef<StockTransfer>[]>(() => {
-    if (!preview) return columns;
-    return columns
-      .filter((column) => column.id !== 'proposed_at' && column.id !== 'action')
-      .map((column) =>
-        column.id === 'transfer_no'
-          ? {
-              ...column,
-              cell: ({ row }: { row: { original: StockTransfer } }) => (
-                <span className="block truncate text-sm">{row.original.transfer_no}</span>
-              ),
-            }
-          : column,
-      );
-  }, [columns, preview]);
 
   // No read grant, no panel (D9). Nothing about the movements is stated - not an empty
   // card, not an error - because none of it is this user's to see.
-  if (!canView && !preview) return null;
+  if (!canView && !(preview && preview.length > 0)) return null;
   // Nothing raised and nothing pressed: no card. See the `justConfirmed` prop.
-  if (!isLoading && !error && rows.length === 0 && !justConfirmed && !preview) return null;
+  if (!isLoading && !error && rows.length === 0 && !justConfirmed) return null;
 
   return (
-    <div className="space-y-1" data-testid={preview ? 'board-preview-transfers' : undefined}>
+    <div className="space-y-1">
       <PanelDataGrid<StockTransfer>
-        title={preview ? undefined : 'Stock transfers'}
-        columns={shownColumns}
-        rowAttributes={
-          preview
-            ? (row) => ({ 'data-testid': `board-preview-transfer-row-${row.so_line_no}` })
-            : undefined
+        title="Stock transfers"
+        columns={columns}
+        rowAttributes={(row) =>
+          row.id.startsWith('preview-')
+            ? { 'data-testid': `board-preview-transfer-row-${row.so_line_no}` }
+            : {}
         }
         rows={rows}
         getRowId={(row) => row.id}
@@ -410,7 +400,7 @@ export function BoardTransfersPanel({
         emptyTitle="Nothing has to move"
         emptyBody="Every confirmed line is served from its own location."
         toolbar={
-          !preview && canEdit && proposedIds.length > 0 ? (
+          canEdit && proposedIds.length > 0 ? (
             <Button
               type="button"
               size="sm"

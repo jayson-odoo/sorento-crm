@@ -4505,7 +4505,7 @@ describe('FulfilmentBoardPanel: confirm scope fix round 1 (FULFIL-CONFIRM-SCOPE)
  * FULFIL-CONFIRM-SCOPE v3.1 (owner, 30 Sep 2026; AC-W1..W6): Preview opens a READ-ONLY view in
  * place of the board content; Confirm lives on that view and posts `only_line_ids`.
  */
-describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
+describe('FulfilmentBoardPanel: Preview filter mode (v4)', () => {
   const DAY_MS = 24 * 60 * 60 * 1000;
 
   /** Lines 6, 9 and 8 saved; 9 by another planner 8 days ago; the rest by me just now. */
@@ -4610,9 +4610,11 @@ describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
     ],
   };
 
+  /** Press Preview; the board switches to filter mode (the chip appears) and stays on screen. */
   async function openView() {
     fireEvent.click(await screen.findByTestId('board-preview'));
-    return screen.findByTestId('board-preview-view');
+    await screen.findByTestId('board-preview-filter');
+    return document.body;
   }
 
   it('AC-W1: the header offers Preview (3) and no Confirm on the board, and nothing pops up', async () => {
@@ -4642,14 +4644,17 @@ describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
     ]);
 
     // The board stays mounted underneath (Back returns to it as it was), hidden.
-    expect(screen.getByTestId('board-content')).not.toBeVisible();
-    expect(view).toHaveTextContent('Preview: what Confirm will send');
-    expect(view).toHaveTextContent('3 lines');
-    expect(view).toHaveTextContent('2 Order Inquiry rows');
-    expect(view).toHaveTextContent('1 stock transfer');
-    expect(view).toHaveTextContent('1 held back');
+    // Filter mode: the cards and the transfers grid stay on screen, the chip says what is shown.
+    expect(screen.getByTestId('board-content')).toBeVisible();
+    expect(screen.getByTestId('board-preview-filter')).toHaveTextContent('Will be sent (3)');
+    expect(screen.getByTestId('board-preview-filter')).toHaveAttribute('aria-pressed', 'true');
+    const summary = screen.getByTestId('board-preview-summary');
+    expect(summary).toHaveTextContent('3 lines');
+    expect(summary).toHaveTextContent('2 Order Inquiry rows');
+    expect(summary).toHaveTextContent('1 stock transfer');
+    expect(summary).toHaveTextContent('1 held back');
 
-    const inquiry = within(view).getByTestId('board-preview-inquiry');
+    const inquiry = view;
     const row6 = within(inquiry).getByTestId('board-preview-inquiry-row-6');
     for (const text of ['SRTWT6808', 'ORDER', '239', 'BRW-IB']) {
       expect(row6).toHaveTextContent(text);
@@ -4662,8 +4667,7 @@ describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
       /Jayson Foundryx/,
     );
 
-    const transfers = within(view).getByTestId('board-preview-transfers');
-    const move = within(transfers).getByTestId('board-preview-transfer-row-8');
+    const move = within(view).getByTestId('board-preview-transfer-row-8');
     for (const text of ['BRW-BB', 'BRW-IB', '100']) {
       expect(move).toHaveTextContent(text);
     }
@@ -4672,9 +4676,10 @@ describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
     expect(held).toHaveTextContent('112');
     expect(held).toHaveTextContent('only 3 free at BRW-IB');
     expect(within(view).queryAllByRole('checkbox')).toHaveLength(0);
+    expect(within(view).queryByTestId('board-preview-inquiry-row-112')).toBeNull();
   });
 
-  it('AC-W3: Back to planning returns to the board as it was', async () => {
+  it('AC-W3: Exit preview returns to the full board as it was', async () => {
     getPlanningBoard.mockResolvedValue(savedBoard());
     previewConfirmMany.mockResolvedValue(previewResult());
     renderPanel(['SO403340']);
@@ -4682,7 +4687,7 @@ describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
 
     fireEvent.click(screen.getByTestId('board-preview-back'));
     expect(await screen.findByTestId('board-content')).toBeVisible();
-    expect(screen.queryByTestId('board-preview-view')).toBeNull();
+    expect(screen.queryByTestId('board-preview-filter')).toBeNull();
     expect(screen.getByTestId('board-preview')).toHaveTextContent('Preview (3)');
   });
 
@@ -4772,7 +4777,7 @@ describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
 
     const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('line 6 SRTWT6808');
-    expect(screen.queryByTestId('board-preview-view')).toBeNull();
+    expect(screen.queryByTestId('board-preview-filter')).toBeNull();
     expect(previewConfirmMany).toHaveBeenCalledTimes(1);
   });
 
@@ -4816,7 +4821,8 @@ describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
     previewConfirmMany.mockResolvedValue(previewResult());
     renderPanel(['SO403340']);
     const view = await openView();
-    expect(view).toHaveTextContent(/applies pending change/);
+    expect(screen.getByTestId('board-preview-notes')).toHaveTextContent(/applies pending change/);
+    expect(view).toBeTruthy();
   });
 
   // ---- fix round 3 --------------------------------------------------------------------------
@@ -4836,10 +4842,10 @@ describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
     const view = await openView();
 
     expect(within(view).getByTestId('board-preview-inquiry-row-5')).toHaveTextContent('Withdrawn');
-    expect(view).toHaveTextContent('1 withdrawn');
+    expect(screen.getByTestId('board-preview-summary')).toHaveTextContent('1 withdrawn');
   });
 
-  it('B-2: Back to planning restores the board with its ticks intact', async () => {
+  it('B-2: Exit preview restores the board with its ticks intact', async () => {
     getPlanningBoard.mockResolvedValue(savedBoard());
     previewConfirmMany.mockResolvedValue(previewResult());
     renderPanel(['SO403340']);
@@ -4888,7 +4894,7 @@ describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
     const extra = within(view).getByTestId('board-preview-inquiry-row-77');
     expect(extra).toHaveTextContent('WESERP20B');
     expect(extra).toHaveTextContent('ORDER 12');
-    expect(view).toHaveTextContent('2 Order Inquiry rows');
+    expect(screen.getByTestId('board-preview-summary')).toHaveTextContent('2 Order Inquiry rows');
   });
 
   it('S-1: Confirm posts the previewed lines only, so held-back lines never read as a mismatch', async () => {
@@ -4974,14 +4980,27 @@ describe('FulfilmentBoardPanel: Preview view (v3.1)', () => {
     expect(screen.getByTestId('board-confirm')).toBeDisabled();
   });
 
-  it('P-1: the board toolbar is hidden while the view is open', async () => {
+  it('P-1: Save all suggested and Undo all are disabled while the filter is on', async () => {
     getPlanningBoard.mockResolvedValue(savedBoard());
     previewConfirmMany.mockResolvedValue(previewResult());
     renderPanel(['SO403340']);
     await openView();
 
-    expect(screen.queryByTestId('board-action-bar')).toBeNull();
-    expect(screen.queryByTestId('board-header-actions')).toBeNull();
+    expect(screen.getByRole('button', { name: /^Save all suggested/ })).toBeDisabled();
+  });
+
+
+  it('AC-W3: switching the chip off returns the full editable list', async () => {
+    getPlanningBoard.mockResolvedValue(savedBoard());
+    previewConfirmMany.mockResolvedValue(previewResult());
+    renderPanel(['SO403340']);
+    await openView();
+
+    fireEvent.click(screen.getByTestId('board-preview-filter'));
+
+    expect(await screen.findByTestId('board-preview')).toHaveTextContent('Preview (3)');
+    expect(screen.queryByTestId('board-preview-filter')).toBeNull();
+    expect(screen.queryByTestId('board-confirm')).toBeNull();
   });
 
 });

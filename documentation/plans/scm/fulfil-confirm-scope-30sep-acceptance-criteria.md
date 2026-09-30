@@ -27,6 +27,10 @@ Plan: `PLAN-fulfil-confirm-scope-30sep.md`
 
 ## Board, Preview view (v3.1, owner refinement 30 Sep 2026; supersedes AC-V1..V5 below, retired)
 
+v4 note (owner decision (b), 30 Sep 2026): the Preview view is now a FILTER MODE on the board.
+AC-W2 and AC-W3 below read accordingly: the list shows only what will be sent (chip "Will be sent (N)"),
+the cards and transfers stay on screen, and "Exit preview" or the chip returns the full grid.
+
 - AC-W1 The board header's only press CTA is "Preview (N)" (N = saved lines the press would
   send). There is no Confirm button on the board and no popup anywhere.
 - AC-W2 (v3.2) Pressing Preview posts the Confirm body with `preview: true` and opens a
