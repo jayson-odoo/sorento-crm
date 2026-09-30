@@ -300,3 +300,64 @@ def test_anchor_ref_is_null_when_the_row_has_no_message_id_or_there_is_no_row(w)
     db.commit()
     body = _portal(w).get(f"{PORTAL}/{w['ask'].id}/conversation").json()
     assert body["ask_message_id"] is None and body["ask_message_ref"] is None
+
+
+# ---- security review (30 Sep): cursors are message ids, the portal sees no staff identity ------
+
+
+@pytest.mark.parametrize("cursor", ["../../id:999/message/list?limit=1#", "1?x=1", "abc"])
+@pytest.mark.parametrize("name", ["before", "after", "around"])
+def test_a_cursor_that_is_not_a_message_id_is_422_on_both_mounts(w, cursor, name):
+    """A cursor reaches the Respond URL path (`RespondClient.get_message`); anything but digits
+    is refused before it gets there."""
+    from urllib.parse import quote
+
+    resp = _portal(w).get(f"{PORTAL}/{w['ask'].id}/conversation/page?{name}={quote(cursor, safe='')}")
+    assert resp.status_code == 422, resp.text
+    client, restore = _sales(w)
+    try:
+        assert client.get(f"{SALES}/{w['ask'].id}/conversation/page?{name}={quote(cursor, safe='')}").status_code == 422
+    finally:
+        restore()
+
+
+def test_the_core_refuses_a_cursor_that_is_not_a_message_id(w):
+    from app.services import conversation_thread_service as svc
+
+    contact = svc.ThreadContact(respond_io_id=w["rid"], phone_number="+60123456789")
+    for name in ("before", "after", "around"):
+        with pytest.raises(ValueError):
+            svc.fetch_thread_page(w["db"], contact, **{name: "../../x"})
+    assert svc.fetch_thread_page(w["db"], contact, around="20260929030200")["anchor_message_id"] == "20260929030200"
+
+
+def test_portal_search_q_is_capped(w):
+    assert _portal(w).get(f"{PORTAL}/{w['ask'].id}/conversation/search?q={'a' * 201}").status_code == 422
+    assert _portal(w).get(f"{PORTAL}/{w['ask'].id}/conversation/search?q={'a' * 200}").status_code == 200
+
+
+def test_portal_page_carries_no_staff_identity_or_transport_ids(w):
+    from app.services.stock_ask_service import portal_thread_item
+
+    raw = {
+        "messageId": 1,
+        "traffic": "outgoing",
+        "message": {"type": "text", "text": "hi"},
+        "sender": {"source": "user", "userId": 42, "name": "Sean Ibrahim", "contactId": 7},
+        "status": [{"value": "read", "timestamp": 1}],
+        "channelMessageId": "wamid.abc",
+        "contactId": 9,
+        "channelId": 3,
+        "replyTo": {"messageId": 0, "message": {"text": "q"}},
+        "source": "respond",
+    }
+    item = portal_thread_item(raw)
+    assert item["sender"] == {"source": "user"}
+    assert set(item) == {"messageId", "traffic", "message", "sender", "status", "replyTo", "source"}
+    assert item["message"] == raw["message"] and item["status"] == raw["status"]
+    # And through the route: every local-lane item comes back projected too.
+    body = _portal(w).get(f"{PORTAL}/{w['ask'].id}/conversation/page?limit=5").json()
+    assert body["items"]
+    for it in body["items"]:
+        assert set(it["sender"]) == {"source"}
+        assert "channelMessageId" not in it and "contactId" not in it

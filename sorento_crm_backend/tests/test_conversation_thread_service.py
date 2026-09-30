@@ -154,9 +154,13 @@ def test_tie_break_on_equal_sent_at_is_stable_and_lossless(db):
 
 
 def test_unknown_anchor_falls_back_to_the_newest_page(db):
+    """An UNKNOWN message id (a purged row) falls back; a cursor that is no message id at all is
+    refused (security review, ASKS-UX: it reaches the Respond URL path)."""
     _seed_ten(db)
-    page = svc.fetch_thread_page(db, CONTACT, before="nope", limit=3)
+    page = svc.fetch_thread_page(db, CONTACT, before="9999", limit=3)
     assert _ids(page) == ["1007", "1008", "1009"]
+    with pytest.raises(ValueError):
+        svc.fetch_thread_page(db, CONTACT, before="nope", limit=3)
 
 
 def test_limit_is_clamped(db):

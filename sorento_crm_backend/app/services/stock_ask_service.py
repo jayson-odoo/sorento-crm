@@ -967,6 +967,21 @@ def _thread_contact_for_ask(db: Session, ask: Any):
     return thread_contact_for(contact)
 
 
+#: What a portal reader gets of each thread item (security review, 30 Sep 2026): the message,
+#: its direction, clock and receipts, the quote it answers and its lane. Never the staff member
+#: behind a send (`sender.userId` / `sender.name`, resolved by `_attach_sender_names`), nor the
+#: transport ids (`channelMessageId`, `contactId`, `channelId`).
+_PORTAL_ITEM_KEYS = ("messageId", "traffic", "message", "status", "replyTo", "source")
+
+
+def portal_thread_item(item: dict[str, Any]) -> dict[str, Any]:
+    """One thread item as the portal may see it: `sender` reduced to its `source`."""
+    out = {k: item[k] for k in _PORTAL_ITEM_KEYS if k in item}
+    sender = item.get("sender") if isinstance(item.get("sender"), dict) else {}
+    out["sender"] = {"source": sender.get("source")}
+    return out
+
+
 def conversation_page_for_ask(
     db: Session,
     ask: Any,
@@ -975,19 +990,22 @@ def conversation_page_for_ask(
     after: Optional[str] = None,
     around: Optional[str] = None,
     limit: int = 50,
+    portal: bool = False,
 ) -> dict[str, Any]:
     """One scroll-back window of the ask's contact thread (ASKS-UX item 3): the SAME core and
     shape as `GET .../conversation-sla-tracking/{id}/conversation/page`, with the same
     per-contact Respond client wiring (`sla_service._thread_page_for_contact`). The caller has
     already put the ask in scope. No thread (no contact, no Respond id) answers the empty page,
-    not a 404: the ask exists and the panel still has to render."""
+    not a 404: the ask exists and the panel still has to render. A cursor that is not a message
+    id raises ValueError (the core's rule); the route answers 422. `portal=True` projects each
+    item through `portal_thread_item`."""
     from app.services import conversation_thread_service as thread_service
     from app.services.integration_service import RespondClient
 
     contact = _thread_contact_for_ask(db, ask)
     if contact is None:
         return thread_service.empty_page(limit=limit, error="No Respond.io contact linked")
-    return thread_service.fetch_thread_page(
+    page = thread_service.fetch_thread_page(
         db,
         contact,
         before=before,
@@ -996,6 +1014,9 @@ def conversation_page_for_ask(
         limit=limit,
         client=RespondClient.for_identifier(db, contact.respond_io_id),
     )
+    if portal:
+        page["items"] = [portal_thread_item(i) for i in page["items"]]
+    return page
 
 
 def conversation_search_for_ask(db: Session, ask: Any, *, q: str, limit: int = 100) -> dict[str, Any]:

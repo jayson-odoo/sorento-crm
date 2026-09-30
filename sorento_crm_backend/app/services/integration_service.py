@@ -558,8 +558,11 @@ class RespondClient:
         """
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
+        from urllib.parse import quote
+
         api_id = self._contact_api_identifier(identifier)
-        url = f"{self.base_url}/v2/contact/{api_id}/message/{message_id}"
+        # Quoted with no safe characters: a message id is one path segment, never a path.
+        url = f"{self.base_url}/v2/contact/{api_id}/message/{quote(str(message_id), safe='')}"
         with httpx.Client(timeout=15) as client:
             response = client.get(url, headers=self._headers())
             response.raise_for_status()

@@ -108,13 +108,18 @@ def portal_customer_ask_conversation_page(
     if len([c for c in (before, after, around) if c]) > 1:
         raise AppException(status_code=422, message="Pass at most one of before, after, around.", code="VALIDATION_ERROR")
     ask = stock_ask_service.get_ask_in_scope(db, agent_id, ask_id)
-    return stock_ask_service.conversation_page_for_ask(db, ask, before=before, after=after, around=around, limit=limit)
+    try:
+        return stock_ask_service.conversation_page_for_ask(
+            db, ask, before=before, after=after, around=around, limit=limit, portal=True
+        )
+    except ValueError as e:  # a cursor that is not a message id
+        raise AppException(status_code=422, message=str(e), code="VALIDATION_ERROR")
 
 
 @router.get("/customer-asks/{ask_id}/conversation/search")
 def portal_customer_ask_conversation_search(
     ask_id: str,
-    q: str = Query("", description="Free text searched inside this contact's messages"),
+    q: str = Query("", max_length=200, description="Free text searched inside this contact's messages"),
     limit: int = Query(100, ge=1, le=200),
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),

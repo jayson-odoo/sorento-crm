@@ -113,6 +113,8 @@ async def get_contact_thread_page(
         )
     except HTTPException:
         raise
+    except ValueError as e:  # a cursor that is not a message id (thread service)
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:  # noqa: BLE001
         raise handle_internal_error(str(e))
 
