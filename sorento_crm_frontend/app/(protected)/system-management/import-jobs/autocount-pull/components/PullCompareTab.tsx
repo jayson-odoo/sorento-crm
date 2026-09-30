@@ -6,7 +6,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Download } from 'lucide-react';
+import { Download, Settings2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardTable } from '@/components/ui/card';
@@ -16,7 +16,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { toast } from '@/lib/toast';
 import { generateExcelFile, parseExcelFile, type ColumnOption } from '@/lib/excel-utils';
-import { useComparePull } from '../hooks/useAutocountPull';
+import { useCompareMappings, useComparePull } from '../hooks/useAutocountPull';
+import { CompareMappingDialog } from './CompareMappingDialog';
 import { isCompareFullMatch } from '../types/compareMatch';
 import { buildCompareRows, type CompareRow } from './compareRows';
 import type {
@@ -50,20 +51,24 @@ const DO_SOURCES: Array<{
   hint: string;
   ariaLabel: string;
   unit: string;
+  /** The saved mapping this file is read with. */
+  kind: 'order_listing' | 'order_tracking';
 }> = [
   {
     source: 'lines',
-    title: 'Order Listing (macro), sheet Master',
+    title: 'Order Listing (macro)',
     hint: 'DO lines: Doc No, Doc Date, Item Code, Qty, Location, Unit Price, Discount, Total (Ex). Drop the .xlsm here, or click to browse.',
     ariaLabel: 'Order Listing sheet to compare',
     unit: 'lines',
+    kind: 'order_listing',
   },
   {
     source: 'headers',
-    title: 'Order Tracking (macro), sheet Master',
+    title: 'Order Tracking (macro)',
     hint: 'DO headers: Doc. No., Date, Debtor Code, Cancel. The Overall Tracking sheet is not compared; AutoCount does not carry it.',
     ariaLabel: 'Order Tracking sheet to compare',
     unit: 'documents',
+    kind: 'order_tracking',
   },
 ];
 
@@ -136,6 +141,10 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
   const [single, setSingle] = useState<AutocountComparePullResult | null>(null);
   const [results, setResults] = useState<SourceResults>({});
   const compareMutation = useComparePull(jobId);
+  const mappings = useCompareMappings(isDeliveryOrders);
+  const [mappingOpen, setMappingOpen] = useState(false);
+  const sheetFor = (kind: 'order_listing' | 'order_tracking'): string =>
+    mappings.data?.items.find((m) => m.kind === kind)?.sheet_name ?? 'Master';
   const accept = entity === 'products' ? '.xlsx,.xls' : '.xlsx,.xls,.xlsm';
 
   const handleFilesChange = async (next: File[], source?: AutocountPullCompareSource) => {
@@ -143,7 +152,10 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
     const file = next[0];
     if (!file) return;
     try {
-      const rows = await parseExcelFile(file);
+      const entry = DO_SOURCES.find((d) => d.source === source);
+      const rows = entry
+        ? await parseExcelFile(file, { sheetName: sheetFor(entry.kind) })
+        : await parseExcelFile(file);
       if (rows.length === 0) {
         toast.error('That file has no rows.');
         return;
@@ -315,6 +327,14 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
 
   return (
     <div className="space-y-4">
+      {isDeliveryOrders && (
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={() => setMappingOpen(true)}>
+            <Settings2 className="size-4" />
+            Mapping
+          </Button>
+        </div>
+      )}
       {isDeliveryOrders ? (
         <div className="grid gap-4 sm:grid-cols-2">
           {sources.map((entry) => {
@@ -324,7 +344,7 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
                 {renderDropzone(
                   `autocount-compare-${jobId}-${entry.source}`,
                   entry.ariaLabel,
-                  entry.title,
+                  `${entry.title}, sheet ${sheetFor(entry.kind)}`,
                   entry.hint,
                   files[entry.source] ?? [],
                   entry.source,
@@ -408,6 +428,9 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
             </CardTable>
           </Card>
         </DataGrid>
+      )}
+      {isDeliveryOrders && mappingOpen && (
+        <CompareMappingDialog open={mappingOpen} onOpenChange={setMappingOpen} />
       )}
     </div>
   );
