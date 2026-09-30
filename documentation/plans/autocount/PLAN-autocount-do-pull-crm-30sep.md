@@ -1,8 +1,9 @@
 # PLAN: Delivery Orders, Pull from AutoCount (lane DO-PULL-CRM, BL-SS-286)
 
-Status: **planned, building** (full track: new permission slug + grant migration, so not the
-small-fix track; no new external ingest surface, the apply reuses the DO ingest). Branch
-`crew/do-pull-crm` (base `main`, cut at `90807ede`). UAC:
+Status: **entity built (pull, preview, apply, review reuse, single-file compare); two-file
+compare waiting on the owner's mock approval (1.8)** (full track: new permission slug + grant
+migration, so not the small-fix track; no new external ingest surface, the apply reuses the
+DO ingest). Branch `crew/do-pull-crm` (base `main`, cut at `90807ede`), PR #1383. UAC:
 `autocount-do-pull-crm-30sep-acceptance-criteria.md` (AC-DP-01 onward).
 
 Owner ask (30 Sep): the CRM Delivery Orders page (Dashboards > Delivery Orders, Actions menu:
@@ -120,9 +121,10 @@ Same `fetch_verified_snapshot`, same `book` rule, then the same service NOT dry-
 `db.commit()` (the route's own order: per-record SAVEPOINTs, one commit for the batch,
 `ingest.py:937-940`). No GRN receipt hook applies to DOs. Outcome rows are written with the same
 three writers as the preview. Apply summary: `{total, created, updated, adopted, unchanged,
-failed, retryable, lines_deleted}`. The confirming user is stamped as the audit actor for the
-task's session (`app.audit_context.stamp_actor`), the way the request path stamps the caller,
-so the `orders` audit rows name the person who confirmed, not "worker".
+failed, retryable, lines_deleted, with_warnings}`. Audit attribution needs nothing new:
+`enqueue_job` writes the confirming request's actor onto the RQ job (`queue_service.py:135`)
+and the work-horse runs the task inside `job_actor_scope` (`:73`), so the `orders` audit rows
+already name the person who confirmed.
 
 ### 1.5 Rows, download, compare (the two other tabs)
 
@@ -172,6 +174,57 @@ brief's "genuinely new UI" clause does not fire):
 - A "lines to delete" detail list beyond the per-record row message: the owner asking for it
   after the first hand test.
 - A GRN pull: the same lane shape, one more entity, when the owner asks.
+
+## 1.8 Owner decision, 30 Sep: pull-on-request + two-file compare (plan delta)
+
+Relayed by the orchestrator after the entity work above was built:
+
+1. The DO feed stays pull-on-request; Push only after the pull is proven. Nothing in this
+   lane changes for that: Confirm applies through the ingest exactly as a push would.
+2. Flow: Pull from AutoCount (a DocDate window, the shared-service snapshot) -> the checker
+   uploads the TWO macro files used today -> the CRM compares the snapshot against their
+   rows -> ideally zero differences -> Confirm as on Products / Stock.
+3. The two files (crew subagent, read-only): "Order Listing - Macro Version 2 ... .xlsm",
+   sheet `Master` = DO item lines (`Doc No`, `Doc Date`, `Created Time`, `Cancelled`,
+   `Item Code`, `Qty`, `Location`, `Unit Price`, `Discount`, `Total (Ex)`, `Total (Inc)`),
+   rows selected by DocDate; "9. Macro Version Order Tracking ... .xlsm", sheets `Master` /
+   `Raw Data` = one row per DO (`Doc. No.`, `Date`, `Created Time`, `Debtor Code`, `Debtor
+   Name`, `Agent`, `Cancel`, `Remarks CS`, `Type`) plus `Overall Tracking` (the delivery
+   log). Neither carries an SO reference or a last-modified column.
+4. The compare is windowed to the pulled DocDate range (the files hold extra days), keyed by
+   DO number + line; a DO missing from the pull is a difference, never a delete.
+5. New UI, so a mock first: `documentation/mockups/do-pull/index.html` (this commit), owner
+   approval before the compare UI is built.
+
+**Verified importer gap (owner's item 3):** `process_delivery_order_detail_import` reads
+headers lower-cased only (`import_tasks.py:2693-2700`) and looks for `total excluding tax` /
+`total including tax` (`:2821-2822`), so the sheet's `Total (Ex)` / `Total (Inc)` columns are
+never read by the existing DO lines import; `total` (`:2819`) matches neither either. Not
+this lane's fix (the pull replaces that upload), recorded for the backlog.
+
+**What changes against sections 1.5 and 1.6, once the mock is approved:**
+
+- Start: `PullStartBody.scope` (built, 1.2) is what the new dialog posts (`fromDay` /
+  `toDay`); the button opens the dialog for a delivery-orders pull, a plain click for the
+  other two entities. `find_open_pull` still reuses the open pull.
+- Compare route: `POST /{job_id}/compare` grows an optional `source` (`lines` = Order
+  Listing `Master`, `headers` = Order Tracking `Master`) and windows both sides to the pull's
+  `scope` (default window = the snapshot header's own `fromDay` / `toDay` when it carries
+  them, else `extractedAt` minus 31 days to `extractedAt`). Lines compare stays keyed by
+  (Doc No, Item Code, Location); a headers compare is keyed by Doc No. Field lists per
+  Q3 below. The stored summary carries both sources.
+- Compare tab: two dropzones, one headline, one grid grouped by source, "Only in your
+  Excel" rows for DOs the pull did not bring back. `Overall Tracking` is not compared (Q6).
+- The single-file compare built in this commit (`compare_delivery_orders`, Qty only) stays
+  the lines half of the above; nothing of it is thrown away.
+
+**Open product questions (recommendation in bold):** Q1 default window: **last 31 days,
+prefilled**. Q2 per-document pull on the dialog: **no**. Q3 difference fields: **lines: Qty,
+Unit Price, Discount, Total (Ex); headers: Doc Date, Debtor Code, Cancel; not compared:
+Created Time, Debtor Name, Agent, Total (Inc)**. Q4 Confirm with differences: **allowed,
+advisory (P11), the headline says the differences change nothing**. Q5 a DO only in
+AutoCount still lands on Confirm: **yes**. Q6 `Overall Tracking` not compared: **yes, the
+tracking upload stays the writer for those columns**.
 
 ## 2. Build order (tests first)
 

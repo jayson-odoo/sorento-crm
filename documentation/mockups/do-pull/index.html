@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Delivery Orders pull: compare with the two Excel files (mockup)</title>
+<style>
+/* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), same as
+   documentation/mockups/sales-asks-todo/index.html */
+:root{
+  --background:#fff;--foreground:#09090b;--card:#fff;--muted:#f4f4f5;--muted-fg:#71717a;
+  --border:#ececee;--primary:#3b82f6;--primary-fg:#fff;--primary-soft:#eff6ff;--primary-line:#bfdbfe;
+  --secondary:#f4f4f5;--destructive:#dc2626;--destructive-soft:#fef2f2;--destructive-line:#fecaca;
+  --success:#15803d;--success-soft:#f0fdf4;--success-line:#bbf7d0;--warning:#a16207;--warning-soft:#fefce8;--warning-line:#fde68a;--info:#7c3aed;--info-soft:#f5f3ff;
+  --radius:8px;--page:#f7f7f8;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+h1{font-size:22px;margin:0 0 4px}
+.doc{max-width:1400px;margin:0 auto;padding:16px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 12px;max-width:900px}
+.nav{position:sticky;top:0;z-index:5;background:var(--page);padding:8px 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}
+.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+section{margin:0 0 34px}
+section>h2{font-size:15px;margin:0 0 4px}
+section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:900px}
+.row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.note{font-size:12px;color:var(--muted-fg);border-left:2px solid var(--border);padding:2px 0 2px 10px;margin:8px 0 0;max-width:900px}
+.note.q{border-left-color:var(--warning);color:var(--foreground)}
+.nb{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--foreground);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px}
+
+/* frames */
+.desk{width:1280px;flex:none;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.desk .screen{height:1010px;overflow:auto;display:flex;background:#fff}
+.cap{font-size:11px;color:var(--muted-fg);text-align:center;padding:6px;border-top:1px solid var(--border);background:#fff}
+.phone{width:375px;flex:none;background:#fff;border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.phone .screen{height:812px;overflow:auto;background:var(--page)}
+.sidebar{width:250px;flex:none;border-right:1px solid var(--border);padding:16px 12px;font-size:13px}
+.sidebar .brand{font-weight:700;font-size:18px;padding:0 8px 18px}
+.sidebar .grp{font-size:10.5px;letter-spacing:.06em;color:var(--muted-fg);padding:10px 8px 6px}
+.sidebar .it{padding:6px 8px;border-radius:6px;color:var(--foreground)}
+.sidebar .it.sub{padding-left:36px;color:var(--muted-fg)}
+.sidebar .it.on{background:var(--muted);color:var(--primary);font-weight:500}
+.main{flex:1;min-width:0;padding:22px 26px;background:var(--page);position:relative}
+.pagehead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px}
+.pagehead .t{font-size:22px;font-weight:600;line-height:1.2}
+.crumbs{font-size:13px;color:var(--muted-fg);margin-top:4px}
+
+/* primitives */
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--border);background:#fff;border-radius:6px;font-size:13px;color:var(--foreground);white-space:nowrap}
+.btn.sm{height:28px;font-size:12.5px}
+.btn.primary{background:var(--primary);color:var(--primary-fg);border-color:var(--primary);font-weight:500}
+.btn.disabled{opacity:.5}
+.btn.block{width:100%;justify-content:center;height:36px}
+.badge{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:11.5px;font-weight:500;border:1px solid}
+.badge.warn{background:var(--warning-soft);color:var(--warning);border-color:var(--warning-line)}
+.badge.ok{background:var(--success-soft);color:var(--success);border-color:var(--success-line)}
+.badge.bad{background:var(--destructive-soft);color:var(--destructive);border-color:var(--destructive-line)}
+.badge.info{background:var(--info-soft);color:var(--info);border-color:#ddd6fe}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius)}
+.card .hd{padding:14px 16px;border-bottom:1px solid var(--border)}
+.card .bd{padding:14px 16px}
+.hline{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.hline .grow{flex:1}
+.sub{font-size:12px;color:var(--muted-fg)}
+.warnline{font-size:12px;color:var(--warning)}
+.counters{display:grid;grid-template-columns:repeat(9,1fr);gap:8px}
+.phone .counters{grid-template-columns:repeat(2,1fr)}
+.ctr{border:1px solid var(--border);background:rgba(244,244,245,.5);border-radius:8px;padding:8px 10px}
+.ctr b{display:block;font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+.ctr span{font-size:11.5px;color:var(--muted-fg)}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--border);margin:14px 0 12px;font-size:13.5px}
+.tabs span{padding:0 0 8px;color:var(--muted-fg)}
+.tabs span.on{color:var(--foreground);border-bottom:2px solid var(--foreground);font-weight:500}
+.drops{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.phone .drops{grid-template-columns:1fr}
+.drop{border:1px dashed var(--border);border-radius:var(--radius);padding:14px;background:#fff}
+.drop .t{font-weight:500;font-size:13px;margin-bottom:2px}
+.drop .h{font-size:12px;color:var(--muted-fg)}
+.drop .f{margin-top:10px;display:flex;align-items:center;gap:8px;font-size:12.5px}
+.drop .f .name{font-weight:500}
+.drop .f .meta{color:var(--muted-fg)}
+.alert{border:1px solid;border-radius:var(--radius);padding:10px 12px;margin-top:12px}
+.alert.warn{background:var(--warning-soft);border-color:var(--warning-line);color:#713f12}
+.alert.ok{background:var(--success-soft);border-color:var(--success-line);color:#14532d}
+.alert b{display:block;font-size:13.5px;margin-bottom:2px}
+.grid{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:10px;background:#fff}
+.grid th{font-weight:500;color:var(--muted-fg);text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+.grid td{padding:7px 10px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.grid td.num{font-variant-numeric:tabular-nums}
+.grid tr.grp td{background:var(--muted);color:var(--muted-fg);font-size:11.5px;letter-spacing:.04em;text-transform:uppercase}
+.gridtools{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+.pill{display:inline-block;background:var(--secondary);border-radius:6px;padding:0 6px;font-size:11.5px;line-height:20px;color:var(--muted-fg)}
+.m{color:var(--destructive)}
+/* dialog */
+.dlg{width:440px;background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px}
+.dlg h3{margin:0 0 4px;font-size:16px}
+.dlg .d{font-size:12.5px;color:var(--muted-fg);margin:0 0 14px}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:12px;color:var(--muted-fg);margin-bottom:4px}
+.inp{height:34px;border:1px solid var(--border);border-radius:6px;padding:0 10px;display:flex;align-items:center;font-size:13px;background:#fff}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.dlg .ft{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+/* phone cards */
+.pc{background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin:0 0 8px}
+.pc .l1{display:flex;justify-content:space-between;font-weight:500;font-size:13px}
+.pc .l2{font-size:12px;color:var(--muted-fg);margin-top:2px}
+.pc .l3{font-size:12.5px;margin-top:6px;display:flex;gap:10px}
+.pc .l3 b{font-weight:500}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Delivery Orders: Pull from AutoCount, compare with the two Excel files</h1>
+<p class="intro">Lane DO-PULL-CRM, owner decision 30 Sep. Everything in grey below is the existing pull review page (Products / Stock Balance) reused as is: phase pill, snapshot line, Download / Discard / Confirm, the counters row, the Changes and Excel view tabs. The NEW parts are marked with a number: <span class="nb">1</span> a DocDate window when the pull starts, <span class="nb">2</span> the Compare tab takes the two macro files the checker uses today instead of one, <span class="nb">3</span> the comparison is windowed to the pulled DocDate range and grouped by source, <span class="nb">4</span> a DO missing from the pull is a difference row, never a delete. Open questions are the yellow notes.</p>
+<div class="nav"><a href="#s1">1 Start: DocDate window</a><a href="#s2">2 Compare tab, 1280</a><a href="#s3">3 Compare tab, 375</a><a href="#s4">Open questions</a></div>
+
+<section id="s1">
+<h2><span class="nb">1</span> Start: the DocDate window (Actions menu &gt; Pull from AutoCount)</h2>
+<p class="why">Products and Stock pull the whole book, so their button starts at once. A DO snapshot is a DocDate range (shared-service contract 16: fromDay / toDay, default the last 31 MYT days, cap 10,000 documents), and the two Excel files are cut by DocDate too, so the checker names the window once, here, and the compare uses the same window. Existing Dialog primitive, two date inputs, nothing else.</p>
+<div class="row">
+  <div class="dlg">
+    <h3>Pull delivery orders from AutoCount</h3>
+    <p class="d">Sorento (SRT). AutoCount builds a snapshot of the delivery orders dated inside this window; you review it before anything changes.</p>
+    <div class="two">
+      <div class="field"><label>From day</label><div class="inp">01/09/2026</div></div>
+      <div class="field"><label>To day</label><div class="inp">30/09/2026</div></div>
+    </div>
+    <p class="sub" style="margin:0 0 12px">Leave both empty for the last 31 days. One document: use the Excel view search on the pull page instead.</p>
+    <div class="ft"><span class="btn">Cancel</span><span class="btn primary">Pull</span></div>
+  </div>
+  <div style="max-width:560px">
+    <p class="note">The dialog is the only new element before the pull page. "Review pull" (an open pull exists) skips it and opens the pull, exactly as Products does.</p>
+    <p class="note q">Q1. Should the window default to the last 31 days (the contract default) or to the current month? Recommendation: last 31 days, and the two inputs prefilled with it, so the checker sees the dates the snapshot will use before clicking Pull.</p>
+    <p class="note q">Q2. Is a per-document pull (docNo) wanted on this dialog? Recommendation: no; the contract supports it, but the checker's job is a window, and one more field is one more way to pull the wrong thing.</p>
+  </div>
+</div>
+</section>
+
+<section id="s2">
+<h2><span class="nb">2</span> <span class="nb">3</span> <span class="nb">4</span> The pull page, Compare tab, at 1280</h2>
+<p class="why">Reached from Delivery Orders &gt; Pull from AutoCount (or Review pull) at System Management &gt; Import Jobs &gt; the pull. Header, counters, tabs and buttons are the existing components. The Compare tab now has two dropzones (one per macro file), a window line, one headline, and one differences grid grouped by source.</p>
+<div class="row">
+<div class="desk">
+ <div class="screen">
+  <div class="sidebar">
+   <div class="brand">Sorento CRM</div>
+   <div class="grp">DASHBOARDS</div>
+   <div class="it">Dashboard</div>
+   <div class="it">Delivery Orders</div>
+   <div class="it sub">Customer Branches</div>
+   <div class="grp">SYSTEM MANAGEMENT</div>
+   <div class="it on">Import Jobs</div>
+   <div class="it sub">Integrations</div>
+  </div>
+  <div class="main">
+   <div class="pagehead">
+    <div><div class="t">AutoCount Delivery Orders Pull</div><div class="crumbs">Import Jobs / AutoCount Delivery Orders Pull</div></div>
+    <span class="btn">&larr; Back to Delivery Orders</span>
+   </div>
+   <div class="card">
+    <div class="hd">
+     <div class="hline">
+      <span class="badge warn">Awaiting confirm</span>
+      <span style="font-weight:500;font-size:13px">AutoCount delivery orders pull, SRT</span>
+      <span class="sub">Snapshot 30/09/2026 09:12, valid until 01/10/2026 09:12</span>
+      <span class="sub">Scope: 01/09/2026 to 30/09/2026</span>
+      <span class="grow"></span>
+      <span class="btn sm">&#8681; Download xlsx</span>
+      <span class="btn sm">Discard</span>
+      <span class="btn sm primary">Confirm</span>
+     </div>
+     <div class="sub" style="margin-top:8px">948 of 950 delivery orders agree with Order Listing 2026-09.xlsm and Order Tracking 2026-09.xlsm.</div>
+    </div>
+    <div class="bd">
+     <div class="counters">
+      <div class="ctr"><b>950</b><span>Received</span></div>
+      <div class="ctr"><b>512</b><span>New</span></div>
+      <div class="ctr"><b>6</b><span>Updated</span></div>
+      <div class="ctr"><b>430</b><span>Adopted by number</span></div>
+      <div class="ctr"><b>0</b><span>Unchanged</span></div>
+      <div class="ctr"><b>9</b><span>Lines to delete</span></div>
+      <div class="ctr"><b>1</b><span>Failed</span></div>
+      <div class="ctr"><b>1</b><span>Retry later</span></div>
+      <div class="ctr"><b>435</b><span>With warnings</span></div>
+     </div>
+     <div class="tabs"><span>Changes</span><span>Excel view</span><span class="on">Compare with my Excel</span></div>
+
+     <div class="drops">
+      <div class="drop">
+       <div class="t">Order Listing (macro), sheet Master</div>
+       <div class="h">DO lines: Doc No, Doc Date, Created Time, Cancelled, Item Code, Qty, Location, Unit Price, Discount, Total (Ex), Total (Inc). Drop the .xlsm here, or click to browse.</div>
+       <div class="f"><span class="badge ok">Read</span><span class="name">Order Listing 2026-09.xlsm</span><span class="meta">2,214 lines in the window, 61 outside it ignored</span></div>
+      </div>
+      <div class="drop">
+       <div class="t">Order Tracking (macro), sheets Master + Overall Tracking</div>
+       <div class="h">DO headers: Doc. No., Date, Created Time, Debtor Code, Debtor Name, Agent, Cancel. Overall Tracking (transporter, driver, delivery date) is NOT compared; AutoCount does not carry it.</div>
+       <div class="f"><span class="badge ok">Read</span><span class="name">Order Tracking 2026-09.xlsm</span><span class="meta">951 DOs in the window, 38 outside it ignored</span></div>
+      </div>
+     </div>
+     <p class="sub" style="margin:8px 0 0"><span class="nb">3</span> Compared inside the pulled window only, 01/09/2026 to 30/09/2026, by document number and line (Doc No + Item Code + Location). Rows outside the window are ignored, never reported.</p>
+
+     <div class="alert warn">
+      <b>948 of 950 match.</b>
+      2 delivery orders differ (3 differences), 1 only in your Excel, 0 only in AutoCount. Confirm applies the AutoCount pull as it is; the differences are for you to check, they change nothing.
+     </div>
+
+     <div class="gridtools">
+      <div><span class="pill">Lines: 2 differences</span> <span class="pill">Headers: 1 difference</span> <span class="pill">Only in your Excel: 1</span></div>
+      <span class="btn sm">&#8681; Download differences</span>
+     </div>
+     <table class="grid">
+      <tr><th>Doc No</th><th>Item Code</th><th>Location</th><th>Difference</th><th>Your Excel</th><th>AutoCount pull</th><th>Source</th></tr>
+      <tr class="grp"><td colspan="7">DO lines (Order Listing, sheet Master)</td></tr>
+      <tr><td>DO-2609/0077</td><td>SRTSH9112-GM</td><td>BRW</td><td>Qty</td><td class="num">12</td><td class="num">10</td><td>Lines</td></tr>
+      <tr><td>DO-2609/0077</td><td>SRTSH9112-GM</td><td>BRW</td><td>Unit Price</td><td class="num">112.50</td><td class="num">120.00</td><td>Lines</td></tr>
+      <tr class="grp"><td colspan="7">DO headers (Order Tracking, sheet Master)</td></tr>
+      <tr><td>DO-2609/0131</td><td>-</td><td>-</td><td>Cancel</td><td>Yes</td><td>No</td><td>Headers</td></tr>
+      <tr class="grp"><td colspan="7">Only in your Excel <span style="text-transform:none;letter-spacing:0">(<span class="nb" style="background:var(--warning)">4</span> a DO the pull did not bring back inside the window; a difference to check, never something Confirm deletes)</span></td></tr>
+      <tr><td>DO-2609/0142</td><td>-</td><td>-</td><td>Only in your Excel</td><td>Present</td><td class="m">Missing</td><td>Headers</td></tr>
+     </table>
+    </div>
+   </div>
+  </div>
+ </div>
+ <div class="cap">1280 wide. Grey = existing pull review; numbered = new. Grid is the shared DataGrid (fixed layout, resizable, truncate + title).</div>
+</div>
+</div>
+<p class="note">Both files are parsed in the browser (the existing <code>parseExcelFile</code>, as the Products / Stock compare tab does) and posted to the SAME compare route with a <code>source</code> per file; the server keeps only the summary on the pull, never the rows. A file dropped alone compares alone (the other group reads "not uploaded"). Re-dropping a file replaces its group.</p>
+<p class="note q">Q3. Which fields count as a difference? Recommendation: lines: Qty, Location (as part of the key), Unit Price, Discount, Total (Ex); headers: Doc Date, Debtor Code, Cancel. Not compared: Created Time (AutoCount sends CreatedTimeStamp with seconds, the sheet a rounded time), Debtor Name (free text drift), Agent (the tracking sheet's Agent is often retyped), Total (Inc) (tax is not on the DO line in the sheet the same way). Say yes/no per field and the compare pins exactly that list.</p>
+<p class="note q">Q4. May the checker Confirm with differences? Recommendation: yes, Confirm stays enabled and the headline says the differences change nothing (the Products / Stock rule, P11: compare is advisory). The alternative (Confirm disabled until zero differences, or a "Confirm anyway" tick) blocks the whole month on one retyped price in the sheet.</p>
+<p class="note q">Q5. A DO in the pull that is NOT in the Excel ("Only in AutoCount") is shown the same way. Confirm still creates or adopts it (it is AutoCount's book). Agree?</p>
+<p class="note q">Q6. Order Tracking's Overall Tracking sheet (transporter, driver, lorry, delivery date) is ignored by the compare because AutoCount has no such fields; the tracking upload stays the writer for those columns. Agree?</p>
+</section>
+
+<section id="s3">
+<h2>The same Compare tab at 375</h2>
+<p class="why">Dropzones stack; the differences grid becomes the same card list the shared DataGrid already renders at phone width. Nothing clipped, one CTA (Confirm) in the header.</p>
+<div class="row">
+<div class="phone">
+ <div class="screen">
+  <div style="padding:12px">
+   <div class="card">
+    <div class="hd">
+     <div class="hline"><span class="badge warn">Awaiting confirm</span><span class="grow"></span><span class="btn sm primary">Confirm</span></div>
+     <div style="font-weight:500;font-size:13px;margin-top:8px">AutoCount delivery orders pull, SRT</div>
+     <div class="sub">Scope: 01/09/2026 to 30/09/2026</div>
+     <div class="hline" style="margin-top:8px"><span class="btn sm">&#8681; Download xlsx</span><span class="btn sm">Discard</span></div>
+    </div>
+    <div class="bd">
+     <div class="counters">
+      <div class="ctr"><b>950</b><span>Received</span></div>
+      <div class="ctr"><b>512</b><span>New</span></div>
+      <div class="ctr"><b>430</b><span>Adopted by number</span></div>
+      <div class="ctr"><b>9</b><span>Lines to delete</span></div>
+     </div>
+     <div class="sub" style="margin-top:6px">+ Updated 6, Unchanged 0, Failed 1, Retry later 1, With warnings 435</div>
+     <div class="tabs"><span>Changes</span><span>Excel view</span><span class="on">Compare</span></div>
+     <div class="drops">
+      <div class="drop"><div class="t">Order Listing, sheet Master</div><div class="f"><span class="badge ok">Read</span><span class="name">Order Listing 2026-09.xlsm</span></div><div class="h" style="margin-top:4px">2,214 lines in the window, 61 ignored</div></div>
+      <div class="drop"><div class="t">Order Tracking, Master + Overall Tracking</div><div class="f"><span class="badge ok">Read</span><span class="name">Order Tracking 2026-09.xlsm</span></div><div class="h" style="margin-top:4px">951 DOs in the window, 38 ignored</div></div>
+     </div>
+     <div class="alert warn"><b>948 of 950 match.</b>2 differ (3 differences), 1 only in your Excel. Confirm applies the pull as it is.</div>
+     <div class="gridtools"><span class="pill">4 rows</span><span class="btn sm">&#8681; Differences</span></div>
+     <div style="margin-top:8px">
+      <div class="pc"><div class="l1"><span>DO-2609/0077</span><span class="badge info">Lines</span></div><div class="l2">SRTSH9112-GM at BRW</div><div class="l3"><span>Qty</span><span><b>12</b> yours</span><span><b>10</b> AutoCount</span></div></div>
+      <div class="pc"><div class="l1"><span>DO-2609/0077</span><span class="badge info">Lines</span></div><div class="l2">SRTSH9112-GM at BRW</div><div class="l3"><span>Unit Price</span><span><b>112.50</b> yours</span><span><b>120.00</b> AutoCount</span></div></div>
+      <div class="pc"><div class="l1"><span>DO-2609/0131</span><span class="badge info">Headers</span></div><div class="l3"><span>Cancel</span><span><b>Yes</b> yours</span><span><b>No</b> AutoCount</span></div></div>
+      <div class="pc"><div class="l1"><span>DO-2609/0142</span><span class="badge bad">Only in your Excel</span></div><div class="l2">Not in the pull inside the window. Check AutoCount; Confirm never deletes it.</div></div>
+     </div>
+    </div>
+   </div>
+  </div>
+ </div>
+ <div class="cap">375 wide</div>
+</div>
+</div>
+</section>
+
+<section id="s4">
+<h2>Open questions, one line each (full text in the yellow notes above)</h2>
+<p class="why">Q1 default window (recommend last 31 days, prefilled). Q2 per-document pull on the dialog (recommend no). Q3 the field list that counts as a difference (recommend Qty / Unit Price / Discount / Total (Ex) on lines; Doc Date / Debtor Code / Cancel on headers). Q4 Confirm with differences (recommend allowed, advisory). Q5 "Only in AutoCount" still lands on Confirm (recommend yes). Q6 Overall Tracking not compared (recommend yes).</p>
+<p class="note">Not in this mock because it is not new: the Changes tab (one row per document Confirm would create / update / adopt, failed and retryable with the reason, warnings on the row), the Excel view tab (one row per DO line in the Order Listing sheet's columns), the Download xlsx, Discard and Pull again buttons, the Back to Delivery Orders link.</p>
+</section>
+</div>
+</body>
+</html>
