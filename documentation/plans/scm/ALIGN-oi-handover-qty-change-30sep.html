@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OI Handover Email Alignment</title>
+<style>
+:root { --bg:#f6f7f9; --fg:#111827; --muted:#6b7280; --card:#fff; --line:#e5e7eb; --accent:#2563eb; --good:#166534; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --fg:#e5e7eb; --muted:#9ca3af; --card:#171a21; --line:#2a2f3a; --accent:#60a5fa; --good:#4ade80; } }
+:root[data-theme="dark"] { --bg:#0f1115; --fg:#e5e7eb; --muted:#9ca3af; --card:#171a21; --line:#2a2f3a; --accent:#60a5fa; --good:#4ade80; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+main { max-width:1180px; margin:0 auto; padding:24px 16px 80px; }
+h1 { font-size:26px; margin:0 0 4px; } h2 { font-size:20px; margin:40px 0 12px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+h3 { font-size:17px; margin:28px 0 4px; }
+.muted { color:var(--muted); }
+blockquote { margin:12px 0; padding:12px 16px; background:var(--card); border-left:4px solid var(--accent); border-radius:6px; }
+table.t { border-collapse:collapse; width:100%; background:var(--card); } table.t th, table.t td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+figure { margin:8px 0; max-width:100%; }
+figcaption { font-size:13px; color:var(--muted); margin-bottom:6px; }
+.q { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin:10px 0; }
+.q b.rec { color:var(--accent); }
+.rec-tag { display:inline-block; font-size:12px; font-weight:600; color:var(--good); border:1px solid currentColor; border-radius:999px; padding:1px 8px; margin-left:6px; }
+code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; }
+/* The email previews below are the REAL shell markup (base.html + layout.html), inlined so the page is self-contained. Scroll sideways at narrow widths rather than shrink: what you see is the pixel width a desktop client shows. */
+.email-page { background:#F3F4F6; padding:32px 12px; overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
+.email-page * { color-scheme: light; }
+</style></head>
+<body><main>
+<h1>Order inquiry handover email: line quantity changes, and room to read</h1>
+<p class="muted">Lane EMAIL-HANDOVER-QTY, PR #1392. Plan: documentation/plans/scm/PLAN-oi-handover-qty-change-30sep.md. Base origin/main e26410c2. Both previews below are the live shell (app/templates/email/base.html + layout.html) with the handover template's own table, so the width you see is the width purchasing gets.</p>
+
+<h2>The ask, in the owner's words (30 Sep)</h2>
+<blockquote>"will we show qty change in an additional column? i think this email template is too narrow already, the words are cramped"</blockquote>
+<p>On the "ORDER, ORDER BACK, ADVANCE" email for SO402757 / SRTWT6808. Planning moved that line to a Buy of 436, required 25/09/2026 (OI-2609-0678). The email printed ADVANCE 172 (01/10 to 25/09), ORDER 64 and ORDER BACK 16, and nowhere did it say the line's quantity had changed.</p>
+
+<h2>What the code does today (measured on origin/main e26410c2)</h2>
+<table class="t">
+<tr><th style="width:32%">Fact</th><th>Where</th></tr>
+<tr><td>The QTY column is the quantity of ONE order inquiry row, never the sales order line's quantity.</td><td><code>project_order_inquiry_service.py</code> <code>_record_handover</code> (line 3273): <code>qty_str = _qty_str(row.qty)</code>.</td></tr>
+<tr><td>A quantity change is only modelled when the line's one row is settled in place: the row takes the new quantity and the email prints old QTY plus QTY CHANGE TO.</td><td><code>_settle_row_in_place</code> lines 1783 and 1824 to 1829; template columns seeded by <code>alembic/versions/oihr_0003_location_column.py</code>.</td></tr>
+<tr><td>Your case did not settle in place: the row was already placed (or the line had two live rows), so only the DATE was stamped on the existing row and the remaining quantity was raised as a separate ORDER row. The date move records <code>was = {delivery_date}</code> only; the 436 never reaches the email.</td><td><code>_write</code> lines 1224 to 1253 (<code>_stamp_date_move</code>, then the netting loop raising the remainder at lines 1341 to 1349).</td></tr>
+<tr><td>The table is cramped by the shell, not the template: the branded card is 600px wide with 40px side padding, so nine columns share about 520px.</td><td><code>app/templates/email/base.html</code> line 31 (width 600), <code>layout.html</code> line 66 (padding 40px), cell padding in <code>email_layout.py</code> lines 427 to 428.</td></tr>
+</table>
+
+<h2>Before: the email you received (600px card)</h2>
+<figure><figcaption>Today. Three rows, no quantity change, nine columns squeezed into 520px so every date wraps. Customer, project and location are sample values.</figcaption>
+<div class="email-page">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;margin:0 auto;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <tr><td align="center" style="padding:24px 40px;background-color:#1F2937;"><span style="font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;">Sorento</span></td></tr>
+  <tr><td style="padding:36px 40px 0 40px;"><h1 style="margin:0;font-size:24px;line-height:32px;font-weight:700;color:#111827;">ORDER, ORDER BACK, ADVANCE</h1></td></tr>
+  <tr><td style="padding:20px 40px 0 40px;font-size:15px;line-height:24px;color:#374151;">
+    <table width="100%" style="border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;">
+      <thead><tr><th style="padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">S/O NO</th><th style="padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">CUSTOMER</th><th style="padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">PROJECT</th></tr></thead>
+      <tbody><tr><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">SO402757</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">SAMPLE CUSTOMER SDN BHD</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">SAMPLE PROJECT</td></tr></tbody>
+    </table>
+    <table width="100%" style="border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;">
+      <thead><tr>
+        <th style="padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">SO DATE</th><th style="padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">S/O NO</th><th style="padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">LOCATION</th><th style="padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">ITEM CODE</th>
+        <th style="padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">QTY</th>
+        <th style="padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">DELIVERY DATE</th><th style="padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">DELIVERY DATE CHANGE TO</th>
+        <th style="padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">REMARK</th>
+      </tr></thead>
+      <tbody>
+        <tr><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">15/09/2026</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">SO402757</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">SRT-MAIN</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">SRTWT6808</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">172</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">01/10/2026</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">25/09/2026</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">ADVANCE</td></tr>
+        <tr><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">15/09/2026</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">SO402757</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">SRT-MAIN</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">SRTWT6808</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">64</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">25/09/2026</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;"></td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">ORDER</td></tr>
+        <tr><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">15/09/2026</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">SO402757</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">SRT-MAIN</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">SRTWT6810</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">16</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">25/09/2026</td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;"></td><td style="padding:8px 10px;border:1px solid #e5e7eb;color:#111827;">ORDER BACK SPO-2609-0031</td></tr>
+      </tbody>
+    </table>
+    <p style="margin:0 0 16px 0;">Raised by Eling (eling@sorento.com.my) on 30/09/2026.</p>
+  </td></tr>
+  <tr><td align="center" style="padding:32px 40px 8px 40px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" bgcolor="#1F2937" style="border-radius:8px;background-color:#1F2937;"><a href="#" style="display:inline-block;padding:16px 40px;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;">Open in Order Inquiries</a></td></tr></table></td></tr>
+  <tr><td style="padding:36px 40px 0 40px;"><div style="height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;">&nbsp;</div></td></tr>
+  <tr><td align="center" style="padding:20px 40px 32px 40px;font-size:12px;line-height:18px;color:#9ca3af;"><div style="font-weight:600;color:#6b7280;">Sorento</div><div style="padding-top:12px;">You received this because you are a user of Sorento.</div></td></tr>
+</table>
+</div></figure>
+
+<h2>After: the proposal (900px card, line totals)</h2>
+<figure><figcaption>Recommended. Same three instructions, but the SRTWT6808 line reads as one line: what purchasing already held (172), what the line is now (436), the date move, and the remark tells them what to do about the difference (ORDER 264). Dates and quantities never wrap; REMARK takes the slack and is the only cell that wraps.</figcaption>
+<div class="email-page">
+<table role="presentation" width="900" cellpadding="0" cellspacing="0" border="0" style="width:900px;max-width:900px;margin:0 auto;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <tr><td align="center" style="padding:24px 24px;background-color:#1F2937;"><span style="font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;">Sorento</span></td></tr>
+  <tr><td style="padding:36px 24px 0 24px;"><h1 style="margin:0;font-size:24px;line-height:32px;font-weight:700;color:#111827;">ORDER, ORDER BACK, ADVANCE</h1></td></tr>
+  <tr><td style="padding:20px 24px 0 24px;font-size:15px;line-height:24px;color:#374151;">
+    <table width="100%" style="border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;">
+      <thead><tr><th style="padding:6px 8px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">S/O NO</th><th style="padding:6px 8px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">CUSTOMER</th><th style="padding:6px 8px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">PROJECT</th></tr></thead>
+      <tbody><tr><td style="padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">SO402757</td><td style="padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">SAMPLE CUSTOMER SDN BHD</td><td style="padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">SAMPLE PROJECT</td></tr></tbody>
+    </table>
+    <table width="100%" style="border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;">
+      <thead><tr>
+        <th style="width:86px;padding:6px 8px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">SO DATE</th>
+        <th style="width:82px;padding:6px 8px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">S/O NO</th>
+        <th style="width:92px;padding:6px 8px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">LOCATION</th>
+        <th style="width:140px;padding:6px 8px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">ITEM CODE</th>
+        <th style="width:56px;padding:6px 8px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">QTY</th>
+        <th style="width:72px;padding:6px 8px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">QTY CHANGE TO</th>
+        <th style="width:92px;padding:6px 8px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">DELIVERY DATE</th>
+        <th style="width:92px;padding:6px 8px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">DELIVERY DATE CHANGE TO</th>
+        <th style="padding:6px 8px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;">REMARK</th>
+      </tr></thead>
+      <tbody>
+        <tr><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">15/09/2026</td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">SO402757</td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">SRT-MAIN</td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">SRTWT6808</td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">172</td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">436</td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">01/10/2026</td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">25/09/2026</td><td style="padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">ADVANCE, ORDER 264</td></tr>
+        <tr><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">15/09/2026</td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">SO402757</td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">SRT-MAIN</td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">SRTWT6810</td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">16</td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;"></td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">25/09/2026</td><td style="white-space:nowrap;padding:6px 8px;border:1px solid #e5e7eb;color:#111827;"></td><td style="padding:6px 8px;border:1px solid #e5e7eb;color:#111827;">ORDER BACK SPO-2609-0031</td></tr>
+      </tbody>
+    </table>
+    <p style="margin:0 0 16px 0;">Raised by Eling (eling@sorento.com.my) on 30/09/2026.</p>
+  </td></tr>
+  <tr><td align="center" style="padding:32px 24px 8px 24px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" bgcolor="#1F2937" style="border-radius:8px;background-color:#1F2937;"><a href="#" style="display:inline-block;padding:16px 40px;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;">Open in Order Inquiries</a></td></tr></table></td></tr>
+  <tr><td style="padding:36px 24px 0 24px;"><div style="height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;">&nbsp;</div></td></tr>
+  <tr><td align="center" style="padding:20px 24px 32px 24px;font-size:12px;line-height:18px;color:#9ca3af;"><div style="font-weight:600;color:#6b7280;">Sorento</div><div style="padding-top:12px;">You received this because you are a user of Sorento.</div></td></tr>
+</table>
+</div></figure>
+<p class="muted">Plainly: QTY is the OI line's quantity before this handover (its live rows added up), QTY CHANGE TO is the OI line's quantity after. One row per OI line. The remark keeps today's wording for what to do about the difference.</p>
+
+<h2>Rulings (owner, 30 Sep, on this mock)</h2>
+<table class="t"><tr><th style="width:12%">Q</th><th>Ruling</th><th style="width:40%">In the owner's words</th></tr>
+<tr><td>Q1</td><td>(a): one row per OI line, QTY = the OI line's quantity before this handover, QTY CHANGE TO = after (172 to 436). No separate ORDER remainder row for the same line.</td><td>"i thought it should be as straight forward as what's the before OI qty, and what's the after OI qty, then show it?"</td></tr>
+<tr><td>Q2</td><td>(a): the wide shell.</td><td>"ok"</td></tr>
+<tr><td>Q3</td><td>(a): DELIVERY DATE CHANGE TO stays a column.</td><td>"column"</td></tr>
+</table>
+
+<h2>Questions (as asked)</h2>
+
+<div class="q"><b>Q1. Row model: how does a quantity change reach the email?</b>
+<p><b>(a)</b> <span class="rec-tag">recommended</span> One line per sales order line whose total changed in this write. The settled row prints the line's total: QTY = what purchasing already held for the line (all its live buy rows), QTY CHANGE TO = the new Buy, REMARK = the date verb plus <code>ORDER n</code> or <code>CANCEL BALANCE n NOS</code> for the difference. The separate ORDER remainder row is not printed as its own line (it still exists in the worklist as the row purchasing acknowledges, and the remark's <code>ORDER n</code> is that row's quantity). This is exactly how a settle-in-place already prints today (<code>_settle_row_in_place</code>), so the two paths read the same.</p>
+<p><b>(b)</b> Keep the separate ORDER row, and add <code>LINE TOTAL 172 to 436</code> to the remark of the ADVANCE row.</p>
+<p><b class="rec">Why (a):</b> purchasing reads the manual mail in line totals, not in inquiry rows; the old value in QTY and the new value in QTY CHANGE TO is the column the owner asked for; (b) leaves two rows for one line and hides the change in prose.</p>
+</div>
+
+<div class="q"><b>Q2. Width: how does the table stop being cramped?</b>
+<p><b>(a)</b> <span class="rec-tag">recommended</span> A wide variant of the branded shell for table emails: 900px card, 24px side padding, per-column widths, dates and quantities never wrap, REMARK gets the slack and is the only cell that wraps. The choice is one setting on the template (Width: Standard 600 / Wide 900) in System Management, Email Templates, so any other table email can opt in; the handover template ships wide. Below 940px the card goes edge to edge, as today's does below 620px.</p>
+<p><b>(b)</b> Keep the 600px card and print each line as a stacked card (label: value pairs) instead of a table.</p>
+<p><b class="rec">Why (a):</b> the manual mail purchasing compares against is a table; stacked cards make a six-line handover a long scroll and lose the column-by-column read.</p>
+</div>
+
+<div class="q"><b>Q3. DELIVERY DATE CHANGE TO: column or remark?</b>
+<p><b>(a)</b> <span class="rec-tag">recommended</span> Keep it as its own column, printed only when a line in the email moved a date (as today).</p>
+<p><b>(b)</b> Fold it into REMARK ("ADVANCE to 25/09/2026").</p>
+<p><b class="rec">Why (a):</b> the old and new date side by side is what makes an ADVANCE actionable, and with the wide shell it no longer costs the other columns.</p>
+</div>
+
+<h2>What does not change</h2>
+<ul>
+<li>The worklist rows: the placed row keeps its own quantity and links, the remainder is still raised as its own ORDER row, and purchasing still acknowledges rows. Only the email's reading changes.</li>
+<li>Subject line, headline verbs, the S/O table, the plain-text part's pipe table, attachments, recipients.</li>
+<li>Every other email keeps the 600px card.</li>
+</ul>
+</main></body></html>

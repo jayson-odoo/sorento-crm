@@ -90,4 +90,36 @@ describe('EmailTemplateDetailPage', () => {
       'custom_text',
     ]);
   });
+
+  // EMAIL-HANDOVER-QTY AC-14: the card width rides on layout_json.
+  it('a template without a width shows Standard and saves layout_json.width standard', async () => {
+    render(<EmailTemplateDetailPage />);
+    expect(screen.getByText('Standard (600px)')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Edit/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(updateMut.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(updateMut.mutateAsync.mock.calls[0][0].layout_json.width).toBe('standard');
+  });
+
+  it('choosing Wide sends layout_json.width wide on Save and on the draft preview', async () => {
+    render(<EmailTemplateDetailPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Edit/ }));
+    fireEvent.click(screen.getByLabelText('Width'));
+    fireEvent.click(screen.getByRole('option', { name: 'Wide (900px)' }));
+
+    await waitFor(() =>
+      expect(draftPreviewMut.mutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          layout_json: expect.objectContaining({ width: 'wide' }),
+        }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateMut.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(updateMut.mutateAsync.mock.calls[0][0].layout_json.width).toBe('wide');
+  });
 });

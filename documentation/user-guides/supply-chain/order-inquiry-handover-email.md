@@ -20,8 +20,8 @@ location: `OI: SO397450 , SO397460`.
    **CANCEL BALANCE**.
 2. A sales-order table: **S/O NO**, **CUSTOMER**, **PROJECT**. This is the only place
    **CUSTOMER** and **PROJECT** appear.
-3. A line table: **SO DATE**, **S/O NO**, **ITEM CODE**, **QTY**, **QTY CHANGE TO**,
-   **DELIVERY DATE**, **DELIVERY DATE CHANGE TO**, **REMARK**.
+3. A line table: **SO DATE**, **S/O NO**, **LOCATION**, **ITEM CODE**, **QTY**, **QTY CHANGE
+   TO**, **DELIVERY DATE**, **DELIVERY DATE CHANGE TO**, **REMARK**.
 4. "Raised by \<name\> (\<email\>) on \<date\>."
 5. A link, **Open in Order Inquiries**, that opens the order inquiry's own detail page - see
    [Order inquiries: the Documents view and the OI detail
@@ -42,6 +42,22 @@ columns blank, **REMARK ORDER**.
 A line whose confirm restates the line itself - a fresh row raised in its place, with its own
 Was/Now - never raises its own DELAY or ADVANCE line in the mail; only a line the confirm leaves
 in place still gets one.
+
+**One line per sales order line, in line totals.** When a planning change moves a line whose
+existing order inquiry row purchasing already placed (or a line carrying two open rows), the row
+keeps its own quantity in Order Inquiries and the extra quantity is raised as its own ORDER
+row there. The mail still prints ONE line for it: **QTY** is what purchasing already held for
+the line (its open rows added up), **QTY CHANGE TO** is the line's new Buy, and **REMARK**
+reads the date verb plus what to do about the difference, for example **ADVANCE, ORDER 264** for
+a line that moved 172 to 436 and came forward. No separate bare **ORDER** line is printed for
+that same line. Two shapes keep today's one-line-per-row reading instead: a line marked
+Order back (its **ORDER BACK** line names the document), and a line whose received supply the
+change sends back to the pool (its fresh **ORDER** line carries "Replaces N used").
+
+**Width.** The handover mail uses the wide email card (900px) so its nine columns read on one
+line each; dates and quantities never wrap, only **REMARK** does. The width is a setting on
+the template in **System Management → Email Templates** (**Width**: Standard or Wide); every
+other mail stays on the standard 600px card.
 
 **How an item swap reads.** Swapping the product on a line prints as two lines in the table: a
 CANCEL BALANCE line for the old item and an ORDER line for the new one, not a single combined
