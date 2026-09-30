@@ -68,3 +68,34 @@ describe('Excel view columns (AC-RV-3, AC-RV-4)', () => {
     ]);
   });
 });
+
+// Delivery orders (lane DO-PULL-CRM, AC-DP-42; review blocker 2: nothing pinned these columns).
+import { DELIVERY_ORDER_COLUMNS, formatExcelDay } from './PullExcelViewTab';
+
+const DO_ROW = {
+  doc_no: 'ZZDO-0001', doc_date: '2026-09-27', debtor_code: '300-ZZAC01',
+  debtor_name: 'ZZAC Customer One', item_code: 'ZZAC-P1', description: 'Item',
+  location: 'ZZAC-WH1', qty: 2.5, uom: 'M', unit_price: 12.5, sub_total: 31.25,
+};
+
+describe('Excel view columns - delivery orders (AC-DP-30, AC-DP-42)', () => {
+  it('lists the Import delivery order lines sheet columns in its order', () => {
+    expect(DELIVERY_ORDER_COLUMNS.map((c) => c.id)).toEqual([
+      'doc_no', 'doc_date', 'debtor_code', 'debtor_name', 'item_code', 'description',
+      'location', 'qty', 'uom', 'unit_price', 'sub_total',
+    ]);
+  });
+
+  it('renders a quantity at its own precision, never rounded (review S5)', () => {
+    expect(renderCell(DELIVERY_ORDER_COLUMNS, 'qty', DO_ROW).container.textContent).toBe('2.5');
+    expect(renderCell(DELIVERY_ORDER_COLUMNS, 'qty', { ...DO_ROW, qty: 10 }).container.textContent).toBe('10');
+    expect(renderCell(DELIVERY_ORDER_COLUMNS, 'qty', { ...DO_ROW, qty: null }).container.textContent).toBe('-');
+  });
+
+  it('renders money with two decimals and the document date as dd/MM/yyyy (review N2)', () => {
+    expect(renderCell(DELIVERY_ORDER_COLUMNS, 'unit_price', DO_ROW).container.textContent).toBe('12.50');
+    expect(renderCell(DELIVERY_ORDER_COLUMNS, 'doc_date', DO_ROW).container.textContent).toBe('27/09/2026');
+    expect(formatExcelDay(null)).toBe('-');
+    expect(formatExcelDay('20260927')).toBe('20260927');
+  });
+});

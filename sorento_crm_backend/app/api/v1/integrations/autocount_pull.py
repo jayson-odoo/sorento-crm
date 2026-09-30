@@ -17,18 +17,26 @@ route reveals nothing about a pull the caller does not already own.
 """
 from __future__ import annotations
 
-from typing import Any
+import re
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.base import get_company_scope
 from app.models.job import ImportJob
 from app.services import autocount_pull_service as pull_service
-from app.services.autocount_pull_compare import compare_products, compare_stock
+from app.services.autocount_pull_compare import (
+    compare_delivery_order_headers,
+    compare_delivery_orders,
+    compare_products,
+    compare_stock,
+    window_excel_rows,
+)
 from app.services.error_handler import AppException
 from app.services.foundryx_autocount_client import FoundryxPullError
 from app.services.job_service import active_company_id_from_scope
@@ -42,8 +50,44 @@ router = APIRouter()
 _XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
+_SCOPE_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+#: The ingest's own `DocNo` ceiling (`autocount_doc_ingest_service._parse`).
+_SCOPE_DOC_NO_MAX = 50
+
+
 class PullStartBody(BaseModel):
     entity: str
+    # DO-PULL-SS contract (delivery orders): a day window or one document, sent FLAT to the
+    # FoundryX build. Keys outside `SCOPE_KEYS` are 422 rather than silently dropped, so a
+    # misspelt `fromDate` never becomes a 31-day pull nobody asked for; a day must be
+    # `YYYY-MM-DD`, a document number at most 50 characters (security review N1), and the
+    # two entities whose snapshot takes no scope refuse one rather than forward it.
+    scope: Optional[dict[str, str]] = Field(default=None, max_length=3)
+
+    @field_validator("scope")
+    @classmethod
+    def _known_scope_keys(cls, value):
+        if value is None:
+            return None
+        unknown = sorted(set(value) - set(pull_service.SCOPE_KEYS))
+        if unknown:
+            raise ValueError(
+                f"unknown scope key(s) {', '.join(unknown)}; expected "
+                f"{', '.join(pull_service.SCOPE_KEYS)}"
+            )
+        cleaned = {k: str(v).strip() for k, v in value.items() if str(v).strip()}
+        for key in ("fromDay", "toDay"):
+            if key in cleaned and not _SCOPE_DAY.match(cleaned[key]):
+                raise ValueError(f"{key} must be a day as YYYY-MM-DD")
+        if len(cleaned.get("docNo", "")) > _SCOPE_DOC_NO_MAX:
+            raise ValueError(f"docNo is longer than {_SCOPE_DOC_NO_MAX} characters")
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def _scope_only_for_delivery_orders(self):
+        if self.scope and self.entity != "delivery_orders":
+            raise ValueError("scope is accepted for delivery_orders only")
+        return self
 
 
 class ComparePostBody(BaseModel):
@@ -54,6 +98,11 @@ class ComparePostBody(BaseModel):
     # rows) and stops a malformed/hostile body from being read into memory unbounded.
     filename: str = Field(max_length=255)
     rows: list[dict[str, Any]] = Field(max_length=200_000)
+    # Delivery orders only (owner decision 30 Sep): which of the two macro files this is,
+    # `lines` (Order Listing, sheet Master) or `headers` (Order Tracking, sheet Master).
+    # Absent = `lines`, the DO lines sheet shape the tab compared before the two-file
+    # design. Refused on products / stock, which take one file.
+    source: Optional[str] = Field(default=None, pattern="^(lines|headers)$")
 
 
 def _permission_slug(entity: str) -> str:
@@ -69,13 +118,40 @@ def _permission_slug(entity: str) -> str:
 
 
 def _require_entity_permission(db: Session, user: dict, entity: str) -> None:
+    """The entity's own slug, AND (security review S1) the module that slug maps to when
+    the module guard is strict - the same check `dependencies.require_permission` runs,
+    which these routes bypass because the entity is only known once the pull is resolved.
+    The router-level `require_any_module_enabled("product", "inventory", "order")` cannot
+    do this: it passes when ANY of the three is enabled, so without this a tenant with
+    `order` switched off could still pull delivery orders into it."""
     slug = _permission_slug(entity)
-    if not UserPermissionService(db).check_user_has_permission(user["id"], slug):
+    service = UserPermissionService(db)
+    if not service.check_user_has_permission(user["id"], slug):
         raise AppException(
             status_code=status.HTTP_403_FORBIDDEN,
             message=f"Permission required: {slug}",
             code="FORBIDDEN",
         )
+    if getattr(settings, "module_guard_strict", False):
+        from app.modules.runtime.installer import (
+            DEFAULT_TENANT_ID,
+            is_module_enabled,
+            tenant_has_any_module_row,
+        )
+        from app.modules.runtime.permission_module_map import module_for_permission
+
+        if not (
+            service.get_user_role_slugs(user["id"])
+            & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}
+        ):
+            module = module_for_permission(slug)
+            if module and tenant_has_any_module_row(db, DEFAULT_TENANT_ID):
+                if not is_module_enabled(db, DEFAULT_TENANT_ID, module):
+                    raise AppException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        message=f"Module not enabled: {module}",
+                        code="MODULE_DISABLED",
+                    )
 
 
 def _resolve_pull(db: Session, current_user: dict, job_id: str) -> ImportJob:
@@ -155,7 +231,8 @@ def start_pull(
     company_id = _require_single_company(db)
     try:
         job = pull_service.start_pull(
-            db, user_id=current_user["id"], company_id=company_id, entity=body.entity
+            db, user_id=current_user["id"], company_id=company_id, entity=body.entity,
+            scope=body.scope,
         )
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
@@ -205,15 +282,18 @@ def get_pull_rows(
     db: Session = Depends(get_db),
 ):
     """AC-RV-3: the Excel-view rows, mapped from the FoundryX snapshot. Products: every
-    row. Stock: FED rows only (AC-SP-2)."""
+    row. Stock: FED rows only (AC-SP-2). Delivery orders: one row per DO line (AC-DP-30)."""
     job = _resolve_pull(db, current_user, job_id)
     _require_rows_available(job)
     try:
         rows = pull_service.fetch_snapshot_rows(db, job)
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
-    if pull_service.entity_of(job) == "products":
+    entity = pull_service.entity_of(job)
+    if entity == "products":
         mapped = [pull_service.map_product_row(r) for r in rows]
+    elif entity == "delivery_orders":
+        mapped = pull_service.map_delivery_order_rows(rows)
     else:
         fed = pull_service.classify_stock_rows(db, str(job.company_id), rows)["fed"]
         mapped = [pull_service.map_stock_row(r) for r in fed]
@@ -234,9 +314,14 @@ def download_pull(
         rows = pull_service.fetch_snapshot_rows(db, job)
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
-    if pull_service.entity_of(job) == "products":
+    entity = pull_service.entity_of(job)
+    if entity == "products":
         mapped = [pull_service.map_product_row(r) for r in rows]
         body = pull_service.build_products_workbook(mapped)
+    elif entity == "delivery_orders":
+        body = pull_service.build_delivery_orders_workbook(
+            pull_service.map_delivery_order_rows(rows)
+        )
     else:
         fed = pull_service.classify_stock_rows(db, str(job.company_id), rows)["fed"]
         body = pull_service.build_stock_workbook(fed)
@@ -263,23 +348,54 @@ def compare_pull(
         pull_rows = pull_service.fetch_snapshot_rows(db, job)
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
-    if pull_service.entity_of(job) == "products":
+    entity = pull_service.entity_of(job)
+    extra: dict[str, Any] = {}
+    if entity == "products":
+        if body.source:
+            raise AppException(status_code=422, message="source is for delivery_orders only", code="INVALID_BODY")
         result = compare_products(body.rows, pull_rows)
+        source = None
+    elif entity == "delivery_orders":
+        # Owner decision 30 Sep: two files, each compared inside the pulled DocDate window
+        # (the macro files hold extra days); a row outside it is ignored, never reported.
+        source = body.source or "lines"
+        from_day, to_day = pull_service.pull_window(pull_service._pull_meta(job))
+        rows_in_window, ignored = window_excel_rows(body.rows, from_day, to_day)
+        if source == "headers":
+            result = compare_delivery_order_headers(rows_in_window, pull_rows)
+        else:
+            result = compare_delivery_orders(rows_in_window, pull_rows)
+        extra = {
+            "source": source,
+            "window": {"fromDay": from_day, "toDay": to_day},
+            "ignored_outside_window": ignored,
+            "rows_in_window": len(rows_in_window),
+        }
     else:
+        if body.source:
+            raise AppException(status_code=422, message="source is for delivery_orders only", code="INVALID_BODY")
         fed = pull_service.classify_stock_rows(db, str(job.company_id), pull_rows)["fed"]
         result = compare_stock(body.rows, fed)
-    job = pull_service.store_compare_summary(db, job, filename=body.filename, result=result)
+        source = None
+    job = pull_service.store_compare_summary(
+        db, job, filename=body.filename, result=result, source=source
+    )
     # AC-CM-5 / Phase 3 fix round (F-10): `summary` in the response is the SAME shape
     # `GET /{job_id}` returns as `compare` - what got stored, not the raw comparison
     # function's own summary (which carries `only_in_excel`/`only_in_pull` as COUNTS
     # under different keys than the stored one and no `filename`/`compared_at` at all).
     # `differences` and the top-level `only_in_excel`/`only_in_pull` stay the raw LISTS
-    # the comparison just computed - never stored (AC-CM-5).
+    # the comparison just computed - never stored (AC-CM-5). For delivery orders
+    # `summary` is the two files added up and `source_summary` this file's own.
+    serialized = pull_service.serialize(job, db)
     return {
-        "summary": pull_service.serialize(job, db)["compare"],
+        "summary": serialized["compare"],
+        "source_summary": (serialized.get("compare_sources") or {}).get(source) if source else None,
+        "confirm_blocked_reason": serialized["confirm_blocked_reason"],
         "differences": result.get("differences", []),
         "only_in_excel": result.get("only_in_excel", []),
         "only_in_pull": result.get("only_in_pull", []),
+        **extra,
     }
 
 

@@ -4,8 +4,26 @@
  * metadata shape) and its UAC for the contract these mirror.
  */
 
-/** The two entities a pull can be started for; the values match the backend route param. */
-export type AutocountPullEntity = 'products' | 'stock_balances';
+/** The entities a pull can be started for; the values match the backend route param.
+ *  `delivery_orders` (PLAN-autocount-do-pull-crm-30sep.md) previews and applies through the
+ *  DO ingest and reviews on this same page. */
+export type AutocountPullEntity = 'products' | 'stock_balances' | 'delivery_orders';
+
+/** The permission slug that gates each entity's pull (backend `ENTITY_PERMISSIONS`). One
+ *  place, so a list cannot wire the shared action with the wrong slug (review blocker 2). */
+export const AUTOCOUNT_PULL_PERMISSION: Record<AutocountPullEntity, string> = {
+  products: 'master_data.products.autocount_pull',
+  stock_balances: 'inventory.stock.autocount_pull',
+  delivery_orders: 'order_management.orders.autocount_pull',
+};
+
+/** The flat scope a delivery-orders build takes (DO-PULL-SS contract): a day window, or one
+ *  document by number; `null` / absent = the gateway's default, the last 31 MYT days. */
+export interface AutocountPullScope {
+  fromDay?: string;
+  toDay?: string;
+  docNo?: string;
+}
 
 /**
  * Where a pull is in its life. `building` = FoundryX still assembling the snapshot (no
@@ -87,7 +105,25 @@ export interface StockPullCounts {
   negative_in_autocount: number;
 }
 
-export type AutocountPullCounts = ProductPullCounts | StockPullCounts;
+/** Delivery orders (AC-DP-10): the DO ingest's dry-run verdicts, one per document.
+ *  `adopted` = an existing tracking-uploaded DO taken over by number (its tracking columns
+ *  kept); `lines_to_delete` = old lines adoption cannot match plus lines a document no
+ *  longer carries; `retryable` = a product or warehouse not in the CRM yet;
+ *  `with_warnings` = documents carrying any warning (unresolved sales order, SO line,
+ *  customer, branch, a line without item code) - never a blocker. */
+export interface DeliveryOrderPullCounts {
+  received: number;
+  created: number;
+  updated: number;
+  adopted: number;
+  unchanged: number;
+  lines_to_delete: number;
+  failed: number;
+  retryable: number;
+  with_warnings: number;
+}
+
+export type AutocountPullCounts = ProductPullCounts | StockPullCounts | DeliveryOrderPullCounts;
 
 export interface AutocountPullCompareSummary {
   filename: string;
@@ -109,22 +145,37 @@ export interface AutocountPullCompareSummary {
  *  to match what the backend actually sends). */
 export interface AutocountCompareDifference {
   item_code: string;
-  /** Stock compare only - the pair's location. */
+  /** Delivery orders compare only - the line's document number. */
+  doc_no?: string;
+  /** Stock and delivery orders compare - the pair's / line's location. */
   location?: string;
   field: string;
   excel: string | number | boolean | null;
   pull: string | number | boolean | null;
 }
 
+/** Delivery orders compare with the two macro files the checker uses today (owner decision
+ *  30 Sep): `lines` = Order Listing, sheet Master (one row per DO line); `headers` = Order
+ *  Tracking, sheet Master (one row per DO). */
+export type AutocountPullCompareSource = 'lines' | 'headers';
+
 /** `POST /api/v1/autocount/pulls/{job_id}/compare` response. `summary` is the STORED
  *  compare summary (same shape `GET /{job_id}` returns as `compare`); `only_in_excel` /
  *  `only_in_pull` here are the item-code LISTS the comparison just computed - distinct
- *  from `summary.only_in_excel` / `summary.only_in_pull`, which are counts. */
+ *  from `summary.only_in_excel` / `summary.only_in_pull`, which are counts. Delivery
+ *  orders add `source`, that file's own `source_summary`, the pulled DocDate `window` the
+ *  rows were cut to, and how many rows sat outside it. */
 export interface AutocountComparePullResult {
   summary: AutocountPullCompareSummary;
   differences: AutocountCompareDifference[];
   only_in_excel: string[];
   only_in_pull: string[];
+  source?: AutocountPullCompareSource | null;
+  source_summary?: AutocountPullCompareSummary | null;
+  confirm_blocked_reason?: string | null;
+  window?: { fromDay: string | null; toDay: string | null } | null;
+  ignored_outside_window?: number;
+  rows_in_window?: number;
 }
 
 /** The apply job's own `import_jobs.status` (backend `JobStatus`). */
@@ -135,15 +186,26 @@ export interface AutocountPull {
   job_id: string;
   entity: AutocountPullEntity;
   company_code: string;
+  /** Delivery orders only: what the snapshot was asked to cover; `null` = the default. */
+  scope?: AutocountPullScope | null;
   phase: AutocountPullPhase;
   progress?: AutocountPullProgress | null;
   preview_progress?: AutocountPullPreviewProgress | null;
   /** The FoundryX ready header (camelCase), once the snapshot has been read; `null` before. */
   header?: AutocountPullHeader | null;
   counts?: AutocountPullCounts | null;
-  /** Set only when Confirm is blocked (e.g. stock AC-SP-1); Confirm stays enabled otherwise. */
+  /** Set only when Confirm is blocked (e.g. stock AC-SP-1, or a delivery-orders pull under
+   *  the "compare must match" switch); Confirm stays enabled otherwise. */
   confirm_blocked_reason?: string | null;
+  /** Delivery orders, owner Q4: true while the switch holds Confirm until both files
+   *  compare clean (the reason above says so); false = the compare is advisory. */
+  confirm_requires_match?: boolean;
   compare?: AutocountPullCompareSummary | null;
+  /** Delivery orders: each file's own last summary; `compare` above is the two added up. */
+  compare_sources?: Partial<Record<AutocountPullCompareSource, AutocountPullCompareSummary>> | null;
+  /** Delivery orders: the DocDate window the compare cuts the files to (the scope, else the
+   *  snapshot's default 31 days); `null` on the other entities. */
+  window?: { fromDay: string | null; toDay: string | null } | null;
   /** Set once Confirm has been clicked - the apply job the page links to. */
   apply_job_id?: string | null;
   /** The apply job's own status (fix round 3, item 2); `null` while there is no apply job
@@ -177,7 +239,23 @@ export interface StockExcelRow {
   on_hand_qty: number;
 }
 
-export type AutocountPullExcelRow = ProductExcelRow | StockExcelRow;
+/** The Excel-view row shape for `delivery_orders`: one row per DO LINE, in the shape of the
+ *  "Import delivery order lines" sheet (AC-DP-30). */
+export interface DeliveryOrderExcelRow {
+  doc_no: string;
+  doc_date: string | null;
+  debtor_code: string | null;
+  debtor_name: string | null;
+  item_code: string;
+  description: string | null;
+  location: string | null;
+  qty: number | null;
+  uom: string | null;
+  unit_price: number | null;
+  sub_total: number | null;
+}
+
+export type AutocountPullExcelRow = ProductExcelRow | StockExcelRow | DeliveryOrderExcelRow;
 
 export interface AutocountPullRowsQuery {
   pageIndex: number;

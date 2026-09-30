@@ -317,6 +317,10 @@ class Settings(BaseSettings):
     # When False (default), module guards allow all API routes if tenant has no module rows yet (legacy).
     # When True, disabled modules return 403 from guarded routers.
     module_guard_strict: bool = False  # MODULE_GUARD_STRICT
+    # DO pull (PLAN-autocount-do-pull-crm-30sep.md, owner Q4): when True, Confirm on a
+    # delivery-orders pull is refused until BOTH Excel files have been compared with zero
+    # differences; when False (default) the compare is advisory, as on Products / Stock.
+    autocount_do_pull_confirm_requires_match: bool = False  # AUTOCOUNT_DO_PULL_CONFIRM_REQUIRES_MATCH
 
     model_config = SettingsConfigDict(
         env_file=_resolve_settings_env_file(),
