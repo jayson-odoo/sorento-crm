@@ -180,6 +180,94 @@ class TestPutMappings:
         assert exc.value.status_code == 404 and exc.value.code == "UNKNOWN_KIND"
 
 
+# ============================================ fix round 1: transform per field
+
+
+class TestFieldTransformPairs:
+    def test_fix1_table_is_exported(self):
+        from app.services.autocount_compare_mapping import TRANSFORMS_BY_FIELD
+
+        assert TRANSFORMS_BY_FIELD == {
+            "doc_no": ("text",), "item_code": ("text",), "location": ("text",),
+            "debtor_code": ("text",), "doc_date": ("date",), "qty": ("number",),
+            "unit_price": ("money",), "total_ex": ("money",),
+            "discount": ("percent_text", "percent_fraction"), "cancel": ("cancel_flag",),
+        }
+
+    @pytest.mark.parametrize("kind,field,transform", [
+        ("order_listing", "qty", "text"),
+        ("order_listing", "doc_date", "text"),
+        ("order_listing", "doc_date", "money"),
+        ("order_listing", "unit_price", "text"),
+        ("order_listing", "total_ex", "text"),
+        ("order_tracking", "cancel", "text"),
+        ("order_listing", "discount", "number"),
+        ("order_listing", "doc_no", "date"),
+    ])
+    def test_fix1_refused_pairing_is_422_and_stores_nothing(self, env, kind, field, transform):
+        env.as_user(env.user(SLUG))
+        defaults = DEFAULT_LISTING if kind == "order_listing" else DEFAULT_TRACKING
+        cols = _cols(defaults)
+        for c in cols:
+            if c["field"] == field:
+                c["transform"] = transform
+        if not any(c["field"] == field for c in cols):
+            cols.append({"excel_header": "Extra", "transform": transform, "field": field})
+        resp = env.client.put(f"{URL}/{kind}", json={"sheet_name": "Nope", "columns": cols})
+        assert resp.status_code == 422, resp.text
+        assert resp.json().get("code") == "INVALID_MAPPING", resp.text
+        after = _by_kind(env.client.get(URL).json()["items"])[kind]
+        assert after["sheet_name"] == "Master"
+        assert after["columns"] == _cols(defaults)
+
+    def test_fix1_allowed_pairing_still_saves(self, env):
+        env.as_user(env.user(SLUG))
+        body = _mapping(_listing_with(discount=("Discount", "percent_fraction")))
+        assert env.client.put(f"{URL}/order_listing", json=body).status_code == 200
+
+    def test_fix1_empty_field_says_a_sorento_field_is_required(self, env):
+        from app.services.autocount_compare_mapping import save_mapping
+        from app.services.error_handler import AppException
+
+        owner = env.user(SLUG)
+        cols = _cols(DEFAULT_LISTING) + [{"excel_header": "Extra", "transform": "text", "field": ""}]
+        with pytest.raises(AppException) as exc:
+            save_mapping(env.db, "order_listing", "Master", cols, owner["id"])
+        assert exc.value.status_code == 422 and exc.value.code == "INVALID_MAPPING"
+        message = str(exc.value.message).lower()
+        assert "required" in message and "sorento field" in message
+        assert "is not a field" not in message
+
+    def test_fix1_long_sheet_name_says_too_long(self, env):
+        from app.services.autocount_compare_mapping import save_mapping
+        from app.services.error_handler import AppException
+
+        owner = env.user(SLUG)
+        with pytest.raises(AppException) as exc:
+            save_mapping(env.db, "order_listing", "S" * 101, _cols(DEFAULT_LISTING), owner["id"])
+        assert exc.value.status_code == 422
+        assert "too long" in str(exc.value.message).lower()
+
+    def test_fix1_route_caps_are_pydantic_422_and_store_nothing(self, env):
+        env.as_user(env.user(SLUG))
+        base = _cols(DEFAULT_LISTING)
+        cases = {
+            "sheet": {"sheet_name": "S" * 101, "columns": base},
+            "transform": {"sheet_name": "Master", "columns": [{**base[0], "transform": "t" * 41}] + base[1:]},
+            "field": {"sheet_name": "Master", "columns": [{**base[0], "field": "f" * 41}] + base[1:]},
+            "columns": {"sheet_name": "Master",
+                        "columns": base + [{"excel_header": f"H{i}", "transform": "text", "field": "doc_no"}
+                                           for i in range(101 - len(base))]},
+        }
+        for name, body in cases.items():
+            resp = env.client.put(f"{URL}/order_listing", json=body)
+            assert resp.status_code == 422, (name, resp.text)
+            # pydantic rejects before the service runs: its error list, not the service's code
+            assert isinstance(resp.json().get("detail"), list), (name, resp.text)
+        after = _by_kind(env.client.get(URL).json()["items"])["order_listing"]
+        assert after["columns"] == _cols(DEFAULT_LISTING)
+
+
 # ============================================================ AC-CMM-3
 
 

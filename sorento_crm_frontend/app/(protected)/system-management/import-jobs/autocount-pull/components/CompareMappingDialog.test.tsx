@@ -117,3 +117,56 @@ describe('CompareMappingDialog', () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 });
+
+// ---- fix round 1: the Transform select mirrors TRANSFORMS_BY_FIELD ----
+
+function optionNames(): string[] {
+  return screen.getAllByRole('option').map((o) => o.textContent?.trim() ?? '');
+}
+
+async function openSelect(label: string, index: number) {
+  const trigger = screen.getAllByLabelText(label)[index];
+  fireEvent.click(trigger);
+  await screen.findAllByRole('option');
+}
+
+describe('CompareMappingDialog transform per field (fix round 1)', () => {
+  it('a discount row offers only Percent text and Percent fraction', async () => {
+    renderDialog();
+    await screen.findByLabelText('Sheet name');
+    await openSelect('Transform', 2); // the Discount row
+    expect(optionNames()).toEqual(['Percent text', 'Percent fraction']);
+  });
+
+  it('a doc_no row offers only Text', async () => {
+    renderDialog();
+    await screen.findByLabelText('Sheet name');
+    await openSelect('Transform', 0);
+    expect(optionNames()).toEqual(['Text']);
+  });
+
+  it('choosing a field sets the transform to its first allowed one', async () => {
+    saveCompareMapping.mockResolvedValue(MAPPINGS.items[0]);
+    renderDialog();
+    await screen.findByLabelText('Sheet name');
+    await openSelect('Sorento field', 2); // the Discount row -> Qty
+    fireEvent.click(screen.getByRole('option', { name: 'Qty' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saveCompareMapping).toHaveBeenCalledTimes(1));
+    expect(saveCompareMapping.mock.calls[0][1].columns[2]).toEqual({
+      excel_header: 'Discount', transform: 'number', field: 'qty',
+    });
+  });
+
+  it('Add row pre-fills the first field not yet mapped, with its first allowed transform', async () => {
+    saveCompareMapping.mockResolvedValue(MAPPINGS.items[0]);
+    renderDialog();
+    await screen.findByLabelText('Sheet name');
+    fireEvent.click(screen.getByRole('button', { name: 'Add row' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saveCompareMapping).toHaveBeenCalledTimes(1));
+    const columns = saveCompareMapping.mock.calls[0][1].columns;
+    // doc_no, item_code, discount are mapped; doc_date is the first unmapped of the kind.
+    expect(columns[columns.length - 1]).toEqual({ excel_header: '', transform: 'date', field: 'doc_date' });
+  });
+});

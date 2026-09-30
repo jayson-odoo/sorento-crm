@@ -95,3 +95,34 @@ describe('PullCompareTab mapping (delivery orders)', () => {
     expect(screen.queryByRole('button', { name: 'Mapping' })).not.toBeInTheDocument();
   });
 });
+
+describe('PullCompareTab while mappings load / hints (fix round 1)', () => {
+  it('does not parse a file with a guessed sheet before the mappings have loaded', async () => {
+    getCompareMappings.mockReset().mockReturnValue(new Promise(() => {})); // never resolves
+    renderTab();
+    parseExcelFile.mockResolvedValue([{ 'Doc No': 'D1' }]);
+    fireEvent.change(screen.getByLabelText('Order Listing sheet to compare'), {
+      target: { files: [new File(['x'], 'Order Listing.xlsm')] },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(parseExcelFile).not.toHaveBeenCalled();
+  });
+
+  it('the hints list the Excel column names of the saved mapping, not hard-coded text', async () => {
+    getCompareMappings.mockReset().mockResolvedValue({
+      items: [
+        { kind: 'order_listing', sheet_name: 'Master', updated_at: null,
+          columns: [{ excel_header: 'Voucher Ref', transform: 'text', field: 'doc_no' },
+                    { excel_header: 'Sku', transform: 'text', field: 'item_code' }] },
+        { kind: 'order_tracking', sheet_name: 'Master', updated_at: null,
+          columns: [{ excel_header: 'Tracker Id', transform: 'text', field: 'doc_no' }] },
+      ],
+    });
+    renderTab();
+    await screen.findByText(/Voucher Ref/);
+    expect(screen.getByText(/Sku/)).toBeInTheDocument();
+    expect(screen.getByText(/Tracker Id/)).toBeInTheDocument();
+    expect(screen.queryByText(/Debtor Code/)).not.toBeInTheDocument();
+  });
+});
+
