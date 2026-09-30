@@ -25,7 +25,35 @@ Plan: `PLAN-fulfil-confirm-scope-30sep.md`
 - AC-P3 A real press right after the preview, same body, writes exactly the previewed
   `lines_confirmed` and raises exactly the previewed inquiry rows and transfers.
 
-## Board, Preview then Confirm (v2, supersedes AC-D1..D5 below, which are retired)
+## Board, Preview view (v3.1, owner refinement 30 Sep 2026; supersedes AC-V1..V5 below, retired)
+
+- AC-W1 The board header's only press CTA is "Preview (N)" (N = saved lines the press would
+  send). There is no Confirm button on the board and no popup anywhere.
+- AC-W2 Pressing Preview posts the Confirm body with `preview: true` and opens a READ-ONLY
+  view in place of the board content, titled "Preview: what Confirm will send", with a summary
+  line ("N lines · R Order Inquiry rows to Purchasing · T stock transfers · H held back · C
+  carried forward unchanged") and two DataGrid sections: "Order Inquiry" (one row per previewed
+  inquiry row: line, sales order, product, verb, qty, delivery date, location, decision, saved
+  by whom and when; amber note when saved by another planner or more than a minute before the
+  board opened; rows with `is_new: false` read "already placed") and "Stock transfer" (one row
+  per previewed transfer: product, from, to, qty, kind, for line, order-back note; `is_new:
+  false` reads "kept"). A third short list names held-back and not-sent lines with reasons.
+  Nothing in the view is editable; there are no tick boxes.
+- AC-W3 "Back to planning" returns to the board exactly as it was (drafts, ticks, page). The
+  planner adjusts there (undo, re-save, Decide) and presses Preview again.
+- AC-W4 "Confirm N lines" lives on the Preview view (N = lines_confirmed + lines_withdrawn
+  echoed by the preview, never held-back lines). It posts the same body with
+  `only_line_ids` = the previewed confirmed and withdrawn ids per order, so the press can never
+  act on a line the preview did not show. If the board changed while the view was open (a
+  refetch brought a new draft), Confirm is disabled and the view says "Preview again".
+- AC-W5 After Confirm the board returns with the results block and toast reading the server
+  echo (AC-R1..R4); an order the preview refused shows its error in the view and Confirm is
+  disabled for the whole press.
+- AC-W6 An order on a pending planning change previews like any other (server applies with
+  notifications off and rolls back); the view marks it "applies pending change <name>".
+- AC-W7 375px: both sections readable in the grid's card layout, no horizontal page scroll.
+
+## Board, Preview then Confirm (v2, RETIRED by owner feedback 30 Sep 2026)
 
 - AC-V1 The header shows "Preview (N)" (N = saved lines the press would send) and Confirm,
   disabled with the hint "Preview first", until a preview for the current board state has
