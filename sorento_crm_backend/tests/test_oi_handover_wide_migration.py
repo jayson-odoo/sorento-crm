@@ -262,3 +262,36 @@ def test_row_left_null_by_eml_0002_is_left_alone():
         assert _handover_row(db) == before
         _run(module, db, "downgrade")
         assert _handover_row(db) == before
+
+
+def test_seeded_document_resaved_by_the_editor_is_still_converted_and_a_skip_is_logged(caplog):
+    """Review round 1 (should-fix): the block editor's Save re-dumps an unchanged
+    arrangement with `width: "standard"` once the field exists; that row is still ours
+    to convert. And a row this migration cannot convert says so in the log."""
+    import logging
+
+    module = _load_migration()
+    with blank_session() as db:
+        mods = _seed(db)
+        _run(mods["eml_0002_seed_layouts"], db)
+        resaved = json.loads(json.dumps(_handover_row(db)["layout_json"]))
+        resaved["width"] = "standard"
+        db.execute(
+            sa.text("UPDATE email_templates SET layout_json = CAST(:l AS jsonb) WHERE code = :c"),
+            {"l": json.dumps(resaved), "c": CODE},
+        )
+        with caplog.at_level(logging.WARNING, logger="alembic.runtime.migration"):
+            _run(module, db)
+        assert _handover_row(db)["layout_json"]["width"] == "wide"
+        assert "left untouched" not in caplog.text
+
+        edited = json.loads(json.dumps(_handover_row(db)["layout_json"]))
+        edited["blocks"].insert(1, {"type": "intro", "text": "Hi", "align": "left"})
+        db.execute(
+            sa.text("UPDATE email_templates SET layout_json = CAST(:l AS jsonb) WHERE code = :c"),
+            {"l": json.dumps(edited), "c": CODE},
+        )
+        with caplog.at_level(logging.WARNING, logger="alembic.runtime.migration"):
+            _run(module, db, "downgrade")
+        assert "oihr_0004 downgrade" in caplog.text and "left untouched" in caplog.text
+        assert _handover_row(db)["layout_json"] == edited

@@ -1230,8 +1230,14 @@ class ProjectOrderInquiryService:
                 # names the cited document, which a totals line has no cell for.
                 held_rows = [r for r in live_rows if r.ack_state != ACK_REJECTED]
                 held_qty = sum((_dec(r.qty) for r in held_rows), _ZERO)
+                # `held_qty != need` as well (review round 1, nit): a refused raised
+                # row alone can make the netting run while what purchasing holds
+                # already equals the need - a "5 -> 5" line with nothing to say.
                 total_moved = (
-                    bool(held_rows) and live_buy_qty != need and not order_back
+                    bool(held_rows)
+                    and live_buy_qty != need
+                    and held_qty != need
+                    and not order_back
                 )
                 stamped = self._stamp_date_move(
                     inquiry, rows, entry, decision, actor_user_id=actor_user_id,

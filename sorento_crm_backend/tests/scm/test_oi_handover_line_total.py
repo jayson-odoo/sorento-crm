@@ -533,3 +533,37 @@ def test_refused_raised_row_is_left_out_of_the_before_total(api, monkeypatch):
     assert len(entries) == 1, entries
     assert entries[0]["was"] == {"qty": "10", "delivery_date": WAS_FMT}, entries[0]
     assert entries[0]["qty"] == "15" and entries[0]["remark"] == "ADVANCE, ORDER 5", entries[0]
+
+
+def test_refused_row_alone_never_prints_a_five_to_five_line(api, monkeypatch):
+    """Review round 1 (nit): placed 5 (no link) plus a refused raised 3, the book only
+    moves the date - what purchasing holds (5) already equals the need, so no totals
+    line: today's date-only ADVANCE line, and the refused row's own cancelled line."""
+    from app.models.project_so import ACK_REJECTED
+
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    fixture = _placed_no_link_fixture(api, qty="5")
+    line = fixture["line"]
+    row_a = fixture["row"]
+    refused = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=row_a.order_inquiry_id,
+        so_line_id=line.id, item_code=row_a.item_code, qty=Decimal("3"),
+        delivery_date=row_a.delivery_date, stock_location=row_a.stock_location,
+        verb=IV_ORDER, state=INQUIRY_RAISED, supply_decision_id=row_a.supply_decision_id,
+        ack_state=ACK_REJECTED, rejected_by=world.actor, rejected_at=datetime.utcnow(),
+    )
+    world.db.add(refused)
+    world.db.commit()
+    calls.clear()
+
+    _apply_change(
+        world, fixture["core"], fixture["order"], fixture["core_so"], line,
+        old_date=WAS_1, new_date=NOW, qty="8", new_qty="5",
+    )
+
+    entries = _line_entries(calls, row_a.item_code)
+    settled = [e for e in entries if e["remark"] == "ADVANCE"]
+    assert len(settled) == 1 and settled[0]["was"] == {"delivery_date": WAS_FMT}, entries
+    assert not any((e["was"] or {}).get("qty") == "5" for e in entries), entries

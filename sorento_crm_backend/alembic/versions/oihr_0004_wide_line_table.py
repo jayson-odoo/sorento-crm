@@ -34,10 +34,13 @@ Create Date: 2026-09-30
 from __future__ import annotations
 
 import json
+import logging
 
 import sqlalchemy as sa
 from alembic import op
 
+
+logger = logging.getLogger("alembic.runtime.migration")
 
 revision = "oihr_0004_wide_line_table"
 down_revision = "rs_0001_stock_ask_referred"
@@ -135,31 +138,43 @@ _PRIOR_BODY_HTML = '<p style="color:#b91c1c;font-weight:bold;">{{ handover.headl
 _BODY_TEXT = '{%- set cols = namespace(qty=false, delivery_date=false) -%}{%- for line in handover.lines -%}{%- if line.was and line.was.qty %}{% set cols.qty = true %}{% endif -%}{%- if line.was and line.was.delivery_date %}{% set cols.delivery_date = true %}{% endif -%}{%- endfor -%}{{ handover.headline }}\n\n{% for order in handover.orders %}{{ order.so_number | default("", true) }}{% if order.customer %} - {{ order.customer }}{% endif %}{% if order.project %} - {{ order.project }}{% endif %}\n{% endfor %}\nSO DATE | S/O NO | LOCATION | ITEM CODE | QTY |{% if cols.qty %} QTY CHANGE TO |{% endif %} DELIVERY DATE |{% if cols.delivery_date %} DELIVERY DATE CHANGE TO |{% endif %} REMARK\n{% for line in handover.lines %}{{ line.so_date | default("", true) }} | {{ line.so_number | default("", true) }} | {{ line.location | default("", true) }} | {{ line.item_code | default("", true) }} | {% if line.was and line.was.qty %}{{ line.was.qty }}{% else %}{{ line.qty | default("", true) }}{% endif %} |{% if cols.qty %} {% if line.was and line.was.qty %}{{ line.qty | default("", true) }}{% endif %} |{% endif %} {% if line.was and line.was.delivery_date %}{{ line.was.delivery_date }}{% else %}{{ line.delivery_date | default("", true) }}{% endif %} |{% if cols.delivery_date %} {% if line.was and line.was.delivery_date %}{{ line.delivery_date | default("", true) }}{% endif %} |{% endif %} {{ line.remark | default("", true) }}{% if line.attachments %} / Attachments: {% for a in line.attachments %}{% if not loop.first %}, {% endif %}{% if a.attached %}{{ a.name }}{% else %}{{ a.name }} ({{ a.url }}) (not attached, too large for email){% endif %}{% endfor %}{% endif %}\n{% endfor %}\nRaised by {{ actor.name if actor else \'-\' }} on {{ today }}.\nOpen: {{ handover.link }}\n'
 
 
-def _set(bind, *, layout: dict, body_html: str, only_when: dict) -> None:
-    """Update the row only while its document is still `only_when` (the eml_0002
+def _set(bind, *, layout: dict, body_html: str, only_when: list, direction: str) -> None:
+    """Update the row only while its document is still one of `only_when` (the eml_0002
     guard, `eml_0002_seed_layouts._convert`'s own rule): a document an admin has since
     arranged in the block editor, or a row eml_0002 left with NULL `layout_json` because
-    its body had been edited, is theirs and is left alone. Insert when no row exists."""
+    its body had been edited, is theirs and is left alone - and the skip is LOGGED (review
+    round 1), so a release can see the row was not converted. Insert when no row exists."""
     existing = bind.execute(
         sa.text("SELECT id, layout_json FROM email_templates WHERE code = :code"),
         {"code": TEMPLATE_CODE},
     ).first()
     if existing:
-        bind.execute(
-            sa.text(
-                """
-                UPDATE email_templates
-                SET layout_json = CAST(:layout AS jsonb), body_html = :body_html
-                WHERE code = :code AND layout_json = CAST(:only_when AS jsonb)
-                """
-            ),
-            {
-                "code": TEMPLATE_CODE,
-                "layout": json.dumps(layout),
-                "body_html": body_html,
-                "only_when": json.dumps(only_when),
-            },
-        )
+        touched = 0
+        for candidate in only_when:
+            touched += bind.execute(
+                sa.text(
+                    """
+                    UPDATE email_templates
+                    SET layout_json = CAST(:layout AS jsonb), body_html = :body_html
+                    WHERE code = :code AND layout_json = CAST(:only_when AS jsonb)
+                    """
+                ),
+                {
+                    "code": TEMPLATE_CODE,
+                    "layout": json.dumps(layout),
+                    "body_html": body_html,
+                    "only_when": json.dumps(candidate),
+                },
+            ).rowcount
+            if touched:
+                break
+        if not touched:
+            logger.warning(
+                "oihr_0004 %s: email_templates row %s carries a document this migration "
+                "did not write (admin-edited, or eml_0002 left it NULL); left untouched.",
+                direction,
+                TEMPLATE_CODE,
+            )
         return
     bind.execute(
         sa.text(
@@ -188,8 +203,23 @@ def _set(bind, *, layout: dict, body_html: str, only_when: dict) -> None:
 
 
 def upgrade() -> None:
-    _set(op.get_bind(), layout=_WIDE_LAYOUT, body_html=_WIDE_BODY_HTML, only_when=_PRIOR_LAYOUT)
+    # The seeded document as eml_0002 wrote it, and the SAME document as the block
+    # editor re-saves it once `EmailDocument.width` exists (`model_dump` adds
+    # `"width": "standard"` to an unchanged arrangement) - both are still ours.
+    _set(
+        op.get_bind(),
+        layout=_WIDE_LAYOUT,
+        body_html=_WIDE_BODY_HTML,
+        only_when=[_PRIOR_LAYOUT, {**_PRIOR_LAYOUT, "width": "standard"}],
+        direction="upgrade",
+    )
 
 
 def downgrade() -> None:
-    _set(op.get_bind(), layout=_PRIOR_LAYOUT, body_html=_PRIOR_BODY_HTML, only_when=_WIDE_LAYOUT)
+    _set(
+        op.get_bind(),
+        layout=_PRIOR_LAYOUT,
+        body_html=_PRIOR_BODY_HTML,
+        only_when=[_WIDE_LAYOUT],
+        direction="downgrade",
+    )

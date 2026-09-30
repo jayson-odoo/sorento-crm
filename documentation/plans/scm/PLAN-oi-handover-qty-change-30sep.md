@@ -107,7 +107,9 @@ Updates `email_templates.code = 'order_inquiry_handover_default'` IN PLACE, but 
 while its `layout_json` is still the document eml_0002 seeded (eml_0002's own guard;
 review round 1, should-fix 3: the template has been admin-editable since #1349, so an
 admin's arrangement, or a row eml_0002 left NULL because its body was edited, is left
-alone by both directions): `layout_json` = the eml_0002 document with `width: "wide"` and the
+alone by both directions, and the skip is logged; the seeded document re-saved unchanged
+by the editor, which adds `width: "standard"`, still converts): `layout_json` = the
+eml_0002 document with `width: "wide"` and the
 custom_text block's line table carrying per-column widths, `white-space:nowrap` on every
 cell but REMARK, and the tighter 6px 8px cell padding; `body_html` = the mirror of the
 custom_text blocks (D3); `body_text` untouched (the hand-tuned pipe table). A DB with no

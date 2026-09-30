@@ -53,7 +53,12 @@ Handover template migration `oihr_0004_wide_line_table`:
 - AC-12 Upgrade on a database with no handover row inserts one in the new shape; downgrade
   restores `layout_json` and `body_html` byte for byte to what they were before.
 - AC-12a (review round 1) A document an admin arranged since eml_0002, or a row eml_0002
-  left with NULL `layout_json`, is left untouched by upgrade and by downgrade.
+  left with NULL `layout_json`, is left untouched by upgrade and by downgrade, and the
+  skip is logged. The seeded document re-saved unchanged by the editor (which adds
+  `width: "standard"`) is still converted.
+- AC-7d (review round 1) A refused raised row alone never produces a totals line whose
+  before equals its after: placed 5 + refused 3, book keeps 5, prints today's date-only
+  line.
 - AC-13 The migrated template renders through `EmailTemplateService.render` at 900px
   with the settled line `172 -> 436` printing cells in the order SO DATE, S/O NO,
   LOCATION, ITEM CODE, QTY, QTY CHANGE TO, DELIVERY DATE, DELIVERY DATE CHANGE TO,
