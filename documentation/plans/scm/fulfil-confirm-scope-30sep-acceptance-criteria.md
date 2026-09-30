@@ -29,16 +29,21 @@ Plan: `PLAN-fulfil-confirm-scope-30sep.md`
 
 - AC-W1 The board header's only press CTA is "Preview (N)" (N = saved lines the press would
   send). There is no Confirm button on the board and no popup anywhere.
-- AC-W2 Pressing Preview posts the Confirm body with `preview: true` and opens a READ-ONLY
-  view in place of the board content, titled "Preview: what Confirm will send", with a summary
-  line ("N lines · R Order Inquiry rows to Purchasing · T stock transfers · H held back · C
-  carried forward unchanged") and two DataGrid sections: "Order Inquiry" (one row per previewed
-  inquiry row: line, sales order, product, verb, qty, delivery date, location, decision, saved
-  by whom and when; amber note when saved by another planner or more than a minute before the
-  board opened; rows with `is_new: false` read "already placed") and "Stock transfer" (one row
-  per previewed transfer: product, from, to, qty, kind, for line, order-back note; `is_new:
-  false` reads "kept"). A third short list names held-back and not-sent lines with reasons.
-  Nothing in the view is editable; there are no tick boxes.
+- AC-W2 (v3.2) Pressing Preview posts the Confirm body with `preview: true` and opens a
+  READ-ONLY view in place of the board content, titled "Preview: what Confirm will send", with
+  the summary in the subtitle ("N lines · R Order Inquiry rows · T stock transfers · H held
+  back · C carried forward unchanged") and two sections. "Order Inquiry" is the board's
+  contributing-lines DataGrid with the SAME columns in the same order (Line, Sales order,
+  Agent, Customer, Product, OI, Required date, Outstanding qty, Suggested, Decided, Rank,
+  Verdict) and the same date format (dd/mm/yyyy), filtered to the lines the press will send;
+  the OI column shows the row that will be raised ("<verb> <qty> · <delivery> · <location>",
+  "already placed" when `is_new` is false); held-back lines stay in the same table greyed
+  with "Held back · <reason>" in the OI column; the Verdict cell reads "Saved · you" or
+  "Saved · <name>, <ago>" (amber when another planner or more than a minute before the board
+  opened). No tick box, no row expansion, no Decide, no chips, no Undo, no explanation text.
+  "Stock transfer" is the board's transfers grid (Transfer no, Product, From, To, Qty, State,
+  For), read-only, listing the transfers the press would create ("on Confirm", State
+  "Proposed"; "kept" when `is_new` is false).
 - AC-W3 "Back to planning" returns to the board exactly as it was (drafts, ticks, page). The
   planner adjusts there (undo, re-save, Decide) and presses Preview again.
 - AC-W4 "Confirm N lines" lives on the Preview view (N = lines_confirmed + lines_withdrawn
