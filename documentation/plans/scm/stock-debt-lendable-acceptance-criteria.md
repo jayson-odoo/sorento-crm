@@ -16,13 +16,12 @@ SO381065 (due 29/03/2027) holds 88 on hand at BRW-BB because its own SPO was rec
    SO381065)". The cell reads -44.
 2. Planner opens the Mar 27 cell. SO381065 reads "order back 88", Covered by "Lent to
    SO396071 (32) · SO402118 (29) · SO404890 (27)". The cell reads -88, amber.
-3. Planner presses Rebalance. A Preview lists, per receiving sales order, the Borrow from
-   SO381065 and the order-back SO381065 gets at 29/03/2027, and the Confirm button.
-4. Planner presses Confirm. Each order is confirmed on its own; the result names what was
-   written; the order-back rows are on the order inquiry worklist.
+3. Planner who wants the lend made real opens SO396071 on the fulfilment board: the far line
+   is offered as a Borrow donor there and that Confirm raises the order-back. This page
+   writes nothing (owner: "this is a dashboard view only").
 
 **What they hold at the end:** near months that state what can actually ship, a far order
-whose re-buy is on the worklist, and no stock moved by a filter.
+whose re-buy is visible, and no stock moved by a filter.
 
 ## Acceptance criteria
 
@@ -56,24 +55,11 @@ whose re-buy is on the worklist, and no stock moved by a filter.
   `assigned_from` entry carries `lent_from_so_number` and the ref "On hand <bin> (from
   SOxxxx)"; a `lent` entry carries `so_number`, `sales_order_id`, `qty`, ref "Lent to SOxxxx
   (N)". Supply tab unchanged.
-- **AC-R5a `[T]` Rebalance preview.** `GET .../stock-debt/{product_id}/rebalance` (fulfilment
-  EDIT permission) lists per receiving adopted order: lines with `borrow[]` (qty, bin, donor
-  SO / line / agent / required date, the engine's reason) and `buy_qty`; `order_backs[]` at the
-  donor's date; `skipped[]` for receivers not adopted; `confirm_body` in `confirm-all`'s
-  shape (`source other_location`, `warehouse_id`, `donor_core_line_id`, `donor_required_date`,
-  `buy_qty`, `amend_reason` when split). Nothing written. A product with no lend answers
-  empty. Stock-debt view right alone is 403.
-- **AC-R5b `[T]` Confirm.** Posting `confirm_body` to `confirm-all` confirms the receiver and
-  raises one ORDER_BACK inquiry row for the lent quantity on the donor's own line at the
-  donor's required date; afterwards the receiver reads `pinned` and nothing is lent.
 - **AC-V1 `[V]` Pill.** Status `order_back` renders "order back N" in the violet pill; `short`
   with `lent_qty` renders "short N · order back M".
 - **AC-V2 `[V]` Covered by.** Lent entries and the "(from SO...)" on-hand wording render as
   muted text, the lent entry linking the receiving order.
-- **AC-V3 `[V]` Rebalance.** Button in the dialog header, disabled with a title when the cell
-  has no lend; press loads the preview inline above the tabs; Confirm posts `confirm_body`
-  through `confirmMany`, shows the per-order result, refetches the cell; Cancel closes the
-  preview.
-- **AC-V4 `[B]` 1280 and 375** per the mockup.
+- **AC-V3 `[B]` 1280 and 375** per the mockup (sections 2, 3 and 6; the Rebalance sections are
+  superseded by the owner's ruling).
 
 `[T]` pytest, `[V]` vitest, `[B]` browser evidence.

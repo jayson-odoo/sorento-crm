@@ -63,7 +63,6 @@ from app.services.scm.demand import demand_qty, is_open_demand, plan_qty
 from app.services.scm.front_planning_engine import (
     DEFAULT_LEAD_TIME_DAYS,
     later_order_can_wait,
-    order_borrow_reason,
     qty_text,
     reserve_window_end,
 )
@@ -124,13 +123,6 @@ def _export_month_label(key: str) -> str:
     Python and the other in TypeScript."""
     year, month = key.split("-")
     return f"{_MONTH_NAMES[int(month) - 1]} {year[2:]}"
-
-
-def _dec(value: Any) -> Decimal:
-    """A Decimal for the rebalance composition, which `confirm` compares exactly."""
-    if isinstance(value, Decimal):
-        return value
-    return _ZERO if value is None else Decimal(str(value))
 
 
 def _float(value: Any) -> float:
@@ -645,229 +637,6 @@ class StockDebtService:
             "supply_total_qty": supply_total_qty,
         }
 
-    def rebalance_preview(
-        self, product_id: str, group: Optional[str] = None, *, book: str = "all"
-    ) -> Dict[str, Any]:
-        """STOCK-DEBT-LENDABLE R5: every lend of one product, composed the way the
-        fulfilment board's Confirm posts a Borrow - and the exact `confirm-all` body.
-
-        A READ. The assignment is the view's own (`view=True`), over the whole book of the
-        product and with NO date filter: a lend is one transfer wherever it is looked at
-        from (R2), so the preview lists them all rather than the pressed cell's share.
-
-        Per receiving line adopted onto fulfilment planning (a `ProjectSalesOrderLine`
-        mirror on a published order): one `order_borrow` component per lender - donor
-        line, bin, quantity, `front_planning_engine.order_borrow_reason`'s own sentence -
-        and a Buy for whatever the lend does not cover, with the server's amend reason
-        (`confirm`'s whole-or-nothing rule lifts for a stated reason, and this split is a
-        person's own decision: they pressed Rebalance). The donor gets its order-back from
-        `_borrow_shortfalls`, unconditionally, at its own required date - nothing here
-        writes it, `confirm` does. A receiver with no mirror is named in `skipped`.
-
-        The open quantity is the BOARD's (`_facts_for`, `plan_qty`), because that is what
-        `confirm` balances the components against; the view's own net-of-delivered figure
-        is what decided the lend and can be smaller, so the borrow is capped by the former.
-        """
-        from app.models.project_so import ProjectSalesOrder, ProjectSalesOrderLine
-        from app.services.project_supply_service import CONFIRMABLE_STATUSES
-
-        warehouses = self._warehouses(group, book)
-        product = (
-            self.db.query(Product.id, Product.product_code, Product.product_name)
-            .filter(Product.id == product_id)
-            .first()
-        )
-        if product is None:
-            raise AppException(
-                status_code=404, message="Product not found.", code="NOT_FOUND"
-            )
-        products = [(str(product.id), product.product_code, product.product_name)]
-        result = self._assignments(products, warehouses, view=True)[str(product.id)]
-        by_key = {row.line.key: row for row in result.lines}
-
-        #: receiver line key -> [(lender row, lent)], in walk order.
-        transfers: Dict[str, List[Tuple[Any, Any]]] = {}
-        order_of_receivers: List[str] = []
-        lent_total = 0.0
-        for lender in result.lines:
-            for lent in lender.lent:
-                if lent.line_key not in transfers:
-                    order_of_receivers.append(lent.line_key)
-                transfers.setdefault(lent.line_key, []).append((lender, lent))
-                lent_total += float(lent.qty)
-        empty = {
-            "lent_qty": 0.0, "orders": [], "skipped": [], "confirm_body": {"orders": []},
-        }
-        if not transfers:
-            return empty
-
-        mirrors = (
-            self.db.query(ProjectSalesOrderLine, ProjectSalesOrder)
-            .join(
-                ProjectSalesOrder,
-                ProjectSalesOrder.id == ProjectSalesOrderLine.project_sales_order_id,
-            )
-            .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(list(transfers)))
-            .order_by(ProjectSalesOrderLine.created_at)
-            .all()
-        )
-        mirror_by_core: Dict[str, Tuple[Any, Any]] = {}
-        unpublished: set = set()
-        for mirror, pso in mirrors:
-            core = str(mirror.core_sales_order_line_id)
-            if pso.status not in CONFIRMABLE_STATUSES:
-                unpublished.add(core)
-                continue
-            mirror_by_core.setdefault(core, (mirror, pso))
-
-        skipped: List[Dict[str, Any]] = []
-        by_pso: Dict[str, List[str]] = {}
-        pso_rows: Dict[str, Any] = {}
-        for receiver_key in order_of_receivers:
-            receiver = by_key[receiver_key].line
-            qty = sum(float(lent.qty) for _lender, lent in transfers[receiver_key])
-            found = mirror_by_core.get(receiver_key)
-            if found is None:
-                skipped.append(
-                    {
-                        "so_number": receiver.so_number,
-                        "qty": round(qty, 4),
-                        "reason": (
-                            "Its sales order is not published on fulfilment planning yet."
-                            if receiver_key in unpublished
-                            else "Not adopted onto fulfilment planning yet; adopt it on "
-                            "the board first."
-                        ),
-                    }
-                )
-                continue
-            mirror, pso = found
-            pso_rows[str(pso.id)] = pso
-            by_pso.setdefault(str(pso.id), []).append(receiver_key)
-
-        orders: List[Dict[str, Any]] = []
-        confirm_orders: List[Dict[str, Any]] = []
-        for pso_id, receiver_keys in by_pso.items():
-            pso = pso_rows[pso_id]
-            lines = self.supply.lines_of(pso_id)
-            replacing = {str(mirror_by_core[key][0].id) for key in receiver_keys}
-            facts = self.supply._facts_for(pso, lines, replacing=replacing)
-            out_lines: List[Dict[str, Any]] = []
-            confirm_lines: List[Dict[str, Any]] = []
-            order_backs: List[Dict[str, Any]] = []
-            so_number = by_key[receiver_keys[0]].line.so_number
-            agent = by_key[receiver_keys[0]].line.agent_code
-            for key in receiver_keys:
-                mirror, _pso = mirror_by_core[key]
-                receiver = by_key[key].line
-                fact = facts.get(str(mirror.id))
-                open_qty = _dec(fact.open_qty) if fact is not None else _dec(receiver.open_qty)
-                room = open_qty
-                borrows: List[Dict[str, Any]] = []
-                components: List[Dict[str, Any]] = []
-                for lender, lent in transfers[key]:
-                    take = min(_dec(lent.qty), room)
-                    if take <= _ZERO:
-                        continue
-                    room -= take
-                    donor = lender.line
-                    _kind, bin_id = str(lent.supply_key).partition(":")[::2]
-                    reason = order_borrow_reason(
-                        take, str(lent.warehouse or ""), donor.so_number, donor.line_no,
-                        donor.agent_code, donor.required_date,
-                    )
-                    borrows.append(
-                        {
-                            "qty": _float(take),
-                            "warehouse_code": lent.warehouse,
-                            "donor_so_number": donor.so_number,
-                            "donor_line_no": donor.line_no,
-                            "donor_agent_code": donor.agent_code,
-                            "donor_required_date": donor.required_date,
-                            "reason": reason,
-                        }
-                    )
-                    components.append(
-                        {
-                            "source": "other_location",
-                            "warehouse_id": bin_id,
-                            "location": lent.warehouse,
-                            "qty": qty_text(take),
-                            "reason": reason,
-                            "donor_core_line_id": donor.key,
-                            "donor_so_number": donor.so_number,
-                            "donor_line_no": donor.line_no,
-                            "donor_agent_code": donor.agent_code,
-                            "same_agent": bool(
-                                donor.agent_code and donor.agent_code == receiver.agent_code
-                            ),
-                            "donor_required_date": (
-                                donor.required_date.isoformat()
-                                if donor.required_date else None
-                            ),
-                        }
-                    )
-                    order_backs.append(
-                        {
-                            "donor_so_number": donor.so_number,
-                            "donor_line_no": donor.line_no,
-                            "qty": _float(take),
-                            "required_date": donor.required_date,
-                        }
-                    )
-                borrowed = open_qty - room
-                buy = max(room, _ZERO)
-                lenders_named = ", ".join(
-                    sorted({lender.line.so_number for lender, _lent in transfers[key]})
-                )
-                out_lines.append(
-                    {
-                        "project_line_id": str(mirror.id),
-                        "line_no": mirror.line_no,
-                        "so_line_no": receiver.core_line_no,
-                        "required_date": receiver.required_date,
-                        "open_qty": _float(open_qty),
-                        "borrow": borrows,
-                        "buy_qty": _float(buy),
-                    }
-                )
-                confirm_lines.append(
-                    {
-                        "project_line_id": str(mirror.id),
-                        "timely_spo_qty": "0",
-                        "reserve": [],
-                        "borrow": components,
-                        "buy_qty": qty_text(buy),
-                        "buy_reason": (
-                            f"Only {qty_text(borrowed)} of {qty_text(open_qty)} can be "
-                            "covered from stock - buy the rest"
-                            if buy > _ZERO else None
-                        ),
-                        "order_back": False,
-                        "amend_reason": (
-                            f"Rebalance from Stock Debt: {qty_text(borrowed)} lent from "
-                            f"{lenders_named}'s landed stock, the rest bought."
-                            if buy > _ZERO else None
-                        ),
-                    }
-                )
-            orders.append(
-                {
-                    "pso_id": pso_id,
-                    "so_number": so_number,
-                    "agent_code": agent,
-                    "lines": out_lines,
-                    "order_backs": order_backs,
-                }
-            )
-            confirm_orders.append({"pso_id": pso_id, "lines": confirm_lines})
-        return {
-            "lent_qty": round(lent_total, 4),
-            "orders": orders,
-            "skipped": skipped,
-            "confirm_body": {"orders": confirm_orders},
-        }
-
     # ------------------------------------------------------------------ the reads
 
     def _warehouses(
@@ -1127,7 +896,8 @@ class StockDebtService:
         # borrow-donor window, off the SAME batched lead read as the red horizon - is
         # `lendable`: nearer lines draw it first and the far line reads `order_back`. The
         # board and the ladder (`assignments_for`) never lend; their Borrow step is where
-        # the same window turns into a decision, which is what Rebalance runs.
+        # the same window turns into a decision. This page stays read-only (owner, 30 Sep
+        # 2026: "this is a dashboard view only") and points the planner at that board.
         lendable_from = (
             {
                 product_id: reserve_window_end(

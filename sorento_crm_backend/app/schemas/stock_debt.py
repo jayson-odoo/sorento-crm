@@ -15,7 +15,7 @@ from __future__ import annotations
 #: to the field, not to the type - which pydantic reads as "this must be None" and every
 #: dated event then fails response validation.
 from datetime import date as DateType
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -313,77 +313,3 @@ class StockDebtExportIn(BaseModel):
     book: Book = "all"
     split: ExportSplit = "none"
 
-
-# --------------------------------------------------------------------------- Rebalance
-#
-# STOCK-DEBT-LENDABLE (owner, 30 Sep 2026): `GET /project-sales/stock-debt/{product_id}/
-# rebalance` is a READ. It lists every lend the assignment made for the product, composed
-# the way the fulfilment board's Confirm posts a Borrow (one `order_borrow` component per
-# lend, the donor named, an order-back at the donor's own date), and hands back the exact
-# `POST /project-sales/fulfilment-planning/confirm-all` body (`confirm_body`) the Confirm
-# press sends - the FE composes nothing and there is no second write path.
-
-
-class StockDebtRebalanceBorrow(BaseModel):
-    """One lend as a person reads it: what is borrowed, from whom, where it sits."""
-
-    qty: float
-    warehouse_code: Optional[str] = None
-    donor_so_number: str
-    donor_line_no: Optional[int] = None
-    donor_agent_code: Optional[str] = None
-    donor_required_date: Optional[DateType] = None
-    #: The engine's own sentence (`front_planning_engine.order_borrow_reason`).
-    reason: str
-
-
-class StockDebtRebalanceLine(BaseModel):
-    """One receiving line: its borrows, and the Buy for whatever the lend leaves."""
-
-    project_line_id: str
-    #: The PROJECT mirror's own line number (the board's address) and AutoCount's `Seq`.
-    line_no: Optional[int] = None
-    so_line_no: Optional[int] = None
-    required_date: Optional[DateType] = None
-    open_qty: float
-    borrow: List[StockDebtRebalanceBorrow] = []
-    buy_qty: float = 0.0
-
-
-class StockDebtRebalanceOrderBack(BaseModel):
-    """The order-back the donor gets: the lent quantity at ITS OWN required date."""
-
-    donor_so_number: str
-    donor_line_no: Optional[int] = None
-    qty: float
-    required_date: Optional[DateType] = None
-
-
-class StockDebtRebalanceOrder(BaseModel):
-    """One receiving sales order, confirmed on its own by `confirm-all`."""
-
-    pso_id: str
-    so_number: str
-    agent_code: Optional[str] = None
-    lines: List[StockDebtRebalanceLine] = []
-    order_backs: List[StockDebtRebalanceOrderBack] = []
-
-
-class StockDebtRebalanceSkipped(BaseModel):
-    """A receiver the Rebalance cannot compose for, and why (not adopted onto fulfilment
-    planning, or its order is not published)."""
-
-    so_number: str
-    qty: float
-    reason: str
-
-
-class StockDebtRebalancePreview(BaseModel):
-    #: Every lend of the product, summed.
-    lent_qty: float
-    orders: List[StockDebtRebalanceOrder] = []
-    skipped: List[StockDebtRebalanceSkipped] = []
-    #: `ConfirmManyBody`, verbatim - what the Confirm press posts to `confirm-all`. Kept
-    #: as a free dict rather than importing `app.schemas.project_supply` here: that module's
-    #: `ConfirmLine` is the reader's own contract and it validates the body on the way in.
-    confirm_body: Dict[str, Any]

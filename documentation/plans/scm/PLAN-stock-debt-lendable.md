@@ -1,11 +1,10 @@
 # PLAN - far-dated landed pins become lendable to nearer sales orders (STOCK-DEBT-LENDABLE)
 
-Status: in progress, 30 Sep 2026. Feature track (read model + one action on the cell dialog +
-FE; no migration, no RBAC change, no new ingest surface). UAC:
+Status: in progress, 30 Sep 2026. Feature track (read model + the cell dialog's status and
+Covered by wording; no write, no migration, no RBAC change, no new ingest surface). UAC:
 `stock-debt-lendable-acceptance-criteria.md`. Mockup:
 `documentation/mockups/stock-debt-lendable.html`. PR #1398.
-Domain: SCM, Stock Debt view (`_assignments(view=True)`), the shared supply assignment, the
-fulfilment board's Confirm (reused, unchanged).
+Domain: SCM, Stock Debt view (`_assignments(view=True)`) and the shared supply assignment.
 
 ## The owner's words (30 Sep 2026)
 
@@ -64,16 +63,14 @@ move stock (R2).
    SO381065)" beside plain "On hand BRW-BB" for any free part. The lending line lists
    "Lent to SO396071 (32)" per receiver.
 5. **The board and the ladder never lend** (`assignments_for` passes no `view`). There the far
-   line stays `pinned` and is a Borrow DONOR; the Rebalance action is that Borrow, confirmed.
-6. **Rebalance** (cell dialog, one button, gated on the fulfilment board's EDIT permission):
-   `GET /project-sales/stock-debt/{product_id}/rebalance` previews every lend of the product
-   composed as the board's own `order_borrow` component (donor line, bin, qty,
-   `order_borrow_reason`) plus a Buy for whatever the lend leaves, per receiving line adopted
-   onto fulfilment planning, and returns the exact `confirm-all` body. Confirm posts that
-   body to the EXISTING `POST /project-sales/fulfilment-planning/confirm-all`; `confirm`
-   re-checks the borrow against the donor's live open quantity (`_check_group_borrow`) and
-   `_borrow_shortfalls` raises the ORDER_BACK inquiry row on the donor's own line at its own
-   required date. No new write path.
+   line stays `pinned` and is a Borrow DONOR: the same window, turned into a decision by the
+   board's own Confirm, which raises the order-back.
+6. **The page stays read-only.** Owner, on the mockup (30 Sep 2026, verbatim): "don't need
+   rebalance step, this is a dashboard view only". The Rebalance button, its Preview and
+   Confirm, the preview route and its permission gate were built, proven end to end and then
+   removed on that ruling (commit history of PR #1398 has them). A planner who wants the lend
+   made real opens the receiving order on the fulfilment board, where the far line is offered
+   as a Borrow donor and the order-back is raised by that Confirm.
 
 ## Design (simplest thing that works)
 
@@ -86,40 +83,36 @@ move stock (R2).
 - `front_planning_engine.later_order_can_wait`; `_eligible_donor` calls it.
 - `stock_debt_service.py`: `_assignments(view=True)` hands `_landed_holds` the per-product
   window off the batched `lead_times` read (R7: no extra query); `cell()` adds `lent_qty`
-  and the two Covered by shapes; `rebalance_preview()`.
+  and the two Covered by shapes.
 - `schemas/stock_debt.py`: `order_back` status, `lent_from_so_number` on the on-hand entry,
-  the `lent` entry, `lent_qty`, the `StockDebtRebalance*` shapes.
-- Route: `GET .../stock-debt/{product_id}/rebalance` (`require_permission(projects.projects
-  .edit)`, the board's EDIT).
-- FE: status pill `order back N` (violet), Covered by wording, Rebalance button in the dialog
-  header, inline Preview (PR #1395's shape) then Confirm through the existing `confirmMany`.
+  the `lent` entry, `lent_qty`.
+- No route change, no write.
+- FE: status pill `order back N` (violet; "short N · order back M" when short outranks),
+  Covered by wording, the lent entry linking the receiving order. Nothing else on the page.
 
 ## Decisions taken in the lane (recorded for the owner)
 
-- The Preview lists every lend of the PRODUCT, not the pressed cell's share: one product's
-  rebalance is one decision; pressing it from the Sep cell and again from the Oct cell would
-  write two revisions for one move.
-- A partly lent receiving line is posted as Borrow N + Buy the rest with a server-written
-  amend reason (the split a planner amending on the board posts). The board's own ladder
-  would say Buy whole (a step covers the whole unit or nothing); the lend is the point here.
+- R5 (Rebalance) dropped by the owner on the mockup: see rule 6. The two questions the lane
+  put back with the mock (whole-product preview; Borrow + Buy split) are moot with it.
 - With `date_to` hiding the lender's row, the receiving line still gets the same quantity and
   the same status; only the lender's NAME is not printed, because its row (and its pin) are
   off the page. That is R14's own semantics, unchanged by ruling ("do not change `date_to`").
-- Observed on the fixture: the confirm's existing auto-link pass placed the ORDER_BACK row on
-  the far line's own already-received PO line (`from_so_line_ref` match), and R43 then reads
-  that placement as fulfilling. Pre-existing auto-link behaviour, outside this lane; reported
-  on the PR as a crew-note.
+- Observed while R5 was still in: the board confirm's existing auto-link pass placed the
+  ORDER_BACK row on the far line's own already-received PO line (`from_so_line_ref` match),
+  and R43 then reads that placement as fulfilling. Pre-existing auto-link behaviour, outside
+  this lane; reported on the PR as a crew-note.
 
 ## Tests
 
 - `tests/scm/test_stock_debt_lendable.py` (pure walk, 11): AC-1 to AC-8.
-- `tests/scm/test_stock_debt_lendable_routes.py` (Postgres, 13): the window off the lead
-  read, TBA/undated, R2 with and without `date_to`, board parity, the cell wire by name, the
-  rebalance preview shape, permission, confirm end to end raising the order-back.
-- Vitest: `StockDebtCellDialog.test.tsx` (pill, Covered by, Rebalance + Preview + Confirm).
+- `tests/scm/test_stock_debt_lendable_routes.py` (Postgres, 8): the window off the lead
+  read, TBA/undated, R2 with and without `date_to`, `date_from`, board parity, the cell wire
+  by name.
+- Vitest: `StockDebtCellDialog.lendable.test.tsx` (pill, Covered by).
 
 ## Out of scope
 
 - The board and the ladder's own walk.
+- Any write from this page (owner ruling, rule 6).
 - The auto-link pass's choice of document for an order-back row.
 - Any change to `date_to` / `date_from` semantics.

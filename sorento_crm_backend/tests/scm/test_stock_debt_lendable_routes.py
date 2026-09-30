@@ -1,15 +1,14 @@
 """STOCK-DEBT-LENDABLE over the wire: which landed pins lend, the cell's wording, view
-independence, board parity and the Rebalance preview + confirm.
+independence, board parity and the cell wire.
 
     GET  /api/v1/project-sales/stock-debt/{product_id}/cell?month=
-    GET  /api/v1/project-sales/stock-debt/{product_id}/rebalance
-    POST /api/v1/project-sales/fulfilment-planning/confirm-all   (the existing write)
 
 The arithmetic is `test_stock_debt_lendable.py`'s; what is proved here is the READ that
 decides lendability (the line's required date against `as_of + lead + 14`, the board's own
 borrow-donor window, off the batched lead-time read), that the view's filters never move
-stock (R2), that the board path is untouched (R3), every new wire field by name (R4), and
-that the Rebalance preview composes exactly what the fulfilment board's Confirm posts (R5).
+stock (R2), that the board path is untouched (R3) and every new wire field by name (R4).
+The page stays read-only (owner, 30 Sep 2026: "this is a dashboard view only"); a planner
+acts on the fulfilment board, whose Borrow step offers the same far line as a donor.
 
 Postgres via `tests/scm/conftest.py::scm_app`; every test seeds its own chain.
 """
@@ -22,7 +21,6 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from app.models.project_so import IV_ORDER_BACK, OrderInquiryRow
 from app.services.scm.front_planning_engine import RESERVE_BUFFER_DAYS
 from app.services.scm.supply_assignment import month_key
 from tests.scm.conftest import (
@@ -37,7 +35,6 @@ from tests.scm.test_stock_debt_routes import (  # noqa: F401 (helpers, not tests
     VIEW,
     _demand,
     _product,
-    _project_line_for,
     _row_of,
     _stock,
     _u,
@@ -46,7 +43,6 @@ from tests.scm.test_stock_debt_routes import (  # noqa: F401 (helpers, not tests
 
 pytestmark = requires_pg
 
-EDIT = "projects.projects.edit"
 TODAY = date.today()
 #: `DEFAULT_LEAD_TIME_DAYS` (90) + the buffer: a line due on or after this can wait.
 DEFAULT_WINDOW = TODAY + timedelta(days=90 + RESERVE_BUFFER_DAYS)
@@ -359,7 +355,7 @@ def test_the_board_path_still_pins_the_landed_goods(scm_app):
     """R3 / R21: `assignments_for` (the board and the ladder) never lends. There the far
     line stays `pinned` and the nearer line `short`, so the board's own Borrow step keeps
     offering the far line as a DONOR (its cover is on hand and it can wait) with the
-    order-back the Confirm raises - which is what Rebalance runs."""
+    order-back its Confirm raises - the action the read-only view points a planner at."""
     from app.services.scm.stock_debt_service import StockDebtService
 
     app, db, _uid = _client(scm_app, VIEW)
@@ -376,172 +372,3 @@ def test_the_board_path_still_pins_the_landed_goods(scm_app):
     assert far.status == "pinned"
     assert far.lent_qty == 0
     assert near.status == "short"
-
-
-# --------------------------------------------------------------------------- R5
-
-
-def test_the_rebalance_preview_composes_the_boards_own_borrow_and_order_back(scm_app):
-    """AC-R5a: one read, nothing written. For each receiving sales order adopted onto
-    fulfilment planning: a Borrow component naming the far line as donor (the same
-    `order_borrow` component the board's Confirm posts), a Buy for whatever the lend does
-    not cover, and the order-back the donor gets at its own required date. The body the
-    Confirm would post travels back verbatim (`confirm_body`) so the FE never composes."""
-    app, db, _uid = _client(scm_app, VIEW, EDIT)
-    far_due = DEFAULT_WINDOW + timedelta(days=60)
-    world = _owner_case(db, far_due=far_due, near_qty=50)
-    product, marker = world["product"], world["marker"]
-    near_order, near_line = world["near"]
-    # A second, later receiver that is NOT adopted onto the board: named, not composed.
-    _demand(
-        db, product, world["warehouse"], qty=20,
-        required_date=TODAY + timedelta(days=30), so_number=f"{marker}-SO405511",
-    )
-    pso, mirror = _project_line_for(db, near_line)
-    db.flush()
-
-    with TestClient(app) as c:
-        got = c.get(f"{BASE}/{product.id}/rebalance")
-    assert got.status_code == 200, got.text
-    body = got.json()
-
-    assert body["lent_qty"] == 70
-    [order] = body["orders"]
-    assert order["pso_id"] == str(pso.id)
-    assert order["so_number"] == f"{marker}-SO396071"
-    [line] = order["lines"]
-    assert line["project_line_id"] == str(mirror.id)
-    assert line["line_no"] == 1
-    assert line["required_date"] == (TODAY + timedelta(days=20)).isoformat()
-    [borrow] = line["borrow"]
-    assert borrow["qty"] == 50
-    assert borrow["warehouse_code"] == world["warehouse"].warehouse_code
-    assert borrow["donor_so_number"] == f"{marker}-SO381065"
-    assert borrow["donor_required_date"] == far_due.isoformat()
-    assert "from " + f"{marker}-SO381065" in borrow["reason"]
-    assert line["buy_qty"] == 0
-    [back] = order["order_backs"]
-    assert back["donor_so_number"] == f"{marker}-SO381065"
-    assert back["qty"] == 50
-    assert back["required_date"] == far_due.isoformat()
-
-    [skipped] = body["skipped"]
-    assert skipped["so_number"] == f"{marker}-SO405511"
-    assert skipped["qty"] == 20
-    assert "adopt" in skipped["reason"].lower()
-
-    # The confirm body is `POST .../fulfilment-planning/confirm-all`'s own shape.
-    [entry] = body["confirm_body"]["orders"]
-    assert entry["pso_id"] == str(pso.id)
-    [confirm_line] = entry["lines"]
-    assert confirm_line["project_line_id"] == str(mirror.id)
-    [component] = confirm_line["borrow"]
-    assert component["source"] == "other_location"
-    assert component["warehouse_id"] == str(world["warehouse"].id)
-    assert Decimal(str(component["qty"])) == 50
-    assert component["donor_core_line_id"] == str(world["far"][1].id)
-    assert component["donor_so_number"] == f"{marker}-SO381065"
-    assert component["donor_required_date"] == far_due.isoformat()
-    assert Decimal(str(confirm_line["buy_qty"])) == 0
-
-    # Nothing written.
-    assert db.query(OrderInquiryRow).filter(OrderInquiryRow.verb == IV_ORDER_BACK).count() == 0
-
-
-def test_a_partly_lent_receiver_is_posted_as_borrow_plus_buy_with_a_reason(scm_app):
-    """AC-R5b: a receiving line the lend covers only in part gets Borrow N + Buy the rest,
-    with the server's own amend reason - the split a planner amending on the board posts."""
-    app, db, _uid = _client(scm_app, VIEW, EDIT)
-    far_due = DEFAULT_WINDOW + timedelta(days=60)
-    world = _owner_case(db, far_due=far_due, near_qty=207)
-    _project_line_for(db, world["near"][1])
-    db.flush()
-
-    with TestClient(app) as c:
-        body = c.get(f"{BASE}/{world['product'].id}/rebalance").json()
-    [line] = body["orders"][0]["lines"]
-    assert line["borrow"][0]["qty"] == 88
-    assert line["buy_qty"] == 119
-    [confirm_line] = body["confirm_body"]["orders"][0]["lines"]
-    assert Decimal(str(confirm_line["buy_qty"])) == 119
-    assert confirm_line["amend_reason"]
-    assert confirm_line["buy_reason"]
-
-
-def test_a_product_with_no_lend_previews_nothing(scm_app):
-    app, db, _uid = _client(scm_app, VIEW, EDIT)
-    world = _owner_case(db, far_due=DEFAULT_WINDOW - timedelta(days=1))
-    with TestClient(app) as c:
-        body = c.get(f"{BASE}/{world['product'].id}/rebalance").json()
-    assert body == {
-        "lent_qty": 0, "orders": [], "skipped": [], "confirm_body": {"orders": []},
-    }
-
-
-def test_the_rebalance_preview_needs_the_fulfilment_edit_permission(scm_app):
-    """Same gate as the board's Confirm: `projects.projects.edit`, the stock-debt view
-    right alone is not enough."""
-    app, db, _uid = _client(scm_app, VIEW)
-    world = _owner_case(db, far_due=DEFAULT_WINDOW + timedelta(days=60))
-    with TestClient(app) as c:
-        got = c.get(f"{BASE}/{world['product'].id}/rebalance")
-    assert got.status_code == 403, got.text
-
-
-def test_the_rebalance_confirm_raises_the_order_back_for_the_far_line(scm_app):
-    """AC-R5c, end to end through the EXISTING write: the preview's `confirm_body` posted
-    to `confirm-all` confirms the receiving order with the borrow, and the donor gets an
-    ORDER_BACK inquiry row for the lent quantity at ITS OWN required date - the row the
-    hand test checks. Afterwards the view reads the receiver `pinned` off the confirmed
-    hold and the far line still `order_back`."""
-    app, db, _uid = _client(scm_app, VIEW, EDIT)
-    far_due = DEFAULT_WINDOW + timedelta(days=60)
-    world = _owner_case(db, far_due=far_due, near_qty=50)
-    product, marker = world["product"], world["marker"]
-    _far_order, far_line = world["far"]
-    pso, _mirror = _project_line_for(db, world["near"][1])
-    # The donor is adopted too, so the order-back hangs off ITS line (`_borrow_shortfalls`
-    # falls back to the asker's line only for a donor with no mirror).
-    _far_pso, far_mirror = _project_line_for(db, far_line)
-    db.flush()
-
-    with TestClient(app) as c:
-        preview = c.get(f"{BASE}/{product.id}/rebalance").json()
-        posted = c.post(
-            "/api/v1/project-sales/fulfilment-planning/confirm-all",
-            json=preview["confirm_body"],
-        )
-        assert posted.status_code == 200, posted.text
-        [result] = posted.json()["results"]
-        assert result["ok"] is True, result
-        assert result["pso_id"] == str(pso.id)
-
-        after_near = _cell(c, product, month_key(TODAY + timedelta(days=20)))
-        after_far = _cell(c, product, month_key(far_due))
-
-    rows = (
-        db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.verb == IV_ORDER_BACK)
-        .all()
-    )
-    assert len(rows) == 1, [(row.verb, row.qty, row.delivery_date) for row in rows]
-    [back] = rows
-    assert Decimal(back.qty) == 50
-    assert back.delivery_date == far_due
-    # `raised`, or `placed` when the confirm's own auto-link pass found a document for it
-    # (existing machinery, not this lane's): either way the row is on the worklist.
-    assert back.state in {"raised", "placed"}
-    # On the DONOR's own project line.
-    assert str(back.so_line_id) == str(far_mirror.id)
-
-    near = _by_so(after_near, "SO396071")
-    assert near["status"] == "pinned"
-    assert near["assigned_qty"] == 50
-    assert near["assigned_from"][0]["lent_from_so_number"] is None
-    far = _by_so(after_far, "SO381065")
-    # Nothing is lent any more: the borrow is a confirmed hold now. What the far line
-    # reads beyond that depends on where the confirm's own auto-link pass placed the
-    # order-back row (on this fixture it links the far line's own received PO line, a
-    # pre-existing auto-link reading outside this lane), so only the lend is asserted.
-    assert far["lent_qty"] == 0
-    assert not [e for e in far["assigned_from"] if e["kind"] == "lent"]

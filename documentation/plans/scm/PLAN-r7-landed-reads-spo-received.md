@@ -176,9 +176,9 @@ Still true, with one addition (STOCK-DEBT-LENDABLE, owner 30 Sep 2026, option B,
 `PLAN-stock-debt-lendable.md`): in the Stock Debt VIEW only, a landed pin whose line is due on
 or after `today + lead + 14` (the board's own borrow-donor window) is lendable - nearer lines
 draw it first and the far line reads `order_back` for what it lent, a planned re-buy at its own
-date. Nothing is snatched: the far line keeps its claim, and the Rebalance action turns the
-lend into the board's own Borrow with an order-back on the far line. The board and the ladder
-still pin.
+date. Nothing is snatched: the far line keeps its claim, and the fulfilment board (where the
+far line is a Borrow donor under the same window) is where the lend becomes a decision with
+an order-back. The board and the ladder still pin; the view writes nothing.
 
 ## Follow-up: #1362 hand test, a Buy over landed goods is recorded, not refused (owner 29 Sep 2026)
 
