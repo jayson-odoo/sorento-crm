@@ -28,7 +28,7 @@ replay of that chain, never re-derived) - so a rollback returns exactly the stri
 database on that revision shows.
 
 Revision ID: oihr_0004_wide_line_table
-Revises: merge_30sep_batch9
+Revises: sdn_0001_so_debtor_name
 Create Date: 2026-09-30
 """
 from __future__ import annotations
@@ -43,7 +43,7 @@ from alembic import op
 logger = logging.getLogger("alembic.runtime.migration")
 
 revision = "oihr_0004_wide_line_table"
-down_revision = "merge_30sep_batch9"
+down_revision = "sdn_0001_so_debtor_name"
 branch_labels = None
 depends_on = None
 
