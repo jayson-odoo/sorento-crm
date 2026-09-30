@@ -59,7 +59,7 @@ OWNER_FAMILY = [
     "SRTWC286-SH-UF",
 ]
 
-TOO_BIG = "the quantity is more than what I can confirm here, please refer to your salesman."
+TOO_BIG = "the quantity is more than what I can confirm here. Please refer to your salesman."
 
 
 def _tool(plan) -> tuple[list[dict[str, Any]], str]:

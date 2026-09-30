@@ -929,12 +929,10 @@ _INCOMING_TOOLS = frozenset(
 )
 
 
-def _refer_to_salesperson(name: Any) -> str:
-    return (
-        f"Please refer to your salesperson, {name.strip()}."
-        if isinstance(name, str) and name.strip()
-        else "Please refer to your salesperson."
-    )
+#: The ONE refer sentence a dealer ever reads (owner ruling 30 Sep 2026, REFER-SALESMAN):
+#: no "to proceed", no "salesperson", no name. The backend's `turn/task.py::REFER_TO_SALESMAN`
+#: is the same words; `tests/chatbot/test_refer_salesman.py` pins the two together.
+REFER_TO_SALESMAN = "Please refer to your salesman."
 
 
 def _incoming_dealer(rows: list[dict], b: _Builder) -> None:
@@ -1462,16 +1460,12 @@ def _availability_label(entry: dict) -> Optional[str]:
 
 #: R6/R14 (lavish review), AC-SA313: the three branches whose wording never varies.
 #: `incoming` is handled separately in `_availability_line` - it is the only branch
-#: whose sentence carries a date.
+#: whose sentence carries a date. REFER-SALESMAN (30 Sep 2026): the verdict is its own
+#: sentence and the refer is exactly `REFER_TO_SALESMAN`, on the same line.
 _AVAILABILITY_TAILS = {
-    "too_big": (
-        "the quantity is more than what I can confirm here, please refer to your "
-        "salesman."
-    ),
-    "in_stock": "yes, we have stock, please refer to your salesman to proceed.",
-    "no_incoming": (
-        "no stock and no incoming at the moment, please refer to your salesman."
-    ),
+    "too_big": f"the quantity is more than what I can confirm here. {REFER_TO_SALESMAN}",
+    "in_stock": f"yes, we have stock. {REFER_TO_SALESMAN}",
+    "no_incoming": f"no stock and no incoming at the moment. {REFER_TO_SALESMAN}",
 }
 
 
@@ -1777,7 +1771,7 @@ def present_response(tool_name: str, raw: str) -> str:
             else "No matching results found."
         )
     elif dealer:
-        # The per-product lines and the salesperson line are the whole reply.
+        # The per-product lines and the refer line are the whole reply.
         intro = ""
     elif stock_mode == "compact":
         intro = _STOCK_COMPACT_INTRO
@@ -1805,8 +1799,8 @@ def present_response(tool_name: str, raw: str) -> str:
     }
     if dealer and has_result:
         # Printed after the product lines (`output_structurer`): a dealer's contact
-        # point is their salesperson, never a team offer.
-        envelope["closing"] = _refer_to_salesperson(data.get("salesperson_name"))
+        # point is their salesman, never a team offer.
+        envelope["closing"] = REFER_TO_SALESMAN
     for k in _PASSTHROUGH_KEYS:
         if k in data and _filled(data.get(k)):
             envelope[k] = data[k]

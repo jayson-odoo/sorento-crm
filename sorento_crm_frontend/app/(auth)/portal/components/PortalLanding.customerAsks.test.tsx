@@ -78,7 +78,7 @@ const ASK = {
   product_name: 'Wiper Blade 24in',
   quantity: 150,
   branch: 'no_incoming',
-  answer_summary: 'SRT5674 x 150: no stock and no incoming at the moment, please refer to your salesman.',
+  answer_summary: 'SRT5674 x 150: no stock and no incoming at the moment. Please refer to your salesman.',
   notified_agent: true,
   notify_skip_reason: null,
   state: 'open',

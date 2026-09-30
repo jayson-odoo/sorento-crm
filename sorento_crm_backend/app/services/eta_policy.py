@@ -345,29 +345,6 @@ def is_dealer(db: Session, resolved_contact_id: Optional[str]) -> bool:
     return policy is not None and policy.mode == "availability"
 
 
-def salesperson_name(db: Session, resolved_contact_id: str) -> Optional[str]:
-    """The name of the sales agent on the contact's customer (the primary link first),
-    or None when the contact has no customer with an agent."""
-    from app.models.access import RespondContactCustomer
-    from app.models.order import Customer
-    from app.models.sales_agent import SalesAgent
-
-    agent = (
-        db.query(SalesAgent)
-        .join(Customer, Customer.sales_agent_id == SalesAgent.id)
-        .join(RespondContactCustomer, RespondContactCustomer.customer_id == Customer.id)
-        .filter(RespondContactCustomer.contact_id == str(resolved_contact_id))
-        .order_by(RespondContactCustomer.is_primary.desc(), RespondContactCustomer.created_at.asc())
-        .first()
-    )
-    if agent is None:
-        return None
-    for name in (agent.person_label, agent.contact_name, agent.description, agent.sales_agent):
-        if isinstance(name, str) and name.strip():
-            return name.strip()
-    return None
-
-
 def _iso(value: Any) -> Optional[str]:
     if isinstance(value, date):
         return value.isoformat()
@@ -382,9 +359,10 @@ def _told(node: dict[str, Any]) -> Optional[str]:
     return _iso(node.get("eta_delay_date")) or _iso(node.get("estimated_arrival_date"))
 
 
-def dealer_view(payload: Any, *, salesperson: Optional[str]) -> Any:
+def dealer_view(payload: Any) -> Any:
     """One row per product - `{"product_code", "etas"}`, the ETAs distinct and sorted -
-    in the order the products first appear, plus `dealer_view` and `salesperson_name`.
+    in the order the products first appear, plus `dealer_view`. No salesperson name:
+    the presenter closes with the one refer sentence (REFER-SALESMAN, 30 Sep 2026).
     Handles `/list` (shipment rows with `lines`), `/by-product` (product rows with
     `shipments`) and `/shipments` (no product: one row, code None). A single-row payload
     (`/shipments/{id}/...`) is not a chat answer and passes through."""
@@ -416,7 +394,6 @@ def dealer_view(payload: Any, *, salesperson: Optional[str]) -> Any:
             "empty": not rows,
             "pagination": {"total": len(rows), "page": 1, "limit": max(len(rows), 1)},
             "dealer_view": True,
-            "salesperson_name": salesperson,
         }
     )
     return out

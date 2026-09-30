@@ -94,7 +94,7 @@ const ROW = {
   product_name: 'Wiper Blade 24in',
   quantity: 150,
   branch: 'no_incoming',
-  answer_summary: 'SRT5674 x 150: no stock and no incoming at the moment, please refer to your salesman.',
+  answer_summary: 'SRT5674 x 150: no stock and no incoming at the moment. Please refer to your salesman.',
   notified_agent: true,
   notify_skip_reason: null,
   state: 'open',
@@ -175,7 +175,7 @@ describe('CustomerAsksList (portal to-do body)', () => {
     expect(screen.getAllByRole('heading').map((h) => h.textContent)).toEqual(['Needs attention', 'Today']);
     const card = cardOf('Hock Lee Trading').textContent!.replace(/\s+/g, ' ');
     expect(card).toContain('Asked: SRT5674 x 150');
-    expect(card).toContain('Answered: No stock and no incoming at the moment, please refer to your salesman.');
+    expect(card).toContain('Answered: No stock and no incoming at the moment. Please refer to your salesman.');
     expect(screen.queryByLabelText('Filter by state')).toBeNull();
     expect(screen.queryByText('ask-1')).toBeNull(); // no ids in the UI
     // The done history is closed until asked for.

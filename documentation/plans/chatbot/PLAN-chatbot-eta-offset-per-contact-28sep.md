@@ -92,15 +92,17 @@ are withheld from the contact.
   `salesperson_name` (the sales agent on the contact's customer, primary link first).
   No container, quantity, allocation or packing list. The presenter
   (`presenters._incoming_dealer`) prints "<code>" and "ETA: <dates>" per product and
-  `closing` "Please refer to your salesperson, <name>." (no name: "Please refer to your
-  salesperson."); the engine prints it with no intro and no numbering, and the zero-stock
-  ladder stands down for it as it does for an availability reply.
+  `closing` "Please refer to your salesman." (REFER-SALESMAN, 30 Sep 2026, superseding this
+  plan's "salesperson, <name>" closing: the one refer sentence, no name, and the reply now
+  writes a Customer asks row); the engine prints it with no intro and no numbering, and the
+  zero-stock ladder stands down for it as it does for an availability reply.
 - **Identical rows**: `presenters._without_repeats` drops an incoming line that reads
   exactly like an earlier one, for any contact whose reveals leave two lines identical.
 - Staff and non-dealer contacts keep today's full reply. A staff stock miss still climbs
   the zero-stock ladder to incoming under the stock answer (prod parity, 21 Sep ruling).
 - Not changed here: a dealer's incoming MISS still offers the purchasing team; the
-  "refer to your salesman" rule of 26 Sep covers the stock ask only.
+  "refer to your salesman" rule of 26 Sep covers the stock ask only. (Superseded by PR #1329's
+  fix round and REFER-SALESMAN, 30 Sep 2026: the miss is referred, and recorded as an ask.)
 
 ## Behaviour changes on deploy (stated, not hidden)
 

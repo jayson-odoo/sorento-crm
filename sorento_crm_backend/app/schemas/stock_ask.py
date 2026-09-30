@@ -15,7 +15,8 @@ class StockAskResponse(BaseModel):
     contact_phone: Optional[str] = None
     product_code: str
     product_name: Optional[str] = None
-    quantity: int
+    #: None on an `incoming_eta` / `referred` row (REFER-SALESMAN): the ask named no quantity.
+    quantity: Optional[int] = None
     branch: str
     answer_summary: str
     notified_agent: bool

@@ -68,7 +68,7 @@ def dealer_envelope(etas: dict[str, list[str]]) -> dict[str, Any]:
         "has_result": bool(items),
     }
     if items:
-        envelope["closing"] = "Please refer to your salesperson."
+        envelope["closing"] = "Please refer to your salesman."
     return envelope
 
 

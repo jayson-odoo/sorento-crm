@@ -100,8 +100,9 @@ export function askAnswerText(ask: Pick<StockAsk, 'answer_summary'>): string {
   return stripped.charAt(0).toUpperCase() + stripped.slice(1);
 }
 
+/** "SRT5674 x 50"; a quantity-less ask (incoming ETA, referred) is its code alone. */
 export function askProductText(ask: Pick<StockAsk, 'product_code' | 'quantity'>): string {
-  return `${ask.product_code} x ${ask.quantity}`;
+  return ask.quantity == null ? ask.product_code : `${ask.product_code} x ${ask.quantity}`;
 }
 
 export function askToSummary(ask: StockAsk): AskSummary {

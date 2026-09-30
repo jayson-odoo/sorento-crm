@@ -47,9 +47,9 @@ from tests.chatbot.test_engine import stub_access  # noqa: F401 - a pytest fixtu
 from tests.chatbot.test_rearch_s3_attribute_first import SORENTO, _link_contact_company
 from tests.chatbot.test_rearch_s3_roster_from_resolver import _seed_contact
 
-TOO_BIG = "the quantity is more than what I can confirm here, please refer to your salesman."
-IN_STOCK = "yes, we have stock, please refer to your salesman to proceed."
-NO_INCOMING = "no stock and no incoming at the moment, please refer to your salesman."
+TOO_BIG = "the quantity is more than what I can confirm here. Please refer to your salesman."
+IN_STOCK = "yes, we have stock. Please refer to your salesman."
+NO_INCOMING = "no stock and no incoming at the moment. Please refer to your salesman."
 
 # One product per branch, so a single four-product ask exercises all four.
 #
