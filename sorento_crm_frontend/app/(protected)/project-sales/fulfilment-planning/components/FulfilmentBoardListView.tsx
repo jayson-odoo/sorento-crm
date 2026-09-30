@@ -17,6 +17,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { SoLineAttachmentsButton } from '../../_shared/components/SoLineAttachmentsButton';
@@ -165,6 +166,13 @@ export interface FulfilmentBoardListViewProps {
    * supplies it.
    */
   attachmentsByLine?: SoLineAttachmentsByLine;
+  /**
+   * The board's ONE search box, drawn in this list's toolbar (`searchSlot`) instead of the page
+   * header, exactly as the Products list draws its own. Omitted, the list shows no box.
+   */
+  search?: { value: string; onChange: (next: string) => void; placeholder: string };
+  /** The Status filter's state, when the board owns it (shared with the grid view). */
+  status?: { value: string[]; onChange: (next: string[]) => void };
 }
 
 export function FulfilmentBoardListView({
@@ -181,6 +189,8 @@ export function FulfilmentBoardListView({
   poolSharePct,
   canEditAttachments = false,
   attachmentsByLine = {},
+  search,
+  status,
 }: FulfilmentBoardListViewProps) {
   /**
    * AC-RS-42: the Stock button and the "To plan" figure both open the SAME dialog the grid
@@ -208,7 +218,10 @@ export function FulfilmentBoardListView({
   // never disagree about what one search term narrows to.
   // The Status filter (owner, 30 Sep 2026): the SAME state the Verdict pill and its sort read
   // (`verdictOf`), so a status can never be filtered by one rule and shown by another.
-  const [statusFilter, setStatusFilter] = React.useState<string[]>([]);
+  // Controlled by the board when it hands `status` in (so the grid view shares it), else local.
+  const [localStatusFilter, setLocalStatusFilter] = React.useState<string[]>([]);
+  const statusFilter = status?.value ?? localStatusFilter;
+  const setStatusFilter = status?.onChange ?? setLocalStatusFilter;
   const filteredContributions = React.useMemo(
     () =>
       contributions.filter(
@@ -905,7 +918,6 @@ export function FulfilmentBoardListView({
   return (
     <>
     <PanelDataGrid
-      title="Every contributing line"
       columns={columns}
       rows={filteredContributions}
       getRowId={(row) => row.key}
@@ -929,6 +941,18 @@ export function FulfilmentBoardListView({
           table={table}
           exportConfig={false}
           showColumns
+          keepSearchWhileSelected
+          searchSlot={
+            search ? (
+              <ListSearchInput
+                value={search.value}
+                onChange={search.onChange}
+                placeholder={search.placeholder}
+                aria-label={search.placeholder}
+                className="w-64"
+              />
+            ) : undefined
+          }
           filters={{
             kind: 'custom',
             active: statusFilter.length > 0,
@@ -956,41 +980,24 @@ export function FulfilmentBoardListView({
               />
             ),
           }}
-          leftActions={
-            <>
-              {/* The same pair reorder planning carries, in the same place and the same shape
-                  (AC-C12): two icon buttons, each dead when it has nothing to do, so the
-                  control itself says whether the list is open or closed. */}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                mode="icon"
-                className="h-8 w-8"
-                data-testid="board-list-expand-all"
-                title="Expand all"
-                aria-label="Expand all"
-                disabled={openKeys.length >= filteredContributions.length}
-                onClick={() => expandAll(filteredContributions.map((row) => row.key))}
-              >
-                <ChevronsUpDown className="size-4" aria-hidden />
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                mode="icon"
-                className="h-8 w-8"
-                data-testid="board-list-collapse-all"
-                title="Collapse all"
-                aria-label="Collapse all"
-                disabled={openKeys.length === 0}
-                onClick={requestCollapseAll}
-              >
-                <ChevronsDownUp className="size-4" aria-hidden />
-              </Button>
-            </>
-          }
+          // Expand all / Collapse all are the toolbar's secondary actions (two of them collapse
+          // into its "Actions" menu, D7); each is dead when it has nothing to do.
+          secondaryActions={[
+            {
+              key: 'expand-all',
+              label: 'Expand all',
+              icon: ChevronsUpDown,
+              disabled: openKeys.length >= filteredContributions.length,
+              onClick: () => expandAll(filteredContributions.map((row) => row.key)),
+            },
+            {
+              key: 'collapse-all',
+              label: 'Collapse all',
+              icon: ChevronsDownUp,
+              disabled: openKeys.length === 0,
+              onClick: requestCollapseAll,
+            },
+          ]}
           // Suppresses the toolbar's own bulk buttons: the strip keeps "N selected" and Clear.
           bulkActionsSlot={<></>}
           // S3 (D1, R1, R4): Decide replaces the old "Save as suggested" button - As suggested

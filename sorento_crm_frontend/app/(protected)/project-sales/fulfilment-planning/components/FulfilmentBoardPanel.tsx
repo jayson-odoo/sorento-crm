@@ -95,7 +95,8 @@ import type {
   PlanningChangeOrder,
 } from '../../_shared/types/planningChange.types';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
-import { isPreMarkOnly } from './BoardDecisionPill';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { isPreMarkOnly, VERDICT_FILTER_OPTIONS, verdictOf } from './BoardDecisionPill';
 import { BoardTransfersPanel } from './BoardTransfersPanel';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
@@ -301,6 +302,8 @@ export function FulfilmentBoardPanel({
    * a shared link that arrived pre-filtered would hide the rest of the plan without saying so.
    */
   const [kindFilter, setKindFilter] = React.useState<SupplyKind | null>(null);
+  /** The Status filter, shared by the list's Filters control and the grid's filter strip. */
+  const [statusFilter, setStatusFilter] = React.useState<string[]>([]);
   const [openCell, setOpenCell] = React.useState<BoardCell | null>(null);
   /** Which 30-day window the day view is showing. Undefined lets the server choose the first. */
   const [dayWindow, setDayWindow] = React.useState<string | undefined>(undefined);
@@ -328,6 +331,7 @@ export function FulfilmentBoardPanel({
     (contribution: BoardContribution) => {
       setView('list');
       setKindFilter(null);
+      setStatusFilter([]);
       resetProductSearch('');
       setFocusKey(contribution.key);
     },
@@ -1787,17 +1791,25 @@ export function FulfilmentBoardPanel({
     return map;
   }, [visibleCells]);
 
+  // The Status filter, shared by the list (its Filters control) and the grid (the strip below the
+  // cards). In the grid a row stays when ANY of its lines has one of the chosen states, read off
+  // `verdictOf` - the same state the pill shows - never off "has a draft".
   const visibleProductRows = React.useMemo(
     () =>
       axis.rows.filter(
         (row) =>
           (!kindFilter || linesByRow.has(row.key)) &&
-          rowMatchesSearch(row, linesByRow.get(row.key) ?? [], productSearch),
+          rowMatchesSearch(row, linesByRow.get(row.key) ?? [], productSearch) &&
+          (statusFilter.length === 0 ||
+            (linesByRow.get(row.key) ?? []).some((line) =>
+              statusFilter.includes(verdictOf(line, draft[line.key] ?? null)),
+            )),
       ),
-    [axis, linesByRow, productSearch, kindFilter],
+    [axis, linesByRow, productSearch, kindFilter, statusFilter, draft],
   );
 
-  const filtering = productSearch.trim().length > 0 || kindFilter !== null;
+  const filtering =
+    productSearch.trim().length > 0 || kindFilter !== null || statusFilter.length > 0;
 
   /**
    * Every key the board-wide "Save all suggested" button would post (D15): whichever lines the
@@ -1892,13 +1904,8 @@ export function FulfilmentBoardPanel({
         >
           {`Planning ${soNumbers.length} sales orders together`}
         </h2>
-        <ListSearchInput
-          value={productSearchInput}
-          onChange={setProductSearchInput}
-          placeholder="Search sales order, customer, project or product"
-          aria-label="Search sales order, customer, project or product"
-          className="w-full sm:w-64"
-        />
+        {/* No search in the header: the list draws the box in its toolbar, and the grid in the
+            filter strip under the summary cards (same box, same URL `product=` param). */}
 
         <div
           data-testid="board-header-actions"
@@ -2498,6 +2505,12 @@ export function FulfilmentBoardPanel({
                 // beside the title, drives Grid and List alike - the panel's own search
                 // box is gone, so there is no second box to disagree with this one.
                 externalSearch={productSearch}
+                status={{ value: statusFilter, onChange: setStatusFilter }}
+                search={{
+                  value: productSearchInput,
+                  onChange: setProductSearchInput,
+                  placeholder: 'Search sales order, customer, project or product',
+                }}
                 // `visibleListContributions` also narrows by `kindFilter` (above), which
                 // is not part of `externalSearch` - so the reset key carries both, or
                 // toggling a kind card while on page 3 would leave the list showing
@@ -2520,6 +2533,29 @@ export function FulfilmentBoardPanel({
               />
             ) : (
               <>
+                {/* The grid's filter strip: the same search box and Status filter the list's toolbar
+                    carries, at the same vertical position (`py-5`, `gap-2`) so the box does not
+                    jump between views. No Columns, Expand/Collapse or Decide here. */}
+                <div
+                  data-testid="board-grid-filter-strip"
+                  className="flex w-full flex-wrap items-center gap-2 py-5"
+                >
+                  <ListSearchInput
+                    value={productSearchInput}
+                    onChange={setProductSearchInput}
+                    placeholder="Search sales order, customer, project or product"
+                    aria-label="Search sales order, customer, project or product"
+                    className="w-64"
+                  />
+                  <SearchableMultiSelect
+                    value={statusFilter}
+                    onChange={setStatusFilter}
+                    options={VERDICT_FILTER_OPTIONS}
+                    placeholder="Status"
+                    size="sm"
+                    triggerClassName="w-40 shrink-0"
+                  />
+                </div>
                 {/* How much of the board is on screen. Only while a filter is on, and stated as
                     a fraction, so a narrowed board is never mistaken for the whole one. */}
                 {filtering && (

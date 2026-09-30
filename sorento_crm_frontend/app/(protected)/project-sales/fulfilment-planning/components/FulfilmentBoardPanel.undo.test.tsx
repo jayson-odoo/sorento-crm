@@ -14,6 +14,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import userEvent from '@testing-library/user-event';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -218,6 +219,12 @@ async function openBoardActions() {
   fireEvent.keyDown(trigger, { key: 'Enter' });
   await screen.findByRole('menuitem', { name: 'Undo all' });
   return screen.getByRole('menu');
+}
+
+/** Expand all / Collapse all live in the shared toolbar's "Actions" menu. */
+async function pickAction(label: string) {
+  await userEvent.click(screen.getByRole('button', { name: 'Actions' }));
+  await userEvent.click(await screen.findByRole('menuitem', { name: label }));
 }
 
 beforeEach(() => {
@@ -500,7 +507,7 @@ describe('AC-B13: Undo on a pre-marked line returns to "Change proposed", not "S
 
     await waitFor(() => expect(within(row()).getByText(openingPill)).toBeInTheDocument());
 
-    fireEvent.click(screen.getByTestId('board-list-expand-all'));
+    await pickAction('Expand all');
     fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
 
     await waitFor(() => expect(within(row()).getByText('Saved')).toBeInTheDocument());
@@ -695,7 +702,7 @@ describe('SF-5: "Undo all" returns a batch-named line to "Change proposed" too',
     );
 
     // Save it, so there is a real draft for the board-wide discard to act on.
-    fireEvent.click(screen.getByTestId('board-list-expand-all'));
+    await pickAction('Expand all');
     fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
     await waitFor(() => expect(within(row()).getByText('Saved')).toBeInTheDocument());
 

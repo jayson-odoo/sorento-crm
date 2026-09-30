@@ -18,6 +18,7 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const routerReplace = vi.fn();
@@ -2035,7 +2036,10 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     // B1 bug) this row is STILL filtered out right here, and `getByTestId` throws immediately
     // rather than retrying past it.
     expect(screen.getByTestId(/^line-decision-so-a\|28\|ITEM28/)).toBeInTheDocument();
-    expect(searchBox).toHaveValue('');
+    // The click switched to the list, whose toolbar draws its own box: read that one.
+    expect(
+      screen.getByPlaceholderText('Search sales order, customer, project or product'),
+    ).toHaveValue('');
     expect(scrollSpy).toHaveBeenCalledTimes(1);
 
     scrollSpy.mockRestore();
@@ -4678,4 +4682,89 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     expect(toasts.some((text) => text.includes('1 held back'))).toBe(true);
   });
 
+});
+
+describe('FulfilmentBoardPanel: search and Status live under the cards, not in the header (owner, 30 Sep)', () => {
+  const SEARCH = 'Search sales order, customer, project or product';
+  const twoProducts = () =>
+    withContribution(
+      boardOf([
+        demand({ line_no: 1, item_code: 'WESERP10B' }),
+        demand({ line_no: 2, item_code: 'TPE-9204' }),
+      ]),
+      (entry) => entry.item_code === 'WESERP10B',
+      (entry) => ({
+        ...entry,
+        draft: {
+          decision: { verdict: 'approved' as const },
+          saved_by: 'Test Planner',
+          saved_at: '2026-09-08T00:00:00Z',
+        },
+      }),
+    );
+
+  it('grid view: no search in the header; the filter strip has the search and Status, and no Columns', async () => {
+    getPlanningBoard.mockResolvedValue(twoProducts());
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(within(screen.getByTestId('board-header')).queryByPlaceholderText(SEARCH)).toBeNull();
+    const strip = screen.getByTestId('board-grid-filter-strip');
+    expect(within(strip).getByPlaceholderText(SEARCH)).toBeInTheDocument();
+    expect(within(strip).getByText('Status')).toBeInTheDocument();
+    expect(within(strip).queryByRole('button', { name: 'Columns' })).toBeNull();
+    expect(within(strip).queryByRole('button', { name: 'Actions' })).toBeNull();
+    expect(within(strip).queryByTestId('board-decide-button')).toBeNull();
+  });
+
+  it('grid view: the strip is ONE flex row with the search and the compact Status control as siblings', async () => {
+    getPlanningBoard.mockResolvedValue(twoProducts());
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const strip = screen.getByTestId('board-grid-filter-strip');
+    expect(strip.className).toMatch(/\bflex\b/);
+    expect(strip.className).not.toMatch(/flex-col/);
+    expect(strip.children).toHaveLength(2);
+    expect(within(strip.children[0] as HTMLElement).getByPlaceholderText(SEARCH)).toBeInTheDocument();
+    const status = strip.children[1] as HTMLElement;
+    expect(status).toHaveTextContent('Status');
+    expect(status.className).toMatch(/\bw-40\b/);
+    expect(status.className).not.toMatch(/\bw-full\b/);
+  });
+
+  it('list view: no title row, no header search; the list toolbar carries the search, Filters, Columns and Decide', async () => {
+    getPlanningBoard.mockResolvedValue(twoProducts());
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    const toolbar = await waitFor(() => {
+      const found = document.querySelector('[data-slot="data-grid-list-toolbar"]');
+      if (!found) throw new Error('toolbar not yet mounted');
+      return found as HTMLElement;
+    });
+    expect(within(screen.getByTestId('board-header')).queryByPlaceholderText(SEARCH)).toBeNull();
+    expect(within(toolbar).getByPlaceholderText(SEARCH)).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: /^Filters/ })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Columns' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Actions' })).toBeInTheDocument();
+    expect(within(toolbar).getByTestId('board-decide-button')).toBeInTheDocument();
+    expect(screen.queryByText('Every contributing line')).toBeNull();
+  });
+
+  it('the Status filter narrows the matrix rows to the products that have a saved line', async () => {
+    getPlanningBoard.mockResolvedValue(twoProducts());
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.getByText('TPE-9204')).toBeInTheDocument();
+
+    const strip = screen.getByTestId('board-grid-filter-strip');
+    await userEvent.click(within(strip).getByText('Status'));
+    await userEvent.click(await screen.findByRole('option', { name: /Saved/ }));
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByText('TPE-9204')).not.toBeInTheDocument());
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+  });
 });
