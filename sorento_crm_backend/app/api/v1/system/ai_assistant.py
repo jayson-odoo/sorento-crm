@@ -27,6 +27,9 @@ from app.schemas.ai_prompt import (
     PromptKeySummary,
     PromptVersionDetail,
     PromptVersionsResponse,
+    RegistryVariableRow,
+    RenderPreviewRequest,
+    RenderPreviewResponse,
     SaveVersionRequest,
     SetLabelRequest,
     SetAgentModelRequest,
@@ -366,6 +369,56 @@ def create_ai_assistant_prompt_version(
         )
     response.status_code = status.HTTP_201_CREATED
     return PromptVersionDetail(**row)
+
+
+@router.get(
+    "/ai-assistant/prompts/{name}/registry-variables",
+    response_model=list[RegistryVariableRow],
+)
+def get_ai_assistant_prompt_registry_variables(
+    name: str,
+    version: Optional[int] = Query(None),
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    """The editor's "Wired to this agent" panel (PLAN-prompt-dynamic-30sep R5a): every
+    registry variable with its source, row count, last change and CURRENT rendered text.
+    `used` is read against `version` when given; the editor tracks its own draft."""
+    from app.services import chatbot_prompt_vars
+
+    _ensure_known_prompt(name)
+    if not PROMPT_KEYS[name].registry_variables:
+        return []
+    template = AIPromptService(db).get_version(name, version)["template"] if version else None
+    return [RegistryVariableRow(**row) for row in chatbot_prompt_vars.describe(db, template)]
+
+
+@router.post(
+    "/ai-assistant/prompts/{name}/render-preview",
+    response_model=RenderPreviewResponse,
+)
+def render_ai_assistant_prompt_preview(
+    name: str,
+    payload: RenderPreviewRequest,
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    """"Preview rendered prompt": the draft exactly as the model would receive it now,
+    registry variables filled from their tables and `{{current_date}}` with today (MYT).
+    Nothing is saved."""
+    from datetime import timezone
+
+    from app.services import chatbot_prompt_vars
+    from app.services.ai_prompt_registry import _substitute, extract_tokens
+
+    _ensure_known_prompt(name)
+    spec = PROMPT_KEYS[name]
+    wanted = extract_tokens(payload.template) & set(spec.registry_variables)
+    values: dict[str, object] = dict(chatbot_prompt_vars.render_values(db, wanted)) if wanted else {}
+    if "current_date" in spec.variables:
+        now_myt = datetime.now(timezone.utc) + timedelta(hours=8)
+        values["current_date"] = now_myt.strftime("%A, %d %B %Y")
+    return RenderPreviewResponse(text=_substitute(payload.template, values))
 
 
 @router.post("/ai-assistant/prompts/{name}/labels", response_model=SetLabelResponse)
