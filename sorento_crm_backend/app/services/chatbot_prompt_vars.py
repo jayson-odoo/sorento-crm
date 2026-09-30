@@ -19,6 +19,8 @@ domain and entity-kind lines): `ai_prompt_registry` calls it, and core never imp
 from __future__ import annotations
 
 import json
+import logging
+import re as _re_mod
 import threading
 import time
 from dataclasses import dataclass
@@ -99,21 +101,13 @@ def _brands(db: Session) -> list[str]:
 
 
 def _teams(db: Session) -> list[str]:
+    """The escalation lane's own team list. Not `agent_teams`: the lane matches the
+    parser's team word only against `ESCALATION_TEAMS` (`lanes/escalation.py:1234-1261`),
+    so a code from any other source is one it cannot route (owner, grill item 2, 30 Sep
+    2026). Next lane: move that list into the `agent_teams` registry."""
     from app.modules.chatbot.lane_vocabulary import escalation_teams
 
-    known = list(escalation_teams())
-    codes = list(
-        db.execute(
-            sql(
-                "SELECT DISTINCT t.code FROM agent_teams t "
-                "JOIN access_agents a ON a.id = t.agent_id WHERE a.is_active"
-            )
-        ).scalars()
-    )
-    if not codes:
-        return known
-    order = {code: i for i, code in enumerate(known)}
-    return sorted(codes, key=lambda c: (order.get(c, len(order)), c))
+    return list(escalation_teams())
 
 
 def _agents(db: Session) -> list[str]:
@@ -138,6 +132,28 @@ def _access_levels(db: Session) -> list[str]:
     )
 
 
+_LINE_BREAKS = _re_mod.compile(r"[\r\n\u2028\u2029\x85\x0b\x0c]+")
+
+
+def _one_line(value: object) -> str:
+    """Registry text as ONE line of prompt: no line break of any kind, no policy-block
+    marker, no `{{token}}` braces, no control characters (security review M2). Rows
+    written through the Chatbot pages are already cleaned on save; the spec registry,
+    brands and access types are written elsewhere and reach every turn live."""
+    from app.services.chatbot_parser_prompt import BLOCKS_BEGIN, BLOCKS_END
+
+    text = _LINE_BREAKS.sub(" ", str(value or ""))
+    text = "".join(ch for ch in text if ch.isprintable() or ch == " ")
+    for marker in (BLOCKS_BEGIN, BLOCKS_END, "{{", "}}"):
+        text = text.replace(marker, " ")
+    return " ".join(text.split())
+
+
+def _quoted(value: object) -> str:
+    """A word inside the prompt's own double quotes: a quote in it becomes an apostrophe."""
+    return '"' + _one_line(value).replace('"', "'") + '"'
+
+
 def _dedupe(values: list[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -154,16 +170,17 @@ def _dedupe(values: list[str]) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
+def _status_line(row: dict) -> str:
+    words = ", ".join(_quoted(w) for w in row["trigger_words"] or [])
+    line = f'  - {_quoted(row["value"])} -> {_one_line(row["label"])}'
+    line += f": {words}." if words else "."
+    if row["domain"] != "order":
+        line += f" Domain {_quoted(row['domain'])}."
+    return line
+
+
 def render_statuses(db: Session) -> str:
-    lines = []
-    for row in _status_rows(db):
-        words = ", ".join(f'"{w}"' for w in row["trigger_words"] or [])
-        line = f'  - "{row["value"]}" -> {row["label"]}'
-        line += f": {words}." if words else "."
-        if row["domain"] != "order":
-            line += f' Domain "{row["domain"]}".'
-        lines.append(line)
-    return "\n".join(lines)
+    return "\n".join(_status_line(row) for row in _status_rows(db))
 
 
 def _render_domains_detail(db: Session) -> str:
@@ -175,7 +192,7 @@ def _render_domains_detail(db: Session) -> str:
             "escalation_team_code FROM chatbot_domains ORDER BY sort_order, name"
         )
     ).mappings()
-    return "\n".join(domain_line(r) for r in rows)
+    return "\n".join(_one_line(domain_line(r)) for r in rows)
 
 
 def _render_entity_kinds_detail(db: Session) -> str:
@@ -186,9 +203,9 @@ def _render_entity_kinds_detail(db: Session) -> str:
         )
     ).mappings()
     return "\n".join(
-        f'Entity kind {r["kind"]}: resolver {r["resolver_source"]}. '
+        _one_line(f'Entity kind {r["kind"]}: resolver {r["resolver_source"]}. '
         f'Did-you-mean {"on" if r["did_you_mean"] else "off"}. '
-        f'Default narrowing {r["default_narrowing"]}.'
+        f'Default narrowing {r["default_narrowing"]}.')
         for r in rows
     )
 
@@ -196,7 +213,7 @@ def _render_entity_kinds_detail(db: Session) -> str:
 def _render_specs(db: Session) -> str:
     from app.services.chatbot_parser_prompt import specification_lines
 
-    return "\n".join(specification_lines(db))
+    return "\n".join(_one_line(line) for line in specification_lines(db))
 
 
 def _count(query: str) -> Callable[[Session], int]:
@@ -211,12 +228,12 @@ VARIABLES: dict[str, RegistryVariable] = {
     for v in (
         RegistryVariable(
             "domains", "Domains", "Chatbot Domains", _DOMAINS_HREF, ("chatbot_domains",),
-            lambda db: " | ".join(_domain_names(db)), lambda db: len(_domain_names(db)),
+            lambda db: " | ".join(_one_line(n) for n in _domain_names(db)), lambda db: len(_domain_names(db)),
         ),
         RegistryVariable(
             "domain_words", "Domain words", "Chatbot Domains + Status Words", _DOMAINS_HREF,
             ("chatbot_domains", "chatbot_status_words"),
-            lambda db: ", ".join(_domain_words(db)), lambda db: len(_domain_words(db)),
+            lambda db: ", ".join(_one_line(w) for w in _domain_words(db)), lambda db: len(_domain_words(db)),
         ),
         RegistryVariable(
             "domains_detail", "Domains - detail", "Chatbot Domains", _DOMAINS_HREF,
@@ -229,12 +246,12 @@ VARIABLES: dict[str, RegistryVariable] = {
         RegistryVariable(
             "status_values", "Status values", "Chatbot Status Words", _STATUS_HREF,
             ("chatbot_status_words",),
-            lambda db: "|".join(r["value"] for r in _status_rows(db)),
+            lambda db: "|".join(_one_line(r["value"]) for r in _status_rows(db)),
             lambda db: len(_status_rows(db)),
         ),
         RegistryVariable(
             "entity_kinds", "Entity kinds", "Chatbot Entity Kinds", "/system-management/chatbot-entity-kinds",
-            ("chatbot_entity_kinds",), lambda db: "|".join(_entity_kinds(db)),
+            ("chatbot_entity_kinds",), lambda db: "|".join(_one_line(k) for k in _entity_kinds(db)),
             lambda db: len(_entity_kinds(db)),
         ),
         RegistryVariable(
@@ -249,21 +266,20 @@ VARIABLES: dict[str, RegistryVariable] = {
         ),
         RegistryVariable(
             "brands", "Brands", "Brands", "/master-data-management/brands", ("brands",),
-            lambda db: ", ".join(_brands(db)), lambda db: len(_brands(db)),
+            lambda db: ", ".join(_one_line(b) for b in _brands(db)), lambda db: len(_brands(db)),
         ),
         RegistryVariable(
-            "teams", "Teams", "Agents and Teams", "/user-management/access-agents",
-            ("agent_teams", "access_agents"), lambda db: "|".join(_teams(db)),
-            lambda db: len(_teams(db)),
+            "teams", "Teams", "Escalation lane (code list)", "/user-management/access-agents",
+            (), lambda db: "|".join(_teams(db)), lambda db: len(_teams(db)),
         ),
         RegistryVariable(
             "agents", "Agents", "Agents and Teams", "/user-management/access-agents", ("access_agents",),
-            lambda db: "|".join(_agents(db)), lambda db: len(_agents(db)),
+            lambda db: "|".join(_one_line(a) for a in _agents(db)), lambda db: len(_agents(db)),
         ),
         RegistryVariable(
             "access_levels", "Access levels", "Contact Access Types",
             "/user-management/contact-access-types", ("contact_access_types",),
-            lambda db: json.dumps(_access_levels(db), ensure_ascii=False, separators=(",", ":")),
+            lambda db: json.dumps([_one_line(a) for a in _access_levels(db)], ensure_ascii=False, separators=(",", ":")),
             lambda db: len(_access_levels(db)),
         ),
     )
@@ -279,12 +295,22 @@ REGISTRY_TABLES: frozenset[str] = frozenset(t for v in VARIABLES.values() for t 
 # --------------------------------------------------------------------------- #
 
 _CACHE: dict[str, tuple[float, str]] = {}
+# The last value each variable rendered successfully. Survives `clear_cache`: when a
+# reader fails, the turn gets the list as it last stood rather than an empty one.
+_LAST_GOOD: dict[str, str] = {}
+# Bumped by every `clear_cache`. A render that started before a registry commit read the
+# old rows, so it must not be stored over the commit's invalidation.
+_GENERATION = 0
 _LOCK = threading.Lock()
+
+logger = logging.getLogger(__name__)
 
 
 def clear_cache() -> None:
+    global _GENERATION
     with _LOCK:
         _CACHE.clear()
+        _GENERATION += 1
 
 
 def render_value(db: Session, name: str) -> str:
@@ -292,17 +318,37 @@ def render_value(db: Session, name: str) -> str:
     now = time.monotonic()
     with _LOCK:
         hit = _CACHE.get(name)
+        generation = _GENERATION
     if hit is not None and hit[0] > now:
         return hit[1]
     value = VARIABLES[name].render(db)
     with _LOCK:
-        _CACHE[name] = (now + CACHE_TTL_SECONDS, value)
+        _LAST_GOOD[name] = value
+        if generation == _GENERATION:
+            _CACHE[name] = (now + CACHE_TTL_SECONDS, value)
     return value
 
 
 def render_values(db: Session, names: set[str] | list[str] | None = None) -> dict[str, str]:
     wanted = VARIABLE_NAMES if names is None else [n for n in VARIABLE_NAMES if n in set(names)]
     return {name: render_value(db, name) for name in wanted}
+
+
+def render_values_safe(db: Session, names: set[str] | list[str]) -> dict[str, str]:
+    """`render_values` for a live turn: never raises, never leaves a token unfilled. Each
+    variable renders in its own savepoint, so one failing reader neither blanks the others
+    nor aborts the turn's transaction; a failed one falls back to its last good value,
+    and to "" only when it never rendered in this process."""
+    out: dict[str, str] = {}
+    for name in [n for n in VARIABLE_NAMES if n in set(names)]:
+        try:
+            with db.begin_nested():
+                out[name] = render_value(db, name)
+        except Exception:
+            logger.warning("registry variable %s failed; using its last good value", name, exc_info=True)
+            with _LOCK:
+                out[name] = _LAST_GOOD.get(name, "")
+    return out
 
 
 _DIRTY_FLAG = "chatbot_prompt_vars_dirty"
@@ -482,11 +528,17 @@ def wording_layer(template: str, db: Session) -> tuple[str, list[str]]:
         report.append("status bullets: not found (reworded or absent), kept")
     else:
         literal = _re.findall(r'^  - "([a-z_]+)"', m.group("list"), flags=_re.M)
-        if _covers(statuses, literal) and _bullet_words_covered(db, m.group("list")):
+        rows = {r["value"]: r for r in _status_rows(db)}
+        # Swapped only when the hand bullets say EXACTLY what the rows render (whitespace
+        # aside): any word of the owner's own inside a bullet keeps the block literal
+        # (review S5), because `{{statuses}}` renders only what the rows hold.
+        expected = "\n".join(_status_line(rows[v]) for v in literal if v in rows)
+        same = all(v in rows for v in literal) and " ".join(m.group("list").split()) == " ".join(expected.split())
+        if same:
             text = text[: m.start("list")] + "{{statuses}}\n" + text[m.end("list") :]
             report.append("status bullets: -> {{statuses}}")
         else:
-            report.append("status bullets: registry lacks a value or word, kept literal")
+            report.append("status bullets: differ from what the registry renders (owner wording or a missing row), kept literal")
 
     # DOMAIN IN MESSAGE: the comma list between "STATUS word -" and "- in any language".
     m = _re.search(
@@ -519,14 +571,6 @@ def wording_layer(template: str, db: Session) -> tuple[str, list[str]]:
     else:
         report.append("policy blocks: no markers, none added")
     return text, report
-
-
-def _bullet_words_covered(db: Session, bullets: str) -> bool:
-    """Every quoted word in the hand bullets is a trigger word of some status row."""
-    have = {w.lower() for r in _status_rows(db) for w in r["trigger_words"] or []}
-    have |= {r["value"].lower() for r in _status_rows(db)}
-    words = _re.findall(r'"([^"]+)"', bullets)
-    return all(w.lower() in have for w in words)
 
 
 # --------------------------------------------------------------------------- #

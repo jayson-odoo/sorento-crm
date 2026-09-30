@@ -135,7 +135,8 @@ def _clean_text(value: str | None, *, field: str, max_chars: int = _TEXT_MAX) ->
         return None
     from app.services.chatbot_parser_prompt import BLOCKS_BEGIN, BLOCKS_END
 
-    cleaned = "".join(ch for ch in value if unicodedata.category(ch) not in ("Cc", "Cf"))
+    # Zl/Zp (U+2028/U+2029) too: most tokenizers read them as line breaks.
+    cleaned = "".join(ch for ch in value if unicodedata.category(ch) not in ("Cc", "Cf", "Zl", "Zp"))
     for marker in (BLOCKS_BEGIN, BLOCKS_END):
         if marker in cleaned:
             raise _unprocessable(
@@ -547,6 +548,14 @@ def delete_entity_kind(
 
 _STATUS_SORTS = {"value", "label", "domain", "sort_order", "updated_at"}
 
+# Every row is rendered into every parser call twice (`{{statuses}}`, `{{domain_words}}`),
+# so the table has a ceiling like its word lists do (security review L1).
+STATUS_WORDS_MAX = 100
+
+# A quote or backtick in a word or label would close the quotes the prompt renders it
+# in and read as an instruction (security review L2).
+_QUOTE_CHARS = ('"', "`")
+
 
 class ChatbotStatusWordBody(BaseModel):
     domain: str = Field(min_length=1, max_length=64)
@@ -577,6 +586,9 @@ def _validate_status(db: Session, body: ChatbotStatusWordBody) -> None:
     body.domain = _clean_text(body.domain, field="domain") or ""
     body.label = _clean_text(body.label, field="label", max_chars=128) or ""
     body.trigger_words = [w for w in _clean_list(body.trigger_words, field="trigger_words") if w.strip()]
+    for text in (body.label, *body.trigger_words):
+        if any(ch in text for ch in _QUOTE_CHARS):
+            raise _unprocessable("Status words and their meaning may not contain quotes or backticks.")
     if db.query(ChatbotDomain).filter(ChatbotDomain.name == body.domain).first() is None:
         raise _unprocessable(f"Unknown chatbot domain {body.domain!r}.")
 
@@ -648,6 +660,8 @@ def create_status_word(
 ):
     _ = current_user
     _validate_status(db, body)
+    if db.query(func.count(ChatbotStatusWord.id)).scalar() >= STATUS_WORDS_MAX:
+        raise _unprocessable(f"There are already {STATUS_WORDS_MAX} status words; remove one first.")
     if db.query(ChatbotStatusWord).filter(ChatbotStatusWord.value == body.value).first() is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

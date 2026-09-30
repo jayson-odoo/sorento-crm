@@ -97,9 +97,9 @@ def test_the_wording_layer_is_published_unlabelled_from_production():
         rows = _wording_layer_rows(db)
         assert rows, "pdyn_0002_wording_layer published no version"
         first = rows[0]
-        assert not db.query(AIPromptLabel).filter(AIPromptLabel.version_id == first.id).count() or (
-            _production(db).id == first.id
-        ), "the migration must not move a label"
+        # Published with no label (the owner promotes). The migration run itself, and that it
+        # leaves `production` where it was, is `test_prompt_dynamic_review_round::test_b1_*`.
+        assert (first.config_json or {}).get("from_version") is not None
         report = (first.config_json or {}).get("wording_layer_report") or []
         assert any("{{domains}}" in line for line in report)
         assert any("{{statuses}}" in line for line in report)

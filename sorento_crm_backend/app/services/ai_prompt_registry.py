@@ -1434,14 +1434,9 @@ def render(
     if spec is not None and spec.registry_variables:
         wanted = (extract_tokens(rp.text) & set(spec.registry_variables)) - set(values)
         if wanted:
-            try:
-                values.update(chatbot_prompt_vars.render_values(db, wanted))
-            except Exception:
-                # A registry read must never take the turn down, and a literal `{{token}}`
-                # must never reach the model: the lists render empty for this call.
-                logger.warning("registry variables failed name=%s", name, exc_info=True)
-                _safe_rollback(db)
-                values.update({token: "" for token in wanted})
+            # Never raises and never leaves a token unfilled: a failing reader falls back
+            # to its last good text (see `render_values_safe`).
+            values.update(chatbot_prompt_vars.render_values_safe(db, wanted))
     return _substitute(rp.text, values), rp.version
 
 

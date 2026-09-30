@@ -46,7 +46,7 @@ D1 **Two layers, one template.** The wording layer IS the version's template tex
    rebuilds a version from the code constant again (the `<<<CHATBOT POLICY BLOCKS>>>` bake is
    retired for this key; the blocks become `{{domains_detail}}`, `{{entity_kinds_detail}}`,
    `{{specs}}`). Deleting a chip = deleting the token; no code path re-inserts it.
-D2 **Variables** (module `app/services/chatbot/prompt_registry_vars.py`, one entry each: name,
+D2 **Variables** (module `app/services/chatbot_prompt_vars.py`, one entry each: name,
    label, source table, admin href, `render(db) -> str`, `rows(db)` for the panel):
    `domains` (names, sort_order, ` | ` joined), `domain_words` (switch words of every domain,
    then status trigger words, de-duplicated, `, ` joined), `domains_detail` (today's
@@ -55,9 +55,10 @@ D2 **Variables** (module `app/services/chatbot/prompt_registry_vars.py`, one ent
    `entity_kinds_detail` (today's kind lines), `specs` (`specification_lines`), `brands`
    (`Name (CODE), ...`, active brands), `teams` (`a|b|c`), `agents` (`a|b|c`), `access_levels`
    (JSON list of active `contact_access_types.name` by sort_order).
-D3 **Teams and agents render from the tables, never from a new code list.** `teams` = distinct
-   `agent_teams.code` of active agents, ordered by `ESCALATION_TEAMS` position then name;
-   `agents` = active `access_agents.code`. Empty table (CI) falls back to the code constants so a
+D3 **Teams = the escalation lane's `ESCALATION_TEAMS` (grill 2, owner 30 Sep 2026), agents =
+   active `access_agents.code`.** The lane matches the parser's team word only against
+   `ESCALATION_TEAMS` (`lanes/escalation.py:1234-1261`); `suggested_agent` goes out as the round
+   robin's `agent_code` (`escalation.py:1547`). Empty table (CI) falls back to the code constants so a
    fresh DB still renders a complete prompt. Equivalence against production data is proven by
    `scripts/prompt_dynamic_render_diff.py`, run by crew on the prod-copy dev DB.
 D4 **Brands.** Stay on the per-turn user block (no behaviour change). `{{brands}}` exists in the
@@ -72,7 +73,7 @@ D6 **Status words registry (R2).** New table `chatbot_status_words` (id, domain 
    `top_selling`) with the owner's words ("sales", "sales report", "top selling",
    "sales analysis", "best selling"). Admin page = the Chatbot Domains page pattern
    (`app/api/v1/system/chatbot_config.py:340-403`, list + modal, deferred hard delete).
-D7 **Wording migration (R1).** `prompt_dynamic_0001` reads the `production`-labelled template
+D7 **Wording migration (R1).** `pdyn_0002_wording_layer` reads the `production`-labelled template
    of `chatbot_semantic_parser` (v42 on prod, owner edits included), replaces each duplicated
    list by exact-substring match with its token, strips the baked policy blocks for
    `{{domains_detail}}` etc., and inserts the result as a NEW UNLABELLED version. A list the
@@ -155,3 +156,45 @@ a recommendation. Answers are recorded here as they arrive. Until then, each rec
     (`assert 5 == 4`).
   - AC-PD-7: the `{{statuses}}` substitution disabled. 3 drift tests go red.
   - AC-PD-10: the old `SearchableTextarea` effect restored. 3 find tests go red.
+
+## Next lane (owner, 30 Sep 2026)
+
+- Move `ESCALATION_TEAMS` (`app/services/chatbot/lanes/escalation.py:61-70`) into the
+  `agent_teams` registry so teams become admin-editable end to end; `{{teams}}` then renders
+  from that registry instead of the code list.
+- Remove the three sales tools from the `order` row once `sales` has run a week (grill 8).
+- The Prompts detail page overflows at 375px (document 1357px wide), measured identical on
+  main b8cdbebe with this lane's files swapped out, so not this lane's defect: logged in
+  `documentation/backlogs/backlog.md`.
+
+## Browser evidence run (agent-browser 0.27.0, session `pdyn`, 30 Sep 2026)
+
+Stack: the lane's sandbox, not the crew test copy (a cloud worker cannot reach it). Backend is
+uvicorn :8000 on the private `sorento_ci` DB, bootstrapped by `scripts.bootstrap_env` with every
+module installed; the frontend is `npm run dev` :3000. Login is a local superadmin
+(`E2E_EMAIL`/`E2E_PASSWORD` in the gitignored `sorento_crm_frontend/.env.local`). Navigation
+was by sidebar clicks from `/`.
+
+1. 1280x800, `/`, then System > Messaging > **Status Words**. The URL is
+   `/system-management/chatbot-status-words`, and the grid shows the 8 seeded rows with real data.
+2. Row `sales_report`, then the modal: added the customer word "jualan bulan ini", then Save.
+   The backend logged `PUT /api/v1/system/chatbot/status-words/<id>` 200, and the row's
+   Customer words cell shows the new word.
+3. Without a publish, `POST /ai-assistant/prompts/chatbot_semantic_parser/render-preview`
+   on the v4 wording-layer template returns the word in `{{domain_words}}` and in the
+   `sales_report` bullet, with 0 literal `{{` left. The version list is unchanged: v4 has no
+   label and v3 is production.
+4. AI Assistant > Prompts > chatbot_semantic_parser, then Ctrl+F on the editor, query
+   "outstanding":
+   - The count reads 1/107, the selection is [2739, 2750] = "outstanding", and scrollTop is 830.
+   - Enter x3 gives 4/107. Shift+Enter gives 3/107, with the selection on [5483, 5494].
+   - The active `<mark>` offsetTop is 2109, inside the visible range 1950-2268.
+5. Caret at 5500, which is between match 3 (5483-5494) and match 4 (5524), then typed "ZZ ".
+   The text reads `outstanding DO foZZ r 7445`, the caret moved to 5503, the find bar stayed
+   open, and the count stayed 3/107. The owner's bug does not reproduce.
+6. 375x812, same page: Enter moves to 4/107 and the active match is visible. The page itself
+   is 1357px wide at 375. That overflow is identical with main b8cdbebe's files, so it is
+   pre-existing: BL-068.
+
+Screenshots (under 200 KB each): `documentation/plans/evidence/prompt-dynamic-status-words-1280.png`
+and `documentation/plans/evidence/prompt-dynamic-search-375.png`.

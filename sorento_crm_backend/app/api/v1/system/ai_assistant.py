@@ -1,6 +1,8 @@
 """System AI assistant config and chat endpoints."""
 from __future__ import annotations
 
+import re
+
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -393,6 +395,9 @@ def get_ai_assistant_prompt_registry_variables(
     return [RegistryVariableRow(**row) for row in chatbot_prompt_vars.describe(db, template)]
 
 
+_PREVIEW_MAX_USES = 5
+
+
 @router.post(
     "/ai-assistant/prompts/{name}/render-preview",
     response_model=RenderPreviewResponse,
@@ -413,6 +418,16 @@ def render_ai_assistant_prompt_preview(
 
     _ensure_known_prompt(name)
     spec = PROMPT_KEYS[name]
+    # Each registry token expands to its whole list, so a template repeating one is an
+    # amplifier for a VIEW-grant caller (security review M1). A real prompt uses each at
+    # most a few times.
+    counts = {t: len(re.findall(r"\{\{\s*" + re.escape(t) + r"\s*\}\}", payload.template)) for t in spec.registry_variables}
+    repeated = sorted(t for t, n in counts.items() if n > _PREVIEW_MAX_USES)
+    if repeated:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{{{{{repeated[0]}}}}} appears more than {_PREVIEW_MAX_USES} times.",
+        )
     wanted = extract_tokens(payload.template) & set(spec.registry_variables)
     values: dict[str, object] = dict(chatbot_prompt_vars.render_values(db, wanted)) if wanted else {}
     if "current_date" in spec.variables:

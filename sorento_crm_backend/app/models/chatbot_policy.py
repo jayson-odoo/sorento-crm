@@ -84,7 +84,7 @@ class ChatbotStatusWord(Base):
     (PLAN-prompt-dynamic-30sep D6).
 
     The parser prompt's status bullets and its `status` / `order_status` value list are
-    rendered from these rows at request time (`chatbot/prompt_registry_vars.py`), so a
+    rendered from these rows at request time (`app/services/chatbot_prompt_vars.py`), so a
     word added here reaches the next turn without a prompt publish. Audited for the same
     reason as ``ChatbotDomain``: one row changes what every future turn is told.
     """
