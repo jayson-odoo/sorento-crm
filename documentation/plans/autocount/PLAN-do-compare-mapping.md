@@ -1,6 +1,6 @@
 # PLAN - DO compare mapping (DO-COMPARE-SIM)
 
-Status: planning, full track (migration + page). Branch `crew/do-compare-sim`.
+Status: building, full track (migration + page). Branch `crew/do-compare-sim`.
 UAC: `do-compare-mapping-acceptance-criteria.md`.
 
 ## 1. Why (measured)
@@ -77,8 +77,20 @@ Cancel->cancel cancel_flag.
 
 ## 4. Grill (30 Sep)
 
-Sent as one crew ask (Q1-Q10, recommendations as in section 2 and 3). Answers recorded here
-when relayed.
+Sent as one crew ask; owner answered "all as recommended" (30 Sep).
+
+| # | Question | Answer |
+|---|---|---|
+| Q1 | Storage | new table `autocount_compare_mappings`, one row per kind, columns as JSON, company-shared, seeded Master defaults |
+| Q2 | Transforms | fixed list in code (text, number, money, date, percent_text, percent_fraction, cancel_flag); no formula builder |
+| Q3 | Doc-no normaliser | trim + uppercase only; no prefix strip until a measured miss |
+| Q4 | Page | "Mapping" on the Compare tab, the ss Branch mapping table pattern (DataGrid, edit in place, one Save); existing DO pull permission |
+| Q5 | Sheet picking | configured sheet by name, case-insensitive; never `Template` for DO compare; products/stock unchanged |
+| Q6 | Blank line Total (Ex) | no alias fallback; blank stays blank, not compared |
+| Q7 | Cancelled DOs | skipped in the lines compare; headers compare still reports cancel |
+| Q8 | Header-only docs (RMA, CG, RF...) + genuine cancel/debtor diffs | reported as-is |
+| Q9 | ss doc-feed mapping | not needed, no ss lane |
+| Q10 | Track / mock | full track, one PR, no mock (existing components only) |
 
 ## 5. Slices
 
