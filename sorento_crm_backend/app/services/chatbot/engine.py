@@ -1332,22 +1332,9 @@ def _customer_scope_gate(
         for e in entities
         if _is_customer(e) and e.get("current_message") is True and jsc.truthy(e.get("raw"))
     ]
-    def _carried_customer_word(e: dict[str, Any]) -> bool:
-        # CHATBOT-SELFREF-SCOPE: under `order` the resolver re-types a brand or category
-        # token as a customer (`entity_resolver._DOMAIN_HINT_EXPANSIONS`), and a CARRIED
-        # one (the category "water tap" the focus held from an earlier turn) can only
-        # ever name customers nobody typed. A scoped turn's subject is its links, so the
-        # carried word is kept away from the resolver rather than screened after it.
-        return (
-            e.get("current_message") is False
-            and str(e.get("hint") or "").strip().lower() in ("brand", "category")
-        )
-
     if not enforced:
         # Staff: "my" alone means the links; naming a customer is unscoped as today.
-        if words:
-            return parse_output, None, False
-        return {**parse_output, "entities": [e for e in entities if not _carried_customer_word(e)]}, list(scope["ids"]), False
+        return (parse_output, list(scope["ids"]), False) if not words else (parse_output, None, False)
     ids: list[str] | None = list(scope["ids"])
     if words:
         from app.services import contact_customer_scope as scope_mod
@@ -1359,25 +1346,7 @@ def _customer_scope_gate(
         return {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}, None, True
     if not in_order:
         return parse_output, None, False
-    return (
-        {**parse_output, "entities": [e for e in entities if not _is_customer(e) and not _carried_customer_word(e)]},
-        ids,
-        False,
-    )
-
-
-def _typed_tokens(parse_output: dict[str, Any]) -> set[str]:
-    """The words the customer typed THIS message (`current_message` not False), by the
-    raw and canonical spellings the resolver keys its answer on, case-folded."""
-    typed: set[str] = set()
-    for e in parse_output.get("entities") or []:
-        if not isinstance(e, dict) or e.get("current_message") is False:
-            continue
-        for key in ("raw", "canonical_code"):
-            word = jsc.js_string(e.get(key) or "").strip().casefold()
-            if word:
-                typed.add(word)
-    return typed
+    return {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}, ids, False
 
 
 def _screen_resolver_for_scope(
@@ -1385,24 +1354,15 @@ def _screen_resolver_for_scope(
     payload: dict[str, Any] | None,
     compatible: list[dict[str, Any]],
     candidates: dict[str, list[dict[str, Any]]],
-    *,
-    typed_tokens: set[str] | None = None,
 ) -> tuple[bool, list[dict[str, Any]], dict[str, list[dict[str, Any]]], list[str]]:
     """The post-resolver filter behind the gate, for a contact whose scope is enforced and
     whatever the domain or hint (the resolver re-types brand, category, order and product
     tokens as customers under `order`). Every customer row outside the contact's own is
-    dropped from the resolver's answer. A DO number still resolves, but never carries the
-    owning customer's name (`display`).
-
-    The REFUSAL is for a word the customer TYPED (parent plan Q7b, AC-CS-10): a typed
-    token whose only matches were other customers, or a picker those matches opened.
-    CHATBOT-SELFREF-SCOPE (production, 30 Sep 2026): a CARRIED word - the category
-    "water tap" the focus held from an earlier turn, handed to the resolver by
-    `turn_runtime.with_carried_entities` and re-typed as a customer under `order` - opened
-    a picker of customers nobody named, and "I want to check my sales" was refused. Its
-    matches are dropped and reported, never refused; `typed_tokens` (from `_typed_tokens`)
-    says which tokens were typed, and `None` reads every token as typed (the refusal as it
-    was). Returns `(refused, compatible, candidates, dropped_ids)`."""
+    dropped from the resolver's answer; a token whose ONLY matches were other customers,
+    or a picker that listed any, refuses the turn. A DO number still resolves, but never
+    carries the owning customer's name (`display`). Returns
+    `(refused, compatible, candidates, dropped_ids)`; `dropped_ids` (CHATBOT-SELFREF-SCOPE
+    R4) names the customer ids dropped, for the trace."""
     own = {str(i) for i in scope["ids"]}
     dropped_ids: list[str] = []
 
@@ -1425,18 +1385,11 @@ def _screen_resolver_for_scope(
             kept.append(row)
         return kept
 
-    def _typed(token: Any) -> bool:
-        if typed_tokens is None:
-            return True
-        return jsc.js_string(token or "").strip().casefold() in typed_tokens
-
     refused = False
     dropped = False
     if isinstance(payload, dict):
         resolved = payload.get("resolved")
-        tokens: list[Any] = []
         if isinstance(resolved, dict):
-            tokens = [t for t in (resolved.get("tokens") or []) if jsc.truthy(t)]
             for resolution in resolved.get("resolutions") or []:
                 if not isinstance(resolution, dict):
                     continue
@@ -1444,7 +1397,7 @@ def _screen_resolver_for_scope(
                 kept = _clean(matches)
                 if len(kept) != len(matches):
                     dropped = True
-                    if not kept and _typed(resolution.get("token") or resolution.get("raw")):
+                    if not kept:
                         refused = True
                 resolution["matches"] = kept
             if isinstance(resolved.get("intersection"), list):
@@ -1459,10 +1412,7 @@ def _screen_resolver_for_scope(
                     before = len(gate[key])
                     gate[key] = _clean(gate[key])
                     dropped = dropped or len(gate[key]) != before
-        # A picker that listed another customer: refused only when a TYPED word is
-        # behind it. The resolver's token list is the whole of what it was asked about
-        # this turn, so no typed token among them means the picker came off the carry.
-        if dropped and payload.get("_exit_kind") == "offer" and (not tokens or any(_typed(t) for t in tokens)):
+        if dropped and payload.get("_exit_kind") == "offer":
             refused = True
     before = len(compatible)
     compatible = _clean(compatible)
@@ -4042,19 +3992,14 @@ def _run_stages(  # noqa: PLR0915
             unplaced_tokens = resolve_outcome.unplaced_tokens
             spec_tier = resolve_outcome.spec_tier
             resolver_payload = resolve_outcome.payload
-            # CHATBOT-SELFREF-SCOPE R4: every scope decision is on the trace, with the
-            # reason and the ids it dropped, so the next refusal explains itself.
-            scope_self_reference = verdict.get("self_reference") is True
-            screened_dropped: list[str] = []
+            # CHATBOT-SELFREF-SCOPE R4: every scope decision is on the trace, with its
+            # reason and the ids it dropped, so a refusal explains itself.
             screened_refused = False
+            screened_dropped: list[str] = []
             if customer_scope and customer_scope.get("enforced"):
                 screened_refused, compatible_entities, resolved_candidates, screened_dropped = (
                     _screen_resolver_for_scope(
-                        customer_scope,
-                        resolver_payload,
-                        compatible_entities,
-                        resolved_candidates,
-                        typed_tokens=_typed_tokens(resolver_parse_output),
+                        customer_scope, resolver_payload, compatible_entities, resolved_candidates
                     )
                 )
                 scope_refused = scope_refused or screened_refused
@@ -4068,44 +4013,26 @@ def _run_stages(  # noqa: PLR0915
                     {
                         "refused": "customer_not_permitted",
                         "reason": (
-                            "typed_word_matched_only_other_customers"
+                            "resolver_matched_only_other_customers"
                             if screened_refused
                             else "typed_customer_word_outside_links"
                         ),
-                        "typed": sorted(_typed_tokens(resolver_parse_output)),
                         "dropped": screened_dropped,
-                        "self_reference": scope_self_reference,
+                        "self_reference": verdict.get("self_reference") is True,
                     },
                 )
                 resolver_payload = _pass_scope_gate(resolver_payload, [], force=True)
             elif scope_ids is not None:
-                # D3: the linked customers are this turn's customers. A picker a CARRIED
-                # word opened on customers nobody typed is spent once its rows are
-                # dropped (nothing else is left to ask about), so it is passed and the
-                # tool runs on the links instead of an empty picker being printed.
-                spent_offer = bool(screened_dropped) and not compatible_entities and (
-                    isinstance(resolver_payload, dict) and resolver_payload.get("_exit_kind") == "offer"
-                )
+                # D3: the linked customers are this turn's customers.
                 compatible_entities = _scoped_compatible(customer_scope, scope_ids, compatible_entities)
-                resolver_payload = _pass_scope_gate(resolver_payload, compatible_entities, force=spent_offer)
+                resolver_payload = _pass_scope_gate(resolver_payload, compatible_entities, force=False)
                 turn_trace.add(
                     "customer_scope",
                     {
                         "decision": "scoped_to_links",
                         "ids": list(scope_ids),
-                        "self_reference": scope_self_reference,
-                        **({"dropped": screened_dropped, "reason": "carried_word_matched_other_customers"} if screened_dropped else {}),
-                        **({"offer_passed": True} if spent_offer else {}),
-                    },
-                )
-            elif screened_dropped:
-                turn_trace.add(
-                    "customer_scope",
-                    {
-                        "decision": "dropped_other_customers",
-                        "dropped": screened_dropped,
-                        "reason": "carried_word_matched_other_customers",
-                        "self_reference": scope_self_reference,
+                        "self_reference": verdict.get("self_reference") is True,
+                        **({"dropped": screened_dropped} if screened_dropped else {}),
                     },
                 )
             answer_parse_output = turn_runtime.answer_parse_output(

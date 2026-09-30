@@ -626,20 +626,13 @@ def _rendered_product_count(items: list[Any]) -> int | None:
 
 
 def entity_ids_transformer(
-    trigger: dict[str, Any] | None,
-    *,
-    space_id: str | None = None,
-    scope_events: list[dict[str, Any]] | None = None,
+    trigger: dict[str, Any] | None, *, space_id: str | None = None
 ) -> dict[str, Any]:
     """The MCP tool's arguments, built from the gate's already-resolved entities.
 
     `space_id` defaults to n8n's own literal so a replay is byte-equal; production passes
     the default respond workspace's (D5), which is the same value on this install and the
     right one on any other.
-
-    `scope_events`, when given, collects one record per customer-scope decision the
-    customer-scoped block below makes without raising (CHATBOT-SELFREF-SCOPE R4); the
-    caller writes them to the turn trace as `customer_scope` events.
     """
     trig = trigger if isinstance(trigger, dict) else {}
     semantic_input: Any = trig.get("semantic_input")
@@ -1174,30 +1167,11 @@ def entity_ids_transformer(
     if isinstance(scope_ids, list) and scope_ids and tool_name in CUSTOMER_SCOPED_TOOLS:
         requested = out.get("customer_ids")
         requested = requested if isinstance(requested, list) else ([requested] if requested else [])
-        own = {str(i) for i in scope_ids}
-        outside = [str(c) for c in requested if str(c) not in own]
+        outside = [str(c) for c in requested if str(c) not in {str(i) for i in scope_ids}]
         if outside:
-            # CHATBOT-SELFREF-SCOPE R1: on a self-reference turn ("my sales") the links ARE
-            # the subject, so an id the conversation carried from before (an offer's
-            # `customer_ids`, a settled focus) is clamped to them and reported, never
-            # refused. Any other turn keeps the refusal: an id outside the links cannot
-            # have come from this contact's own words, and the fetch must not run on it.
-            if jsc.get(semantic_input, "self_reference") is True:
-                requested = [c for c in requested if str(c) in own]
-                if scope_events is not None:
-                    scope_events.append(
-                        {
-                            "decision": "clamped_to_links",
-                            "reason": "self_reference_carried_customer_ids",
-                            "tool": tool_name,
-                            "dropped": outside,
-                            "kept": [str(c) for c in requested],
-                        }
-                    )
-            else:
-                raise ScopeViolation(
-                    f"{tool_name} asked for a customer outside the contact's scope", dropped=outside
-                )
+            raise ScopeViolation(
+                f"{tool_name} asked for a customer outside the contact's scope", dropped=outside
+            )
         out["customer_ids"] = requested or list(scope_ids)
         out.pop("customer_query", None)
 

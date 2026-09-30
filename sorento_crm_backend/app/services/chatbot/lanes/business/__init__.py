@@ -917,10 +917,6 @@ def _fetch_semantic_input(
         # delivered) and the company the contact named, straight to the tool's params.
         "sales_basis": parse_output.get("sales_basis"),
         "sales_company": parse_output.get("sales_company"),
-        # CHATBOT-SELFREF-SCOPE R1: "my" / "me" / "our" (parent plan Q5) - read by
-        # `entity_ids_transformer`'s customer-scope block, which clamps a carried
-        # customer id outside the links to them on such a turn instead of refusing.
-        "self_reference": parse_output.get("self_reference") is True,
         # R-B3 (reviewer finding, Phase 3 fix round): the sales_report_detail
         # offer's stored channel, restored by `head/output_exchange.py::
         # _apply_outstanding_pending` - `fetch.py` reads this ONLY when THIS
@@ -1325,17 +1321,6 @@ def run_fetch(
     if pre_resolved_brand_ids:
         semantic_input["outstanding_brand_ids"] = pre_resolved_brand_ids
 
-    # CHATBOT-SELFREF-SCOPE R4: what the customer-scope block of `entity_ids_transformer`
-    # decided without raising (a carried id clamped to the links), written to the trace
-    # as `customer_scope` events beside the refusals.
-    scope_events: list[dict[str, Any]] = []
-
-    def _trace_scope_events() -> None:
-        while scope_events:
-            event = scope_events.pop(0)
-            if trace is not None:
-                trace.add("customer_scope", event)
-
     def probe(tool: str, probe_entities: Any, probe_levels: Any) -> Any:
         """One `sub-get-results` call: build the args the same way, then the same seam."""
         trigger = {
@@ -1344,8 +1329,7 @@ def run_fetch(
             "semantic_input": {**semantic_input, "access_levels": probe_levels},
             "contact_id": contact_id,
         }
-        args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id, scope_events=scope_events)
-        _trace_scope_events()
+        args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
         return fetch_mod.parse_mcp_content(
             fetch_mod.call_tool(tool, args, mcp=_McpSeam(services.mcp_call))
         )
@@ -1711,7 +1695,8 @@ def run_fetch(
         # customer account, AC-S1-23), so the ask went out as `crm_sales_analysis` and
         # came back with nothing. Its sales figures are its linked customers' (parent
         # plan Q6a, Q8a): the customer-facing report, over the links, the way every
-        # other sales ask of a scoped contact runs.
+        # other sales ask of a scoped contact runs. Its reply is TEXT (the presenter's
+        # month blocks), never a file.
         tool_name = "crm_sales_report"
         if order_status_raw == "sales_analysis":
             tool_item = {"name": tool_name, "_tool_pick": {"source": "customer_scope_sales_report"}}
@@ -1841,7 +1826,7 @@ def run_fetch(
         # lane names the set, the scheme or the unknown word instead.
         return _error_fragment("the described set qualifies nothing", outcome="not_found")
     try:
-        args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id, scope_events=scope_events)
+        args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
     except fetch_mod.ScopeViolation as violation:
         # D4: the defence behind the engine's gate. No tool is called.
         if trace is not None:
@@ -1855,7 +1840,6 @@ def run_fetch(
                 },
             )
         return _fixed_reply(str(customer_scope.get("refusal") or ""))
-    _trace_scope_events()
     if (
         tool_name in policy_rows.ENTITY_FILTER_REQUIRED_TOOLS
         and not fetch_mod.has_narrowing_filter(args, tool_name=tool_name)
