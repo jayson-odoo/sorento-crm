@@ -12,6 +12,10 @@ from app.services.chatbot.turn.state import (
     Profile,
     fold_token,
 )
+# Core owns the ledger-family rule (`app/services/ledger_family.py`): the stock-ask record
+# names a customer-less ask by it too, and core may not import this package. `compose.py`
+# and `session_state.py` keep reading the two names from here.
+from app.services.ledger_family import ledger_family_key, ledger_family_label
 
 # Which suffix an ask carries, by policy value.
 _ROSTER_POLICIES = {"narrow_to_code", "must_narrow_one", "narrow_by_tier"}
@@ -63,51 +67,6 @@ def _token_of(candidate: dict[str, Any]) -> str:
 def _code_of(candidate: dict[str, Any]) -> str:
     """The code this row IS - the resolver's own, the token's only where it matched one."""
     return str(candidate.get("canonical_code") or candidate.get("raw") or "").strip()
-
-
-#: Words that name a company's LEGAL FORM, not the business (`gate._LEGAL_FORM` on main,
-#: spelled as words because this package may not use regular expressions).
-_LEGAL_FORM_WORDS = frozenset({"SDN", "BHD"})
-
-
-def _without_brackets(text: str) -> str:
-    """`text` with every bracketed or parenthesised run removed.
-
-    The ledger marker a customer row carries is always bracketed - `CHIN CHUN HARDWARE
-    SDN BHD - [A/C I]`, `HANLIM TRADING (JB) SDN BHD (SRT)` - and it is the only part of
-    the name that differs between the ledgers of one trading name.
-    """
-    out: list[str] = []
-    depth = 0
-    for ch in text:
-        if ch in "[(":
-            depth += 1
-            continue
-        if ch in "])":
-            depth = max(0, depth - 1)
-            continue
-        if depth == 0:
-            out.append(ch)
-    return "".join(out)
-
-
-def ledger_family_key(text: str) -> str:
-    """The TRADING NAME behind a customer row, as a comparison key.
-
-    Main's `gate._cust_base`, rule for rule: upper-cased, bracketed parts dropped, the
-    legal-form words dropped, everything non-alphanumeric collapsed to one space. Written
-    with string operations rather than the three regexes it uses because the turn package
-    may not call `re` (AC-1520).
-    """
-    stripped = _without_brackets(text.upper())
-    cleaned = "".join(ch if ch.isalnum() else " " for ch in stripped)
-    return " ".join(w for w in cleaned.split() if w not in _LEGAL_FORM_WORDS)
-
-
-def ledger_family_label(text: str) -> str:
-    """What the family is CALLED: the row's own name without its ledger marker."""
-    cleaned = " ".join(_without_brackets(text).split()).strip().strip("-").strip()
-    return cleaned or text
 
 
 def _family_of(candidate: dict[str, Any], grouping: str | None) -> str | None:
