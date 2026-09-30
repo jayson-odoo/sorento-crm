@@ -294,6 +294,17 @@ def _handler_chat_message_resolver(db, task):
     return resolve_pending(db, limit=limit)
 
 
+def _handler_chat_history_reconcile(db, task):
+    """One Respond.io delta read per recently active contact (lane CHAT-LOCAL-FIRST, R4).
+
+    The thread renders from `chat_histories`; this is what keeps that table honest when
+    the n8n or webhook feed missed a message. Knobs on the task's `metadata`:
+    `activity_days` (7), `concurrency` per workspace key (2), `batch_limit` (500)."""
+    from app.services.chat_thread_sync_service import run_reconcile
+
+    return run_reconcile(db, task)
+
+
 def _handler_chat_latency_watchdog(db, task):
     """Evaluate the WhatsApp round-trip p99 and the per-turn hard ceiling."""
     from app.services.system_health_alert_service import run_chat_latency_watchdog
@@ -690,6 +701,7 @@ def register_task_handlers():
     register_handler("api_call_log_prune", _handler_api_call_log_prune)
     register_handler("import_job_rows_prune", _handler_import_job_rows_prune)
     register_handler("chat_latency_watchdog", _handler_chat_latency_watchdog)
+    register_handler("chat_history_reconcile", _handler_chat_history_reconcile)
     register_handler("project_staleness_sweep", _handler_project_staleness_sweep)
     register_handler("scm_analytics", _handler_scm_analytics)
     register_handler("scm_reorder_run", _handler_scm_reorder_run)
