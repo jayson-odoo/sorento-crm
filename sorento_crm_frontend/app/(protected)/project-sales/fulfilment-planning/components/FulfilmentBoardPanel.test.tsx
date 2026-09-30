@@ -4723,6 +4723,9 @@ describe('FulfilmentBoardPanel: search and Status live under the cards, not in t
     await screen.findByTestId('fulfilment-board-matrix');
 
     const strip = screen.getByTestId('board-grid-filter-strip');
+    // The same Card > CardHeader shell PanelDataGrid draws around the list toolbar, so the search
+    // box shares the list's left edge instead of jumping between views.
+    expect(strip.closest('[data-slot="card-header"]')).not.toBeNull();
     expect(strip.className).toMatch(/\bflex\b/);
     expect(strip.className).not.toMatch(/flex-col/);
     expect(strip.children).toHaveLength(2);

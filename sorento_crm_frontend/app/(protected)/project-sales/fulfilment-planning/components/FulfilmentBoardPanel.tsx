@@ -30,7 +30,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -2536,26 +2536,30 @@ export function FulfilmentBoardPanel({
                 {/* The grid's filter strip: the same search box and Status filter the list's toolbar
                     carries, at the same vertical position (`py-5`, `gap-2`) so the box does not
                     jump between views. No Columns, Expand/Collapse or Decide here. */}
-                <div
-                  data-testid="board-grid-filter-strip"
-                  className="flex w-full flex-wrap items-center gap-2 py-5"
-                >
-                  <ListSearchInput
-                    value={productSearchInput}
-                    onChange={setProductSearchInput}
-                    placeholder="Search sales order, customer, project or product"
-                    aria-label="Search sales order, customer, project or product"
-                    className="w-64"
-                  />
-                  <SearchableMultiSelect
-                    value={statusFilter}
-                    onChange={setStatusFilter}
-                    options={VERDICT_FILTER_OPTIONS}
-                    placeholder="Status"
-                    size="sm"
-                    triggerClassName="w-40 shrink-0"
-                  />
-                </div>
+                <Card>
+                  <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div
+                      data-testid="board-grid-filter-strip"
+                      className="flex w-full flex-wrap items-center gap-2 py-5"
+                    >
+                      <ListSearchInput
+                        value={productSearchInput}
+                        onChange={setProductSearchInput}
+                        placeholder="Search sales order, customer, project or product"
+                        aria-label="Search sales order, customer, project or product"
+                        className="w-64"
+                      />
+                      <SearchableMultiSelect
+                        value={statusFilter}
+                        onChange={setStatusFilter}
+                        options={VERDICT_FILTER_OPTIONS}
+                        placeholder="Status"
+                        size="sm"
+                        triggerClassName="w-40 shrink-0"
+                      />
+                    </div>
+                  </CardHeader>
+                </Card>
                 {/* How much of the board is on screen. Only while a filter is on, and stated as
                     a fraction, so a narrowed board is never mistaken for the whole one. */}
                 {filtering && (
