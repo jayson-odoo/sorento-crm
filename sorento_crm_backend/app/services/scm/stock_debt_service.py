@@ -60,7 +60,12 @@ from app.services.error_handler import AppException
 from app.services.project_supply_service import ProjectSupplyService, held_qty_expr
 from app.services.scm import order_link_service, sales_agent_service, spo_supply
 from app.services.scm.demand import demand_qty, is_open_demand, plan_qty
-from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
+from app.services.scm.front_planning_engine import (
+    DEFAULT_LEAD_TIME_DAYS,
+    later_order_can_wait,
+    qty_text,
+    reserve_window_end,
+)
 # Reused, not reinvented (AC-18): the low stock report's own cap. A read-only export off a
 # bounded catalogue does not need a cap of its own; it needs the SAME reason that one has -
 # "narrow it first" past a size nobody opens a workbook to page through.
@@ -478,6 +483,11 @@ class StockDebtService:
                 key = (line.line.so_number, line.line.core_line_no)
                 assigned_to.setdefault(item.event.key, {}).setdefault(key, 0.0)
                 assigned_to[item.event.key][key] += item.qty
+        # STOCK-DEBT-LENDABLE: a "Lent to" entry links the receiving order, off the same
+        # read (the receiver is a line of this very assignment).
+        order_ids = {
+            line.line.key: line.line.sales_order_id for line in result.lines
+        }
 
         demand = [
             {
@@ -502,7 +512,11 @@ class StockDebtService:
                 # R29: the Sales order cell's own link target.
                 "sales_order_id": line.line.sales_order_id,
                 # R29 + addendum: one LINKED entry per source, replacing `assigned_source`.
-                "assigned_from": self._assigned_from(line),
+                # STOCK-DEBT-LENDABLE: plus one "Lent to" entry per receiver on a line that
+                # lent its landed goods, and the receiver's on-hand entry names the lender.
+                "assigned_from": self._assigned_from(line, order_ids=order_ids),
+                # STOCK-DEBT-LENDABLE: what nearer lines took of this line's landed goods.
+                "lent_qty": line.lent_qty,
             }
             for line in result.lines
             if line.bucket == month
@@ -865,6 +879,31 @@ class StockDebtService:
         demand_rows = self._demand(
             product_ids, warehouse_ids, codes, pools, date_from=date_from, date_to=date_to,
         )
+        # STOCK-DEBT-LENDABLE (owner, 30 Sep 2026, option B): in the VIEW alone, the lines
+        # that CAN WAIT - due on or after `as_of + lead + 14`, the board's own borrow-donor
+        # window, off the SAME batched lead read as the red horizon, and before the TBA
+        # line (`later_order_can_wait`, shared with `_eligible_donor`). Their landed goods,
+        # however they reach the assignment (a placement on the received SPO in `_holds`,
+        # or R7's own-purchase read in `_landed_holds`), are `lendable`: nearer lines draw
+        # them first and the far line reads `order_back`. The board and the ladder
+        # (`assignments_for`) never lend; their Borrow step is where the same window turns
+        # into a decision. This page stays read-only (owner, 30 Sep 2026: "this is a
+        # dashboard view only") and points the planner at that board.
+        lendable_lines: Optional[Set[str]] = None
+        if view:
+            lendable_lines = set()
+            for product_id, lines in demand_rows.items():
+                lead = leads.get(product_id)
+                window = reserve_window_end(
+                    as_of, DEFAULT_LEAD_TIME_DAYS if lead is None else lead
+                )
+                lendable_lines.update(
+                    line.key
+                    for line in lines
+                    if later_order_can_wait(
+                        line.required_date, window=window, tba_from=tba_from
+                    )
+                )
         holds = self._holds(
             product_ids,
             {line.key for lines in demand_rows.values() for line in lines},
@@ -872,11 +911,14 @@ class StockDebtService:
             # SPO-RECEIVED-PIN: what a placement on a received SPO may pin on, see `_holds`.
             span=set(warehouse_ids),
             supply_rows=supply_rows,
+            lendable_lines=lendable_lines,
         )
         # #1362 round 5 (owner ruling, 29 Sep 2026): goods that LANDED for a line stay with
         # that line, so they bind before anybody queues, exactly as a confirmed decision
         # does. After the decision and placement holds, so nothing is pinned twice.
-        holds = holds + self._landed_holds(supply_rows, demand_rows, holds)
+        holds = holds + self._landed_holds(
+            supply_rows, demand_rows, holds, lendable_lines=lendable_lines,
+        )
 
         settings = self.supply._fulfilment_settings()
         grace = settings.get("overdue_grace_days")
@@ -1187,6 +1229,7 @@ class StockDebtService:
         include_po: bool = True,
         span: Optional[Set[str]] = None,
         supply_rows: Optional[Dict[str, List[SupplyEvent]]] = None,
+        lendable_lines: Optional[Set[str]] = None,
     ) -> List[Hold]:
         """What is already promised: confirmed allocations and placement links (R21).
 
@@ -1233,6 +1276,14 @@ class StockDebtService:
         `group=`) is one the read cannot see, and the promise is honoured the way every other
         out-of-span hold is (AC-S2-1b). Neither given (a caller that only wants the holds
         listed), every converted hold is returned.
+
+        `lendable_lines` (STOCK-DEBT-LENDABLE, the view only): the line keys that can wait
+        for a re-buy. A converted received-SPO placement on such a line is `lendable` - it
+        IS the line's landed goods (SO381065's 88 at BRW-BB reach the assignment this way,
+        through the auto placement on SPO-2026/05-0001, and `_landed_holds` then nets its
+        own read to nothing), so without the mark here the feature lent nothing on the real
+        book. A decision hold (`so_line_allocations`) is never lendable: it is a Reserve
+        somebody confirmed, not goods that landed for the line. `None` marks nothing.
         """
         if not line_keys:
             return []
@@ -1394,6 +1445,9 @@ class StockDebtService:
                         qty=take,
                         kind=KIND_ON_HAND,
                         warehouse=row.spo_warehouse_code,
+                        # STOCK-DEBT-LENDABLE: the line's landed goods, lendable when the
+                        # line can wait (see the docstring).
+                        lendable=str(row[0]) in (lendable_lines or ()),
                     )
                 )
                 continue
@@ -1517,7 +1571,9 @@ class StockDebtService:
             )
         return out
 
-    def _assigned_from(self, line) -> List[Dict[str, Any]]:
+    def _assigned_from(
+        self, line, *, order_ids: Optional[Dict[str, Optional[str]]] = None
+    ) -> List[Dict[str, Any]]:
         """R29 + addendum: one LINKED entry per source behind `line`'s `assigned_qty` -
         a document (SPO/PO) or an on-hand bin, each with its OWN quantity, so the FE can
         render "SPO-... line 4 (100)" / "On hand BRW-BB (14)" instead of one merged
@@ -1531,23 +1587,32 @@ class StockDebtService:
         event: the event object is SHARED across every line that draws from it, and only a
         PINNED placement names an order inquiry at all - a plain walk draw of the same
         document, by another line, names none.
+
+        STOCK-DEBT-LENDABLE: an on-hand take LENT by another line (`item.lent_from_so`) is
+        its own entry - "On hand BRW-BB (from SO381065)" beside the plain "On hand BRW-BB"
+        for the free part - and a line that lent gets one `lent` entry per receiver,
+        "Lent to SO396071 (32)", after its own sources. `order_ids` links the receiver.
         """
-        entries: Dict[str, Dict[str, Any]] = {}
-        order: List[str] = []
+        entries: Dict[Tuple[str, Optional[str]], Dict[str, Any]] = {}
+        order: List[Tuple[str, Optional[str]]] = []
         for item in line.assigned:
             event = item.event
-            if event.key not in entries:
-                order.append(event.key)
+            key = (event.key, item.lent_from_line_key)
+            if key not in entries:
+                order.append(key)
                 if event.kind == KIND_ON_HAND:
-                    entries[event.key] = {
+                    lent_from = item.lent_from_so if item.lent_from_line_key else None
+                    entries[key] = {
                         "kind": KIND_ON_HAND,
-                        "ref": f"On hand {event.warehouse}",
+                        "ref": f"On hand {event.warehouse}"
+                        + (f" (from {lent_from})" if lent_from else ""),
                         "spo_number": None,
                         "spo_line_number": None,
                         "qty": 0.0,
+                        "lent_from_so_number": lent_from,
                     }
                 else:
-                    entries[event.key] = {
+                    entries[key] = {
                         "kind": event.kind,
                         "ref": event.ref or event.kind.upper(),
                         "spo_number": event.spo_number,
@@ -1558,10 +1623,19 @@ class StockDebtService:
                         # R42: Covered by opens a PO on its own line, the way it opens an SPO.
                         **self._po_fields(event),
                     }
-            entries[event.key]["qty"] += item.qty
-        return [
-            {**entries[key], "qty": round(entries[key]["qty"], 4)} for key in order
-        ]
+            entries[key]["qty"] += item.qty
+        out = [{**entries[key], "qty": round(entries[key]["qty"], 4)} for key in order]
+        for lent in getattr(line, "lent", ()):
+            out.append(
+                {
+                    "kind": "lent",
+                    "ref": f"Lent to {lent.so_number} ({qty_text(Decimal(str(lent.qty)))})",
+                    "qty": round(lent.qty, 4),
+                    "so_number": lent.so_number,
+                    "sales_order_id": (order_ids or {}).get(lent.line_key),
+                }
+            )
+        return out
 
     @staticmethod
     def _po_fields(event: SupplyEvent) -> Dict[str, Any]:
@@ -1586,6 +1660,8 @@ class StockDebtService:
         supply_rows: Dict[str, List[SupplyEvent]],
         demand_rows: Dict[str, List[DemandLine]],
         holds: Sequence[Hold],
+        *,
+        lendable_lines: Optional[Set[str]] = None,
     ) -> List[Hold]:
         """#1362 round 5 (owner ruling, 29 Sep 2026): goods ordered against a sales-order
         line stay with that line.
@@ -1607,6 +1683,11 @@ class StockDebtService:
         own decisions and placements already hold (`holds`), so nothing is pinned twice.
         A sibling's tier-2 SPARE is not pinned: it is not owed to the line it was bought
         for, so it stays free stock the order's own lines are credited from first (R7).
+
+        `lendable_lines` (STOCK-DEBT-LENDABLE, the view only): the line keys that can wait
+        for a re-buy (`later_order_can_wait` off the batched lead read, decided once in
+        `_assignments`). A pin on such a line is `lendable` and `assign()` lets nearer
+        lines draw it first. `None` (the board path) marks nothing. No extra read.
         """
         already: Dict[str, float] = {}
         for hold in holds:
@@ -1643,6 +1724,7 @@ class StockDebtService:
                         kind=KIND_ON_HAND,
                         warehouse=str(line.warehouse),
                         landed=True,
+                        lendable=line.key in (lendable_lines or ()),
                     )
                 )
         return out
