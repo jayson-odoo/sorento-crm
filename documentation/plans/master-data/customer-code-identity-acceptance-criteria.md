@@ -9,8 +9,9 @@ One CRM customer per debtor code within a company. Names are labels. Plan:
   company, when a sales order is pushed with `customer_code=300-1001` and
   `customer_name="MODERNMED SDN BHD"`, then the order links to the existing customer, no new
   customer row is created, no `customer_created` warning is emitted, the master's
-  `customer_name` is unchanged, and `"MODERNMED SDN BHD"` appears in the customer's
-  `name_aliases`.
+  `customer_name` and `name_aliases` are unchanged, and the order's own `debtor_name` is
+  `"MODERNMED SDN BHD"`. A re-push with another name updates the order's `debtor_name` only; a
+  push without a name leaves the stored one alone.
 - **AC-02 [BE]** Given no customer holds code `X` in the anchor company, when a sales order is
   pushed with code `X` and a name, then exactly one customer is back-created (`customer_created`)
   and a second push with the same code and a different name lands on that same row (AC-01).
@@ -23,7 +24,12 @@ One CRM customer per debtor code within a company. Names are labels. Plan:
 - **AC-05 [BE]** `customer_ambiguous` is in the published warning vocabulary
   (`GET /api/v1/external/contract` `warnings`).
 - **AC-06 [BE]** `customer_back_create.get_or_create` matches by code alone (case and whitespace
-  insensitive, within the company) and returns the existing row when the name differs.
+  insensitive, within the company) and returns the existing row untouched when the name differs.
+- **AC-06b [BE]** Given a customer row already linked under `AED_SORENTO:2613` (same source
+  system), when the masters push sends `source_ref=AED_SORENTO:300-1003` with that row's code,
+  then the row is updated, keeps `AED_SORENTO:2613` as its only ref, the AccNo ref is never
+  linked, the verdict carries `ref_mismatch` and no `ReferenceConflict` is raised. A ref from
+  another source system still conflicts.
 - **AC-07 [BE]** A code held by another company is never matched (AC-V1-2 unchanged).
 
 ## Masters push and imports
@@ -33,11 +39,14 @@ One CRM customer per debtor code within a company. Names are labels. Plan:
   no third row is created, `customer_name` is updated to `BETA` (the masters push is AutoCount's
   own master and owns the name), and `ALPHA` is kept in `name_aliases`.
 - **AC-09 [BE]** The order (Excel) import's debtor upsert matches by code alone: a row with
-  the same code and a different debtor name reuses the customer and does not insert.
+  the same code and a different debtor name reuses the customer, does not insert and does not
+  alias (the DO keeps its own `orders.debtor_name`).
 - **AC-10 [BE]** The customer master import (`customer_import_service`) treats a file row whose
   code is already held as an update of that row, never an insert of a second row.
 - **AC-11 [BE]** `POST /api/v1/order-management/customers` with a code already held in the
   company returns 409 whatever the name.
+- **AC-11b [BE]** A rename through `PUT /api/v1/order-management/customers/{id}` keeps the
+  former name in `name_aliases`, the same as a masters-push or listing-import rename (parity).
 
 ## Schema and data
 
@@ -63,6 +72,16 @@ One CRM customer per debtor code within a company. Names are labels. Plan:
 - **AC-17 [FE]** The Customers list shows one row for `300-1001` after the merge (data, no code
   change), and the customer detail page shows the aliases under the header as "Also known as"
   when there are any, nothing when there are none.
+
+## SO screens (S1 of D8)
+
+- **AC-19 [BE]** `sales_orders.debtor_name` exists (migration cci_0001) and the SCM sales order
+  serializer's `customer_name` is the order's `debtor_name` when set, else the master name;
+  the list search matches it.
+- **AC-20 [BE]** `customer_label.CUSTOMER_LABEL_SQL` (reorder demand popovers, container
+  requests, trend drill) and `order_service.so_outstanding_rows` (chatbot, MCP) print the
+  order's `debtor_name` first, the master name for an order without one, the debtor code for
+  an order nobody holds.
 
 ## Hand test
 

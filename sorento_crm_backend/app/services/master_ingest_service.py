@@ -85,7 +85,6 @@ from app.services.integration_reference_service import (
 )
 from app.services.rules import product_rules
 from app.services.rules import customer_rules
-from app.services.rules.customer_rules import customer_identity
 from app.services.rules.master_rules import clean_supplier_name, normalize_code, resolve_master_by_code
 # The agent code's one normalisation, imported rather than restated: the master
 # screen, the outstanding-SO import and this ingest all have to agree on what
@@ -638,19 +637,15 @@ def _sales_agent_columns(payload: Any, db: Session, company_id: str, warnings: l
 
 
 def _adopt_customer(db: Session, payload: Any, company_id: str) -> Optional[str]:
-    """D13: adoption match for a customer is the (code, name) pair, never the
-    code alone - the same key as `uq_customers_company_code_name_lower` and
-    `order_service.CustomerService.create_customer`, via the shared
-    `customer_identity` rule."""
-    code_norm, name_norm = customer_identity(payload.code, payload.name)
-    row = db.execute(
-        text(
-            "SELECT id FROM customers WHERE lower(btrim(customer_code)) = :code "
-            "AND lower(btrim(customer_name)) = :name AND company_id = :cid LIMIT 1"
-        ),
-        {"code": code_norm, "name": name_norm, "cid": company_id},
-    ).first()
-    return str(row[0]) if row else None
+    """CUSTOMER-CODE-IDENTITY (supersedes D13): adoption match for a customer
+    is the debtor code alone, per company - the same key as
+    `uq_customers_company_code_lower` and every other matcher, through the
+    shared `customer_rules.pick_customer_by_code` rule. A legacy duplicate
+    (two rows still holding the code) resolves by that rule's preference
+    (ref holder, orders, oldest); linking the ref then makes the next push a
+    step-1 ref hit."""
+    entity_id, _ambiguous = customer_rules.pick_customer_by_code(db, payload.code, company_id)
+    return entity_id
 
 
 ENTITY_SPECS: dict[str, EntitySpec] = {
@@ -1211,6 +1206,7 @@ class MasterIngestService:
                 self._finalize_product_derived(payload, columns, existing_id, row=product_row)
             if entity_type == "customers":
                 self._finalize_customer_segment_fill_only(columns, existing_id)
+                self._finalize_customer_name_alias(columns, existing_id)
             diff = self._diff(spec, existing_id, columns, row=product_row)
             if diff != {}:
                 # C1: `{}` is a real answer ("nothing to write"), not "diff
@@ -1247,7 +1243,7 @@ class MasterIngestService:
         if adopted is not None:
             origin = self._origin_of(entity_type, adopted)
             if origin is not None:
-                if entity_type == "products" and is_unclaimed_or_same_source(origin):
+                if entity_type in ("products", "customers") and is_unclaimed_or_same_source(origin):
                     # Code-wins (ingest-products-code-wins, SR0): the same
                     # rule `MasterRefResolver` already applies to a document
                     # line's product rung (`WARN_REF_MISMATCH`) - the
@@ -1258,14 +1254,29 @@ class MasterIngestService:
                     # minted. The item code decides identity and the STORED
                     # reference is kept -- `_link` is deliberately never
                     # called here, so the incoming ref is never written.
+                    #
+                    # Customers too (CUSTOMER-KEY-AUTOKEY decision (a), folded
+                    # into CUSTOMER-CODE-IDENTITY): the wrapper's
+                    # `/debtorbypage` exposes no AutoKey, so the Customer
+                    # entity keys on AccNo (`AED_SORENTO:300-1003`) while the
+                    # SO/PO feeds already linked the row under its AutoKey
+                    # (`AED_SORENTO:2613`). The debtor code decides identity,
+                    # the stored AutoKey ref is kept, the AccNo ref is never
+                    # linked, and `ReferenceConflict` is never raised for it.
                     from app.services.master_ref_resolver import WARN_REF_MISMATCH
 
-                    # C3: this is the DOMINANT products path (FoundryX product
-                    # rows carry no numeric key, so a push always arrives
-                    # keyed by item code even for an already-linked row) - the
-                    # one shared SELECT matters most here.
-                    product_row = self._read_product_row(adopted, columns)
-                    self._finalize_product_derived(payload, columns, adopted, row=product_row)
+                    product_row = None
+                    if entity_type == "products":
+                        # C3: this is the DOMINANT products path (FoundryX
+                        # product rows carry no numeric key, so a push always
+                        # arrives keyed by item code even for an
+                        # already-linked row) - the one shared SELECT matters
+                        # most here.
+                        product_row = self._read_product_row(adopted, columns)
+                        self._finalize_product_derived(payload, columns, adopted, row=product_row)
+                    else:
+                        self._finalize_customer_segment_fill_only(columns, adopted)
+                        self._finalize_customer_name_alias(columns, adopted)
                     diff = self._diff(spec, adopted, columns, row=product_row)
                     if diff != {}:  # C1
                         self._update(spec, adopted, columns)
@@ -1283,6 +1294,7 @@ class MasterIngestService:
                 self._finalize_product_derived(payload, columns, adopted, row=product_row)
             if entity_type == "customers":
                 self._finalize_customer_segment_fill_only(columns, adopted)
+                self._finalize_customer_name_alias(columns, adopted)
             # Captured before the UPDATE (dry run) or the skip (C1, real run):
             # an adoption overwrites a row somebody typed in by hand, and the
             # operator/audit trail gets no other chance to see what it replaces.
@@ -1459,6 +1471,34 @@ class MasterIngestService:
         ).scalar()
         if current:
             columns.pop("market_segment_code")
+
+    def _finalize_customer_name_alias(
+        self, columns: dict[str, Any], existing_row_id: Optional[str]
+    ) -> None:
+        """CUSTOMER-CODE-IDENTITY: the masters push IS AutoCount's debtor master,
+        so it owns `customer_name` - but the name it replaces is not thrown
+        away: it joins the row's `name_aliases` (through the same
+        `record_name_alias` rule the listing import uses), written as one more
+        column of this same update so the dry-run diff shows it too. Nothing
+        happens when the name is unchanged (case/space-insensitively) or when
+        the incoming name is already an alias."""
+        if existing_row_id is None or not columns.get("customer_name"):
+            return
+        current = (
+            self.db.execute(
+                text("SELECT customer_name, name_aliases FROM customers WHERE id = :id"),
+                {"id": existing_row_id},
+            )
+            .mappings()
+            .first()
+        )
+        if current is None:
+            return
+        # A detached shell of the row is enough for the rule: it only reads and
+        # writes these two attributes.
+        shell = Customer(customer_name=columns["customer_name"], name_aliases=list(current["name_aliases"] or []))
+        if customer_rules.record_name_alias(shell, current["customer_name"]):
+            columns["name_aliases"] = shell.name_aliases
 
     def _system_settings(self) -> Optional[SystemSetting]:
         """The singleton `system_settings` row, read ONCE per batch (perf

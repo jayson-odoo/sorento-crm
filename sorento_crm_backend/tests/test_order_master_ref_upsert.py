@@ -48,13 +48,18 @@ def test_customer_upsert_is_idempotent(db):
     assert db.query(Customer).count() == 1
 
 
-def test_same_code_distinct_names_get_separate_rows(db):
-    """One Sage code can carry multiple debtor names - each pair is its own row."""
+def test_same_code_distinct_names_reuse_the_row_and_keep_the_name_as_an_alias(db):
+    """CUSTOMER-CODE-IDENTITY (AC-09): the debtor code identifies the customer;
+    a second debtor name under it is a label on the same row, never a second row."""
     svc = _svc(db)
     a = svc._upsert_customer_from_debtor("Deluxe Home Center (KTN)", "300-D093")
     b = svc._upsert_customer_from_debtor("Deluxe Home Center AC (I)", "300-D093")
-    assert a != b
-    assert db.query(Customer).count() == 2
+    assert a == b
+    assert db.query(Customer).count() == 1
+    row = db.query(Customer).filter(Customer.id == a).one()
+    assert row.customer_name == "Deluxe Home Center (KTN)"
+    # The order keeps its own `debtor_name`; the master is not renamed or aliased by it.
+    assert row.name_aliases == []
 
 
 def test_blank_code_falls_back_to_deterministic_slug(db):

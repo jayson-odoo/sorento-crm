@@ -3379,7 +3379,6 @@ def _customer_import_shape(result: Dict[str, Any]) -> Dict[str, Any]:
     unmapped = result.get("unmapped_headers", [])
     unknown_segments = result.get("unknown_market_segments", [])
     unknown_segment_rows = int(result.get("unknown_market_segment_rows", 0))
-    needs_review = int(result.get("needs_review", 0))
 
     errors: List[str] = []
     if not result.get("readable"):
@@ -3410,11 +3409,6 @@ def _customer_import_shape(result: Dict[str, Any]) -> Dict[str, Any]:
                 f"{unknown_segment_rows} row(s) import with no market segment. "
                 "Each is listed on the job."
             )
-        if needs_review:
-            warnings.append(
-                f"{needs_review} row(s) carry a name close to one already on the same "
-                "customer code. They import; each is listed on the job."
-            )
 
     return {
         "valid": bool(result.get("readable")),
@@ -3426,7 +3420,6 @@ def _customer_import_shape(result: Dict[str, Any]) -> Dict[str, Any]:
             "would_update": int(result.get("updated", 0)),
             "would_unchanged": int(result.get("unchanged", 0)),
             "would_skip": int(result.get("skipped", 0)) + int(result.get("failed", 0)),
-            "needs_review": needs_review,
             "unmapped_headers": list(unmapped),
             "missing_columns": list(result.get("missing_columns", [])),
             "problems": problems,
@@ -3547,8 +3540,6 @@ def process_customer_import(db_job_id: str, file_data: bytes, filename: str, use
                 created=result["created"],
                 updated=result["updated"],
                 unchanged=result["unchanged"],
-                needs_review=result["needs_review"],
-                review_rows=result["review_rows"][:50],
                 unmapped_headers=result["unmapped_headers"],
                 unknown_market_segments=result.get("unknown_market_segments", []),
             ),

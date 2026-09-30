@@ -88,6 +88,14 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
           <p className="text-sm text-muted-foreground">
             Customer Code: {customer.customer_code}
           </p>
+          {customer.name_aliases && customer.name_aliases.length > 0 && (
+            <p
+              className="text-sm text-muted-foreground truncate"
+              title={customer.name_aliases.join(', ')}
+            >
+              Also known as: {customer.name_aliases.join(', ')}
+            </p>
+          )}
         </div>
         <DetailActions
           pager={{

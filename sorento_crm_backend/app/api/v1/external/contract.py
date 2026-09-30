@@ -54,6 +54,7 @@ from app.services.finance.billing_document_ingest_service import (
 )
 from app.services.master_ref_resolver import (
     WARN_AGENT_CREATED,
+    WARN_CUSTOMER_AMBIGUOUS,
     WARN_CUSTOMER_CREATED,
     WARN_CUSTOMER_UNRESOLVED,
     WARN_REF_MISMATCH,
@@ -239,6 +240,7 @@ WARNINGS: list[str] = sorted(
     {
         WARN_CUSTOMER_CREATED,
         WARN_CUSTOMER_UNRESOLVED,
+        WARN_CUSTOMER_AMBIGUOUS,
         WARN_SUPPLIER_CREATED,
         WARN_AGENT_CREATED,
         WARN_WAREHOUSE_UNRESOLVED,

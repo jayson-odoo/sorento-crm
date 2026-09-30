@@ -999,6 +999,15 @@ class DocumentIngestService(MasterRefResolver):
         customer_code = getattr(payload, "customer_code", None)
         if customer_code:
             values["debtor_code"] = normalize_debtor_code(customer_code)
+        # `debtor_name` (CUSTOMER-CODE-IDENTITY, owner decision 30 Sep 2026):
+        # the customer name the SO was issued under is per DOCUMENT - AutoCount
+        # lets the user edit it on the order - so it is stored on the order
+        # whenever it is sent, and the master `customers.customer_name` is
+        # never written from here. Same shape rule as `debtor_code` above: a
+        # PO payload has no `customer_name`, so this is a no-op for a PO.
+        customer_name = (getattr(payload, "customer_name", None) or "").strip()
+        if customer_name:
+            values["debtor_name"] = customer_name
         # PO currency default (D1): only a spec that carries a `currency`
         # header column reaches this, which today is `purchase_orders` alone -
         # so the fill is shape-driven rather than a hardcoded entity check.

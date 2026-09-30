@@ -29,7 +29,7 @@ from app.services.integration_reference_service import (
     ReferenceConflict,
 )
 from app.services.master_ingest_service import MissingReference, _is_company_scoped
-from app.services.rules import master_rules
+from app.services.rules import customer_rules, master_rules
 from app.services.scm import customer_back_create, sales_agent_service
 from app.services.scm.supplier_back_create import back_create_supplier, supplier_slug
 
@@ -55,6 +55,12 @@ WARN_UNCLASSIFIED_DEMAND = "unclassified_demand"
 #: rather than back-created or guessed, the document lands with `supplier_id`
 #: NULL. Distinct from a plain "not found" name, which still back-creates.
 WARN_SUPPLIER_AMBIGUOUS = "supplier_ambiguous"
+#: CUSTOMER-CODE-IDENTITY: a debtor code still held by more than one customer
+#: row (legacy duplicates the merge migration has not yet folded). The row is
+#: chosen by `customer_rules.pick_customer_by_code` (ref holder, else the one
+#: with orders, else the oldest) rather than at random, and the verdict says
+#: so; unreachable once `uq_customers_company_code_lower` is in place.
+WARN_CUSTOMER_AMBIGUOUS = "customer_ambiguous"
 
 
 def dedupe_warnings(warnings: list[str]) -> list[str]:
@@ -313,12 +319,16 @@ class MasterRefResolver:
             return None
 
         if model is Customer:
-            entity_id = self._resolve_by_code(model, code) if code else None
+            if not code:
+                return None
+            entity_id = self._resolve_customer_by_code(code, warnings)
             if entity_id is not None:
                 return entity_id
-            # D2: only when BOTH are sent - the unique index is on the pair,
-            # and a code-only row would collide with a later named one.
-            if code and name:
+            # CUSTOMER-CODE-IDENTITY: the code is the identity, the name only
+            # labels the new row - so a code nobody holds is back-created
+            # only when a name was sent too (never invent one), and a later
+            # push naming the same code under ANY name lands on this row.
+            if name:
                 customer = customer_back_create.get_or_create(
                     self.db, code=code, name=name, company_id=self.company_id
                 )
@@ -334,44 +344,63 @@ class MasterRefResolver:
 
         return None
 
+    def _resolve_customer_by_code(self, code: str, warnings: list[str]) -> Optional[str]:
+        """The customer a debtor code names in the anchor company, by code alone
+        (CUSTOMER-CODE-IDENTITY), through the one shared rule
+        `customer_rules.pick_customer_by_code` - the same one the back-create,
+        the masters push and the order import go through, so a code can never
+        resolve two different ways.
+
+        Legacy duplicates (two rows still holding one code before the merge
+        migration ran) are not picked at random: the rule prefers the row the
+        integration already knows, then the one with orders, then the oldest,
+        and the verdict carries `customer_ambiguous` so the ESB log shows
+        which documents landed under that rule.
+
+        Memoised like `_resolve_by_code` (perf round 5): a positive hit is
+        cached for the batch, a miss is not (this same batch may back-create
+        the row). The warning rides on the memo too, so the SECOND document
+        naming an ambiguous code in one batch is flagged like the first.
+        """
+        normalized = code.strip().upper()
+        memo_key = (Customer.__tablename__, "code", normalized)
+        ambiguous_key = (Customer.__tablename__, "ambiguous", normalized)
+        if memo_key in self._memo:
+            if self._memo.get(ambiguous_key):
+                warnings.append(WARN_CUSTOMER_AMBIGUOUS)
+            return self._memo[memo_key]
+        entity_id, ambiguous = customer_rules.pick_customer_by_code(
+            self.db, code, self.company_id
+        )
+        if ambiguous:
+            warnings.append(WARN_CUSTOMER_AMBIGUOUS)
+        if entity_id is not None:
+            self._memo[memo_key] = entity_id
+            self._memo[ambiguous_key] = "1" if ambiguous else None
+        return entity_id
+
     def _resolve_by_code(self, model: type, code: str) -> Optional[str]:
         """Exact match on the model's code column, case/whitespace-insensitive.
 
-        `Customer` stays its own query (S3 repoint): `master_rules
-        .resolve_master_by_code` deliberately has no `customers` entry -
-        identity there is the (code, name) pair, not the code alone (D13) -
-        but this ladder's Customer rung has always matched on a bare code
-        too (the `WARN_CUSTOMER_UNRESOLVED` path). Every other model
-        delegates to the shared function (D17), the same one the manual
-        create services and the ESB masters push already go through.
+        `Customer` never reaches here: its rung goes through
+        `_resolve_customer_by_code` (the shared code-identity rule, with its
+        ambiguity warning). Every other model delegates to `master_rules
+        .resolve_master_by_code` (D17), the same function the manual create
+        services and the ESB masters push already go through.
 
         Memoised (perf round 5): a positive hit is cached for every model - a
         code that resolved once resolves the same way for the rest of this
         batch, since nothing here writes to the code column mid-batch. A MISS
         is cached too, but only for `Product`/`Warehouse` - the two models
         this ladder never back-creates, so "not found" cannot go stale within
-        the batch the way it would for `Customer`/`Supplier`.
+        the batch the way it would for `Supplier`.
         """
         normalized = code.strip().upper()
         memo_key = (model.__tablename__, "code", normalized)
         if memo_key in self._memo:
             return self._memo[memo_key]
-        if model is Customer:
-            row = (
-                self.db.query(model.id)
-                .filter(func.upper(func.btrim(Customer.customer_code)) == normalized)
-                .order_by(model.id.desc())
-                .filter(model.company_id == self.company_id)
-                .first()
-            )
-            entity_id = str(row[0]) if row else None
-        else:
-            company_id = (
-                self.company_id if _is_company_scoped(model.__tablename__) else None
-            )
-            entity_id = master_rules.resolve_master_by_code(
-                self.db, model, code, company_id
-            )
+        company_id = self.company_id if _is_company_scoped(model.__tablename__) else None
+        entity_id = master_rules.resolve_master_by_code(self.db, model, code, company_id)
         if entity_id is not None or model in (Product, Warehouse):
             self._memo[memo_key] = entity_id
         return entity_id

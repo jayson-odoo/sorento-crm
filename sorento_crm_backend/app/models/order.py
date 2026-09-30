@@ -96,13 +96,22 @@ class Customer(Base, CompanyScopedMixin):
     ]
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    # Not column-unique. Real customers can share a single code across
-    # multiple debtor names (e.g. "300-D093" maps to both "Deluxe Home Center
-    # (KTN)" and "Deluxe Home Center AC (I)"). Uniqueness enforced via the
-    # composite functional index in __table_args__ below: lower(customer_code)
-    # + lower(customer_name) must be distinct.
+    # The debtor code IS the customer within a company (CUSTOMER-CODE-IDENTITY,
+    # owner decision 30 Sep 2026: AutoCount keys a debtor by code, and the CRM
+    # used to fork a second row whenever a document spelled the name
+    # differently, so 300-1001 existed three times). Unique per company through
+    # the functional index in __table_args__ below: lower(btrim(customer_code)).
+    # The name is a label: a document keeps the name it was issued under on
+    # itself (`orders.debtor_name`, `sales_orders.debtor_name`) and never
+    # renames the master; only the customer master feed does.
     customer_code = Column(String(50), nullable=False)
     customer_name = Column(String(255), nullable=False)
+    # Names this customer has also been known by: the rows the duplicate-code
+    # merge (migration cci_0001) folded into this one, and every earlier master
+    # name a rename replaced. A JSON list rather than a table - one list per
+    # customer, read in one place (the detail header). Order-preserving,
+    # case/space-insensitively distinct, never holds the current name.
+    name_aliases = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     email = Column(String(150), nullable=True)
     phone_number = Column(String(50), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
@@ -187,20 +196,17 @@ class Customer(Base, CompanyScopedMixin):
         Index("ix_customers_is_active", "is_active"),
         Index("ix_customers_customer_code", "customer_code"),
         Index("ix_customers_account_owner_user_id", "account_owner_user_id"),
-        # Composite uniqueness - see column docstring. Created as a functional
-        # UNIQUE INDEX by migration 220 so case + whitespace differences don't
-        # produce silent duplicates, then re-created WITH company_id by migration
-        # 305: the same code+name legally exists once per company (884 pairs are
-        # held by both Sorento and Mocha today), so the pre-305 global shape would
-        # reject a real row. `products` was updated to its composite at the time
-        # and this one was not, which mattered because a test building its schema
-        # from `Base.metadata.create_all` got the GLOBAL index and failed on data
-        # production accepts. Keep this in step with the live index.
+        # One customer per debtor code per company - see the column comment.
+        # Migration 220 made the (code, name) pair unique, 305 scoped it by
+        # company, cci_0001 merged the duplicate-code rows and replaced the pair
+        # index with this code-only one. The same code legally exists once per
+        # company (Sorento and Mocha both hold hundreds of them). Keep this in
+        # step with the live index: a test building its schema from
+        # `Base.metadata.create_all` gets exactly this.
         Index(
-            "uq_customers_company_code_name_lower",
+            "uq_customers_company_code_lower",
             "company_id",
             func.lower(func.btrim(customer_code)),
-            func.lower(func.btrim(customer_name)),
             unique=True,
         ),
     )
@@ -507,6 +513,12 @@ class SalesOrder(Base, CompanyScopedMixin):
     # is what makes the link fixable. Never a substitute for the FK - `customer_id` stays
     # the link, this is the evidence behind it.
     debtor_code = Column(String(64), nullable=True)
+    # The customer name the source document was issued under (CUSTOMER-CODE-IDENTITY,
+    # owner decision 30 Sep 2026): AutoCount lets a user edit the debtor name on the
+    # SO itself, so it is per document, and it is what every SO-facing screen shows,
+    # with the master name only as the fallback for an order that carries none. The
+    # master `customers.customer_name` is never written from a document.
+    debtor_name = Column(String(255), nullable=True)
     # Who sold it, as the salesperson master (`sales_agents`), resolved from the agent code
     # the extract states. Nullable because most orders predate the column and no export is
     # required to carry an agent; `SET NULL` because deleting a salesperson must not delete
