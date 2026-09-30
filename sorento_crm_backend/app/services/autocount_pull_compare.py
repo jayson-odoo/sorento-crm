@@ -219,3 +219,107 @@ def compare_stock(excel_rows: list[dict], fed_rows: list[dict]) -> dict:
         "only_in_excel": only_in_excel,
         "only_in_pull": only_in_pull,
     }
+
+
+# ===================================================================== delivery orders
+
+#: The DO lines import's own header aliases (`order_service.validate_delivery_order_detail_
+#: excel`), lower-cased: what a checker's sheet may call each key column.
+_DO_DOC_NO_KEYS = ("doc no", "doc number", "order number")
+_DO_ITEM_KEYS = ("item code", "product code")
+_DO_LOCATION_KEYS = ("location", "warehouse", "warehouse code")
+_DO_QTY_KEYS = ("qty", "quantity")
+
+
+def _excel_value(row: dict, keys: tuple[str, ...]) -> Any:
+    lowered = {str(k).strip().lower(): v for k, v in row.items()}
+    for key in keys:
+        if key in lowered:
+            return lowered[key]
+    return None
+
+
+def _do_excel_key(row: dict) -> tuple[str, str, str]:
+    return (
+        _key(_excel_value(row, _DO_DOC_NO_KEYS)),
+        _key(_excel_value(row, _DO_ITEM_KEYS)),
+        _key(_excel_value(row, _DO_LOCATION_KEYS)),
+    )
+
+
+def _do_label(doc_no: Any, item_code: Any, location: Any) -> str:
+    return f"{str(doc_no or '').strip()}|{str(item_code or '').strip()}|{str(location or '').strip()}"
+
+
+def _do_qty(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value).strip())
+    except (InvalidOperation, ValueError, TypeError, AttributeError):
+        return Decimal("0")
+
+
+def _json_number(value: Decimal):
+    return int(value) if value == value.to_integral_value() else float(value)
+
+
+def compare_delivery_orders(excel_rows: list[dict], pull_rows: list[dict]) -> dict:
+    """AC-DP-32: the checker's DO lines sheet against the pull's raw DO records, keyed by
+    (Doc No, Item Code, Location) trimmed and case-insensitive, `Qty` compared as a
+    Decimal. `pull_rows` are the raw vendor records (one per document, `Details[]`); a
+    Details row with no `ItemCode` is not a line, the DO ingest's own rule. Only-in labels
+    are `DOCNO|ITEM|LOCATION`. Same summary shape as the other two comparisons; no quantity
+    totals (a DO line quantity total means nothing across documents)."""
+    excel_by_key: dict[tuple[str, str, str], dict] = {}
+    for row in excel_rows:
+        key = _do_excel_key(row)
+        if key[0] and key[1]:
+            excel_by_key[key] = row
+
+    pull_by_key: dict[tuple[str, str, str], tuple[dict, dict]] = {}
+    for rec in pull_rows:
+        if not isinstance(rec, dict):
+            continue
+        for line in rec.get("Details") or []:
+            if not isinstance(line, dict) or not str(line.get("ItemCode") or "").strip():
+                continue
+            key = (_key(rec.get("DocNo")), _key(line.get("ItemCode")), _key(line.get("Location")))
+            pull_by_key[key] = (rec, line)
+
+    only_in_excel = sorted(
+        _do_label(
+            _excel_value(excel_by_key[k], _DO_DOC_NO_KEYS),
+            _excel_value(excel_by_key[k], _DO_ITEM_KEYS),
+            _excel_value(excel_by_key[k], _DO_LOCATION_KEYS),
+        )
+        for k in excel_by_key if k not in pull_by_key
+    )
+    only_in_pull = sorted(
+        _do_label(rec.get("DocNo"), line.get("ItemCode"), line.get("Location"))
+        for k, (rec, line) in pull_by_key.items() if k not in excel_by_key
+    )
+
+    common_keys = [k for k in excel_by_key if k in pull_by_key]
+    differences: list[dict] = []
+    matched = 0
+    for key in common_keys:
+        excel_row = excel_by_key[key]
+        rec, line = pull_by_key[key]
+        excel_qty = _do_qty(_excel_value(excel_row, _DO_QTY_KEYS))
+        pull_qty = _do_qty(line.get("Qty"))
+        if excel_qty != pull_qty:
+            differences.append({
+                "item_code": str(line.get("ItemCode") or "").strip(),
+                "doc_no": str(rec.get("DocNo") or "").strip(),
+                "location": str(line.get("Location") or "").strip(),
+                "field": "qty", "excel": _json_number(excel_qty), "pull": _json_number(pull_qty),
+            })
+        else:
+            matched += 1
+
+    total = len(common_keys)
+    return {
+        "summary": {"total": total, "matched": matched, "different": total - matched},
+        "differences": differences,
+        "only_in_excel": only_in_excel,
+        "only_in_pull": only_in_pull,
+    }

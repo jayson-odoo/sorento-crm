@@ -35,16 +35,24 @@ from app.services.queue_service import enqueue_job
 logger = logging.getLogger(__name__)
 
 #: Entity name (as the FE/route spells it) -> the permission slug that gates it.
+#: `delivery_orders` (PLAN-autocount-do-pull-crm-30sep.md) is the third entity on this
+#: machinery; its preview and apply run the DO ingest, never a writer of their own.
 ENTITY_PERMISSIONS = {
     "products": "master_data.products.autocount_pull",
     "stock_balances": "inventory.stock.autocount_pull",
+    "delivery_orders": "order_management.orders.autocount_pull",
 }
 
 #: Entity name -> the `import_jobs.job_type` a pull of it is stored under.
 JOB_TYPES = {
     "products": "autocount_products_pull",
     "stock_balances": "autocount_stock_pull",
+    "delivery_orders": "autocount_delivery_orders_pull",
 }
+
+#: The flat scope keys a delivery-orders build accepts (DO-PULL-SS contract): a day window,
+#: or one document by number; none = the gateway's own default (the last 31 MYT days).
+SCOPE_KEYS = ("fromDay", "toDay", "docNo")
 
 #: D3 (small-fix track, browser e2e run 3): "date of the apply" is the LOCAL calendar day,
 #: same convention every other module in this file's neighbourhood uses for a user-facing
@@ -56,6 +64,7 @@ _MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 APPLY_JOB_TYPES = {
     "products": "autocount_products_apply",
     "stock_balances": "autocount_stock_apply",
+    "delivery_orders": "autocount_delivery_orders_apply",
 }
 
 #: A pull is visible on the review page (rows / download / compare) once the preview has
@@ -181,11 +190,17 @@ def get_owned_pull(db: Session, *, job_id: str, user_id: str) -> Optional[Import
     return job
 
 
-def start_pull(db: Session, *, user_id: str, company_id: str, entity: str) -> ImportJob:
+def start_pull(
+    db: Session, *, user_id: str, company_id: str, entity: str, scope: Optional[dict] = None
+) -> ImportJob:
     """Reuses an open pull; otherwise asks FoundryX to build a snapshot and creates the
     pending row (AC-PL-3, AC-PL-4). Raises `FoundryxPullError` on any FoundryX refusal -
     the caller is responsible for leaving no job row behind on that path, which is true
     here because the row is only ever constructed AFTER `client.build` returns.
+
+    `scope` (delivery orders, DO-PULL-SS contract) is passed to the build flat and kept
+    on the pull for the review header; an open pull is reused whatever scope the second
+    click names - one open pull per company + entity + caller is the rule (AC-PL-4).
     """
     existing = find_open_pull(db, user_id=user_id, company_id=company_id, entity=entity)
     if existing is not None:
@@ -193,12 +208,14 @@ def start_pull(db: Session, *, user_id: str, company_id: str, entity: str) -> Im
 
     company_code = _company_code(db, company_id)
     client = FoundryxAutocountClient(db)  # raises FoundryxPullError(NOT_CONFIGURED) if unset
-    body = client.build(company_code, entity)
+    scope = {k: v for k, v in (scope or {}).items() if k in SCOPE_KEYS and v not in (None, "")}
+    body = client.build(company_code, entity, scope or None)
 
     pull = {
         "entity": entity,
         "company_code": company_code,
         "snapshot_id": body.get("snapshotId"),
+        "scope": scope or None,
         "phase": "building",
         "progress": None,
         "header": None,
@@ -389,6 +406,7 @@ def serialize(job: ImportJob, db: Session) -> dict:
         "job_id": str(job.id),
         "entity": pull.get("entity"),
         "company_code": pull.get("company_code"),
+        "scope": pull.get("scope"),
         "phase": phase,
         "progress": pull.get("progress"),
         "preview_progress": preview_progress,
@@ -477,13 +495,18 @@ def _row_price(raw_list_price) -> float:
 
 
 def paginate_rows(mapped_rows: list[dict], *, page: int, limit: int, query: Optional[str]) -> dict:
-    """AC-RV-3: `query` filters by item code, contains, case-insensitive - applied before
-    paging, over the whole assembled set (plan: "no cache", the FoundryX side is the one
-    that pages 1000 at a time; this is the already-assembled view)."""
+    """AC-RV-3: `query` filters by item code (and, on a delivery-orders row, by its
+    document number too), contains, case-insensitive - applied before paging, over the
+    whole assembled set (plan: "no cache", the FoundryX side is the one that pages 1000 at
+    a time; this is the already-assembled view)."""
     rows = mapped_rows
     needle = (query or "").strip().lower()
     if needle:
-        rows = [r for r in rows if needle in (r.get("item_code") or "").lower()]
+        rows = [
+            r for r in rows
+            if needle in (r.get("item_code") or "").lower()
+            or needle in (r.get("doc_no") or "").lower()
+        ]
     total = len(rows)
     total_pages = max(1, (total + limit - 1) // limit)
     start = (page - 1) * limit
@@ -644,6 +667,123 @@ def build_stock_workbook(template_rows: list[dict]) -> bytes:
         sheet.append([
             row.get("Item Code"), row.get("Item Description"),
             row.get("Location"), row.get("On Hand Qty"),
+        ])
+    _neutralize_formula_cells(sheet)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+# ============================================================ delivery orders rows
+
+
+class SnapshotBookUnknown(ValueError):
+    """The snapshot names no single AutoCount book - the DO ingest is keyed per book, so
+    nothing can be previewed or applied. The message is safe to store as `import_jobs.error`."""
+
+
+def snapshot_book(header: dict, rows: list[dict]) -> str:
+    """The AutoCount book a delivery-orders snapshot came from (DO-PULL-SS contract): the
+    header's own `book` when it carries one, else the prefix every row's `source_ref`
+    (`{book}:DO:{DocKey}`) agrees on. Rows naming two books, or none at all, raise - the
+    book is never guessed."""
+    from_header = str((header or {}).get("book") or "").strip()
+    if from_header:
+        return from_header
+    books = set()
+    for row in rows:
+        ref = str((row or {}).get("source_ref") or "")
+        prefix = ref.split(":", 1)[0].strip() if ":" in ref else ""
+        if prefix:
+            books.add(prefix)
+    if len(books) == 1:
+        return books.pop()
+    if not books:
+        raise SnapshotBookUnknown("AutoCount snapshot names no book; pull again.")
+    raise SnapshotBookUnknown(
+        f"AutoCount snapshot names more than one book ({', '.join(sorted(books))}); pull again."
+    )
+
+
+def _iso_day(value) -> Optional[str]:
+    """`DocDate` as the vendor sends it (`2026-09-27T00:00:00`, or `yyyyMMdd`) -> `YYYY-MM-DD`;
+    anything unparseable is passed through as text rather than dropped."""
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+    if len(text_value) == 8 and text_value.isdigit():
+        return f"{text_value[:4]}-{text_value[4:6]}-{text_value[6:]}"
+    return text_value[:10]
+
+
+def _number(value):
+    """A JSON number for the rows view - `None` stays `None`, a numeric string becomes a
+    float, anything else is left as it came."""
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return value
+
+
+def map_delivery_order_rows(rows: list[dict]) -> list[dict]:
+    """AC-DP-30: one row per DO LINE, in the shape of the "Import delivery order lines"
+    sheet the checker uploads today (`Doc No` / `Item Code` / `Location` are its keys). A
+    `Details` row with no `ItemCode` is not a line (the DO ingest's own rule) and is left
+    out. Snapshot order is kept: documents as served, lines as listed."""
+    out: list[dict] = []
+    for rec in rows:
+        if not isinstance(rec, dict):
+            continue
+        for line in rec.get("Details") or []:
+            if not isinstance(line, dict):
+                continue
+            item_code = str(line.get("ItemCode") or "").strip()
+            if not item_code:
+                continue
+            out.append({
+                "doc_no": rec.get("DocNo"),
+                "doc_date": _iso_day(rec.get("DocDate")),
+                "debtor_code": rec.get("DebtorCode"),
+                "debtor_name": rec.get("DebtorName"),
+                "item_code": item_code,
+                "description": line.get("Description"),
+                "location": line.get("Location"),
+                "qty": _number(line.get("Qty")),
+                "uom": line.get("UOM"),
+                "unit_price": _number(line.get("UnitPrice")),
+                "sub_total": _number(line.get("SubTotal")),
+            })
+    return out
+
+
+_DELIVERY_ORDERS_TEMPLATE_HEADER = (
+    "Doc No", "Doc Date", "Debtor Code", "Debtor Name", "Item Code", "Description",
+    "Location", "Qty", "UOM", "Unit Price", "Sub Total",
+)
+
+
+def build_delivery_orders_workbook(mapped_rows: list[dict]) -> bytes:
+    """AC-DP-31: the DO lines sheet's own header row, one row per line."""
+    import io
+
+    import openpyxl
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "AutoCount pull"
+    sheet.append(list(_DELIVERY_ORDERS_TEMPLATE_HEADER))
+    for row in mapped_rows:
+        sheet.append([
+            row.get("doc_no"), row.get("doc_date"), row.get("debtor_code"),
+            row.get("debtor_name"), row.get("item_code"), row.get("description"),
+            row.get("location"), row.get("qty"), row.get("uom"), row.get("unit_price"),
+            row.get("sub_total"),
         ])
     _neutralize_formula_cells(sheet)
     buffer = io.BytesIO()

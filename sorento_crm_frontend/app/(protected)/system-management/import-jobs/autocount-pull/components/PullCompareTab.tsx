@@ -32,6 +32,7 @@ export interface PullCompareTabProps {
 const COMPARE_LISTING_KEY: Record<AutocountPullEntity, string> = {
   products: 'master_data.products.autocount_pull::compare',
   stock_balances: 'inventory.stock.autocount_pull::compare',
+  delivery_orders: 'order_management.orders.autocount_pull::compare',
 };
 
 function summaryHeadline(result: AutocountComparePullResult): { title: string; body: string; ok: boolean } {
@@ -100,19 +101,30 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
   };
 
   const columns = useMemo<ColumnDef<CompareRow>[]>(() => {
-    const base: ColumnDef<CompareRow>[] = [
-      {
-        accessorKey: 'item_code',
-        header: ({ column }) => <DataGridColumnHeader title="Item Code" column={column} />,
+    const base: ColumnDef<CompareRow>[] = [];
+    if (entity === 'delivery_orders') {
+      base.push({
+        accessorKey: 'doc_no',
+        header: ({ column }) => <DataGridColumnHeader title="Doc No" column={column} />,
         cell: ({ row }) => (
-          <span className="truncate" title={row.original.item_code}>
-            {row.original.item_code}
+          <span className="truncate" title={row.original.doc_no}>
+            {row.original.doc_no || '-'}
           </span>
         ),
         size: 140,
-      },
-    ];
-    if (entity === 'stock_balances') {
+      });
+    }
+    base.push({
+      accessorKey: 'item_code',
+      header: ({ column }) => <DataGridColumnHeader title="Item Code" column={column} />,
+      cell: ({ row }) => (
+        <span className="truncate" title={row.original.item_code}>
+          {row.original.item_code}
+        </span>
+      ),
+      size: 140,
+    });
+    if (entity === 'stock_balances' || entity === 'delivery_orders') {
       base.push({
         accessorKey: 'location',
         header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
@@ -162,7 +174,8 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
   const table = useReactTable({
     columns,
     data: rows,
-    getRowId: (row, index) => `${row.item_code}-${row.location ?? ''}-${row.field}-${index}`,
+    getRowId: (row, index) =>
+      `${row.doc_no ?? ''}-${row.item_code}-${row.location ?? ''}-${row.field}-${index}`,
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: 'onChange',
   });
@@ -170,8 +183,11 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
   const handleDownloadDifferences = async () => {
     if (rows.length === 0) return;
     const cols: ColumnOption[] = [
+      ...(entity === 'delivery_orders'
+        ? [{ key: 'doc_no', label: 'Doc No', selected: true } satisfies ColumnOption]
+        : []),
       { key: 'item_code', label: 'Item Code', selected: true },
-      ...(entity === 'stock_balances'
+      ...(entity === 'stock_balances' || entity === 'delivery_orders'
         ? [{ key: 'location', label: 'Location', selected: true } satisfies ColumnOption]
         : []),
       { key: 'field', label: 'Difference', selected: true },

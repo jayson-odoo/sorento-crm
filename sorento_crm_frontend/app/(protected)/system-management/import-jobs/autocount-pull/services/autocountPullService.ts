@@ -118,6 +118,9 @@ const START_ERROR_MESSAGES: Record<string, string> = {
   PULL_NOT_ENABLED: 'AutoCount pull is not switched on for this company.',
   PUSH_ACTIVE: 'This book now updates automatically.',
   TOO_MANY_BUILDS: 'A pull was just started. Try again in a minute.',
+  // DO-PULL-SS: a delivery-orders build with a DIFFERENT scope is still running for this
+  // company (the same scope re-attaches instead).
+  BUILD_IN_FLIGHT: 'Another AutoCount pull with a different scope is still building. Try again shortly.',
   NOT_CONFIGURED: 'AutoCount connection is not set up for this company.',
   UNREACHABLE: 'AutoCount could not be reached. Try again.',
 };

@@ -17,10 +17,10 @@ route reveals nothing about a pull the caller does not already own.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -28,7 +28,11 @@ from app.dependencies import get_current_user
 from app.models.base import get_company_scope
 from app.models.job import ImportJob
 from app.services import autocount_pull_service as pull_service
-from app.services.autocount_pull_compare import compare_products, compare_stock
+from app.services.autocount_pull_compare import (
+    compare_delivery_orders,
+    compare_products,
+    compare_stock,
+)
 from app.services.error_handler import AppException
 from app.services.foundryx_autocount_client import FoundryxPullError
 from app.services.job_service import active_company_id_from_scope
@@ -44,6 +48,23 @@ _XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.
 
 class PullStartBody(BaseModel):
     entity: str
+    # DO-PULL-SS contract (delivery orders): a day window or one document, sent FLAT to the
+    # FoundryX build. Keys outside `SCOPE_KEYS` are 422 rather than silently dropped, so a
+    # misspelt `fromDate` never becomes a 31-day pull nobody asked for.
+    scope: Optional[dict[str, str]] = Field(default=None, max_length=3)
+
+    @field_validator("scope")
+    @classmethod
+    def _known_scope_keys(cls, value):
+        if value is None:
+            return None
+        unknown = sorted(set(value) - set(pull_service.SCOPE_KEYS))
+        if unknown:
+            raise ValueError(
+                f"unknown scope key(s) {', '.join(unknown)}; expected "
+                f"{', '.join(pull_service.SCOPE_KEYS)}"
+            )
+        return {k: str(v).strip() for k, v in value.items() if str(v).strip()} or None
 
 
 class ComparePostBody(BaseModel):
@@ -155,7 +176,8 @@ def start_pull(
     company_id = _require_single_company(db)
     try:
         job = pull_service.start_pull(
-            db, user_id=current_user["id"], company_id=company_id, entity=body.entity
+            db, user_id=current_user["id"], company_id=company_id, entity=body.entity,
+            scope=body.scope,
         )
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
@@ -205,15 +227,18 @@ def get_pull_rows(
     db: Session = Depends(get_db),
 ):
     """AC-RV-3: the Excel-view rows, mapped from the FoundryX snapshot. Products: every
-    row. Stock: FED rows only (AC-SP-2)."""
+    row. Stock: FED rows only (AC-SP-2). Delivery orders: one row per DO line (AC-DP-30)."""
     job = _resolve_pull(db, current_user, job_id)
     _require_rows_available(job)
     try:
         rows = pull_service.fetch_snapshot_rows(db, job)
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
-    if pull_service.entity_of(job) == "products":
+    entity = pull_service.entity_of(job)
+    if entity == "products":
         mapped = [pull_service.map_product_row(r) for r in rows]
+    elif entity == "delivery_orders":
+        mapped = pull_service.map_delivery_order_rows(rows)
     else:
         fed = pull_service.classify_stock_rows(db, str(job.company_id), rows)["fed"]
         mapped = [pull_service.map_stock_row(r) for r in fed]
@@ -234,9 +259,14 @@ def download_pull(
         rows = pull_service.fetch_snapshot_rows(db, job)
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
-    if pull_service.entity_of(job) == "products":
+    entity = pull_service.entity_of(job)
+    if entity == "products":
         mapped = [pull_service.map_product_row(r) for r in rows]
         body = pull_service.build_products_workbook(mapped)
+    elif entity == "delivery_orders":
+        body = pull_service.build_delivery_orders_workbook(
+            pull_service.map_delivery_order_rows(rows)
+        )
     else:
         fed = pull_service.classify_stock_rows(db, str(job.company_id), rows)["fed"]
         body = pull_service.build_stock_workbook(fed)
@@ -263,8 +293,11 @@ def compare_pull(
         pull_rows = pull_service.fetch_snapshot_rows(db, job)
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
-    if pull_service.entity_of(job) == "products":
+    entity = pull_service.entity_of(job)
+    if entity == "products":
         result = compare_products(body.rows, pull_rows)
+    elif entity == "delivery_orders":
+        result = compare_delivery_orders(body.rows, pull_rows)
     else:
         fed = pull_service.classify_stock_rows(db, str(job.company_id), pull_rows)["fed"]
         result = compare_stock(body.rows, fed)

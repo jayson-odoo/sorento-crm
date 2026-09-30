@@ -45,9 +45,15 @@ from app.database import SessionLocal
 from app.models.base import company_scope
 from app.models.job import ImportJob, JobStatus
 from app.services import import_outcome_codes as codes
+from app.services.autocount_doc_ingest_service import (
+    DELIVERY_ORDERS_ENTITY,
+    WARN_ADOPTED,
+    AutocountDocIngestService,
+)
 from app.services.autocount_pull_service import (
     build_stock_workbook,
     classify_stock_rows,
+    snapshot_book,
     stock_list_archive_filename,
 )
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
@@ -146,6 +152,8 @@ def preview_autocount_pull(db_job_id: str) -> None:
                 counts = _preview_products(db, job, pull)
             elif entity == "stock_balances":
                 counts = _preview_stock(db, job, pull)
+            elif entity == DELIVERY_ORDERS_ENTITY:
+                counts = _preview_delivery_orders(db, job, pull)
             else:
                 raise UnsupportedPullEntity(f"Unknown pull entity {entity!r}.")
         except Exception as exc:  # noqa: BLE001 - one job's failure, reported on the job
@@ -202,6 +210,8 @@ def apply_autocount_pull(db_job_id: str) -> None:
                 summary = _apply_products(db, job, snapshot_id)
             elif entity == "stock_balances":
                 summary = _apply_stock(db, job, snapshot_id, pull_job_id)
+            elif entity == DELIVERY_ORDERS_ENTITY:
+                summary = _apply_delivery_orders(db, job, snapshot_id)
             else:
                 raise UnsupportedPullEntity(f"Unknown pull entity {entity!r}.")
         except Exception as exc:  # noqa: BLE001 - one job's failure, reported on the job
@@ -608,6 +618,174 @@ def _preview_stock(db, job: ImportJob, pull: dict) -> dict:
     else:
         pull["confirm_blocked_reason"] = None
     return counts
+
+
+# ================================================================ delivery orders
+
+#: Human wording for the DO ingest's record warnings on a pull's row message (cursor rule:
+#: no raw slug in what a person reads). `adopted_by_doc_no` is the message itself, never a
+#: warning here, and never counts toward `with_warnings` (SO-link ruling, 30 Sep).
+_DO_WARNING_TEXT = {
+    "sales_order_unresolved": "sales order not found",
+    "so_line_unresolved": "SO line not found",
+    "line_without_item": "a line without item code",
+    "customer_unresolved": "customer not found",
+    "branch_unresolved": "branch not found",
+    "stale_ignored": "older than what is stored, ignored",
+    "restored": "restored after a deletion sweep",
+    "legacy_links_released": "an old line's link released",
+}
+
+
+def _do_warning_suffix(warnings: list[str]) -> str:
+    names = [_DO_WARNING_TEXT.get(w, w.replace("_", " ")) for w in warnings if w != WARN_ADOPTED]
+    return f" (warnings: {', '.join(names)})" if names else ""
+
+
+def _do_ingest(db, job: ImportJob, *, header: dict, rows: list[dict]) -> AutocountDocIngestService:
+    """The ONE writer for a delivery-orders pull, preview and apply alike: the DO ingest,
+    keyed to the pull's company and the snapshot's book. `snapshot_book` raises (a stored
+    `ValueError` subclass, "pull again") when the snapshot names no single book."""
+    book = snapshot_book(header, rows)
+    company_id = str(job.company_id) if job.company_id else None
+    return AutocountDocIngestService(db, None, company_id=company_id, book=book)
+
+
+def _tally_delivery_orders(outcome_writer: ImportOutcome, rows: list[dict], result) -> dict:
+    """One `import_job_rows` row per document the ingest would create, update or adopt,
+    and per failed or retryable one; `unchanged` writes no row (the AC-PP-3 rule). Returns
+    the neutral tally both the preview counts and the apply summary are built from."""
+    tally = {
+        "created": 0, "updated": 0, "adopted": 0, "unchanged": 0, "failed": 0,
+        "retryable": 0, "lines_deleted": 0, "with_warnings": 0,
+    }
+    for raw, record in zip(rows, result.records):
+        raw = raw if isinstance(raw, dict) else {}
+        doc_no = str(raw.get("DocNo") or record.source_ref or "").strip()
+        warnings = list(record.warnings or [])
+        lines = dict(record.lines or {})
+        # Flat on purpose: `_json_safe_identity` prints identity in the UI and stringifies
+        # any nested value, so the per-line counters are their own keys and the warnings
+        # one comma-joined string.
+        identity = {
+            "doc_no": doc_no,
+            "doc_key": raw.get("DocKey"),
+            "source_ref": record.source_ref,
+            **{f"lines_{key}": value for key, value in lines.items()},
+            "warnings": ", ".join(warnings),
+        }
+        if any(w != WARN_ADOPTED for w in warnings):
+            tally["with_warnings"] += 1
+        suffix = _do_warning_suffix(warnings)
+
+        if record.outcome == IngestOutcome.CREATED:
+            tally["created"] += 1
+            outcome_writer.success(
+                message=f"DO created: {doc_no} ({lines.get('created', 0)} line(s)){suffix}",
+                value=doc_no, identity=identity, entity_id=record.entity_id, entity_type="order",
+            )
+        elif record.outcome == IngestOutcome.UPDATED:
+            deleted = int(lines.get("deleted", 0) or 0)
+            tally["lines_deleted"] += deleted
+            if WARN_ADOPTED in warnings:
+                tally["adopted"] += 1
+                message = (
+                    f"DO adopted by number: {doc_no}: tracking kept, "
+                    f"{lines.get('adopted', 0)} line(s) kept, {lines.get('created', 0)} created, "
+                    f"{deleted} deleted{suffix}"
+                )
+            else:
+                tally["updated"] += 1
+                message = (
+                    f"DO updated: {doc_no}: {lines.get('created', 0)} line(s) created, "
+                    f"{lines.get('updated', 0)} updated, {deleted} deleted{suffix}"
+                )
+            outcome_writer.updated(
+                message=message, value=doc_no, identity=identity,
+                entity_id=record.entity_id, entity_type="order",
+            )
+        elif record.outcome == IngestOutcome.UNCHANGED:
+            tally["unchanged"] += 1
+        elif record.outcome == IngestOutcome.RETRYABLE:
+            tally["retryable"] += 1
+            outcome_writer.fail(
+                code=codes.AUTOCOUNT_RETRYABLE,
+                message="; ".join(f"{k}: {v}" for k, v in (record.errors or {}).items()) or None,
+                value=doc_no, identity={**identity, "errors": record.errors or {}},
+            )
+        else:  # FAILED
+            tally["failed"] += 1
+            outcome_writer.fail(
+                code=_first_error_code(record.errors),
+                message="; ".join(f"{k}: {v}" for k, v in (record.errors or {}).items()) or None,
+                value=doc_no, identity={**identity, "errors": record.errors or {}},
+            )
+    return tally
+
+
+def _preview_delivery_orders(db, job: ImportJob, pull: dict) -> dict:
+    """AC-DP-10..14: the DO ingest's own dry run over every snapshot document - the exact
+    verdicts Confirm will get (adoption by number, DocKey clash failed, unknown product or
+    warehouse retryable), nothing written (the ingest rolls its dry run back itself).
+    Warnings never block Confirm; `confirm_blocked_reason` stays None."""
+    client = FoundryxAutocountClient(db)
+    header, rows, warnings = fetch_verified_snapshot(
+        client, snapshot_id=pull.get("snapshot_id"), company_code=pull.get("company_code")
+    )
+    pull["warnings"] = warnings
+
+    job_id = str(job.job_id)
+    _publish_preview_progress(job_id, 0, len(rows))
+    ingest = _do_ingest(db, job, header=header, rows=rows)
+    result = ingest.ingest(
+        DELIVERY_ORDERS_ENTITY, rows, dry_run=True,
+        on_progress=lambda processed, total: _publish_preview_progress(job_id, processed, total),
+    )
+
+    outcome_writer = ImportOutcome(job.id)
+    tally = _tally_delivery_orders(outcome_writer, rows, result)
+    outcome_writer.flush()
+
+    pull["confirm_blocked_reason"] = None
+    return {
+        "received": len(rows),
+        "created": tally["created"],
+        "updated": tally["updated"],
+        "adopted": tally["adopted"],
+        "unchanged": tally["unchanged"],
+        "lines_to_delete": tally["lines_deleted"],
+        "failed": tally["failed"],
+        "retryable": tally["retryable"],
+        "with_warnings": tally["with_warnings"],
+    }
+
+
+def _apply_delivery_orders(db, job: ImportJob, snapshot_id: str) -> dict:
+    """AC-DP-20..23: re-verifies the SAME snapshot, then the DO ingest for real - per-record
+    SAVEPOINTs, one commit for the batch, the external route's own order - and the same
+    outcome rows the preview wrote. No post-write hook applies to delivery orders."""
+    client = FoundryxAutocountClient(db)
+    header, rows, warnings = fetch_verified_snapshot(
+        client, snapshot_id=snapshot_id, company_code=_company_code(db, job.company_id)
+    )
+    ingest = _do_ingest(db, job, header=header, rows=rows)
+    result = ingest.ingest(DELIVERY_ORDERS_ENTITY, rows)
+    db.commit()
+
+    outcome_writer = ImportOutcome(job.id)
+    tally = _tally_delivery_orders(outcome_writer, rows, result)
+    outcome_writer.flush()
+    return {
+        "total": len(result.records),
+        "created": tally["created"],
+        "updated": tally["updated"],
+        "adopted": tally["adopted"],
+        "unchanged": tally["unchanged"],
+        "failed": tally["failed"],
+        "retryable": tally["retryable"],
+        "lines_deleted": tally["lines_deleted"],
+        "with_warnings": tally["with_warnings"],
+    }
 
 
 def _stock_pair_key(row: dict) -> tuple[str, str]:

@@ -94,6 +94,10 @@ PERMISSION_REGISTRY.extend(_crud("order_management", "orders", "Delivery Orders"
 # AutoCount branch table (#1354 S2): the debtors' delivery branches, fed by the ingest only.
 PERMISSION_REGISTRY.extend(_crud("order_management", "branches", "Customer Branches"))
 PERMISSION_REGISTRY.append({"slug": "order_management.orders.import", "name": "Import Delivery Orders", "description": "Permission to bulk import delivery orders."})
+# PLAN-autocount-do-pull-crm-30sep.md: pull a frozen delivery-orders snapshot from AutoCount
+# (via FoundryX) and review/confirm it through the DO ingest, instead of uploading the DO
+# lines sheet by hand.
+PERMISSION_REGISTRY.append({"slug": "order_management.orders.autocount_pull", "name": "Pull Delivery Orders from AutoCount", "description": "Permission to pull a delivery orders snapshot from AutoCount and review/confirm it."})
 PERMISSION_REGISTRY.append({"slug": "order_management.orders.export", "name": "Export Delivery Orders", "description": "Permission to export delivery orders with dynamic fields."})
 PERMISSION_REGISTRY.append({"slug": "order_management.orders.bulk_delete", "name": "Bulk Delete Delivery Orders", "description": "Permission to bulk delete delivery orders."})
 PERMISSION_REGISTRY.extend(_crud("order_management", "order_statuses", "Delivery Order Statuses"))

@@ -394,16 +394,19 @@ class TestMigration:
                 role_ids = {}
                 for key, slug in roles.items():
                     role_ids[key] = q(
-                        "INSERT INTO user_roles (id, slug, name, description, is_protected, is_default) "
-                        "VALUES (gen_random_uuid()::text, :slug, :slug, '', false, false) RETURNING id",
+                        "INSERT INTO user_roles (id, slug, name, description, is_trashed, "
+                        "is_protected, is_default) "
+                        "VALUES (gen_random_uuid()::text, :slug, :slug, '', false, false, false) "
+                        "RETURNING id",
                         slug=slug,
                     ).scalar()
                 for key in ("human", "integration"):
                     q("INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at) "
                       "VALUES (gen_random_uuid()::text, :r, :p, now()) ON CONFLICT DO NOTHING",
                       r=role_ids[key], p=import_perm)
-                q("INSERT INTO user_roles (id, slug, name, description, is_protected, is_default) "
-                  "SELECT gen_random_uuid()::text, 'admin', 'admin', '', true, false "
+                q("INSERT INTO user_roles (id, slug, name, description, is_trashed, is_protected, "
+                  "is_default) "
+                  "SELECT gen_random_uuid()::text, 'admin', 'admin', '', false, true, false "
                   "WHERE NOT EXISTS (SELECT 1 FROM user_roles WHERE slug = 'admin')")
 
                 with Operations.context(MigrationContext.configure(conn)):
@@ -456,7 +459,7 @@ class TestPreview:
         assert {r["outcome"] for r in written} == {"created"}
         first = next(r for r in written if r["value"] == "ZZDO-0001")
         assert first["identity"]["doc_key"] == 900001
-        assert first["identity"]["lines"]["created"] == 2
+        assert first["identity"]["lines_created"] == 2
         # Dry run: the ingest rolled itself back, nothing landed.
         assert _orders(db, 900001, 900002) == []
 
@@ -502,9 +505,11 @@ class TestPreview:
         adopted = next(r for r in _job_rows(db, job_id) if r["value"] == "ZZDO-0001")
         assert adopted["outcome"] == "updated"
         assert "adopted" in (adopted["message"] or "").lower()
-        assert adopted["identity"]["lines"] == {
-            "created": 1, "updated": 0, "deleted": 1, "adopted": 1, "skipped": 0,
-            "linked": 0, "unlinked": 2,
+        # Flat keys: `_json_safe_identity` prints identity in the UI and stringifies any
+        # nested value, so the per-line counters are their own keys.
+        assert {k: v for k, v in adopted["identity"].items() if k.startswith("lines_")} == {
+            "lines_created": 1, "lines_updated": 0, "lines_deleted": 1, "lines_adopted": 1,
+            "lines_skipped": 0, "lines_linked": 0, "lines_unlinked": 2,
         }
         # Nothing landed: the tracking row still has no doc_key, its two old lines stand.
         assert _tracking_snapshot(db, order_id) == before

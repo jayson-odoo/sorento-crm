@@ -20,6 +20,7 @@ import { usePullRows } from '../hooks/useAutocountPull';
 import type {
   AutocountPullEntity,
   AutocountPullExcelRow,
+  DeliveryOrderExcelRow,
   ProductExcelRow,
   StockExcelRow,
 } from '../types/autocountPull.types';
@@ -37,7 +38,108 @@ export interface PullExcelViewTabProps {
 const EXCEL_VIEW_LISTING_KEY: Record<AutocountPullEntity, string> = {
   products: 'master_data.products.autocount_pull::excel-view',
   stock_balances: 'inventory.stock.autocount_pull::excel-view',
+  delivery_orders: 'order_management.orders.autocount_pull::excel-view',
 };
+
+function textCell<T>(pick: (row: T) => string | null | undefined) {
+  return function TextCell({ row }: { row: { original: AutocountPullExcelRow } }) {
+    const value = pick(row.original as T) || '-';
+    return (
+      <span className="block truncate" title={value}>
+        {value}
+      </span>
+    );
+  };
+}
+
+function numberCell(pick: (row: DeliveryOrderExcelRow) => number | null | undefined, digits = 2) {
+  return function NumberCell({ row }: { row: { original: AutocountPullExcelRow } }) {
+    const value = pick(row.original as DeliveryOrderExcelRow);
+    return <span className="tabular-nums">{value == null ? '-' : value.toFixed(digits)}</span>;
+  };
+}
+
+/** One row per DO LINE, the "Import delivery order lines" sheet's columns in its order
+ *  (AC-DP-30), so the pull reads side by side with the sheet the checker uploads today. */
+export const DELIVERY_ORDER_COLUMNS: ColumnDef<AutocountPullExcelRow>[] = [
+  {
+    id: 'doc_no',
+    header: ({ column }) => <DataGridColumnHeader title="Doc No" column={column} />,
+    cell: textCell<DeliveryOrderExcelRow>((r) => r.doc_no),
+    size: 140,
+    meta: { headerTitle: 'Doc No', skeleton: <Skeleton className="h-4 w-20" /> },
+  },
+  {
+    id: 'doc_date',
+    header: ({ column }) => <DataGridColumnHeader title="Doc Date" column={column} />,
+    cell: textCell<DeliveryOrderExcelRow>((r) => r.doc_date),
+    size: 110,
+    meta: { headerTitle: 'Doc Date', skeleton: <Skeleton className="h-4 w-16" /> },
+  },
+  {
+    id: 'debtor_code',
+    header: ({ column }) => <DataGridColumnHeader title="Debtor Code" column={column} />,
+    cell: textCell<DeliveryOrderExcelRow>((r) => r.debtor_code),
+    size: 120,
+    meta: { headerTitle: 'Debtor Code', skeleton: <Skeleton className="h-4 w-16" /> },
+  },
+  {
+    id: 'debtor_name',
+    header: ({ column }) => <DataGridColumnHeader title="Debtor Name" column={column} />,
+    cell: textCell<DeliveryOrderExcelRow>((r) => r.debtor_name),
+    size: 220,
+    meta: { headerTitle: 'Debtor Name', skeleton: <Skeleton className="h-4 w-32" /> },
+  },
+  {
+    id: 'item_code',
+    header: ({ column }) => <DataGridColumnHeader title="Item Code" column={column} />,
+    cell: textCell<DeliveryOrderExcelRow>((r) => r.item_code),
+    size: 140,
+    meta: { headerTitle: 'Item Code', skeleton: <Skeleton className="h-4 w-20" /> },
+  },
+  {
+    id: 'description',
+    header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
+    cell: textCell<DeliveryOrderExcelRow>((r) => r.description),
+    size: 260,
+    meta: { headerTitle: 'Description', skeleton: <Skeleton className="h-4 w-40" /> },
+  },
+  {
+    id: 'location',
+    header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+    cell: textCell<DeliveryOrderExcelRow>((r) => r.location),
+    size: 110,
+    meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-14" /> },
+  },
+  {
+    id: 'qty',
+    header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
+    cell: numberCell((r) => r.qty, 0),
+    size: 90,
+    meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
+  },
+  {
+    id: 'uom',
+    header: ({ column }) => <DataGridColumnHeader title="UOM" column={column} />,
+    cell: textCell<DeliveryOrderExcelRow>((r) => r.uom),
+    size: 80,
+    meta: { headerTitle: 'UOM', skeleton: <Skeleton className="h-4 w-10" /> },
+  },
+  {
+    id: 'unit_price',
+    header: ({ column }) => <DataGridColumnHeader title="Unit Price" column={column} />,
+    cell: numberCell((r) => r.unit_price),
+    size: 110,
+    meta: { headerTitle: 'Unit Price', skeleton: <Skeleton className="h-4 w-14" /> },
+  },
+  {
+    id: 'sub_total',
+    header: ({ column }) => <DataGridColumnHeader title="Sub Total" column={column} />,
+    cell: numberCell((r) => r.sub_total),
+    size: 110,
+    meta: { headerTitle: 'Sub Total', skeleton: <Skeleton className="h-4 w-14" /> },
+  },
+];
 
 export const PRODUCT_COLUMNS: ColumnDef<AutocountPullExcelRow>[] = [
   {
@@ -195,14 +297,28 @@ export function PullExcelViewTab({ jobId, entity }: PullExcelViewTabProps) {
   const query = { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, query: search || undefined };
   const { data, isLoading, isPlaceholderData, isFetching, isError, error } = usePullRows(jobId, query);
 
-  const columns = useMemo(() => (entity === 'products' ? PRODUCT_COLUMNS : STOCK_COLUMNS), [entity]);
+  const columns = useMemo(
+    () =>
+      entity === 'products'
+        ? PRODUCT_COLUMNS
+        : entity === 'delivery_orders'
+          ? DELIVERY_ORDER_COLUMNS
+          : STOCK_COLUMNS,
+    [entity],
+  );
   const total = data?.pagination?.total ?? 0;
 
   const table = useReactTable({
     columns,
     data: data?.data ?? [],
     pageCount: Math.ceil(total / pagination.pageSize) || 0,
-    getRowId: (row) => row.item_code + ('location' in row ? `-${row.location}` : ''),
+    // A DO line is unique by (doc no, item, location) plus its position: the same item can
+    // sit twice on one document (two batches), so the index keeps the two apart.
+    getRowId: (row, index) =>
+      ('doc_no' in row ? `${row.doc_no}-` : '') +
+      row.item_code +
+      ('location' in row ? `-${row.location}` : '') +
+      ('doc_no' in row ? `-${index}` : ''),
     state: { pagination },
     onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
@@ -227,7 +343,9 @@ export function PullExcelViewTab({ jobId, entity }: PullExcelViewTabProps) {
               value={searchInput}
               onChange={setSearchInput}
               isSettling={isSearchInFlight(searchSettling, isFetching, search)}
-              placeholder="Search by item code…"
+              placeholder={
+                entity === 'delivery_orders' ? 'Search by doc no or item code…' : 'Search by item code…'
+              }
               className="w-full"
             />
           </div>

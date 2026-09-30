@@ -4,8 +4,18 @@
  * metadata shape) and its UAC for the contract these mirror.
  */
 
-/** The two entities a pull can be started for; the values match the backend route param. */
-export type AutocountPullEntity = 'products' | 'stock_balances';
+/** The entities a pull can be started for; the values match the backend route param.
+ *  `delivery_orders` (PLAN-autocount-do-pull-crm-30sep.md) previews and applies through the
+ *  DO ingest and reviews on this same page. */
+export type AutocountPullEntity = 'products' | 'stock_balances' | 'delivery_orders';
+
+/** The flat scope a delivery-orders build takes (DO-PULL-SS contract): a day window, or one
+ *  document by number; `null` / absent = the gateway's default, the last 31 MYT days. */
+export interface AutocountPullScope {
+  fromDay?: string;
+  toDay?: string;
+  docNo?: string;
+}
 
 /**
  * Where a pull is in its life. `building` = FoundryX still assembling the snapshot (no
@@ -87,7 +97,25 @@ export interface StockPullCounts {
   negative_in_autocount: number;
 }
 
-export type AutocountPullCounts = ProductPullCounts | StockPullCounts;
+/** Delivery orders (AC-DP-10): the DO ingest's dry-run verdicts, one per document.
+ *  `adopted` = an existing tracking-uploaded DO taken over by number (its tracking columns
+ *  kept); `lines_to_delete` = old lines adoption cannot match plus lines a document no
+ *  longer carries; `retryable` = a product or warehouse not in the CRM yet;
+ *  `with_warnings` = documents carrying any warning (unresolved sales order, SO line,
+ *  customer, branch, a line without item code) - never a blocker. */
+export interface DeliveryOrderPullCounts {
+  received: number;
+  created: number;
+  updated: number;
+  adopted: number;
+  unchanged: number;
+  lines_to_delete: number;
+  failed: number;
+  retryable: number;
+  with_warnings: number;
+}
+
+export type AutocountPullCounts = ProductPullCounts | StockPullCounts | DeliveryOrderPullCounts;
 
 export interface AutocountPullCompareSummary {
   filename: string;
@@ -109,7 +137,9 @@ export interface AutocountPullCompareSummary {
  *  to match what the backend actually sends). */
 export interface AutocountCompareDifference {
   item_code: string;
-  /** Stock compare only - the pair's location. */
+  /** Delivery orders compare only - the line's document number. */
+  doc_no?: string;
+  /** Stock and delivery orders compare - the pair's / line's location. */
   location?: string;
   field: string;
   excel: string | number | boolean | null;
@@ -135,6 +165,8 @@ export interface AutocountPull {
   job_id: string;
   entity: AutocountPullEntity;
   company_code: string;
+  /** Delivery orders only: what the snapshot was asked to cover; `null` = the default. */
+  scope?: AutocountPullScope | null;
   phase: AutocountPullPhase;
   progress?: AutocountPullProgress | null;
   preview_progress?: AutocountPullPreviewProgress | null;
@@ -177,7 +209,23 @@ export interface StockExcelRow {
   on_hand_qty: number;
 }
 
-export type AutocountPullExcelRow = ProductExcelRow | StockExcelRow;
+/** The Excel-view row shape for `delivery_orders`: one row per DO LINE, in the shape of the
+ *  "Import delivery order lines" sheet (AC-DP-30). */
+export interface DeliveryOrderExcelRow {
+  doc_no: string;
+  doc_date: string | null;
+  debtor_code: string | null;
+  debtor_name: string | null;
+  item_code: string;
+  description: string | null;
+  location: string | null;
+  qty: number | null;
+  uom: string | null;
+  unit_price: number | null;
+  sub_total: number | null;
+}
+
+export type AutocountPullExcelRow = ProductExcelRow | StockExcelRow | DeliveryOrderExcelRow;
 
 export interface AutocountPullRowsQuery {
   pageIndex: number;

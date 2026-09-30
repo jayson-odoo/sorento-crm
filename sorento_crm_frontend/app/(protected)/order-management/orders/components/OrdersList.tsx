@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   Trash2,
   RefreshCw,
+  CloudDownload,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -55,6 +56,7 @@ import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useAutocountPullAction } from '@/app/(protected)/system-management/import-jobs/autocount-pull/hooks/useAutocountPull';
 
 export default function OrdersList() {
   const router = useRouter();
@@ -78,6 +80,10 @@ export default function OrdersList() {
   const [linesFilter, setLinesFilter] = useState<'all' | 'yes' | 'no'>('all');
 
   const { data: orderStatuses = [] } = useOrderStatusSelectQuery();
+
+  // AutoCount pull - one more secondary action beside the two imports, the same shared
+  // hook Products and Stock Balance use (PLAN-autocount-do-pull-crm-30sep.md).
+  const autocountPull = useAutocountPullAction('delivery_orders', 'order_management.orders.autocount_pull');
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -384,6 +390,16 @@ export default function OrdersList() {
                 icon: Upload,
                 onClick: () => setOrderLinesImportOpen(true),
               },
+              ...(autocountPull.visible
+                ? [
+                    {
+                      key: 'autocount-pull',
+                      label: autocountPull.label,
+                      icon: CloudDownload,
+                      onClick: autocountPull.onSelect,
+                    },
+                  ]
+                : []),
             ]}
             bulkActions={[
               {
