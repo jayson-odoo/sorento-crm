@@ -5,8 +5,9 @@ from typing import Optional
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
-    # Legacy field from the retired "Remember me" box: accepted so an older client
-    # still signs in, and ignored - every sign-in is the 30-day sliding session.
+    # Legacy field from the retired "Remember me" box, kept to document the old
+    # contract and ignored: every sign-in is the 30-day sliding session. (Unknown
+    # fields are dropped anyway - this model sets no `extra` config.)
     remember_me: Optional[bool] = None
 
 

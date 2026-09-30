@@ -8,9 +8,9 @@ continuous days the session just continues".
 
 Actor: any staff user (email/password or phone). They arrive at `/signin`. The page is the same as
 before, minus the "Remember me" checkbox, so there is no decision to make about it. They sign in
-by email + password or by phone code. From then on, any day they use the CRM pushes their session
-end out to 30 days from that moment, so a person who works on consecutive days never sees the
-sign-in page again. They are signed out only by 30 days without activity, by logging out, by
+by email + password or by phone code. From then on, using the CRM pushes their session end out to 30 days
+from that moment, at most once a day (`user_session_service.py:116-118`), so a person who works on consecutive days never sees the
+sign-in page again. They are signed out only by 29 to 30 days without activity, by logging out, by
 "sign out other devices", by a password reset/change, or by an admin force logout / deactivation.
 No one else is notified; nothing else changes.
 

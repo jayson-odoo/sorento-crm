@@ -21,16 +21,21 @@ The code was written before this grill, so every question below is asked against
 already implements the recommendation. Sent to the owner as one `crew-ask` on PR #1404
 (30 Sep 2026). Owner answered the same day: all as recommended.
 
-| # | Decision | Options | Recommendation (implemented) | Owner answer |
-| --- | --- | --- | --- | --- |
-| G1 | Absolute cap | (a) pure sliding, no cap; (b) hard cap e.g. 90d | (a): owner asked for "exactly like portal", which has no cap | accepted as recommended (30 Sep) |
-| G2 | Idle window | (a) 30d without a request; (b) shorter e.g. 7d | (a): matches portal and phone today | accepted as recommended (30 Sep) |
-| G3 | Existing 8h (`rolling=false`) rows | (a) lapse within 8h; (b) migration flips them | (a): at most one extra sign-in, no migration | accepted as recommended (30 Sep) |
-| G4 | Legacy `remember_me` in the login body | (a) accept and ignore; (b) 422 | (a): a cached old bundle keeps signing in | accepted as recommended (30 Sep) |
-| G5 | Shared/kiosk devices (30d session left behind) | (a) accept, rely on logout / sign out other devices / admin force logout; (b) idle timeout or "public computer" option | (a); trigger for (b): a real shared-device incident | accepted as recommended (30 Sep) |
-| G6 | Impersonation has no TTL of its own (was implicitly 8h for unticked admins) | (a) backlog a follow-up for an 8h impersonation TTL; (b) in this PR; (c) leave | (a): predates the lane, keeps this PR to sign-in | accepted: follow-up is backlog BL-068 |
-| G7 | Tell users they stay signed in | (a) no UI text, one line in the Outline guide batch; (b) hint under Continue | (a): CLAUDE.md "no feature explanations inside the UI" | accepted: line added to `user-guides/_shared/getting-started-for-new-users.md` section 1 |
-| G8 | Phone sign-in and portal | no change, both already slide 30d | confirm no change | accepted as recommended (30 Sep) |
+Premises re-checked against the code on 30 Sep, after the owner's "get your facts right" ruling.
+Every premise below cites file:line (origin/main = b8cdbebe4 for code this lane removed).
+**Corrected** marks a premise the first crew-ask stated wrongly. None of the corrections changes a
+decision: each wrong premise was an argument for the recommendation, not the thing decided.
+
+| # | Decision | Verified premise (file:line) | Decision (owner, 30 Sep) |
+| --- | --- | --- | --- |
+| G1 | Absolute cap | The portal slide re-extends with no cap check: `portal_service.py:423-424`. Staff slide has none either: `user_session_service.py:116-118`. The archived plan rules "no absolute cap": `_archive/PLAN-staff-rolling-sessions-fastapi-auth.md:31` (Q11). | (a) no cap |
+| G2 | Idle window | **Corrected.** The first ask said "30 days with no request". Actual rule: a request re-extends to now+30d only once under 29d remain (`user_session_service.py:25-26,116-118`). The expiry therefore lands 29 to 30 days after the last request, depending on when in the day the last slide happened. The NextAuth cookie also slides: every `/api/auth/session` read re-issues it with now+30d (`node_modules/next-auth/core/routes/session.js:61-80`, next-auth 4.24.13; `SessionProvider` mounted at `providers/auth-provider.tsx:17`; `maxAge` 30d at `auth-options.ts:181`). So there is no hidden 30-days-from-sign-in cutoff on the cookie side. | (a) keep, same as portal (`portal_service.py:61-62`) |
+| G3 | Existing 8h rows | Old code minted `rolling=False, now+8h` when the box was unticked; unticked was the default (origin/main `signin/page.tsx:92`). `resolve_session` only slides `rolling` rows (`user_session_service.py:116`), and expired rows get 401 `session_expired` (`:111-112`). So every such row ends within 8h of its sign-in. | (a) let lapse, no migration |
+| G4 | Legacy `remember_me` | **Corrected.** The first ask said a cached old browser bundle would fail without it. Wrong: the browser never posts to FastAPI login. It posts credentials to NextAuth, whose server-side `authorize` builds the FastAPI body (`auth-options.ts:64-90`); the new server sends no `remember_me`. Direct callers of `/api/v1/auth/login` are the NextAuth server (an old one only during a rolling deploy) and `scripts/chatbot_journey.py:105`. Also, `LoginRequest` has no `extra` config (`app/schemas/auth.py:5-10`), so Pydantic ignores unknown fields anyway. Rejecting with 422 would need an explicit `extra="forbid"`. Keeping the field is documentation of the old contract, not what keeps callers working. | (a) accept and ignore (the kept field is harmless and documents it) |
+| G5 | Shared devices | Logout revokes server-side: `topbar/user-dropdown-menu.tsx:285` calls `revokeCurrentSession` (`lib/api.ts:177-183`), which calls `POST /auth/logout` (`auth.py:462-467`). Sign out other devices: `auth.py:509-516`. Admin force logout: `user_management/users.py:298-303`. | (a) accept; the trigger for an idle timeout is a real shared-device incident |
+| G6 | Impersonation expiry | Impersonation needs admin/superadmin (`dependencies.py:195-197`) and an `ImpersonationSession` row with `ended_at IS NULL` (`dependencies.py:199-206`); the model has no expiry column (`models/impersonation.py:17-26`). **Refined:** only admins who signed in by EMAIL with the box unticked were capped at 8h. Phone-signin admins were already on 30d sliding (origin/main `phone_signin_service.py:440`), so the gap existed before this lane for them. | (a) follow-up BL-068 |
+| G7 | Tell users | "No feature explanations inside the UI itself": `CLAUDE.md:172`. | (a) one line in `user-guides/_shared/getting-started-for-new-users.md` section 1 |
+| G8 | Phone and portal | Phone already minted 30d sliding (origin/main `phone_signin_service.py:440`). **Corrected:** "the portal slides 30 days" holds only for OTP-verified portal tokens (`portal_service.py:58-62,423-424`). A portal link token is 7 days, fixed (`portal_service.py:57,278`). Neither portal path is touched by this lane. | no change |
 
 ## TDD note
 
