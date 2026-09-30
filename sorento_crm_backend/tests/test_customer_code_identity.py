@@ -165,15 +165,19 @@ class TestDocumentIngestResolvesByCode:
         beta = _customer(env.db, env.company_a, code=code, name="BETA")
         env.refs.link(entity_type="customers", entity_id=str(beta.id), source_ref=f"DEBTOR-{code}")
 
-        res = env.post(INGEST_SO, [_so_record(env, customer_code=code)])
+        # Two records in ONE batch: the second resolves through the per-batch memo
+        # and must carry the warning just like the first.
+        res = env.post(
+            INGEST_SO, [_so_record(env, customer_code=code), _so_record(env, customer_code=code)]
+        )
 
         assert res.status_code == 200, res.text
-        entry = res.json()["records"][0]
-        assert "customer_ambiguous" in entry.get("warnings", []), entry
-        assert "customer_created" not in entry.get("warnings", []), entry
-        header = env.header("sales_orders", entry["source_ref"])
-        assert str(header["customer_id"]) == str(beta.id)
-        assert str(header["customer_id"]) != str(alpha.id)
+        for entry in res.json()["records"]:
+            assert "customer_ambiguous" in entry.get("warnings", []), entry
+            assert "customer_created" not in entry.get("warnings", []), entry
+            header = env.header("sales_orders", entry["source_ref"])
+            assert str(header["customer_id"]) == str(beta.id)
+            assert str(header["customer_id"]) != str(alpha.id)
 
     def test_legacy_duplicates_without_a_ref_resolve_to_the_row_with_orders_and_warn(self, env):
         """AC-04."""
@@ -244,11 +248,12 @@ class TestBackCreateByCode:
         assert found.name_aliases == [], "a document name never touches the master"
 
     def test_get_or_create_never_matches_another_company(self, db, company_b):
+        # Scope left at "all companies" on purpose: the explicit `company_id` is
+        # what must keep the other company's row out, not the ORM scope filter.
         set_company_scope(db, None)
         code = unique_code(MARKER)
         _customer(db, company_b, code=code, name="THEIRS")
 
-        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         created = customer_back_create.get_or_create(
             db, code=code, name="OURS", company_id=DEFAULT_COMPANY_ID
         )
@@ -388,6 +393,39 @@ class TestMastersPushAdoptsByCode:
         assert rows[0]["customer_name"] == "NEW NAME"
         assert rows[0]["name_aliases"] == ["OLD NAME"]
 
+    def test_code_adopted_customer_claimed_by_another_integration_still_conflicts(self, db):
+        """Security review S2: the same source system under a DIFFERENT integration
+        (a second API key) may not rename a row the first one linked; the same
+        integration (or a ref that predates integrations, NULL) may."""
+        from app.models.integration import Integration
+
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        first = Integration(name=f"{MARKER}-A-{uuid.uuid4().hex[:6]}", type="autocount")
+        second = Integration(name=f"{MARKER}-B-{uuid.uuid4().hex[:6]}", type="autocount")
+        db.add_all([first, second])
+        db.flush()
+        code = unique_code(MARKER)[:30]
+        row = _customer(db, DEFAULT_COMPANY_ID, code=code, name="OLD NAME")
+        IntegrationReferenceService(db, company_id=DEFAULT_COMPANY_ID).link(
+            entity_type="customers",
+            entity_id=str(row.id),
+            source_ref=f"AED_SORENTO:{uuid.uuid4().int % 10000}",
+            integration_id=str(first.id),
+        )
+        record = {"source_ref": f"AED_SORENTO:{code}", "code": code, "name": "NEW NAME"}
+
+        other = MasterIngestService(db, integration_id=str(second.id), company_id=DEFAULT_COMPANY_ID)
+        result = other.ingest("customers", [record])
+        assert (result.created, result.updated) == (0, 0)
+        assert result.records[0].errors, result.records[0]
+        assert _rows_for_code(db, code, DEFAULT_COMPANY_ID)[0]["customer_name"] == "OLD NAME"
+
+        same = MasterIngestService(db, integration_id=str(first.id), company_id=DEFAULT_COMPANY_ID)
+        result = same.ingest("customers", [record])
+        assert (result.created, result.updated) == (0, 1), result.records[0].errors
+        assert "ref_mismatch" in result.records[0].warnings
+        assert _rows_for_code(db, code, DEFAULT_COMPANY_ID)[0]["customer_name"] == "NEW NAME"
+
     def test_code_adopted_customer_held_by_another_source_system_still_conflicts(self, db):
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         code = unique_code(MARKER)[:30]
@@ -421,6 +459,14 @@ class TestManualCreateByCode:
             )
         assert exc.value.status_code == 409
 
+    def test_create_refuses_a_blank_code(self, db):
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        with pytest.raises(AppException) as exc:
+            CustomerService(db).create_customer(
+                CustomerCreate(customer_code="  ", customer_name="NO CODE")
+            )
+        assert exc.value.status_code == 422
+
     def test_a_manual_rename_keeps_the_old_name_as_an_alias(self, db):
         from app.schemas.order import CustomerUpdate
 
@@ -433,6 +479,39 @@ class TestManualCreateByCode:
         db.refresh(row)
         assert row.customer_name == "new name "
         assert row.name_aliases == ["OLD NAME"]
+        # Renaming back takes the name that is current again OUT of the aliases
+        # (security review N2: the list never holds the current name).
+        svc.update_customer(str(row.id), CustomerUpdate(customer_name="OLD NAME"))
+        db.refresh(row)
+        assert row.name_aliases == ["new name "]
+
+    def test_the_alias_list_is_capped(self, db):
+        row = Customer(customer_code="X", customer_name="CURRENT", name_aliases=[])
+        for i in range(customer_rules.MAX_NAME_ALIASES + 5):
+            customer_rules.record_name_alias(row, f"name {i}")
+        assert len(row.name_aliases) == customer_rules.MAX_NAME_ALIASES
+        assert row.name_aliases[-1] == f"name {customer_rules.MAX_NAME_ALIASES + 4}"
+
+    def test_an_all_companies_scope_never_matches_another_company_s_code(self, db, company_b):
+        """Security review S1: an integration principal (scope None) writes into the
+        incumbent company, so the code is looked up THERE, not in every company."""
+        from app.services.order_service import OrderService
+
+        set_company_scope(db, None)
+        code = unique_code(MARKER)
+        theirs = _customer(db, company_b, code=code, name="THEIRS")
+
+        linked = OrderService(db)._upsert_customer_from_debtor("OURS", code)
+        assert linked != str(theirs.id)
+        ours = db.get(Customer, linked)
+        assert str(ours.company_id) == DEFAULT_COMPANY_ID and ours.customer_name == "OURS"
+
+        # And the manual create is neither refused nor told the code exists elsewhere.
+        _customer(db, company_b, code=unique_code(MARKER), name="THEIRS 2")
+        created = CustomerService(db).create_customer(
+            CustomerCreate(customer_code=unique_code(MARKER), customer_name="OURS 2")
+        )
+        assert str(created.company_id) == DEFAULT_COMPANY_ID
 
     def test_create_accepts_the_same_code_in_another_company(self, db, company_b):
         set_company_scope(db, None)

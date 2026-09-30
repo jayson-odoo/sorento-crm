@@ -65,20 +65,11 @@ function TestResultPanel({ result }: { result: CustomerImportValidateResult }) {
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-3 gap-2">
         <CountTile label="New customers" value={summary.would_create} />
         <CountTile label="Updated" value={summary.would_update} />
         <CountTile label="Unchanged" value={summary.would_unchanged} />
-        <CountTile label="Needs a look" value={summary.needs_review} />
       </div>
-
-      {summary.needs_review > 0 ? (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
-          {summary.needs_review.toLocaleString()} row
-          {summary.needs_review === 1 ? '' : 's'} carry a name close to one already on the
-          same customer code. They import; each one is listed on the job for a human.
-        </div>
-      ) : null}
 
       <ImportFeedbackSections
         unrecognisedColumns={summary.unmapped_headers}

@@ -30,6 +30,7 @@ from app.services.company_scope import (
     build_company_predicate,
     get_company_scope,
     pending_company_id,
+    resolve_write_company_id,
     stamp_lookup_companies,
 )
 from app.services.embedding_change_listener import (
@@ -2229,7 +2230,11 @@ class OrderService:
         if not code:
             import hashlib
             code = "DBR-" + hashlib.md5(name.lower().encode("utf-8")).hexdigest()[:10]
-        existing_id, _ambiguous = customer_rules.pick_customer_by_code(self.db, code, None)
+        # The company the new customer would be stamped with is the one the code is
+        # looked up in (security review S1): an all-companies principal must not link
+        # this order to the other company's customer of the same code.
+        company_id = resolve_write_company_id(get_company_scope(self.db))
+        existing_id, _ambiguous = customer_rules.pick_customer_by_code(self.db, code, company_id)
         if existing_id is not None:
             return existing_id
         new_customer = Customer(
@@ -3649,7 +3654,12 @@ class CustomerService:
         is the same customer, so it is a conflict, not a second row.
         """
         code = (customer_data.customer_code or "").strip()
-        existing_id, _ambiguous = customer_rules.pick_customer_by_code(self.db, code, None)
+        if not code:
+            raise handle_unprocessable("Customer code is required.")
+        # Looked up in the company the row is about to join (security review S1): a
+        # code held only by another company is not a conflict here, nor a disclosure.
+        company_id = resolve_write_company_id(get_company_scope(self.db))
+        existing_id, _ambiguous = customer_rules.pick_customer_by_code(self.db, code, company_id)
         if existing_id is not None:
             raise handle_conflict("Customer with this code already exists.")
 

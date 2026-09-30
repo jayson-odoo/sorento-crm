@@ -29,7 +29,12 @@ One CRM customer per debtor code within a company. Names are labels. Plan:
   system), when the masters push sends `source_ref=AED_SORENTO:300-1003` with that row's code,
   then the row is updated, keeps `AED_SORENTO:2613` as its only ref, the AccNo ref is never
   linked, the verdict carries `ref_mismatch` and no `ReferenceConflict` is raised. A ref from
-  another source system still conflicts.
+  another source system, or from another integration on the same source system, still
+  conflicts (security review S2).
+- **AC-06c [BE]** Every code lookup names its company explicitly: under an all-companies
+  scope the order import's debtor upsert and the manual create look the code up in the
+  company the row is stamped with, never in another company's book (security review S1).
+  `name_aliases` never holds the current name (a rename back removes it) and is capped.
 - **AC-07 [BE]** A code held by another company is never matched (AC-V1-2 unchanged).
 
 ## Masters push and imports

@@ -62,7 +62,6 @@ const SUMMARY: CustomerImportSummary = {
   would_update: 240,
   would_unchanged: 45,
   would_skip: 3,
-  needs_review: 2,
   unmapped_headers: [],
   missing_columns: [],
   problems: [],

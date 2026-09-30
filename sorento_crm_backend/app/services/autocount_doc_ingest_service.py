@@ -661,7 +661,7 @@ class AutocountDocIngestService(MasterRefResolver):
     def _customer(self, code: Optional[str], warnings: list[str]) -> Optional[str]:
         if not code:
             return None
-        entity_id = self._resolve_by_code(Customer, code)
+        entity_id = self._resolve_by_code(Customer, code, warnings)
         if entity_id is None:
             warnings.append(WARN_CUSTOMER_UNRESOLVED)
         return entity_id

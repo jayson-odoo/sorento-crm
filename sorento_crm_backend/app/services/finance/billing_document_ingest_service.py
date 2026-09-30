@@ -506,7 +506,7 @@ class BillingDocumentIngestService(MasterRefResolver):
     def _customer(self, payload: CanonicalBillingDocument, warnings: list[str]) -> Optional[str]:
         entity_id = self._by_ref(Customer, payload.customer_ref)
         if entity_id is None and payload.customer_code:
-            entity_id = self._resolve_by_code(Customer, payload.customer_code)
+            entity_id = self._resolve_by_code(Customer, payload.customer_code, warnings)
         if entity_id is None and (payload.customer_ref or payload.customer_code):
             warnings.append(WARN_CUSTOMER_UNRESOLVED)
         return entity_id

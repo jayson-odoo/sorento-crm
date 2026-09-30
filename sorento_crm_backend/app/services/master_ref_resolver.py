@@ -379,14 +379,18 @@ class MasterRefResolver:
             self._memo[ambiguous_key] = "1" if ambiguous else None
         return entity_id
 
-    def _resolve_by_code(self, model: type, code: str) -> Optional[str]:
+    def _resolve_by_code(
+        self, model: type, code: str, warnings: Optional[list[str]] = None
+    ) -> Optional[str]:
         """Exact match on the model's code column, case/whitespace-insensitive.
 
-        `Customer` never reaches here: its rung goes through
-        `_resolve_customer_by_code` (the shared code-identity rule, with its
-        ambiguity warning). Every other model delegates to `master_rules
-        .resolve_master_by_code` (D17), the same function the manual create
-        services and the ESB masters push already go through.
+        `Customer` goes through `_resolve_customer_by_code` (the shared
+        code-identity rule, with its ambiguity warning - appended to
+        `warnings` when the caller passes its list; the DO/GRN and billing
+        ingests call this directly for their debtor code). Every other model
+        delegates to `master_rules.resolve_master_by_code` (D17), the same
+        function the manual create services and the ESB masters push already
+        go through.
 
         Memoised (perf round 5): a positive hit is cached for every model - a
         code that resolved once resolves the same way for the rest of this
@@ -395,6 +399,8 @@ class MasterRefResolver:
         this ladder never back-creates, so "not found" cannot go stale within
         the batch the way it would for `Supplier`.
         """
+        if model is Customer:
+            return self._resolve_customer_by_code(code, warnings if warnings is not None else [])
         normalized = code.strip().upper()
         memo_key = (model.__tablename__, "code", normalized)
         if memo_key in self._memo:

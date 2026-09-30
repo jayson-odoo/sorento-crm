@@ -166,6 +166,18 @@ def test_duplicate_codes_merge_onto_one_survivor_per_company():
         b = _customer(db, company, code1, "1 LIVING DEPOT SDN BHD [A/C I]", days_old=20)
         c = _customer(db, company, code1, "MODERNMED SDN BHD", days_old=10)
         _ref(db, company, a, "AED_SORENTO:2613")
+        # A second ref on a loser (an AccNo one) goes with the loser.
+        _ref(db, company, b, "AED_SORENTO:300-1001")
+        # Fill-only: the survivor has no email; the oldest loser's wins, the
+        # survivor's own phone stays.
+        db.execute(
+            text("UPDATE customers SET phone_number = '03-000' WHERE id = :a"), {"a": a}
+        )
+        db.execute(
+            text("UPDATE customers SET email = 'b@x.my', phone_number = '03-111' WHERE id = :b"),
+            {"b": b},
+        )
+        db.execute(text("UPDATE customers SET email = 'c@x.my' WHERE id = :c"), {"c": c})
         b_orders = {_order(db, company, b), _order(db, company, b)}
         c_so = _sales_order(db, company, c)
         alice = _contact(db, company, a, "Alice", "main")
@@ -187,13 +199,27 @@ def test_duplicate_codes_merge_onto_one_survivor_per_company():
         _sales_order(db, company, e)
 
         # Code 3: nothing to choose on; the oldest survives. Case/space variant.
+        # The survivor has no main contact and TWO losers do: the oldest loser's
+        # main moves over as main, the other steps down.
         code3 = unique_code("300")
         f = _customer(db, company, code3, "F OLDEST", days_old=9)
         g = _customer(db, company, f"  {code3.lower()} ", "G NEWER", days_old=2)
+        g2 = _customer(db, company, code3.upper(), "G2 NEWEST", days_old=1)
+        gina = _contact(db, company, g, "Gina", "main")
+        gus = _contact(db, company, g2, "Gus", "main")
 
         # Code 4: a single row is left alone.
         code4 = unique_code("300")
         h = _customer(db, company, code4, "H ALONE", days_old=3)
+        # Search embeddings the ORM listener wrote for the losers must go with them.
+        for loser in (g, g2):
+            db.execute(
+                text(
+                    "INSERT INTO embedding_documents (id, source_type, source_id, body_text, "
+                    "source_hash, is_active) VALUES (:i, 'customer', :s, 'x', :h, true)"
+                ),
+                {"i": str(uuid.uuid4()), "s": loser, "h": uuid.uuid4().hex},
+            )
         db.flush()
 
         _run_upgrade(db)
@@ -210,6 +236,10 @@ def test_duplicate_codes_merge_onto_one_survivor_per_company():
         row = _customer_row(db, a)
         assert row["customer_name"] == "1 LIVING DEPOT SDN BHD"
         assert row["name_aliases"] == ["1 LIVING DEPOT SDN BHD [A/C I]", "MODERNMED SDN BHD"]
+        filled = db.execute(
+            text("SELECT email, phone_number FROM customers WHERE id = :a"), {"a": a}
+        ).first()
+        assert tuple(filled) == ("b@x.my", "03-000")
         assert _scalar(db, "SELECT count(*) FROM customers WHERE id IN (:b, :c)", b=b, c=c) == 0
         assert _scalar(db, "SELECT count(*) FROM customers WHERE id = :t", t=theirs) == 1
 
@@ -263,8 +293,17 @@ def test_duplicate_codes_merge_onto_one_survivor_per_company():
         assert _customer_row(db, e)["name_aliases"] == ["D OLDEST"]
 
         # --- code 3
-        assert _scalar(db, "SELECT count(*) FROM customers WHERE id = :g", g=g) == 0
-        assert _customer_row(db, f)["name_aliases"] == ["G NEWER"]
+        assert _scalar(db, "SELECT count(*) FROM customers WHERE id IN (:g, :g2)", g=g, g2=g2) == 0
+        assert _customer_row(db, f)["name_aliases"] == ["G NEWER", "G2 NEWEST"]
+        moved = db.execute(
+            text(
+                "SELECT id, contact_role FROM customer_contacts WHERE customer_id = :f "
+                "ORDER BY full_name"
+            ),
+            {"f": f},
+        ).all()
+        assert [(str(i), r) for i, r in moved] == [(gina, "main"), (gus, "stakeholder")]
+        assert _scalar(db, "SELECT count(*) FROM embedding_documents WHERE source_id IN (:g, :g2)", g=g, g2=g2) == 0
 
         # --- code 4
         assert _customer_row(db, h) == {"customer_name": "H ALONE", "name_aliases": []}

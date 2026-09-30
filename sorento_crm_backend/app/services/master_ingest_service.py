@@ -1243,7 +1243,19 @@ class MasterIngestService:
         if adopted is not None:
             origin = self._origin_of(entity_type, adopted)
             if origin is not None:
-                if entity_type in ("products", "customers") and is_unclaimed_or_same_source(origin):
+                if entity_type == "products" and is_unclaimed_or_same_source(origin) or (
+                    entity_type == "customers"
+                    and is_unclaimed_or_same_source(origin)
+                    # Security review S2: for a customer the stored ref must also
+                    # belong to THIS integration (or predate integrations, NULL),
+                    # so a second key on the same source system cannot rename a
+                    # row another integration claimed under its AutoKey.
+                    and (
+                        origin.integration_id is None
+                        or self.integration_id is None
+                        or str(origin.integration_id) == str(self.integration_id)
+                    )
+                ):
                     # Code-wins (ingest-products-code-wins, SR0): the same
                     # rule `MasterRefResolver` already applies to a document
                     # line's product rung (`WARN_REF_MISMATCH`) - the

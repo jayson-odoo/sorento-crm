@@ -40,11 +40,6 @@ export interface CustomerImportSummary {
   would_update: number;
   would_unchanged: number;
   would_skip: number;
-  /**
-   * Rows that would import but want a human's eye: a near-identical name already on
-   * the same customer code (AC-1.6). Never a blocker.
-   */
-  needs_review: number;
   /** Column headings no alias could place, by name (AC-4.3). */
   unmapped_headers: string[];
   /** Required columns the file does not carry at all. */

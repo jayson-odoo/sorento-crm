@@ -54,7 +54,9 @@ def _customer(db, company_id: str, name: str) -> Customer:
     customer = Customer(
         id=_uid(),
         company_id=company_id,
-        customer_code=f"ZZT-{name[:6]}",
+        # Unique per row: the code is the customer's identity (one row per code per
+        # company), so a shared name prefix must not become a shared code.
+        customer_code=f"ZZT-{_uid()[:8]}",
         customer_name=name,
     )
     db.add(customer)

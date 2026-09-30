@@ -32,11 +32,16 @@ def customer_code_key(code: Optional[str]) -> str:
 
 
 def pick_customer_by_code(
-    db: Session, code: Optional[str], company_id: Optional[str]
+    db: Session, code: Optional[str], company_id: str
 ) -> tuple[Optional[str], bool]:
-    """`(customer_id, ambiguous)` for a debtor code, within `company_id` - or within
-    the session's ambient company scope when `company_id` is None (the ORM scope
-    filter applies to the query).
+    """`(customer_id, ambiguous)` for a debtor code, within `company_id`.
+
+    The company is REQUIRED, never left to the session's ambient scope (security
+    review S1): the same code legally exists once per company, and a session scoped
+    to every company (an integration principal, a multi-company contact, a job with
+    no snapshot) would otherwise match the other company's row. A caller writing a
+    row passes the company that row is about to be stamped with
+    (`resolve_write_company_id(get_company_scope(db))`).
 
     One row holds the code: `(its id, False)`. None: `(None, False)`. More than one
     (legacy duplicates the merge migration has not folded yet): never a random
@@ -48,12 +53,16 @@ def pick_customer_by_code(
     key = customer_code_key(code)
     if not key:
         return None, False
-    query = db.query(Customer.id, Customer.created_at).filter(
-        func.lower(func.btrim(Customer.customer_code)) == key
+    if not company_id:
+        raise ValueError("pick_customer_by_code needs the company the code is looked up in")
+    rows = (
+        db.query(Customer.id, Customer.created_at)
+        .filter(
+            func.lower(func.btrim(Customer.customer_code)) == key,
+            Customer.company_id == company_id,
+        )
+        .all()
     )
-    if company_id is not None:
-        query = query.filter(Customer.company_id == company_id)
-    rows = query.all()
     if not rows:
         return None, False
     if len(rows) == 1:
@@ -95,21 +104,37 @@ def _same_label(a: Optional[str], b: Optional[str]) -> bool:
     return (a or "").strip().lower() == (b or "").strip().lower()
 
 
+#: Names kept per customer at most. The merge folds a handful of rows and a rename adds
+#: one; a feed that keeps renaming a row is not something the list should remember
+#: without bound (security review N2), so the oldest drop off first.
+MAX_NAME_ALIASES = 50
+
+
 def record_name_alias(customer: Customer, name: Optional[str]) -> bool:
     """Keep `name` on the customer as a former/other name. `True` when it was added.
 
-    Order-preserving and case/space-insensitively distinct; the current
-    `customer_name` is never an alias of itself. Assigns a NEW list so the JSONB
-    column is flagged dirty (an in-place append is invisible to the ORM).
+    Order-preserving and case/space-insensitively distinct; the CURRENT
+    `customer_name` is never in the list (a rename back to an earlier name takes
+    that name out of the aliases again), and the list is capped at
+    `MAX_NAME_ALIASES`. Assigns a NEW list so the JSONB column is flagged dirty
+    (an in-place append is invisible to the ORM).
     """
     label = (name or "").strip()
-    if not label or _same_label(label, customer.customer_name):
-        return False
-    aliases = list(customer.name_aliases or [])
-    if any(_same_label(label, existing) for existing in aliases):
-        return False
-    customer.name_aliases = aliases + [label]
-    return True
+    aliases = [
+        existing
+        for existing in (customer.name_aliases or [])
+        if not _same_label(existing, customer.customer_name)
+    ]
+    added = False
+    if label and not _same_label(label, customer.customer_name) and not any(
+        _same_label(label, existing) for existing in aliases
+    ):
+        aliases.append(label)
+        added = True
+    aliases = aliases[-MAX_NAME_ALIASES:]
+    if aliases != list(customer.name_aliases or []):
+        customer.name_aliases = aliases
+    return added
 
 
 def fold_market_segment(db: Session, code: Optional[str]) -> Optional[str]:

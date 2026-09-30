@@ -41,25 +41,6 @@ depends_on = None
 _OLD_INDEX = "uq_customers_company_code_name_lower"
 _NEW_INDEX = "uq_customers_company_code_lower"
 
-# Survivor columns filled from a loser only when the survivor's own is empty.
-_FILL_IF_EMPTY = (
-    "email",
-    "phone_number",
-    "mobile_number",
-    "registered_name",
-    "trading_name",
-    "registration_number",
-    "industry",
-    "website",
-    "billing_address",
-    "country",
-    "tax_id",
-    "account_owner_user_id",
-    "market_segment_code",
-    "region",
-    "sales_agent_id",
-)
-
 _MERGE_SQL = """
 DO $do$
 DECLARE
@@ -88,14 +69,14 @@ BEGIN
             SELECT (SELECT count(*) FROM orders o WHERE o.customer_id = c.id)
                  + (SELECT count(*) FROM sales_orders s WHERE s.customer_id = c.id) AS n
         ) ords ON true
-        WHERE c.company_id = grp.company_id
+        WHERE c.company_id IS NOT DISTINCT FROM grp.company_id
           AND lower(btrim(c.customer_code)) = grp.code_key
         ORDER BY (refs.n > 0) DESC, ords.n DESC, c.created_at ASC NULLS LAST, c.id ASC
         LIMIT 1;
 
         SELECT array_agg(id ORDER BY created_at ASC NULLS LAST, id ASC) INTO losing_ids
         FROM customers
-        WHERE company_id = grp.company_id
+        WHERE company_id IS NOT DISTINCT FROM grp.company_id
           AND lower(btrim(customer_code)) = grp.code_key
           AND id <> survivor_id;
 
@@ -177,34 +158,31 @@ BEGIN
               );
         END IF;
 
-        -- The survivor keeps its own origin; a loser's reference has nothing to
-        -- say once the row is gone (one origin per record, uq_integration_ref_entity).
-        IF EXISTS (
-            SELECT 1 FROM integration_references
-            WHERE entity_type = 'customers' AND entity_id = survivor_id::text
-        ) THEN
-            DELETE FROM integration_references
-            WHERE entity_type = 'customers' AND entity_id = ANY(losing_ids::text[]);
-        ELSE
-            -- No ref on the survivor (so no loser has one either by the survivor
-            -- rule above, unless two losers both did - then the oldest moves).
-            DELETE FROM integration_references
-            WHERE entity_type = 'customers' AND entity_id = ANY(losing_ids::text[])
-              AND id <> (
-                  SELECT r.id FROM integration_references r
-                  JOIN customers c ON c.id::text = r.entity_id
-                  WHERE r.entity_type = 'customers' AND r.entity_id = ANY(losing_ids::text[])
-                  ORDER BY c.created_at ASC NULLS LAST, c.id ASC
-                  LIMIT 1
-              );
-            UPDATE integration_references SET entity_id = survivor_id::text
-            WHERE entity_type = 'customers' AND entity_id = ANY(losing_ids::text[]);
+        -- The survivor keeps its own origin. A loser's reference is dropped: by the
+        -- survivor rule a loser can only hold one when the survivor holds one too,
+        -- and one record has exactly one origin (uq_integration_ref_entity).
+        DELETE FROM integration_references
+        WHERE entity_type = 'customers' AND entity_id = ANY(losing_ids::text[]);
+
+        -- Search embeddings of the losers (written by the ORM listener the raw
+        -- DELETE below bypasses) go with them, or the chatbot keeps finding them.
+        IF to_regclass('embedding_documents') IS NOT NULL THEN
+            DELETE FROM embedding_documents
+            WHERE source_type = 'customer' AND source_id = ANY(losing_ids::text[]);
+        END IF;
+        IF to_regclass('embedding_queue') IS NOT NULL THEN
+            DELETE FROM embedding_queue
+            WHERE source_type = 'customer' AND source_id = ANY(losing_ids::text[]);
         END IF;
 
         -- Re-point every FK referencing customers(id), discovered dynamically
-        -- (migration 220's mechanism). A row the unique constraints refuse to
-        -- move (the survivor already holds its equivalent) is dropped: it says
-        -- nothing the survivor's own row does not.
+        -- (migration 220's mechanism): one set-based UPDATE per child table, and
+        -- only when a unique constraint refuses that (the survivor already holds
+        -- the equivalent of some row) a per-row pass that drops exactly the rows
+        -- that collide - they say nothing the survivor's own row does not. A
+        -- person's contact record is never dropped that way: the main-contact
+        -- demotion above is what makes contacts movable, so a collision there is
+        -- a bug in that step and stops the migration instead of losing a contact.
         FOR fk IN
             SELECT c.conrelid::regclass::text AS child_table,
                    att.attname               AS child_column
@@ -213,21 +191,31 @@ BEGIN
               ON att.attrelid = c.conrelid AND att.attnum = ANY (c.conkey)
             WHERE c.contype = 'f' AND c.confrelid = 'customers'::regclass
         LOOP
-            FOR child IN EXECUTE format(
-                'SELECT ctid AS row_ctid FROM %s WHERE %I = ANY($1)',
-                fk.child_table, fk.child_column
-            ) USING losing_ids
-            LOOP
-                BEGIN
-                    EXECUTE format(
-                        'UPDATE %s SET %I = $1 WHERE ctid = $2',
-                        fk.child_table, fk.child_column
-                    ) USING survivor_id, child.row_ctid;
-                EXCEPTION WHEN unique_violation THEN
-                    EXECUTE format('DELETE FROM %s WHERE ctid = $1', fk.child_table)
-                    USING child.row_ctid;
-                END;
-            END LOOP;
+            BEGIN
+                EXECUTE format(
+                    'UPDATE %s SET %I = $1 WHERE %I = ANY($2)',
+                    fk.child_table, fk.child_column, fk.child_column
+                ) USING survivor_id, losing_ids;
+            EXCEPTION WHEN unique_violation THEN
+                IF fk.child_table = 'customer_contacts' THEN
+                    RAISE;
+                END IF;
+                FOR child IN EXECUTE format(
+                    'SELECT ctid AS row_ctid FROM %s WHERE %I = ANY($1)',
+                    fk.child_table, fk.child_column
+                ) USING losing_ids
+                LOOP
+                    BEGIN
+                        EXECUTE format(
+                            'UPDATE %s SET %I = $1 WHERE ctid = $2',
+                            fk.child_table, fk.child_column
+                        ) USING survivor_id, child.row_ctid;
+                    EXCEPTION WHEN unique_violation THEN
+                        EXECUTE format('DELETE FROM %s WHERE ctid = $1', fk.child_table)
+                        USING child.row_ctid;
+                    END;
+                END LOOP;
+            END;
         END LOOP;
 
         DELETE FROM customers WHERE id = ANY(losing_ids);

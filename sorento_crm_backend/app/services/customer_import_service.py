@@ -39,12 +39,14 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable, Optional
 
-from sqlalchemy import func, inspect as sa_inspect, text
+from sqlalchemy import func, inspect as sa_inspect
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.models.base import get_company_scope
 from app.models.order import Customer
 from app.services import import_outcome_codes as oc
+from app.services.company_scope import resolve_write_company_id
 from app.services.rules import customer_rules
 from app.services.customer_import_reader import (
     CustomerReadResult,
@@ -504,8 +506,13 @@ def _load_candidates(db: Session, rows: list[CustomerRow]) -> dict[str, Customer
             continue
         # Legacy duplicates the merge migration has not folded yet: the shared
         # rule decides (ref holder, else orders, else oldest), never list order.
-        picked_id, _ambiguous = customer_rules.pick_customer_by_code(db, code_key, None)
-        held[code_key] = next(c for c in customers if str(c.id) == picked_id)
+        # Looked up in the company the file's rows are stamped with (the job's
+        # scope; security review S1), the same one the scoped read above used.
+        company_id = resolve_write_company_id(get_company_scope(db))
+        picked_id, _ambiguous = customer_rules.pick_customer_by_code(db, code_key, company_id)
+        # `customers[0]` only if the picker's `btrim` and `_key`'s `strip` disagree on
+        # an exotic whitespace (a tab, an NBSP): still one of the rows, never a crash.
+        held[code_key] = next((c for c in customers if str(c.id) == picked_id), customers[0])
     return held
 
 
