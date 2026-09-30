@@ -31,13 +31,14 @@ from decimal import Decimal
 from io import BytesIO
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.models.base import get_company_scope
 from app.models.inventory import Stock, Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import (
+    InboundShipment,
     ProductSupplier,
     PurchaseOrder,
     PurchaseOrderLine,
@@ -136,6 +137,23 @@ def _spo_ref(spo_number: Optional[str]) -> str:
     if not spo_number:
         return "SPO"
     return spo_number if spo_number.upper().startswith("SPO") else f"SPO {spo_number}"
+
+
+def _landed_qty(
+    allocated: float, received: float, *, arrived: bool, receipt_status: Optional[str]
+) -> float:
+    """What an SPO line that is NO LONGER incoming brought into its bin (SPO-RECEIVED-PIN).
+
+    The receipt when the book has written one; the whole allocation when only the
+    shipment's arrival, or the line's own receipt status, says the goods are in; nothing for
+    a line closed with nothing received and nothing landed - that document brought no stock
+    anywhere, so a placement on it holds no stock either.
+    """
+    if received > EPSILON:
+        return received
+    if arrived or receipt_status in spo_supply.RECEIVED_RECEIPT_STATUSES:
+        return allocated
+    return 0.0
 
 
 def book_so_pins(
@@ -846,6 +864,9 @@ class StockDebtService:
             product_ids,
             {line.key for lines in demand_rows.values() for line in lines},
             include_po=include_po,
+            # SPO-RECEIVED-PIN: what a placement on a received SPO may pin on, see `_holds`.
+            span=set(warehouse_ids),
+            supply_rows=supply_rows,
         )
         # #1362 round 5 (owner ruling, 29 Sep 2026): goods that LANDED for a line stay with
         # that line, so they bind before anybody queues, exactly as a confirmed decision
@@ -1146,6 +1167,8 @@ class StockDebtService:
         line_keys: set,
         *,
         include_po: bool = True,
+        span: Optional[Set[str]] = None,
+        supply_rows: Optional[Dict[str, List[SupplyEvent]]] = None,
     ) -> List[Hold]:
         """What is already promised: confirmed allocations and placement links (R21).
 
@@ -1170,6 +1193,28 @@ class StockDebtService:
         supply is outside the read span (a site pool, an unflagged bin, another group under
         `group=`) off exactly these fields (AC-S2-1b), so the drill still says `On hand BRW`
         rather than leaving a pinned line looking unsourced.
+
+        **A placement on an SPO line that is no longer incoming is an ON-HAND hold at the
+        SPO's bin** (SPO-RECEIVED-PIN, owner 30 Sep 2026: "when the SPO is received, it is on
+        hand already, so if we still link to the received SPO, it seems like there are more
+        quantities than we should have"). "No longer incoming" is `open_incoming_clauses()`
+        failing, evaluated in SQL on the row itself, plus the quantity test (`allocated <=
+        received`) - the one rule `_supply` drops the same line from supply under, so the
+        hold and the event agree. Handed on as an SPO hold, that placement met AC-S2-1b's
+        stood-up branch in `assign()` (meant for supply OUTSIDE the span, not for a document
+        that is not supply) and pinned an uncapped stand-in SPO to the line while the landed
+        goods covered a second line as free on hand. Converted, it pins `min(placement,
+        landed)` on the bin's floor, which `assign()` caps at what the bin still holds: a
+        bin that has since shipped the goods pins nothing, and the line reads short.
+
+        `span` / `supply_rows` (the warehouse ids this read covers and the events `_supply`
+        read for them) decide what "the floor" means for that converted hold. A bin IN the
+        span with no on-hand event is a bin the read looked at and found empty, so the hold
+        is dropped rather than stood up out of nothing - `_landed_holds` pins under the same
+        rule. A bin OUTSIDE the span (a site pool, an unflagged bin, another group under
+        `group=`) is one the read cannot see, and the promise is honoured the way every other
+        out-of-span hold is (AC-S2-1b). Neither given (a caller that only wants the holds
+        listed), every converted hold is returned.
         """
         if not line_keys:
             return []
@@ -1219,6 +1264,20 @@ class StockDebtService:
                 # `_holds` already joins that row to get here.
                 OrderInquiry.inquiry_no,
                 OrderInquiry.id.label("order_inquiry_id"),
+                # SPO-RECEIVED-PIN: is the placed SPO line still incoming supply? The
+                # shared rule, evaluated in SQL on this very row (the way
+                # `spo_supply.spo_history_for_product` labels it) rather than restated
+                # in Python; the quantity half is applied below, beside the arithmetic.
+                # NULL-safe for a PO link: every clause passes on NULL SPO columns, and
+                # the PO branch below never reads it.
+                and_(*spo_supply.open_incoming_clauses()).label("spo_incoming"),
+                SPOAllocation.allocated_quantity.label("spo_allocated"),
+                SPOAllocation.quantity_received.label("spo_received"),
+                SPOAllocation.receipt_status.label("spo_receipt_status"),
+                SPOAllocation.product_id.label("spo_product_id"),
+                SPOAllocation.warehouse_id.label("spo_warehouse_id"),
+                Warehouse.warehouse_code.label("spo_warehouse_code"),
+                InboundShipment.actual_arrival_date.label("spo_arrived"),
             )
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
             .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
@@ -1229,6 +1288,11 @@ class StockDebtService:
             .outerjoin(
                 SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id
             )
+            .outerjoin(
+                InboundShipment,
+                InboundShipment.id == SPOAllocation.inbound_shipment_id,
+            )
+            .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
             .outerjoin(
                 PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id
             )
@@ -1272,6 +1336,46 @@ class StockDebtService:
                         purchase_order_id=str(row.purchase_order_id)
                         if row.purchase_order_id
                         else None,
+                    )
+                )
+                continue
+            allocated = _float(row.spo_allocated)
+            received = _float(row.spo_received)
+            if not (bool(row.spo_incoming) and allocated > received):
+                # SPO-RECEIVED-PIN (see the docstring): the document is not supply any
+                # more, so the placement holds what it brought INTO THE BIN, and only
+                # that. An on-hand hold is a decision on stock, never a placement, so it
+                # names no order inquiry (`StockDebtAssignedFromOnHand` carries none).
+                take = min(
+                    qty,
+                    _landed_qty(
+                        allocated,
+                        received,
+                        arrived=row.spo_arrived is not None,
+                        receipt_status=row.spo_receipt_status,
+                    ),
+                )
+                if take <= EPSILON or not row.spo_warehouse_id:
+                    continue
+                bin_id = str(row.spo_warehouse_id)
+                floor_key = f"on_hand:{bin_id}"
+                if span is not None and bin_id in span:
+                    floors = {
+                        event.key
+                        for event in (supply_rows or {}).get(str(row.spo_product_id), [])
+                        if event.kind == KIND_ON_HAND
+                    }
+                    if floor_key not in floors:
+                        # The read looked at this bin and it holds nothing of the product:
+                        # the landed goods are gone, so the promise covers nobody (AC-3).
+                        continue
+                out.append(
+                    Hold(
+                        line_key=str(row[0]),
+                        supply_key=floor_key,
+                        qty=take,
+                        kind=KIND_ON_HAND,
+                        warehouse=row.spo_warehouse_code,
                     )
                 )
                 continue

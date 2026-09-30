@@ -189,7 +189,10 @@ def _demand(
     return order, line
 
 
-def _spo(db, product, warehouse, *, qty, arrives, spo_number=None, received=0):
+def _spo(
+    db, product, warehouse, *, qty, arrives, spo_number=None, received=0,
+    receipt_status="pending", line_status="open",
+):
     from app.models.procurement import SPOAllocation
 
     row = SPOAllocation(
@@ -200,14 +203,36 @@ def _spo(db, product, warehouse, *, qty, arrives, spo_number=None, received=0):
         warehouse_id=warehouse.id,
         allocated_quantity=qty,
         quantity_received=received,
-        receipt_status="pending",
-        line_status="open",
+        receipt_status=receipt_status,
+        line_status=line_status,
         expected_date=arrives,
         company_id=SORENTO_COMPANY_ID,
     )
     db.add(row)
     db.flush()
     return row
+
+
+def _landed_shipment(db, allocation, *, arrived):
+    """An inbound shipment that has ARRIVED (`actual_arrival_date` set), booked onto
+    `allocation` - the third leg of `spo_supply.open_incoming_clauses()`: a landed shipment
+    takes its SPO line out of incoming supply even before a receipt is written."""
+    from app.models.procurement import InboundShipment
+
+    shipment = InboundShipment(
+        id=_u(),
+        shipment_number=f"ZZT-SHP-{_u()[:6]}",
+        shipment_date=arrived - timedelta(days=30),
+        estimated_arrival_date=arrived,
+        actual_arrival_date=arrived,
+        shipment_status="arrived",
+        company_id=SORENTO_COMPANY_ID,
+    )
+    db.add(shipment)
+    db.flush()
+    allocation.inbound_shipment_id = shipment.id
+    db.flush()
+    return shipment
 
 
 def _row_of(body: dict, code: str) -> dict:
@@ -1428,6 +1453,180 @@ def test_a_cancelled_inquiry_row_pins_nothing(scm_app):
         ).json()
 
     assert cell["demand"][0]["status"] != "pinned"
+
+
+# --------------------------------------------------------------- SPO-RECEIVED-PIN
+
+
+def _received_spo_case(db, *, on_hand, received, receipt_status, arrived=None):
+    """The SRTSS8710 / SPO-2026/05-0001 shape: SO1's placement sits on an SPO line that is
+    no longer incoming, SO2 at the same bin has no placement, and the bin holds whatever
+    the SPO brought in. Returns (marker, warehouse, product, allocation, due)."""
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    if on_hand:
+        _stock(db, product, warehouse, on_hand)
+    due = _months_ahead(1)
+    _order, core_line = _demand(
+        db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1",
+    )
+    _demand(db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO2")
+    project_order, project_line = _project_line_for(db, core_line)
+    allocation = _spo(
+        db, product, warehouse, qty=50, arrives=TODAY - timedelta(days=20),
+        received=received, receipt_status=receipt_status,
+    )
+    if arrived is not None:
+        _landed_shipment(db, allocation, arrived=arrived)
+    _order_back_link_on_spo(db, project_order, project_line, allocation=allocation, qty=50)
+    db.flush()
+    return marker, warehouse, product, allocation, due
+
+
+def _assert_pinned_on_the_bin(c, *, marker, warehouse, product, due):
+    """AC-1 / AC-2: SO1 is pinned on the bin's own on hand, SO2 is short, the month owes
+    50, and the current month's Supply tab is the bin alone, assigned to SO1."""
+    cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+    now = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(TODAY)}).json()
+    board = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+
+    by_so = {line["so_number"]: line for line in cell["demand"]}
+    so1 = by_so[f"{marker}-SO1"]
+    assert so1["status"] == "pinned"
+    assert so1["assigned_qty"] == 50
+    assert so1["assigned_from"] == [
+        {
+            "kind": "on_hand", "ref": f"On hand {warehouse.warehouse_code}",
+            "spo_number": None, "spo_line_number": None, "qty": 50,
+        }
+    ]
+    so2 = by_so[f"{marker}-SO2"]
+    assert so2["status"] == "short"
+    assert so2["assigned_qty"] == 0
+    assert so2["short_qty"] == 50
+
+    # The received document is not supply, and no stand-in is built for it: the only
+    # supply row anywhere is the bin, and it is spoken for by SO1.
+    assert cell["supply"] == []
+    assert [row["kind"] for row in now["supply"]] == ["on_hand"]
+    [on_hand] = now["supply"]
+    assert on_hand["warehouse_code"] == warehouse.warehouse_code
+    assert on_hand["qty"] == 50
+    assert on_hand["free_qty"] == 0
+    assert on_hand["assigned_to"] == [
+        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 50},
+    ]
+    assert now["supply_total_qty"] == 50
+
+    # And the month agrees: 100 owed, 50 real units, debt 50.
+    row = _row_of(board, product.product_code)
+    assert {m["key"]: m["balance"] for m in row["months"]}[month_key(due)] == -50
+
+
+def test_a_placement_on_a_fully_received_spo_pins_the_bins_on_hand_not_the_spo(scm_app):
+    """SPO-RECEIVED-PIN (owner, 30 Sep 2026, SRTSS8710 / SPO-2026/05-0001): "when the SPO is
+    received, it is on hand already, so if we still link to the received SPO, it seems like
+    there are more quantities than we should have."
+
+    The bin holds the 50 the SPO line brought in. SO1's placement is on that line, which is
+    fully received and so out of incoming supply. Before this fix `_holds` handed the
+    placement on as an SPO hold and `assign()` stood a synthetic SPO event up for it (the
+    AC-S2-1b branch, meant for supply OUTSIDE the span, not for a document that is not
+    supply), so the landed 50 covered SO2 as free on hand too: 100 covered off 50 units.
+    Now the placement is an on-hand hold at the SPO's own bin, for what landed.
+    """
+    app, db = _client(scm_app)
+    marker, warehouse, product, _allocation, due = _received_spo_case(
+        db, on_hand=50, received=50, receipt_status="fully_received",
+    )
+    with TestClient(app) as c:
+        _assert_pinned_on_the_bin(c, marker=marker, warehouse=warehouse, product=product, due=due)
+
+
+def test_a_placement_on_a_landed_shipment_pins_the_bins_on_hand_before_the_receipt(scm_app):
+    """The shipment's own arrival is the third leg of `open_incoming_clauses()`: a landed
+    container takes its SPO line out of incoming supply before a receipt is written. With
+    nothing received yet, what landed is the line's allocated quantity, and the pin is still
+    capped by what the bin actually holds."""
+    app, db = _client(scm_app)
+    marker, warehouse, product, _allocation, due = _received_spo_case(
+        db, on_hand=50, received=0, receipt_status="pending",
+        arrived=TODAY - timedelta(days=2),
+    )
+    with TestClient(app) as c:
+        _assert_pinned_on_the_bin(c, marker=marker, warehouse=warehouse, product=product, due=due)
+
+
+def test_a_placement_on_a_line_received_in_full_by_quantity_alone_pins_the_bin(scm_app):
+    """The quantity half of the rule, on its own: `quantity_received` has reached
+    `allocated_quantity` while `receipt_status` still says `pending` and the line is still
+    `open`. `_supply` drops that line (`incoming_by_location`'s `balance <= 0`), so `_holds`
+    has to convert it too, or the hold and the event disagree. The statuses alone would
+    keep it an SPO hold; this is the test the reviewer's kill run found nothing guarding."""
+    app, db = _client(scm_app)
+    marker, warehouse, product, _allocation, due = _received_spo_case(
+        db, on_hand=50, received=50, receipt_status="pending",
+    )
+    with TestClient(app) as c:
+        _assert_pinned_on_the_bin(c, marker=marker, warehouse=warehouse, product=product, due=due)
+
+
+def test_a_placement_on_a_received_spo_whose_goods_are_gone_pins_nothing(scm_app):
+    """A received SPO placement is a promise about STOCK, and stock that has left the bin
+    covers nobody: no stand-in SPO event, no on-hand stood up out of nothing. The line
+    reads short, which is the action the red cell is asking for."""
+    app, db = _client(scm_app)
+    marker, _warehouse_row, product, _allocation, due = _received_spo_case(
+        db, on_hand=0, received=50, receipt_status="fully_received",
+    )
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+        now = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(TODAY)}).json()
+
+    by_so = {line["so_number"]: line for line in cell["demand"]}
+    so1 = by_so[f"{marker}-SO1"]
+    assert so1["status"] == "short"
+    assert so1["assigned_qty"] == 0
+    assert so1["short_qty"] == 50
+    assert so1["assigned_from"] == []
+    assert by_so[f"{marker}-SO2"]["status"] == "short"
+    assert cell["supply"] == []
+    assert now["supply"] == []
+
+
+def test_a_placement_on_a_partly_received_open_spo_still_pins_the_spo(scm_app):
+    """Regression guard: a line still incoming (something left to come, not received, no
+    landed shipment) keeps its SPO hold exactly as before, pinned off the netted outstanding
+    balance (R26). Only a document that has stopped being supply is converted."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    _stock(db, product, warehouse, 30)
+    due = _months_ahead(1)
+    _order, core_line = _demand(
+        db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1",
+    )
+    project_order, project_line = _project_line_for(db, core_line)
+    allocation = _spo(db, product, warehouse, qty=100, received=30, arrives=due)
+    inquiry, _row, _link = _order_back_link_on_spo(
+        db, project_order, project_line, allocation=allocation, qty=50,
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+
+    [line] = cell["demand"]
+    assert line["status"] == "pinned"
+    assert line["assigned_qty"] == 50
+    assert [(entry["kind"], entry["qty"], entry["oi_id"]) for entry in line["assigned_from"]] == [
+        ("spo", 50, str(inquiry.id)),
+    ]
+    [spo_row] = cell["supply"]
+    assert (spo_row["qty"], spo_row["received_qty"], spo_row["outstanding_qty"]) == (100, 30, 70)
+    assert spo_row["free_qty"] == 20
 
 
 def test_reserved_stock_is_not_offered_as_free_supply(scm_app):
