@@ -169,7 +169,7 @@ _DELIVERY_ORDER_LINES_SQL = text(
     JOIN products p ON p.id = l.product_id
     JOIN warehouses w ON w.id = l.warehouse_id
     LEFT JOIN units_of_measure u ON u.id = p.base_uom_id
-    WHERE l.order_id = ANY(:order_ids)
+    WHERE l.order_id = ANY(CAST(:order_ids AS uuid[]))
     ORDER BY l.order_id, l.line_sequence
     """
 )
@@ -182,10 +182,15 @@ def _num(value):
 def _doc_key(order_number: str) -> int:
     """A deterministic synthetic DocKey per document number (the CRM's own DOs carry no
     AutoCount key): the same number builds the same key on every run, so a second pull of
-    the same window answers `unchanged`, exactly as a real re-pull would."""
-    import zlib
+    the same window answers `unchanged`, exactly as a real re-pull would. 48 bits of a
+    blake2b digest (crew hand test, 30 Sep: a 32-bit crc folded to eight digits made two of
+    4,412 documents share a key, and the second one failed as a DocNo clash) - collision
+    odds over any real window are nil, and `DtlKey = key * 100 + seq` still fits the
+    ingest's 18-digit ceiling and the BIGINT column."""
+    import hashlib
 
-    return 700_000_000 + zlib.crc32(order_number.encode("utf-8")) % 100_000_000
+    digest = hashlib.blake2b(order_number.encode("utf-8"), digest_size=6).digest()
+    return 1_000_000_000_000 + int.from_bytes(digest, "big")
 
 
 def _build_delivery_orders(engine, company_code: str, date_from: str, date_to: str) -> list[dict]:
