@@ -200,23 +200,42 @@ def test_ac_6_a_line_after_the_far_line_gets_nothing_of_the_lend():
     assert rows["later"].uncovered == pytest.approx(50)
 
 
-def test_ac_7_two_lendable_claims_on_one_bin_are_capped_by_the_floor():
-    """Two far lines each landed 60 but the bin holds 100 (20 already shipped): the claims
-    are capped in order, 60 then 40, and a nearer line of 30 is lent off the first claim."""
+def test_ac_7_two_lendable_claims_on_one_bin_and_the_later_one_bears_the_lend():
+    """Two far lines landed 60 and 40 on a floor of 100. The nearer line takes 32; the
+    earlier-due far line still takes its whole 60 at its own step, so the LATER one is the
+    one that lent - the same order the walk itself gives them."""
     far_a = _line("far-a", "SO381065", 60, date(2027, 3, 29))
-    far_b = _line("far-b", "SO381999", 60, date(2027, 4, 15))
+    far_b = _line("far-b", "SO381999", 40, date(2027, 4, 15))
     result = _walk(
         [_on_hand(100)], [far_a, far_b, SEP],
-        [_landed("far-a", 60, lendable=True), _landed("far-b", 60, lendable=True)],
+        [_landed("far-a", 60, lendable=True), _landed("far-b", 40, lendable=True)],
     )
     rows = _by_key(result)
     assert rows["sep"].status == STATUS_COVERED
-    assert rows["far-a"].lent_qty == pytest.approx(32)
-    assert rows["far-a"].status == STATUS_ORDER_BACK
-    assert rows["far-b"].lent_qty == 0
-    assert rows["far-b"].status == STATUS_SHORT
-    assert rows["far-b"].uncovered == pytest.approx(20)
+    assert rows["sep"].assigned[0].lent_from_line_key == "far-b"
+    assert rows["far-a"].status == STATUS_PINNED
+    assert rows["far-a"].lent_qty == 0
+    assert rows["far-b"].status == STATUS_ORDER_BACK
+    assert rows["far-b"].lent_qty == pytest.approx(32)
+    assert rows["far-b"].uncovered == pytest.approx(32)
     assert result.free[BIN] == 0
+
+
+def test_ac_7b_two_claims_are_capped_by_the_floor_in_hold_order():
+    """Each far line landed 60 but the bin holds 100: the second claim is capped at 40,
+    and the 20 it never got is plain `short`, not a lend."""
+    far_a = _line("far-a", "SO381065", 60, date(2027, 3, 29))
+    far_b = _line("far-b", "SO381999", 60, date(2027, 4, 15))
+    result = _walk(
+        [_on_hand(100)], [far_a, far_b],
+        [_landed("far-a", 60, lendable=True), _landed("far-b", 60, lendable=True)],
+    )
+    rows = _by_key(result)
+    assert rows["far-a"].status == STATUS_PINNED
+    assert rows["far-b"].status == STATUS_SHORT
+    assert rows["far-b"].lent_qty == 0
+    assert rows["far-b"].uncovered == pytest.approx(20)
+    assert [(item.qty, item.pinned) for item in rows["far-b"].assigned] == [(40, True)]
 
 
 def test_ac_8_a_lend_never_crosses_an_ownership_group():

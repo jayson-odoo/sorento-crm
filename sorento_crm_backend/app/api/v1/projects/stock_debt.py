@@ -27,7 +27,16 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.schemas.download import DownloadResponse
-from app.schemas.stock_debt import Book, StockDebtCell, StockDebtExportIn, StockDebtList
+#: The fulfilment board's own write permission: the Rebalance preview is the first half of
+#: that board's Confirm, so it is gated the same way (R5: "same as fulfilment Confirm").
+from app.api.v1.projects.fulfilment_planning import EDIT as FULFILMENT_EDIT
+from app.schemas.stock_debt import (
+    Book,
+    StockDebtCell,
+    StockDebtExportIn,
+    StockDebtList,
+    StockDebtRebalancePreview,
+)
 from app.services.error_handler import AppException, handle_internal_error
 # Reused, not reinvented (AC-18): the same cap `StockDebtService.export()` itself refuses
 # above - the route checks it FIRST, before any `user_downloads` row exists, the same
@@ -161,6 +170,33 @@ def stock_debt_cell(
         return StockDebtService(db).cell(
             product_id, month, group, date_from=date_from, date_to=date_to, book=book
         )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/stock-debt/{product_id}/rebalance", response_model=StockDebtRebalancePreview)
+def stock_debt_rebalance_preview(
+    product_id: str,
+    group: Optional[str] = Query(
+        None, description="The BOARD's own ownership group, same meaning as on the list."
+    ),
+    book: Book = Query("all", description="The BOARD's own book, same meaning as on the list."),
+    _user: dict = Depends(require_permission(FULFILMENT_EDIT)),
+    db: Session = Depends(get_db),
+):
+    """STOCK-DEBT-LENDABLE R5, the Preview: every lend of this product composed the way
+    the fulfilment board's Confirm posts a Borrow, plus the exact `confirm-all` body.
+
+    A READ (nothing is written; the Confirm press posts `confirm_body` to
+    `POST /project-sales/fulfilment-planning/confirm-all`, the existing write). Gated on
+    the fulfilment board's own EDIT permission rather than this screen's view right,
+    because it is the first half of that Confirm and a planner who cannot press it has
+    nothing to preview. No `date_from`/`date_to`: a lend is one transfer wherever it is
+    looked at from (R2).
+    """
+    try:
+        validate_uuid_path(product_id, resource="Product")
+        return StockDebtService(db).rebalance_preview(product_id, group, book=book)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

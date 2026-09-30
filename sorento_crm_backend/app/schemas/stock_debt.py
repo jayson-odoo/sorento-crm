@@ -15,14 +15,16 @@ from __future__ import annotations
 #: to the field, not to the type - which pydantic reads as "this must be None" and every
 #: dated event then fails response validation.
 from datetime import date as DateType
-from typing import Annotated, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
 from app.schemas.export_split import ExportSplit as ExportSplit
 
 Tone = Literal["red", "amber", "green"]
-DemandStatus = Literal["covered", "late", "short", "pinned"]
+#: `order_back` (STOCK-DEBT-LENDABLE, 30 Sep 2026): the line lent its landed goods to
+#: nearer lines and is owed a re-buy for them at its own date.
+DemandStatus = Literal["covered", "late", "short", "pinned", "order_back"]
 SupplyKind = Literal["on_hand", "spo", "po"]
 #: `book` (R1/AC-8): `all` (default) spans flagged project bins AND the site pools in one
 #: read; `project` reproduces the pre-24-Sep view (flagged bins only); `retail` is pools
@@ -140,6 +142,23 @@ class StockDebtAssignedFromOnHand(BaseModel):
     spo_number: Optional[str] = None
     spo_line_number: Optional[int] = None
     qty: float
+    #: STOCK-DEBT-LENDABLE: the sales order whose landed goods this take was LENT from
+    #: ("On hand BRW-BB (from SO381065)"). `None` on free stock at the same bin, which is
+    #: then a separate entry.
+    lent_from_so_number: Optional[str] = None
+
+
+class StockDebtAssignedFromLent(BaseModel):
+    """STOCK-DEBT-LENDABLE: one receiver of this line's lendable landed goods - "Lent to
+    SO396071 (32)". Not a source (nothing was assigned to this line by it); listed under
+    Covered by so the far line says where its goods went and the reader can open the
+    receiving order."""
+
+    kind: Literal["lent"]
+    ref: str
+    qty: float
+    so_number: str
+    sales_order_id: Optional[str] = None
 
 
 class StockDebtAssignedFromDocument(BaseModel):
@@ -166,7 +185,11 @@ class StockDebtAssignedFromDocument(BaseModel):
 #: Discriminated on `kind` (the same idiom `price_tag.TagLayerPropsDoc` already uses) so an
 #: on-hand entry's wire shape never grows the two OI keys a document entry always carries.
 StockDebtAssignedFrom = Annotated[
-    Union[StockDebtAssignedFromOnHand, StockDebtAssignedFromDocument],
+    Union[
+        StockDebtAssignedFromOnHand,
+        StockDebtAssignedFromDocument,
+        StockDebtAssignedFromLent,
+    ],
     Field(discriminator="kind"),
 ]
 
@@ -196,6 +219,9 @@ class StockDebtDemandLine(BaseModel):
     sales_order_id: Optional[str] = None
     #: R29: `assigned_source` (free text) replaced by one LINKED entry per source.
     assigned_from: List[StockDebtAssignedFrom] = []
+    #: STOCK-DEBT-LENDABLE: what nearer lines took of this line's lendable landed goods -
+    #: the "order back N" the status pill prints. 0 on every line that lent nothing.
+    lent_qty: float = 0.0
 
 
 class StockDebtAssignedTo(BaseModel):
@@ -286,3 +312,78 @@ class StockDebtExportIn(BaseModel):
     supplier_ids: List[str] = []
     book: Book = "all"
     split: ExportSplit = "none"
+
+
+# --------------------------------------------------------------------------- Rebalance
+#
+# STOCK-DEBT-LENDABLE (owner, 30 Sep 2026): `GET /project-sales/stock-debt/{product_id}/
+# rebalance` is a READ. It lists every lend the assignment made for the product, composed
+# the way the fulfilment board's Confirm posts a Borrow (one `order_borrow` component per
+# lend, the donor named, an order-back at the donor's own date), and hands back the exact
+# `POST /project-sales/fulfilment-planning/confirm-all` body (`confirm_body`) the Confirm
+# press sends - the FE composes nothing and there is no second write path.
+
+
+class StockDebtRebalanceBorrow(BaseModel):
+    """One lend as a person reads it: what is borrowed, from whom, where it sits."""
+
+    qty: float
+    warehouse_code: Optional[str] = None
+    donor_so_number: str
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    donor_required_date: Optional[DateType] = None
+    #: The engine's own sentence (`front_planning_engine.order_borrow_reason`).
+    reason: str
+
+
+class StockDebtRebalanceLine(BaseModel):
+    """One receiving line: its borrows, and the Buy for whatever the lend leaves."""
+
+    project_line_id: str
+    #: The PROJECT mirror's own line number (the board's address) and AutoCount's `Seq`.
+    line_no: Optional[int] = None
+    so_line_no: Optional[int] = None
+    required_date: Optional[DateType] = None
+    open_qty: float
+    borrow: List[StockDebtRebalanceBorrow] = []
+    buy_qty: float = 0.0
+
+
+class StockDebtRebalanceOrderBack(BaseModel):
+    """The order-back the donor gets: the lent quantity at ITS OWN required date."""
+
+    donor_so_number: str
+    donor_line_no: Optional[int] = None
+    qty: float
+    required_date: Optional[DateType] = None
+
+
+class StockDebtRebalanceOrder(BaseModel):
+    """One receiving sales order, confirmed on its own by `confirm-all`."""
+
+    pso_id: str
+    so_number: str
+    agent_code: Optional[str] = None
+    lines: List[StockDebtRebalanceLine] = []
+    order_backs: List[StockDebtRebalanceOrderBack] = []
+
+
+class StockDebtRebalanceSkipped(BaseModel):
+    """A receiver the Rebalance cannot compose for, and why (not adopted onto fulfilment
+    planning, or its order is not published)."""
+
+    so_number: str
+    qty: float
+    reason: str
+
+
+class StockDebtRebalancePreview(BaseModel):
+    #: Every lend of the product, summed.
+    lent_qty: float
+    orders: List[StockDebtRebalanceOrder] = []
+    skipped: List[StockDebtRebalanceSkipped] = []
+    #: `ConfirmManyBody`, verbatim - what the Confirm press posts to `confirm-all`. Kept
+    #: as a free dict rather than importing `app.schemas.project_supply` here: that module's
+    #: `ConfirmLine` is the reader's own contract and it validates the body on the way in.
+    confirm_body: Dict[str, Any]
