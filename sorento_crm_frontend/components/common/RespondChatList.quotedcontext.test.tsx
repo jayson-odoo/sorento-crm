@@ -233,7 +233,8 @@ describe('RespondChatList reply-to jump beyond the loaded window (AC-CP-8/9/10)'
     // The specific call shape the focus effect makes (`block: 'center'`)
     // distinguishes it from the unrelated pin-to-bottom scroll, which never
     // passes a `block` option.
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+    // `auto` under the harness's reduced-motion default (vitest.setup S8-01); the centre scroll is what is pinned.
+    expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'center' }));
   });
 
   it('AC-CP-9: without a fetch-back loader supplied, an out-of-window quote stays plain text (no dead button)', () => {

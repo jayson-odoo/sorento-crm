@@ -243,15 +243,14 @@ export function CustomerAsksHistory({
                     ask={ask}
                     pending={pendingAskId === ask.id}
                     onOpen={onOpen}
-                    // A done card offers Reopen only; Done never renders here.
-                    onDone={() => undefined}
                     onReopen={onReopen}
                   />
                 </li>
               ))}
             </ul>
           )}
-          {total > pagination.pageSize ? (
+          {/* Also past page 1: a Reopen that empties the last page must leave a way back. */}
+          {total > pagination.pageSize || pagination.pageIndex > 0 ? (
             <div className="flex justify-between border-t pt-3">
               <DataGridPagination />
             </div>

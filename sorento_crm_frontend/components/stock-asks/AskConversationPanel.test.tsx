@@ -21,6 +21,11 @@ vi.mock('next/link', () => ({
   ),
 }));
 vi.mock('@/components/common/AttachmentPreviewModal', () => ({ __esModule: true, default: () => null }));
+const motion = vi.hoisted(() => ({ reduced: false }));
+vi.mock('@/lib/motion', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/motion')>();
+  return { ...actual, useReducedMotion: () => motion.reduced };
+});
 
 const ASK: StockAsk & { contact_phone?: string | null } = {
   id: 'ask-1',
@@ -58,6 +63,7 @@ const ANCHOR = { messages: [], ask_message_id: 3, ask_message_ref: idOf(3) };
 
 let scrollIntoView: ReturnType<typeof vi.fn>;
 beforeEach(() => {
+  motion.reduced = false;
   scrollIntoView = vi.fn();
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { value: scrollIntoView, configurable: true, writable: true });
 });
@@ -120,6 +126,12 @@ describe('AskConversationPanel header and block (AC-ST307)', () => {
     expect(text).toContain('Yes, we have stock, please refer to your salesman to proceed.');
     expect(screen.getByRole('button', { name: /Jump to message/ })).toBeInTheDocument();
   });
+
+  it('puts nothing after the code when there is no product name', () => {
+    const { container } = setup({ ask: { ...ASK, product_name: null } });
+    expect(container.textContent).not.toMatch(/\(\s*\)|\(null\)/);
+    expect(container.textContent).not.toContain('Wiper Blade');
+  });
 });
 
 describe('AskConversationPanel conversation is the shared thread (AC-AU10, AC-AU11)', () => {
@@ -153,6 +165,17 @@ describe('AskConversationPanel conversation is the shared thread (AC-AU10, AC-AU
     const before = centreScrolls();
     fireEvent.click(screen.getByRole('button', { name: /Jump to message/ }));
     await waitFor(() => expect(centreScrolls()).toBe(before + 1));
+  });
+
+  it('jumps without motion when the reader asked for reduced motion (DESIGN-LANGUAGE)', async () => {
+    motion.reduced = true;
+    setup();
+    await waitFor(() => expect(centreScrolls()).toBeGreaterThanOrEqual(1));
+    fireEvent.click(screen.getByRole('button', { name: /Jump to message/ }));
+    await waitFor(() => expect(centreScrolls()).toBeGreaterThanOrEqual(2));
+    for (const [opts] of scrollIntoView.mock.calls) {
+      expect((opts as ScrollIntoViewOptions | undefined)?.behavior ?? 'auto').toBe('auto');
+    }
   });
 
   it('loads the page around the anchor when the tail does not hold it (an old ask)', async () => {

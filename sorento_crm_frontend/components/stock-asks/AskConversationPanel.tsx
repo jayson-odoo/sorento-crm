@@ -6,32 +6,16 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import RespondChatList from '@/components/common/RespondChatList';
-import {
-  useConversationThread,
-  type ConversationThreadLoaders,
-} from '@/components/common/conversation/useConversationThread';
+import { useConversationThread } from '@/components/common/conversation/useConversationThread';
+import type { AskThreadSource } from '@/hooks/useAskThread';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import type { RespondMessageRenderable } from '@/lib/respondIoChatRender';
 import type { StockAsk } from '@/lib/stock-asks';
 import { askAnswerText, askProductText, type AskConversation } from '@/lib/stock-asks-todo';
 
 /** Where the CRM's chat history for one contact lives. */
 const CONVERSATIONS_PATH = '/sla-management/conversations';
 
-/**
- * What the mount hands the panel about the ask's contact thread (ASKS-UX item 3): the live tail
- * it keeps polling, plus the two loaders `useConversationThread` needs for scroll-back, search
- * and the jump to the anchor. The mount owns the fetching (portal token or CRM session).
- */
-export interface AskThreadSource {
-  liveItems: RespondMessageRenderable[];
-  /** True until the tail has been read once. */
-  loading: boolean;
-  /** The tail read failed: shown in place of the thread. */
-  error: string | null;
-  loadPage: ConversationThreadLoaders['loadPage'];
-  searchMessages: ConversationThreadLoaders['searchMessages'];
-}
+export type { AskThreadSource } from '@/hooks/useAskThread';
 
 export interface AskConversationPanelProps {
   ask: StockAsk;
@@ -165,7 +149,8 @@ export function AskConversationPanel({
                 contactName={ask.contact_name}
                 contactPhone={ask.contact_phone}
                 emptyHint="No messages in this conversation yet."
-                maxHeightClass="max-h-[50vh]"
+                // dvh, not vh: the portal drawer is phone-facing (M6-02) and a vh cap sits under Safari's chrome.
+                maxHeightClass="max-h-[50dvh]"
                 highlightMessageId={anchor}
                 highlightLabel="This enquiry"
                 onLoadOlder={thread.loadOlder}
