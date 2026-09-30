@@ -2530,10 +2530,36 @@ export interface ConfirmManyBody {
    * batch. Absent on an ordinary Confirm.
    */
   batch_id?: string | null;
+  /** Run the press and roll it back: the answer names what it WOULD raise (FULFIL-CONFIRM-SCOPE v2). */
+  preview?: boolean;
+}
+
+/** One order inquiry row a previewed press would raise. */
+export interface PreviewInquiryRow {
+  line_no?: number | null;
+  item_code?: string | null;
+  verb: string;
+  qty: string | number;
+  delivery_date?: string | null;
+  stock_location?: string | null;
+  note?: string | null;
+}
+
+/** One stock transfer a previewed press would propose. */
+export interface PreviewTransfer {
+  line_no?: number | null;
+  kind: string;
+  qty: string | number;
+  from_location?: string | null;
+  to_location?: string | null;
 }
 
 /** One order's outcome. `ok` decides which half is populated. */
 export interface ConfirmManyOrderResult {
+  /** True on a preview: nothing below was committed. */
+  preview?: boolean | null;
+  inquiry_rows?: PreviewInquiryRow[] | null;
+  transfers?: PreviewTransfer[] | null;
   pso_id: string;
   ok: boolean;
   decision_revision?: number | null;

@@ -29,6 +29,7 @@ import type {
   BoardSource,
   ConfirmBorrowComponent,
   ConfirmLine,
+  ConfirmManyOrderResult,
   ConfirmReserveComponent,
 } from '../types/fulfilmentPlanning.types';
 import {
@@ -833,6 +834,15 @@ export function confirmSummaryFor(
   return { toConfirm, rejected, orderCount: orderIds.size, changed };
 }
 
+/**
+ * Saved before this board was opened: at least a minute earlier, so a draft the planner just
+ * saved (stamped a moment before the panel mounted) is not flagged as somebody's old work.
+ */
+function savedBeforeOpen(savedAt: string | null, openedAt: Date): boolean {
+  if (!savedAt) return false;
+  return openedAt.getTime() - parseDateTimeAsUTC(savedAt).getTime() >= 60_000;
+}
+
 /** How long ago a draft was saved, reading the server's naive-UTC stamp as UTC. */
 export function savedAgoText(savedAt: string): string {
   return timeAgo(parseDateTimeAsUTC(savedAt));
@@ -962,7 +972,7 @@ export function confirmDialogRowsFor(
       savedByOther:
         !!savedBy && !!context.currentUserName && savedBy !== context.currentUserName,
       // The server sends naive UTC (no Z); `new Date()` would read it as local time.
-      savedBefore: !!savedAt && parseDateTimeAsUTC(savedAt) < context.openedAt,
+      savedBefore: savedBeforeOpen(savedAt, context.openedAt),
     });
     const adoptedLater =
       !contribution.project_line_id &&
@@ -1501,4 +1511,163 @@ export function confirmNoticeLines(result: {
   );
   const landed = (result.landed_buy_notices ?? []).map((line) => failingLineText(line));
   return [...held, ...landed];
+}
+
+/** One previewed row: what the SERVER says the press would raise, plus the board's decision behind it. */
+export interface PreviewRow {
+  /** The board contribution behind the line: what an untick excludes. */
+  key: string;
+  line_no: number | null;
+  item_code: string | null;
+  verb: string;
+  qty: string;
+  delivery_date: string | null;
+  stock_location: string | null;
+  note: string | null;
+  /** The decision that produced it, in board words (`Buy 239`, `Borrow 43 + 57 from BRW-BB`). */
+  decision: string;
+  saved_by: string | null;
+  saved_at: string | null;
+  savedByOther: boolean;
+  savedBefore: boolean;
+  /** The transfer the press would propose for this line, `BRW-BB to BRW-IB 100`. */
+  transfer?: string;
+}
+
+export interface PreviewOrder {
+  pso_id: string;
+  sales_order_id: string | null;
+  so_number: string | null;
+  customer_name: string | null;
+  ok: boolean;
+  error: string | null;
+  carried: number;
+  rows: PreviewRow[];
+  heldBack: { line_no: number | null; item_code: string | null; reason: string }[];
+  notSent: ConfirmDialogNotPosted[];
+}
+
+/**
+ * The panel's preview: the SERVER's per-order answer joined back to the board's own
+ * contribution (by project line id, else line no within the order) for the decision behind
+ * each row and who saved it and when. Nothing about what would be sent is derived here.
+ */
+export function previewRowsFor(
+  results: ConfirmManyOrderResult[],
+  contributions: BoardContribution[],
+  draft: BoardDraft,
+  context: {
+    currentUserName: string | null | undefined;
+    openedAt: Date;
+    /** The board's orders, to name a refused order that echoed no lines. */
+    orders?: {
+      sales_order_id: string;
+      so_number: string;
+      customer_name?: string | null;
+      project_sales_order_id?: string | null;
+    }[];
+    unadoptedSalesOrderIds?: ReadonlySet<string>;
+    batchBlockedSalesOrderIds?: ReadonlySet<string>;
+  },
+): PreviewOrder[] {
+  return results.map((result) => {
+    const confirmed = result.lines_confirmed ?? [];
+    const ids = new Set(confirmed.map((entry) => entry.project_line_id));
+    const standing = context.orders?.find(
+      (order) => order.project_sales_order_id === result.pso_id,
+    );
+    const salesOrderId =
+      standing?.sales_order_id ??
+      contributions.find(
+        (entry) => entry.project_line_id && ids.has(entry.project_line_id),
+      )?.sales_order_id ??
+      null;
+    const own = salesOrderId
+      ? contributions.filter((entry) => entry.sales_order_id === salesOrderId)
+      : [];
+    const soNumber = standing?.so_number ?? own[0]?.so_number ?? null;
+    const base: PreviewOrder = {
+      pso_id: result.pso_id,
+      sales_order_id: salesOrderId,
+      so_number: soNumber,
+      customer_name: standing?.customer_name ?? own[0]?.customer_name ?? null,
+      ok: result.ok,
+      error: result.error ?? null,
+      carried: result.lines_carried ?? 0,
+      rows: [],
+      heldBack: [],
+      notSent: [],
+    };
+    if (!result.ok) return base;
+
+    const heldBack = (result.lines_held_back ?? []).map((entry) => ({
+      line_no: entry.line_no ?? null,
+      item_code: entry.item_code ?? null,
+      reason: entry.reason ?? '',
+    }));
+    const heldNos = new Set(heldBack.map((entry) => entry.line_no));
+    const inquiry = result.inquiry_rows ?? [];
+    const transfers = result.transfers ?? [];
+
+    const rows: PreviewRow[] = confirmed.map((line) => {
+      const contribution =
+        own.find((entry) => entry.project_line_id === line.project_line_id) ??
+        own.find((entry) => entry.line_no === line.line_no);
+      const decision = contribution ? draft[contribution.key] : undefined;
+      const role = contribution
+        ? pressRoleFor(
+            contribution,
+            decision,
+            context.batchBlockedSalesOrderIds?.has(contribution.sales_order_id) ?? false,
+          )
+        : null;
+      const savedBy = contribution?.draft?.saved_by ?? null;
+      const savedAt = contribution?.draft?.saved_at ?? null;
+      const mine = inquiry.filter((row) => row.line_no === line.line_no);
+      const moves = transfers.filter((move) => move.line_no === line.line_no);
+      const joined = (values: (string | number | null | undefined)[]) =>
+        values.map((value) => String(value ?? '')).join(' + ');
+      return {
+        key: contribution?.key ?? `line-${line.project_line_id}`,
+        line_no: line.line_no ?? null,
+        item_code: line.item_code ?? contribution?.item_code ?? null,
+        verb: joined(mine.map((row) => row.verb)),
+        qty: joined(mine.map((row) => row.qty)),
+        delivery_date: mine[0]?.delivery_date ?? null,
+        stock_location: mine[0]?.stock_location ?? null,
+        note: mine[0]?.note ?? null,
+        decision:
+          role?.kind === 'post' && contribution && decision && decision.verdict !== 'rejected'
+            ? compositionText(role.line, contribution, decision)
+            : role?.kind === 'withdraw'
+              ? WITHDRAWN_COMPOSITION
+              : '',
+        saved_by: savedBy,
+        saved_at: savedAt,
+        savedByOther:
+          !!savedBy && !!context.currentUserName && savedBy !== context.currentUserName,
+        savedBefore: savedBeforeOpen(savedAt, context.openedAt),
+        ...(moves.length > 0
+          ? {
+              transfer: moves
+                .map(
+                  (move) =>
+                    `${move.from_location ?? '?'} to ${move.to_location ?? '?'} ${move.qty}`,
+                )
+                .join(' + '),
+            }
+          : {}),
+      };
+    });
+
+    const notSent = salesOrderId
+      ? confirmDialogRowsFor(own, draft, {
+          currentUserName: context.currentUserName,
+          openedAt: context.openedAt,
+          unadoptedSalesOrderIds: context.unadoptedSalesOrderIds,
+          batchBlockedSalesOrderIds: context.batchBlockedSalesOrderIds,
+        }).notPosted.filter((entry) => !heldNos.has(entry.line_no))
+      : [];
+    return { ...base, rows, heldBack, notSent };
+  });
 }

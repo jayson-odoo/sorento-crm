@@ -23,6 +23,7 @@ import {
   factorLabel,
   matchesSuggestion,
   plannedLineCount,
+  previewRowsFor,
   rankingNote,
   rejectedCoveredLineIdsFor,
   rowMatchesSearch,
@@ -3072,9 +3073,195 @@ describe('confirm scope: a naive-UTC saved_at is read as UTC', () => {
     const { rows } = confirmDialogRowsFor(
       [contribution],
       { [contribution.key]: { verdict: 'approved' } },
-      { currentUserName: 'Cyndi', openedAt: new Date('2026-09-30T04:50:30Z') },
+      { currentUserName: 'Cyndi', openedAt: new Date('2026-09-30T04:52:00Z') },
     );
     expect(rows[0].savedBefore).toBe(true);
     expect(savedAgoText('2026-09-30T04:50:00')).toBe('just now');
+  });
+});
+
+/**
+ * FULFIL-CONFIRM-SCOPE v2 (P3/P4): the panel's rows are the SERVER's preview answer, matched
+ * back to the board's own contribution (by line_no within the order the answer names) for the
+ * decision behind each row, who saved it and when. Nothing about what would be sent is derived
+ * here: `previewRowsFor` only joins and annotates.
+ */
+describe('previewRowsFor', () => {
+  const OPENED = new Date('2026-09-30T02:00:00Z');
+  const EIGHT_DAYS_AGO = '2026-09-22T03:09:00Z';
+  const board = buildBoard(
+    [
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 6, qty: '239', item_code: 'SRTWT6808' }),
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 9, qty: '100', item_code: 'SRTSH1040' }),
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 24, qty: '10', item_code: 'TPE-9204' }),
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 30, qty: '5', item_code: 'WESERP20B' }),
+    ],
+    { today: TODAY },
+  );
+  const base = board.cells.flatMap((cell) => cell.contributions);
+  const at = (lineNo: number) => base.find((entry) => entry.line_no === lineNo)!;
+
+  const contributions: BoardContribution[] = [
+    {
+      ...at(6),
+      draft: {
+        decision: { verdict: 'amended', reserve_qty: '0', reserve: [], borrow: [], buy_qty: '239', reason: 'Late.' },
+        saved_by: 'Cyndi',
+        saved_at: '2026-09-30T02:30:00Z',
+      },
+    },
+    {
+      ...at(9),
+      qty_proposed_reserve: '0',
+      qty_proposed_incoming: '0',
+      qty_proposed_buy: '0',
+      sources: [
+        { kind: 'borrow' as const, qty: '100', location: 'BRW-BB', warehouse_id: 'wh-brw-bb', reason: 'Group borrow.' },
+      ],
+      draft: {
+        decision: { verdict: 'approved' },
+        saved_by: 'Jayson Foundryx',
+        saved_at: EIGHT_DAYS_AGO,
+      },
+    },
+    {
+      ...at(24),
+      draft: { decision: { verdict: 'approved' }, saved_by: 'Cyndi', saved_at: '2026-09-30T02:31:00Z' },
+    },
+    {
+      ...at(30),
+      draft: { decision: { verdict: 'approved' }, saved_by: 'Cyndi', saved_at: '2026-09-29T01:00:00Z', stale: true },
+    },
+  ];
+  const draft = Object.fromEntries(
+    contributions.map((entry) => [entry.key, entry.draft!.decision]),
+  );
+
+  const previewResults = [
+    {
+      pso_id: 'pso-so-a',
+      ok: true,
+      preview: true,
+      decision_revision: 3,
+      lines_confirmed: [
+        { project_line_id: 'pl-so-a-6', line_no: 6, item_code: 'SRTWT6808' },
+        { project_line_id: 'pl-so-a-9', line_no: 9, item_code: 'SRTSH1040' },
+      ],
+      lines_carried: 0,
+      lines_held_back: [{ line_no: 24, item_code: 'TPE-9204', reason: 'only 3 free at BRW' }],
+      lines_fulfilled_skipped: 0,
+      inquiry_rows: [
+        {
+          line_no: 6,
+          item_code: 'SRTWT6808',
+          verb: 'ORDER',
+          qty: '239',
+          delivery_date: '2026-09-01',
+          stock_location: 'BRW-IB',
+          note: null,
+        },
+        {
+          line_no: 9,
+          item_code: 'SRTSH1040',
+          verb: 'BORROW',
+          qty: '100',
+          delivery_date: '2026-09-04',
+          stock_location: 'BRW-IB',
+          note: null,
+        },
+      ],
+      transfers: [{ line_no: 9, kind: 'borrow', qty: '100', from_location: 'BRW-BB', to_location: 'BRW-IB' }],
+    },
+  ];
+
+  const result = () =>
+    previewRowsFor(previewResults as never, contributions, draft, {
+      currentUserName: 'Cyndi',
+      openedAt: OPENED,
+    });
+
+  it('pins a plain buy: identity, server figures, the decision behind it, own fresh draft (AC-V2)', () => {
+    const [order] = result();
+    expect(order).toMatchObject({ pso_id: 'pso-so-a', so_number: 'SO000001' });
+    const row = order.rows.find((entry) => entry.line_no === 6)!;
+    expect(row).toMatchObject({
+      key: contributions[0].key,
+      line_no: 6,
+      item_code: 'SRTWT6808',
+      verb: 'ORDER',
+      qty: '239',
+      delivery_date: '2026-09-01',
+      stock_location: 'BRW-IB',
+      decision: 'Buy 239',
+      saved_by: 'Cyndi',
+      saved_at: '2026-09-30T02:30:00Z',
+      savedByOther: false,
+      savedBefore: false,
+    });
+    expect(row.transfer).toBeUndefined();
+  });
+
+  it('pins a borrow: folds the transfer in as text and flags another planner and an old save (AC-V2)', () => {
+    const [order] = result();
+    const row = order.rows.find((entry) => entry.line_no === 9)!;
+    expect(row).toMatchObject({
+      key: contributions[1].key,
+      verb: 'BORROW',
+      decision: 'Borrow 100 from BRW-BB',
+      saved_by: 'Jayson Foundryx',
+      saved_at: EIGHT_DAYS_AGO,
+      savedByOther: true,
+      savedBefore: true,
+      transfer: 'BRW-BB to BRW-IB 100',
+    });
+    expect(order.rows).toHaveLength(2);
+  });
+
+  it('lists the held-back line with its reason and the stale draft as not sent (AC-V2)', () => {
+    const [order] = result();
+    expect(order.heldBack).toHaveLength(1);
+    expect(order.heldBack[0]).toMatchObject({
+      line_no: 24,
+      item_code: 'TPE-9204',
+      reason: 'only 3 free at BRW',
+    });
+    expect(order.notSent).toHaveLength(1);
+    expect(order.notSent[0]).toMatchObject({ line_no: 30, item_code: 'WESERP20B' });
+    expect(order.notSent[0].reason).toContain('Suggestion changed');
+  });
+
+  it('carries a refused order through with no rows, so the panel can name the refusal', () => {
+    const refused = [{ pso_id: 'pso-so-a', ok: false, preview: true, error: 'No supply', inquiry_rows: [], transfers: [] }];
+    const [order] = previewRowsFor(refused as never, contributions, draft, {
+      currentUserName: 'Cyndi',
+      openedAt: OPENED,
+    });
+    expect(order.pso_id).toBe('pso-so-a');
+    expect(order.rows).toEqual([]);
+  });
+});
+
+describe('confirm scope: savedBefore needs a real gap', () => {
+  const board = buildBoard(
+    [line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1 })],
+    { today: TODAY },
+  );
+  const base = board.cells.flatMap((cell) => cell.contributions)[0];
+  const OPENED = new Date('2026-09-30T02:00:00Z');
+  const flag = (savedAt: string) => {
+    const contribution = {
+      ...base,
+      draft: { decision: { verdict: 'approved' }, saved_by: 'Cyndi', saved_at: savedAt },
+    } as BoardContribution;
+    return confirmDialogRowsFor(
+      [contribution],
+      { [contribution.key]: { verdict: 'approved' } },
+      { currentUserName: 'Cyndi', openedAt: OPENED },
+    ).rows[0].savedBefore;
+  };
+
+  it('is false for a save 30 seconds before the board opened, true for one 8 days before', () => {
+    expect(flag('2026-09-30T01:59:30Z')).toBe(false);
+    expect(flag('2026-09-22T02:00:00Z')).toBe(true);
   });
 });

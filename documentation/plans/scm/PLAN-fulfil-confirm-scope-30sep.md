@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning Confirm posts what the planner ticked, and says exactly what it wrote
 
-Status: v1 (confirm dialog listing lines) built and pushed on PR #1395, then REDESIGNED on owner Lavish feedback 30 Sep 2026 (no popup; Preview is a required step; no autosave). Mock v2 awaiting owner approval; build after approval. Track: feature lane (FE + BE, no migration, no RBAC).
+Status: implemented (v2), PR #1395, hand test pending. Track: feature lane (FE + BE, no migration, no RBAC).
 Domain: scm (fulfilment planning board)
 UAC: `fulfil-confirm-scope-30sep-acceptance-criteria.md`
 Lane: `crew/fulfil-confirm-scope` (crew lane FULFIL-CONFIRM-SCOPE), base `origin/main` at e26410c20.

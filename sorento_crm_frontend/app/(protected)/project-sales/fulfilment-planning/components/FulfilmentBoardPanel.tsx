@@ -30,7 +30,6 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useSession } from 'next-auth/react';
 import { AlertTriangle } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent } from '@/components/ui/card';
@@ -52,6 +51,7 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   PLANNING_BOARD_KEY,
   useConfirmManyMutation,
+  usePreviewConfirmManyMutation,
   useFulfilmentPlanningMutations,
   useLineDraftMutation,
   usePlanningBoard,
@@ -68,8 +68,8 @@ import {
 import {
   boardAxis,
   bucketLabelText,
-  confirmDialogRowsFor,
   confirmSummaryFor,
+  previewRowsFor,
   savedAgoText,
   decisionHeaderText,
   orderListRows,
@@ -1194,14 +1194,9 @@ export function FulfilmentBoardPanel({
   );
 
   const confirmMany = useConfirmManyMutation();
-  const [confirmAllOpenState, setConfirmAllOpenState] = React.useState(false);
-  // Lines the planner unticked in the pre-confirm dialog: left out of the body, drafts kept.
+  const previewConfirmMany = usePreviewConfirmManyMutation();
+  // Lines the planner unticked in the preview: left out of the Confirm body, drafts kept.
   const [confirmExcluded, setConfirmExcluded] = React.useState<ReadonlySet<string>>(new Set());
-  const confirmAllOpen = confirmAllOpenState;
-  const setConfirmAllOpen = React.useCallback((open: boolean) => {
-    if (open) setConfirmExcluded(new Set());
-    setConfirmAllOpenState(open);
-  }, []);
   const { data: session } = useSession();
   const currentUserName = session?.user?.name ?? '';
   // When the board was opened: a draft saved before this is somebody else's earlier work.
@@ -1212,24 +1207,6 @@ export function FulfilmentBoardPanel({
     Record<string, { project_line_id: string; label: string }[]>
   >({});
 
-  // The pre-confirm dialog: one row per line this press will post, and the saved lines it
-  // cannot post. Computed only while the dialog is open.
-  const dialogRows = React.useMemo(() => {
-    if (!confirmAllOpen) return null;
-    return confirmDialogRowsFor(allContributions, draftWithoutPreMark, {
-      currentUserName,
-      openedAt: openedAt.current,
-      unadoptedSalesOrderIds,
-      batchBlockedSalesOrderIds: pendingBatchSalesOrderIds,
-    });
-  }, [
-    confirmAllOpen,
-    allContributions,
-    draftWithoutPreMark,
-    currentUserName,
-    unadoptedSalesOrderIds,
-    pendingBatchSalesOrderIds,
-  ]);
   const scopedSummary = React.useMemo(
     () =>
       confirmSummaryFor(allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds, {
@@ -1245,6 +1222,48 @@ export function FulfilmentBoardPanel({
     ],
   );
 
+  // PREVIEW THEN CONFIRM (FULFIL-CONFIRM-SCOPE v2): Preview posts the very body Confirm would
+  // post, with `preview: true`; the server runs it and rolls it back, and the panel below
+  // shows its answer. Confirm is only offered while the population it was computed for still
+  // stands: any save, undo or fresh draft changes the fingerprint and asks for a new preview.
+  const populationFingerprint = React.useMemo(() => {
+    const parts = allContributions
+      .filter((entry) => draftWithoutPreMark[entry.key])
+      .map(
+        (entry) =>
+          `${entry.key}|${draftWithoutPreMark[entry.key].verdict}|${entry.draft?.saved_at ?? ''}`,
+      );
+    return parts.sort().join('\n');
+  }, [allContributions, draftWithoutPreMark]);
+  const [previewState, setPreviewState] = React.useState<{
+    results: ConfirmManyOrderResult[];
+    batchedPsoIds: string[];
+    fingerprint: string;
+  } | null>(null);
+  const [previewing, setPreviewing] = React.useState(false);
+  const previewFresh = previewState !== null && previewState.fingerprint === populationFingerprint;
+  const previewOrders = React.useMemo(
+    () =>
+      previewState
+        ? previewRowsFor(previewState.results, allContributions, draftWithoutPreMark, {
+            currentUserName,
+            openedAt: openedAt.current,
+            orders: board.data?.orders,
+            unadoptedSalesOrderIds,
+            batchBlockedSalesOrderIds: pendingBatchSalesOrderIds,
+          })
+        : [],
+    [
+      previewState,
+      allContributions,
+      draftWithoutPreMark,
+      currentUserName,
+      board.data?.orders,
+      unadoptedSalesOrderIds,
+      pendingBatchSalesOrderIds,
+    ],
+  );
+
   /**
    * Undo all throws away every decision taken since the board was opened, and there is no way
    * back to them: it is destructive in the only sense a client draft can be, so it is
@@ -1255,33 +1274,14 @@ export function FulfilmentBoardPanel({
   const [batchResults, setBatchResults] = React.useState<BoardBatchResult[] | null>(null);
 
   /**
-   * CONFIRM: one call, grouped per order, each order writing in its OWN transaction
-   * server-side (`confirm_many`) - so one order's refusal never takes the others down. Any
-   * order that has not been adopted yet is adopted first; the board is re-read once
-   * afterwards so the fresh mirror lines can be named in the payload (adoption fills
-   * `project_line_id`, which is null until then).
-   *
-   * The population is `confirmLinesFor`'s own: CONFIRM POSTS SAVED LINES ONLY (8 Sep 2026
-   * ruling, reverses R11). An uncovered line nobody saved a decision for is left undecided,
-   * not confirmed as the engine's suggestion; "Save all suggested" is the bulk way to agree
-   * with it before this press.
-   *
-   * S5 (owner ruling 25 Sep 2026, issue #1245): reads `draftWithoutPreMark`, never `draft`,
-   * throughout - a `Change proposed` line nobody has saved is the SAME "nothing to post" case
-   * as a line nobody has touched, so its order never enters the batch on its account alone and
-   * its batch row stays pending server-side.
+   * The body of ONE press, built once for both Preview and Confirm so the two can never drift:
+   * adopts any order not yet adopted (the body needs the mirror ids), re-reads the board once
+   * afterwards, and returns the per-order `orders` plus the orders left out with a reason.
+   * `excludeKeys` are the lines the planner unticked in the preview; Preview itself passes none.
    */
-  const runConfirmAll = React.useCallback(async () => {
-    if (!board.data) return;
-    setConfirmAllOpen(false);
-    setConfirmingAll(true);
-    setBatchResults(null);
-    // AC-6: the count as the banner above stated it the moment Confirm was pressed - the
-    // owner's own words were "confirming silently is dangerous", so a press that leaves lines
-    // out says so in the SAME toast that says what it did commit, not only in a banner that
-    // stays on screen after the fact.
-    const leftOutAtConfirm = unpostable.length;
-    try {
+  const buildConfirmOrders = React.useCallback(
+    async (excludeKeys: ReadonlySet<string>) => {
+      if (!board.data) return null;
       let liveBoard = board.data;
       let contributions = allContributions;
 
@@ -1289,7 +1289,7 @@ export function FulfilmentBoardPanel({
         contributions
           .filter((contribution) => {
             if (contribution.unplannable) return false;
-            if (confirmExcluded.has(contribution.key)) return false;
+            if (excludeKeys.has(contribution.key)) return false;
             const decision = draftWithoutPreMark[contribution.key];
             // A COVERED reject is a WITHDRAWAL this press carries out (owner ruling 23 Sep
             // 2026, `PLAN-board-reject-on-confirmed-line.md`: "we should confirm the
@@ -1314,7 +1314,7 @@ export function FulfilmentBoardPanel({
           })
           .map((contribution) => contribution.sales_order_id),
       );
-      if (wantedOrders.size === 0) return;
+      if (wantedOrders.size === 0) return null;
 
       let adoptedAny = false;
       // WHAT ADOPT ITSELF ANSWERED WITH, kept rather than discarded. The id is in the
@@ -1397,7 +1397,7 @@ export function FulfilmentBoardPanel({
           continue;
         }
         const lines = confirmLinesFor(contributions, salesOrderId, draftWithoutPreMark, {
-          excludeKeys: confirmExcluded,
+          excludeKeys: excludeKeys,
         });
         // AC-B3/AC-B5: THIS order's own batch, not the board-wide `batchId` - two orders on
         // two different pending batches each answer their own. The batches the screen LOADED
@@ -1415,7 +1415,7 @@ export function FulfilmentBoardPanel({
         const rejectedLineIds = orderBatchId
           ? []
           : rejectedCoveredLineIdsFor(contributions, salesOrderId, draftWithoutPreMark, {
-              excludeKeys: confirmExcluded,
+              excludeKeys: excludeKeys,
             });
         // S4 (fix round, review): the covered-rejected lines THIS order's own batch just
         // zeroed out of `rejectedLineIds` above, so the planner is told what did not ride
@@ -1429,7 +1429,7 @@ export function FulfilmentBoardPanel({
               (contribution) =>
                 contribution.sales_order_id === salesOrderId &&
                 contribution.covered &&
-                !confirmExcluded.has(contribution.key) &&
+                !excludeKeys.has(contribution.key) &&
                 draftWithoutPreMark[contribution.key]?.verdict === 'rejected',
             )
           : [];
@@ -1488,11 +1488,6 @@ export function FulfilmentBoardPanel({
         }
         orders.push({ pso_id: psoId, lines, batch_id: orderBatchId, rejected_line_ids: rejectedLineIds });
       }
-      if (orders.length === 0) {
-        if (skipped.length > 0) setBatchResults(skipped);
-        return;
-      }
-
       // Per-order `batch_id` above answers AC-P3-4/AC-B5 on its own. The body-level
       // `batch_id` is kept ONLY when EVERY order in THIS press carries that SAME id
       // (backward compatible with a server that has not deployed the per-order field
@@ -1507,9 +1502,61 @@ export function FulfilmentBoardPanel({
         firstOrderBatchId && orders.every((order) => order.batch_id === firstOrderBatchId)
           ? firstOrderBatchId
           : null;
-      const result = await confirmMany.mutateAsync(
-        bodyBatchId ? { orders, batch_id: bodyBatchId } : { orders },
-      );
+      return {
+        orders,
+        skipped,
+        contributions,
+        body: bodyBatchId ? { orders, batch_id: bodyBatchId } : { orders },
+      };
+    },
+    [
+      board,
+      allContributions,
+      draftWithoutPreMark,
+      adopt,
+      appliedSoNumbers,
+      batchIdBySoNumber,
+    ],
+  );
+
+  /**
+   * CONFIRM: one call, grouped per order, each order writing in its OWN transaction
+   * server-side (`confirm_many`) - so one order's refusal never takes the others down. Any
+   * order that has not been adopted yet is adopted first; the board is re-read once
+   * afterwards so the fresh mirror lines can be named in the payload (adoption fills
+   * `project_line_id`, which is null until then).
+   *
+   * The population is `confirmLinesFor`'s own: CONFIRM POSTS SAVED LINES ONLY (8 Sep 2026
+   * ruling, reverses R11). An uncovered line nobody saved a decision for is left undecided,
+   * not confirmed as the engine's suggestion; "Save all suggested" is the bulk way to agree
+   * with it before this press.
+   *
+   * S5 (owner ruling 25 Sep 2026, issue #1245): reads `draftWithoutPreMark`, never `draft`,
+   * throughout - a `Change proposed` line nobody has saved is the SAME "nothing to post" case
+   * as a line nobody has touched, so its order never enters the batch on its account alone and
+   * its batch row stays pending server-side.
+   */
+  const runConfirmAll = React.useCallback(async () => {
+    if (!board.data) return;
+    setConfirmingAll(true);
+    setBatchResults(null);
+    // AC-6: the count as the banner above stated it the moment Confirm was pressed - the
+    // owner's own words were "confirming silently is dangerous", so a press that leaves lines
+    // out says so in the SAME toast that says what it did commit, not only in a banner that
+    // stays on screen after the fact.
+    const leftOutAtConfirm = unpostable.length;
+    try {
+      const built = await buildConfirmOrders(confirmExcluded);
+      if (!built) return;
+      const { orders, skipped, contributions, body } = built;
+      if (orders.length === 0) {
+        if (skipped.length > 0) setBatchResults(skipped);
+        return;
+      }
+
+      const result = await confirmMany.mutateAsync(body);
+      setPreviewState(null);
+      setConfirmExcluded(new Set());
       const labelOf = new Map(
         contributions.map((entry) => [
           entry.project_line_id ?? '',
@@ -1634,16 +1681,42 @@ export function FulfilmentBoardPanel({
     }
   }, [
     board,
-    allContributions,
-    draftWithoutPreMark,
-    adopt,
+    buildConfirmOrders,
     confirmMany,
-    appliedSoNumbers,
-    batchIdBySoNumber,
     unpostable,
     confirmExcluded,
-    setConfirmAllOpen,
   ]);
+
+  const runPreview = React.useCallback(async () => {
+    if (!board.data) return;
+    setPreviewing(true);
+    setBatchResults(null);
+    try {
+      const built = await buildConfirmOrders(new Set());
+      if (!built) return;
+      if (built.skipped.length > 0) setBatchResults(built.skipped);
+      if (built.orders.length === 0) return;
+      // An order answering a pending planning change is applied whole and cannot be rolled
+      // back, so the server does not preview it: it is left out of the preview body and named
+      // beside the rows, and Confirm still applies it.
+      const previewable = built.orders.filter((order) => !order.batch_id);
+      const batchedPsoIds = built.orders.filter((order) => order.batch_id).map((order) => order.pso_id);
+      const result =
+        previewable.length > 0
+          ? await previewConfirmMany.mutateAsync({ orders: previewable })
+          : { results: [] };
+      setConfirmExcluded(new Set());
+      setPreviewState({
+        results: result.results,
+        batchedPsoIds,
+        fingerprint: populationFingerprint,
+      });
+    } catch {
+      // The mutation's own `onError` already toasted the message.
+    } finally {
+      setPreviewing(false);
+    }
+  }, [board, buildConfirmOrders, previewConfirmMany, populationFingerprint]);
 
   /**
    * The rows on screen, and the rows the selection holds.
@@ -2114,20 +2187,44 @@ export function FulfilmentBoardPanel({
               subject={undoTarget?.soNumber}
               onCancel={undoAction.cancel}
               idle={
-                <Button
-                  type="button"
-                  size="sm"
-                  data-testid="board-confirm"
-                  disabled={
-                    confirmSummary.toConfirm === 0 ||
-                    confirmingAll ||
-                    Boolean(confirmBlockedReason)
-                  }
-                  title={confirmBlockedReason ?? undefined}
-                  onClick={() => setConfirmAllOpen(true)}
-                >
-                  {`Confirm (${confirmSummary.toConfirm})`}
-                </Button>
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    data-testid="board-preview"
+                    disabled={
+                      confirmSummary.toConfirm === 0 ||
+                      confirmingAll ||
+                      previewing ||
+                      Boolean(confirmBlockedReason)
+                    }
+                    onClick={() => void runPreview()}
+                  >
+                    {`Preview (${confirmSummary.toConfirm})`}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    data-testid="board-confirm"
+                    disabled={
+                      !previewFresh ||
+                      previewOrders.some((order) => !order.ok) ||
+                      scopedSummary.toConfirm === 0 ||
+                      confirmingAll ||
+                      Boolean(confirmBlockedReason)
+                    }
+                    title={
+                      confirmBlockedReason ??
+                      (previewFresh ? undefined : previewState ? 'Preview again' : 'Preview first')
+                    }
+                    onClick={() => void runConfirmAll()}
+                  >
+                    {previewFresh
+                      ? `Confirm ${scopedSummary.toConfirm} line${scopedSummary.toConfirm === 1 ? '' : 's'}`
+                      : `Confirm (${confirmSummary.toConfirm})`}
+                  </Button>
+                </>
               }
             />
           ) : null}
@@ -2189,6 +2286,135 @@ export function FulfilmentBoardPanel({
             })}
           </AlertContent>
         </Alert>
+      )}
+
+      {previewState && (
+        <div
+          data-testid="board-preview-panel"
+          className="space-y-3 rounded-lg border border-border px-3 py-2.5"
+        >
+          {!previewFresh && (
+            <p
+              data-testid="board-preview-stale"
+              className="rounded-md bg-amber-50 px-2 py-1.5 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
+            >
+              Preview again
+            </p>
+          )}
+          {previewState.batchedPsoIds.map((psoId) => (
+            <p
+              key={psoId}
+              data-testid={`board-preview-batched-${psoId}`}
+              className="text-sm break-words text-muted-foreground"
+            >
+              {`${
+                board.data?.orders.find((order) => order.project_sales_order_id === psoId)
+                  ?.so_number ?? 'Order'
+              }: not previewed, its pending planning change is applied when you confirm`}
+            </p>
+          ))}
+          {previewOrders.map((order) => {
+            const ticked = order.rows.filter((row) => !confirmExcluded.has(row.key)).length;
+            const heading = [order.so_number, order.customer_name].filter(Boolean).join(' \u00b7 ');
+            if (!order.ok) {
+              return (
+                <p
+                  key={order.pso_id}
+                  data-testid={`board-preview-refused-${order.pso_id}`}
+                  className="text-sm break-words text-destructive"
+                >
+                  {`${heading || 'Order'}: ${order.error ?? 'refused'}`}
+                </p>
+              );
+            }
+            return (
+              <div key={order.pso_id} className="space-y-2">
+                <p className="text-sm font-medium break-words">
+                  {`${heading} \u00b7 ${ticked} of ${order.rows.length} lines ticked${
+                    order.carried > 0 ? ` \u00b7 ${order.carried} lines carried forward unchanged` : ''
+                  }`}
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[40rem] text-sm">
+                    <tbody>
+                      {order.rows.map((row) => {
+                        const flagged = row.savedByOther || row.savedBefore;
+                        const when = row.saved_at ? savedAgoText(row.saved_at) : '';
+                        return (
+                          <tr key={row.key} data-testid={`board-preview-row-${row.key}`} className="align-top">
+                            <td className="w-8 py-1 pr-2">
+                              <Checkbox
+                                checked={!confirmExcluded.has(row.key)}
+                                aria-label={`Line ${row.line_no} ${row.item_code}`}
+                                onCheckedChange={(value) =>
+                                  setConfirmExcluded((current) => {
+                                    const next = new Set(current);
+                                    if (value) next.delete(row.key);
+                                    else next.add(row.key);
+                                    return next;
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="py-1 pr-3 whitespace-nowrap">{`Line ${row.line_no}`}</td>
+                            <td className="py-1 pr-3 whitespace-nowrap">{row.item_code}</td>
+                            <td className="py-1 pr-3 whitespace-nowrap">{row.verb}</td>
+                            <td className="py-1 pr-3 whitespace-nowrap">{row.qty}</td>
+                            <td className="py-1 pr-3 whitespace-nowrap">{row.delivery_date ?? ''}</td>
+                            <td className="py-1 pr-3 whitespace-nowrap">{row.stock_location ?? ''}</td>
+                            <td className="py-1 pr-3 break-words">
+                              {[row.decision, row.transfer].filter(Boolean).join(' \u00b7 ')}
+                            </td>
+                            <td className="py-1 break-words">
+                              {flagged && row.saved_by ? (
+                                <span
+                                  data-testid={`board-preview-row-note-${row.key}`}
+                                  className="block rounded-md bg-amber-50 px-2 py-1 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
+                                >
+                                  {`Saved by ${row.savedByOther ? row.saved_by : 'you'}, ${when}${
+                                    row.saved_at ? ` (${formatDateTimeInMalaysia(row.saved_at)})` : ''
+                                  }`}
+                                </span>
+                              ) : row.saved_by ? (
+                                <span className="text-muted-foreground">
+                                  {`saved by ${row.savedByOther ? row.saved_by : 'you'}${when ? `, ${when}` : ''}`}
+                                </span>
+                              ) : null}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {order.heldBack.length > 0 && (
+                  <ul data-testid="board-preview-held-back" className="space-y-0.5">
+                    {order.heldBack.map((entry, index) => (
+                      <li
+                        key={`${entry.line_no}-${index}`}
+                        className="text-sm break-words text-muted-foreground"
+                      >
+                        {`Held back: line ${entry.line_no} ${entry.item_code ?? ''} \u00b7 ${entry.reason}`}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {order.notSent.length > 0 && (
+                  <div data-testid="board-preview-not-sent" className="space-y-0.5">
+                    <p className="text-xs font-medium text-muted-foreground">Not sent</p>
+                    <ul className="space-y-0.5">
+                      {order.notSent.map((entry) => (
+                        <li key={entry.key} className="text-sm break-words text-muted-foreground">
+                          {`Line ${entry.line_no} ${entry.item_code} \u00b7 ${entry.reason}`}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {batchResults && (
@@ -2537,166 +2763,6 @@ export function FulfilmentBoardPanel({
           onClose={() => setOpenCell(null)}
         />
       )}
-
-      {/* Confirmation dialog per PRINCIPLES: an irreversible batch write states what it is
-          about to do, in numbers, before it does it. */}
-      <AlertDialog open={confirmAllOpen} onOpenChange={setConfirmAllOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {`Confirm ${scopedSummary.toConfirm} line${
-                scopedSummary.toConfirm === 1 ? '' : 's'
-              } across ${scopedSummary.orderCount} order${
-                scopedSummary.orderCount === 1 ? '' : 's'
-              }?`}
-            </AlertDialogTitle>
-            {/* C4 (code review round 3 batch 2): named here too, not only on the pill - a
-                planner about to press Confirm is told which of their OWN saved lines this
-                press will silently leave behind. */}
-            {confirmSummary.changed > 0 ? (
-              <AlertDialogDescription>
-                {`${confirmSummary.changed} saved line${
-                  confirmSummary.changed === 1 ? '' : 's'
-                } whose suggestion changed will not be confirmed; re-save ${
-                  confirmSummary.changed === 1 ? 'it' : 'them'
-                } first.`}
-              </AlertDialogDescription>
-            ) : null}
-          </AlertDialogHeader>
-          {dialogRows && (
-            <div className="max-h-[50dvh] space-y-3 overflow-y-auto" data-testid="board-confirm-dialog-list">
-              {(() => {
-                const orderIds = [
-                  ...new Set([
-                    ...dialogRows.rows.map((row) => row.sales_order_id),
-                    ...dialogRows.cancelled.map((row) => row.sales_order_id),
-                    ...dialogRows.notPosted.map((row) => row.sales_order_id),
-                  ]),
-                ];
-                return orderIds.map((salesOrderId) => {
-                  const standing = board.data?.orders.find(
-                    (order) => order.sales_order_id === salesOrderId,
-                  );
-                  const rows = dialogRows.rows.filter((row) => row.sales_order_id === salesOrderId);
-                  const released = dialogRows.cancelled.filter(
-                    (row) => row.sales_order_id === salesOrderId,
-                  );
-                  const left = dialogRows.notPosted.filter(
-                    (row) => row.sales_order_id === salesOrderId,
-                  );
-                  return (
-                    <div key={salesOrderId} className="space-y-1.5">
-                      <p className="text-sm font-medium break-words">
-                        {[standing?.so_number ?? rows[0]?.so_number ?? released[0]?.so_number ?? left[0]?.so_number, standing?.customer_name]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </p>
-                      <ul className="space-y-1.5">
-                        {rows.map((row) => {
-                          const ticked = !confirmExcluded.has(row.key);
-                          const flagged = row.savedByOther || row.savedBefore;
-                          const when = row.saved_at ? savedAgoText(row.saved_at) : '';
-                          const mine = !row.savedByOther;
-                          return (
-                            <li
-                              key={row.key}
-                              data-testid={`board-confirm-dialog-row-${row.key}`}
-                              className="flex items-start gap-2 text-sm"
-                            >
-                              <Checkbox
-                                checked={ticked}
-                                aria-label={`Line ${row.line_no} ${row.item_code}`}
-                                onCheckedChange={(value) =>
-                                  setConfirmExcluded((current) => {
-                                    const next = new Set(current);
-                                    if (value) next.delete(row.key);
-                                    else next.add(row.key);
-                                    return next;
-                                  })
-                                }
-                                className="mt-0.5"
-                              />
-                              <div className="min-w-0 flex-1 space-y-0.5">
-                                <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 break-words">
-                                  <span>{`Line ${row.line_no} · ${row.item_code}`}</span>
-                                  <Badge
-                                    size="sm"
-                                    variant={
-                                      row.verdict === 'rejected'
-                                        ? 'destructive'
-                                        : row.verdict === 'amended'
-                                          ? 'warning'
-                                          : 'success'
-                                    }
-                                    appearance="light"
-                                  >
-                                    {row.verdict === 'approved'
-                                      ? 'Approved'
-                                      : row.verdict === 'amended'
-                                        ? 'Amended'
-                                        : 'Rejected'}
-                                  </Badge>
-                                  {row.composition && <span>{`· ${row.composition}`}</span>}
-                                  {!flagged && row.saved_by && (
-                                    <span className="text-muted-foreground">
-                                      {`· saved by ${mine ? 'you' : row.saved_by}${when ? `, ${when}` : ''}`}
-                                    </span>
-                                  )}
-                                </p>
-                                {flagged && row.saved_by && (
-                                  <p className="rounded-md bg-amber-50 px-2 py-1 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-                                    {`Saved by ${row.savedByOther ? row.saved_by : 'you'}, ${when}${
-                                      row.saved_at ? ` (${formatDateTimeInMalaysia(row.saved_at)})` : ''
-                                    }`}
-                                  </p>
-                                )}
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                      {released.length > 0 && (
-                        <ul className="space-y-1">
-                          {released.map((row) => (
-                            <li
-                              key={row.key}
-                              data-testid={`board-confirm-dialog-row-${row.key}`}
-                              className="text-sm break-words text-muted-foreground"
-                            >
-                              {`Line ${row.line_no} · ${row.item_code} · Cancelled · released by the book`}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      {left.length > 0 && (
-                        <div className="space-y-1">
-                          <p className="text-xs font-medium text-muted-foreground">Not posted</p>
-                          <ul className="space-y-1">
-                            {left.map((row) => (
-                              <li key={row.key} className="text-sm break-words text-muted-foreground">
-                                {`Line ${row.line_no} · ${row.item_code}: ${row.reason}`}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          )}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={scopedSummary.toConfirm === 0}
-              onClick={() => void runConfirmAll()}
-            >
-              {`Confirm ${scopedSummary.toConfirm} line${scopedSummary.toConfirm === 1 ? '' : 's'}`}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       {/* Undo all discards work nobody can get back. Same rule, same component. */}
       <AlertDialog open={undoAllOpen} onOpenChange={setUndoAllOpen}>
