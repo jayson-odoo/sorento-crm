@@ -264,3 +264,41 @@ describe('ContactChatbotSection - ETA buffer days switch (#1328)', () => {
     expect(mutate.mock.calls[0][0]).toEqual({ ...loaded, eta_offset_applied: false });
   });
 });
+
+/**
+ * ESCALATION-CONTROL (owner, 30 Sep 2026): "Can escalate to customer service" is
+ * inherit / allow / block. Inherit is the cleared select, whose placeholder names the
+ * value the contact's access types give it.
+ */
+describe('ContactChatbotSection - Can escalate to customer service', () => {
+  const DEALER = {
+    ...BASE_PROFILE,
+    escalation_allowed: null,
+    escalation_allowed_inherited: false,
+    escalation_allowed_inherited_from: 'Sorento Dealer',
+  };
+
+  it('shows the inherited value when the contact has no override', () => {
+    useContactChatbotProfile.mockReturnValue({ data: DEALER, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    // The stub is a native <select> with no blank option, so an empty value cannot be
+    // read back; the placeholder is what names the inherited value.
+    const select = screen.getByLabelText('(inherit: Blocked (Sorento Dealer))');
+    expect(select).toHaveAttribute('data-clearable', 'true');
+  });
+
+  it('allow saves true, block saves false, clearing saves null (inherit)', () => {
+    useContactChatbotProfile.mockReturnValue({
+      data: { ...DEALER, escalation_allowed: true },
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    const select = screen.getByLabelText('(inherit: Blocked (Sorento Dealer))');
+    expect(select).toHaveValue('allow');
+    fireEvent.change(select, { target: { value: 'block' } });
+    fireEvent.change(select, { target: { value: '' } });
+    expect(mutate.mock.calls.map((c) => c[0].escalation_allowed)).toEqual([false, null]);
+    expect(mutate.mock.calls[0][0]).toEqual({ ...DEALER, escalation_allowed: false });
+  });
+});

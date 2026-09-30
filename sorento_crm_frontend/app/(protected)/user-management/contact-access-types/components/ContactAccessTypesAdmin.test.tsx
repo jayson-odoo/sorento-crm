@@ -108,3 +108,34 @@ describe('ContactAccessTypesAdmin - no Portal forms column or field (AC-M3)', ()
     expect(createContactAccessType.mock.calls[0][0]).not.toHaveProperty('portal_form_types');
   });
 });
+
+describe('ContactAccessTypesAdmin - Can escalate to customer service (ESCALATION-CONTROL)', () => {
+  it('shows the type\'s value and saves the flipped one', async () => {
+    getAllContactAccessTypes.mockResolvedValue([{ ...ROWS[0], escalation_allowed: false }]);
+    render();
+    await screen.findByText('Dealer');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    await screen.findByText('Edit access type');
+
+    const box = screen.getByLabelText('Can escalate to customer service');
+    expect(box).toHaveAttribute('data-state', 'unchecked');
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole('button', { name: 'Update' }));
+
+    await waitFor(() => expect(updateContactAccessType).toHaveBeenCalled());
+    expect(updateContactAccessType.mock.calls[0][1]).toHaveProperty('escalation_allowed', true);
+  });
+
+  it('a new type defaults to allowed', async () => {
+    render();
+    await screen.findByText('Dealer');
+    fireEvent.click(screen.getByRole('button', { name: /add type/i }));
+    await screen.findByText('Add access type');
+    fireEvent.change(screen.getByLabelText('Code'), { target: { value: 'zzt_new' } });
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'ZZT New' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => expect(createContactAccessType).toHaveBeenCalled());
+    expect(createContactAccessType.mock.calls[0][0]).toHaveProperty('escalation_allowed', true);
+  });
+});

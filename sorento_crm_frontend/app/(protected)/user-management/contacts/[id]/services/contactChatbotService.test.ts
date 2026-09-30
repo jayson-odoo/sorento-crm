@@ -54,3 +54,33 @@ describe('contactChatbotService - ETA offset switch (#1328)', () => {
     expect(saved.eta_offset_applied).toBe(false);
   });
 });
+
+describe('contactChatbotService - escalation override (ESCALATION-CONTROL)', () => {
+  it('reads the override and the inherited value; a contact without them inherits allowed', async () => {
+    getContact.mockResolvedValueOnce({
+      escalation_allowed: null,
+      escalation_allowed_inherited: false,
+      escalation_allowed_inherited_from: 'Sorento Dealer',
+    });
+    const dealer = await getContactChatbotProfile('c1');
+    expect(dealer.escalation_allowed).toBeNull();
+    expect(dealer.escalation_allowed_inherited).toBe(false);
+    expect(dealer.escalation_allowed_inherited_from).toBe('Sorento Dealer');
+
+    getContact.mockResolvedValueOnce({});
+    const plain = await getContactChatbotProfile('c1');
+    expect(plain.escalation_allowed).toBeNull();
+    expect(plain.escalation_allowed_inherited).toBe(true);
+  });
+
+  it('sends null for inherit so the route clears the override', async () => {
+    getContact.mockResolvedValueOnce({ escalation_allowed: false });
+    const profile = await getContactChatbotProfile('c1');
+    apiFetch.mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }));
+
+    await saveContactChatbotProfile('c1', { ...profile, escalation_allowed: null });
+
+    const body = JSON.parse(apiFetch.mock.calls[0][1].body);
+    expect(body).toHaveProperty('escalation_allowed', null);
+  });
+});

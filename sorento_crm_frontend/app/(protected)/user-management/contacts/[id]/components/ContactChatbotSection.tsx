@@ -91,9 +91,13 @@ const ESCALATION_OPTIONS = [
   { value: 'block', label: 'Blocked' },
 ];
 
-function escalationInheritedLabel(profile: { escalation_allowed_inherited: boolean; escalation_allowed_inherited_from: string | null }) {
+function escalationInheritedLabel(profile: {
+  escalation_allowed_inherited: boolean;
+  escalation_allowed_inherited_from: string | null;
+}) {
   if (profile.escalation_allowed_inherited) return 'Allowed';
-  return profile.escalation_allowed_inherited_from ? `Blocked (${profile.escalation_allowed_inherited_from})` : 'Blocked';
+  const from = profile.escalation_allowed_inherited_from;
+  return from ? `Blocked (${from})` : 'Blocked';
 }
 
 const TIER_OPTIONS = [
