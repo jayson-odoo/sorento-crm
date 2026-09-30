@@ -79,9 +79,6 @@ class CustomerResponse(CustomerBase):
     # Shown as columns on a sales agent's Customers tab.
     region: Optional[str] = None
     market_segment_code: Optional[str] = None
-    # Names this customer has also been known by (`Customer.name_aliases`): the
-    # detail header shows them as "Also known as".
-    name_aliases: list[str] = []
 
     class Config:
         from_attributes = True

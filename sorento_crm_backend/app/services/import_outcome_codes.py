@@ -145,6 +145,12 @@ SHIPPING_ORDER = "shipping_order"
 RESTATES_AN_INSTALMENT = "restates_an_instalment"
 
 # --- written, but worth a human's eye ------------------------------------
+#: A customer was inserted while a NEAR-identical name already sat on the same
+#: customer code ("CASH (SRT) - AISAH SHAMSUDlN" against "... SHAMSUDIN"). One code
+#: legally carries many names, so this is never a skip: the row IS written and rides
+#: on OUTCOME_CREATED. Distinct from ALREADY_EXISTS / DUPLICATE_LINE, which both
+#: assert the row was NOT written.
+CODE_EXISTS_UNDER_OTHER_NAME = "code_exists_under_other_name"
 #: The row named a market segment no `market_segments.code` matches. The column is a
 #: foreign key, so the value is dropped rather than costing a whole customer - but the
 #: segment decides SCM demand class and fulfilment priority, so the row it happened on
@@ -227,6 +233,7 @@ LABELS: dict[str, str] = {
     NOTHING_OUTSTANDING: "Nothing outstanding on this row",
     SHIPPING_ORDER: "Shipping order: not part of the purchase-order book",
     RESTATES_AN_INSTALMENT: "Counted into a delivery this file already states",
+    CODE_EXISTS_UNDER_OTHER_NAME: "Inserted; similar name already on this code",
     MARKET_SEGMENT_NOT_RECOGNISED: "Imported; market segment not recognised, left unset",
     FILENAME_COLLISION: "Filename already exists in the target folder",
     EXTENSION_NOT_ALLOWED: "File extension not allowed",

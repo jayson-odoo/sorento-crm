@@ -140,40 +140,82 @@ def _row_values(db, table: str, code_column: str, code: str, company_id: str, co
     return dict(row) if row else None
 
 
-class TestAcP01CustomerIdentityCode:
-    """CUSTOMER-CODE-IDENTITY (supersedes D13): customer identity on the masters
-    push is the lower-trimmed code alone, per company. A push naming a known
-    code under a new name adopts and renames that row; there is never a second
-    row for one code. Aliases and the ref-mismatch fold-in are pinned in
-    `tests/test_customer_code_identity.py`.
+class TestAcP01CustomerIdentityCodeAndName:
+    """D13: customer identity on the masters push is the lower-trimmed (code,
+    name) pair, never the code alone. `_lookup_id("customers", ...)` today
+    matches on `customer_code` only, so it cannot tell two same-code,
+    different-name rows apart.
     """
 
-    def test_pushing_a_new_name_under_a_known_code_adopts_and_links_that_row(self, db):
+    def test_pushing_an_existing_name_updates_that_row_and_leaves_the_sibling(self, db):
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
-        code = _code("CUST2")
+        code = _code("CUST1")
         alpha = Customer(customer_code=code, customer_name="ALPHA", email="alpha@old.com")
-        db.add(alpha)
+        beta = Customer(customer_code=code, customer_name="BETA", email="beta@old.com")
+        db.add_all([alpha, beta])
         db.flush()
-        alpha_id = str(alpha.id)
+        alpha_id, beta_id = str(alpha.id), str(beta.id)
 
         svc = _esb(db, DEFAULT_COMPANY_ID)
-        ref = f"DK-{code}-G"
         result = svc.ingest(
-            "customers", [{"source_ref": ref, "code": code, "name": "GAMMA", "email": "g@new.com"}]
+            "customers",
+            [{"source_ref": f"DK-{code}", "code": code, "name": "BETA", "email": "beta@new.com"}],
+        )
+        assert result.updated == 1, result.records[0].errors
+
+        alpha_row = db.execute(
+            text("SELECT customer_name, email FROM customers WHERE id = :i"), {"i": alpha_id}
+        ).first()
+        beta_row = db.execute(
+            text("SELECT customer_name, email FROM customers WHERE id = :i"), {"i": beta_id}
+        ).first()
+        assert alpha_row == ("ALPHA", "alpha@old.com"), "ALPHA must be untouched"
+        assert beta_row == ("BETA", "beta@new.com"), "BETA is the row that should have updated"
+
+    def test_pushing_a_new_name_under_a_known_code_creates_a_third_row_never_renames(self, db):
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        code = _code("CUST2")
+        db.add_all(
+            [
+                Customer(customer_code=code, customer_name="ALPHA"),
+                Customer(customer_code=code, customer_name="BETA"),
+            ]
+        )
+        db.flush()
+
+        svc = _esb(db, DEFAULT_COMPANY_ID)
+        result = svc.ingest(
+            "customers", [{"source_ref": f"DK-{code}-G", "code": code, "name": "GAMMA"}]
         )
 
-        assert (result.created, result.updated) == (0, 1), result.records[0].errors
-        rows = db.execute(
-            text("SELECT id, customer_name, email FROM customers WHERE customer_code = :c"),
-            {"c": code},
-        ).all()
-        assert [(str(i), n, e) for i, n, e in rows] == [(alpha_id, "GAMMA", "g@new.com")]
+        assert result.created == 1, result.records[0].errors
+        names = set(
+            db.execute(
+                text("SELECT lower(customer_name) FROM customers WHERE customer_code = :c"),
+                {"c": code},
+            ).scalars()
+        )
+        assert names == {"alpha", "beta", "gamma"}, "neither existing row may be renamed"
+
+    def test_integration_reference_links_the_row_matched_by_name_not_an_arbitrary_one(self, db):
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        code = _code("CUST3")
+        alpha = Customer(customer_code=code, customer_name="ALPHA")
+        beta = Customer(customer_code=code, customer_name="BETA")
+        db.add_all([alpha, beta])
+        db.flush()
+        beta_id = str(beta.id)
+
+        svc = _esb(db, DEFAULT_COMPANY_ID)
+        ref = f"DK-{code}-B"
+        svc.ingest("customers", [{"source_ref": ref, "code": code, "name": "BETA"}])
+
         linked = (
             db.query(IntegrationReference)
             .filter_by(entity_type="customers", source_ref=ref)
             .one()
         )
-        assert str(linked.entity_id) == alpha_id
+        assert str(linked.entity_id) == beta_id
 
 
 class TestAcP02AbsentUntouchedNullCleared:

@@ -22,7 +22,6 @@ from app.schemas.order import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_unprocessable
 from app.services.import_log_service import ImportLogService
-from app.services.rules import customer_rules
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
 from app.services.company_scope import (
@@ -2212,11 +2211,11 @@ class OrderService:
     ) -> Optional[str]:
         """Find-or-create a Customer row from order debtor fields, return its id.
 
-        Match key is the debtor CODE alone, case + whitespace insensitive, within
-        the session's company scope (CUSTOMER-CODE-IDENTITY): one code is one
-        customer, and the debtor name the order printed stays on the order
-        (`orders.debtor_name`) rather than forking a second master row. The
-        pair rule this replaced is how "300-D093" came to be two customers.
+        Match key is the (customer_code, customer_name) PAIR - case + whitespace
+        insensitive - because one Sage code can carry multiple distinct debtor
+        names (e.g. "300-D093" maps to both "Deluxe Home Center (KTN)" and
+        "Deluxe Home Center AC (I)"). Each unique pair gets its own customers
+        row. Matches the composite unique index created in migration 220.
 
         When debtor_code is missing, fall back to a deterministic `DBR-<hash>`
         slug derived from the name so the same blank-code debtor doesn't
@@ -2229,9 +2228,17 @@ class OrderService:
         if not code:
             import hashlib
             code = "DBR-" + hashlib.md5(name.lower().encode("utf-8")).hexdigest()[:10]
-        existing_id, _ambiguous = customer_rules.pick_customer_by_code(self.db, code, None)
-        if existing_id is not None:
-            return existing_id
+        # Pair match (case + whitespace normalized on both columns).
+        existing = (
+            self.db.query(Customer)
+            .filter(
+                func.lower(func.btrim(Customer.customer_code)) == code.lower(),
+                func.lower(func.btrim(Customer.customer_name)) == name.lower(),
+            )
+            .first()
+        )
+        if existing is not None:
+            return str(existing.id)
         new_customer = Customer(
             customer_code=code,
             customer_name=name,
@@ -3644,14 +3651,19 @@ class CustomerService:
     def create_customer(self, customer_data: CustomerCreate):
         """Create a new customer.
 
-        Uniqueness is on the customer code alone, case + whitespace insensitive,
-        per company (CUSTOMER-CODE-IDENTITY): the same code under another name
-        is the same customer, so it is a conflict, not a second row.
+        Uniqueness is on the (customer_code, customer_name) pair - case +
+        whitespace insensitive - so the same Sage code can legitimately host
+        multiple debtor names (e.g. "300-D093" for "Deluxe Home Center (KTN)"
+        and "Deluxe Home Center AC (I)").
         """
         code = (customer_data.customer_code or "").strip()
-        existing_id, _ambiguous = customer_rules.pick_customer_by_code(self.db, code, None)
-        if existing_id is not None:
-            raise handle_conflict("Customer with this code already exists.")
+        name = (customer_data.customer_name or "").strip()
+        existing = self.db.query(Customer).filter(
+            func.lower(func.btrim(Customer.customer_code)) == code.lower(),
+            func.lower(func.btrim(Customer.customer_name)) == name.lower(),
+        ).first()
+        if existing:
+            raise handle_conflict("Customer with this code + name already exists.")
 
         # `sales_agent_id` is held out of the constructor and set only AFTER it validates:
         # `_resolve_sales_agent`'s `db.get(SalesAgent, ...)` autoflushes this row the moment
@@ -3693,13 +3705,8 @@ class CustomerService:
                 customer_company_id=customer.company_id,
                 require_active=changing,
             )
-        former_name = customer.customer_name
         for key, value in update_data.items():
             setattr(customer, key, value)
-        if "customer_name" in update_data:
-            # A rename keeps the name it replaces on the row, the same as the master
-            # feeds do (CUSTOMER-CODE-IDENTITY): the form and the ESB push stay at parity.
-            customer_rules.record_name_alias(customer, former_name)
 
         self.db.commit()
         self.db.refresh(customer)

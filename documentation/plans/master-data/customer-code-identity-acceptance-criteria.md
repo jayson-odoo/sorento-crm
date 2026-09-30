@@ -1,89 +1,35 @@
-# UAC - customer-code-identity (CUSTOMER-CODE-IDENTITY)
+# UAC - customer-code-identity (CUSTOMER-CODE-IDENTITY, re-scoped 30 Sep 2026)
 
-One CRM customer per debtor code within a company. Names are labels. Plan:
-`PLAN-customer-code-identity.md`.
+The customer name a sales order was issued under is stored on the order and shown by the SO
+screens; the customer master's name is the fallback. Plan: `PLAN-customer-code-identity.md`.
 
-## Resolution (ingest)
+## Ingest
 
 - **AC-01 [BE]** Given a customer `300-1001 / "1 LIVING DEPOT SDN BHD"` exists in the anchor
   company, when a sales order is pushed with `customer_code=300-1001` and
-  `customer_name="MODERNMED SDN BHD"`, then the order links to the existing customer, no new
-  customer row is created, no `customer_created` warning is emitted, the master's
-  `customer_name` and `name_aliases` are unchanged, and the order's own `debtor_name` is
-  `"MODERNMED SDN BHD"`. A re-push with another name updates the order's `debtor_name` only; a
-  push without a name leaves the stored one alone.
-- **AC-02 [BE]** Given no customer holds code `X` in the anchor company, when a sales order is
-  pushed with code `X` and a name, then exactly one customer is back-created (`customer_created`)
-  and a second push with the same code and a different name lands on that same row (AC-01).
-- **AC-03 [BE]** Given two legacy rows share code `X` in the anchor company and one of them holds
-  an `integration_references` row, when a document names code `X` with no ref, then it resolves
-  to the row holding the ref and the verdict carries `customer_ambiguous`.
-- **AC-04 [BE]** Given two legacy rows share code `X`, neither holds a ref, and one has orders,
-  when a document names code `X`, then it resolves to the row with orders and carries
-  `customer_ambiguous`.
-- **AC-05 [BE]** `customer_ambiguous` is in the published warning vocabulary
-  (`GET /api/v1/external/contract` `warnings`).
-- **AC-06 [BE]** `customer_back_create.get_or_create` matches by code alone (case and whitespace
-  insensitive, within the company) and returns the existing row untouched when the name differs.
-- **AC-06b [BE]** Given a customer row already linked under `AED_SORENTO:2613` (same source
-  system), when the masters push sends `source_ref=AED_SORENTO:300-1003` with that row's code,
-  then the row is updated, keeps `AED_SORENTO:2613` as its only ref, the AccNo ref is never
-  linked, the verdict carries `ref_mismatch` and no `ReferenceConflict` is raised. A ref from
-  another source system still conflicts.
-- **AC-07 [BE]** A code held by another company is never matched (AC-V1-2 unchanged).
+  `customer_name="MODERNMED SDN BHD"`, then the order links to that customer, the order's
+  `debtor_name` is `"MODERNMED SDN BHD"`, and `customers.customer_name` is unchanged.
+- **AC-02 [BE]** A re-push of the same order with another `customer_name` updates the order's
+  `debtor_name` (trimmed); a push without one leaves the stored name alone; a dry run reports
+  the change in `diff.debtor_name` and persists nothing.
 
-## Masters push and imports
+## Screens (S1)
 
-- **AC-08 [BE]** Given a customer with code `X` and name `ALPHA`, when the masters push sends
-  code `X` name `BETA` with a new `source_ref`, then the existing row is adopted and linked,
-  no third row is created, `customer_name` is updated to `BETA` (the masters push is AutoCount's
-  own master and owns the name), and `ALPHA` is kept in `name_aliases`.
-- **AC-09 [BE]** The order (Excel) import's debtor upsert matches by code alone: a row with
-  the same code and a different debtor name reuses the customer, does not insert and does not
-  alias (the DO keeps its own `orders.debtor_name`).
-- **AC-10 [BE]** The customer master import (`customer_import_service`) treats a file row whose
-  code is already held as an update of that row, never an insert of a second row.
-- **AC-11 [BE]** `POST /api/v1/order-management/customers` with a code already held in the
-  company returns 409 whatever the name.
-- **AC-11b [BE]** A rename through `PUT /api/v1/order-management/customers/{id}` keeps the
-  former name in `name_aliases`, the same as a masters-push or listing-import rename (parity).
+- **AC-03 [BE]** The SCM sales order serializer's `customer_name` (list and detail) is the
+  order's `debtor_name` when set, else the master name; the list search matches it.
+- **AC-04 [BE]** `customer_label.CUSTOMER_LABEL_SQL` (reorder demand popovers, order-qty
+  ledger, container requests, trend drill) prints the order's `debtor_name` first, the master
+  name for an order without one, the debtor code for an order nobody holds. The trend drill
+  stays one row per customer key.
+- **AC-05 [BE]** `order_service.so_outstanding_rows` (chatbot, MCP) prints the same order.
 
-## Schema and data
+## Schema
 
-- **AC-12 [BE]** After the migration, `customers` carries a unique index on
-  `(company_id, lower(btrim(customer_code)))` and the old `(company_id, code, name)` unique index
-  is gone; inserting a second row with the same code in the same company fails.
-- **AC-13 [BE]** The merge migration, run on a schema holding duplicate-code rows, keeps exactly
-  one row per code per company: the row holding the integration reference, else the one with the
-  most orders (`orders` + `sales_orders`), else the oldest. Losers are deleted.
-- **AC-14 [BE]** After the merge, every row that referenced a loser (orders, order lines via
-  their order, sales orders, delivery orders, customer contacts, respond contact links, stock
-  asks, project leads, integration references) references the survivor, and the losers' names
-  are in the survivor's `name_aliases`.
-- **AC-15 [BE]** The merge does not lose a unique-constrained child row where the survivor
-  already holds the equivalent: a respond contact linked to both rows ends with one link; a
-  loser's `main` contact becomes a `stakeholder` when the survivor already has a `main`.
-- **AC-16 [BE]** A read-only report (`python -m scripts.report_customer_code_duplicates`)
-  lists, per duplicated code, every row with its name, whether it holds a ref, and its order
-  counts, without writing anything.
-
-## Frontend
-
-- **AC-17 [FE]** The Customers list shows one row for `300-1001` after the merge (data, no code
-  change), and the customer detail page shows the aliases under the header as "Also known as"
-  when there are any, nothing when there are none.
-
-## SO screens (S1 of D8)
-
-- **AC-19 [BE]** `sales_orders.debtor_name` exists (migration cci_0001) and the SCM sales order
-  serializer's `customer_name` is the order's `debtor_name` when set, else the master name;
-  the list search matches it.
-- **AC-20 [BE]** `customer_label.CUSTOMER_LABEL_SQL` (reorder demand popovers, container
-  requests, trend drill) and `order_service.so_outstanding_rows` (chatbot, MCP) print the
-  order's `debtor_name` first, the master name for an order without one, the debtor code for
-  an order nobody holds.
+- **AC-06 [BE]** Migration `sdn_0001_so_debtor_name` adds `sales_orders.debtor_name`
+  (varchar 255, nullable) and leaves `uq_customers_company_code_name_lower` in place.
 
 ## Hand test
 
-- **AC-18 [E2E]** On the crew test copy: Customers page shows one `300-1001`; an SO push with a
-  changed debtor name lands on that same customer and the name appears as an alias.
+- **AC-07 [E2E]** On the crew test copy: an SO push with a changed debtor name shows that name
+  on Supply Chain > Sales Orders (list and detail) while the Customers page still shows the
+  master name; a re-push with another name updates the order.

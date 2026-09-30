@@ -14,9 +14,6 @@ export interface Customer {
   sales_agent_id?: string | null;
   sales_agent_code?: string | null;
   sales_agent_name?: string | null;
-  // Names this customer has also been known by (rows merged into it, earlier master
-  // names). Read-only; the detail header shows them as "Also known as".
-  name_aliases?: string[];
   // Extended profile (added by commercial_core)
   registered_name?: string | null;
   trading_name?: string | null;

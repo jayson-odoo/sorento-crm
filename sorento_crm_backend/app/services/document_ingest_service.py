@@ -1004,7 +1004,8 @@ class DocumentIngestService(MasterRefResolver):
         # lets the user edit it on the order - so it is stored on the order
         # whenever it is sent, and the master `customers.customer_name` is
         # never written from here. Same shape rule as `debtor_code` above: a
-        # PO payload has no `customer_name`, so this is a no-op for a PO.
+        # PO payload has no `customer_name`, so this is a no-op for a PO; a
+        # push that sends none leaves the stored name alone.
         customer_name = (getattr(payload, "customer_name", None) or "").strip()
         if customer_name:
             values["debtor_name"] = customer_name

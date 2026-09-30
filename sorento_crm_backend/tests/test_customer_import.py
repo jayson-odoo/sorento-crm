@@ -48,6 +48,13 @@ def _scope_listeners():
     register_company_scope_listeners()
 
 
+@pytest.fixture(autouse=True)
+def _reset_trgm_schema_cache():
+    """The resolved pg_trgm schema is a process global; keep it per-test honest."""
+    svc._TRGM_SCHEMA.clear()
+    yield
+    svc._TRGM_SCHEMA.clear()
+
 
 def _workbook(rows: list[list], headers: list[str] | None = None, title_lines: int = 1) -> bytes:
     """A listing with `title_lines` junk rows above the header, as AutoCount emits."""
@@ -215,16 +222,14 @@ def test_company_id_is_never_read_from_a_file_column():
         assert rows[0].created_at is not None and rows[0].created_at.year > 2001
 
 
-def test_the_same_code_under_a_different_name_in_one_file_is_one_customer():
-    """CUSTOMER-CODE-IDENTITY (AC-10, supersedes AC-1.2): the code is the
-    identity, so a second name for it in the same file is the same customer
-    stated twice - the first row wins and the second is skipped."""
+def test_the_same_code_under_a_different_name_is_a_second_row():
+    """AC-1.2: `301-S007` carries 225 names. Code alone is never identity."""
     with blank_session() as session:
         _aliases(session)
         set_company_scope(session, frozenset({DEFAULT_COMPANY_ID}))
         code = unique_code("C")[:50]
 
-        result, outcome = _apply(
+        result, _outcome = _apply(
             session,
             _workbook(
                 [
@@ -234,9 +239,8 @@ def test_the_same_code_under_a_different_name_in_one_file_is_one_customer():
             ),
         )
 
-        assert (result["created"], result["skipped"]) == (1, 1)
-        assert outcome.count_of(oc.DUPLICATE_IN_FILE) == 1
-        assert [c.customer_name for c in _held(session, code)] == ["ABDUL RAUF"]
+        assert result["created"] == 2
+        assert [c.customer_name for c in _held(session, code)] == ["ABDUL RAUF", "AIMAN"]
 
 
 def test_the_same_code_and_name_may_exist_under_two_companies():
@@ -563,10 +567,50 @@ def test_customer_type_is_written_on_insert_only():
 # ------------------------------------------------------------------ near names
 
 
-def test_a_changed_name_on_a_known_code_renames_and_keeps_the_old_name():
-    """CUSTOMER-CODE-IDENTITY (AC-10, supersedes AC-1.5/1.6): the listing is
-    AutoCount's debtor master, so a new name on a known code is a rename of that
-    row; the old name stays on it as an alias and there is never a second row."""
+def test_a_near_name_on_the_same_code_inserts_and_is_flagged():
+    """AC-1.6: the typo is caught, the row still lands, nothing is blocked."""
+    with blank_session() as session:
+        _aliases(session)
+        set_company_scope(session, frozenset({DEFAULT_COMPANY_ID}))
+        code = unique_code("C")[:50]
+        _apply(
+            session,
+            _workbook([[code, "CASH (SRT) - AISAH SHAMSUDIN", None, None, None, None, None]]),
+        )
+
+        result, outcome = _apply(
+            session,
+            _workbook([[code, "CASH (SRT) - AISAH SHAMSUDlN", None, None, None, None, None]]),
+        )
+
+        assert result["created"] == 1, "it is still inserted"
+        assert result["needs_review"] == 1
+        assert result["review_rows"][0]["similar_to"] == "CASH (SRT) - AISAH SHAMSUDIN"
+        assert outcome.count_of(oc.CODE_EXISTS_UNDER_OTHER_NAME) == 1
+        assert outcome.failed == 0 and outcome.skipped == 0
+        assert len(_held(session, code)) == 2
+
+
+def test_an_unrelated_name_on_the_same_code_is_not_flagged():
+    """AC-1.5: `301-C001` holds 99 person names. Flagging each would fire 99 times and
+    mean nothing."""
+    with blank_session() as session:
+        _aliases(session)
+        set_company_scope(session, frozenset({DEFAULT_COMPANY_ID}))
+        code = unique_code("C")[:50]
+        _apply(session, _workbook([[code, "ABDUL RAUF", None, None, None, None, None]]))
+
+        result, outcome = _apply(
+            session, _workbook([[code, "AIMAN", None, None, None, None, None]])
+        )
+
+        assert result["created"] == 1
+        assert result["needs_review"] == 0
+        assert outcome.count_of(oc.CODE_EXISTS_UNDER_OTHER_NAME) == 0
+
+
+def test_two_branches_of_one_dealer_are_not_reported_as_near_names():
+    """Both rows legitimately exist; a threshold that flags them turns the signal to noise."""
     with blank_session() as session:
         _aliases(session)
         set_company_scope(session, frozenset({DEFAULT_COMPANY_ID}))
@@ -576,35 +620,13 @@ def test_a_changed_name_on_a_known_code_renames_and_keeps_the_old_name():
             _workbook([[code, "Deluxe Home Center (KTN)", None, None, None, None, None]]),
         )
 
-        result, outcome = _apply(
+        result, _outcome = _apply(
             session,
             _workbook([[code, "Deluxe Home Center AC (I)", None, None, None, None, None]]),
         )
 
-        assert (result["created"], result["updated"]) == (0, 1)
-        assert outcome.failed == 0 and outcome.skipped == 0
-        held = _held(session, code)
-        assert len(held) == 1
-        assert held[0].customer_name == "Deluxe Home Center AC (I)"
-        assert held[0].name_aliases == ["Deluxe Home Center (KTN)"]
-
-
-def test_the_same_name_spelled_differently_is_unchanged_not_renamed():
-    """Case and edge whitespace are not a rename: the index compares
-    `lower(btrim(...))` and so does the importer."""
-    with blank_session() as session:
-        _aliases(session)
-        set_company_scope(session, frozenset({DEFAULT_COMPANY_ID}))
-        code = unique_code("C")[:50]
-        _apply(session, _workbook([[code, "ABDUL RAUF", None, None, None, None, None]]))
-
-        result, _outcome = _apply(
-            session, _workbook([[f" {code.lower()} ", "  abdul rauf ", None, None, None, None, None]])
-        )
-
-        assert (result["created"], result["updated"], result["unchanged"]) == (0, 0, 1)
-        held = _held(session, code)
-        assert len(held) == 1 and held[0].name_aliases == []
+        assert result["created"] == 1
+        assert result["needs_review"] == 0
 
 
 # ------------------------------------------------------------- partial success
@@ -792,7 +814,7 @@ def test_the_preview_writes_nothing_and_agrees_with_the_import():
         assert _held(session, held)[0].email == "old@example.com"
 
         applied, _outcome = _apply(session, book)
-        for key in ("created", "updated", "unchanged", "skipped", "failed"):
+        for key in ("created", "updated", "unchanged", "skipped", "failed", "needs_review"):
             assert applied[key] == preview[key], key
 
 
@@ -970,6 +992,7 @@ def test_the_validation_shape_makes_row_problems_warnings_not_errors():
             "unchanged": 45,
             "skipped": 3,
             "failed": 0,
+            "needs_review": 2,
             "unknown_market_segments": ["RETAIL-X"],
             "unknown_market_segment_rows": 40,
         }
@@ -980,12 +1003,13 @@ def test_the_validation_shape_makes_row_problems_warnings_not_errors():
     assert "Row 14: no customer name" in shaped["warnings"]
     assert "Column not recognised: SALESMAN" in shaped["warnings"]
     assert any("RETAIL-X" in w for w in shaped["warnings"])
+    assert any("close to one already" in w for w in shaped["warnings"])
     # How MANY customers land without a segment is the part that matters: it decides
     # SCM demand class, and the spelling alone does not say how much of the book moved.
     assert any("40 row(s) import with no market segment" in w for w in shaped["warnings"])
     assert shaped["summary"]["would_create"] == 612
     assert shaped["summary"]["would_skip"] == 3
-    assert "needs_review" not in shaped["summary"]
+    assert shaped["summary"]["needs_review"] == 2
 
 
 def test_an_unreadable_file_is_invalid_with_the_missing_column_named():

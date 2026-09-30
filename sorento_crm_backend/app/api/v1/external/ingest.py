@@ -277,12 +277,7 @@ SUPPORTED_ENTITIES = (
 # the envelope adds a required `book`, the idempotency key is (company, book, DocKey), a DO / GRN
 # adopts an upload-created row by its number, and `/deletions` takes the sweep's vanished
 # `doc_keys` for a DocDate range and cancels them, never deletes. Additive.
-# "2.8" (CUSTOMER-CODE-IDENTITY, #1390): a customer is one row per debtor code per company.
-# `sales_orders.customer_code` resolves on the code alone and the sent `customer_name` is
-# stored on the order (`debtor_name`), never on the master; `customer_ambiguous` joins
-# `warnings`; the `customers` masters push adopts by code, renames, and treats a same-source
-# ref mismatch like `products` does (2.4). Additive on the wire.
-CONTRACT_VERSION = "2.8"
+CONTRACT_VERSION = "2.7"
 
 
 def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:

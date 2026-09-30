@@ -56,30 +56,6 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('CustomerDetail - Also known as (CUSTOMER-CODE-IDENTITY)', () => {
-  it('lists the aliases under the header when there are any', async () => {
-    getCustomer.mockResolvedValue({
-      ...BASE,
-      name_aliases: ['1 LIVING DEPOT SDN BHD [A/C I]', 'MODERNMED SDN BHD'],
-    });
-    render(<CustomerDetail customerId="cust-1" />);
-
-    await waitFor(() =>
-      expect(
-        screen.getByText('Also known as: 1 LIVING DEPOT SDN BHD [A/C I], MODERNMED SDN BHD'),
-      ).toBeInTheDocument(),
-    );
-  });
-
-  it('shows nothing when there are none', async () => {
-    getCustomer.mockResolvedValue({ ...BASE, name_aliases: [] });
-    render(<CustomerDetail customerId="cust-1" />);
-
-    await waitFor(() => expect(screen.getByText('Customer Code: C-001')).toBeInTheDocument());
-    expect(screen.queryByText(/Also known as/)).not.toBeInTheDocument();
-  });
-});
-
 describe('CustomerDetail - Sales Agent', () => {
   it('shows code - name, no id, next to Phone', async () => {
     getCustomer.mockResolvedValue({
