@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { SoLineAttachmentsButton } from '../../_shared/components/SoLineAttachmentsButton';
@@ -909,7 +910,6 @@ export function FulfilmentBoardListView({
       rows={filteredContributions}
       getRowId={(row) => row.key}
       pageResetKey={`${pageResetKey ?? externalSearch ?? ''}|${statusFilter.join(',')}`}
-      columnToggle
       // Rank is a planner's tiebreak, not something to read on every row: hidden until asked.
       initialColumnVisibility={{ rank: false }}
       listingKey="projects.projects.view::project-fulfilment-board-list-v2"
@@ -917,59 +917,98 @@ export function FulfilmentBoardListView({
       rowSelection={rowSelection}
       onRowSelectionChange={setRowSelection}
       enableRowSelection={(row) => canDecide(row.original)}
-      toolbar={
-        <div className="flex flex-wrap items-center gap-2">
-          <SearchableMultiSelect
-            value={statusFilter}
-            onChange={setStatusFilter}
-            options={VERDICT_FILTER_OPTIONS}
-            placeholder="Status"
-            className="w-44"
-          />
-          {/* The same pair reorder planning carries, in the same place and the same shape
-              (AC-C12): two icon buttons, each dead when it has nothing to do, so the
-              control itself says whether the list is open or closed. */}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            mode="icon"
-            className="h-8 w-8"
-            data-testid="board-list-expand-all"
-            title="Expand all"
-            aria-label="Expand all"
-            disabled={openKeys.length >= filteredContributions.length}
-            onClick={() => expandAll(filteredContributions.map((row) => row.key))}
-          >
-            <ChevronsUpDown className="size-4" aria-hidden />
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            mode="icon"
-            className="h-8 w-8"
-            data-testid="board-list-collapse-all"
-            title="Collapse all"
-            aria-label="Collapse all"
-            disabled={openKeys.length === 0}
-            onClick={requestCollapseAll}
-          >
-            <ChevronsDownUp className="size-4" aria-hidden />
-          </Button>
-          {/* S3 (D1, R1, R4): Decide replaces the old "Save as suggested" button - As
-              suggested is now its first menu item, and Decide itself is ALWAYS rendered,
-              disabled with a tooltip while nothing is ticked. */}
-          <BoardDecideControl
-            contributions={sortedContributions}
-            selectedKeys={selectedKeys}
-            draft={draft}
-            onSave={onDecideBatch}
-            onSaved={untickSaved}
-            onClear={() => setRowSelection({})}
-          />
-        </div>
-      }
+      // ONE row (owner, 30 Sep 2026): Status, Columns, Expand all, Collapse all, Decide. The
+      // Columns trigger is handed in by the grid so it sits in this row in order, the same
+      // title-left / actions-right shape as PromotionProductsGrid's CardHeader.
+      // The app's own list toolbar (`DataGridListToolbar`, PLAN-unified-list-toolbar-UAC.md D2/D3):
+      // Filters (Status) and Columns on the left, Expand/Collapse as left actions, Decide as the
+      // primary action. While rows are ticked its bulk strip ("N selected", Clear) replaces the
+      // left cluster, so Decide keeps its place on the right.
+      toolbar={({ table }) => (
+        <DataGridListToolbar
+          table={table}
+          exportConfig={false}
+          showColumns
+          filters={{
+            kind: 'custom',
+            active: statusFilter.length > 0,
+            activeCount: statusFilter.length,
+            activeSummary:
+              statusFilter.length > 0
+                ? {
+                    label: `Status: ${statusFilter
+                      .map(
+                        (value) =>
+                          VERDICT_FILTER_OPTIONS.find((option) => option.value === value)?.label ??
+                          value,
+                      )
+                      .join(', ')}`,
+                    onClear: () => setStatusFilter([]),
+                  }
+                : undefined,
+            content: (
+              <SearchableMultiSelect
+                value={statusFilter}
+                onChange={setStatusFilter}
+                options={VERDICT_FILTER_OPTIONS}
+                placeholder="Status"
+                size="sm"
+              />
+            ),
+          }}
+          leftActions={
+            <>
+              {/* The same pair reorder planning carries, in the same place and the same shape
+                  (AC-C12): two icon buttons, each dead when it has nothing to do, so the
+                  control itself says whether the list is open or closed. */}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                mode="icon"
+                className="h-8 w-8"
+                data-testid="board-list-expand-all"
+                title="Expand all"
+                aria-label="Expand all"
+                disabled={openKeys.length >= filteredContributions.length}
+                onClick={() => expandAll(filteredContributions.map((row) => row.key))}
+              >
+                <ChevronsUpDown className="size-4" aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                mode="icon"
+                className="h-8 w-8"
+                data-testid="board-list-collapse-all"
+                title="Collapse all"
+                aria-label="Collapse all"
+                disabled={openKeys.length === 0}
+                onClick={requestCollapseAll}
+              >
+                <ChevronsDownUp className="size-4" aria-hidden />
+              </Button>
+            </>
+          }
+          // Suppresses the toolbar's own bulk buttons: the strip keeps "N selected" and Clear.
+          bulkActionsSlot={<></>}
+          // S3 (D1, R1, R4): Decide replaces the old "Save as suggested" button - As suggested
+          // is its first menu item, and Decide itself is ALWAYS rendered, disabled with a
+          // tooltip while nothing is ticked.
+          primaryAction={
+            <BoardDecideControl
+              contributions={sortedContributions}
+              selectedKeys={selectedKeys}
+              draft={draft}
+              onSave={onDecideBatch}
+              onSaved={untickSaved}
+              onClear={() => setRowSelection({})}
+              embedded
+            />
+          }
+        />
+      )}
       expanded={expanded}
       onExpandedChange={setExpanded}
       onRowClick={(row) => requestRow(row.key)}

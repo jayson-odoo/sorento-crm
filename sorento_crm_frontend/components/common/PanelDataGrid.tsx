@@ -9,6 +9,7 @@ import {
   Row,
   RowSelectionState,
   SortingState,
+  Table,
   getCoreRowModel,
   getExpandedRowModel,
   getPaginationRowModel,
@@ -16,10 +17,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { Card, CardFooter, CardHeader, CardTable, CardTitle } from '@/components/ui/card';
-import { Columns3 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -73,7 +71,6 @@ export function PanelDataGrid<TRow extends object>({
   pageResetKey,
   focusRowId,
   focusRequestKey,
-  columnToggle = false,
   initialColumnVisibility,
 }: {
   /**
@@ -86,8 +83,12 @@ export function PanelDataGrid<TRow extends object>({
    * rendered at all, so the column headers sit directly under that row.
    */
   title?: React.ReactNode;
-  /** Filters, view switches and the Add button. Sits in the card header beside the title. */
-  toolbar?: React.ReactNode;
+  /**
+   * Filters, view switches and the Add button. Sits in the card header beside the title. Or a
+   * function receiving the grid's own `table`, for a caller that mounts the app's list toolbar
+   * (`DataGridListToolbar`), which needs it for Columns and the bulk strip.
+   */
+  toolbar?: React.ReactNode | ((slots: { table: Table<TRow> }) => React.ReactNode);
   columns: ColumnDef<TRow>[];
   rows: TRow[];
   getRowId?: (row: TRow) => string;
@@ -223,8 +224,6 @@ export function PanelDataGrid<TRow extends object>({
    * to re-press, which keeps today's once-per-id behaviour exactly as it is.
    */
   focusRequestKey?: string | number;
-  /** Adds the standard "Columns" visibility menu (the Products in Promotion grid's) to the toolbar. */
-  columnToggle?: boolean;
   /** Columns hidden until the reader turns them on (a saved column preference still wins). */
   initialColumnVisibility?: Record<string, boolean>;
 }) {
@@ -408,12 +407,16 @@ export function PanelDataGrid<TRow extends object>({
         {/* flex-col until sm so a title and a toolbar never overlap at phone width. Not
             rendered at all when there is nothing to put in it, so a grid titled by the row
             it expanded from starts at its own column headers. */}
-        {(title || toolbar || searchOf || columnToggle) && (
+        {(title || toolbar || searchOf) && (
           <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
             {title ? (
               <CardTitle className="min-w-0 break-words text-sm">{title}</CardTitle>
             ) : null}
-            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+            <div
+              className={`flex w-full flex-wrap items-center gap-2 ${
+                typeof toolbar === 'function' ? 'min-w-0 sm:grow' : 'sm:w-auto'
+              }`}
+            >
               {searchOf && (
                 <Input
                   type="search"
@@ -428,18 +431,7 @@ export function PanelDataGrid<TRow extends object>({
                   className="h-8 w-full sm:w-56"
                 />
               )}
-              {toolbar}
-              {columnToggle && (
-                <DataGridColumnVisibility
-                  table={table}
-                  trigger={
-                    <Button variant="outline" size="sm" className="gap-1">
-                      <Columns3 className="size-4" aria-hidden />
-                      Columns
-                    </Button>
-                  }
-                />
-              )}
+              {typeof toolbar === 'function' ? toolbar({ table }) : toolbar}
             </div>
           </CardHeader>
         )}

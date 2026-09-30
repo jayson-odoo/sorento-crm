@@ -2289,7 +2289,8 @@ describe('FulfilmentBoardListView: Columns and Status filter', () => {
     await screen.findByText('SO397450');
     expect(screen.getByText('SO397451')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByText('Status'));
+    await userEvent.click(screen.getByRole('button', { name: /^Filters/ }));
+    await userEvent.click(await screen.findByText('Status'));
     await userEvent.click(await screen.findByRole('option', { name: /Saved/ }));
     await userEvent.keyboard('{Escape}');
 
@@ -2309,7 +2310,8 @@ describe('FulfilmentBoardListView: Columns and Status filter', () => {
     });
     await screen.findByText('SO397450');
 
-    await userEvent.click(screen.getByText('Status'));
+    await userEvent.click(screen.getByRole('button', { name: /^Filters/ }));
+    await userEvent.click(await screen.findByText('Status'));
     await userEvent.click(await screen.findByRole('option', { name: /Rejected/ }));
     await userEvent.keyboard('{Escape}');
 
@@ -2317,22 +2319,28 @@ describe('FulfilmentBoardListView: Columns and Status filter', () => {
     expect(screen.getByText('SO397450')).toBeInTheDocument();
   });
 
-  it('a row ticked and then hidden by the Status filter is not counted as selected', async () => {
-    renderView({
-      contributions: [
-        contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 }),
-        contribution({ key: 'so-2:line-20', so_number: 'SO397451', line_no: 20 }),
-        contribution({ key: 'so-3:line-30', so_number: 'SO397452', line_no: 30 }),
-      ],
-    });
+  it('a row ticked and then hidden by a narrower view is not counted as selected', async () => {
+    const rows = [
+      contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 }),
+      contribution({ key: 'so-2:line-20', so_number: 'SO397451', line_no: 20 }),
+      contribution({ key: 'so-3:line-30', so_number: 'SO397452', line_no: 30 }),
+    ];
+    const { rerender } = renderView({ contributions: rows });
     await screen.findByText('SO397450');
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO397451 line 20' }));
     expect(screen.getByText('2 selected')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByText('Status'));
-    await userEvent.click(await screen.findByRole('option', { name: /Confirmed/ }));
-    await userEvent.keyboard('{Escape}');
+    rerender(
+      <FulfilmentBoardListView
+        contributions={rows}
+        draft={{}}
+        onDecide={vi.fn()}
+        onDecideMany={vi.fn()}
+        onDecideBatch={vi.fn()}
+        externalSearch="SO397452"
+      />,
+    );
 
     await waitFor(() => expect(screen.queryByText(/selected/)).not.toBeInTheDocument());
   });
@@ -2344,6 +2352,22 @@ describe('FulfilmentBoardListView: Columns and Status filter', () => {
       ],
     });
     expect(await screen.findByText('2912')).not.toHaveAttribute('title');
+  });
+
+
+  it('uses the shared list toolbar: Filters (Status), Columns, expand and collapse, and Decide in one bar', async () => {
+    const { container } = renderView();
+    await screen.findByText('SO397450');
+
+    const toolbar = container.querySelector('[data-slot="data-grid-list-toolbar"]') as HTMLElement;
+    expect(toolbar).not.toBeNull();
+    expect(within(toolbar).getByRole('button', { name: /^Filters/ })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Columns' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Expand all' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Collapse all' })).toBeInTheDocument();
+    expect(within(toolbar).getByTestId('board-decide-button')).toBeInTheDocument();
+    // One toolbar only: the grid does not draw a second row of controls of its own.
+    expect(container.querySelectorAll('[data-slot="data-grid-list-toolbar"]')).toHaveLength(1);
   });
 
 });
