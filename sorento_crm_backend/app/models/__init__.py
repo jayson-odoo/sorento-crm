@@ -92,6 +92,7 @@ from app.models.ai_assistant import (
 )
 from app.models.ai_prompt import AIPromptVersion, AIPromptLabel
 from app.models.chat_history import ChatHistory
+from app.models.chat_thread_sync_state import ChatThreadSyncState
 from app.models.chatbot_turn import ChatbotTurn
 from app.models.conversation_frame import ConversationFrame
 from app.models.chatbot_policy import ChatbotDomain, ChatbotEntityKind
@@ -329,6 +330,7 @@ __all__ = [
     "AIPromptVersion",
     "AIPromptLabel",
     "ChatHistory",
+    "ChatThreadSyncState",
     "ConversationFrame",
     "ChatbotDomain",
     "ChatbotEntityKind",
