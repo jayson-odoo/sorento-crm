@@ -838,6 +838,8 @@ def _withdrawal_only_result(
         "exceptions": [],
         "lines_decided": decided,
         "lines_undecided": max(total - decided, 0),
+        "lines_confirmed": [],
+        "lines_carried": decided,
         "transfers_written": 0,
         "transfers_failed": 0,
         "transfers_kept": 0,

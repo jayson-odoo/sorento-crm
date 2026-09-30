@@ -363,6 +363,7 @@ export function FulfilmentBoardListView({
       // The repo's own select column (the users list uses the same one), so a quick save is
       // a bulk action like any other rather than a second selection mechanism.
       buildSelectColumn<BoardContribution>({
+        selectAllRows: true,
         // S3 (D1): widened from `canQuickSave` - a Confirmed or already-saved row is
         // tickable too (R3), so only an unplannable or a cancelled line is refused.
         enableRow: (row) => canDecide(row.original),

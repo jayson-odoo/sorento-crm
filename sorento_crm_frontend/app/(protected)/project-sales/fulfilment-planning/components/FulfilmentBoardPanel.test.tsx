@@ -4374,3 +4374,256 @@ describe('FulfilmentBoardPanel: line attachments lookup (#1312, AC-U2, fix round
     expect(lastCall).toHaveLength(2);
   });
 });
+
+/**
+ * FULFIL-CONFIRM-SCOPE (`PLAN-fulfil-confirm-scope-30sep.md`): the pre-confirm dialog lists
+ * the lines it will post with a tick box each (AC-D1..D3), and the toast and results block
+ * read the lines the SERVER says it wrote (AC-R1..R4).
+ *
+ * The existing tests above press the dialog action through `{ name: 'Confirm' }`; the action
+ * reads "Confirm N lines" from here on, so the coder switches those to
+ * `{ name: /^Confirm( \d+ lines?)?$/ }`. They are deliberately not edited by this file.
+ */
+describe('FulfilmentBoardPanel: the confirm dialog lists and ticks its lines (FULFIL-CONFIRM-SCOPE)', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const CONFIRM_ACTION = /^Confirm( \d+ lines?)?$/;
+
+  /** Three saved lines on one order; line 2's draft was saved 8 days ago by somebody else. */
+  function threeSavedLines() {
+    const base = allSaved(
+      boardOf([
+        demand({ line_no: 1, item_code: 'SRTWT6808' }),
+        demand({ line_no: 2, item_code: 'SRTSH1040' }),
+        demand({ line_no: 3, item_code: 'TPE-9204' }),
+      ]),
+    );
+    return withContribution(
+      base,
+      (entry) => entry.line_no === 2,
+      (entry) => ({
+        ...entry,
+        draft: {
+          decision: { verdict: 'approved' as const },
+          saved_by: 'Jayson Foundryx',
+          saved_at: new Date(Date.now() - 8 * DAY_MS).toISOString(),
+        },
+      }),
+    );
+  }
+
+  const keyOfLine = (board: PlanningBoard, lineNo: number) =>
+    board.contributions.find((entry) => entry.line_no === lineNo)!.key;
+
+  async function openDialog() {
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+    return screen.findByRole('alertdialog');
+  }
+
+  const okResult = {
+    pso_id: 'pso-so-a',
+    ok: true,
+    decision_revision: 1,
+    inquiry_rows_created: 0,
+  };
+
+  it('lists one row per line, names who saved it, and counts the action button (AC-D1, D2)', async () => {
+    const board = threeSavedLines();
+    getPlanningBoard.mockResolvedValue(board);
+
+    renderPanel(['SO403340']);
+    const dialog = await openDialog();
+
+    for (const lineNo of [1, 2, 3]) {
+      expect(
+        within(dialog).getByTestId(`board-confirm-dialog-row-${keyOfLine(board, lineNo)}`),
+      ).toBeInTheDocument();
+    }
+    const jayson = within(dialog).getByTestId(
+      `board-confirm-dialog-row-${keyOfLine(board, 2)}`,
+    );
+    expect(jayson).toHaveTextContent(/saved by Jayson Foundryx/i);
+    expect(
+      within(dialog).getByRole('button', { name: 'Confirm 3 lines' }),
+    ).toBeInTheDocument();
+  });
+
+  it('leaves an unticked line out of the body and lowers the count (AC-D3)', async () => {
+    const board = threeSavedLines();
+    getPlanningBoard.mockResolvedValue(board);
+    confirmMany.mockResolvedValue({ results: [okResult] });
+
+    renderPanel(['SO403340']);
+    const dialog = await openDialog();
+    const jayson = within(dialog).getByTestId(
+      `board-confirm-dialog-row-${keyOfLine(board, 2)}`,
+    );
+    fireEvent.click(within(jayson).getByRole('checkbox'));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm 2 lines' }));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const lines = confirmMany.mock.calls[0][0].orders[0].lines as {
+      project_line_id: string;
+    }[];
+    expect(lines).toHaveLength(2);
+    expect(lines.map((line) => line.project_line_id)).not.toContain('pl-so-a-2');
+  });
+
+  it('disables the action once every row is unticked (AC-D3)', async () => {
+    const board = threeSavedLines();
+    getPlanningBoard.mockResolvedValue(board);
+
+    renderPanel(['SO403340']);
+    const dialog = await openDialog();
+    for (const lineNo of [1, 2, 3]) {
+      const row = within(dialog).getByTestId(
+        `board-confirm-dialog-row-${keyOfLine(board, lineNo)}`,
+      );
+      fireEvent.click(within(row).getByRole('checkbox'));
+    }
+
+    expect(within(dialog).getByRole('button', { name: CONFIRM_ACTION })).toBeDisabled();
+    expect(confirmMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('FulfilmentBoardPanel: the toast and results block read the server echo (FULFIL-CONFIRM-SCOPE)', () => {
+  const CONFIRM_ACTION = /^Confirm( \d+ lines?)?$/;
+
+  function lines6And9() {
+    return allSaved(
+      boardOf([
+        demand({ line_no: 6, item_code: 'SRTWT6808' }),
+        demand({ line_no: 9, item_code: 'SRTWT6808' }),
+      ]),
+    );
+  }
+
+  function threeLines() {
+    return allSaved(
+      boardOf([
+        demand({ line_no: 1, item_code: 'WESERP10B' }),
+        demand({ line_no: 2, item_code: 'TPE-9204' }),
+        demand({ line_no: 3, item_code: 'WESERP20B' }),
+      ]),
+    );
+  }
+
+  async function press() {
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: CONFIRM_ACTION }));
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+  }
+
+  it('toasts the echoed count and lists the lines and the carried count (AC-R1, R2)', async () => {
+    getPlanningBoard.mockResolvedValue(lines6And9());
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 2,
+          inquiry_rows_created: 2,
+          lines_confirmed: [
+            { project_line_id: 'pl-so-a-6', line_no: 6, item_code: 'SRTWT6808' },
+            { project_line_id: 'pl-so-a-9', line_no: 9, item_code: 'SRTWT6808' },
+          ],
+          lines_carried: 4,
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+    await press();
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(String((toast.success as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0])).toMatch(
+      /^2 lines confirmed/,
+    );
+    const block = await screen.findByTestId('board-confirm-results');
+    expect(block).toHaveTextContent('line 6 SRTWT6808');
+    expect(block).toHaveTextContent('line 9 SRTWT6808');
+    expect(block).toHaveTextContent('4 carried forward');
+    expect(block).not.toHaveTextContent(/Posted \d+, server confirmed/);
+  });
+
+  it('warns in amber when the server confirmed fewer lines than were posted (AC-R3)', async () => {
+    getPlanningBoard.mockResolvedValue(threeLines());
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 1,
+          inquiry_rows_created: 0,
+          lines_confirmed: [
+            { project_line_id: 'pl-so-a-1', line_no: 1, item_code: 'WESERP10B' },
+            { project_line_id: 'pl-so-a-2', line_no: 2, item_code: 'TPE-9204' },
+          ],
+          lines_carried: 0,
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+    await press();
+
+    // AC-R1: the toast counts what the server echoed (2), not what was posted (3).
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(
+      String((toast.success as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]),
+    ).toMatch(/^2 lines confirmed/);
+    const block = await screen.findByTestId('board-confirm-results');
+    const warning = await within(block).findByText(/Posted 3, server confirmed 2/);
+    expect(warning.className).toMatch(/amber/);
+    expect(warning).toHaveTextContent(/line 3 WESERP20B/);
+  });
+
+  it('clears the local Saved pill only on the lines the server echoed (AC-R4)', async () => {
+    getPlanningBoard.mockResolvedValueOnce(threeLines());
+    // The refetch after Confirm reads a board carrying NO server drafts (a read that raced the
+    // draft writes), so the Saved pills left on screen are the panel's own local draft state:
+    // exactly the lines the server echoed lose theirs, the posted-but-not-echoed one keeps it.
+    getPlanningBoard.mockResolvedValue(
+      boardOf([
+        demand({ line_no: 1, item_code: 'WESERP10B' }),
+        demand({ line_no: 2, item_code: 'TPE-9204' }),
+        demand({ line_no: 3, item_code: 'WESERP20B' }),
+      ]),
+    );
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 1,
+          inquiry_rows_created: 0,
+          lines_confirmed: [
+            { project_line_id: 'pl-so-a-1', line_no: 1, item_code: 'WESERP10B' },
+            { project_line_id: 'pl-so-a-2', line_no: 2, item_code: 'TPE-9204' },
+          ],
+          lines_carried: 0,
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    const pillFor = (itemCode: string): HTMLElement => {
+      const pill = screen
+        .getAllByTestId(/^decision-pill-/)
+        .find((el) => el.getAttribute('data-testid')?.includes(itemCode));
+      if (!pill) throw new Error(`No decision pill carries ${itemCode} in its key`);
+      return pill;
+    };
+    await waitFor(() => expect(pillFor('WESERP20B')).toHaveTextContent('Saved'));
+
+    await press();
+
+    await waitFor(() => expect(pillFor('WESERP10B')).not.toHaveTextContent('Saved'));
+    expect(pillFor('TPE-9204')).not.toHaveTextContent('Saved');
+    expect(pillFor('WESERP20B')).toHaveTextContent('Saved');
+  });
+});

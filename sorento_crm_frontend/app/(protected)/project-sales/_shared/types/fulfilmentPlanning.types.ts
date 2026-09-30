@@ -645,6 +645,13 @@ export interface ConfirmException {
 }
 
 /** `POST /project-sales/sales-orders/{pso_id}/confirm`. */
+/** One line a confirmation froze, as the server echoes it (FULFIL-CONFIRM-SCOPE). */
+export interface ConfirmedLine {
+  project_line_id: string;
+  line_no?: number | null;
+  item_code?: string | null;
+}
+
 export interface ConfirmResult {
   /** Null only when every named line was already fulfilled and nothing was written (#1362). */
   revision_no: number | null;
@@ -668,6 +675,9 @@ export interface ConfirmResult {
    * at the same quantity survives a reconfirm with its state and its approval intact.
    */
   transfers_kept?: number | null;
+  /** The lines this press froze, in payload order, and how many covered lines rode forward. */
+  lines_confirmed?: ConfirmedLine[] | null;
+  lines_carried?: number | null;
   /** How many of the confirmed lines were flagged as a suspected system problem (R10). */
   suspected_issues?: number | null;
   /**
@@ -2530,6 +2540,9 @@ export interface ConfirmManyOrderResult {
   inquiry_rows_created?: number | null;
   lines_decided?: number | null;
   lines_undecided?: number | null;
+  /** The lines this order's press froze, and how many covered lines rode forward. */
+  lines_confirmed?: ConfirmedLine[] | null;
+  lines_carried?: number | null;
   /**
    * The movements this order's confirmation raised, the same figure the single-order
    * `ConfirmResult` already carries. Optional because a server that predates the field

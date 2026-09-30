@@ -457,6 +457,12 @@ class ConfirmException(BaseModel):
     message: str
 
 
+class ConfirmedLine(BaseModel):
+    project_line_id: str
+    line_no: Optional[int] = None
+    item_code: Optional[str] = None
+
+
 class ConfirmResult(BaseModel):
     #: None only when every named line was already fulfilled and nothing was written
     #: (#1362 item 3).
@@ -469,6 +475,10 @@ class ConfirmResult(BaseModel):
     #: `lines_undecided > 0` is a normal, deliberate outcome, not a warning.
     lines_decided: int = 0
     lines_undecided: int = 0
+    #: The lines this press froze (payload order) and how many covered lines were carried
+    #: forward untouched. `lines_decided == len(lines_confirmed) + lines_carried`.
+    lines_confirmed: List[ConfirmedLine] = []
+    lines_carried: int = 0
     #: The physical movements this confirmation raised, and how many it could NOT write
     #: (`PLAN-scm-cs-planning-uat.md` section E). The transfer write is best-effort so a
     #: failure cannot fail a promise already made, but a movement nobody was told about is
@@ -577,6 +587,8 @@ class ConfirmManyOrderResult(BaseModel):
     inquiry_rows_created: Optional[int] = None
     lines_decided: Optional[int] = None
     lines_undecided: Optional[int] = None
+    lines_confirmed: Optional[List[ConfirmedLine]] = None
+    lines_carried: Optional[int] = None
     #: The movements this order's confirmation raised, and how many could NOT be written -
     #: the same pair the single-order `ConfirmResult` carries. The board's toast reads "N
     #: lines confirmed, T transfers proposed", and T comes from here.

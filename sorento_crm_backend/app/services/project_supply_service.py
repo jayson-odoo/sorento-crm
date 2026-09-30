@@ -5244,6 +5244,8 @@ class ProjectSupplyService:
                 "lines_decided": decided,
                 "lines_undecided": max(len(lines) - decided, 0),
                 "lines_fulfilled_skipped": len(fulfilled),
+                "lines_confirmed": [],
+                "lines_carried": decided,
             }
 
         carried = self._carried_lines(
@@ -6975,6 +6977,17 @@ class ProjectSupplyService:
             # this order rather than being stopped from committing what is not.
             "lines_decided": decided,
             "lines_undecided": max(len(self.lines_of(str(order.id))) - decided, 0),
+            # The lines this press froze, in payload order, and how many covered lines rode
+            # forward untouched: the caller can see exactly what was written.
+            "lines_confirmed": [
+                {
+                    "project_line_id": str(line.id),
+                    "line_no": line.line_no,
+                    "item_code": fact.item_code,
+                }
+                for (line, _entry, fact) in checked
+            ],
+            "lines_carried": len(carried),
             # What this confirmation asked a warehouse to physically carry, and how much of
             # it could not be written down (PLAN section E). `transfers_failed > 0` is the
             # only sign a planner gets that a movement is missing, so it reaches the screen.
@@ -10778,6 +10791,8 @@ class ProjectSupplyService:
                         "inquiry_rows_created": body.get("inquiry_rows_created"),
                         "lines_decided": body.get("lines_decided"),
                         "lines_undecided": body.get("lines_undecided"),
+                        "lines_confirmed": body.get("lines_confirmed"),
+                        "lines_carried": body.get("lines_carried"),
                         # The board confirms every order in one press and reports one toast,
                         # so the movements and the flags have to come back PER ORDER or the
                         # toast has nothing to add up. `.get`, because the planning-change

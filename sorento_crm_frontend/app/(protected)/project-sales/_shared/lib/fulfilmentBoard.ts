@@ -39,6 +39,7 @@ import {
 } from './boardAmend';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { fromMinor, toMinor } from './supplyComposition';
+import { unpostableNotices } from './unpostableNotices';
 
 /**
  * A column header with the week-commencing abbreviation taken off.
@@ -298,14 +299,21 @@ export function commitPreviewFor(
  * A confirmation carrying nothing new is not sent at all (an empty body), because there is
  * nothing to decide: the covered lines are already in the database.
  */
+export interface ConfirmScopeOptions {
+  excludeKeys?: ReadonlySet<string>;
+}
+
 export function confirmLinesFor(
   contributions: BoardContribution[],
   salesOrderId: string,
   draft: BoardDraft,
+  /** Contributions the planner unticked in the pre-confirm dialog: left out of the body. */
+  options?: ConfirmScopeOptions,
 ): ConfirmLine[] {
   const lines: ConfirmLine[] = [];
   for (const contribution of contributions) {
     if (contribution.sales_order_id !== salesOrderId) continue;
+    if (options?.excludeKeys?.has(contribution.key)) continue;
     const built = lineFor(contribution, draft[contribution.key]);
     if (built && typeof built !== 'string') lines.push(built);
   }
@@ -326,10 +334,12 @@ export function rejectedCoveredLineIdsFor(
   contributions: BoardContribution[],
   salesOrderId: string,
   draft: BoardDraft,
+  options?: ConfirmScopeOptions,
 ): string[] {
   const ids: string[] = [];
   for (const contribution of contributions) {
     if (contribution.sales_order_id !== salesOrderId) continue;
+    if (options?.excludeKeys?.has(contribution.key)) continue;
     // N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): `covered` spans TWO kinds
     // of line - an ACTIVE decision, or a live order-inquiry row naming it with none
     // (`inquiry_decided`, #875). Only the first has a `line_snapshots` entry Confirm's
@@ -678,10 +688,12 @@ export function plannedLineCount(
    * every test that does not name a batch) is unaffected.
    */
   batchBlockedSalesOrderIds: ReadonlySet<string> = new Set(),
+  options?: ConfirmScopeOptions,
 ): number {
   const batchBlocked = batchBlockedSalesOrderIds.has(salesOrderId);
   return contributions.filter((contribution) => {
     if (contribution.sales_order_id !== salesOrderId) return false;
+    if (options?.excludeKeys?.has(contribution.key)) return false;
     if (contribution.unplannable) return false;
     // A CANCELLED line posts nothing and is still one of the lines this press acts on (R3):
     // its apply is the retire path, which needs no composition to build.
@@ -724,6 +736,7 @@ export function confirmSummaryFor(
   draft: BoardDraft,
   /** Threaded straight through to `plannedLineCount` (S4, fix round) - see its own doc. */
   batchBlockedSalesOrderIds: ReadonlySet<string> = new Set(),
+  options?: ConfirmScopeOptions,
 ): { toConfirm: number; rejected: number; orderCount: number; changed: number } {
   // N6 (code review round 3): `confirmed > rejected > stale > saved`, the same order
   // `BoardDecisionPill` reads by. A covered line's frozen composition is what the server
@@ -740,6 +753,7 @@ export function confirmSummaryFor(
   const orderIds = new Set<string>();
   for (const contribution of contributions) {
     if (contribution.unplannable) continue;
+    if (options?.excludeKeys?.has(contribution.key)) continue;
     // A CANCELLED line is decided BY THE BOOK (R3, scenario S5): the order it was on removed
     // it, and Confirm retires it. Nobody saves a decision for it, so the untouched-line skip
     // below would drop it from the count and the press would silently do one thing more than
@@ -774,10 +788,134 @@ export function confirmSummaryFor(
   }
   const toConfirm = [...orderIds].reduce(
     (total, salesOrderId) =>
-      total + plannedLineCount(contributions, salesOrderId, draft, batchBlockedSalesOrderIds),
+      total +
+      plannedLineCount(contributions, salesOrderId, draft, batchBlockedSalesOrderIds, options),
     0,
   );
   return { toConfirm, rejected, orderCount: orderIds.size, changed };
+}
+
+/** One line the pre-confirm dialog lists: what this press will write for it. */
+export interface ConfirmDialogRow {
+  key: string;
+  sales_order_id: string;
+  so_number: string;
+  line_no: number;
+  item_code: string;
+  verdict: 'approved' | 'amended' | 'rejected';
+  composition: string;
+  saved_by: string | null;
+  saved_at: string | null;
+  /** Saved by somebody other than the person pressing Confirm. */
+  savedByOther: boolean;
+  /** Saved before this board was opened. */
+  savedBefore: boolean;
+}
+
+/** A saved line this press cannot post, with the reason the panel already words. */
+export interface ConfirmDialogNotPosted {
+  key: string;
+  sales_order_id: string;
+  so_number: string;
+  line_no: number;
+  item_code: string;
+  reason: string;
+}
+
+const STALE_NOT_POSTED_REASON = 'Suggestion changed since it was saved; re-save it first.';
+const WITHDRAWN_COMPOSITION = 'Withdrawn from the confirmation';
+
+/**
+ * The composition `lineFor` will post, in the words the board uses: `Reserve 20 BRW`,
+ * `Borrow 43 + 57 from BRW-BB`, `Incoming 10`, `Buy 239`, joined with ' · '.
+ */
+function compositionText(
+  line: ConfirmLine,
+  contribution: BoardContribution,
+  decision: BoardDecision,
+): string {
+  const codes = new Map<string, string>();
+  const remember = (id: string | null | undefined, code: string | null | undefined) => {
+    if (id && code && !codes.has(id)) codes.set(id, code);
+  };
+  for (const source of contribution.sources) remember(source.warehouse_id, source.location);
+  for (const row of decision.reserve ?? []) remember(row.warehouse_id, row.location);
+  for (const row of decision.borrow ?? []) remember(row.warehouse_id, row.warehouse_code);
+  const codeOf = (id: string, own?: string | null) => own || codes.get(id) || '';
+
+  const parts: string[] = [];
+  for (const row of line.reserve) {
+    if (toMinor(row.qty) <= 0) continue;
+    parts.push(`Reserve ${row.qty} ${codeOf(row.warehouse_id, row.location)}`.trim());
+  }
+  const borrowByLocation = new Map<string, string[]>();
+  for (const row of line.borrow) {
+    if (toMinor(row.qty) <= 0) continue;
+    const location = codeOf(row.warehouse_id, row.location);
+    borrowByLocation.set(location, [...(borrowByLocation.get(location) ?? []), row.qty]);
+  }
+  for (const [location, quantities] of borrowByLocation) {
+    const text = `Borrow ${quantities.join(' + ')}${location ? ` from ${location}` : ''}`;
+    parts.push(decision.order_back ? `${text} (order-back)` : text);
+  }
+  if (toMinor(line.timely_spo_qty) > 0) parts.push(`Incoming ${line.timely_spo_qty}`);
+  if (toMinor(line.buy_qty) > 0) parts.push(`Buy ${line.buy_qty}`);
+  return parts.join(' \u00b7 ');
+}
+
+/**
+ * What the pre-confirm dialog lists: one row per line this press will post (or withdraw),
+ * and the saved lines it cannot post, with why. Built off the SAME `lineFor` the body is
+ * built by, so the list and the payload cannot disagree.
+ */
+export function confirmDialogRowsFor(
+  contributions: BoardContribution[],
+  draft: BoardDraft,
+  context: { currentUserName: string | null | undefined; openedAt: Date },
+): { rows: ConfirmDialogRow[]; notPosted: ConfirmDialogNotPosted[] } {
+  const rows: ConfirmDialogRow[] = [];
+  const notPosted: ConfirmDialogNotPosted[] = [];
+  for (const contribution of contributions) {
+    if (contribution.unplannable) continue;
+    const decision = draft[contribution.key];
+    if (!decision) continue;
+    const identity = {
+      key: contribution.key,
+      sales_order_id: contribution.sales_order_id,
+      so_number: contribution.so_number,
+      line_no: contribution.line_no,
+      item_code: contribution.item_code,
+    };
+    const savedBy = contribution.draft?.saved_by ?? null;
+    const savedAt = contribution.draft?.saved_at ?? null;
+    const rowFor = (verdict: ConfirmDialogRow['verdict'], composition: string) => ({
+      ...identity,
+      verdict,
+      composition,
+      saved_by: savedBy,
+      saved_at: savedAt,
+      savedByOther: !!savedBy && savedBy !== context.currentUserName,
+      savedBefore: !!savedAt && new Date(savedAt) < context.openedAt,
+    });
+    if (decision.verdict === 'rejected') {
+      // Only an active decision has anything for Confirm to withdraw.
+      if (contribution.decision) rows.push(rowFor('rejected', WITHDRAWN_COMPOSITION));
+      continue;
+    }
+    if (contribution.draft?.stale) {
+      notPosted.push({ ...identity, reason: STALE_NOT_POSTED_REASON });
+      continue;
+    }
+    const built = lineFor(contribution, decision);
+    if (built === null) continue;
+    if (typeof built === 'string') {
+      const [notice] = unpostableNotices(built, [{ contribution, reason: built }]);
+      notPosted.push({ ...identity, reason: notice?.clause ?? built });
+      continue;
+    }
+    rows.push(rowFor(decision.verdict, compositionText(built, contribution, decision)));
+  }
+  return { rows, notPosted };
 }
 
 /**

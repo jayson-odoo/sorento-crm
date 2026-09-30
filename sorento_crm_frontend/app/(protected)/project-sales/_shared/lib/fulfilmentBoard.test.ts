@@ -16,6 +16,7 @@ import {
   boardAxis,
   bucketLabelText,
   commitPreviewFor,
+  confirmDialogRowsFor,
   confirmLinesFor,
   confirmSummaryFor,
   DAY_WINDOW_COLUMNS as BOARD_DAY_WINDOW_COLUMNS,
@@ -2809,5 +2810,143 @@ describe('#1362 (owner, 29 Sep 2026): confirmNoticeLines', () => {
       'Line 2912, B2154-NL: Buy 100 confirmed as decided; 100 landed for this line on SPO-2026/06-0131 stay linked to it, for purchasing to adjust',
     ]);
     expect(confirmNoticeLines({})).toEqual([]);
+  });
+});
+
+/**
+ * FULFIL-CONFIRM-SCOPE (S2): Confirm posts what the planner ticked in the pre-confirm dialog.
+ * `excludeKeys` leaves a contribution out of the body and the count; `confirmDialogRowsFor`
+ * is the pure read the dialog lists (AC-D1, D2, D4, D5).
+ */
+describe('confirm scope: excludeKeys', () => {
+  const board = buildBoard(
+    [
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '100' }),
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 2, qty: '50', item_code: 'TPE-9204' }),
+      line({ sales_order_id: 'so-b', so_number: 'SO000002', line_no: 3, qty: '10' }),
+    ],
+    { today: TODAY, freeStock: { 'WESERP10B|BRW-BB': '100', 'TPE-9204|BRW-BB': '20' } },
+  );
+  const contributions = board.cells.flatMap((cell) => cell.contributions);
+  const keyOf = (soNumber: string, lineNo: number) =>
+    contributions.find((entry) => entry.so_number === soNumber && entry.line_no === lineNo)!.key;
+  const saved = () => ({
+    [keyOf('SO000001', 1)]: { verdict: 'approved' as const },
+    [keyOf('SO000001', 2)]: { verdict: 'approved' as const },
+    [keyOf('SO000002', 3)]: { verdict: 'approved' as const },
+  });
+
+  it('confirmLinesFor leaves an excluded contribution out of the returned lines (AC-D3)', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', saved(), {
+      excludeKeys: new Set([keyOf('SO000001', 2)]),
+    });
+    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-1']);
+  });
+
+  it('confirmSummaryFor lowers toConfirm by the excluded count (AC-D3)', () => {
+    const all = confirmSummaryFor(contributions, saved(), new Set<string>());
+    expect(all.toConfirm).toBe(3);
+    const fewer = confirmSummaryFor(contributions, saved(), new Set<string>(), {
+      excludeKeys: new Set([keyOf('SO000001', 1)]),
+    });
+    expect(fewer.toConfirm).toBe(2);
+  });
+});
+
+describe('confirmDialogRowsFor', () => {
+  const OPENED = new Date('2026-09-30T02:00:00Z');
+  const EIGHT_DAYS_AGO = '2026-09-22T03:09:00Z';
+  const board = buildBoard(
+    [
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '100', item_code: 'SRTSH1040' }),
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 2, qty: '239', item_code: 'SRTWT6808' }),
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 3, qty: '10', item_code: 'TPE-9204' }),
+    ],
+    { today: TODAY },
+  );
+  const base = board.cells.flatMap((cell) => cell.contributions);
+  const at = (lineNo: number) => base.find((entry) => entry.line_no === lineNo)!;
+
+  const borrowSource = (qty: string) => ({
+    kind: 'borrow' as const,
+    qty,
+    location: 'BRW-BB',
+    warehouse_id: 'wh-brw-bb',
+    reason: 'Group borrow.',
+  });
+  const withDrafts: BoardContribution[] = [
+    {
+      ...at(1),
+      qty_proposed_reserve: '0',
+      qty_proposed_incoming: '0',
+      qty_proposed_buy: '0',
+      sources: [borrowSource('43'), borrowSource('57')],
+      draft: {
+        decision: { verdict: 'approved' },
+        saved_by: 'Jayson Foundryx',
+        saved_at: EIGHT_DAYS_AGO,
+      },
+    },
+    {
+      ...at(2),
+      draft: {
+        decision: { verdict: 'amended', reserve_qty: '0', reserve: [], borrow: [], buy_qty: '239', reason: 'Late.' },
+        saved_by: 'Cyndi',
+        saved_at: '2026-09-30T02:30:00Z',
+      },
+    },
+    {
+      ...at(3),
+      draft: {
+        decision: { verdict: 'approved' },
+        saved_by: 'Cyndi',
+        saved_at: '2026-09-29T01:00:00Z',
+        stale: true,
+      },
+    },
+  ];
+  const draft = {
+    [withDrafts[0].key]: withDrafts[0].draft!.decision,
+    [withDrafts[1].key]: withDrafts[1].draft!.decision,
+    [withDrafts[2].key]: withDrafts[2].draft!.decision,
+  };
+  const result = () =>
+    confirmDialogRowsFor(withDrafts, draft, { currentUserName: 'Cyndi', openedAt: OPENED });
+
+  it('describes an approved line by the live suggestion that WILL be posted (AC-D5)', () => {
+    const row = result().rows.find((entry) => entry.line_no === 1)!;
+    expect(row).toMatchObject({
+      key: withDrafts[0].key,
+      sales_order_id: 'so-a',
+      so_number: 'SO000001',
+      item_code: 'SRTSH1040',
+      verdict: 'approved',
+      composition: 'Borrow 43 + 57 from BRW-BB',
+      saved_by: 'Jayson Foundryx',
+      saved_at: EIGHT_DAYS_AGO,
+    });
+  });
+
+  it('describes an amended buy by its own composition (AC-D1)', () => {
+    const row = result().rows.find((entry) => entry.line_no === 2)!;
+    expect(row.verdict).toBe('amended');
+    expect(row.composition).toBe('Buy 239');
+  });
+
+  it('flags a row saved by someone else, before the board was opened (AC-D2)', () => {
+    const jayson = result().rows.find((entry) => entry.line_no === 1)!;
+    expect(jayson.savedByOther).toBe(true);
+    expect(jayson.savedBefore).toBe(true);
+    const own = result().rows.find((entry) => entry.line_no === 2)!;
+    expect(own.savedByOther).toBe(false);
+    expect(own.savedBefore).toBe(false);
+  });
+
+  it('lists a stale line under notPosted with its reason, not as a row (AC-D4)', () => {
+    const { rows, notPosted } = result();
+    expect(rows.map((entry) => entry.line_no)).toEqual([1, 2]);
+    expect(notPosted).toHaveLength(1);
+    expect(notPosted[0]).toMatchObject({ key: withDrafts[2].key, line_no: 3, item_code: 'TPE-9204' });
+    expect(notPosted[0].reason).toContain('Suggestion changed');
   });
 });

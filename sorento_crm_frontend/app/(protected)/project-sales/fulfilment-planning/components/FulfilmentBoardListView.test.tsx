@@ -838,7 +838,7 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
 
   function selectAll() {
     fireEvent.click(
-      screen.getByRole('checkbox', { name: 'Select all rows on this page' }),
+      screen.getByRole('checkbox', { name: 'Select all rows' }),
     );
   }
 
@@ -2212,5 +2212,34 @@ describe('FulfilmentBoardListView: every column sorts (owner ruling 22 Sep)', ()
         screen.getAllByText(/^SO00000[1-2]$/).map((el) => el.textContent),
       ).toEqual(['SO000001', 'SO000002']),
     );
+  });
+});
+
+/**
+ * FULFIL-CONFIRM-SCOPE (AC-L1): the board list's header tick box ticks every row across every
+ * page, not the page (`pageSize` is 25, so a board of 30 used to tick 25 of them). The label
+ * changes with the behaviour; the older test above that presses 'Select all rows on this page'
+ * is for the coder to switch to 'Select all rows'.
+ */
+describe('FulfilmentBoardListView: the header tick box selects every row (FULFIL-CONFIRM-SCOPE, AC-L1)', () => {
+  function thirtyRows() {
+    return Array.from({ length: 30 }, (_, index) =>
+      contribution({
+        key: `so-${index + 1}:line-${(index + 1) * 10}`,
+        sales_order_id: `so-${index + 1}`,
+        line_id: `core-line-${index + 1}`,
+        so_number: `SO4${String(10000 + index)}`,
+        line_no: (index + 1) * 10,
+      }),
+    );
+  }
+
+  it('ticks all 30 rows across both pages and the Decide chip counts 30', async () => {
+    renderView({ contributions: thirtyRows() });
+
+    await screen.findByText('SO410000');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows' }));
+
+    expect(await screen.findByText('30 selected')).toBeInTheDocument();
   });
 });
