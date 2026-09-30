@@ -1,6 +1,6 @@
 # PLAN - parser prompt wired to its registries + prompt editor that shows it (PROMPT-DYNAMIC)
 
-Status: Build. Track: full (migration, new admin table, new admin page). R5c shipped (7f004bf0);
+Status: Build. Track: full (migration, new admin table, new admin page). Grill run late (see "Grill"). R5c shipped (7f004bf0);
 backend S2-S4 under TDD; R5a/b wait on the mock
 (`documentation/mockups/prompt-editor-dynamic.html`). Lane `crew-lane: PROMPT-DYNAMIC`, PR #1405.
 UAC: `prompt-dynamic-30sep-acceptance-criteria.md`.
@@ -105,3 +105,53 @@ S6 R5a/b editor (after mock OK): chips, wired panel, preview toggle, variable pi
 
 - Variables for other prompt keys: only `chatbot_semantic_parser` reads registries today.
 - Per-variable formatting options: one format each until a second format is asked for.
+
+## Grill (feature skill step 2, run LATE on 30 Sep 2026 after the owner's process audit)
+
+The grill was not run before the build. It was run after the audit: every decision the lane
+had taken alone went to the owner as one `crew-ask` on PR #1405 (comment 5914198889), each with
+a recommendation. Answers are recorded here as they arrive. Until then, each recommendation stands.
+
+| # | Decision | Recommendation | Owner answer |
+|---|---|---|---|
+| 1 | Wording layer published unlabelled; the owner promotes | keep unlabelled (R3) | pending |
+| 2 | Teams and agents render from `agent_teams` / `access_agents`, swapped only when they cover the old codes, code fallback on an empty table | tables, confirmed by the prod-copy render diff | pending |
+| 3 | Access levels from `contact_access_types.name`, swapped only when they cover the 7 tier names | keep the guard | pending |
+| 4 | Domain words = union of switch words and status words (~64, about +900 tokens); uncovered hand words stay literal | union | pending |
+| 5 | OUTPUT status enums list all 8 statuses | accept; code maps sales to `sales` | pending |
+| 6 | Sales addenda keep `domain_hint "order"` verbatim; the code maps to `sales` | code now, wording edit is the owner's call | pending |
+| 7 | Sales ask needs `sales_orders.sales_report` at the plan gate | accept | pending |
+| 8 | `order` row keeps the 3 sales tools | remove in a follow-up | pending |
+| 9 | Cross-process freshness TTL 30s | 30s | pending |
+| 10 | Code-constant publishers stand down; later wording changes use `publish_wording_edit` | accept | pending |
+| 11 | Stale banner silenced for a wording-layer production | accept | pending |
+| 12 | Brands not inserted into the wording (already per turn) | accept | pending |
+| 13 | Wired panel and preview visible with `system.ai_assistant_settings.view`, system-wide brands | accept | pending |
+| 14 | Status Words page built without its own mock (clone of Chatbot Domains) | accept | pending |
+
+## Process deviations and how each was closed (owner audit, 30 Sep 2026)
+
+- **Red-first commit order.** S1 (R5c), S2, S3, S4 and the Status Words page were committed
+  with their tests IN the same commit, so the commit order does not show red first. History
+  is not rewritten (no force-push). Red was proven after the fact instead: each slice's test
+  file was run against the code as it stood just before that slice:
+  - R5c (7f004bf0): 3 of the 4 new tests fail on the old `SearchableTextarea`. The typing test
+    reproduces the owner's bug as `'w a   b ne c'`.
+  - S2 (427b309c) test file on 7e4affa3: collection error `cannot import name
+    'ChatbotStatusWord'` (the model did not exist).
+  - S3 (ef271758) test file on 427b309c: 11 failed, all `404 == 200/201/409/422/403` (the
+    routes did not exist).
+  - S4 (888f4ae3) test file on ef271758: 10 failed with `AttributeError`, because
+    `wording_layer`, `is_wording_layer` and `publish_wording_edit` did not exist, and the
+    migration published no version (`assert 5 == 4`).
+  - Status Words page (b3a940d5): both vitest files fail when the service and the list are
+    removed.
+  R7 and R5a/b are committed red-test-first (`test(prompt-dynamic): red tests for ...`, then
+  `feat(...)`).
+- **Kill test** (captain's own, before the reviewer's independent one), each restored after:
+  - AC-PD-1: the `after_commit` cache clear disabled. 4 tests go red (the committed-domain
+    render, the cache test, and the API create and update/delete renders).
+  - AC-PD-3/R3: the s4/s12 wording-layer guards disabled. The stand-down test goes red
+    (`assert 5 == 4`).
+  - AC-PD-7: the `{{statuses}}` substitution disabled. 3 drift tests go red.
+  - AC-PD-10: the old `SearchableTextarea` effect restored. 3 find tests go red.
