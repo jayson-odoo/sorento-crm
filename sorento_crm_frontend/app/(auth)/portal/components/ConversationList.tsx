@@ -420,7 +420,7 @@ function ConversationGrid({
       {
         id: 'last_message',
         header: 'Last message',
-        size: 320,
+        size: 270,
         minSize: 140,
         cell: ({ row }) => (
           <span

@@ -1,8 +1,10 @@
 # PLAN: Conversation view for sales agents in the sales portal (lane SALES-CONVO)
 
-Status: Plan; Lavish mock filed 30 Sep 2026 and waiting for the owner's approval before any code.
-Track: named once the mock is approved (expected full: one new portal route, one new landing kind;
-no migration unless the per-contact switch needs a seed).
+Status: built 30 Sep 2026 to the approved mock (owner rulings Q1 read only, Q2 latest first, Q3 both,
+30 Sep); pytest 19 new + 146 neighbouring green, vitest 14 new green, browser-verified with
+agent-browser at 375 and 1280 (evidence in `evidence/sales-conversation-30sep/`); hand test filed
+(`laneboard/scripts/1384.md`); awaiting review, hand test, CI and merge. Track: full (no migration,
+one new portal router, one new grantable kind; security review needed: new portal-token surface).
 Plan created: 2026-09-30
 Domain: sales (the salesperson's own surface, beside `PLAN-sales-asks-todo-29sep.md`).
 Branch: `claude/sales-conversation-view-0wzzl1` (stands in for `crew/sales-convo`), PR #1384.
@@ -103,7 +105,7 @@ twins already share one core.
 3. Card vs list. Recommendation (a) both through the landing's existing toggle, cards default,
    list as the landing DataGrid (Customer, Contact, Last message, When).
 
-## 4. Build outline (after approval; not started)
+## 4. Build (30 Sep 2026, as shipped)
 
 - BE: `app/api/v1/public/portal_conversations.py`: `GET /conversations` (agent scope, latest
   message per contact, `q`, keyset or page), `GET /conversations/{contact_id}/page`,
@@ -116,3 +118,25 @@ twins already share one core.
   `PortalLanding.tsx` branches. Vitest on the list and the empty states.
 - Admin: the kind appears in the Contact page's Portal forms switches and the market segment
   "Additional portal forms" automatically through `ADDITIONAL_LANDING_KINDS`.
+
+## 5. Build notes
+
+- Rulings applied: read-only thread (no composer, no `onReply`, Copy stays), latest message first
+  with Sort offering Customer, cards default with the landing's toggle and the DataGrid list.
+- Files: BE `app/api/v1/public/portal_conversations.py`, `app/services/portal_conversation_service.py`,
+  `app/schemas/portal_conversation.py`, kind + agent-only gate in `portal_service.py` /
+  `portal_form_visibility_service.py`, router mount in `public/__init__.py`; FE
+  `lib/portal-form-kinds.ts` (`CONVERSATION_KIND`), `app/(auth)/portal/lib/conversations-service.ts`,
+  `conversation-landing.ts`, `hooks/usePortalConversations.ts`, `components/ConversationList.tsx`,
+  `components/ConversationThread.tsx`, the two `PortalLanding.tsx` branches.
+- The list carries `contact_id` (`respond_contacts.id`) as the only key; the thread routes accept
+  that id only (a phone number or a Respond id is 404), and every thread read re-runs the list's
+  own scope query for that one contact, so "may open" and "is a row" cannot disagree.
+- Internal notes render in the thread as in the ticket drawer (the mock the owner approved shows
+  one); they are read through `TicketCommentService.list_for_contact` after the scope check.
+- Process note: the red tests were written first (backend commit 1c9d... `test(portal)`, then the
+  FE specs) and made green in the same session rather than by separate tester / coder agents; the
+  reviewer and security-reviewer passes ran as agents (Phase 3).
+- Not touched: `AskConversationPanel.tsx`, `RespondChatList.tsx`, `conversation_thread_service.py`,
+  `portal_customer_asks.py` (lane ASKS-UX, PR #1385, reshapes those); the two-step agent gate is a
+  local copy in the new router for that reason.
