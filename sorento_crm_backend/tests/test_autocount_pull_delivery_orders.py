@@ -362,10 +362,12 @@ class TestMigration:
         spec.loader.exec_module(module)
         return module
 
-    def test_dp_04a_revision_fits_and_is_the_single_head(self):
+    def test_dp_04a_revision_fits_and_sits_on_the_single_head(self):
         """Not a literal `down_revision`: `scripts/alembic-reparent.sh` rewrites it every time
         main's head moves before merge (review blocker 1), so the pin is the property that
-        matters - this revision is the ONE head of the chain."""
+        matters - the chain has ONE head and this revision is on its ancestry. Not "this
+        revision IS the head": the join migration main adds after a fork (merge_30sep_batch9
+        after #1383 and #1386) sits on top of it and would turn a by-name pin red."""
         from alembic.config import Config
         from alembic.script import ScriptDirectory
 
@@ -373,7 +375,9 @@ class TestMigration:
         assert module.revision == MIGRATION
         assert len(module.revision) <= 32
         script = ScriptDirectory.from_config(Config(str(VERSIONS.parent.parent / "alembic.ini")))
-        assert script.get_heads() == [MIGRATION]
+        heads = list(script.get_heads())
+        assert len(heads) == 1, heads
+        assert MIGRATION in {r.revision for r in script.walk_revisions(base="base", head=heads[0])}
 
     def test_dp_04b_grants_to_import_holders_and_admin_not_integrations(self):
         """Runs `upgrade()` on the real tables inside a rolled-back transaction (the
