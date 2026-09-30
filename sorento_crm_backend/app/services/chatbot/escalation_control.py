@@ -16,17 +16,16 @@ from typing import Any
 
 from app.services.chatbot.dealer_stock import refers_to_salesman
 from app.services.chatbot.turn.pending import without_escalation as strip_pending
-
-#: The owner's default wording until he rules otherwise (crew brief, 30 Sep 2026). The
-#: stock ask's older dealer line is `turn/task.py::REFER_TO_SALESMAN` ("Please refer to
-#: your salesman."); this one names the salesperson when the CRM knows them.
-BARRED_REPLY = "For anything I can't answer here, please contact your salesperson"
+from app.services.chatbot.turn.task import REFER_TO_SALESMAN
 
 
-def barred_reply(profile: Any) -> str:
-    """The reply a barred contact gets where a hand-off (or an offer of one) would be."""
-    name = (getattr(profile, "salesperson", None) or "").strip()
-    return f"{BARRED_REPLY} {name}." if name else f"{BARRED_REPLY}."
+def barred_reply(profile: Any = None) -> str:
+    """The reply a barred contact gets where a hand-off (or an offer of one) would be.
+
+    Owner ruling, 30 Sep 2026: the dealer line the stock ask already prints,
+    `turn/task.py::REFER_TO_SALESMAN` ("Please refer to your salesman."), never a
+    second wording and never the salesperson's name (REFER-SALESMAN AC-RS02)."""
+    return REFER_TO_SALESMAN
 
 
 def strip_text(text: str, question: Any, profile: Any) -> tuple[str, Any, bool]:

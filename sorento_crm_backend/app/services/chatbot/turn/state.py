@@ -194,9 +194,6 @@ class Profile:
     # contact's override, else its access types; "Sorento Dealer" is seeded barred).
     # Default ON: an unresolved contact keeps today's behaviour.
     escalation_allowed: bool = True
-    # The salesperson a barred contact is referred to instead (`profile_facts.
-    # salesperson_name` off the primary customer), read only when escalation is barred.
-    salesperson: str | None = None
 
 
 def offers_escalation(profile: "Profile | None") -> bool:

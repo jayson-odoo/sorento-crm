@@ -688,6 +688,17 @@ class ContactService:
             "packing_list_allowed": bool(getattr(contact, "packing_list_allowed", False)),
             # Issue #1328: default ON, like chatbot_stock_allowed.
             "chatbot_eta_offset_applied": bool(getattr(contact, "chatbot_eta_offset_applied", True)),
+            # ESCALATION-CONTROL: the contact's own override (null = inherit) and what
+            # its access types say without it, off the types already loaded above - the
+            # same most-restrictive merge `escalation_policy.inherited_policy` runs.
+            "escalation_allowed": getattr(contact, "escalation_allowed", None),
+            "escalation_allowed_inherited": not any(
+                getattr(a, "escalation_allowed", True) is False for a in access_types
+            ),
+            "escalation_allowed_inherited_from": next(
+                iter(sorted(str(a.name) for a in access_types if getattr(a, "escalation_allowed", True) is False)),
+                None,
+            ),
             "created_at": contact.created_at,
             "updated_at": contact.updated_at,
             "created_by": contact.created_by,

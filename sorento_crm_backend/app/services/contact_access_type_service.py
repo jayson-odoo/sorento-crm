@@ -196,6 +196,7 @@ class ContactAccessTypeService:
             is_active=data.get("is_active", True),
             sort_order=data.get("sort_order"),
             keywords=_clean_keywords(data.get("keywords")),
+            escalation_allowed=data.get("escalation_allowed") is not False,
         )
         self.db.add(row)
         self.db.commit()
@@ -217,6 +218,8 @@ class ContactAccessTypeService:
             row.sort_order = data["sort_order"]
         if "keywords" in data:
             row.keywords = _clean_keywords(data["keywords"])
+        if data.get("escalation_allowed") is not None:
+            row.escalation_allowed = bool(data["escalation_allowed"])
         self.db.commit()
         self.db.refresh(row)
         return row

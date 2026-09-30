@@ -643,25 +643,20 @@ def order_brand_filter(
 
 
 def _escalation_facts(db: Session, contact_pk: Any) -> dict[str, Any]:
-    """ESCALATION-CONTROL: `escalation_allowed` and, when barred, the salesperson the
-    contact is referred to instead. A read that fails keeps today's behaviour (allowed),
-    the same fail-open reading `_stock_availability_only` takes."""
+    """ESCALATION-CONTROL: `escalation_allowed` off `escalation_policy.resolve` (the
+    contact's override, else its access types). A read that fails keeps today's
+    behaviour (allowed), the same fail-open reading `_stock_availability_only` takes."""
     if not contact_pk:
         return {}
     try:
         from app.services.escalation_policy import resolve
-        from app.services.chatbot.turn import profile_facts
 
         with db.begin_nested():
             policy = resolve(db, str(contact_pk))
-            if policy.allowed:
-                return {"escalation_allowed": True}
-            row = profile_facts.primary_customer(db, str(contact_pk))
     except Exception:  # noqa: BLE001 - a policy read is a profile fact, not the turn
         logger.warning("chatbot: escalation policy unreadable for %s", contact_pk)
         return {}
-    salesperson = profile_facts.salesperson_name(row[1]) if row is not None else None
-    return {"escalation_allowed": False, "salesperson": salesperson}
+    return {"escalation_allowed": policy.allowed}
 
 
 def _stock_availability_only(db: Session, contact_respond_id: str, space_id: str | None) -> bool:

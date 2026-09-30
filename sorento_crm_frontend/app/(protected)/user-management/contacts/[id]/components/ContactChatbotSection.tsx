@@ -86,6 +86,16 @@ const LEVEL_LABEL: Record<ChatbotMemoryLevel, string> = LEVEL_OPTIONS.reduce(
   {} as Record<ChatbotMemoryLevel, string>,
 );
 
+const ESCALATION_OPTIONS = [
+  { value: 'allow', label: 'Allowed' },
+  { value: 'block', label: 'Blocked' },
+];
+
+function escalationInheritedLabel(profile: { escalation_allowed_inherited: boolean; escalation_allowed_inherited_from: string | null }) {
+  if (profile.escalation_allowed_inherited) return 'Allowed';
+  return profile.escalation_allowed_inherited_from ? `Blocked (${profile.escalation_allowed_inherited_from})` : 'Blocked';
+}
+
 const TIER_OPTIONS = [
   { value: 'dealer', label: 'Dealer' },
   { value: 'office', label: 'Office' },
@@ -160,6 +170,9 @@ function ChatbotSettingsCard({
 
   const ownSet = profile.chatbot_memory_level != null;
   const systemDefaultLabel = LEVEL_LABEL[systemDefault ?? 'off'];
+  const escalationInherited = escalationInheritedLabel(profile);
+  const escalationValue =
+    profile.escalation_allowed == null ? '' : profile.escalation_allowed ? 'allow' : 'block';
 
   return (
     <Card>
@@ -197,6 +210,27 @@ function ChatbotSettingsCard({
               placeholder="(none)"
               options={TIER_OPTIONS}
             />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Can escalate to customer service</Label>
+            <SearchableSelect
+              value={escalationValue}
+              onChange={(v) =>
+                save.mutate({
+                  ...profile,
+                  escalation_allowed: v === 'allow' ? true : v === 'block' ? false : null,
+                })
+              }
+              clearable
+              disabled={save.isPending}
+              placeholder={`(inherit: ${escalationInherited})`}
+              options={ESCALATION_OPTIONS}
+            />
+            <p className="text-xs text-muted-foreground">
+              {profile.escalation_allowed != null
+                ? `Own setting · access type: ${escalationInherited}`
+                : `Access type: ${escalationInherited}`}
+            </p>
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
