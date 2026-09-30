@@ -110,24 +110,24 @@ S6 R5a/b editor (after mock OK): chips, wired panel, preview toggle, variable pi
 
 The grill was not run before the build. It was run after the audit: every decision the lane
 had taken alone went to the owner as one `crew-ask` on PR #1405 (comment 5914198889), each with
-a recommendation. Answers are recorded here as they arrive. Until then, each recommendation stands.
+a recommendation. Answers are recorded here as they arrive. Until then, each recommendation stands. Every premise was re-checked against the code after the owner's rule of 30 Sep 2026 ("every statement grounded in file:line"); the two wrong ones (2, 7) are marked CORRECTED.
 
 | # | Decision | Recommendation | Owner answer |
 |---|---|---|---|
-| 1 | Wording layer published unlabelled; the owner promotes | keep unlabelled (R3) | pending |
-| 2 | Teams and agents render from `agent_teams` / `access_agents`, swapped only when they cover the old codes, code fallback on an empty table | tables, confirmed by the prod-copy render diff | pending |
-| 3 | Access levels from `contact_access_types.name`, swapped only when they cover the 7 tier names | keep the guard | pending |
-| 4 | Domain words = union of switch words and status words (~64, about +900 tokens); uncovered hand words stay literal | union | pending |
-| 5 | OUTPUT status enums list all 8 statuses | accept; code maps sales to `sales` | pending |
-| 6 | Sales addenda keep `domain_hint "order"` verbatim; the code maps to `sales` | code now, wording edit is the owner's call | pending |
-| 7 | Sales ask needs `sales_orders.sales_report` at the plan gate | accept | pending |
-| 8 | `order` row keeps the 3 sales tools | remove in a follow-up | pending |
-| 9 | Cross-process freshness TTL 30s | 30s | pending |
-| 10 | Code-constant publishers stand down; later wording changes use `publish_wording_edit` | accept | pending |
-| 11 | Stale banner silenced for a wording-layer production | accept | pending |
-| 12 | Brands not inserted into the wording (already per turn) | accept | pending |
-| 13 | Wired panel and preview visible with `system.ai_assistant_settings.view`, system-wide brands | accept | pending |
-| 14 | Status Words page built without its own mock (clone of Chatbot Domains) | accept | pending |
+| 1 | Wording layer published unlabelled; the owner promotes (`pdyn_0002_wording_layer.apply`, no label row) | keep unlabelled (R3) | no answer: recommendation stands |
+| 2 | CORRECTED. Teams: the lane matches `suggested_team` only against `ESCALATION_TEAMS` (`lanes/escalation.py:61-70`, `:1234-1261`), so `{{teams}}` from `agent_teams` could name codes the lane cannot route. Agents: `suggested_agent` goes out as `agent_code` to the round robin (`escalation.py:1547`, `:1579`), so `{{agents}}` from `access_agents` is right | teams = `ESCALATION_TEAMS` via `lane_vocabulary`; agents = `access_agents` | re-asked (comment 5914415234) |
+| 3 | Access levels from `contact_access_types.name`, swapped only when they cover the 7 tier names. UNVERIFIED on prod: CI table empty | keep the guard | as recommended |
+| 4 | Domain words = union of switch words and status words; measured +2,712 chars on the CI DB | union | no answer: recommendation stands |
+| 5 | OUTPUT status enums list all 8 statuses; the mapping to `sales` is PENDING R7 | accept | no answer: recommendation stands |
+| 6 | Sales addenda keep `domain_hint "order"` (constant; UNVERIFIED on prod v42) | code mapping only | owner: do NOT change his wording |
+| 7 | CORRECTED. The plan-level reveal gate never runs (`turn_runtime.py:420`, `:451` grants None; `apply.py:2135`). The sales refusal is the business lane (`lanes/business/__init__.py:1558-1566`), unchanged. The `sales` row's `reveal_key` has no runtime effect today | nothing to decide | as recommended |
+| 8 | `order` row keeps the 3 sales tools | remove in a follow-up | as recommended |
+| 9 | Worker turns (`app/tasks/chat_turns.py:12`) converge within the 30s TTL; the API process clears at commit | 30s | as recommended |
+| 10 | Code-constant publishers stand down. INCOMPLETE at first: `sales_s1_reports_module.py:121-149` was unguarded; guarded in the review round | accept | as recommended |
+| 11 | Stale banner silenced for a wording-layer production | accept | as recommended |
+| 12 | Brands not inserted. The per-turn line carries the contact's own companies' brands (`turn/context.py:100-116`, `head/parser.py:754`) | accept | as recommended |
+| 13 | Wired panel and preview need `system.ai_assistant_settings.view`; the brand list is system-wide (raw SQL `_brands`) | accept | as recommended |
+| 14 | Status Words page built without its own mock (clone of Chatbot Domains) | accept | as recommended |
 
 ## Process deviations and how each was closed (owner audit, 30 Sep 2026)
 
