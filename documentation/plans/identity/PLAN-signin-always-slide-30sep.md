@@ -1,6 +1,6 @@
 # PLAN: CRM sign-in always uses the 30-day sliding session (SIGNIN-ALWAYS-SLIDE)
 
-Status: in review (Track: full). PR #1404. Plan created: 2026-09-30.
+Status: in review, DoD gate passed pending CI (Track: full). PR #1404. Plan created: 2026-09-30.
 
 Track note: first filed as small fix (under 300 lines, no migration); re-tracked to FULL on the
 30 Sep process audit because the diff changes staff auth/session lifetime and NextAuth, which is on
@@ -19,18 +19,18 @@ the user to tick remember me; when there is activity on continuous days the sess
 
 The code was written before this grill, so every question below is asked against a change that
 already implements the recommendation. Sent to the owner as one `crew-ask` on PR #1404
-(30 Sep 2026). An answer that differs from the recommendation reopens the lane.
+(30 Sep 2026). Owner answered the same day: all as recommended.
 
 | # | Decision | Options | Recommendation (implemented) | Owner answer |
 | --- | --- | --- | --- | --- |
-| G1 | Absolute cap | (a) pure sliding, no cap; (b) hard cap e.g. 90d | (a): owner asked for "exactly like portal", which has no cap | pending |
-| G2 | Idle window | (a) 30d without a request; (b) shorter e.g. 7d | (a): matches portal and phone today | pending |
-| G3 | Existing 8h (`rolling=false`) rows | (a) lapse within 8h; (b) migration flips them | (a): at most one extra sign-in, no migration | pending |
-| G4 | Legacy `remember_me` in the login body | (a) accept and ignore; (b) 422 | (a): a cached old bundle keeps signing in | pending |
-| G5 | Shared/kiosk devices (30d session left behind) | (a) accept, rely on logout / sign out other devices / admin force logout; (b) idle timeout or "public computer" option | (a); trigger for (b): a real shared-device incident | pending |
-| G6 | Impersonation has no TTL of its own (was implicitly 8h for unticked admins) | (a) backlog a follow-up for an 8h impersonation TTL; (b) in this PR; (c) leave | (a): predates the lane, keeps this PR to sign-in | pending |
-| G7 | Tell users they stay signed in | (a) no UI text, one line in the Outline guide batch; (b) hint under Continue | (a): CLAUDE.md "no feature explanations inside the UI" | pending |
-| G8 | Phone sign-in and portal | no change, both already slide 30d | confirm no change | pending |
+| G1 | Absolute cap | (a) pure sliding, no cap; (b) hard cap e.g. 90d | (a): owner asked for "exactly like portal", which has no cap | accepted as recommended (30 Sep) |
+| G2 | Idle window | (a) 30d without a request; (b) shorter e.g. 7d | (a): matches portal and phone today | accepted as recommended (30 Sep) |
+| G3 | Existing 8h (`rolling=false`) rows | (a) lapse within 8h; (b) migration flips them | (a): at most one extra sign-in, no migration | accepted as recommended (30 Sep) |
+| G4 | Legacy `remember_me` in the login body | (a) accept and ignore; (b) 422 | (a): a cached old bundle keeps signing in | accepted as recommended (30 Sep) |
+| G5 | Shared/kiosk devices (30d session left behind) | (a) accept, rely on logout / sign out other devices / admin force logout; (b) idle timeout or "public computer" option | (a); trigger for (b): a real shared-device incident | accepted as recommended (30 Sep) |
+| G6 | Impersonation has no TTL of its own (was implicitly 8h for unticked admins) | (a) backlog a follow-up for an 8h impersonation TTL; (b) in this PR; (c) leave | (a): predates the lane, keeps this PR to sign-in | accepted: follow-up is backlog BL-068 |
+| G7 | Tell users they stay signed in | (a) no UI text, one line in the Outline guide batch; (b) hint under Continue | (a): CLAUDE.md "no feature explanations inside the UI" | accepted: line added to `user-guides/_shared/getting-started-for-new-users.md` section 1 |
+| G8 | Phone sign-in and portal | no change, both already slide 30d | confirm no change | accepted as recommended (30 Sep) |
 
 ## TDD note
 
@@ -38,6 +38,18 @@ Order was code first, tests second, on the small-fix track. Rules allow that tra
 and fix in one pass, but still require reds shown red. Once re-tracked to FULL, each behaviour was
 proven with a kill test instead: break the implementing line, show the named test go red, restore.
 Results are in the PR's DoD gate comment and in the table below.
+
+| Behaviour | Mutation | Tests that went red |
+| --- | --- | --- |
+| B1 email login mints sliding | `mint_session` `rolling=False` | 2 (login slide cases) |
+| B1 email login mints 30d | `expires_at = now + 8h` | 6 (all login regression cases) |
+| B2 slide on activity | slide condition `if False:` | 5 (login x2, phone, consecutive days, service slide) |
+| B3 legacy `remember_me` accepted | schema `remember_me: None` | 3 (false/true variants 422) |
+| B4 no 8h path | `SHORT_TTL` re-added | 5 |
+| B5 phone OTP 30d sliding | phone mint then `rolling=False` | 2 (phone regression, ac24) |
+| B6 revocation still checked | revoked check `if False:` | 1 (logout then 401) |
+| B7 no checkbox (FE) | checkbox re-inserted in the email form | 2 vitest |
+| B8 no `rememberMe` in payload (FE) | `rememberMe: false` re-added | 1 vitest |
 
 ## Facts (b8cdbebe4)
 
