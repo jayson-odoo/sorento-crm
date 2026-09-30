@@ -3,11 +3,13 @@
 "We need to be able to control each contact that they cannot access the escalation:
 cannot force escalate, won't be offered escalation; this is for dealer."
 
-A contact whose access type bars escalation ("Sorento Dealer" is seeded barred), or
-whose own override does, is offered no hand-off on a miss, sees no routing picker, and
-asking for a person or answering an old offer gets "Please refer to your salesman."
-(owner ruling (b), the existing `turn/task.py::REFER_TO_SALESMAN`) with no hand-off.
-Staff and unbarred contacts are unchanged; an "allow" override on a dealer restores offers.
+Owner change, 30 Sep 2026: ONE per-contact flag decides, `respond_contacts.
+escalation_allowed` (NOT NULL, default true, every existing contact backfilled true). Access
+types no longer decide anything. A contact whose flag is unticked on the contact page is
+offered no hand-off, sees no routing picker, and asking for a person or answering an old
+offer gets "Please refer to your salesman." (`turn/task.py::REFER_TO_SALESMAN`) with no
+hand-off. A miss says what could not be found, THEN "Please refer to your salesman."
+(owner ruling Q2), never the bare line. Staff and allowed contacts are unchanged.
 
 Engine turns reuse `test_escalation_agent_carry.py`'s harness: the real engine, the
 `/external/next-assignee` and SLA seams captured at their own boundary.
@@ -27,7 +29,6 @@ from app.services.chatbot import escalation_control
 from app.services.chatbot.turn.pending import ask as pending_ask
 from app.services.chatbot.turn.state import Profile, escalation_barred, offers_escalation
 from app.services.chatbot.turn.task import REFER_TO_SALESMAN
-from app.services.escalation_policy import resolve as resolve_policy
 
 from tests.chatbot._turn_helpers import entity, verdict
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, stub_access, stub_parser  # noqa: F401
@@ -44,39 +45,45 @@ from tests.chatbot.test_escalation_agent_carry import (
 
 pytestmark = pytest.mark.usefixtures("_no_real_mcp_calls", "_stub_casual_llm")
 
-DEALER_TYPE = "zzt_sorento_dealer"
-
-
 def _contact_pk(session_factory) -> str:
     return session_factory().execute(
         text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": str(CONTACT_ID)}
     ).scalar()
 
 
-def _make_dealer(session_factory, *, override: bool | None = None) -> str:
-    """The contact holds a "Sorento Dealer" type that bars escalation (the seed's value),
-    plus the contact's own override when one is given."""
+def _set_flag(session_factory, allowed: bool) -> str:
+    """The contact page's "Can escalate to a person" switch, set on the one row."""
     db = session_factory()
-    db.execute(
-        text(
-            "INSERT INTO contact_access_types (code, name, is_active, escalation_allowed) "
-            "VALUES (:code, 'Sorento Dealer', true, false) ON CONFLICT (code) DO NOTHING"
-        ),
-        {"code": DEALER_TYPE},
-    )
     pk = db.execute(
         text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": str(CONTACT_ID)}
     ).scalar()
-    db.execute(
-        text("INSERT INTO respond_contact_access_types (contact_id, access_type_code) VALUES (:c, :t)"),
-        {"c": pk, "t": DEALER_TYPE},
-    )
-    db.execute(
-        text("UPDATE respond_contacts SET escalation_allowed = :o WHERE id = :c"),
-        {"o": override, "c": pk},
-    )
+    db.execute(text("UPDATE respond_contacts SET escalation_allowed = :a WHERE id = :c"), {"a": allowed, "c": pk})
     db.commit()
     return pk
+
+
+def _make_dealer(session_factory) -> str:
+    """A blocked contact: the flag unticked."""
+    return _set_flag(session_factory, False)
+
+
+def _give_types(session_factory, pk: str, names: list[str]) -> None:
+    """Access types on the contact. They no longer decide escalation (owner change)."""
+    db = session_factory()
+    for name in names:
+        code = f"zzt_{name.lower().replace(' ', '_')}"
+        db.execute(
+            text(
+                "INSERT INTO contact_access_types (code, name, is_active) VALUES (:c, :n, true) "
+                "ON CONFLICT (code) DO NOTHING"
+            ),
+            {"c": code, "n": name},
+        )
+        db.execute(
+            text("INSERT INTO respond_contact_access_types (contact_id, access_type_code) VALUES (:p, :c)"),
+            {"p": pk, "c": code},
+        )
+    db.commit()
 
 
 def _reply(result: Any) -> str:
@@ -125,104 +132,53 @@ def _help_verdict() -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# Resolution (R1)
+# The per-contact flag (owner change, 30 Sep 2026)
 # --------------------------------------------------------------------------- #
 
-
-class TestResolution:
-    def test_a_contact_with_no_access_type_is_allowed(self, session_factory) -> None:
-        _seed_contact(session_factory, phone="+60000009001")
-        policy = resolve_policy(session_factory(), _contact_pk(session_factory))
-        assert policy.allowed is True and policy.source == "default"
-
-    def test_the_dealer_type_bars_and_names_itself(self, session_factory) -> None:
-        _seed_contact(session_factory, phone="+60000009002")
-        pk = _make_dealer(session_factory)
-        policy = resolve_policy(session_factory(), pk)
-        assert (policy.allowed, policy.source, policy.source_label) == (False, "access_type", "Sorento Dealer")
-
-    def test_the_contact_override_wins_both_ways(self, session_factory) -> None:
-        _seed_contact(session_factory, phone="+60000009003")
-        pk = _make_dealer(session_factory, override=True)
-        assert resolve_policy(session_factory(), pk).allowed is True
-        db = session_factory()
-        db.execute(text("UPDATE respond_contacts SET escalation_allowed = false WHERE id = :c"), {"c": pk})
-        db.execute(text("DELETE FROM respond_contact_access_types WHERE contact_id = :c"), {"c": pk})
-        db.commit()
-        policy = resolve_policy(session_factory(), pk)
-        assert (policy.allowed, policy.source) == (False, "contact")
-
-    def test_the_profile_carries_it(self, session_factory) -> None:
-        from app.services.chatbot.turn_runtime import load_profile
-
-        _seed_contact(session_factory, phone="+60000009004")
-        _make_dealer(session_factory)
-        profile, _ = load_profile(session_factory(), str(CONTACT_ID))
-        assert profile.escalation_allowed is False
-
-
-#: Mr Loo (respond 487555417, owner hand test of #1406): office, dealer and end-user
-#: types across three brands. (name, escalation_allowed, sort_order) as the seed leaves them.
 MR_LOO_TYPES = [
-    ("Sorento Office", True, 1),
-    ("Sorento Dealer", False, 2),
-    ("Mocha Dealer", False, 3),
-    ("Mocha Office", True, 4),
-    ("Cabana Office", True, 5),
-    ("Cabana Dealer", False, 6),
-    ("End User", True, 7),
+    "Sorento Office",
+    "Sorento Dealer",
+    "Mocha Dealer",
+    "Mocha Office",
+    "Cabana Office",
+    "Cabana Dealer",
+    "End User",
 ]
 
 
-def _give_types(session_factory, pk: str, types: list[tuple[str, bool, int]]) -> None:
-    db = session_factory()
-    for name, allowed, order in types:
-        code = f"zzt_{name.lower().replace(' ', '_')}"
-        db.execute(
-            text(
-                "INSERT INTO contact_access_types (code, name, is_active, escalation_allowed, sort_order) "
-                "VALUES (:code, :name, true, :allowed, :order) ON CONFLICT (code) DO NOTHING"
-            ),
-            {"code": code, "name": name, "allowed": allowed, "order": order},
-        )
-        db.execute(
-            text("INSERT INTO respond_contact_access_types (contact_id, access_type_code) VALUES (:c, :t)"),
-            {"c": pk, "t": code},
-        )
-    db.commit()
+class TestTheContactFlagDecides:
+    def test_a_new_contact_is_allowed(self, session_factory) -> None:
+        from app.services.chatbot.turn_runtime import load_profile
 
+        _seed_contact(session_factory, phone="+60000009001")
+        stored = session_factory().execute(
+            text("SELECT escalation_allowed FROM respond_contacts WHERE respond_io_id = :c"),
+            {"c": str(CONTACT_ID)},
+        ).scalar()
+        assert stored is True
+        profile, _ = load_profile(session_factory(), str(CONTACT_ID))
+        assert profile.escalation_allowed is True
 
-class TestMergeAcrossAccessTypes:
-    """Owner hand test, 30 Sep 2026 ("why doesn't it allow to escalate to human?"): allowed
-    when ANY of the contact's types allows, blocked only when EVERY type blocks."""
+    def test_the_flag_unticked_blocks(self, session_factory) -> None:
+        from app.services.chatbot.turn_runtime import load_profile
 
-    def test_office_plus_dealer_is_allowed_via_the_office_type(self, session_factory) -> None:
-        _seed_contact(session_factory, phone="+60000009011")
-        pk = _contact_pk(session_factory)
-        _give_types(session_factory, pk, MR_LOO_TYPES)
-        policy = resolve_policy(session_factory(), pk)
-        assert (policy.allowed, policy.source, policy.source_label) == (True, "access_type", "Sorento Office")
+        _seed_contact(session_factory, phone="+60000009002")
+        _set_flag(session_factory, False)
+        profile, _ = load_profile(session_factory(), str(CONTACT_ID))
+        assert profile.escalation_allowed is False
 
-    def test_dealer_only_is_blocked(self, session_factory) -> None:
-        _seed_contact(session_factory, phone="+60000009012")
-        pk = _contact_pk(session_factory)
-        _give_types(session_factory, pk, [("Sorento Dealer", False, 2), ("Mocha Dealer", False, 3)])
-        policy = resolve_policy(session_factory(), pk)
-        assert (policy.allowed, policy.source_label) == (False, "Sorento Dealer")
+    def test_dealer_access_types_do_not_block_when_the_flag_allows(self, session_factory) -> None:
+        from app.services.chatbot.turn_runtime import load_profile
 
-    def test_an_override_block_on_a_mixed_contact_blocks(self, session_factory) -> None:
-        _seed_contact(session_factory, phone="+60000009013")
-        pk = _contact_pk(session_factory)
-        _give_types(session_factory, pk, MR_LOO_TYPES)
-        db = session_factory()
-        db.execute(text("UPDATE respond_contacts SET escalation_allowed = false WHERE id = :c"), {"c": pk})
-        db.commit()
-        policy = resolve_policy(session_factory(), pk)
-        assert (policy.allowed, policy.source) == (False, "contact")
+        _seed_contact(session_factory, phone="+60000009003")
+        _give_types(session_factory, _contact_pk(session_factory), ["Sorento Dealer", "Mocha Dealer"])
+        profile, _ = load_profile(session_factory(), str(CONTACT_ID))
+        assert profile.escalation_allowed is True
 
     def test_mr_loo_asking_for_a_person_is_handed_over(
         self, session_factory, stub_parser, stub_access, monkeypatch
     ) -> None:
+        """The owner's hand test: Mr Loo (office, dealer and end-user types) is allowed."""
         _seed_contact(session_factory, phone="+60000009014")
         _give_types(session_factory, _contact_pk(session_factory), MR_LOO_TYPES)
         bodies = _capture_next_assignee(monkeypatch)
@@ -366,6 +322,10 @@ class TestDealerIsNeverOfferedAndCannotForce:
         reply = _reply(result)
         assert "escalate" not in reply.lower(), reply
         assert "route to" not in reply.lower(), reply
+        # Owner ruling Q2: the miss is said, then the salesman line; never the bare line.
+        text_ = (result.reply or {}).get("text") or ""
+        assert text_.endswith(REFER_TO_SALESMAN), text_
+        assert text_.strip() != REFER_TO_SALESMAN, text_
         oq = _open_question(session_factory)
         assert oq is None or oq.get("kind") not in {"team_pick", "member_offer", "company_pick"}, oq
 
@@ -438,11 +398,12 @@ class TestUnbarredContactsAreUnchanged:
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
         assert result.branch_kind == "out_of_scope" and len(bodies) == 1, (result.branch_kind, bodies)
 
-    def test_an_allow_override_on_a_dealer_restores_the_offer(
+    def test_ticking_the_flag_again_restores_the_offer(
         self, session_factory, stub_parser, stub_access, monkeypatch
     ) -> None:
         _seed_contact(session_factory, phone="+60000009203")
-        _make_dealer(session_factory, override=True)
+        _set_flag(session_factory, False)
+        _set_flag(session_factory, True)
         result = _incoming_miss(session_factory, monkeypatch, stub_parser, stub_access)
         assert "escalate" in _reply(result).lower(), _reply(result)
         assert (_open_question(session_factory) or {}).get("kind") == "team_pick"
@@ -600,22 +561,14 @@ class TestAmbiguousContact:
         db = session_factory()
         db.execute(
             text(
-                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, workspace_id) "
-                "SELECT gen_random_uuid()::text, respond_io_id, '+60000009402', '{}'::jsonb, workspace_id "
-                "FROM respond_contacts WHERE phone_number = '+60000009401'"
-            )
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, workspace_id, "
+                "escalation_allowed) SELECT gen_random_uuid()::text, respond_io_id, '+60000009402', "
+                "'{}'::jsonb, workspace_id, :second FROM respond_contacts WHERE phone_number = '+60000009401'"
+            ),
+            {"second": not second_barred},
         )
+        db.execute(text("UPDATE respond_contacts SET escalation_allowed = false WHERE phone_number = '+60000009401'"))
         db.commit()
-        rows = [
-            r[0]
-            for r in session_factory().execute(
-                text("SELECT id FROM respond_contacts WHERE respond_io_id = :c ORDER BY phone_number"),
-                {"c": str(CONTACT_ID)},
-            )
-        ]
-        _give_types(session_factory, rows[0], [("Sorento Dealer", False, 2)])
-        if second_barred:
-            _give_types(session_factory, rows[1], [("Sorento Dealer", False, 2)])
 
     def test_every_row_barred_is_barred(self, session_factory) -> None:
         from app.services.chatbot.turn_runtime import load_profile
@@ -650,3 +603,74 @@ def test_lane_blocks_every_forced_door_for_a_barred_contact(shape) -> None:
     v = verdict(entities=[], domain_hint=None, intent_hint=None, **shape)
     assert _lane(v, [], build_policy(), barred=True) == "escalation_barred"
     assert _lane(v, [], build_policy()) == "escalation"
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling Q2: a blocked miss says what could not be found, then refers
+# --------------------------------------------------------------------------- #
+
+_MISS_SHAPES = {
+    # What the owner reads on the console, exactly (measured before the change: the same
+    # text with "Would you like me to escalate to ... team?" where the salesman line is).
+    "order number": (
+        verdict(
+            domain_hint="order",
+            intent_hint="check_order",
+            entities=[entity("SO999001", hint="order", confident=True)],
+            routing={"suggested_team": "customer_service", "suggested_agent": "order_enquiries"},
+        ),
+        'Couldn\'t find: "SO999001" (order). Please refer to your salesman.',
+    ),
+    "product code": (
+        verdict(
+            domain_hint="master_products",
+            intent_hint="check_product",
+            entities=[entity("ZZTNOPE9", hint="product", confident=True)],
+            routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+        ),
+        'Couldn\'t find: "ZZTNOPE9" (product). Please refer to your salesman.',
+    ),
+    "product near a real code": (
+        verdict(
+            domain_hint="master_products",
+            intent_hint="check_product",
+            entities=[entity("ZZTSC0", hint="product", confident=False)],
+            routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+        ),
+        "Here's what you want:\n\u2022 product: ZZTSC07\n\nBut no master products matched these. "
+        "Please refer to your salesman.",
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", list(_MISS_SHAPES))
+def test_a_blocked_miss_names_what_was_asked_then_refers_to_the_salesman(
+    shape, session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    _seed_contact(session_factory, phone="+60000009501")
+    _seed_product(session_factory, code="ZZTSC07")
+    _set_flag(session_factory, False)
+    _stub_incoming_probe_empty(monkeypatch)
+    v, expected = _MISS_SHAPES[shape]
+    stub_parser(v)
+    stub_access()
+    result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+    assert (result.reply or {}).get("text") == expected
+    oq = _open_question(session_factory)
+    assert oq is None or oq.get("kind") not in {"team_pick", "member_offer", "company_pick"}, oq
+
+
+@pytest.mark.parametrize("shape", list(_MISS_SHAPES))
+def test_an_allowed_miss_still_offers_the_team(
+    shape, session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    _seed_contact(session_factory, phone="+60000009502")
+    _seed_product(session_factory, code="ZZTSC07")
+    _stub_incoming_probe_empty(monkeypatch)
+    v, expected = _MISS_SHAPES[shape]
+    stub_parser(v)
+    stub_access()
+    result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+    text_ = (result.reply or {}).get("text") or ""
+    assert "Would you like me to escalate to" in text_ and REFER_TO_SALESMAN not in text_, text_
+

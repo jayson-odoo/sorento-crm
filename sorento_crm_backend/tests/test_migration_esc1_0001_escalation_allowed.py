@@ -1,10 +1,12 @@
 """Migration `esc1_0001_escalation_allowed` (ESCALATION-CONTROL): up, down, up on scratch tables.
 
-Owner, 30 Sep 2026: "all dealer block escalation by default". Every access type whose
-name ends in the word "Dealer" (any case) is seeded barred; every other type stays
-allowed. The migration's SQL names its tables unqualified, so `search_path` points it at
-a scratch schema's own copies, never the shared relations. Named `test_migration_*.py` so
-CI runs it in the serial migration pass.
+Owner change and ruling, 30 Sep 2026: one per-contact flag, `respond_contacts.
+escalation_allowed` BOOLEAN NOT NULL DEFAULT true, and EVERY existing contact is backfilled
+allowed (no dealer-blocked backfill; blocking is only by unticking the contact page). Access
+types get no column. The migration also converges a copy that ran this lane's earlier SQL
+(the column nullable, some rows NULL). Its SQL names the table unqualified, so `search_path`
+points it at a scratch schema's copy, never the shared relation. Named `test_migration_*.py`
+so CI runs it in the serial migration pass.
 """
 from __future__ import annotations
 
@@ -22,11 +24,6 @@ MIGRATION = (
     Path(__file__).resolve().parent / ".." / "alembic" / "versions" / "esc1_0001_escalation_allowed.py"
 ).resolve()
 
-#: Dev's four dealer types, the bare "Dealer" type migration 094 seeds, and names that
-#: only look like one.
-DEALERS = ["Sorento Dealer", "Cabana Dealer", "Mocha Dealer", "NL Dealer", "Dealer", "  mocha DEALER "]
-NOT_DEALERS = ["End User", "Sorento Office", "Dealership Staff", "Subdealer", "Dealer Office"]
-
 
 def _load():
     spec = importlib.util.spec_from_file_location("m_esc1_0001", MIGRATION)
@@ -40,17 +37,14 @@ def _run(conn, fn):
         fn()
 
 
-def _columns(conn, schema):
-    return {
-        row.table_name: row.is_nullable
-        for row in conn.execute(
-            sa.text(
-                "SELECT table_name, is_nullable FROM information_schema.columns "
-                "WHERE table_schema = :s AND column_name = 'escalation_allowed'"
-            ),
-            {"s": schema},
-        )
-    }
+def _column(conn, schema, table):
+    return conn.execute(
+        sa.text(
+            "SELECT is_nullable, column_default FROM information_schema.columns "
+            "WHERE table_schema = :s AND table_name = :t AND column_name = 'escalation_allowed'"
+        ),
+        {"s": schema, "t": table},
+    ).first()
 
 
 def test_revision_chains_onto_mains_head():
@@ -60,35 +54,68 @@ def test_revision_chains_onto_mains_head():
     assert module.down_revision == "oihr_0004_wide_line_table"
 
 
-def test_every_dealer_type_is_seeded_barred_and_nothing_else():
-    module = _load()
+def _scratch(conn):
     schema = f"zzt_esc1_{uuid.uuid4().hex[:8]}"
+    conn.execute(sa.text(f"CREATE SCHEMA {schema}"))
+    conn.commit()
+    conn.execute(sa.text(f"SET search_path TO {schema}"))
+    conn.execute(sa.text("CREATE TABLE contact_access_types (code varchar(50) PRIMARY KEY, name varchar(255) NOT NULL)"))
+    conn.execute(sa.text("CREATE TABLE respond_contacts (id text PRIMARY KEY)"))
+    conn.execute(sa.text("INSERT INTO contact_access_types VALUES ('sd', 'Sorento Dealer'), ('eu', 'End User')"))
+    return schema
+
+
+def _drop(conn, schema):
+    conn.execute(sa.text("SET search_path TO DEFAULT"))
+    conn.execute(sa.text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+    conn.commit()
+
+
+def test_every_existing_contact_is_backfilled_allowed_and_access_types_get_nothing():
+    module = _load()
     with engine.connect() as conn:
-        conn.execute(sa.text(f"CREATE SCHEMA {schema}"))
-        conn.commit()
+        schema = _scratch(conn)
         try:
-            conn.execute(sa.text(f"SET search_path TO {schema}"))
-            conn.execute(sa.text("CREATE TABLE contact_access_types (code varchar(50) PRIMARY KEY, name varchar(255) NOT NULL)"))
-            conn.execute(sa.text("CREATE TABLE respond_contacts (id text PRIMARY KEY)"))
-            for i, name in enumerate(DEALERS + NOT_DEALERS):
-                conn.execute(
-                    sa.text("INSERT INTO contact_access_types (code, name) VALUES (:c, :n)"),
-                    {"c": f"t{i}", "n": name},
-                )
+            conn.execute(sa.text("INSERT INTO respond_contacts (id) VALUES ('dealer'), ('office'), ('plain')"))
 
             _run(conn, module.upgrade)
-            assert _columns(conn, schema) == {"contact_access_types": "NO", "respond_contacts": "YES"}
-            seeded = dict(conn.execute(sa.text("SELECT name, escalation_allowed FROM contact_access_types")).all())
-            assert {n: seeded[n] for n in DEALERS} == {n: False for n in DEALERS}, seeded
-            assert {n: seeded[n] for n in NOT_DEALERS} == {n: True for n in NOT_DEALERS}, seeded
+            col = _column(conn, schema, "respond_contacts")
+            assert col is not None and col.is_nullable == "NO" and "true" in (col.column_default or "")
+            assert _column(conn, schema, "contact_access_types") is None
+            assert conn.execute(
+                sa.text("SELECT count(*) FROM respond_contacts WHERE escalation_allowed IS NOT TRUE")
+            ).scalar() == 0
+            conn.execute(sa.text("INSERT INTO respond_contacts (id) VALUES ('new')"))
+            assert conn.execute(
+                sa.text("SELECT escalation_allowed FROM respond_contacts WHERE id = 'new'")
+            ).scalar() is True
 
             _run(conn, module.upgrade)  # re-runnable against a create_all schema
             _run(conn, module.downgrade)
-            assert _columns(conn, schema) == {}
+            assert _column(conn, schema, "respond_contacts") is None
             _run(conn, module.upgrade)
-            assert len(_columns(conn, schema)) == 2
+            assert _column(conn, schema, "respond_contacts") is not None
             conn.rollback()
         finally:
-            conn.execute(sa.text("SET search_path TO DEFAULT"))
-            conn.execute(sa.text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
-            conn.commit()
+            _drop(conn, schema)
+
+
+def test_a_copy_that_ran_the_earlier_nullable_sql_converges():
+    """The crew copy ran this lane's first SQL: a NULLable override column. The migration
+    makes it NOT NULL DEFAULT true and reads every NULL as allowed; a contact already set
+    to false stays false."""
+    module = _load()
+    with engine.connect() as conn:
+        schema = _scratch(conn)
+        try:
+            conn.execute(sa.text("ALTER TABLE respond_contacts ADD COLUMN escalation_allowed BOOLEAN NULL"))
+            conn.execute(
+                sa.text("INSERT INTO respond_contacts VALUES ('inherit', NULL), ('blocked', false), ('ok', true)")
+            )
+            _run(conn, module.upgrade)
+            rows = dict(conn.execute(sa.text("SELECT id, escalation_allowed FROM respond_contacts")).all())
+            assert rows == {"inherit": True, "blocked": False, "ok": True}
+            assert _column(conn, schema, "respond_contacts").is_nullable == "NO"
+            conn.rollback()
+        finally:
+            _drop(conn, schema)
