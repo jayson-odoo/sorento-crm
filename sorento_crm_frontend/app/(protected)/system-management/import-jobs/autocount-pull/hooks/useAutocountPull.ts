@@ -245,6 +245,23 @@ export interface AutocountPullAction {
   onSelect: (scope?: AutocountPullScope | null) => Promise<void>;
 }
 
+const PULL_SCOPE_KEYS: ReadonlySet<string> = new Set<keyof AutocountPullScope>(['fromDay', 'toDay', 'docNo']);
+
+/** True only for the plain `{ fromDay?, toDay?, docNo? }` object the Delivery Orders dialog
+ *  passes. `onSelect` is also handed straight to toolbar menu items as `onClick`, which call
+ *  it with the React click event; that event is a class instance carrying a DOM node, so
+ *  treating it as a scope sent it through `JSON.stringify` and blew up on the fiber cycle
+ *  (production toast, 30 Sep 2026). Anything that is not a plain object of known string
+ *  fields is ignored, so a stray argument can never reach the request body. */
+export function isAutocountPullScope(value: unknown): value is AutocountPullScope {
+  if (typeof value !== 'object' || value === null) return false;
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return false;
+  return Object.entries(value).every(
+    ([key, field]) => PULL_SCOPE_KEYS.has(key) && (field === undefined || typeof field === 'string'),
+  );
+}
+
 /**
  * The Products list / Stock Balance grid / Delivery Orders list's "Pull from AutoCount"
  * secondary action, shared so each owns one gate and one click behaviour instead of an
@@ -269,7 +286,9 @@ export function useAutocountPullAction(
         return;
       }
       try {
-        const pull = await startMutation.mutateAsync(scope ? { entity, scope } : entity);
+        const pull = await startMutation.mutateAsync(
+          isAutocountPullScope(scope) ? { entity, scope } : entity,
+        );
         router.push(`/system-management/import-jobs/${pull.job_id}`);
       } catch (error) {
         toast.error(startPullErrorMessage(error));
