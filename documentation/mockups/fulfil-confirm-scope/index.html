@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Confirm scope (mockup)</title>
+<style>
+/* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme) */
+:root{--background:#fff;--foreground:#09090b;--card:#fff;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-fg:#fff;--primary-soft:#eff6ff;--secondary:#f4f4f5;--destructive:#dc2626;--destructive-soft:#fef2f2;--success:#15803d;--success-soft:#f0fdf4;--warning:#a16207;--warning-soft:#fefce8;--warning-line:#fde68a;--radius:8px;--page:#f7f7f8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+h1{font-size:22px;margin:0 0 4px}
+.doc{max-width:1400px;margin:0 auto;padding:16px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 12px;max-width:900px}
+.nav{position:sticky;top:0;z-index:5;background:var(--page);padding:8px 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}
+.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+section{margin:0 0 34px}
+section>h2{font-size:15px;margin:0 0 4px}
+section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:860px}
+.row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.note{font-size:12px;color:var(--muted-fg);border-left:2px solid var(--border);padding:2px 0 2px 10px;margin:8px 0 0;max-width:860px}
+.nb{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--foreground);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px}
+.desk{width:1280px;flex:none;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.desk .screen{height:760px;overflow:auto;background:#fff;position:relative}
+.phone{width:375px;flex:none;background:#fff;border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.phone .screen{height:812px;overflow:auto;background:var(--page);position:relative}
+.cap{font-size:11px;color:var(--muted-fg);text-align:center;padding:6px;border-top:1px solid var(--border);background:#fff}
+.main{padding:22px 26px}
+.pagehead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
+.pagehead .t{font-size:22px;font-weight:600}
+.sub{font-size:13px;color:var(--muted-fg)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--border);background:#fff;font-size:13px;font-weight:500;white-space:nowrap}
+.btn.pri{background:var(--primary);color:#fff;border-color:var(--primary)}
+.btn.sm{height:28px;font-size:12px}
+.btn[disabled]{opacity:.5}
+.toolbar{display:flex;gap:8px;align-items:center;margin:0 0 10px}
+.chip{background:var(--secondary);border-radius:6px;padding:0 8px;font-size:12px;line-height:24px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{border-bottom:1px solid var(--border);padding:7px 8px;text-align:left;white-space:nowrap}
+th{font-size:12px;color:var(--muted-fg);font-weight:500;background:#fff}
+.pill{display:inline-block;border-radius:999px;padding:0 8px;font-size:11px;line-height:20px;border:1px solid var(--border);background:var(--muted)}
+.pill.ok{background:var(--success-soft);color:var(--success);border-color:#bbf7d0}
+.pill.saved{background:var(--primary-soft);color:#1d4ed8;border-color:#bfdbfe}
+.cb{display:inline-block;width:14px;height:14px;border:1px solid #a1a1aa;border-radius:3px;vertical-align:-2px;background:#fff}
+.cb.on{background:var(--primary);border-color:var(--primary);position:relative}
+.cb.on:after{content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.scrim{position:absolute;inset:0;background:rgba(9,9,11,.35)}
+.dlg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:640px;max-width:calc(100% - 32px);max-height:calc(100% - 32px);overflow:auto;background:#fff;border-radius:12px;border:1px solid var(--border);box-shadow:0 10px 30px rgba(0,0,0,.15);padding:20px}
+.dlg h3{margin:0 0 4px;font-size:16px}
+.dlg .d{font-size:13px;color:var(--muted-fg);margin:0 0 12px}
+.grp{font-size:12px;color:var(--muted-fg);margin:12px 0 4px;font-weight:500}
+.ln{display:grid;grid-template-columns:22px 1fr;gap:8px;padding:6px 0;border-top:1px solid var(--border);align-items:start}
+.ln .h{font-size:13px}
+.ln .m{font-size:12px;color:var(--muted-fg)}
+.ln .m .v{color:var(--foreground)}
+.amber{color:var(--warning)}
+.amberbox{background:var(--warning-soft);border:1px solid var(--warning-line);border-radius:6px;padding:4px 8px;font-size:12px;color:var(--warning);display:inline-block;margin-top:2px}
+.np{opacity:.7}
+.foot{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.results{border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin:10px 0}
+.results .t{font-size:14px;font-weight:500;margin:0 0 4px}
+.results .o{color:var(--success);font-size:13px}
+.results ul{margin:2px 0 0 0;padding:0;list-style:none}
+.results li{font-size:13px;padding:1px 0}
+.results .k{color:var(--muted-fg)}
+.results .mis{background:var(--warning-soft);border-radius:6px;padding:4px 8px;color:var(--warning);font-size:13px;margin-top:4px}
+.toast{position:absolute;right:16px;bottom:16px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.1)}
+.toast.warn{border-color:var(--warning-line);background:var(--warning-soft);color:var(--warning)}
+.dim{color:var(--muted-fg)}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Fulfilment planning: Confirm posts what you ticked, and says what it wrote</h1>
+<p class="intro">Lane FULFIL-CONFIRM-SCOPE. Owner complaints: (A) two SRTWT6808 rows ticked on SO402757, Confirm also confirmed SRTSH1040 line 8 and raised TR-000056; (B) "clicked all" on SO423409, only 6 went through. Root cause A, measured on the 29 Sep prod dump: Confirm posts <b>every saved draft on the board</b> (any planner, any day), not the ticked rows, and the only signal today is the number in the title. Line 8 carried an 8-day-old Approved draft by Jayson Foundryx. This mock changes three existing surfaces and adds nothing new.</p>
+<div class="nav"><a href="#s1">1 Confirm dialog (desktop)</a><a href="#s2">2 Confirm dialog (375)</a><a href="#s3">3 After the press</a><a href="#s4">4 Header tick = all rows</a></div>
+
+<section id="s1">
+<h2><span class="nb">1</span>Pre-confirm dialog lists the lines it will post, each with a tick box (1280)</h2>
+<p class="why">Same AlertDialog as today ("Confirm N lines across M orders?"), now with the rows under it. A row saved by someone else, or before this board was opened, says so in amber. Unticking a row leaves that line out of the request and keeps its draft. The button count follows the ticks.</p>
+<div class="row"><div class="desk"><div class="screen">
+<div class="main">
+ <div class="pagehead"><div><div class="t">Fulfilment planning</div><div class="sub">SO402757 · OIB CONSTRUCTION SDN BHD (PROJECT) · Revision 1, confirmed by Jayson Foundryx, 4 lines</div></div>
+ <div style="display:flex;gap:8px"><span class="btn">Save all suggested (41)</span><span class="btn">Undo all</span><span class="btn pri">Confirm (3)</span></div></div>
+ <div class="toolbar"><span class="btn sm">Expand all</span><span class="btn sm">Collapse all</span><span class="btn sm">Decide</span><span class="chip">0 selected</span></div>
+ <table><tr><th><span class="cb"></span></th><th>Line</th><th>Item</th><th>Required</th><th>Outstanding</th><th>Suggested</th><th>Decision</th></tr>
+ <tr><td><span class="cb"></span></td><td>5</td><td>SRTSH1040</td><td>1 Sep 2026</td><td>350</td><td>Reserve 200 BRW-IB · Buy 150</td><td><span class="pill ok">Confirmed</span></td></tr>
+ <tr><td><span class="cb"></span></td><td>6</td><td>SRTWT6808</td><td>1 Sep 2026</td><td>239</td><td>Buy 239</td><td><span class="pill saved">Saved · Buy 239</span></td></tr>
+ <tr><td><span class="cb"></span></td><td>8</td><td>SRTSH1040</td><td>1 Nov 2026</td><td>100</td><td>Borrow 43 + 57 from BRW-BB</td><td><span class="pill saved">Saved · Approved</span></td></tr>
+ <tr><td><span class="cb"></span></td><td>9</td><td>SRTWT6808</td><td>1 Nov 2026</td><td>436</td><td>Buy 436</td><td><span class="pill saved">Saved · Buy 436</span></td></tr>
+ <tr><td><span class="cb"></span></td><td>10</td><td>B2155-NL-BLUE</td><td>1 Sep 2026</td><td>300</td><td>Buy 300</td><td><span class="pill ok">Confirmed</span></td></tr>
+ <tr><td><span class="cb"></span></td><td>23</td><td>SRTWT7445-LV-NEW</td><td>1 Nov 2026</td><td>350</td><td>Buy 350</td><td><span class="pill">Suggested</span></td></tr>
+ </table>
+</div>
+<div class="scrim"></div>
+<div class="dlg">
+ <h3>Confirm 3 lines across 1 order?</h3>
+ <p class="d">Only ticked lines are posted. An unticked line keeps its saved decision and is not confirmed.</p>
+ <div class="grp">SO402757 · OIB CONSTRUCTION SDN BHD (PROJECT)</div>
+ <div class="ln"><span class="cb on"></span><div><div class="h">Line 6 · SRTWT6808 · <span class="pill saved">Amended</span></div><div class="m"><span class="v">Buy 239</span> · saved by you, just now</div></div></div>
+ <div class="ln"><span class="cb on"></span><div><div class="h">Line 9 · SRTWT6808 · <span class="pill saved">Amended</span></div><div class="m"><span class="v">Buy 436</span> · saved by you, just now</div></div></div>
+ <div class="ln"><span class="cb on"></span><div><div class="h">Line 8 · SRTSH1040 · <span class="pill saved">Approved</span></div><div class="m"><span class="v">Borrow 43 + 57 from BRW-BB (order-back)</span></div><div class="amberbox">Saved by Jayson Foundryx, 8 days ago (22 Sep 2026)</div></div></div>
+ <div class="grp">Not posted</div>
+ <div class="ln np"><span></span><div><div class="h">Line 24 · TPE-9204 · <span class="pill">Saved</span></div><div class="m">Suggestion changed since it was saved; re-save it first.</div></div></div>
+ <div class="foot"><span class="btn">Cancel</span><span class="btn pri">Confirm 3 lines</span></div>
+</div>
+</div><div class="cap">1280 · dialog over the board list. Untick line 8 and the button reads "Confirm 2 lines".</div></div></div>
+<p class="note">The composition shown is the one that will be written. For an Approved draft that is the engine's suggestion at press time (existing behaviour), so a suggestion that moved since the save is visible here before anything is written.</p>
+</section>
+
+<section id="s2">
+<h2><span class="nb">2</span>Same dialog at 375</h2>
+<div class="row"><div class="phone"><div class="screen">
+<div class="main" style="padding:14px"><div class="pagehead"><div class="t" style="font-size:18px">Fulfilment planning</div></div><span class="btn pri">Confirm (3)</span></div>
+<div class="scrim"></div>
+<div class="dlg" style="width:calc(100% - 24px);padding:14px">
+ <h3>Confirm 3 lines across 1 order?</h3>
+ <p class="d">Only ticked lines are posted.</p>
+ <div class="grp">SO402757</div>
+ <div class="ln"><span class="cb on"></span><div><div class="h">Line 6 · SRTWT6808</div><div class="m"><span class="v">Buy 239</span> · you, just now</div></div></div>
+ <div class="ln"><span class="cb on"></span><div><div class="h">Line 9 · SRTWT6808</div><div class="m"><span class="v">Buy 436</span> · you, just now</div></div></div>
+ <div class="ln"><span class="cb"></span><div><div class="h">Line 8 · SRTSH1040</div><div class="m"><span class="v">Borrow 43 + 57 from BRW-BB</span></div><div class="amberbox">Saved by Jayson Foundryx, 8 days ago</div></div></div>
+ <div class="foot"><span class="btn">Cancel</span><span class="btn pri">Confirm 2 lines</span></div>
+</div>
+</div><div class="cap">375 · line 8 unticked, button follows</div></div></div>
+</section>
+
+<section id="s3">
+<h2><span class="nb">3</span>After the press: toast and results block read the server's own list</h2>
+<p class="why">The server now answers <code>lines_confirmed</code> (line no + item) and <code>lines_carried</code> per order. The toast count is that list's length, never a client subtraction. The results block names the confirmed lines, the carried count, and any gap between what was posted and what came back.</p>
+<div class="row"><div class="desk"><div class="screen">
+<div class="main">
+ <div class="pagehead"><div><div class="t">Fulfilment planning</div><div class="sub">SO402757 · Revision 2, confirmed by Cyndi, 6 lines</div></div><span class="btn pri" disabled>Confirm (0)</span></div>
+ <div class="results">
+  <div class="t">1 of 1 orders confirmed</div>
+  <div class="o">SO402757: confirmed as revision 2 (2 purchase rows handed over)</div>
+  <ul><li>Confirmed: line 6 SRTWT6808 · line 9 SRTWT6808</li><li class="k">4 lines carried forward unchanged (5, 10, 11, 12)</li></ul>
+ </div>
+ <div class="results">
+  <div class="t">Example with a gap (SO423409, a line held back by the server)</div>
+  <div class="o">SO423409: confirmed as revision 2 (7 purchase rows handed over)</div>
+  <ul><li>Confirmed: line 48 MWC-SC04-QQ · line 80 M-FH14 · line 96 MWT3184SS-DIY · line 144 MPW402 · line 176 MWT2807-DIY · line 192 MHS1544-CR-DIY · line 256 MFG6632</li><li class="k">8 lines carried forward unchanged</li></ul>
+  <div class="mis">Posted 8, server confirmed 7: line 112 MWB242 was held back (only 3 free at BRW-IB). Its saved decision is untouched.</div>
+ </div>
+ <table><tr><th><span class="cb"></span></th><th>Line</th><th>Item</th><th>Outstanding</th><th>Decision</th></tr>
+ <tr><td><span class="cb"></span></td><td>6</td><td>SRTWT6808</td><td>239</td><td><span class="pill ok">Confirmed</span></td></tr>
+ <tr><td><span class="cb"></span></td><td>8</td><td>SRTSH1040</td><td>100</td><td><span class="pill saved">Saved · Approved</span></td></tr>
+ <tr><td><span class="cb"></span></td><td>9</td><td>SRTWT6808</td><td>436</td><td><span class="pill ok">Confirmed</span></td></tr></table>
+ <div class="toast">2 lines confirmed · 0 transfers proposed · 2 inquiry rows</div>
+</div>
+</div><div class="cap">1280 · the second block shows the amber gap line; the toast for that case turns amber and reads "7 lines confirmed · 1 held back"</div></div></div>
+</section>
+
+<section id="s4">
+<h2><span class="nb">4</span>Board list: the header tick box ticks every row, not the page</h2>
+<p class="why">Today the header box is the grid default: "Select all rows on this page" (25 per page). "Click all" on a board with 41 rows ticks 25 and Decide saves 25. The board list opts into "Select all rows"; every other listing keeps the page box.</p>
+<div class="row"><div class="desk"><div class="screen"><div class="main">
+ <div class="toolbar"><span class="btn sm">Expand all</span><span class="btn sm">Collapse all</span><span class="btn sm">Decide ▾</span><span class="chip">41 selected</span><span class="dim" style="font-size:12px">Decide saves every ticked row; rows already saved or confirmed are skipped and named.</span></div>
+ <table><tr><th><span class="cb on" title="Select all rows"></span></th><th>Line</th><th>Item</th><th>Required</th><th>Outstanding</th><th>Suggested</th><th>Decision</th></tr>
+ <tr><td><span class="cb on"></span></td><td>7</td><td>SRTSA-SS</td><td>1 Nov 2026</td><td>100</td><td>Buy 100</td><td><span class="pill">Suggested</span></td></tr>
+ <tr><td><span class="cb on"></span></td><td>23</td><td>SRTWT7445-LV-NEW</td><td>1 Nov 2026</td><td>350</td><td>Buy 350</td><td><span class="pill">Suggested</span></td></tr>
+ <tr><td><span class="cb on"></span></td><td>24</td><td>TPE-9204</td><td>1 Sep 2026</td><td>99</td><td>Borrow 99 from BRW</td><td><span class="pill">Suggested</span></td></tr>
+ <tr><td colspan="7" class="dim">… 22 more on this page, 16 on page 2, all ticked</td></tr></table>
+ <div class="sub" style="margin-top:8px">1 to 25 of 41 · Rows per page 25</div>
+</div></div><div class="cap">1280 · "41 selected" after one click on the header box</div></div></div>
+</section>
+</div>
+</body>
+</html>
