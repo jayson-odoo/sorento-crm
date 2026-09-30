@@ -735,6 +735,7 @@ def seed_chatbot_policy() -> None:
     top_selling = _load("_chatbot_top_selling_tool", "chatbot_top_selling_tool.py")
     sales_s1 = _load("_sales_s1_reports_module", "sales_s1_reports_module.py")
     pdyn1 = _load("_pdyn_0001_status_words_sales", "pdyn_0001_status_words_sales.py")
+    pdyn2 = _load("_pdyn_0002_wording_layer", "pdyn_0002_wording_layer.py")
 
     with engine.begin() as conn:
         domains_inserted, kinds_inserted = s0.seed_domains_and_kinds(conn)
@@ -766,6 +767,10 @@ def seed_chatbot_policy() -> None:
     # they now stand and leaves `production` on that version.
     with engine.begin() as conn:
         s12.republish_and_promote(conn)
+    # After the republish: the wording layer is built from the version it promoted, and
+    # published unlabelled (the owner promotes).
+    with engine.begin() as conn:
+        pdyn2.apply(conn)
     log.info(
         "chatbot policy seeded -> domains=%d kinds=%d (narrowing + first prompt "
         "version applied)",

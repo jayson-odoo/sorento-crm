@@ -375,3 +375,236 @@ def describe(db: Session, template: str | None = None) -> list[dict]:
         }
         for v in VARIABLES.values()
     ]
+
+
+# --------------------------------------------------------------------------- #
+# The wording layer (D7): a template with its hand-copied registry lists replaced by
+# their tokens. Used once by migration `pdyn_0002_wording_layer` on the production text
+# (owner edits included) and by the code fallback, never on a save: after this, the
+# owner's text is only ever what he typed.
+#
+# Each list is replaced only when its registry renders AT LEAST the values the hand list
+# carried, so the rendered prompt loses nothing (R6). A list the registry does not cover
+# stays literal and is reported, and a list the owner already reworded is not found and
+# stays untouched.
+# --------------------------------------------------------------------------- #
+
+import re as _re
+
+_SEP_PIPE = _re.compile(r"\s*\|\s*")
+
+
+def _pipe_values(raw: str) -> list[str]:
+    return [v for v in _SEP_PIPE.split(raw.strip()) if v]
+
+
+def _covers(rendered: list[str], literal: list[str]) -> bool:
+    have = {v.strip().lower() for v in rendered}
+    return all(v.strip().lower() in have for v in literal)
+
+
+def wording_layer(template: str, db: Session) -> tuple[str, list[str]]:
+    """`(new_template, report)`. `report` has one line per list: replaced or kept, why."""
+    report: list[str] = []
+    text = template
+
+    def pipe_rule(label: str, pattern: str, token: str, values: list[str]) -> None:
+        nonlocal text
+        m = _re.search(pattern, text)
+        if m is None:
+            report.append(f"{label}: not found (reworded or absent), kept")
+            return
+        literal = _pipe_values(m.group("list"))
+        if not _covers(values, literal):
+            missing = [v for v in literal if v.lower() not in {x.lower() for x in values}]
+            report.append(f"{label}: registry lacks {missing}, kept literal")
+            return
+        text = text[: m.start("list")] + "{{" + token + "}}" + text[m.end("list") :]
+        report.append(f"{label}: -> {{{{{token}}}}}")
+
+    domains = _domain_names(db)
+    statuses = [r["value"] for r in _status_rows(db)]
+    pipe_rule(
+        "domain_hint list",
+        r"domain_hint = ONE of: (?P<list>[a-z_]+(?:\s*\|\s*[a-z_]+)+?)\s*\|\s*null",
+        "domains", domains,
+    )
+    pipe_rule(
+        "OUTPUT order_status",
+        r'"order_status": "(?P<list>[a-z_]+(?:\|[a-z_]+)*?)\|null',
+        "status_values", statuses,
+    )
+    pipe_rule(
+        "OUTPUT status",
+        r'"status": "(?P<list>[a-z_]+(?:\|[a-z_]+)*?)\|null',
+        "status_values", statuses,
+    )
+    pipe_rule(
+        "order_status full set",
+        r"The full set is now: (?P<list>[a-z_]+(?:\|[a-z_]+)*?)\|null",
+        "status_values", statuses,
+    )
+    pipe_rule(
+        "OUTPUT suggested_team",
+        r'"suggested_team": "(?P<list>[a-z_]+(?:\|[a-z_]+)+)"',
+        "teams", _teams(db),
+    )
+    pipe_rule(
+        "OUTPUT suggested_agent",
+        r'"suggested_agent": "(?P<list>[a-z_]+(?:\|[a-z_]+)+)"',
+        "agents", _agents(db),
+    )
+    pipe_rule(
+        "entity hint list",
+        r'"hint": "(?P<list>[a-z_]+(?:\|[a-z_]+){3,})"',
+        "entity_kinds", _entity_kinds(db),
+    )
+
+    # ACCESS LEVELS: the JSON list the section draws from.
+    m = _re.search(r"drawn\s+ONLY from:\s*\n(?P<list>\[\"[^\]\n]*\"\])", text)
+    if m is None:
+        report.append("access levels: not found (reworded or absent), kept")
+    else:
+        literal = json.loads(m.group("list"))
+        if _covers(_access_levels(db), literal):
+            text = text[: m.start("list")] + "{{access_levels}}" + text[m.end("list") :]
+            report.append("access levels: -> {{access_levels}}")
+        else:
+            report.append(
+                f"access levels: registry lacks {[v for v in literal if v not in _access_levels(db)]}, kept literal"
+            )
+
+    # ORDER_STATUS FILTER: the status bullets up to the `null -> DEFAULT` bullet.
+    m = _re.search(
+        r"(?P<list>  - \"outstanding\" -> .*?)(?=  - null -> DEFAULT)", text, flags=_re.S
+    )
+    if m is None:
+        report.append("status bullets: not found (reworded or absent), kept")
+    else:
+        literal = _re.findall(r'^  - "([a-z_]+)"', m.group("list"), flags=_re.M)
+        if _covers(statuses, literal) and _bullet_words_covered(db, m.group("list")):
+            text = text[: m.start("list")] + "{{statuses}}\n" + text[m.end("list") :]
+            report.append("status bullets: -> {{statuses}}")
+        else:
+            report.append("status bullets: registry lacks a value or word, kept literal")
+
+    # DOMAIN IN MESSAGE: the comma list between "STATUS word -" and "- in any language".
+    m = _re.search(
+        r"STATUS word -\s*\n?(?P<list>[^\n].*?)\s+- in any language", text, flags=_re.S
+    )
+    if m is None:
+        report.append("domain words: not found (reworded or absent), kept")
+    else:
+        literal = [w.strip() for w in _re.split(r",\s*", m.group("list")) if w.strip()]
+        covered = {w.lower() for w in _domain_words(db)}
+        leftover = [w for w in literal if w.lower() not in covered]
+        replacement = "{{domain_words}}" + (f", {', '.join(leftover)}" if leftover else "")
+        text = text[: m.start("list")] + replacement + text[m.end("list") :]
+        report.append(
+            "domain words: -> {{domain_words}}"
+            + (f" (kept the words no registry holds: {', '.join(leftover)})" if leftover else "")
+        )
+
+    # The publish-time policy blocks become their live variables.
+    from app.services.chatbot_parser_prompt import BLOCKS_BEGIN, BLOCKS_END
+
+    if BLOCKS_BEGIN in text and BLOCKS_END in text:
+        head, rest = text.split(BLOCKS_BEGIN, 1)
+        _old, tail = rest.split(BLOCKS_END, 1)
+        text = (
+            f"{head}{BLOCKS_BEGIN}\n{{{{domains_detail}}}}\n\n{{{{entity_kinds_detail}}}}\n\n"
+            f"{{{{specs}}}}\n{BLOCKS_END}{tail}"
+        )
+        report.append("policy blocks: -> {{domains_detail}}, {{entity_kinds_detail}}, {{specs}}")
+    else:
+        report.append("policy blocks: no markers, none added")
+    return text, report
+
+
+def _bullet_words_covered(db: Session, bullets: str) -> bool:
+    """Every quoted word in the hand bullets is a trigger word of some status row."""
+    have = {w.lower() for r in _status_rows(db) for w in r["trigger_words"] or []}
+    have |= {r["value"].lower() for r in _status_rows(db)}
+    words = _re.findall(r'"([^"]+)"', bullets)
+    return all(w.lower() in have for w in words)
+
+
+# --------------------------------------------------------------------------- #
+# Publishing after the wording layer exists (R1: republishing never overwrites it).
+# --------------------------------------------------------------------------- #
+
+_TOKEN_RE = _re.compile(r"\{\{\s*(" + "|".join(VARIABLE_NAMES) + r")\s*\}\}")
+
+
+def is_wording_layer(template: str | None) -> bool:
+    """A template that carries at least one registry variable."""
+    return bool(_TOKEN_RE.search(template or ""))
+
+
+def wording_layer_exists(session: Session) -> bool:
+    """True once any `chatbot_semantic_parser` version carries a registry variable. From
+    then on the owner's text is the source of the wording, and every publish path that
+    rebuilds a version from the code constant (`chatbot_rearch_s4.publish_policy_blocks`,
+    `chatbot_rearch_s12.republish_and_promote`) stands down."""
+    rows = session.execute(
+        sql("SELECT template FROM ai_prompt_versions WHERE name = :n"), {"n": PROMPT_KEY}
+    ).scalars()
+    return any(is_wording_layer(t) for t in rows)
+
+
+def publish_wording_edit(session: Session, *, old: str, new: str, message: str) -> int | None:
+    """The way a later migration changes the parser's wording: one exact edit applied to
+    the PRODUCTION text (owner edits and variables kept), published as a new UNLABELLED
+    version. Returns the version number, or None when `old` is not in the production text
+    (already applied, or reworded by the owner) - reported, never forced. The label
+    moves only when the owner moves it (R3)."""
+    import uuid
+
+    row = session.execute(
+        sql(
+            "SELECT v.template, v.variables FROM ai_prompt_versions v "
+            "JOIN ai_prompt_labels l ON l.version_id = v.id "
+            "WHERE l.name = :n AND l.label = 'production'"
+        ),
+        {"n": PROMPT_KEY},
+    ).first()
+    if row is None or old not in row[0]:
+        return None
+    from app.models.ai_prompt import AIPromptVersion
+
+    top = session.execute(
+        sql("SELECT coalesce(max(version), 0) FROM ai_prompt_versions WHERE name = :n"),
+        {"n": PROMPT_KEY},
+    ).scalar()
+    version = int(top) + 1
+    session.add(
+        AIPromptVersion(
+            name=PROMPT_KEY,
+            version=version,
+            type="text",
+            template=row[0].replace(old, new, 1),
+            variables=list(row[1] or []),
+            config_json={"wording_edit": True},
+            commit_message=message,
+        )
+    )
+    session.flush()
+    return version
+
+
+# Literal registry lists the drift test (R4) refuses in any version published after the
+# wording layer: the shapes the hand lists had.
+LITERAL_LIST_PATTERNS: dict[str, str] = {
+    "domains": r"domain_hint = ONE of: [a-z_]+ \| [a-z_]+ \| [a-z_]+",
+    "status_values": r'"(?:order_)?status": "outstanding\|delivered',
+    "teams": r'"suggested_team": "[a-z_]+\|[a-z_]+',
+    "agents": r'"suggested_agent": "[a-z_]+\|[a-z_]+',
+    "entity_kinds": r'"hint": "product\|[a-z_]+\|[a-z_]+',
+    "access_levels": r'drawn\s+ONLY from:\s*\n\["',
+    "statuses": r'  - "outstanding" -> orders NOT yet delivered',
+}
+
+
+def literal_lists(template: str) -> list[str]:
+    """Names of the registry lists `template` carries as literal text."""
+    return [name for name, pattern in LITERAL_LIST_PATTERNS.items() if _re.search(pattern, template or "")]
