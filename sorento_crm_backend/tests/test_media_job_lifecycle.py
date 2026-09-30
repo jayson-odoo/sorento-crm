@@ -394,8 +394,21 @@ def test_extraction_exceeding_the_configured_timeout_is_abandoned_and_marked_fai
     wait -- a hung stub must not hang the job forever."""
     import app.tasks.media_tasks as media_tasks
 
+    # "Abandoned" is proven by state, not by wall clock: the stub blocks on an
+    # Event the test releases only AFTER the worker has returned, so if the job
+    # went terminal while `stub_finished` is still clear, the worker gave up on
+    # the extraction rather than waiting it out. The 60s cap on the wait is a
+    # safety net for a broken ceiling - the test then fails on the assertions
+    # below instead of hanging the suite. (The previous shape timed the whole
+    # `process_media_extraction` call against a 4s bound and flaked on a loaded
+    # CI Postgres: the timeout fired on time, and the failure-path writes and
+    # commit after it took the rest - release run 36651034909.)
+    release = threading.Event()
+    stub_finished = threading.Event()
+
     def _hangs(job):
-        time.sleep(5)
+        release.wait(60)
+        stub_finished.set()
         return {"never": "reached"}
 
     monkeypatch.setattr(media_tasks, "run_media_extraction", _hangs)
@@ -409,6 +422,22 @@ def test_extraction_exceeding_the_configured_timeout_is_abandoned_and_marked_fai
         lambda db: _fake_settings(extraction_timeout_seconds=0.5),
         raising=False,
     )
+
+    # "Near the timeout" is measured on the bounded call alone - the thread
+    # start plus the 0.5s join - which is the only piece the ceiling governs.
+    # The DB writes that follow it are excluded from the clock on purpose.
+    real_run_bounded = media_tasks._run_bounded
+    bounded_elapsed: dict[str, float] = {}
+
+    def _timed_run_bounded(job, timeout_seconds):
+        started = time.monotonic()
+        try:
+            return real_run_bounded(job, timeout_seconds)
+        finally:
+            bounded_elapsed["seconds"] = time.monotonic() - started
+
+    monkeypatch.setattr(media_tasks, "_run_bounded", _timed_run_bounded)
+
     captured = []
     monkeypatch.setattr(
         media_tasks,
@@ -417,17 +446,25 @@ def test_extraction_exceeding_the_configured_timeout_is_abandoned_and_marked_fai
     )
     job_id, contact_id = _seed_job_row(callback_url="https://n8n.example/webhook")
     try:
-        started = time.monotonic()
         media_tasks.process_media_extraction(job_id)
-        elapsed = time.monotonic() - started
 
-        assert elapsed < 4, "the job must be abandoned near the timeout, not run to completion"
+        assert not stub_finished.is_set(), (
+            "the worker must abandon a hung extraction, not wait for it to finish"
+        )
+        assert "seconds" in bounded_elapsed, "the bounded run never ran"
+        assert bounded_elapsed["seconds"] < 3, (
+            "the ceiling must fire near the configured 0.5s timeout, "
+            f"not after {bounded_elapsed['seconds']:.2f}s"
+        )
         job = _fetch_job(job_id)
         assert job.status == "failed"
         assert "timeout" in (job.error or "").lower() or "timed out" in (job.error or "").lower()
         assert len(captured) == 1
         assert captured[0]["status"] == "failed"
     finally:
+        # Let the orphaned extraction thread exit now rather than leaking a
+        # blocked daemon thread into the tests that follow.
+        release.set()
         _cleanup_chain(contact_id)
 
 
