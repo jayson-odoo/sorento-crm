@@ -591,3 +591,25 @@ def test_ceiling_matches_the_backend_copy():
         pytest.skip("backend source not in this container")
     match = re.search(r"^TOP_SELLING_N_CEILING = (\d+)$", source.read_text(), re.M)
     assert match and int(match.group(1)) == TOP_SELLING_N_CEILING
+
+
+def test_a_long_detail_reply_is_split_too():
+    """Grill Q6 (owner, 30 Sep 2026: "split detail reply here"): one code bought by
+    hundreds of customers goes out in ordered WhatsApp parts, every customer once."""
+    body = _mock("detail")
+    body["detail"]["by_customer"] = [
+        {"customer_name": f"CUSTOMER NUMBER {i:03d} SDN BHD", "quantity": 500 - i, "amount": 5000.0 - i}
+        for i in range(1, 301)
+    ]
+    rendered = _top_selling(body)
+    parts = _parts(rendered)
+    assert len(parts) > 1
+    assert all(len(p) <= WHATSAPP_MESSAGE_MAX_CHARS for p in parts)
+    assert [p.split("\n", 1)[0] for p in parts] == [f"({k}/{len(parts)})" for k in range(1, len(parts) + 1)]
+    names = [line for p in parts for line in p.split("\n") if "CUSTOMER NUMBER" in line]
+    assert [int(n.split(".", 1)[0]) for n in names] == list(range(1, 301))
+    assert _top_selling_envelope(body)["response"] == rendered
+
+
+def test_a_short_detail_reply_is_unchanged():
+    assert _parts(_top_selling(_mock("detail"))) == [_golden("detail")]
