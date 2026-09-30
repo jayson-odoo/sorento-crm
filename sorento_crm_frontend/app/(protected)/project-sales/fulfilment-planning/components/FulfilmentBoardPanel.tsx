@@ -66,6 +66,7 @@ import {
 import {
   boardAxis,
   bucketLabelText,
+  contributionMatchesSearch,
   confirmSummaryFor,
   decisionHeaderText,
   orderListRows,
@@ -96,6 +97,7 @@ import type {
 } from '../../_shared/types/planningChange.types';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { BoardScopeToggle, type BoardScope } from './BoardScopeToggle';
 import { isPreMarkOnly, VERDICT_FILTER_OPTIONS, verdictOf } from './BoardDecisionPill';
 import { BoardTransfersPanel } from './BoardTransfersPanel';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
@@ -304,6 +306,14 @@ export function FulfilmentBoardPanel({
   const [kindFilter, setKindFilter] = React.useState<SupplyKind | null>(null);
   /** The Status filter, shared by the list's Filters control and the grid's filter strip. */
   const [statusFilter, setStatusFilter] = React.useState<string[]>([]);
+  /** Saved | Others (owner, 30 Sep 2026): Others by default, kept across a Confirm press. */
+  const [scope, setScope] = React.useState<BoardScope>(() =>
+    searchParams.get('scope') === 'saved'
+      ? 'saved'
+      : searchParams.get('scope') === 'all'
+        ? 'all'
+        : 'others',
+  );
   const [openCell, setOpenCell] = React.useState<BoardCell | null>(null);
   /** Which 30-day window the day view is showing. Undefined lets the server choose the first. */
   const [dayWindow, setDayWindow] = React.useState<string | undefined>(undefined);
@@ -332,10 +342,12 @@ export function FulfilmentBoardPanel({
       setView('list');
       setKindFilter(null);
       setStatusFilter([]);
+      // Whichever segment holds the row, so the link can reach it.
+      setScope(verdictOf(contribution, draft[contribution.key] ?? null) === 'saved' ? 'saved' : 'others');
       resetProductSearch('');
       setFocusKey(contribution.key);
     },
-    [resetProductSearch],
+    [resetProductSearch, draft],
   );
   /**
    * Fired by `FulfilmentBoardListView` once it has actually scrolled to `focusKey` (S3) - a
@@ -1794,18 +1806,33 @@ export function FulfilmentBoardPanel({
   // The Status filter, shared by the list (its Filters control) and the grid (the strip below the
   // cards). In the grid a row stays when ANY of its lines has one of the chosen states, read off
   // `verdictOf` - the same state the pill shows - never off "has a draft".
+  // The Saved | Others counts: the board's lines under the product search (and the day window,
+  // through the list's whole-selection population), never under the Status filter.
+  const scopeCounts = React.useMemo(() => {
+    let saved = 0;
+    let others = 0;
+    for (const line of listContributions) {
+      if (!contributionMatchesSearch(line, productSearch)) continue;
+      if (verdictOf(line, draft[line.key] ?? null) === 'saved') saved += 1;
+      else others += 1;
+    }
+    return { saved, others };
+  }, [listContributions, productSearch, draft]);
   const visibleProductRows = React.useMemo(
     () =>
       axis.rows.filter(
         (row) =>
           (!kindFilter || linesByRow.has(row.key)) &&
           rowMatchesSearch(row, linesByRow.get(row.key) ?? [], productSearch) &&
-          (statusFilter.length === 0 ||
-            (linesByRow.get(row.key) ?? []).some((line) =>
-              statusFilter.includes(verdictOf(line, draft[line.key] ?? null)),
-            )),
+          (linesByRow.get(row.key) ?? []).some((line) => {
+            const verdict = verdictOf(line, draft[line.key] ?? null);
+            return (
+              (scope === 'all' || (verdict === 'saved') === (scope === 'saved')) &&
+              (statusFilter.length === 0 || statusFilter.includes(verdict))
+            );
+          }),
       ),
-    [axis, linesByRow, productSearch, kindFilter, statusFilter, draft],
+    [axis, linesByRow, productSearch, kindFilter, statusFilter, scope, draft],
   );
 
   const filtering =
@@ -2506,6 +2533,12 @@ export function FulfilmentBoardPanel({
                 // box is gone, so there is no second box to disagree with this one.
                 externalSearch={productSearch}
                 status={{ value: statusFilter, onChange: setStatusFilter }}
+                scope={{
+                  value: scope,
+                  onChange: setScope,
+                  savedCount: scopeCounts.saved,
+                  othersCount: scopeCounts.others,
+                }}
                 search={{
                   value: productSearchInput,
                   onChange: setProductSearchInput,
@@ -2548,6 +2581,12 @@ export function FulfilmentBoardPanel({
                         placeholder="Search sales order, customer, project or product"
                         aria-label="Search sales order, customer, project or product"
                         className="w-64"
+                      />
+                      <BoardScopeToggle
+                        value={scope}
+                        onChange={setScope}
+                        savedCount={scopeCounts.saved}
+                        othersCount={scopeCounts.others}
                       />
                       <SearchableMultiSelect
                         value={statusFilter}

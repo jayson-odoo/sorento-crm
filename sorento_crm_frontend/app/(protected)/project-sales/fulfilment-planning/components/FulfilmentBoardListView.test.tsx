@@ -2411,4 +2411,35 @@ describe('FulfilmentBoardListView: Columns and Status filter', () => {
     expect(heightOf('Actions')).toBe(heightOf('Columns'));
   });
 
+
+  it('the Saved | Others scope shows only the matching rows, and Others hides the saved one', async () => {
+    const saved = contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 });
+    const plain = contribution({ key: 'so-2:line-20', so_number: 'SO397451', line_no: 20 });
+    const props = {
+      contributions: [saved, plain],
+      draft: { [saved.key]: { verdict: 'approved' as const } },
+      onDecide: vi.fn(),
+      onDecideMany: vi.fn(),
+      onDecideBatch: vi.fn(),
+    };
+    const { rerender } = render(
+      <FulfilmentBoardListView
+        {...props}
+        scope={{ value: 'others', onChange: vi.fn(), savedCount: 1, othersCount: 1 }}
+      />,
+    );
+    await screen.findByText('SO397451');
+    expect(screen.queryByText('SO397450')).not.toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Others (1)' })).toHaveAttribute('aria-checked', 'true');
+
+    rerender(
+      <FulfilmentBoardListView
+        {...props}
+        scope={{ value: 'saved', onChange: vi.fn(), savedCount: 1, othersCount: 1 }}
+      />,
+    );
+    await screen.findByText('SO397450');
+    expect(screen.queryByText('SO397451')).not.toBeInTheDocument();
+  });
+
 });

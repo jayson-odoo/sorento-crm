@@ -352,7 +352,8 @@ beforeEach(() => {
   // R-J (List is now the default view): every spec here exercises the GRID matrix,
   // so `?view=grid` is seeded by default rather than clicking the Grid button in
   // each test - one place, per the coordinator's repair note.
-  currentSearchParams = new URLSearchParams('view=grid');
+  // `scope=all`: the fixtures here are saved lines; the Others default is tested on its own.
+  currentSearchParams = new URLSearchParams('view=grid&scope=all');
 });
 
 /**
@@ -1421,7 +1422,7 @@ describe('FulfilmentBoardPanel: the calendar control (13.3)', () => {
         .filter((bucket) => bucket.kind === 'dated')
         .slice(0, 5),
     });
-    currentSearchParams = new URLSearchParams('view=grid&granularity=day');
+    currentSearchParams = new URLSearchParams('scope=all&view=grid&granularity=day');
 
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
@@ -1462,7 +1463,7 @@ describe('FulfilmentBoardPanel: the calendar control (13.3)', () => {
       'day',
     );
     getPlanningBoard.mockResolvedValue(dayBoard);
-    currentSearchParams = new URLSearchParams('view=grid&granularity=day');
+    currentSearchParams = new URLSearchParams('scope=all&view=grid&granularity=day');
 
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
@@ -2521,14 +2522,14 @@ describe('FulfilmentBoardPanel: searching the product rows', () => {
 
     await waitFor(() =>
       expect(routerReplace).toHaveBeenCalledWith(
-        '/project-sales/fulfilment-planning?view=grid&product=tpe',
+        '/project-sales/fulfilment-planning?view=grid&scope=all&product=tpe',
         expect.objectContaining({ scroll: false }),
       ),
     );
   });
 
   it('opens on the term the URL carries', async () => {
-    currentSearchParams = new URLSearchParams('view=grid&product=ceiling');
+    currentSearchParams = new URLSearchParams('scope=all&view=grid&product=ceiling');
     getPlanningBoard.mockResolvedValue(catalogue());
 
     renderPanel();
@@ -2626,7 +2627,7 @@ describe('FulfilmentBoardPanel: the live policy, and only it', () => {
  */
 describe('FulfilmentBoardPanel: granularity in the URL', () => {
   it('opens on the granularity the URL names', async () => {
-    currentSearchParams = new URLSearchParams('view=grid&granularity=month');
+    currentSearchParams = new URLSearchParams('scope=all&view=grid&granularity=month');
     getPlanningBoard.mockResolvedValue(boardOf([demand()], {}, 'month'));
 
     renderPanel(['SO403340']);
@@ -2643,7 +2644,7 @@ describe('FulfilmentBoardPanel: granularity in the URL', () => {
   });
 
   it('AC-B1-5: a URL naming granularity=week opens week view, not the date default', async () => {
-    currentSearchParams = new URLSearchParams('view=grid&granularity=week');
+    currentSearchParams = new URLSearchParams('scope=all&view=grid&granularity=week');
     getPlanningBoard.mockResolvedValue(boardOf([demand()], {}, 'week'));
 
     renderPanel(['SO403340']);
@@ -2663,7 +2664,7 @@ describe('FulfilmentBoardPanel: granularity in the URL', () => {
     // S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-1/AC-B1-5): `date` is what an
     // unrecognised param resolves to now, the same default an ABSENT param gets - `week`
     // is still a real, explicitly-named option (`?granularity=week` is honoured as-is).
-    currentSearchParams = new URLSearchParams('view=grid&granularity=fortnightly');
+    currentSearchParams = new URLSearchParams('scope=all&view=grid&granularity=fortnightly');
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));
 
     renderPanel(['SO403340']);
@@ -2690,7 +2691,7 @@ describe('FulfilmentBoardPanel: granularity in the URL', () => {
 
     await waitFor(() =>
       expect(routerReplace).toHaveBeenCalledWith(
-        '/project-sales/fulfilment-planning?view=grid&granularity=month',
+        '/project-sales/fulfilment-planning?view=grid&scope=all&granularity=month',
         expect.objectContaining({ scroll: false }),
       ),
     );
@@ -2903,14 +2904,14 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
 
     await waitFor(() =>
       expect(routerReplace).toHaveBeenCalledWith(
-        '/project-sales/fulfilment-planning?view=grid&rows=customer',
+        '/project-sales/fulfilment-planning?view=grid&scope=all&rows=customer',
         expect.objectContaining({ scroll: false }),
       ),
     );
   });
 
   it('opens on the axis the URL names, and falls back to product on nonsense', async () => {
-    currentSearchParams = new URLSearchParams('view=grid&rows=project');
+    currentSearchParams = new URLSearchParams('scope=all&view=grid&rows=project');
     getPlanningBoard.mockResolvedValue(twoOrders());
 
     renderPanel();
@@ -2921,7 +2922,7 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
   });
 
   it('falls back to product on an axis nobody defined', async () => {
-    currentSearchParams = new URLSearchParams('view=grid&rows=warehouse');
+    currentSearchParams = new URLSearchParams('scope=all&view=grid&rows=warehouse');
     getPlanningBoard.mockResolvedValue(twoOrders());
 
     renderPanel();
@@ -3144,7 +3145,7 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
     expect(board.contributions).toHaveLength(2);
     // Both SAVED (8 Sep 2026 ruling, reverses R11), or the counter reads 0 regardless of window.
     getPlanningBoard.mockResolvedValue(allSaved(board));
-    currentSearchParams = new URLSearchParams('view=grid&granularity=day');
+    currentSearchParams = new URLSearchParams('scope=all&view=grid&granularity=day');
     confirmMany.mockResolvedValue({
       results: [
         { pso_id: 'pso-so-a', ok: true, decision_revision: 1 },
@@ -4728,9 +4729,11 @@ describe('FulfilmentBoardPanel: search and Status live under the cards, not in t
     expect(strip.closest('[data-slot="card-header"]')).not.toBeNull();
     expect(strip.className).toMatch(/\bflex\b/);
     expect(strip.className).not.toMatch(/flex-col/);
-    expect(strip.children).toHaveLength(2);
+    // Search, the Saved | Others toggle, then the compact Status control: siblings in one row.
+    expect(strip.children).toHaveLength(3);
     expect(within(strip.children[0] as HTMLElement).getByPlaceholderText(SEARCH)).toBeInTheDocument();
-    const status = strip.children[1] as HTMLElement;
+    expect(strip.children[1]).toHaveAttribute('data-testid', 'board-scope-toggle');
+    const status = strip.children[2] as HTMLElement;
     expect(status).toHaveTextContent('Status');
     expect(status.className).toMatch(/\bw-40\b/);
     expect(status.className).not.toMatch(/\bw-full\b/);
@@ -4769,5 +4772,108 @@ describe('FulfilmentBoardPanel: search and Status live under the cards, not in t
 
     await waitFor(() => expect(screen.queryByText('TPE-9204')).not.toBeInTheDocument());
     expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+  });
+});
+
+describe('FulfilmentBoardPanel: Saved | Others toggle (owner, 30 Sep)', () => {
+  /** A saved, B suggested (no draft), C confirmed (covered by an active decision). */
+  const threeStates = () => {
+    const base = boardOf([
+      demand({ line_no: 1, item_code: 'WESERP10B' }),
+      demand({ line_no: 2, item_code: 'TPE-9204' }),
+      demand({ line_no: 3, item_code: 'WESERP20B' }),
+    ]);
+    const saved = withContribution(
+      base,
+      (entry) => entry.item_code === 'WESERP10B',
+      (entry) => ({
+        ...entry,
+        draft: {
+          decision: { verdict: 'approved' as const },
+          saved_by: 'Test Planner',
+          saved_at: '2026-09-08T00:00:00Z',
+        },
+      }),
+    );
+    return withContribution(
+      saved,
+      (entry) => entry.item_code === 'WESERP20B',
+      (entry) => ({
+        ...entry,
+        covered: true,
+        decision: { revision_no: 1, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '100' },
+      }),
+    );
+  };
+  const segment = (name: RegExp) => screen.getByRole('radio', { name });
+
+  beforeEach(() => {
+    currentSearchParams = new URLSearchParams('view=grid');
+  });
+
+  it('shows Saved (1) | Others (2) in the grid strip and in the list toolbar', async () => {
+    getPlanningBoard.mockResolvedValue(threeStates());
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const strip = screen.getByTestId('board-grid-filter-strip');
+    expect(within(strip).getByRole('radio', { name: 'Saved (1)' })).toBeInTheDocument();
+    expect(within(strip).getByRole('radio', { name: 'Others (2)' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    const toolbar = await waitFor(() => {
+      const found = document.querySelector('[data-slot="data-grid-list-toolbar"]');
+      if (!found) throw new Error('toolbar not yet mounted');
+      return found as HTMLElement;
+    });
+    expect(within(toolbar).getByRole('radio', { name: 'Saved (1)' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('radio', { name: 'Others (2)' })).toBeInTheDocument();
+  });
+
+  it('defaults to Others: the saved row is hidden, and Saved shows only the saved row', async () => {
+    getPlanningBoard.mockResolvedValue(threeStates());
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(segment(/^Others/)).toHaveAttribute('aria-checked', 'true');
+    expect(screen.queryByText('WESERP10B')).not.toBeInTheDocument();
+    expect(screen.getByText('TPE-9204')).toBeInTheDocument();
+    expect(screen.getByText('WESERP20B')).toBeInTheDocument();
+
+    await userEvent.click(segment(/^Saved/));
+
+    await waitFor(() => expect(screen.getByText('WESERP10B')).toBeInTheDocument());
+    expect(screen.queryByText('TPE-9204')).not.toBeInTheDocument();
+    expect(screen.queryByText('WESERP20B')).not.toBeInTheDocument();
+  });
+
+  it('combines with the Status filter: Others AND Confirmed leaves only the confirmed row', async () => {
+    getPlanningBoard.mockResolvedValue(threeStates());
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const strip = screen.getByTestId('board-grid-filter-strip');
+    await userEvent.click(within(strip).getByText('Status'));
+    await userEvent.click(await screen.findByRole('option', { name: /Confirmed/ }));
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByText('TPE-9204')).not.toBeInTheDocument());
+    expect(screen.getByText('WESERP20B')).toBeInTheDocument();
+  });
+
+  it('keeps the chosen segment across a Confirm press', async () => {
+    getPlanningBoard.mockResolvedValue(threeStates());
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 2, lines_confirmed: [], lines_carried: 0 }],
+    });
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await userEvent.click(segment(/^Saved/));
+
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    await screen.findByTestId('board-confirm-results');
+
+    expect(segment(/^Saved/)).toHaveAttribute('aria-checked', 'true');
   });
 });

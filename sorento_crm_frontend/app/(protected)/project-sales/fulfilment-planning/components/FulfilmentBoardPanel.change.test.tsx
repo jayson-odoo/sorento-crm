@@ -22,7 +22,7 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/fulfilment-planning',
   // R-J (List is now the default view): every spec here exercises the GRID matrix, so
   // `?view=grid` is seeded rather than clicking the Grid button in each test.
-  useSearchParams: () => new URLSearchParams('view=grid'),
+  useSearchParams: () => new URLSearchParams('view=grid&scope=all'),
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({

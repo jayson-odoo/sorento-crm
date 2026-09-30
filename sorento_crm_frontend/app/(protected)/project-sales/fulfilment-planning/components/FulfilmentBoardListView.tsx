@@ -18,6 +18,7 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { BoardScopeToggle, type BoardScope } from './BoardScopeToggle';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { SoLineAttachmentsButton } from '../../_shared/components/SoLineAttachmentsButton';
@@ -173,6 +174,12 @@ export interface FulfilmentBoardListViewProps {
   search?: { value: string; onChange: (next: string) => void; placeholder: string };
   /** The Status filter's state, when the board owns it (shared with the grid view). */
   status?: { value: string[]; onChange: (next: string[]) => void };
+  /**
+   * The Saved | Others toggle (owner, 30 Sep 2026), drawn after the search box. Saved = the lines
+   * whose verdict is `saved` (what Confirm sends), Others = every other verdict. Omitted, the list
+   * shows every line and draws no toggle.
+   */
+  scope?: { value: BoardScope; onChange: (next: BoardScope) => void; savedCount: number; othersCount: number };
 }
 
 export function FulfilmentBoardListView({
@@ -191,6 +198,7 @@ export function FulfilmentBoardListView({
   attachmentsByLine = {},
   search,
   status,
+  scope,
 }: FulfilmentBoardListViewProps) {
   /**
    * AC-RS-42: the Stock button and the "To plan" figure both open the SAME dialog the grid
@@ -227,10 +235,14 @@ export function FulfilmentBoardListView({
       contributions.filter(
         (contribution) =>
           contributionMatchesSearch(contribution, externalSearch ?? '') &&
+          (!scope ||
+            scope.value === 'all' ||
+            (verdictOf(contribution, draft[contribution.key] ?? null) === 'saved') ===
+              (scope.value === 'saved')) &&
           (statusFilter.length === 0 ||
             statusFilter.includes(verdictOf(contribution, draft[contribution.key] ?? null))),
       ),
-    [contributions, externalSearch, statusFilter, draft],
+    [contributions, externalSearch, statusFilter, draft, scope],
   );
 
   // Should fix 3 (review round 1, fixed again round 2): AC-10's "the order follows the list's
@@ -943,14 +955,19 @@ export function FulfilmentBoardListView({
           showColumns
           keepSearchWhileSelected
           searchSlot={
-            search ? (
-              <ListSearchInput
-                value={search.value}
-                onChange={search.onChange}
-                placeholder={search.placeholder}
-                aria-label={search.placeholder}
-                className="w-64"
-              />
+            search || scope ? (
+              <>
+                {search && (
+                  <ListSearchInput
+                    value={search.value}
+                    onChange={search.onChange}
+                    placeholder={search.placeholder}
+                    aria-label={search.placeholder}
+                    className="w-64"
+                  />
+                )}
+                {scope && <BoardScopeToggle {...scope} />}
+              </>
             ) : undefined
           }
           filters={{
