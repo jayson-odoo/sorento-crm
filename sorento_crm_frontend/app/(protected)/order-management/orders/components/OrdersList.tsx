@@ -83,7 +83,7 @@ export default function OrdersList() {
 
   // AutoCount pull - one more secondary action beside the two imports, the same shared
   // hook Products and Stock Balance use (PLAN-autocount-do-pull-crm-30sep.md).
-  const autocountPull = useAutocountPullAction('delivery_orders', 'order_management.orders.autocount_pull');
+  const autocountPull = useAutocountPullAction('delivery_orders');
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.

@@ -9,14 +9,14 @@ integration roles excluded (an integration credential has no browser to click Pu
 granted `.import` by name.
 
 Revision ID: do_pull_0001_perm
-Revises: ac_grn_do_0001_ingest
+Revises: lsa_0001_show_all_counts
 Create Date: 2026-09-30
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "do_pull_0001_perm"
-down_revision = "ac_grn_do_0001_ingest"
+down_revision = "lsa_0001_show_all_counts"
 branch_labels = None
 depends_on = None
 

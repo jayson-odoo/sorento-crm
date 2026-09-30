@@ -115,3 +115,33 @@ describe('buildCompareRows', () => {
     expect(rows).toHaveLength(3);
   });
 });
+
+describe('buildCompareRows - delivery orders (AC-DP-42, review S6)', () => {
+  const doResult: AutocountComparePullResult = {
+    summary: {
+      filename: 'do-lines.xlsx', compared_at: '2026-09-30T00:00:00Z',
+      total: 2, matched: 1, different: 1, only_in_excel: 1, only_in_pull: 1,
+    },
+    differences: [
+      { item_code: 'ZZAC-P1', doc_no: 'ZZDO-0001', location: 'ZZAC-WH1', field: 'qty', excel: 11, pull: 10 },
+    ],
+    only_in_excel: ['ZZDO-0009|ZZAC-P2|ZZAC-WH1'],
+    only_in_pull: ['ZZDO-0002|ZZAC-P|1|ZZAC-WH1'],
+  };
+
+  it('keeps the document number on a difference and labels qty as Qty', () => {
+    const [row] = buildCompareRows(doResult, 'delivery_orders');
+    expect(row).toEqual({ item_code: 'ZZAC-P1', doc_no: 'ZZDO-0001', location: 'ZZAC-WH1', field: 'Qty', excel: '11', pull: '10' });
+  });
+
+  it('splits a three-part only-in label on the first and last separator, so an item code carrying one survives', () => {
+    const rows = buildCompareRows(doResult, 'delivery_orders');
+    expect(rows[1]).toMatchObject({ doc_no: 'ZZDO-0009', item_code: 'ZZAC-P2', location: 'ZZAC-WH1', field: 'Only in your Excel' });
+    expect(rows[2]).toMatchObject({ doc_no: 'ZZDO-0002', item_code: 'ZZAC-P|1', location: 'ZZAC-WH1', field: 'Only in AutoCount' });
+  });
+
+  it('never splits a products label (a product code may carry a separator)', () => {
+    const rows = buildCompareRows({ ...doResult, differences: [], only_in_pull: [] , only_in_excel: ['A|B|C'] }, 'products');
+    expect(rows[0]).toMatchObject({ item_code: 'A|B|C', doc_no: undefined, location: undefined });
+  });
+});

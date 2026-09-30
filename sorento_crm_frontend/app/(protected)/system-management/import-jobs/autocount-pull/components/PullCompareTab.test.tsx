@@ -73,7 +73,7 @@ async function dropFile(rows: Record<string, unknown>[] = [{ 'Item Code': 'X' }]
 
 /** The differences DataGrid needs a QueryClient (`useListingColumnPreferences`) even
  *  though this tab does not itself use react-query for that grid's data. */
-function renderTab(entity: 'products' | 'stock_balances' = 'products') {
+function renderTab(entity: 'products' | 'stock_balances' | 'delivery_orders' = 'products') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     React.createElement(
@@ -415,5 +415,34 @@ describe('PullCompareTab - only-in rows in the grid (CT-3, CT-4)', () => {
     expect(typedRows[1]).toMatchObject({
       item_code: 'SRT-2', field: 'Only in your Excel', excel: 'Present', pull: 'Missing',
     });
+  });
+});
+
+describe('PullCompareTab - delivery orders (AC-DP-42, review S6)', () => {
+  it('shows a Doc No column before Item Code and the Location column, with the document number on every row', async () => {
+    useComparePull.mockReturnValue(
+      mutateReturning({
+        summary: {
+          filename: 'do-lines.xlsx', compared_at: '2026-09-30T00:00:00Z',
+          total: 2, matched: 1, different: 1, only_in_excel: 1, only_in_pull: 0,
+        },
+        differences: [
+          { item_code: 'ZZAC-P1', doc_no: 'ZZDO-0001', location: 'ZZAC-WH1', field: 'qty', excel: 11, pull: 10 },
+        ],
+        only_in_excel: ['ZZDO-0009|ZZAC-P2|ZZAC-WH1'],
+        only_in_pull: [],
+      }),
+    );
+
+    renderTab('delivery_orders');
+    await dropFile([{ 'Doc No': 'ZZDO-0001', 'Item Code': 'ZZAC-P1', Location: 'ZZAC-WH1', Qty: 11 }]);
+
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    expect(headers.indexOf('Doc No')).toBeGreaterThanOrEqual(0);
+    expect(headers.indexOf('Doc No')).toBeLessThan(headers.indexOf('Item Code'));
+    expect(headers).toContain('Location');
+    expect(screen.getByText('ZZDO-0001')).toBeInTheDocument();
+    expect(screen.getByText('ZZDO-0009')).toBeInTheDocument();
+    expect(screen.getByText('Qty')).toBeInTheDocument();
   });
 });

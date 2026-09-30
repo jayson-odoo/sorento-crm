@@ -52,11 +52,26 @@ function textCell<T>(pick: (row: T) => string | null | undefined) {
   };
 }
 
-function numberCell(pick: (row: DeliveryOrderExcelRow) => number | null | undefined, digits = 2) {
+/** `digits` null = the number at its own precision (a quantity: 2.5 m stays "2.5", never a
+ *  rounded "3" that no longer matches the checker's sheet, review S5); a money column keeps
+ *  two decimals. */
+function numberCell(
+  pick: (row: DeliveryOrderExcelRow) => number | null | undefined,
+  digits: number | null = 2,
+) {
   return function NumberCell({ row }: { row: { original: AutocountPullExcelRow } }) {
     const value = pick(row.original as DeliveryOrderExcelRow);
-    return <span className="tabular-nums">{value == null ? '-' : value.toFixed(digits)}</span>;
+    if (value == null) return <span className="tabular-nums">-</span>;
+    return <span className="tabular-nums">{digits == null ? String(value) : value.toFixed(digits)}</span>;
   };
+}
+
+/** `YYYY-MM-DD` -> dd/MM/yyyy, the one date format this page uses (the scope line above
+ *  the tabs is dd/MM/yyyy too, review N2); anything else passes through as text. */
+export function formatExcelDay(day: string | null | undefined): string {
+  if (!day) return '-';
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : day;
 }
 
 /** One row per DO LINE, the "Import delivery order lines" sheet's columns in its order
@@ -72,7 +87,7 @@ export const DELIVERY_ORDER_COLUMNS: ColumnDef<AutocountPullExcelRow>[] = [
   {
     id: 'doc_date',
     header: ({ column }) => <DataGridColumnHeader title="Doc Date" column={column} />,
-    cell: textCell<DeliveryOrderExcelRow>((r) => r.doc_date),
+    cell: textCell<DeliveryOrderExcelRow>((r) => formatExcelDay(r.doc_date)),
     size: 110,
     meta: { headerTitle: 'Doc Date', skeleton: <Skeleton className="h-4 w-16" /> },
   },
@@ -114,7 +129,7 @@ export const DELIVERY_ORDER_COLUMNS: ColumnDef<AutocountPullExcelRow>[] = [
   {
     id: 'qty',
     header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-    cell: numberCell((r) => r.qty, 0),
+    cell: numberCell((r) => r.qty, null),
     size: 90,
     meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
   },

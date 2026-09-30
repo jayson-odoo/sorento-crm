@@ -362,11 +362,18 @@ class TestMigration:
         spec.loader.exec_module(module)
         return module
 
-    def test_dp_04a_revision_fits_and_chains_onto_the_main_head(self):
+    def test_dp_04a_revision_fits_and_is_the_single_head(self):
+        """Not a literal `down_revision`: `scripts/alembic-reparent.sh` rewrites it every time
+        main's head moves before merge (review blocker 1), so the pin is the property that
+        matters - this revision is the ONE head of the chain."""
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
         module = self._load()
         assert module.revision == MIGRATION
         assert len(module.revision) <= 32
-        assert module.down_revision == "ac_grn_do_0001_ingest"
+        script = ScriptDirectory.from_config(Config(str(VERSIONS.parent.parent / "alembic.ini")))
+        assert script.get_heads() == [MIGRATION]
 
     def test_dp_04b_grants_to_import_holders_and_admin_not_integrations(self):
         """Runs `upgrade()` on the real tables inside a rolled-back transaction (the
@@ -481,7 +488,9 @@ class TestPreview:
         assert pull["counts"]["with_warnings"] == 1
         first = next(r for r in _job_rows(db, job_id) if r["value"] == "ZZDO-0001")
         assert first["outcome"] == "created"
-        assert "sales_order_unresolved" in first["identity"]["warnings"]
+        # Words, never the slug (review S4): the identity is printed as is on the rows card.
+        assert first["identity"]["warnings"] == "sales order not found"
+        assert "sales_order_unresolved" not in str(first["identity"])
         assert "sales order not found" in (first["message"] or "")
 
     def test_dp_11_adopts_tracking_row_by_number_and_writes_nothing(self, task_db, monkeypatch):
@@ -505,12 +514,17 @@ class TestPreview:
         adopted = next(r for r in _job_rows(db, job_id) if r["value"] == "ZZDO-0001")
         assert adopted["outcome"] == "updated"
         assert "adopted" in (adopted["message"] or "").lower()
-        # Flat keys: `_json_safe_identity` prints identity in the UI and stringifies any
-        # nested value, so the per-line counters are their own keys.
+        # Adoption is the message itself, never a warning (review N5): no "(warnings" suffix,
+        # no slug anywhere, and it does not count toward `with_warnings`.
+        assert "(warnings" not in (adopted["message"] or "")
+        assert "adopted_by_doc_no" not in str(adopted)
+        assert counts["with_warnings"] == 0
+        # Flat keys, non-zero only (review S4): `_json_safe_identity` prints identity in the
+        # UI and stringifies any nested value, so the per-line counters are their own keys.
         assert {k: v for k, v in adopted["identity"].items() if k.startswith("lines_")} == {
-            "lines_created": 1, "lines_updated": 0, "lines_deleted": 1, "lines_adopted": 1,
-            "lines_skipped": 0, "lines_linked": 0, "lines_unlinked": 2,
+            "lines_created": 1, "lines_deleted": 1, "lines_adopted": 1, "lines_unlinked": 2,
         }
+        assert "source_ref" not in adopted["identity"]
         # Nothing landed: the tracking row still has no doc_key, its two old lines stand.
         assert _tracking_snapshot(db, order_id) == before
         assert before["doc_key"] is None
@@ -903,9 +917,9 @@ class TestSecurityFixRound:
         assert _csv_safe("+1+cmd") == "'+1+cmd"
         assert _csv_safe("@SUM(1)") == "'@SUM(1)"
         assert _csv_safe("\tx") == "'\tx"
-        assert _csv_safe("-2+3") == "-2+3"
-        assert _csv_safe("-5") == "-5"
-        assert _csv_safe("-.5") == "-.5"
+        # Any leading dash (OWASP; review N4): `-1+cmd|' /C calc'!A0` is a formula too.
+        assert _csv_safe("-1+cmd|' /C calc'!A0") == "'-1+cmd|' /C calc'!A0"
+        assert _csv_safe("-5") == "'-5"
         assert _csv_safe("-cmd") == "'-cmd"
         assert _csv_safe("DO-2609/0077") == "DO-2609/0077"
         assert _csv_safe(None) == ""
@@ -1027,3 +1041,84 @@ class TestSecurityFixRound:
         cell = sheet["A2"]
         assert cell.value == "=cmd|' /C calc'!A0"
         assert cell.data_type == "s"
+
+
+# ============================================== correctness review fix round (30 Sep)
+
+
+class TestCorrectnessFixRound:
+    """Reviewer findings on 69c1f263 / 40884ec3: S1 (a push-written DO must preview as
+    unchanged), S2 (duplicate lines summed), S3 (`with_warnings` counts shown rows only)."""
+
+    def test_s1_a_document_the_feed_pushed_previews_as_unchanged(self, task_db, monkeypatch):
+        """The feed's push carries the vendor record WITHOUT `source_ref`; the pull's rows
+        carry it. The pull must strip it before the ingest, or the stored `source_record`
+        differs and every document reads `updated` with nothing to show."""
+        from app.services.autocount_doc_ingest_service import AutocountDocIngestService
+
+        db, factory = task_db
+        fake = _FakeFoundryX()
+        _patch_foundryx(monkeypatch, fake, db)
+        _seed_masters(db)
+        pushed = AutocountDocIngestService(db, None, company_id=DEFAULT_COMPANY_ID, book=BOOK).ingest(
+            ENTITY, _do_rows(book=None)
+        )
+        db.commit()
+        assert {r.outcome.value for r in pushed.records} == {"created"}
+        stamps = {o["order_number"]: o["updated_at"] for o in _orders(db, 900001, 900002)}
+
+        job_id = _prepare_do_preview(db, fake, rows=_do_rows())
+        _run_preview(monkeypatch, factory, job_id)
+        counts = _counts(db, job_id)
+        assert counts["unchanged"] == 2 and counts["updated"] == 0, counts
+        assert _job_rows(db, job_id) == []
+
+        apply_id = _prepare_do_apply(db, fake, rows=_do_rows())
+        _run_apply(monkeypatch, factory, apply_id)
+        assert _job_row(db, apply_id)["metadata"]["autocount_apply"]["counts"]["unchanged"] == 2
+        assert {o["order_number"]: o["updated_at"] for o in _orders(db, 900001, 900002)} == stamps
+        assert all("source_ref" not in o["source_record"] for o in _orders(db, 900001, 900002))
+
+    def test_s2_compare_sums_the_same_item_listed_twice_on_one_document(self):
+        from app.services.autocount_pull_compare import compare_delivery_orders
+
+        pull_rows = _do_rows()
+        twice = copy.deepcopy(pull_rows[0]["Details"][0])
+        twice.update({"DtlKey": 910077, "Seq": 48, "Qty": 3.0})
+        pull_rows[0]["Details"].append(twice)  # ZZDO-0001 / ZZAC-P1 / ZZAC-WH1: 10 + 3
+
+        split = [
+            {"Doc No": "ZZDO-0001", "Item Code": "ZZAC-P1", "Location": "ZZAC-WH1", "Qty": 5},
+            {"Doc No": "ZZDO-0001", "Item Code": "ZZAC-P1", "Location": "ZZAC-WH1", "Qty": 8},
+        ]
+        result = compare_delivery_orders(split, pull_rows)
+        assert result["summary"]["matched"] == 1 and result["differences"] == []
+
+        one_row = [{"Doc No": "ZZDO-0001", "Item Code": "ZZAC-P1", "Location": "ZZAC-WH1", "Qty": 12}]
+        result = compare_delivery_orders(one_row, pull_rows)
+        assert result["differences"] == [{
+            "item_code": "ZZAC-P1", "doc_no": "ZZDO-0001", "location": "ZZAC-WH1",
+            "field": "qty", "excel": 12, "pull": 13,
+        }]
+
+    def test_s3_with_warnings_counts_shown_rows_only(self, task_db, monkeypatch):
+        """An unchanged document writes no row, so it must not count toward the tile; a
+        second pull of a window whose DOs all carry an unresolved sales order reads
+        `with_warnings 0`, not the whole window."""
+        db, factory = task_db
+        fake = _FakeFoundryX()
+        _patch_foundryx(monkeypatch, fake, db)
+        _seed_masters(db)
+        rows = _do_rows()
+        for row in rows:
+            row["RefDocNo"] = f"{MARKER}-SO-NOWHERE"
+        first = _prepare_do_apply(db, fake, rows=rows)
+        _run_apply(monkeypatch, factory, first)
+        assert _job_row(db, first)["metadata"]["autocount_apply"]["counts"]["with_warnings"] == 2
+
+        job_id = _prepare_do_preview(db, fake, rows=rows)
+        _run_preview(monkeypatch, factory, job_id)
+        counts = _counts(db, job_id)
+        assert counts["unchanged"] == 2
+        assert counts["with_warnings"] == 0
+        assert _job_rows(db, job_id) == []

@@ -638,8 +638,12 @@ _DO_WARNING_TEXT = {
 }
 
 
+def _do_warning_names(warnings: list[str]) -> list[str]:
+    return [_DO_WARNING_TEXT.get(w, w.replace("_", " ")) for w in warnings if w != WARN_ADOPTED]
+
+
 def _do_warning_suffix(warnings: list[str]) -> str:
-    names = [_DO_WARNING_TEXT.get(w, w.replace("_", " ")) for w in warnings if w != WARN_ADOPTED]
+    names = _do_warning_names(warnings)
     return f" (warnings: {', '.join(names)})" if names else ""
 
 
@@ -658,6 +662,19 @@ def _do_ingest(db, job: ImportJob, *, header: dict, rows: list[dict]) -> Autocou
     return AutocountDocIngestService(db, None, company_id=company_id, book=book)
 
 
+def _ingest_rows(rows: list[dict]) -> list[dict]:
+    """The rows as the DO feed's own push sends them: the vendor record WITHOUT the
+    snapshot's `source_ref` (review S1). The ingest stores the whole record as
+    `source_record` and diffs it on the next push, so a pull that left `source_ref` in
+    would make every push-then-pull cycle read as `updated`, and the first pull after the
+    feed goes live would rewrite every document it had already written. The contentHash
+    check ran on the untouched rows before this."""
+    return [
+        {k: v for k, v in row.items() if k != "source_ref"} if isinstance(row, dict) else row
+        for row in rows
+    ]
+
+
 def _tally_delivery_orders(outcome_writer: ImportOutcome, rows: list[dict], result) -> dict:
     """One `import_job_rows` row per document the ingest would create, update or adopt,
     and per failed or retryable one; `unchanged` writes no row (the AC-PP-3 rule). Returns
@@ -671,17 +688,21 @@ def _tally_delivery_orders(outcome_writer: ImportOutcome, rows: list[dict], resu
         doc_no = str(raw.get("DocNo") or record.source_ref or "").strip()
         warnings = list(record.warnings or [])
         lines = dict(record.lines or {})
-        # Flat on purpose: `_json_safe_identity` prints identity in the UI and stringifies
-        # any nested value, so the per-line counters are their own keys and the warnings
-        # one comma-joined string.
+        # Flat on purpose, and only what a person reads (review S4): `_json_safe_identity`
+        # prints identity in the UI and stringifies any nested value, so the per-line
+        # counters are their own keys (non-zero ones only) and the warnings one
+        # comma-joined string in words, never a slug.
         identity = {
             "doc_no": doc_no,
             "doc_key": raw.get("DocKey"),
-            "source_ref": record.source_ref,
-            **{f"lines_{key}": value for key, value in lines.items()},
-            "warnings": ", ".join(warnings),
+            **{f"lines_{key}": value for key, value in lines.items() if value},
+            "warnings": ", ".join(_do_warning_names(warnings)),
         }
-        if any(w != WARN_ADOPTED for w in warnings):
+        # `with_warnings` counts documents the Changes tab SHOWS with a warning (review
+        # S3): an unchanged document writes no row, and `stale_ignored` is not a warning
+        # about the document's content.
+        has_warning = any(w not in (WARN_ADOPTED, "stale_ignored") for w in warnings)
+        if has_warning and record.outcome != IngestOutcome.UNCHANGED:
             tally["with_warnings"] += 1
         suffix = _do_warning_suffix(warnings)
 
@@ -718,14 +739,14 @@ def _tally_delivery_orders(outcome_writer: ImportOutcome, rows: list[dict], resu
             outcome_writer.fail(
                 code=codes.AUTOCOUNT_RETRYABLE,
                 message="; ".join(f"{k}: {v}" for k, v in (record.errors or {}).items()) or None,
-                value=doc_no, identity={**identity, "errors": record.errors or {}},
+                value=doc_no, identity=identity,
             )
         else:  # FAILED
             tally["failed"] += 1
             outcome_writer.fail(
                 code=_first_error_code(record.errors),
                 message="; ".join(f"{k}: {v}" for k, v in (record.errors or {}).items()) or None,
-                value=doc_no, identity={**identity, "errors": record.errors or {}},
+                value=doc_no, identity=identity,
             )
     return tally
 
@@ -744,13 +765,14 @@ def _preview_delivery_orders(db, job: ImportJob, pull: dict) -> dict:
     job_id = str(job.job_id)
     _publish_preview_progress(job_id, 0, len(rows))
     ingest = _do_ingest(db, job, header=header, rows=rows)
+    records = _ingest_rows(rows)
     result = ingest.ingest(
-        DELIVERY_ORDERS_ENTITY, rows, dry_run=True,
+        DELIVERY_ORDERS_ENTITY, records, dry_run=True,
         on_progress=lambda processed, total: _publish_preview_progress(job_id, processed, total),
     )
 
     outcome_writer = ImportOutcome(job.id)
-    tally = _tally_delivery_orders(outcome_writer, rows, result)
+    tally = _tally_delivery_orders(outcome_writer, records, result)
     outcome_writer.flush()
 
     pull["confirm_blocked_reason"] = None
@@ -776,11 +798,12 @@ def _apply_delivery_orders(db, job: ImportJob, snapshot_id: str) -> dict:
         client, snapshot_id=snapshot_id, company_code=_company_code(db, job.company_id)
     )
     ingest = _do_ingest(db, job, header=header, rows=rows)
-    result = ingest.ingest(DELIVERY_ORDERS_ENTITY, rows)
+    records = _ingest_rows(rows)
+    result = ingest.ingest(DELIVERY_ORDERS_ENTITY, records)
     db.commit()
 
     outcome_writer = ImportOutcome(job.id)
-    tally = _tally_delivery_orders(outcome_writer, rows, result)
+    tally = _tally_delivery_orders(outcome_writer, records, result)
     outcome_writer.flush()
     return {
         "total": len(result.records),

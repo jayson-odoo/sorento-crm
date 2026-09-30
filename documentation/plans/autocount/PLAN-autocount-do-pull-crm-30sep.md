@@ -63,8 +63,10 @@ orchestrator's relay (this sandbox cannot open that repo); the points this side 
   (the same ref the DO feed and ingest use). The **book is read off the rows' `source_ref`
   prefix** (header `book` accepted first when present); rows naming two books, or none ->
   the preview fails with "AutoCount snapshot names no book; pull again". Rows are handed to
-  the ingest untouched (no mapping, one writer; `source_record` keeps `source_ref` exactly as
-  the feed's own push does).
+  the ingest as the feed's own push sends them: the vendor record with the snapshot's
+  `source_ref` key removed (review S1: the ingest stores and diffs the whole record as
+  `source_record`, and the push carries no `source_ref`, so leaving it in would make every
+  push-then-pull cycle read as `updated`). No other mapping, one writer.
 
 CRM side of the scope: `PullStartBody` gains an optional `scope: {fromDay?, toDay?, docNo?}`
 passed through flat to `client.build` and stored on the pull (`autocount_pull.scope`,
@@ -253,6 +255,33 @@ Verdict "needs work", one blocker, all taken in the fix round (`TestSecurityFixR
 
 Clean: multi-company scoping (every ingest lookup filters `company_id`), owner-only routes,
 the scope dict (allow-listed twice, JSON body only, never the URL), the migration's sweep.
+
+## 1.10 Phase 3 correctness review (30 Sep, on 69c1f263 + 40884ec3) and what changed
+
+Verdict "needs work"; kill tests 12 of 16 backend mutations killed, 1 of 6 frontend. Taken in
+(`TestCorrectnessFixRound` + the frontend tests named):
+
+- **Blocker 1** main gained `lsa_0001_show_all_counts` on the same parent: merged main,
+  `scripts/alembic-reparent.sh` re-parented `do_pull_0001_perm`; the migration test now pins
+  "the one head" (`ScriptDirectory.get_heads()`), never a literal parent.
+- **Blocker 2** frontend kill gaps: `useAutocountPullAction` defaults its slug from
+  `AUTOCOUNT_PULL_PERMISSION[entity]` and OrdersList passes the entity alone (pinned);
+  `page.deliveryOrdersPull.test.tsx` renders the job page for the DO job type (review card,
+  label, Back to Delivery Orders); `PullExcelViewTab.columns.test.ts` pins the DO columns.
+- **S1** the pull's rows carry `source_ref`, the push's do not, and the ingest diffs the whole
+  record: a push-then-pull cycle read every document as `updated`. `_ingest_rows` strips
+  `source_ref` before the ingest (after the contentHash check); pinned push-then-pull =
+  `unchanged`, `source_record` without `source_ref`. Plan 1.2 corrected.
+- **S2** duplicate (Doc No, Item Code, Location) lines are summed on both sides of the compare.
+- **S3** `with_warnings` counts only documents that write a row, `stale_ignored` excluded.
+- **S4** row identity: warnings in words, non-zero line counters only, no `source_ref`, no
+  `errors` dict.
+- **S5 / N2** the Excel view shows a quantity at its own precision and the document date as
+  dd/MM/yyyy. **S6** compare tab DO column and three-part only-in split pinned. **N1** UAC
+  says nine counters. **N4** `_csv_safe` prefixes any leading dash (OWASP). **N5** adoption
+  never appears in the warnings suffix, pinned.
+- **N3** (an open pull is reused whatever scope the second click names): left as is; the
+  trigger is the scope dialog (1.8), where the click will name a window.
 
 ## 2. Build order (tests first)
 

@@ -15,11 +15,12 @@ import {
   startPull,
   startPullErrorMessage,
 } from '../services/autocountPullService';
-import type {
-  AutocountPull,
-  AutocountPullEntity,
-  AutocountPullPhase,
-  AutocountPullRowsQuery,
+import {
+  AUTOCOUNT_PULL_PERMISSION,
+  type AutocountPull,
+  type AutocountPullEntity,
+  type AutocountPullPhase,
+  type AutocountPullRowsQuery,
 } from '../types/autocountPull.types';
 
 /**
@@ -218,12 +219,14 @@ export interface AutocountPullAction {
 }
 
 /**
- * The Products list / Stock Balance grid's "Pull from AutoCount" secondary action, shared so
- * both own one gate and one click behaviour instead of an inline copy each.
+ * The Products list / Stock Balance grid / Delivery Orders list's "Pull from AutoCount"
+ * secondary action, shared so each owns one gate and one click behaviour instead of an
+ * inline copy. `permissionSlug` defaults to the entity's own slug
+ * (`AUTOCOUNT_PULL_PERMISSION`), so a caller cannot pair an entity with another entity's gate.
  */
 export function useAutocountPullAction(
   entity: AutocountPullEntity,
-  permissionSlug: string,
+  permissionSlug: string = AUTOCOUNT_PULL_PERMISSION[entity],
 ): AutocountPullAction {
   const visible = useHasPermission(permissionSlug);
   const router = useRouter();

@@ -88,8 +88,9 @@ Actor: the Sorento checker who today uploads the "Import delivery order lines" s
   `order_management.orders.autocount_pull`; with an open DO pull the label is "Review pull".
 - **AC-DP-41 [FE]** The job page treats `autocount_delivery_orders_pull` as a pull job
   (review card rendered, label "AutoCount Delivery Orders Pull", Back to Delivery Orders).
-- **AC-DP-42 [FE]** `AutocountPullReview` renders the eight DO counters for a DO pull in
-  review; the Excel view renders the DO columns.
+- **AC-DP-42 [FE]** `AutocountPullReview` renders the nine DO counters for a DO pull in
+  review; the Excel view renders the DO columns (quantities at their own precision, dates
+  as dd/MM/yyyy); the Compare tab shows a Doc No column and splits a three-part only-in label.
 
 ## Hand test
 

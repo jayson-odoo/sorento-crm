@@ -9,6 +9,14 @@
  *  DO ingest and reviews on this same page. */
 export type AutocountPullEntity = 'products' | 'stock_balances' | 'delivery_orders';
 
+/** The permission slug that gates each entity's pull (backend `ENTITY_PERMISSIONS`). One
+ *  place, so a list cannot wire the shared action with the wrong slug (review blocker 2). */
+export const AUTOCOUNT_PULL_PERMISSION: Record<AutocountPullEntity, string> = {
+  products: 'master_data.products.autocount_pull',
+  stock_balances: 'inventory.stock.autocount_pull',
+  delivery_orders: 'order_management.orders.autocount_pull',
+};
+
 /** The flat scope a delivery-orders build takes (DO-PULL-SS contract): a day window, or one
  *  document by number; `null` / absent = the gateway's default, the last 31 MYT days. */
 export interface AutocountPullScope {

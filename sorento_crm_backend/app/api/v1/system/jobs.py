@@ -175,16 +175,15 @@ async def get_job(
 
 #: Cell prefixes a spreadsheet reads as a formula when a CSV is opened (DO-PULL-CRM
 #: security review S2: an AutoCount document number or message is untrusted text that
-#: lands in `value` / `message`). A leading `-` is guarded only when what follows is not a
-#: number, so a negative quantity still exports as a number.
-_CSV_FORMULA_PREFIXES = ("=", "+", "@", "\t", "\r")
+#: lands in `value` / `message`). The OWASP set, a leading `-` included: `-1+cmd|...`
+#: is a formula too, and these two columns are text (codes, numbers, messages), never a
+#: numeric cell a spreadsheet has to sum.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 
 def _csv_safe(value) -> str:
     text_value = str(value) if value is not None else ""
     if text_value.startswith(_CSV_FORMULA_PREFIXES):
-        return "'" + text_value
-    if text_value.startswith("-") and not text_value[1:2].isdigit() and text_value[1:2] != ".":
         return "'" + text_value
     return text_value
 

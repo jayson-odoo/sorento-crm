@@ -34,6 +34,7 @@ vi.mock('../services/autocountPullService', () => ({
 }));
 
 import { useAutocountPullAction } from './useAutocountPull';
+import { AUTOCOUNT_PULL_PERMISSION } from '../types/autocountPull.types';
 
 const SLUG = 'order_management.orders.autocount_pull';
 
@@ -50,6 +51,18 @@ beforeEach(() => {
 });
 
 describe('useAutocountPullAction - Delivery Orders (AC-DP-40)', () => {
+  it('defaults the gate to the entity\'s own slug, the one OrdersList relies on (review blocker 2)', async () => {
+    expect(AUTOCOUNT_PULL_PERMISSION.delivery_orders).toBe(SLUG);
+    expect(AUTOCOUNT_PULL_PERMISSION.products).toBe('master_data.products.autocount_pull');
+    expect(AUTOCOUNT_PULL_PERMISSION.stock_balances).toBe('inventory.stock.autocount_pull');
+    useHasPermission.mockReturnValue(false);
+    getCurrentPull.mockResolvedValue(null);
+
+    renderHook(() => useAutocountPullAction('delivery_orders'), { wrapper });
+
+    expect(useHasPermission).toHaveBeenCalledWith(SLUG);
+  });
+
   it('is gated on order_management.orders.autocount_pull', async () => {
     useHasPermission.mockReturnValue(false);
     getCurrentPull.mockResolvedValue(null);

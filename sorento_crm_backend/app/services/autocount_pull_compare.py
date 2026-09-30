@@ -288,13 +288,19 @@ def compare_delivery_orders(excel_rows: list[dict], pull_rows: list[dict]) -> di
     Details row with no `ItemCode` is not a line, the DO ingest's own rule. Only-in labels
     are `DOCNO|ITEM|LOCATION`. Same summary shape as the other two comparisons; no quantity
     totals (a DO line quantity total means nothing across documents)."""
+    # One entry per (Doc No, Item Code, Location) on each side, quantities SUMMED (review
+    # S2): the same item can sit twice on one document (two batches), and the sheet and
+    # the pull may split it differently. The first row seen keeps the labels.
     excel_by_key: dict[tuple[str, str, str], dict] = {}
+    excel_qty: dict[tuple[str, str, str], Decimal] = {}
     for row in excel_rows:
         key = _do_excel_key(row)
         if key[0] and key[1]:
-            excel_by_key[key] = row
+            excel_by_key.setdefault(key, row)
+            excel_qty[key] = excel_qty.get(key, Decimal("0")) + _do_qty(_excel_value(row, _DO_QTY_KEYS))
 
     pull_by_key: dict[tuple[str, str, str], tuple[dict, dict]] = {}
+    pull_qty: dict[tuple[str, str, str], Decimal] = {}
     for rec in pull_rows:
         if not isinstance(rec, dict):
             continue
@@ -302,7 +308,8 @@ def compare_delivery_orders(excel_rows: list[dict], pull_rows: list[dict]) -> di
             if not isinstance(line, dict) or not str(line.get("ItemCode") or "").strip():
                 continue
             key = (_key(rec.get("DocNo")), _key(line.get("ItemCode")), _key(line.get("Location")))
-            pull_by_key[key] = (rec, line)
+            pull_by_key.setdefault(key, (rec, line))
+            pull_qty[key] = pull_qty.get(key, Decimal("0")) + _do_qty(line.get("Qty"))
 
     only_in_excel = sorted(
         _do_label(
@@ -321,16 +328,15 @@ def compare_delivery_orders(excel_rows: list[dict], pull_rows: list[dict]) -> di
     differences: list[dict] = []
     matched = 0
     for key in common_keys:
-        excel_row = excel_by_key[key]
         rec, line = pull_by_key[key]
-        excel_qty = _do_qty(_excel_value(excel_row, _DO_QTY_KEYS))
-        pull_qty = _do_qty(line.get("Qty"))
-        if excel_qty != pull_qty:
+        if excel_qty[key] != pull_qty[key]:
             differences.append({
                 "item_code": str(line.get("ItemCode") or "").strip(),
                 "doc_no": str(rec.get("DocNo") or "").strip(),
                 "location": str(line.get("Location") or "").strip(),
-                "field": "qty", "excel": _json_number(excel_qty), "pull": _json_number(pull_qty),
+                "field": "qty",
+                "excel": _json_number(excel_qty[key]),
+                "pull": _json_number(pull_qty[key]),
             })
         else:
             matched += 1
