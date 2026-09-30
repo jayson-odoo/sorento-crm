@@ -13,14 +13,25 @@
  *          contact's label, a transition to open clears both, a note-only PATCH touches neither)
  *   GET   /api/v1/public/portal/customer-asks?state=done&page=&limit=  (unchanged, "Show done")
  * `StockAsk` gains `done_at` and `done_by`.
- *   GET   /api/v1/public/portal/customer-asks/{id}/conversation[?whole_day=true]  (S3, plan 3.6)
- *     -> { messages: [{ id, direction: 'in' | 'out', text, at }], ask_message_id: id | null }
- *        Same gate and scope as the PATCH.
+ *   GET   /api/v1/public/portal/customer-asks/{id}/conversation  (S3, plan 3.6; ASKS-UX)
+ *     -> { messages: [{ id, direction: 'in' | 'out', text, at }], ask_message_id: id | null,
+ *          ask_message_ref: <Respond message id> | null }
+ *        Same gate and scope as the PATCH. The opened card reads only `ask_message_ref` from it
+ *        (the anchor the shared thread highlights); the window rows predate the thread.
+ *   GET   /api/v1/public/portal/customer-asks/{id}/conversation/page?before|after|around&limit
+ *   GET   /api/v1/public/portal/customer-asks/{id}/conversation/search?q&limit  (ASKS-UX item 3)
+ *     -> the SAME shapes as the ticket drawer's `.../conversation-sla-tracking/{id}/conversation/
+ *        {page,search}` (`ConversationThreadPage`, `{ items: ConversationSearchMatch[] }`), the
+ *        two loaders `useConversationThread` takes. Same gate and scope as the PATCH.
  */
 import { buildDataGridParams } from '@/lib/api-client';
 import { portalFetch, unwrap } from './portal-client';
 import type { StockAsk, StockAskPage, StockAskPatch, StockAskState } from '@/lib/stock-asks';
 import type { AskConversation, AskTodoPayload } from '@/lib/stock-asks-todo';
+import type {
+  ConversationSearchMatch,
+  ConversationThreadPage,
+} from '@/components/common/conversation/useConversationThread';
 
 const BASE = '/api/v1/public/portal/customer-asks';
 
@@ -64,13 +75,38 @@ export async function updateCustomerAsk(askId: string, patch: StockAskPatch): Pr
   return unwrap<StockAsk>(res, 'Failed to update the ask');
 }
 
-/** The chat around one ask, for the opened card. */
-export async function getAskConversation(
-  askId: string,
-  opts: { wholeDay: boolean },
-): Promise<AskConversation> {
-  const qs = opts.wholeDay ? '?whole_day=true' : '';
-  const res = await portalFetch(`${BASE}/${encodeURIComponent(askId)}/conversation${qs}`);
+/** The ask's anchor in its thread (`ask_message_ref`), for the opened card. */
+export async function getAskConversation(askId: string): Promise<AskConversation> {
+  const res = await portalFetch(`${BASE}/${encodeURIComponent(askId)}/conversation`);
   if (res.status === 403) throw new NotASalesAgentError();
   return unwrap<AskConversation>(res, 'Failed to load the conversation');
+}
+
+/** One window of the ask's contact thread; no cursor is the live tail. */
+export async function getAskConversationPage(
+  askId: string,
+  params: { before?: string; after?: string; around?: string; limit?: number },
+): Promise<ConversationThreadPage> {
+  const sp = new URLSearchParams();
+  if (params.before) sp.set('before', params.before);
+  if (params.after) sp.set('after', params.after);
+  if (params.around) sp.set('around', params.around);
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  const qs = sp.toString();
+  const res = await portalFetch(`${BASE}/${encodeURIComponent(askId)}/conversation/page${qs ? `?${qs}` : ''}`);
+  if (res.status === 403) throw new NotASalesAgentError();
+  return unwrap<ConversationThreadPage>(res, 'Failed to load earlier messages');
+}
+
+/** In-thread search over the ask's contact thread, newest first. */
+export async function searchAskConversation(
+  askId: string,
+  query: string,
+  limit = 100,
+): Promise<ConversationSearchMatch[]> {
+  const sp = new URLSearchParams({ q: query, limit: String(limit) });
+  const res = await portalFetch(`${BASE}/${encodeURIComponent(askId)}/conversation/search?${sp.toString()}`);
+  if (res.status === 403) throw new NotASalesAgentError();
+  const body = await unwrap<{ items?: ConversationSearchMatch[] }>(res, 'Search failed');
+  return body.items ?? [];
 }

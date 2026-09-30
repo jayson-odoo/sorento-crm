@@ -46,6 +46,9 @@ const getCustomerAsksTodo = vi.fn();
 const listCustomerAsks = vi.fn();
 const updateCustomerAsk = vi.fn();
 const getAskConversation = vi.fn();
+const getAskConversationPage = vi.fn();
+const searchAskConversation = vi.fn();
+vi.mock('@/components/common/AttachmentPreviewModal', () => ({ __esModule: true, default: () => null }));
 vi.mock('../lib/customer-asks-service', async () => {
   const actual = await vi.importActual<typeof import('../lib/customer-asks-service')>(
     '../lib/customer-asks-service',
@@ -56,6 +59,8 @@ vi.mock('../lib/customer-asks-service', async () => {
     listCustomerAsks: (...a: unknown[]) => listCustomerAsks(...a),
     updateCustomerAsk: (...a: unknown[]) => updateCustomerAsk(...a),
     getAskConversation: (...a: unknown[]) => getAskConversation(...a),
+    getAskConversationPage: (...a: unknown[]) => getAskConversationPage(...a),
+    searchAskConversation: (...a: unknown[]) => searchAskConversation(...a),
   };
 });
 
@@ -115,12 +120,19 @@ function payload(over: Record<string, unknown> = {}) {
   return { today_start: TODAY_START, open: [ROW, TODAY_ROW], done_today: [], truncated: false, ...over };
 }
 
-const CONVERSATION = {
-  messages: [
-    { id: 1, direction: 'in', text: 'Boss, SRT5674 ada stock?', at: '2026-09-27T04:58:00' },
-    { id: 2, direction: 'out', text: 'SRT5674 x 150: no stock', at: '2026-09-27T05:00:00' },
+/** ASKS-UX item 3: the anchor read names the Respond message id of the tagged row. */
+const BASE_US = 1_790_000_000_000_000;
+const CONVERSATION = { messages: [], ask_message_id: 2, ask_message_ref: String(BASE_US + 2_000_000) };
+/** The shared thread's tail page, in the shape the ticket drawer reads. */
+const TAIL_PAGE = {
+  items: [
+    { messageId: BASE_US + 1_000_000, traffic: 'incoming', message: { type: 'text', text: 'Boss, SRT5674 ada stock?' }, status: [] },
+    { messageId: BASE_US + 2_000_000, traffic: 'outgoing', message: { type: 'text', text: 'SRT5674 x 150: no stock' }, status: [] },
   ],
-  ask_message_id: 2,
+  has_more_older: false,
+  has_more_newer: false,
+  oldest_message_id: String(BASE_US + 1_000_000),
+  newest_message_id: String(BASE_US + 2_000_000),
 };
 
 /** The landing's view toggle: force the cards view whatever the stored default is. */
@@ -146,6 +158,8 @@ beforeEach(() => {
   gridProps.length = 0;
   window.localStorage.clear();
   getAskConversation.mockResolvedValue(CONVERSATION);
+  getAskConversationPage.mockResolvedValue(TAIL_PAGE);
+  searchAskConversation.mockResolvedValue([]);
   getCustomerAsksTodo.mockResolvedValue(payload());
   listCustomerAsks.mockResolvedValue({ data: [DONE_ROW], pagination: { total: 1, page: 1, limit: 20 } });
   updateCustomerAsk.mockResolvedValue({ ...ROW, state: 'done' });
@@ -243,23 +257,26 @@ describe('CustomerAsksList (portal to-do body)', () => {
     showCards();
     fireEvent.click(screen.getByText('Hock Lee Trading'));
     const dialog = await screen.findByRole('dialog');
-    await waitFor(() => expect(getAskConversation).toHaveBeenCalledWith('ask-1', { wholeDay: false }));
+    await waitFor(() => expect(getAskConversation).toHaveBeenCalledWith('ask-1'));
+    await waitFor(() => expect(getAskConversationPage).toHaveBeenCalledWith('ask-1', { limit: 50 }));
     expect(await within(dialog).findByText('Boss, SRT5674 ada stock?')).toBeInTheDocument();
-    expect(within(dialog).getByText('This ask')).toBeInTheDocument();
+    expect(within(dialog).getByTestId('chat-scroll-container')).toBeInTheDocument(); // the shared thread
+    expect(within(dialog).getByText('This enquiry')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Search messages' })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Show the whole day' })).toBeNull();
     expect(within(dialog).getByRole('button', { name: /Jump to message/ })).toBeInTheDocument();
     expect(within(dialog).queryByRole('link', { name: 'Open in Conversations' })).toBeNull(); // CRM only
     expect(within(dialog).getByRole('button', { name: 'Done' })).toBeInTheDocument();
     expect(within(dialog).queryByRole('button', { name: 'Reopen' })).toBeNull(); // an open ask
   });
 
-  it('Show the whole day refetches with wholeDay true', async () => {
+  // ASKS-UX item 1 (AC-AU02): the asker is a filter.
+  it('the Filter popover offers Contact', async () => {
     render(<CustomerAsksList search="" />);
     await screen.findByText('Hock Lee Trading');
-    showCards();
-    fireEvent.click(screen.getByText('Hock Lee Trading'));
-    const dialog = await screen.findByRole('dialog');
-    fireEvent.click(await within(dialog).findByRole('button', { name: 'Show the whole day' }));
-    await waitFor(() => expect(getAskConversation).toHaveBeenCalledWith('ask-1', { wholeDay: true }));
+    await openMenu('Filter');
+    expect(screen.getByText('Contact')).toBeInTheDocument();
+    expect(screen.getByText('Any contact')).toBeInTheDocument(); // the select's placeholder
   });
 
   it('Save note (not blur) writes the note through updateCustomerAsk; Done at the foot clears the ask', async () => {
@@ -281,7 +298,7 @@ describe('CustomerAsksList (portal to-do body)', () => {
   it('Show done toggles the done history (state=done) under the to-do', async () => {
     render(<CustomerAsksList search="" />);
     await screen.findByText('Hock Lee Trading');
-    showCards();
+    showList();
     fireEvent.click(screen.getByRole('button', { name: 'Show done' }));
     await waitFor(() =>
       expect(listCustomerAsks).toHaveBeenCalledWith(expect.objectContaining({ state: 'done', page: 1 })),
@@ -290,6 +307,49 @@ describe('CustomerAsksList (portal to-do body)', () => {
     expect(screen.getByText('Hock Lee Trading')).toBeInTheDocument(); // the to-do stays
     fireEvent.click(screen.getByRole('button', { name: 'Hide done' }));
     await waitFor(() => expect(screen.queryByText('SRT-CLEARED')).toBeNull());
+  });
+
+  // ASKS-UX item 2 (AC-AU03 to AC-AU05): the done history follows the view.
+  it('Show done in Cards view renders the done asks as cards under a Done heading, no grid', async () => {
+    render(<CustomerAsksList search="" />);
+    await screen.findByText('Hock Lee Trading');
+    showCards();
+    fireEvent.click(screen.getByRole('button', { name: 'Show done' }));
+    await screen.findByText('Cleared Trading');
+    expect(screen.queryAllByRole('columnheader')).toHaveLength(0);
+    expect(screen.getByRole('heading', { name: 'Done' })).toBeInTheDocument();
+    const card = cardOf('Cleared Trading');
+    expect(card.textContent).toContain('Asked: SRT-CLEARED x 150');
+    expect(within(card).getByRole('button', { name: 'Reopen' })).toBeInTheDocument();
+    // Switching to List swaps the same history for the grid.
+    showList();
+    await waitFor(() => expect(screen.getAllByRole('columnheader').map((h) => h.textContent?.trim())).toContain('Done by'));
+  });
+
+  it('a done card opens the conversation Drawer; its Reopen reopens and refetches the to-do', async () => {
+    render(<CustomerAsksList search="" />);
+    await screen.findByText('Hock Lee Trading');
+    showCards();
+    fireEvent.click(screen.getByRole('button', { name: 'Show done' }));
+    await screen.findByText('Cleared Trading');
+    fireEvent.click(within(cardOf('Cleared Trading')).getByRole('button', { name: 'Reopen' }));
+    await waitFor(() => expect(updateCustomerAsk).toHaveBeenCalledWith('ask-3', { state: 'open' }));
+    await waitFor(() => expect(getCustomerAsksTodo).toHaveBeenCalledTimes(2));
+    expect(getAskConversation).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('Cleared Trading'));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(getAskConversation).toHaveBeenCalledWith('ask-3'));
+    expect(await within(dialog).findByRole('button', { name: 'Reopen' })).toBeInTheDocument();
+  });
+
+  it('an empty done history in Cards view reads "No done asks yet"', async () => {
+    listCustomerAsks.mockResolvedValue({ data: [], pagination: { total: 0, page: 1, limit: 20 } });
+    render(<CustomerAsksList search="" />);
+    await screen.findByText('Hock Lee Trading');
+    showCards();
+    fireEvent.click(screen.getByRole('button', { name: 'Show done' }));
+    expect(await screen.findByText('No done asks yet')).toBeInTheDocument();
+    expect(screen.queryByText('No data available')).toBeNull();
   });
 
   it('narrows the to-do by the landing search box', async () => {
@@ -376,10 +436,12 @@ describe('CustomerAsksList (portal to-do body)', () => {
 // AC-ST214 (FE half): the Show done history names who cleared each ask.
 
 function doneByCells(rowText: string): string {
-  const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+  // The history's OWN table: in List view the to-do grid above it has headers of its own.
+  const row = screen.getByText(rowText).closest('tr') as HTMLElement;
+  const table = row.closest('table') as HTMLElement;
+  const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent?.trim());
   const at = headers.indexOf('Done by');
   expect(at, `a "Done by" column header in ${JSON.stringify(headers)}`).toBeGreaterThan(-1);
-  const row = screen.getByText(rowText).closest('tr') as HTMLElement;
   return (within(row).getAllByRole('cell')[at].textContent ?? '').trim();
 }
 
@@ -395,7 +457,7 @@ describe('CustomerAsksList Show done history: Done by column (AC-ST214)', () => 
     });
     render(<CustomerAsksList search="" />);
     await screen.findByText('Hock Lee Trading');
-    showCards();
+    showList();
     fireEvent.click(screen.getByRole('button', { name: 'Show done' }));
     await screen.findByText('SRT-NAMED');
     expect(doneByCells('SRT-NAMED')).toBe(`Done by Agent Lim, ${formatDateTimeInMalaysia(doneAt)}`);

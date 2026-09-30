@@ -444,7 +444,9 @@ describe('RespondChatList in-thread search (AC-L8)', () => {
     const ringed = document.querySelector('[data-active-match="true"]');
     expect(ringed).toBeTruthy();
     expect(ringed?.className).toContain('ring-sky-500');
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+    // The test harness matches prefers-reduced-motion (vitest.setup S8-01), so the list scrolls
+    // with `auto` here; what is pinned is the centre scroll, not its easing.
+    expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'center' }));
   });
 
   it('fix round 2 regression: a content-only rerender (same ids, same count, same order) does not re-scroll to the still-active match', () => {
@@ -636,7 +638,8 @@ describe('RespondChatList pin to the tail', () => {
 
     rerender(<RespondChatList items={[msg(1), msg(2), pending('on my way')]} />);
 
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' });
+    // `auto` under the harness's reduced-motion default; the pin to the tail is what is pinned.
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto' });
   });
 
   it('re-pins when a different conversation loads into the same list', () => {

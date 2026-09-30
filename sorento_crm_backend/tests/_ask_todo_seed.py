@@ -106,8 +106,10 @@ def respond_io_id(db, contact_id: str) -> str:
     return db.execute(text("SELECT respond_io_id FROM respond_contacts WHERE id = :i"), {"i": contact_id}).scalar_one()
 
 
-def chat(db, respond_io_id_value: str, at: datetime, kind: str, message: str):
-    """One `chat_histories` row; `kind` is 'incoming' or 'outgoing'. Returns the row (id is a bigint)."""
+def chat(db, respond_io_id_value: str, at: datetime, kind: str, message: str, *, message_id: str | None = None):
+    """One `chat_histories` row; `kind` is 'incoming' or 'outgoing'. Returns the row (id is a bigint).
+    `message_id` is the Respond message id the shared thread keys bubbles by (ASKS-UX); the
+    plan 3.6 window tests leave it None."""
     from app.models.chat_history import ChatHistory
 
     row = ChatHistory(
@@ -117,6 +119,7 @@ def chat(db, respond_io_id_value: str, at: datetime, kind: str, message: str):
         message=message,
         sent_at=at,
         type=kind,
+        message_id=message_id,
     )
     db.add(row)
     db.flush()

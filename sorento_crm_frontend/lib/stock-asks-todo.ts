@@ -53,6 +53,11 @@ export interface AskConversation {
   messages: AskConversationMessage[];
   /** The outgoing message that carries the ask's answer, when there is one. */
   ask_message_id: number | null;
+  /**
+   * The Respond message id of that row: what the shared thread highlights ("This enquiry") and
+   * jumps to (ASKS-UX item 3). null when the row has no Respond id, so nothing to jump to.
+   */
+  ask_message_ref?: string | null;
   /** The contact's row id (respond_contacts.id), only for the CRM's "Open in Conversations" link (`?contact=` on the conversations page); absent on an empty answer. */
   contact_id?: string | null;
 }
@@ -122,6 +127,8 @@ export function askToSummary(ask: StockAsk): AskSummary {
  */
 export const ASK_LANDING_FIELDS: LandingField[] = [
   { key: 'customer_name', label: 'Customer', type: 'text' },
+  // ASKS-UX item 1: the asker. Filter and Sort share the table, so Sort offers it too.
+  { key: 'contact_name', label: 'Contact', type: 'text' },
   // Keyed `title` (the `CODE x Q` line of the summary), so Product filters and sorts by it.
   { key: 'title', label: 'Product', type: 'text' },
   { key: 'answer', label: 'Answer', type: 'text' },

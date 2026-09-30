@@ -77,12 +77,17 @@ const getCustomerAsksTodo = vi.fn();
 const listAskAgents = vi.fn();
 const updateSalesAsk = vi.fn();
 const getAskConversation = vi.fn();
+const getAskConversationPage = vi.fn();
+const searchAskConversation = vi.fn();
 vi.mock('@/services/stockAskService', () => ({
   getCustomerAsksTodo: (...a: unknown[]) => getCustomerAsksTodo(...a),
   listAskAgents: (...a: unknown[]) => listAskAgents(...a),
   updateSalesAsk: (...a: unknown[]) => updateSalesAsk(...a),
   getAskConversation: (...a: unknown[]) => getAskConversation(...a),
+  getAskConversationPage: (...a: unknown[]) => getAskConversationPage(...a),
+  searchAskConversation: (...a: unknown[]) => searchAskConversation(...a),
 }));
+vi.mock('@/components/common/AttachmentPreviewModal', () => ({ __esModule: true, default: () => null }));
 
 import { MyCustomerAsksClient } from './MyCustomerAsksClient';
 
@@ -124,12 +129,18 @@ const AGENTS = [
   { agent_id: 'agent-b', code: 'WT I', name: 'William Tan', open: 1, needs_attention: 0 },
 ];
 
-const CONVERSATION = {
-  messages: [
-    { id: 1, direction: 'in', text: 'Boss, ada stock?', at: '2026-09-29T00:58:00' },
-    { id: 2, direction: 'out', text: 'answer', at: '2026-09-29T01:00:00' },
+/** ASKS-UX item 3: the anchor read plus the shared thread's tail page. */
+const BASE_US = 1_790_000_000_000_000;
+const CONVERSATION = { messages: [], ask_message_id: 2, ask_message_ref: String(BASE_US + 2_000_000), contact_id: 'contact-7' };
+const TAIL_PAGE = {
+  items: [
+    { messageId: BASE_US + 1_000_000, traffic: 'incoming', message: { type: 'text', text: 'Boss, ada stock?' }, status: [] },
+    { messageId: BASE_US + 2_000_000, traffic: 'outgoing', message: { type: 'text', text: 'answer' }, status: [] },
   ],
-  ask_message_id: 2,
+  has_more_older: false,
+  has_more_newer: false,
+  oldest_message_id: String(BASE_US + 1_000_000),
+  newest_message_id: String(BASE_US + 2_000_000),
 };
 
 function showCards() {
@@ -151,6 +162,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   gridProps.length = 0;
   getAskConversation.mockResolvedValue(CONVERSATION);
+  getAskConversationPage.mockResolvedValue(TAIL_PAGE);
+  searchAskConversation.mockResolvedValue([]);
   storedSorting = [{ id: 'created_at', desc: false }];
   prefsCalls.length = 0;
   getCustomerAsksTodo.mockResolvedValue(payload());
@@ -198,7 +211,7 @@ describe('MyCustomerAsksClient (AC-ST209)', () => {
     await waitFor(() => expect(updateSalesAsk).toHaveBeenCalledWith('mine', { state: 'done' }));
     expect(getAskConversation).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText('Customer mine'));
-    await waitFor(() => expect(getAskConversation).toHaveBeenCalledWith('mine', { wholeDay: false }));
+    await waitFor(() => expect(getAskConversation).toHaveBeenCalledWith('mine'));
   });
 
   // AC-ST307 (CRM half)
@@ -209,15 +222,27 @@ describe('MyCustomerAsksClient (AC-ST209)', () => {
     showCards();
     fireEvent.click(screen.getByText('Customer mine'));
     const dialog = await screen.findByRole('dialog');
-    await waitFor(() => expect(getAskConversation).toHaveBeenCalledWith('mine', { wholeDay: false }));
+    await waitFor(() => expect(getAskConversation).toHaveBeenCalledWith('mine'));
+    await waitFor(() => expect(getAskConversationPage).toHaveBeenCalledWith('mine', { limit: 50 }));
     expect(within(dialog).getByRole('button', { name: 'Done' })).toBeInTheDocument();
     expect(within(dialog).queryByRole('button', { name: 'Reopen' })).toBeNull(); // an open ask
     expect(await within(dialog).findByText('Boss, ada stock?')).toBeInTheDocument();
-    expect(within(dialog).getByText('This ask')).toBeInTheDocument();
+    expect(within(dialog).getByTestId('chat-scroll-container')).toBeInTheDocument(); // the shared thread
+    expect(within(dialog).getByText('This enquiry')).toBeInTheDocument();
     expect(within(dialog).getByText(/SEAN I/)).toBeInTheDocument();
-    expect(within(dialog).getByRole('link', { name: 'Open in Conversations' })).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Show the whole day' }));
-    await waitFor(() => expect(getAskConversation).toHaveBeenCalledWith('mine', { wholeDay: true }));
+    expect(within(dialog).getByRole('link', { name: 'Open in Conversations' })).toHaveAttribute(
+      'href',
+      '/sla-management/conversations?contact=contact-7',
+    );
+    expect(within(dialog).queryByRole('button', { name: 'Show the whole day' })).toBeNull();
+  });
+
+  // ASKS-UX item 1 (AC-AU02): the asker is a filter on the CRM too.
+  it('the Filter popover offers Contact', async () => {
+    render(<MyCustomerAsksClient />);
+    await screen.findByText('Customer mine');
+    await openMenu('Filter');
+    expect(screen.getByText('Contact')).toBeInTheDocument();
   });
 
   it('Save note (not blur) goes through updateSalesAsk, Done at the foot marks the ask done', async () => {

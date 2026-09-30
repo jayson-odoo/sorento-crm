@@ -20,7 +20,7 @@ import {
   askToSummary,
   filterTodoPayload,
 } from '@/lib/stock-asks-todo';
-import { useCustomerAsksTodo, usePortalAsksSort } from '../hooks/useCustomerAsksTodo';
+import { useCustomerAsksTodo, usePortalAskThread, usePortalAsksSort } from '../hooks/useCustomerAsksTodo';
 import { getAskConversation } from '../lib/customer-asks-service';
 import type { LandingFilters } from '../lib/landing-fields';
 import { CustomerAsksHistory } from './CustomerAsksHistory';
@@ -29,8 +29,9 @@ import { LandingToolbar } from './LandingToolbar';
 /**
  * The body of the landing's Customer asks kind: the salesperson's to-do (`AskTodoList`, shared
  * with the CRM's Sales > Customer asks) under the landing's own `LandingToolbar`. A card or row
- * opens the conversation in a bottom Drawer; `Show done` opens the paged done history under it.
- * The landing's search box narrows the to-do; the sort is remembered per contact.
+ * opens the conversation in a bottom Drawer; `Show done` opens the paged done history under it,
+ * as cards or as the grid, whichever the view is (ASKS-UX item 2). The landing's search box
+ * narrows the to-do; the sort is remembered per contact.
  */
 export function CustomerAsksList({
   search,
@@ -49,7 +50,6 @@ export function CustomerAsksList({
   const [filters, setFilters] = useState<LandingFilters>({});
   const [showDone, setShowDone] = useState(false);
   const [opened, setOpened] = useState<StockAsk | null>(null);
-  const [wholeDay, setWholeDay] = useState(false);
 
   const items = useMemo(
     () => (todo.payload ? [...todo.payload.open, ...todo.payload.done_today].map(askToSummary) : []),
@@ -67,16 +67,16 @@ export function CustomerAsksList({
     return all.find((a) => a.id === opened.id) ?? opened;
   }, [opened, todo.payload]);
 
+  // The anchor (`ask_message_ref`) and the contact's thread, both keyed on the opened ask; the
+  // thread is the ticket drawer's shared component fed by the portal loaders (ASKS-UX item 3).
   const conversation = useQuery({
-    queryKey: ['portal-customer-ask-conversation', opened?.id, wholeDay],
-    queryFn: () => getAskConversation(opened!.id, { wholeDay }),
+    queryKey: ['portal-customer-ask-conversation', opened?.id],
+    queryFn: () => getAskConversation(opened!.id),
     enabled: Boolean(opened),
   });
+  const thread = usePortalAskThread(opened?.id ?? null);
 
-  const open = (ask: StockAsk) => {
-    setWholeDay(false);
-    setOpened(ask);
-  };
+  const open = (ask: StockAsk) => setOpened(ask);
 
   if (todo.notAgent) {
     return (
@@ -117,7 +117,16 @@ export function CustomerAsksList({
       <Button variant="ghost" size="sm" onClick={() => setShowDone((v) => !v)} aria-expanded={showDone}>
         {showDone ? 'Hide done' : 'Show done'}
       </Button>
-      {showDone ? <CustomerAsksHistory search={search} refreshKey={todo.version} /> : null}
+      {showDone ? (
+        <CustomerAsksHistory
+          search={search}
+          refreshKey={todo.version}
+          view={view}
+          onOpen={open}
+          onReopen={todo.reopen}
+          pendingAskId={todo.pendingAskId}
+        />
+      ) : null}
 
       <Drawer open={Boolean(opened)} onOpenChange={(next) => !next && setOpened(null)}>
         {/* M6-02: dvh - phone-facing portal sheet, so a `vh` cap sits under mobile Safari's chrome. */}
@@ -131,9 +140,8 @@ export function CustomerAsksList({
               key={current.id}
               ask={current}
               conversation={conversation.data}
-              loading={conversation.isLoading}
+              thread={thread}
               showOpenInConversations={false}
-              onWholeDay={() => setWholeDay(true)}
               onNote={todo.note}
               onDone={(askId) => {
                 todo.done(askId);

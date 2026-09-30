@@ -7,6 +7,10 @@ import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { StockAsk, StockAskPage, StockAskPatch } from '@/lib/stock-asks';
 import type { AskAgentSummary, AskConversation, AskTodoPayload } from '@/lib/stock-asks-todo';
+import type {
+  ConversationSearchMatch,
+  ConversationThreadPage,
+} from '@/components/common/conversation/useConversationThread';
 
 const BASE = '/api/v1/order-management/customers';
 const SALES_BASE = '/api/v1/sales/customer-asks';
@@ -32,10 +36,16 @@ const SALES_BASE = '/api/v1/sales/customer-asks';
  *        team's current members, or everyone with view_all); otherwise 404. A transition
  *        to done stamps `done_at` and the actor (the user id, server side); `done_by` on the wire is
  *        a label (my name), never an id; a transition to open clears both.
- *   GET   /api/v1/sales/customer-asks/{ask_id}/conversation[?whole_day=true]  (S3, plan 3.6)
- *     -> { messages: [{ id, direction: 'in' | 'out', text, at }], ask_message_id: id | null }
- *        Same scope as the PATCH (404 outside it). The chat around the ask: 30 minutes either
- *        side of it, or its whole Malaysia day.
+ *   GET   /api/v1/sales/customer-asks/{ask_id}/conversation  (S3, plan 3.6; ASKS-UX)
+ *     -> { messages: [{ id, direction: 'in' | 'out', text, at }], ask_message_id: id | null,
+ *          ask_message_ref: <Respond message id> | null, contact_id }
+ *        Same scope as the PATCH (404 outside it). The opened card reads `ask_message_ref` (the
+ *        anchor the shared thread highlights) and `contact_id` (Open in Conversations) from it.
+ *   GET   /api/v1/sales/customer-asks/{ask_id}/conversation/page?before|after|around&limit
+ *   GET   /api/v1/sales/customer-asks/{ask_id}/conversation/search?q&limit  (ASKS-UX item 3)
+ *     -> the SAME shapes as `.../conversation-sla-tracking/{id}/conversation/{page,search}`
+ *        (`ConversationThreadPage`, `{ items: ConversationSearchMatch[] }`), the two loaders
+ *        `useConversationThread` takes. Same scope as the PATCH.
  */
 
 export async function listCustomerAsks(
@@ -88,13 +98,38 @@ export async function updateSalesAsk(askId: string, patch: StockAskPatch): Promi
   return response.json();
 }
 
-/** The chat around one ask, for the opened card. */
-export async function getAskConversation(
-  askId: string,
-  opts: { wholeDay: boolean },
-): Promise<AskConversation> {
-  const qs = opts.wholeDay ? '?whole_day=true' : '';
-  const response = await apiFetch(`${SALES_BASE}/${encodeURIComponent(askId)}/conversation${qs}`);
+/** The ask's anchor in its thread (`ask_message_ref`) and its contact, for the opened card. */
+export async function getAskConversation(askId: string): Promise<AskConversation> {
+  const response = await apiFetch(`${SALES_BASE}/${encodeURIComponent(askId)}/conversation`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the conversation'));
   return response.json();
+}
+
+/** One window of the ask's contact thread; no cursor is the live tail. */
+export async function getAskConversationPage(
+  askId: string,
+  params: { before?: string; after?: string; around?: string; limit?: number },
+): Promise<ConversationThreadPage> {
+  const sp = new URLSearchParams();
+  if (params.before) sp.set('before', params.before);
+  if (params.after) sp.set('after', params.after);
+  if (params.around) sp.set('around', params.around);
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  const qs = sp.toString();
+  const response = await apiFetch(`${SALES_BASE}/${encodeURIComponent(askId)}/conversation/page${qs ? `?${qs}` : ''}`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load earlier messages'));
+  return response.json();
+}
+
+/** In-thread search over the ask's contact thread, newest first. */
+export async function searchAskConversation(
+  askId: string,
+  query: string,
+  limit = 100,
+): Promise<ConversationSearchMatch[]> {
+  const sp = new URLSearchParams({ q: query, limit: String(limit) });
+  const response = await apiFetch(`${SALES_BASE}/${encodeURIComponent(askId)}/conversation/search?${sp.toString()}`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Search failed'));
+  const body = (await response.json()) as { items?: ConversationSearchMatch[] };
+  return body.items ?? [];
 }

@@ -25,7 +25,8 @@ export function AskCard({
   /** The CRM's All agents view: the agent code sits on the date line. */
   showAgent?: boolean;
   onOpen: (ask: StockAsk) => void;
-  onDone: (askId: string) => void;
+  /** Absent on a surface that only ever shows done cards (the done history). */
+  onDone?: (askId: string) => void;
   onReopen: (askId: string) => void;
 }) {
   const isDone = ask.state === 'done';
@@ -54,7 +55,7 @@ export function AskCard({
             Reopen
           </Button>
         ) : (
-          <Button size="sm" variant="primary" disabled={pending} onClick={() => onDone(ask.id)}>
+          <Button size="sm" variant="primary" disabled={pending} onClick={() => onDone?.(ask.id)}>
             Done
           </Button>
         )}

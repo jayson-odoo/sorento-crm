@@ -1,7 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
-import { getCustomerAsksTodo, listAskAgents, updateSalesAsk } from '@/services/stockAskService';
+import {
+  getAskConversationPage,
+  getCustomerAsksTodo,
+  listAskAgents,
+  searchAskConversation,
+  updateSalesAsk,
+} from '@/services/stockAskService';
 import type { StockAskPatch } from '@/lib/stock-asks';
+import { useAskThread, type AskThreadService } from '@/hooks/useAskThread';
 
 const TODO_KEY = 'customer-asks-todo';
 const AGENTS_KEY = 'customer-asks-agents';
@@ -40,4 +47,12 @@ export function useAskDoneMutation() {
       toast.error(error instanceof Error ? error.message : 'Failed to update the ask');
     },
   });
+}
+
+/** The CRM-keyed pair of thread loaders (a module constant, so the hook sees one identity). */
+const SALES_ASK_THREAD: AskThreadService = { getPage: getAskConversationPage, search: searchAskConversation };
+
+/** The opened ask's contact thread, read on the CRM session (ASKS-UX item 3). */
+export function useSalesAskThread(askId: string | null) {
+  return useAskThread(askId, SALES_ASK_THREAD, 'customer-ask');
 }
