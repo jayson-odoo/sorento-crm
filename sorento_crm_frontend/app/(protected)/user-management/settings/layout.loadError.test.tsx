@@ -47,7 +47,9 @@ function renderLayout() {
   );
 }
 
-beforeEach(() => apiFetch.mockReset());
+beforeEach(() => {
+  apiFetch.mockReset();
+});
 afterEach(() => cleanup());
 
 describe('settings when the read fails', () => {

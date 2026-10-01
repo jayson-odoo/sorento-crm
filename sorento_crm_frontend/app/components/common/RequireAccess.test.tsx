@@ -15,6 +15,9 @@ import RequireAccess from './RequireAccess';
 import PermissionsLoadBanner from './PermissionsLoadBanner';
 
 const fetchMyPermissions = vi.fn();
+const failPermissions = async (): Promise<string[]> => {
+  throw new Error('Failed to fetch permissions');
+};
 vi.mock('@/lib/permissions-service', () => ({
   fetchMyPermissions: () => fetchMyPermissions(),
 }));
@@ -33,12 +36,14 @@ function wrap(ui: React.ReactNode) {
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
-beforeEach(() => fetchMyPermissions.mockReset());
+beforeEach(() => {
+  fetchMyPermissions.mockReset();
+});
 afterEach(() => cleanup());
 
 describe('RequireAccess when the permission check fails', () => {
   it('shows "Could not check your access" with Retry, never AccessDenied', async () => {
-    fetchMyPermissions.mockRejectedValue(new Error('Failed to fetch permissions'));
+    fetchMyPermissions.mockImplementation(failPermissions);
 
     wrap(
       <RequireAccess permission="orders.view">
@@ -53,7 +58,7 @@ describe('RequireAccess when the permission check fails', () => {
   });
 
   it('Retry refetches and renders the page once the check succeeds', async () => {
-    fetchMyPermissions.mockRejectedValueOnce(new Error('Failed to fetch permissions'));
+    fetchMyPermissions.mockImplementationOnce(failPermissions);
     fetchMyPermissions.mockResolvedValue(['orders.view']);
 
     wrap(
@@ -83,7 +88,7 @@ describe('RequireAccess when the permission check fails', () => {
 
 describe('PermissionsLoadBanner', () => {
   it('tells the user, with Retry, when the permission check failed', async () => {
-    fetchMyPermissions.mockRejectedValueOnce(new Error('Failed to fetch permissions'));
+    fetchMyPermissions.mockImplementationOnce(failPermissions);
     fetchMyPermissions.mockResolvedValue(['orders.view']);
 
     wrap(<PermissionsLoadBanner />);

@@ -12,6 +12,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { usePermissions } from './usePermissions';
 
 const fetchMyPermissions = vi.fn();
+const failPermissions = async (): Promise<string[]> => {
+  throw new Error('Failed to fetch permissions');
+};
 vi.mock('@/lib/permissions-service', () => ({
   fetchMyPermissions: () => fetchMyPermissions(),
 }));
@@ -27,11 +30,13 @@ function setup() {
   return renderHook(() => usePermissions(), { wrapper });
 }
 
-beforeEach(() => fetchMyPermissions.mockReset());
+beforeEach(() => {
+  fetchMyPermissions.mockReset();
+});
 
 describe('usePermissions().isError', () => {
   it('is true when the first load fails', async () => {
-    fetchMyPermissions.mockRejectedValue(new Error('Failed to fetch permissions'));
+    fetchMyPermissions.mockImplementation(failPermissions);
     const { result } = setup();
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.isLoading).toBe(false);
@@ -42,7 +47,7 @@ describe('usePermissions().isError', () => {
     const { result } = setup();
     await waitFor(() => expect(result.current.permissionSet.has('a.view')).toBe(true));
 
-    fetchMyPermissions.mockRejectedValue(new Error('Failed to fetch permissions'));
+    fetchMyPermissions.mockImplementation(failPermissions);
     await act(async () => {
       await result.current.refetch();
     });
