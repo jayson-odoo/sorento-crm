@@ -129,15 +129,45 @@ def test_deleted_module_still_selects_what_imports_it(tmp_path):
     assert P + "tests/test_direct.py" in result.tests
 
 
-def test_above_the_cap_the_full_shards_run_instead(tmp_path):
+def _many(tmp_path: Path, n: int) -> Path:
     files = dict(BASE)
-    for i in range(12):
+    for i in range(n):
         files[f"tests/test_many_{i:02d}.py"] = "from app.services.qux import X\n"
-    root = _tree(tmp_path, files)
-    result = sel.select([P + "app/services/qux.py"], root, scm_runs=False, cap=10)
-    assert result.full is True and result.count == 13
-    under = sel.select([P + "app/services/qux.py"], root, scm_runs=False, cap=13)
-    assert under.full is False and len(under.tests) == 13
+    return _tree(tmp_path, files)
+
+
+def test_budget_is_estimated_cpu_seconds_and_full_only_above_it(tmp_path):
+    """test_unrelated + 3 test_many files import qux, at 10 s each = 40 CPU-s."""
+    root = _many(tmp_path, 3)
+    durations = {"tests/test_unrelated.py": 10.0, **{f"tests/test_many_{i:02d}.py": 10.0 for i in range(3)}}
+    at = sel.select([P + "app/services/qux.py"], root, scm_runs=False, budget=40.0, durations=durations)
+    assert at.count == 4 and at.seconds == pytest.approx(40.0)
+    assert at.full is False, "at the budget is still under it"
+    over = sel.select([P + "app/services/qux.py"], root, scm_runs=False, budget=39.9, durations=durations)
+    assert over.full is True and over.count == 4
+    assert over.tests == at.tests, "the selection is still reported above the budget"
+
+
+def test_file_count_alone_never_trips_the_budget(tmp_path):
+    root = _many(tmp_path, 40)
+    durations = {f"tests/test_many_{i:02d}.py": 0.5 for i in range(40)}
+    result = sel.select([P + "app/services/qux.py"], root, scm_runs=False, budget=30.0, durations=durations)
+    assert result.count == 41 and result.full is False
+
+
+def test_a_file_without_history_counts_at_the_median_file(tmp_path):
+    root = _many(tmp_path, 2)
+    # Known: 1, 5, 100 -> median 5. test_many_01 has no history.
+    durations = {"tests/test_unrelated.py": 1.0, "tests/test_many_00.py": 100.0, "tests/test_other.py": 5.0}
+    result = sel.select([P + "app/services/qux.py"], root, scm_runs=False, durations=durations)
+    assert result.seconds == pytest.approx(1.0 + 100.0 + 5.0)
+    assert sel.estimate_seconds([P + "tests/x.py", P + "tests/y.py"], {"a": 1.0, "b": 2.0, "c": 4.0, "d": 9.0}) == pytest.approx(6.0)
+
+
+def test_durations_file_is_summed_per_file(tmp_path):
+    root = _tree(tmp_path, {".test_durations": '{"tests/test_a.py::test_1": 1.5, "tests/test_a.py::C::test_2": 2.0, "tests/test_b.py::t": 4}'})
+    assert sel.file_durations(root) == {"tests/test_a.py": 3.5, "tests/test_b.py": 4.0}
+    assert sel.file_durations(tmp_path / "nowhere") == {}
 
 
 def test_a_path_a_shell_would_parse_is_never_selected(tmp_path):
@@ -148,12 +178,14 @@ def test_a_path_a_shell_would_parse_is_never_selected(tmp_path):
     assert all(" " not in t for t in result.tests)
 
 
-def test_cli_above_the_cap_writes_no_list_and_full_true(tmp_path):
-    root = _tree(tmp_path, BASE)
+def test_cli_above_the_budget_writes_no_list_and_full_true(tmp_path):
+    files = dict(BASE)
+    files[".test_durations"] = '{"tests/test_direct.py::t": 3.0}'
+    root = _tree(tmp_path, files)
     out = tmp_path / "gh_output"
     out.write_text("")
     proc = subprocess.run(
-        [sys.executable, str(BACKEND / "scripts" / "ci_select_tests.py"), "--root", str(root), "--cap", "2"],
+        [sys.executable, str(BACKEND / "scripts" / "ci_select_tests.py"), "--root", str(root), "--budget", "2"],
         input=f"{P}app/services/foo.py\n",
         env={"GITHUB_OUTPUT": str(out), "PATH": "/usr/bin:/bin"},
         capture_output=True,
@@ -161,7 +193,9 @@ def test_cli_above_the_cap_writes_no_list_and_full_true(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert dict(line.split("=", 1) for line in out.read_text().splitlines()) == {"tests": "", "full": "true"}
-    assert "above the cap of 2" in proc.stdout and f"{P}tests/test_direct.py" in proc.stdout
+    # 7 files: test_direct at 3 s, six unknown at the median (3 s) = 21 CPU-s.
+    assert "7 test files, estimated 21 CPU-s (budget 2): above the budget" in proc.stdout
+    assert f"{P}tests/test_direct.py" in proc.stdout
 
 
 def test_cli_writes_the_outputs_and_logs_the_list(tmp_path):
@@ -182,6 +216,7 @@ def test_cli_writes_the_outputs_and_logs_the_list(tmp_path):
         "full": "false",
     }
     assert f"{P}tests/test_unrelated.py" in proc.stdout
+    assert "2 test files, estimated 0 CPU-s (budget 3600)" in proc.stdout
 
 
 # #1411 (123d4282c) as GitHub listed it. The test that broke the 1 Oct release
@@ -205,14 +240,12 @@ PR_1411 = [
 
 @pytest.mark.skipif(not (BACKEND / "app").is_dir(), reason="needs the backend tree")
 def test_pr_1411_selects_the_test_that_broke_the_release():
-    """#1411 touched procurement_service, which ~60 test files import: above the
-    cap, so that PR would have run the full shards, which include the file too."""
+    """#1411 touched procurement_service, which ~60 test files import directly:
+    ~216 files, ~2668 CPU-s by the committed durations, under the 3600 budget,
+    so the selected list itself runs on the PR, and it holds the file."""
     result = sel.select(PR_1411, BACKEND, scm_runs=False)
     assert P + "tests/test_ingest_parity_security_fixes.py" in result.tests
     for changed in PR_1411[-3:]:
         assert changed in result.tests
-    assert result.full is True, result.count
-    # The ingest service alone stays under the cap and still selects it.
-    alone = sel.select([P + "app/services/shipping_order_ingest_service.py"], BACKEND, scm_runs=False)
-    assert alone.full is False
-    assert P + "tests/test_ingest_parity_security_fixes.py" in alone.tests
+    assert result.full is False, (result.count, result.seconds)
+    assert 150 < result.count < 300 and 1000 < result.seconds < sel.BUDGET_SECONDS

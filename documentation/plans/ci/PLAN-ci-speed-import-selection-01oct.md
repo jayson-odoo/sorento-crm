@@ -22,11 +22,13 @@ Owner approval: 1 Oct retro, decision 4.
    maps each changed `sorento_crm_backend/app/**.py` to its dotted module, adds every `app/`
    module that imports it (one level), and selects every test file that names any of those
    modules (`import app.x`, `from app.x import`, `from app.pkg import x`, or a dotted string
-   such as a `mock.patch` target). Changed test files are always selected. Above 150 files it
-   reports `full=true` instead of a list. The selected list is printed in the job log.
+   such as a `mock.patch` target). Changed test files are always selected. Cap by time
+   (crew ruling 1 Oct, option b): the selection's estimated CPU seconds from the committed
+   `.test_durations` (summed per file; a file with no history counts at the median file) above
+   3600 reports `full=true` instead of a list. #1411: 216 files, ~2668 CPU-s, under the budget. The selected list is printed in the job log.
 2. `changes` checks out the backend tree (only when the PR touches `sorento_crm_backend/app/`) and
    runs the script. `backend_tests` becomes the selection; `backend_full=true` makes the six main
-   shards run on that PR (and the changed-files job steps aside).
+   shards and the SCM shards run on that PR (and the changed-files job steps aside).
 3. `test-backend-changed` runs the selection in two passes, like the shards: xdist `--dist
    loadfile` for everything not migration / serial_ddl, then those serially.
 4. Release shard rebalance: refresh `.test_durations` from a real run, keep the slow chatbot replay
@@ -37,5 +39,7 @@ Not changed: caching, the production gate, image builds, release ordering.
 ## Tests
 
 `sorento_crm_backend/tests/test_ci_select_tests.py` (red first): direct import, from-package
-import, transitive one level, patch-string match, cap, scm exclusion, and #1411's real diff
-selecting `tests/test_ingest_parity_security_fixes.py`.
+import, relative import, transitive one level (and not two), patch-string match, budget on both
+sides of the threshold, median for unknown files, scm exclusion, CLI outputs, and #1411's real
+diff selecting `tests/test_ingest_parity_security_fixes.py`. `tests/test_ci_docs_only_filter.py`
+covers the `backend_code` output, the select step and the job gating on `backend_full`.

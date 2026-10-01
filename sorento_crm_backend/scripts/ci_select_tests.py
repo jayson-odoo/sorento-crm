@@ -14,8 +14,12 @@ release and failed it. So the selection is now:
 a relative import resolving to one of those, or the dotted name in the source text
 (a `monkeypatch.setattr("app.x.y", ...)` or `mock.patch` target).
 
-Above CAP files the selection reports `full=true` and no list: the six main shards
-and the SCM shards then run on the PR instead. Files under tests/scm/ are left out
+The cap is time, not file count (crew ruling, 1 Oct 2026): the selection's
+estimated CPU seconds, summed per file from the committed `.test_durations` (the
+file the shards balance on; a file it does not hold counts at the median file),
+above BUDGET_SECONDS reports `full=true` and no list: the six main shards and the
+SCM shards then run on the PR instead. #1411 selects 216 files at ~2668 CPU-s,
+under the budget; one changed-files runner under xdist -n 4 takes it in ~12 min. Files under tests/scm/ are left out
 when the SCM shards run anyway (`--scm true`).
 
 Stdlib only: the `changes` job runs it with the runner's own python3, before any
@@ -28,13 +32,14 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import os
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-CAP = 150
+BUDGET_SECONDS = 3600.0
 PREFIX = "sorento_crm_backend/"
 SOURCE_DIRS = ("app", "scripts", "tests")
 # Only paths a shell cannot misparse ever reach the pytest argument line, the
@@ -46,8 +51,32 @@ DOTTED_RE = re.compile(r"(?<![\w.])((?:app|scripts|tests)(?:\.[A-Za-z_]\w*)+)")
 @dataclass
 class Selection:
     tests: list[str]  # the whole selection, also when `full` (printed, never run)
-    full: bool  # above the cap: the full shards run instead of `tests`
+    full: bool  # above the budget: the full shards run instead of `tests`
     count: int
+    seconds: float  # estimated CPU seconds of `tests`
+
+
+def file_durations(root: Path) -> dict[str, float]:
+    """`tests/x.py` -> summed seconds of its tests in `<root>/.test_durations`."""
+    try:
+        raw = json.loads((root / ".test_durations").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    per_file: dict[str, float] = {}
+    for test_id, seconds in raw.items():
+        name = test_id.split("::", 1)[0]
+        per_file[name] = per_file.get(name, 0.0) + float(seconds)
+    return per_file
+
+
+def estimate_seconds(tests: list[str], per_file: dict[str, float]) -> float:
+    """Sum of the files' durations; a file with no history counts at the median file."""
+    known = sorted(per_file.values())
+    median = 0.0
+    if known:
+        mid = len(known) // 2
+        median = known[mid] if len(known) % 2 else (known[mid - 1] + known[mid]) / 2
+    return sum(per_file.get(t[len(PREFIX):] if t.startswith(PREFIX) else t, median) for t in tests)
 
 
 def _module_name(rel: str) -> str | None:
@@ -111,7 +140,14 @@ def _sources(root: Path) -> dict[str, str]:
     return out
 
 
-def select(changed: list[str], root: Path, *, scm_runs: bool, cap: int = CAP) -> Selection:
+def select(
+    changed: list[str],
+    root: Path,
+    *,
+    scm_runs: bool,
+    budget: float = BUDGET_SECONDS,
+    durations: dict[str, float] | None = None,
+) -> Selection:
     rel_changed = [p[len(PREFIX):] for p in changed if p.startswith(PREFIX)]
     picked = {r for r in rel_changed if _is_test_file(r)}
     changed_modules = {
@@ -133,24 +169,25 @@ def select(changed: list[str], root: Path, *, scm_runs: bool, cap: int = CAP) ->
         picked = {r for r in picked if not r.startswith("tests/scm/")}
     picked = {r for r in picked if SAFE_TEST_RE.match(r)}
     tests = sorted(PREFIX + r for r in picked)
-    return Selection(tests=tests, full=len(tests) > cap, count=len(tests))
+    seconds = estimate_seconds(tests, file_durations(root) if durations is None else durations)
+    return Selection(tests=tests, full=seconds > budget, count=len(tests), seconds=seconds)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", default="sorento_crm_backend", help="the backend directory")
     parser.add_argument("--scm", default="false", choices=("true", "false"), help="the SCM shards run anyway")
-    parser.add_argument("--cap", type=int, default=CAP)
+    parser.add_argument("--budget", type=float, default=BUDGET_SECONDS, help="estimated CPU seconds")
     args = parser.parse_args()
     changed = [line.strip() for line in sys.stdin if line.strip()]
-    result = select(changed, Path(args.root), scm_runs=args.scm == "true", cap=args.cap)
+    result = select(changed, Path(args.root), scm_runs=args.scm == "true", budget=args.budget)
+    summary = f"{result.count} test files, estimated {result.seconds:.0f} CPU-s (budget {args.budget:.0f})"
     if result.full:
-        print(f"{result.count} test files reference the changed modules, above the cap of {args.cap}: "
-              "the full backend shards run on this PR instead. The selection was:")
+        print(f"{summary}: above the budget, the full backend shards run on this PR instead. The selection was:")
         for test in result.tests:
             print(f"  {test}")
     elif result.tests:
-        print(f"backend test files selected ({result.count}): changed, or importing a changed module")
+        print(f"backend test files selected, changed or importing a changed module: {summary}")
         for test in result.tests:
             print(f"  {test}")
     else:
@@ -158,7 +195,7 @@ def main() -> int:
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with open(output, "a", encoding="utf-8") as fh:
-            # Above the cap the shards run every file, so no list goes out.
+            # Above the budget the shards run every file, so no list goes out.
             fh.write(f"tests={'' if result.full else ' '.join(result.tests)}\n")
             fh.write(f"full={'true' if result.full else 'false'}\n")
     return 0
