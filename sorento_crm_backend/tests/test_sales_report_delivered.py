@@ -194,6 +194,44 @@ def test_legacy_do_product_shares_are_weighted_by_qty_price_and_discount(client,
     assert money(body["total"]["amount"]) == D("1000.00"), body
 
 
+def test_a_discount_stored_as_a_percent_is_normalised(client, db):
+    """Fix round 1, S2: a discount above 1 is a percent (real data carries 100.0000 on three
+    lines). A legacy DO with a paid line and a 100%-off line: the free line is RM 0.00 and the
+    paid line carries the whole DOC total."""
+    cust, _p, wh = _world(db)
+    paid = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-PCT-PAID")
+    free = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-PCT-FREE")
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
+            lines=[
+                line(paid.id, wh.id, 2, price=D("100"), discount=D("0"), total=D("200.00")),
+                line(free.id, wh.id, 1, price=D("100"), discount=D("100"), total=D("200.00")),
+            ])
+    db.commit()
+
+    body = _get(client, customer_ids=cust.id, group_by="product")
+    by_name = {r["name"]: money(r["amount"]) for r in body["rows"]}
+    assert by_name == {"ZZT-PCT-PAID": D("200.00"), "ZZT-PCT-FREE": D("0.00")}, body["rows"]
+    assert money(body["total"]["amount"]) == D("200.00"), body
+
+
+def test_a_percent_discount_below_100_is_a_fraction(client, db):
+    """37 stored is 37%: weights A = 1 x 100 x 0.63 = 63, B = 1 x 100 x 1 = 100 over a repeated
+    163.00 split A 63.00, B 100.00."""
+    cust, _p, wh = _world(db)
+    a = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-PCT37-A")
+    b = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-PCT37-B")
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
+            lines=[
+                line(a.id, wh.id, 1, price=D("100"), discount=D("37"), total=D("163.00")),
+                line(b.id, wh.id, 1, price=D("100"), discount=D("0"), total=D("163.00")),
+            ])
+    db.commit()
+
+    body = _get(client, customer_ids=cust.id, group_by="product")
+    by_name = {r["name"]: money(r["amount"]) for r in body["rows"]}
+    assert by_name == {"ZZT-PCT37-A": D("63.00"), "ZZT-PCT37-B": D("100.00")}, body["rows"]
+
+
 def test_equal_shares_when_every_weight_is_zero(client, db):
     """No unit price on any line: weights are all 0, so the DOC total splits equally."""
     cust, _p, wh = _world(db)

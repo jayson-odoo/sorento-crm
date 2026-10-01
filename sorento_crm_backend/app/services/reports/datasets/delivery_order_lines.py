@@ -83,6 +83,15 @@ def _do_level_filters(ctx: Any) -> List[Any]:
     return preds
 
 
+def discount_fraction() -> Any:
+    """A line's discount as a fraction 0..1. The column is mostly a fraction, but some rows
+    store a percent (real data: three lines carry 100.0000), so a value above 1 is read as a
+    percent (100 -> 1.0, 37 -> 0.37), then clamped to 0..1."""
+    raw = sa.func.coalesce(OrderLine.discount, 0)
+    fraction = sa.case((raw > 1, raw / 100), else_=raw)
+    return sa.func.least(sa.func.greatest(fraction, 0), 1)
+
+
 def _line_amounts(ctx: Any) -> Any:
     """Each DO line's amount, as a subquery keyed by the line id. Built once per run (the
     base and the `amount` measure must read the SAME subquery object)."""
@@ -94,7 +103,7 @@ def _line_amounts(ctx: Any) -> Any:
     weight = (
         sa.func.coalesce(OrderLine.quantity, 0)
         * sa.func.coalesce(OrderLine.unit_price, 0)
-        * (1 - sa.func.coalesce(OrderLine.discount, 0))
+        * (1 - discount_fraction())
     )
     lines = (
         sa.select(
