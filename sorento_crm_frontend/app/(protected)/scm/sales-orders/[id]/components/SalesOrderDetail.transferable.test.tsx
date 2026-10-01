@@ -107,7 +107,7 @@ vi.mock('../../../services/salesOrderService', () => ({
 }));
 
 import { SalesOrderDetail } from './SalesOrderDetail';
-import type { SalesOrder, SalesOrderLine } from '../../../types/scm.types';
+import type { SalesOrder } from '../../../types/scm.types';
 
 function so(over: Partial<SalesOrder> = {}): SalesOrder {
   return {
