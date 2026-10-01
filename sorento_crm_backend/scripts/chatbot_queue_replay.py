@@ -110,9 +110,13 @@ def main() -> int:
     failures = []
     if rows["65ce"]["wait"] > 0.5:
         failures.append("65ce waited for a finished ticket 1")
+    # a1d7 arrives 8 s after a45f starts its ~40 s turn, so it waits out the 30 s cap and
+    # RUNS ANYWAY (its reply is never lost). Nothing else may time out.
     timed_out = [label for label, r in rows.items() if r["timed_out"]]
-    if timed_out:
-        failures.append(f"timed out: {timed_out}")
+    if set(timed_out) - {"a1d7"}:
+        failures.append(f"unexpected timeouts: {timed_out}")
+    if len(rows) != len(TIMELINE):
+        failures.append("a turn did not run")
     order = sorted(rows.values(), key=lambda r: r["ticket"])
     if [r["ticket"] for r in order] != list(range(1, len(TIMELINE) + 1)):
         failures.append("tickets were not 1..7 (seq did not restart at 1)")
