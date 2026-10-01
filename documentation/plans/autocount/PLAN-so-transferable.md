@@ -63,10 +63,22 @@ sorento-crm; SOs with Transferable = F must NOT be considered in Stock Debt.
 `SalesOrdersList.transferable.test.tsx` + `SalesOrderDetail.transferable.test.tsx` (AC-TR-10).
 Browser evidence: `evidence/so-transferable/`.
 
+## 3b. Ingest ignores unknown fields (owner decision, 1 Oct 2026, same lane)
+
+`extra="forbid"` lived on `canonical_masters._Canonical`, `canonical_documents._SalesOrderExternalRef`,
+`_CanonicalLine`, `CanonicalBillingDocumentLine` and `stock_balance_ingest_service._StockBalanceRecord`.
+All now take `INGEST_MODEL_CONFIG` (`extra="ignore"`) plus a before-validator that notes unknown key
+NAMES into a per-request set; `POST /external/ingest/{entity}` logs them once as
+`ingest.unknown_fields`. Declared fields stay strict. Dropping is not writing. Test:
+`tests/test_ingest_ignores_unknown_fields.py`; the tests that pinned the old reject contract now pin
+drop-not-write.
+
 ## 4. Follow-ups (not in this lane)
 
-- ss lane: SorentoSink sends header `transferable` (AutoCount `SO.Transferable`). Deploy AFTER this
-  PR: `CanonicalSalesOrder` forbids unknown keys, so an early send fails every SO push.
+- ss lane: SorentoSink sends header `transferable` (AutoCount `SO.Transferable`). Deploy order no
+  longer matters: owner decision (1 Oct 2026) made every `/external/ingest/*` schema DROP unknown
+  keys and log their names once per request (`app.schemas.ingest_extras`) instead of refusing the
+  record, so an early send is ingested without the flag and a late one simply leaves it NULL.
 - Owner to decide whether F also leaves `is_open_demand()` / `scm.committed_v` (reorder, netting,
   coverage, location stock, SPO conversion, container requests), the outstanding report, the sales
   report and the chatbot answers built on them.
