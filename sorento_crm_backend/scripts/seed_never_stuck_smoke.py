@@ -13,7 +13,11 @@ but seeds no users, so this adds them, idempotently:
 - expired: a plain user whose session the spec revokes after sign-in, so its NextAuth
   cookie stays valid while every FastAPI call answers 401 (the owner's report).
 
-Every user is granted the default company. Prints the manifest the spec reads as JSON
+Every module in the catalog is installed and enabled for the default tenant, as on
+production. A fresh bootstrap leaves them all uninstalled, and the frontend's
+`ModuleRouteGuard` then redirects EVERY module route to `/` for every persona: the smoke
+would be checking the dashboard 400 times and passing. Every user is granted the default
+company. Prints the manifest the spec reads as JSON
 (`--out` writes it to a file). Refuses any database that is not local AND named
 `*_smoke` / `*_ci`: the admin it adds has a published password, so this is for a
 throwaway CI or sandbox database only, never a dev prod-copy.
@@ -102,12 +106,25 @@ def _upsert_user(db, *, email: str, name: str, password: str, role_id: str | Non
     return user
 
 
+def _enable_all_modules(db) -> list[str]:
+    from app.modules.runtime.installer import (
+        DEFAULT_TENANT_ID,
+        get_enabled_module_keys,
+        install_modules,
+        load_dependency_graph,
+    )
+
+    install_modules(db, DEFAULT_TENANT_ID, sorted(load_dependency_graph(db)), None, action="install")
+    return sorted(get_enabled_module_keys(db, DEFAULT_TENANT_ID))
+
+
 def seed(password: str) -> dict:
     from app.database import SessionLocal
     from app.models.user import UserRole
 
     db = SessionLocal()
     try:
+        modules = _enable_all_modules(db)
         admin_role = db.query(UserRole).filter_by(slug="admin").one()
         slugs = _restricted_slugs(db)
         restricted_role = _upsert_role(db, RESTRICTED_ROLE_SLUG, "Never Stuck Procurement Viewer", slugs)
@@ -121,6 +138,7 @@ def seed(password: str) -> dict:
             "password": password,
             "personas": {key: {"email": PERSONAS[key]["email"], "id": u.id} for key, u in users.items()},
             "restrictedSlugs": slugs,
+            "enabledModules": modules,
             # Route template -> a real id, for the detail routes this seed can fill. Every
             # other dynamic route is opened with a missing-record id (see the spec). Add a
             # row here when a fix lane wants its detail page smoked against real data.

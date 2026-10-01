@@ -26,12 +26,14 @@ const walk = (suite) => {
       // The spec's own assertion prints the problems array; keep its quoted lines only.
       const problems = [...msg.matchAll(/^\s*[+-]?\s*"(.+)",?$/gm)].map((m) => m[1]);
       const note = (t.annotations ?? []).find((a) => a.type.startsWith('known-'));
+      const redirectedTo = (t.annotations ?? []).find((a) => a.type === 'redirected')?.description;
       rows.push({
         title: spec.title,
         status: t.status,
         known: note?.type ?? '',
         detail: problems.length ? problems.join('; ') : msg.split('\n')[0].slice(0, 200),
         audit: note?.description ?? '',
+        redirectedTo,
       });
     }
   }
@@ -43,13 +45,14 @@ const nowPassing = rows.filter((r) => r.known === 'known-passed');
 const stillKnown = rows.filter((r) => r.known === 'known-failure');
 const passed = rows.filter((r) => r.status === 'expected' && !r.known);
 const skipped = rows.filter((r) => r.status === 'skipped');
+const redirected = rows.filter((r) => r.redirectedTo);
 
 const esc = (s) => String(s).replace(/\|/g, '\\|');
 const out = ['## Never-stuck smoke', ''];
 out.push(
-  `| passed | new failures | known (audit row, fix lane open) | known now passing | skipped |`,
-  `|---|---|---|---|---|`,
-  `| ${passed.length} | ${newFailures.length} | ${stillKnown.length} | ${nowPassing.length} | ${skipped.length} |`,
+  `| passed | new failures | known (audit row, fix lane open) | known now passing | redirected off the route | skipped |`,
+  `|---|---|---|---|---|---|`,
+  `| ${passed.length} | ${newFailures.length} | ${stillKnown.length} | ${nowPassing.length} | ${redirected.length} | ${skipped.length} |`,
   '',
 );
 if (newFailures.length) {
@@ -70,6 +73,11 @@ if (nowPassing.length) {
 if (stillKnown.length) {
   out.push('<details><summary>Known failures still failing (audit row, fix lane open)</summary>', '', '| test | audit: problem |', '|---|---|');
   for (const r of stillKnown) out.push(`| \`${esc(r.title)}\` | ${esc(r.audit)} |`);
+  out.push('', '</details>', '');
+}
+if (redirected.length) {
+  out.push('<details><summary>Redirected off the requested route (checked where they landed)</summary>', '', '| test | landed on |', '|---|---|');
+  for (const r of redirected) out.push(`| \`${esc(r.title)}\` | \`${esc(r.redirectedTo)}\` |`);
   out.push('', '</details>', '');
 }
 // A run that died in global setup (sign-in, seed) reports errors and no tests: say so

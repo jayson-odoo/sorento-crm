@@ -164,11 +164,20 @@ for (const persona of PERSONAS) {
           if (onSignIn(page.url())) problems.push('live session bounced to /signin');
         }
 
+        // A live persona that ends somewhere else (a missing record sent back to its list, a
+        // module guard) reached a final state, but not on the page under test: say so in the
+        // report, so a run where everything quietly lands on `/` cannot read as all green.
+        const landedOn = new URL(page.url()).pathname;
+        const redirected = persona !== 'expired' && !onSignIn(page.url()) && landedOn !== url;
+        if (redirected) test.info().annotations.push({ type: 'redirected', description: landedOn });
+
         const text = await page.locator('body').innerText({ timeout: 2_000 }).catch(() => '');
         const raw = text.match(RAW_PERMISSION_TEXT);
         if (raw) problems.push(`raw permission text on screen: "${raw[0]}..."`);
 
-        if (persona === 'restricted' && refused.length > 0) {
+        // Judged only on the page that was asked for: after a redirect the empty copy on
+        // screen belongs to some other page.
+        if (persona === 'restricted' && refused.length > 0 && !redirected) {
           const denied = await page.locator('[data-access-denied]').count();
           const empty = emptyStateText(text);
           if (denied === 0 && empty) {
