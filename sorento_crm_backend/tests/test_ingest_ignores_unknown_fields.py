@@ -154,12 +154,8 @@ def test_every_document_schema_reports_unknown_names_to_the_request_log(model_pa
     assert not any("secret-value" in name for name in seen)
 
 
-def test_unknown_names_are_not_collected_outside_an_ingest_request():
+def test_validating_outside_an_ingest_request_does_not_raise():
+    # No collector is set outside a request: noting must be a no-op, not `None.add`.
     CanonicalSalesOrder.model_validate(
         {"source_ref": "r", "so_number": "SO1", "status": "open", "lines": [], "zz": 1}
-    )  # no collector set: must not raise, and nothing leaks into a later request
-    from app.schemas.ingest_extras import collect_unknown_fields
-
-    with collect_unknown_fields() as seen:
-        pass
-    assert seen == set()
+    )

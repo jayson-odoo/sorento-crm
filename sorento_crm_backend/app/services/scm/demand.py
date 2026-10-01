@@ -190,8 +190,9 @@ def is_transferable_order():
     to T. NULL is "the source never said" (every Excel / manual / older order) and counts like
     T, hence `IS NOT FALSE` rather than `IS TRUE`.
 
-    Deliberately NOT part of `is_open_demand()`: the reorder run, `scm.committed_v`, coverage
-    and the outstanding / sales reports still count an F order until the owner rules on them.
+    Deliberately NOT part of `is_open_demand()` (owner decision (a), 1 Oct 2026): the reorder
+    run, `scm.committed_v`, coverage, the outstanding / sales reports and the chatbot keep
+    counting an F order as demand.
     """
     return SalesOrder.is_transferable.isnot(False)
 
