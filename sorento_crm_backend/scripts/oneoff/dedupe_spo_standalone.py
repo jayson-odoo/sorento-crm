@@ -50,19 +50,33 @@ SAFETY
 
 RUN IT IN THE PROD BACKEND CONTAINER (docker exec)
 --------------------------------------------------
-Production is blue/green (scripts/blue_green_deploy.sh): the live backend
-service is `backend_<colour>`, the colour is in /opt/sorento-crm2/.active_color.
-Every backend container already has DATABASE_URL and the app at /app. Run it
-inside `tmux` (or `screen`): a dropped SSH session kills the process and rolls
-back the SPO in flight.
+The prod host has NO git checkout (/opt/sorento-crm2 holds only the compose
+file and what CI scp's there; PRINCIPLES.md "Ops quick-reference"), so the
+file travels from a LOCAL checkout of this branch by scp. Production is
+blue/green (scripts/blue_green_deploy.sh): the live backend service is
+`backend_<colour>`, the colour is in /opt/sorento-crm2/.active_color. Every
+backend container already has DATABASE_URL in its environment and the app at
+/app. Run the server steps inside `tmux` (or `screen`): a dropped SSH session
+kills the process and rolls back the SPO in flight.
 
+    # 0. ON YOUR MACHINE, from a checkout of this branch: copy the script to the
+    #    host (same SSH user/host CI deploys with; fill in your own).
+    scp sorento_crm_backend/scripts/oneoff/dedupe_spo_standalone.py \
+        <ssh-user>@<prod-host>:/tmp/dedupe_spo_standalone.py
+    ssh <ssh-user>@<prod-host>
+
+    # ON THE HOST
     tmux new -s spo-repair
     set -o pipefail            # so `| tee` keeps the script's exit code
     cd /opt/sorento-crm2
     COLOUR=$(cat .active_color)
+    docker compose ps --services   # confirm the real service names first:
+                                   # backend_${COLOUR} and the worker services
+                                   # (worker / worker_fast in the deploy script)
+    docker compose ps backend_${COLOUR}   # must show it running
 
-    # 1. copy the file in (from a checkout of this branch on the host)
-    docker compose cp /path/to/dedupe_spo_standalone.py backend_${COLOUR}:/tmp/dedupe_spo_standalone.py
+    # 1. copy the file into the live backend container
+    docker compose cp /tmp/dedupe_spo_standalone.py backend_${COLOUR}:/tmp/dedupe_spo_standalone.py
 
     # 2. DRY RUN (default) - read the plan, keep the log. The header names the
     #    database it connected to (current_database, server address, alembic head).
@@ -70,19 +84,24 @@ back the SPO in flight.
         python /tmp/dedupe_spo_standalone.py --company SRT --spo SPO-2026/08-0074 \
         2>&1 | tee spo-0074-dryrun.log
 
-    # 3. APPLY, only after the dry run has been read and approved, ideally with
-    #    the worker containers stopped (`docker compose stop worker worker_fast`)
-    #    so no AutoCount sync or GRN ingest writes the same rows meanwhile.
+    # 3. APPLY, only after the dry run has been read and approved. Stop the
+    #    worker services first (use the names `ps --services` printed) so no
+    #    AutoCount sync or GRN ingest writes the same rows meanwhile, and start
+    #    them again whatever the outcome.
+    docker compose stop worker worker_fast
     docker compose exec -T -w /app backend_${COLOUR} \
         python /tmp/dedupe_spo_standalone.py --company SRT --spo SPO-2026/08-0074 --apply \
-        2>&1 | tee spo-0074-apply.log
+        2>&1 | tee spo-0074-apply.log; echo "exit=$?"
     docker compose start worker worker_fast
+    docker compose ps --services --filter status=running   # workers back up
 
     # 4. open each packing list the apply printed, once, in the CRM
     # 5. run the dry run again. It should report nothing left to do. If it
     #    proposes ANY new carry or delete, do not apply it without review: a
     #    group the first run kept can only match lines the first run already
     #    carried a receipt onto.
+    # 6. copy the logs off the host (scp back to your machine) and keep them:
+    #    they are the audit record.
 
 The log is the audit record (raw SQL writes no audit rows): before any write
 it prints every row of the SPO and every pick, claim and order-inquiry link on
