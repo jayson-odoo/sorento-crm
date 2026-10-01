@@ -1,6 +1,6 @@
 # PLAN: never-stuck levers L2-L5 (lane NS-FETCH-STATES)
 
-Status: Build (small fix track: shared frontend code plus mechanical call-site edits; no
+Status: PR ready for review, 1 Oct 2026 (small fix track: shared frontend code plus mechanical call-site edits; no
 migration, no auth/RBAC change, no new ingest surface. The call-site sweep pushes the diff over
 ~300 lines, but each site is a one-prop edit, so the lane stays on the small track and says so
 in the PR.)
