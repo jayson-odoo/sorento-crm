@@ -93,6 +93,7 @@ test('session revoked mid view-as: the next click lands on sign-in once, view-as
   await page.waitForURL(/\/signin\?callbackUrl=/, { timeout: SIGNIN_WITHIN_MS });
 
   expect(Date.now() - started).toBeLessThan(SIGNIN_WITHIN_MS);
+  // A fixed wait on purpose: it asserts a SECOND navigation does not follow.
   await page.waitForTimeout(1500);
   expect(seen.signinDocuments).toBe(1);
   expect(await page.evaluate(() => localStorage.getItem('impersonation-session-v1'))).toBeNull();
@@ -111,6 +112,7 @@ test('cookie no longer usable: a reload lands on sign-in, no request storm', asy
   await page.reload();
   await page.waitForURL(/\/signin\?callbackUrl=/, { timeout: SIGNIN_WITHIN_MS });
 
+  // A fixed wait on purpose: it asserts no second navigation and no storm follow.
   await page.waitForTimeout(1500);
   expect(seen.signinDocuments).toBe(1);
   // Main sent 9 token reads + 19 bearer-less calls in 1.5 s and never left the page.

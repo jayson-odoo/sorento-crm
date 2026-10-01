@@ -19,10 +19,15 @@ export const sessionNavigation = {
   assign: (url: string) => window.location.assign(url),
 };
 
-/** How long a cancelled navigation (a page's "leave site?" guard, answered Stay) keeps the latch. */
+/**
+ * After this long with the page still alive, the navigation was cancelled (a page's
+ * "leave site?" guard answered Stay) or is very slow: the next call retries it. The
+ * latch itself never drops, so requests stay short-circuited for the page's life.
+ */
 export const REDIRECT_RETRY_MS = 5000;
 
 let _ending = false;
+let _navigatedAt = 0;
 let _signedInShell = false;
 
 export function isSessionEnding(): boolean {
@@ -68,7 +73,15 @@ async function _signOutQuietly(): Promise<void> {
 }
 
 export function endSessionAndRedirect(): void {
-  if (_ending || typeof window === 'undefined') return;
+  if (typeof window === 'undefined') return;
+  if (_ending) {
+    // Already on the way out: only re-try a navigation that has not happened.
+    if (_navigatedAt && Date.now() - _navigatedAt >= REDIRECT_RETRY_MS) {
+      _navigatedAt = Date.now();
+      sessionNavigation.assign(signInUrl());
+    }
+    return;
+  }
   _ending = true;
   const target = signInUrl();
   // The view-as entry belongs to the session that just died; leaving it in storage
@@ -76,12 +89,8 @@ export function endSessionAndRedirect(): void {
   impersonationStore.setSession(null);
   const cap = new Promise<void>((resolve) => setTimeout(resolve, SIGN_OUT_CAP_MS));
   void Promise.race([_signOutQuietly(), cap]).finally(() => {
+    _navigatedAt = Date.now();
     sessionNavigation.assign(target);
-    // Still here after a while: the navigation was cancelled. Release the latch so
-    // the next call tries again instead of answering "ending" forever.
-    setTimeout(() => {
-      _ending = false;
-    }, REDIRECT_RETRY_MS);
   });
 }
 

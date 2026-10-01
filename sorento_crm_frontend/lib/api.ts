@@ -427,8 +427,12 @@ export async function apiFetch(
         // Extract JWT token from NextAuth and send in Authorization header
         // NextAuth stores JWT encrypted in cookies, so we need to get the raw token
         if (typeof window !== 'undefined') {
-          // The session is on its way to /signin: answer at once, no request storm.
-          if (isSessionEnding()) return _sessionEndingResponse();
+          // The session is on its way to /signin: answer at once, no request storm
+          // (and re-try the navigation if it was cancelled).
+          if (isSessionEnding()) {
+            endSessionAndRedirect();
+            return _sessionEndingResponse();
+          }
           try {
             // For client-side: get a cached (deduped) JWT from the Next.js API.
             const token = await getCachedAuthToken(basePath);

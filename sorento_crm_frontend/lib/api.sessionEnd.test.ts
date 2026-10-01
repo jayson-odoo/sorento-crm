@@ -258,6 +258,46 @@ describe('FastAPI says the session is dead (401 with a session_* code)', () => {
     expect(bearerOf(v1Calls().at(-1)!)).toBe('Bearer tok-user-b');
   });
 
+  it('HEAD is a read: replayed with the newer token', async () => {
+    let cookieToken = 'tok-old';
+    fetchMock.mockImplementation(async (input: RequestInfo, init?: RequestInit) => {
+      if (String(input).includes('/api/auth/token')) return json({ token: cookieToken });
+      const bearer = new Headers(init?.headers as HeadersInit).get('Authorization');
+      if (bearer === 'Bearer tok-old') return dead('session_revoked');
+      return new Response(null, { status: 200 });
+    });
+    const { apiFetch } = await load();
+    fetchMock.mockImplementationOnce(async () => json({ token: 'tok-old' }));
+    fetchMock.mockImplementationOnce(async () => json({ ok: true }));
+    await apiFetch('/api/v1/prime');
+
+    cookieToken = 'tok-new';
+    const res = await apiFetch('/api/v1/attachments/a-1', { method: 'HEAD' });
+
+    expect(res.status).toBe(200);
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('a replayed read that is still dead ends the session', async () => {
+    let cookieToken = 'tok-old';
+    let alive = true;
+    fetchMock.mockImplementation(async (input: RequestInfo) => {
+      if (String(input).includes('/api/auth/token')) return json({ token: cookieToken });
+      return alive ? json({ ok: true }) : dead('session_revoked');
+    });
+    const { apiFetch } = await load();
+    await apiFetch('/api/v1/prime'); // caches tok-old
+
+    alive = false;
+    cookieToken = 'tok-newer-but-also-dead';
+    await apiFetch('/api/v1/a');
+    await settle();
+
+    const calls = v1Calls().filter((c) => String(c[0]).endsWith('/a'));
+    expect(calls.map(bearerOf)).toEqual(['Bearer tok-old', 'Bearer tok-newer-but-also-dead']);
+    expect(assign).toHaveBeenCalledTimes(1);
+  });
+
   it('no replay once another call has started ending the session', async () => {
     let reads = 0;
     let end: (() => void) | null = null;
@@ -349,20 +389,28 @@ describe('endSessionAndRedirect', () => {
     expect(signInUrl()).toBe('/crm/signin');
   });
 
-  it('a cancelled navigation (a "leave site?" guard answered Stay) releases the latch', async () => {
+  it('a cancelled navigation (a "leave site?" guard answered Stay) is retried, the latch never drops', async () => {
     vi.useFakeTimers();
-    const { endSessionAndRedirect, isSessionEnding, REDIRECT_RETRY_MS } = await load();
+    fetchMock.mockImplementation(async () => json({ ok: true }));
+    const { apiFetch, endSessionAndRedirect, isSessionEnding, REDIRECT_RETRY_MS } = await load();
 
     endSessionAndRedirect();
     await vi.advanceTimersByTimeAsync(0);
     expect(assign).toHaveBeenCalledTimes(1);
-    expect(isSessionEnding()).toBe(true);
+
+    // Too soon: a slow /signin compile must not restart anything.
+    await apiFetch('/api/v1/a');
+    expect(assign).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(REDIRECT_RETRY_MS + 10);
-    expect(isSessionEnding()).toBe(false);
-    endSessionAndRedirect();
-    await vi.advanceTimersByTimeAsync(0);
+    const res = await apiFetch('/api/v1/b');
+
+    expect(res.status).toBe(401);
+    expect(isSessionEnding()).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(assign).toHaveBeenCalledTimes(2);
+    const nextAuth = await import('next-auth/react');
+    expect(vi.mocked(nextAuth.signOut)).toHaveBeenCalledTimes(1);
   });
 
   it('is idempotent and skips the return URL when already on sign-in', async () => {
