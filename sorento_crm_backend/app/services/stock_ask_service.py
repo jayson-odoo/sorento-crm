@@ -877,7 +877,8 @@ def todo_for_agent(
     db: Session, agent_id: Optional[str | Iterable[str]], *, now: Optional[datetime] = None, with_agent: bool = False
 ) -> dict[str, Any]:
     """The to-do read (plan 3.2): open asks oldest first (capped), and what was cleared today.
-    `agent_id=None` is every agent (view_all). Grouping happens on the client from `today_start`."""
+    `agent_id=None` is every agent (view_all). One Open list (CUSTOMER-ASKS-REFER-ONLY);
+    `today_start` is the Done today window's start."""
     from app.models.stock_ask import StockAsk
 
     start = today_start_utc(now or datetime.utcnow())
@@ -908,32 +909,28 @@ def agent_counts(
     *,
     agent_ids: Optional[Iterable[str]] = None,
     include_idle: bool = False,
-    now: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
     """The Agent select's lines, counted over the SAME rows the to-do shows: each agent's
     `_agent_scope` (so a customer-less ask reached through a contact link counts for every agent
-    it belongs to), open, every branch; needs attention = asked before today. `agent_ids` None is
-    every agent. Agents with no open ask are left out, unless `include_idle` (a team leader sees
-    every current member, 0 allowed). One small query per agent: an agent list is tens."""
-    from sqlalchemy import case, func
+    it belongs to), open, every branch. One Open count (CUSTOMER-ASKS-REFER-ONLY, 1 Oct 2026:
+    the to-do has no "needs attention" split any more). `agent_ids` None is every agent. Agents
+    with no open ask are left out, unless `include_idle` (a team leader sees every current
+    member, 0 allowed). One small query per agent: an agent list is tens."""
+    from sqlalchemy import func
 
     from app.models.sales_agent import SalesAgent
     from app.models.stock_ask import StockAsk
 
-    start = today_start_utc(now or datetime.utcnow())
     query = db.query(SalesAgent)
     if agent_ids is not None:
         query = query.filter(SalesAgent.id.in_(list(agent_ids)))
     out = []
     for agent in query.all():
-        opened, attention = (
+        opened = (
             _agent_scope(db, agent.id)
             .filter(StockAsk.state == "open")
-            .with_entities(
-                func.count(StockAsk.id),
-                func.coalesce(func.sum(case((StockAsk.created_at < start, 1), else_=0)), 0),
-            )
-            .one()
+            .with_entities(func.count(StockAsk.id))
+            .scalar()
         )
         if not opened and not include_idle:
             continue
@@ -942,8 +939,7 @@ def agent_counts(
                 "agent_id": str(agent.id),
                 "code": agent.sales_agent,
                 "name": agent.person_label or agent.sales_agent,
-                "open": int(opened),
-                "needs_attention": int(attention),
+                "open": int(opened or 0),
             }
         )
     return sorted(out, key=lambda r: r["code"])
