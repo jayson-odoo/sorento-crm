@@ -1,6 +1,6 @@
 # PLAN: Packing-list tabs for users without SCM permission (PL-TABS-ACCESS)
 
-Status: In progress (small fix track: frontend only, no migration, no backend RBAC change)
+Status: In review, PR #1413 (small fix track: frontend only, no migration, no backend RBAC change)
 
 ## Journey
 
@@ -43,3 +43,33 @@ Backend gates: `require_permission("scm.dashboard.view")` (`app/api/v1/scm/profo
 - `[id]/layout.tsx`: Proforma invoices + SPO planner tabs only with the permission.
 - `[id]/proforma-invoices/page.tsx`, `[id]/spo/page.tsx`: `RequireAccess` for a deep link.
 - Lines / Details / Documents: their SCM reads are skipped without the permission.
+
+Review round (reviewer): the shared read still retries a non-403 failure once, and Documents
+says "Could not load the proforma invoices." rather than "none"; without SCM read the Lines
+grid drops From PI + Photos, the gear drops "Download packing list" (an SCM export), and the
+container size stays a value in edit mode.
+
+## The "hang"
+
+Not reproduced. Tried: dev server and a production build served with the browser calling the
+API cross-origin (as deployed), direct login and admin view-as, on an empty container. Every tab
+settled with no pending request. What the user saw on those three tabs was the false empty state
+(Proforma invoices, Documents) and the raw 403 card (SPO planner) after a retry delay plus a
+permission toast, which the fix removes. If the owner still sees a hang on the test copy with real
+data, that is a separate defect.
+
+## Verification
+
+agent-browser, 1280 and 375, sidebar navigation from `/`: restricted user sees Details, Shipment
+lines, Documents, Timeline with no SCM request and no 4xx; deep links to `/proforma-invoices` and
+`/spo` show AccessDenied; admin still sees all six tabs, SPO suggestion 200, the workbook download.
+
+## Follow-ups (not in this lane)
+
+- View-as restored by `hydrate()` on a fresh sign-in (impersonation already active server-side)
+  keeps the admin's cached `['my-permissions']` until a reload: the tabs show and 403 as before.
+  Starting view-as from Users reloads the page, so the owner's normal path is unaffected.
+- `next build` with type checking fails on main at `app/(auth)/signin/page.tsx`
+  (`isSafeCallbackUrl` is not a valid Page export). Docker skips the type check.
+- `RequireAccess` renders a full-screen `ScreenLoader` on a cold deep link, and `AccessDenied`
+  carries its own h1 + CTA inside the tab. Reused as briefed; an in-tab variant would read better.
