@@ -122,6 +122,15 @@ function formatDay(day: string | null | undefined): string {
   return match ? `${match[3]}/${match[2]}/${match[1]}` : day;
 }
 
+/** Only the columns the mapping reads travel to the server (a full macro sheet body is over
+ *  12 MB); a key matches a mapped header trimmed and case-insensitive, its spelling kept. */
+function projectRows(rows: unknown[], headers: Set<string> | null): Record<string, unknown>[] {
+  if (!headers) return rows as Record<string, unknown>[];
+  return (rows as Record<string, unknown>[]).map((row) =>
+    Object.fromEntries(Object.entries(row).filter(([key]) => headers.has(key.trim().toLowerCase()))),
+  );
+}
+
 type SourceResults = Partial<Record<AutocountPullCompareSource, AutocountComparePullResult>>;
 
 /**
@@ -146,14 +155,25 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
       ? `Columns read: ${headers.join(', ')}. Drop the .xlsm here, or click to browse.`
       : 'Drop the .xlsm here, or click to browse.';
   };
+  const mappedHeaders = (kind: 'order_listing' | 'order_tracking'): Set<string> | null => {
+    const items = mappings.data?.items.find((m) => m.kind === kind)?.columns;
+    return items ? new Set(items.map((c) => c.excel_header.trim().toLowerCase())) : null;
+  };
   const sheetFor = (kind: 'order_listing' | 'order_tracking'): string =>
     mappings.data?.items.find((m) => m.kind === kind)?.sheet_name ?? 'Master';
   const accept = entity === 'products' ? '.xlsx,.xls' : '.xlsx,.xls,.xlsm';
 
   const handleFilesChange = async (next: File[], source?: AutocountPullCompareSource) => {
     setFiles((prev) => ({ ...prev, [source ?? 'single']: next }));
+    const clearResult = () => {
+      if (source) setResults((prev) => ({ ...prev, [source]: undefined }));
+      else setSingle(null);
+    };
     const file = next[0];
-    if (!file) return;
+    if (!file) {
+      clearResult();
+      return;
+    }
     if (isDeliveryOrders && mappings.isLoading) {
       toast.error('The mapping is still loading. Try again in a moment.');
       return;
@@ -164,11 +184,12 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
         ? await parseExcelFile(file, { sheetName: sheetFor(entry.kind) })
         : await parseExcelFile(file);
       if (rows.length === 0) {
+        clearResult();
         toast.error('That file has no rows.');
         return;
       }
       compareMutation.mutate(
-        { filename: file.name, rows: rows as Record<string, unknown>[], source },
+        { filename: file.name, rows: entry ? projectRows(rows, mappedHeaders(entry.kind)) : (rows as Record<string, unknown>[]), source },
         {
           onSuccess: (data) => {
             if (source) setResults((prev) => ({ ...prev, [source]: data }));
@@ -177,6 +198,7 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
         },
       );
     } catch (error) {
+      clearResult();
       toast.error(error instanceof Error ? error.message : 'Could not read that file.');
     }
   };
@@ -347,7 +369,7 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
           {sources.map((entry) => {
             const result = results[entry.source];
             return (
-              <div key={entry.source} className="space-y-2">
+              <div key={entry.source} className="min-w-0 space-y-2">
                 {renderDropzone(
                   `autocount-compare-${jobId}-${entry.source}`,
                   entry.ariaLabel,

@@ -11,6 +11,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -221,6 +222,7 @@ export function CompareMappingDialog({ open, onOpenChange }: CompareMappingDialo
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Mapping</DialogTitle>
+          <DialogDescription className="sr-only">Compare mapping</DialogDescription>
         </DialogHeader>
         <Tabs value={kind} onValueChange={(value) => setKind(value as CompareMappingKind)}>
           <TabsList variant="line">
