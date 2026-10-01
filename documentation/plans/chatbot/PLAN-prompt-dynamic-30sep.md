@@ -298,3 +298,63 @@ Browser repro (agent-browser 0.27.0, session `pdyn4`, sandbox stack):
 Screenshots:
 - `documentation/plans/evidence/prompt-dynamic-find-1280.png`
 - `documentation/plans/evidence/prompt-dynamic-insert-375.png`
+
+## Owner requirement, 1 Oct 2026: the live production text as a variable version (replaces the "identical to v53" ask)
+
+The owner pasted the live production `chatbot_semantic_parser` text. Crew committed it verbatim
+on `crew/prod-semantic-parser-20261001` (6409fa769, 1741 lines, sha256 fdbf2ea1ba0cc019...).
+This lane copies it byte for byte to
+`sorento_crm_backend/alembic/data/chatbot_semantic_parser.prod-20261001.txt`. The file sits
+inside the backend tree because the backend image builds from `sorento_crm_backend/`
+(`sorento_crm/docker-compose.yml:28`). The text carries the owner's em dashes, so the pre-push
+dash guard skips that one directory (`scripts/git-hooks/pre-push`, exclude pathspec).
+
+Migration `pdyn_0003_prod_identical` (after `pdyn_0002`):
+- Inputs: it loads the file and runs `chatbot_prompt_vars.identical_wording_layer`. That swap
+  happens only where `literal == render_value(db, variable)` at migration time.
+- Proof: before insert, it checks that rendering the result gives the file. If the check fails,
+  it inserts the text verbatim instead.
+- Insert: ONE unlabelled version at max+1, with
+  `config_json {prod_snapshot, prod_snapshot_sha256, rendered_identical, identical_report}`.
+- Idempotent: it skips when the same template or the same snapshot sha already exists.
+- Downgrade: deletes only its own row, and only while it is unlabelled.
+- `bootstrap_env` applies it after `pdyn_0002`.
+
+Tests (`tests/chatbot/test_prompt_dynamic_prod_snapshot.py`) were red first (b307df27) and are
+green at 870054ef:
+- seeded registries: the variables are swapped in, and the render equals the file;
+- a differing registry: the list is kept literal and reported, and the render still equals the
+  file;
+- no label is set and no existing version is touched;
+- idempotent;
+- downgrade is scoped.
+
+Kill tests:
+- guard off: 2 red;
+- guard off and proof off: 2 red;
+- idempotency off: 1 red;
+- downgrade unscoped: 1 red.
+
+A fresh `bootstrap_env` database ran the 79 prompt tests green.
+
+On the sandbox (CI tables) the version came out as v5, unlabelled, rendering equal to the file:
+132034 characters both. On those tables only `{{teams}}` and `{{entity_kinds_detail}}` are
+swapped. Expected on prod, worked out from the text and from what this lane's own migrations
+add:
+
+| List (line in the file) | On prod | Why |
+| --- | --- | --- |
+| teams (773) | variable | Rendered from code (`ESCALATION_TEAMS`), the same everywhere. |
+| domains (82) | literal | `pdyn_0001` adds `sales`; the text also omits `purchase_order`, which its own policy block lists. |
+| status_values (770, 778, 821) | literal | The three lines differ from each other, and `pdyn_0001` seeds 8 statuses. |
+| statuses (643) | literal | The text wraps each status over two lines; the registry renders one line each. |
+| domain_words (87) | literal | The text carries words no registry holds (ETA, DO, SO, PO, purchase cost, price, photo, certificate, forms, GRN). |
+| domains_detail (1662) | literal | `pdyn_0001` adds the `sales` row. |
+| entity_kinds (401) | literal | The hint list omits `specification`, which the kind table holds (the text's own block lists it). |
+| agents (773) | UNVERIFIED | Depends on prod `access_agents`. |
+| access_levels (352) | UNVERIFIED | Depends on prod `contact_access_types`. |
+| entity_kinds_detail (1677) | UNVERIFIED | Likely a variable: the text's block was published from the prod table. |
+| specs (1691) | UNVERIFIED | Depends on prod `product_spec_registry`. |
+
+The real answer is the migration log on deploy (`prod snapshot vN: {{x}} line L replaced|kept literal`),
+and the version's `config_json.identical_report`.
