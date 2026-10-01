@@ -20,7 +20,7 @@ from __future__ import annotations
 import random
 import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 
 from sqlalchemy import text
 
@@ -393,6 +393,36 @@ class TestAcF5FallbackGuards:
         assert {str(case.excel_95.id), str(case.excel_4.id)} <= ids
         assert _picked_on(env, case.excel_95.id) == 95
 
+    def test_fewer_lines_than_rows_keep_the_excel_rows_too(self, env):
+        """AC-F5, the other direction (review M4b): 95 + 4 against 22 + 73."""
+        case = _owner_case(env)
+        entry = _push(env, _autocount_record(env, case, ntc_qty=73))
+        assert "superseded" not in entry.lines, entry.lines
+        ids = {str(r["id"]) for r in _spo_rows(env, case.number)}
+        assert {str(case.excel_95.id), str(case.excel_4.id)} <= ids
+
+    def test_a_repush_never_fallback_pairs_a_new_line(self, env):
+        """Review B1: the first push keeps the HQ rows (22 + 80 does not
+        reconcile); a re-push adding a new, unreceived NTC 99 line must not pair
+        them with it (99 == 95 + 4) and call it fully received."""
+        case = _owner_case(env)
+        record = _autocount_record(env, case, ntc_qty=80)
+        _push(env, record)
+        record["lines"].append(
+            _spo_line(
+                env, warehouse_ref=case.ntc_ref, qty_ordered=99, qty_received=0, line_number=3
+            )
+        )
+        entry = _push(env, record)
+
+        assert "superseded" not in entry.lines, entry.lines
+        rows = _spo_rows(env, case.number)
+        new_line = [r for r in rows if r["source_ref"] == record["lines"][2]["source_ref"]]
+        assert len(new_line) == 1
+        assert int(new_line[0]["quantity_received"] or 0) == 0
+        assert new_line[0]["line_status"] == "open"
+        assert _picked_on(env, case.excel_95.id) == 95
+
     def test_an_excel_row_naming_a_warehouse_is_never_fallback_paired(self, env):
         """AC-F6 (guard): the Excel rows name a warehouse AutoCount never
         names. The quantities reconcile (95 + 4 = 22 + 77), but a row with a
@@ -478,6 +508,50 @@ class TestAcF9NoFalseIncomingOnReceivedLines:
         # PL keeps saying so; what must stop is the false "still to come".
         assert (allocated, received) == (194, 99)
         assert _incoming_shipments(env, case) == []
+
+    @staticmethod
+    def _partly_received(env):
+        case = _owner_case(env, with_receipts=False)
+        ib_row, ntc_row = _seed_pre_repair_state(env, case)
+        ntc_row.quantity_received = 0
+        ntc_row.stated_received = None
+        ntc_row.receipt_status = "pending"
+        ntc_row.line_status = "open"
+        env.db.delete(case.excel_95)
+        env.db.delete(case.excel_4)
+        env.db.commit()
+        _pl_figures(env, case)  # refresh the stored line figures
+        ntc_code = env.db.execute(
+            text("SELECT warehouse_code FROM warehouses WHERE id = :id"), {"id": case.ntc_id}
+        ).scalar()
+        owed = [
+            {
+                "warehouse_code": ntc_code,
+                "warehouse_name": f"{MARKER} depot",
+                "allocated_quantity": 77,
+            }
+        ]
+        return case, owed
+
+    def test_incoming_list_shows_only_the_warehouse_still_owed(self, env):
+        """Review M9: the n8n list endpoint emits the same outstanding list."""
+        from app.services.incoming_stock_service import IncomingStockService
+
+        case, owed = self._partly_received(env)
+        result = IncomingStockService(env.db).incoming_list(shipment_ids=[case.shipment_id])
+        lines = [line for ship in result["data"] for line in ship["lines"]]
+        assert len(lines) == 1, result
+        assert lines[0]["warehouse_allocations"] == owed
+
+    def test_shipment_incoming_products_shows_only_the_warehouse_still_owed(self, env):
+        """Review M10: the per-shipment drill-down emits the same outstanding list."""
+        from app.services.incoming_stock_service import IncomingStockService
+
+        case, owed = self._partly_received(env)
+        result = IncomingStockService(env.db).shipment_incoming_products(case.shipment_id)
+        products = result["data"]["products"]
+        assert len(products) == 1, result
+        assert products[0]["warehouse_allocations"] == owed
 
     def test_partly_received_pl_lists_only_the_warehouse_still_owed(self, env):
         """AC-F9. AutoCount IB 22 received, NTC 77 not yet: the chatbot still
@@ -701,3 +775,131 @@ class TestSecurityReviewFixes:
         ids = {str(r["id"]) for r in _spo_rows(env, case.number)}
         assert {str(case.excel_95.id), str(case.excel_4.id)} <= ids
         assert _picked_on(env, case.excel_95.id) == 95
+
+
+# ============================================================================ #
+# Reviewer round: B2 pool, capacity, overflow, expected, dtl_key, locked lines
+# ============================================================================ #
+def _pool(env, case, *, exclude=()):
+    from app.services.grn_spo_matching import build_allocation_pool
+
+    return {
+        entry.allocation_id: entry.available
+        for entry in build_allocation_pool(
+            env.db,
+            product_id=case.product_id,
+            spo_number=case.number,
+            company_id=env.company_a,
+            exclude_header_ids=exclude,
+        )
+    }
+
+
+def _header(env, case) -> str:
+    header = PickingHeader(
+        id=str(uuid.uuid4()),
+        company_id=env.company_a,
+        picking_number=unique_code(f"{MARKER}-GR"),
+        picking_type="goods_received",
+        picking_status="approved",
+        spo_number=case.number,
+    )
+    env.db.add(header)
+    env.db.flush()
+    return str(header.id)
+
+
+class TestReviewerRound:
+    def test_reimport_finds_a_retired_line_that_still_carries_its_picks(self, env):
+        """Review B2: a retired AutoCount line with a pick from GRN H stays in
+        the pool when H is re-imported, so the re-import does not draw a second
+        copy of the receipt onto the live sibling."""
+        case = _owner_case(env, with_receipts=False)
+        ib_row, ntc_row = _seed_pre_repair_state(env, case)
+        env.db.delete(case.excel_95)
+        env.db.delete(case.excel_4)
+        header_id = _header(env, case)
+        _pick(env, header_id, ib_row.id, case.product_id, case.ib_id, 10)
+        ib_row.retired_at = datetime.now(timezone.utc)
+        env.db.commit()
+
+        pool = _pool(env, case, exclude=[header_id])
+        # Its own header's pick is excluded, so it offers its full 22 again.
+        assert pool.get(str(ib_row.id)) == 22
+
+    def test_repair_respects_existing_picks_and_overflows_onto_the_last_line(self, env):
+        """Review M5 + M6: the IB line already carries a 10 pick from another GRN,
+        so it takes only 12 more; what no line has room for lands on the LAST
+        line (NTC), never the first."""
+        from scripts import dedupe_spo_xlsx_superseded as script
+
+        case = _owner_case(env)
+        ib_row, ntc_row = _seed_pre_repair_state(env, case)
+        _pick(env, _header(env, case), ib_row.id, case.product_id, case.ib_id, 10)
+        env.db.commit()
+
+        script.run(env.db, env.company_a, dry_run=False)
+
+        assert _picked_on(env, ib_row.id) == 22
+        assert _picked_on(env, ntc_row.id) == 87
+
+    def _split_ib_pick(self, env, *, expected, dtl_key=None):
+        case = _owner_case(env)
+        case.pick_ib_22.quantity_picked = 30
+        case.pick_ib_22.quantity_expected = expected
+        case.pick_ib_22.dtl_key = dtl_key
+        case.pick_ntc_73.quantity_picked = 65
+        case.pick_ntc_73.quantity_expected = 65
+        env.db.commit()
+        _push(env, _autocount_record(env, case))
+        rows = _spo_rows(env, case.number)
+        ib = _row_by_wh(rows, case.ib_id)
+        ntc = _row_by_wh(rows, case.ntc_id)
+        chunks = env.db.execute(
+            text(
+                "SELECT spo_allocation_id, quantity_picked, quantity_expected "
+                "FROM picking_lines WHERE picking_header_id = :h AND source_warehouse_id = :w "
+                "ORDER BY quantity_picked DESC"
+            ),
+            {"h": str(case.pick_ib_22.picking_header_id), "w": case.ib_id},
+        ).all()
+        return ib, ntc, [(str(a), p, e) for a, p, e in chunks]
+
+    def test_a_short_receipt_keeps_its_shortfall_on_the_last_chunk(self, env):
+        """Review M7: expected 32, picked 30, split 22 / 8 -> expected 22 / 10."""
+        ib, ntc, chunks = self._split_ib_pick(env, expected=32)
+        assert chunks == [(str(ib["id"]), 22, 22), (str(ntc["id"]), 8, 10)]
+
+    def test_an_over_pick_never_yields_a_negative_expectation(self, env):
+        """Review should-fix 3: expected 25, picked 30 -> expected 22 / 3."""
+        ib, ntc, chunks = self._split_ib_pick(env, expected=25)
+        assert chunks == [(str(ib["id"]), 22, 22), (str(ntc["id"]), 8, 3)]
+
+    def test_an_autocount_grn_line_is_never_split(self, env):
+        """Review should-fix 1: a pick carrying a `dtl_key` moves whole."""
+        ib, _ntc, chunks = self._split_ib_pick(env, expected=30, dtl_key=987654321)
+        assert chunks == [(str(ib["id"]), 30, 30)]
+
+    def test_a_locked_groups_line_is_never_handed_to_the_fallback(self):
+        """Review should-fix 2 (pure): row A at IB 30/30 is D26a-locked by the
+        single IB 10 line; HQ row B (10) must not take that line."""
+        from types import SimpleNamespace
+
+        from app.services.rules.shipping_order_rules import plan_xlsx_supersede
+
+        def row(row_id, warehouse_id, location, allocated, received, number):
+            return SimpleNamespace(
+                id=row_id, product_id="P", warehouse_id=warehouse_id,
+                location_code=location, allocated_quantity=allocated,
+                quantity_received=received, spo_line_number=number,
+                inbound_shipment_id=None, storage_zone_id=None, uom_id=None,
+                quantity_rejected=0, allocation_notes=None,
+            )
+
+        plan = plan_xlsx_supersede(
+            [{"product_id": "P", "warehouse_id": "IB", "location_code": "IB",
+              "allocated_quantity": 10, "line_number": 1}],
+            [row("A", "IB", "IB", 30, 30, 1), row("B", None, "HQ", 10, 0, 2)],
+        )
+        assert plan.groups == ()
+        assert [g.reason for g in plan.locked_groups] == ["received_locked"]

@@ -499,6 +499,7 @@ class ShippingOrderIngestService(MasterRefResolver):
                 self._supersede_xlsx_rows(
                     payload, unmatched, supersede_pool, counts, force_closed,
                     container_number=container_number, warnings=warnings,
+                    fallback_blocked_products={key[0] for key in esb_group_keys},
                 )
             )
 
@@ -1052,6 +1053,7 @@ class ShippingOrderIngestService(MasterRefResolver):
         *,
         container_number: Optional[str] = None,
         warnings: Optional[list[str]] = None,
+        fallback_blocked_products: frozenset | set = frozenset(),
     ) -> list[SPOAllocation]:
         """D25a/D25c/D26/D26a/D27/D30: an Excel-era group REPLACED by the pushed lines.
 
@@ -1078,7 +1080,12 @@ class ShippingOrderIngestService(MasterRefResolver):
         counterpart, or refused by D26a's group-total guard) for the caller to
         hand to the ordinary leftover sweep.
         """
-        plan = shipping_order_rules.plan_xlsx_supersede(unmatched, supersede_pool)
+        plan = shipping_order_rules.plan_xlsx_supersede(
+            unmatched,
+            supersede_pool,
+            # Review B1: the D31 fallback runs only on a product's FIRST push.
+            fallback_blocked_products=fallback_blocked_products,
+        )
         by_id = {str(row.id): row for row in supersede_pool}
         kept = [by_id[row_id] for row_id in plan.kept_row_ids if row_id in by_id]
 

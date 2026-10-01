@@ -149,11 +149,6 @@ def build_allocation_pool(
     allocation_query = db.query(SPOAllocation).filter(
         SPOAllocation.product_id == str(product_id),
         SPOAllocation.spo_number.isnot(None),
-        # D34 (SPO-XLSX-SUPERSEDE round 2): a retired line - one AutoCount
-        # stopped naming, or an Excel row a push superseded without a delete
-        # grant - is not capacity. FIFO is by age, so a retired Excel row would
-        # otherwise be drawn before the AutoCount lines that replaced it.
-        SPOAllocation.retired_at.is_(None),
     )
     if company_id:
         allocation_query = allocation_query.filter(SPOAllocation.company_id == str(company_id))
@@ -199,6 +194,17 @@ def build_allocation_pool(
     pool: list[PoolEntry] = []
     for allocation in matched:
         linked_all, linked_excluded = linked.get(str(allocation.id), (0, 0))
+        if allocation.retired_at is not None and linked_all == 0:
+            # D34 (SPO-XLSX-SUPERSEDE round 2): a retired line nothing picks
+            # against is not capacity - an Excel row a push superseded without a
+            # delete grant (its picks moved to the AutoCount lines) or a line
+            # AutoCount stopped naming. FIFO is by age, so the old row would
+            # otherwise be drawn before the lines that replaced it. A retired
+            # line that still CARRIES picks stays in the pool (review B2): a
+            # re-import of the GRN those picks came from excludes its own header
+            # and must find the same allocation again, or it draws a second
+            # copy of the receipt onto a live sibling.
+            continue
         linked_other = linked_all - linked_excluded
         stated = int(allocation.stated_received or 0)
         external_received = max(0, int(allocation.quantity_received or 0) - stated - linked_all)

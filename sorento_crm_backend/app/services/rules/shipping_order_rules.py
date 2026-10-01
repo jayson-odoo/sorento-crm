@@ -481,7 +481,7 @@ def carried_received(
     return received, received >= int(allocated or 0)
 
 
-def plan_xlsx_supersede(incoming, refless_rows) -> SupersedePlan:
+def plan_xlsx_supersede(incoming, refless_rows, *, fallback_blocked_products=()) -> SupersedePlan:
     """Plan D26/D26a/D27 for ONE document. Pure: reads, decides, writes nothing.
 
     `incoming` is a sequence of mappings carrying `product_id`,
@@ -491,6 +491,15 @@ def plan_xlsx_supersede(incoming, refless_rows) -> SupersedePlan:
     already filtered to `is_xlsx_era_row` and to the groups D25a still counts
     as Excel-era by the caller, since only the caller can see which groups
     already hold a ref row.
+
+    `fallback_blocked_products` (review B1): product ids the D31 fallback must
+    not touch because this `spo_number` already carries a ref row for them. A
+    no-warehouse Excel group never joins the caller's ESB keys (AutoCount never
+    resolves "HQ"), so on a RE-push it would otherwise still be offered every
+    NEW line of that product and pair on quantity alone - a fresh, unreceived
+    line would come out fully received with the old picks on it. The ingest
+    passes the products its ESB keys name; the repair script passes none, since
+    it plans against the document's whole live line-set at once.
     """
     ordered_rows = sorted(
         refless_rows,
@@ -575,6 +584,11 @@ def plan_xlsx_supersede(incoming, refless_rows) -> SupersedePlan:
             locked.append(
                 SupersedeKeptGroup(key=key, row_ids=row_ids, reason=KEPT_RECEIVED_LOCKED)
             )
+            # Review should-fix 2: the line(s) this locked group named are still
+            # its counterpart (the push creates them as ordinary rows beside the
+            # locked Excel rows), so the D31 fallback must not hand them to a
+            # different Excel row of equal quantity.
+            claimed_lines.update(indexes)
             continue
 
         claimed_lines.update(indexes)
@@ -591,8 +605,13 @@ def plan_xlsx_supersede(incoming, refless_rows) -> SupersedePlan:
     # line elsewhere is not its counterpart.
     still_kept: list[SupersedeKeptGroup] = []
     fallback: dict[str, list[SupersedeKeptGroup]] = {}
+    blocked = {str(product) for product in fallback_blocked_products if product}
     for group in kept:
-        if group.key[0] and not (group.key[1] or "").startswith("wh:"):
+        if (
+            group.key[0]
+            and group.key[0] not in blocked
+            and not (group.key[1] or "").startswith("wh:")
+        ):
             fallback.setdefault(group.key[0], []).append(group)
         else:
             still_kept.append(group)
@@ -805,7 +824,7 @@ def repoint_picking_lines_by_capacity(
     NULL, read with the ambient scope off and the anchor as the predicate.
     """
     from app.models.base import company_scope
-    from app.models.procurement import PickingLine
+    from app.models.procurement import PickingHeader, PickingLine
     from app.services.grn_spo_matching import PoolEntry, draw_fifo
 
     ids = [str(value) for value in from_ids if value]
@@ -826,6 +845,10 @@ def repoint_picking_lines_by_capacity(
                 PickingLine.spo_allocation_id,
                 func.coalesce(func.sum(PickingLine.quantity_picked), 0),
             )
+            # Same consumption rule as `build_allocation_pool`: a pick on a
+            # REJECTED GRN holds no capacity (review should-fix 4).
+            .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
+            .filter(PickingHeader.picking_status != "rejected")
             .filter(PickingLine.spo_allocation_id.in_(target_ids))
             .filter(or_(PickingLine.company_id == company_id, PickingLine.company_id.is_(None)))
             .group_by(PickingLine.spo_allocation_id)
@@ -859,11 +882,29 @@ def repoint_picking_lines_by_capacity(
         if not chunks:
             # A zero-quantity pick has nothing to place; it follows the group.
             chunks = [[target_ids[0], quantity]]
+        if line.dtl_key is not None and len(chunks) > 1:
+            # Review should-fix 1: an AutoCount GRN line is never split. Its
+            # identity is `(picking_header_id, dtl_key)` (unique), which a chunk
+            # cannot share, and the next push of that GRN would fold the chunk
+            # back into the original row and delete it anyway. The whole pick
+            # goes to the line its first draw chose (same warehouse first), and
+            # the capacity the other draws took is given back.
+            for draw in draws[1:]:
+                for entry in pool:
+                    if draw.allocation_id and entry.allocation_id == draw.allocation_id:
+                        entry.available += draw.quantity
+            chunks = [[chunks[0][0], quantity]]
         moved += 1
         if dry_run:
             continue
         states_expected = int(line.quantity_expected or 0) > 0
-        shortfall = int(line.quantity_expected or 0) - quantity
+        # Expected follows the chunks the way a receipt does (`distribute_received`:
+        # each up to its own quantity, the rest on the last), so a short receipt
+        # keeps its shortfall on the last chunk and an over-pick never yields a
+        # negative expectation (review should-fix 3).
+        expected_parts = distribute_received(
+            int(line.quantity_expected or 0), [qty for _, qty in chunks]
+        )
         # Acceptance follows the split in order, each chunk taking up to its own
         # quantity, so the chunks never accept more than they picked and still
         # sum to what the original row accepted (security review N2).
@@ -872,11 +913,7 @@ def repoint_picking_lines_by_capacity(
         if len(chunks) == 1:
             continue
         for position, (allocation_id, chunk_qty) in enumerate(chunks):
-            expected = (
-                chunk_qty + (shortfall if position == len(chunks) - 1 else 0)
-                if states_expected
-                else 0
-            )
+            expected = expected_parts[position] if states_expected else 0
             if position == 0:
                 line.quantity_picked = chunk_qty
                 if states_expected:
@@ -977,4 +1014,8 @@ def assert_supersede_conserved(
             .scalar()
         )
     if stranded:
-        raise SupersedeNotConserved(f"{stranded} GRN pick(s) still point at superseded rows")
+        raise SupersedeNotConserved(
+            f"{stranded} GRN pick(s) still point at superseded rows; a pick stamped with "
+            "another company cannot be moved by this company's push and must be "
+            "corrected by hand first"
+        )
