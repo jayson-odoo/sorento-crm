@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 
 import { impersonationStore } from '@/lib/impersonation-store';
+import { REQUEST_TIMED_OUT_MESSAGE } from '@/lib/api-client';
 import {
   REVISION_HEADER,
   clearRememberedRevisions,
@@ -99,6 +100,70 @@ function _attachRevisionHeader(
 }
 
 // ---------------------------------------------------------------------------
+// Request deadlines (NEVER-STUCK-UI S2.1).
+//
+// A bare `fetch` waits as long as the browser lets it, which for a stalled proxy or
+// keep-alive connection is forever: the query stays `pending` and the screen is a
+// skeleton that never ends. Every apiFetch therefore gets a budget for the server to
+// ANSWER (response headers). Reading the body is not on the clock, so an export that has
+// started downloading or an event stream that has connected is never cut off.
+// ---------------------------------------------------------------------------
+export const AUTH_TOKEN_TIMEOUT_MS = 10_000;
+export const API_READ_TIMEOUT_MS = 30_000;
+/** Writes and the AI chat: the server may do real work before it answers. */
+export const API_WRITE_TIMEOUT_MS = 120_000;
+/** A FormData body: the upload itself happens before the server can answer. */
+export const API_UPLOAD_TIMEOUT_MS = 600_000;
+
+/** `RequestInit` plus our own per-call budget. `timeoutMs` is never forwarded to fetch. */
+export type ApiFetchInit = RequestInit & {
+  /** Milliseconds the server has to answer. Defaults by method and body, see above. */
+  timeoutMs?: number;
+};
+
+function _defaultTimeoutMs(init: RequestInit | undefined): number {
+  if (init?.body instanceof FormData) return API_UPLOAD_TIMEOUT_MS;
+  const method = (init?.method || 'GET').toUpperCase();
+  return method === 'GET' || method === 'HEAD' ? API_READ_TIMEOUT_MS : API_WRITE_TIMEOUT_MS;
+}
+
+/**
+ * `fetch` with a deadline on the answer. The caller's own signal still works and still
+ * rejects with its own AbortError; only our deadline becomes the readable timeout error.
+ */
+async function _fetchWithDeadline(
+  url: RequestInfo,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const callerSignal = init?.signal ?? undefined;
+  let timedOut = false;
+  const onCallerAbort = () => controller.abort(callerSignal?.reason);
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort(callerSignal.reason);
+    else callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+  }
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new DOMException(REQUEST_TIMED_OUT_MESSAGE, 'TimeoutError'));
+  }, timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (timedOut && !callerSignal?.aborted) {
+      const timeoutError = new Error(REQUEST_TIMED_OUT_MESSAGE);
+      timeoutError.name = 'TimeoutError';
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener('abort', onCallerAbort);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Cached client-side auth token.
 //
 // Every apiFetch needs a Bearer JWT from /api/auth/token. That route is pure
@@ -135,7 +200,14 @@ async function getCachedAuthToken(basePath: string): Promise<string | null> {
 
   _tokenInFlight = (async () => {
     try {
-      const res = await fetch(`${basePath}/api/auth/token`, { credentials: 'include' });
+      // Every apiFetch waits on this one promise, so a hung token route would freeze
+      // the whole app (NEVER-STUCK-UI S2.1). On timeout it settles as "no token", the
+      // same as any other failed token fetch.
+      const res = await _fetchWithDeadline(
+        `${basePath}/api/auth/token`,
+        { credentials: 'include' },
+        AUTH_TOKEN_TIMEOUT_MS,
+      );
       if (!res.ok) return null;
       const data = await res.json().catch(() => null);
       const token: string | null = data?.token ?? null;
@@ -228,8 +300,11 @@ async function _maybeForceSignOut(clonedResponse: Response): Promise<void> {
  */
 export async function apiFetch(
   input: string | Request,
-  init?: RequestInit,
+  apiInit?: ApiFetchInit,
 ): Promise<Response> {
+  const { timeoutMs: callerTimeoutMs, ...rest } = apiInit ?? {};
+  let init: RequestInit | undefined = apiInit ? rest : undefined;
+  const timeoutMs = callerTimeoutMs ?? _defaultTimeoutMs(init);
   let url = input;
   // Use empty string for relative paths (nginx will proxy), or explicit URL for direct backend access
   let apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
@@ -537,7 +612,7 @@ export async function apiFetch(
   init = _attachImpersonationHeader(url, init);
   const fenced = _attachRevisionHeader(url, init);
   init = fenced.init;
-  const response = await fetch(url as RequestInfo, init);
+  const response = await _fetchWithDeadline(url as RequestInfo, init, timeoutMs);
   // Browser-side: a 401 with a session-dead reason code means our session was
   // revoked/expired server-side → sign out and bounce to /signin.
   if (

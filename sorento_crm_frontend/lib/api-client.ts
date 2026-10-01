@@ -111,6 +111,71 @@ export async function codedError(response: Response, fallback: string): Promise<
   return error;
 }
 
+// ---------------------------------------------------------------------------
+// Refusal classifiers (NEVER-STUCK-UI S2, S3).
+//
+// Errors built from `extractApiError` carry no HTTP status, so a refusal is recognised by
+// the backend's own `detail` text. If a status-carrying error is added later, only these
+// change; the call sites (retry rule, DataGrid, pickers) stay.
+// ---------------------------------------------------------------------------
+
+/** What `apiFetch` throws when the server has not answered within the request's budget. */
+export const REQUEST_TIMED_OUT_MESSAGE = 'The server took too long to answer.';
+
+/** `dependencies.py` require_permission / require_any_permission and the module guard. */
+const ACCESS_DENIED_PREFIXES = [
+  'Permission required:',
+  // Covers the strict-mode "(module may be disabled)" variant too.
+  'One of these permissions required',
+  'Module not enabled:',
+];
+
+/** `get_current_user` 401 details (`dependencies.py`, `user_session_service.py`) and the
+ *  message `extractApiError` gives a bodiless 401. */
+const SIGNED_OUT_MESSAGES = [
+  'Not signed in or session expired',
+  'Authentication required',
+  'Session expired',
+  'Session was revoked',
+  'Session not found',
+  'Account is not active',
+];
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : '';
+}
+
+/** A 403: the user's role does not include this read, or the module is off. */
+export function isAccessDenied(error: unknown): boolean {
+  const msg = errorMessage(error);
+  return ACCESS_DENIED_PREFIXES.some((p) => msg.startsWith(p));
+}
+
+/** A 401 from the session check. */
+export function isSignedOut(error: unknown): boolean {
+  const msg = errorMessage(error);
+  return SIGNED_OUT_MESSAGES.some((p) => msg.startsWith(p));
+}
+
+/** A 404, by the backend's "<thing> not found" wording. */
+export function isNotFound(error: unknown): boolean {
+  return /\bnot found\b/i.test(errorMessage(error));
+}
+
+/** The request outlived its `apiFetch` budget. */
+export function isTimedOut(error: unknown): boolean {
+  return errorMessage(error) === REQUEST_TIMED_OUT_MESSAGE;
+}
+
+/**
+ * A failure that asking again will not fix (401 / 403 / 404), or one that already cost the
+ * user a full timeout. Never retried automatically: the screen shows its final state and
+ * the user's own Retry is the next step.
+ */
+export function isRefused(error: unknown): boolean {
+  return isAccessDenied(error) || isSignedOut(error) || isNotFound(error) || isTimedOut(error);
+}
+
 /**
  * Build URLSearchParams for DataGrid-backed list endpoints.
  * Uses page (1-based), limit, sort, dir, query, plus any extra params.
