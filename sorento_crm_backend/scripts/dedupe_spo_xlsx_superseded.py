@@ -48,9 +48,27 @@ SAFETY / IDEMPOTENCY
 
 USAGE
 -----
-    python scripts/dedupe_spo_xlsx_superseded.py --company SORENTO --dry-run
-    python scripts/dedupe_spo_xlsx_superseded.py --company SORENTO \
+    python scripts/dedupe_spo_xlsx_superseded.py --company SRT --dry-run
+    python scripts/dedupe_spo_xlsx_superseded.py --company SRT \
         --since 2026-09-06T05:15:00 --apply
+
+    # ONE document only (repeat --spo for more), the owner's production fix:
+    python scripts/dedupe_spo_xlsx_superseded.py --company SRT \
+        --spo SPO-2026/08-0074 --dry-run
+
+`--company` takes `companies.code`. Sorento's is `SRT`, not `SORENTO`: the
+multi-company scaffold seeds it as ('Sorento', 'SRT')
+(alembic/versions/302_multi_company_scaffold.py:158), confirmed on the dev
+database (id 00000000-0000-0000-0000-000000000001).
+
+`--spo` narrows the sweep to the named `spo_number`s, still inside the one
+company's scope - the same number under another company is never read.
+Every scoped document prints its plan line by line: each Excel row it would
+delete (id, allocated, received), the receipt carried onto each AutoCount
+line, the links moved, and any Excel row it leaves alone with the reason
+(`no AutoCount line` for a product AutoCount does not list on the document,
+`received locked` for D26a). Nothing about the plan differs between
+`--dry-run` and `--apply`; only the writes do.
 """
 from __future__ import annotations
 
@@ -242,8 +260,73 @@ def _has_ref_row_since(
     )
 
 
+def _link_counts(db, allocation_id: str) -> tuple[int, int, int]:
+    """(picks, claims, order-inquiry links) pointing at one allocation, in ANY
+    company: the orphan guard fails closed, and the read returns numbers only."""
+    from sqlalchemy import func
+
+    from app.models.procurement import PickingLine
+    from app.models.project_so import OrderInquiryLink
+    from app.models.scm import OrderLinkClaim
+
+    with company_scope(db, None):
+        return tuple(
+            int(
+                db.query(func.count(model.id))
+                .filter(model.spo_allocation_id == allocation_id)
+                .scalar()
+                or 0
+            )
+            for model in (PickingLine, OrderLinkClaim, OrderInquiryLink)
+        )
+
+
+def _orphan_rows(plan, by_id: dict[str, SPOAllocation], incoming_rows) -> list[SPOAllocation]:
+    """Owner ruling 1 Oct 2026, "just follow AutoCount": an Excel-era row whose
+    PRODUCT the newest AutoCount line-set does not list at all is an orphan
+    (SPO-2026/08-0074 L23/L26: SRTWCY8605, where AutoCount states
+    SRTWCY8605-PJ). No substitution is guessed - a row whose product AutoCount
+    DOES list (at another location, or with quantities that do not reconcile)
+    is not an orphan and stays a plain `keep`."""
+    listed = {str(row.product_id) for row in incoming_rows if row.product_id}
+    orphans = []
+    for group in plan.kept_groups:
+        for row_id in group.row_ids:
+            row = by_id.get(row_id)
+            if row is not None and str(row.product_id) not in listed:
+                orphans.append(row)
+    return orphans
+
+
+def _kept_details(
+    plan, by_id: dict[str, SPOAllocation], skip_ids: frozenset = frozenset()
+) -> list[str]:
+    """One line per Excel row the plan leaves alone, with the reason."""
+    lines = []
+    for groups, reason in (
+        (plan.kept_groups, "no AutoCount line"),
+        (plan.locked_groups, "received locked"),
+    ):
+        for group in groups:
+            for row_id in group.row_ids:
+                row = by_id.get(row_id)
+                if row is None or row_id in skip_ids:
+                    continue
+                lines.append(
+                    f"keep {row.id} line {row.spo_line_number} "
+                    f"(allocated {int(row.allocated_quantity or 0)}, "
+                    f"received {int(row.quantity_received or 0)}): {reason}"
+                )
+    return lines
+
+
 def _apply_document(
-    db, company_id: str, spo_number: str, since: Optional[datetime], dry_run: bool
+    db,
+    company_id: str,
+    spo_number: str,
+    since: Optional[datetime],
+    dry_run: bool,
+    report_kept: bool = False,
 ) -> Optional[dict[str, Any]]:
     """One document, or `None` when there is nothing to do for it.
 
@@ -279,12 +362,14 @@ def _apply_document(
     retired_marked = _retire_older_dockeys(older_rows, dry_run)
 
     plan = plan_xlsx_supersede([_incoming_values(row) for row in incoming_rows], refless)
-    if not plan.groups:
+    by_id = {str(row.id): row for row in refless}
+    orphans = _orphan_rows(plan, by_id, incoming_rows)
+    if not plan.groups and not orphans:
         # Every candidate row is a group the newest DocKey names no line for,
         # or one D26a refuses - this document has nothing left to supersede.
         if retired_marked and not dry_run:
             db.commit()
-        if not retired_marked:
+        if not retired_marked and not report_kept:
             return None
         return {
             "rows_removed": 0,
@@ -294,9 +379,12 @@ def _apply_document(
             "retired_marked": retired_marked,
             "fallback_groups": 0,
             "shipment_ids": set(),
+            "orphans_removed": 0,
+            "orphans_blocked": 0,
+            # A scoped (--spo) run says why nothing happens to this document.
+            "details": _kept_details(plan, by_id) if report_kept else [],
         }
 
-    by_id = {str(row.id): row for row in refless}
     counts: dict[str, Any] = {
         "rows_removed": 0,
         "lines_touched": 0,
@@ -305,6 +393,10 @@ def _apply_document(
         "retired_marked": retired_marked,
         "fallback_groups": 0,
         "shipment_ids": set(),
+        "orphans_removed": 0,
+        "orphans_blocked": 0,
+        # The per-SPO plan, printed under the document's line (--spo runs).
+        "details": [],
     }
 
     for group in plan.groups:
@@ -320,6 +412,10 @@ def _apply_document(
                 allocated, row.quantity_received, line_plan.carried_received
             )
             planned_received += received
+            counts["details"].append(
+                f"carry {line_plan.carried_received} -> {row.id} line {row.spo_line_number} "
+                f"(allocated {allocated}, received after {received})"
+            )
             if not dry_run:
                 row.quantity_received = received
                 # D28c: the carry is a STATEMENT about this line's receipt,
@@ -366,11 +462,12 @@ def _apply_document(
             # Nothing may be pending when the repoint widens its read under a
             # disabled company scope (same structural rule as the ingest).
             db.flush()
+            split_moved = 0
             if group.split_receipts:
                 # D32/D36: a product-level fallback group (Excel rows that named
                 # no warehouse, the owner's GCXU6137164 shape) spans locations,
                 # so its GRN picks are split over the lines by capacity.
-                counts["links_moved"] += repoint_picking_lines_by_capacity(
+                split_moved = repoint_picking_lines_by_capacity(
                     db,
                     [str(row.id) for row in removing],
                     [
@@ -380,13 +477,19 @@ def _apply_document(
                     company_id=company_id,
                     dry_run=dry_run,
                 )
-            counts["links_moved"] += repoint_allocation_dependants(
+            dependants_moved = repoint_allocation_dependants(
                 db,
                 [str(row.id) for row in removing],
                 str(target.id),
                 company_id=company_id,
                 dry_run=dry_run,
             )
+            if dry_run:
+                # Nothing moved in a dry run, so the dependants count still sees
+                # the picks the split already counted - subtract them, or the
+                # preview reports every pick twice.
+                dependants_moved = max(dependants_moved - split_moved, 0)
+            counts["links_moved"] += split_moved + dependants_moved
         # D30 (S7): the same trail the ingest's own supersede logs, read
         # BEFORE the rows go.
         trail = "; ".join(
@@ -394,6 +497,11 @@ def _apply_document(
             f"received={row.quantity_received})"
             for row in removing
         )
+        for row in removing:
+            counts["details"].append(
+                f"delete {row.id} (allocated {int(row.allocated_quantity or 0)}, "
+                f"received {int(row.quantity_received or 0)}) line {row.spo_line_number}"
+            )
         removed_received = sum(int(row.quantity_received or 0) for row in removing)
         carried_total = sum(line_plan.carried_received for line_plan in group.lines)
         if dry_run:
@@ -432,6 +540,31 @@ def _apply_document(
             ",".join(group.dropped_shipment_ids) or "-",
         )
 
+    # Owner ruling "just follow AutoCount": an orphan goes too, but only when
+    # nothing would be lost with it - no receipt, and no pick, claim or
+    # order-inquiry link in any company. Anything else is left exactly as it is
+    # and reported ORPHAN-BLOCKED with what holds it.
+    for row in orphans:
+        received = int(row.quantity_received or 0)
+        picks, claims, links = _link_counts(db, str(row.id))
+        facts = (
+            f"{row.id} line {row.spo_line_number} "
+            f"(allocated {int(row.allocated_quantity or 0)}, received {received}; "
+            f"picks {picks}, claims {claims}, order-inquiry links {links})"
+        )
+        if received == 0 and not (picks or claims or links):
+            counts["details"].append(f"orphan delete {facts}: no AutoCount line for its product")
+            counts["orphans_removed"] += 1
+            if row.inbound_shipment_id:
+                counts["shipment_ids"].add(str(row.inbound_shipment_id))
+            if not dry_run:
+                db.delete(row)
+        else:
+            counts["details"].append(f"ORPHAN-BLOCKED {facts}: left untouched")
+            counts["orphans_blocked"] += 1
+    counts["details"].extend(
+        _kept_details(plan, by_id, frozenset(str(row.id) for row in orphans))
+    )
     if not dry_run:
         db.commit()
         # D27a: same refresh every other writer of allocations does, once per
@@ -444,7 +577,11 @@ def _apply_document(
 
 
 def run(
-    db, company_id: str, since: Optional[datetime] = None, dry_run: bool = True
+    db,
+    company_id: str,
+    since: Optional[datetime] = None,
+    dry_run: bool = True,
+    spo_numbers: Optional[list[str]] = None,
 ) -> dict[str, int]:
     """Every affected document of ONE company. Prints one line per document.
 
@@ -456,6 +593,11 @@ def run(
     is compared against is `DateTime(timezone=False)` (naive DB-local), and
     an aware value would otherwise crash mid-sweep on the first comparison
     rather than telling the operator what is wrong with their argument.
+
+    `spo_numbers` (--spo) replaces the keyset sweep with exactly those numbers,
+    still read through this company's own filters and scope, and prints each
+    one's plan line by line - including a document with nothing to do, so the
+    operator sees why.
     """
     if since is not None and since.tzinfo is not None:
         raise ValueError(
@@ -477,6 +619,8 @@ def run(
         "groups_kept": 0,
         "retired_marked": 0,
         "fallback_groups": 0,
+        "orphans_removed": 0,
+        "orphans_blocked": 0,
         # D33: documents the conservation guard refused (left untouched).
         "aborted": 0,
         # D36: the scope count - distinct packing lists (inbound shipments) whose
@@ -484,15 +628,18 @@ def run(
         "shipments": 0,
     }
     shipment_ids: set[str] = set()
+    scoped = [n.strip() for n in (spo_numbers or []) if n and n.strip()]
     with company_scope(db, frozenset({company_id})):
         after: Optional[str] = None
         while True:
-            numbers = _document_numbers(db, company_id, after)
+            numbers = scoped if scoped else _document_numbers(db, company_id, after)
             if not numbers:
                 break
             for spo_number in numbers:
                 try:
-                    counts = _apply_document(db, company_id, spo_number, since, dry_run)
+                    counts = _apply_document(
+                        db, company_id, spo_number, since, dry_run, report_kept=bool(scoped)
+                    )
                 except SupersedeNotConserved as exc:
                     # D33 refused this document: nothing of it is committed
                     # (rolled back here), it is named, counted, and the sweep
@@ -503,6 +650,8 @@ def run(
                     print(f"  {spo_number}: ABORTED, receipt not conserved ({exc})")
                     continue
                 if counts is None:
+                    if scoped:
+                        print(f"  {spo_number}: nothing to do (no Excel-era rows beside AutoCount lines)")
                     continue
                 summary["documents"] += 1
                 for key in (
@@ -512,8 +661,10 @@ def run(
                     "groups_kept",
                     "retired_marked",
                     "fallback_groups",
+                    "orphans_removed",
+                    "orphans_blocked",
                 ):
-                    summary[key] += counts[key]
+                    summary[key] += counts.get(key, 0)
                 shipment_ids.update(counts["shipment_ids"])
                 print(
                     f"  {spo_number}: xlsx rows removed {counts['rows_removed']}, "
@@ -522,8 +673,15 @@ def run(
                     f"groups kept {counts['groups_kept']}, "
                     f"product-fallback groups {counts['fallback_groups']}, "
                     f"PLs touched {len(counts['shipment_ids'])}, "
+                    f"orphans removed {counts.get('orphans_removed', 0)}, "
+                    f"orphans blocked {counts.get('orphans_blocked', 0)}, "
                     f"old-DocKey rows retired {counts['retired_marked']}"
                 )
+                if scoped:
+                    for line in counts.get("details", []):
+                        print(f"      {line}")
+            if scoped:
+                break
             after = numbers[-1]
             if len(numbers) < BATCH_SIZE:
                 break
@@ -535,7 +693,7 @@ def run(
     return summary
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--company", required=True, help="Company CODE to dedupe")
     parser.add_argument(
@@ -548,7 +706,18 @@ def main() -> int:
         "--dry-run", action="store_true", help="Print the plan, write nothing (the default)"
     )
     mode.add_argument("--apply", action="store_true", help="Write the plan")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--spo",
+        action="append",
+        default=None,
+        metavar="SPO_NUMBER",
+        help="Only this spo_number (repeatable); prints its plan line by line",
+    )
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     dry_run = not args.apply
     try:
@@ -573,7 +742,7 @@ def main() -> int:
             print(f"no company with code {args.company!r}")
             return 1
         print(f"=== {args.company} ({'DRY-RUN (no writes)' if dry_run else 'APPLYING'}) ===")
-        summary = run(db, str(company.id), since=since, dry_run=dry_run)
+        summary = run(db, str(company.id), since=since, dry_run=dry_run, spo_numbers=args.spo)
         print("\n=== summary ===")
         print(f"mode:                {'DRY-RUN (no writes)' if dry_run else 'APPLIED'}")
         print(f"documents:           {summary['documents']}")
@@ -585,6 +754,8 @@ def main() -> int:
         print(f"product-fallback groups: {summary['fallback_groups']}")
         print(f"PLs (shipments) touched: {summary['shipments']}")
         print(f"documents aborted (receipt not conserved): {summary['aborted']}")
+        print(f"orphan Excel rows removed: {summary['orphans_removed']}")
+        print(f"orphan Excel rows BLOCKED (receipt or links): {summary['orphans_blocked']}")
     except ValueError as exc:
         print(str(exc))
         return 2

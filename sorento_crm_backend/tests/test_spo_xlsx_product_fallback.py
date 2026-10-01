@@ -88,7 +88,9 @@ def _pick(env, header_id, allocation_id, product_id, warehouse_id, qty) -> Picki
     return line
 
 
-def _owner_case(env, *, excel_warehouse: bool = False, with_receipts: bool = True) -> _Case:
+def _owner_case(
+    env, *, excel_warehouse: bool = False, with_receipts: bool = True, number: str | None = None
+) -> _Case:
     """The owner's shape BEFORE any AutoCount push: two Excel rows, one GR."""
     ib_ref = env.link_warehouse(env.company_a)
     ntc_ref = env.link_warehouse(env.company_a)
@@ -118,7 +120,7 @@ def _owner_case(env, *, excel_warehouse: bool = False, with_receipts: bool = Tru
     env.db.add(shipment_line)
     env.db.flush()
 
-    number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+    number = number or f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
     received_95, received_4 = (95, 4) if with_receipts else (0, 0)
     excel_95 = _seed_legacy_row(
         env,
@@ -929,3 +931,169 @@ class TestReviewerRound:
             {"a": str(ib_row.id), "h": rejected},
         ).scalar()
         assert int(moved_to_ib) == 22
+
+
+# ============================================================================ #
+# --spo: the owner's one-SPO production repair (SPO-2026/08-0074)
+# ============================================================================ #
+OWNER_SPO = "SPO-2026/08-0074"
+
+
+class TestScopedRepair:
+    def test_spo_option_limits_the_sweep_to_the_named_document(self, env):
+        """Only SPO-2026/08-0074 changes; another broken SPO in the same company
+        is left exactly as it was."""
+        from scripts import dedupe_spo_xlsx_superseded as script
+
+        target = _owner_case(env, number=OWNER_SPO)
+        target_ib, target_ntc = _seed_pre_repair_state(env, target)
+        other = _owner_case(env)
+        _seed_pre_repair_state(env, other)
+        other_before = sorted(
+            (str(r["id"]), r["quantity_received"]) for r in _spo_rows(env, other.number)
+        )
+
+        summary = script.run(env.db, env.company_a, dry_run=False, spo_numbers=[OWNER_SPO])
+
+        assert summary["documents"] == 1
+        assert {str(r["id"]) for r in _spo_rows(env, OWNER_SPO)} == {
+            str(target_ib.id),
+            str(target_ntc.id),
+        }
+        assert sorted(
+            (str(r["id"]), r["quantity_received"]) for r in _spo_rows(env, other.number)
+        ) == other_before
+        assert _picked_on(env, other.excel_95.id) == 95
+
+    def test_spo_option_never_crosses_the_company_guard(self, env):
+        """The same number under ANOTHER company is not touched by a run scoped
+        to company A."""
+        from scripts import dedupe_spo_xlsx_superseded as script
+
+        summary = script.run(env.db, env.company_b, dry_run=False, spo_numbers=[OWNER_SPO])
+        assert summary["documents"] == 0
+
+    def test_dry_run_prints_the_per_spo_plan(self, env, capsys):
+        """Rows to delete (ids + quantities), quantity carried per line, links
+        moved - printed in a dry run, nothing written."""
+        from scripts import dedupe_spo_xlsx_superseded as script
+
+        case = _owner_case(env, number=OWNER_SPO)
+        ib_row, ntc_row = _seed_pre_repair_state(env, case)
+
+        script.run(env.db, env.company_a, dry_run=True, spo_numbers=[OWNER_SPO])
+
+        out = capsys.readouterr().out
+        assert f"{OWNER_SPO}:" in out
+        assert f"delete {case.excel_95.id} (allocated 95, received 95)" in out
+        assert f"delete {case.excel_4.id} (allocated 4, received 4)" in out
+        assert f"carry 22 -> {ib_row.id}" in out
+        assert f"carry 77 -> {ntc_row.id}" in out
+        assert "links moved 3" in out
+        assert {str(r["id"]) for r in _spo_rows(env, OWNER_SPO)} >= {
+            str(case.excel_95.id),
+            str(case.excel_4.id),
+        }
+
+    def test_cli_accepts_a_repeatable_spo_option(self):
+        from scripts import dedupe_spo_xlsx_superseded as script
+
+        args = script.build_parser().parse_args(
+            ["--company", "SRT", "--spo", OWNER_SPO, "--spo", "SPO-2026/09-0001"]
+        )
+        assert args.spo == [OWNER_SPO, "SPO-2026/09-0001"]
+        assert args.apply is False
+
+
+# ============================================================================ #
+# Owner ruling "just follow AutoCount": orphan Excel rows (product AutoCount
+# does not list on the document at all) - SPO-2026/08-0074 L23/L26 shape
+# ============================================================================ #
+def _orphan_row(env, case: _Case, *, line: int, received: int = 0) -> SPOAllocation:
+    """An Excel row for a product the AutoCount line-set never names
+    (SRTWCY8605 beside AutoCount's SRTWCY8605-PJ): 99 ordered, `received`."""
+    product_id = env.refs.resolve(entity_type="products", source_ref=env.product2_ref)
+    row = SPOAllocation(
+        company_id=env.company_a,
+        spo_number=case.number,
+        spo_line_number=line,
+        product_id=product_id,
+        location_code="HQ",
+        allocated_quantity=99,
+        quantity_received=received,
+        receipt_status="pending" if received < 99 else "fully_received",
+        line_status="open",
+        source_system="scm_upload",
+    )
+    env.db.add(row)
+    env.db.flush()
+    env.db.commit()
+    return row
+
+
+class TestOrphanExcelRows:
+    def _run(self, env, *, dry_run):
+        from scripts import dedupe_spo_xlsx_superseded as script
+
+        return script.run(env.db, env.company_a, dry_run=dry_run, spo_numbers=[OWNER_SPO])
+
+    def test_an_unreceived_unlinked_orphan_is_removed(self, env, capsys):
+        case = _owner_case(env, number=OWNER_SPO)
+        ib_row, ntc_row = _seed_pre_repair_state(env, case)
+        orphan_23 = _orphan_row(env, case, line=23)
+        orphan_26 = _orphan_row(env, case, line=26)
+
+        dry = self._run(env, dry_run=True)
+        out = capsys.readouterr().out
+        assert f"orphan delete {orphan_23.id}" in out
+        assert f"orphan delete {orphan_26.id}" in out
+        assert dry["orphans_removed"] == 2
+        assert {str(orphan_23.id), str(orphan_26.id)} <= {
+            str(r["id"]) for r in _spo_rows(env, OWNER_SPO)
+        }
+
+        summary = self._run(env, dry_run=False)
+        assert summary["orphans_removed"] == 2
+        # 2 superseded Excel rows + 2 orphans gone; only AutoCount remains.
+        assert {str(r["id"]) for r in _spo_rows(env, OWNER_SPO)} == {
+            str(ib_row.id),
+            str(ntc_row.id),
+        }
+
+    def test_an_orphan_with_a_receipt_is_blocked(self, env, capsys):
+        case = _owner_case(env, number=OWNER_SPO)
+        _seed_pre_repair_state(env, case)
+        orphan = _orphan_row(env, case, line=23, received=5)
+
+        summary = self._run(env, dry_run=False)
+
+        out = capsys.readouterr().out
+        assert f"ORPHAN-BLOCKED {orphan.id}" in out
+        assert "received 5" in out
+        assert summary["orphans_blocked"] == 1
+        assert str(orphan.id) in {str(r["id"]) for r in _spo_rows(env, OWNER_SPO)}
+
+    def test_an_orphan_with_a_link_is_blocked(self, env, capsys):
+        case = _owner_case(env, number=OWNER_SPO)
+        _seed_pre_repair_state(env, case)
+        orphan = _orphan_row(env, case, line=26)
+        from app.models.scm import OrderLinkClaim
+
+        env.db.add(
+            OrderLinkClaim(
+                company_id=env.company_a,
+                so_number=f"{MARKER}-SO-{uuid.uuid4().hex[:8]}",
+                po_number=OWNER_SPO,
+                source="autocount",
+                spo_allocation_id=orphan.id,
+            )
+        )
+        env.db.commit()
+
+        summary = self._run(env, dry_run=False)
+
+        out = capsys.readouterr().out
+        assert f"ORPHAN-BLOCKED {orphan.id}" in out
+        assert "picks 0, claims 1, order-inquiry links 0" in out
+        assert summary["orphans_blocked"] == 1
+        assert str(orphan.id) in {str(r["id"]) for r in _spo_rows(env, OWNER_SPO)}
