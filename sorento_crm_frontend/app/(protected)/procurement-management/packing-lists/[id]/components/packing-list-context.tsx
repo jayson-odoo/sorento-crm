@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { toast } from '@/lib/toast';
+import { useHasPermission } from '@/hooks/usePermissions';
 import {
   usePackingList,
   usePackingListSourceInvoices,
@@ -28,6 +29,14 @@ import type {
  * on Save, which is what stops a header saved from one tab and lines saved from another
  * disagreeing about which version of the container is current.
  */
+
+/**
+ * Every SCM read on this page (the proforma invoices behind the container, the SPO planner,
+ * the consolidated build, line photos, container sizes) sits behind this permission, and a
+ * procurement-only user has none of them (PL-TABS-ACCESS). The tabs and reads that need it
+ * ask `canReadScm` rather than letting the backend answer 403.
+ */
+export const SCM_READ_PERMISSION = 'scm.dashboard.view';
 
 /** One line as it is being edited. `id` is absent on a line the operator just added. */
 export interface DraftLine {
@@ -63,12 +72,16 @@ interface PackingListContextValue {
   packingListId: string;
   packingList: PackingListDetail | undefined;
   isLoading: boolean;
+  /** Holds `SCM_READ_PERMISSION`. False while permissions are still loading. */
+  canReadScm: boolean;
   suppliers: Array<{ id: string; supplier_code: string; supplier_name: string }>;
   supplierNameById: Map<string, string>;
   /** Every factory named on the lines, in the order they appear. */
   lineSupplierNames: string;
   checkpoints: ClearanceCheckpoint[];
   sourceInvoices: PackingListSourceInvoices | undefined;
+  /** That read failed. It is silent, so whoever shows the invoices must say so. */
+  sourceInvoicesFailed: boolean;
   editing: boolean;
   saving: boolean;
   draft: Record<string, string>;
@@ -117,9 +130,13 @@ export function PackingListProvider({
   const { data: packingList, isLoading } = usePackingList(packingListId);
   const { data: suppliers = [] } = useSupplierSelectQuery();
   const { data: checkpoints = [] } = useClearanceCheckpoints();
+  const canReadScm = useHasPermission(SCM_READ_PERMISSION);
   // The proforma invoices behind this container, read ONCE for the four places that show
   // them: the Proforma invoices tab, the Lines column, the Timeline entry and Documents.
-  const { data: sourceInvoices } = usePackingListSourceInvoices(packingListId);
+  const { data: sourceInvoices, isError: sourceInvoicesFailed } = usePackingListSourceInvoices(
+    packingListId,
+    { enabled: canReadScm },
+  );
   const updateMutation = useUpdatePackingList();
 
   const [editing, setEditing] = useState(false);
@@ -370,11 +387,13 @@ export function PackingListProvider({
     packingListId,
     packingList,
     isLoading,
+    canReadScm,
     suppliers,
     supplierNameById,
     lineSupplierNames,
     checkpoints,
     sourceInvoices,
+    sourceInvoicesFailed,
     editing,
     saving,
     draft,

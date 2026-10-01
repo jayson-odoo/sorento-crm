@@ -107,6 +107,42 @@ def _publish_preview_progress(job_id: str, processed: int, total: int) -> None:
         fresh.close()
 
 
+def _apply_progress_counts(records) -> dict:
+    """The job row's generic columns for a DO apply: created/updated/adopted are
+    successful, failed/retryable are failed, unchanged is skipped."""
+    counts = {"processed": len(records), "successful": 0, "failed": 0, "skipped": 0}
+    for record in records:
+        if record.outcome in (IngestOutcome.CREATED, IngestOutcome.UPDATED):
+            counts["successful"] += 1
+        elif record.outcome == IngestOutcome.UNCHANGED:
+            counts["skipped"] += 1
+        else:
+            counts["failed"] += 1
+    return counts
+
+
+def _publish_apply_progress(job_id: str, records, total: int) -> None:
+    """DO-APPLY-PROGRESS: the apply's twin of `_publish_preview_progress`, with the running
+    tallies too. Same fresh session, same best-effort rule: the apply holds its whole batch
+    in one open transaction, so this must never write through it, and a failure here must
+    never fail the apply."""
+    counts = _apply_progress_counts(records)
+    fresh = SessionLocal()
+    try:
+        JobService(fresh).update_job_progress(
+            job_id,
+            processed_rows=counts["processed"],
+            successful_rows=counts["successful"],
+            failed_rows=counts["failed"],
+            skipped_rows=counts["skipped"],
+            total_rows=total,
+        )
+    except Exception:  # noqa: BLE001 - never let a progress bump fail the apply
+        logger.warning("could not publish apply progress for job %s", job_id, exc_info=True)
+    finally:
+        fresh.close()
+
+
 def _stored_pull_phase(db, job_id) -> str:
     """A fresh, direct read of the pull's OWN stored phase - never the ORM's
     identity-mapped `job` object, which this task holds onto (and never refreshes)
@@ -220,6 +256,11 @@ def apply_autocount_pull(db_job_id: str) -> None:
             logger.warning(
                 "autocount pull apply failed job=%s entity=%s", db_job_id, entity, exc_info=True
             )
+            # The batch rolled back, so tallies the progress publisher already committed
+            # (DO-APPLY-PROGRESS) would claim documents that were never written.
+            job.successful_rows = 0
+            job.failed_rows = 0
+            job.skipped_rows = 0
             job.status = JobStatus.FAILED.value
             job.error = str(exc)[:2000]
             job.completed_at = datetime.utcnow()
@@ -799,8 +840,27 @@ def _apply_delivery_orders(db, job: ImportJob, snapshot_id: str) -> dict:
     )
     ingest = _do_ingest(db, job, header=header, rows=rows)
     records = _ingest_rows(rows)
-    result = ingest.ingest(DELIVERY_ORDERS_ENTITY, records)
+    job_id = str(job.job_id)
+    # DO-APPLY-PROGRESS: the job page read Total 0 / Processed 0 for a whole 6,487-doc run.
+    # Same fresh-session publisher the preview uses, so the batch's one commit below is
+    # untouched; the tallies are read off the ingest's records so far.
+    _publish_apply_progress(job_id, [], len(records))
+    result = ingest.ingest(
+        DELIVERY_ORDERS_ENTITY, records,
+        on_progress=lambda processed, total: _publish_apply_progress(
+            job_id, ingest.live_records, total
+        ),
+    )
     db.commit()
+
+    # The final numbers are the apply's own write (committed with the job's finished
+    # status), never left to the best-effort publisher above.
+    final = _apply_progress_counts(result.records)
+    job.total_rows = len(records)
+    job.processed_rows = final["processed"]
+    job.successful_rows = final["successful"]
+    job.failed_rows = final["failed"]
+    job.skipped_rows = final["skipped"]
 
     outcome_writer = ImportOutcome(job.id)
     tally = _tally_delivery_orders(outcome_writer, records, result)
