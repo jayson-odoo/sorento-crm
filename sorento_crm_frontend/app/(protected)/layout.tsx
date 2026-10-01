@@ -5,7 +5,7 @@ import { useSession } from 'next-auth/react';
 import { ScreenLoader } from '@/components/common/screen-loader';
 import { Demo1Layout } from '../components/layouts/demo1/layout';
 import { useImpersonation } from '@/hooks/useImpersonation';
-import { endSessionAndRedirect } from '@/lib/session-end';
+import { endSessionAndRedirect, setSignedInShell } from '@/lib/session-end';
 import GuideTargetSpotlight from '@/app/components/common/GuideTargetSpotlight';
 import {
   UploadActivityDrawer,
@@ -29,6 +29,11 @@ export default function ProtectedLayout({
       hydrate().catch(() => {});
     }
   }, [status, hydrate]);
+
+  useEffect(() => {
+    setSignedInShell(status === 'authenticated');
+    return () => setSignedInShell(false);
+  }, [status]);
 
   useEffect(() => {
     if (status === 'unauthenticated') {

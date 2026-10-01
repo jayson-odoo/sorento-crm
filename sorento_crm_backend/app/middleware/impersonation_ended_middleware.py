@@ -4,8 +4,10 @@
 honour ``X-Impersonate-User-Id`` (view-as stopped elsewhere, admin role removed, target
 deactivated). Without a signal the client kept its "viewing as X" banner over that data.
 The dependency marks ``request.state.impersonation_ended``; this stamps
-``X-Impersonation-Ended: 1`` on whatever response follows, error statuses included,
-which a dependency's own ``Response`` parameter could not do.
+``X-Impersonation-Ended: 1`` on whatever response follows, handled errors (403, 404,
+AppException) included, which a dependency's own ``Response`` parameter could not do. An
+unhandled 500 is built by Starlette's ServerErrorMiddleware outside this layer and carries
+no header; the next successful call does.
 """
 from __future__ import annotations
 

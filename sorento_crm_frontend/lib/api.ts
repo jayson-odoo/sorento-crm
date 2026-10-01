@@ -6,6 +6,7 @@ import {
   endSessionAndRedirect,
   endViewAsLocally,
   isSessionEnding,
+  isSignedInShell,
 } from '@/lib/session-end';
 import {
   REVISION_HEADER,
@@ -117,13 +118,13 @@ function _attachRevisionHeader(
 let _cachedToken: string | null = null;
 let _cachedTokenExp = 0; // epoch seconds; 0 = unknown
 let _tokenInFlight: Promise<string | null> | null = null;
-const _TOKEN_REFRESH_MARGIN_S = 60;
+const _TOKEN_REFRESH_MARGIN_S = 60; // refetch this many seconds before exp
 /**
  * A token read that never answers used to hold `_tokenInFlight` forever, and every
  * apiFetch awaited that same promise: the whole app spun with nothing failing.
  */
 export const TOKEN_FETCH_TIMEOUT_MS = 10_000;
-export { SIGN_OUT_CAP_MS } from '@/lib/session-end'; // refetch this many seconds before exp
+export { SIGN_OUT_CAP_MS } from '@/lib/session-end';
 
 function _decodeJwtExp(token: string): number {
   try {
@@ -154,11 +155,12 @@ async function getCachedAuthToken(basePath: string): Promise<string | null> {
         signal: abort.signal,
       });
       // 401 = the NextAuth cookie holds no usable session (gone, undecodable, or
-      // overwritten by another localhost copy). Sending the call without a bearer
-      // only earns a code-less 401 that nothing acts on, so end the session here.
-      // Anything else (500, timeout) is transient: no sign-out.
+      // overwritten by another localhost copy). Inside the signed-in shell, sending
+      // the call without a bearer only earns a code-less 401 that nothing acts on,
+      // so end the session here. A public page (unsubscribe link) has no session
+      // to end and its call needs none. Anything else (500, timeout) is transient.
       if (res.status === 401) {
-        endSessionAndRedirect();
+        if (isSignedInShell()) endSessionAndRedirect();
         return null;
       }
       if (!res.ok) return null;
@@ -218,8 +220,11 @@ export async function revokeCurrentSession(): Promise<void> {
 // so an RBAC 403 or an incidental 401 from one endpoint never logs everyone out.
 //
 // Before giving up, re-read the cookie once: the tab may hold a cached token
-// that died while the user signed in again elsewhere. A newer token replays the
-// call; the same (dead) token ends the session through `endSessionAndRedirect`.
+// that died while the user signed in again elsewhere. A newer token replays a
+// read; a write is NOT replayed, because the newer token may be another user's
+// and the user never meant that write to run as them - it returns the 401 and
+// the next submit carries the new token. The same (dead) token ends the session
+// through `endSessionAndRedirect`.
 // ---------------------------------------------------------------------------
 const _SESSION_DEAD_CODES = new Set(['session_revoked', 'session_expired', 'session_invalid']);
 
@@ -584,11 +589,16 @@ export async function apiFetch(
   if (isBrowserApiCall && response.status === 401 && (await _isSessionDead(response.clone()))) {
     const failedToken = _bearerOf(init);
     const fresh = failedToken ? await _refreshAuthToken(basePath, failedToken) : null;
+    const method = (init?.method ?? 'GET').toUpperCase();
     if (fresh && fresh !== failedToken && !isSessionEnding()) {
-      init = _withHeader(init, 'Authorization', `Bearer ${fresh}`);
-      response = await fetch(url as RequestInfo, init);
-    }
-    if (response.status === 401 && (await _isSessionDead(response.clone()))) {
+      if (method === 'GET' || method === 'HEAD') {
+        init = _withHeader(init, 'Authorization', `Bearer ${fresh}`);
+        response = await fetch(url as RequestInfo, init);
+        if (response.status === 401 && (await _isSessionDead(response.clone()))) {
+          endSessionAndRedirect();
+        }
+      }
+    } else {
       endSessionAndRedirect();
     }
   }

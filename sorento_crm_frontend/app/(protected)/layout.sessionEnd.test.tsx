@@ -27,9 +27,21 @@ vi.mock('@/components/common/screen-loader', () => ({
 vi.mock('../components/layouts/demo1/layout', () => ({
   Demo1Layout: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
+const Pass = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
+vi.mock('@/app/components/common/GuideTargetSpotlight', () => ({ default: () => null }));
+vi.mock('@/components/upload-activity', () => ({
+  UploadActivityDrawer: () => null,
+  UploadManagerProvider: Pass,
+}));
+vi.mock('@/components/my-downloads/MyDownloadsContext', () => ({ MyDownloadsProvider: Pass }));
+vi.mock('@/components/my-downloads/MyDownloadsDrawer', () => ({ MyDownloadsDrawer: () => null }));
+vi.mock('@/app/providers/CompanyProvider', () => ({ CompanyProvider: Pass }));
+vi.mock('@/components/pwa/PushPrompts', () => ({ default: () => null }));
 
 describe('ProtectedLayout when the NextAuth session is gone', () => {
   beforeEach(() => {
+    sessionState.status = 'unauthenticated';
+    sessionState.data = null;
     push.mockReset();
     window.history.replaceState(null, '', '/procurement-management/packing-lists/pl-1?tab=lines');
   });
@@ -48,5 +60,20 @@ describe('ProtectedLayout when the NextAuth session is gone', () => {
     expect(assign).toHaveBeenCalledWith(
       `/signin?callbackUrl=${encodeURIComponent('/procurement-management/packing-lists/pl-1?tab=lines')}`,
     );
+  });
+});
+
+describe('ProtectedLayout marks the signed-in shell', () => {
+  it('on while authenticated, off once unmounted (public pages never end a session)', async () => {
+    sessionState.status = 'authenticated';
+    sessionState.data = { user: { id: 'u-1' } };
+    const end = await import('@/lib/session-end');
+    const { default: ProtectedLayout } = await import('./layout');
+
+    const { unmount } = render(<ProtectedLayout>page</ProtectedLayout>);
+    await vi.waitFor(() => expect(end.isSignedInShell()).toBe(true));
+    unmount();
+
+    expect(end.isSignedInShell()).toBe(false);
   });
 });

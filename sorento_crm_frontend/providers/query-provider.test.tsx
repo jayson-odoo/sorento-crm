@@ -294,7 +294,15 @@ describe('QueryProvider while a dead session is ending (SESSION-NEVER-STUCK)', (
     expect(toastCustom).toHaveBeenCalledTimes(1);
   });
 
-  it('registers a refetch-everything handler for an ended view-as', () => {
+  it('an ended view-as refetches every query (cached data may be the target\'s)', async () => {
+    const { QueryClient } = await import('@tanstack/react-query');
+    const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+
     expect(sessionEnd.viewAsEnded).toBeTypeOf('function');
+    sessionEnd.viewAsEnded!();
+
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith();
+    invalidate.mockRestore();
   });
 });

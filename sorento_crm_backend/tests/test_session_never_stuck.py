@@ -13,7 +13,7 @@ Postgres only (`tests/_pg_fixture.py`), one rolled-back transaction per test.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,6 +25,11 @@ from tests._pg_fixture import blank_session, unique_code
 
 ENDED = "X-Impersonation-Ended"
 ME_PERMS = "/api/v1/user-management/users/me/permissions"
+
+
+def _now() -> datetime:
+    """Naive UTC, the shape every timestamp column here stores."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _user(db, label: str, status: str = "ACTIVE") -> User:
@@ -99,7 +104,7 @@ def test_no_view_as_header_no_signal(view_as):
 def test_view_as_stopped_elsewhere_is_signalled(view_as):
     """RED pre-fix: the ended row was silently ignored, no header."""
     db, client, _admin, target, imp, _a, session = view_as
-    imp.ended_at = datetime.utcnow()
+    imp.ended_at = _now()
     db.commit()
 
     resp = _get(client, session, target.id)
@@ -137,7 +142,7 @@ def test_ended_signal_is_readable_cross_origin(view_as):
     from app.config import settings
 
     db, client, _admin, target, imp, _a, session = view_as
-    imp.ended_at = datetime.utcnow()
+    imp.ended_at = _now()
     db.commit()
     origin = settings.cors_origins_list[0]
 
@@ -157,8 +162,8 @@ def test_ended_signal_is_readable_cross_origin(view_as):
 @pytest.mark.parametrize(
     "mutate, code",
     [
-        (lambda s: setattr(s, "expires_at", datetime.utcnow() - timedelta(minutes=1)), "session_expired"),
-        (lambda s: setattr(s, "revoked_at", datetime.utcnow()), "session_revoked"),
+        (lambda s: setattr(s, "expires_at", _now() - timedelta(minutes=1)), "session_expired"),
+        (lambda s: setattr(s, "revoked_at", _now()), "session_revoked"),
     ],
 )
 def test_dead_session_401_carries_the_reason_code_the_fe_keys_on(view_as, mutate, code):

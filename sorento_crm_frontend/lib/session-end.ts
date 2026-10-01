@@ -19,10 +19,27 @@ export const sessionNavigation = {
   assign: (url: string) => window.location.assign(url),
 };
 
+/** How long a cancelled navigation (a page's "leave site?" guard, answered Stay) keeps the latch. */
+export const REDIRECT_RETRY_MS = 5000;
+
 let _ending = false;
+let _signedInShell = false;
 
 export function isSessionEnding(): boolean {
   return _ending;
+}
+
+/**
+ * The protected layout says when the signed-in shell is mounted. Only there does a
+ * missing session mean "this session died"; a public page using apiFetch (the
+ * unsubscribe link) simply has none.
+ */
+export function setSignedInShell(active: boolean): void {
+  _signedInShell = active;
+}
+
+export function isSignedInShell(): boolean {
+  return _signedInShell;
 }
 
 function _basePath(): string {
@@ -34,7 +51,8 @@ export function signInUrl(): string {
   const base = _basePath();
   const loc = window.location;
   let path = loc.pathname;
-  if (base && path.startsWith(base)) path = path.slice(base.length) || '/';
+  // The sign-in page's router.push adds the base path itself, so the return URL is app-relative.
+  if (base && (path === base || path.startsWith(`${base}/`))) path = path.slice(base.length) || '/';
   if (path === '/signin' || path.startsWith('/signin/')) return `${base}/signin`;
   const target = `${path}${loc.search}${loc.hash}`;
   return `${base}/signin?callbackUrl=${encodeURIComponent(target)}`;
@@ -59,6 +77,11 @@ export function endSessionAndRedirect(): void {
   const cap = new Promise<void>((resolve) => setTimeout(resolve, SIGN_OUT_CAP_MS));
   void Promise.race([_signOutQuietly(), cap]).finally(() => {
     sessionNavigation.assign(target);
+    // Still here after a while: the navigation was cancelled. Release the latch so
+    // the next call tries again instead of answering "ending" forever.
+    setTimeout(() => {
+      _ending = false;
+    }, REDIRECT_RETRY_MS);
   });
 }
 

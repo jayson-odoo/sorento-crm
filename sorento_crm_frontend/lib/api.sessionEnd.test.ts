@@ -42,6 +42,9 @@ async function load() {
   const imp = await import('./impersonation-store');
   assign = vi.fn();
   end.sessionNavigation.assign = assign as unknown as (url: string) => void;
+  // The protected layout marks the signed-in shell; these run "inside" it unless a
+  // test says otherwise.
+  end.setSignedInShell(true);
   return { ...api, ...end, ...imp };
 }
 
@@ -75,6 +78,7 @@ beforeEach(async () => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  delete process.env.NEXT_PUBLIC_BASE_PATH;
 });
 
 describe('token route says the session is gone (401)', () => {
@@ -131,6 +135,23 @@ describe('token route says the session is gone (401)', () => {
 
     expect(impersonationStore.getState()).toBeNull();
     expect(window.localStorage.getItem(IMP_KEY)).toBeNull();
+  });
+
+  it('outside the signed-in shell (a public page) it neither redirects nor blocks the call', async () => {
+    // The daily-SLA unsubscribe link calls a no-login route through apiFetch.
+    fetchMock.mockImplementation(async (input: RequestInfo) => {
+      if (String(input).includes('/api/auth/token')) return json({ error: 'No valid session' }, 401);
+      return json({ unsubscribed: true }, 200);
+    });
+    const { apiFetch, setSignedInShell, isSessionEnding } = await load();
+    setSignedInShell(false);
+
+    const res = await apiFetch('/api/v1/notifications/daily-sla-summary/unsubscribe?token=t');
+
+    expect(res.status).toBe(200);
+    expect(v1Calls()).toHaveLength(1);
+    expect(isSessionEnding()).toBe(false);
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it('a transient token failure (500) does NOT sign the user out', async () => {
@@ -208,6 +229,56 @@ describe('FastAPI says the session is dead (401 with a session_* code)', () => {
     expect(assign).not.toHaveBeenCalled();
   });
 
+  it('a write is NOT replayed under a newer token (it may be another user), and no sign-out', async () => {
+    let cookieToken = 'tok-old';
+    fetchMock.mockImplementation(async (input: RequestInfo, init?: RequestInit) => {
+      if (String(input).includes('/api/auth/token')) return json({ token: cookieToken });
+      const bearer = new Headers(init?.headers as HeadersInit).get('Authorization');
+      if (bearer === 'Bearer tok-old') return dead('session_revoked');
+      return json({ ok: true });
+    });
+    const { apiFetch, isSessionEnding } = await load();
+    fetchMock.mockImplementationOnce(async () => json({ token: 'tok-old' }));
+    fetchMock.mockImplementationOnce(async () => json({ ok: true }));
+    await apiFetch('/api/v1/prime');
+
+    cookieToken = 'tok-user-b';
+    const res = await apiFetch('/api/v1/procurement/packing-lists/pl-1', {
+      method: 'PUT',
+      body: JSON.stringify({ notes: 'x' }),
+    });
+
+    expect(res.status).toBe(401);
+    const writes = v1Calls().filter((c) => String(c[0]).includes('pl-1'));
+    expect(writes.map(bearerOf)).toEqual(['Bearer tok-old']);
+    expect(isSessionEnding()).toBe(false);
+    expect(assign).not.toHaveBeenCalled();
+    // The next submit carries the cookie's token.
+    await apiFetch('/api/v1/procurement/packing-lists/pl-1', { method: 'PUT', body: '{}' });
+    expect(bearerOf(v1Calls().at(-1)!)).toBe('Bearer tok-user-b');
+  });
+
+  it('no replay once another call has started ending the session', async () => {
+    let reads = 0;
+    let end: (() => void) | null = null;
+    fetchMock.mockImplementation(async (input: RequestInfo) => {
+      if (String(input).includes('/api/auth/token')) {
+        reads += 1;
+        if (reads === 2) end?.(); // a parallel call trips the latch mid-refresh
+        return json({ token: reads === 1 ? 'tok-old' : 'tok-new' });
+      }
+      return dead('session_expired');
+    });
+    const mods = await load();
+    end = mods.endSessionAndRedirect;
+
+    await mods.apiFetch('/api/v1/a');
+    await settle();
+
+    expect(v1Calls()).toHaveLength(1);
+    expect(assign).toHaveBeenCalledTimes(1);
+  });
+
   it('an RBAC 403 or a code-less 401 from one endpoint never signs out', async () => {
     fetchMock.mockImplementation(async (input: RequestInfo) => {
       if (String(input).includes('/api/auth/token')) return json({ token: 'tok' });
@@ -264,6 +335,36 @@ describe('never hang', () => {
 });
 
 describe('endSessionAndRedirect', () => {
+  it('keeps the return URL app-relative under a base path, with a real path boundary', async () => {
+    process.env.NEXT_PUBLIC_BASE_PATH = '/crm';
+    const { signInUrl } = await load();
+
+    window.history.replaceState(null, '', '/crm/procurement-management/packing-lists?x=1#h');
+    expect(signInUrl()).toBe(
+      `/crm/signin?callbackUrl=${encodeURIComponent('/procurement-management/packing-lists?x=1#h')}`,
+    );
+    window.history.replaceState(null, '', '/crmfoo/bar');
+    expect(signInUrl()).toBe(`/crm/signin?callbackUrl=${encodeURIComponent('/crmfoo/bar')}`);
+    window.history.replaceState(null, '', '/crm/signin');
+    expect(signInUrl()).toBe('/crm/signin');
+  });
+
+  it('a cancelled navigation (a "leave site?" guard answered Stay) releases the latch', async () => {
+    vi.useFakeTimers();
+    const { endSessionAndRedirect, isSessionEnding, REDIRECT_RETRY_MS } = await load();
+
+    endSessionAndRedirect();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(isSessionEnding()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(REDIRECT_RETRY_MS + 10);
+    expect(isSessionEnding()).toBe(false);
+    endSessionAndRedirect();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(assign).toHaveBeenCalledTimes(2);
+  });
+
   it('is idempotent and skips the return URL when already on sign-in', async () => {
     window.history.replaceState(null, '', '/signin');
     const { endSessionAndRedirect } = await load();
