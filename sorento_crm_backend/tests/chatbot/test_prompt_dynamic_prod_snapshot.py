@@ -34,10 +34,35 @@ def _load():
     return module
 
 
+def _live_text_is(db, template: str) -> str:
+    """Point `production` at a version holding `template`, as prod's live text (rolled
+    back with the test). Returns the version id."""
+    vid = db.execute(
+        text(
+            "INSERT INTO ai_prompt_versions (id, name, version, type, template, variables, created_at) "
+            "VALUES (gen_random_uuid(), :n, (SELECT COALESCE(max(version), 0) + 1 FROM ai_prompt_versions WHERE name = :n), "
+            "'text', :t, '[\"current_date\"]', now()) RETURNING id"
+        ),
+        {"n": KEY, "t": template},
+    ).scalar()
+    updated = db.execute(
+        text("UPDATE ai_prompt_labels SET version_id = :v WHERE name = :n AND label = 'production'"),
+        {"v": vid, "n": KEY},
+    ).rowcount
+    if not updated:
+        db.execute(
+            text("INSERT INTO ai_prompt_labels (id, name, label, version_id) VALUES (gen_random_uuid(), :n, 'production', :v)"),
+            {"n": KEY, "v": vid},
+        )
+    db.flush()
+    return str(vid)
+
+
 def _apply(mod, db):
     """Run the migration on a database where it may already have run (CI migrates to head
     and `bootstrap_env` applies it): its own row goes first, inside the rolled-back test."""
     mod.remove(db.connection())
+    _live_text_is(db, _source())
     return mod.apply(db.connection())
 
 
@@ -120,6 +145,7 @@ def test_seeded_registries_become_variables_and_the_render_equals_the_file():
     with pg_session() as db:
         _seed_registries_to_the_file(db)
         mod.remove(db.connection())
+        _live_text_is(db, _source())
         top = db.execute(text("SELECT max(version) FROM ai_prompt_versions WHERE name = :n"), {"n": KEY}).scalar()
         version = mod.apply(db.connection())
         assert version == int(top) + 1
@@ -148,6 +174,7 @@ def test_never_labels_and_never_touches_an_existing_version():
     mod = _load()
     with pg_session() as db:
         mod.remove(db.connection())
+        _live_text_is(db, _source())
         before = {
             r.id: (r.version, r.template)
             for r in db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY)
@@ -175,6 +202,7 @@ def test_downgrade_deletes_only_its_own_unlabelled_row():
     mod = _load()
     with pg_session() as db:
         mod.remove(db.connection())
+        _live_text_is(db, _source())
         count = db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count()
         version = mod.apply(db.connection())
         mod.remove(db.connection())
@@ -183,3 +211,38 @@ def test_downgrade_deletes_only_its_own_unlabelled_row():
         assert not db.query(AIPromptVersion).filter(
             AIPromptVersion.name == KEY, AIPromptVersion.version == version
         ).count()
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["one_character", "trailing_newline", "crlf"],
+)
+def test_a_live_text_that_differs_from_the_owner_file_writes_nothing_and_says_where(change, caplog):
+    """Owner, 1 Oct 2026: the migration locates prod's live text by the `production`
+    label and requires it to equal the owner's file exactly. One character off: nothing
+    written, and the log names the first difference. It never guesses."""
+    source = _source()
+    live = {
+        "one_character": source.replace("Sorento Semantic Parser", "Sorento Semantic Parsex", 1),
+        "trailing_newline": source + "\n",
+        "crlf": source.replace("\n", "\r\n"),
+    }[change]
+    mod = _load()
+    with pg_session() as db:
+        mod.remove(db.connection())
+        _live_text_is(db, live)
+        count = db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count()
+        with caplog.at_level("WARNING", logger="alembic.runtime.migration"):
+            assert mod.apply(db.connection()) is None
+        assert db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count() == count
+        assert "differs from the owner's file" in caplog.text and "first difference at line" in caplog.text
+
+
+def test_no_production_label_writes_nothing():
+    mod = _load()
+    with pg_session() as db:
+        mod.remove(db.connection())
+        db.execute(text("DELETE FROM ai_prompt_labels WHERE name = :n AND label = 'production'"), {"n": KEY})
+        count = db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count()
+        assert mod.apply(db.connection()) is None
+        assert db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count() == count
