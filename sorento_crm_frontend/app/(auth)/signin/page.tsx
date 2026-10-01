@@ -9,7 +9,6 @@ import { getSession, signIn } from 'next-auth/react';
 import { useForm } from 'react-hook-form';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   Form,
   FormControl,
@@ -89,7 +88,6 @@ export default function Page() {
     defaultValues: {
       email: '',
       password: '',
-      rememberMe: false,
     },
   });
 
@@ -119,7 +117,6 @@ export default function Page() {
         redirect: false,
         email: values.email,
         password: values.password,
-        rememberMe: values.rememberMe,
       });
 
       if (response?.error) {
@@ -238,28 +235,6 @@ export default function Page() {
                   </FormItem>
                 )}
               />
-
-              <div className="flex items-center space-x-2">
-                <FormField
-                  control={form.control}
-                  name="rememberMe"
-                  render={({ field }) => (
-                    <>
-                      <Checkbox
-                        id="remember-me"
-                        checked={field.value}
-                        onCheckedChange={(checked) => field.onChange(!!checked)}
-                      />
-                      <label
-                        htmlFor="remember-me"
-                        className="text-sm leading-none text-muted-foreground"
-                      >
-                        Remember me
-                      </label>
-                    </>
-                  )}
-                />
-              </div>
 
               <div className="flex flex-col gap-2.5">
                 <Button
