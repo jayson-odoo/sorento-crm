@@ -463,9 +463,10 @@ def test_ac_sa411_agent_not_allowed_to_send_enqueues_nothing_but_writes_and_logs
     assert dealer.notified == []
 
     asks, logs = _asks_and_logs(session_factory, dealer.contact_id)
-    assert sorted(a.branch for a in asks) == ["in_stock", "incoming", "no_incoming", "too_big"]
+    # CUSTOMER-ASKS-REFER-ONLY: B3 `incoming` does not refer, so it is not a row.
+    assert sorted(a.branch for a in asks) == ["in_stock", "no_incoming", "too_big"]
     assert {a.source for a in asks} == {"console" if console else "live"}
-    notified = [a for a in asks if a.branch != "incoming"]
+    notified = asks
     assert all(a.notified_agent is False for a in notified)
     assert {a.notify_skip_reason for a in notified} == {"contact_not_allowed_to_send"}
     assert len(logs) == 3
@@ -487,7 +488,7 @@ def test_ac_sa411_agent_allowed_to_send_enqueues_the_jobs(
     facts = dealer.notified
     assert sorted(f["branch"] for f in facts) == ["in_stock", "no_incoming", "too_big"]
     asks, logs = _asks_and_logs(session_factory, dealer.contact_id)
-    assert len(asks) == 4
+    assert len(asks) == 3
     assert logs == []
 
 
