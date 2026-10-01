@@ -145,6 +145,9 @@ def _renderers() -> dict[str, str]:
         "teams": _q("|".join(escalation_teams())),
         "domains": "(SELECT string_agg(name, ' | ' ORDER BY sort_order, name) FROM chatbot_domains)",
         "status_values": "(SELECT string_agg(value, '|' ORDER BY sort_order, value) FROM chatbot_status_words)",
+        "order_status_values": (
+            "(SELECT string_agg(value, '|' ORDER BY sort_order, value) FROM chatbot_status_words WHERE domain = 'order')"
+        ),
         "entity_kinds": "(SELECT string_agg(kind, '|' ORDER BY sort_order, kind) FROM chatbot_entity_kinds)",
         "agents": (
             "COALESCE((SELECT string_agg(code, '|' ORDER BY COALESCE(array_position("

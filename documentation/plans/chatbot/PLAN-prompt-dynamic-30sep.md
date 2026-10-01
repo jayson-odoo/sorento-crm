@@ -499,3 +499,35 @@ was reported as 773, but it is on 774. It is now fixed and covered by a test.
 
 On the sandbox, the dry run from the seed rendered identical, and `--verify` on the variable
 version gave equal (132,025 = 132,025 characters).
+
+Round 5, the same day. The owner set the goal: every hard-coded list becomes a variable, and the
+version with variables renders text byte-identical to his plain-text version. The per-list table
+went to crew before any rebuild (PR comment 5924667945).
+
+**A. Format gaps, fixed in this PR.**
+- **Statuses:** the quoted values are padded so the arrows line up, and the words wrap greedily
+  at 89 columns with a 4-space continuation.
+- **Domain words:** they wrap greedily at 89 columns.
+- Tests (red cf938d1d) show that rows matching the owner's content now render his exact text.
+- Kill test (wrap width 200): 3 red.
+
+**Crew decision Q5.** The `status_values` list at line 821 is exactly the order-domain statuses.
+It now uses a new variable, `order_status_values` (no data change), which the crew SQL renders
+too.
+- Tests: red 118970e5.
+- Kill test (filter dropped): 2 red.
+
+**Crew's dev answers** (dry run `--from-version 54`, read-only; `--verify 55` passed, 132,025 =
+132,025 characters):
+- access_levels: the same items, but the sort_order differs.
+- agents: dev has 5 extra active codes (ideation, complaint, conversation_analysis,
+  lead_time_enquiries, purchase_request).
+- domains_detail: as on the sandbox (no master_products narrowing; plus the `sales` row).
+- specs: matches the owner's text, so it is not a gap.
+
+**B. Content gaps:** domains, domain_words, entity_kinds, statuses and status_values (770, 778),
+access_levels, agents and domains_detail. These wait for the owner's answers (Q1-Q4, Q6); none
+are built yet.
+
+**Rebuild on dev:** `scripts.prompt_dynamic_identical_version --from-version 54 --save`, then
+`--verify N`. Expected swaps: teams, order_status_values, entity_kinds_detail and specs.

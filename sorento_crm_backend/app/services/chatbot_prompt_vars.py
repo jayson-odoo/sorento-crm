@@ -293,6 +293,14 @@ VARIABLES: dict[str, RegistryVariable] = {
             lambda db: len(_status_rows(db)),
         ),
         RegistryVariable(
+            # The owner's "full set" line lists only the order-domain statuses (crew Q5,
+            # 1 Oct 2026).
+            "order_status_values", "Status values - order domain", "Chatbot Status Words", _STATUS_HREF,
+            ("chatbot_status_words",),
+            lambda db: "|".join(_one_line(r["value"]) for r in _status_rows(db) if r["domain"] == "order"),
+            lambda db: sum(1 for r in _status_rows(db) if r["domain"] == "order"),
+        ),
+        RegistryVariable(
             "entity_kinds", "Entity kinds", "Chatbot Entity Kinds", "/system-management/chatbot-entity-kinds",
             ("chatbot_entity_kinds",), lambda db: "|".join(_one_line(k) for k in _entity_kinds(db)),
             lambda db: len(_entity_kinds(db)),
@@ -719,7 +727,7 @@ def _items(variable: str, text_value: str) -> list[str]:
     raw = (text_value or "").strip()
     if variable in ("domains",):
         return [v for v in _re.split(r"\s*\|\s*", raw) if v]
-    if variable in ("status_values", "teams", "agents", "entity_kinds"):
+    if variable in ("status_values", "order_status_values", "teams", "agents", "entity_kinds"):
         return [v for v in raw.split("|") if v]
     if variable == "access_levels":
         try:
@@ -750,7 +758,7 @@ _IDENTICAL_CANDIDATES: tuple[tuple[str, str], ...] = (
     ("domains", r"domain_hint = ONE of: (?P<list>[a-z_]+(?: \| [a-z_]+)+) \| null"),
     ("status_values", r'"order_status": "(?P<list>[a-z_]+(?:\|[a-z_]+)*)\|null'),
     ("status_values", r'"status": "(?P<list>[a-z_]+(?:\|[a-z_]+)*)\|null'),
-    ("status_values", r"The full set is now: (?P<list>[a-z_]+(?:\|[a-z_]+)*)\|null"),
+    ("order_status_values", r"The full set is now: (?P<list>[a-z_]+(?:\|[a-z_]+)*)\|null"),
     ("teams", r'"suggested_team": "(?P<list>[a-z_]+(?:\|[a-z_]+)+)"'),
     ("agents", r'"suggested_agent": "(?P<list>[a-z_]+(?:\|[a-z_]+)+)"'),
     ("entity_kinds", r'"hint": "(?P<list>[a-z_]+(?:\|[a-z_]+){3,})"'),

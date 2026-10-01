@@ -47,7 +47,7 @@ def _names(db) -> list[str]:
 
 def test_parser_key_declares_every_registry_variable():
     assert set(PROMPT_KEYS[KEY].registry_variables) == {
-        "domains", "domain_words", "domains_detail", "statuses", "status_values",
+        "domains", "domain_words", "domains_detail", "statuses", "status_values", "order_status_values",
         "entity_kinds", "entity_kinds_detail", "specs", "brands", "teams", "agents",
         "access_levels",
     }
