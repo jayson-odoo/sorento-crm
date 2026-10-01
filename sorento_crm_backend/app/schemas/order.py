@@ -215,6 +215,10 @@ class OrderResponse(OrderBase):
     # single-order GET / PUT; defaults False on list rows (the edit form reads the
     # single GET). See PLAN-complaint-do-auto-fulfilment.md.
     remarks_cs_locked: bool = False
+    # The fields an AutoCount-owned DO (`doc_key` set) takes only from AutoCount, so the edit
+    # form shows them read-only (DO-OWNERSHIP-GUARD). Stamped on the single-order GET / PUT
+    # like `remarks_cs_locked`; empty on list rows and on every row AutoCount does not own.
+    autocount_owned_fields: list[str] = []
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime] = None
@@ -225,7 +229,7 @@ class OrderResponse(OrderBase):
     customer: Optional[CustomerSimple] = None
     order_status: Optional[OrderStatusSimple] = None
     lines: Optional[list["OrderLineResponse"]] = []
-    
+
     @field_validator('company_id', mode='before')
     @classmethod
     def _company_id_to_str(cls, v):
@@ -266,6 +270,8 @@ class BulkImportResponse(BaseModel):
     created: int = 0
     updated: int = 0
     errors: list[str] = []
+    # Rows that updated an AutoCount-owned DO name the AutoCount fields left untouched.
+    warnings: list[str] = []
 
 
 class BulkDeleteOrdersRequest(BaseModel):
