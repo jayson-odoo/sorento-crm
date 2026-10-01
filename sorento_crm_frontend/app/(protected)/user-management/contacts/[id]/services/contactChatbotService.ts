@@ -213,7 +213,7 @@ export async function saveContactChatbotProfile(
 }
 
 /**
- * ESCALATION-CONTROL: "Can escalate to a person", saved on its own - the body carries this
+ * ESCALATION-CONTROL: "Chatbot hands over to support teams", saved on its own - the body carries this
  * one key, and the route leaves every field it does not name alone.
  */
 export async function saveContactEscalation(contactId: string, allowed: boolean): Promise<ContactChatbotProfile> {

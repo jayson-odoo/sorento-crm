@@ -279,7 +279,7 @@ class ContactChatbotUpdate(BaseModel):
     packing_list_allowed: bool | None = None
     # Issue #1328: absent = leave alone.
     chatbot_eta_offset_applied: bool | None = None
-    # ESCALATION-CONTROL: "Can escalate to a person". Absent = leave alone.
+    # ESCALATION-CONTROL: "Chatbot hands over to support teams". Absent = leave alone.
     escalation_allowed: bool | None = None
 
 

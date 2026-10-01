@@ -7,7 +7,7 @@ Owner: "we need to be able to control each contact that they cannot access the e
 cannot force escalate, won't be offered escalation; this is for dealer".
 
 ## Journey
-Staff untick "Can escalate to a person" on a contact's Chatbot card. From then on, that contact
+Staff untick "Chatbot hands over to support teams" on a contact's Chatbot card. From then on, that contact
 is never offered a hand-off to a person (no "Would you like me to escalate to ... team?", no
 routing picker), and asking for a person or answering an old offer gets "Please refer to your
 salesman." with nothing handed over. When that contact asks for an order or product the bot
@@ -39,7 +39,7 @@ salesman." Every other contact behaves as before.
 - Backstop: `escalation_control.strip_offers` runs in `engine._run_answer`, `run_tail` and the
   casual lane for a blocked contact, so an offer sentence, routing picker or armed question from
   any composer is removed and the salesman line stands in its place.
-- UI: Contact > Chatbot card, "Can escalate to a person" switch (the card's existing
+- UI: Contact > Chatbot card, "Chatbot hands over to support teams" switch (the card's existing
   `SwitchRow`), saved by `PUT /contacts/{id}/chatbot` (`escalation_allowed`, absent = leave
   alone, guarded by `user_management.contacts.edit`).
 
@@ -59,7 +59,7 @@ design and are superseded by the owner change.
 | # | Decision | Owner answer |
 | --- | --- | --- |
 | R-a | Blocked reply | "Please refer to your salesman." (`turn/task.py:42` REFER_TO_SALESMAN), ruling (b) |
-| Q1 | Scope and label | Covers every hand-off (the engine guard is on the branch kind whatever the team, `engine.py:5258`), so the label is "Can escalate to a person" |
+| Q1 | Scope and label | Covers every hand-off (the engine guard is on the branch kind whatever the team, `engine.py:5258`), so the label is "Chatbot hands over to support teams" |
 | Q2 | A blocked miss | Say what could not be found (the order no. or product), then "Please refer to your salesman."; never the bare line. Measured before the change: `Couldn't find: "SO999001" (order).` with nothing after it |
 | Q5 | Unreadable flag | Fail open (allowed): OK |
 | Q6 | Reporting | Keep branch kind out_of_scope, lane escalation_barred; the n8n cutover's one-time SLA precondition (`documentation/plans/chatbot/n8n-changes.md:586-598`) excludes that lane |
@@ -68,5 +68,6 @@ design and are superseded by the owner change.
 | Owner change | Control | Per contact, not by access type |
 | Backfill | Existing and new contacts | All allowed (TRUE); blocking only by unticking the contact page |
 | Q3, Q4 | Access-type merge, new dealer types | Superseded by the owner change |
+| Label (hand test, 1 Oct) | Switch wording | "Chatbot hands over to support teams", helper "When off, the chatbot tells this contact to refer to their salesman." (owner: the first label read oddly, since referring to the salesman is also an escalation). Behaviour PASS on the owner's hand test |
 
 See `escalation-control-acceptance-criteria.md`.

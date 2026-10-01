@@ -16,9 +16,9 @@ after each navigation.
 
 | Shot | Width | What it shows |
 | --- | --- | --- |
-| 01 | 1280 | Mr Loo's Chatbot card: "Can escalate to a person" switch ON (backfilled allowed; his dealer types do not block him) |
+| 01 | 1280 | Mr Loo's Chatbot card: "Chatbot hands over to support teams" ON (backfilled allowed; his dealer types do not block him), helper "When off, the chatbot tells this contact to refer to their salesman." under it (owner-approved wording, 1 Oct 2026) |
 | 02 | 1280 | After unticking and a page reload: the switch reads OFF; the API read `escalation_allowed: false` |
-| 03 | 375 | The same card at 375: nothing clipped, page scrollWidth 360; ticking it at 375 saved `true` (API) |
+| 03 | 375 | The same card at 375: label and helper wrap inside the row, nothing clipped, page scrollWidth 360; ticking it at 375 saved `true` (API) |
 | 04 | 1280 | Edit Mocha Dealer in Contact Access Types: only "Active", no escalation setting (the access-type files match main) |
 
 Not covered here: the Chatbot Console needs a live parser model key, which this sandbox lacks

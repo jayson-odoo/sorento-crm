@@ -27,5 +27,5 @@ Owner change and rulings, 30 Sep 2026. Every AC names its test.
 8. **[BE]** `PUT /contacts/{id}/chatbot` sets `escalation_allowed` (absent leaves it alone) behind
    `user_management.contacts.edit`; every contact read carries it.
    `tests/chatbot/test_escalation_control_api.py`
-9. **[FE]** The contact's Chatbot card shows a "Can escalate to a person" switch, checked by
+9. **[FE]** The contact's Chatbot card shows a "Chatbot hands over to support teams" switch, checked by
    default; unticking saves `escalation_allowed: false`. `ContactChatbotSection.test.tsx`

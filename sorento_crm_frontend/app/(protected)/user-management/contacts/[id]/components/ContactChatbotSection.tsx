@@ -96,21 +96,27 @@ const TIER_OPTIONS = [
 function SwitchRow({
   id,
   label,
+  hint,
   checked,
   disabled,
   onCheckedChange,
 }: {
   id: string;
   label: string;
+  /** One line under the label, the card's helper-text style. */
+  hint?: string;
   checked: boolean;
   disabled?: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-4">
-      <Label htmlFor={id} className="cursor-pointer font-normal">
-        {label}
-      </Label>
+      <div className="space-y-0.5">
+        <Label htmlFor={id} className="cursor-pointer font-normal">
+          {label}
+        </Label>
+        {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+      </div>
       <Switch
         id={id}
         checked={checked}
@@ -232,7 +238,9 @@ function ChatbotSettingsCard({
           />
           <SwitchRow
             id="contact-chatbot-escalation"
-            label="Can escalate to a person"
+            label="Chatbot hands over to support teams"
+            // Owner-approved wording (1 Oct 2026, hand test of #1406).
+            hint="When off, the chatbot tells this contact to refer to their salesman."
             checked={profile.escalation_allowed}
             disabled={save.isPending || saveEscalation.isPending}
             onCheckedChange={(checked) => saveEscalation.mutate(checked)}

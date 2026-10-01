@@ -52,7 +52,7 @@ def _contact_pk(session_factory) -> str:
 
 
 def _set_flag(session_factory, allowed: bool) -> str:
-    """The contact page's "Can escalate to a person" switch, set on the one row."""
+    """The contact page's "Chatbot hands over to support teams" switch, set on the one row."""
     db = session_factory()
     pk = db.execute(
         text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": str(CONTACT_ID)}

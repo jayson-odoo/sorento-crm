@@ -1,4 +1,4 @@
-"""ESCALATION-CONTROL: the contact's "Can escalate to a person" flag over the API.
+"""ESCALATION-CONTROL: the contact's "Chatbot hands over to support teams" flag over the API.
 
 Owner change, 30 Sep 2026: one per-contact flag, `respond_contacts.escalation_allowed`
 (default true). `PUT .../contacts/{id}/chatbot` takes it (absent = leave alone, the rule

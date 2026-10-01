@@ -48,7 +48,7 @@ export function useSaveContactChatbotProfile(contactId: string) {
 }
 
 /**
- * ESCALATION-CONTROL: the "Can escalate to a person" switch's own save (only that key goes
+ * ESCALATION-CONTROL: the "Chatbot hands over to support teams" switch's own save (only that key goes
  * over the wire), with the same cache handling as the card's save.
  */
 export function useSaveContactEscalation(contactId: string) {

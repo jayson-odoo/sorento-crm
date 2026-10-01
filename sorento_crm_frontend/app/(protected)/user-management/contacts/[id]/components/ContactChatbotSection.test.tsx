@@ -270,14 +270,24 @@ describe('ContactChatbotSection - ETA buffer days switch (#1328)', () => {
 });
 
 /**
- * ESCALATION-CONTROL (owner change, 30 Sep 2026): one per-contact switch, "Can escalate to
- * a person", default on; access types no longer decide it.
+ * ESCALATION-CONTROL (owner change, 30 Sep 2026): one per-contact switch, "Chatbot hands
+ * over to support teams" (owner-approved label, 1 Oct 2026), default on; access types no
+ * longer decide it.
  */
-describe('ContactChatbotSection - Can escalate to a person switch', () => {
+describe('ContactChatbotSection - Chatbot hands over to support teams switch', () => {
+  it('shows the owner-approved helper text under the switch', () => {
+    useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    expect(
+      screen.getByText('When off, the chatbot tells this contact to refer to their salesman.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Can escalate to a person')).not.toBeInTheDocument();
+  });
+
   it('renders checked for a contact that may escalate', () => {
     useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
     renderWithClient(<ContactChatbotSection contactId="c1" />);
-    expect(screen.getByLabelText('Can escalate to a person')).toHaveAttribute('data-state', 'checked');
+    expect(screen.getByLabelText('Chatbot hands over to support teams')).toHaveAttribute('data-state', 'checked');
   });
 
   it('renders unchecked for a blocked contact', () => {
@@ -287,13 +297,13 @@ describe('ContactChatbotSection - Can escalate to a person switch', () => {
       isError: false,
     });
     renderWithClient(<ContactChatbotSection contactId="c1" />);
-    expect(screen.getByLabelText('Can escalate to a person')).toHaveAttribute('data-state', 'unchecked');
+    expect(screen.getByLabelText('Chatbot hands over to support teams')).toHaveAttribute('data-state', 'unchecked');
   });
 
   it('unticking saves through its own mutation, never the card save (security review S3)', () => {
     useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
     renderWithClient(<ContactChatbotSection contactId="c1" />);
-    fireEvent.click(screen.getByLabelText('Can escalate to a person'));
+    fireEvent.click(screen.getByLabelText('Chatbot hands over to support teams'));
     expect(escalationMutate).toHaveBeenCalledTimes(1);
     expect(escalationMutate.mock.calls[0][0]).toBe(false);
     expect(mutate).not.toHaveBeenCalled();
