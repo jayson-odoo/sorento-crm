@@ -23,8 +23,9 @@ table itself; there is no `integration_references` row, because the row can pred
 exactly when the vendor sends a real `FromDocDtlKey` (today it sends 0, which names nothing).
 Without one, a DO line that names its SO (`FromDocNo`) links to the one line of its product in
 that SO (PLAN-do-so-line-link-1oct.md); otherwise the document number (`RefDocNo` on a DO,
-`OurPONo` on a GRN line) links the document and the line link stays null (Q10 a). A link once made is never unset by a later push that cannot resolve it. At the end of
-every real batch, waiting links that now resolve are filled.
+`OurPONo` on a GRN line) links the document and the line link stays null (Q10 a). A link once
+made is never unset by a later push that cannot resolve it. At the end of every real batch,
+waiting links that now resolve are filled.
 """
 from __future__ import annotations
 

@@ -713,15 +713,34 @@ def test_from_dtl_key_zero_with_two_candidate_so_lines_warns(env):
 
 def test_from_dtl_key_zero_waiting_link_filled_when_so_arrives(env):
     """AC-DSL005, including a row the old code stored with from_dtl_key 0."""
-    env.push_do([_with_from(copy.deepcopy(do_records()[0]), 0, "SO", "ZZSO-0001", 0)])
-    line = {l.dtl_key: l for l in env.order_lines(env.order(900001).id)}[910001]
-    assert line.sales_order_line_id is None
-    line.from_dtl_key = 0  # what the pre-fix ingest stored
+    # 900001 is stored as this ingest stores it (NULL); 900002 as the pre-fix ingest did (0).
+    env.push_do([_with_from(copy.deepcopy(do_records()[0]), 0, "SO", "ZZSO-0001", 0),
+                 _with_from(copy.deepcopy(do_records()[1]), 0, "SO", "ZZSO-0001", 0)])
+    fresh = env.order_lines(env.order(900001).id)[0]
+    legacy = env.order_lines(env.order(900002).id)[0]
+    assert fresh.from_dtl_key is None
+    assert fresh.sales_order_line_id is None and legacy.sales_order_line_id is None
+    legacy.from_dtl_key = 0
     env.db.commit()
     _, so_line = _seed_so(env)
-    env.push_do([do_records()[1]])
-    line = {l.dtl_key: l for l in env.order_lines(env.order(900001).id)}[910001]
-    assert line.sales_order_line_id == so_line
+    # Any later non-dry DO batch fills both, here one for a third document.
+    env.push_do([_another(do_records()[1], 900003, "ZZDO-0003", 910009)])
+    assert env.order_lines(env.order(900001).id)[0].sales_order_line_id == so_line
+    assert env.order_lines(env.order(900002).id)[0].sales_order_line_id == so_line
+
+
+def test_from_dtl_key_zero_never_links_to_company_b(env):
+    """AC-DSL001 scope: the same SO number and product in another company is not a match."""
+    so = SalesOrder(so_number="ZZSO-0001", company_id=env.company_b, source_system="autocount")
+    env.db.add(so)
+    env.db.flush()
+    env.db.add(SalesOrderLine(sales_order_id=so.id, product_id=env.p1, qty_ordered=10,
+                              source_ref="SRT_DB:4001:5001", company_id=env.company_b))
+    env.db.commit()
+    rec = _with_from(copy.deepcopy(do_records()[0]), 0, "SO", "ZZSO-0001", 0)
+    r = _records(env.push_do([rec]))["db1:DO:900001"]
+    assert "so_line_unresolved" in r["warnings"]
+    assert all(l.sales_order_line_id is None for l in env.order_lines(env.order(900001).id))
 
 
 def test_grn_from_dtl_key_zero_falls_back_to_our_po_no(env):
@@ -737,6 +756,34 @@ def test_grn_from_dtl_key_zero_falls_back_to_our_po_no(env):
     line = {l.dtl_key: l for l in env.grn_lines(env.grn(800001).id)}[810001]
     assert line.purchase_order_id == str(po.id)
     assert line.from_dtl_key is None
+
+
+def test_grn_stored_from_dtl_key_zero_heals_by_our_po_no(env):
+    """AC-DSL006: a GRN line the pre-fix ingest stored with from_dtl_key 0 links its purchase
+    order by OurPONo once the PO arrives."""
+    rec = copy.deepcopy(grn_records()[0])
+    _with_from(rec, 0, "PO", "ZZPO-0002", 0)
+    rec["Details"][0]["OurPONo"] = "ZZPO-0002"
+    env.push_grn([rec])
+    line = {l.dtl_key: l for l in env.grn_lines(env.grn(800001).id)}[810001]
+    assert line.purchase_order_id is None
+    line.from_dtl_key = 0
+    env.db.commit()
+    po = PurchaseOrder(po_number="ZZPO-0002", company_id=env.company)
+    env.db.add(po)
+    env.db.commit()
+    env.push_grn([_another(grn_records()[0], 800009, "ZZGRN-0009", 810090)])
+    line = {l.dtl_key: l for l in env.grn_lines(env.grn(800001).id)}[810001]
+    assert line.purchase_order_id == str(po.id)
+
+
+def _another(rec: dict, doc_key: int, doc_no: str, first_dtl: int) -> dict:
+    """A copy of `rec` as a different document, so a batch can run without touching `rec`."""
+    out = copy.deepcopy(rec)
+    out.update({"DocKey": doc_key, "DocNo": doc_no})
+    for offset, detail in enumerate(out["Details"]):
+        detail["DtlKey"] = first_dtl + offset
+    return out
 
 
 # ======================================================================= ownership

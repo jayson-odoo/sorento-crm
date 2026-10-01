@@ -1,6 +1,6 @@
 # PLAN: AutoCount DO ingest, FromDocDtlKey 0 means "no link" (DO-SO-LINE-LINK)
 
-Status: **built, in review** (small fix track: one service file plus tests, no migration, no
+Status: **built, reviewed, PR #1409 awaiting CI** (small fix track: one service file plus tests, no migration, no
 auth/RBAC change, no new ingest surface). Branch `claude/do-so-line-link-qnsztu` (the session's
 designated branch; the brief named `crew/do-so-line-link`), cut from `origin/main` `b8cdbebe`.
 UAC: `do-so-line-link-1oct-acceptance-criteria.md` (AC-DSL001 onward).
@@ -49,4 +49,12 @@ snapshot, 3,718 of them with `FromDocType "SO"`; found on the #1408 sim).
 ## Tests
 
 `sorento_crm_backend/tests/test_ingest_autocount_do_grn.py`, red first:
-AC-DSL001..AC-DSL006 in the UAC file.
+AC-DSL001..AC-DSL006 in the UAC file, plus a company B scope pin and a GRN stored-0 heal test.
+Reviewer kill tests: ignore-product, link-first-of-several, drop DO waiting-fill heal and drop GRN
+heal all go red. Dropping the explicit `company_id` filter in `_do_so_line` stays green because the
+ingest already runs under `company_scope` (ORM-level filter); the scope test pins the outcome.
+
+## Rollout note
+
+The first pull after deploy reports every DO the old code stored with `from_dtl_key = 0` as
+`updated` once (0 becomes NULL on the line). Expected, one time only.

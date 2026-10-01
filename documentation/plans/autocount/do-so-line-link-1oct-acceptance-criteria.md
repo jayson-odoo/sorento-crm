@@ -13,5 +13,7 @@ Plan: `PLAN-do-so-line-link-1oct.md`.
 - **AC-DSL005** A DO landed with `FromDocDtlKey 0` before its SO; a later non-dry DO batch links
   it by the natural key. A row stored by the old code with `from_dtl_key = 0` heals the same way.
 - **AC-DSL006** A GRN line with `FromDocDtlKey 0` and an `OurPONo` links the purchase order by
-  number, stores `from_dtl_key` NULL and carries no `po_line_unresolved`.
+  number, stores `from_dtl_key` NULL and carries no `po_line_unresolved`. A GRN line stored with
+  `from_dtl_key = 0` by the old code links its purchase order on a later batch.
+- **AC-DSL007** An SO with the same number and product in another company is never a match.
 - Unchanged: an exact `FromDocDtlKey` link (AC-AG031/032), `RefDocNo` links no line (AC-AG034).
