@@ -115,8 +115,9 @@ class TestSec1AdoptionPathReceivedGuard:
         the receipt now lives on the replacement line and a retired row that
         kept it was counted twice. The receipt is not erased: it is frozen
         into the retired row's `stated_received`, and the live rows still
-        hold exactly the 5 received, no more and no less. The old assertions (row untouched by id,
-        `received_locked` warning, outcome `updated`) belonged to the
+        hold exactly the 5 received, no more and no less. The old assertions
+        (row untouched by id, `received_locked` warning, outcome `updated`)
+        belonged to the
         adopt-in-place ladder this shape no longer takes - see 1(b) for that
         property, now pinned against a spo_number with a ref row present.
         """

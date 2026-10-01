@@ -1,6 +1,6 @@
 # PLAN: release blocker test_sec_1a (RELEASE-HOTFIX-1001)
 
-Status: IN PROGRESS 2026-10-01, small fix track (test-only diff, no migration, no auth/RBAC, no ingest surface change).
+Status: REVIEWED 2026-10-01 (reviewer READY, awaiting CI + owner merge), small fix track (test-only diff, no migration, no auth/RBAC, no ingest surface change).
 
 ## Journey
 
@@ -35,10 +35,11 @@ Test-only. In test_sec_1a:
 
 ## Grill (to crew, 2026-10-01)
 
-- G1: test-only fix (a) vs revert D33 zeroing (b). Recommendation (a). Answer: PENDING.
-- G2: browser check on a test-only lane exercises nothing changed; propose skip, stated in PR. Answer: PENDING.
+- G1: test-only fix (a) vs revert D33 zeroing (b). Recommendation (a). Answer (crew, 1 Oct): (a) approved - live-row floor, live total == 5, retired row closed, qty 0, stated_received >= 5; also grep every test for the same stale per-row floor and fix in this PR (none found: test_spo_xlsx_supersede.py:1824 reads live ref lines only).
+- G2: browser check on a test-only lane exercises nothing changed; propose skip, stated in PR. Answer (crew, 1 Oct): skip the browser check, say so in the PR.
 
 ## PR #1424
 
 #1424 changes `rules/shipping_order_rules.py` (planner) and the dedupe scripts, not this test or the
-ingest service. Checked by running this test file on its head (result in the PR body).
+ingest service. On its head 6fbc345ac the old test also fails (1 failed / 4 passed) and the fixed
+test passes (5 passed), so #1424 needs only a merge of main once this lands; no change to #1424 itself.
