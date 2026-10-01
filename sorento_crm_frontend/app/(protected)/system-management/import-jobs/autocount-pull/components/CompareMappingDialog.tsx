@@ -251,7 +251,7 @@ export function CompareMappingDialog({ open, onOpenChange }: CompareMappingDialo
               listingKey={null}
             >
               <Card>
-                <CardTable className="max-h-[50vh] overflow-auto">
+                <CardTable className="max-h-[50dvh] overflow-auto">
                   <DataGridTable />
                 </CardTable>
               </Card>
