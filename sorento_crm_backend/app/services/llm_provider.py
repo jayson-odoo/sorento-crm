@@ -188,6 +188,7 @@ class LLMProvider(Protocol):
         response_format: Optional[dict] = None,
         json_schema: Optional[dict] = None,
         json_schema_name: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> ChatResult: ...
 
     def embed(self, text: str) -> list[float]: ...
@@ -355,8 +356,11 @@ class OpenAIProvider:
         response_format: Optional[dict] = None,
         json_schema: Optional[dict] = None,
         json_schema_name: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> ChatResult:
-        client = self._client()
+        # A caller-set timeout turns the SDK's own retries off: the caller owns the retry
+        # loop and the budget (`chatbot/llm_call.py`), and a silent second attempt doubles it.
+        client = self._client(timeout=timeout, max_retries=0) if timeout is not None else self._client()
         outbound_messages = (
             _attach_images_openai(messages, images) if images else messages
         )
@@ -644,8 +648,11 @@ class AnthropicProvider:
         response_format: Optional[dict] = None,
         json_schema: Optional[dict] = None,
         json_schema_name: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> ChatResult:
-        client = self._client()
+        # A caller-set timeout turns the SDK's own retries off: the caller owns the retry
+        # loop and the budget (`chatbot/llm_call.py`), and a silent second attempt doubles it.
+        client = self._client(timeout=timeout, max_retries=0) if timeout is not None else self._client()
         system_text, rest = _split_system_messages(messages)
         # Structured-output: Anthropic has no response_format=json_schema. Force
         # a single tool whose input_schema IS the target schema and require it
@@ -1198,6 +1205,7 @@ class GeminiProvider:
         response_format: Optional[dict] = None,
         json_schema: Optional[dict] = None,
         json_schema_name: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> ChatResult:
         system_text, rest = _split_system_messages(messages)
         contents = _convert_messages_to_gemini(rest)
@@ -1253,7 +1261,7 @@ class GeminiProvider:
         payload["generationConfig"] = generation
 
         body = self._request(
-            "POST", f"models/{model_name}:generateContent", json_body=payload
+            "POST", f"models/{model_name}:generateContent", json_body=payload, timeout=timeout
         )
 
         candidates = body.get("candidates") or []
