@@ -2261,7 +2261,20 @@ def run_turn(
                     ticket = dispatch.contact_ticket(redis, contact_respond_id)
                     # Alive from the take to the release, the wait included: a successor
                     # must see this turn as alive while it is still queued too.
-                    heartbeat = dispatch.start_heartbeat(redis, contact_respond_id, ticket)
+                    try:
+                        heartbeat = dispatch.start_heartbeat(
+                            redis, contact_respond_id, ticket
+                        )
+                    except RuntimeError:
+                        # No thread to be had ("can't start new thread"). The turn still
+                        # runs; its stamp lapses after `dispatch.ALIVE_TTL_SECONDS`, after
+                        # which successors stop waiting for it.
+                        logger.error(
+                            "chatbot ordering: no heartbeat for ticket %s of %s",
+                            ticket,
+                            contact_respond_id,
+                            exc_info=True,
+                        )
                 except dispatch.ORDERING_ERRORS:
                     # Redis is not answering. Run the turn UNORDERED rather than failing
                     # it: out-of-order replies are a degradation, a chatbot that answers

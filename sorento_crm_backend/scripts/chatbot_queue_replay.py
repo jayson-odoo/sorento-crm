@@ -115,7 +115,7 @@ def main() -> int:
         failures.append(f"timed out: {timed_out}")
     order = sorted(rows.values(), key=lambda r: r["ticket"])
     if [r["ticket"] for r in order] != list(range(1, len(TIMELINE) + 1)):
-        failures.append("tickets were not 1..7 (the stale done was not reset)")
+        failures.append("tickets were not 1..7 (seq did not restart at 1)")
     if overlaps:
         failures.extend(overlaps)
     if client.get(dispatch.done_key(contact)) != str(len(TIMELINE)):

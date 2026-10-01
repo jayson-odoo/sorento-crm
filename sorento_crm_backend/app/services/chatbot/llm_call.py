@@ -18,7 +18,9 @@ waited on it. Every attempt now carries `ATTEMPT_TIMEOUT_SECONDS` with the SDK's
 off (this loop is the only retry), and the whole call, backoff included, stops at
 `CALL_DEADLINE_SECONDS`. A timeout raises `TimedOut`, which IS a `RateLimited`: to the dealer
 both mean "the model is busy, send that again", so every caller that already says
-`RATE_LIMITED_REPLY` says it for a hang too, and the row keeps the real reason.
+`RATE_LIMITED_REPLY` says it for a hang too, and the row keeps the real reason. With the SDK
+retries off, a 5xx / 529 / dropped connection (`is_transient`) is retried here on the same
+backoff as a 429, and ends the same way.
 """
 from __future__ import annotations
 
@@ -94,6 +96,17 @@ def _quota_exhausted(exc: BaseException) -> bool:
     return "insufficient_quota" in str(exc)
 
 
+def is_transient(exc: BaseException) -> bool:
+    """A provider-side blip the SDK used to retry on its own before its retries were
+    turned off: a 5xx, Anthropic's 529 "overloaded", or a dropped connection."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(status, int) and status >= 500:
+        return True
+    return type(exc).__name__ in {"APIConnectionError", "InternalServerError", "OverloadedError"}
+
+
 def _server_wait(exc: BaseException) -> float | None:
     match = _RETRY_IN_RE.search(str(exc))
     if not match:
@@ -119,9 +132,9 @@ def chat(provider: str, api_key: str, model: str, messages: list[dict], **kwargs
                 "chatbot llm: %s/%s out of time before attempt %s", provider, model, attempt
             )
             raise TimedOut(f"no answer from {provider} within {CALL_DEADLINE_SECONDS:.0f}s")
-        timeout = min(ATTEMPT_TIMEOUT_SECONDS, remaining)
+        timeout = min(float(kwargs.get("timeout") or ATTEMPT_TIMEOUT_SECONDS), remaining)
         try:
-            return client.chat(messages, model=model, timeout=timeout, **kwargs)
+            return client.chat(messages, model=model, **{**kwargs, "timeout": timeout})
         except Exception as exc:  # noqa: BLE001 - inspected, then re-raised
             if is_timeout(exc):
                 # Not retried: a provider that hung for 20 s is not answering this turn,
@@ -136,7 +149,8 @@ def chat(provider: str, api_key: str, model: str, messages: list[dict], **kwargs
                 raise TimedOut(
                     f"no answer from {provider} within {timeout:.0f}s ({exc})"
                 ) from exc
-            if not is_rate_limited(exc):
+            transient = is_transient(exc)
+            if not transient and not is_rate_limited(exc):
                 raise
             wait = None
             if backoff is not None and not _quota_exhausted(exc):
@@ -145,10 +159,13 @@ def chat(provider: str, api_key: str, model: str, messages: list[dict], **kwargs
                     wait = None
                 elif deadline - (_monotonic() + wait) < MIN_ATTEMPT_SECONDS:
                     wait = None
+            reason = "unavailable" if transient else "rate limited"
             if wait is None:
-                logger.warning("chatbot llm: rate limited on attempt %s, giving up", attempt)
+                # A provider that stayed unavailable is told to the dealer the same way
+                # as a rate limit that never cleared: busy, send that again.
+                logger.warning("chatbot llm: %s on attempt %s, giving up", reason, attempt)
                 raise RateLimited(str(exc)) from exc
-            logger.info("chatbot llm: rate limited on attempt %s, waiting %.1fs", attempt, wait)
+            logger.info("chatbot llm: %s on attempt %s, waiting %.1fs", reason, attempt, wait)
             _sleep(wait)
             waited += wait
     raise AssertionError("unreachable")  # pragma: no cover - the loop always returns or raises

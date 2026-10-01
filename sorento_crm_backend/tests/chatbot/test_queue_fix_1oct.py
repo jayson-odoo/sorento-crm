@@ -234,3 +234,68 @@ def test_a_slow_turn_logs_every_stage_with_its_ms(
     slow = [r.getMessage() for r in caplog.records if "slow turn" in r.getMessage()]
     assert slow, [r.getMessage() for r in caplog.records]
     assert contact in slow[0] and "understood=" in slow[0] and "ms" in slow[0]
+
+
+def test_a_stale_done_equal_to_the_new_ticket_is_reset(r, contact, fast):
+    """Review S4: a stale `done=1` survives a seq restart. Ticket 1 of the new session is
+    alive, so ticket 2 must wait for it, not read the stale 1 as "ticket 1 finished"."""
+    r.set(dispatch.done_key(contact), 1, ex=30)
+    t1 = dispatch.contact_ticket(r, contact)
+    hb1 = dispatch.start_heartbeat(r, contact, t1)
+    t2 = dispatch.contact_ticket(r, contact)
+    hb2 = dispatch.start_heartbeat(r, contact, t2)
+    try:
+        with pytest.raises(dispatch.QueueWait):
+            dispatch.wait_for_turn(r, contact, t2, timeout_s=0.6)
+    finally:
+        hb1.stop()
+        hb2.stop()
+
+
+def test_a_hung_turn_stops_beating_after_the_max_hold(r, contact, fast, monkeypatch):
+    """Review S1: a turn stuck in a blocking call must not keep its ticket alive forever."""
+    monkeypatch.setattr(dispatch, "MAX_HOLD_SECONDS", 0.3)
+    t1 = dispatch.contact_ticket(r, contact)
+    hb1 = dispatch.start_heartbeat(r, contact, t1)  # never stopped: the turn is hung
+    t2 = dispatch.contact_ticket(r, contact)
+    hb2 = dispatch.start_heartbeat(r, contact, t2)
+    try:
+        # Lapses at roughly max hold + liveness TTL, well inside the cap.
+        assert _timed_wait(r, contact, t2, timeout_s=3.0) < 2.0
+    finally:
+        hb1.stop()
+        hb2.stop()
+
+
+def _heartbeat_threads() -> list[str]:
+    import threading
+
+    return [t.name for t in threading.enumerate() if t.name.startswith("chatbot-heartbeat-")]
+
+
+def test_run_turn_leaves_no_heartbeat_thread_behind(
+    real_contacts, stub_engine_seams, stub_parser, monkeypatch
+):
+    """Review S3: the engine stops the heartbeat on the way out, success and failure."""
+    from app.database import SessionLocal
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.head import parser as parser_mod
+
+    _enable_ordering(monkeypatch)
+    before = _heartbeat_threads()
+    contact = real_contacts("no-leak")
+
+    stub_parser()
+    engine_mod.run_turn(_envelope_for(contact, "ZZT-msg-no-leak-1"), session_factory=SessionLocal)
+    assert _heartbeat_threads() == before
+
+    stub_parser(error=parser_mod.ParserError("boom"))
+    failed = engine_mod.run_turn(
+        _envelope_for(contact, "ZZT-msg-no-leak-2"), session_factory=SessionLocal
+    )
+    assert failed.status == "failed"
+    assert _heartbeat_threads() == before
+
+    # A duplicate delivery replays before any ticket is taken.
+    engine_mod.run_turn(_envelope_for(contact, "ZZT-msg-no-leak-1"), session_factory=SessionLocal)
+    assert _heartbeat_threads() == before

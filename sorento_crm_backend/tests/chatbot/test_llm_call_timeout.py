@@ -181,3 +181,43 @@ def test_gemini_passes_the_timeout_to_its_request(monkeypatch):
     with pytest.raises(RuntimeError):
         llm_provider.GeminiProvider("k").chat([{"role": "user", "content": "x"}], timeout=9.0)
     assert seen == [9.0]
+
+
+class InternalServerError(Exception):
+    status_code = 502
+
+
+class OverloadedError(Exception):
+    """Anthropic's 529."""
+
+    status_code = 529
+
+
+@pytest.mark.parametrize("error", [InternalServerError("bad gateway"), OverloadedError("overloaded")])
+def test_a_transient_provider_error_is_retried(monkeypatch, clock, error):
+    """The SDK's own retries are off, so a 5xx / 529 is retried here (review S2)."""
+    provider = Provider(errors=[error], content="ok")
+    _install(monkeypatch, provider)
+    assert llm_call.chat("openai", "k", "m", []).content == "ok"
+    assert len(provider.timeouts) == 2
+
+
+def test_a_provider_that_stays_unavailable_ends_busy(monkeypatch, clock):
+    provider = Provider(errors=[InternalServerError("bad gateway")] * 10)
+    _install(monkeypatch, provider)
+    with pytest.raises(llm_call.RateLimited):
+        llm_call.chat("openai", "k", "m", [])
+
+
+def test_a_callers_own_timeout_is_honoured_not_a_type_error(monkeypatch, clock):
+    provider = Provider()
+    _install(monkeypatch, provider)
+    llm_call.chat("openai", "k", "m", [], timeout=5.0)
+    assert provider.timeouts == [5.0]
+
+
+def test_an_error_whose_text_says_timeout_is_not_a_timeout(monkeypatch, clock):
+    provider = Provider(errors=[ValueError("invalid value for 'timeout' parameter")])
+    _install(monkeypatch, provider)
+    with pytest.raises(ValueError):
+        llm_call.chat("openai", "k", "m", [])

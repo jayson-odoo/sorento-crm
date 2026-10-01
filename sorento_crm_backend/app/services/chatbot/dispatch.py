@@ -94,6 +94,12 @@ TICKET_TTL_SECONDS = 3600
 ALIVE_TTL_SECONDS = float(REDIS_SOCKET_TIMEOUT_SECONDS) + 5.0
 HEARTBEAT_INTERVAL_SECONDS = 4.0
 
+# The longest a heartbeat keeps one ticket alive. A turn that is still holding its ticket
+# past this is hung (n8n gave up on it at 90 s, `send_order.N8N_CHAT_TURN_TIMEOUT_SECONDS`),
+# and beating forever would hold every later message from the contact at the queue cap for
+# the life of the process. Past it the heartbeat stops with an ERROR and the ticket lapses.
+MAX_HOLD_SECONDS = 120.0
+
 # The waiter polls; it does not subscribe. One script call every 200 ms for at most the
 # queue-wait window is a handful of cheap reads, and a pub/sub channel per contact would be
 # a second mechanism to keep alive for no measured gain.
@@ -248,7 +254,17 @@ class Heartbeat:
         self._thread.start()
 
     def _run(self) -> None:
+        started = time.monotonic()
         while not self._stop.wait(HEARTBEAT_INTERVAL_SECONDS):
+            if time.monotonic() - started > MAX_HOLD_SECONDS:
+                logger.error(
+                    "chatbot ordering: ticket %s of %s held its slot past %.0fs, "
+                    "letting it lapse",
+                    self._ticket,
+                    self._contact,
+                    MAX_HOLD_SECONDS,
+                )
+                return
             try:
                 beat(self._redis, self._contact, self._ticket)
             except Exception:  # noqa: BLE001 - a heartbeat thread must never die loudly

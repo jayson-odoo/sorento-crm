@@ -230,7 +230,9 @@ per second regardless of what the CRM does. From S7 the request itself serialise
 on arrival `ticket = INCR chatbot:seq:{contact}` (expire 1 h, stamped with its holder's
 liveness in the same script); the request waits (200 ms poll, max
 `CHATBOT_QUEUE_WAIT_SECONDS` = 45) until `chatbot:done:{contact} >= ticket - 1`, runs the
-turn, and advances `done` monotonically in a `finally` that covers the wait as well as the
+**SUPERSEDED 1 Oct 2026 by CHATBOT-QUEUE-FIX** (`PLAN-chatbot-queue-fix-1oct.md`): per-ticket
+heartbeat keys replace `running` and the stall grace, and a queue timeout runs the turn. The
+paragraph below is the original S7 design. turn, and advances `done` monotonically in a `finally` that covers the wait as well as the
 stages. Two repairs, for two different deaths, and **both are kept on purpose**: giving up
 after the queue budget advances `done` to your own ticket, which is what unblocks the
 contact when a process died mid-turn with its `chatbot:running:{contact}` key still set (it
