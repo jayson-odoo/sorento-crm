@@ -55,8 +55,36 @@ def _last_writer(db: Any, *, respond_io_id: str, turn_id: str | None) -> str | N
             {"cid": respond_io_id, "tid": str(turn_id or "")},
         ).first()
     except Exception:  # noqa: BLE001 - a log lookup must never fail the write
+        try:
+            db.rollback()  # the write is already committed; leave the session usable
+        except Exception:  # noqa: BLE001
+            pass
         return None
     return str(row[0]) if row else None
+
+
+def _as_written_unchanged(base: Mapping[str, Any]) -> dict[str, Any]:
+    """`base` as THIS turn would write it had it changed nothing.
+
+    Loading is not lossless: `focus_from_wire` marks every carried entity as not named by
+    this message, and `turn_runtime.load_state` ticks the open question's clock. A turn
+    that never touched focus therefore still writes a focus that differs from the raw
+    stored one, and comparing against the raw `base` would read that as "this turn
+    changed it" and clobber the other turn's write (review round 2, M1).
+    """
+    from app.services.chatbot.turn.pending import from_wire, tick, to_wire as pending_wire
+    from app.services.chatbot.turn.state import focus_from_wire
+
+    out = dict(base)
+    try:
+        out["focus"] = focus_to_wire(focus_from_wire(base.get("focus")))
+    except Exception:  # noqa: BLE001 - an unreadable focus just compares raw
+        pass
+    try:
+        out["open_question"] = pending_wire(tick(from_wire(base.get("open_question"))))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def write_merged(
@@ -82,6 +110,8 @@ def write_merged(
     from app.services.chatbot import session_state
 
     merged = payload
+    clobbered: list[str] = []
+    merged_any = False
     if base is not None:
         # The same lock `overwrite_for_contact` takes, taken FIRST so the read below and
         # the write after it are one critical section.
@@ -89,38 +119,47 @@ def write_merged(
             text("SELECT id FROM respond_contacts WHERE respond_io_id = :cid FOR UPDATE"),
             {"cid": respond_io_id},
         )
-        now = session_state.five_keys(
-            {"session_vars": get_for_contact(db, respond_io_id=respond_io_id)}
-        )
+        stored = get_for_contact(db, respond_io_id=respond_io_id)
+        now = session_state.five_keys({"session_vars": stored})
         if any(now.get(k) != base.get(k) for k in payload):
+            unchanged = _as_written_unchanged(base)
             merged = {}
-            clobbered: list[str] = []
             for key, mine in payload.items():
-                theirs, start = now.get(key), base.get(key)
-                if mine == start and theirs != start:
+                start = base.get(key)
+                # A key absent from the stored TOP level was not written by the other
+                # turn: a legacy `{"variables": ...}` row that only gained a top-level
+                # `ideation` mid-turn reads every other key as None (review W2).
+                theirs = now.get(key) if key in stored else start
+                mine_untouched = mine == start or mine == unchanged.get(key)
+                if mine_untouched and theirs != start:
                     merged[key] = theirs
+                    merged_any = True
                 else:
                     merged[key] = mine
                     if theirs != start and theirs != mine:
                         clobbered.append(key)
-            other = _last_writer(db, respond_io_id=respond_io_id, turn_id=turn_id)
-            if clobbered:
-                logger.warning(
-                    "chatbot session state: turn %s overwrote %s written by turn %s for "
-                    "contact %s (both changed it; last write wins)",
-                    turn_id,
-                    ", ".join(clobbered),
-                    other,
-                    respond_io_id,
-                )
-            else:
-                logger.info(
-                    "chatbot session state: turn %s merged onto turn %s's write for %s",
-                    turn_id,
-                    other,
-                    respond_io_id,
-                )
-    return overwrite_for_contact(db, respond_io_id=respond_io_id, state=merged)
+    written = overwrite_for_contact(db, respond_io_id=respond_io_id, state=merged)
+    if clobbered or merged_any:
+        # Looked up AFTER the write committed, outside the lock: a failed lookup must
+        # not abort the transaction the write rides on (review W1).
+        other = _last_writer(db, respond_io_id=respond_io_id, turn_id=turn_id)
+        if clobbered:
+            logger.warning(
+                "chatbot session state: turn %s overwrote %s written by turn %s for "
+                "contact %s (both changed it; last write wins)",
+                turn_id,
+                ", ".join(clobbered),
+                other,
+                respond_io_id,
+            )
+        else:
+            logger.info(
+                "chatbot session state: turn %s merged onto turn %s's write for %s",
+                turn_id,
+                other,
+                respond_io_id,
+            )
+    return written
 
 
 def persist(

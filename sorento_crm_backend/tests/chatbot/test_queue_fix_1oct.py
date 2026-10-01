@@ -443,3 +443,82 @@ def test_both_changed_is_last_write_wins_with_a_warning_naming_both_turns(state_
     assert _stored(db, cid)["focus"] == {"products": ["LATE"]}
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert warnings and late in warnings[0] and slow in warnings[0] and "focus" in warnings[0]
+
+
+def test_a_late_turn_that_round_tripped_focus_still_keeps_the_predecessors(state_contact, caplog):
+    """Review round 2 M1, the realistic shape: the late turn's focus went through
+    `focus_from_wire` -> `focus_to_wire` (which down-flags `current_message`), so it is
+    NOT byte-equal to what it read, yet it did not change focus. The slow turn's focus
+    must survive, with no "both changed" warning."""
+    import logging
+
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.turn import tail
+    from app.services.chatbot.turn.state import focus_from_wire, focus_to_wire
+    from app.services.conversation_variables_service import overwrite_for_contact
+
+    db, cid = state_contact
+    named = {"products": [{"canonical_code": "AAA1", "current_message": True}]}
+    overwrite_for_contact(db, respond_io_id=cid, state=_five(focus=named))
+    base = _stored(db, cid)
+
+    slow = str(uuid.uuid4())
+    overwrite_for_contact(
+        db,
+        respond_io_id=cid,
+        state=_five(focus={"products": [{"canonical_code": "SLOW3", "current_message": True}]}),
+    )
+    engine_mod._log_session_write(db, turn_id=slow, contact_respond_id=cid)
+
+    round_tripped = focus_to_wire(focus_from_wire(base["focus"]))
+    assert round_tripped != base["focus"], "the premise: loading is not lossless"
+    mine = {**base, "focus": round_tripped, "open_question": {"kind": "pick"}}
+    with caplog.at_level(logging.WARNING, logger="app.services.chatbot.turn.tail"):
+        tail.write_merged(db, respond_io_id=cid, payload=mine, base=base, turn_id="late4")
+    after = _stored(db, cid)
+    assert after["focus"]["products"][0]["canonical_code"] == "SLOW3"
+    assert after["open_question"] == {"kind": "pick"}
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_the_engine_hands_its_base_to_the_merge(
+    real_contacts, stub_engine_seams, monkeypatch
+):
+    """Review round 2 M2: a slow turn writes this contact's state while this turn is
+    mid-flight (here: inside the parser call). A key this turn does not touch
+    (`ideation`) must keep the other turn's write. With `base=None` it is erased."""
+    import json
+
+    from sqlalchemy import text
+
+    from app.database import SessionLocal
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.head import parser as parser_mod
+    from app.services.conversation_variables_service import get_for_contact
+    from tests.chatbot.test_engine import _parser_output
+
+    _enable_ordering(monkeypatch)
+    contact = real_contacts("merge-engine")
+    pointer = {"submission_id": "ZZT-slow-turn-draft", "status": "draft"}
+
+    def parse_while_another_turn_writes(config, user_block):
+        db = SessionLocal()
+        try:
+            stored = get_for_contact(db, respond_io_id=contact)
+            db.execute(
+                text("UPDATE respond_contacts SET session_vars = CAST(:s AS jsonb) WHERE respond_io_id = :c"),
+                {"s": json.dumps({**stored, "ideation": pointer}), "c": contact},
+            )
+            db.commit()
+        finally:
+            db.close()
+        return _parser_output()
+
+    monkeypatch.setattr(parser_mod, "parse", parse_while_another_turn_writes)
+    engine_mod.run_turn(_envelope_for(contact, "ZZT-msg-merge-engine"), session_factory=SessionLocal)
+
+    db = SessionLocal()
+    try:
+        assert get_for_contact(db, respond_io_id=contact).get("ideation") == pointer
+    finally:
+        db.close()

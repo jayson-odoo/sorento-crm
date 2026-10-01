@@ -37,17 +37,28 @@ def _row_text(code: str, qty: int) -> str:
     return f"*Product Code:* {code}\n*Warehouse:* BUKIT RAJA\n*Quantity On Hand:* {qty}"
 
 
-def _envelope(entities: list[str], rows: dict[str, int], unresolved: list[str] | None = None) -> dict:
+def _envelope(
+    entities: list[str],
+    rows: dict[str, int],
+    unresolved: list[str] | None = None,
+    *,
+    customers: list[str] | None = None,
+    footer: bool = False,
+) -> dict:
     figures = [_fig(code, qty) for code, qty in rows.items()]
     lane_text = (
         "Stock availability:\n" + "\n\n".join(_row_text(c, q) for c, q in rows.items())
         if rows
         else "No matching results found."
     )
+    if footer:
+        lane_text += "\n\n_Data last updated: 1 Oct 2026 10:05_"
     return {
         "domain": "inventory",
         "denied": False,
-        "entities": entities,
+        "entities": [*entities, *(customers or [])],
+        # `turn_runtime.envelope_of`: the product subjects alone.
+        "product_codes": list(entities),
         "figures": figures,
         "files": [],
         "miss": [] if rows else entities,
@@ -143,3 +154,31 @@ def test_a_code_that_prefixes_another_requested_code_still_reaches_the_stock_too
 
     assert gated["gate_passed"] is True
     assert args["product_ids"] == [plain, suffixed]
+
+
+def test_a_pinned_customer_is_never_named_as_a_stock_code():
+    """Review round 2 C1: a customer subject carried into a stock ask is not a code."""
+    text = _text(
+        _envelope(["SRTSWT3001-GM"], {"SRTSWT3001-GM": 12}, customers=["CHIN CHUN HARDWARE"])
+    )
+    assert _NO_STOCK_PREFIX not in text, text
+
+
+def test_a_counted_set_answer_adds_no_line():
+    """Review round 2 C2: a described / counted set carries every member as a subject;
+    naming each out-of-stock one would dump the set on one line."""
+    env = _envelope(["AAA1", "BBB2", "CCC3"], {"CCC3": 4})
+    env["header_override"] = "1 basin is in stock."
+    assert _NO_STOCK_PREFIX not in _text(env)
+
+
+def test_more_codes_than_the_header_shows_adds_no_line():
+    from app.services.chatbot.turn.compose import HEADER_SUBJECT_MAX
+
+    codes = [f"C{i:03d}" for i in range(HEADER_SUBJECT_MAX + 1)]
+    assert _NO_STOCK_PREFIX not in _text(_envelope(codes, {codes[0]: 1}))
+
+
+def test_the_line_sits_above_the_data_footer():
+    text = _text(_envelope(["SRTSWT3001", "SRTSWT3001-GM"], {"SRTSWT3001-GM": 12}, footer=True))
+    assert text.index("No stock found for SRTSWT3001.") < text.index("_Data last updated")

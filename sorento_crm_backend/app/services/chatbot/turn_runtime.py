@@ -3872,6 +3872,17 @@ def envelope_of(
         "domain": spec.domain,
         "denied": refused,
         "entities": codes,
+        # The PRODUCT subjects alone, for the composer's "No stock found for X" line: a
+        # customer pinned from an earlier turn is a subject too, and is not a stock code.
+        "product_codes": [
+            name
+            for name in (
+                _answer_subject(e)
+                for e in entities
+                if jsc.nullish_str(e.get("entity_type")).strip().lower() == "product"
+            )
+            if name
+        ],
         "figures": figures,
         "files": [f for f in files if isinstance(f, dict)] if isinstance(files, list) else [],
         "miss": [] if has_result else codes,

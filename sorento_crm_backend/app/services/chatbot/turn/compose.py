@@ -423,10 +423,29 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         # resolved code with no row in a stock answer is named on one line. The
         # whole-section miss already names every code (above), and an unresolved token
         # is named by "I could not find" below, so neither is repeated here.
-        if domain == "inventory" and figures and not envelope_missed(env):
-            absent = _codes_without_rows(entities, figures)
+        # Only the product subjects (`product_codes`, never a pinned customer), and never
+        # on a counted / described set (`header_override`) or a list past the header's
+        # own count limit, where every out-of-stock member would land on one line (W6).
+        product_codes = env.get("product_codes")
+        if (
+            domain == "inventory"
+            and figures
+            and not envelope_missed(env)
+            and isinstance(product_codes, list)
+            and product_codes
+            and len(product_codes) <= HEADER_SUBJECT_MAX
+            and not (isinstance(header_override, str) and header_override.strip())
+        ):
+            absent = _codes_without_rows(product_codes, figures)
             if absent:
-                block = block + "\n" + f"No stock found for {_join_words(absent)}."
+                # Above the lane's "_Data last updated: ..._" footer, which closes the
+                # section, rather than under it.
+                line = f"No stock found for {_join_words(absent)}."
+                body, sep, footer = block.rpartition("\n_Data last updated")
+                if sep:
+                    block = body + "\n" + line + sep + footer
+                else:
+                    block = block + "\n" + line
         # The window the fetch ran with, stated under the header it belongs to (browser
         # pass 6 item 4). Never on a section that states its own scope - the outstanding
         # report and the refusal both do, and the report's own four-line block already

@@ -1,6 +1,8 @@
 # PLAN: per-contact chatbot queue fix (CHATBOT-QUEUE-FIX)
 
-Status: in progress (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+Status: built, in review (PR #1415). Small fix track: no migration, no auth/RBAC change, no new
+ingest surface. Grew in-lane with item 7 (parser LLM timeout, owner 1 Oct) and the crew
+decision (queue wait sized to n8n's budget, late turns merge session state).
 
 ## Journey
 
@@ -24,6 +26,8 @@ was slow or its release was lost. A stock question that names several codes answ
 4. A timed-out ticket never advances `done` past a still-running predecessor.
 5. Failed release logs at ERROR with contact + ticket; per-stage timing logged so a slow turn shows its stage.
 6. A resolved code with no stock rows prints "No stock found for <CODE>".
+7. The parser LLM call (every chatbot LLM call) has a hard deadline: 20 s per attempt, 35 s total.
+8. Queue wait capped at 90 - 35 - 15 - 10 = 30 s; a late turn merges its session state.
 
 ## UAC
 
