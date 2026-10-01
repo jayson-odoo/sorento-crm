@@ -159,6 +159,29 @@ def test_people_lookup_lists_only_active_untrashed_users(api, db):
     assert [row["name"] for row in response.json()] == [f"{MARKER} {tag} Active"]
 
 
+def test_people_lookup_filters_over_past_records_can_include_inactive_people(api, db):
+    """A filter over historical rows (SLA trackers, complaints, order inquiries) must still offer
+    someone who has since left; an assignment picker must not. Trashed stays out, as on
+    `/users/select`'s default."""
+    client, *_ = api
+    tag = unique_code("INA", alpha=True)
+    _user(db, f"{MARKER} {tag} Active")
+    _user(db, f"{MARKER} {tag} Inactive", status=UserStatus.INACTIVE)
+    _user(db, f"{MARKER} {tag} Trashed", trashed=True)
+
+    response = client.get(
+        f"{BASE}/user-management/users/lookup",
+        params={"query": tag, "include_inactive": "true"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert sorted(row["name"] for row in response.json()) == [
+        f"{MARKER} {tag} Active",
+        f"{MARKER} {tag} Inactive",
+    ]
+    assert all(set(row) == {"id", "name"} for row in response.json())
+
+
 def test_people_lookup_lists_staff_only(api, db):
     """Portal contacts (no role, or only `portal_user` / `guest`) and integration act-as
     accounts are not people a salesperson assigns work to."""

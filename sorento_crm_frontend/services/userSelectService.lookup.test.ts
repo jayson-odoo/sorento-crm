@@ -38,6 +38,14 @@ describe('getUserLookup', () => {
     expect(calledUrl().searchParams.get('respond_synced')).toBe('true');
   });
 
+  it('asks for deactivated people only when a filter over past records says so', async () => {
+    mockedFetch.mockResolvedValue({ ok: true, json: async () => [] } as Response);
+
+    await getUserLookup({ include_inactive: true });
+
+    expect(calledUrl().searchParams.get('include_inactive')).toBe('true');
+  });
+
   it('throws the backend message instead of returning an empty list', async () => {
     mockedFetch.mockResolvedValue({
       ok: false,

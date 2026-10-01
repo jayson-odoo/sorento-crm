@@ -181,6 +181,10 @@ async def get_users_lookup(
         False,
         description="Only users linked to a Respond.io agent, each with its respond_user_id.",
     ),
+    include_inactive: bool = Query(
+        False,
+        description="Also deactivated staff, for filters over past records. Never for assigning.",
+    ),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -202,7 +206,9 @@ async def get_users_lookup(
             code="people_lookup_staff_only",
         )
     try:
-        users = service.list_user_lookup(query=query, respond_synced=respond_synced)
+        users = service.list_user_lookup(
+            query=query, respond_synced=respond_synced, include_inactive=include_inactive
+        )
         return [
             UserLookupItem(
                 id=user.id,

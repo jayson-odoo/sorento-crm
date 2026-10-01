@@ -247,7 +247,7 @@ beforeEach(() => {
   assignLead.mockResolvedValue(lead());
   getCustomerPortfolio.mockResolvedValue({ leads: [], projects: [] });
   getUserLookup.mockResolvedValue([
-    { id: 'u-siti', name: 'Siti', email: 'siti@x.my' },
+    { id: 'u-siti', name: 'Siti' },
   ]);
 });
 

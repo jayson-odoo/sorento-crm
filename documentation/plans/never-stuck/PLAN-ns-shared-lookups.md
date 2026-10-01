@@ -52,8 +52,11 @@ Kept to URL switches so it does not collide with #1418 (NS-FETCH-STATES), which 
 picker / list failure rendering (L2, L3, L5) on the same files:
 
 - `services/userSelectService.ts` gains `getUserLookup()`; business-module pickers (project
-  sales, tickets, complaints, SLA, resource management, procurement) switch to it. Admin screens
-  (user management, roles, automation, integrations) stay on `getUsersSelect`.
+  sales, tickets, complaints, SLA, resource management, the purchase-request assignee filter, the
+  notes and internal-comment @-mentions) switch to it. Filters over past records pass
+  `include_inactive`. Admin screens (user management, roles, automation, integrations, settings)
+  stay on `getUsersSelect`, and so does the purchase-request approver picker: it sends the
+  approval link to the chosen person's email, which the lookup never carries.
 - The project-sales status-graph fetch switches to `/project-sales/status-graph/{entity}`.
 - Master-data, contact-access-type and market-segment consumers need no change: same URL, the
   gate moved.

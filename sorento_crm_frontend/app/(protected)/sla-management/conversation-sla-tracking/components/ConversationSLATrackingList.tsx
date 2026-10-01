@@ -133,8 +133,8 @@ export default function ConversationSLATrackingList() {
   });
 
   const { data: respondUsers } = useQuery({
-    queryKey: ['user-lookup', 'respond-synced'],
-    queryFn: () => getUserLookup({ respond_synced: true }),
+    queryKey: ['user-lookup', 'respond-synced', 'with-inactive'],
+    queryFn: () => getUserLookup({ respond_synced: true, include_inactive: true }),
     staleTime: 1000 * 60 * 5,
   });
 

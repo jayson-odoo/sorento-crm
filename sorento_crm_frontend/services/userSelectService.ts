@@ -66,10 +66,13 @@ export async function getUserLookup(params?: {
   query?: string;
   /** Only users linked to a Respond.io agent, each with its `respond_user_id`. */
   respond_synced?: boolean;
+  /** Also deactivated staff: for filters over past records, never for assigning. */
+  include_inactive?: boolean;
 }): Promise<UserLookupItem[]> {
   const sp = new URLSearchParams();
   if (params?.query) sp.set('query', params.query);
   if (params?.respond_synced) sp.set('respond_synced', 'true');
+  if (params?.include_inactive) sp.set('include_inactive', 'true');
   const url = USERS_LOOKUP + (sp.toString() ? `?${sp.toString()}` : '');
   const response = await apiFetch(url);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to fetch people'));

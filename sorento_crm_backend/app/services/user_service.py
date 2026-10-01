@@ -370,7 +370,10 @@ class UserService:
         )
 
     def list_user_lookup(
-        self, query: Optional[str] = None, respond_synced: bool = False
+        self,
+        query: Optional[str] = None,
+        respond_synced: bool = False,
+        include_inactive: bool = False,
     ) -> list:
         """Active, non-trashed users for the shared people picker, ordered by name.
 
@@ -379,13 +382,16 @@ class UserService:
         ``query`` matches the NAME only: this list is open to every signed-in user, and
         matching email would let anyone probe whether an address belongs to a colleague.
         ``respond_synced`` narrows to users linked to a Respond.io agent.
+        ``include_inactive`` is for filters over past records (who raised it, who it was
+        assigned to): someone who has left still owns those rows. Trashed users stay out.
         """
         q = self.db.query(User).filter(
             User.is_trashed == False,  # noqa: E712
-            User.status == UserStatus.ACTIVE.value,
             User.is_integration == False,  # noqa: E712
             _holds_staff_role(),
         )
+        if not include_inactive:
+            q = q.filter(User.status == UserStatus.ACTIVE.value)
         if query:
             q = q.filter(User.name.ilike(f"%{query}%"))
         if respond_synced:

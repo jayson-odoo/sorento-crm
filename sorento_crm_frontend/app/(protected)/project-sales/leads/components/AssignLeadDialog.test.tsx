@@ -81,7 +81,7 @@ function renderDialog(props: Partial<React.ComponentProps<typeof AssignLeadDialo
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getUserLookup.mockResolvedValue([{ id: 'u-ali', name: 'Ali', email: 'ali@x.my' }]);
+  getUserLookup.mockResolvedValue([{ id: 'u-ali', name: 'Ali' }]);
 });
 
 describe('AssignLeadDialog', () => {

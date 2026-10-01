@@ -183,8 +183,8 @@ export function OrderInquiryHeadersList() {
   //     registered `Project` row (0 of 738 headers on the prod copy), so the REGISTERED
   //     project list (`useProjects`) matched nothing and is dropped here.
   const usersQuery = useQuery({
-    queryKey: ['oi-header-raised-by-users'],
-    queryFn: () => getUserLookup(),
+    queryKey: ['user-lookup', 'with-inactive'],
+    queryFn: () => getUserLookup({ include_inactive: true }),
     staleTime: 5 * 60 * 1000,
   });
   const worklistSummary = useOrderInquiryWorklistSummary({});

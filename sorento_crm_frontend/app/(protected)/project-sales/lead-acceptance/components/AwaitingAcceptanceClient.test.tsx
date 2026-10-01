@@ -135,8 +135,8 @@ beforeEach(() => {
   assignLead.mockResolvedValue(row());
   nudgeLeadAssignee.mockResolvedValue(row());
   getUserLookup.mockResolvedValue([
-    { id: 'u-ali', name: 'Ali', email: 'ali@x.my' },
-    { id: 'u-siti', name: 'Siti', email: 'siti@x.my' },
+    { id: 'u-ali', name: 'Ali' },
+    { id: 'u-siti', name: 'Siti' },
   ]);
 });
 

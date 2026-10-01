@@ -430,8 +430,8 @@ beforeEach(() => {
   updateProject.mockResolvedValue(baseProject());
   listLeads.mockResolvedValue({ data: [LEAD_OPEN], pagination: { total: 1, page: 1, limit: 20 } });
   getUserLookup.mockResolvedValue([
-    { id: 'u-me', name: 'Me', email: 'me@example.com' },
-    { id: 'u-2', name: 'Aina', email: 'aina@example.com' },
+    { id: 'u-me', name: 'Me' },
+    { id: 'u-2', name: 'Aina' },
   ]);
   useBrandSelectQuery.mockReturnValue({ data: [BRAND_A], isLoading: false });
 });

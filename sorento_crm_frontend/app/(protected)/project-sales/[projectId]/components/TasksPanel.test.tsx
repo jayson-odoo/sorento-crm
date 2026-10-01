@@ -125,7 +125,7 @@ vi.mock('@/app/(protected)/project-sales/_shared/hooks/useProjectStatusGraph', (
 
 vi.mock('@/services/userSelectService', () => ({
   getUserLookup: vi.fn(async () => [
-    { id: 'u-siti', name: 'Siti', email: 'siti@example.com' },
+    { id: 'u-siti', name: 'Siti' },
   ]),
 }));
 

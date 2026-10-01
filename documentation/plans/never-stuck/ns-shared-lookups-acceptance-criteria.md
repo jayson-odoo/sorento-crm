@@ -6,9 +6,15 @@ management, system or master data.
 
 ## People picker
 
-- UAC1.1 `GET /api/v1/user-management/users/lookup` answers any signed-in user with 200 and a
-  list of `{id, name}` objects, nothing else.
-- UAC1.2 Only ACTIVE, non-trashed users are listed.
+- UAC1.1 `GET /api/v1/user-management/users/lookup` answers any signed-in STAFF user (a role
+  other than `portal_user` / `guest`) with 200 and a list of `{id, name}` objects. With
+  `respond_synced=true` each row also carries `respond_user_id` (the SLA and complaint assignee
+  filters key on it) and only Respond.io-synced users are listed. A portal caller gets 403
+  `people_lookup_staff_only`.
+- UAC1.2 Only ACTIVE, non-trashed staff are listed (no portal contacts, no integration
+  accounts). `include_inactive=true` adds deactivated staff, for filters over past records
+  (SLA, escalation logs, complaints, order inquiries, purchase requests); assignment pickers never
+  pass it.
 - UAC1.3 `?query=` narrows by name. It does not match on email.
 - UAC1.4 No session: 401. `GET /users/select` still needs `user_management.users.view`.
 - UAC1.5 The project owner, task assignee, escalation, lead assign / informant, order-inquiry

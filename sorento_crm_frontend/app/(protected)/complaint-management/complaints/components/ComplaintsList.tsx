@@ -109,8 +109,8 @@ export default function ComplaintsList() {
   });
 
   const { data: respondSyncedUsers = [] } = useQuery({
-    queryKey: ['user-lookup', 'respond_synced', 'successful'],
-    queryFn: () => getUserLookup({ respond_synced: true }),
+    queryKey: ['user-lookup', 'respond-synced', 'with-inactive'],
+    queryFn: () => getUserLookup({ respond_synced: true, include_inactive: true }),
     staleTime: 60_000,
   });
   const assigneeOptions = respondSyncedUsers.filter((u) => u.respond_user_id);

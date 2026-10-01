@@ -128,7 +128,7 @@ beforeEach(() => {
     lead_code: 'LEAD-000001',
     owner_name: 'Ali',
   });
-  getUserLookup.mockResolvedValue([{ id: 'u-ali', name: 'Ali', email: 'ali@x.my' }]);
+  getUserLookup.mockResolvedValue([{ id: 'u-ali', name: 'Ali' }]);
 });
 
 describe('LeadWizardDialog', () => {

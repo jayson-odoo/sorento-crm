@@ -247,7 +247,7 @@ beforeEach(() => {
   previewClashes.mockResolvedValue({ candidates: [], would_block: false });
   updateProject.mockResolvedValue(fixture());
   listLeads.mockResolvedValue({ data: [], pagination: { total: 0, page: 1, limit: 20 } });
-  getUserLookup.mockResolvedValue([{ id: 'u-me', name: 'Me', email: 'me@example.com' }]);
+  getUserLookup.mockResolvedValue([{ id: 'u-me', name: 'Me' }]);
   useBrandSelectQuery.mockReturnValue({ data: [], isLoading: false });
 });
 
