@@ -423,6 +423,9 @@ class TestAcF7ClosedOnlySupersedeRetires:
             assert row["retired_at"] is not None
             assert int(row["quantity_received"] or 0) == 0
             assert "superseded by" in (row["allocation_notes"] or "")
+        # Security review N1: the zeroed receipt is frozen in the declared column.
+        assert int(by_id[str(case.excel_95.id)]["stated_received"]) == 95
+        assert int(by_id[str(case.excel_4.id)]["stated_received"]) == 4
         assert _picked_on(env, case.excel_95.id) == 0
         assert _pl_figures(env, case) == (99, 99, "received")
 
@@ -574,7 +577,18 @@ class TestD33ConservationGuard:
         )
 
         with pytest.raises(SupersedeNotConserved):
-            assert_supersede_conserved(env.db, [], 99, 95, company_id=env.company_a)
+            assert_supersede_conserved(env.db, [], 99, 99, 95)
+
+    def test_a_carry_that_drops_a_remainder_raises(self, env):
+        import pytest
+
+        from app.services.rules.shipping_order_rules import (
+            SupersedeNotConserved,
+            assert_supersede_conserved,
+        )
+
+        with pytest.raises(SupersedeNotConserved):
+            assert_supersede_conserved(env.db, [], 99, 95, 99)
 
     def test_a_pick_still_on_a_removed_row_raises(self, env):
         import pytest
@@ -586,17 +600,13 @@ class TestD33ConservationGuard:
 
         case = _owner_case(env)
         with pytest.raises(SupersedeNotConserved):
-            assert_supersede_conserved(
-                env.db, [str(case.excel_95.id)], 95, 95, company_id=env.company_a
-            )
+            assert_supersede_conserved(env.db, [str(case.excel_95.id)], 95, 95, 95)
 
     def test_a_conserved_supersede_passes(self, env):
         from app.services.rules.shipping_order_rules import assert_supersede_conserved
 
         case = _owner_case(env, with_receipts=False)
-        assert_supersede_conserved(
-            env.db, [str(case.excel_95.id)], 0, 0, company_id=env.company_a
-        )
+        assert_supersede_conserved(env.db, [str(case.excel_95.id)], 0, 0, 0)
 
     def test_a_push_that_would_strand_a_pick_lands_nothing(self, env, monkeypatch):
         """End to end: if the pick move ever failed, the record FAILS and the
@@ -616,4 +626,78 @@ class TestD33ConservationGuard:
         by_id = {str(r["id"]): r for r in _spo_rows(env, case.number)}
         assert int(by_id[str(case.excel_95.id)]["quantity_received"]) == 95
         assert by_id[str(case.excel_95.id)]["retired_at"] is None
+        assert _picked_on(env, case.excel_95.id) == 95
+
+
+# ============================================================================ #
+# Security review round: S1 cap, S3 abort, N2 acceptance split
+# ============================================================================ #
+class TestSecurityReviewFixes:
+    def test_stated_receipt_above_the_line_never_marks_more_received(self, env):
+        """S1: a pushed TransferedQty of 500 on a 77 line counts as 77."""
+        case = _owner_case(env, with_receipts=False)
+        ib_row, ntc_row = _seed_pre_repair_state(env, case)
+        ib_row.stated_received = 0
+        ib_row.quantity_received = 0
+        ntc_row.stated_received = 500
+        env.db.delete(case.excel_95)
+        env.db.delete(case.excel_4)
+        env.db.commit()
+        _allocated, received, _status = _pl_figures(env, case)
+        assert received == 77
+
+    def test_a_pick_split_across_two_lines_splits_its_acceptance(self, env):
+        """N2: a 30-pick at IB (25 accepted) over IB 22 + NTC 77 becomes 22 + 8,
+        accepted 22 + 3; the sum still accepts 25 and no chunk accepts more than
+        it picked."""
+        case = _owner_case(env)
+        case.pick_ib_22.quantity_picked = 30
+        case.pick_ib_22.quantity_expected = 30
+        case.pick_ib_22.qty_accepted = 25
+        case.pick_ntc_73.quantity_picked = 65
+        case.pick_ntc_73.quantity_expected = 65
+        env.db.commit()
+        _push(env, _autocount_record(env, case))
+
+        rows = _spo_rows(env, case.number)
+        ib = _row_by_wh(rows, case.ib_id)
+        ntc = _row_by_wh(rows, case.ntc_id)
+        assert _picked_on(env, ib["id"]) == 22
+        assert _picked_on(env, ntc["id"]) == 77
+        chunks = env.db.execute(
+            text(
+                "SELECT spo_allocation_id, quantity_picked, quantity_expected, qty_accepted "
+                "FROM picking_lines WHERE picking_header_id = :h AND source_warehouse_id = :w "
+                "ORDER BY quantity_picked DESC"
+            ),
+            {"h": str(case.pick_ib_22.picking_header_id), "w": case.ib_id},
+        ).all()
+        assert [(str(a), p, e, q) for a, p, e, q in chunks] == [
+            (str(ib["id"]), 22, 22, 22),
+            (str(ntc["id"]), 8, 8, 3),
+        ]
+
+    def test_repair_aborts_a_document_whose_carry_would_not_conserve(self, env, monkeypatch, capsys):
+        """S3: the guard refuses the document, it is named and counted, nothing of
+        it is written, and the sweep finishes with a summary."""
+        from app.services.rules import shipping_order_rules
+        from scripts import dedupe_spo_xlsx_superseded as script
+
+        real = shipping_order_rules.distribute_received
+
+        def lossy(total, allocated):
+            shares = real(total, allocated)
+            shares[-1] = max(shares[-1] - 1, 0)
+            return shares
+
+        monkeypatch.setattr(shipping_order_rules, "distribute_received", lossy)
+        case = _owner_case(env)
+        _seed_pre_repair_state(env, case)
+
+        for dry_run in (True, False):
+            summary = script.run(env.db, env.company_a, dry_run=dry_run)
+            assert summary["aborted"] >= 1
+            assert f"{case.number}: ABORTED" in capsys.readouterr().out
+        ids = {str(r["id"]) for r in _spo_rows(env, case.number)}
+        assert {str(case.excel_95.id), str(case.excel_4.id)} <= ids
         assert _picked_on(env, case.excel_95.id) == 95

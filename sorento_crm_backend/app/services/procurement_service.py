@@ -1155,7 +1155,19 @@ class InboundShipmentService:
         stated_rows = (
             self.db.query(
                 SPOAllocation.product_id,
-                func.coalesce(func.sum(SPOAllocation.stated_received), 0),
+                # Each line's statement capped at what it was ordered for
+                # (security review S1): a pushed TransferedQty above the line
+                # cannot mark more of the container received than the line could
+                # ever have brought.
+                func.coalesce(
+                    func.sum(
+                        func.least(
+                            SPOAllocation.stated_received,
+                            func.coalesce(SPOAllocation.allocated_quantity, 0),
+                        )
+                    ),
+                    0,
+                ),
             )
             .filter(
                 SPOAllocation.inbound_shipment_id == shipment_id,

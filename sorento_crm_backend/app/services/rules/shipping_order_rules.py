@@ -864,7 +864,10 @@ def repoint_picking_lines_by_capacity(
             continue
         states_expected = int(line.quantity_expected or 0) > 0
         shortfall = int(line.quantity_expected or 0) - quantity
-        full_accept = line.qty_accepted is not None and int(line.qty_accepted) == quantity
+        # Acceptance follows the split in order, each chunk taking up to its own
+        # quantity, so the chunks never accept more than they picked and still
+        # sum to what the original row accepted (security review N2).
+        accepted_left = int(line.qty_accepted) if line.qty_accepted is not None else None
         line.spo_allocation_id = chunks[0][0]
         if len(chunks) == 1:
             continue
@@ -878,9 +881,14 @@ def repoint_picking_lines_by_capacity(
                 line.quantity_picked = chunk_qty
                 if states_expected:
                     line.quantity_expected = expected
-                if full_accept:
-                    line.qty_accepted = chunk_qty
+                if accepted_left is not None:
+                    line.qty_accepted = min(accepted_left, chunk_qty)
+                    accepted_left -= line.qty_accepted
                 continue
+            chunk_accepted = None
+            if accepted_left is not None:
+                chunk_accepted = min(accepted_left, chunk_qty)
+                accepted_left -= chunk_accepted
             db.add(
                 PickingLine(
                     picking_header_id=line.picking_header_id,
@@ -900,7 +908,7 @@ def repoint_picking_lines_by_capacity(
                     spo_allocation_id=allocation_id,
                     quantity_expected=expected,
                     quantity_picked=chunk_qty,
-                    qty_accepted=chunk_qty if full_accept else None,
+                    qty_accepted=chunk_accepted,
                     # Explicit, never left to the insert hook (same reason as
                     # the forward match): under a NULL scope the hook stamps the
                     # incumbent company.
@@ -923,24 +931,38 @@ def assert_supersede_conserved(
     db: Session,
     removed_ids,
     removed_received: int,
+    carried_total: int,
     replacement_received: int,
-    *,
-    company_id: str,
 ) -> None:
     """D33 (crew ruling, 1 Oct 2026): the superseded rows' receipt is gone from them
     only once it is provably on the lines that replace them.
 
-    Two facts, checked in the same transaction as the move and BEFORE the rows are
-    deleted or zeroed: the replacement lines state at least the receipt the removed
-    rows held (`carried_received` takes the max of the carry and AutoCount's own
-    figure, so equality is the floor), and no GRN pick still points at a removed
-    row (every one was repointed). Either failing raises, and the document's own
-    savepoint (ingest) or rollback (repair script) leaves it exactly as it was.
+    Three facts, checked in the same transaction as the move and BEFORE the rows are
+    deleted or zeroed:
+
+    - the CARRY conserves: the planned shares (`SupersedeLinePlan.carried_received`)
+      sum to exactly what the removed rows held - a regression in `_group_plan` or
+      `distribute_received` that dropped a remainder fails here (security review S2);
+    - the replacement lines state at least that receipt after the carry
+      (`carried_received` takes the max of the carry and AutoCount's own figure);
+    - no GRN pick still points at a removed row. Counted across EVERY company, not
+      just the anchor: a foreign pick hanging off a row about to be zeroed is exactly
+      the receipt this guard exists to protect, and the read returns a number only,
+      so failing closed on it exposes nothing (security review S2).
+
+    Any failure raises, and the document's own savepoint (ingest) or rollback
+    (repair script) leaves it exactly as it was.
     """
     from app.models.base import company_scope
     from app.models.procurement import PickingLine
 
-    if int(replacement_received or 0) < int(removed_received or 0):
+    removed_received = int(removed_received or 0)
+    if int(carried_total or 0) != removed_received:
+        raise SupersedeNotConserved(
+            f"planned carry {carried_total} does not equal the {removed_received} "
+            "the superseded rows held"
+        )
+    if int(replacement_received or 0) < removed_received:
         raise SupersedeNotConserved(
             f"replacement lines state {replacement_received} received, "
             f"superseded rows held {removed_received}"
@@ -952,7 +974,6 @@ def assert_supersede_conserved(
         stranded = (
             db.query(func.count(PickingLine.id))
             .filter(PickingLine.spo_allocation_id.in_(ids))
-            .filter(or_(PickingLine.company_id == company_id, PickingLine.company_id.is_(None)))
             .scalar()
         )
     if stranded:

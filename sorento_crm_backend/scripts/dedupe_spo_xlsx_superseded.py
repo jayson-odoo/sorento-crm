@@ -74,6 +74,7 @@ from app.services.procurement_service import InboundShipmentService
 from app.services.rules import shipping_order_rules
 from app.services.rules.shipping_order_rules import (
     append_note,
+    SupersedeNotConserved,
     assert_supersede_conserved,
     carried_received,
     plan_xlsx_supersede,
@@ -393,15 +394,27 @@ def _apply_document(
             f"received={row.quantity_received})"
             for row in removing
         )
-        if not dry_run:
-            # D33: proven before the rows go; a failure raises out of the
-            # run before this document commits, so it is left exactly as it was.
+        removed_received = sum(int(row.quantity_received or 0) for row in removing)
+        carried_total = sum(line_plan.carried_received for line_plan in group.lines)
+        if dry_run:
+            # The pure half of D33 runs in the preview too (security review S3),
+            # so a document `--apply` would refuse is reported here, not found
+            # halfway through the owner-gated run. Picks are not moved in a dry
+            # run, so the stranded-pick half can only be checked on apply.
+            if carried_total != removed_received or planned_received < removed_received:
+                raise SupersedeNotConserved(
+                    f"planned carry {carried_total} / replacement {planned_received} "
+                    f"vs {removed_received} held"
+                )
+        else:
+            # D33: proven before the rows go; a failure raises out of this
+            # document before it commits, so it is left exactly as it was.
             assert_supersede_conserved(
                 db,
                 [str(row.id) for row in removing],
-                sum(int(row.quantity_received or 0) for row in removing),
+                removed_received,
+                carried_total,
                 planned_received,
-                company_id=company_id,
             )
             for row in removing:
                 db.delete(row)
@@ -464,6 +477,8 @@ def run(
         "groups_kept": 0,
         "retired_marked": 0,
         "fallback_groups": 0,
+        # D33: documents the conservation guard refused (left untouched).
+        "aborted": 0,
         # D36: the scope count - distinct packing lists (inbound shipments) whose
         # allocations this run changes or would change.
         "shipments": 0,
@@ -476,7 +491,17 @@ def run(
             if not numbers:
                 break
             for spo_number in numbers:
-                counts = _apply_document(db, company_id, spo_number, since, dry_run)
+                try:
+                    counts = _apply_document(db, company_id, spo_number, since, dry_run)
+                except SupersedeNotConserved as exc:
+                    # D33 refused this document: nothing of it is committed
+                    # (rolled back here), it is named, counted, and the sweep
+                    # moves on rather than ending on a traceback with half the
+                    # corpus done and no summary (security review S3).
+                    db.rollback()
+                    summary["aborted"] += 1
+                    print(f"  {spo_number}: ABORTED, receipt not conserved ({exc})")
+                    continue
                 if counts is None:
                     continue
                 summary["documents"] += 1
@@ -559,6 +584,7 @@ def main() -> int:
         print(f"old-DocKey rows retired: {summary['retired_marked']}")
         print(f"product-fallback groups: {summary['fallback_groups']}")
         print(f"PLs (shipments) touched: {summary['shipments']}")
+        print(f"documents aborted (receipt not conserved): {summary['aborted']}")
     except ValueError as exc:
         print(str(exc))
         return 2

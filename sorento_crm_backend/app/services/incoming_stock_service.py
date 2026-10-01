@@ -14,7 +14,10 @@ This service enforces the rules from next_agents/incoming_stock_enquiries.txt:
 - The response DOES expose:
     * product_code, product_name
     * shipment_number, shipping_container_number, estimated_arrival_date, batch_number
-    * warehouse_code, warehouse_name, allocated_quantity (aggregated per warehouse)
+    * warehouse_code, warehouse_name, allocated_quantity (aggregated per warehouse; in the
+      emitted `warehouse_allocations` list it is what is STILL TO COME per warehouse -
+      allocated less what that warehouse's allocations already received - and a warehouse
+      with nothing left is omitted, see `_warehouse_allocations_for(outstanding_only=True)`)
     * attachment filename / file_path / mime_type (only when present)
     * remaining_incoming_quantity (computed server-side)
     * unallocated_quantity (computed server-side - the GAP only, never the shipped base;

@@ -1215,8 +1215,8 @@ class ShippingOrderIngestService(MasterRefResolver):
                     self.db,
                     [str(row.id) for row in removing],
                     sum(int(row.quantity_received or 0) for row in removing),
+                    sum(line_plan.carried_received for line_plan in group.lines),
                     sum(int(row.quantity_received or 0) for row in group_rows),
-                    company_id=self.company_id,
                 )
             # S7 (D30): read BEFORE the rows go, so the trail names what was
             # actually taken out of the picture and with which quantities.
@@ -1260,6 +1260,14 @@ class ShippingOrderIngestService(MasterRefResolver):
                     # `retired_at` takes it out of the GRN pool (D34), so a
                     # future GRN cannot FIFO onto it. The trail logged below
                     # and the note above keep the old figure.
+                    # Frozen into the DECLARED column first (security review
+                    # N1, the D28d freeze): a structured record of what the row
+                    # held. Every reader that floors by `stated_received` (D35)
+                    # or draws capacity (D34) skips a retired row, so nothing
+                    # counts it a second time.
+                    held = int(row.quantity_received or 0)
+                    if held > int(row.stated_received or 0):
+                        row.stated_received = held
                     row.quantity_received = 0
                     row.receipt_status = RECEIPT_PENDING
                     if row.retired_at is None:
