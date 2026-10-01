@@ -279,6 +279,7 @@ def plan_spo(excel_rows: list, lines: list) -> Plan:
 
     claimed: set = set()
     kept_groups = []
+    keyed_locked = []
     for key in sorted(rows_by_key, key=lambda k: (0 if (k[1] or "").startswith("wh:") else 1, str(k[0]), str(k[1]))):
         group_rows = rows_by_key[key]
         indexes = [i for i in lines_by_key.get(key, ()) if i not in claimed]
@@ -287,39 +288,44 @@ def plan_spo(excel_rows: list, lines: list) -> Plan:
             continue
         received = sum(_i(r["quantity_received"]) for r in group_rows)
         allocated = sum(_i(r["allocated_quantity"]) for r in group_rows)
-        if sum(_i(lines[i]["allocated_quantity"]) for i in indexes) < min(received, allocated):
-            plan.kept.extend((r, "received locked (AutoCount lines too small for the receipt)") for r in group_rows)
-            claimed.update(indexes)
-            continue
         claimed.update(indexes)
+        if sum(_i(lines[i]["allocated_quantity"]) for i in indexes) < min(received, allocated):
+            keyed_locked.append((key, group_rows))
+            continue
         plan.groups.append(Group(group_rows, [lines[i] for i in indexes], split=False))
 
-    # Follow AutoCount (owner rulings): an Excel row whose product AutoCount
-    # lists on this SPO - at any warehouse, or none - is pooled per product with
-    # that product's unclaimed lines; a product AutoCount does not list is an
-    # orphan.
-    listed = {str(line["product_id"]) for line in lines if line["product_id"]}
-    fallback: dict = {}
+    # Follow AutoCount (owner rulings, D37): a product with ANY Excel row the
+    # keyed pass could not settle - no line at its warehouse, no warehouse, a
+    # same-warehouse line too small for its receipt, or a sibling group that
+    # took every line - is planned as ONE pool: all its Excel rows against all
+    # its AutoCount lines, superseded when the lines can hold the receipt the
+    # rows carry, else received locked. A product AutoCount does not list at
+    # all is an orphan. A product the keyed pass settled keeps that result.
+    lines_by_product: dict = {}
+    for index, line in enumerate(lines):
+        if line["product_id"]:
+            lines_by_product.setdefault(str(line["product_id"]), []).append(index)
+    unsettled = {key[0] for key, _ in (*kept_groups, *keyed_locked) if key[0]}
+    pooled = {product for product in unsettled if product in lines_by_product}
+    plan.groups = [g for g in plan.groups if str(g.rows[0]["product_id"]) not in pooled]
     for key, group_rows in kept_groups:
-        if key[0] and key[0] in listed:
-            fallback.setdefault(key[0], []).extend(group_rows)
-        else:
+        if key[0] not in pooled:
             plan.orphans.extend(group_rows)
-    for product, group_rows in fallback.items():
-        indexes = [i for i, line in enumerate(lines) if i not in claimed and str(line["product_id"]) == product]
+    for key, group_rows in keyed_locked:
+        if key[0] not in pooled:
+            plan.kept.extend((r, "received locked (AutoCount lines too small for the receipt)") for r in group_rows)
+    for product in sorted(pooled):
+        group_rows = [r for r in rows if str(r["product_id"]) == product]
+        indexes = lines_by_product[product]
         rows_total = sum(_i(r["allocated_quantity"]) for r in group_rows)
         rows_received = sum(_i(r["quantity_received"]) for r in group_rows)
         lines_total = sum(_i(lines[i]["allocated_quantity"]) for i in indexes)
-        if not indexes:
-            plan.kept.extend((r, "every AutoCount line of its product is already claimed") for r in group_rows)
-        elif lines_total < min(rows_received, rows_total):
+        if lines_total < min(rows_received, rows_total):
             plan.kept.extend(
                 (r, f"received locked (AutoCount lines {lines_total} cannot hold the {rows_received} received)")
                 for r in group_rows
             )
         else:
-            claimed.update(indexes)
-            group_rows.sort(key=lambda r: (r["spo_line_number"] if r["spo_line_number"] is not None else 10**9, str(r["id"])))
             plan.groups.append(Group(group_rows, [lines[i] for i in indexes], split=True))
     return plan
 

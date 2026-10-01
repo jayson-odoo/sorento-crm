@@ -504,12 +504,11 @@ def plan_xlsx_supersede(
     it plans against the document's whole live line-set at once.
 
     `follow_autocount` (owner ruling after #1411, the REPAIR scripts only):
-    AutoCount is the truth for a document it states, so the product-level pass
-    also takes Excel rows that DO name a warehouse (SPO-2026/08-0074: Excel at
-    BRW, AutoCount at BRW-NTC), and supersedes whenever the AutoCount lines can
-    hold the receipt the rows carry - the D26a rule the keyed pass applies -
-    instead of requiring equal quantities; a pool they cannot hold is
-    `received_locked`. The ingest push leaves it off: a live push keeps D31.
+    AutoCount is the truth for a document it states. A product whose Excel rows
+    the keyed pass settles completely keeps that result; a product with ANY row
+    it cannot settle is planned as one pool across warehouses
+    (`_follow_autocount_pools`, D37). The ingest push leaves it off: a live push
+    keeps D31.
     """
     ordered_rows = sorted(
         refless_rows,
@@ -604,6 +603,9 @@ def plan_xlsx_supersede(
         claimed_lines.update(indexes)
         groups.append(_group_plan(key, rows, indexes, incoming))
 
+    if follow_autocount:
+        return _follow_autocount_pools(incoming, rows_by_key, groups, kept, locked, all_have_seq)
+
     # D31 (SPO-XLSX-SUPERSEDE round 2): an Excel row that named NO warehouse -
     # the SCM upload's "HQ" aggregate - can never meet a line on the keyed pass,
     # because every AutoCount line resolves a warehouse. Its rows are pooled per
@@ -620,7 +622,7 @@ def plan_xlsx_supersede(
         if (
             group.key[0]
             and group.key[0] not in blocked
-            and (follow_autocount or not (group.key[1] or "").startswith("wh:"))
+            and not (group.key[1] or "").startswith("wh:")
         ):
             fallback.setdefault(group.key[0], []).append(group)
         else:
@@ -641,19 +643,7 @@ def plan_xlsx_supersede(
         indexes.sort(key=lambda i: incoming[i]["line_number"] if all_have_seq else i)
         rows_allocated = sum(int(row.allocated_quantity or 0) for row in rows)
         lines_allocated = sum(int(incoming[i].get("allocated_quantity") or 0) for i in indexes)
-        if not indexes:
-            still_kept.extend(kept_groups)
-            continue
-        if follow_autocount:
-            rows_received = sum(int(row.quantity_received or 0) for row in rows)
-            if lines_allocated < min(rows_received, rows_allocated):
-                # D26a: the AutoCount lines cannot hold what already arrived.
-                locked.extend(
-                    SupersedeKeptGroup(key=g.key, row_ids=g.row_ids, reason=KEPT_RECEIVED_LOCKED)
-                    for g in kept_groups
-                )
-                continue
-        elif rows_allocated != lines_allocated:
+        if not indexes or rows_allocated != lines_allocated:
             still_kept.extend(kept_groups)
             continue
         claimed_lines.update(indexes)
@@ -662,6 +652,66 @@ def plan_xlsx_supersede(
         )
     return SupersedePlan(
         groups=tuple(groups), kept_groups=tuple(still_kept), locked_groups=tuple(locked)
+    )
+
+
+def _follow_autocount_pools(incoming, rows_by_key, groups, kept, locked, all_have_seq) -> SupersedePlan:
+    """D37 (owner ruling after #1411, the REPAIR only): AutoCount is the truth
+    for every product it lists on the document.
+
+    A product the keyed pass settled completely (every Excel row of it in a
+    superseded same-destination group) keeps that result. A product with ANY
+    Excel row the keyed pass could not settle - no line at its warehouse
+    (SPO-2026/08-0074: Excel at BRW, AutoCount at BRW-NTC), no warehouse at
+    all, a same-warehouse line too small for its receipt (NTC 77 + IB 22
+    against 99 received at NTC), or a sibling group that took every line of the
+    product - is planned as ONE pool: all its Excel rows against all its
+    AutoCount lines, picks split by capacity (same warehouse first), superseded
+    whenever the lines can hold the receipt the rows carry (the D26a rule) and
+    `received_locked` otherwise. A product AutoCount does not list at all is
+    left as it was (`no_counterpart`, the repair's orphan rule).
+    """
+    unsettled = {g.key[0] for g in (*kept, *locked) if g.key[0]}
+    lines_by_product: dict[str, list[int]] = {}
+    for index, values in enumerate(incoming):
+        if values.get("product_id"):
+            lines_by_product.setdefault(str(values["product_id"]), []).append(index)
+    pooled = {product for product in unsettled if product in lines_by_product}
+
+    out_groups = [g for g in groups if g.key[0] not in pooled]
+    out_kept = [g for g in kept if g.key[0] not in pooled]
+    out_locked = [g for g in locked if g.key[0] not in pooled]
+    for product in sorted(pooled):
+        keys = [key for key in rows_by_key if key[0] == product]
+        rows = sorted(
+            (row for key in keys for row in rows_by_key[key]),
+            key=lambda r: (
+                r.spo_line_number if r.spo_line_number is not None else 10**9,
+                str(r.id),
+            ),
+        )
+        indexes = sorted(
+            lines_by_product[product],
+            key=lambda i: incoming[i]["line_number"] if all_have_seq else i,
+        )
+        received = sum(int(row.quantity_received or 0) for row in rows)
+        allocated = sum(int(row.allocated_quantity or 0) for row in rows)
+        lines_total = sum(int(incoming[i].get("allocated_quantity") or 0) for i in indexes)
+        if lines_total < min(received, allocated):
+            out_locked.extend(
+                SupersedeKeptGroup(
+                    key=key,
+                    row_ids=tuple(str(row.id) for row in rows_by_key[key]),
+                    reason=KEPT_RECEIVED_LOCKED,
+                )
+                for key in keys
+            )
+            continue
+        out_groups.append(
+            _group_plan((product, "product:*"), rows, indexes, incoming, split_receipts=True)
+        )
+    return SupersedePlan(
+        groups=tuple(out_groups), kept_groups=tuple(out_kept), locked_groups=tuple(out_locked)
     )
 
 

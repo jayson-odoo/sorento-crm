@@ -286,8 +286,8 @@ def _orphan_rows(plan, by_id: dict[str, SPOAllocation], incoming_rows) -> list[S
     PRODUCT the newest AutoCount line-set does not list at all is an orphan
     (SPO-2026/08-0074 L23/L26: SRTWCY8605, where AutoCount states
     SRTWCY8605-PJ). No substitution is guessed - a row whose product AutoCount
-    DOES list (at another location, or with quantities that do not reconcile)
-    is not an orphan and stays a plain `keep`."""
+    DOES list is never an orphan: it is pooled with that product's lines
+    (D37), superseded or `received locked`."""
     listed = {str(row.product_id) for row in incoming_rows if row.product_id}
     orphans = []
     for group in plan.kept_groups:

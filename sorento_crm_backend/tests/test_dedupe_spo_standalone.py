@@ -252,13 +252,18 @@ class TestStandalonePaths:
         case.excel_95.warehouse_id = case.ntc_id
         case.excel_95.allocated_quantity = 77
         case.excel_95.quantity_received = 77
+        # Its sibling keyed too (IB 4 within IB 22), so the product is settled by
+        # the keyed pass and never pooled (D37 pools a product only when some
+        # row of it is left unsettled).
+        case.excel_4.warehouse_id = case.ib_id
         env.db.commit()
         excel_id = str(case.excel_95.id)
 
         code, out = _run(env, apply=True)
 
         assert code == 0, out
-        assert "group same destination: 1 Excel row(s) -> 1 AutoCount line(s)" in out
+        assert out.count("group same destination: 1 Excel row(s) -> 1 AutoCount line(s)") == 2
+        assert "product fallback" not in out
         assert excel_id not in _ids(env)
 
 
@@ -711,3 +716,124 @@ class TestStandaloneFollowAutocountAcrossWarehouses:
         rows, picks = rich.state(b)
         assert [r[0] for r in rows] == [2, 3]
         assert {r[0]: r[2] for r in rows} == {2: 20, 3: 10}
+
+
+class TestFollowAutocountWholeProductPool:
+    """Review of #1424 (SF1/SF2/SF3/SF4): a product the keyed pass cannot settle
+    is planned as ONE pool, in both scripts, with the same end state."""
+
+    def _twin(self, env, rich, rows, lines, picks=()):
+        numbers = []
+        for tag in ("A", "B"):
+            number = f"{MARKER}-WP{tag}-{uuid.uuid4().hex[:6]}"
+            doc = f"{MARKER}:D-{number}"
+            created = {}
+            for spec in rows:
+                created[spec["line"]] = rich._alloc(number, **spec)
+            for spec in lines:
+                rich._alloc(number, ref=f"{MARKER}:L-{uuid.uuid4().hex[:6]}", doc=doc, **spec)
+            if picks:
+                header = PickingHeader(id=str(uuid.uuid4()), company_id=env.company_a,
+                                       picking_number=unique_code(MARKER), picking_type="goods_received",
+                                       picking_status="approved", spo_number=number)
+                env.db.add(header)
+                env.db.flush()
+                for line, wh, qty in picks:
+                    rich._pick(header.id, created[line].id, created[line].product_id, wh, qty)
+            numbers.append(number)
+        env.db.commit()
+        return numbers
+
+    def _run_both(self, env, a, b):
+        from scripts import dedupe_spo_xlsx_superseded as inapp
+        from scripts.oneoff import dedupe_spo_standalone as standalone
+
+        summary = inapp.run(env.db, env.company_a, dry_run=False, spo_numbers=[a])
+        lines: list[str] = []
+        code = standalone.run(env.db, env.company_a_code, [b], apply=True, out=lines.append)
+        assert code == 0, "\n".join(lines)
+        return summary, "\n".join(lines)
+
+    def test_sf1_same_warehouse_line_too_small_pools_the_whole_product(self, env):
+        """Excel at NTC 99/99; AutoCount NTC 77 + IB 22. The keyed pass alone
+        would lock it; the pool holds 99 and supersedes."""
+        rich = _Rich(env)
+        a, b = self._twin(env, rich,
+                          [dict(line=1, product=rich.p, wh=rich.ntc, alloc=99, recv=99)],
+                          [dict(line=2, product=rich.p, wh=rich.ntc, alloc=77),
+                           dict(line=3, product=rich.p, wh=rich.ib, alloc=22)],
+                          picks=[(1, rich.ntc, 77), (1, rich.ib, 22)])
+        summary, out = self._run_both(env, a, b)
+        assert summary["rows_removed"] == 1
+        assert rich.state(a) == rich.state(b)
+        rows, picks = rich.state(b)
+        assert [(r[0], r[2], r[3]) for r in rows] == [(2, 77, 77), (3, 22, 22)]
+        assert sorted((p[0], p[1]) for p in picks) == [(2, 77), (3, 22)]
+
+    def test_sf2_rows_left_behind_by_a_keyed_group_join_the_pool(self, env):
+        """Excel NTC 50 + BRW 49 (nothing received); one AutoCount NTC line of
+        99. Both Excel rows go; no open Excel supply is left beside it."""
+        rich = _Rich(env)
+        brw = env.refs.resolve(entity_type="warehouses", source_ref=env.link_warehouse(env.company_a))
+        a, b = self._twin(env, rich,
+                          [dict(line=1, product=rich.p, wh=rich.ntc, alloc=50),
+                           dict(line=2, product=rich.p, wh=brw, alloc=49)],
+                          [dict(line=3, product=rich.p, wh=rich.ntc, alloc=99)])
+        summary, _out = self._run_both(env, a, b)
+        assert summary["rows_removed"] == 2
+        assert rich.state(a) == rich.state(b)
+        assert [r[0] for r in rich.state(b)[0]] == [3]
+
+    def test_a_settled_product_keeps_the_keyed_result_beside_a_pooled_one(self, env):
+        """Product R fully settled by the keyed pass (whole-pick move to its own
+        line); product P pooled across warehouses - in the same document."""
+        rich = _Rich(env)
+        brw = env.refs.resolve(entity_type="warehouses", source_ref=env.link_warehouse(env.company_a))
+        a, b = self._twin(env, rich,
+                          [dict(line=1, product=rich.r, wh=rich.ntc, alloc=10, recv=6),
+                           dict(line=2, product=rich.p, wh=brw, alloc=30, recv=30)],
+                          [dict(line=3, product=rich.r, wh=rich.ntc, alloc=10),
+                           dict(line=4, product=rich.p, wh=rich.ntc, alloc=30)],
+                          picks=[(1, rich.ntc, 6), (2, brw, 30)])
+        summary, _out = self._run_both(env, a, b)
+        assert summary["rows_removed"] == 2
+        assert rich.state(a) == rich.state(b)
+        rows, picks = rich.state(b)
+        assert [(r[0], r[3]) for r in rows] == [(3, 6), (4, 30)]
+
+    def test_inapp_reports_received_locked(self, env, capsys):
+        """SF3: the in-app script names the lock, not "no AutoCount line"."""
+        rich = _Rich(env)
+        a, _b = self._twin(env, rich,
+                           [dict(line=1, product=rich.p, wh=rich.ntc, alloc=99, recv=99)],
+                           [dict(line=2, product=rich.p, wh=rich.ib, alloc=50)])
+        from scripts import dedupe_spo_xlsx_superseded as inapp
+
+        summary = inapp.run(env.db, env.company_a, dry_run=False, spo_numbers=[a])
+        out = capsys.readouterr().out
+        assert summary["rows_removed"] == 0
+        assert "(allocated 99, received 99): received locked" in out
+
+    def test_inapp_unequal_quantities_with_nothing_received_follow_autocount(self, env):
+        """SF4: Excel 99 / 0 received against AutoCount 95 - superseded."""
+        rich = _Rich(env)
+        a, b = self._twin(env, rich,
+                          [dict(line=1, product=rich.p, loc="HQ", alloc=99, recv=0)],
+                          [dict(line=2, product=rich.p, wh=rich.ib, alloc=95)])
+        summary, _out = self._run_both(env, a, b)
+        assert summary["rows_removed"] == 1
+        assert rich.state(a) == rich.state(b)
+
+    def test_inapp_orphan_with_a_warehouse_under_follow_autocount(self, env):
+        """SF4: a BRW row for a product AutoCount does not list is an orphan
+        (removed: nothing received, nothing linked) in both scripts."""
+        rich = _Rich(env)
+        brw = env.refs.resolve(entity_type="warehouses", source_ref=env.link_warehouse(env.company_a))
+        a, b = self._twin(env, rich,
+                          [dict(line=1, product=rich.q, wh=brw, alloc=99)],
+                          [dict(line=2, product=rich.p, wh=rich.ib, alloc=10)])
+        summary, out = self._run_both(env, a, b)
+        assert summary["orphans_removed"] == 1
+        assert "orphan delete" in out
+        assert rich.state(a) == rich.state(b)
+        assert [r[0] for r in rich.state(b)[0]] == [2]
