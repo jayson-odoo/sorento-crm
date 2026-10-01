@@ -304,7 +304,7 @@ def _kept_details(
     """One line per Excel row the plan leaves alone, with the reason."""
     lines = []
     for groups, reason in (
-        (plan.kept_groups, "no AutoCount line"),
+        (plan.kept_groups, "no unclaimed AutoCount line for its product"),
         (plan.locked_groups, "received locked"),
     ):
         for group in groups:
@@ -361,7 +361,10 @@ def _apply_document(
     older_rows = [row for row in refs if str(row.id) not in newest_ids]
     retired_marked = _retire_older_dockeys(older_rows, dry_run)
 
-    plan = plan_xlsx_supersede([_incoming_values(row) for row in incoming_rows], refless)
+    # Owner ruling: the repair follows AutoCount across warehouses too.
+    plan = plan_xlsx_supersede(
+        [_incoming_values(row) for row in incoming_rows], refless, follow_autocount=True
+    )
     by_id = {str(row.id): row for row in refless}
     orphans = _orphan_rows(plan, by_id, incoming_rows)
     if not plan.groups and not orphans:

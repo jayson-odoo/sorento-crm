@@ -481,7 +481,9 @@ def carried_received(
     return received, received >= int(allocated or 0)
 
 
-def plan_xlsx_supersede(incoming, refless_rows, *, fallback_blocked_products=()) -> SupersedePlan:
+def plan_xlsx_supersede(
+    incoming, refless_rows, *, fallback_blocked_products=(), follow_autocount: bool = False
+) -> SupersedePlan:
     """Plan D26/D26a/D27 for ONE document. Pure: reads, decides, writes nothing.
 
     `incoming` is a sequence of mappings carrying `product_id`,
@@ -500,6 +502,14 @@ def plan_xlsx_supersede(incoming, refless_rows, *, fallback_blocked_products=())
     line would come out fully received with the old picks on it. The ingest
     passes the products its ESB keys name; the repair script passes none, since
     it plans against the document's whole live line-set at once.
+
+    `follow_autocount` (owner ruling after #1411, the REPAIR scripts only):
+    AutoCount is the truth for a document it states, so the product-level pass
+    also takes Excel rows that DO name a warehouse (SPO-2026/08-0074: Excel at
+    BRW, AutoCount at BRW-NTC), and supersedes whenever the AutoCount lines can
+    hold the receipt the rows carry - the D26a rule the keyed pass applies -
+    instead of requiring equal quantities; a pool they cannot hold is
+    `received_locked`. The ingest push leaves it off: a live push keeps D31.
     """
     ordered_rows = sorted(
         refless_rows,
@@ -610,7 +620,7 @@ def plan_xlsx_supersede(incoming, refless_rows, *, fallback_blocked_products=())
         if (
             group.key[0]
             and group.key[0] not in blocked
-            and not (group.key[1] or "").startswith("wh:")
+            and (follow_autocount or not (group.key[1] or "").startswith("wh:"))
         ):
             fallback.setdefault(group.key[0], []).append(group)
         else:
@@ -631,7 +641,19 @@ def plan_xlsx_supersede(incoming, refless_rows, *, fallback_blocked_products=())
         indexes.sort(key=lambda i: incoming[i]["line_number"] if all_have_seq else i)
         rows_allocated = sum(int(row.allocated_quantity or 0) for row in rows)
         lines_allocated = sum(int(incoming[i].get("allocated_quantity") or 0) for i in indexes)
-        if not indexes or rows_allocated != lines_allocated:
+        if not indexes:
+            still_kept.extend(kept_groups)
+            continue
+        if follow_autocount:
+            rows_received = sum(int(row.quantity_received or 0) for row in rows)
+            if lines_allocated < min(rows_received, rows_allocated):
+                # D26a: the AutoCount lines cannot hold what already arrived.
+                locked.extend(
+                    SupersedeKeptGroup(key=g.key, row_ids=g.row_ids, reason=KEPT_RECEIVED_LOCKED)
+                    for g in kept_groups
+                )
+                continue
+        elif rows_allocated != lines_allocated:
             still_kept.extend(kept_groups)
             continue
         claimed_lines.update(indexes)

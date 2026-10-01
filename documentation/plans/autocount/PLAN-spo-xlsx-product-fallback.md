@@ -53,3 +53,9 @@ The keyed supersede (D25..D30), the D26a guard, adoption, the Excel importer, PL
 
 One slice, one PR. Red tests first on a fixture of exactly the owner case, kill-tested; then the code; reviewer +
 security-reviewer (receipts are rewritten by the repair).
+
+## 4. Follow-up: follow AutoCount across warehouses (owner ruling, 1 Oct 2026, after #1411)
+
+| id | decision |
+| --- | --- |
+| D37 | **The repair follows AutoCount across warehouses.** In `scripts/dedupe_spo_xlsx_superseded.py` and `scripts/oneoff/dedupe_spo_standalone.py` (`plan_xlsx_supersede(..., follow_autocount=True)` and its standalone twin), an Excel-era row with no keyed counterpart whose product AutoCount lists on the same SPO - at another warehouse (SPO-2026/08-0074 L1-6: Excel at BRW, AutoCount L34-39 at BRW-NTC) or with no warehouse - is pooled per product with that product's unclaimed AutoCount lines and superseded (receipt carried, picks split by capacity, claims and links to the first line, same conservation guard) whenever those lines can hold the receipt the rows carry (the D26a rule); otherwise kept as `received locked`. AutoCount's quantities win, so the D31 equal-quantities requirement no longer applies in the repair. The orphan rule is unchanged. The ingest push keeps D31 (`follow_autocount` off). |

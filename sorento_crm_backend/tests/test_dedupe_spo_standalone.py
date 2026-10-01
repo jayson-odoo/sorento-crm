@@ -547,13 +547,24 @@ class TestStandaloneTargetedRules:
         assert "received locked" in out
         assert left == {1, 2}
 
-    def test_unequal_fallback_quantities_are_kept(self, env):
+    def test_unequal_quantities_follow_autocount_when_its_lines_hold_the_receipt(self, env):
+        """Follow AutoCount: Excel 99 (nothing received) against an AutoCount line
+        of 95 is superseded - AutoCount's quantity is the truth and no receipt is
+        at stake. Before the ruling this pool needed equal quantities."""
         rich = _Rich(env)
         number = self._doc(env, rich, [dict(line=1, product=rich.p, loc="HQ", alloc=99, recv=0)],
                            [dict(line=2, product=rich.p, wh=rich.ib, alloc=95)])
         code, out, left = self._apply(env, number)
         assert code == 0, out
-        assert "quantities do not reconcile (Excel 99 vs AutoCount 95)" in out
+        assert left == {2}
+
+    def test_unequal_quantities_that_cannot_hold_the_receipt_are_kept(self, env):
+        rich = _Rich(env)
+        number = self._doc(env, rich, [dict(line=1, product=rich.p, loc="HQ", alloc=99, recv=99)],
+                           [dict(line=2, product=rich.p, wh=rich.ib, alloc=95)])
+        code, out, left = self._apply(env, number)
+        assert code == 0, out
+        assert "received locked (AutoCount lines 95 cannot hold the 99 received)" in out
         assert left == {1, 2}
 
     def test_a_po_line_row_is_never_touched(self, env):
@@ -641,3 +652,62 @@ class TestStandaloneTargetedRules:
         assert code == 3, out
         assert "still pointing at Excel rows after the move (picks 3" in out
         assert _ids(env) == before
+
+
+class TestStandaloneFollowAutocountAcrossWarehouses:
+    def test_excel_rows_at_another_warehouse_are_superseded(self, env):
+        case = _owner_case(env, excel_warehouse=True, number=OWNER_SPO)
+        ib, ntc = _seed_pre_repair_state(env, case)
+        excel_ids = {str(case.excel_95.id), str(case.excel_4.id)}
+        ib_id, ntc_id = str(ib.id), str(ntc.id)
+
+        code, out = _run(env, apply=True)
+
+        assert code == 0, out
+        assert "product listed by AutoCount at another warehouse" not in out
+        assert _ids(env) == {ib_id, ntc_id}
+        assert not excel_ids & _ids(env)
+        assert _picked_on(env, ib_id) == 22
+        assert _picked_on(env, ntc_id) == 77
+
+    def test_autocount_lines_too_small_for_the_receipt_are_kept_as_received_locked(self, env):
+        case = _owner_case(env, excel_warehouse=True, number=OWNER_SPO)
+        _ib, ntc = _seed_pre_repair_state(env, case)
+        ntc.allocated_quantity = 50
+        env.db.commit()
+        before = _ids(env)
+
+        code, out = _run(env, apply=True)
+
+        assert code == 0, out
+        assert "received locked" in out
+        assert _ids(env) == before
+
+    def test_parity_with_the_in_app_repair_across_warehouses(self, env):
+        from scripts import dedupe_spo_xlsx_superseded as inapp
+
+        rich = _Rich(env)
+        a, b = f"{MARKER}-XW-A-{uuid.uuid4().hex[:6]}", f"{MARKER}-XW-B-{uuid.uuid4().hex[:6]}"
+        for number in (a, b):
+            doc = f"{MARKER}:D-{number}"
+            excel = rich._alloc(number, 1, rich.p, wh=rich.ib, alloc=30, recv=30)
+            rich._alloc(number, 2, rich.p, wh=rich.ntc, alloc=20, ref=f"{MARKER}:X-{uuid.uuid4().hex[:6]}", doc=doc)
+            rich._alloc(number, 3, rich.p, wh=rich.ntc, alloc=10, ref=f"{MARKER}:Y-{uuid.uuid4().hex[:6]}", doc=doc)
+            header = PickingHeader(id=str(uuid.uuid4()), company_id=env.company_a,
+                                   picking_number=unique_code(MARKER), picking_type="goods_received",
+                                   picking_status="approved", spo_number=number)
+            env.db.add(header)
+            env.db.flush()
+            rich._pick(header.id, excel.id, rich.p, rich.ib, 30, accepted=30)
+        env.db.commit()
+
+        inapp.run(env.db, env.company_a, dry_run=False, spo_numbers=[a])
+        lines: list[str] = []
+        from scripts.oneoff import dedupe_spo_standalone as standalone
+
+        code = standalone.run(env.db, env.company_a_code, [b], apply=True, out=lines.append)
+        assert code == 0, "\n".join(lines)
+        assert rich.state(b) == rich.state(a)
+        rows, picks = rich.state(b)
+        assert [r[0] for r in rows] == [2, 3]
+        assert {r[0]: r[2] for r in rows} == {2: 20, 3: 10}

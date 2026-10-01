@@ -1097,3 +1097,56 @@ class TestOrphanExcelRows:
         assert "picks 0, claims 1, order-inquiry links 0" in out
         assert summary["orphans_blocked"] == 1
         assert str(orphan.id) in {str(r["id"]) for r in _spo_rows(env, OWNER_SPO)}
+
+
+# ============================================================================ #
+# Owner ruling (after #1411): follow AutoCount ACROSS warehouses in the repair.
+# SPO-2026/08-0074 L1-6 shape: Excel rows at BRW, AutoCount lines at BRW-NTC.
+# ============================================================================ #
+class TestFollowAutocountAcrossWarehouses:
+    def _run(self, env, *, dry_run=False):
+        from scripts import dedupe_spo_xlsx_superseded as script
+
+        return script.run(env.db, env.company_a, dry_run=dry_run, spo_numbers=[OWNER_SPO])
+
+    def test_excel_rows_at_another_warehouse_are_superseded_onto_the_autocount_lines(self, env, capsys):
+        case = _owner_case(env, excel_warehouse=True, number=OWNER_SPO)
+        ib_row, ntc_row = _seed_pre_repair_state(env, case)
+        for row in (ib_row, ntc_row):  # AutoCount has not stated the receipt yet
+            row.quantity_received = 0
+            row.stated_received = None
+            row.line_status = "open"
+            row.receipt_status = "pending"
+        env.db.commit()
+        excel_ids = {str(case.excel_95.id), str(case.excel_4.id)}
+
+        summary = self._run(env)
+
+        assert summary["rows_removed"] == 2, capsys.readouterr().out
+        rows = _spo_rows(env, OWNER_SPO)
+        assert not excel_ids & {str(r["id"]) for r in rows}
+        ib = _row_by_wh(rows, case.ib_id)
+        ntc = _row_by_wh(rows, case.ntc_id)
+        assert (ib["quantity_received"], ib["line_status"]) == (22, "closed")
+        assert (ntc["quantity_received"], ntc["line_status"]) == (77, "closed")
+        assert _picked_on(env, ib["id"]) == 22
+        assert _picked_on(env, ntc["id"]) == 77
+
+    def test_autocount_lines_too_small_for_the_receipt_keep_the_excel_rows(self, env):
+        case = _owner_case(env, excel_warehouse=True, number=OWNER_SPO)
+        ib_row, ntc_row = _seed_pre_repair_state(env, case)
+        ntc_row.allocated_quantity = 50  # 22 + 50 < 99 already received
+        env.db.commit()
+        excel_ids = {str(case.excel_95.id), str(case.excel_4.id)}
+
+        self._run(env)
+
+        assert excel_ids <= {str(r["id"]) for r in _spo_rows(env, OWNER_SPO)}
+        assert _picked_on(env, case.excel_95.id) == 95
+
+    def test_the_ingest_push_still_never_pairs_across_warehouses(self, env):
+        """The ruling is for the repair; a live push keeps D31 (warehouse-less
+        rows, exact quantities) - AC-F6 is unchanged."""
+        case = _owner_case(env, excel_warehouse=True)
+        entry = _push(env, _autocount_record(env, case))
+        assert "superseded" not in entry.lines, entry.lines
