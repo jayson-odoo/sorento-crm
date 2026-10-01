@@ -180,17 +180,50 @@ def _dedupe(values: list[str]) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def _status_line(row: dict) -> str:
-    words = ", ".join(_quoted(w) for w in row["trigger_words"] or [])
-    line = f'  - {_quoted(row["value"])} -> {_one_line(row["label"])}'
-    line += f": {words}." if words else "."
-    if row["domain"] != "order":
-        line += f" Domain {_quoted(row['domain'])}."
-    return line
+# The owner's production text (1 Oct 2026) wraps its hand lists at 89 columns: the status
+# words and the domain words reproduce it byte for byte with a greedy wrap at this width.
+WRAP_WIDTH = 89
+
+
+def _wrap(tokens: list[str], *, indent: str = "") -> str:
+    """Greedy wrap: tokens joined by one space, a new line (with `indent`) before a token
+    that would pass `WRAP_WIDTH`. A token is never split."""
+    lines: list[str] = []
+    current = ""
+    for token in tokens:
+        if current and len(current) + 1 + len(token) > WRAP_WIDTH:
+            lines.append(current)
+            current = indent + token
+        else:
+            current = f"{current} {token}" if current else token
+    if current:
+        lines.append(current)
+    return "\n".join(lines)
+
+
+def _status_line(row: dict, pad: int = 0) -> str:
+    """One status, the owner's layout: the quoted values padded so the arrows line up,
+    the words wrapped at `WRAP_WIDTH` with a 4-space continuation."""
+    words = [_quoted(w) for w in row["trigger_words"] or []]
+    head = f'  - {_quoted(row["value"]).ljust(pad)} -> {_one_line(row["label"])}'
+    tail = [f'Domain {_quoted(row["domain"])}.'] if row["domain"] != "order" else []
+    if not words:
+        return _wrap([head + "."] + tail, indent="    ")
+    tokens = [head + ":"] + [w + "," for w in words[:-1]] + [words[-1] + "."]
+    if tail:
+        tokens += ["Domain", f"{_quoted(row['domain'])}."]
+    return _wrap(tokens, indent="    ")
 
 
 def render_statuses(db: Session) -> str:
-    return "\n".join(_status_line(row) for row in _status_rows(db))
+    rows = _status_rows(db)
+    pad = max((len(_quoted(r["value"])) for r in rows), default=0)
+    return "\n".join(_status_line(row, pad) for row in rows)
+
+
+def render_domain_words(db: Session) -> str:
+    words = [_one_line(w) for w in _domain_words(db)]
+    return _wrap([w + "," for w in words[:-1]] + words[-1:])
 
 
 def _render_domains_detail(db: Session) -> str:
@@ -243,7 +276,7 @@ VARIABLES: dict[str, RegistryVariable] = {
         RegistryVariable(
             "domain_words", "Domain words", "Chatbot Domains + Status Words", _DOMAINS_HREF,
             ("chatbot_domains", "chatbot_status_words"),
-            lambda db: ", ".join(_one_line(w) for w in _domain_words(db)), lambda db: len(_domain_words(db)),
+            render_domain_words, lambda db: len(_domain_words(db)),
         ),
         RegistryVariable(
             "domains_detail", "Domains - detail", "Chatbot Domains", _DOMAINS_HREF,

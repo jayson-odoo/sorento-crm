@@ -64,6 +64,7 @@ def test_domain_words_render_the_owner_layout_from_rows_that_match_his_content()
 def test_a_short_status_list_stays_on_one_line_and_long_ones_never_split_a_word():
     with pg_session() as db:
         db.execute(text("DELETE FROM chatbot_status_words WHERE value <> 'delivered'"))
+        db.execute(text("UPDATE chatbot_status_words SET trigger_words = '{done}' WHERE value = 'delivered'"))
         db.flush()
         out = pv.render_value(db, "statuses")
         assert "\n" not in out and out.startswith('  - "delivered" -> ')

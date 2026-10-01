@@ -83,7 +83,8 @@ def _rendered_statuses(db) -> str:
     out, _ = ai_prompt_registry.render(db, KEY, current_date="", override_version_id=version.id)
     db.delete(version)
     db.flush()
-    return out
+    # Arrows are padded and lines wrapped to the owner's layout: compare with whitespace folded.
+    return " ".join(out.split())
 
 
 def test_list_returns_the_seeded_rows(client):

@@ -139,9 +139,11 @@ def test_statuses_render_every_row_with_its_words():
         db.add(ChatbotStatusWord(domain="order", value=value, label="a test status",
                                  trigger_words=["zzt word"], sort_order=999))
         db.flush()
-        out = chatbot_prompt_vars.render_statuses(db)
-        assert f'  - "{value}" -> a test status: "zzt word".' in out
-        assert '  - "outstanding" -> orders NOT yet delivered: "outstanding", "pending"' in out
+        # Arrows are padded and lines wrapped to the owner's layout (test_prompt_dynamic_formats),
+        # so compare with the whitespace folded.
+        out = " ".join(chatbot_prompt_vars.render_statuses(db).split())
+        assert f'- "{value}" -> a test status: "zzt word".' in out
+        assert '- "outstanding" -> orders NOT yet delivered: "outstanding", "pending"' in out
         assert '"sales_report"' in out and 'Domain "sales".' in out
         values = chatbot_prompt_vars.VARIABLES["status_values"].render(db).split("|")
         assert values[0] == "outstanding" and value in values
