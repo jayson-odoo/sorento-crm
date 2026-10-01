@@ -8,15 +8,35 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, render, renderHook, screen, waitFor } from '@testing-library/react';
-import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  cleanup,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from '@testing-library/react';
+import {
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from '@tanstack/react-query';
 
-const getSourceInvoices = vi.fn();
+// A plain stub rather than `vi.fn()` + `mockImplementation`: under vitest 4.1 a rejection
+// from a mock implementation set after creation is reported as the test's own failure.
+const service = { calls: 0, fail: false };
 vi.mock('../services/packingListService', () => ({
-  getPackingListSourceInvoices: (id: string) => getSourceInvoices(id),
+  getPackingListSourceInvoices: async () => {
+    service.calls += 1;
+    if (service.fail)
+      throw new Error('Permission required: scm.dashboard.view');
+    return { invoices: [], by_shipment_line: {}, created_by: null };
+  },
 }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+  useListingColumnPreferences: () => ({
+    resetToDefaults: vi.fn(),
+    isLoading: false,
+  }),
 }));
 
 import { usePackingListSourceInvoices } from './usePackingLists';
@@ -37,24 +57,27 @@ function appClient(toasts: string[]) {
 }
 
 function wrapper(client: QueryClient) {
-  return ({ children }: { children: React.ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
+  return function Wrapper({ children }: { children: React.ReactNode }) {
+    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  };
 }
 
-beforeEach(() => getSourceInvoices.mockReset());
+beforeEach(() => {
+  service.calls = 0;
+  service.fail = false;
+});
 afterEach(() => cleanup());
 
 describe('usePackingListSourceInvoices', () => {
   it('does not retry a 403 and raises no toast', async () => {
-    getSourceInvoices.mockRejectedValue(new Error('Permission required: scm.dashboard.view'));
+    service.fail = true;
     const toasts: string[] = [];
     const { result } = renderHook(() => usePackingListSourceInvoices('pl-1'), {
       wrapper: wrapper(appClient(toasts)),
     });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(getSourceInvoices).toHaveBeenCalledTimes(1);
+    expect(service.calls).toBe(1);
     expect(toasts).toEqual([]);
   });
 
@@ -66,18 +89,22 @@ describe('usePackingListSourceInvoices', () => {
 
     await new Promise((r) => setTimeout(r, 20));
     expect(result.current.fetchStatus).toBe('idle');
-    expect(getSourceInvoices).not.toHaveBeenCalled();
+    expect(service.calls).toBe(0);
   });
 });
 
 describe('SourceProformaInvoicesCard', () => {
   it('says the read failed instead of claiming the container has no proforma invoice', async () => {
-    getSourceInvoices.mockRejectedValue(new Error('Permission required: scm.dashboard.view'));
+    service.fail = true;
     render(<SourceProformaInvoicesCard packingListId="pl-1" />, {
       wrapper: wrapper(appClient([])),
     });
 
-    expect(await screen.findByText('Permission required: scm.dashboard.view')).toBeInTheDocument();
-    expect(screen.queryByText(/Read from a packing list/)).not.toBeInTheDocument();
+    expect(
+      await screen.findByText('Permission required: scm.dashboard.view'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Read from a packing list/),
+    ).not.toBeInTheDocument();
   });
 });

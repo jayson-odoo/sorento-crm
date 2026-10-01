@@ -48,11 +48,20 @@ export function usePackingListHistory(packingListId: string | null) {
  * the Documents list are four readings of the same link rows, and four fetches of it would
  * be four chances for them to disagree.
  */
-export function usePackingListSourceInvoices(packingListId: string | null) {
+export function usePackingListSourceInvoices(
+  packingListId: string | null,
+  { enabled = true }: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: ['packing-lists', 'source-proforma-invoices', packingListId],
     queryFn: () => getPackingListSourceInvoices(packingListId as string),
-    enabled: !!packingListId,
+    // False for a user without SCM read, for whom the endpoint 403s (PL-TABS-ACCESS).
+    enabled: !!packingListId && enabled,
+    // Read for every tab, so a failure belongs on the one tab that shows it
+    // (`SourceProformaInvoicesCard`), not in a toast on Lines; and a 403 is an answer,
+    // so retrying it only doubles the wait.
+    retry: false,
+    meta: { silent: true },
   });
 }
 

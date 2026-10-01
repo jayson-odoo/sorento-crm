@@ -55,9 +55,12 @@ export function PackingListDetailsTab() {
     suppliers,
     lineSupplierNames,
     checkpoints,
+    canReadScm,
   } = usePackingListRecord();
 
-  const containerSizes = useContainerSizes();
+  // An SCM read (403 without SCM read). The view reads `container_size_code` off the
+  // record, so only the edit select's options go without it (PL-TABS-ACCESS).
+  const containerSizes = useContainerSizes({ enabled: canReadScm });
 
   if (!packingList) return null;
   const record = packingList as unknown as Record<string, unknown>;

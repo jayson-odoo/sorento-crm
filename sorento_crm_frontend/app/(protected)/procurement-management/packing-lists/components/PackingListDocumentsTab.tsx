@@ -20,7 +20,7 @@ import { usePackingListRecord } from '../[id]/components/packing-list-context';
 
 /** Every file this container is answered by: its own attachment and the invoices behind it. */
 export function PackingListDocumentsTab() {
-  const { packingListId, packingList, sourceInvoices, update, updatePending } =
+  const { packingListId, packingList, canReadScm, sourceInvoices, update, updatePending } =
     usePackingListRecord();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [unlinkOpen, setUnlinkOpen] = useState(false);
@@ -84,37 +84,41 @@ export function PackingListDocumentsTab() {
           </div>
         )}
 
-        {/* The proforma invoice files these lines were read from. Always rendered: "none"
-            is the honest answer for a container that came off a real packing list, and a
-            section that vanishes teaches nobody where to look. */}
-        <div className="space-y-2">
-          <p className="text-sm font-medium">Proforma invoices</p>
-          {invoices.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No proforma invoice behind this container.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {invoices.map((pi) => (
-                <div key={pi.id} className="flex items-center gap-2 rounded-lg border p-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{pi.pi_number}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {pi.source_ref || 'No source file recorded'}
-                      {pi.supplier_name ? ` • ${pi.supplier_name}` : ''}
-                    </p>
+        {/* The proforma invoice files these lines were read from. Always rendered for a
+            user who can read them: "none" is the honest answer for a container that came
+            off a real packing list, and a section that vanishes teaches nobody where to
+            look. Without SCM read "none" would be a guess, so it is not rendered at all
+            (PL-TABS-ACCESS). */}
+        {canReadScm && (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Proforma invoices</p>
+            {invoices.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No proforma invoice behind this container.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {invoices.map((pi) => (
+                  <div key={pi.id} className="flex items-center gap-2 rounded-lg border p-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{pi.pi_number}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {pi.source_ref || 'No source file recorded'}
+                        {pi.supplier_name ? ` • ${pi.supplier_name}` : ''}
+                      </p>
+                    </div>
+                    <Link
+                      href={`/scm/proforma-invoices/${pi.id}`}
+                      className="shrink-0 text-sm text-primary hover:underline"
+                    >
+                      Open
+                    </Link>
                   </div>
-                  <Link
-                    href={`/scm/proforma-invoices/${pi.id}`}
-                    className="shrink-0 text-sm text-primary hover:underline"
-                  >
-                    Open
-                  </Link>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <LinkAttachmentBrowserDialog
           open={linkDialogOpen}

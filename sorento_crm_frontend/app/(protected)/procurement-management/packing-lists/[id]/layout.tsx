@@ -55,18 +55,21 @@ import {
  * because Edit is on this toolbar and Save is still ONE `PUT` for the whole record.
  */
 
+/** `scm` marks a tab that is nothing but an SCM read: it is not offered to a user without
+ *  `SCM_READ_PERMISSION`, and its page guards a deep link the same way (PL-TABS-ACCESS). */
 const TAB_ORDER = [
-  { key: 'details', title: 'Details', icon: Info, segment: '' },
+  { key: 'details', title: 'Details', icon: Info, segment: '', scm: false },
   {
     key: 'proforma-invoices',
     title: 'Proforma invoices',
     icon: FileText,
     segment: 'proforma-invoices',
+    scm: true,
   },
-  { key: 'lines', title: 'Shipment lines', icon: Boxes, segment: 'lines' },
-  { key: 'documents', title: 'Documents', icon: Files, segment: 'documents' },
-  { key: 'spo', title: 'SPO planner', icon: FileSpreadsheet, segment: 'spo' },
-  { key: 'timeline', title: 'Timeline', icon: History, segment: 'timeline' },
+  { key: 'lines', title: 'Shipment lines', icon: Boxes, segment: 'lines', scm: false },
+  { key: 'documents', title: 'Documents', icon: Files, segment: 'documents', scm: false },
+  { key: 'spo', title: 'SPO planner', icon: FileSpreadsheet, segment: 'spo', scm: true },
+  { key: 'timeline', title: 'Timeline', icon: History, segment: 'timeline', scm: false },
 ] as const;
 
 /** What the old `?tab=` values mean now, so a link somebody saved still lands. */
@@ -237,8 +240,9 @@ function PackingListTabs({ id }: { id: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { packingList, isLoading } = usePackingListRecord();
+  const { packingList, isLoading, canReadScm } = usePackingListRecord();
   const base = `/procurement-management/packing-lists/${id}`;
+  const tabs = TAB_ORDER.filter((t) => canReadScm || !t.scm);
 
   const active = useMemo(() => {
     const tail = pathname.startsWith(base) ? pathname.slice(base.length) : '';
@@ -255,7 +259,7 @@ function PackingListTabs({ id }: { id: string }) {
   return (
     <Tabs value={active}>
       <TabsList variant="line" className="mb-5 w-full justify-start">
-        {TAB_ORDER.map(({ key, title, icon: Icon, segment }) => (
+        {tabs.map(({ key, title, icon: Icon, segment }) => (
           <TabsTrigger
             key={key}
             value={key}

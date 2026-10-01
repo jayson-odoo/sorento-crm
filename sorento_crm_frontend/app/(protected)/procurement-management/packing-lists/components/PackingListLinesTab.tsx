@@ -172,12 +172,16 @@ export function PackingListLinesTab() {
     suppliers,
     supplierNameById,
     sourceInvoices,
+    canReadScm,
   } = usePackingListRecord();
 
   const packingListId = packingList?.id ?? null;
-  const consolidated = useConsolidatedPackingList(packingListId);
+  // Both are SCM reads, which 403 without SCM read: not asked for at all then, so the tab
+  // still works and no permission toast lands on it (PL-TABS-ACCESS).
+  const scmShipmentId = canReadScm ? packingListId : null;
+  const consolidated = useConsolidatedPackingList(scmShipmentId);
   // R25 (lane C, slice C3): every line's photos in one read, not one per row.
-  const linePhotos = useShipmentLinePhotos(packingListId);
+  const linePhotos = useShipmentLinePhotos(scmShipmentId);
 
   const {
     value: searchInput,
