@@ -89,7 +89,7 @@ def test_the_committed_sql_is_generated_from_the_file_and_the_code():
 
 def test_the_sql_carries_no_dash_characters():
     raw = SQL_FILE.read_text(encoding="utf-8")
-    assert "—" not in raw and "–" not in raw
+    assert "\u2014" not in raw and "\u2013" not in raw
 
 
 def test_on_tables_shaped_like_the_file_the_sql_swaps_and_renders_the_file():

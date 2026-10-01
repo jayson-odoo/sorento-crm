@@ -30,7 +30,7 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 SNAPSHOT = BACKEND / "alembic" / "data" / "chatbot_semantic_parser.prod-20261001.txt"
 OUT = BACKEND.parent / "documentation" / "plans" / "chatbot" / "crew-migration-prompt-dynamic.sql"
 KEY = "chatbot_semantic_parser"
-EM_DASH = "—"
+EM_DASH = "\u2014"
 PLACEHOLDER = "<<EM_DASH>>"
 QUOTE = "$pdyn$"
 
