@@ -492,12 +492,23 @@ class TestMigration:
     def _source(self) -> str:
         return (VERSIONS / f"{MIGRATION}.py").read_text()
 
-    def test_cmm_migration_revision_fits_and_parents_on_oihr_0004(self):
+    def test_cmm_migration_revision_fits_and_sits_on_the_single_head(self):
+        """No literal `down_revision`: `scripts/alembic-reparent.sh` rewrites it whenever main's
+        head moves. The property is: the id fits, the parent exists, the chain has one head and
+        this revision is on its ancestry."""
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
         src = self._source()
         rev = re.search(r'^revision\s*=\s*"([^"]+)"', src, re.M).group(1)
         down = re.search(r'^down_revision\s*=\s*"([^"]+)"', src, re.M).group(1)
         assert rev == MIGRATION and len(rev) <= 32
-        assert down == "oihr_0004_wide_line_table"
+        script = ScriptDirectory.from_config(Config(str(VERSIONS.parent.parent / "alembic.ini")))
+        known = {r.revision for r in script.walk_revisions()}
+        assert down in known
+        heads = list(script.get_heads())
+        assert len(heads) == 1, heads
+        assert MIGRATION in {r.revision for r in script.walk_revisions(base="base", head=heads[0])}
 
     def test_cmm_migration_creates_the_table_and_seeds_two_rows(self):
         src = self._source()

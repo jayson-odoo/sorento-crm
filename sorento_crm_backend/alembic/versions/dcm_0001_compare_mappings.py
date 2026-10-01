@@ -5,7 +5,7 @@ Additive: one new global table (no company_id) and its two seed rows, `order_lis
 `order_tracking`, both on sheet `Master`. Idempotent seed (`ON CONFLICT (kind) DO NOTHING`).
 
 Revision ID: dcm_0001_compare_mappings
-Revises: oihr_0004_wide_line_table
+Revises: esc1_0001_escalation_allowed
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "dcm_0001_compare_mappings"
-down_revision = "oihr_0004_wide_line_table"
+down_revision = "esc1_0001_escalation_allowed"
 branch_labels = None
 depends_on = None
 
