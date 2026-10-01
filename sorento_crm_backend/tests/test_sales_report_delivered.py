@@ -232,6 +232,51 @@ def test_a_percent_discount_below_100_is_a_fraction(client, db):
     assert by_name == {"ZZT-PCT37-A": D("63.00"), "ZZT-PCT37-B": D("100.00")}, body["rows"]
 
 
+def test_a_legacy_do_with_more_than_one_distinct_total_sums_its_own_line_math(client, db):
+    """Fix round 1, S1 (owner ruling, option a): a legacy DO whose lines carry MORE THAN ONE
+    distinct total is not one repeated DOC total, so nothing is split: each line is
+    qty x unit price x (1 - discount), rounded to the sen. Two real shapes, made-up codes:
+
+    * PS202607-0355: 2 x 523 (total 1046) and 3 x 523 (total 1569) -> 1,046 + 1,569 = 2,615.00;
+    * M2609-0511: 3 x 320 d0 (960), 3 x 14 d1 (960), 2 x 320 d0 (640), 2 x 14 d1 (640)
+      -> 960 + 0 + 640 + 0 = 1,600.00 (discount 1 = free).
+    """
+    cust, _p, wh = _world(db)
+    ps_a = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-MIX-PS-A")
+    ps_b = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-MIX-PS-B")
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 7, 10), number="ZZT-PS0355", source_book=None,
+            lines=[
+                line(ps_a.id, wh.id, 2, price=D("523"), total=D("1046.00")),
+                line(ps_b.id, wh.id, 3, price=D("523"), total=D("1569.00")),
+            ])
+    m = [product(db, company_id=DEFAULT_COMPANY_ID, code=f"ZZT-MIX-M-{i}") for i in range(4)]
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 9, 5), number="ZZT-M0511", source_book=None,
+            lines=[
+                line(m[0].id, wh.id, 3, price=D("320"), discount=D("0"), total=D("960.00")),
+                line(m[1].id, wh.id, 3, price=D("14"), discount=D("1"), total=D("960.00")),
+                line(m[2].id, wh.id, 2, price=D("320"), discount=D("0"), total=D("640.00")),
+                line(m[3].id, wh.id, 2, price=D("14"), discount=D("1"), total=D("640.00")),
+            ])
+    db.commit()
+
+    by_do = _get(client, customer_ids=cust.id, group_by="delivery_order")
+    assert {r["name"]: money(r["amount"]) for r in by_do["rows"]} == {
+        "ZZT-PS0355": D("2615.00"),
+        "ZZT-M0511": D("1600.00"),
+    }, by_do["rows"]
+    assert money(by_do["total"]["amount"]) == D("4215.00"), by_do
+
+    by_product = _get(client, customer_ids=cust.id, group_by="product")
+    assert {r["name"]: money(r["amount"]) for r in by_product["rows"]} == {
+        "ZZT-MIX-PS-B": D("1569.00"),
+        "ZZT-MIX-PS-A": D("1046.00"),
+        "ZZT-MIX-M-0": D("960.00"),
+        "ZZT-MIX-M-2": D("640.00"),
+        "ZZT-MIX-M-1": D("0.00"),
+        "ZZT-MIX-M-3": D("0.00"),
+    }, by_product["rows"]
+
+
 def test_equal_shares_when_every_weight_is_zero(client, db):
     """No unit price on any line: weights are all 0, so the DOC total splits equally."""
     cust, _p, wh = _world(db)

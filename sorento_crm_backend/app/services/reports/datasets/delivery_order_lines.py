@@ -15,7 +15,11 @@ product, period, DO, sales agent) sums to the same Total to the sen:
   ONCE, split across its lines by weight qty x unit price x (1 - discount), in equal shares
   when every weight is 0. The split is rounded by cumulative rounding (each line takes the
   rounded running total minus the rounded running total before it), so the shares sum to
-  the DOC total exactly, the last sen included.
+  the DOC total exactly, the last sen included;
+* a legacy DO whose lines carry MORE THAN ONE distinct total is not a repeated DOC total
+  (owner ruling, PR #1401 fix round 1): each line is its own qty x unit price x
+  (1 - discount), rounded to the sen. The discount is normalised first
+  (`discount_fraction`).
 
 The DO-level filters a run names (its customers, its window, its company grant) are pushed
 into that subquery as well: a share is a fraction of its whole DO, so only a filter that
@@ -114,6 +118,11 @@ def _line_amounts(ctx: Any) -> Any:
             sa.func.coalesce(OrderLine.total, 0).label("line_total"),
             weight.label("weight"),
             sa.func.coalesce(sa.func.max(OrderLine.total).over(partition_by=partition), 0).label("doc_total"),
+            # Postgres has no COUNT(DISTINCT) window: min <> max is "more than one total".
+            (
+                sa.func.min(OrderLine.total).over(partition_by=partition)
+                != sa.func.max(OrderLine.total).over(partition_by=partition)
+            ).label("mixed_totals"),
             sa.func.sum(weight).over(partition_by=partition).label("weight_sum"),
             sa.func.count().over(partition_by=partition).label("line_count"),
         )
@@ -133,6 +142,10 @@ def _line_amounts(ctx: Any) -> Any:
     )
     amount = sa.case(
         (lines.c.source_book.isnot(None), sa.func.round(lines.c.line_total, 2)),
+        # A legacy DO whose lines carry more than one distinct total is not one repeated DOC
+        # total (owner ruling, fix round 1 S1): each line is its own qty x price x (1 -
+        # discount), rounded to the sen, and nothing is split.
+        (lines.c.mixed_totals.is_(True), sa.func.round(lines.c.weight, 2)),
         else_=sa.func.round(running, 2) - sa.func.round(running - share, 2),
     )
     subquery = sa.select(lines.c.line_id, amount.label("amount")).subquery("do_line_amounts")
