@@ -65,7 +65,7 @@ export default function CustomersList() {
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useCustomers({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching, error } = useCustomers({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -211,6 +211,8 @@ export default function CustomersList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      error={error}
+      onRetry={() => void refetch()}
       isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}

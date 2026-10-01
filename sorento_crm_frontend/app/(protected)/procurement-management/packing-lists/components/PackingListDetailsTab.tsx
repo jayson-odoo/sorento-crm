@@ -218,6 +218,8 @@ export function PackingListDetailsTab() {
                   size="sm"
                   value={draft.container_size_id ?? ''}
                   onChange={(v: string) => setField('container_size_id', v)}
+                  loadError={containerSizes.error}
+                  onRetry={() => void containerSizes.refetch()}
                   options={containerSizeOptions}
                   placeholder={
                     defaultContainerSize
