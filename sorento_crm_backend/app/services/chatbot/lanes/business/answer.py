@@ -35,6 +35,7 @@ from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
 from app.services.product_spec_registry import SPEC_ACRONYMS
 from app.services.chatbot.tail.scope_block import live_brand_words
+from app.services.chatbot.turn.task import REFER_TO_SALESMAN
 
 # The did-you-mean helpers the JS carries in BOTH bodies with a "keep in lockstep" note.
 # `miss_suggest` owns them because that is where their node lives; this file imports them
@@ -2692,6 +2693,10 @@ def what_you_want_reply(asked: str, lines: list[str], *, missing: str = "", leg:
     else:
         tail = "But none matched."
     # #1301 (F8): a staff profile gets no bot-initiated offer; its caller passes no team.
+    # ESCALATION-CONTROL (owner ruling Q2): a blocked contact's caller passes the salesman
+    # line itself, which stands where the offer would.
+    if team == REFER_TO_SALESMAN:
+        return f"{head}\n\n{tail} {REFER_TO_SALESMAN}"
     return f"{head}\n\n{tail} Would you like me to escalate to {team} team?" if team else f"{head}\n\n{tail}"
 
 
@@ -3017,9 +3022,12 @@ def not_found_error_message(
     q = parser if isinstance(parser, dict) else {}
     r = resolved if isinstance(resolved, dict) else {}
     g = gate if isinstance(gate, dict) else {}
-    from app.services.chatbot.turn.state import is_staff_profile
+    from app.services.chatbot.turn.state import escalation_barred, offers_escalation
 
-    is_staff = is_staff_profile(profile)
+    # ESCALATION-CONTROL: staff and a barred contact alike get no offer; a barred contact's
+    # miss says what was not found, then "Please refer to your salesman." (owner ruling Q2).
+    is_staff = not offers_escalation(profile)
+    barred = escalation_barred(profile)
 
     by_entity_type = jsc.get(r, "by_entity_type")
     resolved_types = list(by_entity_type.keys()) if isinstance(by_entity_type, dict) else []
@@ -3115,11 +3123,13 @@ def not_found_error_message(
         remember it. `""` for a staff profile - the caller appends it only when
         truthy, so no branch prints a dangling space or period-with-nothing-after.
         """
+        if barred:
+            return REFER_TO_SALESMAN
         t = offer_team if jsc.truthy(offer_team) else team
         return "" if is_staff else f"Would you like me to escalate to {t} team?"
 
     # The one reply structure's own offer (`what_you_want_reply`) under the same gate.
-    offer_team = None if is_staff else team
+    offer_team = REFER_TO_SALESMAN if barred else (None if is_staff else team)
 
     escalate_message: Any = None
     is_clarification = False
@@ -3682,7 +3692,9 @@ def not_found_error_message(
             windowed = is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end))
             if windowed:
                 esc_ask = (
-                    "Reply 'all dates' to search without the date filter."
+                    f"Reply 'all dates' to search without the date filter. {REFER_TO_SALESMAN}"
+                    if barred
+                    else "Reply 'all dates' to search without the date filter."
                     if is_staff
                     else (
                         f"Reply 'all dates' to search without the date filter, or would you like me "
@@ -4307,14 +4319,19 @@ def build_suggest_offer(
         routing = jsc.get(q, "routing")
         company_team = jsc.get(routing, "suggested_team") if jsc.truthy(routing) else None
     team = _pretty_team(company_team if jsc.truthy(company_team) else "customer_service")
-    from app.services.chatbot.turn.state import is_staff_profile
+    from app.services.chatbot.turn.state import escalation_barred, offers_escalation
 
-    is_staff = is_staff_profile(profile)
+    # ESCALATION-CONTROL: staff and a barred contact alike get no offer; a barred contact's
+    # miss says what was not found, then "Please refer to your salesman." (owner ruling Q2).
+    is_staff = not offers_escalation(profile)
+    barred = escalation_barred(profile)
 
     def _cont(lead_in: str, escalate_suffix: str) -> str:
         """`lead_in + escalate_suffix` (the ", or ...escalate..." tail, several wordings
         across this function's own branches) - staff get `f"{lead_in}."` alone, no
         escalate offer (#1262 slice 11 review round, 26 Sep 2026)."""
+        if barred:
+            return f"{lead_in}. {REFER_TO_SALESMAN}"
         return f"{lead_in}." if is_staff else f"{lead_in}{escalate_suffix}"
 
     def mk_offer(cands: Any) -> Any:
