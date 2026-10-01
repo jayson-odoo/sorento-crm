@@ -9,6 +9,7 @@ import {
   Row,
   RowSelectionState,
   SortingState,
+  Table,
   getCoreRowModel,
   getExpandedRowModel,
   getPaginationRowModel,
@@ -70,6 +71,7 @@ export function PanelDataGrid<TRow extends object>({
   pageResetKey,
   focusRowId,
   focusRequestKey,
+  initialColumnVisibility,
 }: {
   /**
    * A plain heading, or a heading with an embedded link (e.g. the record's own number).
@@ -81,8 +83,12 @@ export function PanelDataGrid<TRow extends object>({
    * rendered at all, so the column headers sit directly under that row.
    */
   title?: React.ReactNode;
-  /** Filters, view switches and the Add button. Sits in the card header beside the title. */
-  toolbar?: React.ReactNode;
+  /**
+   * Filters, view switches and the Add button. Sits in the card header beside the title. Or a
+   * function receiving the grid's own `table`, for a caller that mounts the app's list toolbar
+   * (`DataGridListToolbar`), which needs it for Columns and the bulk strip.
+   */
+  toolbar?: React.ReactNode | ((slots: { table: Table<TRow> }) => React.ReactNode);
   columns: ColumnDef<TRow>[];
   rows: TRow[];
   getRowId?: (row: TRow) => string;
@@ -218,6 +224,8 @@ export function PanelDataGrid<TRow extends object>({
    * to re-press, which keeps today's once-per-id behaviour exactly as it is.
    */
   focusRequestKey?: string | number;
+  /** Columns hidden until the reader turns them on (a saved column preference still wins). */
+  initialColumnVisibility?: Record<string, boolean>;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -276,6 +284,9 @@ export function PanelDataGrid<TRow extends object>({
     // never touched the page - see PLAN-panel-datagrid-keep-page.md. The
     // render-time clamp above is the only reset this grid wants for that.
     autoResetPageIndex: false,
+    ...(initialColumnVisibility
+      ? { initialState: { columnVisibility: initialColumnVisibility } }
+      : {}),
     state: {
       pagination: tablePagination,
       ...(sortable ? { sorting } : {}),
@@ -401,7 +412,11 @@ export function PanelDataGrid<TRow extends object>({
             {title ? (
               <CardTitle className="min-w-0 break-words text-sm">{title}</CardTitle>
             ) : null}
-            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+            <div
+              className={`flex w-full flex-wrap items-center gap-2 ${
+                typeof toolbar === 'function' ? 'min-w-0 sm:grow' : 'sm:w-auto'
+              }`}
+            >
               {searchOf && (
                 <Input
                   type="search"
@@ -416,7 +431,7 @@ export function PanelDataGrid<TRow extends object>({
                   className="h-8 w-full sm:w-56"
                 />
               )}
-              {toolbar}
+              {typeof toolbar === 'function' ? toolbar({ table }) : toolbar}
             </div>
           </CardHeader>
         )}
