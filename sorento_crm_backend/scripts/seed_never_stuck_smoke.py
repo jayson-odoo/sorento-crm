@@ -36,9 +36,9 @@ RESTRICTED_ROLE_SLUG = "never-stuck-procurement-viewer"
 RESTRICTED_EXTRA_SLUGS = ("user_management.account.view",)
 
 PERSONAS = {
-    "admin": {"email": "never-stuck-admin@example.test", "name": "Never Stuck Admin"},
-    "restricted": {"email": "never-stuck-restricted@example.test", "name": "Never Stuck Restricted"},
-    "expired": {"email": "never-stuck-expired@example.test", "name": "Never Stuck Expired"},
+    "admin": {"email": "never-stuck-admin@example.com", "name": "Never Stuck Admin"},
+    "restricted": {"email": "never-stuck-restricted@example.com", "name": "Never Stuck Restricted"},
+    "expired": {"email": "never-stuck-expired@example.com", "name": "Never Stuck Expired"},
 }
 
 
