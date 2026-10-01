@@ -101,7 +101,7 @@ from app.services.chatbot.tail import scope_block
 from app.services.chatbot.turn import compose as turn_compose
 from app.services.chatbot.turn import fetch as run_fetch
 from app.services.chatbot.turn import pending
-from app.services.chatbot.turn.state import is_staff_profile
+from app.services.chatbot.turn.state import escalation_barred, is_staff_profile, offers_escalation
 
 # AC-1691's umbrella: no roster is ever asked with fewer than two options, in any
 # domain and for any entity kind - `narrow.decide`'s own rule for every other roster
@@ -267,7 +267,8 @@ def apply_crossdomain_hit(
         result = _prefix_zero_note(result)
         from dataclasses import replace
 
-        is_staff = is_staff_profile(profile)
+        # ESCALATION-CONTROL: staff and a barred contact alike get no offer.
+        is_staff = not offers_escalation(profile)
         text = _apply_crossdomain_render(answer.text, result, answered=True, include_offer=not is_staff)
         if text == answer.text:
             return answer
@@ -326,6 +327,7 @@ def apply_silent_company_offer(
     turn_id: str | None = None,
     db: Any = None,
     ctx: Any = None,
+    profile: Any = None,
 ) -> turn_compose.Answer:
     """Hand pass 11, defect 3 (multi-company HIT parity): a HIT in ONE of several
     searched companies still offers to escalate to the SILENT company's own team -
@@ -366,6 +368,9 @@ def apply_silent_company_offer(
     searched; a HIT's sentence names none, so the honest offer is the single one.
     """
     try:
+        if escalation_barred(profile):
+            # ESCALATION-CONTROL: a barred contact is offered no team, silent or not.
+            return answer
         if not answer.text or not isinstance(envelope, Mapping):
             return answer
         if answer.question is not None:
@@ -1837,6 +1842,8 @@ def answer_for(
             combine_rows
             and len(combine_rows) >= _MIN_ROSTER_OPTIONS
             and db is not None
+            # ESCALATION-CONTROL: no routing roster for a barred contact.
+            and not escalation_barred(profile)
             and _cs_offer_eligible(producers.get("escalate-catalog"), routing=(parser or {}).get("routing") or {}, gate=gate)
         ):
             from app.services.chatbot.tail import member_offer as member_mod
@@ -1883,6 +1890,13 @@ def answer_for(
                 question = _replace_q(question, team=None, payload=stripped_payload)
         else:
             question = None
+    if escalation_barred(profile) and question is not None:
+        # ESCALATION-CONTROL: a barred contact's roster is still ASKED (a clarifying
+        # question, not an offer); its escalation half goes, and an escalation offer
+        # goes whole.
+        from app.services.chatbot.escalation_control import strip_pending
+
+        question, _dropped = strip_pending(question)
     if combined_member_rows and question is not None:
         member_options = [o for o in question.options if o.get("entity_type") == "member"]
         if member_options and any(o.get("entity_type") != "member" for o in question.options):
@@ -1941,7 +1955,7 @@ def answer_for(
         )
     # #1262 slice 11 (F8): same audience gate as the HIT-side ladder rung above.
     text = _apply_crossdomain_render(
-        text, crossdomain_result, include_offer=not is_staff_profile(profile)
+        text, crossdomain_result, include_offer=offers_escalation(profile)
     )
     if dealer_stock_ask:
         # Owner ruling 26 Sep 2026 (hand test F1): a dealer's stock ask never offers
