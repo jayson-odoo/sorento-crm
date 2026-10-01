@@ -119,7 +119,7 @@ def test_on_tables_shaped_like_the_file_the_sql_swaps_and_renders_the_file():
         ).scalar()
         _run_sql(db, _gen().pdyn_0003_sql())
         row = _row(db)
-        assert row.version == int(top) + 1
+        assert row.version == int(top) + 2  # the dev seed takes top + 1
         replaced = {v for v, a in _sql_actions(row) if a == "replaced"}
         assert {"teams", "status_values", "agents", "access_levels", "entity_kinds_detail"} <= replaced
         for name in replaced:
@@ -164,7 +164,8 @@ def test_the_sql_is_idempotent_unlabelled_and_leaves_other_versions_alone():
         _exec(db, sql)
         db.expire_all()
         after = {r.id: r.template for r in db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY)}
-        assert len(after) == len(before) + 1
+        # The dev seed (the owner's text, verbatim) and the variable version built from it.
+        assert len(after) == len(before) + 2
         assert {k: v for k, v in after.items() if k in before} == before
         assert {(l.label, l.version_id) for l in db.query(AIPromptLabel).filter(AIPromptLabel.name == KEY)} == labels
         assert not db.query(AIPromptLabel).filter(AIPromptLabel.version_id == _row(db).id).count()
@@ -220,3 +221,26 @@ def test_the_lookup_comment_is_small_and_sql_only():
     body = gen.comment_body(sql)
     assert body.startswith("crew-migration:\n```sql\n") and body.endswith("\n```") and body.count("```") == 2
     assert len(body) < 8000
+
+
+def test_the_dev_seed_puts_the_owner_text_verbatim_then_the_variable_version_renders_it():
+    """Crew, 1 Oct 2026: the crew copy holds no version with the owner's text, so the full
+    SQL inserts it verbatim (unlabelled, 'prod snapshot 1 Oct (dev seed)') and builds the
+    variable version from it: two new versions, seed first."""
+    source = SNAPSHOT.read_text(encoding="utf-8")
+    with pg_session() as db:
+        db.execute(text("DELETE FROM ai_prompt_versions WHERE name = :n AND template = :t"), {"n": KEY, "t": source})
+        top = db.execute(text("SELECT max(version) FROM ai_prompt_versions WHERE name = :n AND config_json->>'prod_snapshot_sha256' IS DISTINCT FROM :s"), {"n": KEY, "s": SHA}).scalar()
+        _run_sql(db)
+        seed = db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY, AIPromptVersion.template == source).one()
+        assert seed.commit_message == "prod snapshot 1 Oct (dev seed)"
+        assert seed.version == int(top) + 1
+        assert not db.query(AIPromptLabel).filter(AIPromptLabel.version_id == seed.id).count()
+        row = _row(db)
+        assert row.version == seed.version + 1
+        assert _render(db, row) == _expected()
+        # A re-run adds nothing.
+        count = db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count()
+        _exec(db, SQL_FILE.read_text(encoding="utf-8"))
+        db.expire_all()
+        assert db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count() == count

@@ -279,6 +279,16 @@ IF first THEN t := part; first := false; ELSE t := t || chr(tbl[strpos(idx, left
 END LOOP;
 IF encode(sha256(convert_to(t, 'UTF8')), 'hex') <> 'fdbf2ea1ba0cc019b2a171f323e0c8160b4cc445b8804ab89d255b135a910129' THEN
 RAISE EXCEPTION 'prod snapshot: decoded text does not match the owner file; nothing written'; END IF;
+SELECT version INTO v FROM ai_prompt_versions WHERE name = 'chatbot_semantic_parser' AND template = t ORDER BY version LIMIT 1;
+IF v IS NULL THEN
+SELECT COALESCE(max(version), 0) + 1 INTO v FROM ai_prompt_versions WHERE name = 'chatbot_semantic_parser';
+INSERT INTO ai_prompt_versions (id, name, version, type, template, variables, config_json, commit_message, created_at)
+VALUES (gen_random_uuid(), 'chatbot_semantic_parser', v, 'text', t, '["current_date"]'::jsonb, jsonb_build_object('dev_seed', true, 'prod_snapshot', 'chatbot_semantic_parser.prod-20261001.txt'), 'prod snapshot 1 Oct (dev seed)', now());
+RAISE NOTICE 'dev seed v%: owner prod text inserted verbatim, unlabelled', v;
+ELSE
+RAISE NOTICE 'dev seed: owner prod text already present as v%', v;
+END IF;
+v := NULL;
 tpl := t;
 FOR i IN REVERSE array_length(starts, 1)..1 LOOP
 var := vars[i]; lit := substr(t, starts[i], lens[i]);

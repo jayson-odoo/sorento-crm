@@ -197,7 +197,7 @@ def _candidates(source: str) -> list[tuple[int, int, str]]:
 # --------------------------------------------------------------------------- #
 
 
-def build_sql(lookup: bool = False) -> str:
+def build_sql(lookup: bool = False, seed: bool = True) -> str:
     """`lookup=True` carries no text: it takes the owner's text from a version already on
     the database whose text (CRLF folded, trailing newlines trimmed) has the file's sha256,
     and writes nothing when none matches. Small enough to post by hand."""
@@ -248,6 +248,7 @@ def build_sql(lookup: bool = False) -> str:
                 f"IF encode(sha256(convert_to(t, 'UTF8')), 'hex') <> {_q(sha)} THEN",
                 "RAISE EXCEPTION 'prod snapshot: decoded text does not match the owner file; nothing written'; END IF;",
             ]),
+            *(_seed_lines() if seed and not lookup else []),
             "tpl := t;",
             "FOR i IN REVERSE array_length(starts, 1)..1 LOOP",
             "var := vars[i]; lit := substr(t, starts[i], lens[i]);",
@@ -279,6 +280,29 @@ def build_sql(lookup: bool = False) -> str:
             "",
         ]
     )
+
+
+SEED_MESSAGE = "prod snapshot 1 Oct (dev seed)"
+
+
+def _seed_lines() -> list[str]:
+    """Dev only (crew, 1 Oct 2026): the crew copy has no version holding the owner's text,
+    so put it there verbatim and unlabelled first; the variable version is then built from
+    it. Prod needs no seed: alembic pdyn_0003 reads the version `production` points at."""
+    return [
+        f"SELECT version INTO v FROM ai_prompt_versions WHERE name = {_q(KEY)} AND template = t ORDER BY version LIMIT 1;",
+        "IF v IS NULL THEN",
+        f"SELECT COALESCE(max(version), 0) + 1 INTO v FROM ai_prompt_versions WHERE name = {_q(KEY)};",
+        "INSERT INTO ai_prompt_versions (id, name, version, type, template, variables, config_json, commit_message, created_at)",
+        f"VALUES (gen_random_uuid(), {_q(KEY)}, v, 'text', t, '[\"current_date\"]'::jsonb, "
+        "jsonb_build_object('dev_seed', true, 'prod_snapshot', 'chatbot_semantic_parser.prod-20261001.txt'), "
+        f"{_q(SEED_MESSAGE)}, now());",
+        "RAISE NOTICE 'dev seed v%: owner prod text inserted verbatim, unlabelled', v;",
+        "ELSE",
+        "RAISE NOTICE 'dev seed: owner prod text already present as v%', v;",
+        "END IF;",
+        "v := NULL;",
+    ]
 
 
 def _lookup_lines(sha: str) -> list[str]:

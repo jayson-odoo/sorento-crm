@@ -432,3 +432,40 @@ leaving a single head `pdyn_0003_prod_identical`. The backlog clash on BL-068 wa
 keeping main's entry and renumbering this lane's entry BL-069. On a fresh `bootstrap_env` DB,
 the PR's changed backend tests pass (197), and so does the chatbot subset for sales, business,
 engine, domain, status and prompt (1458 passed, 30 skipped, 5 xfailed).
+
+Round 3, the same day. The lookup SQL (a 6 KB crew-migration comment, which finds the owner's
+text on the database by its sha256) applied on dev as crew sha 0ba15480. It wrote nothing,
+because dev tops out at v53 and holds no version with the owner's text.
+
+Crew's ruling has two parts:
+- seed the owner's text on dev first;
+- on prod, the migration must find the live text and must never guess.
+
+**pdyn_0003 on prod (alembic).**
+- It finds the live text through the `production` label: the version that label points at.
+  It never searches.
+- That text must equal the owner's file character for character, with no newline folding
+  and no trimming.
+- On any difference it writes nothing. The log names the first difference: line, column,
+  both characters, and both lengths.
+- If there is no `production` label, it writes nothing and logs that.
+- A failed render proof now also writes nothing; the old fallback inserted the verbatim text.
+- The new version records `from_production_version`.
+- Tests: red 68ea0fbf, covering one changed character, a trailing newline, CRLF line ends,
+  and no label.
+- Kill test (match with CRLF folded and trailing newlines trimmed): 2 red.
+
+**The crew SQL for dev** (the full `documentation/plans/chatbot/crew-migration-prompt-dynamic.sql`,
+55,862-character comment body):
+1. It decodes the owner's text and checks its sha256.
+2. It inserts that text verbatim, unlabelled, with commit message
+   `prod snapshot 1 Oct (dev seed)`, unless a version with that exact text already exists.
+3. It builds the variable version from it.
+
+Simulated dev on the sandbox (top v4, inside a transaction that was rolled back):
+- seed v5, with 132,040 characters;
+- variable version v6, with `{{teams}}` and `{{entity_kinds_detail}}` replaced and the rest kept
+  literal;
+- a re-run is a no-op.
+
+Kill test (seed removed): 3 red.

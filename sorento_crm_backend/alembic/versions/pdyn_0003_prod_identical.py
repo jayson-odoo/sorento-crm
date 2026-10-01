@@ -8,9 +8,15 @@ stand at migration time (`chatbot_prompt_vars.identical_wording_layer`). A regis
 differs keeps the owner's list literal; the report of every list (replaced or kept, and
 what differs) is stored on the version (`config_json.identical_report`) and logged.
 
+It locates prod's live text by the `production` label (the version that label points
+at), never by search, and requires that text to equal the owner's file character for
+character: no newline folding, no trimming. Any difference, one character, a trailing
+newline or CRLF line ends, means nothing is written and the log names the first
+difference (line, column, both characters). It never guesses (owner, 1 Oct 2026). No
+`production` label: nothing written, logged.
+
 The result is proven before insert: rendering it from the tables gives the file byte for
-byte. If that proof ever fails the file is inserted verbatim instead (no variables), so
-the owner never gets a version that renders differently from what he pasted.
+byte. If that proof ever fails, nothing is written and the failure is logged.
 
 Inserted as ONE new UNLABELLED version (version = max + 1 at run time). No label moves
 and no existing version is touched; the owner publishes it himself. Idempotent: does
@@ -59,6 +65,16 @@ def _renders_identical(template: str, source: str, session: Session) -> bool:
     return ai_prompt_registry._substitute(template, values) == source
 
 
+def _first_difference(a: str, b: str) -> str:
+    i = next((k for k, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+    line = a[:i].count("\n") + 1
+    col = i - (a.rfind("\n", 0, i) + 1) + 1
+    return (
+        f"first difference at line {line}, column {col}: live {a[i:i + 1]!r} vs file {b[i:i + 1]!r} "
+        f"(live {len(a)} chars, file {len(b)} chars)"
+    )
+
+
 def apply(bind) -> int | None:
     from app.models.ai_prompt import AIPromptVersion
     from app.services import chatbot_prompt_vars
@@ -67,12 +83,28 @@ def apply(bind) -> int | None:
     sha = _sha()
     session = Session(bind=bind)
     try:
+        live = session.execute(
+            sql(
+                "SELECT v.version, v.template FROM ai_prompt_versions v JOIN ai_prompt_labels l "
+                "ON l.version_id = v.id WHERE l.name = :n AND l.label = 'production'"
+            ),
+            {"n": PROMPT_NAME},
+        ).first()
+        if live is None:
+            logger.warning("prod snapshot: no production label on %s; nothing written", PROMPT_NAME)
+            return None
+        if live[1] != source:
+            logger.warning(
+                "prod snapshot: production v%s differs from the owner's file %s; %s; nothing written",
+                live[0], SNAPSHOT.name, _first_difference(live[1], source),
+            )
+            return None
         chatbot_prompt_vars.clear_cache()
         template, report = chatbot_prompt_vars.identical_wording_layer(source, session)
         identical = _renders_identical(template, source, session)
         if not identical:
-            logger.warning("prod snapshot: swapped text did not render identical; inserting it verbatim")
-            template, report = source, [{"variable": "*", "line": None, "action": "kept literal (proof failed)"}]
+            logger.warning("prod snapshot: the swapped text did not render identical to the file; nothing written")
+            return None
         exists = session.execute(
             sql(
                 "SELECT version FROM ai_prompt_versions WHERE name = :n "
@@ -104,6 +136,7 @@ def apply(bind) -> int | None:
                 config_json={
                     "prod_snapshot": SNAPSHOT.name,
                     "prod_snapshot_sha256": sha,
+                    "from_production_version": int(live[0]),
                     "rendered_identical": identical,
                     "identical_report": report,
                 },
