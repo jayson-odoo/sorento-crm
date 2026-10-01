@@ -140,11 +140,12 @@ describe('fix 2.3: a stale result never outlives its file', () => {
 });
 
 describe('fix 2.4: no fixed width at 375px', () => {
-  it('the dropzone wrapper shrinks and its title truncates with the full text in title', async () => {
+  it('the dropzone wrapper shrinks and its title wraps (never truncates) with the full text in title', async () => {
     renderTab();
     const titleText = 'Order Listing (macro), sheet Master';
     const title = await screen.findByText(titleText);
-    expect(title.className).toMatch(/\btruncate\b/);
+    expect(title.className).toMatch(/\bbreak-words\b/);
+    expect(title.className).not.toMatch(/\btruncate\b/);
     expect(title.getAttribute('title')).toBe(titleText);
     const wrapper = (screen.getByLabelText('Order Listing sheet to compare').parentElement as HTMLElement)
       .parentElement as HTMLElement;
