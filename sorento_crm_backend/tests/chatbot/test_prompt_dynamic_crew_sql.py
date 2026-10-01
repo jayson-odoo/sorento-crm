@@ -87,14 +87,30 @@ def test_the_committed_sql_is_generated_from_the_file_and_the_code():
     assert SQL_FILE.read_text(encoding="utf-8") == _gen().build_sql()
 
 
+def test_the_comment_body_is_the_prefix_and_one_sql_fence_under_the_github_limit():
+    """Crew's applier (worker-contract.md:88) takes the body as `crew-migration:` + ONE sql
+    fence and nothing else; prose anywhere broke it (1 Oct 2026). GitHub caps a comment at
+    65,536 characters."""
+    gen = _gen()
+    body = gen.comment_body()
+    assert body.startswith("crew-migration:\n```sql\n") and body.endswith("\n```")
+    assert body.count("```") == 2
+    assert len(body) <= gen.COMMENT_LIMIT
+    assert body[len("crew-migration:\n```sql\n") : -len("\n```")] + "\n" == SQL_FILE.read_text(encoding="utf-8")
+
+
+def test_the_encoding_round_trips_the_owner_text():
+    gen = _gen()
+    source = SNAPSHOT.read_text(encoding="utf-8")
+    assert gen.decode(*gen.encode(source)) == source
+
+
 def test_the_sql_carries_no_dash_characters():
     raw = SQL_FILE.read_text(encoding="utf-8")
     assert "\u2014" not in raw and "\u2013" not in raw
 
 
 def test_on_tables_shaped_like_the_file_the_sql_swaps_and_renders_the_file():
-    """The pdyn_0003 section alone: the full file re-seeds the 8 status rows first
-    (pdyn_0001), which is exactly why `status_values` stays literal on the crew copy."""
     with pg_session() as db:
         _seed_registries_to_the_file(db)
         top = db.execute(

@@ -1,22 +1,28 @@
 """Generate the PROMPT-DYNAMIC crew-migration SQL (crew copy, 1 Oct 2026).
 
-The crew copy's dev DB is migrated with plain SQL, not alembic. This writes the SQL twin of
-`pdyn_0001_status_words_sales` + `pdyn_0003_prod_identical` to
-`documentation/plans/chatbot/crew-migration-prompt-dynamic.sql`:
+The crew copy's dev DB is migrated with plain SQL posted as ONE `crew-migration:` PR
+comment, and a GitHub comment holds at most 65,536 characters. This writes the SQL twin of
+`pdyn_0003_prod_identical` to `documentation/plans/chatbot/crew-migration-prompt-dynamic.sql`,
+small enough for that comment:
 
-- pdyn_0001: the status words table, its 8 seed rows and the `sales` domain row
-  (idempotent, the statements crew already applied).
-- pdyn_0003: ONE unlabelled `chatbot_semantic_parser` version from the owner's production
-  text. Each hard-coded list becomes its `{{variable}}` only where the tables, when the
-  SQL runs, render exactly that text; the SQL computes each rendering the way
-  `chatbot_prompt_vars` does. Lists with no SQL renderer here stay literal. Skips when a
-  version from the same snapshot (or with the same template) exists.
+- ONE unlabelled `chatbot_semantic_parser` version from the owner's production text (132 KB).
+  Each hard-coded list becomes its `{{variable}}` only where the tables, when the SQL runs,
+  render exactly that text; the SQL computes each rendering the way `chatbot_prompt_vars`
+  does. Lists with no SQL renderer here stay literal. Skips when a version from the same
+  snapshot (or with the same template) exists. Never sets a label.
+- The text travels compressed, decoded in plain PL/pgSQL (no extension): its non-ASCII
+  characters become `^` + an index into a code-point table, the result is LZ77-coded
+  (`~<hex offset>,<hex length>;` back-references), and each pair of ASCII characters is
+  packed into one code point from U+4E00. The SQL checks the decoded text's sha256 against
+  the file before it writes anything.
+- pdyn_0001's statements are not repeated: the crew copy already applied them.
+  pdyn_0002 has no SQL twin (Python over the copy's own production text).
 
-The text carries the owner's em dashes; the SQL writes them as a placeholder that
-`chr(8212)` restores, so the file passes the repo dash guard.
+No dash character reaches the file: the table lists code points as numbers.
 
-    venv/bin/python -m scripts.prompt_dynamic_crew_sql          # write the file
-    venv/bin/python -m scripts.prompt_dynamic_crew_sql --check  # exit 1 if stale
+    venv/bin/python -m scripts.prompt_dynamic_crew_sql            # write the file
+    venv/bin/python -m scripts.prompt_dynamic_crew_sql --check    # exit 1 if stale
+    venv/bin/python -m scripts.prompt_dynamic_crew_sql --comment  # print the PR comment body
 """
 from __future__ import annotations
 
@@ -30,9 +36,12 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 SNAPSHOT = BACKEND / "alembic" / "data" / "chatbot_semantic_parser.prod-20261001.txt"
 OUT = BACKEND.parent / "documentation" / "plans" / "chatbot" / "crew-migration-prompt-dynamic.sql"
 KEY = "chatbot_semantic_parser"
-EM_DASH = "\u2014"
-PLACEHOLDER = "<<EM_DASH>>"
-QUOTE = "$pdyn$"
+COMMENT_LIMIT = 65536
+ESC = "^"
+REF = "~"
+PACK_BASE = 0x4E00
+# Index characters for the non-ASCII table: printable ASCII minus the two markers.
+INDEX_CHARS = "".join(chr(c) for c in range(33, 127) if chr(c) not in (ESC, REF))
 
 
 def _load(name: str):
@@ -43,13 +52,6 @@ def _load(name: str):
     return module
 
 
-def _lit(value: str) -> str:
-    """A SQL text literal for any piece of the owner's text."""
-    assert QUOTE not in value and PLACEHOLDER not in value
-    body = f"{QUOTE}{value.replace(EM_DASH, PLACEHOLDER)}{QUOTE}"
-    return f"replace({body}, '{PLACEHOLDER}', chr(8212))" if EM_DASH in value else body
-
-
 def _q(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -58,9 +60,84 @@ def _array(values) -> str:
     return "ARRAY[" + ", ".join(_q(v) for v in values) + "]::text[]"
 
 
+# --------------------------------------------------------------------------- #
+# Encoding (decoded by the SQL below; `decode` here is its Python mirror for tests)
+# --------------------------------------------------------------------------- #
+
+
+def _escape(text: str) -> tuple[str, list[int]]:
+    table = sorted({ord(c) for c in text if ord(c) > 127})
+    assert len(table) <= len(INDEX_CHARS) and ESC not in text and REF not in text
+    index = {cp: INDEX_CHARS[i] for i, cp in enumerate(table)}
+    return "".join(ESC + index[ord(c)] if ord(c) > 127 else c for c in text), table
+
+
+def _lz(s: str, min_len: int = 8, gram: int = 6, chain: int = 64) -> str:
+    """Greedy LZ77. A reference never overlaps its own output (length <= offset)."""
+    heads: dict[str, list[int]] = {}
+    out: list[str] = []
+    i, n = 0, len(s)
+
+    def remember(k: int) -> None:
+        if k + gram <= n:
+            heads.setdefault(s[k : k + gram], []).append(k)
+
+    while i < n:
+        best_len, best_off = 0, 0
+        if i + gram <= n:
+            for j in reversed(heads.get(s[i : i + gram], [])[-chain:]):
+                off = i - j
+                limit = min(n - i, off)
+                length = 0
+                while length < limit and s[j + length] == s[i + length]:
+                    length += 1
+                if length > best_len:
+                    best_len, best_off = length, off
+        if best_len >= min_len:
+            out.append(f"{REF}{best_off:x},{best_len:x};")
+            for k in range(i, i + best_len):
+                remember(k)
+            i += best_len
+        else:
+            out.append(s[i])
+            remember(i)
+            i += 1
+    return "".join(out)
+
+
+def _pack(s: str) -> str:
+    assert all(0 < ord(c) < 128 for c in s)
+    if len(s) % 2:
+        s += " "
+    return "".join(chr(PACK_BASE + ord(a) * 128 + ord(b)) for a, b in zip(s[::2], s[1::2]))
+
+
+def encode(text: str) -> tuple[str, int, list[int]]:
+    escaped, table = _escape(text)
+    coded = _lz(escaped)
+    return _pack(coded), len(coded), table
+
+
+def decode(packed: str, length: int, table: list[int]) -> str:
+    coded = "".join(chr((ord(c) - PACK_BASE) // 128) + chr((ord(c) - PACK_BASE) % 128) for c in packed)[:length]
+    parts = coded.split(REF)
+    out = parts[0]
+    for part in parts[1:]:
+        ref, rest = part.split(";", 1)
+        off, ln = (int(x, 16) for x in ref.split(","))
+        out += out[len(out) - off : len(out) - off + ln] + rest
+    pieces = out.split(ESC)
+    return pieces[0] + "".join(chr(table[INDEX_CHARS.index(p[0])]) + p[1:] for p in pieces[1:])
+
+
+# --------------------------------------------------------------------------- #
+# Renderers and candidate lists
+# --------------------------------------------------------------------------- #
+
+
 def _renderers() -> dict[str, str]:
     """SQL for each variable, matching `chatbot_prompt_vars.VARIABLES[...].render` on any
-    row whose rendering equals a clean literal (the only case that swaps)."""
+    rows whose rendering equals a clean literal (the only case that swaps)."""
     from app.modules.chatbot.lane_vocabulary import escalation_teams, suggested_agents
 
     known = list(suggested_agents())
@@ -105,8 +182,7 @@ def _candidates(source: str) -> list[tuple[int, int, str]]:
     if BLOCKS_BEGIN in source and BLOCKS_END in source:
         start = source.index(BLOCKS_BEGIN) + len(BLOCKS_BEGIN)
         block = source[start : source.index(BLOCKS_END)]
-        lead = len(block) - len(block.lstrip("\n"))
-        offset = start + lead
+        offset = start + len(block) - len(block.lstrip("\n"))
         for variable, part in zip(["domains_detail", "entity_kinds_detail", "specs"], block.strip("\n").split("\n\n")):
             spans.append((offset, offset + len(part), variable))
             offset += len(part) + 2
@@ -116,137 +192,105 @@ def _candidates(source: str) -> list[tuple[int, int, str]]:
     return spans
 
 
-def _pdyn_0001_sql() -> str:
-    mod = _load("pdyn_0001_status_words_sales.py")
-    lines = [
-        "-- pdyn_0001_status_words_sales: status words table, 8 seed rows, the sales domain.",
-        "CREATE TABLE IF NOT EXISTS chatbot_status_words (",
-        "    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),",
-        "    domain text NOT NULL,",
-        "    value text NOT NULL UNIQUE,",
-        "    label text NOT NULL,",
-        "    trigger_words text[] NOT NULL DEFAULT '{}',",
-        "    sort_order integer NOT NULL DEFAULT 0,",
-        "    created_at timestamp without time zone NOT NULL DEFAULT now(),",
-        "    updated_at timestamp without time zone NOT NULL DEFAULT now()",
-        ");",
-    ]
-    for i, (domain, value, label, words) in enumerate(mod.STATUS_WORDS):
-        lines.append(
-            "INSERT INTO chatbot_status_words (id, domain, value, label, trigger_words, sort_order) "
-            f"VALUES (gen_random_uuid(), {_q(domain)}, {_q(value)}, {_q(label)}, {_array(words)}, {i}) "
-            "ON CONFLICT (value) DO NOTHING;"
-        )
-    d = mod.SALES_DOMAIN
-    lines += [
-        "INSERT INTO chatbot_domains (id, name, label, intents, tools, primary_tool, escalation_team_code, "
-        "switch_words, narrowing, takes_date_filter, reveal_key, supported, ladder, sort_order)",
-        f"SELECT gen_random_uuid(), {_q(d['name'])}, {_q(d['label'])}, {_array(d['intents'])}, {_array(d['tools'])}, "
-        f"NULL, {_q(d['escalation_team_code'])}, {_array(d['switch_words'])},",
-        "       COALESCE((SELECT narrowing FROM chatbot_domains WHERE name = 'order'), '{}'::jsonb), true, "
-        f"{_q(d['reveal_key'])}, true, '{{}}',",
-        "       COALESCE((SELECT max(sort_order) + 1 FROM chatbot_domains), 0)",
-        f"WHERE NOT EXISTS (SELECT 1 FROM chatbot_domains WHERE name = {_q(d['name'])});",
-    ]
-    return "\n".join(lines)
+# --------------------------------------------------------------------------- #
+# The SQL
+# --------------------------------------------------------------------------- #
 
 
 def build_sql() -> str:
-    return "\n".join(
-        [
-            "-- crew-migration for PROMPT-DYNAMIC (#1405). GENERATED by",
-            "-- `sorento_crm_backend/scripts/prompt_dynamic_crew_sql.py`; do not edit by hand.",
-            "-- Additive only. Idempotent: safe to apply twice. Never sets or moves a label.",
-            "-- pdyn_0002_wording_layer has no SQL twin (its transform is Python over the copy's own",
-            "-- production text); run `venv/bin/python -m scripts.publish_parser_wording_layer` for it.",
-            "",
-            _pdyn_0001_sql(),
-            "",
-            pdyn_0003_sql(),
-        ]
-    )
-
-
-def pdyn_0003_sql() -> str:
     mod3 = _load("pdyn_0003_prod_identical.py")
     raw = SNAPSHOT.read_bytes()
     source = raw.decode("utf-8")
     sha = hashlib.sha256(raw).hexdigest()
+    packed, length, table = encode(source)
+    assert decode(packed, length, table) == source
     renderers = _renderers()
     spans = _candidates(source)
-
-    declare = [f"    r_{name} text := {sql};" for name, sql in renderers.items()]
-    pieces: list[str] = []
-    report: list[str] = []
-    pos = 0
-    for start, end, variable in spans:
-        if pos < start:
-            pieces.append(_lit(source[pos:start]))
-        literal = source[start:end]
-        line = source[:start].count("\n") + 1
-        if variable in renderers:
-            cond = f"r_{variable} IS NOT DISTINCT FROM {_lit(literal)}"
-            pieces.append(f"CASE WHEN {cond} THEN {_q('{{' + variable + '}}')} ELSE {_lit(literal)} END")
-            action = f"CASE WHEN {cond} THEN 'replaced' ELSE 'kept literal' END"
-            reason = "CASE WHEN {c} THEN NULL ELSE 'the registry renders different text' END".format(c=cond)
-        else:
-            pieces.append(_lit(literal))
-            action = "'kept literal'"
-            reason = "'no SQL renderer: the alembic migration decides this list from the tables'"
-        report.append(
-            f"        jsonb_build_object('variable', {_q(variable)}, 'line', {line}, 'action', {action}, 'reason', {reason})"
-        )
-        pos = end
-    if pos < len(source):
-        pieces.append(_lit(source[pos:]))
-
-    message = mod3.MESSAGE
-    body = "\n".join(
+    lines = [source[:s].count("\n") + 1 for s, _, _ in spans]
+    pick = "CASE var " + " ".join(f"WHEN {_q(n)} THEN r_{n}" for n in renderers) + " END"
+    return "\n".join(
         [
-            "-- pdyn_0003_prod_identical: the owner's production text of 1 Oct 2026,",
-            f"-- sha256 {sha}, as ONE unlabelled version.",
             "DO $crew$",
             "DECLARE",
-            *declare,
-            "    t text;",
-            "    rep jsonb;",
-            "    v integer;",
-            "    vars jsonb;",
-            "    item jsonb;",
+            *[f"r_{name} text := {sql};" for name, sql in renderers.items()],
+            f"starts int[] := ARRAY[{', '.join(str(s + 1) for s, _, _ in spans)}];",
+            f"lens int[] := ARRAY[{', '.join(str(e - s) for s, e, _ in spans)}];",
+            f"vars text[] := {_array([v for _, _, v in spans])};",
+            f"lines int[] := ARRAY[{', '.join(str(n) for n in lines)}];",
+            f"tbl int[] := ARRAY[{', '.join(str(cp) for cp in table)}];",
+            f"idx text := {_q(INDEX_CHARS)};",
+            "p text; l text; e text := ''; t text; tpl text; part text; var text; lit text; rendered text;",
+            "k int; off int; ln int; v int; vars_json jsonb; rep jsonb := '[]'::jsonb; act text; i int; first boolean;",
             "BEGIN",
-            f"    IF EXISTS (SELECT 1 FROM ai_prompt_versions WHERE name = {_q(KEY)} "
+            f"IF EXISTS (SELECT 1 FROM ai_prompt_versions WHERE name = {_q(KEY)} "
             f"AND config_json->>'prod_snapshot_sha256' = {_q(sha)}) THEN",
-            "        RAISE NOTICE 'prod snapshot already published; nothing to do';",
-            "        RETURN;",
-            "    END IF;",
-            "    t := " + "\n      || ".join(pieces) + ";",
-            "    rep := jsonb_build_array(\n" + ",\n".join(report) + "\n    );",
-            f"    IF EXISTS (SELECT 1 FROM ai_prompt_versions WHERE name = {_q(KEY)} AND template = t) THEN",
-            "        RAISE NOTICE 'an identical template already exists; nothing to do';",
-            "        RETURN;",
-            "    END IF;",
-            f"    SELECT COALESCE(max(version), 0) + 1 INTO v FROM ai_prompt_versions WHERE name = {_q(KEY)};",
-            "    SELECT pv.variables INTO vars FROM ai_prompt_versions pv JOIN ai_prompt_labels l ON l.version_id = pv.id",
-            f"        WHERE l.name = {_q(KEY)} AND l.label = 'production';",
-            "    INSERT INTO ai_prompt_versions (id, name, version, type, template, variables, config_json, commit_message, created_at)",
-            f"    VALUES (gen_random_uuid(), {_q(KEY)}, v, 'text', t, COALESCE(vars, '[\"current_date\"]'::jsonb),",
-            f"        jsonb_build_object('prod_snapshot', {_q(SNAPSHOT.name)}, 'prod_snapshot_sha256', {_q(sha)},",
-            "            'rendered_identical', true, 'identical_report', rep, 'source', 'crew-migration SQL'),",
-            f"        {_q(message)}, now());",
-            "    RAISE NOTICE 'prod snapshot v%: published unlabelled', v;",
-            "    FOR item IN SELECT * FROM jsonb_array_elements(rep) LOOP",
-            "        RAISE NOTICE 'prod snapshot v%: {{%}} line % %', v, item->>'variable', item->>'line', item->>'action';",
-            "    END LOOP;",
+            "RAISE NOTICE 'prod snapshot already published; nothing to do'; RETURN; END IF;",
+            f"p := $pk${packed}$pk$;",
+            "SELECT string_agg(chr((ascii(c) - 19968) / 128) || chr((ascii(c) - 19968) % 128), '' ORDER BY n) INTO l",
+            "FROM unnest(string_to_array(p, NULL)) WITH ORDINALITY AS u(c, n);",
+            f"l := left(l, {length});",
+            "first := true;",
+            "FOREACH part IN ARRAY string_to_array(l, '~') LOOP",
+            "IF first THEN e := part; first := false; CONTINUE; END IF;",
+            "k := strpos(part, ';');",
+            "off := ('x' || lpad(split_part(left(part, k - 1), ',', 1), 8, '0'))::bit(32)::int;",
+            "ln := ('x' || lpad(split_part(left(part, k - 1), ',', 2), 8, '0'))::bit(32)::int;",
+            "e := e || substr(e, length(e) - off + 1, ln) || substr(part, k + 1);",
+            "END LOOP;",
+            "first := true;",
+            "FOREACH part IN ARRAY string_to_array(e, '^') LOOP",
+            "IF first THEN t := part; first := false; ELSE t := t || chr(tbl[strpos(idx, left(part, 1))]) || substr(part, 2); END IF;",
+            "END LOOP;",
+            f"IF encode(sha256(convert_to(t, 'UTF8')), 'hex') <> {_q(sha)} THEN",
+            "RAISE EXCEPTION 'prod snapshot: decoded text does not match the owner file; nothing written'; END IF;",
+            "tpl := t;",
+            "FOR i IN REVERSE array_length(starts, 1)..1 LOOP",
+            "var := vars[i]; lit := substr(t, starts[i], lens[i]);",
+            f"rendered := {pick};",
+            "act := CASE WHEN rendered IS NOT NULL AND rendered = lit THEN 'replaced' ELSE 'kept literal' END;",
+            "IF act = 'replaced' THEN tpl := overlay(tpl placing '{{' || var || '}}' from starts[i] for lens[i]); END IF;",
+            "rep := jsonb_build_object('variable', var, 'line', lines[i], 'action', act, 'reason', CASE",
+            "WHEN act = 'replaced' THEN NULL",
+            "WHEN rendered IS NULL AND NOT var = ANY(" + _array(list(renderers)) + ") "
+            "THEN 'no SQL renderer: the alembic migration decides this list from the tables'",
+            "ELSE 'the registry renders different text' END) || rep;",
+            "END LOOP;",
+            f"IF EXISTS (SELECT 1 FROM ai_prompt_versions WHERE name = {_q(KEY)} AND template = tpl) THEN",
+            "RAISE NOTICE 'an identical template already exists; nothing to do'; RETURN; END IF;",
+            f"SELECT COALESCE(max(version), 0) + 1 INTO v FROM ai_prompt_versions WHERE name = {_q(KEY)};",
+            "SELECT pv.variables INTO vars_json FROM ai_prompt_versions pv JOIN ai_prompt_labels lb ON lb.version_id = pv.id",
+            f"WHERE lb.name = {_q(KEY)} AND lb.label = 'production';",
+            "INSERT INTO ai_prompt_versions (id, name, version, type, template, variables, config_json, commit_message, created_at)",
+            f"VALUES (gen_random_uuid(), {_q(KEY)}, v, 'text', tpl, COALESCE(vars_json, '[\"current_date\"]'::jsonb),",
+            f"jsonb_build_object('prod_snapshot', {_q(SNAPSHOT.name)}, 'prod_snapshot_sha256', {_q(sha)},",
+            "'rendered_identical', true, 'identical_report', rep, 'source', 'crew-migration SQL'),",
+            f"{_q(mod3.MESSAGE)}, now());",
+            "RAISE NOTICE 'prod snapshot v%: published unlabelled', v;",
+            "FOR i IN 1..jsonb_array_length(rep) LOOP",
+            "RAISE NOTICE 'prod snapshot v%: {{%}} line % %', v, rep->(i-1)->>'variable', rep->(i-1)->>'line', rep->(i-1)->>'action';",
+            "END LOOP;",
             "END",
             "$crew$;",
             "",
         ]
     )
-    return body
+
+
+# The pdyn_0003 section on its own (the whole file now).
+pdyn_0003_sql = build_sql
+
+
+def comment_body(sql: str | None = None) -> str:
+    """Exactly what crew's applier expects: the prefix line and ONE sql fence, nothing else."""
+    sql = build_sql() if sql is None else sql
+    return "crew-migration:\n```sql\n" + sql.rstrip("\n") + "\n```"
 
 
 def main() -> int:
     sql = build_sql()
+    if "--comment" in sys.argv[1:]:
+        sys.stdout.write(comment_body(sql))
+        return 0
     if "--check" in sys.argv[1:]:
         current = OUT.read_text(encoding="utf-8") if OUT.exists() else ""
         if current != sql:
@@ -255,7 +299,7 @@ def main() -> int:
         print("up to date")
         return 0
     OUT.write_text(sql, encoding="utf-8")
-    print(f"wrote {OUT} ({len(sql)} chars)")
+    print(f"wrote {OUT} ({len(sql)} chars; comment body {len(comment_body(sql))} of {COMMENT_LIMIT})")
     return 0
 
 
