@@ -662,7 +662,7 @@ def test_from_dtl_key_zero_links_by_doc_no_and_item(env):
     _, so_line = _seed_so(env)
     rec = _with_from(copy.deepcopy(do_records()[0]), 0, "SO", "ZZSO-0001", 0)
     r = _records(env.push_do([rec]))["db1:DO:900001"]
-    assert "so_line_unresolved" not in r["warnings"]
+    assert "so_line_unresolved" not in r.get("warnings", [])
     assert r["lines"]["linked"] == 1
     line = {l.dtl_key: l for l in env.order_lines(env.order(900001).id)}[910001]
     assert line.sales_order_line_id == so_line
@@ -680,7 +680,7 @@ def test_missing_from_dtl_key_links_by_doc_no_and_item(env, absent):
     else:
         rec["Details"][0]["FromDocDtlKey"] = None
     r = _records(env.push_do([rec]))["db1:DO:900001"]
-    assert "so_line_unresolved" not in r["warnings"]
+    assert "so_line_unresolved" not in r.get("warnings", [])
     line = {l.dtl_key: l for l in env.order_lines(env.order(900001).id)}[910001]
     assert line.sales_order_line_id == so_line
 
@@ -733,7 +733,7 @@ def test_grn_from_dtl_key_zero_falls_back_to_our_po_no(env):
     _with_from(rec, 0, "PO", "ZZPO-0002", 0)
     rec["Details"][0]["OurPONo"] = "ZZPO-0002"
     r = _records(env.push_grn([rec]))["db1:GRN:800001"]
-    assert "po_line_unresolved" not in r["warnings"]
+    assert "po_line_unresolved" not in r.get("warnings", [])
     line = {l.dtl_key: l for l in env.grn_lines(env.grn(800001).id)}[810001]
     assert line.purchase_order_id == str(po.id)
     assert line.from_dtl_key is None
