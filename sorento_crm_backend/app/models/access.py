@@ -281,6 +281,11 @@ class RespondContact(Base):
     # stock ask and the incoming routes, `app/services/eta_policy.py`). Default ON: the
     # stock ask padded the ETA for everyone before the switch existed.
     chatbot_eta_offset_applied = Column(Boolean, nullable=False, server_default=text("true"), default=True)
+    # ESCALATION-CONTROL (owner, 30 Sep 2026): may the chatbot offer this contact a
+    # hand-off to a person, or let them force one. The ONE control (access types do not
+    # decide it); default ON, every existing contact backfilled ON, unticked on the
+    # contact page's Chatbot card to block.
+    escalation_allowed = Column(Boolean, nullable=False, server_default=text("true"), default=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)
