@@ -1,6 +1,6 @@
 # PLAN: AutoCount DO ingest, FromDocDtlKey 0 means "no link" (DO-SO-LINE-LINK)
 
-Status: **built, reviewed, PR #1409 awaiting CI** (small fix track: one service file plus tests, no migration, no
+Status: **built, reviewed, CI green on PR #1409, awaiting hand test + merge** (small fix track: one service file plus tests, no migration, no
 auth/RBAC change, no new ingest surface). Branch `claude/do-so-line-link-qnsztu` (the session's
 designated branch; the brief named `crew/do-so-line-link`), cut from `origin/main` `b8cdbebe`.
 UAC: `do-so-line-link-1oct-acceptance-criteria.md` (AC-DSL001 onward).
