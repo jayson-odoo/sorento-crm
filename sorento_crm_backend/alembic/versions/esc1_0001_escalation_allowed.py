@@ -24,6 +24,9 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
+    # Security review N3: ADD COLUMN takes an ACCESS EXCLUSIVE lock; give up rather than
+    # queue every chatbot turn behind a long transaction on respond_contacts.
+    bind.execute(sa.text("SET LOCAL lock_timeout = '10s'"))
     bind.execute(
         sa.text(
             "ALTER TABLE respond_contacts ADD COLUMN IF NOT EXISTS escalation_allowed "

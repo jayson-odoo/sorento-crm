@@ -556,8 +556,9 @@ def test_apply_closes_an_open_escalation_offer_on_entry_for_a_barred_contact() -
 
 
 class TestAmbiguousContact:
-    """Security review S2: one respond.io id on two rows in the workspace. Stock is denied
-    (today's rule); escalation is barred only when every row is barred."""
+    """Security review S2 (second round): one respond.io id on two rows in the workspace is
+    one person. Stock is denied (today's rule) and so is the hand-off when ANY row is
+    unticked; only when every row is ticked is the contact allowed."""
 
     def _two_rows(self, session_factory, *, second_barred: bool) -> None:
         _seed_contact(session_factory, phone="+60000009401")
@@ -580,12 +581,40 @@ class TestAmbiguousContact:
         profile, _ = load_profile(session_factory(), str(CONTACT_ID))
         assert profile.stock_allowed is False and profile.escalation_allowed is False
 
-    def test_one_allowed_row_allows(self, session_factory) -> None:
+    def test_one_unticked_row_blocks(self, session_factory) -> None:
         from app.services.chatbot.turn_runtime import load_profile
 
         self._two_rows(session_factory, second_barred=False)
         profile, _ = load_profile(session_factory(), str(CONTACT_ID))
-        assert profile.stock_allowed is False and profile.escalation_allowed is True
+        assert profile.stock_allowed is False and profile.escalation_allowed is False
+
+    def test_one_unticked_row_of_three_blocks_whichever_two_the_check_reads(self, session_factory) -> None:
+        """Review nit: the ambiguity check reads two rows (`LIMIT 2`); the block reads all."""
+        from app.services.chatbot.turn_runtime import load_profile
+
+        self._two_rows(session_factory, second_barred=False)
+        db = session_factory()
+        db.execute(text("UPDATE respond_contacts SET escalation_allowed = true WHERE respond_io_id = :c"), {"c": str(CONTACT_ID)})
+        db.execute(
+            text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, workspace_id, "
+                "escalation_allowed) SELECT gen_random_uuid()::text, respond_io_id, '+60000009403', "
+                "'{}'::jsonb, workspace_id, false FROM respond_contacts WHERE phone_number = '+60000009401'"
+            )
+        )
+        db.commit()
+        profile, _ = load_profile(session_factory(), str(CONTACT_ID))
+        assert profile.escalation_allowed is False
+
+    def test_every_row_ticked_is_allowed(self, session_factory) -> None:
+        from app.services.chatbot.turn_runtime import load_profile
+
+        self._two_rows(session_factory, second_barred=False)
+        db = session_factory()
+        db.execute(text("UPDATE respond_contacts SET escalation_allowed = true WHERE respond_io_id = :c"), {"c": str(CONTACT_ID)})
+        db.commit()
+        profile, _ = load_profile(session_factory(), str(CONTACT_ID))
+        assert profile.escalation_allowed is True
 
 
 
@@ -698,3 +727,47 @@ def test_the_what_you_want_reply_ends_with_the_salesman_line_for_a_blocked_conta
     assert "escalate" not in blocked
     allowed = what_you_want_reply("basin taps", lines, team="customer service", **kwargs)
     assert allowed.endswith("Would you like me to escalate to customer service team?"), allowed
+
+
+def test_the_composer_miss_ends_with_the_salesman_line_for_a_blocked_contact() -> None:
+    """Review (per-contact round) should-fix 1: `turn/compose.py`'s own offer arm. The
+    barred analogue of the S11 staff test, with the exact text (measured by the reviewer)."""
+    from app.services.chatbot.turn.compose import compose
+    from app.services.chatbot.turn.state import Focus, State
+    from tests.chatbot.test_samantha_26sep_s11_escalation_audience import _policy, _total_miss_envelope
+
+    state = State(focus=Focus(), pending=None, profile=Profile(escalation_allowed=False), turn_no=11)
+    answer = compose([_total_miss_envelope()], state, _policy(), ctx=None)
+    assert answer.offer is None
+    assert answer.text == "*inventory* for M210-GM:\n\nPlease refer to your salesman."
+
+    allowed = compose(
+        [_total_miss_envelope()], State(focus=Focus(), pending=None, profile=Profile(), turn_no=11), _policy(), ctx=None
+    )
+    assert allowed.text.endswith("Would you like me to escalate to warehouse team?"), allowed.text
+
+
+def test_the_silent_company_offer_is_not_made_to_a_blocked_contact() -> None:
+    """Review nit: `answer_bridge.apply_silent_company_offer`'s barred early return, on the
+    envelope AC-1803 uses to prove the offer IS made to an allowed contact."""
+    from app.services.chatbot import answer_bridge as bridge
+    from app.services.chatbot.turn.compose import Answer
+
+    envelope = {
+        "figures": [{"fields": [{"label": "Product", "value": "SRTSC07"}]}],
+        "denied": False,
+        "raw_fragment": {
+            "fetch": {
+                "lookup_companies": [{"id": "zzt-co-1", "name": "Sorento"}, {"id": "zzt-co-2", "name": "Mocha"}],
+                "answers": [{"fields": [{"key": "company_name", "label": "Company", "value": "Sorento"}]}],
+            }
+        },
+    }
+    parser = {"routing": {"suggested_team": "purchasing", "suggested_agent": "incoming_stock_enquiries"}}
+    kwargs = dict(envelope=envelope, parser=parser, gate={}, asked_at_turn=1, turn_id="zzt-turn-1")
+    answer = Answer(text="Found it in Sorento.", question=None)
+
+    allowed = bridge.apply_silent_company_offer(answer, profile=Profile(), **kwargs)
+    assert allowed.question is not None and allowed.question.kind == "team_pick"
+    blocked = bridge.apply_silent_company_offer(answer, profile=Profile(escalation_allowed=False), **kwargs)
+    assert blocked is answer

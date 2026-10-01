@@ -174,7 +174,13 @@ def _fail_closed_profile() -> tuple[Profile, bool]:
     return Profile(stock_allowed=False), False
 
 
-def _profile_rows(db: Session, contact_respond_id: str, space_id: str | None) -> list[Any]:
+def _limit(limit: int | None) -> str:
+    return f" LIMIT {int(limit)}" if limit is not None else ""
+
+
+def _profile_rows(
+    db: Session, contact_respond_id: str, space_id: str | None, *, limit: int | None = 2
+) -> list[Any]:
     """This contact's rows under `space_id`, falling back to the NULL-workspace ones.
 
     Mirrors `field_access.resolve_contact_with_null_workspace_fallback`, which is the
@@ -187,7 +193,7 @@ def _profile_rows(db: Session, contact_respond_id: str, space_id: str | None) ->
     if not space_id:
         return list(
             db.execute(
-                text(f"SELECT {_PROFILE_COLUMNS} WHERE c.respond_io_id = :cid LIMIT 2"),
+                text(f"SELECT {_PROFILE_COLUMNS} WHERE c.respond_io_id = :cid{_limit(limit)}"),
                 {"cid": contact_respond_id},
             ).fetchall()
         )
@@ -196,7 +202,7 @@ def _profile_rows(db: Session, contact_respond_id: str, space_id: str | None) ->
             text(
                 f"SELECT {_PROFILE_COLUMNS} "
                 "JOIN respond_workspaces w ON w.id = c.workspace_id "
-                "WHERE c.respond_io_id = :cid AND w.space_id = :space LIMIT 2"
+                f"WHERE c.respond_io_id = :cid AND w.space_id = :space{_limit(limit)}"
             ),
             {"cid": contact_respond_id, "space": str(space_id)},
         ).fetchall()
@@ -207,7 +213,7 @@ def _profile_rows(db: Session, contact_respond_id: str, space_id: str | None) ->
         db.execute(
             text(
                 f"SELECT {_PROFILE_COLUMNS} "
-                "WHERE c.respond_io_id = :cid AND c.workspace_id IS NULL LIMIT 2"
+                f"WHERE c.respond_io_id = :cid AND c.workspace_id IS NULL{_limit(limit)}"
             ),
             {"cid": contact_respond_id},
         ).fetchall()
@@ -430,6 +436,9 @@ def load_profile(
             space_id = default_space_id(db)
         rows = _profile_rows(db, contact_respond_id, space_id)
     except Exception:  # noqa: BLE001 - a contact with no profile row is a blank profile
+        # Security review N1: an unreadable profile fails open (stock and escalation both
+        # allowed), so it must at least be visible.
+        logger.warning("chatbot: profile unreadable for %s", contact_respond_id, exc_info=True)
         return Profile(), False
     if not rows:
         return Profile(), False
@@ -441,10 +450,14 @@ def load_profile(
             len(rows),
         )
         profile, recall = _fail_closed_profile()
-        # ESCALATION-CONTROL security review S2: the ambiguity denies stock, and must not
-        # hand a blocked contact a hand-off either. Blocked only when EVERY matching row is
-        # unticked, so a namesake who is allowed is never stranded.
-        if all(_escalation_allowed(row) is False for row in rows):
+        # ESCALATION-CONTROL security review S2 (both rounds): the ambiguity denies stock,
+        # and denies the hand-off the same way - the rows share one respond.io id in one
+        # workspace, so they are the same person, and an operator who unticks the row they
+        # can see must not be undone by the duplicate. Blocked when ANY row is unticked.
+        # Every matching row, not the two the ambiguity check read (review nit: `LIMIT 2`
+        # would decide on two arbitrary rows of three).
+        every_row = _profile_rows(db, contact_respond_id, space_id, limit=None)
+        if any(_escalation_allowed(row) is False for row in every_row):
             profile.escalation_allowed = False
         return profile, recall
     row = rows[0]

@@ -19,6 +19,7 @@ import ContactChatbotSection from './ContactChatbotSection';
 
 const useContactChatbotProfile = vi.fn();
 const mutate = vi.fn();
+const escalationMutate = vi.fn();
 const memoryMutate = vi.fn();
 
 // Chatbot memory lane A: `chatbot_memory_level` replaces `recall_enabled`, `language`
@@ -29,6 +30,7 @@ const memoryMutate = vi.fn();
 vi.mock('../hooks/useContactChatbot', () => ({
   useContactChatbotProfile: (...a: unknown[]) => useContactChatbotProfile(...a),
   useSaveContactChatbotProfile: () => ({ mutate, isPending: false }),
+  useSaveContactEscalation: () => ({ mutate: escalationMutate, isPending: false }),
   useContactChatbotMemory: () => ({
     data: {
       level: { own: null, effective: 'off', system_default: 'off' },
@@ -88,6 +90,7 @@ function renderWithClient(ui: React.ReactElement) {
 beforeEach(() => {
   useContactChatbotProfile.mockReset();
   mutate.mockReset();
+  escalationMutate.mockReset();
 });
 
 afterEach(() => cleanup());
@@ -287,12 +290,13 @@ describe('ContactChatbotSection - Can escalate to a person switch', () => {
     expect(screen.getByLabelText('Can escalate to a person')).toHaveAttribute('data-state', 'unchecked');
   });
 
-  it('unticking saves escalation_allowed false with every other field unchanged', () => {
+  it('unticking saves through its own mutation, never the card save (security review S3)', () => {
     useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
     renderWithClient(<ContactChatbotSection contactId="c1" />);
     fireEvent.click(screen.getByLabelText('Can escalate to a person'));
-    expect(mutate).toHaveBeenCalledTimes(1);
-    expect(mutate.mock.calls[0][0]).toEqual({ ...BASE_PROFILE, escalation_allowed: false });
+    expect(escalationMutate).toHaveBeenCalledTimes(1);
+    expect(escalationMutate.mock.calls[0][0]).toBe(false);
+    expect(mutate).not.toHaveBeenCalled();
   });
 
   it('shows no inherited-from-access-type text any more', () => {

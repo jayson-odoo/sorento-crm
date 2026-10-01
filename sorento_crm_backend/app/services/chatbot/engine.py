@@ -7392,6 +7392,7 @@ def run_tail(
     state: Any = None,
     question: Any = None,
     remembered_before: Mapping[str, Any] | None = None,
+    profile: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """outcome -> CS member offer -> reply ladder -> persist the five keys.
 
@@ -7414,6 +7415,11 @@ def run_tail(
     `access_denied` answers WITHOUT the tail's write on a live turn, and a contact refused
     the agent must not have the turn written into their memory.
     """
+    # ESCALATION-CONTROL (security review S1): the contact's profile for the block checks
+    # below. A caller with APPLY's state carries it there; n8n's `/complete` has none and
+    # hands the contact's own profile in (`complete_turn`).
+    if profile is None:
+        profile = getattr(state, "profile", None)
     from app.services.chatbot.contracts import SessionVars
     from app.services.chatbot.tail import member_offer as member_mod
     from app.services.chatbot.tail import outcome as outcome_mod
@@ -7454,7 +7460,7 @@ def run_tail(
         outcome_input = catalog
         # ESCALATION-CONTROL: no CS roster is built for a barred contact at all (its rows
         # would ride on `result_set` even after the text is stripped).
-        if not turn_state.escalation_barred(getattr(state, "profile", None)) and outcome_mod.cs_offer_gate(
+        if not turn_state.escalation_barred(profile) and outcome_mod.cs_offer_gate(
             catalog, ctx, values["gate"]
         ):
             plan = member_mod.cs_roster_plan(values["gate"])
@@ -7476,7 +7482,7 @@ def run_tail(
         # A lane may have composed quick replies of its own before the tail ran: the
         # escalation clarifies name the teams so the answer is a tap.
         quick_replies = lane_quick_replies
-    barred_profile = getattr(state, "profile", None)
+    barred_profile = profile
     if turn_state.escalation_barred(barred_profile):
         # ESCALATION-CONTROL: the same backstop `_run_answer` runs, for the lanes this
         # tail composes (canned, escalation). The casual lane builds its send action
@@ -7523,7 +7529,7 @@ def run_tail(
     if state is None:
         state = turn_runtime.load_state(
             {"session_vars": jsc.get(jsc.get(ctx, "session"), "session_vars")},
-            profile=turn_state.Profile(),
+            profile=profile if profile is not None else turn_state.Profile(),
             turn_no=0,
         )
     before = dict(remembered_before or session_state.five_keys(jsc.get(ctx, "session")))
@@ -8047,6 +8053,14 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 # from, and this is one value the tail could not have composed for itself
                 # - what the lane already decided the customer can tap.
                 lane_quick_replies=fragments.get("lane_quick_replies"),
+                # ESCALATION-CONTROL (security review S1): n8n's `/complete` hands over no
+                # APPLY state, so the contact's own profile is read here, or a blocked
+                # contact would be offered the team and the CS roster on this path.
+                profile=(
+                    getattr(state, "profile", None)
+                    if state is not None
+                    else turn_runtime.load_profile(db, str(contact_respond_id or ""))[0]
+                ),
             )
             # D9: the caller SENDS; the engine hands it the action to send. Only a lane
             # that ASKED for it gets one: the `/complete` path is n8n's, and n8n composes

@@ -201,8 +201,26 @@ export async function saveContactChatbotProfile(
       notify_salesman: input.notify_salesman,
       packing_list_allowed: input.packing_list_allowed,
       chatbot_eta_offset_applied: input.eta_offset_applied,
-      escalation_allowed: input.escalation_allowed,
+      // `escalation_allowed` is NOT sent here: it has its own save
+      // (`saveContactEscalation`), so another switch saved from a stale page can never
+      // switch a contact's escalation back on (security review S3).
     }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save chatbot settings'));
+  }
+  return profileFromContact(await response.json());
+}
+
+/**
+ * ESCALATION-CONTROL: "Can escalate to a person", saved on its own - the body carries this
+ * one key, and the route leaves every field it does not name alone.
+ */
+export async function saveContactEscalation(contactId: string, allowed: boolean): Promise<ContactChatbotProfile> {
+  const response = await apiFetch(`/api/v1/user-management/contacts/${contactId}/chatbot`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ escalation_allowed: allowed }),
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to save chatbot settings'));

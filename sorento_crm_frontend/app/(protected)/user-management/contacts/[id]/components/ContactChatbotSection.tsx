@@ -33,6 +33,7 @@ import {
   useContactChatbotMemory,
   useContactChatbotProfile,
   useSaveContactChatbotProfile,
+  useSaveContactEscalation,
   useSaveContactFact,
 } from '../hooks/useContactChatbot';
 import {
@@ -129,6 +130,7 @@ function ChatbotSettingsCard({
 }) {
   const { data: profile, isLoading, isError } = useContactChatbotProfile(contactId);
   const save = useSaveContactChatbotProfile(contactId);
+  const saveEscalation = useSaveContactEscalation(contactId);
 
   if (isLoading) {
     return (
@@ -232,8 +234,8 @@ function ChatbotSettingsCard({
             id="contact-chatbot-escalation"
             label="Can escalate to a person"
             checked={profile.escalation_allowed}
-            disabled={save.isPending}
-            onCheckedChange={(checked) => save.mutate({ ...profile, escalation_allowed: checked })}
+            disabled={save.isPending || saveEscalation.isPending}
+            onCheckedChange={(checked) => saveEscalation.mutate(checked)}
           />
         </div>
       </CardContent>
