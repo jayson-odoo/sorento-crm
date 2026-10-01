@@ -14,9 +14,11 @@
  * - expired: the page is not on `/signin` within 5 s.
  *
  * Rows the audit already ranked and whose fix lane has not merged are listed in
- * `never-stuck/known-failures.json` with their audit row id (`route: "*"` covers every
- * route for that persona). They still run and are reported, but do not fail the night;
- * the summary names the ones that passed so their entries get deleted.
+ * `never-stuck/known-failures.json` with their audit row id and problem kinds (`route: "*"`
+ * covers every route for that persona). Those kinds are reported without failing the
+ * night; any other kind on the same route still fails. The summary names the entries that
+ * passed so they get deleted.
+ * - admin / restricted: landing on `/` without asking for it (the module-guard bounce).
  *
  * Run: `scripts/never-stuck-smoke.sh` boots, seeds and runs it end to end. Against a stack
  * already up and seeded:
@@ -51,9 +53,23 @@ const EMPTY_LINE = /(?:^|\n)[ \t]*((?:No|Nothing) [^\n]{0,80})/;
 const NOT_FOUND = /\bnot found\b|doesn't exist|does not exist/i;
 const emptyStateText = (text: string) => text.match(EMPTY_LINE)?.[1] ?? text.match(NOT_FOUND)?.[0];
 
+/** The kinds of problem a route can have; a known entry tolerates only its own kinds. */
+const KINDS = [
+  'still loading',
+  'document did not finish loading',
+  'expired session not on /signin',
+  'live session bounced to /signin',
+  'redirected to /',
+  'raw permission text',
+  'refusal rendered as empty',
+] as const;
+const kindOf = (problem: string) => KINDS.find((k) => problem.startsWith(k)) ?? problem;
+
 interface KnownFailure {
   persona: Persona;
   route: string;
+  /** Problem kinds (from KINDS) this entry tolerates; any other problem still fails. */
+  kinds: string[];
   audit: string;
   reason: string;
 }
@@ -171,6 +187,10 @@ for (const persona of PERSONAS) {
         const landedOn = new URL(page.url()).pathname;
         const redirected = persona !== 'expired' && !onSignIn(page.url()) && landedOn !== url;
         if (redirected) test.info().annotations.push({ type: 'redirected', description: landedOn });
+        // Landing on `/` without asking for it is the ModuleRouteGuard signature: a run where
+        // every module route bounces to the dashboard must not read as green (it did once,
+        // on a database with no module enabled).
+        if (redirected && landedOn === '/') problems.push(`redirected to / instead of rendering ${url}`);
 
         const text = await page.locator('body').innerText({ timeout: 2_000 }).catch(() => '');
         const raw = text.match(RAW_PERMISSION_TEXT);
@@ -189,14 +209,16 @@ for (const persona of PERSONAS) {
         }
 
         if (known) {
-          // A ranked audit row whose fix lane is open: report, do not fail. Not `test.fail()`:
-          // several of these (the expired-session redirect) are timing-bound and flap, and a
-          // ratchet that fails the night a flaky row happens to pass is noise, not signal.
-          // The summary lists the ones that passed so their entries get deleted.
+          // A ranked audit row whose fix lane is open: its own kinds of problem are reported,
+          // not failed. Not `test.fail()`: some are timing-bound and flap, and a ratchet that
+          // fails the night a flaky row happens to pass is noise. Any OTHER kind of problem
+          // on the same route is a regression and still fails below.
+          const tolerated = problems.filter((p) => known.kinds.includes(kindOf(p)));
           test.info().annotations.push({
-            type: problems.length ? 'known-failure' : 'known-passed',
-            description: `${known.audit}: ${problems.join('; ') || known.reason}`,
+            type: tolerated.length ? 'known-failure' : 'known-passed',
+            description: `${known.audit}: ${tolerated.join('; ') || known.reason}`,
           });
+          expect(problems.filter((p) => !tolerated.includes(p)), `${persona} ${url}`).toEqual([]);
           return;
         }
         expect(problems, `${persona} ${url}`).toEqual([]);

@@ -16,15 +16,21 @@ Plan: `PLAN-ns-smoke-all-routes.md`.
 5. Any persona: `Permission required:`, `One of these permissions required` or
    `Module not enabled:` on screen fails with "raw permission text on screen".
 6. Admin / restricted landing on `/signin` fails with "live session bounced to /signin".
-7. Each entry in `known-failures.json` carries an audit row id (`route: "*"` = every route of
-   that persona). Its route still runs; a failure is reported in the summary's folded "known
-   failures still failing" table without failing the night, and a pass is listed under "known
+7. Each entry in `known-failures.json` carries an audit row id and the problem kinds it
+   tolerates (`route: "*"` = every route of that persona). Its route still runs; a problem of a
+   listed kind is reported in the summary's folded "known failures still failing" table without
+   failing the night, a problem of any other kind fails, and a pass is listed under "known
    failures that passed tonight".
 8. The nightly job runs on cron and on dispatch only, never on a PR or push, and skips itself
-   when main's head already has a green run. Its summary lists new failures first, then known
-   failures now passing, then counts; screenshots are in the `never-stuck-report` artifact.
+   when main's head already has a green run. Its summary lists counts, new failures, known
+   failures that passed, the known failures still failing and the redirects (both folded), and
+   any run error; screenshots are in the `never-stuck-report` artifact.
 9. The seed script and the runner refuse any `DATABASE_URL` that is not a local database named
    `*_smoke` / `*_ci`.
 10. `npm run test:e2e` (the default config) does not pick up the smoke spec.
 11. `Skeleton` / `ScreenLoader` render `data-loading` and `AccessDenied` renders
    `data-access-denied` (vitest `components/never-stuck-markers.test.tsx`).
+12. The seed installs and enables every catalog module for the default tenant (a fresh bootstrap
+   has none, and `ModuleRouteGuard` would then send every module route to `/`). A live persona
+   redirected off the requested route is listed in the summary; one that lands on `/` without
+   asking for it fails with "redirected to /".

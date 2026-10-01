@@ -81,6 +81,9 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
   # NEVER_STUCK_API_PROXY bakes the /api/v1 rewrite into this build (next.config.mjs);
   # NEXT_SKIP_TYPECHECK matches the Docker build.
   (cd "$FE" && NEVER_STUCK_API_PROXY=1 NEXT_SKIP_TYPECHECK=1 NODE_OPTIONS="--max-old-space-size=6144" npx next build)
+  # A build into NEXT_DIST_DIR rewrites next-env.d.ts and tsconfig.json to point at it;
+  # put them back so a checkout without .next-never-stuck still type-checks.
+  git -C "$ROOT" checkout -- sorento_crm_frontend/next-env.d.ts sorento_crm_frontend/tsconfig.json 2>/dev/null || true
 fi
 
 echo "== frontend :$FE_PORT"

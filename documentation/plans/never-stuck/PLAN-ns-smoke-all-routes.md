@@ -48,8 +48,9 @@ it merges instead of when a user hits it.
   reading SCM endpoints, PR #1413).
 - **Refusal rendered as empty** = a 403 on `/api/v1/` during the visit, no `[data-access-denied]`
   on screen, and empty / not-found copy on screen.
-- **Known failures are reported, not failed.** Each entry carries an audit row id
-  (`route: "*"` covers a persona's every route). The route still runs; its problems go into
+- **Known failures are reported, not failed.** Each entry carries an audit row id and the
+  problem kinds it tolerates (`route: "*"` covers a persona's every route); a different kind
+  of problem on the same route still fails, so a known row cannot hide a new regression. The route still runs; its problems go into
   the summary's folded "still failing" table and the night stays green for it. One that
   passes is listed under "passed tonight" so the entry gets retired. Not `test.fail()`
   (a ratchet that fails the night a known row passes): measured, the expired-session
@@ -66,6 +67,19 @@ it merges instead of when a user hits it.
   already passed. No labels touched.
 - **Production build in CI**, not `next dev`: dev compiles each route on first hit, which would
   read as "stuck" on a 15 s budget. `NEXT_SKIP_TYPECHECK=1` as in the Docker build.
+
+- **Modules enabled in the seed.** A fresh bootstrap installs no tenant module, and
+  `ModuleRouteGuard` then sends every module route to `/`: the first baseline "passed" by
+  checking the dashboard. The seed enables every catalog module, and landing on `/` unasked
+  is now a failure, so that cannot recur silently.
+
+## Baseline (sandbox, 1 Oct 2026)
+
+1101 visits: 997 pass, 104 fail, 8 redirected (all to a sibling route, none to `/`).
+Expired persona: every route reached `/signin` within 5 s at 2 workers. 103 failures are in
+`known-failures.json` (the 104th was a regex false positive, fixed): rows 11, 12, 15, 16, 17,
+18, 35, 36 where a top-40 row matches, else L2 (24), L3 / S4.3 (17), S3 + S4.4 (31), S3
+skeleton forever (10).
 
 ## Not in scope
 
