@@ -81,7 +81,7 @@ class TestStandaloneOwnerCase:
         assert _ids(env) == {str(ib.id), str(ntc.id)}
         assert _picked_on(env, ib.id) == 22
         assert _picked_on(env, ntc.id) == 77
-        assert f"packing list to re-open (refreshes its stored status): {case.shipment_id}" in out
+        assert f"container {case.container} ({case.shipment_id})" in out
         assert _pl_figures(env, case)[:2] == (99, 99)
 
         code, again = _run(env, apply=False)
@@ -314,7 +314,8 @@ class TestStandaloneSecurityRound:
         code, out = _run(env, apply=True)
 
         assert code == 0, out
-        assert "=== database sorento_test at" in out
+        database = env.db.execute(text("SELECT current_database()")).scalar()
+        assert f"=== database {database} at" in out
         assert "alembic head" in out
         before = out.split("[before]", 1)[1]
         assert f'"id":"{excel_id}"' in before
@@ -341,4 +342,302 @@ class TestStandaloneSecurityRound:
         assert code == 4, out
         assert "FAILED, rolled back, run STOPPED: RuntimeError" in out
         assert "SPO-NEVER-REACHED" not in out
+        assert _ids(env) == before
+
+
+
+# ============================================================================ #
+# Review B1: the standalone copies the rules, so it is held to the in-app
+# repair by a DIFFERENTIAL test on a rich document, plus targeted cases.
+# ============================================================================ #
+from datetime import date, datetime, timedelta  # noqa: E402
+
+from app.models.procurement import (  # noqa: E402
+    InboundShipment,
+    PickingHeader,
+    PickingLine,
+    SPOAllocation,
+)
+from tests._pg_fixture import unique_code  # noqa: E402
+
+
+class _Rich:
+    """Every rule in one document. Seeded twice (two spo_numbers) so the in-app
+    script repairs one and the standalone the other."""
+
+    def __init__(self, env):
+        self.env = env
+        self.ib = env.refs.resolve(entity_type="warehouses", source_ref=env.link_warehouse(env.company_a))
+        self.ntc = env.refs.resolve(entity_type="warehouses", source_ref=env.link_warehouse(env.company_a))
+        self.codes = {
+            wh: env.db.execute(text("SELECT warehouse_code FROM warehouses WHERE id = :i"), {"i": wh}).scalar()
+            for wh in (self.ib, self.ntc)
+        }
+        self.p = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        self.r = env.refs.resolve(entity_type="products", source_ref=env.product2_ref)
+        self.q = env.refs.resolve(entity_type="products", source_ref=env.link_product(env.company_a))
+        from tests.test_spo_xlsx_supersede import _seed_po_line
+
+        self._seed_po_line = _seed_po_line
+
+    def _alloc(self, number, line, product, *, wh=None, loc=None, alloc, recv=0, status=None,
+               ref=None, doc=None, created=None, **extra):
+        env = self.env
+        row = SPOAllocation(
+            company_id=env.company_a, spo_number=number, spo_line_number=line, product_id=product,
+            warehouse_id=wh, location_code=loc if loc is not None else (self.codes.get(wh) if wh else None),
+            allocated_quantity=alloc, quantity_received=recv,
+            receipt_status="fully_received" if recv >= alloc and alloc else "pending",
+            line_status=status or ("closed" if recv >= alloc and alloc else "open"),
+            source_system="autocount" if ref else extra.pop("source_system", "scm_upload"),
+            source_ref=ref, source_doc_ref=doc, **extra,
+        )
+        env.db.add(row)
+        env.db.flush()
+        if created is not None:
+            env.db.execute(text("UPDATE spo_allocations SET created_at = :c WHERE id = :i"), {"c": created, "i": row.id})
+        return row
+
+    def _pick(self, header, alloc, product, wh, qty, expected=None, accepted=None, dtl=None):
+        line = PickingLine(
+            id=str(uuid.uuid4()), company_id=self.env.company_a, picking_header_id=header,
+            spo_allocation_id=alloc, product_id=product, source_warehouse_id=wh,
+            quantity_expected=qty if expected is None else expected, quantity_picked=qty,
+            qty_accepted=accepted, dtl_key=dtl,
+        )
+        self.env.db.add(line)
+        self.env.db.flush()
+        return line
+
+    def seed(self, number):
+        env = self.env
+        shipment = InboundShipment(
+            id=str(uuid.uuid4()), company_id=env.company_a, shipment_number=unique_code(f"{MARKER}-PL"),
+            shipping_container_number=f"ZZTU{uuid.uuid4().int % 10**7:07d}", shipment_date=date(2026, 9, 1),
+            shipment_status="pending",
+        )
+        env.db.add(shipment)
+        env.db.flush()
+        t0 = datetime(2026, 9, 1, 8, 0, 0)
+        # Excel-era rows.
+        self._alloc(number, 1, self.p, loc="HQ", alloc=95, recv=95, inbound_shipment_id=shipment.id,
+                    quantity_rejected=2, allocation_notes="excel note")
+        e2 = self._alloc(number, 2, self.p, loc="HQ", alloc=4, recv=4)
+        e3 = self._alloc(number, 3, self.r, wh=self.ntc, alloc=10, recv=6)
+        self._alloc(number, 4, self.q, loc="HQ", alloc=99, recv=0)  # orphan, removable
+        self._alloc(number, 5, self.p, loc="HQ", alloc=7, po_line_id=self._seed_po_line(env, product_id=self.p))
+        # An older DocKey's closed row, then the live DocKey's unreceived lines.
+        self._alloc(number, 9, self.p, wh=self.ib, alloc=5, recv=5, ref=f"{MARKER}:OLD-{uuid.uuid4().hex[:6]}",
+                    doc=f"{MARKER}:D1-{number}", created=t0)
+        doc = f"{MARKER}:D2-{number}"
+        l10 = self._alloc(number, 10, self.p, wh=self.ib, alloc=22, ref=f"{MARKER}:A-{uuid.uuid4().hex[:6]}",
+                          doc=doc, created=t0 + timedelta(days=1))
+        self._alloc(number, 11, self.p, wh=self.ntc, alloc=77, ref=f"{MARKER}:B-{uuid.uuid4().hex[:6]}",
+                    doc=doc, created=t0 + timedelta(days=1))
+        self._alloc(number, 12, self.r, wh=self.ntc, alloc=10, ref=f"{MARKER}:C-{uuid.uuid4().hex[:6]}",
+                    doc=doc, created=t0 + timedelta(days=1))
+        e1 = env.db.execute(
+            text("SELECT id FROM spo_allocations WHERE spo_number = :n AND spo_line_number = 1"), {"n": number}
+        ).scalar()
+        approved = PickingHeader(id=str(uuid.uuid4()), company_id=env.company_a, picking_number=unique_code(MARKER),
+                                 picking_type="goods_received", picking_status="approved", spo_number=number)
+        rejected = PickingHeader(id=str(uuid.uuid4()), company_id=env.company_a, picking_number=unique_code(MARKER),
+                                 picking_type="goods_received", picking_status="rejected", spo_number=number)
+        env.db.add_all([approved, rejected])
+        env.db.flush()
+        self._pick(approved.id, e1, self.p, self.ib, 30, expected=32, accepted=25)  # splits 22 + 8
+        self._pick(approved.id, e1, self.p, self.ntc, 65)
+        self._pick(approved.id, e2.id, self.p, self.ntc, 4, dtl=900000 + uuid.uuid4().int % 99999)  # never split
+        self._pick(approved.id, e2.id, self.p, None, 0)  # zero quantity: first line
+        self._pick(approved.id, e3.id, self.r, self.ntc, 6)  # keyed group: moves whole
+        self._pick(rejected.id, l10.id, self.p, self.ib, 10)  # holds no capacity
+        env.db.commit()
+
+    def state(self, number):
+        """The document's end state, keyed by line number (ids differ per seed)."""
+        rows = self.env.db.execute(
+            text(
+                "SELECT id, spo_line_number, allocated_quantity, quantity_received, stated_received, line_status, "
+                "receipt_status, inbound_shipment_id IS NOT NULL AS has_pl, quantity_rejected, allocation_notes, "
+                "retired_at IS NOT NULL AS retired FROM spo_allocations WHERE spo_number = :n ORDER BY spo_line_number"
+            ),
+            {"n": number},
+        ).mappings().all()
+        by_id = {str(r["id"]): r["spo_line_number"] for r in rows}
+        picks = self.env.db.execute(
+            text(
+                "SELECT pl.spo_allocation_id, pl.quantity_picked, pl.quantity_expected, pl.qty_accepted, "
+                "pl.source_warehouse_id = :ib AS at_ib, pl.dtl_key IS NOT NULL AS ac, ph.picking_status "
+                "FROM picking_lines pl JOIN picking_headers ph ON ph.id = pl.picking_header_id "
+                "WHERE ph.spo_number = :n"
+            ),
+            {"n": number, "ib": self.ib},
+        ).all()
+        return (
+            [tuple(v for k, v in r.items() if k != "id") for r in rows],
+            sorted(
+                ((by_id.get(str(a)), q, e, acc, ib, ac, st) for a, q, e, acc, ib, ac, st in picks),
+                key=repr,
+            ),
+        )
+
+
+class TestStandaloneParity:
+    def test_standalone_reaches_exactly_the_in_app_end_state(self, env):
+        from scripts import dedupe_spo_xlsx_superseded as inapp
+        from scripts.oneoff import dedupe_spo_standalone as standalone
+
+        rich = _Rich(env)
+        a, b = f"{MARKER}-PAR-A-{uuid.uuid4().hex[:6]}", f"{MARKER}-PAR-B-{uuid.uuid4().hex[:6]}"
+        rich.seed(a)
+        rich.seed(b)
+
+        inapp.run(env.db, env.company_a, dry_run=False, spo_numbers=[a])
+        lines: list[str] = []
+        code = standalone.run(env.db, env.company_a_code, [b], apply=True, out=lines.append)
+        assert code == 0, "\n".join(lines)
+
+        state_a, state_b = rich.state(a), rich.state(b)
+        assert state_b == state_a
+        rows, picks = state_b
+        # Pin the end state itself, so a shared mistake cannot pass as parity.
+        assert [r[0] for r in rows] == [5, 9, 10, 11, 12]  # po_line_id row kept, old DocKey kept (retired)
+        by_line = {r[0]: r for r in rows}
+        assert by_line[9][-1] is True  # older DocKey row retired
+        assert by_line[10][2:5] == (22, 22, "closed")  # carried 22, stated floor 22
+        assert by_line[11][2:5] == (77, 77, "closed")
+        assert by_line[12][2:4] == (6, 6)  # keyed group carried 6
+        assert by_line[10][7:9] == (2, "excel note")  # rejected + note onto the first line
+        assert (10, 22, 22, 22, True, False, "approved") in picks  # split chunk 1
+        assert (11, 8, 10, 3, True, False, "approved") in picks  # split chunk 2 (shortfall + acceptance)
+        assert (11, 4, 4, None, False, True, "approved") in picks  # AutoCount GRN pick moved whole
+        assert (10, 0, 0, None, None, False, "approved") in picks  # zero pick on the FIRST line
+        assert (12, 6, 6, None, False, False, "approved") in picks  # keyed group moved whole
+
+
+class TestStandaloneTargetedRules:
+    def _doc(self, env, rich, rows, lines):
+        number = f"{MARKER}-T-{uuid.uuid4().hex[:6]}"
+        doc = f"{MARKER}:D-{number}"
+        for spec in rows:
+            rich._alloc(number, **spec)
+        for spec in lines:
+            rich._alloc(number, ref=f"{MARKER}:L-{uuid.uuid4().hex[:6]}", doc=doc, **spec)
+        env.db.commit()
+        return number
+
+    def _apply(self, env, number):
+        from scripts.oneoff import dedupe_spo_standalone as standalone
+
+        lines: list[str] = []
+        code = standalone.run(env.db, env.company_a_code, [number], apply=True, out=lines.append)
+        return code, "\n".join(lines), {
+            r[0] for r in env.db.execute(
+                text("SELECT spo_line_number FROM spo_allocations WHERE spo_number = :n"), {"n": number}
+            )
+        }
+
+    def test_received_locked_group_is_kept(self, env):
+        """D26a: an Excel row at IB (30 received) against a single IB line of 10."""
+        rich = _Rich(env)
+        number = self._doc(env, rich, [dict(line=1, product=rich.p, wh=rich.ib, alloc=30, recv=30)],
+                           [dict(line=2, product=rich.p, wh=rich.ib, alloc=10)])
+        code, out, left = self._apply(env, number)
+        assert code == 0, out
+        assert "received locked" in out
+        assert left == {1, 2}
+
+    def test_unequal_fallback_quantities_are_kept(self, env):
+        rich = _Rich(env)
+        number = self._doc(env, rich, [dict(line=1, product=rich.p, loc="HQ", alloc=99, recv=0)],
+                           [dict(line=2, product=rich.p, wh=rich.ib, alloc=95)])
+        code, out, left = self._apply(env, number)
+        assert code == 0, out
+        assert "quantities do not reconcile (Excel 99 vs AutoCount 95)" in out
+        assert left == {1, 2}
+
+    def test_a_po_line_row_is_never_touched(self, env):
+        rich = _Rich(env)
+        po_line = rich._seed_po_line(env, product_id=rich.q)
+        number = self._doc(env, rich, [dict(line=1, product=rich.q, loc="HQ", alloc=7, po_line_id=po_line)],
+                           [dict(line=2, product=rich.p, wh=rich.ib, alloc=10)])
+        code, out, left = self._apply(env, number)
+        assert code == 0, out
+        assert left == {1, 2}
+
+    def test_an_orphan_held_by_another_companys_pick_is_blocked(self, env):
+        rich = _Rich(env)
+        number = self._doc(env, rich, [dict(line=1, product=rich.q, loc="HQ", alloc=99, recv=0)],
+                           [dict(line=2, product=rich.p, wh=rich.ib, alloc=10)])
+        orphan = env.db.execute(
+            text("SELECT id FROM spo_allocations WHERE spo_number = :n AND spo_line_number = 1"), {"n": number}
+        ).scalar()
+        header = PickingHeader(id=str(uuid.uuid4()), company_id=env.company_b, picking_number=unique_code(MARKER),
+                               picking_type="goods_received", picking_status="approved")
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(PickingLine(id=str(uuid.uuid4()), company_id=env.company_b, picking_header_id=header.id,
+                               spo_allocation_id=orphan, product_id=rich.q, quantity_expected=1, quantity_picked=1))
+        env.db.commit()
+        code, out, left = self._apply(env, number)
+        assert code == 0, out
+        assert f"ORPHAN-BLOCKED {orphan} line 1" in out
+        assert "picks 1" in out
+        assert left == {1, 2}
+
+    def test_a_pick_from_another_company_on_a_superseded_row_aborts(self, env):
+        rich = _Rich(env)
+        number = self._doc(env, rich, [dict(line=1, product=rich.p, loc="HQ", alloc=10, recv=0)],
+                           [dict(line=2, product=rich.p, wh=rich.ib, alloc=10)])
+        excel = env.db.execute(
+            text("SELECT id FROM spo_allocations WHERE spo_number = :n AND spo_line_number = 1"), {"n": number}
+        ).scalar()
+        header = PickingHeader(id=str(uuid.uuid4()), company_id=env.company_b, picking_number=unique_code(MARKER),
+                               picking_type="goods_received", picking_status="approved")
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(PickingLine(id=str(uuid.uuid4()), company_id=env.company_b, picking_header_id=header.id,
+                               spo_allocation_id=excel, product_id=rich.p, quantity_expected=3, quantity_picked=3))
+        env.db.commit()
+        code, out, left = self._apply(env, number)
+        assert code == 3, out
+        assert "another company's links point at rows to delete (picks 1" in out
+        assert left == {1, 2}
+
+
+    def test_an_autocount_grn_line_that_would_span_two_lines_moves_whole(self, env):
+        """A 30-pick carrying `dtl_key` at IB over IB 22 + NTC 8 stays one row on
+        IB (30); without the rule it would split 22 + 8."""
+        rich = _Rich(env)
+        number = self._doc(env, rich, [dict(line=1, product=rich.p, loc="HQ", alloc=30, recv=30)],
+                           [dict(line=2, product=rich.p, wh=rich.ib, alloc=22),
+                            dict(line=3, product=rich.p, wh=rich.ntc, alloc=8)])
+        excel = env.db.execute(
+            text("SELECT id FROM spo_allocations WHERE spo_number = :n AND spo_line_number = 1"), {"n": number}
+        ).scalar()
+        header = PickingHeader(id=str(uuid.uuid4()), company_id=env.company_a, picking_number=unique_code(MARKER),
+                               picking_type="goods_received", picking_status="approved", spo_number=number)
+        env.db.add(header)
+        env.db.flush()
+        rich._pick(header.id, excel, rich.p, rich.ib, 30, dtl=123456)
+        env.db.commit()
+        code, out, _left = self._apply(env, number)
+        assert code == 0, out
+        picks = env.db.execute(
+            text("SELECT quantity_picked FROM picking_lines WHERE picking_header_id = :h"), {"h": str(header.id)}
+        ).scalars().all()
+        assert picks == [30]
+
+    def test_a_pick_the_move_left_behind_aborts_before_any_delete(self, env, monkeypatch):
+        """The post-move guard: if a pick were still on a superseded row, the SPO
+        is refused and nothing is deleted."""
+        from scripts.oneoff import dedupe_spo_standalone as standalone
+
+        monkeypatch.setattr(standalone, "_move_picks_by_capacity", lambda *a, **k: 0)
+        case = _owner_case(env, number=OWNER_SPO)
+        _seed_pre_repair_state(env, case)
+        before = _ids(env)
+        code, out = _run(env, apply=True)
+        assert code == 3, out
+        assert "still pointing at Excel rows after the move (picks 3" in out
         assert _ids(env) == before

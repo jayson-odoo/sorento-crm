@@ -57,6 +57,7 @@ inside `tmux` (or `screen`): a dropped SSH session kills the process and rolls
 back the SPO in flight.
 
     tmux new -s spo-repair
+    set -o pipefail            # so `| tee` keeps the script's exit code
     cd /opt/sorento-crm2
     COLOUR=$(cat .active_color)
 
@@ -86,6 +87,10 @@ back the SPO in flight.
 The log is the audit record (raw SQL writes no audit rows): before any write
 it prints every row of the SPO and every pick, claim and order-inquiry link on
 them as full JSON, and after an apply it prints the same set again.
+
+Check the exit code (`echo $?`) or grep the log for `ABORTED|FAILED|PREFLIGHT`.
+If the backend container has no DATABASE_URL in its environment (it reads it
+from a file), the script stops with that message and writes nothing.
 
 `--company` is `companies.code`; Sorento's is `SRT` (seeded by
 alembic/versions/302_multi_company_scaffold.py:158). `--spo` is repeatable.
@@ -132,6 +137,7 @@ REQUIRED = {
         "spo_number_raw", "po_line_id", "item_code", "location_code", "created_at",
     ),
     ("public", "picking_headers"): ("id", "picking_status"),
+    ("public", "inbound_shipments"): ("id", "shipment_number", "shipping_container_number"),
     ("scm", "order_link_claim"): ("id", "spo_allocation_id", "company_id"),
     ("projects", "order_inquiry_links"): ("id", "spo_allocation_id", "company_id"),
     # ON DELETE CASCADE from spo_allocations: counted and logged per deleted row.
@@ -473,7 +479,12 @@ def _move_picks_by_capacity(db, from_ids, targets: list, company_id, write, log)
                 draws.append([entry["id"], take, entry])
                 entry["avail"] -= take
                 remaining -= take
-        if remaining > 0 or not draws:
+        if not draws:
+            # Nothing to place (a zero-quantity pick): it follows the group's
+            # first line, as the in-app repair does.
+            draws.append([target_ids[0], qty, None])
+        elif remaining > 0:
+            # What no line has room for lands on the LAST line, never dropped.
             draws.append([target_ids[-1], remaining, None])
         chunks: list = []
         for allocation_id, take, entry in draws:
@@ -568,7 +579,7 @@ def _append_note(existing: Optional[str], note: Optional[str]) -> Optional[str]:
 def process_spo(db, company_id: str, spo_number: str, *, write: bool, log) -> dict[str, Any]:
     """Plan (and with `write`, apply) one SPO. Raises GuardFailed before any
     delete when a receipt would be lost; the caller rolls back."""
-    stats = {"deleted": 0, "orphans_removed": 0, "orphans_blocked": 0, "kept": 0,
+    stats = {"deleted": 0, "orphans_removed": 0, "orphans_blocked": 0, "kept": 0, "retired": 0,
              "links_moved": 0, "carried": 0, "shipments": set()}
     rows = _rows(db, company_id, spo_number, lock=write)
     refs = [r for r in rows if r["source_ref"]]
@@ -580,11 +591,30 @@ def process_spo(db, company_id: str, spo_number: str, *, write: bool, log) -> di
         log("no AutoCount lines on this SPO: nothing to follow, untouched")
         return stats
     lines, older = _newest_dockey(refs)
-    for row in older:
-        log(f"older DocKey row {row['id']} line {row['spo_line_number']} ({row['source_doc_ref']}): not touched")
     if not excel:
         log("no Excel-era rows: already follows AutoCount")
         return stats
+    # D28d, as the in-app repair does (`_retire_older_dockeys`): a CLOSED row of
+    # an older AutoCount document version is retired, its receipt frozen into
+    # `stated_received`; an open one is left for its own push to settle.
+    for row in older:
+        if row["retired_at"] is not None:
+            continue
+        if row["line_status"] != "closed":
+            log(f"older DocKey row {row['id']} line {row['spo_line_number']} is open: not touched")
+            continue
+        frozen = max(_i(row["stated_received"]), _i(row["quantity_received"]))
+        log(f"retire older DocKey row {row['id']} line {row['spo_line_number']} ({row['source_doc_ref']}), "
+            f"stated_received {row['stated_received']} -> {frozen if frozen > 0 else row['stated_received']}")
+        stats["retired"] += 1
+        if write:
+            db.execute(
+                text(
+                    "UPDATE spo_allocations SET retired_at = now(), "
+                    "stated_received = CASE WHEN :f > 0 THEN :f ELSE stated_received END WHERE id = :id"
+                ),
+                {"f": frozen, "id": row["id"]},
+            )
 
     plan = plan_spo(excel, lines)
     if not plan.groups and not plan.orphans:
@@ -638,13 +668,18 @@ def process_spo(db, company_id: str, spo_number: str, *, write: bool, log) -> di
                      "rs": "fully_received" if closed else "pending",
                      "sh": shipment, "z": zone, "u": uom, "id": line["id"]},
                 )
-                if position == 0 and (rejected or notes):
+                if position == 0 and rejected:
                     db.execute(
                         text(
-                            "UPDATE spo_allocations SET quantity_rejected = GREATEST(coalesce(quantity_rejected, 0), :rej), "
-                            "allocation_notes = :n WHERE id = :id"
+                            "UPDATE spo_allocations SET "
+                            "quantity_rejected = GREATEST(coalesce(quantity_rejected, 0), :rej) WHERE id = :id"
                         ),
-                        {"rej": rejected, "n": _append_note(line["allocation_notes"], notes), "id": line["id"]},
+                        {"rej": rejected, "id": line["id"]},
+                    )
+                if position == 0 and notes:
+                    db.execute(
+                        text("UPDATE spo_allocations SET allocation_notes = :n WHERE id = :id"),
+                        {"n": _append_note(line["allocation_notes"], notes), "id": line["id"]},
                     )
         removed_ids = [r["id"] for r in group.rows]
         first = group.lines[0]["id"]
@@ -757,12 +792,18 @@ def run(db, company_code: str, spo_numbers: list[str], *, apply: bool, out=print
         if apply:
             db.commit()
             for shipment_id in sorted(stats["shipments"]):
-                out(f"  packing list to re-open (refreshes its stored status): {shipment_id}")
+                number = db.execute(
+                    text("SELECT shipment_number, shipping_container_number FROM inbound_shipments WHERE id = :i"),
+                    {"i": shipment_id},
+                ).one_or_none()
+                label = f"{number[0]} / container {number[1]}" if number else ""
+                out(f"  packing list to re-open (refreshes its stored status): {label} ({shipment_id})")
         else:
             db.rollback()
         for key in totals:
             totals[key] += stats[key]
         out(f"  => Excel rows superseded {stats['deleted']}, orphans removed {stats['orphans_removed']}, "
+            f"older-DocKey rows retired {stats['retired']}, "
             f"orphans BLOCKED {stats['orphans_blocked']}, kept {stats['kept']}, "
             f"links moved {stats['links_moved']}, received carried {stats['carried']}, "
             f"PLs touched {len(stats['shipments'])}")
@@ -778,7 +819,10 @@ def main() -> int:
     if not url:
         print("DATABASE_URL is not set (the backend container sets it)")
         return 1
-    engine = create_engine(url)
+    # Pinned to UTC like the app's own engine (app/database.py): `now()` defaults
+    # on naive timestamp columns (a split pick's created_at, which FIFO reads)
+    # must not take the database server's local zone.
+    engine = create_engine(url, connect_args={"options": "-c timezone=utc"})
     with engine.connect() as conn:
         return run(conn, args.company, args.spo, apply=args.apply)
 
