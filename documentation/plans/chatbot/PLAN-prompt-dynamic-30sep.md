@@ -358,3 +358,46 @@ add:
 
 The real answer is the migration log on deploy (`prod snapshot vN: {{x}} line L replaced|kept literal`),
 and the version's `config_json.identical_report`.
+
+### Crew-migration SQL twin (crew copy, 1 Oct 2026)
+
+The crew copy's dev DB is migrated by SQL, not alembic. Its last crew-migration SQL (hash
+97a3eba5) carried only pdyn_0001, so dev stayed at v53.
+
+`scripts/prompt_dynamic_crew_sql.py` generates
+`documentation/plans/chatbot/crew-migration-prompt-dynamic.sql`. The file is 152 KB, over
+GitHub's 65,536-character comment limit, so it is committed instead of pasted. It holds:
+- pdyn_0001's idempotent statements;
+- a `DO` block that does what pdyn_0003 does.
+
+How the `DO` block works:
+- Each list becomes its variable only where a SQL rendering, computed the way
+  `chatbot_prompt_vars` renders it, equals the owner's text. That applies to teams, domains,
+  status_values, entity_kinds, agents, access_levels and entity_kinds_detail.
+- domains_detail, specs, statuses and domain_words have no SQL renderer here, so they stay
+  literal.
+- The owner's em dashes are written as a placeholder that `chr(8212)` restores, so the file
+  passes the dash guard.
+
+pdyn_0002 has no SQL twin: its transform is Python, run over the copy's own production text.
+`scripts.publish_parser_wording_layer` still publishes it.
+
+Tests (`tests/chatbot/test_prompt_dynamic_crew_sql.py`, red fc5c72af):
+- the committed file equals the generator's output;
+- the file has no dash characters;
+- with seeded tables the expected lists are swapped and the render equals the file;
+- every SQL swap is also a Python swap;
+- with differing tables the list is kept literal and the render still equals the file;
+- running it twice is idempotent, it sets no label, and it leaves other versions alone;
+- alembic pdyn_0003 skips once the SQL has run.
+
+Kill tests:
+- always swap: 3 red;
+- wrong dash character: 2 red;
+- no idempotency: 1 red;
+- agent order reversed: 1 red.
+
+`psql -f` twice on the sandbox DB:
+- first run: v5, unlabelled, render equal to the file (132034 = 132034 characters). Only
+  `{{teams}}` and `{{entity_kinds_detail}}` were replaced;
+- second run: "already published; nothing to do".

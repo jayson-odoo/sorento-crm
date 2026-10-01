@@ -45,12 +45,19 @@ def _fresh_cache():
     ai_prompt_registry.bust_cache()
 
 
-def _run_sql(db) -> None:
+def _exec(db, sql: str) -> None:
+    """Through the raw driver cursor with no parameters, the way psql sends a file: the
+    owner's text carries `%` and `:word` that a bound-parameter path would rewrite."""
+    with db.connection().connection.cursor() as cur:
+        cur.execute(sql)
+
+
+def _run_sql(db, sql: str | None = None) -> None:
     db.execute(
         text("DELETE FROM ai_prompt_versions WHERE name = :n AND config_json->>'prod_snapshot_sha256' = :s"),
         {"n": KEY, "s": SHA},
     )
-    db.connection().exec_driver_sql(SQL_FILE.read_text(encoding="utf-8"))
+    _exec(db, sql if sql is not None else SQL_FILE.read_text(encoding="utf-8"))
     db.expire_all()
     pv.clear_cache()
 
@@ -86,13 +93,15 @@ def test_the_sql_carries_no_dash_characters():
 
 
 def test_on_tables_shaped_like_the_file_the_sql_swaps_and_renders_the_file():
+    """The pdyn_0003 section alone: the full file re-seeds the 8 status rows first
+    (pdyn_0001), which is exactly why `status_values` stays literal on the crew copy."""
     with pg_session() as db:
         _seed_registries_to_the_file(db)
         top = db.execute(
             text("SELECT max(version) FROM ai_prompt_versions WHERE name = :n AND config_json->>'prod_snapshot_sha256' IS DISTINCT FROM :s"),
             {"n": KEY, "s": SHA},
         ).scalar()
-        _run_sql(db)
+        _run_sql(db, _gen().pdyn_0003_sql())
         row = _row(db)
         assert row.version == int(top) + 1
         replaced = {v for v, a in _sql_actions(row) if a == "replaced"}
@@ -108,7 +117,7 @@ def test_the_sql_agrees_with_the_python_migration_wherever_it_decides():
     registry)."""
     with pg_session() as db:
         _seed_registries_to_the_file(db)
-        _run_sql(db)
+        _run_sql(db, _gen().pdyn_0003_sql())
         sql_report = _row(db).config_json["identical_report"]
         _template, py_report = pv.identical_wording_layer(SNAPSHOT.read_text(encoding="utf-8"), db)
         py = [(r["variable"], r["action"]) for r in py_report]
@@ -135,8 +144,8 @@ def test_the_sql_is_idempotent_unlabelled_and_leaves_other_versions_alone():
         before = {r.id: r.template for r in db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY)}
         labels = {(l.label, l.version_id) for l in db.query(AIPromptLabel).filter(AIPromptLabel.name == KEY)}
         sql = SQL_FILE.read_text(encoding="utf-8")
-        db.connection().exec_driver_sql(sql)
-        db.connection().exec_driver_sql(sql)
+        _exec(db, sql)
+        _exec(db, sql)
         db.expire_all()
         after = {r.id: r.template for r in db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY)}
         assert len(after) == len(before) + 1
