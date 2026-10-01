@@ -320,3 +320,30 @@ describe('PromptDetail editor mode uses the Tabs primitive (reviewer pass 2)', (
     expect(preview.getAttribute('aria-selected')).toBe('false');
   });
 });
+
+describe('PromptDetail wired-panel insert (owner hand test #1405, item 2)', () => {
+  it('inserts at the caret in the editor, not at the bottom', () => {
+    usePromptVersions.mockReturnValue({ data: { ...META, name: 'chatbot_semantic_parser', registry_variables: ['domains', 'statuses'] }, isLoading: false, isError: false });
+    usePromptVersion.mockReturnValue({ data: { ...BASE, template: 'domain_hint = ONE of: | null\nEND' }, isLoading: false, isError: false });
+    useRegistryVariables.mockReturnValue({
+      data: [{ name: 'domains', label: 'Domains', source: 'Chatbot Domains', href: '/x', count: 3, last_changed: null, rendered: 'a | b', used: false }],
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    const editor = screen.getByTestId('prompt-chip-editor');
+    const textNode = editor.firstChild as Text;
+    const range = document.createRange();
+    range.setStart(textNode, 'domain_hint = ONE of:'.length);
+    range.collapse(true);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    fireEvent.mouseUp(editor);
+    window.getSelection()!.removeAllRanges();
+    fireEvent.click(screen.getByTestId('wired-insert-domains'));
+    const chip = editor.querySelector('[data-chip="domains"]')!;
+    expect(chip).not.toBeNull();
+    expect(chip.previousSibling!.textContent!.endsWith('domain_hint = ONE of:')).toBe(true);
+    expect(editor.lastChild!.textContent!.endsWith('END')).toBe(true);
+  });
+});

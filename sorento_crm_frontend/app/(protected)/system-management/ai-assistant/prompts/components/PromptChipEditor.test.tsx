@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { PromptChipEditor } from './PromptChipEditor';
+import { PromptChipEditor, type PromptChipEditorHandle } from './PromptChipEditor';
 import type { RegistryVariableRow } from '../../services/aiPromptsService';
 
 const VARS: RegistryVariableRow[] = [
@@ -248,5 +248,106 @@ describe('PromptChipEditor, reviewer pass 2', () => {
     }
     render(<NoLink />);
     expect(editor().querySelector('[data-chip="domains"] a')).toBeNull();
+  });
+});
+
+describe('PromptChipEditor, owner hand test #1405 (1 Oct 2026)', () => {
+  /** A harness whose value can be swapped from outside, as a version switch does. */
+  let swap: (next: string) => void = () => {};
+  function Switchable({ initial, vars = VARS }: { initial: string; vars?: RegistryVariableRow[] }) {
+    const [v, setV] = useState(initial);
+    swap = setV;
+    last = v;
+    return <PromptChipEditor value={v} onChange={setV} variables={vars} registryNames={NAMES} />;
+  }
+
+  function stubHighlights() {
+    const registry = new Map<string, { ranges: Range[] }>();
+    class FakeHighlight {
+      ranges: Range[];
+      constructor(...ranges: Range[]) {
+        this.ranges = ranges;
+      }
+    }
+    (globalThis as unknown as { CSS: unknown }).CSS = { highlights: registry };
+    (globalThis as unknown as { Highlight: unknown }).Highlight = FakeHighlight;
+    return {
+      registry,
+      restore: () => {
+        delete (globalThis as unknown as { CSS?: unknown }).CSS;
+        delete (globalThis as unknown as { Highlight?: unknown }).Highlight;
+      },
+    };
+  }
+
+  it('1: find re-indexes on a version switch and every highlight covers exactly the matched text', () => {
+    const { registry, restore } = stubHighlights();
+    try {
+      render(<Switchable initial={'xx current {{domains}} zz'} />);
+      act(() => swap('current yy {{statuses}} and current again'));
+      fireEvent.keyDown(editor(), { key: 'f', ctrlKey: true });
+      fireEvent.change(screen.getByTestId('find-input'), { target: { value: 'current' } });
+      expect(screen.getByTestId('find-count')).toHaveTextContent('1/2');
+      expect(editor().getAttribute('data-find-active')).toBe('0-7');
+      const all = registry.get('prompt-find')!.ranges.map((r) => r.toString());
+      expect(all).toEqual(['current', 'current']);
+      expect(registry.get('prompt-find-active')!.ranges.map((r) => r.toString())).toEqual(['current']);
+    } finally {
+      restore();
+    }
+  });
+
+  it('1: find re-indexes after an edit too', () => {
+    const { registry, restore } = stubHighlights();
+    try {
+      render(<Switchable initial={'current one'} />);
+      fireEvent.keyDown(editor(), { key: 'f', ctrlKey: true });
+      fireEvent.change(screen.getByTestId('find-input'), { target: { value: 'current' } });
+      const text = editor().firstChild as Text;
+      text.textContent = 'zz current one current';
+      fireEvent.input(editor());
+      expect(screen.getByTestId('find-count').textContent).toMatch(/\/2$/);
+      expect(registry.get('prompt-find')!.ranges.map((r) => r.toString())).toEqual(['current', 'current']);
+    } finally {
+      restore();
+    }
+  });
+
+  it('2: the toolbar insert lands at the last caret even after the registry data refetches', () => {
+    const { rerender } = render(<Switchable initial={'domain_hint = ONE of: | null'} />);
+    const textNode = editor().firstChild as Text;
+    const range = document.createRange();
+    range.setStart(textNode, 'domain_hint = ONE of:'.length);
+    range.collapse(true);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    fireEvent.keyUp(editor());
+    fireEvent.blur(editor());
+    window.getSelection()!.removeAllRanges(); // focus moved elsewhere
+    // A refetch brings new metadata (a row count changed).
+    rerender(<Switchable initial={'ignored'} vars={VARS.map((v) => ({ ...v, count: v.count + 1 }))} />);
+    fireEvent.click(screen.getByTestId('insert-variable'));
+    fireEvent.click(screen.getByTestId('insert-variable-domains'));
+    expect(last).toBe('domain_hint = ONE of:{{domains}} | null');
+  });
+
+  it('2: insertVariable from outside (the wired panel) lands at the last caret', () => {
+    const handle = React.createRef<PromptChipEditorHandle>();
+    function WithHandle() {
+      const [v, setV] = useState('domain_hint = ONE of: | null');
+      last = v;
+      return <PromptChipEditor ref={handle} value={v} onChange={setV} variables={VARS} registryNames={NAMES} />;
+    }
+    render(<WithHandle />);
+    const textNode = editor().firstChild as Text;
+    const range = document.createRange();
+    range.setStart(textNode, 'domain_hint = ONE of:'.length);
+    range.collapse(true);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    fireEvent.mouseUp(editor());
+    window.getSelection()!.removeAllRanges(); // the click on the panel takes the selection away
+    act(() => handle.current!.insertVariable('domains'));
+    expect(last).toBe('domain_hint = ONE of:{{domains}} | null');
   });
 });
