@@ -1304,6 +1304,7 @@ class TestAcX17SupersedeNeedsDeletePermission:
         number, legacy, picking_line, claim, link, record, line1, line2 = (
             self._seed_ac_x1_fixture(env)
         )
+        held = int(legacy.quantity_received or 0)  # read before the push zeroes it (D33)
         user_id = _seed_principal_with_permissions(env, ["scm.shipping_orders.edit"])
 
         with caplog.at_level(logging.INFO, logger=_SUPERSEDE_LOGGER):
@@ -1319,7 +1320,14 @@ class TestAcX17SupersedeNeedsDeletePermission:
         assert str(legacy.id) in by_id, "without .delete the xlsx row must be closed, not removed"
         closed_row = by_id[str(legacy.id)]
         assert closed_row["line_status"] == "closed"
-        assert closed_row["allocation_notes"] == f"superseded by {record['source_ref']}", closed_row
+        # D33 (SPO-XLSX-SUPERSEDE round 2): retired, its receipt zeroed (carried onto the
+        # replacement lines) and the old figure kept as its own note fragment.
+        expected_note = f"superseded by {record['source_ref']}"
+        if held:
+            expected_note += f"; received {held} carried"
+        assert closed_row["allocation_notes"] == expected_note, closed_row
+        assert closed_row["retired_at"] is not None
+        assert int(closed_row["quantity_received"] or 0) == 0
 
         by_ref = {r["source_ref"]: r for r in rows if r["source_ref"]}
         target_id = str(by_ref[line1["source_ref"]]["id"])
