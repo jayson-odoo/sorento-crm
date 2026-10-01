@@ -79,3 +79,36 @@ def test_a_short_status_list_stays_on_one_line_and_long_ones_never_split_a_word(
         assert all(len(line) <= 89 for line in lines)
         assert all(line.startswith("    ") for line in lines[1:])
         assert all('"word number' in line for line in lines[1:])
+
+
+# --------------------------------------------------------------------------- #
+# status_values at line 821 ("The full set is now: ...|null") lists exactly the statuses
+# whose domain is `order`: crew decision (Q5, 1 Oct 2026), a domain filter, no data change.
+# --------------------------------------------------------------------------- #
+
+
+def test_order_status_values_render_the_order_domain_statuses_only():
+    with pg_session() as db:
+        want = "|".join(
+            db.execute(
+                text("SELECT value FROM chatbot_status_words WHERE domain = 'order' ORDER BY sort_order, value")
+            ).scalars()
+        )
+        assert pv.render_value(db, "order_status_values") == want
+        assert "sales_report" not in want
+
+
+def test_the_owner_full_set_line_becomes_order_status_values_and_renders_the_file():
+    from app.services import ai_prompt_registry
+
+    source = SNAPSHOT.read_text(encoding="utf-8")
+    with pg_session() as db:
+        template, report = pv.identical_wording_layer(source, db)
+        row = next(r for r in report if r["line"] == 821)
+        assert (row["variable"], row["action"]) == ("order_status_values", "replaced")
+        assert "The full set is now: {{order_status_values}}|null" in template
+        values = {
+            n: pv.render_value(db, n)
+            for n in ai_prompt_registry.extract_tokens(template) & set(pv.VARIABLE_NAMES)
+        }
+        assert ai_prompt_registry._substitute(template, values) == source

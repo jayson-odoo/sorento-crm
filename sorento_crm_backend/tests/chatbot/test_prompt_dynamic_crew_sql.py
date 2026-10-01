@@ -244,3 +244,12 @@ def test_the_dev_seed_puts_the_owner_text_verbatim_then_the_variable_version_ren
         _exec(db, SQL_FILE.read_text(encoding="utf-8"))
         db.expire_all()
         assert db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count() == count
+
+
+def test_the_crew_sql_also_swaps_the_order_domain_status_values():
+    with pg_session() as db:
+        _run_sql(db)
+        row = _row(db)
+        assert "The full set is now: {{order_status_values}}|null" in row.template
+        assert ("order_status_values", "replaced") in _sql_actions(row)
+        assert _render(db, row) == _expected()
