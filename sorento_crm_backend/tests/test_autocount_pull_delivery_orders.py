@@ -156,6 +156,7 @@ TRACKING_COLUMNS = (
     "actual_delivery_date", "pickup_time", "transporter", "driver_name", "lorry_plate",
     "checker", "trips", "delivery_days", "kpi_warning", "customer_ref", "salesman",
     "warehouse", "delivery_remarks", "delivery_remarks_cs", "remarks_cs", "order_status_id",
+    "order_type", "estimated_delivery_date",
 )
 
 
@@ -172,6 +173,7 @@ def _seed_tracking_row(db, ids: dict):
         kpi_warning=False, customer_ref="iPad ref", salesman="SEAN", warehouse="BRW",
         delivery_remarks="dr", delivery_remarks_cs="drcs", remarks_cs="rcs",
         order_status_id=ids["new_status"], debtor_code="OLD", debtor_name="Old name",
+        order_type="TRUCK", estimated_delivery_date=date(2026, 9, 28),
     )
     db.add(row)
     db.flush()

@@ -660,7 +660,7 @@ TRACKING_COLUMNS = (
     "actual_delivery_date", "pickup_time", "transporter", "transporter_id", "driver_name",
     "lorry_plate", "checker", "trips", "delivery_days", "kpi_warning", "customer_ref",
     "salesman", "warehouse", "delivery_remarks", "delivery_remarks_cs", "remarks_cs",
-    "order_status_id",
+    "order_status_id", "order_type", "estimated_delivery_date",
 )
 
 
@@ -672,6 +672,7 @@ def _tracking_row(env) -> Order:
         kpi_warning=False, customer_ref="iPad ref", salesman="SEAN", warehouse="BRW",
         delivery_remarks="dr", delivery_remarks_cs="drcs", remarks_cs="rcs",
         order_status_id=env.new_status, debtor_code="OLD", debtor_name="Old name",
+        order_type="TRUCK", estimated_delivery_date=date(2026, 9, 28),
     )
     env.db.add(row)
     env.db.flush()
@@ -722,6 +723,61 @@ def test_update_after_adopt_leaves_tracking_columns(env):
     o = env.order(900001)
     assert _tracking_snapshot(o) == before
     assert o.ref == "new ref" and o.agent == "OTHER"
+
+
+def test_ingest_header_write_stays_in_autocount_columns(env, monkeypatch):
+    """DO-OWNERSHIP-GUARD AC-OG04: a header carrying an Order Tracking column fails the record
+    and writes nothing, so the ingest can never overwrite a tracking field."""
+    from app.services.autocount_doc_ingest_service import AutocountDocIngestService
+
+    row = _tracking_row(env)
+    row_id = str(row.id)
+    real = AutocountDocIngestService._identity
+
+    def leaky(self, doc):
+        return {**real(self, doc), "driver_name": "FROM AUTOCOUNT"}
+
+    monkeypatch.setattr(AutocountDocIngestService, "_identity", leaky)
+    r = _records(env.push_do([do_records()[0]]))["db1:DO:900001"]
+    assert r["outcome"] == "failed"
+    env.db.expire_all()
+    o = env.db.get(Order, row_id)
+    assert o.driver_name == "Ali" and o.doc_key is None
+
+
+def test_master_reupload_after_adoption_keeps_autocount_values(env):
+    """DO-OWNERSHIP-GUARD AC-OG06: a Master sheet re-upload after adoption keeps every
+    AutoCount value and still writes Remarks CS and Type."""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    from app.services.order_service import OrderService
+
+    _tracking_row(env)
+    env.push_do([do_records()[0]])
+    o = env.order(900001)
+    ac = {c: getattr(o, c) for c in ("order_date", "created_time", "debtor_code",
+                                      "debtor_name", "agent", "is_cancelled", "customer_id")}
+    wb = Workbook()
+    wb.remove(wb.active)
+    master = wb.create_sheet("Master")
+    master.append(["Doc. No.", "Date", "Created Time", "Debtor Code", "Debtor Name", "Agent",
+                   "Cancel", "Remarks CS", "Type"])
+    master.append(["ZZDO-0001", date(2026, 1, 2), "02/01/2026 09:00", "999-SHEET",
+                   "Sheet Debtor", "SHEET-AGENT", "Y", "cs after adopt", "RMA"])
+    tracking = wb.create_sheet("Overall Tracking")
+    tracking.append(["Doc Number", "Date", "Driver Name"])
+    tracking.append(["ZZDO-0001", date(2026, 9, 30), "Bala"])
+    buf = BytesIO()
+    wb.save(buf)
+    result = OrderService(env.db).import_excel_tracking(buf.getvalue(), _USER_ID)
+    assert not result.get("errors"), result.get("errors")
+
+    o = env.order(900001)
+    assert {c: getattr(o, c) for c in ac} == ac
+    assert o.remarks_cs == "cs after adopt" and o.order_type == "RMA"
+    assert o.driver_name == "Bala" and o.actual_delivery_date == date(2026, 9, 30)
 
 
 def test_doc_no_held_by_another_doc_key_fails(env):
@@ -801,6 +857,18 @@ def test_deletion_not_found_and_out_of_range(env):
     assert out["db1:DO:900001"]["outcome"] == "failed"
     assert "doc_date" in out["db1:DO:900001"]["errors"]
     assert env.order(900001).is_cancelled is False
+
+
+def test_deletion_never_touches_unowned_row(env):
+    """DO-OWNERSHIP-GUARD AC-OG07: the vanished sweep only ever finds rows by DocKey, so an
+    Order Tracking row (doc_key NULL) in the swept range is never cancelled."""
+    row = _tracking_row(env)
+    row_id = str(row.id)
+    res = env.delete(DO_DELETE, [900001], "2026-09-01", "2026-09-30")
+    assert res.json()["records"][0]["outcome"] == "not_found"
+    env.db.expire_all()
+    o = env.db.get(Order, row_id)
+    assert o.is_cancelled is False and o.source_vanished_at is None and o.doc_key is None
 
 
 def test_vanished_document_restored_by_push(env):

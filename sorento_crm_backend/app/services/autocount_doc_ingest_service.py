@@ -69,6 +69,7 @@ from app.services.master_ref_resolver import (
     MasterRefResolver,
     dedupe_warnings,
 )
+from app.services.order_field_ownership import assert_autocount_writes
 
 logger = logging.getLogger(__name__)
 
@@ -816,6 +817,8 @@ class AutocountDocIngestService(MasterRefResolver):
         for key in ("subtotal_amount", "tax_amount", "total_amount"):
             if header[key] is None:
                 header[key] = Decimal("0.00")
+        # Order Tracking owns every other column (DO-OWNERSHIP-GUARD); never write one.
+        assert_autocount_writes(header)
         if header["ref_doc_no"] and header["sales_order_id"] is None:
             warnings.append(WARN_SALES_ORDER_UNRESOLVED)
 
