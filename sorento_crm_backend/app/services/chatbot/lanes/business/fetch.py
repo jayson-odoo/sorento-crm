@@ -3039,7 +3039,12 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     ):
         msg += _item_line(i + 1 + set_row_offset, it, numbered=not plain_lines) + "\n\n"
     if dealer_incoming and jsc.truthy(e.get("closing")):
-        msg += jsc.js_string(e["closing"]).strip() + "\n\n"
+        # The presenter's dealer closing is the refer line (`presenters.py`, `closing`);
+        # printed through `turn/refer.py` so the turn is marked for Customer asks
+        # (CUSTOMER-ASKS-REFER-ONLY).
+        from app.services.chatbot.turn import refer
+
+        msg += refer.sentence() + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
     # (`_project_product_specs`). Byte-inert when the key is absent.
     for miss in e.get("spec_misses") or []:
