@@ -1,6 +1,6 @@
 # PLAN: AutoCount SO 'Transferable' flag; non-transferable SOs excluded from Stock Debt
 
-Status: Review (build done, reviewer + browser pass). Track: standard (carries a migration, so not small-fix).
+Status: Review (fix round 1 Oct: vitest key-parity fixture, unknown-field log guard test, owner decision (a) recorded). Track: standard (carries a migration, so not small-fix).
 UAC: `so-transferable-acceptance-criteria.md` alongside.
 
 Lane: SO-TRANSFERABLE. Owner ask, 1 Oct 2026: AutoCount sales orders carry a header column
@@ -41,9 +41,11 @@ sorento-crm; SOs with Transferable = F must NOT be considered in Stock Debt.
   predicate, `demand.is_transferable_order()`, so an F line never ranks as competing demand
   either. The board still LISTS an F order's lines (its row read is unchanged). Consequence: an F order gets no stock reserved anywhere
   until AutoCount flips it to T. F means "not confirmed yet for the queue" (owner).
-- D5 Not changed (owner to decide, listed in the scout report): `is_open_demand()` /
-  `scm.committed_v` (reorder, netting, coverage, location stock, SPO conversion), outstanding
-  report, sales report, chatbot.
+- D5 Owner decision (a), 1 Oct 2026: F does NOT leave `is_open_demand()` / `scm.committed_v`
+  (reorder, netting, coverage, location stock, SPO conversion, container requests), the
+  outstanding report, the sales report or the chatbot. An F order is still real demand for
+  planning and reporting; F only keeps it out of Stock Debt and the fulfilment board's
+  reservation ladder (D3, D4).
 - D6 UI (owner ruling, 1 Oct 2026): a Transferable column on the SO list (Yes / No / Not stated
   `Badge`, not sortable) with a Transferable filter (`transferable=yes|no|unknown`), and a
   read-only Transferable field on the SO detail General tab, the same in view and edit, with a
@@ -79,6 +81,3 @@ drop-not-write.
   longer matters: owner decision (1 Oct 2026) made every `/external/ingest/*` schema DROP unknown
   keys and log their names once per request (`app.schemas.ingest_extras`) instead of refusing the
   record, so an early send is ingested without the flag and a late one simply leaves it NULL.
-- Owner to decide whether F also leaves `is_open_demand()` / `scm.committed_v` (reorder, netting,
-  coverage, location stock, SPO conversion, container requests), the outstanding report, the sales
-  report and the chatbot answers built on them.
