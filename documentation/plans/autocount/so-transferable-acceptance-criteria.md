@@ -7,6 +7,6 @@
 - AC-TR-5 Rows that never stated it read `is_transferable = null` (migration adds a nullable column with no default; nothing is backfilled).
 - AC-TR-6 Stock Debt list: an open SO line on an F order is not demand; the same line on a T or unknown order is. A product whose only demand is F and has no stock/supply gets no row.
 - AC-TR-7 Stock Debt cell drill: F order lines are not listed in `demand`, and `demand_total_qty` excludes them.
-- AC-TR-8 The shared assignment (`assignments_for`, the fulfilment board's ladder input) carries no F line.
+- AC-TR-8 The shared assignment (`assignments_for`, and the board ladder's `planning_assignments`) carries no F line, so no stock is reserved for it.
 - AC-TR-9 `GET /scm/sales-orders/{id}` returns `is_transferable`; `PUT /scm/sales-orders/{id}` cannot change it.
-- AC-TR-10 SO detail page shows a "Not transferable" badge only when `is_transferable === false`, at 1280px and 375px.
+- AC-TR-10 SO list shows a Transferable column (Yes / No / Not stated) and a Transferable filter; SO detail General tab shows a read-only Transferable field marked "From AutoCount" in view and edit; usable at 1280px and 375px.
