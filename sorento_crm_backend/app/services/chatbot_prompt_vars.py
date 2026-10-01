@@ -668,3 +668,128 @@ LITERAL_LIST_PATTERNS: dict[str, str] = {
 def literal_lists(template: str) -> list[str]:
     """Names of the registry lists `template` carries as literal text."""
     return [name for name, pattern in LITERAL_LIST_PATTERNS.items() if _re.search(pattern, template or "")]
+
+
+# --------------------------------------------------------------------------- #
+# The rendered-IDENTICAL wording layer (owner hand test #1405, item 3, 1 Oct 2026)
+#
+# Stricter than `wording_layer`: a hard-coded list becomes its `{{variable}}` only when
+# the registry renders EXACTLY the same text today, so the prompt the model receives does
+# not change by a single byte. Every list whose registry differs stays literal and is
+# reported with what is only in the text and what is only in the registry, so the owner
+# decides each one instead of the wording changing silently.
+# --------------------------------------------------------------------------- #
+
+
+def _items(variable: str, text_value: str) -> list[str]:
+    """A list's items, for the difference report."""
+    raw = (text_value or "").strip()
+    if variable in ("domains",):
+        return [v for v in _re.split(r"\s*\|\s*", raw) if v]
+    if variable in ("status_values", "teams", "agents", "entity_kinds"):
+        return [v for v in raw.split("|") if v]
+    if variable == "access_levels":
+        try:
+            return [str(v) for v in json.loads(raw)]
+        except ValueError:
+            return [raw]
+    if variable == "domain_words":
+        return [w.strip() for w in _re.split(r",\s*", raw.replace("\n", " ")) if w.strip()]
+    return [line.strip() for line in raw.splitlines() if line.strip()]
+
+
+_IDENTICAL_CANDIDATES: tuple[tuple[str, str], ...] = (
+    ("domains", r"domain_hint = ONE of: (?P<list>[a-z_]+(?: \| [a-z_]+)+) \| null"),
+    ("status_values", r'"order_status": "(?P<list>[a-z_]+(?:\|[a-z_]+)*)\|null'),
+    ("status_values", r'"status": "(?P<list>[a-z_]+(?:\|[a-z_]+)*)\|null'),
+    ("status_values", r"The full set is now: (?P<list>[a-z_]+(?:\|[a-z_]+)*)\|null"),
+    ("teams", r'"suggested_team": "(?P<list>[a-z_]+(?:\|[a-z_]+)+)"'),
+    ("agents", r'"suggested_agent": "(?P<list>[a-z_]+(?:\|[a-z_]+)+)"'),
+    ("entity_kinds", r'"hint": "(?P<list>[a-z_]+(?:\|[a-z_]+){3,})"'),
+    ("access_levels", r"drawn\s+ONLY from:\s*\n(?P<list>\[\"[^\]\n]*\"\])"),
+    ("statuses", r'(?P<list>  - "outstanding" -> .*?)\n(?=  - null -> DEFAULT)'),
+    ("domain_words", r"STATUS word -\s*\n?(?P<list>[^\n].*?)\s+- in any language"),
+)
+
+
+def identical_wording_layer(template: str, db: Session) -> tuple[str, list[dict]]:
+    """`(new_template, report)`: each candidate list replaced by its variable only where the
+    registry renders exactly that text. Report rows: variable, line (1-based in the
+    source), action (`replaced` | `kept literal` | `not found`), and for a kept list the
+    items only in the text and only in the registry."""
+    from app.services.chatbot_parser_prompt import BLOCKS_BEGIN, BLOCKS_END
+
+    report: list[dict] = []
+    text = template
+    seen_spans: set[tuple[int, int]] = set()
+
+    def record(variable: str, m, literal: str, rendered: str) -> dict:
+        line = template[: m.start("list")].count("\n") + 1 if m else None
+        row = {"variable": variable, "line": line}
+        if m is None:
+            row["action"] = "not found"
+        elif literal == rendered:
+            row["action"] = "replaced"
+        else:
+            a, b = _items(variable, literal), _items(variable, rendered)
+            row.update(
+                action="kept literal",
+                only_in_text=[x for x in a if x not in b],
+                only_in_registry=[x for x in b if x not in a],
+                order_or_format_only=sorted(a) == sorted(b),
+            )
+        report.append(row)
+        return row
+
+    for variable, pattern in _IDENTICAL_CANDIDATES:
+        rendered = render_value(db, variable)
+        # Each pattern may match in several places (status_values does); handle each once.
+        m = None
+        for found in _re.finditer(pattern, text, flags=_re.S):
+            span = (found.start("list"), found.end("list"))
+            if span in seen_spans:
+                continue
+            m = found
+            break
+        if m is None:
+            record(variable, None, "", rendered)
+            continue
+        literal = m.group("list")
+        row = record(variable, m, literal, rendered)
+        if row["action"] == "replaced":
+            token = "{{" + variable + "}}"
+            text = text[: m.start("list")] + token + text[m.end("list") :]
+            seen_spans.add((m.start("list"), m.start("list") + len(token)))
+        else:
+            seen_spans.add((m.start("list"), m.end("list")))
+
+    # The publish-time policy blocks: each paragraph replaced only when it is exactly what
+    # its variable renders today.
+    if BLOCKS_BEGIN in text and BLOCKS_END in text:
+        head, rest = text.split(BLOCKS_BEGIN, 1)
+        block, tail = rest.split(BLOCKS_END, 1)
+        parts = block.strip("\n").split("\n\n")
+        names = ["domains_detail", "entity_kinds_detail", "specs"]
+        line0 = template.split(BLOCKS_BEGIN, 1)[0].count("\n") + 2
+        for i, part in enumerate(parts[: len(names)]):
+            variable = names[i]
+            rendered = render_value(db, variable)
+            row = {"variable": variable, "line": line0}
+            if part == rendered:
+                parts[i] = "{{" + variable + "}}"
+                row["action"] = "replaced"
+            else:
+                a, b = _items(variable, part), _items(variable, rendered)
+                row.update(
+                    action="kept literal",
+                    only_in_text=[x for x in a if x not in b],
+                    only_in_registry=[x for x in b if x not in a],
+                    order_or_format_only=sorted(a) == sorted(b),
+                )
+            report.append(row)
+            line0 += part.count("\n") + 2
+        lead = block[: len(block) - len(block.lstrip("\n"))]
+        trail = block[len(block.rstrip("\n")) :]
+        joined = "\n\n".join(parts)
+        text = f"{head}{BLOCKS_BEGIN}{lead}{joined}{trail}{BLOCKS_END}{tail}"
+    return text, report
