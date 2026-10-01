@@ -227,9 +227,7 @@ from the version list.
 8. 375x812: the document is 360px wide (no page overflow: BL-068 is fixed by the `min-w-0` grid
    columns). The wired panel stacks under the editor. The Insert variable menu ends at x=325.
 
-Screenshots (quantised, under 200 KB each): `documentation/plans/evidence/prompt-dynamic-editor-1280.png`
-(Status words chip expanded, showing the owner's added word "jualan bulan ini") and
-`documentation/plans/evidence/prompt-dynamic-editor-375.png` (the variable picker).
+Screenshots from this run were replaced (two-per-lane cap) by the owner hand-test repro below.
 
 Kill tests, R5a/b (each restored after):
 - chip serialisation dropped: 2 red;
@@ -251,3 +249,52 @@ Fresh login, then System > AI Assistant > Prompts > chatbot_semantic_parser, v4.
   inside the editor.
 - **Tabs (Radix pill).** Preview rendered prompt shows 0 `{{`, and Edit brings the chip
   editor back.
+
+## Owner hand test #1405 = FAIL, fix round (1 Oct 2026)
+
+Three items from the owner. Items 1 and 2 were red-first: af0738ea (4 red), fix 6babf079 (114/114
+green). Item 3: red cb915805, then 56ceba99.
+
+1. **Find after a version switch.** The highlighted text was built from `emitted.current ?? value`.
+   After a version switch, `emitted` still held the previous draft, so the ranges were offsets into
+   the wrong text. `findText` is now derived from `value` (`PromptChipEditor.tsx`). Kill test (stale
+   `findText`): 1 red.
+2. **Insert at the caret.** Two causes:
+   - the wired panel appended to the draft;
+   - a registry refetch rebuilt the editor DOM, which detached the remembered Range.
+
+   The fix has three parts:
+   - The caret is remembered as a value offset (`savedOffset`) on keyup, mouseup, blur and input.
+   - A registry refetch now relabels the chips in place instead of rebuilding the DOM.
+   - The panel's Insert calls the editor's `insertVariable` through a ref. The editor stays mounted
+     (hidden) while Preview is shown.
+
+   Kill tests: offset memory disabled, 4 red; panel append restored, 1 red.
+3. **Rendered-identical version.** `chatbot_prompt_vars.identical_wording_layer` swaps a hand list
+   for its variable only when the registry renders exactly the same text, and reports every other
+   list with what differs. `scripts/prompt_dynamic_identical_version.py`:
+   - It is a dry run by default.
+   - `--save` refuses unless the rendered diff is empty.
+   - `--save` inserts one unlabelled version and is idempotent.
+   - It never labels, publishes or stages.
+
+   Kill test (always replace): 3 red. Sandbox (CI DB, production v3), rendered output identical:
+   True.
+   - Replaced: `{{teams}}` and `{{entity_kinds_detail}}`.
+   - Kept literal, because the registry differs: domains, status_values (x3), agents,
+     entity_kinds, access_levels, statuses, domain_words, domains_detail.
+   - The differences on the real v53 come from crew's run on the crew copy.
+
+Browser repro (agent-browser 0.27.0, session `pdyn4`, sandbox stack):
+- Find at 1280: on v4, "current" gives 1/84, and all 84 highlight ranges read exactly "current".
+  - Switch to v3 with find open: still exact.
+  - Back to v4: still exact.
+  - Type "current " at the top: 2/85, 0 wrong ranges.
+- Panel Insert at 1280: with the caret after "domain_hint = ONE of:", Insert on Brands puts the
+  chip there, before the Domains chip, not at the bottom.
+- Toolbar Insert: Access levels lands after "== ACCESS LEVELS ==".
+- Panel Insert at 375: the chip lands at the caret, and the document is 360 wide.
+
+Screenshots:
+- `documentation/plans/evidence/prompt-dynamic-find-1280.png`
+- `documentation/plans/evidence/prompt-dynamic-insert-375.png`
