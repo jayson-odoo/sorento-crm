@@ -102,8 +102,13 @@ def referred_entries(
 
     # 2. A miss: the codes the fetch found nothing for, and the tokens it could not place
     #    (read beside step 1 too: "incoming SRT1 XYZ9" answers SRT1's ETA and cannot find
-    #    XYZ9, and both are the dealer's asks - review round 1, finding 2).
+    #    XYZ9, and both are the dealer's asks - review round 1, finding 2). Only a stock or
+    #    incoming fetch names PRODUCTS there; another domain's miss is a customer name or an
+    #    order number, so a barred contact's miss in it falls through to steps 4 and 5
+    #    (CUSTOMER-ASKS-REFER-ONLY review).
     for envelope in envelopes:
+        if envelope.get("domain") not in _PRODUCT_DOMAINS:
+            continue
         for code in [*_strings(envelope.get("miss")), *_strings(envelope.get("unresolved"))]:
             add(code, branch=BRANCH_REFERRED, answer=text)
     if out:
@@ -140,6 +145,8 @@ def referred_entries(
 
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
+#: The fetch domains whose `miss` / `unresolved` are product codes.
+_PRODUCT_DOMAINS = frozenset({"inventory", "incoming"})
 
 
 def _key(value: Any) -> str:

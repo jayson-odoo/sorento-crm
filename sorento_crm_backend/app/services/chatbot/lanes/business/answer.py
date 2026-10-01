@@ -3458,7 +3458,9 @@ def not_found_error_message(
             esc = _esc_offer()
             return f"{label} is not available{at}." + (f" {esc}" if esc else "")
 
-        entitlement_miss = _entitlement_miss()
+        # Called where it is used (`build_breakdown_msg`), not here: a barred contact's
+        # refer line marks the turn for Customer asks (`turn/refer.py`), so it is built only
+        # for the reply that sends it (CUSTOMER-ASKS-REFER-ONLY review).
 
         # We may summarise our OWN expansions; we may never hide something the customer asked
         # for by name. `resolutions` maps each typed token to what it matched, so a code
@@ -3709,6 +3711,7 @@ def not_found_error_message(
             )
             if esc_ask:
                 miss_sentence = f"{miss_sentence} {esc_ask}"
+            entitlement_miss = _entitlement_miss()
             parts.append(entitlement_miss if jsc.truthy(entitlement_miss) else miss_sentence)
             return "\n\n".join(parts)
 

@@ -155,7 +155,7 @@ def test_referred_entries_are_built_only_on_a_marked_turn_and_carry_the_flag():
         return refer_asks.referred_entries(
             referred=referred,
             reply_text=f"Couldn't find ZZT9. {REFER_TO_SALESMAN}",
-            envelopes=[{"miss": ["ZZT9"]}],
+            envelopes=[{"domain": "inventory", "miss": ["ZZT9"]}],
             plan=None,
             pending_before=None,
             message_text="stock ZZT9",
@@ -167,6 +167,54 @@ def test_referred_entries_are_built_only_on_a_marked_turn_and_carry_the_flag():
     assert [(r["product_code"], r["branch"], r["refers_to_salesman"]) for r in rows] == [
         ("ZZT9", "referred", True)
     ]
+
+
+def test_consume_reads_the_mark_once_so_a_second_tail_cannot_log_twice():
+    with refer.tracking():
+        refer.sentence()
+        assert refer.consume() is True
+        assert refer.consume() is False
+    assert refer.consume() is False  # outside a turn
+
+
+def test_a_miss_outside_stock_and_incoming_is_not_a_product_code():
+    """Review: another domain's `miss` is a customer name or an order number; a barred
+    contact's order miss is named by what they typed, never "ACME SDN BHD" as a product."""
+    rows = refer_asks.referred_entries(
+        referred=True,
+        reply_text=f"Couldn't find orders for ACME SDN BHD. {REFER_TO_SALESMAN}",
+        envelopes=[{"domain": "order", "miss": ["ACME SDN BHD"], "unresolved": ["SO-123"]}],
+        plan=None,
+        pending_before=None,
+        message_text="orders for ACME last month",
+        answered=[],
+    )
+    assert [(r["product_code"], r["branch"]) for r in rows] == [("orders for ACME last month", "referred")]
+
+
+def test_the_ask_writer_never_fails_the_turn(monkeypatch, caplog):
+    def boom(**_kw):
+        raise RuntimeError("bad envelope")
+
+    monkeypatch.setattr(refer_asks, "referred_entries", boom)
+    written: list = []
+    monkeypatch.setattr(engine_mod, "_after_stock_ask_turn", lambda *a, **k: written.append(k))
+    with refer.tracking():
+        refer.sentence()
+        engine_mod._record_customer_asks(
+            None,
+            turn_id="ZZT-turn",
+            contact_respond_id="ZZT",
+            state=None,
+            stock_entries=[],
+            reply_text=REFER_TO_SALESMAN,
+            refer_context=None,
+            ctx={},
+            dry_run=False,
+            chat_console=False,
+        )
+    assert written == []
+    assert "building the Customer asks rows failed" in caplog.text
 
 
 def _refer_name(node: ast.AST) -> str | None:

@@ -7298,22 +7298,26 @@ def _record_customer_asks(
     marked = refer.consume()
     if dry_run and not chat_console:
         return
-    context = refer_context or {}
-    referred = marked or any(
-        isinstance(e, dict) and e.get("refers_to_salesman") is True for e in stock_entries
-    )
-    entries = [
-        *stock_entries,
-        *refer_asks.referred_entries(
-            referred=referred,
-            reply_text=reply_text,
-            envelopes=context.get("envelopes") or [],
-            plan=context.get("plan"),
-            pending_before=context.get("pending_before"),
-            message_text=context["message_text"] if "message_text" in context else _ctx_message_text(ctx),
-            answered=stock_entries,
-        ),
-    ]
+    try:
+        context = refer_context or {}
+        referred = marked or any(
+            isinstance(e, dict) and e.get("refers_to_salesman") is True for e in stock_entries
+        )
+        entries = [
+            *stock_entries,
+            *refer_asks.referred_entries(
+                referred=referred,
+                reply_text=reply_text,
+                envelopes=context.get("envelopes") or [],
+                plan=context.get("plan"),
+                pending_before=context.get("pending_before"),
+                message_text=context["message_text"] if "message_text" in context else _ctx_message_text(ctx),
+                answered=stock_entries,
+            ),
+        ]
+    except Exception:  # noqa: BLE001 - a post-commit side effect: the reply is already recorded
+        logger.exception("chatbot turn %s: building the Customer asks rows failed", turn_id)
+        return
     if not entries:
         return
     _after_stock_ask_turn(

@@ -44,6 +44,12 @@ The backend cannot import `sorento_crm_mcp` at runtime (`lanes/business/fetch.py
 
 `lib/stock-asks-todo.ts::bucketTodo` returns one `open` section (`Open`) ordered by the toolbar sort, default `created_at` ascending; `AskTodoList` / `AskTodoGrid` render `Open` and `Done today` (no red heading). `AskCard` already shows `formatDateTimeInMalaysia(created_at)`. `stock_ask_service.agent_counts` and `StockAskAgentCount` drop `needs_attention`; the Agent select reads `CODE · N open`. `today_start` stays on the payload: it is the Done today window.
 
+## Review round 1 (reviewer, 1 Oct 2026)
+
+- The mark is set when a composer BUILDS the line, so a line built and then discarded would log a row: `answer.py`'s promotion entitlement miss was built eagerly and is now built only inside the reply that sends it (`build_breakdown_msg`). Every other site's output is the reply.
+- `refer_asks` step 2 reads `miss` / `unresolved` only from `inventory` / `incoming` envelopes: another domain's miss is a customer name or an order number, so a barred order miss is named by what the customer typed.
+- `engine._record_customer_asks` is best-effort (logs, never fails a turn whose reply is already recorded).
+
 ## Known limits
 
 - A business-lane or entities-only console run of a barred reply reaches `complete_turn` / `_run_answer` without `chat_console`, so a console hand test of those writes no row (a live turn does). The casual lane and the head's own arms do pass it.
