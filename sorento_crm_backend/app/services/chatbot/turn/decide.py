@@ -630,12 +630,19 @@ def decide(
                 **facts,
             )
         named_scope = _named_scope(verdict)
-        if named_scope is not None and pending.kind == "sales_report_detail":
+        own_status = verdict.get("status") or verdict.get("order_status")
+        if (
+            named_scope is not None
+            and pending.kind == "sales_report_detail"
+            and own_status in (None, "", "sales_report")
+        ):
             # Fix round 1, B1 (AC-SR-28): "DO" / "delivery orders" typed at the sales
             # report's drill offer comes back as `document: ["DO"]` (the parser's document
             # enum). Here it picks the Delivery orders option; SO (or both), or DO when that
             # option is not on offer, is a pick of nothing offered, re-asked like a number
-            # past the end. The outstanding kinds keep the named-document arm below.
+            # past the end. A message that names its own status ("DO outstanding") is a new
+            # ask and falls through to the named-document arm below (fix round 2, R1), as
+            # every outstanding kind's named document does.
             offered = [
                 o["position"]
                 for o in pending.options
