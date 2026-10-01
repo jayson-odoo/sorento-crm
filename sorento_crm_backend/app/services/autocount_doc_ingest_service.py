@@ -494,6 +494,7 @@ class AutocountDocIngestService(MasterRefResolver):
         # SPO allocations whose receipt a GRN write moved, for the route's post-commit hook.
         self.touched_allocation_ids: set[str] = set()
         self.released_allocation_ids: set[str] = set()
+        self.live_records: list[RecordResult] = []
 
     #: How often `on_progress` fires mid-batch - the same cadence `MasterIngestService`
     #: uses (B3): a pull snapshot can run to thousands of documents.
@@ -515,6 +516,9 @@ class AutocountDocIngestService(MasterRefResolver):
         if entity_type not in AUTOCOUNT_DOC_ENTITIES | AUTOCOUNT_BRANCH_ENTITIES:
             raise UnsupportedIngestEntity(f"Unsupported AutoCount entity {entity_type!r}")
         result = IngestResult(dry_run=dry_run)
+        # The batch's records so far, for an `on_progress` callback that tallies outcomes
+        # mid-run (DO-APPLY-PROGRESS); the callback signature stays `(processed, total)`.
+        self.live_records = result.records
         total = len(records)
         try:
             for index, raw in enumerate(records, start=1):
