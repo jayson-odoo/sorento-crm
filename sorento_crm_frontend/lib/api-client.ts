@@ -135,6 +135,7 @@ const ACCESS_DENIED_PREFIXES = [
   'Permission required:',
   'One of these permissions required', // covers the "(module may be disabled)" variant
   'Module not enabled:',
+  'One of these modules must be enabled:',
 ];
 
 /** The backend refused this read: render `AccessDenied`, never an error card or "not found". */

@@ -282,6 +282,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     gcTime: 1000 * 60 * 60, // 60 minutes
     refetchOnReconnect: false,
     retry: retryUnlessRefused,
+    // The layout renders the failure in place; no toast on top of it.
+    meta: { silent: true },
   });
   const data = loaded ?? { settings: null, roles: [] };
 

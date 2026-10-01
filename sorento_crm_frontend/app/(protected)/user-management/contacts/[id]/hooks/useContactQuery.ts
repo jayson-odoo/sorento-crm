@@ -12,5 +12,7 @@ export function useContactQuery(contactId: string) {
     enabled: !!contactId,
     // A refusal or a missing contact will not change on retry; a fault gets one.
     retry: retryUnlessRefused,
+    // The contact layout renders the failure in place; no toast on top of it.
+    meta: { silent: true },
   });
 }

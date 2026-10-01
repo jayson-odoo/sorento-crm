@@ -10,8 +10,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import UserLayout from './layout';
+import { pendingEntityStore } from '@/lib/pending-entity-store';
 
-const h = vi.hoisted(() => ({ apiFetch: vi.fn(), push: vi.fn(), replace: vi.fn() }));
+const h = vi.hoisted(() => ({ apiFetch: vi.fn(), push: vi.fn(), replace: vi.fn(), toast: vi.fn() }));
 
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 vi.mock('@/lib/api', () => ({ apiFetch: (...args: unknown[]) => h.apiFetch(...args) }));
@@ -20,7 +21,7 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: h.push, replace: h.replace }),
   useSearchParams: () => new URLSearchParams(),
 }));
-vi.mock('@/lib/toast', () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }) }));
+vi.mock('@/lib/toast', () => ({ toast: Object.assign(h.toast, { success: vi.fn(), error: vi.fn() }) }));
 vi.mock('@/components/common/RecordNavigation', () => ({ default: () => null }));
 vi.mock('@/components/common/container', () => ({
   Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -35,10 +36,12 @@ function json(status: number, body: unknown): Response {
 }
 
 const PARAMS = Promise.resolve({ id: 'u1' });
+const clients: QueryClient[] = [];
 
 async function renderLayout() {
   // The layout sets its own retry rule; the client default must not mask it.
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  clients.push(client);
   await act(async () => {
     render(
       <QueryClientProvider client={client}>
@@ -57,6 +60,9 @@ beforeEach(async () => {
   h.apiFetch.mockReset();
   h.push.mockReset();
   h.replace.mockReset();
+  h.toast.mockReset();
+  clients.length = 0;
+  pendingEntityStore.reset();
 });
 afterEach(() => cleanup());
 
@@ -106,5 +112,31 @@ describe('user detail when the record read fails', () => {
     expect(h.push).not.toHaveBeenCalled();
     expect(h.apiFetch).toHaveBeenCalledTimes(1);
     expect(screen.queryByText('child tab')).toBeNull();
+  });
+
+  it('a user this tab just deleted leaves for the list once, through the deleted-record guard only', async () => {
+    pendingEntityStore.noteCommittedDelete('u1');
+    h.apiFetch.mockImplementation(async () => json(404, { detail: 'User not found' }));
+    await renderLayout();
+
+    await waitFor(() => expect(h.replace).toHaveBeenCalledWith('/user-management/users'));
+    expect(h.replace).toHaveBeenCalledTimes(1);
+    expect(h.toast).toHaveBeenCalledWith('Already deleted', expect.anything());
+  });
+
+  it('a failed background refetch keeps the user on screen', async () => {
+    h.apiFetch.mockImplementation(async () => json(200, { id: 'u1', name: 'Ada', roles: [] }));
+    await renderLayout();
+    expect(await screen.findByText('child tab')).toBeTruthy();
+
+    h.apiFetch.mockImplementation(async () => json(500, { detail: 'Database unavailable' }));
+    await act(async () => {
+      await clients[0].refetchQueries({ queryKey: ['user-user', 'u1'] });
+    });
+    await waitFor(() => expect(h.apiFetch.mock.calls.length).toBeGreaterThanOrEqual(2));
+    // Give the error a chance to reach the layout before asserting it did not swap.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText('child tab')).toBeTruthy();
+    expect(screen.queryByText('Could not load this user')).toBeNull();
   });
 });

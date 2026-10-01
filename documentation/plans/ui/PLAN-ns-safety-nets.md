@@ -14,15 +14,17 @@ Out of scope: session / sign-out (L1, lane SESSION-NEVER-STUCK), shared-lookup p
 
 ### L8: boundaries (rows 33, 40)
 
-- `components/common/route-error-screen.tsx`: one fixed-copy error screen (never
+- `components/common/RouteErrorScreen.tsx`: one fixed-copy error screen (never
   `error.message`; `digest` shown as a reference). Detects a chunk-load failure (deploy skew:
   the browser holds an old build whose chunks are gone) and offers **Reload** (full
   `window.location.reload()`, the only thing that fetches the new build) instead of `reset()`.
-- `app/global-error.tsx`: own `<html>`/`<body>`, plain markup (the root layout's providers and
-  CSS may be what failed), Reload button. Catches a failed `ssr:false` chunk load of
+- `app/global-error.tsx` + `components/common/GlobalErrorView.tsx`: own `<html>`/`<body>`,
+  plain markup and inline styles, no UI-primitive imports (the root layout's providers, CSS or a
+  shared chunk may be what failed), Reload button. Catches a failed `ssr:false` chunk load of
   `DynamicClientProviders`.
 - `error.tsx` in `app/(auth)`, `app/(public)`, `app/unsubscribe`, all rendering
-  `RouteErrorScreen`. `(protected)/error.tsx` keeps its copy and gains the chunk-load Reload.
+  `RouteErrorScreen`, none with a staff link: `(auth)` also holds customer pages (portal,
+  quotation-sign, view, approval, forms). `(protected)/error.tsx` keeps its copy and gains the chunk-load Reload.
 
 ### L6: permission-load failure is not "no access" (row 34)
 
@@ -36,15 +38,21 @@ Out of scope: session / sign-out (L1, lane SESSION-NEVER-STUCK), shared-lookup p
 
 ### L9: detail layouts branch on error before drawing tabs (rows 11, 12, 15)
 
-- `components/common/load-error-state.tsx`: "Could not load X" + message + Retry, plus
-  `isAccessDenied` / `isNotFound` helpers in `lib/api-client.ts` (S3 snippet).
+- `components/common/LoadErrorState.tsx`: "Could not load X" + message + Retry, and
+  `QueryErrorState` (403 -> `AccessDenied`, else `LoadErrorState`). `lib/api-client.ts` gains
+  `apiError` (status-carrying), `isAccessDenied`, `isNotFound` (S3 snippet) and
+  `retryUnlessRefused` (one retry for a fault, none for a 403 / 404). The three layout queries
+  and the permissions query set `meta: { silent: true }` (S4.3): the failure is shown in place,
+  not toasted on top. `query-provider.tsx` uses `isAccessDenied` for its permission toast.
+- A failed background refetch over data already shown keeps the data in all three layouts.
 - `user-management/users/[id]/layout.tsx` (row 11): error -> AccessDenied / not-found /
   LoadErrorState before the tabs render; the 404 redirect moves out of `queryFn` into an
   effect on the settled error, using `router.replace` (S6.4).
 - `user-management/settings/layout.tsx` (row 12): a failed settings read renders
   LoadErrorState instead of the tab bodies, so no tab can draw (and Save) blank defaults.
-- `user-management/contacts/[id]/layout.tsx` + `page.tsx` (row 15): same, no endless
-  skeleton, no "not found" for a refused or failed read.
+- `user-management/contacts/[id]/layout.tsx` (row 15): same, no endless skeleton, no "not
+  found" for a refused or failed read. `page.tsx` needs no change: the layout no longer renders
+  `children` until the record is there.
 
 ## Tests (red first, vitest)
 

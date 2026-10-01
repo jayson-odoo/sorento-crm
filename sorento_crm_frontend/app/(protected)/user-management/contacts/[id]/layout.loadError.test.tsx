@@ -40,8 +40,11 @@ function json(status: number, body: unknown): Response {
 
 const PARAMS = Promise.resolve({ id: ID });
 
+const clients: QueryClient[] = [];
+
 async function renderLayout() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  clients.push(client);
   await act(async () => {
     render(
       <QueryClientProvider client={client}>
@@ -58,6 +61,7 @@ async function renderLayout() {
 beforeEach(async () => {
   await PARAMS;
   h.apiFetch.mockReset();
+  clients.length = 0;
 });
 afterEach(() => cleanup());
 
@@ -109,5 +113,23 @@ describe('contact detail when the record read fails', () => {
     expect(await screen.findByText('Contact not found')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     expect(screen.queryByText('Tab body')).toBeNull();
+  });
+
+  it('a failed background refetch keeps the contact on screen', async () => {
+    h.apiFetch.mockImplementation(async (url: string) =>
+      url.endsWith(ID)
+        ? json(200, { id: ID, phone_number: '6012', name: 'Aisyah', access_types: [] })
+        : json(200, { data: [], pagination: { total: 0 } }),
+    );
+    await renderLayout();
+    expect(await screen.findByText('Tab body')).toBeTruthy();
+
+    h.apiFetch.mockImplementation(async () => json(500, { detail: 'Database unavailable' }));
+    await act(async () => {
+      await clients[0].refetchQueries({ queryKey: ['respond-contact', ID] });
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText('Tab body')).toBeTruthy();
+    expect(screen.queryByText('Could not load this contact')).toBeNull();
   });
 });

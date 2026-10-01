@@ -13,6 +13,8 @@ export function usePermissions() {
     queryFn: fetchMyPermissions,
     enabled: status === 'authenticated',
     staleTime: 5 * 60 * 1000,
+    // Its failure is reported in place (RequireAccess + the shell banner), not as a toast.
+    meta: { silent: true },
   });
   const permissions = data ?? [];
   const set = new Set(permissions);

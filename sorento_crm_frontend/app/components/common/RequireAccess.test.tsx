@@ -26,6 +26,11 @@ vi.mock('next-auth/react', () => ({
   useSession: () => ({ data: { user: { id: 'u1' } }, status: 'authenticated' }),
 }));
 
+// Container reads the app settings provider, which this test does not stand up.
+vi.mock('@/components/common/container', () => ({
+  Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+
 vi.mock('@/components/common/screen-loader', () => ({
   ScreenLoader: () => <div>loading-access</div>,
 }));

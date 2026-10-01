@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('next/navigation', () => ({
@@ -23,6 +23,8 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...args: unknown[]) => apiFetch(...args
 import Layout from './layout';
 import { useSettings } from './components/settings-context';
 
+const clients: QueryClient[] = [];
+
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -38,6 +40,7 @@ function FakeTab() {
 
 function renderLayout() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  clients.push(client);
   return render(
     <QueryClientProvider client={client}>
       <Layout>
@@ -49,6 +52,7 @@ function renderLayout() {
 
 beforeEach(() => {
   apiFetch.mockReset();
+  clients.length = 0;
 });
 afterEach(() => cleanup());
 
@@ -79,5 +83,23 @@ describe('settings when the read fails', () => {
 
     expect(await screen.findByText("You don't have access to this page")).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Save/ })).toBeNull();
+  });
+
+  it('a failed refetch after a save keeps the loaded settings, it does not swap the form for an error', async () => {
+    apiFetch.mockImplementation(async () =>
+      json(200, { settings: { id: 's1', name: 'Sorento' }, roles: [] }),
+    );
+    renderLayout();
+    expect(await screen.findByRole('button', { name: 'Save Sorento' })).toBeTruthy();
+
+    // What every tab does after a save: invalidate, and this time the read fails.
+    apiFetch.mockImplementation(async () => json(500, { detail: 'Database unavailable' }));
+    await act(async () => {
+      await clients[0].invalidateQueries({ queryKey: ['system-settings'] });
+    });
+    await waitFor(() => expect(apiFetch.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByRole('button', { name: 'Save Sorento' })).toBeTruthy();
+    expect(screen.queryByText('Could not load settings')).toBeNull();
   });
 });

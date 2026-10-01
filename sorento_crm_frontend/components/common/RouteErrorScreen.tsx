@@ -59,7 +59,9 @@ export default function RouteErrorScreen({
     <div className="flex w-full justify-center px-4">
       <Card className="mt-10 w-full max-w-lg">
         <CardHeader>
-          <CardTitle>{chunk ? 'A new version is available' : 'Something went wrong'}</CardTitle>
+          <CardTitle>
+            {chunk ? 'A new version is available' : 'Something went wrong'}
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
@@ -68,7 +70,9 @@ export default function RouteErrorScreen({
               : 'Something went wrong on this page.'}
           </p>
           {error.digest ? (
-            <p className="font-mono text-xs text-muted-foreground">Reference: {error.digest}</p>
+            <p className="font-mono text-xs text-muted-foreground">
+              Reference: {error.digest}
+            </p>
           ) : null}
           <div className="flex flex-wrap items-center gap-2">
             {chunk ? (

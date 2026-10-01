@@ -138,6 +138,8 @@ export default function UserLayout({
     gcTime: 1000 * 60 * 60, // 60 minutes
     refetchOnReconnect: false,
     retry: retryUnlessRefused,
+    // The layout renders the failure in place; no toast on top of it.
+    meta: { silent: true },
   });
 
   const notFound = isNotFound(error);

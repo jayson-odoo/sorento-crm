@@ -28,13 +28,22 @@ export default function GlobalErrorView({
       }}
     >
       <div style={{ maxWidth: 420, width: '100%', textAlign: 'center' }}>
-        <h1 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 8px' }}>Something went wrong</h1>
+        <h1 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 8px' }}>
+          Something went wrong
+        </h1>
         <p style={{ fontSize: 14, color: '#4b5563', margin: '0 0 16px' }}>
-          The app could not start. This usually clears after a reload, for example after an
-          update.
+          The app could not start. This usually clears after a reload, for
+          example after an update.
         </p>
         {digest ? (
-          <p style={{ fontSize: 12, fontFamily: 'monospace', color: '#6b7280', margin: '0 0 16px' }}>
+          <p
+            style={{
+              fontSize: 12,
+              fontFamily: 'monospace',
+              color: '#6b7280',
+              margin: '0 0 16px',
+            }}
+          >
             Reference: {digest}
           </p>
         ) : null}

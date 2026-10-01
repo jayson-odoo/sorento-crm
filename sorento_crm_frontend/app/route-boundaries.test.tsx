@@ -36,14 +36,16 @@ describe('route group error boundaries', () => {
     expect(fs.existsSync(path.join(APP, 'global-error.tsx'))).toBe(true);
   });
 
-  it('sign-in errors show fixed copy, Try again and a way back to sign in', () => {
+  it('sign-in and customer-link errors show fixed copy and Try again, no staff link', () => {
     const reset = vi.fn();
     render(<AuthError error={new Error('boom')} reset={reset} />);
     expect(screen.getByRole('heading', { name: 'Something went wrong' })).toBeTruthy();
     expect(screen.queryByText('boom')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(reset).toHaveBeenCalled();
-    expect(screen.getByRole('link', { name: /Back to sign in/ }).getAttribute('href')).toBe('/signin');
+    // `(auth)` also holds customer pages (portal, quotation-sign, view), whose
+    // readers have no staff account to sign in to.
+    expect(screen.queryByRole('link')).toBeNull();
   });
 
   it.each([

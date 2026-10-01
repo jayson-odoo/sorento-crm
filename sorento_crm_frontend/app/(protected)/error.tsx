@@ -1,6 +1,5 @@
 'use client';
 
-import { Container } from '@/components/common/container';
 import RouteErrorScreen from '@/components/common/RouteErrorScreen';
 
 /**
@@ -30,12 +29,10 @@ export default function ProtectedError({
   // chunk-load failure (a deploy replaced the build this tab runs) into Reload,
   // since Try again cannot fetch chunks that no longer exist.
   return (
-    <Container>
-      <RouteErrorScreen
-        error={error}
-        reset={reset}
-        exit={{ href: '/', label: 'Back to dashboards' }}
-      />
-    </Container>
+    <RouteErrorScreen
+      error={error}
+      reset={reset}
+      exit={{ href: '/', label: 'Back to dashboards' }}
+    />
   );
 }

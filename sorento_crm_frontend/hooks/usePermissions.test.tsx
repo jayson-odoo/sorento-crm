@@ -51,6 +51,9 @@ describe('usePermissions().isError', () => {
     await act(async () => {
       await result.current.refetch();
     });
+    // React Query v5 notifies observers on a later tick: wait for the failed refetch
+    // to reach the hook, or this asserts against the old success render.
+    await waitFor(() => expect(result.current.error).toBeTruthy());
     expect(result.current.isError).toBe(false);
     expect(result.current.permissionSet.has('a.view')).toBe(true);
   });

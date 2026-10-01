@@ -39,9 +39,16 @@ export default function LoadErrorState({
       </div>
       <h2 className="mt-4 text-base font-semibold text-foreground">{title}</h2>
       {message ? (
-        <p className="mt-1 max-w-md break-words text-sm text-muted-foreground">{message}</p>
+        <p className="mt-1 max-w-md break-words text-sm text-muted-foreground">
+          {message}
+        </p>
       ) : null}
-      <Button variant="outline" className="mt-4" onClick={onRetry} disabled={retrying}>
+      <Button
+        variant="outline"
+        className="mt-4"
+        onClick={onRetry}
+        disabled={retrying}
+      >
         <RefreshCw className={cn(retrying && 'animate-spin')} />
         Retry
       </Button>
