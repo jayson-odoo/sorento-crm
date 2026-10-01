@@ -1066,10 +1066,14 @@ def test_select_step_on_pr_1411_runs_the_test_that_broke_the_release(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
-    assert outputs["full"] == "false"
-    selected = outputs["tests"].split()
-    assert "sorento_crm_backend/tests/test_ingest_parity_security_fixes.py" in selected
-    assert set(filtered["backend_tests"].split()) <= set(selected)
+    # Under the budget when this was written (216 files, ~2668 CPU-s); either
+    # way the file runs on the PR: in the list, or in the full shards.
+    if outputs["full"] == "false":
+        selected = outputs["tests"].split()
+        assert "sorento_crm_backend/tests/test_ingest_parity_security_fixes.py" in selected
+        assert set(filtered["backend_tests"].split()) <= set(selected)
+    else:
+        assert outputs == {"tests": "", "full": "true"}
     assert "estimated" in result.stdout and "sorento_crm_backend/tests/test_ingest_parity_security_fixes.py" in result.stdout
 
 

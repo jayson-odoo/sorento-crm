@@ -861,8 +861,8 @@ jobs:
   # tests/test_migration_*.py is the one case loadfile cannot cover: several of
   # those files run real DDL through `pg_session` against tables that OTHER
   # files' tests also touch, so the collision is cross-file, not within one
-  # file. Those tests run in a dedicated serial step below, after this step,
-  # on shard 2 only.
+  # file. Those tests run in a dedicated serial step below, on the `serial`
+  # matrix entry only.
   #
   # Never on a `pull_request` event (owner ruling 2026-09-29, fast PR gate):
   # six shards at ~15 min each were ~60% of a PR run's ~190 job-minutes on

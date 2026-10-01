@@ -12,7 +12,13 @@ release and failed it. So the selection is now:
 
 "References" is any of: `import app.x`, `from app.x import y`, `from app import x`,
 a relative import resolving to one of those, or the dotted name in the source text
-(a `monkeypatch.setattr("app.x.y", ...)` or `mock.patch` target).
+(a `monkeypatch.setattr("app.x.y", ...)` or `mock.patch` target). A changed
+`scripts/` file also matches a test that loads it by path or by bare name
+(`sys.path.insert` + `import name`, `spec_from_file_location(".../name.py")`).
+
+A conftest.py is never imported, so it is handled by place: a changed
+`tests/<dir>/conftest.py` selects every test file under `tests/<dir>/`, and a
+changed `tests/conftest.py`, the harness of every test, reports `full=true`.
 
 The cap is time, not file count (crew ruling, 1 Oct 2026): the selection's
 estimated CPU seconds, summed per file from the committed `.test_durations` (the
@@ -155,7 +161,12 @@ def select(
         if r.split("/", 1)[0] in SOURCE_DIRS and not _is_test_file(r)
         for m in [_module_name(r)] if m
     }
-    if changed_modules:
+    conftest_dirs = {r.rsplit("/", 1)[0] for r in rel_changed if r.startswith("tests/") and r.endswith("/conftest.py")}
+    scripts_by_path = {
+        Path(r).stem: re.compile(rf"\b{re.escape(Path(r).name)}\b|\bimport {re.escape(Path(r).stem)}\b|\bfrom {re.escape(Path(r).stem)} import\b")
+        for r in rel_changed if r.startswith("scripts/") and r.endswith(".py")
+    }
+    if changed_modules or conftest_dirs:
         sources = _sources(root)
         refs = {rel: _references(rel, text) for rel, text in sources.items()}
         targets = set(changed_modules)
@@ -165,12 +176,21 @@ def select(
                 if mod:
                     targets.add(mod)
         picked |= {rel for rel, names in refs.items() if _is_test_file(rel) and names & targets}
+        picked |= {
+            rel for rel, text in sources.items()
+            if _is_test_file(rel) and any(rx.search(text) for rx in scripts_by_path.values())
+        }
+        picked |= {
+            rel for rel in sources
+            if _is_test_file(rel) and any(rel.startswith(d + "/") for d in conftest_dirs)
+        }
     if scm_runs:
         picked = {r for r in picked if not r.startswith("tests/scm/")}
     picked = {r for r in picked if SAFE_TEST_RE.match(r)}
     tests = sorted(PREFIX + r for r in picked)
     seconds = estimate_seconds(tests, file_durations(root) if durations is None else durations)
-    return Selection(tests=tests, full=seconds > budget, count=len(tests), seconds=seconds)
+    harness = "tests" in conftest_dirs
+    return Selection(tests=tests, full=harness or seconds > budget, count=len(tests), seconds=seconds)
 
 
 def main() -> int:
@@ -182,7 +202,9 @@ def main() -> int:
     changed = [line.strip() for line in sys.stdin if line.strip()]
     result = select(changed, Path(args.root), scm_runs=args.scm == "true", budget=args.budget)
     summary = f"{result.count} test files, estimated {result.seconds:.0f} CPU-s (budget {args.budget:.0f})"
-    if result.full:
+    if result.full and f"{PREFIX}tests/conftest.py" in changed:
+        print("tests/conftest.py changed, the harness of every test: the full backend shards run on this PR")
+    elif result.full:
         print(f"{summary}: above the budget, the full backend shards run on this PR instead. The selection was:")
         for test in result.tests:
             print(f"  {test}")
