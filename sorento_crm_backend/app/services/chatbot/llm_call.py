@@ -65,13 +65,15 @@ class TimedOut(RateLimited):
 def is_timeout(exc: BaseException) -> bool:
     """A request timeout, however the SDK spells it (`openai.APITimeoutError`,
     `anthropic.APITimeoutError`, `httpx.TimeoutException`, or Gemini's RuntimeError
-    wrapping one). Walks the cause chain because Gemini re-raises."""
+    wrapping one). Walks the `from` chain because Gemini re-raises."""
     seen = 0
     current: BaseException | None = exc
     while current is not None and seen < 5:
         if isinstance(current, TimeoutError) or "Timeout" in type(current).__name__:
             return True
-        current = current.__cause__ or current.__context__
+        # `__cause__` only (an explicit `raise ... from`): an unrelated error raised while
+        # a timeout was being handled is not a timeout.
+        current = current.__cause__
         seen += 1
     return False
 

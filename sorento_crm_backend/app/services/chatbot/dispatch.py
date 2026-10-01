@@ -260,9 +260,11 @@ class Heartbeat:
                 )
 
     def stop(self) -> None:
-        """Stop beating. Joined (briefly) so no refresh can land after the release."""
+        """Stop beating. Joined for at most a second: a beat stuck on a hung redis call is
+        not worth holding the request thread for. If one does land after the release, the
+        key it writes lapses on its own TTL and only delays the next turn by that much."""
         self._stop.set()
-        self._thread.join(timeout=REDIS_SOCKET_TIMEOUT_SECONDS + 1.0)
+        self._thread.join(timeout=1.0)
 
 
 def start_heartbeat(redis: Any, contact: str, ticket: int) -> Heartbeat:
