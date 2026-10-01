@@ -58,6 +58,7 @@ def _oi_prefix_now() -> str:
     """`OI-YYMM-` for today's Malaysia date - the month a header minted now carries."""
     return datetime.now(timezone.utc).astimezone(MY_TZ).strftime("OI-%y%m-")
 
+
 _MIGRATION_PATH = (
     Path(__file__).resolve().parents[1]
     / "alembic"

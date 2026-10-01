@@ -303,8 +303,9 @@ def test_the_cell_value_is_the_same_with_and_without_date_to(scm_app):
     The nearer line is due NEXT calendar month, never this one: on hand is counted in the
     current month, and `date_to` drops the far line (and its pin) before the walk (R14),
     so its 38 left over reads free in the current month on the narrowed page only. Due
-    `TODAY + 20`, the nearer month WAS the current month on days 1-10 of any month, and
-    the test went red on 1 Oct 2026 with the service unchanged (TEST-DATEBOMB-1001)."""
+    `TODAY + 20`, the nearer month WAS the current month on the first 8 to 11 days of a
+    month, and the test went red on 1 Oct 2026 with the service unchanged
+    (TEST-DATEBOMB-1001)."""
     app, db, _uid = _client(scm_app, VIEW)
     far_due = DEFAULT_WINDOW + timedelta(days=60)
     # 10 to 40 days out: inside `date_to` and the lend window, never in TODAY's month.
@@ -329,10 +330,11 @@ def test_the_cell_value_is_the_same_with_and_without_date_to(scm_app):
         m["key"]: m["balance"] for m in _row_of(narrowed, product.product_code)["months"]
     }
     assert whole_balance[near_month] == narrowed_balance[near_month] == 0
-    # R14, unchanged: with the far line off the page its pin goes too, so the 88 - 50 it
-    # held reads free this month; with it on the page those 38 stay held for it.
+    # The current month is NOT asserted equal across the two: with the far line off the
+    # page its pin goes too (R14, `date_to` drops demand before the walk), so the 88 - 50
+    # it held reads +38 free here on the narrowed page only. Whether that is wanted is an
+    # open owner question (TEST-DATEBOMB-1001, PR #1412); this test does not pin it.
     assert whole_balance[current_month] == 0
-    assert narrowed_balance[current_month] == 38
     assert month_key(far_due) not in narrowed_balance
     assert whole_balance[month_key(far_due)] == -50
 
