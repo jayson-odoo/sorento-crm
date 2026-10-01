@@ -554,6 +554,12 @@ class SalesOrder(Base, CompanyScopedMixin):
     # address in the note). Decides whether a later, lower-ranked write is allowed to
     # overwrite it (`apply_project_label`).
     project_label_source = Column(String(16), nullable=True)
+    # AutoCount's SO header `Transferable` (T/F), owned by AutoCount and written only by the
+    # ESB ingest (`document_ingest_service`). F means "not confirmed yet for the queue"
+    # (owner, 1 Oct 2026), so the Stock Debt view does not count the order. NULL means the
+    # source never said - every order that predates the field or came from Excel - and
+    # counts like T. Migration sotr_0001.
+    is_transferable = Column(Boolean, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

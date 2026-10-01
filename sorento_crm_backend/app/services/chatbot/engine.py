@@ -125,6 +125,55 @@ CHAT_QUEUE = "chat"
 WORKER_POLL_INTERVAL_SECONDS = 0.25
 
 
+# A long reply the MCP presenter already split into WhatsApp-sized parts
+# (`sorento_crm_mcp.presenters.whatsapp_parts`): each part after the first opens with
+# its own "(k/m)" line, after a blank line.
+_MARKED_PART_BREAK = re.compile(r"\n\n(?=\(\d+/\d+\)\n)")
+_MARKED_PART_HEAD = re.compile(r"\((\d+)/(\d+)\)\n")
+
+
+def split_marked_message(text: str) -> list[str]:
+    """The presenter's marked parts of `text`, in order, or `[text]` when it carries
+    none (TOP-N-UNCAP, owner 30 Sep 2026: a top 200 goes out as several messages, so
+    delivery never leans on n8n chunking one over WhatsApp's 4096 characters).
+
+    Only a COMPLETE run splits: "(1/m)" on a line of the first piece (a lane note may
+    sit above it) and "(2/m)" to "(m/m)" opening the rest. Anything else is text that
+    merely looks like a marker and goes out whole, as before."""
+    pieces = _MARKED_PART_BREAK.split(text)
+    if len(pieces) > 2 and pieces[1].startswith("(1/"):
+        # A lane note above part 1 ("I can list at most ...") travels with part 1.
+        pieces = [pieces[0] + "\n\n" + pieces[1], *pieces[2:]]
+    if len(pieces) < 2:
+        return [text]
+    total = len(pieces)
+    for k, piece in enumerate(pieces[1:], start=2):
+        head = _MARKED_PART_HEAD.match(piece)
+        if head is None or int(head.group(1)) != k or int(head.group(2)) != total:
+            return [text]
+    first = pieces[0]
+    marker = f"(1/{total})\n"
+    if not (first.startswith(marker) or f"\n{marker}" in first):
+        return [text]
+    return pieces
+
+
+def split_send_actions(actions: list[Any]) -> list[Any]:
+    """Each `send_message` whose text is a marked run becomes one action per part, in
+    order. The quick replies and the result set ride on the LAST part only: they belong
+    to the question the reply ends on. Every other action passes through untouched."""
+    out: list[Any] = []
+    for action in actions:
+        text = action.get("text") if isinstance(action, dict) and action.get("kind") == "send_message" else None
+        parts = split_marked_message(text) if isinstance(text, str) else []
+        if len(parts) < 2:
+            out.append(action)
+            continue
+        out.extend({**action, "text": part, "quick_replies": None, "result_set": None} for part in parts[:-1])
+        out.append({**action, "text": parts[-1]})
+    return out
+
+
 class TurnResult:
     """What the endpoint serialises. A plain object so the route stays a thin adapter."""
 
@@ -163,7 +212,7 @@ class TurnResult:
             "delegate": self.delegate,
             "delegate_payload": self.delegate_payload,
             "reply": self.reply,
-            "actions": self.actions,
+            "actions": split_send_actions(self.actions),
             "session_patch": self.session_patch,
             "duplicate": self.duplicate,
         }
@@ -464,6 +513,21 @@ def _scoped_factory(factory: SessionFactory, scope: frozenset) -> SessionFactory
 # Envelope readers. Each names the n8n node whose read it reproduces, so the
 # by-name hazard the port removes stays traceable.
 # --------------------------------------------------------------------------- #
+
+
+def _refer_tracked(fn: Any) -> Any:
+    """CUSTOMER-ASKS-REFER-ONLY: one refer mark per turn (`turn/refer.py`). A tail called
+    from inside the head shares the head's mark."""
+    import functools
+
+    from app.services.chatbot.turn import refer
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        with refer.tracking():
+            return fn(*args, **kwargs)
+
+    return wrapper
 
 
 def _tf_message(envelope: Envelope) -> dict[str, Any]:
@@ -2123,6 +2187,7 @@ def _top_selling_verdict(
     return out, state, "top_selling_split_token"
 
 
+@_refer_tracked
 def run_turn(
     envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
 ) -> TurnResult:
@@ -2850,6 +2915,7 @@ def _fallback_context(
     dry_run: bool,
     turn_id: str,
     policy: Any,
+    profile: Any = None,
 ) -> Any:
     """Everything the graceful fallback reply needs from the database, read while the
     routing session is still open (S4, plan 7.1 and 7.2). Each memory field is filled
@@ -2887,7 +2953,13 @@ def _fallback_context(
     if contact_pk:
         first_name = db.query(RespondContact.first_name).filter(RespondContact.id == contact_pk).scalar()
     order_domain = policy.domain("order") if policy is not None else None
-    team_code = getattr(order_domain, "escalation_team_code", None)
+    # ESCALATION-CONTROL: no team to "pass this to" for a barred contact, so the fallback
+    # takes its ordinary offer instead of `fallback_offer_customer`.
+    team_code = (
+        None
+        if turn_state.escalation_barred(profile)
+        else getattr(order_domain, "escalation_team_code", None)
+    )
 
     statements = verdict.get("profile_statements")
     noted = [
@@ -4108,6 +4180,7 @@ def _run_stages(  # noqa: PLR0915
                     dry_run=dry_run,
                     turn_id=turn_id,
                     policy=policy,
+                    profile=getattr(state_out, "profile", None),
                 )
             except Exception:  # noqa: BLE001 - the clarifier still answers, memory-less
                 logger.warning("chatbot: the fallback context did not build", exc_info=True)
@@ -4253,7 +4326,9 @@ def _run_stages(  # noqa: PLR0915
         turn_trace.record(
             "routed",
             summary=f"Routed to {trace_mod.lane_words(branch_kind, verdict.get('domain_hint'))}.",
-            why=trace_mod.routed_why(branch_kind, verdict, bool(access.get("allowed"))),
+            why=trace_mod.routed_why(
+                branch_kind, verdict, bool(access.get("allowed")), lane=plan.trace.lane
+            ),
             facts={
                 "lane": branch_kind,
                 "domains": list(plan.domains),
@@ -4839,6 +4914,7 @@ def _run_stages(  # noqa: PLR0915
                         # single-company turn.
                         answer = answer_bridge.apply_silent_company_offer(
                             answer,
+                            profile=state_out.profile,
                             envelope=envelopes[0],
                             parser=answer_parse_output,
                             # For the silent company's own `brand_code`, off the gate's
@@ -5099,24 +5175,6 @@ def _run_stages(  # noqa: PLR0915
             # PR #1329 (ETA policy): a dealer's incoming reply is the same, so an
             # incoming miss no longer offers the purchasing team.
             answer = _dealer_refers_to_salesman(answer)
-            # REFER-SALESMAN (owner ruling 30 Sep 2026): every reply that refers the dealer
-            # to their salesman is a Customer asks row. The stock ask's own entries are
-            # already in `stock_ask_entries`; this adds the incoming ETA lines, the misses
-            # and a declined did-you-mean, read off what the turn already knows, and
-            # `_run_answer` writes them through the same `stock_ask_service` road.
-            from app.services.chatbot import refer_asks
-
-            stock_ask_entries = [
-                *stock_ask_entries,
-                *refer_asks.referred_entries(
-                    reply_text=getattr(answer, "text", "") or "",
-                    envelopes=envelopes,
-                    plan=plan,
-                    pending_before=state_in.pending,
-                    message_text=latest_user_message,
-                    answered=stock_ask_entries,
-                ),
-            ]
         elif in_ranking_conversation:
             answer = _without_escalation_offer(answer)
         return _run_answer(
@@ -5136,6 +5194,14 @@ def _run_stages(  # noqa: PLR0915
             verdict=verdict,
             recalled=recalled,
             stock_ask_entries=stock_ask_entries,
+            # REFER-SALESMAN / CUSTOMER-ASKS-REFER-ONLY: what `refer_asks` names a refer
+            # reply's rows by, read once the reply is final (`_run_answer`).
+            refer_context={
+                "envelopes": envelopes,
+                "plan": plan,
+                "pending_before": state_in.pending,
+                "message_text": latest_user_message,
+            },
             chat_console=_chat_console(envelope),
         )
 
@@ -5272,6 +5338,37 @@ def _run_stages(  # noqa: PLR0915
     if hard_failure is not None:
         return hard_failure
 
+    if (
+        branch_kind == "out_of_scope"
+        and completes_here
+        and turn_state.escalation_barred(getattr(state_out, "profile", None))
+    ):
+        # ESCALATION-CONTROL (owner, 30 Sep 2026): a barred contact asking for a person,
+        # or answering an old offer, gets the salesperson referral and no hand-off.
+        # `apply()` already routed it here as "escalation_barred"; this is the guard in
+        # front of `_run_escalation_arm` whichever way the turn arrived.
+        from app.services.chatbot import escalation_control
+
+        turn_trace.add("escalation_barred", {"branch_kind": branch_kind})
+        return _run_answer(
+            turn_id=turn_id,
+            ctx=ctx,
+            item=item,
+            branch_kind=branch_kind,
+            actions=actions,
+            answer=turn_compose.Answer(text=escalation_control.barred_reply(state_out.profile)),
+            state=state_out,
+            remembered_before=remembered_before,
+            dry_run=dry_run,
+            session_factory=session_factory,
+            turn_trace=turn_trace,
+            stage=stage,
+            contact_respond_id=contact_respond_id,
+            verdict=verdict,
+            recalled=recalled,
+            chat_console=_chat_console(envelope),
+        )
+
     if branch_kind == "out_of_scope" and completes_here:
         # Owner correction, 21 Sep (hand pass 12 round 3): reverts hand pass 12 round
         # 2's `_run_member_offer_arm` detour (commit 8e4ecdac7). A "yes" accepting a
@@ -5315,6 +5412,7 @@ def _run_stages(  # noqa: PLR0915
             contact_respond_id=contact_respond_id,
             recalled=recalled,
             fallback=fallback_ctx,
+            chat_console=_chat_console(envelope),
         )
 
     return TurnResult(
@@ -5482,6 +5580,7 @@ def _run_answer(
     recalled: list[dict[str, Any]],
     stock_ask_entries: list[dict[str, Any]] | None = None,
     chat_console: bool = False,
+    refer_context: dict[str, Any] | None = None,
 ) -> TurnResult:
     """G TAIL for a turn the composer answered: persist, record, hand the actions back.
 
@@ -5489,6 +5588,12 @@ def _run_answer(
     turn's memory must not depend on which of them ran - the `Answer` carries the text,
     the actions and the question, and this writes exactly that.
     """
+    # ESCALATION-CONTROL: the backstop behind every offer site's own gate - whatever
+    # composed this reply, a barred contact is offered no hand-off.
+    if turn_state.escalation_barred(getattr(state, "profile", None)):
+        from app.services.chatbot import escalation_control
+
+        answer = escalation_control.strip_offers(answer, state.profile)
     # AC-MEM083 (S4): an answer whose subject was carried from memory opens with the
     # one line naming what was carried, built in `_carried_line` before the fetch.
     carried = remembered_before.get("_carried_line")
@@ -5573,22 +5678,18 @@ def _run_answer(
             response={"ctx": ctx, "item": item, "actions": lane_actions, "reply": reply},
         )
 
-    if stock_ask_entries and (not dry_run or chat_console):
-        # Chatbot stock ask v2 S4 / S5 (AC-SA401, AC-SA402, AC-SA501): AFTER the turn row
-        # is closed, never before. A live turn, and (owner ruling 28 Sep 2026) a CHAT
-        # CONSOLE turn, write the ask rows and enqueue the real salesman job; every other
-        # dry run does neither (D14). The console's own reply stays a dry run: its
-        # actions carry `dry_run: true` and nothing here sends them. The send is a
-        # queued job, so Respond never holds the dealer's reply up.
-        _after_stock_ask_turn(
-            session_factory,
-            turn_id=turn_id,
-            contact_respond_id=contact_respond_id,
-            state=state,
-            entries=stock_ask_entries,
-            reply_text=reply.get("text") or "",
-            source="console" if dry_run else "live",
-        )
+    _record_customer_asks(
+        session_factory,
+        turn_id=turn_id,
+        contact_respond_id=contact_respond_id,
+        state=state,
+        stock_entries=stock_ask_entries or [],
+        reply_text=reply.get("text") or "",
+        refer_context=refer_context,
+        ctx=ctx,
+        dry_run=dry_run,
+        chat_console=chat_console,
+    )
 
     return TurnResult(
         turn_id=turn_id,
@@ -6217,6 +6318,7 @@ def _run_casual_lane(
     contact_respond_id: str | None = None,
     recalled: list[dict[str, Any]] | None = None,
     fallback: Any = None,
+    chat_console: bool = False,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
@@ -6299,6 +6401,14 @@ def _run_casual_lane(
         )
         answer_shape = "canned"
         failed = None
+    if turn_state.escalation_barred(getattr(state, "profile", None)):
+        # ESCALATION-CONTROL: this lane's send action is built HERE, before the tail runs,
+        # so the backstop runs here too (a clarifier that wrote an escalate sentence).
+        from app.services.chatbot import escalation_control
+
+        stripped, _question, offered = escalation_control.strip_text(text, None, state.profile)
+        if offered:
+            text = stripped
     actions = [
         *actions,
         # AC-507: `quick_replies` is n8n's comma-joined string or null, never a list -
@@ -6435,6 +6545,7 @@ def _run_casual_lane(
         # The clarifier asks nothing of its own, so whatever question was open before
         # this greeting is still open after it (contract 36 / 56, cluster 4's carry).
         state=state,
+        chat_console=chat_console,
     )
 
     return TurnResult(
@@ -7114,7 +7225,7 @@ class CompleteResult:
         return {
             "turn_id": self.turn_id,
             "reply": self.reply,
-            "actions": self.actions,
+            "actions": split_send_actions(self.actions),
             "session_patch": self.session_patch,
             # The ROW's `is_test`, so the caller's test-guard reads one field here instead
             # of remembering what `/turn` said about this turn two calls ago.
@@ -7176,6 +7287,79 @@ def _stock_ask_answered_entries(envelopes: list[dict[str, Any]]) -> list[dict[st
             continue
         entries.extend(stock_ask_service.answered_entries(block))
     return entries
+
+
+def _ctx_message_text(ctx: Any) -> str:
+    """What the customer typed this turn (`ctx.text.message.message.text`)."""
+    inner = jsc.get(jsc.get(jsc.get(ctx, "text"), "message"), "message")
+    value = jsc.get(inner, "text")
+    return jsc.js_string(value) if jsc.truthy(value) else ""
+
+
+def _record_customer_asks(
+    session_factory: SessionFactory,
+    *,
+    turn_id: str,
+    contact_respond_id: str,
+    state: Any,
+    stock_entries: list[dict[str, Any]],
+    reply_text: str,
+    refer_context: dict[str, Any] | None,
+    ctx: Any,
+    dry_run: bool,
+    chat_console: bool,
+) -> None:
+    """CUSTOMER-ASKS-REFER-ONLY (owner ruling 1 Oct 2026): Customer asks logs every reply
+    that referred the customer to their salesman, and only those. Run by both tails
+    (`_run_answer`, `complete_turn`) once the turn row is closed.
+
+    Whether the reply referred is never read off its text: a stock ask line carries the
+    presenter's `refers_to_salesman`, and every other refer line was printed through
+    `turn/refer.py`, which marked this turn (`refer.consume`, so a second tail in the same
+    turn cannot log it twice). `refer_asks` names the rows: the incoming ETA lines, the
+    misses, a declined did-you-mean, the plan's products, else what the customer typed.
+
+    Chatbot stock ask v2 S4 / S5 (AC-SA401, AC-SA402, AC-SA501): a live turn, and (owner
+    ruling 28 Sep 2026) a CHAT CONSOLE turn, write the rows and enqueue the real salesman
+    job; every other dry run does neither (D14). The send is a queued job, so Respond never
+    holds the reply up."""
+    from app.services.chatbot import refer_asks
+    from app.services.chatbot.turn import refer
+
+    marked = refer.consume()
+    if dry_run and not chat_console:
+        return
+    try:
+        context = refer_context or {}
+        referred = marked or any(
+            isinstance(e, dict) and e.get("refers_to_salesman") is True for e in stock_entries
+        )
+        entries = [
+            *stock_entries,
+            *refer_asks.referred_entries(
+                referred=referred,
+                reply_text=reply_text,
+                envelopes=context.get("envelopes") or [],
+                plan=context.get("plan"),
+                pending_before=context.get("pending_before"),
+                message_text=context["message_text"] if "message_text" in context else _ctx_message_text(ctx),
+                answered=stock_entries,
+            ),
+        ]
+    except Exception:  # noqa: BLE001 - a post-commit side effect: the reply is already recorded
+        logger.exception("chatbot turn %s: building the Customer asks rows failed", turn_id)
+        return
+    if not entries:
+        return
+    _after_stock_ask_turn(
+        session_factory,
+        turn_id=turn_id,
+        contact_respond_id=contact_respond_id,
+        state=state,
+        entries=entries,
+        reply_text=reply_text,
+        source="console" if dry_run else "live",
+    )
 
 
 def _after_stock_ask_turn(
@@ -7367,6 +7551,7 @@ def run_tail(
     state: Any = None,
     question: Any = None,
     remembered_before: Mapping[str, Any] | None = None,
+    profile: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """outcome -> CS member offer -> reply ladder -> persist the five keys.
 
@@ -7389,6 +7574,11 @@ def run_tail(
     `access_denied` answers WITHOUT the tail's write on a live turn, and a contact refused
     the agent must not have the turn written into their memory.
     """
+    # ESCALATION-CONTROL (security review S1): the contact's profile for the block checks
+    # below. A caller with APPLY's state carries it there; n8n's `/complete` has none and
+    # hands the contact's own profile in (`complete_turn`).
+    if profile is None:
+        profile = getattr(state, "profile", None)
     from app.services.chatbot.contracts import SessionVars
     from app.services.chatbot.tail import member_offer as member_mod
     from app.services.chatbot.tail import outcome as outcome_mod
@@ -7427,7 +7617,11 @@ def run_tail(
             }
         producers["escalate-catalog"] = catalog
         outcome_input = catalog
-        if outcome_mod.cs_offer_gate(catalog, ctx, values["gate"]):
+        # ESCALATION-CONTROL: no CS roster is built for a barred contact at all (its rows
+        # would ride on `result_set` even after the text is stripped).
+        if not turn_state.escalation_barred(profile) and outcome_mod.cs_offer_gate(
+            catalog, ctx, values["gate"]
+        ):
             plan = member_mod.cs_roster_plan(values["gate"])
             rosters = member_mod.fetch_rosters(db, plan, ctx)
             offer = member_mod.build_cs_member_offer(catalog, plan, rosters)
@@ -7447,6 +7641,20 @@ def run_tail(
         # A lane may have composed quick replies of its own before the tail ran: the
         # escalation clarifies name the teams so the answer is a tap.
         quick_replies = lane_quick_replies
+    barred_profile = profile
+    if turn_state.escalation_barred(barred_profile):
+        # ESCALATION-CONTROL: the same backstop `_run_answer` runs, for the lanes this
+        # tail composes (canned, escalation). The casual lane builds its send action
+        # before the tail and runs the same strip in `_run_casual_lane`.
+        from app.services.chatbot import escalation_control
+
+        stripped_text, question, offered = escalation_control.strip_text(
+            jsc.js_string(composed.get("text") or ""), question, barred_profile
+        )
+        if offered:
+            composed = {**composed, "text": stripped_text}
+            # Security review N2: the offer's team buttons go with it.
+            quick_replies = None
     reply = {
         "text": composed.get("text"),
         "quick_replies": quick_replies,
@@ -7480,7 +7688,7 @@ def run_tail(
     if state is None:
         state = turn_runtime.load_state(
             {"session_vars": jsc.get(jsc.get(ctx, "session"), "session_vars")},
-            profile=turn_state.Profile(),
+            profile=profile if profile is not None else turn_state.Profile(),
             turn_no=0,
         )
     before = dict(remembered_before or session_state.five_keys(jsc.get(ctx, "session")))
@@ -7865,6 +8073,7 @@ def _complete_canned_lane(
     return reply, session_patch, actions
 
 
+@_refer_tracked
 def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the contract
     turn_id: str,
     fragments: dict[str, Any],
@@ -7873,6 +8082,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
     compose_send_action: bool = False,
     lane_trace: Any = None,
     state: Any = None,
+    chat_console: bool = False,
 ) -> CompleteResult:
     """Run the tail of one turn: outcome -> member offer -> state -> compose -> persist.
 
@@ -8004,6 +8214,14 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 # from, and this is one value the tail could not have composed for itself
                 # - what the lane already decided the customer can tap.
                 lane_quick_replies=fragments.get("lane_quick_replies"),
+                # ESCALATION-CONTROL (security review S1): n8n's `/complete` hands over no
+                # APPLY state, so the contact's own profile is read here, or a blocked
+                # contact would be offered the team and the CS roster on this path.
+                profile=(
+                    getattr(state, "profile", None)
+                    if state is not None
+                    else turn_runtime.load_profile(db, str(contact_respond_id or ""))[0]
+                ),
             )
             # D9: the caller SENDS; the engine hands it the action to send. Only a lane
             # that ASKED for it gets one: the `/complete` path is n8n's, and n8n composes
@@ -8071,6 +8289,22 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 records=turn_trace.persisted(),
             )
             raise
+
+    # CUSTOMER-ASKS-REFER-ONLY: a reply this tail composed (the casual, canned, escalation
+    # and business lanes) that referred the customer is a Customer asks row, the same rule
+    # `_run_answer` applies. The row is closed first, as there.
+    _record_customer_asks(
+        session_factory,
+        turn_id=turn_id,
+        contact_respond_id=str(contact_respond_id or ""),
+        state=state,
+        stock_entries=[],
+        reply_text=jsc.js_string(reply.get("text") or ""),
+        refer_context=None,
+        ctx=ctx,
+        dry_run=dry_run,
+        chat_console=chat_console,
+    )
 
     return CompleteResult(
         turn_id=turn_id,

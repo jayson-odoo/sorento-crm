@@ -19,11 +19,13 @@ survive.
 **Idempotency on the row.** `(company, book, DocKey)` is a partial unique index on the header
 table itself; there is no `integration_references` row, because the row can predate the feed.
 
-**Links are resolved, never waited for.** A line names the SO / PO / SPO line it came from only
-when the vendor sends `FromDocDtlKey` (today it does not); otherwise the document number
-(`RefDocNo` on a DO, `OurPONo` on a GRN line) links the document and the line link stays null
-(Q10 a). A link once made is never unset by a later push that cannot resolve it. At the end of
-every real batch, waiting links that now resolve are filled.
+**Links are resolved, never waited for.** A line names the SO / PO / SPO line it came from
+exactly when the vendor sends a real `FromDocDtlKey` (today it sends 0, which names nothing).
+Without one, a DO line that names its SO (`FromDocNo`) links to the one line of its product in
+that SO (PLAN-do-so-line-link-1oct.md); otherwise the document number (`RefDocNo` on a DO,
+`OurPONo` on a GRN line) links the document and the line link stays null (Q10 a). A link once
+made is never unset by a later push that cannot resolve it. At the end of every real batch,
+waiting links that now resolve are filled.
 """
 from __future__ import annotations
 
@@ -69,6 +71,7 @@ from app.services.master_ref_resolver import (
     MasterRefResolver,
     dedupe_warnings,
 )
+from app.services.order_field_ownership import assert_autocount_writes
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +171,13 @@ def _int(value: Any) -> Optional[int]:
     if value is None or not -_INT8_MAX <= value <= _INT8_MAX:
         return None
     return value
+
+
+def _link_key(value: Any) -> Optional[int]:
+    """A `FromDocDtlKey`, or None when it names no line. AutoCount sends 0 on every DO line
+    (3,841 of 3,841 in the 01-03 Sep snapshot) and DtlKeys are positive identities."""
+    key = _int(value)
+    return key if key is not None and key > 0 else None
 
 
 def _dec(value: Any, exp: Decimal) -> Optional[Decimal]:
@@ -437,7 +447,7 @@ def _parse(entity: str, raw: dict) -> _Doc:
                     qty=qty,
                     from_doc_type=_text(row.get("FromDocType"), 10),
                     from_doc_no=_text(row.get("FromDocNo"), 100),
-                    from_dtl_key=_int(row.get("FromDocDtlKey")),
+                    from_dtl_key=_link_key(row.get("FromDocDtlKey")),
                     values=values,
                 )
             )
@@ -484,6 +494,7 @@ class AutocountDocIngestService(MasterRefResolver):
         # SPO allocations whose receipt a GRN write moved, for the route's post-commit hook.
         self.touched_allocation_ids: set[str] = set()
         self.released_allocation_ids: set[str] = set()
+        self.live_records: list[RecordResult] = []
 
     #: How often `on_progress` fires mid-batch - the same cadence `MasterIngestService`
     #: uses (B3): a pull snapshot can run to thousands of documents.
@@ -505,6 +516,9 @@ class AutocountDocIngestService(MasterRefResolver):
         if entity_type not in AUTOCOUNT_DOC_ENTITIES | AUTOCOUNT_BRANCH_ENTITIES:
             raise UnsupportedIngestEntity(f"Unsupported AutoCount entity {entity_type!r}")
         result = IngestResult(dry_run=dry_run)
+        # The batch's records so far, for an `on_progress` callback that tallies outcomes
+        # mid-run (DO-APPLY-PROGRESS); the callback signature stays `(processed, total)`.
+        self.live_records = result.records
         total = len(records)
         try:
             for index, raw in enumerate(records, start=1):
@@ -737,6 +751,27 @@ class AutocountDocIngestService(MasterRefResolver):
         rows = query.limit(2).all()
         return str(rows[0][0]) if len(rows) == 1 else None
 
+    def _do_so_line(self, dtl_key: Optional[int], doc_no: Optional[str],
+                    product_id: Optional[str]) -> Optional[str]:
+        """The SO line a DO line came from: by its exact DtlKey when AutoCount sends one,
+        else the one line of this product inside the SO numbered `FromDocNo`. Several lines
+        of the product in that SO resolve to none: no guess by position, because SO lines
+        carry no `line_no` yet (#1400)."""
+        if dtl_key is not None:
+            return self._so_line(dtl_key, doc_no)
+        if not doc_no or not product_id:
+            return None
+        rows = (
+            self.db.query(SalesOrderLine.id)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(SalesOrderLine.company_id == self.company_id,
+                    SalesOrder.so_number == doc_no,
+                    SalesOrderLine.product_id == product_id)
+            .limit(2)
+            .all()
+        )
+        return str(rows[0][0]) if len(rows) == 1 else None
+
     def _po_or_spo_line(self, dtl_key: int, doc_no: Optional[str]) -> tuple[Optional[str], Optional[str]]:
         """(po_line_id, spo_allocation_id): exactly one match across both tables, else both
         None. SPO and PO share one AutoCount table, so one DtlKey resolves against either."""
@@ -816,6 +851,8 @@ class AutocountDocIngestService(MasterRefResolver):
         for key in ("subtotal_amount", "tax_amount", "total_amount"):
             if header[key] is None:
                 header[key] = Decimal("0.00")
+        # Order Tracking owns every other column (DO-OWNERSHIP-GUARD); never write one.
+        assert_autocount_writes(header)
         if header["ref_doc_no"] and header["sales_order_id"] is None:
             warnings.append(WARN_SALES_ORDER_UNRESOLVED)
 
@@ -843,8 +880,10 @@ class AutocountDocIngestService(MasterRefResolver):
                 from_dtl_key=line.from_dtl_key,
                 sales_order_line_id=None,
             )
-            if line.from_dtl_key is not None and (line.from_doc_type in (None, "SO")):
-                values["sales_order_line_id"] = self._so_line(line.from_dtl_key, line.from_doc_no)
+            if ((line.from_dtl_key is not None or line.from_doc_no)
+                    and line.from_doc_type in (None, "SO")):
+                values["sales_order_line_id"] = self._do_so_line(
+                    line.from_dtl_key, line.from_doc_no, product_id)
                 if values["sales_order_line_id"] is None:
                     warnings.append(WARN_SO_LINE_UNRESOLVED)
             lines.append(values)
@@ -1081,7 +1120,6 @@ class AutocountDocIngestService(MasterRefResolver):
                 self.db.query(OrderLine)
                 .filter(OrderLine.company_id == self.company_id,
                         OrderLine.sales_order_line_id.is_(None),
-                        OrderLine.from_dtl_key.isnot(None),
                         OrderLine.from_doc_no.isnot(None),
                         or_(OrderLine.from_doc_type.is_(None), OrderLine.from_doc_type == "SO"))
                 .order_by(OrderLine.created_at.desc())
@@ -1089,7 +1127,9 @@ class AutocountDocIngestService(MasterRefResolver):
                 .all()
             )
             for row in waiting_lines:
-                target = self._so_line(row.from_dtl_key, row.from_doc_no)
+                # `or None`: a 0 stored before `_link_key` existed names no line either.
+                target = self._do_so_line(row.from_dtl_key or None, row.from_doc_no,
+                                          row.product_id)
                 if target is not None:
                     row.sales_order_line_id = target
             waiting_headers = (
@@ -1110,7 +1150,7 @@ class AutocountDocIngestService(MasterRefResolver):
                 .filter(PickingLine.company_id == self.company_id,
                         PickingLine.po_line_id.is_(None),
                         PickingLine.spo_allocation_id.is_(None),
-                        PickingLine.from_dtl_key.isnot(None),
+                        PickingLine.from_dtl_key > 0,
                         PickingLine.from_doc_no.isnot(None))
                 .order_by(PickingLine.created_at.desc())
                 .limit(MAX_WAITING_LINKS)
@@ -1127,7 +1167,8 @@ class AutocountDocIngestService(MasterRefResolver):
                 .filter(PickingLine.company_id == self.company_id,
                         PickingLine.dtl_key.isnot(None),
                         PickingLine.purchase_order_id.is_(None),
-                        PickingLine.from_dtl_key.is_(None),
+                        # <= 0: stored before `_link_key` existed, names no line.
+                        or_(PickingLine.from_dtl_key.is_(None), PickingLine.from_dtl_key <= 0),
                         PickingLine.our_po_no.isnot(None),
                         # A line received against an SPO has no purchase order to wait for.
                         or_(PickingLine.from_doc_type.is_(None),

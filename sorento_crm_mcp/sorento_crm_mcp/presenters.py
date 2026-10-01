@@ -1477,16 +1477,38 @@ def _availability_line(entry: dict) -> str:
     entry, `StockService._apply_stock_visibility`) ever appears."""
     code = _availability_label(entry)
     qty = entry.get("requested_qty")
+    return f"{code} x {qty}: {_availability_tail(entry)}"
+
+
+def _availability_tail(entry: dict) -> str:
+    """The sentence after "<code> x <Q>:" for one answered entry."""
     branch = entry.get("branch")
     if branch == "incoming":
-        tail = f"no stock at the moment, ETA {entry.get('eta')}."
-    else:
-        # Nit, review round 1: an unknown or missing branch is unreachable today
-        # (`products.category_id` is NOT NULL, so `inventory_service.py` never
-        # leaves `branch` unset) - but if a fallback is kept, `too_big` is the one
-        # of the four sentences that claims nothing about our stock either way.
-        tail = _AVAILABILITY_TAILS.get(branch, _AVAILABILITY_TAILS["too_big"])
-    return f"{code} x {qty}: {tail}"
+        return f"no stock at the moment, ETA {entry.get('eta')}."
+    # Nit, review round 1: an unknown or missing branch is unreachable today
+    # (`products.category_id` is NOT NULL, so `inventory_service.py` never
+    # leaves `branch` unset) - but if a fallback is kept, `too_big` is the one
+    # of the four sentences that claims nothing about our stock either way.
+    return _AVAILABILITY_TAILS.get(branch, _AVAILABILITY_TAILS["too_big"])
+
+
+def _stamp_refers(entries: Any) -> Any:
+    """CUSTOMER-ASKS-REFER-ONLY (owner ruling 1 Oct 2026): each answered entry carries
+    `refers_to_salesman`, read off the tail this presenter printed for it, so the backend's
+    Customer asks writer logs exactly the lines that referred the dealer (B3 `incoming`
+    does not). Only once every entry is answered, the same rule `_stock_availability`
+    prints the lines by; a reply still owing a quantity printed no tail at all."""
+    if not isinstance(entries, list):
+        return entries
+    rows = [e for e in entries if isinstance(e, dict)]
+    if not rows or any(e.get("needs_quantity") for e in rows):
+        return entries
+    return [
+        {**e, "refers_to_salesman": _availability_tail(e).endswith(REFER_TO_SALESMAN)}
+        if isinstance(e, dict) and e.get("branch")
+        else e
+        for e in entries
+    ]
 
 
 def _stock_availability(payload: dict, b: _Builder) -> None:
@@ -1836,6 +1858,8 @@ def present_response(tool_name: str, raw: str) -> str:
     for k in _PASSTHROUGH_KEYS:
         if k in data and _filled(data.get(k)):
             envelope[k] = data[k]
+    if stock_mode == "availability" and "stock_availability" in envelope:
+        envelope["stock_availability"] = _stamp_refers(envelope["stock_availability"])
     # QS-8: the summary in the ITEM shape, printed by the same renderer as the
     # rows. Only over a real answer (has_result AND rows on the page); absent
     # otherwise, never []. Exception boundary: a hostile leaf inside `summary`
@@ -2636,8 +2660,13 @@ TOP_SELLING_ASK_GROUP = (
 TOP_SELLING_ASK_BASIS = "Delivered (transferred to DO) or ordered?"
 TOP_SELLING_REFUSED_OTHER_CUSTOMER = "Sorry, I can only share sales figures for your own account."
 
-# The owner's "top 100": the route caps a named N here, the presenter never prints past it.
-_TOP_SELLING_MAX_ROWS = 100
+# The shared safety ceiling on a named N (owner, 30 Sep 2026: no 100 cap, "100, 200").
+# A COPY of the backend's `sales_report_service.TOP_SELLING_N_CEILING` (this package cannot
+# import the backend); `tests/test_presenters_top_selling.py` pins the two equal.
+TOP_SELLING_N_CEILING = 1000
+# One WhatsApp message's budget: the platform limit is 4096 characters, and the headroom
+# is for the line the lane may put above the first part and the "(k/m)" marker.
+WHATSAPP_MESSAGE_MAX_CHARS = 3900
 # The agent fill-rate note prints below this share (plan "The reply": the route
 # sends the rate whenever an agent filter is used, the presenter decides).
 _TOP_SELLING_AGENT_NOTE_BELOW = 0.95
@@ -2757,7 +2786,40 @@ def _top_selling_row(row: dict) -> str:
 
 def _top_selling_rows(report: dict) -> list[dict]:
     rows = report.get("rows") if isinstance(report.get("rows"), list) else []
-    return [r for r in rows if isinstance(r, dict)][:_TOP_SELLING_MAX_ROWS]
+    return [r for r in rows if isinstance(r, dict)][:TOP_SELLING_N_CEILING]
+
+
+def whatsapp_parts(text: str, limit: int = WHATSAPP_MESSAGE_MAX_CHARS) -> list[str]:
+    """`text` as WhatsApp-sized messages, in order. One part when it fits (unmarked,
+    so a short reply reads exactly as before); otherwise lines are packed greedily,
+    never splitting a line (one row is one line), and every part opens with its own
+    ``(k/m)`` line. The caller joins the parts with a blank line; the backend engine
+    (`engine.split_marked_message`) sends each marked part as its own message.
+
+    The marker's width is reserved in every part's budget, so a part plus its marker
+    stays within `limit`. A single line longer than the budget goes out on its own."""
+    if len(text) <= limit:
+        return [text]
+    budget = limit - len("(9999/9999)\n")
+    parts: list[list[str]] = [[]]
+    size = 0
+    for line in text.split("\n"):
+        if not parts[-1] and not line.strip():
+            continue  # a part never opens on a blank line
+        grown = size + len(line) + (1 if parts[-1] else 0)
+        if parts[-1] and grown > budget:
+            while parts[-1] and not parts[-1][-1].strip():
+                parts[-1].pop()  # nor closes on one
+            parts.append([])
+            size = 0
+            if not line.strip():
+                continue
+            grown = len(line)
+        parts[-1].append(line)
+        size = grown
+    chunks = ["\n".join(p) for p in parts if p]
+    total = len(chunks)
+    return [f"({i}/{total})\n{chunk}" for i, chunk in enumerate(chunks, start=1)]
 
 
 def _top_selling_detail(report: dict) -> str:
@@ -2793,7 +2855,8 @@ def _top_selling_detail(report: dict) -> str:
                 for r in months
             )
         )
-    return "\n\n".join(blocks)
+    # Grill Q6 (owner, 30 Sep 2026): a code bought by hundreds of customers is split too.
+    return "\n\n".join(whatsapp_parts("\n\n".join(blocks)))
 
 
 def _top_selling(report: dict) -> str:
@@ -2806,8 +2869,9 @@ def _top_selling(report: dict) -> str:
       26 Sep: no default N, no partial list, no "more");
     * no rows and no count: the miss line.
 
-    Length is never a reason here: n8n already chunks a long WhatsApp message
-    (owner, PR #1258 05:32Z), so a named N up to 100 goes out whole."""
+    Length never cuts the list (owner, 30 Sep 2026: "100, 200"): a ranking longer
+    than one WhatsApp message is split here, between rows (`whatsapp_parts`), so the
+    delivery does not lean on n8n chunking it."""
     if isinstance(report.get("detail"), dict):
         return _top_selling_detail(report)
     header = _top_selling_header(report)
@@ -2819,7 +2883,7 @@ def _top_selling(report: dict) -> str:
             noun = "categories" if category else "items"
             return (
                 header + f"\n\nHow many {noun} do you want to see? "
-                f"Reply with a number from 1 to {min(total, _TOP_SELLING_MAX_ROWS)}."
+                f"Reply with a number from 1 to {min(total, TOP_SELLING_N_CEILING)}."
             )
         return header + "\n\n" + SALES_REPORT_MISS_MESSAGE
     offer = (
@@ -2828,7 +2892,7 @@ def _top_selling(report: dict) -> str:
         else "Reply with a rank number to see that item's customers and months."
     )
     body = "\n".join(_top_selling_row(r) for r in rows)
-    return header + "\n\n" + body + "\n\n" + offer
+    return "\n\n".join(whatsapp_parts(header + "\n\n" + body + "\n\n" + offer))
 
 
 def _top_selling_pick_row(row: dict, *, category: bool) -> dict:

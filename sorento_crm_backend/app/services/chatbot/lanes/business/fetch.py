@@ -905,8 +905,12 @@ def entity_ids_transformer(
             # A picked row: that code's customers and months, same filters and basis.
             out["detail_code"] = detail_code
         elif isinstance(top_n, (int, float)) and not isinstance(top_n, bool) and top_n >= 1:
-            # Owner ruling 26 Sep: a named N is 1 to 100 ("top 100").
-            out["n"] = min(int(top_n), 100)
+            # Owner, 30 Sep 2026: no 100 cap ("100, 200"). Only the shared safety ceiling
+            # bounds it, and never silently: the lane notes it above the reply
+            # (`lanes/business.top_selling_ceiling_note`).
+            from app.services.sales_report_service import TOP_SELLING_N_CEILING
+
+            out["n"] = min(int(top_n), TOP_SELLING_N_CEILING)
         else:
             # No N named: the full count and no rows, so the reply states the total
             # and asks how many (owner, PR #1258 05:32Z) without the whole book being
@@ -3070,7 +3074,12 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     ):
         msg += _item_line(i + 1 + set_row_offset, it, numbered=not plain_lines) + "\n\n"
     if dealer_incoming and jsc.truthy(e.get("closing")):
-        msg += jsc.js_string(e["closing"]).strip() + "\n\n"
+        # The presenter's dealer closing is the refer line (`presenters.py`, `closing`);
+        # printed through `turn/refer.py` so the turn is marked for Customer asks
+        # (CUSTOMER-ASKS-REFER-ONLY).
+        from app.services.chatbot.turn import refer
+
+        msg += refer.sentence() + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
     # (`_project_product_specs`). Byte-inert when the key is absent.
     for miss in e.get("spec_misses") or []:

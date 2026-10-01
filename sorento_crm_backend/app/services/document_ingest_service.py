@@ -1009,6 +1009,13 @@ class DocumentIngestService(MasterRefResolver):
         customer_name = (getattr(payload, "customer_name", None) or "").strip()
         if customer_name:
             values["debtor_name"] = customer_name
+        # `is_transferable` (SO-TRANSFERABLE): AutoCount's `Transferable` flag, written
+        # whenever it is SENT and left alone when it is not - the same shape rule as the two
+        # above. Explicit `is not None`: an F is a False, and a falsy check would drop it.
+        # A PO payload has no such field, so this is a no-op for a PO.
+        transferable = getattr(payload, "transferable", None)
+        if transferable is not None:
+            values["is_transferable"] = transferable
         # PO currency default (D1): only a spec that carries a `currency`
         # header column reaches this, which today is `purchase_orders` alone -
         # so the fill is shape-driven rather than a hardcoded entity check.
@@ -1884,6 +1891,10 @@ class DocumentReadService:
         # column, hence the guard rather than a per-entity literal.
         if hasattr(header, "order_type"):
             record["order_type"] = header.order_type
+        # Read back under the payload's own name. Not in `header_fields` for the same
+        # reason as `order_type`: the write side is fill-when-sent, not unconditional.
+        if hasattr(header, "is_transferable"):
+            record["transferable"] = header.is_transferable
         record["lines"] = [
             self._line(spec, line) for line in self._lines(spec, header)
         ]

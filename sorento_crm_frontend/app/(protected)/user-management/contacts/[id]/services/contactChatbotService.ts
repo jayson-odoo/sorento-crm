@@ -59,6 +59,8 @@ export interface ContactChatbotProfile {
   packing_list_allowed: boolean;
   /** #1328: the ETA this contact is told carries the +x days offset. Default on. */
   eta_offset_applied: boolean;
+  /** ESCALATION-CONTROL: may the chatbot hand this contact to a person. Default on. */
+  escalation_allowed: boolean;
 }
 
 export type ChatbotFactSource = 'crm' | 'tallied' | 'stated' | 'staff';
@@ -160,6 +162,7 @@ function profileFromContact(contact: {
   notify_salesman?: boolean;
   packing_list_allowed?: boolean;
   chatbot_eta_offset_applied?: boolean;
+  escalation_allowed?: boolean;
 }): ContactChatbotProfile {
   const profile = contact.chatbot_profile ?? null;
   return {
@@ -170,6 +173,7 @@ function profileFromContact(contact: {
     notify_salesman: Boolean(contact.notify_salesman),
     packing_list_allowed: Boolean(contact.packing_list_allowed),
     eta_offset_applied: contact.chatbot_eta_offset_applied !== false,
+    escalation_allowed: contact.escalation_allowed !== false,
   };
 }
 
@@ -197,7 +201,26 @@ export async function saveContactChatbotProfile(
       notify_salesman: input.notify_salesman,
       packing_list_allowed: input.packing_list_allowed,
       chatbot_eta_offset_applied: input.eta_offset_applied,
+      // `escalation_allowed` is NOT sent here: it has its own save
+      // (`saveContactEscalation`), so another switch saved from a stale page can never
+      // switch a contact's escalation back on (security review S3).
     }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save chatbot settings'));
+  }
+  return profileFromContact(await response.json());
+}
+
+/**
+ * ESCALATION-CONTROL: "Chatbot hands over to support teams", saved on its own - the body carries this
+ * one key, and the route leaves every field it does not name alone.
+ */
+export async function saveContactEscalation(contactId: string, allowed: boolean): Promise<ContactChatbotProfile> {
+  const response = await apiFetch(`/api/v1/user-management/contacts/${contactId}/chatbot`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ escalation_allowed: allowed }),
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to save chatbot settings'));

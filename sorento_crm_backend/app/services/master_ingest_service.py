@@ -417,8 +417,8 @@ def _supplier_columns(payload: Any, db: Session, company_id: str, warnings: list
     # drop on the floor. D14: absent vs null on every one of them, plus
     # `payment_terms_days` (model default 30 fills an absent value on create -
     # see `_insert`). `payment_terms_code` is REMOVED (D15 end state, S4) -
-    # `extra="forbid"` now rejects it outright rather than accepting and
-    # warning; the payment-terms master it once waited for still does not
+    # an undeclared key, so it is dropped (name logged, owner decision 1 Oct
+    # 2026) and never written; the payment-terms master it once waited for still does not
     # exist, and a supplier no longer needs a placeholder for it at all.
     _present(
         payload,
@@ -468,8 +468,8 @@ def _resolve_country_id(db: Session, value: str) -> Optional[str]:
 def _customer_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
     # `credit_limit` / `payment_terms_days` / `payment_terms_code` are REMOVED
     # (D15 end state, S4) - `customers` never had a matching column for any
-    # of the three, and `extra="forbid"` now rejects a payload naming one
-    # outright rather than accepting and warning.
+    # of the three, and an undeclared key is dropped (name logged, owner
+    # decision 1 Oct 2026) before this builder runs, so none is ever written.
     columns: dict[str, Any] = {"customer_code": payload.code, "customer_name": payload.name}
     _present(
         payload,

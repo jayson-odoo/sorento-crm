@@ -15,9 +15,9 @@ import { sessionTokenCookieName } from '@/lib/auth-cookie';
  * source of truth for session validity  - revocation and the sliding 30-day
  * window live there (see PLAN-staff-rolling-sessions-fastapi-auth.md).
  *
- * The cookie maxAge (30d) only has to outlive the FastAPI session; FastAPI
- * decides the real expiry, so an unchecked-remember-me 8h session is enforced
- * backend-side even though the cookie itself persists.
+ * Every sign-in is the 30-day sliding session (no remember-me choice, same as
+ * phone sign-in and the portal). The cookie maxAge (30d) only has to outlive the
+ * FastAPI session; FastAPI decides the real expiry and revocation.
  */
 
 function backendBaseUrl(): string {
@@ -67,7 +67,6 @@ const authOptions: NextAuthOptions = {
       credentials: {
         email: { label: 'Email', type: 'text' },
         password: { label: 'Password', type: 'password' },
-        rememberMe: { label: 'Remember me', type: 'boolean' },
       },
       async authorize(credentials) {
         if (!credentials || !credentials.email || !credentials.password) {
@@ -75,12 +74,6 @@ const authOptions: NextAuthOptions = {
             JSON.stringify({ code: 400, message: 'Please enter both email and password.' }),
           );
         }
-
-        // NextAuth serializes credentials as strings  - coerce the checkbox.
-        // (Boolean true → "true", string "true"/"on" all count as checked.)
-        const rememberMe = ['true', 'on', '1'].includes(
-          String(credentials.rememberMe).toLowerCase(),
-        );
 
         let res: Response;
         try {
@@ -90,7 +83,6 @@ const authOptions: NextAuthOptions = {
             body: JSON.stringify({
               email: credentials.email,
               password: credentials.password,
-              remember_me: rememberMe,
             }),
           });
         } catch {

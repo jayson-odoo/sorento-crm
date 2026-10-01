@@ -25,8 +25,10 @@ from app.services.chatbot.turn.state import (
     State,
     focus_row_label,
     fold_token,
-    is_staff_profile,
+    escalation_barred,
+    offers_escalation,
 )
+from app.services.chatbot.turn import refer
 
 _ATTACHED_SENTENCE = "I have attached the file(s) below."
 
@@ -484,7 +486,8 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             #   carried in, never resolved by `_lane_question` above because it is
             #   not THIS turn's own ask) must stay the only open question - a
             #   second one piled on top is what the finding measured.
-            is_staff = is_staff_profile(getattr(state, "profile", None))
+            # ESCALATION-CONTROL: staff and a barred contact alike get no offer.
+            is_staff = not offers_escalation(getattr(state, "profile", None))
             # Phase 3 fix round (26 Sep 2026), review B1/B2: "a clarifying question
             # open" means a question ASKED THIS TURN (a fresh kind pick / did-you-mean
             # / roster the lane just armed), never any carried pending regardless of
@@ -510,6 +513,10 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                     if len(teams) == 1
                     else "\n\nWould you like me to escalate?"
                 )
+            elif escalation_barred(getattr(state, "profile", None)) and not clarifying_open:
+                # ESCALATION-CONTROL (owner ruling Q2): the miss is said above, then the
+                # salesman line stands where the offer would; no offer is armed.
+                text = refer.after(text)
             carried = carried_for_gate
             if carried is not None and is_roster(carried.kind):
                 # Owner hand pass 2, item 8 (turns 29605e65 miss, then 586746d3 "5" and
