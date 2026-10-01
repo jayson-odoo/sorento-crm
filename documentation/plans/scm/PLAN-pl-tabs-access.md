@@ -49,14 +49,28 @@ says "Could not load the proforma invoices." rather than "none"; without SCM rea
 grid drops From PI + Photos, the gear drops "Download packing list" (an SCM export), and the
 container size stays a value in edit mode.
 
-## The "hang"
+## The "hang" (root cause, found after the owner's hand test)
 
-Not reproduced. Tried: dev server and a production build served with the browser calling the
-API cross-origin (as deployed), direct login and admin view-as, on an empty container. Every tab
-settled with no pending request. What the user saw on those three tabs was the false empty state
-(Proforma invoices, Documents) and the raw 403 card (SPO planner) after a retry delay plus a
-permission toast, which the fix removes. If the owner still sees a hang on the test copy with real
-data, that is a separate defect.
+Reproduced on the sandbox with a container that HAS lines (40), as Kah Xin: on Shipment lines the
+renderer pegged a core, agent-browser's `Runtime.evaluate` timed out, and a click on Documents or
+Timeline never committed (the tab highlights, the page stays on Shipment lines). A full load of
+`/lines` hangs the same way. My first repro used an empty container, where the grid never mounts,
+which is why it did not show.
+
+Cause: a client render loop.
+- `components/PackingListLinesTab.tsx:192` (before the fix): `invoicesByLine =
+  sourceInvoices?.by_shipment_line ?? {}`. Without SCM read `sourceInvoices` is undefined (a 403
+  before this PR, a disabled query after it), so this was a NEW `{}` every render.
+- It is a dependency of `viewRows` (`useMemo`), so the grid got new `data` every render.
+- TanStack Table resets the page index whenever the row model recomputes
+  (`@tanstack/table-core` `getRowModel` memo `onChange` -> `_autoResetPageIndex` ->
+  `resetPageIndex` -> `setPagination` with a new object), which is a React state update, which
+  re-renders with new rows again. Endless.
+- Admin has the invoices, so the reference is stable and nothing loops: granting SCM "fixed" it.
+  Signing in again "fixed" it for the same reason (the view-as ended). Not a session problem.
+
+Fix: `invoicesByLine` memoised with a shared empty map. Test: "settles on Shipment lines instead
+of re-rendering forever" (`[id]/packing-list-record.test.tsx`) times out on the old code.
 
 ## Verification
 
