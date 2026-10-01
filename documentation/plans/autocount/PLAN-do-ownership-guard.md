@@ -1,6 +1,6 @@
 # PLAN: DO-OWNERSHIP-GUARD - one explicit two-way field-ownership list (AutoCount DO vs Order Tracking)
 
-Status: Build (standard track: the owner rulings added manual-edit guards and a FE change; no
+Status: Review complete, awaiting owner hand test and CI (standard track: the owner rulings added manual-edit guards and a FE change; no
 migration, no RBAC change, no new ingest surface). PR #1410.
 
 crew-lane: DO-OWNERSHIP-GUARD
