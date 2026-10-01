@@ -58,6 +58,27 @@ vi.mock('@/lib/toast', () => ({
   },
 }));
 
+/** The signed-in user's permission slugs. Every SCM read on this page (the proforma invoices
+ *  behind the container, the SPO planner, the consolidated build, line photos, container
+ *  sizes) sits behind `scm.dashboard.view`; a procurement-only user has none of them. */
+const perms = { set: new Set<string>(['scm.dashboard.view']), isLoading: false };
+vi.mock('@/hooks/usePermissions', () => ({
+  usePermissions: () => ({
+    permissions: [...perms.set],
+    permissionSet: perms.set,
+    isLoading: perms.isLoading,
+  }),
+  useHasPermission: (slug: string) => !perms.isLoading && perms.set.has(slug),
+}));
+
+/** What each SCM read was asked for, so a test can tell "never fetched" from "fetched". */
+const calls = {
+  sourceInvoices: [] as unknown[][],
+  consolidated: [] as unknown[],
+  linePhotos: [] as unknown[],
+  containerSizes: [] as unknown[][],
+};
+
 const state = {
   packingList: null as unknown,
   /** The proforma invoices behind the container - four readings of one payload. */
@@ -82,7 +103,10 @@ vi.mock('../hooks/usePackingLists', () => ({
   },
   useDeletePackingList: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdatePackingList: () => ({ mutateAsync: updatePackingList, isPending: false }),
-  usePackingListSourceInvoices: () => ({ data: state.sourceInvoices, isLoading: false }),
+  usePackingListSourceInvoices: (...args: unknown[]) => {
+    calls.sourceInvoices.push(args);
+    return { data: state.sourceInvoices, isLoading: false, isError: false };
+  },
   // The Timeline's History card reads the container's audit trail (R17).
   usePackingListHistory: () => ({ data: state.history, isLoading: false, isError: false }),
   // Checkpoint labels and order come from config, and the edit-in-place clearance fields
@@ -138,7 +162,8 @@ vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
 }));
 
 vi.mock('@/app/(protected)/scm/hooks/useFulfilment', () => ({
-  useConsolidatedPackingList: () => ({
+  useConsolidatedPackingList: (id: unknown) => ({
+    _: calls.consolidated.push(id),
     data: state.consolidated,
     isLoading: false,
     isError: false,
@@ -146,14 +171,16 @@ vi.mock('@/app/(protected)/scm/hooks/useFulfilment', () => ({
   }),
   // The Details tab's Container size select (S5) - not this suite's concern, so one
   // active default is enough to satisfy the render.
-  useContainerSizes: () => ({
+  useContainerSizes: (...args: unknown[]) => ({
+    _: calls.containerSizes.push(args),
     data: [{ id: 'size-40hq', code: '40HQ', label: '40ft high cube', cbm: 65, is_default: true }],
     isLoading: false,
   }),
   // R25 (lane C, slice C3): the Lines tab reads every line's photos in one call, and
   // `ShipmentLinePhotosCell` uploads through its own mutation - neither is this
   // suite's concern, so both settle on an empty/no-op default.
-  useShipmentLinePhotos: () => ({
+  useShipmentLinePhotos: (id: unknown) => ({
+    _: calls.linePhotos.push(id),
     data: {},
     isLoading: false,
     isError: false,
@@ -321,6 +348,12 @@ beforeEach(async () => {
   state.consolidated = undefined;
   updatePackingList.mockReset();
   updatePackingList.mockResolvedValue({});
+  perms.set = new Set(['scm.dashboard.view']);
+  perms.isLoading = false;
+  calls.sourceInvoices = [];
+  calls.consolidated = [];
+  calls.linePhotos = [];
+  calls.containerSizes = [];
 });
 
 afterEach(() => cleanup());
@@ -1033,5 +1066,105 @@ describe('the remaining tabs still render their own bodies', () => {
     await renderTab(<SpoPage />);
 
     expect(screen.getByText('SPO planner body')).toBeInTheDocument();
+  });
+});
+
+/**
+ * PL-TABS-ACCESS: a procurement user without SCM read (Kah Xin, 1 Oct). Every SCM read on
+ * this page 403s for her, so the tabs that are nothing but an SCM read are not offered, a
+ * deep link to one says so plainly, and the tabs she CAN use never fire the reads at all -
+ * a 403 there used to surface as a permission toast on a tab that works, and as "none"
+ * where the honest answer is "you cannot see this".
+ */
+describe('a user without SCM read (PL-TABS-ACCESS)', () => {
+  beforeEach(() => {
+    perms.set = new Set(['procurement.packing_lists.view', 'procurement.packing_lists.edit']);
+  });
+
+  it('is offered only the tabs she can open', async () => {
+    await renderTab(<DetailsPage />);
+
+    const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''));
+    expect(tabs).toEqual(['Details', 'Shipment lines', 'Documents', 'Timeline']);
+  });
+
+  it('offers no SCM tab while her permissions are still loading', async () => {
+    perms.set = new Set(['scm.dashboard.view']);
+    perms.isLoading = true;
+    await renderTab(<DetailsPage />);
+
+    const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''));
+    expect(tabs).not.toContain('Proforma invoices');
+    expect(tabs).not.toContain('SPO planner');
+  });
+
+  it('never asks for the proforma invoices behind the container', async () => {
+    await renderTab(<DetailsPage />);
+
+    // The hook is still called (rules of hooks) but told not to fetch.
+    expect(calls.sourceInvoices.length).toBeGreaterThan(0);
+    for (const [, opts] of calls.sourceInvoices) {
+      expect(opts).toEqual(expect.objectContaining({ enabled: false }));
+    }
+  });
+
+  it('says plainly she has no access on a deep link to Proforma invoices', async () => {
+    state.sourceInvoices = sourceInvoices();
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/proforma-invoices';
+    await renderTab(<ProformaInvoicesPage />);
+
+    expect(screen.getByText("You don't have access to this page")).toBeInTheDocument();
+    expect(screen.queryByText('PI-2026-001')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Read from a packing list/)).not.toBeInTheDocument();
+  });
+
+  it('says plainly she has no access on a deep link to the SPO planner', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/spo';
+    await renderTab(<SpoPage />);
+
+    expect(screen.getByText("You don't have access to this page")).toBeInTheDocument();
+    expect(screen.queryByText('SPO planner body')).not.toBeInTheDocument();
+  });
+
+  it('keeps Documents usable, without claiming there is no proforma invoice', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/documents';
+    await renderTab(<DocumentsPage />);
+
+    expect(screen.getByText('Related Documents')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Link attachment/ })).toBeInTheDocument();
+    expect(screen.queryByText('No proforma invoice behind this container.')).not.toBeInTheDocument();
+  });
+
+  it('keeps Shipment lines working without the SCM reads behind it', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    await renderTab(<LinesPage />);
+
+    expect(screen.getByText('SRTWT7443')).toBeInTheDocument();
+    expect(calls.consolidated.length).toBeGreaterThan(0);
+    expect(calls.consolidated.every((id) => id === null)).toBe(true);
+    expect(calls.linePhotos.every((id) => id === null)).toBe(true);
+  });
+
+  it('keeps Details working without reading the SCM container sizes', async () => {
+    await renderTab(<DetailsPage />);
+
+    expect(screen.getByRole('heading', { name: 'FSCU8103365' })).toBeInTheDocument();
+    expect(calls.containerSizes.length).toBeGreaterThan(0);
+    for (const [opts] of calls.containerSizes) {
+      expect(opts).toEqual(expect.objectContaining({ enabled: false }));
+    }
+  });
+});
+
+describe('a user with SCM read', () => {
+  it('reads the proforma invoices and the planner as before', async () => {
+    await renderTab(<DetailsPage />);
+
+    for (const [, opts] of calls.sourceInvoices) {
+      expect(opts).toEqual(expect.objectContaining({ enabled: true }));
+    }
+    const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''));
+    expect(tabs).toContain('Proforma invoices');
+    expect(tabs).toContain('SPO planner');
   });
 });
