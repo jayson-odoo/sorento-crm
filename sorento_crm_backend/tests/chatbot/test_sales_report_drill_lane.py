@@ -400,6 +400,60 @@ class TestANamedDocumentPicksTheDeliveryOrders:
         assert _open_question(session_factory).get("kind") == "sales_report_detail"
 
 
+class TestFixRound2:
+    def test_a_named_document_with_its_own_status_is_a_new_ask_and_closes_the_offer(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """R1: `document: ["DO"]` WITH `status: "outstanding"` is the outstanding report asked
+        for in words, not a pick of the sales drill: the outstanding report runs and the sales
+        offer closes, so a following "1" never lands on the sales drill."""
+        _ask(session_factory, monkeypatch, msg_id="ZZT-drill-r1-arm-1")
+        _result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                message_type="business_query", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[], document=["DO"], status="outstanding",
+            ),
+            text_body="DO outstanding",
+            msg_id="ZZT-drill-r1-1",
+            attributes=ATTRS + ["sales_orders.outstanding"],
+            mcp_response=SALES_REPORT_HIT,
+        )
+        assert not any(name == "crm_sales_report" for name, _a in captured), captured
+        assert _open_question(session_factory).get("kind") != "sales_report_detail", _open_question(session_factory)
+        _result, after = _pick(session_factory, monkeypatch, position=1, msg_id="ZZT-drill-r1-2")
+        assert not any(name == "crm_sales_report" for name, _a in after), after
+
+    @pytest.mark.parametrize(
+        "word,document",
+        [("DO", None), ("DO", ["DO"]), ("by product", None), ("delivery orders", None)],
+    )
+    def test_a_typed_pick_never_prints_a_could_not_find_line(
+        self, session_factory, monkeypatch, word, document
+    ) -> None:
+        """R2: the typed label that settled the pick is not also a subject to resolve, so the
+        reply carries no "I could not find DO." miss line."""
+        slug = f"{word.replace(' ', '-')}-{bool(document)}"
+        _ask(session_factory, monkeypatch, msg_id=f"ZZT-drill-r2-arm-{slug}")
+        result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None,
+                entities=[
+                    {"raw": word, "hint": "order", "canonical_code": None, "current_message": True, "confident": True},
+                ],
+                reference_positions=[], entity_op="reuse", document=document,
+            ),
+            text_body=word,
+            msg_id=f"ZZT-drill-r2-{slug}",
+            attributes=ATTRS,
+            mcp_response=SALES_REPORT_HIT,
+        )
+        assert captured and captured[0][0] == "crm_sales_report", captured
+        reply = (result.reply or {}).get("text") or ""
+        assert "could not find" not in reply.lower(), reply
+
+
 # --------------------------------------------------------------------------- #
 # AC-SR-28 - unchanged rules around the offer (AC-SR-29, the own-account miss staying a final
 # answer, is pinned in `test_customer_scope_lane.py` through the new MISS body)

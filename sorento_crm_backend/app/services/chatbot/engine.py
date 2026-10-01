@@ -222,6 +222,49 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+#: The words a named document arrives as, which settle a sales report drill pick too.
+_DRILL_DOCUMENT_WORDS = frozenset({"do", "delivery order", "delivery orders"})
+
+
+def _without_the_drill_pick_words(parse_output: dict[str, Any], pending: Any, trace: Any) -> dict[str, Any]:
+    """The resolver's input on a turn that ANSWERED the sales report's drill offer.
+
+    PR #1401 fix round 2, R2: "DO", "by product", "delivery orders" typed back at the
+    `sales_report_detail` offer settle the pick (`turn/decide.py`, the label / alias /
+    named-document arms), but the typed word also rode to the resolver as an entity, found
+    nothing, and the reply closed with "I could not find DO." The word that settled the pick
+    is the answer, not a subject, so it is dropped from what the resolver is asked about.
+    """
+    from app.services.chatbot.contracts import SALES_REPORT_GROUP_BYS
+    from app.services.chatbot.turn.decide import _option_words
+
+    answered = getattr(trace, "outstanding", None) or {}
+    if (
+        pending is None
+        or pending.kind != "sales_report_detail"
+        or answered.get("kind") != "sales_report_detail"
+        or answered.get("detail") not in SALES_REPORT_GROUP_BYS
+    ):
+        return parse_output
+    words = set(_DRILL_DOCUMENT_WORDS)
+    for option in pending.options:
+        words |= _option_words(option)
+    entities = parse_output.get("entities") or []
+
+    def _settles_the_pick(e: Any) -> bool:
+        if not isinstance(e, dict) or e.get("current_message") is not True:
+            return False
+        typed = {
+            str(v).strip().lower() for v in (e.get("raw"), e.get("canonical_code")) if isinstance(v, str)
+        }
+        return bool(typed & words)
+
+    kept = [e for e in entities if not _settles_the_pick(e)]
+    if len(kept) == len(entities):
+        return parse_output
+    return {**parse_output, "entities": kept}
+
+
 def _without_carried_domain_on_a_roster_pick(
     parse_output: dict[str, Any], rules_fired: list[str]
 ) -> dict[str, Any]:
@@ -3973,6 +4016,9 @@ def _run_stages(  # noqa: PLR0915
             )
             resolver_parse_output = _without_carried_domain_on_a_roster_pick(
                 resolver_parse_output, plan.trace.rules_fired
+            )
+            resolver_parse_output = _without_the_drill_pick_words(
+                resolver_parse_output, state_in.pending, plan.trace
             )
             # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4 (AC-1954): under `order`
             # the generic resolver re-types a category token as a customer
