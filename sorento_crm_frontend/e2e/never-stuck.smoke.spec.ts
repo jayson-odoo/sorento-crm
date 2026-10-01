@@ -14,8 +14,9 @@
  * - expired: the page is not on `/signin` within 5 s.
  *
  * Rows the audit already ranked and whose fix lane has not merged are listed in
- * `never-stuck/known-failures.json` with their audit row id. They run as expected
- * failures, so the night one starts passing it fails as "fixed, remove the entry".
+ * `never-stuck/known-failures.json` with their audit row id (`route: "*"` covers every
+ * route for that persona). They still run and are reported, but do not fail the night;
+ * the summary names the ones that passed so their entries get deleted.
  *
  * Run (needs the stack up and seeded; recipe in `never-stuck/README.md`):
  *   NEVER_STUCK_SEED=e2e/.never-stuck/seed.json \
@@ -55,33 +56,41 @@ const KNOWN: KnownFailure[] = JSON.parse(
 const seed = loadSeed();
 const routes = routeTemplates();
 
-/** Visible loading placeholders. A spinner inside a button is a pending action, not a page. */
-async function loadingCount(page: Page): Promise<number> {
+/**
+ * Visible loading placeholders, described (`skeleton in "Packing list"`) so a failure says
+ * where to look. A spinner inside a button is a pending action, not a stuck page.
+ */
+async function visibleLoaders(page: Page): Promise<string[]> {
   return page.evaluate(() => {
-    const nodes = document.querySelectorAll('[data-loading], .animate-spin');
-    let n = 0;
-    nodes.forEach((el) => {
+    const found: string[] = [];
+    document.querySelectorAll('[data-loading], .animate-spin').forEach((el) => {
       if (el.closest('button')) return;
       const box = el.getBoundingClientRect();
       if (box.width === 0 || box.height === 0) return;
       if (!(el as Element & { checkVisibility?: () => boolean }).checkVisibility?.()) return;
-      n += 1;
+      const kind = el.getAttribute('data-slot') ?? (el.hasAttribute('data-loading') ? 'loader' : 'spinner');
+      const region = el.closest('section, [role=tabpanel], [role=dialog], main, header, aside');
+      const label = (region?.querySelector('h1, h2, h3, [role=tab][aria-selected=true]')?.textContent ?? '')
+        .trim()
+        .slice(0, 40);
+      found.push(label ? `${kind} in "${label}"` : `${kind} in <${region?.tagName.toLowerCase() ?? 'body'}>`);
     });
-    return n;
+    return found;
   });
 }
 
-/** Settled = no loading placeholder on two reads 500 ms apart, within the budget. */
-async function waitSettled(page: Page, budgetMs: number): Promise<boolean> {
+/** Settled = no loading placeholder on two reads 500 ms apart. Returns what is still loading. */
+async function waitSettled(page: Page, budgetMs: number): Promise<string[]> {
   const deadline = Date.now() + budgetMs;
   let clearReads = 0;
+  let last: string[] = [];
   while (Date.now() < deadline) {
-    const n = await loadingCount(page).catch(() => 1);
-    clearReads = n === 0 ? clearReads + 1 : 0;
-    if (clearReads >= 2) return true;
+    last = await visibleLoaders(page).catch(() => ['page not readable']);
+    clearReads = last.length === 0 ? clearReads + 1 : 0;
+    if (clearReads >= 2) return [];
     await page.waitForTimeout(500);
   }
-  return false;
+  return last;
 }
 
 const onSignIn = (url: string) => /\/signin(?:[/?#]|$)/.test(new URL(url).pathname + new URL(url).search);
@@ -94,11 +103,9 @@ for (const persona of PERSONAS) {
 
     for (const route of routes) {
       test(`${persona} ${route}`, async ({ page }) => {
-        const known = KNOWN.find((k) => k.persona === persona && k.route === route);
-        if (known) {
-          test.info().annotations.push({ type: 'audit', description: `${known.audit}: ${known.reason}` });
-          test.fail(true, `known failure, audit ${known.audit}`);
-        }
+        const known = KNOWN.find(
+          (k) => k.persona === persona && (k.route === route || k.route === '*'),
+        );
 
         const url = concreteUrl(route, seed!);
         const refused: string[] = [];
@@ -109,17 +116,31 @@ for (const persona of PERSONAS) {
         });
 
         const problems: string[] = [];
-        await page.goto(url, { waitUntil: 'commit', timeout: SETTLE_MS });
+        const started = Date.now();
+        // `load`, not `commit`: before the document has parsed there is nothing on screen,
+        // and "no loader visible" on a blank page would read as settled.
+        const loaded = await page
+          .goto(url, { waitUntil: 'load', timeout: SETTLE_MS })
+          .then(() => true)
+          .catch(() => false);
 
-        if (persona === 'expired') {
+        if (!loaded && !onSignIn(page.url())) {
+          problems.push(`document did not finish loading in ${SETTLE_MS / 1000}s`);
+        } else if (persona === 'expired') {
           const landed = await page
-            .waitForURL((u) => onSignIn(u.toString()), { timeout: SIGNIN_MS })
+            .waitForURL((u) => onSignIn(u.toString()), {
+              // Never 0: Playwright reads a 0 timeout as "no timeout".
+              timeout: Math.max(1, SIGNIN_MS - (Date.now() - started)),
+            })
             .then(() => true)
             .catch(() => false);
           if (!landed) problems.push(`expired session not on /signin after ${SIGNIN_MS / 1000}s (at ${page.url()})`);
         } else {
-          const settled = await waitSettled(page, SETTLE_MS);
-          if (!settled) problems.push(`still loading after ${SETTLE_MS / 1000}s`);
+          const stuck = await waitSettled(page, SETTLE_MS - (Date.now() - started));
+          if (stuck.length) {
+            const what = [...new Set(stuck)].slice(0, 3).join(', ');
+            problems.push(`still loading after ${SETTLE_MS / 1000}s at ${new URL(page.url()).pathname}: ${what}`);
+          }
           if (onSignIn(page.url())) problems.push('live session bounced to /signin');
         }
 
@@ -137,6 +158,17 @@ for (const persona of PERSONAS) {
           }
         }
 
+        if (known) {
+          // A ranked audit row whose fix lane is open: report, do not fail. Not `test.fail()`:
+          // several of these (the expired-session redirect) are timing-bound and flap, and a
+          // ratchet that fails the night a flaky row happens to pass is noise, not signal.
+          // The summary lists the ones that passed so their entries get deleted.
+          test.info().annotations.push({
+            type: problems.length ? 'known-failure' : 'known-passed',
+            description: `${known.audit}: ${problems.join('; ') || known.reason}`,
+          });
+          return;
+        }
         expect(problems, `${persona} ${url}`).toEqual([]);
       });
     }

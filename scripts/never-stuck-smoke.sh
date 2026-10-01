@@ -33,7 +33,9 @@ export DIRECT_URL="${DIRECT_URL:-$DATABASE_URL}" JWT_SECRET="$SECRET" JWT_ALGORI
 
 mkdir -p "$STATE"
 pids=()
-cleanup() { for p in "${pids[@]}"; do kill "$p" 2>/dev/null || true; done; }
+# Each server runs in its own process group (setsid), so the whole tree goes on exit:
+# `npx` and uvicorn's worker processes do not forward a plain kill to their children.
+cleanup() { for p in "${pids[@]}"; do kill -- "-$p" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
 wait_http() { # url, seconds, label
@@ -46,7 +48,7 @@ echo "== bootstrap + seed"
 (cd "$BE" && "$PY" -m scripts.seed_never_stuck_smoke --out "$STATE/seed.json" >/dev/null)
 
 echo "== backend :$BE_PORT"
-(cd "$BE" && CORS_ORIGINS="http://localhost:$FE_PORT" exec "$PY" -m uvicorn app.main:app \
+(cd "$BE" && CORS_ORIGINS="http://localhost:$FE_PORT" exec setsid "$PY" -m uvicorn app.main:app \
   --host 127.0.0.1 --port "$BE_PORT" --workers 2) > "$STATE/backend.log" 2>&1 &
 pids+=($!)
 wait_http "http://127.0.0.1:$BE_PORT/docs" 120 backend
@@ -59,7 +61,7 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
 fi
 
 echo "== frontend :$FE_PORT"
-(cd "$FE" && exec npx next start -p "$FE_PORT") > "$STATE/frontend.log" 2>&1 &
+(cd "$FE" && exec setsid npx next start -p "$FE_PORT") > "$STATE/frontend.log" 2>&1 &
 pids+=($!)
 wait_http "http://localhost:$FE_PORT/signin" 120 frontend
 

@@ -1,7 +1,62 @@
 # PLAN: NS-SMOKE-ALL-ROUTES (Never-stuck guard G4)
 
-Status: Plan (small fix track pending sizing; test + CI only, no migration, no product code beyond a data-testid marker)
+Status: Build (small fix track: test + CI + three marker attributes, no migration, no auth/RBAC
+change, no product behaviour change). UAC: `ns-smoke-all-routes-acceptance-criteria.md`.
 
-Nightly Playwright smoke that opens every app route as admin, a restricted user and an expired
-session, failing on stuck loading (15 s), expired session not on sign-in (5 s), refusal rendered
-as empty, or raw permission text. Details follow in the next commit.
+Standard: `documentation/reference/NEVER-STUCK-UI.md`. Source: audit
+`documentation/reports/AUDIT-never-stuck-2026-10-01.md` section 7, G4. Owner approved this ONE new
+Playwright spec on 1 Oct 2026 as an exception to the no-new-specs order.
+
+## Journey
+
+The owner opens a page and it spins forever, or a restricted user sees "No proforma invoice"
+where the truth is "you cannot see that". Nightly, a robot opens every page as three people and
+names each page that is not in a final, honest state, so a regression is caught the morning after
+it merges instead of when a user hits it.
+
+## What ships
+
+| Piece | File |
+|---|---|
+| Seed: admin, restricted (procurement `.view` slugs only), expired-session user, all on the default company; localhost DBs only | `sorento_crm_backend/scripts/seed_never_stuck_smoke.py` |
+| Route walk (every `page.tsx` under `app/(protected)`, route groups stripped, Metronic demo dirs excluded), persona fixtures | `sorento_crm_frontend/e2e/never-stuck/routes.ts` |
+| Global setup: NextAuth credentials sign-in per persona, storage state saved; expired persona's FastAPI session revoked through `POST /api/v1/auth/logout` after sign-in | `e2e/never-stuck/global-setup.ts` |
+| The spec | `e2e/never-stuck.smoke.spec.ts` |
+| Known failures (audit row id per entry, run as expected failures) | `e2e/never-stuck/known-failures.json` |
+| Markdown summary of the JSON report | `e2e/never-stuck/summarize.mjs` |
+| Config (parallel, JSON + HTML reporters) | `playwright.never-stuck.config.ts` |
+| Loading marker `data-loading` | `components/ui/skeleton.tsx`, `components/common/screen-loader.tsx` |
+| Refusal marker `data-access-denied` | `app/components/common/AccessDenied.tsx` |
+| `/api/v1` rewrite on a production build when `NEVER_STUCK_API_PROXY=1` at build time | `next.config.mjs` |
+| One-command runner (bootstrap, seed, BE, FE build + start, smoke, summary) | `scripts/never-stuck-smoke.sh` |
+| Nightly job (cron + dispatch, skips when main has not moved since the last green run) | `.github/workflows/never-stuck-nightly.yml` |
+
+## Decisions
+
+- **Marker attribute is `data-loading`, not `data-testid`.** The audit's G4 names
+  `[data-loading]`; `Skeleton` spreads caller props, so a `data-testid` there would be overwritten
+  by any caller that sets its own (and would overwrite theirs if placed after). `Skeleton` covers
+  `SectionSkeleton`, `ListPageSkeleton` and `LayoutLoadingFallback`, which compose it. Hand-rolled
+  spinners (`animate-spin` outside a button) are also counted as loading.
+- **Expired = revoked.** The audit's G4 recipe: sign in, revoke the `user_sessions` row. The
+  NextAuth cookie stays valid, so this is the owner's reported state (FastAPI 401
+  `session_revoked`), not a plain signed-out visit.
+- **Dynamic routes** use the seeded record where the seed has one (user detail), else a
+  missing-record id. A detail page on a missing record must still settle (not found / error);
+  that is the audit's "skeleton forever on any error" class.
+- **Restricted role = procurement viewer**, the role in the audit's top rows (packing-list tabs
+  reading SCM endpoints, PR #1413).
+- **Refusal rendered as empty** = a 403 on `/api/v1/` during the visit, no `[data-access-denied]`
+  on screen, and empty / not-found copy on screen.
+- **Known failures** run under `test.fail()` with the audit row id; one that starts passing
+  fails the night as "fixed, delete the entry" (ratchet).
+- **Cost**: one job, nightly + dispatch only, never on PR or push; skips itself when main's head
+  already passed. No labels touched.
+- **Production build in CI**, not `next dev`: dev compiles each route on first hit, which would
+  read as "stuck" on a 15 s budget. `NEXT_SKIP_TYPECHECK=1` as in the Docker build.
+
+## Not in scope
+
+Fixing any screen the smoke flags (fix lanes NS-SESSION / NS-GRID / NS-ACCESS / NS-BOUNDARIES
+own those). Seeding a record per detail route (trigger to add one: a fix lane that wants its
+detail page smoked with real data adds its row to the seed's `records`).

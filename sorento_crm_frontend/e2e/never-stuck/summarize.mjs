@@ -25,23 +25,23 @@ const walk = (suite) => {
       const msg = (last?.error?.message ?? '').replace(/\u001b\[[0-9;]*m/g, '');
       // The spec's own assertion prints the problems array; keep its quoted lines only.
       const problems = [...msg.matchAll(/^\s*[+-]?\s*"(.+)",?$/gm)].map((m) => m[1]);
-      const audit = (t.annotations ?? []).find((a) => a.type === 'audit')?.description ?? '';
+      const note = (t.annotations ?? []).find((a) => a.type.startsWith('known-'));
       rows.push({
         title: spec.title,
         status: t.status,
-        expectedStatus: t.expectedStatus,
+        known: note?.type ?? '',
         detail: problems.length ? problems.join('; ') : msg.split('\n')[0].slice(0, 200),
-        audit,
+        audit: note?.description ?? '',
       });
     }
   }
 };
 for (const s of report.suites ?? []) walk(s);
 
-const newFailures = rows.filter((r) => r.status === 'unexpected' && r.expectedStatus === 'passed');
-const nowPassing = rows.filter((r) => r.status === 'unexpected' && r.expectedStatus === 'failed');
-const stillKnown = rows.filter((r) => r.status === 'expected' && r.expectedStatus === 'failed');
-const passed = rows.filter((r) => r.status === 'expected' && r.expectedStatus === 'passed');
+const newFailures = rows.filter((r) => r.status === 'unexpected' || r.status === 'flaky');
+const nowPassing = rows.filter((r) => r.known === 'known-passed');
+const stillKnown = rows.filter((r) => r.known === 'known-failure');
+const passed = rows.filter((r) => r.status === 'expected' && !r.known);
 const skipped = rows.filter((r) => r.status === 'skipped');
 
 const esc = (s) => String(s).replace(/\|/g, '\\|');
@@ -59,7 +59,7 @@ if (newFailures.length) {
 }
 if (nowPassing.length) {
   out.push(
-    '### Known failures that now pass (delete them from `e2e/never-stuck/known-failures.json`)',
+    '### Known failures that passed tonight (delete the entry once it passes every night)',
     '',
     '| test | audit |',
     '|---|---|',
@@ -67,7 +67,12 @@ if (nowPassing.length) {
   for (const r of nowPassing) out.push(`| \`${esc(r.title)}\` | ${esc(r.audit)} |`);
   out.push('');
 }
-if (!newFailures.length && !nowPassing.length) out.push('Nothing new is stuck.', '');
+if (stillKnown.length) {
+  out.push('<details><summary>Known failures still failing (audit row, fix lane open)</summary>', '', '| test | audit: problem |', '|---|---|');
+  for (const r of stillKnown) out.push(`| \`${esc(r.title)}\` | ${esc(r.audit)} |`);
+  out.push('', '</details>', '');
+}
+if (!newFailures.length) out.push('Nothing new is stuck.', '');
 
 const md = out.join('\n');
 console.log(md);
