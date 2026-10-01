@@ -197,7 +197,10 @@ def _candidates(source: str) -> list[tuple[int, int, str]]:
 # --------------------------------------------------------------------------- #
 
 
-def build_sql() -> str:
+def build_sql(lookup: bool = False) -> str:
+    """`lookup=True` carries no text: it takes the owner's text from a version already on
+    the database whose text (CRLF folded, trailing newlines trimmed) has the file's sha256,
+    and writes nothing when none matches. Small enough to post by hand."""
     mod3 = _load("pdyn_0003_prod_identical.py")
     raw = SNAPSHOT.read_bytes()
     source = raw.decode("utf-8")
@@ -225,24 +228,26 @@ def build_sql() -> str:
             f"IF EXISTS (SELECT 1 FROM ai_prompt_versions WHERE name = {_q(KEY)} "
             f"AND config_json->>'prod_snapshot_sha256' = {_q(sha)}) THEN",
             "RAISE NOTICE 'prod snapshot already published; nothing to do'; RETURN; END IF;",
-            "p := replace($pk$\n" + "\n".join(packed[i : i + 200] for i in range(0, len(packed), 200)) + "\n$pk$, chr(10), '');",
-            "SELECT string_agg(chr((ascii(c) - 19968) / 128) || chr((ascii(c) - 19968) % 128), '' ORDER BY n) INTO l",
-            "FROM unnest(string_to_array(p, NULL)) WITH ORDINALITY AS u(c, n);",
-            f"l := left(l, {length});",
-            "first := true;",
-            "FOREACH part IN ARRAY string_to_array(l, '~') LOOP",
-            "IF first THEN e := part; first := false; CONTINUE; END IF;",
-            "k := strpos(part, ';');",
-            "off := ('x' || lpad(split_part(left(part, k - 1), ',', 1), 8, '0'))::bit(32)::int;",
-            "ln := ('x' || lpad(split_part(left(part, k - 1), ',', 2), 8, '0'))::bit(32)::int;",
-            "e := e || substr(e, length(e) - off + 1, ln) || substr(part, k + 1);",
-            "END LOOP;",
-            "first := true;",
-            "FOREACH part IN ARRAY string_to_array(e, '^') LOOP",
-            "IF first THEN t := part; first := false; ELSE t := t || chr(tbl[strpos(idx, left(part, 1))]) || substr(part, 2); END IF;",
-            "END LOOP;",
-            f"IF encode(sha256(convert_to(t, 'UTF8')), 'hex') <> {_q(sha)} THEN",
-            "RAISE EXCEPTION 'prod snapshot: decoded text does not match the owner file; nothing written'; END IF;",
+            *(_lookup_lines(sha) if lookup else [
+                "p := replace($pk$\n" + "\n".join(packed[i : i + 200] for i in range(0, len(packed), 200)) + "\n$pk$, chr(10), '');",
+                "SELECT string_agg(chr((ascii(c) - 19968) / 128) || chr((ascii(c) - 19968) % 128), '' ORDER BY n) INTO l",
+                "FROM unnest(string_to_array(p, NULL)) WITH ORDINALITY AS u(c, n);",
+                f"l := left(l, {length});",
+                "first := true;",
+                "FOREACH part IN ARRAY string_to_array(l, '~') LOOP",
+                "IF first THEN e := part; first := false; CONTINUE; END IF;",
+                "k := strpos(part, ';');",
+                "off := ('x' || lpad(split_part(left(part, k - 1), ',', 1), 8, '0'))::bit(32)::int;",
+                "ln := ('x' || lpad(split_part(left(part, k - 1), ',', 2), 8, '0'))::bit(32)::int;",
+                "e := e || substr(e, length(e) - off + 1, ln) || substr(part, k + 1);",
+                "END LOOP;",
+                "first := true;",
+                "FOREACH part IN ARRAY string_to_array(e, '^') LOOP",
+                "IF first THEN t := part; first := false; ELSE t := t || chr(tbl[strpos(idx, left(part, 1))]) || substr(part, 2); END IF;",
+                "END LOOP;",
+                f"IF encode(sha256(convert_to(t, 'UTF8')), 'hex') <> {_q(sha)} THEN",
+                "RAISE EXCEPTION 'prod snapshot: decoded text does not match the owner file; nothing written'; END IF;",
+            ]),
             "tpl := t;",
             "FOR i IN REVERSE array_length(starts, 1)..1 LOOP",
             "var := vars[i]; lit := substr(t, starts[i], lens[i]);",
@@ -276,6 +281,18 @@ def build_sql() -> str:
     )
 
 
+def _lookup_lines(sha: str) -> list[str]:
+    return [
+        f"FOR t IN SELECT rtrim(replace(template, chr(13) || chr(10), chr(10)), chr(10)) FROM ai_prompt_versions "
+        f"WHERE name = {_q(KEY)} ORDER BY version DESC LOOP",
+        f"EXIT WHEN encode(sha256(convert_to(t, 'UTF8')), 'hex') = {_q(sha)};",
+        "END LOOP;",
+        f"IF t IS NULL OR encode(sha256(convert_to(t, 'UTF8')), 'hex') <> {_q(sha)} THEN",
+        f"RAISE NOTICE 'prod snapshot: no {KEY} version on this database holds the owner text; nothing written'; "
+        "RETURN; END IF;",
+    ]
+
+
 # The pdyn_0003 section on its own (the whole file now).
 pdyn_0003_sql = build_sql
 
@@ -289,7 +306,7 @@ def comment_body(sql: str | None = None) -> str:
 def main() -> int:
     sql = build_sql()
     if "--comment" in sys.argv[1:]:
-        sys.stdout.write(comment_body(sql))
+        sys.stdout.write(comment_body(build_sql(lookup=True) if "--lookup" in sys.argv[1:] else sql))
         return 0
     if "--check" in sys.argv[1:]:
         current = OUT.read_text(encoding="utf-8") if OUT.exists() else ""

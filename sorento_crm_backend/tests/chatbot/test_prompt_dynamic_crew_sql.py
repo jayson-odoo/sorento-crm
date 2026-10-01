@@ -179,3 +179,44 @@ def test_the_python_migration_skips_once_the_sql_has_run():
     with pg_session() as db:
         _run_sql(db)
         assert mod.apply(db.connection()) is None
+
+
+def _put_owner_text(db, template: str) -> None:
+    db.execute(
+        text(
+            "INSERT INTO ai_prompt_versions (id, name, version, type, template, variables, created_at) "
+            "VALUES (gen_random_uuid(), :n, (SELECT max(version) + 1 FROM ai_prompt_versions WHERE name = :n), "
+            "'text', :t, '[\"current_date\"]', now())"
+        ),
+        {"n": KEY, "t": template},
+    )
+
+
+@pytest.mark.parametrize("shape", ["exact", "crlf_and_trailing_newline"])
+def test_the_lookup_sql_finds_the_owner_text_on_the_database_and_renders_it(shape):
+    """The hand-postable variant (crew-migration comment 5923683902) carries no text: it
+    finds a version already on the database with the file's sha256."""
+    source = SNAPSHOT.read_text(encoding="utf-8")
+    template = source if shape == "exact" else source.replace("\n", "\r\n") + "\r\n"
+    with pg_session() as db:
+        _put_owner_text(db, template)
+        _run_sql(db, _gen().build_sql(lookup=True))
+        row = _row(db)
+        assert _render(db, row) == _expected()
+        assert not db.query(AIPromptLabel).filter(AIPromptLabel.version_id == row.id).count()
+
+
+def test_the_lookup_sql_writes_nothing_when_the_owner_text_is_not_on_the_database():
+    with pg_session() as db:
+        _run_sql(db, _gen().build_sql(lookup=True))
+        assert not db.query(AIPromptVersion).filter(
+            AIPromptVersion.name == KEY, AIPromptVersion.config_json["prod_snapshot_sha256"].astext == SHA
+        ).count()
+
+
+def test_the_lookup_comment_is_small_and_sql_only():
+    gen = _gen()
+    sql = gen.build_sql(lookup=True)
+    body = gen.comment_body(sql)
+    assert body.startswith("crew-migration:\n```sql\n") and body.endswith("\n```") and body.count("```") == 2
+    assert len(body) < 8000
