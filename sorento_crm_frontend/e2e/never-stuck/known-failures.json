@@ -147,6 +147,15 @@
     },
     {
       "persona": "restricted",
+      "route": "/forms-management/forms/new",
+      "kinds": [
+        "refusal rendered as empty"
+      ],
+      "audit": "L5 / L10, row 20 shape (contact-access-types picker refused and shown empty; lane NS-PICKERS + NS-LOOKUPS)",
+      "reason": "refusal rendered as empty (\"No attachment\") after a 403 on /api/v1/user-management/contact-access-types; flaps with render timing"
+    },
+    {
+      "persona": "restricted",
       "route": "/integration-management/integrations",
       "kinds": [
         "raw permission text"

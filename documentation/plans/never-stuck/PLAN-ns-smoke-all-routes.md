@@ -1,6 +1,6 @@
 # PLAN: NS-SMOKE-ALL-ROUTES (Never-stuck guard G4)
 
-Status: Review (small fix track: test + CI + three marker attributes, no migration, no auth/RBAC
+Status: Review, ready for merge (small fix track: test + CI + three marker attributes, no migration, no auth/RBAC
 change, no product behaviour change). UAC: `ns-smoke-all-routes-acceptance-criteria.md`.
 
 Standard: `documentation/reference/NEVER-STUCK-UI.md`. Source: audit
@@ -75,7 +75,9 @@ it merges instead of when a user hits it.
 
 ## Baseline (sandbox, 1 Oct 2026)
 
-1101 visits: 997 pass, 104 fail, 8 redirected (all to a sibling route, none to `/`).
+1101 visits: 997 pass, 104 fail, 8 redirected (all to a sibling route, none to `/`). Re-run on
+the final code: 997 pass, 102 known, 1 new (`restricted /forms-management/forms/new`, a picker
+refusal that flaps with render timing; added as known, 104 entries).
 Expired persona: every route reached `/signin` within 5 s at 2 workers. 103 failures are in
 `known-failures.json` (the 104th was a regex false positive, fixed): rows 11, 12, 15, 16, 17,
 18, 35, 36 where a top-40 row matches, else L2 (24), L3 / S4.3 (17), S3 + S4.4 (31), S3
