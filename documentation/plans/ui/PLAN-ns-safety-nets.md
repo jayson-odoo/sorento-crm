@@ -1,6 +1,6 @@
 # PLAN: never-stuck safety nets (levers L6, L8, L9)
 
-Status: in progress (small fix track: FE only, no migration, no RBAC change; the permission
+Status: in review, PR #1419 (small fix track: FE only, no migration, no RBAC change; the permission
 gate's *failure* path changes, not who is allowed). Lane NS-SAFETY-NETS.
 
 Standard: `documentation/reference/NEVER-STUCK-UI.md` (S3, S5). Audit:
@@ -65,3 +65,36 @@ Out of scope: session / sign-out (L1, lane SESSION-NEVER-STUCK), shared-lookup p
    renders AccessDenied; settings layout with a failed read renders no Save button.
 
 Kill test: revert each fix, the matching test goes red.
+
+Found in the browser pass and fixed here (L6): with `/me/permissions` failed, `usePermissions`
+returned a new `[]` and `Set` on every render. `SearchDialog`
+(`app/components/partials/dialogs/search/search-dialog.tsx:71-87`, always mounted in the demo1
+header) has `permissions` in an effect's deps and sets state there, so it re-ran forever and the
+renderer sat at ~95% CPU (pre-existing on main, reproduced there). The hook now returns a stable
+empty array and a memoised set. Left open, not this lane: `sidebar-menu.tsx` keys root groups by
+index and shows the unfiltered menu while `isLoading`, so a group can flip between two menus
+while a failed permissions query refetches.
+
+## Evidence run (agent-browser, cloud sandbox, empty bootstrapped DB, all modules installed)
+
+Users: an admin and a salesperson seeded into the throwaway DB. Failures induced with
+`network route <url> --abort`.
+
+1. Admin, Settings (sidebar Users & Access > Settings) with
+   `/api/v1/user-management/settings*` aborted: two attempts (one retry), then "Could not load
+   settings" + Retry, no tab strip, no "Save Settings". 1280 and 375, no horizontal scroll
+   (scrollWidth 375). Unroute + Retry: tabs and real values render.
+2. Admin, user detail (Administrative Users > row) with the user's record read aborted: "User"
+   header + "Could not load this user" + Retry, no tabs, no skeleton. 1280 and 375 (scrollWidth
+   375). Unroute + Retry: hero, Profile and Activity Logs tabs render.
+3. Salesperson, `/me/permissions` aborted at sign-in: the shell banner "Could not check your
+   access, so some menus and actions are hidden." + Retry on every page; a sidebar group opens
+   without freezing (renderer ~7-10% CPU after the fix, ~95% before); `/project-sales/pipeline`
+   (under `RequireAccess`) shows "Could not check your access" + Retry, not AccessDenied, at 1280
+   and 375. Unroute + Retry: the pipeline page shows AccessDenied, the honest answer for this
+   role. `/user-management/settings` as the salesperson (backend 403
+   `Permission required: user_management.settings.view`) shows AccessDenied through the L9 path.
+
+L8 (crash screens) is covered by unit tests only: a chunk-load failure of the client providers
+cannot be induced on a dev server without breaking every script.
+

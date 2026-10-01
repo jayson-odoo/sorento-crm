@@ -57,4 +57,26 @@ describe('usePermissions().isError', () => {
     expect(result.current.isError).toBe(false);
     expect(result.current.permissionSet.has('a.view')).toBe(true);
   });
+
+  it('hands out the same permissions array and set on every render while the load has failed', async () => {
+    // A new [] per render looped SearchDialog's effect (deps: permissions, then
+    // setState) forever when /me/permissions failed: the page froze at 95% CPU.
+    fetchMyPermissions.mockImplementation(failPermissions);
+    const { result, rerender } = setup();
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    const first = result.current;
+    rerender();
+    expect(result.current.permissions).toBe(first.permissions);
+    expect(result.current.permissionSet).toBe(first.permissionSet);
+  });
+
+  it('keeps the set identity across renders once loaded', async () => {
+    fetchMyPermissions.mockResolvedValue(['a.view']);
+    const { result, rerender } = setup();
+    await waitFor(() => expect(result.current.permissionSet.has('a.view')).toBe(true));
+    const first = result.current.permissionSet;
+    rerender();
+    expect(result.current.permissionSet).toBe(first);
+  });
 });
+
