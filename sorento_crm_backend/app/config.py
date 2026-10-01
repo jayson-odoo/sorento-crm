@@ -138,10 +138,11 @@ class Settings(BaseSettings):
     # environment variable makes each flip a deploy. The two settings below stay here:
     # they are deployment properties of THIS box, not owner decisions.
     #
-    # The longest a turn waits for its contact's earlier turns. Past it the turn is failed
-    # at stage `queued` with today's error reply rather than holding the request open: n8n's
-    # HTTP node waits 60 s, so a wait that outlives that would turn one stuck turn into a
-    # stuck n8n execution as well. CHATBOT_QUEUE_WAIT_SECONDS.
+    # The longest a turn waits behind a predecessor that is still ALIVE (heart-beating; a
+    # dead one is walked past within `dispatch.ALIVE_TTL_SECONDS`). Past it the turn runs
+    # anyway, possibly out of order (CHATBOT-QUEUE-FIX, 1 Oct). Deliberately below n8n's
+    # 90 s turn budget (`send_order.N8N_CHAT_TURN_TIMEOUT_SECONDS`): the waiter's own reply
+    # rides that same budget, so it must leave room to run. CHATBOT_QUEUE_WAIT_SECONDS.
     chatbot_queue_wait_seconds: float = 45.0
     # Optional worker offload (AC-703). OFF by default: in-process is simpler and the
     # measured trigger for moving the turn off the API threads (beyond ~250 concurrent) has

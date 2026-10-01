@@ -2217,7 +2217,9 @@ def run_turn(
     switches = _TurnSwitches()
     ordered = False
     ticket: int | None = None
+    heartbeat: Any = None
     redis = None
+    turn_started = time.monotonic()
     try:
         with _session(session_factory) as db:
             switches = _read_switches(db)
@@ -2257,6 +2259,9 @@ def run_turn(
                 redis = _ordering_redis()
                 try:
                     ticket = dispatch.contact_ticket(redis, contact_respond_id)
+                    # Alive from the take to the release, the wait included: a successor
+                    # must see this turn as alive while it is still queued too.
+                    heartbeat = dispatch.start_heartbeat(redis, contact_respond_id, ticket)
                 except dispatch.ORDERING_ERRORS:
                     # Redis is not answering. Run the turn UNORDERED rather than failing
                     # it: out-of-order replies are a degradation, a chatbot that answers
@@ -2321,6 +2326,7 @@ def run_turn(
                 # never gets a "queued" stage record at all.
                 queue_wait_started = time.monotonic()
                 try:
+                    timed_out = False
                     try:
                         dispatch.wait_for_turn(
                             redis,
@@ -2331,28 +2337,36 @@ def run_turn(
                             ),
                         )
                     except dispatch.QueueWait:
-                        # A predecessor may be answering THIS message right now, because
-                        # it was sent earlier (`send_order`). Then the wait was for our
-                        # own answer, and failing would send the error reply beside it.
-                        if not _claim_own_row(session_factory, turn_id):
-                            return _answered_by_predecessor(session_factory, turn_id)
-                        raise
-                    dispatch.mark_running(redis, contact_respond_id, ticket)
+                        # CHATBOT-QUEUE-FIX (prod 1 Oct): a predecessor still alive past
+                        # the cap no longer fails this turn with the generic error. The
+                        # customer gets an answer, possibly out of order. A predecessor
+                        # may be answering THIS message right now (`send_order`), which
+                        # the claim below still catches.
+                        timed_out = True
+                        logger.warning(
+                            "chatbot ordering: ticket %s for %s waited the full queue "
+                            "budget behind a live predecessor, running it anyway",
+                            ticket,
+                            contact_respond_id,
+                        )
                     turn_trace.record(
                         "queued",  # type: ignore[arg-type]
                         status="ok",
-                        summary="Waited for this contact's earlier messages to finish.",
+                        summary=(
+                            "Waited the full queue budget for an earlier message; answering now."
+                            if timed_out
+                            else "Waited for this contact's earlier messages to finish."
+                        ),
                         why="Replies to one contact are sent in the order the messages arrived.",
                         facts={
                             "ticket": ticket,
                             "wait_ms": int((time.monotonic() - queue_wait_started) * 1000),
+                            **({"timed_out": True} if timed_out else {}),
                         },
                     )
                 except dispatch.ORDERING_ERRORS:
                     # Redis went away mid-wait. Same call as above: answer unordered
-                    # rather than not at all. `QueueWait` is NOT one of these and still
-                    # fails the turn at `queued` - that one means the ordering worked and
-                    # the predecessor was too slow, which is a real, recordable outcome.
+                    # rather than not at all.
                     logger.warning(
                         "chatbot ordering: redis is unavailable mid-wait, running turn "
                         "%s unordered",
@@ -2411,10 +2425,10 @@ def run_turn(
         except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never dropped
             message = f"{type(exc).__name__}: {exc}"
             logger.exception("chatbot turn %s failed at stage %s", turn_id, stage[0])
-            # AC-MEM014: a queue TIMEOUT (`dispatch.QueueWait`, uncaught by
-            # `dispatch.ORDERING_ERRORS`) fails the turn at "queued" - the ticket it
-            # was waiting for rides on this same failure record, the one place
-            # `trace_detail._order` reads `ticket`/`wait_ms` from.
+            # AC-MEM014: a turn that fails while still at "queued" carries its ticket
+            # on this failure record, the one place `trace_detail._order` reads
+            # `ticket`/`wait_ms` from. A queue TIMEOUT no longer lands here
+            # (CHATBOT-QUEUE-FIX): the turn runs anyway.
             failure_facts: dict[str, Any] = {"stage": stage[0]}
             if stage[0] == "queued" and ticket is not None:
                 failure_facts["ticket"] = ticket
@@ -2452,20 +2466,46 @@ def run_turn(
         # the one that gave up waiting (AC-710) - it is the one whose predecessor may be
         # dead - and a `finally` on the stages alone would be the only one to skip it.
         #
-        # `mark_done` is monotone, so releasing out of order can never rewind the counter.
+        # `mark_done` only settles the counter over finished or dead tickets, so
+        # releasing out of order can neither rewind it nor pass a live predecessor. The
+        # heartbeat stops FIRST so no late beat can resurrect the released key.
+        if heartbeat is not None:
+            heartbeat.stop()
         if ticket is not None:
             try:
                 dispatch.mark_done(redis, contact_respond_id, ticket)
             except dispatch.ORDERING_ERRORS:
-                # Best effort, same reasoning as the take above: if redis is down the next
-                # turn for this contact cannot read the counter either, so it runs
-                # unordered rather than waiting on a release that never lands.
-                logger.warning(
+                # ERROR, not a warning: this is the alert. The successors are not stuck
+                # (the stopped heartbeat lets the alive key lapse within
+                # `ALIVE_TTL_SECONDS`), but each waits that long for nothing.
+                logger.error(
                     "chatbot ordering: could not release ticket %s for %s",
                     ticket,
                     contact_respond_id,
                     exc_info=True,
                 )
+        _log_slow_turn(turn_trace, contact_respond_id, ticket, turn_started)
+
+
+# A turn this long holds its contact's queue slot long enough to matter. One log line with
+# every stage's `ms`, so the stage that held it is in the server log, not only on the trace
+# screen (prod 1 Oct: turn a45f took 3m52s, all of it in `understood`).
+SLOW_TURN_LOG_SECONDS = 30.0
+
+
+def _log_slow_turn(turn_trace: Any, contact: str, ticket: int | None, started: float) -> None:
+    elapsed = time.monotonic() - started
+    if elapsed < SLOW_TURN_LOG_SECONDS:
+        return
+    try:
+        stages = ", ".join(
+            f"{r.get('stage')}={r.get('ms')}ms" for r in turn_trace.records if isinstance(r, dict)
+        )
+    except Exception:  # noqa: BLE001 - a log line must never fail a turn
+        stages = "?"
+    logger.warning(
+        "chatbot slow turn: %.1fs for %s (ticket %s): %s", elapsed, contact, ticket, stages
+    )
 
 
 def _ordering_redis() -> Any:
