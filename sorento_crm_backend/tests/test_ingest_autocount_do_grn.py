@@ -655,6 +655,90 @@ def test_later_payload_with_link_fills_it(env):
     assert line.sales_order_line_id == so_line
 
 
+# ======================================================================= FromDocDtlKey 0 (DO-SO-LINE-LINK)
+# AutoCount sends FromDocDtlKey 0 on every DO line (3,841 of 3,841 in the 01-03 Sep snapshot).
+def test_from_dtl_key_zero_links_by_doc_no_and_item(env):
+    """AC-DSL001."""
+    _, so_line = _seed_so(env)
+    rec = _with_from(copy.deepcopy(do_records()[0]), 0, "SO", "ZZSO-0001", 0)
+    r = _records(env.push_do([rec]))["db1:DO:900001"]
+    assert "so_line_unresolved" not in r["warnings"]
+    assert r["lines"]["linked"] == 1
+    line = {l.dtl_key: l for l in env.order_lines(env.order(900001).id)}[910001]
+    assert line.sales_order_line_id == so_line
+    assert (line.from_doc_type, line.from_doc_no, line.from_dtl_key) == ("SO", "ZZSO-0001", None)
+
+
+@pytest.mark.parametrize("absent", ["missing", "null"])
+def test_missing_from_dtl_key_links_by_doc_no_and_item(env, absent):
+    """AC-DSL002."""
+    _, so_line = _seed_so(env)
+    rec = copy.deepcopy(do_records()[0])
+    rec["Details"][0].update({"FromDocType": "SO", "FromDocNo": "ZZSO-0001"})
+    if absent == "missing":
+        rec["Details"][0].pop("FromDocDtlKey", None)
+    else:
+        rec["Details"][0]["FromDocDtlKey"] = None
+    r = _records(env.push_do([rec]))["db1:DO:900001"]
+    assert "so_line_unresolved" not in r["warnings"]
+    line = {l.dtl_key: l for l in env.order_lines(env.order(900001).id)}[910001]
+    assert line.sales_order_line_id == so_line
+
+
+def test_from_dtl_key_zero_without_a_matching_so_line_warns(env):
+    """AC-DSL003: the SO holds no line of this product, or the SO is not here."""
+    _seed_so(env)  # one line, product P1
+    rec = copy.deepcopy(do_records()[0])
+    _with_from(rec, 1, "SO", "ZZSO-0001", 0)  # line 1 is product P2
+    r = _records(env.push_do([rec]))["db1:DO:900001"]
+    assert "so_line_unresolved" in r["warnings"]
+    assert all(l.sales_order_line_id is None for l in env.order_lines(env.order(900001).id))
+
+    other = _with_from(copy.deepcopy(do_records()[1]), 0, "SO", "ZZSO-0404", 0)
+    r = _records(env.push_do([other]))["db1:DO:900002"]
+    assert "so_line_unresolved" in r["warnings"]
+
+
+def test_from_dtl_key_zero_with_two_candidate_so_lines_warns(env):
+    """AC-DSL004: the product sits on two lines of the SO; no guess."""
+    so_id, _ = _seed_so(env)
+    env.db.add(SalesOrderLine(sales_order_id=so_id, product_id=env.p1, qty_ordered=3,
+                              source_ref="SRT_DB:4001:5002", company_id=env.company))
+    env.db.commit()
+    rec = _with_from(copy.deepcopy(do_records()[0]), 0, "SO", "ZZSO-0001", 0)
+    r = _records(env.push_do([rec]))["db1:DO:900001"]
+    assert "so_line_unresolved" in r["warnings"]
+    assert all(l.sales_order_line_id is None for l in env.order_lines(env.order(900001).id))
+
+
+def test_from_dtl_key_zero_waiting_link_filled_when_so_arrives(env):
+    """AC-DSL005, including a row the old code stored with from_dtl_key 0."""
+    env.push_do([_with_from(copy.deepcopy(do_records()[0]), 0, "SO", "ZZSO-0001", 0)])
+    line = {l.dtl_key: l for l in env.order_lines(env.order(900001).id)}[910001]
+    assert line.sales_order_line_id is None
+    line.from_dtl_key = 0  # what the pre-fix ingest stored
+    env.db.commit()
+    _, so_line = _seed_so(env)
+    env.push_do([do_records()[1]])
+    line = {l.dtl_key: l for l in env.order_lines(env.order(900001).id)}[910001]
+    assert line.sales_order_line_id == so_line
+
+
+def test_grn_from_dtl_key_zero_falls_back_to_our_po_no(env):
+    """AC-DSL006."""
+    po = PurchaseOrder(po_number="ZZPO-0002", company_id=env.company)
+    env.db.add(po)
+    env.db.commit()
+    rec = copy.deepcopy(grn_records()[0])
+    _with_from(rec, 0, "PO", "ZZPO-0002", 0)
+    rec["Details"][0]["OurPONo"] = "ZZPO-0002"
+    r = _records(env.push_grn([rec]))["db1:GRN:800001"]
+    assert "po_line_unresolved" not in r["warnings"]
+    line = {l.dtl_key: l for l in env.grn_lines(env.grn(800001).id)}[810001]
+    assert line.purchase_order_id == str(po.id)
+    assert line.from_dtl_key is None
+
+
 # ======================================================================= ownership
 TRACKING_COLUMNS = (
     "actual_delivery_date", "pickup_time", "transporter", "transporter_id", "driver_name",
