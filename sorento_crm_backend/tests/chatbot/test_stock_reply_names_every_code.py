@@ -182,3 +182,78 @@ def test_more_codes_than_the_header_shows_adds_no_line():
 def test_the_line_sits_above_the_data_footer():
     text = _text(_envelope(["SRTSWT3001", "SRTSWT3001-GM"], {"SRTSWT3001-GM": 12}, footer=True))
     assert text.index("No stock found for SRTSWT3001.") < text.index("_Data last updated")
+
+
+# --------------------------------------------------------------------------- #
+# Crew browser pass on 9fba50f0 (TESTER-LOCAL): SRTSWT3001 dropped before compose
+# --------------------------------------------------------------------------- #
+
+
+def _resolution(token: str, *codes: str) -> dict:
+    return {
+        "token": token,
+        "matches": [
+            {"uuid": f"uuid-{c}", "entity_type": "product", "canonical_code": c, "match_tier": "prefix"}
+            for c in codes
+        ],
+    }
+
+
+def _typed(*raws: str) -> list[dict]:
+    return [{"raw": r, "hint": "product", "current_message": True} for r in raws]
+
+
+def test_a_token_answered_only_by_another_typed_code_is_reported_unplaced():
+    """The crew copy's looked_up envelope: `entities: [SRTSWT3001-GM]`, `unresolved: []`.
+    The resolver placed `srtswt3001` on SRTSWT3001-GM, so the gate deduped it away."""
+    from app.services.chatbot.turn_runtime import absorbed_tokens
+
+    resolved = {
+        "resolutions": [
+            _resolution("srtswt3001", "SRTSWT3001-GM"),
+            _resolution("srtswt3001gm", "SRTSWT3001-GM"),
+        ]
+    }
+    assert absorbed_tokens(_typed("Srtswt3001", "Srtswt3001-gm"), resolved) == {
+        "srtswt3001": "Srtswt3001"
+    }
+
+
+def test_a_token_with_its_own_exact_match_is_not_absorbed():
+    from app.services.chatbot.turn_runtime import absorbed_tokens
+
+    resolved = {
+        "resolutions": [
+            _resolution("srtswt3001", "SRTSWT3001", "SRTSWT3001-GM"),
+            _resolution("srtswt3001gm", "SRTSWT3001-GM"),
+        ]
+    }
+    assert absorbed_tokens(_typed("Srtswt3001", "Srtswt3001-gm"), resolved) == {}
+
+
+def test_a_family_prefix_matching_untyped_members_is_not_absorbed():
+    """`srt5674` covering SRT5674-N AND SRT5674-NL is a real answer even when the customer
+    also typed SRT5674-N: it matched something nobody else typed."""
+    from app.services.chatbot.turn_runtime import absorbed_tokens
+
+    resolved = {
+        "resolutions": [
+            _resolution("srt5674", "SRT5674-N", "SRT5674-NL"),
+            _resolution("srt5674n", "SRT5674-N"),
+        ]
+    }
+    assert absorbed_tokens(_typed("srt5674", "srt5674-n"), resolved) == {}
+
+
+def test_a_single_token_is_never_absorbed():
+    from app.services.chatbot.turn_runtime import absorbed_tokens
+
+    resolved = {"resolutions": [_resolution("srtswt3001", "SRTSWT3001-GM")]}
+    assert absorbed_tokens(_typed("Srtswt3001"), resolved) == {}
+
+
+def test_the_absorbed_token_is_named_in_the_reply():
+    """End of the chain: an unplaced token reaches compose as `unresolved`."""
+    text = _text(_envelope(["SRTSWT3001-GM"], {"SRTSWT3001-GM": 20}, unresolved=["Srtswt3001"]))
+    assert "I could not find Srtswt3001." in text, text
+    assert "SRTSWT3001-GM" in text
