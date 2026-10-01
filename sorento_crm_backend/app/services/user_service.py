@@ -348,6 +348,25 @@ class UserService:
             "empty": total == 0
         }
 
+    def list_user_lookup(
+        self, query: Optional[str] = None, respond_synced: bool = False
+    ) -> list:
+        """Active, non-trashed users for the shared people picker, ordered by name.
+
+        ``query`` matches the NAME only: this list is open to every signed-in user, and
+        matching email would let anyone probe whether an address belongs to a colleague.
+        ``respond_synced`` narrows to users linked to a Respond.io agent.
+        """
+        q = self.db.query(User).filter(
+            User.is_trashed == False,  # noqa: E712
+            User.status == UserStatus.ACTIVE.value,
+        )
+        if query:
+            q = q.filter(User.name.ilike(f"%{query}%"))
+        if respond_synced:
+            q = q.filter(User.respond_synced == "successful", User.respond_user_id.isnot(None))
+        return q.order_by(User.name.asc().nullslast(), User.id.asc()).all()
+
     def list_users_select(
         self,
         query: Optional[str] = None,

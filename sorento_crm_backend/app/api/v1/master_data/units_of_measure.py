@@ -4,9 +4,18 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import (
+    get_current_user_or_api_key,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.services.product_service import UnitOfMeasureService
-from app.schemas.product import UnitOfMeasureCreate, UnitOfMeasureUpdate, UnitOfMeasureResponse
+from app.schemas.product import (
+    UnitOfMeasureCreate,
+    UnitOfMeasureResponse,
+    UnitOfMeasureSelectItem,
+    UnitOfMeasureUpdate,
+)
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 from app.services.uuid_list_param import parse_uuid_list
@@ -45,10 +54,12 @@ async def get_units_of_measure(
         raise handle_internal_error(str(e))
 
 
-@router.get("/select", response_model=List[UnitOfMeasureResponse])
+@router.get("/select", response_model=List[UnitOfMeasureSelectItem])
 async def get_uoms_select(
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(require_permission_with_api_key("master_data.units_of_measure.view")),
+    # Any signed-in user or API key (owner ruling 1 Oct 2026, never-stuck L10); the
+    # list, detail and write routes keep their slugs.
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get units of measure for select dropdowns."""

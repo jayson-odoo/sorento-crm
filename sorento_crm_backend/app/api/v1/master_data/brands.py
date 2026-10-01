@@ -3,9 +3,13 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import (
+    get_current_user_or_api_key,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.services.product_service import BrandService
-from app.schemas.product import BrandCreate, BrandUpdate, BrandResponse
+from app.schemas.product import BrandCreate, BrandResponse, BrandSelectItem, BrandUpdate
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 from app.services.uuid_list_param import parse_uuid_list
@@ -107,7 +111,7 @@ async def get_brands(
         raise handle_internal_error(str(e))
 
 
-@router.get("/select", response_model=List[BrandResponse])
+@router.get("/select", response_model=List[BrandSelectItem])
 async def get_brands_select(
     query: Optional[str] = Query(None),
     company_id: Optional[str] = Query(
@@ -117,7 +121,9 @@ async def get_brands_select(
             "into. Omit for the caller's active-company scope (the default)."
         ),
     ),
-    current_user: dict = Depends(require_permission_with_api_key("master_data.brands.view")),
+    # Any signed-in user or API key (owner ruling 1 Oct 2026, never-stuck L10); the
+    # list, detail and write routes keep their slugs.
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get brands for select dropdowns.

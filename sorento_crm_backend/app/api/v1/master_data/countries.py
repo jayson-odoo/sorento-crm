@@ -5,7 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import (
+    get_current_user_or_api_key,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
 from app.schemas.country import CountryCreate, CountryResponse, CountrySelectItem, CountryUpdate
 from app.services.country_service import CountryService
@@ -38,7 +42,9 @@ async def get_countries(
 @router.get("/select", response_model=List[CountrySelectItem])
 async def get_countries_select(
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(require_permission_with_api_key("master_data.countries.view")),
+    # Any signed-in user or API key (owner ruling 1 Oct 2026, never-stuck L10); the
+    # list, detail and write routes keep their slugs.
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     try:
