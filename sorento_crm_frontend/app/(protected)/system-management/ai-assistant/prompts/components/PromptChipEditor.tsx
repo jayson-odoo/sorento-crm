@@ -10,7 +10,6 @@ import { FindBar, isFindChord } from '@/components/common/find-in-text/FindBar';
 import { useFindController } from '@/components/common/find-in-text/useFindController';
 import { splitTemplate } from '../../lib/promptSegments';
 import type { RegistryVariableRow } from '../../services/aiPromptsService';
-import '@/css/components/prompt-find.css';
 
 /** Variables that render several lines: drawn as a full-width block, not an inline pill. */
 const BLOCK_VARIABLES = new Set(['statuses', 'domains_detail', 'entity_kinds_detail', 'specs']);
@@ -599,6 +598,11 @@ export function PromptChipEditor({
         </div>
       ) : null}
 
+      {/* Inline on purpose: Next's CSS parser (lightningcss) rejects `::highlight()` in a
+          stylesheet ("'highlight' is not recognized as a valid pseudo-element"), and the
+          page then fails to compile (measured 1 Oct 2026). A runtime <style> string is not
+          parsed at build time. */}
+      <style>{`::highlight(prompt-find){background-color:color-mix(in oklab, var(--color-warning, #f59e0b) 40%, transparent)}::highlight(prompt-find-active){background-color:color-mix(in oklab, var(--color-primary, #2563eb) 40%, transparent)}`}</style>
     </div>
   );
 }

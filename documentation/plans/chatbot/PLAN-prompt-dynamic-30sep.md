@@ -1,6 +1,6 @@
 # PLAN - parser prompt wired to its registries + prompt editor that shows it (PROMPT-DYNAMIC)
 
-Status: Review. Track: full (migration, new admin table, new admin page). Grill run late (see "Grill"). R5c shipped (7f004bf0);
+Status: Review done; waiting on the owner (promote v-wording-layer) and the prod-copy render diff (AC-PD-8). Track: full (migration, new admin table, new admin page). Grill run late (see "Grill"). R5c shipped (7f004bf0);
 backend S2-S4 under TDD; R5a/b wait on the mock
 (`documentation/mockups/prompt-editor-dynamic.html`). Lane `crew-lane: PROMPT-DYNAMIC`, PR #1405.
 UAC: `prompt-dynamic-30sep-acceptance-criteria.md`.
@@ -235,3 +235,19 @@ Kill tests, R5a/b (each restored after):
 - chip serialisation dropped: 2 red;
 - validateVars without the registry names: 2 red;
 - diff step frozen: 2 red.
+
+## Browser re-check after reviewer pass 2 (agent-browser 0.27.0, session `pdyn3`, 1 Oct 2026)
+
+Fresh login, then System > AI Assistant > Prompts > chatbot_semantic_parser, v4.
+- **CSS break found.** Moving the `::highlight()` rules into `css/components/prompt-find.css`
+  broke the page: Next's CSS parser rejects `::highlight` ("not recognized as a valid
+  pseudo-element") and the route returned 500. vitest does not parse CSS, so no test could
+  catch it. Reverted to the inline style, with the reason in a comment. The page is back to 200.
+- **B1, copy/paste.** Selected the text around the Domains chip, Ctrl+C, caret at the top,
+  Ctrl+V. That gives 2 Domains chips and no label text in the editor.
+- **B2, Enter then find.** Enter x2 mid-text leaves 0 `<div>` in the editor. Ctrl+F
+  "outstanding" and Enter x3 give 4/97, active 10166-10177, and CSS highlights
+  `prompt-find` + `prompt-find-active` registered. Escape leaves the selection "outstanding",
+  inside the editor.
+- **Tabs (Radix pill).** Preview rendered prompt shows 0 `{{`, and Edit brings the chip
+  editor back.
