@@ -108,6 +108,25 @@ describe('apiFetch deadline', () => {
     expect(s.done).toBe(true);
   });
 
+  it.each([
+    '/api/v1/scm/proforma-invoices/abc/export',
+    '/api/v1/system/jobs/abc/rows/export?status=failed',
+    '/api/v1/autocount/pulls/abc/download.xlsx',
+    '/api/v1/sales-orders/abc/pdf',
+  ])('a GET that builds a file (%s) gets the write budget', async (url) => {
+    const s = track(apiFetch(url));
+    await vi.advanceTimersByTimeAsync(API_READ_TIMEOUT_MS + 1);
+    expect(s.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(API_WRITE_TIMEOUT_MS);
+    expect(s.done).toBe(true);
+  });
+
+  it('an ordinary list read whose name only contains "export" text is still a read', async () => {
+    const s = track(apiFetch('/api/v1/procurement/exporters'));
+    await vi.advanceTimersByTimeAsync(API_READ_TIMEOUT_MS + 1);
+    expect(s.done).toBe(true);
+  });
+
   it('a caller can name its own budget', async () => {
     const s = track(apiFetch('/api/v1/reports/export', { timeoutMs: 5_000 }));
     await vi.advanceTimersByTimeAsync(5_001);

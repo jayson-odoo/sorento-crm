@@ -121,10 +121,20 @@ export type ApiFetchInit = RequestInit & {
   timeoutMs?: number;
 };
 
-function _defaultTimeoutMs(init: RequestInit | undefined): number {
+/**
+ * A GET that builds a file before it answers (an Excel or PDF export) gets the write
+ * budget: the server does the whole build before the first byte, so 30s is too short for
+ * a large one. Matched by path so every export, present and future, is covered in one
+ * place rather than by each service remembering a `timeoutMs`.
+ */
+const _FILE_BUILD_PATH = /\/(export|download|pdf)(\b|[/?.])|\.(xlsx|pdf|csv)(\?|$)/i;
+
+function _defaultTimeoutMs(url: unknown, init: RequestInit | undefined): number {
   if (init?.body instanceof FormData) return API_UPLOAD_TIMEOUT_MS;
   const method = (init?.method || 'GET').toUpperCase();
-  return method === 'GET' || method === 'HEAD' ? API_READ_TIMEOUT_MS : API_WRITE_TIMEOUT_MS;
+  if (method !== 'GET' && method !== 'HEAD') return API_WRITE_TIMEOUT_MS;
+  if (typeof url === 'string' && _FILE_BUILD_PATH.test(url)) return API_WRITE_TIMEOUT_MS;
+  return API_READ_TIMEOUT_MS;
 }
 
 /**
@@ -304,7 +314,7 @@ export async function apiFetch(
 ): Promise<Response> {
   const { timeoutMs: callerTimeoutMs, ...rest } = apiInit ?? {};
   let init: RequestInit | undefined = apiInit ? rest : undefined;
-  const timeoutMs = callerTimeoutMs ?? _defaultTimeoutMs(init);
+  const timeoutMs = callerTimeoutMs ?? _defaultTimeoutMs(input, init);
   let url = input;
   // Use empty string for relative paths (nginx will proxy), or explicit URL for direct backend access
   let apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
