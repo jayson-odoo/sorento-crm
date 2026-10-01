@@ -1153,3 +1153,18 @@ def test_changed_files_step_fails_on_any_pass_but_runs_them_all(tmp_path):
 def test_changed_files_step_with_only_migrations_skips_the_pool(tmp_path):
     rc, calls = _run_changed_step(tmp_path, "tests/test_migration_400_x.py")
     assert rc == 0 and len(calls) == 1 and "test_migration_400_x.py" in calls[0]
+
+
+def test_serial_ddl_steps_have_their_own_matrix_entry_off_the_balanced_shards():
+    """CI-SPEED: the serial steps no longer ride on shard 1, which run 36875899060
+    measured as the release's critical path (43.8 min vs 14-22 for shards 2-6)."""
+    text = _workflow_text()
+    block = re.search(r"\n  test-backend:\n(.*?)\n  [a-z][\w-]*:\n", text, re.S).group(1)
+    assert re.search(r"^        shard: \[1, 2, 3, 4, 5, 6, serial\]$", block, re.M)
+    steps = {s.splitlines()[0]: s for s in re.split(r"\n      - name: ", block)[1:]}
+    xdist = steps["Run backend suite under xdist (executing gate)"]
+    assert "        if: matrix.shard != 'serial'" in xdist and "--splits 6 --group ${{ matrix.shard }}" in xdist
+    assert "matrix.shard != 'serial'" in steps["Upload backend shard durations artifact"]
+    for name in ("Run migration tests serially (executing gate)", "Run view/DDL tests serially (executing gate)"):
+        assert "        if: matrix.shard == 'serial'" in steps[name], name
+    assert "matrix.shard == 1" not in block

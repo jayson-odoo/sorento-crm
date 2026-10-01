@@ -896,10 +896,18 @@ jobs:
     # duration, so a brand-new test does not need a manual refresh to be
     # balanced correctly. Refresh the committed file when the longest shard
     # drifts more than ~3 min above the shortest.
+    #
+    # The seventh entry, `serial`, runs no xdist pass: it holds the two
+    # serial steps (tests/test_migration_*.py and `-m serial_ddl`, ~2.5 min
+    # plus ~1.5 min of setup) that used to ride on shard 1 after its xdist
+    # pass, which made shard 1 the release's critical path by that much on
+    # top of its own imbalance (CI-SPEED, run 36875899060: shard 1 43.8 min,
+    # shards 2-6 14-22 min). On its own runner it finishes long before any
+    # balanced shard, so it is off the critical path whatever the balance.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, serial]
     services:
       postgres:
         # pgvector image, not plain postgres: the embedding tables need the
@@ -1000,6 +1008,7 @@ jobs:
       # documentation/reference/PR-CHECKLIST.md ("Test cost") to justify a new
       # slow test rather than discovering it three weeks later as wall clock.
       - name: Run backend suite under xdist (executing gate)
+        if: matrix.shard != 'serial'
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
@@ -1029,7 +1038,7 @@ jobs:
       # result. Refresh when the longest shard drifts more than ~3 min above
       # the shortest; a small drift is not worth the churn.
       - name: Upload backend shard durations artifact
-        if: always()
+        if: always() && matrix.shard != 'serial'
         uses: actions/upload-artifact@v4
         with:
           name: test-durations-${{ matrix.shard }}
@@ -1039,7 +1048,8 @@ jobs:
           # default and silently uploads nothing ("No files were found").
           include-hidden-files: true
 
-      # Migration tests run serially, outside the xdist pool, on one shard only.
+      # Migration tests run serially, outside the xdist pool, on the `serial`
+      # matrix entry only (no xdist pass runs there).
       #
       # Some of them (324, 325, 354, 370, 375_user_discontinued_scopes, 395, 400,
       # 422, 443) run real ALTER TABLE / DROP against shared tables through
@@ -1050,15 +1060,15 @@ jobs:
       # `ALTER TABLE projects.order_inquiry_rows DROP COLUMN` deadlocked against
       # tests/test_order_inquiry_place_on_po.py's SELECT on another worker and
       # Postgres killed the DDL side. The whole migration set is a few seconds of
-      # test time, so it runs here serially, after the xdist pool has drained,
-      # with nothing else on the database. Run 35945594213 (2026-09-24, uneven
-      # count-based split across 4 shards) measured shard 1 as the shortest at
-      # 9:03 against shard 2's 19:34, so shard 1 is where these two serial
-      # steps land now that the matrix is rebalanced to 6 shards. Glob rather
+      # test time, so it runs here serially, with nothing else on the database.
+      # It rode on shard 1 from 2026-09-24 (then the shortest shard) until
+      # CI-SPEED (2026-10-01) gave it its own entry: by then shard 1 was the
+      # longest, and these steps added 2.5 min to the release's critical
+      # path (run 36875899060: 1:54 migrations + 0:37 serial_ddl). Glob rather
       # than a list: a future migration test with DDL is covered without
       # anyone remembering to register it.
       - name: Run migration tests serially (executing gate)
-        if: matrix.shard == 1
+        if: matrix.shard == 'serial'
         working-directory: sorento_crm_backend
         run: |
           python -m pytest -q -p no:cacheprovider -p no:xdist --durations=10 \
@@ -1069,14 +1079,14 @@ jobs:
       # TestMigration473WidensTheSourceCheck holds an AccessExclusiveLock on the
       # SHARED `scm.order_link_claim` (DROP CONSTRAINT / ADD CONSTRAINT on a plain
       # `engine.connect()`), and nothing about its filename says so. Same cycle as
-      # issue #987, same treatment, no shard but this one.
+      # issue #987, same treatment, on the `serial` entry only.
       #
       # `-m serial_ddl` over the whole tree rather than a path list: a future test
       # that marks itself is picked up without anyone remembering to register it
-      # here. Collection of tests/ costs about 25 seconds, and shard 1 has the
-      # headroom.
+      # here. Collection of tests/ costs about 25 seconds, on a runner that
+      # does nothing else.
       - name: Run view/DDL tests serially (executing gate)
-        if: matrix.shard == 1
+        if: matrix.shard == 'serial'
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
