@@ -186,8 +186,8 @@ export async function revokeCurrentSession(): Promise<void> {
 // Session-invalidation interceptor.
 //
 // NextAuth is just a cookie-holder now; FastAPI owns session validity. When a
-// session is revoked (logout-all, password change, admin force-logout) or hits
-// its 8h unchecked expiry, the NextAuth cookie is still "valid" but FastAPI
+// session is revoked (logout-all, password change, admin force-logout) or
+// expires (30 days with no activity), the NextAuth cookie is still "valid" but FastAPI
 // returns 401 with a specific reason code. Without this, the user sees a
 // logged-in shell where every call fails. We gate strictly on the reason code
 // so an RBAC 403 or an incidental 401 from one endpoint never logs everyone out.

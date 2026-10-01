@@ -194,7 +194,7 @@ was by sidebar clicks from `/`.
    open, and the count stayed 3/107. The owner's bug does not reproduce.
 6. 375x812, same page: Enter moves to 4/107 and the active match is visible. The page itself
    is 1357px wide at 375. That overflow is identical with main b8cdbebe's files, so it is
-   pre-existing: BL-068.
+   pre-existing: BL-069.
 
 (The two screenshots of this first run were replaced by the R5a/b run below, per the
 two-per-lane cap.)
@@ -224,7 +224,7 @@ from the version list.
    scrollWidth equals clientWidth at 375 and at 1280, with 0 overflowing children.
 7. Layout. The third column squeezed the editor to 286px at 1280, so the side-by-side panel now
    starts at 2xl. At 1280 the editor is 582px wide, with the panel below it.
-8. 375x812: the document is 360px wide (no page overflow: BL-068 is fixed by the `min-w-0` grid
+8. 375x812: the document is 360px wide (no page overflow: BL-069 is fixed by the `min-w-0` grid
    columns). The wired panel stacks under the editor. The Insert variable menu ends at x=325.
 
 Screenshots from this run were replaced (two-per-lane cap) by the owner hand-test repro below.
