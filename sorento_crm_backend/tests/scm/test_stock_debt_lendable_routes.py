@@ -330,10 +330,10 @@ def test_the_cell_value_is_the_same_with_and_without_date_to(scm_app):
         m["key"]: m["balance"] for m in _row_of(narrowed, product.product_code)["months"]
     }
     assert whole_balance[near_month] == narrowed_balance[near_month] == 0
-    # Today's behaviour, pre-existing and unchanged (R14): with the far line off the page
-    # its pin goes too (`date_to` drops demand before the walk), so the 88 - 50 it held
-    # reads +38 free in the current month on the narrowed page only.
-    # TODO(a19364058): owner question, is this an R2 breach? Update this pin on the answer.
+    # `date_to` is a demand horizon (R14; owner ruling 1 Oct 2026, a19364058: "leave as
+    # is"): with the far line off the page its pin goes too, since `date_to` drops demand
+    # before the walk, so the 88 - 50 it held reads +38 free in the current month on the
+    # narrowed page only.
     assert whole_balance[current_month] == 0
     assert narrowed_balance[current_month] == 38
     assert month_key(far_due) not in narrowed_balance
