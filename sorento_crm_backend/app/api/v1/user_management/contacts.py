@@ -279,6 +279,8 @@ class ContactChatbotUpdate(BaseModel):
     packing_list_allowed: bool | None = None
     # Issue #1328: absent = leave alone.
     chatbot_eta_offset_applied: bool | None = None
+    # ESCALATION-CONTROL: "Chatbot hands over to support teams". Absent = leave alone.
+    escalation_allowed: bool | None = None
 
 
 @router.put("/{contact_id}/chatbot", response_model=RespondContactResponse)
@@ -319,6 +321,8 @@ async def update_contact_chatbot(
             contact.packing_list_allowed = body.packing_list_allowed
         if body.chatbot_eta_offset_applied is not None:
             contact.chatbot_eta_offset_applied = body.chatbot_eta_offset_applied
+        if body.escalation_allowed is not None:
+            contact.escalation_allowed = body.escalation_allowed
         # `get_db` never commits (it only closes), so a flush here rolled back on
         # return: PUT 200, row untouched. Main's convention is the commit in the route.
         db.commit()
