@@ -1,13 +1,14 @@
 """SO-TRANSFERABLE: an AutoCount sales order marked Transferable = F is not Stock Debt demand.
 
-Owner, 1 Oct 2026: F means "not confirmed yet for the queue", so the Stock Debt view must not
-count it. Scope ruling, same day: the Stock Debt VIEW only (list, cell drill, export); the
-fulfilment board's ladder (`assignments_for`) keeps reading every open line until the owner
-says otherwise. NULL (AutoCount never stated it) counts, exactly like T.
+Owner, 1 Oct 2026: F means "not confirmed yet for the queue", so Stock Debt must not count it.
+Scope ruling (b), same day: F leaves the SHARED assignment (`StockDebtService._demand`, R21's
+one reader), so the Stock Debt page and the fulfilment board's ladder both skip it - no stock
+is reserved for an F order anywhere until AutoCount flips it to T. NULL (AutoCount never
+stated it) counts, exactly like T.
 
   AC-TR-6  list: an F order's line is not demand; T and unknown are
   AC-TR-7  cell drill: F lines are not listed and not in `demand_total_qty`
-  AC-TR-8  the board's shared assignment still carries the F line (view-only ruling)
+  AC-TR-8  the board's shared assignment (the ladder) carries no F line either
   AC-TR-9  GET /scm/sales-orders/{id} answers `is_transferable`, the list filters on it, and
            PUT cannot change it (AutoCount-owned)
 """
@@ -130,9 +131,9 @@ def test_the_export_carries_the_same_figure(scm_app):
     assert data[header.index("Total")] == -50
 
 
-def test_the_board_assignment_still_reads_the_non_transferable_line(scm_app):
-    """AC-TR-8. Owner ruling 1 Oct 2026: Stock Debt only for now. `assignments_for` is the
-    fulfilment board's ladder input and is unchanged, so the F line is still in it."""
+def test_the_shared_assignment_drops_the_non_transferable_line(scm_app):
+    """AC-TR-8. Owner ruling 1 Oct 2026 (b): F is excluded from the SHARED assignment
+    (`assignments_for`, R21's one reader), so the board ladder agrees with the page."""
     from app.services.scm.stock_debt_service import StockDebtService
 
     _app, db = _client(scm_app)
@@ -144,8 +145,32 @@ def test_the_board_assignment_still_reads_the_non_transferable_line(scm_app):
     )[str(book["product"].id)]
 
     keys = {line.line.key for line in result.lines}
-    assert str(book["orders"]["F"][1].id) in keys
+    assert str(book["orders"]["F"][1].id) not in keys
     assert {str(book["orders"][k][1].id) for k in ("T", "U")} <= keys
+
+
+def test_the_board_ladder_reserves_nothing_for_a_non_transferable_line(scm_app):
+    """AC-TR-8, read through the board's own entry point (`planning_assignments`, the
+    ladder). On hand 60 at the bin: with F counted the F line (50, the oldest SO number)
+    would draw from it; with F out the T and unknown lines (30 + 20) take 50 and 10 stays
+    free. The F line has no assignment at all, so no stock is reserved for it anywhere
+    until AutoCount flips it to T."""
+    from app.services.project_supply_service import ProjectSupplyService
+    from tests.scm.test_stock_debt_routes import _stock
+
+    _app, db = _client(scm_app)
+    book = _book(db)
+    _stock(db, book["product"], book["warehouse"], 60)
+
+    result = ProjectSupplyService(db).planning_assignments([str(book["product"].id)])[
+        str(book["product"].id)
+    ]
+
+    by_key = {line.line.key: line for line in result.lines}
+    assert str(book["orders"]["F"][1].id) not in by_key
+    for key in ("T", "U"):
+        line = by_key[str(book["orders"][key][1].id)]
+        assert round(sum(item.qty for item in line.assigned), 4) == line.line.open_qty
 
 
 # ------------------------------------------------------------------ the SO screens (AC-TR-9)

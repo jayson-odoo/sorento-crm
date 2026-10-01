@@ -244,6 +244,11 @@ class CanonicalSalesOrder(_CanonicalDocument):
     # which carries `PO.Ref` for the same reason: a field AutoCount already prints that
     # this contract had never accepted before.
     ref: Optional[str] = Field(None, max_length=255)
+    # AutoCount `SO.Transferable` (PLAN-so-transferable.md). AutoCount prints `T`/`F`, which
+    # Pydantic's bool already reads (case-insensitive, as it does `true`/`false`); any other
+    # word fails the record rather than guessing whether an order is demand. Absent or null
+    # leaves the stored value alone, so an ESB build that does not send it blanks nothing.
+    transferable: Optional[bool] = None
     lines: list[CanonicalSalesOrderLine] = Field(default_factory=list, max_length=2000)
 
     @field_validator("internal_note", mode="before")
