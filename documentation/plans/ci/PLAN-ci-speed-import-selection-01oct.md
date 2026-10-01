@@ -47,7 +47,9 @@ Owner approval: 1 Oct retro, decision 4.
    tests/chatbot keys from a local run x1.25; (ii) each shard region rescaled by its measured
    CI wall over modelled wall (run 36891698460); (iii) the 156 files (2856 tests) the file never
    held, local x1.55, with the CI-only 397-674 s setup of `test_sales_achievement_perf.py` priced
-   at 535 s. Verified by test-only dispatch runs 36891698460, 36895403885, 36901464643. And give the serial migration / `serial_ddl` steps
+   at 535 s; (iv) a damped (square-root) per-region correction from run 36901464643. Verified by
+   test-only dispatch runs 36891698460, 36895403885, 36901464643 and 36905481588; the last one
+   ran every main shard in 15.8 to 22.7 min (critical path 22.7, was 43.8). And give the serial migration / `serial_ddl` steps
    their own `serial` matrix entry instead of shard 1. That leg is a new check name: row 19 of
    `PLAN-ci-fast-gate-29sep.md`'s required-check table, which the owner adds to the ruleset.
 
