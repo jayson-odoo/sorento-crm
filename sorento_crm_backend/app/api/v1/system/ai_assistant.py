@@ -1,7 +1,6 @@
 """System AI assistant config and chat endpoints."""
 from __future__ import annotations
 
-import re
 
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -30,8 +29,6 @@ from app.schemas.ai_prompt import (
     PromptVersionDetail,
     PromptVersionsResponse,
     RegistryVariableRow,
-    RenderPreviewRequest,
-    RenderPreviewResponse,
     SaveVersionRequest,
     SetLabelRequest,
     SetAgentModelRequest,
@@ -393,47 +390,6 @@ def get_ai_assistant_prompt_registry_variables(
         return []
     template = AIPromptService(db).get_version(name, version)["template"] if version else None
     return [RegistryVariableRow(**row) for row in chatbot_prompt_vars.describe(db, template)]
-
-
-_PREVIEW_MAX_USES = 5
-
-
-@router.post(
-    "/ai-assistant/prompts/{name}/render-preview",
-    response_model=RenderPreviewResponse,
-)
-def render_ai_assistant_prompt_preview(
-    name: str,
-    payload: RenderPreviewRequest,
-    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
-    db: Session = Depends(get_db),
-):
-    """"Preview rendered prompt": the draft exactly as the model would receive it now,
-    registry variables filled from their tables and `{{current_date}}` with today (MYT).
-    Nothing is saved."""
-    from datetime import timezone
-
-    from app.services import chatbot_prompt_vars
-    from app.services.ai_prompt_registry import _substitute, extract_tokens
-
-    _ensure_known_prompt(name)
-    spec = PROMPT_KEYS[name]
-    # Each registry token expands to its whole list, so a template repeating one is an
-    # amplifier for a VIEW-grant caller (security review M1). A real prompt uses each at
-    # most a few times.
-    counts = {t: len(re.findall(r"\{\{\s*" + re.escape(t) + r"\s*\}\}", payload.template)) for t in spec.registry_variables}
-    repeated = sorted(t for t, n in counts.items() if n > _PREVIEW_MAX_USES)
-    if repeated:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"{{{{{repeated[0]}}}}} appears more than {_PREVIEW_MAX_USES} times.",
-        )
-    wanted = extract_tokens(payload.template) & set(spec.registry_variables)
-    values: dict[str, object] = dict(chatbot_prompt_vars.render_values(db, wanted)) if wanted else {}
-    if "current_date" in spec.variables:
-        now_myt = datetime.now(timezone.utc) + timedelta(hours=8)
-        values["current_date"] = now_myt.strftime("%A, %d %B %Y")
-    return RenderPreviewResponse(text=_substitute(payload.template, values))
 
 
 @router.post("/ai-assistant/prompts/{name}/labels", response_model=SetLabelResponse)

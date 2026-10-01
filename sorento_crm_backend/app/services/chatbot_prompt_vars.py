@@ -143,6 +143,7 @@ def _one_line(value: object) -> str:
     from app.services.chatbot_parser_prompt import BLOCKS_BEGIN, BLOCKS_END
 
     text = _LINE_BREAKS.sub(" ", str(value or ""))
+    text = text.replace("\t", " ").replace("\u00a0", " ")
     text = "".join(ch for ch in text if ch.isprintable() or ch == " ")
     # Collapse whitespace BEFORE removing the markers: removing first let a doubled space
     # inside a marker survive the replace and collapse back into the real marker
@@ -278,7 +279,8 @@ VARIABLES: dict[str, RegistryVariable] = {
             lambda db: ", ".join(_one_line(b) for b in _brands(db)), lambda db: len(_brands(db)),
         ),
         RegistryVariable(
-            "teams", "Teams", "Escalation lane (code list)", "/user-management/access-agents",
+            # No admin page edits this list yet (next lane: move it into `agent_teams`).
+            "teams", "Teams", "Escalation lane (code list)", "",
             (), lambda db: "|".join(_teams(db)), lambda db: len(_teams(db)),
         ),
         RegistryVariable(
@@ -350,6 +352,11 @@ def render_values_safe(db: Session, names: set[str] | list[str]) -> dict[str, st
     and to "" only when it never rendered in this process."""
     out: dict[str, str] = {}
     for name in [n for n in VARIABLE_NAMES if n in set(names)]:
+        with _LOCK:
+            hit = _CACHE.get(name)
+        if hit is not None and hit[0] > time.monotonic():
+            out[name] = hit[1]  # a cache hit needs no savepoint (no SQL runs)
+            continue
         try:
             with db.begin_nested():
                 out[name] = render_value(db, name)

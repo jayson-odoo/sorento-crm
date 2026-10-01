@@ -5,7 +5,7 @@
  */
 import React, { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { PromptChipEditor } from './PromptChipEditor';
 import type { RegistryVariableRow } from '../../services/aiPromptsService';
 
@@ -225,12 +225,13 @@ describe('PromptChipEditor, reviewer pass 2', () => {
     expect(screen.getByTestId('find-bar')).toBeInTheDocument();
   });
 
-  it('Escape closes the variable picker', () => {
+  it('Escape closes the variable picker', async () => {
     render(<Harness initial={'x'} />);
     fireEvent.click(screen.getByTestId('insert-variable'));
     expect(screen.getByTestId('insert-variable-menu')).toBeInTheDocument();
     fireEvent.keyDown(screen.getByTestId('insert-variable-menu'), { key: 'Escape' });
-    expect(screen.queryByTestId('insert-variable-menu')).toBeNull();
+    // The project Popover animates out before it unmounts (popover.portal-exit.test.tsx).
+    await waitFor(() => expect(screen.queryByTestId('insert-variable-menu')).toBeNull());
   });
 
   it('a variable with no admin page gets no link', () => {

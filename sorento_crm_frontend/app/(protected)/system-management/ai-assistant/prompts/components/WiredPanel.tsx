@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { Check, ExternalLink, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -69,14 +68,20 @@ export function WiredPanel({
                   </span>
                   <span className="flex shrink-0 items-center gap-2 text-xs tabular-nums text-muted-foreground">
                     {v.count}
-                    <Link
-                      href={v.href}
-                      className="text-muted-foreground hover:text-foreground"
-                      aria-label={`Open ${v.source}`}
-                      title={v.source}
-                    >
-                      <ExternalLink className="size-3.5" />
-                    </Link>
+                    {v.href ? (
+                      // A new tab: an in-app navigation would drop the unsaved draft with no
+                      // warning (the page only guards a full unload).
+                      <a
+                        href={v.href}
+                        target="_blank"
+                        rel="noopener"
+                        className="text-muted-foreground hover:text-foreground"
+                        aria-label={`Open ${v.source}`}
+                        title={v.source}
+                      >
+                        <ExternalLink className="size-3.5" />
+                      </a>
+                    ) : null}
                   </span>
                 </div>
                 <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">

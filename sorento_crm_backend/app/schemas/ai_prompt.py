@@ -138,11 +138,3 @@ class RegistryVariableRow(BaseModel):
     last_changed: Optional[datetime] = None
     rendered: str
     used: bool = False
-
-
-class RenderPreviewRequest(BaseModel):
-    template: str = Field(max_length=500_000)
-
-
-class RenderPreviewResponse(BaseModel):
-    text: str

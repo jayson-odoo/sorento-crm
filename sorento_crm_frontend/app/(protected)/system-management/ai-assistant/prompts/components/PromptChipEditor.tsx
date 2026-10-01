@@ -1,14 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Braces, Plus } from 'lucide-react';
+import { Braces, Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { FindBar, isFindChord } from '@/components/common/find-in-text/FindBar';
 import { useFindController } from '@/components/common/find-in-text/useFindController';
 import { splitTemplate } from '../../lib/promptSegments';
 import type { RegistryVariableRow } from '../../services/aiPromptsService';
+import '@/css/components/prompt-find.css';
 
 /** Variables that render several lines: drawn as a full-width block, not an inline pill. */
 const BLOCK_VARIABLES = new Set(['statuses', 'domains_detail', 'entity_kinds_detail', 'specs']);
@@ -18,6 +20,53 @@ const CHIP_CLASS =
 const BLOCK_CHIP_CLASS = 'mx-0 my-0.5 flex w-full';
 const RENDERED_CLASS =
   'basis-full whitespace-pre-wrap break-words rounded border border-primary/20 bg-background px-2 py-1 font-mono text-2xs text-foreground';
+
+type Piece = { node: Node; kind: 'text' | 'chip' | 'virtual'; text: string };
+
+/**
+ * The editor's DOM as a flat list of pieces, under ONE set of rules for serialising and for
+ * find offsets (reviewer pass 2, B2: the two used to disagree once a block element appeared).
+ * A chip is its exact token; a `<br>` is a newline (the caret placeholder after a trailing
+ * newline is nothing); any other element (a block the browser inserted, a pasted wrapper) is
+ * its content, on a new line when it starts a block.
+ */
+function pieces(root: Node): Piece[] {
+  const out: Piece[] = [];
+  let produced = '';
+  const visit = (node: Node) => {
+    node.childNodes.forEach((child) => {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const text = child.textContent ?? '';
+        out.push({ node: child, kind: 'text', text });
+        produced += text;
+      } else if (child instanceof HTMLElement) {
+        if (child.dataset.chip) {
+          const raw = child.dataset.raw ?? `{{${child.dataset.chip}}}`;
+          out.push({ node: child, kind: 'chip', text: raw });
+          produced += raw;
+        } else if (child.tagName === 'BR') {
+          if (child.dataset.trailing) return;
+          out.push({ node: child, kind: 'virtual', text: '\n' });
+          produced += '\n';
+        } else {
+          if (produced && !produced.endsWith('\n')) {
+            out.push({ node: child, kind: 'virtual', text: '\n' });
+            produced += '\n';
+          }
+          visit(child);
+        }
+      }
+    });
+  };
+  visit(root);
+  return out;
+}
+
+function serialiseNode(root: Node): string {
+  return pieces(root)
+    .map((p) => p.text)
+    .join('');
+}
 
 /**
  * The prompt editor for a key with registry variables (PLAN-prompt-dynamic-30sep R5a; owner,
@@ -92,14 +141,16 @@ export function PromptChipEditor({
         detail.className = 'text-primary/70';
         detail.textContent = `${meta.count} rows, from ${meta.source}`;
         chip.appendChild(detail);
-        const link = document.createElement('a');
-        link.href = meta.href;
-        link.target = '_blank';
-        link.rel = 'noopener';
-        link.setAttribute('aria-label', `Open ${meta.source}`);
-        link.className = 'px-0.5 text-primary/70 hover:text-primary';
-        link.textContent = '↗';
-        chip.appendChild(link);
+        if (meta.href) {
+          const link = document.createElement('a');
+          link.href = meta.href;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.setAttribute('aria-label', `Open ${meta.source}`);
+          link.className = 'px-0.5 text-primary/70 hover:text-primary';
+          link.textContent = '↗';
+          chip.appendChild(link);
+        }
       }
 
       if (!disabled) {
@@ -138,23 +189,7 @@ export function PromptChipEditor({
     [makeChip, namesKey],
   );
 
-  const serialise = useCallback((node: Node): string => {
-    let out = '';
-    node.childNodes.forEach((child) => {
-      if (child.nodeType === Node.TEXT_NODE) {
-        out += child.textContent ?? '';
-      } else if (child instanceof HTMLElement) {
-        if (child.dataset.chip) out += child.dataset.raw ?? `{{${child.dataset.chip}}}`;
-        else if (child.tagName === 'BR') out += '\n';
-        else {
-          // A browser-inserted block (Enter in some engines): its content on a new line.
-          const inner = serialise(child);
-          out += (out && !out.endsWith('\n') ? '\n' : '') + inner;
-        }
-      }
-    });
-    return out;
-  }, []);
+  const serialise = serialiseNode;
 
   const emit = useCallback(() => {
     const root = ref.current;
@@ -223,23 +258,70 @@ export function PromptChipEditor({
     }
     setPickerOpen(false);
     setPickerQuery('');
+    setUndoValue(null);
     emit();
   };
 
-  const insertPlainText = (text: string) => {
-    if (typeof document.execCommand === 'function' && document.execCommand('insertText', false, text)) return;
+  /**
+   * Insert text at `at` (else the selection, else the remembered caret, else the end), never
+   * through `execCommand`: Chromium answers a newline with a `<div>` around the rest of the
+   * text (reviewer pass 2, B2). Registry tokens in the text become chips, so a paste or a drop
+   * of `{{domains}}` is the variable, not its letters.
+   */
+  const insertText = (text: string, at?: Range | null) => {
+    const root = ref.current;
+    if (!root || disabled) return;
     const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) return;
-    const range = sel.getRangeAt(0);
+    let range: Range | null = at ?? null;
+    if (!range && sel && sel.rangeCount > 0 && root.contains(sel.getRangeAt(0).startContainer)) {
+      range = sel.getRangeAt(0);
+    }
+    if (!range && savedRange.current && root.contains(savedRange.current.startContainer)) {
+      range = savedRange.current;
+    }
+    if (!range) {
+      range = document.createRange();
+      range.selectNodeContents(root);
+      range.collapse(false);
+    }
     range.deleteContents();
-    const node = document.createTextNode(text);
-    range.insertNode(node);
-    range.setStartAfter(node);
-    range.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(range);
+    const fragment = document.createDocumentFragment();
+    let lastNode: Node | null = null;
+    for (const seg of splitTemplate(text, registryNames)) {
+      lastNode = seg.kind === 'text' ? document.createTextNode(seg.text) : makeChip(seg.name, seg.raw);
+      fragment.appendChild(lastNode);
+    }
+    range.insertNode(fragment);
+    if (lastNode) {
+      // A newline as the very last thing needs a placeholder, or its empty line never shows.
+      const following = lastNode.nextSibling;
+      if (text.endsWith('\n') && (!following || (following instanceof HTMLElement && following.dataset.trailing))) {
+        if (!following) {
+          const placeholder = document.createElement('br');
+          placeholder.dataset.trailing = '1';
+          root.appendChild(placeholder);
+        }
+      }
+      range.setStartAfter(lastNode);
+      range.collapse(true);
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+      savedRange.current = range.cloneRange();
+    }
+    setUndoValue(null);
     emit();
   };
+
+  /** The selection inside the editor, and its value text with chips as their tokens. */
+  const selectionTokens = (): { text: string; range: Range } | null => {
+    const root = ref.current;
+    const sel = window.getSelection();
+    if (!root || !sel || sel.rangeCount === 0) return null;
+    const range = sel.getRangeAt(0);
+    if (!root.contains(range.commonAncestorContainer)) return null;
+    return { text: serialiseNode(range.cloneContents()), range };
+  };
+  const dragSource = useRef<Range | null>(null);
 
   // ---- find ----------------------------------------------------------------------------
 
@@ -262,24 +344,19 @@ export function PromptChipEditor({
     const root = ref.current;
     if (!root) return null;
     let pos = 0;
-    let startNode: Text | null = null;
+    let startNode: Node | null = null;
     let startOff = 0;
-    let endNode: Text | null = null;
+    let endNode: Node | null = null;
     let endOff = 0;
-    for (const child of Array.from(root.childNodes)) {
-      const len =
-        child.nodeType === Node.TEXT_NODE
-          ? (child.textContent ?? '').length
-          : child instanceof HTMLElement && child.dataset.chip
-            ? (child.dataset.raw ?? '').length
-            : (child.textContent ?? '').length;
-      if (child.nodeType === Node.TEXT_NODE) {
+    for (const piece of pieces(root)) {
+      const len = piece.text.length;
+      if (piece.kind === 'text') {
         if (!startNode && start >= pos && start <= pos + len) {
-          startNode = child as Text;
+          startNode = piece.node;
           startOff = start - pos;
         }
         if (startNode && end >= pos && end <= pos + len) {
-          endNode = child as Text;
+          endNode = piece.node;
           endOff = end - pos;
           break;
         }
@@ -360,29 +437,26 @@ export function PromptChipEditor({
 
   return (
     <div className={cn('space-y-2', className)}>
-      {!disabled ? (
-        <div className="relative flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setPickerOpen((o) => !o)}
-            data-testid="insert-variable"
-            aria-expanded={pickerOpen}
+      <div className="flex flex-wrap items-center gap-2">
+        {!disabled ? (
+          <Popover
+            open={pickerOpen}
+            onOpenChange={(o) => {
+              setPickerOpen(o);
+              if (!o) setPickerQuery('');
+            }}
           >
-            <Plus className="size-4" /> Insert variable
-          </Button>
-          {pickerOpen ? (
-            <div
-              className="absolute left-0 top-full z-30 mt-1 w-72 max-w-[calc(100vw-2rem)] rounded-md border bg-background p-2 shadow-md"
-              data-testid="insert-variable-menu"
-            >
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="sm" data-testid="insert-variable">
+                <Plus className="size-4" /> Insert variable
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-72 p-2" data-testid="insert-variable-menu">
               <Input
                 value={pickerQuery}
                 onChange={(e) => setPickerQuery(e.target.value)}
                 placeholder="Search variables"
                 className="mb-2 h-8 text-xs"
-                autoFocus
               />
               <div className="max-h-64 overflow-auto">
                 {pickerOptions.length === 0 ? (
@@ -406,10 +480,13 @@ export function PromptChipEditor({
                   ))
                 )}
               </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+            </PopoverContent>
+          </Popover>
+        ) : null}
+        <Button type="button" variant="outline" size="sm" onClick={openFind} data-testid="open-find">
+          <Search className="size-4" /> Find
+        </Button>
+      </div>
 
       <div className="relative">
         <FindBar controller={find} onDismiss={dismissFind} />
@@ -435,12 +512,52 @@ export function PromptChipEditor({
           onBlur={rememberCaret}
           onPaste={(e) => {
             e.preventDefault();
-            insertPlainText(e.clipboardData.getData('text/plain'));
+            insertText(e.clipboardData.getData('text/plain'));
+          }}
+          onCopy={(e) => {
+            // The tokens, not the chips' labels (reviewer pass 2, B1).
+            const picked = selectionTokens();
+            if (!picked) return;
+            e.preventDefault();
+            e.clipboardData.setData('text/plain', picked.text);
+          }}
+          onCut={(e) => {
+            const picked = selectionTokens();
+            if (!picked) return;
+            e.preventDefault();
+            e.clipboardData.setData('text/plain', picked.text);
+            if (disabled) return;
+            picked.range.deleteContents();
+            setUndoValue(null);
+            emit();
+          }}
+          onDragStart={(e) => {
+            const picked = selectionTokens();
+            if (!picked) return;
+            e.dataTransfer.setData('text/plain', picked.text);
+            dragSource.current = picked.range.cloneRange();
+          }}
+          onDragEnd={() => {
+            dragSource.current = null;
           }}
           onDrop={(e) => {
-            // Plain text only, as for paste: a drop from another page would bring its HTML.
+            // Plain text (tokens become chips), at the drop point; a drag from inside the
+            // editor moves its text rather than copying it.
             e.preventDefault();
-            insertPlainText(e.dataTransfer.getData('text/plain'));
+            const doc = document as Document & {
+              caretRangeFromPoint?: (x: number, y: number) => Range | null;
+            };
+            const target =
+              typeof doc.caretRangeFromPoint === 'function' && (e.clientX || e.clientY)
+                ? doc.caretRangeFromPoint(e.clientX, e.clientY)
+                : null;
+            const source = dragSource.current;
+            dragSource.current = null;
+            insertText(e.dataTransfer.getData('text/plain'), target);
+            if (source && !source.collapsed && ref.current?.contains(source.commonAncestorContainer)) {
+              source.deleteContents();
+              emit();
+            }
           }}
           onKeyDown={(e) => {
             if (isFindChord(e)) {
@@ -451,9 +568,9 @@ export function PromptChipEditor({
               close();
               dismissFind();
             } else if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
-              // A newline, never a browser-inserted <div>, so the value stays plain text.
+              // A newline inserted by this editor, never by the browser (reviewer pass 2, B2).
               e.preventDefault();
-              insertPlainText('\n');
+              insertText('\n');
             }
           }}
         />
@@ -482,7 +599,6 @@ export function PromptChipEditor({
         </div>
       ) : null}
 
-      <style>{`::highlight(prompt-find){background-color:color-mix(in oklab, var(--color-warning, #f59e0b) 40%, transparent)}::highlight(prompt-find-active){background-color:color-mix(in oklab, var(--color-primary, #2563eb) 40%, transparent)}`}</style>
     </div>
   );
 }

@@ -32,29 +32,35 @@ export function DiffView({
   const [changesOnly, setChangesOnly] = useState(false);
   const [opened, setOpened] = useState<Set<number>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setCurrent(0);
-    setOpened(new Set());
-  }, [a, b]);
-
   const total = hunks.length;
+  // Typing in the draft re-diffs on every keystroke: keep the reader's place (clamped to the
+  // changes that still exist) and never scroll for it (reviewer pass 2, should-fix 1).
+  useEffect(() => {
+    setCurrent((c) => (total === 0 ? 0 : Math.min(c, total - 1)));
+  }, [total]);
   const hunk = total > 0 ? hunks[Math.min(current, total - 1)] : null;
 
+  const [stepSeq, setStepSeq] = useState(0);
   const step = useCallback(
     (delta: number) => {
       if (total === 0) return;
       setCurrent((c) => (c + delta + total) % total);
+      setStepSeq((n) => n + 1);
     },
     [total],
   );
 
-  // Bring the current change into view (the diff pane scrolls, the page does not).
+  // Bring the current change into view on an explicit step only, by scrolling the diff pane
+  // itself: `scrollIntoView` would scroll the page too.
+  const hunkRef = useRef(hunk);
+  hunkRef.current = hunk;
   useEffect(() => {
-    if (!hunk) return;
-    const el = scrollRef.current?.querySelector<HTMLElement>(`[data-row="${hunk.start}"]`);
-    el?.scrollIntoView?.({ block: 'center' });
-  }, [hunk, changesOnly]);
+    const pane = scrollRef.current;
+    const target = hunkRef.current;
+    if (!pane || !target || stepSeq === 0) return;
+    const el = pane.querySelector<HTMLElement>(`[data-row="${target.start}"]`);
+    if (el) pane.scrollTop = Math.max(0, el.offsetTop - pane.clientHeight / 2);
+  }, [stepSeq]);
 
   const items = useMemo(
     () => (changesOnly ? collapseUnchanged(rows, 2) : rows.map((_, index) => ({ kind: 'row' as const, index }))),

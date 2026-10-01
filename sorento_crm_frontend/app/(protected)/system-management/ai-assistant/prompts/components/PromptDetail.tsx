@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -390,28 +391,16 @@ export function PromptDetail({ name }: { name: string }) {
             </CardHeader>
             <CardContent className="space-y-3">
               {hasRegistry ? (
-                <div className="inline-flex rounded-md border p-0.5 text-xs" role="tablist" aria-label="Editor mode">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={editorMode === 'edit'}
-                    onClick={() => setEditorMode('edit')}
-                    data-testid="editor-mode-edit"
-                    className={cn('rounded px-2.5 py-1', editorMode === 'edit' ? 'bg-muted font-medium' : 'text-muted-foreground')}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={editorMode === 'preview'}
-                    onClick={() => setEditorMode('preview')}
-                    data-testid="editor-mode-preview"
-                    className={cn('rounded px-2.5 py-1', editorMode === 'preview' ? 'bg-muted font-medium' : 'text-muted-foreground')}
-                  >
-                    Preview rendered prompt
-                  </button>
-                </div>
+                <Tabs value={editorMode} onValueChange={(v) => setEditorMode(v as 'edit' | 'preview')}>
+                  <TabsList shape="pill" size="sm" aria-label="Editor mode">
+                    <TabsTrigger value="edit" data-testid="editor-mode-edit">
+                      Edit
+                    </TabsTrigger>
+                    <TabsTrigger value="preview" data-testid="editor-mode-preview">
+                      Preview rendered prompt
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
               ) : null}
               {hasRegistry && editorMode === 'preview' ? (
                 <RenderedPreview template={draft} registryNames={registryNames} rows={registryRows} />

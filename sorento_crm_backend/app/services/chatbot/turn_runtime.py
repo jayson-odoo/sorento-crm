@@ -1404,6 +1404,14 @@ def _report_status_means_order_domain(out: dict[str, Any]) -> None:
         return
     report_statuses = OUTSTANDING_ORDER_STATUS | set(contracts.SALES_FIGURE_STATUSES)
     status = jsc.js_string(out.get("status") or "").strip()
+    # PROMPT-DYNAMIC reviewer pass 2: the parser can now name `sales` off the switch word
+    # ("sales orders for hanlim") with no sales status. Only the three sales statuses are
+    # the sales domain; anything else under `sales` is the order ask it was before R7.
+    if out.get("domain_hint") == contracts.SALES_DOMAIN:
+        either = {status, jsc.js_string(out.get("order_status") or "").strip()}
+        if not either & set(contracts.SALES_FIGURE_STATUSES):
+            out["domain_hint"] = "order"
+            out["domain_corrected"] = "sales->order (no sales status)"
     if status not in report_statuses:
         status = jsc.js_string(out.get("order_status") or "").strip()
     if status not in report_statuses:

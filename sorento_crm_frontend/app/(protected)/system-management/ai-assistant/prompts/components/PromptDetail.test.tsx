@@ -296,12 +296,13 @@ describe('PromptDetail with registry variables (PROMPT-DYNAMIC R5a)', () => {
 
   it('Preview rendered prompt shows the text the model receives, read-only', () => {
     renderDetail();
-    fireEvent.click(screen.getByTestId('editor-mode-preview'));
+    // Radix tabs activate on mousedown (the repo's own convention, e.g. SalesTeamDetail.test.tsx).
+    fireEvent.mouseDown(screen.getByTestId('editor-mode-preview'), { button: 0 });
     const preview = screen.getByTestId('prompt-preview');
     expect(preview.textContent).toContain('ONE of: order | sales | inventory | null');
     expect(preview.textContent).not.toContain('{{domains}}');
     expect(screen.queryByTestId('prompt-chip-editor')).toBeNull();
-    fireEvent.click(screen.getByTestId('editor-mode-edit'));
+    fireEvent.mouseDown(screen.getByTestId('editor-mode-edit'), { button: 0 });
     expect(screen.getByTestId('prompt-chip-editor')).toBeInTheDocument();
   });
 });
