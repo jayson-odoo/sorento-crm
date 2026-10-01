@@ -43,9 +43,10 @@ something that is not going to arrive.
   the permissions table (`user_service.py:1468-1470`).
 - FE errors are plain `Error(message)` built by `extractApiError` (`lib/api-client.ts`); the HTTP
   status is not carried. Today the only way to recognise a 403 is the message prefix.
-- One sign-out path exists: `apiFetch` sends any `/api/v1/` 401 to `_maybeForceSignOut`
-  (`lib/api.ts:540-550`), which is guarded by `_signingOut` and redirects with a `callbackUrl`
-  (`lib/api.ts:198-219`), but only when the 401 body carries a session-dead `code`.
+- Two sign-out exits exist: `apiFetch` sends a `/api/v1/` 401 carrying a session-dead `code` to
+  `_maybeForceSignOut` (`lib/api.ts:198-219,540-550`), and the protected layout redirects when
+  NextAuth reports `unauthenticated` (`app/(protected)/layout.tsx:35-54`). There is no
+  `middleware.ts`. NextAuth never validates the FastAPI token after login.
 - `apiFetch` and the shared token fetch have no timeout (`lib/api.ts:138,540`). React Query
   default is `retry: 1`, `staleTime: 30s` (`providers/query-provider.tsx:37-43`), version 5.
 - `DataGrid` has no error state: a failed load renders `emptyMessage` / "No data available"
@@ -61,30 +62,47 @@ something that is not going to arrive.
 
 ## S1. Session: one 401 path, one redirect
 
-1. **Every 401 from `/api/v1/*` signs out and redirects once**, whatever its body. The
-   session-dead `code` check stays only to pick the copy on the sign-in page, never to decide
-   whether to redirect. A 401 that does not redirect is a hang.
-2. **A failed token fetch is a 401.** When `/api/auth/token` returns non-OK or no token, the
-   caller must not send an unauthenticated request and wait; it takes the same sign-out path.
-3. **The redirect is `window.location.replace`**, not `href` or `router.push`, so Back does not
-   return to the dead page. The `_signingOut` latch stays: N parallel 401s produce one redirect.
-4. **`callbackUrl` is the current path + query**, never a `/signin...` URL (that would loop).
-5. **401 is never retried** by React Query (see S2 `retry`).
-6. **View-as (impersonation):** a 401 or 403 that names the impersonated user (target deleted,
-   deactivated, or view-as no longer allowed) ends view-as (clear the stored target) and reloads
-   the current page as the real user. It never signs the real user out and never loops.
-7. **NextAuth `status === 'loading'` has a ceiling** (10 s): past it, the protected layout shows
-   "Could not reach the sign-in service" + Retry, not an endless `ScreenLoader`.
+Today there are two exits and neither is safe under load: `_maybeForceSignOut`
+(`lib/api.ts:198-219`) checks its `_signingOut` latch before an `await` and sets it after, so all
+~10 parallel 401s of a detail page each run an untimed `await signOut()` before navigating; and
+the protected layout (`app/(protected)/layout.tsx:35-54`) shows `ScreenLoader` behind one soft
+`router.push` with no timeout. A failed token fetch sends the request with no Bearer, which the
+backend answers with an uncoded 401 (`dependencies.py:289-296`) that neither exit handles.
+
+1. **Every authentication 401 carries a session code.** The backend's `get_current_user` 401s
+   all get a `detail.code` (`session_expired`, `session_revoked`, `session_invalid`, and a new
+   `session_missing` for "no token"). The FE redirects on any of them. The code gate stays
+   (`lib/api.ts:186-193` explains why: a 401 from an unrelated integration must not log everyone
+   out), and an uncoded 401 renders as S3's error state, never a hang. A non-auth exception during
+   authentication is a 503, not an uncoded 401 (`dependencies.py:318-327`).
+2. **A failed or timed-out token fetch is a dead session.** When `/api/auth/token` returns non-OK
+   or no token, `apiFetch` does not send an unauthenticated request; it takes the redirect.
+3. **One latch, set synchronously, then navigate at once.** The latch is set before any `await`.
+   The redirect is `window.location.replace('/signin?callbackUrl=...')`, issued immediately;
+   `signOut()` runs fire-and-forget with a short timeout, or `/signin` clears the cookie itself.
+   The protected layout's `unauthenticated` branch uses the same function, so N 401s plus the
+   session broadcast still produce exactly one navigation.
+4. **Every exit clears client state**: the token cache (with a generation counter so an in-flight
+   token fetch cannot repopulate it), the React Query cache, and the view-as store.
+5. **`callbackUrl` is path + query, basePath stripped, never a `/signin...` URL.**
+6. **401 is never retried** by React Query (see S2 `retry`).
+7. **View-as (impersonation):** a stale view-as header is not silently ignored (today
+   `dependencies.py:192-213` serves the admin's own data while the banner says "viewing as X").
+   The backend answers it with a coded refusal (`impersonation_ended`); the FE clears the view-as
+   store and reloads the current page as the real user, without signing them out. `/current`
+   applies the same ACTIVE-target check as the header path (`impersonation.py:194-212`).
+8. **NextAuth `status === 'loading'` has a ceiling** (10 s): past it, re-check the session once,
+   then take the redirect. No endless `ScreenLoader`.
 
 ```ts
 // lib/api.ts (target shape)
-if (response.status === 401 && isBrowser && url.includes('/api/v1/')) {
-  if (isImpersonating() && (await isImpersonationRefusal(response.clone()))) {
-    endImpersonation();                     // clears the stored target
-    window.location.reload();               // same page, as the real user
-  } else {
-    void forceSignOut();                    // latched; replace('/signin?callbackUrl=...')
-  }
+let _exiting = false;
+export function exitToSignIn(): void {
+  if (_exiting) return;
+  _exiting = true;                                    // before any await
+  clearClientState();                                 // token cache, query cache, view-as store
+  void withTimeout(signOutQuietly(), 3000);           // fire and forget
+  window.location.replace(signInUrl(currentPathWithoutBasePath()));
 }
 ```
 
