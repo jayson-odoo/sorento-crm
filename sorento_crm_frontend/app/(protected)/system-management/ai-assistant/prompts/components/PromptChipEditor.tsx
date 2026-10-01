@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Braces, Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -83,24 +83,30 @@ function serialiseNode(root: Node): string {
  * highlighted, the caret moves only on an explicit next/previous, and closing find leaves the
  * match selected for editing in place.
  */
-export function PromptChipEditor({
-  value,
-  onChange,
-  variables,
-  registryNames,
-  disabled = false,
-  className,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  variables: RegistryVariableRow[];
-  registryNames: string[];
-  disabled?: boolean;
-  className?: string;
-}) {
+/** What the page around the editor can do to it: the wired panel's Insert. */
+export interface PromptChipEditorHandle {
+  /** Insert the variable at the owner's last caret in the editor (end when none). */
+  insertVariable: (name: string) => void;
+}
+
+export const PromptChipEditor = forwardRef<
+  PromptChipEditorHandle,
+  {
+    value: string;
+    onChange: (next: string) => void;
+    variables: RegistryVariableRow[];
+    registryNames: string[];
+    disabled?: boolean;
+    className?: string;
+  }
+>(function PromptChipEditor({ value, onChange, variables, registryNames, disabled = false, className }, handleRef) {
   const ref = useRef<HTMLDivElement>(null);
   const emitted = useRef<string | null>(null);
   const savedRange = useRef<Range | null>(null);
+  // The last caret as an offset into the VALUE (owner hand test #1405, item 2): a DOM Range
+  // dies with the nodes it points into (a refetch redraw, a version switch), an offset does
+  // not, so an insert after focus moved away still lands where the owner left the caret.
+  const savedOffset = useRef<number | null>(null);
   const [undoValue, setUndoValue] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState('');
@@ -206,18 +212,70 @@ export function PromptChipEditor({
     setUndoValue(null);
   }, [value, build]);
 
-  // Registry data arriving (or changing) redraws the chips' labels in place.
+  // Registry data arriving (or changing) redraws each chip in place. Only the chip elements
+  // are replaced: the text nodes, and with them the owner's caret, stay where they are.
   useLayoutEffect(() => {
-    if (emitted.current != null) build(emitted.current);
-  }, [build]);
+    const root = ref.current;
+    if (!root) return;
+    root.querySelectorAll<HTMLElement>('[data-chip]').forEach((chip) => {
+      chip.replaceWith(makeChip(chip.dataset.chip ?? '', chip.dataset.raw ?? `{{${chip.dataset.chip}}}`));
+    });
+  }, [makeChip]);
 
   // ---- caret, chip actions, insert ----------------------------------------------------
+
+  /** The value offset of a DOM position inside the editor. */
+  const offsetOf = (container: Node, offset: number): number | null => {
+    const root = ref.current;
+    if (!root || !root.contains(container)) return null;
+    const before = document.createRange();
+    before.setStart(root, 0);
+    before.setEnd(container, offset);
+    return serialiseNode(before.cloneContents()).length;
+  };
+
+  /** A collapsed DOM Range at a value offset (the end when the offset is past it). */
+  const rangeAtOffset = (offset: number): Range | null => {
+    const root = ref.current;
+    if (!root) return null;
+    const range = document.createRange();
+    let pos = 0;
+    for (const piece of pieces(root)) {
+      const len = piece.text.length;
+      if (piece.kind === 'text' && offset >= pos && offset <= pos + len) {
+        range.setStart(piece.node, offset - pos);
+        range.collapse(true);
+        return range;
+      }
+      if (piece.kind !== 'text' && offset === pos) {
+        range.setStartBefore(piece.node);
+        range.collapse(true);
+        return range;
+      }
+      pos += len;
+    }
+    range.selectNodeContents(root);
+    range.collapse(false);
+    return range;
+  };
 
   const rememberCaret = () => {
     const sel = typeof window !== 'undefined' ? window.getSelection() : null;
     if (sel && sel.rangeCount > 0 && ref.current?.contains(sel.getRangeAt(0).startContainer)) {
-      savedRange.current = sel.getRangeAt(0).cloneRange();
+      const range = sel.getRangeAt(0);
+      savedRange.current = range.cloneRange();
+      savedOffset.current = offsetOf(range.startContainer, range.startOffset);
     }
+  };
+
+  /** Where an insert goes: the live selection in the editor, else the remembered caret. */
+  const insertionRange = (): Range | null => {
+    const root = ref.current;
+    if (!root) return null;
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && root.contains(sel.getRangeAt(0).startContainer)) return sel.getRangeAt(0);
+    if (savedOffset.current != null) return rangeAtOffset(savedOffset.current);
+    return null;
   };
 
   const onRootClick = (e: React.MouseEvent) => {
@@ -245,8 +303,8 @@ export function PromptChipEditor({
     const root = ref.current;
     if (!root || disabled) return;
     const chip = makeChip(name, `{{${name}}}`);
-    const range = savedRange.current;
-    if (range && root.contains(range.startContainer)) {
+    const range = insertionRange();
+    if (range) {
       range.deleteContents();
       range.insertNode(chip);
       range.setStartAfter(chip);
@@ -255,6 +313,7 @@ export function PromptChipEditor({
     } else {
       root.appendChild(chip);
     }
+    savedOffset.current = offsetOf(root, Array.from(root.childNodes).indexOf(chip) + 1);
     setPickerOpen(false);
     setPickerQuery('');
     setUndoValue(null);
@@ -271,13 +330,7 @@ export function PromptChipEditor({
     const root = ref.current;
     if (!root || disabled) return;
     const sel = window.getSelection();
-    let range: Range | null = at ?? null;
-    if (!range && sel && sel.rangeCount > 0 && root.contains(sel.getRangeAt(0).startContainer)) {
-      range = sel.getRangeAt(0);
-    }
-    if (!range && savedRange.current && root.contains(savedRange.current.startContainer)) {
-      range = savedRange.current;
-    }
+    let range: Range | null = at ?? insertionRange();
     if (!range) {
       range = document.createRange();
       range.selectNodeContents(root);
@@ -306,6 +359,7 @@ export function PromptChipEditor({
       sel?.removeAllRanges();
       sel?.addRange(range);
       savedRange.current = range.cloneRange();
+      savedOffset.current = offsetOf(range.startContainer, range.startOffset);
     }
     setUndoValue(null);
     emit();
@@ -328,7 +382,10 @@ export function PromptChipEditor({
   // across a variable, and every offset is an offset into `value` itself.
   const findText = useMemo(() => {
     let out = '';
-    for (const seg of splitTemplate(emitted.current ?? value, registryNames)) {
+    // From `value` itself, never `emitted.current`: on a version switch the ref still holds
+    // the OLD text during this render, and find indexed the wrong version (owner hand test
+    // #1405, item 1).
+    for (const seg of splitTemplate(value, registryNames)) {
       out += seg.kind === 'text' ? seg.text : '\u0000'.repeat(seg.raw.length);
     }
     return out;
@@ -425,6 +482,8 @@ export function PromptChipEditor({
     }
   };
 
+  useImperativeHandle(handleRef, () => ({ insertVariable }));
+
   // ---- render --------------------------------------------------------------------------
 
   const pickerOptions = variables.filter(
@@ -504,6 +563,7 @@ export function PromptChipEditor({
             // Typing after a removal makes the removal final: Undo would roll the typing back.
             setUndoValue(null);
             emit();
+            rememberCaret();
           }}
           onKeyUp={rememberCaret}
           onMouseUp={rememberCaret}
@@ -605,4 +665,4 @@ export function PromptChipEditor({
       <style>{`::highlight(prompt-find){background-color:color-mix(in oklab, var(--color-warning, #f59e0b) 40%, transparent)}::highlight(prompt-find-active){background-color:color-mix(in oklab, var(--color-primary, #2563eb) 40%, transparent)}`}</style>
     </div>
   );
-}
+});

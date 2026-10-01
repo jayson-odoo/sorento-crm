@@ -41,7 +41,7 @@ import type { SaveVersionError } from '../../services/aiPromptsService';
 import { AgentModelCard } from './AgentModelCard';
 import { DiffView } from './DiffView';
 import { DryRunBox } from './DryRunBox';
-import { PromptChipEditor } from './PromptChipEditor';
+import { PromptChipEditor, type PromptChipEditorHandle } from './PromptChipEditor';
 import { PublishDialog } from './PublishDialog';
 import { VarChips } from './VarChips';
 import { WiredPanel } from './WiredPanel';
@@ -122,6 +122,7 @@ export function PromptDetail({ name }: { name: string }) {
   const registryQuery = useRegistryVariables(name, hasRegistry);
   const registryRows = useMemo(() => registryQuery.data ?? [], [registryQuery.data]);
   const [editorMode, setEditorMode] = useState<'edit' | 'preview'>('edit');
+  const chipEditorRef = useRef<PromptChipEditorHandle>(null);
   const validation = useMemo(
     () => validateVars(draft, declared, registryNames),
     [draft, declared, registryNames],
@@ -404,14 +405,20 @@ export function PromptDetail({ name }: { name: string }) {
               ) : null}
               {hasRegistry && editorMode === 'preview' ? (
                 <RenderedPreview template={draft} registryNames={registryNames} rows={registryRows} />
-              ) : hasRegistry ? (
-                <PromptChipEditor
-                  value={draft}
-                  onChange={setDraft}
-                  variables={registryRows}
-                  registryNames={registryNames}
-                  disabled={!canEdit}
-                />
+              ) : null}
+              {hasRegistry ? (
+                // Stays mounted (hidden) under Preview, so the owner's last caret survives a
+                // look at the preview and the wired panel's Insert still lands there.
+                <div hidden={editorMode === 'preview'} data-testid="chip-editor-pane">
+                  <PromptChipEditor
+                    ref={chipEditorRef}
+                    value={draft}
+                    onChange={setDraft}
+                    variables={registryRows}
+                    registryNames={registryNames}
+                    disabled={!canEdit}
+                  />
+                </div>
               ) : (
                 <SearchableTextarea
                   value={draft}
@@ -511,8 +518,10 @@ export function PromptDetail({ name }: { name: string }) {
               isLoading={registryQuery.isLoading}
               canEdit={canEdit}
               onInsert={(varName) => {
+                // At the owner's last caret in the editor, never appended at the bottom
+                // (owner hand test #1405, item 2).
                 setEditorMode('edit');
-                setDraft((d) => `${d}${d.endsWith('\n') || d === '' ? '' : '\n'}{{${varName}}}`);
+                chipEditorRef.current?.insertVariable(varName);
               }}
             />
           </div>

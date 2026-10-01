@@ -301,9 +301,10 @@ describe('PromptDetail with registry variables (PROMPT-DYNAMIC R5a)', () => {
     const preview = screen.getByTestId('prompt-preview');
     expect(preview.textContent).toContain('ONE of: order | sales | inventory | null');
     expect(preview.textContent).not.toContain('{{domains}}');
-    expect(screen.queryByTestId('prompt-chip-editor')).toBeNull();
+    // The editor stays mounted but hidden, so the caret survives (hand test #1405, item 2).
+    expect(screen.getByTestId('chip-editor-pane')).not.toBeVisible();
     fireEvent.mouseDown(screen.getByTestId('editor-mode-edit'), { button: 0 });
-    expect(screen.getByTestId('prompt-chip-editor')).toBeInTheDocument();
+    expect(screen.getByTestId('chip-editor-pane')).toBeVisible();
   });
 });
 
