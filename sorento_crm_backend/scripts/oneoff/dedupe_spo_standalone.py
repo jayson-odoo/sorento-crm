@@ -50,33 +50,52 @@ SAFETY
 
 RUN IT IN THE PROD BACKEND CONTAINER (docker exec)
 --------------------------------------------------
-The container already has DATABASE_URL in its environment and the app at /app
-(Dockerfile WORKDIR /app; compose service `backend`, container
-`sorento_crm_backend` - check `docker ps` for the real name on the host).
+Production is blue/green (scripts/blue_green_deploy.sh): the live backend
+service is `backend_<colour>`, the colour is in /opt/sorento-crm2/.active_color.
+Every backend container already has DATABASE_URL and the app at /app. Run it
+inside `tmux` (or `screen`): a dropped SSH session kills the process and rolls
+back the SPO in flight.
+
+    tmux new -s spo-repair
+    cd /opt/sorento-crm2
+    COLOUR=$(cat .active_color)
 
     # 1. copy the file in (from a checkout of this branch on the host)
-    docker cp sorento_crm_backend/scripts/oneoff/dedupe_spo_standalone.py \
-        sorento_crm_backend:/tmp/dedupe_spo_standalone.py
+    docker compose cp /path/to/dedupe_spo_standalone.py backend_${COLOUR}:/tmp/dedupe_spo_standalone.py
 
-    # 2. DRY RUN (default) - read the plan, keep the log
-    docker exec -it -w /app sorento_crm_backend \
+    # 2. DRY RUN (default) - read the plan, keep the log. The header names the
+    #    database it connected to (current_database, server address, alembic head).
+    docker compose exec -T -w /app backend_${COLOUR} \
         python /tmp/dedupe_spo_standalone.py --company SRT --spo SPO-2026/08-0074 \
-        | tee spo-0074-dryrun.log
+        2>&1 | tee spo-0074-dryrun.log
 
-    # 3. APPLY, only after the dry run has been read and approved
-    docker exec -it -w /app sorento_crm_backend \
+    # 3. APPLY, only after the dry run has been read and approved, ideally with
+    #    the worker containers stopped (`docker compose stop worker worker_fast`)
+    #    so no AutoCount sync or GRN ingest writes the same rows meanwhile.
+    docker compose exec -T -w /app backend_${COLOUR} \
         python /tmp/dedupe_spo_standalone.py --company SRT --spo SPO-2026/08-0074 --apply \
-        | tee spo-0074-apply.log
+        2>&1 | tee spo-0074-apply.log
+    docker compose start worker worker_fast
 
     # 4. open each packing list the apply printed, once, in the CRM
-    # 5. run the dry run again: it must report nothing left to do
+    # 5. run the dry run again. It should report nothing left to do. If it
+    #    proposes ANY new carry or delete, do not apply it without review: a
+    #    group the first run kept can only match lines the first run already
+    #    carried a receipt onto.
+
+The log is the audit record (raw SQL writes no audit rows): before any write
+it prints every row of the SPO and every pick, claim and order-inquiry link on
+them as full JSON, and after an apply it prints the same set again.
 
 `--company` is `companies.code`; Sorento's is `SRT` (seeded by
 alembic/versions/302_multi_company_scaffold.py:158). `--spo` is repeatable.
-`--database-url` overrides DATABASE_URL (local / dev testing only).
+DATABASE_URL comes from the environment only (no flag, so no password lands in
+`ps` or shell history).
 
-Exit codes: 0 done, 1 bad arguments / unknown company, 2 preflight failed,
-3 at least one SPO was refused by a guard (rolled back).
+Exit codes: 0 done, 1 bad arguments / unknown company / no DATABASE_URL,
+2 preflight failed, 3 at least one SPO was refused by a guard (rolled back,
+the run continued), 4 an unexpected database error (that SPO rolled back, the
+run STOPPED; SPOs before it stay committed).
 """
 from __future__ import annotations
 
@@ -115,6 +134,8 @@ REQUIRED = {
     ("public", "picking_headers"): ("id", "picking_status"),
     ("scm", "order_link_claim"): ("id", "spo_allocation_id", "company_id"),
     ("projects", "order_inquiry_links"): ("id", "spo_allocation_id", "company_id"),
+    # ON DELETE CASCADE from spo_allocations: counted and logged per deleted row.
+    ("projects", "order_inquiry_suggested_links"): ("id", "spo_allocation_id"),
 }
 
 
@@ -133,6 +154,11 @@ _LINK_TABLES = {
         schema="projects",
     ),
 }
+_SUGGESTED = Table(
+    "order_inquiry_suggested_links", _META,
+    Column("id", UUID), Column("spo_allocation_id", UUID),
+    schema="projects",
+)
 
 
 class GuardFailed(RuntimeError):
@@ -272,13 +298,18 @@ def plan_spo(excel_rows: list, lines: list) -> Plan:
 _ROW_COLUMNS = ", ".join(REQUIRED[("public", "spo_allocations")])
 
 
-def _rows(db, company_id: str, spo_number: str) -> list:
+def _rows(db, company_id: str, spo_number: str, lock: bool = False) -> list:
+    """The SPO's rows. `lock` (apply) takes FOR UPDATE: a concurrent AutoCount
+    sync or GRN cannot overwrite them, and no new pick, claim or link can attach
+    to them (a new FK reference needs FOR KEY SHARE on the parent) until this
+    SPO's transaction ends."""
     return [
         dict(r._mapping)
         for r in db.execute(
             text(
                 f"SELECT {_ROW_COLUMNS} FROM spo_allocations "
                 "WHERE company_id = :c AND spo_number = :n ORDER BY spo_line_number, id"
+                + (" FOR UPDATE" if lock else "")
             ),
             {"c": company_id, "n": spo_number},
         )
@@ -314,6 +345,72 @@ def _link_counts(db, allocation_id) -> tuple[int, int, int]:
         for table in _LINK_TABLES.values()
     )
     return picks, claims, links
+
+
+def _foreign_links(db, ids: list, company_id: str) -> tuple[int, int, int]:
+    """(picks, claims, order-inquiry links) on `ids` stamped with ANOTHER company.
+    The script may only move this company's (or company-less) links, so any of
+    these means a superseded row cannot be deleted without losing a pairing."""
+    picks = _i(db.execute(
+        text(
+            "SELECT count(*) FROM picking_lines WHERE spo_allocation_id = ANY(CAST(:ids AS uuid[])) "
+            "AND company_id IS NOT NULL AND company_id <> CAST(:c AS uuid)"
+        ),
+        {"ids": ids, "c": company_id},
+    ).scalar())
+    claims, links = (
+        _i(db.execute(
+            select(func.count()).select_from(table).where(
+                table.c.spo_allocation_id.in_(ids),
+                table.c.company_id.isnot(None),
+                table.c.company_id != company_id,
+            )
+        ).scalar())
+        for table in _LINK_TABLES.values()
+    )
+    return picks, claims, links
+
+
+def _any_links(db, ids: list) -> tuple[int, int, int]:
+    """(picks, claims, order-inquiry links) on `ids`, ANY company."""
+    picks = _i(db.execute(
+        text("SELECT count(*) FROM picking_lines WHERE spo_allocation_id = ANY(CAST(:ids AS uuid[]))"),
+        {"ids": ids},
+    ).scalar())
+    claims, links = (
+        _i(db.execute(
+            select(func.count()).select_from(table).where(table.c.spo_allocation_id.in_(ids))
+        ).scalar())
+        for table in _LINK_TABLES.values()
+    )
+    return picks, claims, links
+
+
+def _suggested_count(db, allocation_id) -> int:
+    return _i(db.execute(
+        select(func.count()).select_from(_SUGGESTED).where(_SUGGESTED.c.spo_allocation_id == str(allocation_id))
+    ).scalar())
+
+
+def _snapshot(db, ids: list, label: str, log) -> None:
+    """Full JSON of the rows and of everything pointing at them."""
+    log(f"[{label}] spo_allocations:")
+    for (row,) in db.execute(
+        text("SELECT row_to_json(a)::text FROM spo_allocations a WHERE id = ANY(CAST(:ids AS uuid[])) "
+             "ORDER BY spo_line_number, id"),
+        {"ids": ids},
+    ):
+        log(f"[{label}]   {row}")
+    log(f"[{label}] picking_lines:")
+    for (row,) in db.execute(
+        text("SELECT row_to_json(p)::text FROM picking_lines p WHERE spo_allocation_id = ANY(CAST(:ids AS uuid[])) "
+             "ORDER BY created_at, id"),
+        {"ids": ids},
+    ):
+        log(f"[{label}]   {row}")
+    for name, table in _LINK_TABLES.items():
+        for row in db.execute(select(table).where(table.c.spo_allocation_id.in_(ids))):
+            log(f"[{label}] {name}: id={row.id} spo_allocation_id={row.spo_allocation_id} company_id={row.company_id}")
 
 
 def _move_picks_whole(db, from_ids, to_id, company_id, write, log) -> int:
@@ -406,7 +503,9 @@ def _move_picks_by_capacity(db, from_ids, targets: list, company_id, write, log)
                 accepted_left -= acc
             if position == 0:
                 log(f"split pick {pick['id']} ({qty}): keep {chunk_qty} on {allocation_id} "
-                    f"(was {pick['spo_allocation_id']})")
+                    f"(was {pick['spo_allocation_id']}; expected {_i(pick['quantity_expected'])} -> "
+                    f"{exp if states_expected else _i(pick['quantity_expected'])}, accepted "
+                    f"{pick['qty_accepted']} -> {acc})")
                 if write:
                     db.execute(
                         text(
@@ -419,7 +518,8 @@ def _move_picks_by_capacity(db, from_ids, targets: list, company_id, write, log)
                     )
                 continue
             new_id = str(uuid.uuid4())
-            log(f"split pick {pick['id']}: new pick {new_id} ({chunk_qty}) on {allocation_id}")
+            log(f"split pick {pick['id']}: new pick {new_id} ({chunk_qty}, expected {exp}, accepted {acc}) "
+                f"on {allocation_id}")
             if write:
                 db.execute(
                     text(
@@ -470,7 +570,7 @@ def process_spo(db, company_id: str, spo_number: str, *, write: bool, log) -> di
     delete when a receipt would be lost; the caller rolls back."""
     stats = {"deleted": 0, "orphans_removed": 0, "orphans_blocked": 0, "kept": 0,
              "links_moved": 0, "carried": 0, "shipments": set()}
-    rows = _rows(db, company_id, spo_number)
+    rows = _rows(db, company_id, spo_number, lock=write)
     refs = [r for r in rows if r["source_ref"]]
     excel = [
         r for r in rows
@@ -487,6 +587,22 @@ def process_spo(db, company_id: str, spo_number: str, *, write: bool, log) -> di
         return stats
 
     plan = plan_spo(excel, lines)
+    if not plan.groups and not plan.orphans:
+        for row, reason in plan.kept:
+            log(f"keep {row['id']} line {row['spo_line_number']} (allocated {_i(row['allocated_quantity'])}, "
+                f"received {_i(row['quantity_received'])}): {reason}")
+            stats["kept"] += 1
+        return stats
+    all_ids = [str(r["id"]) for r in excel] + [str(r["id"]) for r in lines]
+    _snapshot(db, all_ids, "before", log)
+    superseded_ids = [str(r["id"]) for group in plan.groups for r in group.rows]
+    if superseded_ids:
+        foreign = _foreign_links(db, superseded_ids, company_id)
+        if any(foreign):
+            raise GuardFailed(
+                f"another company's links point at rows to delete (picks {foreign[0]}, claims {foreign[1]}, "
+                f"order-inquiry links {foreign[2]}) - fix those by hand first"
+            )
     for group in plan.groups:
         removed_received = sum(_i(r["quantity_received"]) for r in group.rows)
         shares = distribute(removed_received, [_i(l["allocated_quantity"]) for l in group.lines])
@@ -544,15 +660,16 @@ def process_spo(db, company_id: str, spo_number: str, *, write: bool, log) -> di
         if after_total < removed_received:
             raise GuardFailed(f"AutoCount lines would state {after_total} < {removed_received} held")
         if write:
-            stranded = _i(db.execute(
-                text("SELECT count(*) FROM picking_lines WHERE spo_allocation_id = ANY(CAST(:ids AS uuid[]))"),
-                {"ids": [str(i) for i in removed_ids]},
-            ).scalar())
-            if stranded:
-                raise GuardFailed(f"{stranded} pick(s) still on Excel rows (another company's?) - fix by hand first")
+            stranded = _any_links(db, [str(i) for i in removed_ids])
+            if any(stranded):
+                raise GuardFailed(
+                    f"still pointing at Excel rows after the move (picks {stranded[0]}, claims {stranded[1]}, "
+                    f"order-inquiry links {stranded[2]}) - fix by hand first"
+                )
         for row in group.rows:
             log(f"delete {row['id']} line {row['spo_line_number']} "
-                f"(allocated {_i(row['allocated_quantity'])}, received {_i(row['quantity_received'])})")
+                f"(allocated {_i(row['allocated_quantity'])}, received {_i(row['quantity_received'])}; "
+                f"suggested links cascaded {_suggested_count(db, row['id'])})")
             if row["inbound_shipment_id"]:
                 stats["shipments"].add(str(row["inbound_shipment_id"]))
             if write:
@@ -562,10 +679,15 @@ def process_spo(db, company_id: str, spo_number: str, *, write: bool, log) -> di
     for row in plan.orphans:
         received = _i(row["quantity_received"])
         picks, claims, links = _link_counts(db, row["id"])
+        other = (_i(row["stated_received"]), _i(row["quantity_rejected"]), (row["allocation_notes"] or "").strip())
         facts = (f"{row['id']} line {row['spo_line_number']} (allocated {_i(row['allocated_quantity'])}, "
-                 f"received {received}; picks {picks}, claims {claims}, order-inquiry links {links})")
-        if received == 0 and not (picks or claims or links):
-            log(f"orphan delete {facts}: no AutoCount line for its product")
+                 f"received {received}; picks {picks}, claims {claims}, order-inquiry links {links}; "
+                 f"stated {other[0]}, rejected {other[1]}, notes {'yes' if other[2] else 'no'})")
+        # Anything a person or a system recorded about the row blocks it: a
+        # receipt, a stated receipt, a rejection, a note, or a link.
+        if received == 0 and not (picks or claims or links) and not any(other):
+            log(f"orphan delete {facts}: no AutoCount line for its product; "
+                f"suggested links cascaded {_suggested_count(db, row['id'])}")
             if row["inbound_shipment_id"]:
                 stats["shipments"].add(str(row["inbound_shipment_id"]))
             if write:
@@ -579,6 +701,8 @@ def process_spo(db, company_id: str, spo_number: str, *, write: bool, log) -> di
         log(f"keep {row['id']} line {row['spo_line_number']} (allocated {_i(row['allocated_quantity'])}, "
             f"received {_i(row['quantity_received'])}): {reason}")
         stats["kept"] += 1
+    if write:
+        _snapshot(db, all_ids, "after", log)
     return stats
 
 
@@ -589,7 +713,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--spo", action="append", required=True, metavar="SPO_NUMBER",
                         help="spo_number to repair (repeatable)")
     parser.add_argument("--apply", action="store_true", help="write (default: dry run)")
-    parser.add_argument("--database-url", default=None, help="override DATABASE_URL (local/dev only)")
     return parser
 
 
@@ -606,6 +729,13 @@ def run(db, company_code: str, spo_numbers: list[str], *, apply: bool, out=print
         out(f"no company with code {company_code!r}")
         return 1
     company_id = str(company_id)
+    where = db.execute(text("SELECT current_database(), inet_server_addr()")).one()
+    try:
+        head = db.execute(text("SELECT version_num FROM alembic_version")).scalar()
+    except Exception:  # noqa: BLE001 - informational only
+        db.rollback()
+        head = "unknown"
+    out(f"=== database {where[0]} at {where[1] or 'local socket'}, alembic head {head} ===")
     out(f"=== {company_code} ({company_id}) {'APPLY' if apply else 'DRY-RUN (no writes)'} ===")
     exit_code = 0
     totals = {"deleted": 0, "orphans_removed": 0, "orphans_blocked": 0, "kept": 0, "links_moved": 0}
@@ -620,6 +750,10 @@ def run(db, company_code: str, spo_numbers: list[str], *, apply: bool, out=print
             out(f"  ABORTED, rolled back: {exc}")
             exit_code = 3
             continue
+        except Exception as exc:  # noqa: BLE001 - stop the run, report, never half-write
+            db.rollback()
+            out(f"  FAILED, rolled back, run STOPPED: {type(exc).__name__}: {exc}")
+            return 4
         if apply:
             db.commit()
             for shipment_id in sorted(stats["shipments"]):
@@ -640,9 +774,9 @@ def run(db, company_code: str, spo_numbers: list[str], *, apply: bool, out=print
 
 def main() -> int:
     args = build_parser().parse_args()
-    url = args.database_url or os.environ.get("DATABASE_URL")
+    url = os.environ.get("DATABASE_URL")
     if not url:
-        print("DATABASE_URL is not set (the backend container sets it; or pass --database-url)")
+        print("DATABASE_URL is not set (the backend container sets it)")
         return 1
     engine = create_engine(url)
     with engine.connect() as conn:

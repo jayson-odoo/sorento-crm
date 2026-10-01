@@ -56,8 +56,8 @@ class TestStandaloneOwnerCase:
 
         assert code == 0, out
         assert "DRY-RUN (no writes)" in out
-        assert f"delete {case.excel_95.id} line 1 (allocated 95, received 95)" in out
-        assert f"delete {case.excel_4.id} line 2 (allocated 4, received 4)" in out
+        assert f"delete {case.excel_95.id} line 1 (allocated 95, received 95; suggested links cascaded 0)" in out
+        assert f"delete {case.excel_4.id} line 2 (allocated 4, received 4; suggested links cascaded 0)" in out
         assert f"carry 22 -> {ib.id}" in out
         assert f"carry 77 -> {ntc.id}" in out
         assert f"move pick {case.pick_ib_22.id} (22) {case.excel_95.id} -> {ib.id}" in out
@@ -260,3 +260,85 @@ class TestStandalonePaths:
         assert code == 0, out
         assert "group same destination: 1 Excel row(s) -> 1 AutoCount line(s)" in out
         assert excel_id not in _ids(env)
+
+
+class TestStandaloneSecurityRound:
+    def _foreign_claim(self, env, allocation_id):
+        from app.models.scm import OrderLinkClaim
+
+        claim = OrderLinkClaim(
+            company_id=env.company_b,
+            so_number=f"{MARKER}-SO-{uuid.uuid4().hex[:8]}",
+            po_number=OWNER_SPO,
+            source="autocount",
+            spo_allocation_id=allocation_id,
+        )
+        env.db.add(claim)
+        env.db.commit()
+
+    def test_another_companys_link_on_a_row_to_delete_aborts_dry_run_and_apply(self, env):
+        """S1: such a claim would be silently cleared by the FK; the SPO is
+        refused instead - and the DRY RUN already says so."""
+        case = _owner_case(env, number=OWNER_SPO)
+        _seed_pre_repair_state(env, case)
+        self._foreign_claim(env, case.excel_95.id)
+        before = _ids(env)
+
+        for apply in (False, True):
+            code, out = _run(env, apply=apply)
+            assert code == 3, out
+            assert "another company's links point at rows to delete (picks 0, claims 1" in out
+        assert _ids(env) == before
+        assert _picked_on(env, case.excel_95.id) == 95
+
+    def test_an_orphan_with_a_note_is_blocked(self, env):
+        case = _owner_case(env, number=OWNER_SPO)
+        _seed_pre_repair_state(env, case)
+        orphan = _orphan_row(env, case, line=23)
+        orphan.allocation_notes = "planner: hold for project X"
+        env.db.commit()
+        orphan_id = str(orphan.id)
+
+        code, out = _run(env, apply=True)
+
+        assert code == 0, out
+        assert f"ORPHAN-BLOCKED {orphan_id} line 23" in out
+        assert "notes yes" in out
+        assert orphan_id in _ids(env)
+
+    def test_header_names_the_database_and_snapshots_frame_the_writes(self, env):
+        case = _owner_case(env, number=OWNER_SPO)
+        _seed_pre_repair_state(env, case)
+        excel_id = str(case.excel_95.id)
+
+        code, out = _run(env, apply=True)
+
+        assert code == 0, out
+        assert "=== database sorento_test at" in out
+        assert "alembic head" in out
+        before = out.split("[before]", 1)[1]
+        assert f'"id":"{excel_id}"' in before
+        assert "[after]" in out
+        assert f'"id":"{excel_id}"' not in out.split("[after]", 1)[1]
+
+    def test_an_unexpected_error_rolls_back_and_stops_the_run(self, env, monkeypatch):
+        from scripts.oneoff import dedupe_spo_standalone as standalone
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("simulated database error")
+
+        monkeypatch.setattr(standalone, "_move_links", boom)
+        case = _owner_case(env, number=OWNER_SPO)
+        _seed_pre_repair_state(env, case)
+        before = _ids(env)
+        lines: list[str] = []
+
+        code = standalone.run(
+            env.db, env.company_a_code, [OWNER_SPO, "SPO-NEVER-REACHED"], apply=True, out=lines.append
+        )
+
+        out = "\n".join(lines)
+        assert code == 4, out
+        assert "FAILED, rolled back, run STOPPED: RuntimeError" in out
+        assert "SPO-NEVER-REACHED" not in out
+        assert _ids(env) == before
