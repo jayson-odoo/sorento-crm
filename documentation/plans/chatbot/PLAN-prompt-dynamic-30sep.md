@@ -1,6 +1,6 @@
 # PLAN - parser prompt wired to its registries + prompt editor that shows it (PROMPT-DYNAMIC)
 
-Status: Review done; waiting on the owner (promote v-wording-layer) and the prod-copy render diff (AC-PD-8). Track: full (migration, new admin table, new admin page). Grill run late (see "Grill"). R5c shipped (7f004bf0);
+Status: Review done; pdyn_0003 (owner production text of 1 Oct 2026 as an unlabelled variable version) built, waiting on crew deploy for its version number; waiting on the owner (publish) and the prod-copy render diff (AC-PD-8). Track: full (migration, new admin table, new admin page). Grill run late (see "Grill"). R5c shipped (7f004bf0);
 backend S2-S4 under TDD; R5a/b wait on the mock
 (`documentation/mockups/prompt-editor-dynamic.html`). Lane `crew-lane: PROMPT-DYNAMIC`, PR #1405.
 UAC: `prompt-dynamic-30sep-acceptance-criteria.md`.
