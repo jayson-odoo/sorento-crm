@@ -677,3 +677,24 @@ def test_an_allowed_miss_still_offers_the_team(
     text_ = (result.reply or {}).get("text") or ""
     assert "Would you like me to escalate to" in text_ and REFER_TO_SALESMAN not in text_, text_
 
+
+
+@pytest.mark.parametrize(
+    "kwargs, expected_tail",
+    [
+        ({"missing": "pink (finish)"}, "Couldn't find: pink (finish). Please refer to your salesman."),
+        ({"leg": "master products"}, "But no master products matched these. Please refer to your salesman."),
+    ],
+)
+def test_the_what_you_want_reply_ends_with_the_salesman_line_for_a_blocked_contact(kwargs, expected_tail) -> None:
+    """Kill-matrix K15: the attribute / predicate miss replies (`near_miss_reply`,
+    `unknown_values_reply`, `described_members_reply`) all end in `what_you_want_reply`, and
+    a blocked contact's caller passes the salesman line where the team would be."""
+    from app.services.chatbot.lanes.business.answer import what_you_want_reply
+
+    lines = ["• finish: gunmetal"]
+    blocked = what_you_want_reply("basin taps", lines, team=REFER_TO_SALESMAN, **kwargs)
+    assert blocked.endswith(expected_tail), blocked
+    assert "escalate" not in blocked
+    allowed = what_you_want_reply("basin taps", lines, team="customer service", **kwargs)
+    assert allowed.endswith("Would you like me to escalate to customer service team?"), allowed

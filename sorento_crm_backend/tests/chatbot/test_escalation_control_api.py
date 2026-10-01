@@ -110,3 +110,12 @@ def test_access_types_carry_no_escalation_setting(db, client):
     from app.models.access import ContactAccessType
 
     assert not hasattr(ContactAccessType, "escalation_allowed")
+
+
+def test_a_blocked_contact_reads_blocked(db, client):
+    """Kill-matrix K13: the dict builder lists the field (the schema default alone would
+    read every contact as allowed)."""
+    contact_id = _seed_contact(db)
+    db.execute(text("UPDATE respond_contacts SET escalation_allowed = false WHERE id = :c"), {"c": contact_id})
+    db.commit()
+    assert client.get(f"{BASE}/{contact_id}").json()["escalation_allowed"] is False
