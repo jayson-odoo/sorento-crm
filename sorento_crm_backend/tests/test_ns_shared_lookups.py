@@ -25,7 +25,7 @@ from app.models.access import ContactAccessType, MarketSegment
 from app.models.base import set_company_scope
 from app.models.country import Country
 from app.models.product import Brand, ProductCategory, UnitOfMeasure
-from app.models.user import User, UserStatus
+from app.models.user import User, UserRole, UserRoleAssignment, UserStatus
 from app.services import project_seed_service
 from app.services.company_scope_resolver import apply_company_scope
 from tests._pg_fixture import blank_session, unique_code
@@ -45,6 +45,20 @@ def db():
         yield s
 
 
+def _role(db, slug: str) -> str:
+    row = db.query(UserRole).filter(UserRole.slug == slug).first()
+    if row is None:
+        row = UserRole(id=_uid(), slug=slug, name=f"{MARKER} {slug}")
+        db.add(row)
+        db.flush()
+    return row.id
+
+
+def _assign(db, user_id: str, slug: str) -> None:
+    db.add(UserRoleAssignment(user_id=user_id, role_id=_role(db, slug)))
+    db.flush()
+
+
 @pytest.fixture
 def api(db, monkeypatch):
     """(client, allow, caller). `allow` is the caller's whole permission set; no admin role."""
@@ -60,6 +74,7 @@ def api(db, monkeypatch):
         )
     )
     db.flush()
+    _assign(db, caller_id, "salesperson")
     caller = {"id": caller_id, "email": f"{caller_id}@zzt.test"}
     allow: set[str] = set()
 
@@ -88,7 +103,16 @@ def api(db, monkeypatch):
             app.dependency_overrides.pop(dep, None)
 
 
-def _user(db, name: str, *, status=UserStatus.ACTIVE, trashed: bool = False, email=None) -> str:
+def _user(
+    db,
+    name: str,
+    *,
+    status=UserStatus.ACTIVE,
+    trashed: bool = False,
+    email=None,
+    role: str | None = "salesperson",
+    integration: bool = False,
+) -> str:
     user_id = _uid()
     db.add(
         User(
@@ -97,9 +121,12 @@ def _user(db, name: str, *, status=UserStatus.ACTIVE, trashed: bool = False, ema
             name=name,
             status=getattr(status, "value", status),
             is_trashed=trashed,
+            is_integration=integration,
         )
     )
     db.flush()
+    if role:
+        _assign(db, user_id, role)
     return user_id
 
 
@@ -130,6 +157,38 @@ def test_people_lookup_lists_only_active_untrashed_users(api, db):
 
     assert response.status_code == 200, response.text
     assert [row["name"] for row in response.json()] == [f"{MARKER} {tag} Active"]
+
+
+def test_people_lookup_lists_staff_only(api, db):
+    """Portal contacts (no role, or only `portal_user` / `guest`) and integration act-as
+    accounts are not people a salesperson assigns work to."""
+    client, *_ = api
+    tag = unique_code("STF", alpha=True)
+    _user(db, f"{MARKER} {tag} Staff")
+    _user(db, f"{MARKER} {tag} Roleless", role=None)
+    _user(db, f"{MARKER} {tag} Portal", role="portal_user")
+    _user(db, f"{MARKER} {tag} Guest", role="guest")
+    _user(db, f"{MARKER} {tag} Robot", integration=True)
+
+    response = client.get(f"{BASE}/user-management/users/lookup", params={"query": tag})
+
+    assert response.status_code == 200, response.text
+    assert [row["name"] for row in response.json()] == [f"{MARKER} {tag} Staff"]
+
+
+@pytest.mark.parametrize("caller_role", [None, "portal_user", "guest"])
+def test_people_lookup_refuses_a_portal_caller(api, db, caller_role):
+    """A dealer signed in through the portal holds a session too; it must not list staff."""
+    client, _allow, caller = api
+    db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == caller["id"]).delete()
+    if caller_role:
+        _assign(db, caller["id"], caller_role)
+    db.flush()
+
+    response = client.get(f"{BASE}/user-management/users/lookup")
+
+    assert response.status_code == 403, response.text
+    assert response.json()["code"] == "people_lookup_staff_only"
 
 
 def test_people_lookup_query_does_not_match_email(api, db):
@@ -227,13 +286,15 @@ def test_project_status_graphs_refuse_without_project_view(api, entity_type):
     assert response.json()["detail"] == f"Permission required: {PROJECTS_VIEW}"
 
 
-def test_unknown_scope_falls_back_to_the_default_graph(api, seeded_graphs):
+@pytest.mark.parametrize("scope_id", ["unknown-uuid", "not-a-uuid"])
+def test_unknown_scope_falls_back_to_the_default_graph(api, seeded_graphs, scope_id):
+    """A scope with no fork resolves the default; a malformed one too, never a 500 from the
+    uuid cast."""
     client, allow, _ = api
     allow.add(PROJECTS_VIEW)
+    scope = _uid() if scope_id == "unknown-uuid" else scope_id
 
-    response = client.get(
-        f"{BASE}/project-sales/status-graph/project", params={"scope_id": _uid()}
-    )
+    response = client.get(f"{BASE}/project-sales/status-graph/project", params={"scope_id": scope})
 
     assert response.status_code == 200, response.text
     assert response.json()["is_fork"] is False
@@ -364,6 +425,27 @@ def test_master_data_select_opens_with_select_fields_only(api, db, resource):
         assert set(row) == SELECT_FIELDS[resource], (
             f"{resource}/select leaks or drops fields: {sorted(set(row) ^ SELECT_FIELDS[resource])}"
         )
+
+
+@pytest.mark.parametrize("resource", sorted(SELECT_FIELDS))
+def test_master_data_select_still_needs_the_slug_for_an_api_key(api, monkeypatch, resource):
+    """Integrations act with their act-as user's grants (integration_auth.py). Only signed-in
+    sessions get the open read; a key whose act-as user lacks the `.view` slug is refused."""
+    client, allow, caller = api
+    api_caller = {**caller, "auth_method": "integration_api_key"}
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(api_caller)
+
+    denied = client.get(f"{BASE}/master-data/{resource}/select")
+    assert denied.status_code == 403, denied.text
+
+    slug = {
+        "units-of-measure": "master_data.units_of_measure.view",
+        "brands": "master_data.brands.view",
+        "product-categories": "master_data.product_categories.view",
+        "countries": "master_data.countries.view",
+    }[resource]
+    allow.add(slug)
+    assert client.get(f"{BASE}/master-data/{resource}/select").status_code == 200
 
 
 @pytest.mark.parametrize(

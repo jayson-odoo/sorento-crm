@@ -5,9 +5,9 @@ from typing import Optional, List
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import (
-    get_current_user_or_api_key,
     require_permission,
     require_permission_with_api_key,
+    require_session_or_api_key_permission,
 )
 from app.services.product_service import UnitOfMeasureService
 from app.schemas.product import (
@@ -57,9 +57,9 @@ async def get_units_of_measure(
 @router.get("/select", response_model=List[UnitOfMeasureSelectItem])
 async def get_uoms_select(
     query: Optional[str] = Query(None),
-    # Any signed-in user or API key (owner ruling 1 Oct 2026, never-stuck L10); the
-    # list, detail and write routes keep their slugs.
-    current_user: dict = Depends(get_current_user_or_api_key),
+    # Any signed-in user (owner ruling 1 Oct 2026, never-stuck L10); an API key still
+    # needs the slug. The list, detail and write routes keep their slugs.
+    current_user: dict = Depends(require_session_or_api_key_permission("master_data.units_of_measure.view")),
     db: Session = Depends(get_db)
 ):
     """Get units of measure for select dropdowns."""

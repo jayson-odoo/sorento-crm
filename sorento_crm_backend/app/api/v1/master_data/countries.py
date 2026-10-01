@@ -6,9 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import (
-    get_current_user_or_api_key,
     require_permission,
     require_permission_with_api_key,
+    require_session_or_api_key_permission,
 )
 from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
 from app.schemas.country import CountryCreate, CountryResponse, CountrySelectItem, CountryUpdate
@@ -42,9 +42,9 @@ async def get_countries(
 @router.get("/select", response_model=List[CountrySelectItem])
 async def get_countries_select(
     query: Optional[str] = Query(None),
-    # Any signed-in user or API key (owner ruling 1 Oct 2026, never-stuck L10); the
-    # list, detail and write routes keep their slugs.
-    current_user: dict = Depends(get_current_user_or_api_key),
+    # Any signed-in user (owner ruling 1 Oct 2026, never-stuck L10); an API key still
+    # needs the slug. The list, detail and write routes keep their slugs.
+    current_user: dict = Depends(require_session_or_api_key_permission("master_data.countries.view")),
     db: Session = Depends(get_db),
 ):
     try:

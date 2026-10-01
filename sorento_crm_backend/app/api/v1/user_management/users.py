@@ -184,7 +184,7 @@ async def get_users_lookup(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """The shared people picker: any signed-in user, active people, id + name.
+    """The shared people picker: any signed-in staff user, active staff, id + name.
 
     Owner ruling 1 Oct 2026 (never-stuck L10, AUDIT-never-stuck-2026-10-01 section 5):
     assigning a colleague is a normal action in every module, so owner / assignee / watcher
@@ -192,8 +192,17 @@ async def get_users_lookup(
     ``/select``, which carries email and Respond.io state and filters by phone for the user
     admin screens. Read-only; nothing here changes who may write.
     """
+    service = UserService(db)
+    # A portal contact holds a session too (identity S0, phone sign-in); staff names and
+    # Respond.io ids are not theirs to list.
+    if not service.is_staff(current_user["id"]):
+        raise AppException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message="The people list is for staff accounts.",
+            code="people_lookup_staff_only",
+        )
     try:
-        users = UserService(db).list_user_lookup(query=query, respond_synced=respond_synced)
+        users = service.list_user_lookup(query=query, respond_synced=respond_synced)
         return [
             UserLookupItem(
                 id=user.id,

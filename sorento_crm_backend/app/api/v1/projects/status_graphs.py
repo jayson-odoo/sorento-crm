@@ -22,6 +22,7 @@ from app.modules.projects.status_entities import (
 )
 from app.schemas.status import StatusGraphResponse, StatusResponse, StatusTransitionResponse
 from app.services.error_handler import AppException
+from app.services.identifier_resolver import is_uuid
 from app.services.status_service import resolve_graph
 
 router = APIRouter()
@@ -49,6 +50,10 @@ async def get_project_sales_status_graph(
             message="Status graph not found.",
             code="status_graph_not_found",
         )
+    # A template id is a uuid; anything else can only ever resolve the default, and would
+    # otherwise abort the query on the uuid cast (a 500).
+    if scope_id and not is_uuid(scope_id):
+        scope_id = None
     graph = resolve_graph(db, entity_type, scope_id)
     return StatusGraphResponse(
         entity_type=entity_type,

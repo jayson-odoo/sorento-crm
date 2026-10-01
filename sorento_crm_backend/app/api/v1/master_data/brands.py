@@ -4,9 +4,9 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.database import get_db
 from app.dependencies import (
-    get_current_user_or_api_key,
     require_permission,
     require_permission_with_api_key,
+    require_session_or_api_key_permission,
 )
 from app.services.product_service import BrandService
 from app.schemas.product import BrandCreate, BrandResponse, BrandSelectItem, BrandUpdate
@@ -121,9 +121,9 @@ async def get_brands_select(
             "into. Omit for the caller's active-company scope (the default)."
         ),
     ),
-    # Any signed-in user or API key (owner ruling 1 Oct 2026, never-stuck L10); the
-    # list, detail and write routes keep their slugs.
-    current_user: dict = Depends(get_current_user_or_api_key),
+    # Any signed-in user (owner ruling 1 Oct 2026, never-stuck L10); an API key still
+    # needs the slug. The list, detail and write routes keep their slugs.
+    current_user: dict = Depends(require_session_or_api_key_permission("master_data.brands.view")),
     db: Session = Depends(get_db)
 ):
     """Get brands for select dropdowns.
