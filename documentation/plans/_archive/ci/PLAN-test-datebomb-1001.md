@@ -34,8 +34,8 @@ landed pin goes with it (`:962`), and on hand is stamped at `as_of` (`:1058`) in
 month column (`_axis`, `:1537`). So the narrowed page shows the far line's 38 as free in the
 current month. The test asserted the near month (`TODAY + 20`), which equals the current month
 on the first 8 to 11 days of every month. `date_to` semantics are out of scope
-(`PLAN-stock-debt-lendable.md:132`); whether that +38 is an R2 breach is put to the owner on the
-PR, not pinned by a test.
+(`PLAN-stock-debt-lendable.md:132`); the test pins today's +38 as current behaviour with
+`TODO(a19364058)`, the owner's open question on whether it is an R2 breach.
 
 ## Fixes
 

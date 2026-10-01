@@ -330,11 +330,12 @@ def test_the_cell_value_is_the_same_with_and_without_date_to(scm_app):
         m["key"]: m["balance"] for m in _row_of(narrowed, product.product_code)["months"]
     }
     assert whole_balance[near_month] == narrowed_balance[near_month] == 0
-    # The current month is NOT asserted equal across the two: with the far line off the
-    # page its pin goes too (R14, `date_to` drops demand before the walk), so the 88 - 50
-    # it held reads +38 free here on the narrowed page only. Whether that is wanted is an
-    # open owner question (TEST-DATEBOMB-1001, PR #1412); this test does not pin it.
+    # Today's behaviour, pre-existing and unchanged (R14): with the far line off the page
+    # its pin goes too (`date_to` drops demand before the walk), so the 88 - 50 it held
+    # reads +38 free in the current month on the narrowed page only.
+    # TODO(a19364058): owner question, is this an R2 breach? Update this pin on the answer.
     assert whole_balance[current_month] == 0
+    assert narrowed_balance[current_month] == 38
     assert month_key(far_due) not in narrowed_balance
     assert whole_balance[month_key(far_due)] == -50
 
