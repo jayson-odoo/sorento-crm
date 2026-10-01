@@ -120,3 +120,46 @@ def test_the_shipping_billing_and_stock_balance_schemas_drop_unknown_keys():
     from app.schemas.canonical_documents import CanonicalBillingDocumentLine
 
     assert CanonicalBillingDocumentLine.model_config.get("extra") == "ignore"
+
+
+@pytest.mark.parametrize(
+    "model_path",
+    [
+        "app.schemas.canonical_documents.CanonicalSalesOrder",
+        "app.schemas.canonical_documents.CanonicalPurchaseOrder",
+        "app.schemas.canonical_documents.CanonicalShippingOrder",
+        "app.schemas.canonical_documents.CanonicalBillingDocument",
+        "app.services.stock_balance_ingest_service._StockBalanceRecord",
+    ],
+)
+def test_every_document_schema_reports_unknown_names_to_the_request_log(model_path):
+    """The document entities share `POST /external/ingest/{entity}` with the masters
+    (`ingest.py` `ingest_masters`), which logs whatever `collect_unknown_fields` gathered.
+    So each document schema must NOTE its unknown names, or that one log line stays blind
+    to them. Names only, qualified by model; the value never enters the set."""
+    import importlib
+
+    from pydantic import ValidationError
+
+    from app.schemas.ingest_extras import collect_unknown_fields
+
+    module_name, _, class_name = model_path.rpartition(".")
+    model = getattr(importlib.import_module(module_name), class_name)
+    with collect_unknown_fields() as seen:
+        try:
+            model.model_validate({"source_ref": "r", "zz_doc_unknown": "secret-value"})
+        except ValidationError:
+            pass  # the name is noted in the `before` validator, before field checks
+    assert f"{class_name}.zz_doc_unknown" in seen
+    assert not any("secret-value" in name for name in seen)
+
+
+def test_unknown_names_are_not_collected_outside_an_ingest_request():
+    CanonicalSalesOrder.model_validate(
+        {"source_ref": "r", "so_number": "SO1", "status": "open", "lines": [], "zz": 1}
+    )  # no collector set: must not raise, and nothing leaks into a later request
+    from app.schemas.ingest_extras import collect_unknown_fields
+
+    with collect_unknown_fields() as seen:
+        pass
+    assert seen == set()
