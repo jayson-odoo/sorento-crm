@@ -33,3 +33,16 @@ describe('WiredPanel', () => {
     expect(screen.getByTestId('wired-empty')).toBeInTheDocument();
   });
 });
+
+describe('WiredPanel, reviewer pass 2', () => {
+  it('opens a source in a new tab so an unsaved draft is never lost', () => {
+    render(<WiredPanel variables={ROWS} draft="" onInsert={() => {}} isLoading={false} />);
+    const link = screen.getByTestId('wired-row-domains').querySelector('a')!;
+    expect(link.getAttribute('target')).toBe('_blank');
+  });
+
+  it('a source with no admin page gets no link', () => {
+    render(<WiredPanel variables={[{ ...ROWS[0], href: '' }]} draft="" onInsert={() => {}} isLoading={false} />);
+    expect(screen.getByTestId('wired-row-domains').querySelector('a')).toBeNull();
+  });
+});

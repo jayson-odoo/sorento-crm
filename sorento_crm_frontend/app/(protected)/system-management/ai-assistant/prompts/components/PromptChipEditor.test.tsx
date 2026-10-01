@@ -4,7 +4,7 @@
  * remove the variable"). Red before the component exists.
  */
 import React, { useState } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { PromptChipEditor } from './PromptChipEditor';
 import type { RegistryVariableRow } from '../../services/aiPromptsService';
@@ -129,5 +129,123 @@ describe('PromptChipEditor drop (security pass 2 nit)', () => {
     expect(ev).toBe(false); // default prevented
     expect(last).toBe('Hello dropped world');
     expect(editor().querySelector('b')).toBeNull();
+  });
+});
+
+describe('PromptChipEditor, reviewer pass 2', () => {
+  function selectAll() {
+    const range = document.createRange();
+    range.selectNodeContents(editor());
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  it('B1: copy puts the tokens, not the chip labels, on the clipboard', () => {
+    render(<Harness initial={'ONE of: {{domains}} | null'} />);
+    selectAll();
+    const data: Record<string, string> = {};
+    fireEvent.copy(editor(), { clipboardData: { setData: (t: string, v: string) => (data[t] = v) } });
+    expect(data['text/plain']).toBe('ONE of: {{domains}} | null');
+  });
+
+  it('B1: cut puts the tokens on the clipboard and removes the selection', () => {
+    render(<Harness initial={'A {{domains}} B'} />);
+    selectAll();
+    const data: Record<string, string> = {};
+    fireEvent.cut(editor(), { clipboardData: { setData: (t: string, v: string) => (data[t] = v) } });
+    expect(data['text/plain']).toBe('A {{domains}} B');
+    expect(last).toBe('');
+  });
+
+  it('B1: dragging a selection carries its tokens', () => {
+    render(<Harness initial={'A {{domains}} B'} />);
+    selectAll();
+    const data: Record<string, string> = {};
+    fireEvent.dragStart(editor(), { dataTransfer: { setData: (t: string, v: string) => (data[t] = v) } });
+    expect(data['text/plain']).toBe('A {{domains}} B');
+  });
+
+  it('a pasted token becomes a chip', () => {
+    render(<Harness initial={'Hello world'} />);
+    const range = document.createRange();
+    range.setStart(editor().firstChild as Text, 6);
+    range.collapse(true);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    fireEvent.paste(editor(), { clipboardData: { getData: () => 'list {{statuses}} ' } });
+    expect(last).toBe('Hello list {{statuses}} world');
+    expect(editor().querySelector('[data-chip="statuses"]')).not.toBeNull();
+  });
+
+  it('B2: Enter inserts a newline into the text itself, never through the browser', () => {
+    const exec = vi.fn(() => true);
+    (document as unknown as { execCommand: unknown }).execCommand = exec;
+    try {
+      render(<Harness initial={'ab'} />);
+      const range = document.createRange();
+      range.setStart(editor().firstChild as Text, 1);
+      range.collapse(true);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      fireEvent.keyDown(editor(), { key: 'Enter' });
+      expect(exec).not.toHaveBeenCalled();
+      expect(last).toBe('a\nb');
+    } finally {
+      delete (document as unknown as { execCommand?: unknown }).execCommand;
+    }
+  });
+
+  it('B2: find still lands on a match inside a browser-inserted block', () => {
+    render(<Harness initial={'first line'} />);
+    const div = document.createElement('div');
+    div.textContent = 'current here';
+    editor().appendChild(div);
+    fireEvent.input(editor());
+    expect(last).toBe('first line\ncurrent here');
+    fireEvent.keyDown(editor(), { key: 'f', ctrlKey: true });
+    fireEvent.change(screen.getByTestId('find-input'), { target: { value: 'current' } });
+    act(() => {
+      fireEvent.keyDown(screen.getByTestId('find-input'), { key: 'Escape' });
+    });
+    expect(window.getSelection()!.toString()).toBe('current');
+  });
+
+  it('Undo is dropped once a variable is inserted after the removal', () => {
+    render(<Harness initial={'A {{domains}} B'} />);
+    fireEvent.click(screen.getByTestId('chip-remove-domains'));
+    fireEvent.click(screen.getByTestId('insert-variable'));
+    fireEvent.click(screen.getByTestId('insert-variable-statuses'));
+    expect(screen.queryByTestId('chip-undo')).toBeNull();
+  });
+
+  it('the toolbar has a Find button (mock parity)', () => {
+    render(<Harness initial={'current'} />);
+    fireEvent.click(screen.getByTestId('open-find'));
+    expect(screen.getByTestId('find-bar')).toBeInTheDocument();
+  });
+
+  it('Escape closes the variable picker', () => {
+    render(<Harness initial={'x'} />);
+    fireEvent.click(screen.getByTestId('insert-variable'));
+    expect(screen.getByTestId('insert-variable-menu')).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByTestId('insert-variable-menu'), { key: 'Escape' });
+    expect(screen.queryByTestId('insert-variable-menu')).toBeNull();
+  });
+
+  it('a variable with no admin page gets no link', () => {
+    function NoLink() {
+      const [v, setV] = useState('x {{domains}}');
+      return (
+        <PromptChipEditor
+          value={v}
+          onChange={setV}
+          variables={[{ ...VARS[0], href: '' }]}
+          registryNames={['domains']}
+        />
+      );
+    }
+    render(<NoLink />);
+    expect(editor().querySelector('[data-chip="domains"] a')).toBeNull();
   });
 });

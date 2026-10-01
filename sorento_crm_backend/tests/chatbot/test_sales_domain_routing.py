@@ -208,3 +208,33 @@ class TestTheDomainRow:
             assert row[key] == value, key
         order = next(r for r in policy_rows.DEFAULT_DOMAIN_ROWS if r["name"] == "order")
         assert row["narrowing"] == order["narrowing"]
+
+
+class TestReviewPass2:
+    """Second review of PROMPT-DYNAMIC (30 Sep 2026), should-fix 3 and 4."""
+
+    def test_a_sales_hint_without_a_sales_status_is_the_order_domain(self) -> None:
+        # "sales orders for hanlim": the parser can now pick `sales` off the switch word,
+        # with no sales status. Without this the lane ran the sales report from tools[0].
+        out = _normalised(domain_hint="sales", order_status=None)
+        assert out["domain_hint"] == "order"
+        out = _normalised(domain_hint="sales", order_status="outstanding")
+        assert out["domain_hint"] == "order"
+
+    def test_a_sales_hint_with_a_sales_status_stays_sales(self) -> None:
+        assert _normalised(domain_hint="sales", order_status="sales_report")["domain_hint"] == "sales"
+
+    def test_the_sales_report_override_runs_under_sales(self, session_factory, monkeypatch) -> None:
+        import app.services.chatbot.lanes.business as lane
+
+        calls: list[str] = []
+        real = lane._resolve_report_product_and_location
+
+        def spy(*args, **kwargs):
+            calls.append("resolved")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(lane, "_resolve_report_product_and_location", spy)
+        captured = _picked("sales", "sales_report", [CUSTOMER], response=SALES_REPORT_HIT)
+        assert captured and captured[0][0] == "crm_sales_report", captured
+        assert calls == ["resolved"], "the sales report override (product + location resolution) did not run"

@@ -305,3 +305,17 @@ describe('PromptDetail with registry variables (PROMPT-DYNAMIC R5a)', () => {
     expect(screen.getByTestId('prompt-chip-editor')).toBeInTheDocument();
   });
 });
+
+describe('PromptDetail editor mode uses the Tabs primitive (reviewer pass 2)', () => {
+  it('Edit and Preview are tabs', () => {
+    usePromptVersions.mockReturnValue({ data: { ...META, name: 'chatbot_semantic_parser', registry_variables: ['domains'] }, isLoading: false, isError: false });
+    usePromptVersion.mockReturnValue({ data: { ...BASE, template: 'x {{domains}}' }, isLoading: false, isError: false });
+    useRegistryVariables.mockReturnValue({ data: [], isLoading: false, isError: false });
+    renderDetail();
+    const edit = screen.getByTestId('editor-mode-edit');
+    const preview = screen.getByTestId('editor-mode-preview');
+    expect(edit.getAttribute('role')).toBe('tab');
+    expect(edit.getAttribute('data-slot')).toBe('tabs-trigger');
+    expect(preview.getAttribute('aria-selected')).toBe('false');
+  });
+});

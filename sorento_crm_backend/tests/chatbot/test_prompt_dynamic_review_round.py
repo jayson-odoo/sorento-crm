@@ -247,20 +247,15 @@ def grants(monkeypatch):
     return held
 
 
-def test_m1_render_preview_refuses_a_template_that_repeats_a_registry_variable(client, grants):
+def test_rev2_render_preview_is_removed(client, grants):
+    """Reviewer pass 2, should-fix 5: the editor's preview renders from
+    `/registry-variables`, so the server preview had no caller and was only an amplifier
+    surface for a view-grant caller (security M1). Removed (Simplest thing that works)."""
     res = client.post(
         f"/api/v1/system/ai-assistant/prompts/{KEY}/render-preview",
-        json={"template": "{{specs}}" * 50},
+        json={"template": "{{domains}}"},
     )
-    assert res.status_code == 422, res.text
-
-
-def test_m1_render_preview_still_renders_a_normal_template(client, grants):
-    res = client.post(
-        f"/api/v1/system/ai-assistant/prompts/{KEY}/render-preview",
-        json={"template": "A {{domains}} B {{statuses}} C {{domains}}"},
-    )
-    assert res.status_code == 200, res.text
+    assert res.status_code in (404, 405), res.text
 
 
 # --- Security M2 / L2 / L3: registry text stays inside its line and its quotes -----------
@@ -379,3 +374,21 @@ def test_sec2_f2_a_quote_in_a_spec_label_cannot_close_its_quotes(monkeypatch):
     with pg_session() as db:
         lines = specification_lines(db)
     assert lines and lines[0].count('"') == 2, lines
+
+
+def test_rev2_b3_a_real_sql_failure_neither_blanks_the_others_nor_aborts_the_turn(monkeypatch):
+    """Reviewer pass 2, B3: a reader whose SQL fails (not a Python error) must not abort the
+    turn's transaction: the savepoint in `render_values_safe` is what keeps it usable."""
+    broken = pv.VARIABLES["domains"]
+    monkeypatch.setitem(
+        pv.VARIABLES, "domains",
+        pv.RegistryVariable(broken.name, broken.label, broken.source, broken.href, broken.tables,
+                            lambda db: str(db.execute(text("SELECT * FROM zz_no_such_table")).scalar()),
+                            broken.count),
+    )
+    pv._LAST_GOOD.pop("domains", None)  # another test may have rendered it in this process
+    with pg_session() as db:
+        out = pv.render_values_safe(db, ["domains", "statuses"])
+        assert out["domains"] == ""
+        assert '"outstanding"' in out["statuses"]
+        assert db.execute(text("SELECT 1")).scalar() == 1

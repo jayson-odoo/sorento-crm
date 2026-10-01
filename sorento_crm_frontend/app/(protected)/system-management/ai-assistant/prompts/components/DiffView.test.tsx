@@ -1,6 +1,6 @@
 /** PROMPT-DYNAMIC R5b: diff next/previous change, counter, keys, changes only. Red first. */
 import React from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { DiffView } from './DiffView';
 
@@ -54,5 +54,19 @@ describe('DiffView navigation', () => {
     render(<DiffView a="same" b="same" aLabel="v1" bLabel="v1" />);
     expect(screen.getByTestId('diff-change-counter')).toHaveTextContent('No changes');
     expect(screen.getByTestId('diff-next')).toBeDisabled();
+  });
+});
+
+describe('DiffView, reviewer pass 2', () => {
+  it('typing in the draft keeps the current change and does not scroll', () => {
+    const spy = vi.spyOn(HTMLElement.prototype, 'scrollIntoView');
+    const { rerender } = render(<DiffView a={A} b={B} aLabel="v42" bLabel="draft" />);
+    fireEvent.click(screen.getByTestId('diff-next'));
+    expect(screen.getByTestId('diff-change-counter')).toHaveTextContent('Change 2 of 2');
+    spy.mockClear();
+    rerender(<DiffView a={A} b={B.replace('y2', 'y22')} aLabel="v42" bLabel="draft" />);
+    expect(screen.getByTestId('diff-change-counter')).toHaveTextContent('Change 2 of 2');
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });

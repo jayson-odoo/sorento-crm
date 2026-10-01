@@ -164,18 +164,3 @@ def test_registry_variables_panel_lists_every_source(client, pg_db):
     assert rows["statuses"]["source"] == "Chatbot Status Words"
     assert rows["statuses"]["count"] >= 8
     assert '"sales_report"' in rows["statuses"]["rendered"]
-
-
-def test_render_preview_fills_variables_without_saving(client, pg_db):
-    _GRANTS.add("system.ai_assistant_settings.view")
-    before = pg_db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count()
-    res = client.post(
-        f"{PROMPTS}/{KEY}/render-preview",
-        json={"template": "ONE of: {{domains}} | null. Today {{current_date}}. {{unknown}}"},
-    )
-    assert res.status_code == 200, res.text
-    text = res.json()["text"]
-    assert "{{domains}}" not in text and "| sales" in text
-    assert "{{current_date}}" not in text
-    assert "{{unknown}}" in text
-    assert pg_db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count() == before
