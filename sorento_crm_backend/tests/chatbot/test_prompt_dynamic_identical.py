@@ -80,3 +80,50 @@ def test_save_publishes_one_unlabelled_identical_version():
         assert _render_template(db, row.template) == prod.template
         assert db.query(AIPromptLabel).filter(AIPromptLabel.version_id == row.id).count() == 0
         assert {(l.label, l.version_id) for l in db.query(AIPromptLabel).filter(AIPromptLabel.name == KEY)} == labels_before
+
+
+# --------------------------------------------------------------------------- #
+# Crew, 1 Oct 2026: for each kept-literal list, the first item where the owner's text
+# and the registry part, and a direct render check of a saved version on the crew copy.
+# --------------------------------------------------------------------------- #
+
+import importlib.util  # noqa: E402
+import pathlib  # noqa: E402
+
+SNAPSHOT = pathlib.Path(__file__).resolve().parents[2] / "alembic" / "data" / "chatbot_semantic_parser.prod-20261001.txt"
+
+
+def _script():
+    path = pathlib.Path(__file__).resolve().parents[2] / "scripts" / "prompt_dynamic_identical_version.py"
+    spec = importlib.util.spec_from_file_location("_t_identical_script", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_kept_list_reports_the_first_item_where_text_and_registry_part():
+    with pg_session() as db:
+        names = list(db.execute(text("SELECT name FROM chatbot_domains ORDER BY sort_order, name")).scalars())
+        hand = " | ".join(names[:-1] + ["zzt_not_a_domain"])
+        _template, report = pv.identical_wording_layer(f"domain_hint = ONE of: {hand} | null\n", db)
+        row = next(r for r in report if r["variable"] == "domains")
+        assert row["action"] == "kept literal"
+        assert row["first_difference"] == {"item": len(names), "text": "zzt_not_a_domain", "registry": names[-1]}
+
+
+def test_verify_says_whether_a_version_renders_the_owner_file_and_where_it_parts():
+    source = SNAPSHOT.read_text(encoding="utf-8")
+    script = _script()
+    with pg_session() as db:
+        good = AIPromptVersion(id=str(uuid.uuid4()), name=KEY, version=90000 + uuid.uuid4().int % 9999,
+                               template=source, commit_message="t", config_json={})
+        bad = AIPromptVersion(id=str(uuid.uuid4()), name=KEY, version=good.version + 1,
+                              template=source.replace("Sorento Semantic Parser", "Sorento Semantic Parsex", 1),
+                              commit_message="t", config_json={})
+        db.add_all([good, bad])
+        db.flush()
+        ok = script.verify(db, good.version, SNAPSHOT)
+        assert ok["equal"] is True and ok["first_difference"] is None
+        no = script.verify(db, bad.version, SNAPSHOT)
+        assert no["equal"] is False
+        assert no["first_difference"]["line"] == 1
