@@ -120,7 +120,13 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
   const deleteMutation = useDeleteConversationSLAEventLog();
 
-  const { data: eventLogsResponse, isLoading, isPlaceholderData } = useConversationSLAEventLogs(trackingId, {
+  const {
+    data: eventLogsResponse,
+    isLoading,
+    isPlaceholderData,
+    error,
+    refetch,
+  } = useConversationSLAEventLogs(trackingId, {
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
     sort: sorting?.[0]?.id || 'event_at',
@@ -138,7 +144,11 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [eventTypeFilter, dateFrom, dateTo, assignedToFilter]);
 
-  const { data: respondUsers } = useQuery({
+  const {
+    data: respondUsers,
+    error: respondUsersError,
+    refetch: refetchRespondUsers,
+  } = useQuery({
     queryKey: ['respond-synced-users'],
     queryFn: async () => {
       const response = await apiFetch('/api/user-management/users/select?respond_synced=successful');
@@ -331,6 +341,8 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
         recordCount={totalCount}
         isLoading={isLoading}
         isPlaceholderData={isPlaceholderData}
+        error={error}
+        onRetry={() => void refetch()}
         tableLayout={{ columnsVisibility: true }}
         standardToolbar={false}
       >
@@ -396,6 +408,8 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
                           setAssignedToFilter(v);
                           setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                         }}
+                        loadError={respondUsersError}
+                        onRetry={() => void refetchRespondUsers()}
                         options={[
                           { value: '__all__', label: 'All' },
                           ...users.map((u: { id: string; name?: string; email?: string }) => ({

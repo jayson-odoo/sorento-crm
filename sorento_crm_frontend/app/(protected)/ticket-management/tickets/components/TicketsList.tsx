@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import type { ColumnDef, PaginationState, RowSelectionState } from '@tanstack/react-table';
 import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
-import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -60,6 +59,7 @@ export default function TicketsList() {
     pageSize: PAGE_SIZE,
   });
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const {
     value: search,
     setValue: setSearch,
@@ -98,6 +98,7 @@ export default function TicketsList() {
     if (mode !== 'list') return;
     let cancelled = false;
     setLoading(true);
+    setLoadError(null);
     const filters: TicketListFilters & { page: number; limit: number } = {
       page: pagination.pageIndex + 1,
       limit: pagination.pageSize,
@@ -113,8 +114,11 @@ export default function TicketsList() {
         setRows(res.data);
         setTotal(res.pagination.total);
       })
-      .catch((e: Error) => {
-        if (!cancelled) toast.error(e.message);
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setRows([]);
+        setTotal(0);
+        setLoadError(e);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -354,6 +358,8 @@ export default function TicketsList() {
           table={table}
           recordCount={total}
           isLoading={loading}
+          error={loadError}
+          onRetry={() => setReloadTick((t) => t + 1)}
           rowHref={rowHref}
           listingKey="tickets.tickets.view"
           emptyMessage="No tickets match these filters."

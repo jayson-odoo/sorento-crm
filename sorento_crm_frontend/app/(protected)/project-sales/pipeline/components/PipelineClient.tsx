@@ -381,6 +381,7 @@ export function PipelineClient() {
           projects={rows}
           total={total}
           isLoading={projects.isLoading}
+          error={projects.error}
           isFetching={projects.isFetching}
           isPlaceholderData={projects.isPlaceholderData}
           pagination={pagination}

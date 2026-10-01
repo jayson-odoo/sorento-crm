@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
@@ -25,14 +25,22 @@ export default function TicketWatchersSection({ ticket, onChange }: Props) {
   const [adding, setAdding] = useState(false);
   const [pendingUserId, setPendingUserId] = useState('');
   const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
+
+  const loadUsers = useCallback(() => {
+    getUsersSelect()
+      .then((rows) => {
+        setUsers(rows);
+        setLoadError(null);
+      })
+      .catch(setLoadError);
+  }, []);
 
   // Lazy-load user list when the picker is first opened.
   useEffect(() => {
     if (!adding || users.length > 0) return;
-    getUsersSelect()
-      .then(setUsers)
-      .catch((e: Error) => toast.error(e.message));
-  }, [adding, users.length]);
+    loadUsers();
+  }, [adding, users.length, loadUsers]);
 
   const watcherIds = useMemo(
     () => new Set(ticket.watchers.map((w) => w.user_id)),
@@ -108,6 +116,8 @@ export default function TicketWatchersSection({ ticket, onChange }: Props) {
             value={pendingUserId}
             onChange={(v) => add(v)}
             options={options}
+            loadError={loadError}
+            onRetry={loadUsers}
             placeholder={
               users.length === 0
                 ? 'Loading users…'

@@ -73,6 +73,7 @@ export default function PriceTagRequestsList() {
   } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
 
   // Reset page on filter change
   useEffect(() => {
@@ -91,19 +92,36 @@ export default function PriceTagRequestsList() {
       status: statusFilter !== '__all__' ? statusFilter : undefined,
     });
     setData(result);
+    setLoadError(null);
   };
 
   useEffect(() => {
     let cancelled = false;
     setIsLoading(true);
-    fetchData().finally(() => {
-      if (!cancelled) setIsLoading(false);
-    });
+    fetchData()
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setData(null);
+        setLoadError(e);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, statusFilter]);
+
+  const handleRetry = () => {
+    setIsLoading(true);
+    fetchData()
+      .catch((e: unknown) => {
+        setData(null);
+        setLoadError(e);
+      })
+      .finally(() => setIsLoading(false));
+  };
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -364,6 +382,8 @@ export default function PriceTagRequestsList() {
       table={table}
       recordCount={data?.pagination.total ?? 0}
       isLoading={isLoading}
+      error={loadError}
+      onRetry={handleRetry}
       rowHref={detailHref}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsResizable: true }}

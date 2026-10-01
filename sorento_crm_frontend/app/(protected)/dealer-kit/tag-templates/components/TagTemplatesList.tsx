@@ -42,6 +42,7 @@ export function TagTemplatesList() {
 
   const [templates, setTemplates] = useState<TagTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -54,6 +55,10 @@ export function TagTemplatesList() {
     try {
       const data = await listTemplates();
       setTemplates(data);
+      setLoadError(null);
+    } catch (e) {
+      setTemplates([]);
+      setLoadError(e);
     } finally {
       setIsLoading(false);
     }
@@ -282,6 +287,8 @@ export function TagTemplatesList() {
             table={table}
             recordCount={templates.length}
             isLoading={isLoading}
+            error={loadError}
+            onRetry={() => void fetchData()}
             tableLayout={{ width: 'fixed', columnsResizable: true }}
             rowPending={rowPending}
             onRowClick={(row) =>
