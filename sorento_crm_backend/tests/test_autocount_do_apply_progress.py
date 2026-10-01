@@ -145,6 +145,8 @@ class TestApplyPublishesProgress:
 
         _run_apply(monkeypatch, factory, first)
 
+        # The publisher's last call carries the same numbers, so this alone does not prove
+        # the apply wrote them itself; test_ac4 (publisher broken) pins that.
         assert _job_progress(db, first) == {
             "processed_rows": 2, "successful_rows": 1, "failed_rows": 1,
             "skipped_rows": 0, "total_rows": 2,
@@ -184,6 +186,17 @@ class TestProgressNeverTouchesTheBatch:
             raise RuntimeError("boom after the ingest")
 
         monkeypatch.setattr(AutocountDocIngestService, "ingest", ingest_then_blow_up)
+        # On one shared connection the apply's rollback also unwinds the publisher's own
+        # savepoints, so stand in for what a separate connection would already have
+        # committed by the time the apply fails.
+        db.execute(
+            text(
+                "UPDATE import_jobs SET successful_rows = 2, failed_rows = 1, skipped_rows = 1 "
+                "WHERE id = :id"
+            ),
+            {"id": str(job_id)},
+        )
+        db.commit()
 
         _run_apply(monkeypatch, factory, job_id)
 
@@ -192,6 +205,9 @@ class TestProgressNeverTouchesTheBatch:
         assert "boom" in (row["error"] or "")
         assert len(progress_calls) >= 2, "the run published no mid-ingest progress"
         assert _orders(db, 900001, 900002) == []
+        # The published tallies would otherwise claim two documents written.
+        progress = _job_progress(db, job_id)
+        assert (progress["successful_rows"], progress["failed_rows"], progress["skipped_rows"]) == (0, 0, 0)
 
     def test_ac4_a_failing_progress_publish_never_fails_the_apply(self, task_db, monkeypatch):
         from app.services.job_service import JobService

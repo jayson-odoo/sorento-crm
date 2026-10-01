@@ -1,6 +1,9 @@
 # PLAN: AutoCount DO Apply job shows live progress and counts (DO-APPLY-PROGRESS)
 
-Status: in progress (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+Status: in review, PR #1414 (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+
+A failed apply zeroes successful/failed/skipped (the batch rolled back, so published tallies
+would overstate it). Browser evidence: `evidence/do-apply-progress/README.md`.
 
 ## Journey
 

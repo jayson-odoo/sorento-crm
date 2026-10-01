@@ -201,8 +201,9 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   const queryClient = useQueryClient();
 
   // The job query is only refetched on focus, so a job that finishes while the page is open
-  // kept its running copy (no final counts, no metadata). Re-read it once the 2s status poll
-  // reports a terminal status the loaded job does not have yet.
+  // kept its running copy (no final counts, no metadata), and the rows card kept the empty
+  // page it read mid-run. Re-read both once the 2s status poll reports a terminal status the
+  // loaded job does not have yet.
   const polledStatus = statusData?.status;
   const loadedStatus = job?.status;
   useEffect(() => {
@@ -213,6 +214,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
       TERMINAL_STATUSES.includes(polledStatus)
     ) {
       queryClient.invalidateQueries({ queryKey: ['import-job', id] });
+      queryClient.invalidateQueries({ queryKey: ['import-job-rows', id] });
     }
   }, [polledStatus, loadedStatus, id, queryClient]);
 

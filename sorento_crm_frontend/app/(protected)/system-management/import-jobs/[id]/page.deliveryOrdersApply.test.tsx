@@ -222,4 +222,24 @@ describe('a running apply shows the polled progress, then the final counts', () 
     await waitFor(() => expect(getImportJob).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(valueOf(resultsCard(), 'Lines deleted')).toBe('23'));
   });
+
+  it('does not re-read a job the page already loaded as finished', async () => {
+    getImportJob.mockResolvedValue(applyJob());
+    getImportJobStatus.mockResolvedValue({
+      job_id: 'job-apply',
+      status: 'finished',
+      progress: { total: 6487, processed: 6487, successful: 6460, failed: 16, skipped: 11, percentage: 100 },
+    });
+
+    await act(async () => {
+      render(wrap(<ImportJobDetailPage params={PARAMS} />));
+    });
+
+    await screen.findByText('Results');
+    await waitFor(() => expect(getImportJobStatus).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(getImportJob).toHaveBeenCalledTimes(1);
+  });
 });

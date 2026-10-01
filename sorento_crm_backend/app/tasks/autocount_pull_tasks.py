@@ -256,6 +256,11 @@ def apply_autocount_pull(db_job_id: str) -> None:
             logger.warning(
                 "autocount pull apply failed job=%s entity=%s", db_job_id, entity, exc_info=True
             )
+            # The batch rolled back, so tallies the progress publisher already committed
+            # (DO-APPLY-PROGRESS) would claim documents that were never written.
+            job.successful_rows = 0
+            job.failed_rows = 0
+            job.skipped_rows = 0
             job.status = JobStatus.FAILED.value
             job.error = str(exc)[:2000]
             job.completed_at = datetime.utcnow()
@@ -843,7 +848,7 @@ def _apply_delivery_orders(db, job: ImportJob, snapshot_id: str) -> dict:
     result = ingest.ingest(
         DELIVERY_ORDERS_ENTITY, records,
         on_progress=lambda processed, total: _publish_apply_progress(
-            job_id, ingest.live_records[:processed], total
+            job_id, ingest.live_records, total
         ),
     )
     db.commit()
