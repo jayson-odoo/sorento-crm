@@ -45,7 +45,6 @@ from tests.chatbot.test_escalation_control import (
 )
 from tests.chatbot.test_stock_ask_notify import LiveDealer
 
-pytestmark = pytest.mark.usefixtures("_no_real_mcp_calls", "_stub_casual_llm")
 
 BACKEND = Path(__file__).resolve().parents[2]
 MCP_ROOT = BACKEND.parent / "sorento_crm_mcp"
