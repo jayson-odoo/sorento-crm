@@ -7,16 +7,24 @@ Plan: `PLAN-ns-smoke-all-routes.md`.
    restricted, expired. A new `page.tsx` joins with no registration.
 2. Admin / restricted: a visible `[data-loading]` element or a spinner outside a button 15 s after
    navigation fails the route with "still loading after 15s".
-3. Expired: a route not on `/signin` within 5 s fails with "expired session not on /signin".
-4. Restricted: a 403 from `/api/v1/` plus empty / not-found copy and no `AccessDenied` on screen
-   fails with "refusal rendered as empty" naming the refused endpoint(s).
+3. Expired: a route not on `/signin` within 5 s of navigation start fails with "expired session
+   not on /signin within 5s" and the measured time.
+4. Restricted: a 403 from `/api/v1/` plus empty / not-found copy (a line opening with "No" /
+   "Nothing", or "not found" / "does not exist") and no `AccessDenied` on screen fails with
+   "refusal rendered as empty" naming the refused endpoint(s). Detail routes other than user
+   detail open a missing record, so tabs that only load for a real record are not covered yet.
 5. Any persona: `Permission required:`, `One of these permissions required` or
    `Module not enabled:` on screen fails with "raw permission text on screen".
 6. Admin / restricted landing on `/signin` fails with "live session bounced to /signin".
-7. Each entry in `known-failures.json` carries an audit row id; it runs as an expected failure,
-   and passing turns the night red with "known failure now passing".
+7. Each entry in `known-failures.json` carries an audit row id (`route: "*"` = every route of
+   that persona). Its route still runs; a failure is reported in the summary's folded "known
+   failures still failing" table without failing the night, and a pass is listed under "known
+   failures that passed tonight".
 8. The nightly job runs on cron and on dispatch only, never on a PR or push, and skips itself
    when main's head already has a green run. Its summary lists new failures first, then known
    failures now passing, then counts; screenshots are in the `never-stuck-report` artifact.
-9. The seed script refuses any `DATABASE_URL` whose host is not localhost.
+9. The seed script and the runner refuse any `DATABASE_URL` that is not a local database named
+   `*_smoke` / `*_ci`.
 10. `npm run test:e2e` (the default config) does not pick up the smoke spec.
+11. `Skeleton` / `ScreenLoader` render `data-loading` and `AccessDenied` renders
+   `data-access-denied` (vitest `components/never-stuck-markers.test.tsx`).

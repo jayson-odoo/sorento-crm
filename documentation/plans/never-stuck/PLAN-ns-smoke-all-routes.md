@@ -1,6 +1,6 @@
 # PLAN: NS-SMOKE-ALL-ROUTES (Never-stuck guard G4)
 
-Status: Build (small fix track: test + CI + three marker attributes, no migration, no auth/RBAC
+Status: Review (small fix track: test + CI + three marker attributes, no migration, no auth/RBAC
 change, no product behaviour change). UAC: `ns-smoke-all-routes-acceptance-criteria.md`.
 
 Standard: `documentation/reference/NEVER-STUCK-UI.md`. Source: audit
@@ -48,8 +48,20 @@ it merges instead of when a user hits it.
   reading SCM endpoints, PR #1413).
 - **Refusal rendered as empty** = a 403 on `/api/v1/` during the visit, no `[data-access-denied]`
   on screen, and empty / not-found copy on screen.
-- **Known failures** run under `test.fail()` with the audit row id; one that starts passing
-  fails the night as "fixed, delete the entry" (ratchet).
+- **Known failures are reported, not failed.** Each entry carries an audit row id
+  (`route: "*"` covers a persona's every route). The route still runs; its problems go into
+  the summary's folded "still failing" table and the night stays green for it. One that
+  passes is listed under "passed tonight" so the entry gets retired. Not `test.fail()`
+  (a ratchet that fails the night a known row passes): measured, the expired-session
+  redirect is timing-bound and flaps run to run, so a strict ratchet would page on noise.
+- **2 Playwright workers.** Measured on a 4-core sandbox: at 4, the backend saturates
+  (`/me/permissions` 3-7 s) and the dashboard's loaders flap past 15 s for reasons that are
+  load, not product; at 2, the packing-list slice was 24/24 twice.
+- **Settled** means: the document reached `load`, then no loader on two reads 500 ms apart
+  inside the 15 s budget (a blank pre-render page never counts as settled).
+- **Runner safety.** Local DB named `*_smoke` / `*_ci` only (seed and runner both refuse
+  anything else), backend reads no `.env` (`SORENTO_ENV_FILE` = empty file), its own
+  `NEXT_DIST_DIR=.next-never-stuck`, refuses busy ports.
 - **Cost**: one job, nightly + dispatch only, never on PR or push; skips itself when main's head
   already passed. No labels touched.
 - **Production build in CI**, not `next dev`: dev compiles each route on first hit, which would

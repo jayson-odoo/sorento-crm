@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Turns the never-stuck smoke's Playwright JSON report into a short Markdown summary:
- * new failures first (what to fix), then known failures that now pass (entries to delete
- * from known-failures.json), then counts. Written to $GITHUB_STEP_SUMMARY in CI and to
+ * counts, new failures (what to fix), known failures that passed tonight (entries to
+ * retire), then the known failures still failing, folded. Written to $GITHUB_STEP_SUMMARY in CI and to
  * stdout always.
  *
  *   node e2e/never-stuck/summarize.mjs test-results/never-stuck/results.json
@@ -72,7 +72,15 @@ if (stillKnown.length) {
   for (const r of stillKnown) out.push(`| \`${esc(r.title)}\` | ${esc(r.audit)} |`);
   out.push('', '</details>', '');
 }
-if (!newFailures.length) out.push('Nothing new is stuck.', '');
+// A run that died in global setup (sign-in, seed) reports errors and no tests: say so
+// rather than print a green line over a red job.
+const errors = (report.errors ?? []).map((e) => (e.message ?? String(e)).split('\n')[0]);
+if (errors.length) {
+  out.push('### Run errors (no route was checked)', '');
+  for (const e of errors) out.push(`- ${e.replace(/\u001b\[[0-9;]*m/g, '')}`);
+  out.push('');
+}
+if (!newFailures.length && !errors.length && rows.length > skipped.length) out.push('Nothing new is stuck.', '');
 
 const md = out.join('\n');
 console.log(md);

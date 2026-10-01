@@ -9,7 +9,6 @@
  * a signed-in shell whose every API call answers 401.
  */
 import fs from 'node:fs';
-import path from 'node:path';
 import { request, type FullConfig } from '@playwright/test';
 import { PERSONAS, STATE_DIR, loadSeed, statePath } from './routes';
 
@@ -47,5 +46,4 @@ export default async function globalSetup(config: FullConfig) {
     }
     await ctx.dispose();
   }
-  fs.writeFileSync(path.join(STATE_DIR, 'ready'), new Date().toISOString());
 }

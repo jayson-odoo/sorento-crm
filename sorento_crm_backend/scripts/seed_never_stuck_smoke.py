@@ -7,14 +7,16 @@ but seeds no users, so this adds them, idempotently:
 - admin: the seeded `admin` role, which passes every backend gate.
 - restricted: one role holding ONLY the procurement module's `.view` slugs plus
   `user_management.account.view`. That is the procurement-only role from the audit's
-  top rows (packing-list tabs reading SCM endpoints the role cannot see, PR #1413), so
-  the smoke walks the exact shape the owner hit.
+  top rows (packing-list tabs reading SCM endpoints the role cannot see, PR #1413). Its
+  detail routes open a missing record (only user detail is seeded), so a tab that loads
+  only once its record exists is not exercised yet; see `records` below.
 - expired: a plain user whose session the spec revokes after sign-in, so its NextAuth
   cookie stays valid while every FastAPI call answers 401 (the owner's report).
 
 Every user is granted the default company. Prints the manifest the spec reads as JSON
-(`--out` writes it to a file). Refuses any database that is not on localhost: this is
-for a throwaway CI or sandbox database only.
+(`--out` writes it to a file). Refuses any database that is not local AND named
+`*_smoke` / `*_ci`: the admin it adds has a published password, so this is for a
+throwaway CI or sandbox database only, never a dev prod-copy.
 
     DATABASE_URL=postgresql://localhost/sorento_smoke python -m scripts.seed_never_stuck_smoke \
         --out ../sorento_crm_frontend/e2e/.never-stuck-seed.json
@@ -42,11 +44,15 @@ PERSONAS = {
 }
 
 
-def _require_local_db() -> str:
+def _require_throwaway_db() -> str:
     url = os.environ.get("DATABASE_URL", "")
-    host = urlparse(url).hostname
-    if host not in ("localhost", "127.0.0.1"):
-        sys.exit(f"refusing to seed smoke users into a non-local database (host={host!r})")
+    parsed = urlparse(url)
+    name = parsed.path.lstrip("/")
+    if parsed.hostname not in ("localhost", "127.0.0.1") or not name.endswith(("_smoke", "_ci")):
+        sys.exit(
+            "refusing to seed smoke users: DATABASE_URL must be a local database named "
+            f"*_smoke or *_ci (host={parsed.hostname!r}, name={name!r})"
+        )
     return url
 
 
@@ -116,7 +122,8 @@ def seed(password: str) -> dict:
             "personas": {key: {"email": PERSONAS[key]["email"], "id": u.id} for key, u in users.items()},
             "restrictedSlugs": slugs,
             # Route template -> a real id, for the detail routes this seed can fill. Every
-            # other dynamic route is opened with a missing-record id (see the spec).
+            # other dynamic route is opened with a missing-record id (see the spec). Add a
+            # row here when a fix lane wants its detail page smoked against real data.
             "records": {
                 "/user-management/users/[id]": users["restricted"].id,
             },
@@ -129,7 +136,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", help="write the manifest JSON here as well as to stdout")
     args = parser.parse_args()
-    _require_local_db()
+    _require_throwaway_db()
     manifest = seed(os.environ.get("NEVER_STUCK_PASSWORD", DEFAULT_PASSWORD))
     text = json.dumps(manifest, indent=2)
     if args.out:

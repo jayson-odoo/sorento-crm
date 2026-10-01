@@ -18,7 +18,8 @@
  * route for that persona). They still run and are reported, but do not fail the night;
  * the summary names the ones that passed so their entries get deleted.
  *
- * Run (needs the stack up and seeded; recipe in `never-stuck/README.md`):
+ * Run: `scripts/never-stuck-smoke.sh` boots, seeds and runs it end to end. Against a stack
+ * already up and seeded:
  *   NEVER_STUCK_SEED=e2e/.never-stuck/seed.json \
  *     npx playwright test -c playwright.never-stuck.config.ts
  */
@@ -39,9 +40,15 @@ const SIGNIN_MS = 5_000;
 
 const RAW_PERMISSION_TEXT =
   /Permission required:|One of these permissions required|Module not enabled:/;
-/** Copy a page shows when it decided there is nothing: list empties and not-found states. */
-const EMPTY_STATE_TEXT =
-  /No data available|No [\w\s-]{1,40} (?:yet|found)\b|nothing (?:here|to show)|not found|doesn't exist|does not exist/i;
+/**
+ * Copy a page shows when it decided there is nothing. The app's empty states open a line
+ * with "No" / "Nothing" ("No proforma invoice behind this container.", "No projects match",
+ * "Nothing is quoted on this project yet"), case-sensitive so "no" inside a word never
+ * matches; plus the not-found states. Only read after a 403, so its breadth is bounded.
+ */
+const EMPTY_LINE = /(?:^|\n)[ \t]*((?:No|Nothing)\b[^\n]{0,80})/;
+const NOT_FOUND = /\bnot found\b|doesn't exist|does not exist/i;
+const emptyStateText = (text: string) => text.match(EMPTY_LINE)?.[1] ?? text.match(NOT_FOUND)?.[0];
 
 interface KnownFailure {
   persona: Persona;
@@ -67,7 +74,7 @@ async function visibleLoaders(page: Page): Promise<string[]> {
       if (el.closest('button')) return;
       const box = el.getBoundingClientRect();
       if (box.width === 0 || box.height === 0) return;
-      if (!(el as Element & { checkVisibility?: () => boolean }).checkVisibility?.()) return;
+      if ((el as Element & { checkVisibility?: () => boolean }).checkVisibility?.() === false) return;
       const kind = el.getAttribute('data-slot') ?? (el.hasAttribute('data-loading') ? 'loader' : 'spinner');
       const region = el.closest('section, [role=tabpanel], [role=dialog], main, header, aside');
       const label = (region?.querySelector('h1, h2, h3, [role=tab][aria-selected=true]')?.textContent ?? '')
@@ -79,18 +86,26 @@ async function visibleLoaders(page: Page): Promise<string[]> {
   });
 }
 
-/** Settled = no loading placeholder on two reads 500 ms apart. Returns what is still loading. */
+/**
+ * Settled = no loading placeholder on two reads 500 ms apart, inside the budget. Returns
+ * what is still loading. Always reads at least once, and a budget that ran out before two
+ * clear reads is not settled: it returns the last loaders seen (or says it never got to look).
+ */
 async function waitSettled(page: Page, budgetMs: number): Promise<string[]> {
   const deadline = Date.now() + budgetMs;
   let clearReads = 0;
-  let last: string[] = [];
-  while (Date.now() < deadline) {
-    last = await visibleLoaders(page).catch(() => ['page not readable']);
-    clearReads = last.length === 0 ? clearReads + 1 : 0;
+  let lastSeen: string[] = ['no time left to check after the document loaded'];
+  do {
+    const now = await visibleLoaders(page).catch(() => ['page not readable']);
+    if (now.length === 0) clearReads += 1;
+    else {
+      clearReads = 0;
+      lastSeen = now;
+    }
     if (clearReads >= 2) return [];
     await page.waitForTimeout(500);
-  }
-  return last;
+  } while (Date.now() < deadline);
+  return lastSeen;
 }
 
 const onSignIn = (url: string) => /\/signin(?:[/?#]|$)/.test(new URL(url).pathname + new URL(url).search);
@@ -134,7 +149,12 @@ for (const persona of PERSONAS) {
             })
             .then(() => true)
             .catch(() => false);
-          if (!landed) problems.push(`expired session not on /signin after ${SIGNIN_MS / 1000}s (at ${page.url()})`);
+          const took = Date.now() - started;
+          if (!landed || took > SIGNIN_MS) {
+            problems.push(
+              `expired session not on /signin within ${SIGNIN_MS / 1000}s (${(took / 1000).toFixed(1)}s, at ${page.url()})`,
+            );
+          }
         } else {
           const stuck = await waitSettled(page, SETTLE_MS - (Date.now() - started));
           if (stuck.length) {
@@ -150,10 +170,10 @@ for (const persona of PERSONAS) {
 
         if (persona === 'restricted' && refused.length > 0) {
           const denied = await page.locator('[data-access-denied]').count();
-          const empty = text.match(EMPTY_STATE_TEXT);
+          const empty = emptyStateText(text);
           if (denied === 0 && empty) {
             problems.push(
-              `refusal rendered as empty ("${empty[0]}") after 403 on ${[...new Set(refused)].join(', ')}`,
+              `refusal rendered as empty ("${empty}") after 403 on ${[...new Set(refused)].join(', ')}`,
             );
           }
         }
