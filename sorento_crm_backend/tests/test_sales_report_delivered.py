@@ -248,9 +248,13 @@ def test_a_percent_discount_below_100_is_a_fraction(client, db):
 
 
 def test_a_legacy_do_with_more_than_one_distinct_total_sums_its_own_line_math(client, db):
-    """Fix round 1, S1 (owner ruling, option a): a legacy DO whose lines carry MORE THAN ONE
-    distinct total is not one repeated DOC total, so nothing is split: each line is
-    qty x unit price x (1 - discount), rounded to the sen. Two real shapes, made-up codes:
+    """Fix round 1, S1 (owner ruling, option a) refined by fix round 2, rule a2: a legacy DO
+    whose lines carry MORE THAN ONE distinct total is not one repeated DOC total, so nothing
+    is split: each line is the LESSER of qty x unit price x (1 - discount), rounded to the sen,
+    and the line's own total (a NULL total is the line math). Three real shapes, made-up codes:
+
+    * 202606-3968: 2 x 370 (total 396.27) and 3 x 370 (total 594.41) -> 396.27 + 594.41 = 990.68
+      (the stored totals are below the list-price math);
 
     * PS202607-0355: 2 x 523 (total 1046) and 3 x 523 (total 1569) -> 1,046 + 1,569 = 2,615.00;
     * M2609-0511: 3 x 320 d0 (960), 3 x 14 d1 (960), 2 x 320 d0 (640), 2 x 14 d1 (640)
@@ -272,14 +276,21 @@ def test_a_legacy_do_with_more_than_one_distinct_total_sums_its_own_line_math(cl
                 line(m[2].id, wh.id, 2, price=D("320"), discount=D("0"), total=D("640.00")),
                 line(m[3].id, wh.id, 2, price=D("14"), discount=D("1"), total=D("640.00")),
             ])
+    r = [product(db, company_id=DEFAULT_COMPANY_ID, code=f"ZZT-MIX-R-{i}") for i in range(2)]
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 6, 20), number="ZZT-R3968", source_book=None,
+            lines=[
+                line(r[0].id, wh.id, 2, price=D("370"), total=D("396.27")),
+                line(r[1].id, wh.id, 3, price=D("370"), total=D("594.41")),
+            ])
     db.commit()
 
     by_do = _get(client, customer_ids=cust.id, group_by="delivery_order")
     assert {r["name"]: money(r["amount"]) for r in by_do["rows"]} == {
         "ZZT-PS0355": D("2615.00"),
         "ZZT-M0511": D("1600.00"),
+        "ZZT-R3968": D("990.68"),
     }, by_do["rows"]
-    assert money(by_do["total"]["amount"]) == D("4215.00"), by_do
+    assert money(by_do["total"]["amount"]) == D("5205.68"), by_do
 
     by_product = _get(client, customer_ids=cust.id, group_by="product")
     assert {r["name"]: money(r["amount"]) for r in by_product["rows"]} == {
@@ -289,6 +300,8 @@ def test_a_legacy_do_with_more_than_one_distinct_total_sums_its_own_line_math(cl
         "ZZT-MIX-M-2": D("640.00"),
         "ZZT-MIX-M-1": D("0.00"),
         "ZZT-MIX-M-3": D("0.00"),
+        "ZZT-MIX-R-1": D("594.41"),
+        "ZZT-MIX-R-0": D("396.27"),
     }, by_product["rows"]
 
 

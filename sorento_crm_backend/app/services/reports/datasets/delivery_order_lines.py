@@ -17,9 +17,9 @@ product, period, DO, sales agent) sums to the same Total to the sen:
   rounded running total minus the rounded running total before it), so the shares sum to
   the DOC total exactly, the last sen included;
 * a legacy DO whose lines carry MORE THAN ONE distinct total is not a repeated DOC total
-  (owner ruling, PR #1401 fix round 1): each line is its own qty x unit price x
-  (1 - discount), rounded to the sen. The discount is normalised first
-  (`discount_fraction`).
+  (owner ruling, PR #1401 fix round 1; rule a2, fix round 2): each line is the LESSER of its
+  own qty x unit price x (1 - discount), rounded to the sen, and its stored total (none
+  stored = the line math). The discount is normalised first (`discount_fraction`).
 
 The DO-level filters a run names (its customers, its window, its company grant) are pushed
 into that subquery as well: a share is a fraction of its whole DO, so only a filter that
@@ -117,6 +117,7 @@ def _line_amounts(ctx: Any) -> Any:
             OrderLine.line_sequence.label("line_sequence"),
             Order.source_book.label("source_book"),
             sa.func.coalesce(OrderLine.total, 0).label("line_total"),
+            OrderLine.total.label("stored_total"),
             weight.label("weight"),
             sa.func.coalesce(sa.func.max(OrderLine.total).over(partition_by=partition), 0).label("doc_total"),
             # Postgres has no COUNT(DISTINCT) window: min <> max is "more than one total".
@@ -144,9 +145,16 @@ def _line_amounts(ctx: Any) -> Any:
     amount = sa.case(
         (lines.c.source_book.isnot(None), sa.func.round(lines.c.line_total, 2)),
         # A legacy DO whose lines carry more than one distinct total is not one repeated DOC
-        # total (owner ruling, fix round 1 S1): each line is its own qty x price x (1 -
-        # discount), rounded to the sen, and nothing is split.
-        (lines.c.mixed_totals.is_(True), sa.func.round(lines.c.weight, 2)),
+        # total (owner ruling, fix round 1 S1; rule a2, fix round 2): each line is the lesser
+        # of its own qty x price x (1 - discount), rounded to the sen, and its stored total
+        # (none stored = the line math). Nothing is split.
+        (
+            lines.c.mixed_totals.is_(True),
+            sa.func.least(
+                sa.func.round(lines.c.weight, 2),
+                sa.func.coalesce(sa.func.round(lines.c.stored_total, 2), sa.func.round(lines.c.weight, 2)),
+            ),
+        ),
         else_=sa.func.round(running, 2) - sa.func.round(running - share, 2),
     )
     subquery = sa.select(lines.c.line_id, amount.label("amount")).subquery("do_line_amounts")
