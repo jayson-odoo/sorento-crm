@@ -14,6 +14,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 vi.mock('next-auth/react', () => ({
   signOut: vi.fn(async () => undefined),
 }));
+const toastInfo = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/toast', () => ({ toast: { info: toastInfo } }));
 
 const IMP_KEY = 'impersonation-session-v1';
 const VIEW_AS = {
@@ -58,8 +60,12 @@ async function settle() {
   await vi.waitFor(() => expect(assign).toHaveBeenCalled());
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  const nextAuth = await import('next-auth/react');
+  vi.mocked(nextAuth.signOut).mockClear();
+  vi.mocked(nextAuth.signOut).mockImplementation(async () => undefined);
   vi.resetModules();
+  toastInfo.mockClear();
   window.localStorage.clear();
   window.history.replaceState(null, '', '/procurement-management/packing-lists/pl-1/lines?x=1');
   fetchMock = vi.fn();
@@ -151,9 +157,14 @@ describe('FastAPI says the session is dead (401 with a session_* code)', () => {
     });
     const { apiFetch, impersonationStore } = await load();
 
-    await Promise.all([apiFetch('/api/v1/a'), apiFetch('/api/v1/b'), apiFetch('/api/v1/c')]);
+    await Promise.all(
+      Array.from({ length: 10 }, (_, i) => apiFetch(`/api/v1/parallel-${i}`)),
+    );
     await settle();
 
+    // The latch is taken before any await: ten parallel 401s, ONE sign-out, ONE navigation.
+    const nextAuth = await import('next-auth/react');
+    expect(vi.mocked(nextAuth.signOut)).toHaveBeenCalledTimes(1);
     expect(assign).toHaveBeenCalledTimes(1);
     expect(impersonationStore.getState()).toBeNull();
     // The refresh is ONE shared token read, not one per failed call.
@@ -263,5 +274,74 @@ describe('endSessionAndRedirect', () => {
 
     expect(assign).toHaveBeenCalledTimes(1);
     expect(assign).toHaveBeenCalledWith('/signin');
+  });
+});
+
+describe('stale view-as: the backend ignored X-Impersonate-User-Id', () => {
+  const ended = (body: unknown = { ok: true }) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'X-Impersonation-Ended': '1' },
+    });
+
+  it('ends view-as locally, says so once, refetches, and does not sign out', async () => {
+    window.localStorage.setItem(IMP_KEY, JSON.stringify(VIEW_AS));
+    fetchMock.mockImplementation(async (input: RequestInfo) => {
+      if (String(input).includes('/api/auth/token')) return json({ token: 'tok' });
+      return ended();
+    });
+    const { apiFetch, impersonationStore, registerViewAsEndedHandler, isSessionEnding } = await load();
+    const refetch = vi.fn();
+    registerViewAsEndedHandler(refetch);
+
+    await Promise.all([apiFetch('/api/v1/a'), apiFetch('/api/v1/b')]);
+
+    const sent = v1Calls().map((c) => new Headers(c[1]?.headers as HeadersInit).get('X-Impersonate-User-Id'));
+    expect(sent).toEqual(['u-kx', 'u-kx']);
+    expect(impersonationStore.getState()).toBeNull();
+    expect(window.localStorage.getItem(IMP_KEY)).toBeNull();
+    expect(toastInfo).toHaveBeenCalledTimes(1);
+    expect(toastInfo).toHaveBeenCalledWith('View-as ended - you are seeing your own data', {
+      id: 'view-as-ended',
+    });
+    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(isSessionEnding()).toBe(false);
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('a late answer for an older view-as leaves the current one alone', async () => {
+    window.localStorage.setItem(IMP_KEY, JSON.stringify(VIEW_AS));
+    let release: (r: Response) => void = () => undefined;
+    fetchMock.mockImplementation((input: RequestInfo) => {
+      if (String(input).includes('/api/auth/token')) return Promise.resolve(json({ token: 'tok' }));
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    });
+    const { apiFetch, impersonationStore } = await load();
+
+    const pending = apiFetch('/api/v1/a');
+    await vi.waitFor(() => expect(v1Calls()).toHaveLength(1));
+    const next = { ...VIEW_AS, targetUser: { ...VIEW_AS.targetUser, id: 'u-other' } };
+    impersonationStore.setSession(next);
+    release(ended());
+    await pending;
+
+    expect(impersonationStore.getState()?.targetUser.id).toBe('u-other');
+    expect(toastInfo).not.toHaveBeenCalled();
+  });
+
+  it('no signal, no change', async () => {
+    window.localStorage.setItem(IMP_KEY, JSON.stringify(VIEW_AS));
+    fetchMock.mockImplementation(async (input: RequestInfo) => {
+      if (String(input).includes('/api/auth/token')) return json({ token: 'tok' });
+      return json({ ok: true });
+    });
+    const { apiFetch, impersonationStore } = await load();
+
+    await apiFetch('/api/v1/a');
+
+    expect(impersonationStore.getState()?.targetUser.id).toBe('u-kx');
+    expect(toastInfo).not.toHaveBeenCalled();
   });
 });
