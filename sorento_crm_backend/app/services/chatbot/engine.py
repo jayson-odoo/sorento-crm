@@ -515,6 +515,21 @@ def _scoped_factory(factory: SessionFactory, scope: frozenset) -> SessionFactory
 # --------------------------------------------------------------------------- #
 
 
+def _refer_tracked(fn: Any) -> Any:
+    """CUSTOMER-ASKS-REFER-ONLY: one refer mark per turn (`turn/refer.py`). A tail called
+    from inside the head shares the head's mark."""
+    import functools
+
+    from app.services.chatbot.turn import refer
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        with refer.tracking():
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
 def _tf_message(envelope: Envelope) -> dict[str, Any]:
     """`tf-message`: the respond.io webhook body carried on the envelope."""
     return envelope.message or {}
@@ -2168,6 +2183,7 @@ def _top_selling_verdict(
     return out, state, "top_selling_split_token"
 
 
+@_refer_tracked
 def run_turn(
     envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
 ) -> TurnResult:
@@ -5128,24 +5144,6 @@ def _run_stages(  # noqa: PLR0915
             # PR #1329 (ETA policy): a dealer's incoming reply is the same, so an
             # incoming miss no longer offers the purchasing team.
             answer = _dealer_refers_to_salesman(answer)
-            # REFER-SALESMAN (owner ruling 30 Sep 2026): every reply that refers the dealer
-            # to their salesman is a Customer asks row. The stock ask's own entries are
-            # already in `stock_ask_entries`; this adds the incoming ETA lines, the misses
-            # and a declined did-you-mean, read off what the turn already knows, and
-            # `_run_answer` writes them through the same `stock_ask_service` road.
-            from app.services.chatbot import refer_asks
-
-            stock_ask_entries = [
-                *stock_ask_entries,
-                *refer_asks.referred_entries(
-                    reply_text=getattr(answer, "text", "") or "",
-                    envelopes=envelopes,
-                    plan=plan,
-                    pending_before=state_in.pending,
-                    message_text=latest_user_message,
-                    answered=stock_ask_entries,
-                ),
-            ]
         elif in_ranking_conversation:
             answer = _without_escalation_offer(answer)
         return _run_answer(
@@ -5165,6 +5163,14 @@ def _run_stages(  # noqa: PLR0915
             verdict=verdict,
             recalled=recalled,
             stock_ask_entries=stock_ask_entries,
+            # REFER-SALESMAN / CUSTOMER-ASKS-REFER-ONLY: what `refer_asks` names a refer
+            # reply's rows by, read once the reply is final (`_run_answer`).
+            refer_context={
+                "envelopes": envelopes,
+                "plan": plan,
+                "pending_before": state_in.pending,
+                "message_text": latest_user_message,
+            },
             chat_console=_chat_console(envelope),
         )
 
@@ -5375,6 +5381,7 @@ def _run_stages(  # noqa: PLR0915
             contact_respond_id=contact_respond_id,
             recalled=recalled,
             fallback=fallback_ctx,
+            chat_console=_chat_console(envelope),
         )
 
     return TurnResult(
@@ -5542,6 +5549,7 @@ def _run_answer(
     recalled: list[dict[str, Any]],
     stock_ask_entries: list[dict[str, Any]] | None = None,
     chat_console: bool = False,
+    refer_context: dict[str, Any] | None = None,
 ) -> TurnResult:
     """G TAIL for a turn the composer answered: persist, record, hand the actions back.
 
@@ -5639,22 +5647,18 @@ def _run_answer(
             response={"ctx": ctx, "item": item, "actions": lane_actions, "reply": reply},
         )
 
-    if stock_ask_entries and (not dry_run or chat_console):
-        # Chatbot stock ask v2 S4 / S5 (AC-SA401, AC-SA402, AC-SA501): AFTER the turn row
-        # is closed, never before. A live turn, and (owner ruling 28 Sep 2026) a CHAT
-        # CONSOLE turn, write the ask rows and enqueue the real salesman job; every other
-        # dry run does neither (D14). The console's own reply stays a dry run: its
-        # actions carry `dry_run: true` and nothing here sends them. The send is a
-        # queued job, so Respond never holds the dealer's reply up.
-        _after_stock_ask_turn(
-            session_factory,
-            turn_id=turn_id,
-            contact_respond_id=contact_respond_id,
-            state=state,
-            entries=stock_ask_entries,
-            reply_text=reply.get("text") or "",
-            source="console" if dry_run else "live",
-        )
+    _record_customer_asks(
+        session_factory,
+        turn_id=turn_id,
+        contact_respond_id=contact_respond_id,
+        state=state,
+        stock_entries=stock_ask_entries or [],
+        reply_text=reply.get("text") or "",
+        refer_context=refer_context,
+        ctx=ctx,
+        dry_run=dry_run,
+        chat_console=chat_console,
+    )
 
     return TurnResult(
         turn_id=turn_id,
@@ -6283,6 +6287,7 @@ def _run_casual_lane(
     contact_respond_id: str | None = None,
     recalled: list[dict[str, Any]] | None = None,
     fallback: Any = None,
+    chat_console: bool = False,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
@@ -6509,6 +6514,7 @@ def _run_casual_lane(
         # The clarifier asks nothing of its own, so whatever question was open before
         # this greeting is still open after it (contract 36 / 56, cluster 4's carry).
         state=state,
+        chat_console=chat_console,
     )
 
     return TurnResult(
@@ -7252,6 +7258,75 @@ def _stock_ask_answered_entries(envelopes: list[dict[str, Any]]) -> list[dict[st
     return entries
 
 
+def _ctx_message_text(ctx: Any) -> str:
+    """What the customer typed this turn (`ctx.text.message.message.text`)."""
+    inner = jsc.get(jsc.get(jsc.get(ctx, "text"), "message"), "message")
+    value = jsc.get(inner, "text")
+    return jsc.js_string(value) if jsc.truthy(value) else ""
+
+
+def _record_customer_asks(
+    session_factory: SessionFactory,
+    *,
+    turn_id: str,
+    contact_respond_id: str,
+    state: Any,
+    stock_entries: list[dict[str, Any]],
+    reply_text: str,
+    refer_context: dict[str, Any] | None,
+    ctx: Any,
+    dry_run: bool,
+    chat_console: bool,
+) -> None:
+    """CUSTOMER-ASKS-REFER-ONLY (owner ruling 1 Oct 2026): Customer asks logs every reply
+    that referred the customer to their salesman, and only those. Run by both tails
+    (`_run_answer`, `complete_turn`) once the turn row is closed.
+
+    Whether the reply referred is never read off its text: a stock ask line carries the
+    presenter's `refers_to_salesman`, and every other refer line was printed through
+    `turn/refer.py`, which marked this turn (`refer.consume`, so a second tail in the same
+    turn cannot log it twice). `refer_asks` names the rows: the incoming ETA lines, the
+    misses, a declined did-you-mean, the plan's products, else what the customer typed.
+
+    Chatbot stock ask v2 S4 / S5 (AC-SA401, AC-SA402, AC-SA501): a live turn, and (owner
+    ruling 28 Sep 2026) a CHAT CONSOLE turn, write the rows and enqueue the real salesman
+    job; every other dry run does neither (D14). The send is a queued job, so Respond never
+    holds the reply up."""
+    from app.services.chatbot import refer_asks
+    from app.services.chatbot.turn import refer
+
+    marked = refer.consume()
+    if dry_run and not chat_console:
+        return
+    context = refer_context or {}
+    referred = marked or any(
+        isinstance(e, dict) and e.get("refers_to_salesman") is True for e in stock_entries
+    )
+    entries = [
+        *stock_entries,
+        *refer_asks.referred_entries(
+            referred=referred,
+            reply_text=reply_text,
+            envelopes=context.get("envelopes") or [],
+            plan=context.get("plan"),
+            pending_before=context.get("pending_before"),
+            message_text=context["message_text"] if "message_text" in context else _ctx_message_text(ctx),
+            answered=stock_entries,
+        ),
+    ]
+    if not entries:
+        return
+    _after_stock_ask_turn(
+        session_factory,
+        turn_id=turn_id,
+        contact_respond_id=contact_respond_id,
+        state=state,
+        entries=entries,
+        reply_text=reply_text,
+        source="console" if dry_run else "live",
+    )
+
+
 def _after_stock_ask_turn(
     session_factory: SessionFactory,
     *,
@@ -7963,6 +8038,7 @@ def _complete_canned_lane(
     return reply, session_patch, actions
 
 
+@_refer_tracked
 def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the contract
     turn_id: str,
     fragments: dict[str, Any],
@@ -7971,6 +8047,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
     compose_send_action: bool = False,
     lane_trace: Any = None,
     state: Any = None,
+    chat_console: bool = False,
 ) -> CompleteResult:
     """Run the tail of one turn: outcome -> member offer -> state -> compose -> persist.
 
@@ -8177,6 +8254,22 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 records=turn_trace.persisted(),
             )
             raise
+
+    # CUSTOMER-ASKS-REFER-ONLY: a reply this tail composed (the casual, canned, escalation
+    # and business lanes) that referred the customer is a Customer asks row, the same rule
+    # `_run_answer` applies. The row is closed first, as there.
+    _record_customer_asks(
+        session_factory,
+        turn_id=turn_id,
+        contact_respond_id=str(contact_respond_id or ""),
+        state=state,
+        stock_entries=[],
+        reply_text=jsc.js_string(reply.get("text") or ""),
+        refer_context=None,
+        ctx=ctx,
+        dry_run=dry_run,
+        chat_console=chat_console,
+    )
 
     return CompleteResult(
         turn_id=turn_id,

@@ -25,6 +25,7 @@ from dataclasses import replace
 from typing import Any
 
 from app.services.chatbot import contracts
+from app.services.chatbot.turn import refer
 from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.decide import (
     ANSWER,
@@ -703,7 +704,7 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             # A "no" that also names a position ("no, the 2nd one") is a pick, not a
             # decline.
             trace.rules_fired.append("stock_pick_declined")
-            trace.task_question = task_mod.REFER_TO_SALESMAN
+            trace.task_question = refer.sentence()
             focus.domains = ["inventory"]
             return (
                 focus,

@@ -4,8 +4,13 @@ that refers a dealer to their salesman is a Customer asks row.
 The stock ask (`stock_availability`) already writes its rows from the fetch's own entries
 (`engine._stock_ask_answered_entries`). This module covers the OTHER refer replies - a
 dealer's incoming ETA reply, an incoming or stock miss, a code the resolver could not place,
-a "no" to a did-you-mean - by reading what the turn already knows: the final reply text, the
-fetch envelopes, the plan's resolved entities and the question the dealer was answering.
+a "no" to a did-you-mean, and (CUSTOMER-ASKS-REFER-ONLY, 1 Oct 2026) every reply a barred
+contact (#1406) is referred in - by reading what the turn already knows: the fetch
+envelopes, the plan's resolved entities and the question the dealer was answering.
+
+Whether the reply refers at all is NOT read off its text: the caller passes `referred`, the
+turn's own mark (`turn/refer.py`, set by the one helper every composer prints the line
+through) or a stock ask line the presenter stamped `refers_to_salesman`.
 The entries it returns take the same road as the stock ask's
 (`stock_ask_service.after_answered_turn`), so there is still ONE writer of `stock_asks`.
 
@@ -21,7 +26,7 @@ from typing import Any, Iterable
 from app.services.chatbot import jsc
 from app.services.chatbot.turn.task import REFER_TO_SALESMAN
 
-__all__ = ["REFER_TO_SALESMAN", "BRANCH_INCOMING_ETA", "BRANCH_REFERRED", "refers", "referred_entries"]
+__all__ = ["REFER_TO_SALESMAN", "BRANCH_INCOMING_ETA", "BRANCH_REFERRED", "referred_entries"]
 
 #: A dealer incoming ask answered with ETAs (one row per product line).
 BRANCH_INCOMING_ETA = "incoming_eta"
@@ -32,16 +37,11 @@ BRANCH_REFERRED = "referred"
 _CODE_CAP = 100
 #: The reply text kept as the answer; the column is TEXT, the cap is a guard.
 _ANSWER_CAP = 2000
-_REFER = re.compile(r"refer to your salesman", re.IGNORECASE)
-
-
-def refers(text: Any) -> bool:
-    """Does this reply refer the dealer to their salesman?"""
-    return bool(text) and isinstance(text, str) and _REFER.search(text) is not None
 
 
 def referred_entries(
     *,
+    referred: bool,
     reply_text: str,
     envelopes: Iterable[dict[str, Any]],
     plan: Any,
@@ -53,9 +53,10 @@ def referred_entries(
 
     Each entry: `product_code`, `product_id` (when the plan resolved the code, else None
     and the writer resolves it by code), `requested_qty` (only a declined did-you-mean
-    carries one), `branch` and `answer_summary`. Empty when the reply does not refer, or when
-    every product it names already has a stock-branch entry."""
-    if not refers(reply_text):
+    carries one), `branch`, `answer_summary` and `refers_to_salesman` (always True: the flag
+    `stock_ask_service.refer_entries` keeps rows by). Empty when the turn did not refer
+    (`referred` False), or when every product it names already has a stock-branch entry."""
+    if not referred:
         return []
     text = (reply_text or "").strip()
     covered = {
@@ -85,6 +86,7 @@ def referred_entries(
                 "requested_qty": qty,
                 "branch": branch,
                 "answer_summary": answer[:_ANSWER_CAP],
+                "refers_to_salesman": True,
             }
         )
 

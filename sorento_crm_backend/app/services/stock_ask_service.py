@@ -31,7 +31,8 @@ USE_CASE = "stock_ask_salesman"
 #: R6: B1, B2 and B4 notify the agent; B3 (`incoming`) never does, and neither do the
 #: REFER-SALESMAN branches (30 Sep 2026: the rule adds rows to the Customer asks view only).
 NOTIFIED_BRANCHES = frozenset({"too_big", "in_stock", "no_incoming"})
-#: The stock ask's own branches: each carries the dealer's quantity.
+#: The stock ask's own branches: each carries the dealer's quantity. Answered is not logged:
+#: only an entry whose reply referred the customer is a row (`refer_entries`).
 ANSWERED_BRANCHES = frozenset({"too_big", "in_stock", "incoming", "no_incoming"})
 #: REFER-SALESMAN: a dealer's incoming ETA reply, and every other refer reply. No quantity
 #: is owed; a declined did-you-mean may still carry one.
@@ -89,6 +90,16 @@ def answered_entries(entries: Iterable[Any]) -> list[dict[str, Any]]:
     return out
 
 
+def refer_entries(entries: Iterable[Any]) -> list[dict[str, Any]]:
+    """CUSTOMER-ASKS-REFER-ONLY (owner ruling 1 Oct 2026): the answered entries whose reply
+    referred the customer to their salesman - the only ones Customer asks logs. The flag is
+    set where the line was printed: the MCP presenter stamps a stock ask line from its own
+    tail (so B3 `incoming`, "no stock at the moment, ETA ...", is never logged), and
+    `chatbot/refer_asks.py` stamps every other refer reply. An entry without the flag is not
+    guessed at."""
+    return [e for e in answered_entries(entries) if e.get("refers_to_salesman") is True]
+
+
 def answer_line(reply_text: str, entry: dict[str, Any]) -> str:
     """The exact line the dealer was sent for this entry: R14 starts every answer line
     with "<code> x <Q>:", so the line is found by that prefix in the reply."""
@@ -126,7 +137,8 @@ def after_answered_turn(
     other dry run). `source` is `live` or `console` (owner ruling 28 Sep 2026: a console
     turn records and notifies too, and its rows say so on the Asks tab and portal page).
 
-    S5: one `stock_asks` row per answered entry, state open, with the exact line the dealer
+    S5: one `stock_asks` row per answered entry that referred the customer to their
+    salesman (`refer_entries`; CUSTOMER-ASKS-REFER-ONLY), state open, with the exact line the dealer
     was sent (a REFER-SALESMAN entry brings its own `answer_summary`, and its `product_id`
     is resolved by code within the ask's company when the entry has none). S4: one
     `notify_salesman` job per B1 / B2 / B4 row when the contact's toggle is on and a customer
@@ -137,7 +149,7 @@ def after_answered_turn(
     from app.models.stock_ask import StockAsk
     from app.services.contact_customer_service import resolve_customer
 
-    answered = answered_entries(entries)
+    answered = refer_entries(entries)
     if not answered:
         return []
     moment = now or datetime.now(timezone.utc)

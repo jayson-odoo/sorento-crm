@@ -185,7 +185,13 @@ def test_guard_no_backend_composer_prints_the_refer_line_except_through_the_help
     offenders: list[str] = []
     for path in (BACKEND / "app").rglob("*.py"):
         rel = path.relative_to(BACKEND).as_posix()
-        if rel in ("app/services/chatbot/turn/refer.py", "app/services/chatbot/turn/task.py"):
+        if rel in (
+            "app/services/chatbot/turn/refer.py",
+            "app/services/chatbot/turn/task.py",
+            # Writes a Customer asks row's answer summary for a line already printed (and the
+            # turn already marked) by the composer; it builds no reply.
+            "app/services/chatbot/refer_asks.py",
+        ):
             continue
         source = path.read_text(encoding="utf-8", errors="ignore")
         if "REFER_TO_SALESMAN" not in source and "SALESMAN_TEAM" not in source:
@@ -213,17 +219,30 @@ def test_guard_no_backend_composer_prints_the_refer_line_except_through_the_help
 
 
 def test_guard_the_sentence_is_spelled_only_in_the_constant():
+    """No string literal outside `task.py` carries the words (docstrings aside), so the line
+    cannot be printed around the helper by spelling it out."""
     offenders = []
     for path in (BACKEND / "app").rglob("*.py"):
         rel = path.relative_to(BACKEND).as_posix()
         if rel == "app/services/chatbot/turn/task.py":
             continue
-        for n, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
-            stripped = line.strip()
-            if stripped.startswith("#"):
-                continue
-            if "Please refer to your salesman" in line and '"""' not in line and "`" not in line:
-                offenders.append(f"{rel}:{n}")
+        source = path.read_text(encoding="utf-8", errors="ignore")
+        if "refer to your salesman" not in source.lower():
+            continue
+        tree = ast.parse(source)
+        docstrings = {
+            id(node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+        }
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and "refer to your salesman" in node.value.lower()
+                and id(node) not in docstrings
+            ):
+                offenders.append(f"{rel}:{node.lineno}")
     assert offenders == [], offenders
 
 
