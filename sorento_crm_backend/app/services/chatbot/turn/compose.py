@@ -66,6 +66,29 @@ class Answer:
     text: str = ""
 
 
+def _codes_without_rows(entities: list[Any], figures: list[dict[str, Any]]) -> list[str]:
+    """Requested codes (uppercase, each once) that no figure row's "Product Code" names.
+
+    Silent when no row carries a "Product Code" field at all (a summary-mode answer
+    cannot be matched code by code). Exact match only: "SRTSWT3001" is a prefix of
+    "SRTSWT3001-GM", so a substring test over the printed text would hide the bug."""
+    present: set[str] = set()
+    for fig in figures:
+        for f in fig.get("fields") or []:
+            if isinstance(f, dict) and f.get("label") == "Product Code" and f.get("value"):
+                present.add(str(f["value"]).strip().casefold())
+    if not present:
+        return []
+    absent: list[str] = []
+    for entity in entities:
+        code = str(entity).strip()
+        if not code or code.casefold() in present:
+            continue
+        if code.upper() not in absent:
+            absent.append(code.upper())
+    return absent
+
+
 def _row_key(fig: dict[str, Any]) -> tuple:
     return tuple((f.get("label"), f.get("value")) for f in fig.get("fields") or [])
 
@@ -395,6 +418,15 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             block = header + "\n" + f"I could not fetch {label} just now, please try again."
         else:
             block = header
+        # Prod turn f0a2 (1 Oct 2026, "Srtswt3001 / Srtswt3001-gm stock"): both codes
+        # resolved, one had no stock rows, and the reply listed only the other. A
+        # resolved code with no row in a stock answer is named on one line. The
+        # whole-section miss already names every code (above), and an unresolved token
+        # is named by "I could not find" below, so neither is repeated here.
+        if domain == "inventory" and figures and not envelope_missed(env):
+            absent = _codes_without_rows(entities, figures)
+            if absent:
+                block = block + "\n" + f"No stock found for {_join_words(absent)}."
         # The window the fetch ran with, stated under the header it belongs to (browser
         # pass 6 item 4). Never on a section that states its own scope - the outstanding
         # report and the refusal both do, and the report's own four-line block already
