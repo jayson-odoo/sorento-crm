@@ -141,6 +141,8 @@ export default function UserLayout({
   });
 
   const notFound = isNotFound(error);
+  // A background refetch that fails over a record already shown keeps showing it.
+  const failed = !!error && (!user || notFound);
 
   // A user this tab deleted a moment ago is gone on purpose, so a stale link to
   // them returns to the list quietly instead of reading as a fault (S6 feedback C).
@@ -174,7 +176,7 @@ export default function UserLayout({
             on `user`, so drawing them would leave every tab on its skeleton
             (NEVER-STUCK-UI S5.3, lever L9). A 404 renders nothing while the
             effect above leaves for the list. */}
-        {error ? (
+        {failed ? (
           notFound ? null : (
             <QueryErrorState
               error={error}

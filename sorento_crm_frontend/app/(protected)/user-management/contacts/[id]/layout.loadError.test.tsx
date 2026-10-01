@@ -66,7 +66,7 @@ describe('contact detail when the record read fails', () => {
     h.apiFetch.mockImplementation(async () => json(500, { detail: 'Database unavailable' }));
     await renderLayout();
 
-    expect(await screen.findByText('Could not load this contact')).toBeTruthy();
+    expect(await screen.findByText('Could not load this contact', {}, { timeout: 4000 })).toBeTruthy();
     expect(screen.getByText('Database unavailable')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
     expect(screen.queryByText('Contact not found')).toBeNull();
@@ -75,6 +75,8 @@ describe('contact detail when the record read fails', () => {
   });
 
   it('Retry refetches and draws the tabs once the read succeeds', async () => {
+    // Two failures: the read gets one automatic retry for a fault before it settles.
+    h.apiFetch.mockImplementationOnce(async () => json(500, { detail: 'Database unavailable' }));
     h.apiFetch.mockImplementationOnce(async () => json(500, { detail: 'Database unavailable' }));
     h.apiFetch.mockImplementation(async (url: string) =>
       url.endsWith(ID)
@@ -83,7 +85,7 @@ describe('contact detail when the record read fails', () => {
     );
     await renderLayout();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }, { timeout: 4000 }));
     expect(await screen.findByText('Tab body')).toBeTruthy();
     expect(screen.getAllByRole('tab').length).toBeGreaterThan(0);
   });
