@@ -29,6 +29,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.base import get_company_scope
 from app.models.job import ImportJob
+from app.services import autocount_compare_mapping as compare_mapping
 from app.services import autocount_pull_service as pull_service
 from app.services.autocount_pull_compare import (
     compare_delivery_order_headers,
@@ -258,6 +259,42 @@ def get_current_pull(
     return pull_service.serialize(job, db)
 
 
+class CompareMappingColumn(BaseModel):
+    excel_header: str = Field(max_length=200)
+    transform: str = Field(max_length=40)
+    field: str = Field(max_length=40)
+
+
+class CompareMappingBody(BaseModel):
+    sheet_name: str = Field(max_length=100)
+    columns: list[CompareMappingColumn] = Field(max_length=compare_mapping.MAX_COLUMNS)
+
+
+# Declared before `/{job_id}` so `compare-mappings` is never read as a job id.
+@router.get("/compare-mappings")
+def list_compare_mappings(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The saved (or default) sheet + column mapping of each compare workbook kind."""
+    _require_entity_permission(db, current_user, "delivery_orders")
+    return {"items": compare_mapping.list_mappings(db)}
+
+
+@router.put("/compare-mappings/{kind}")
+def save_compare_mapping(
+    kind: str,
+    body: CompareMappingBody,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_entity_permission(db, current_user, "delivery_orders")
+    saved = compare_mapping.save_mapping(
+        db, kind, body.sheet_name, [c.model_dump() for c in body.columns], current_user["id"]
+    )
+    return {"kind": kind, **saved}
+
+
 @router.get("/{job_id}")
 def get_pull(
     job_id: str,
@@ -360,11 +397,12 @@ def compare_pull(
         # (the macro files hold extra days); a row outside it is ignored, never reported.
         source = body.source or "lines"
         from_day, to_day = pull_service.pull_window(pull_service._pull_meta(job))
-        rows_in_window, ignored = window_excel_rows(body.rows, from_day, to_day)
+        mapping = compare_mapping.get_mapping(db, compare_mapping.KIND_BY_SOURCE[source])
+        rows_in_window, ignored = window_excel_rows(body.rows, from_day, to_day, mapping)
         if source == "headers":
-            result = compare_delivery_order_headers(rows_in_window, pull_rows)
+            result = compare_delivery_order_headers(rows_in_window, pull_rows, mapping)
         else:
-            result = compare_delivery_orders(rows_in_window, pull_rows)
+            result = compare_delivery_orders(rows_in_window, pull_rows, mapping)
         extra = {
             "source": source,
             "window": {"fromDay": from_day, "toDay": to_day},

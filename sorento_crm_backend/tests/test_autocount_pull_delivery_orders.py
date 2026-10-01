@@ -842,7 +842,15 @@ def test_compare_delivery_orders_is_pure_and_case_insensitive():
     pull_rows = _do_rows()
     excel = [{"doc number": "zzdo-0001", "product code": " zzac-p1 ", "warehouse": "zzac-wh1",
               "quantity": "10.0"}]
-    result = compare_delivery_orders(excel, pull_rows)
+    # AC-CMM-7: no alias guessing any more - the sheet's columns are named by a mapping; the
+    # header match is still trimmed and case-insensitive ("Doc Number" matches "doc number").
+    mapping = {"sheet_name": "Master", "columns": [
+        {"excel_header": "Doc Number", "transform": "text", "field": "doc_no"},
+        {"excel_header": " PRODUCT CODE", "transform": "text", "field": "item_code"},
+        {"excel_header": "Warehouse", "transform": "text", "field": "location"},
+        {"excel_header": "Quantity", "transform": "number", "field": "qty"},
+    ]}
+    result = compare_delivery_orders(excel, pull_rows, mapping)
     assert result["summary"] == {"total": 1, "matched": 1, "different": 0}
     assert result["differences"] == []
     assert result["only_in_excel"] == []

@@ -262,3 +262,26 @@ export interface AutocountPullRowsQuery {
   pageSize: number;
   query?: string;
 }
+
+// ---- DO compare mapping (DO-COMPARE-SIM) ------------------------------------------------
+
+export type CompareMappingKind = 'order_listing' | 'order_tracking';
+
+export interface CompareMappingColumn {
+  excel_header: string;
+  transform: string;
+  field: string;
+}
+
+export interface CompareMappingBody {
+  sheet_name: string;
+  columns: CompareMappingColumn[];
+}
+
+export interface CompareMapping extends CompareMappingBody {
+  kind: CompareMappingKind;
+}
+
+export interface CompareMappingsResponse {
+  items: CompareMapping[];
+}
