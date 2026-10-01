@@ -209,3 +209,68 @@ class TestF4OutOfRangeSaysWhichNumbers:
         assert calls == [], calls
         assert reply.startswith("Please reply with a number from 11 to 12.\n"), reply
         assert "11. By customer" in reply and "12. By product" in reply, reply
+
+
+def _raws_in(node: Any) -> list[str]:
+    """Every entity `raw` anywhere under the stored session focus, lower-cased."""
+    if isinstance(node, dict):
+        own = [str(node["raw"]).strip().lower()] if isinstance(node.get("raw"), str) else []
+        return own + [r for v in node.values() for r in _raws_in(v)]
+    if isinstance(node, list):
+        return [r for v in node for r in _raws_in(v)]
+    return []
+
+
+class TestR4APickWordIsNeverCarriedAsASubject:
+    """PR #1401 fix round 4: the word that settled a drill pick ("DO", "by product",
+    "delivery orders") is the answer, not a subject. It must not be written onto the focus,
+    or every later turn carries it, nothing resolves it, and the reply closes with
+    "I could not find DO."."""
+
+    def test_step_six_reply_carries_no_could_not_find(self, session_factory, monkeypatch) -> None:
+        _to_the_one_account_report(session_factory, monkeypatch)
+        reply, calls, _c = _turn(
+            session_factory, monkeypatch,
+            _pick(1, document=["DO"], group_by="product", entity_op="reuse"), "1", ONE_HIT,
+        )
+        assert calls, reply
+        assert "could not find" not in reply.lower(), reply
+
+    def test_a_pick_right_after_the_typed_do_carries_no_could_not_find(self, session_factory, monkeypatch) -> None:
+        _seed_contact(session_factory, variables={})
+        _link_customers(session_factory, *LINKS)
+        _turn(
+            session_factory, monkeypatch,
+            _parser_output(domain_hint="order", intent_hint="check_order", order_status="sales_report",
+                           self_reference=True, entities=[], **WINDOW),
+            "my sales from July to September", MULTI_HIT,
+        )
+        _turn(session_factory, monkeypatch, _typed("DO", document=["DO"]), "DO", DO_LIST_HIT)
+        reply, calls, _c = _turn(session_factory, monkeypatch, _pick(12), "12", MULTI_HIT)
+        assert calls and calls[0].get("group_by") == "product", calls
+        assert "could not find" not in reply.lower(), reply
+
+    @pytest.mark.parametrize(
+        ("word", "over", "group_by"),
+        [
+            ("DO", {"document": ["DO"]}, "delivery_order"),
+            ("by product", {}, "product"),
+            ("delivery orders", {}, "delivery_order"),
+        ],
+    )
+    def test_the_typed_pick_word_is_not_stored_on_the_focus(
+        self, session_factory, monkeypatch, word, over, group_by
+    ) -> None:
+        _seed_contact(session_factory, variables={})
+        _link_customers(session_factory, *LINKS)
+        _turn(
+            session_factory, monkeypatch,
+            _parser_output(domain_hint="order", intent_hint="check_order", order_status="sales_report",
+                           self_reference=True, entities=[], **WINDOW),
+            "my sales from July to September", MULTI_HIT,
+        )
+        reply, calls, _c = _turn(session_factory, monkeypatch, _typed(word, **over), word, MULTI_HIT)
+        assert calls and calls[0].get("group_by") == group_by, calls
+        assert "could not find" not in reply.lower(), reply
+        focus = _session_of(session_factory).get("focus") or {}
+        assert word.lower() not in _raws_in(focus), focus
