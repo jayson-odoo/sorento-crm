@@ -1,6 +1,6 @@
 # PLAN: NS-SHARED-LOOKUPS (never-stuck lever L10)
 
-Status: Review (full track: RBAC read change). Lane NS-SHARED-LOOKUPS, PR #1423, branch
+Status: Merge-ready (full track: RBAC read change), awaiting CI and the owner hand test. Lane NS-SHARED-LOOKUPS, PR #1423, branch
 `claude/ns-shared-lookups-l10-rhjtxi`.
 
 Source: `documentation/reference/NEVER-STUCK-UI.md` S4.6 and
