@@ -555,3 +555,61 @@ class TestAcF10RepairScript:
             str(ib_row.id),
             str(ntc_row.id),
         }
+
+
+# ============================================================================ #
+# D33 guard: a supersede that would lose a receipt aborts
+# ============================================================================ #
+class TestD33ConservationGuard:
+    def test_replacement_holding_less_than_the_removed_receipt_raises(self, env):
+        import pytest
+
+        from app.services.rules.shipping_order_rules import (
+            SupersedeNotConserved,
+            assert_supersede_conserved,
+        )
+
+        with pytest.raises(SupersedeNotConserved):
+            assert_supersede_conserved(env.db, [], 99, 95, company_id=env.company_a)
+
+    def test_a_pick_still_on_a_removed_row_raises(self, env):
+        import pytest
+
+        from app.services.rules.shipping_order_rules import (
+            SupersedeNotConserved,
+            assert_supersede_conserved,
+        )
+
+        case = _owner_case(env)
+        with pytest.raises(SupersedeNotConserved):
+            assert_supersede_conserved(
+                env.db, [str(case.excel_95.id)], 95, 95, company_id=env.company_a
+            )
+
+    def test_a_conserved_supersede_passes(self, env):
+        from app.services.rules.shipping_order_rules import assert_supersede_conserved
+
+        case = _owner_case(env, with_receipts=False)
+        assert_supersede_conserved(
+            env.db, [str(case.excel_95.id)], 0, 0, company_id=env.company_a
+        )
+
+    def test_a_push_that_would_strand_a_pick_lands_nothing(self, env, monkeypatch):
+        """End to end: if the pick move ever failed, the record FAILS and the
+        Excel rows keep their receipt - nothing is zeroed or deleted."""
+        from app.services.rules import shipping_order_rules
+
+        monkeypatch.setattr(
+            shipping_order_rules, "repoint_picking_lines_by_capacity", lambda *a, **k: 0
+        )
+        monkeypatch.setattr(
+            shipping_order_rules, "repoint_allocation_dependants", lambda *a, **k: 0
+        )
+        case = _owner_case(env)
+        entry = _push(env, _autocount_record(env, case), may_delete=False)
+
+        assert entry.outcome.value == "failed", entry
+        by_id = {str(r["id"]): r for r in _spo_rows(env, case.number)}
+        assert int(by_id[str(case.excel_95.id)]["quantity_received"]) == 95
+        assert by_id[str(case.excel_95.id)]["retired_at"] is None
+        assert _picked_on(env, case.excel_95.id) == 95
