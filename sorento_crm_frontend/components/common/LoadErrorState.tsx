@@ -3,6 +3,8 @@
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { isAccessDenied } from '@/lib/api-client';
+import AccessDenied from '@/app/components/common/AccessDenied';
 
 /**
  * The "error" final state of NEVER-STUCK-UI S3: a short heading, the reason, and
@@ -44,5 +46,32 @@ export default function LoadErrorState({
         Retry
       </Button>
     </div>
+  );
+}
+
+/**
+ * The whole error branch for a failed read: a refusal is `AccessDenied` (never the
+ * raw "Permission required: x.y.z" string), anything else is `LoadErrorState`.
+ * A 404 is the caller's to handle first, since "not found" differs per screen.
+ */
+export function QueryErrorState({
+  error,
+  title,
+  onRetry,
+  retrying,
+}: {
+  error: unknown;
+  title: string;
+  onRetry: () => void;
+  retrying?: boolean;
+}) {
+  if (isAccessDenied(error)) return <AccessDenied />;
+  return (
+    <LoadErrorState
+      title={title}
+      message={error instanceof Error ? error.message : undefined}
+      onRetry={onRetry}
+      retrying={retrying}
+    />
   );
 }

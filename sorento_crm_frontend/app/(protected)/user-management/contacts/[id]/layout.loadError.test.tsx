@@ -63,7 +63,7 @@ afterEach(() => cleanup());
 
 describe('contact detail when the record read fails', () => {
   it('a 500 shows the error with Retry, not "Contact not found" and not the tabs', async () => {
-    h.apiFetch.mockResolvedValue(json(500, { detail: 'Database unavailable' }));
+    h.apiFetch.mockImplementation(async () => json(500, { detail: 'Database unavailable' }));
     await renderLayout();
 
     expect(await screen.findByText('Could not load this contact')).toBeTruthy();
@@ -75,7 +75,7 @@ describe('contact detail when the record read fails', () => {
   });
 
   it('Retry refetches and draws the tabs once the read succeeds', async () => {
-    h.apiFetch.mockResolvedValueOnce(json(500, { detail: 'Database unavailable' }));
+    h.apiFetch.mockImplementationOnce(async () => json(500, { detail: 'Database unavailable' }));
     h.apiFetch.mockImplementation(async (url: string) =>
       url.endsWith(ID)
         ? json(200, { id: ID, phone_number: '6012', name: 'Aisyah', access_types: [] })
@@ -101,7 +101,7 @@ describe('contact detail when the record read fails', () => {
   });
 
   it('a 404 still says "Contact not found"', async () => {
-    h.apiFetch.mockResolvedValue(json(404, { detail: 'Contact not found' }));
+    h.apiFetch.mockImplementation(async () => json(404, { detail: 'Contact not found' }));
     await renderLayout();
 
     expect(await screen.findByText('Contact not found')).toBeTruthy();

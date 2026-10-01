@@ -54,7 +54,7 @@ afterEach(() => cleanup());
 
 describe('settings when the read fails', () => {
   it('shows the error with Retry and renders no tab, so nothing can save blank defaults', async () => {
-    apiFetch.mockResolvedValue(json(500, { detail: 'Database unavailable' }));
+    apiFetch.mockImplementation(async () => json(500, { detail: 'Database unavailable' }));
     renderLayout();
 
     expect(await screen.findByText('Could not load settings', {}, { timeout: 4000 })).toBeTruthy();
@@ -64,9 +64,9 @@ describe('settings when the read fails', () => {
   });
 
   it('Retry refetches and renders the real settings', async () => {
-    apiFetch.mockResolvedValueOnce(json(500, { detail: 'Database unavailable' }));
-    apiFetch.mockResolvedValueOnce(json(500, { detail: 'Database unavailable' }));
-    apiFetch.mockResolvedValue(json(200, { settings: { id: 's1', name: 'Sorento' }, roles: [] }));
+    apiFetch.mockImplementationOnce(async () => json(500, { detail: 'Database unavailable' }));
+    apiFetch.mockImplementationOnce(async () => json(500, { detail: 'Database unavailable' }));
+    apiFetch.mockImplementation(async () => json(200, { settings: { id: 's1', name: 'Sorento' }, roles: [] }));
     renderLayout();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Retry' }, { timeout: 4000 }));
@@ -74,7 +74,7 @@ describe('settings when the read fails', () => {
   });
 
   it('a 403 shows AccessDenied, not the form', async () => {
-    apiFetch.mockResolvedValue(json(403, { detail: 'Permission required: system.settings.view' }));
+    apiFetch.mockImplementation(async () => json(403, { detail: 'Permission required: system.settings.view' }));
     renderLayout();
 
     expect(await screen.findByText("You don't have access to this page")).toBeTruthy();

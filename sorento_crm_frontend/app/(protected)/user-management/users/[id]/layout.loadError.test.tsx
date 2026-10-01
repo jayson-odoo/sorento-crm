@@ -62,7 +62,7 @@ afterEach(() => cleanup());
 
 describe('user detail when the record read fails', () => {
   it('a 500 shows the error with Retry in place of the tabs, no endless skeleton', async () => {
-    h.apiFetch.mockResolvedValue(json(500, { detail: 'Database unavailable' }));
+    h.apiFetch.mockImplementation(async () => json(500, { detail: 'Database unavailable' }));
     await renderLayout();
 
     expect(await screen.findByText('Could not load this user', {}, { timeout: 4000 })).toBeTruthy();
@@ -74,9 +74,9 @@ describe('user detail when the record read fails', () => {
   });
 
   it('Retry refetches and draws the tabs once the read succeeds', async () => {
-    h.apiFetch.mockResolvedValueOnce(json(500, { detail: 'Database unavailable' }));
-    h.apiFetch.mockResolvedValueOnce(json(500, { detail: 'Database unavailable' }));
-    h.apiFetch.mockResolvedValue(json(200, { id: 'u1', name: 'Ada', roles: [] }));
+    h.apiFetch.mockImplementationOnce(async () => json(500, { detail: 'Database unavailable' }));
+    h.apiFetch.mockImplementationOnce(async () => json(500, { detail: 'Database unavailable' }));
+    h.apiFetch.mockImplementation(async () => json(200, { id: 'u1', name: 'Ada', roles: [] }));
     await renderLayout();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Retry' }, { timeout: 4000 }));
@@ -98,7 +98,7 @@ describe('user detail when the record read fails', () => {
   });
 
   it('a 404 goes back to the list once, with replace (no Back-button trap), not from queryFn', async () => {
-    h.apiFetch.mockResolvedValue(json(404, { detail: 'User not found' }));
+    h.apiFetch.mockImplementation(async () => json(404, { detail: 'User not found' }));
     await renderLayout();
 
     await waitFor(() => expect(h.replace).toHaveBeenCalledWith('/user-management/users'));
