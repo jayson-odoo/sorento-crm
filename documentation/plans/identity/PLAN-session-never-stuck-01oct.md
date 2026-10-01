@@ -1,6 +1,6 @@
 # PLAN: session never stuck (SESSION-NEVER-STUCK)
 
-Status: in review, DoD gate pending CI (Track: full - staff auth and impersonation change, so not
+Status: in review, DoD gate passed pending CI (Track: full - staff auth and impersonation change, so not
 the small-fix track). PR #1417. UAC: `session-never-stuck-acceptance-criteria.md`.
 
 ## Journey
