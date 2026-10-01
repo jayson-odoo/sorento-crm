@@ -631,11 +631,13 @@ def decide(
             )
         named_scope = _named_scope(verdict)
         own_status = verdict.get("status") or verdict.get("order_status")
-        if (
-            named_scope is not None
-            and pending.kind == "sales_report_detail"
-            and own_status in (None, "", "sales_report")
-        ):
+        sales_drill = pending.kind == "sales_report_detail" and own_status in (None, "", "sales_report")
+        if sales_drill and positions:
+            # Fix round 3, F6: a picked position (a number, or the typed label itself) wins
+            # over a `document` on the same verdict - the parser carries a stale one from an
+            # earlier "DO" turn - so the pick is read below, never the document.
+            named_scope = None
+        if named_scope is not None and sales_drill:
             # Fix round 1, B1 (AC-SR-28): "DO" / "delivery orders" typed at the sales
             # report's drill offer comes back as `document: ["DO"]` (the parser's document
             # enum). Here it picks the Delivery orders option; SO (or both), or DO when that

@@ -1533,6 +1533,27 @@ def _screen_resolver_for_scope(
     return refused, compatible, candidates, dropped_ids
 
 
+def _drill_offer_subject(scope_ids: list[str] | None, focus: Any, trace: Any) -> list[str] | None:
+    """The accounts a sales report drill pick re-runs over, for a customer-scoped contact.
+
+    PR #1401 fix round 3, F6/F7: a pick off the `sales_report_detail` offer settles the
+    OFFER's own accounts onto the focus (`apply._settle_question_subject`), which after
+    "sales of <one account>" is that one account. The scope gate then answered every
+    link ("the linked customers are this turn's customers"), so "1" drilled over all of
+    them. On an answering turn the offer's accounts, kept inside the links, are the subject.
+    """
+    answered = getattr(trace, "outstanding", None) or {}
+    if scope_ids is None or answered.get("kind") != "sales_report_detail":
+        return scope_ids
+    links = set(scope_ids)
+    settled = [
+        str(e.get("uuid"))
+        for e in getattr(focus, "customers", None) or []
+        if isinstance(e, dict) and str(e.get("uuid")) in links
+    ]
+    return settled or scope_ids
+
+
 def _scoped_compatible(
     scope: dict[str, Any], ids: list[str], compatible: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -4046,6 +4067,7 @@ def _run_stages(  # noqa: PLR0915
             resolver_parse_output, scope_ids, scope_refused = _customer_scope_gate(
                 customer_scope, verdict, state_out.focus, resolver_parse_output, plan.domains
             )
+            scope_ids = _drill_offer_subject(scope_ids, state_out.focus, plan.trace)
             if (
                 len(plan.domains) > 1
                 and resolver_parse_output.get("entities")
