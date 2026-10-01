@@ -35,7 +35,7 @@ from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
 from app.services.product_spec_registry import SPEC_ACRONYMS
 from app.services.chatbot.tail.scope_block import live_brand_words
-from app.services.chatbot.turn.task import REFER_TO_SALESMAN
+from app.services.chatbot.turn import refer
 
 # The did-you-mean helpers the JS carries in BOTH bodies with a "keep in lockstep" note.
 # `miss_suggest` owns them because that is where their node lives; this file imports them
@@ -2695,8 +2695,8 @@ def what_you_want_reply(asked: str, lines: list[str], *, missing: str = "", leg:
     # #1301 (F8): a staff profile gets no bot-initiated offer; its caller passes no team.
     # ESCALATION-CONTROL (owner ruling Q2): a blocked contact's caller passes the salesman
     # line itself, which stands where the offer would.
-    if team == REFER_TO_SALESMAN:
-        return f"{head}\n\n{tail} {REFER_TO_SALESMAN}"
+    if team == refer.SALESMAN_TEAM:
+        return refer.after(f"{head}\n\n{tail}", sep=" ")
     return f"{head}\n\n{tail} Would you like me to escalate to {team} team?" if team else f"{head}\n\n{tail}"
 
 
@@ -3124,12 +3124,12 @@ def not_found_error_message(
         truthy, so no branch prints a dangling space or period-with-nothing-after.
         """
         if barred:
-            return REFER_TO_SALESMAN
+            return refer.sentence()
         t = offer_team if jsc.truthy(offer_team) else team
         return "" if is_staff else f"Would you like me to escalate to {t} team?"
 
     # The one reply structure's own offer (`what_you_want_reply`) under the same gate.
-    offer_team = REFER_TO_SALESMAN if barred else (None if is_staff else team)
+    offer_team = refer.SALESMAN_TEAM if barred else (None if is_staff else team)
 
     escalate_message: Any = None
     is_clarification = False
@@ -3458,7 +3458,9 @@ def not_found_error_message(
             esc = _esc_offer()
             return f"{label} is not available{at}." + (f" {esc}" if esc else "")
 
-        entitlement_miss = _entitlement_miss()
+        # Called where it is used (`build_breakdown_msg`), not here: a barred contact's
+        # refer line marks the turn for Customer asks (`turn/refer.py`), so it is built only
+        # for the reply that sends it (CUSTOMER-ASKS-REFER-ONLY review).
 
         # We may summarise our OWN expansions; we may never hide something the customer asked
         # for by name. `resolutions` maps each typed token to what it matched, so a code
@@ -3692,7 +3694,7 @@ def not_found_error_message(
             windowed = is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end))
             if windowed:
                 esc_ask = (
-                    f"Reply 'all dates' to search without the date filter. {REFER_TO_SALESMAN}"
+                    refer.after("Reply 'all dates' to search without the date filter.", sep=" ")
                     if barred
                     else "Reply 'all dates' to search without the date filter."
                     if is_staff
@@ -3709,6 +3711,7 @@ def not_found_error_message(
             )
             if esc_ask:
                 miss_sentence = f"{miss_sentence} {esc_ask}"
+            entitlement_miss = _entitlement_miss()
             parts.append(entitlement_miss if jsc.truthy(entitlement_miss) else miss_sentence)
             return "\n\n".join(parts)
 
@@ -4331,7 +4334,7 @@ def build_suggest_offer(
         across this function's own branches) - staff get `f"{lead_in}."` alone, no
         escalate offer (#1262 slice 11 review round, 26 Sep 2026)."""
         if barred:
-            return f"{lead_in}. {REFER_TO_SALESMAN}"
+            return refer.after(f"{lead_in}.", sep=" ")
         return f"{lead_in}." if is_staff else f"{lead_in}{escalate_suffix}"
 
     def mk_offer(cands: Any) -> Any:
