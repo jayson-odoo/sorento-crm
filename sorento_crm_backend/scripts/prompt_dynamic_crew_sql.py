@@ -225,7 +225,7 @@ def build_sql() -> str:
             f"IF EXISTS (SELECT 1 FROM ai_prompt_versions WHERE name = {_q(KEY)} "
             f"AND config_json->>'prod_snapshot_sha256' = {_q(sha)}) THEN",
             "RAISE NOTICE 'prod snapshot already published; nothing to do'; RETURN; END IF;",
-            f"p := $pk${packed}$pk$;",
+            "p := replace($pk$\n" + "\n".join(packed[i : i + 200] for i in range(0, len(packed), 200)) + "\n$pk$, chr(10), '');",
             "SELECT string_agg(chr((ascii(c) - 19968) / 128) || chr((ascii(c) - 19968) % 128), '' ORDER BY n) INTO l",
             "FROM unnest(string_to_array(p, NULL)) WITH ORDINALITY AS u(c, n);",
             f"l := left(l, {length});",
