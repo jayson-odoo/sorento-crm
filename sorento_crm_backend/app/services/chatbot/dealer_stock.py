@@ -53,6 +53,9 @@ def without_escalation(text: str, question: Pending | None) -> tuple[str, Pendin
     if not offered:
         return text, question
     body = stripped.strip()
+    if REFER_TO_SALESMAN in body:
+        # ESCALATION-CONTROL: a blocked contact's composer already printed the line.
+        return body, question
     return (f"{body}\n\n{REFER_TO_SALESMAN}" if body else REFER_TO_SALESMAN), question
 
 

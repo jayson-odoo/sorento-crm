@@ -70,6 +70,8 @@ class RespondContactResponse(RespondContactBase):
     packing_list_allowed: bool = False
     # Issue #1328: the ETA this contact is told carries the +x days offset. Default on.
     chatbot_eta_offset_applied: bool = True
+    # ESCALATION-CONTROL: may the chatbot hand this contact to a person. Default on.
+    escalation_allowed: bool = True
     # Identity S3 1.7. List rows: linked_user_id/name only (one batched query per
     # page - see `ContactService.list_contacts`). Detail additionally carries
     # is_salesperson/suggested_role_slug and the full linked_user. Both the id/name
