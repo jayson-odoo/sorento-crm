@@ -101,7 +101,9 @@ class TestApplyPublishesProgress:
         _patch_foundryx(monkeypatch, fake, db)
         _seed_masters(db)
         job_id = _prepare_do_apply(db, fake, rows=_created_and_retryable_rows())
-        rq_job_id = _job_row(db, job_id)["job_id"]
+        rq_job_id = db.execute(
+            text("SELECT job_id FROM import_jobs WHERE id = :id"), {"id": str(job_id)}
+        ).scalar()
         opened = _apply_session_spy(monkeypatch, factory)
 
         apply_autocount_pull(job_id)
