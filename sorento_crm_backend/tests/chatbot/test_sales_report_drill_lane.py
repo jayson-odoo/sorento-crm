@@ -329,6 +329,77 @@ class TestAPickReRunsTheReport:
         assert open_question.get("options") == before, (before, open_question.get("options"))
 
 
+def _named_document(
+    session_factory, monkeypatch, *, document: list[str], msg_id: str, with_entity: bool,
+    hit: dict[str, Any] = SALES_REPORT_HIT,
+):
+    """"DO" / "delivery orders" typed at the open offer: the parser emits `document`, with or
+    without the typed word as an entity too (fix round 1, B1)."""
+    entities = (
+        [{"raw": document[0], "hint": "order", "canonical_code": None, "current_message": True, "confident": True}]
+        if with_entity
+        else []
+    )
+    return _run_turn(
+        session_factory, monkeypatch,
+        qf=_parser_output(
+            message_type="casual", intent_hint=None, domain_hint=None, entities=entities,
+            reference_positions=[], entity_op="reuse" if with_entity else "replace_combine",
+            document=document,
+        ),
+        text_body=document[0],
+        msg_id=msg_id,
+        attributes=ATTRS,
+        mcp_response=hit,
+    )
+
+
+class TestANamedDocumentPicksTheDeliveryOrders:
+    """Fix round 1, B1 (AC-SR-28): the parser reads "DO" as `document: ["DO"]` (its
+    document enum), which the outstanding report's named-document arm used to answer as a
+    new ask with no `group_by`. On the sales report's drill offer it picks Delivery orders."""
+
+    @pytest.mark.parametrize("with_entity", [False, True])
+    def test_document_do_reruns_with_group_by_delivery_order(
+        self, session_factory, monkeypatch, with_entity
+    ) -> None:
+        _r, first = _ask(session_factory, monkeypatch, msg_id=f"ZZT-drill-doc-arm-{with_entity}", rich=True)
+        _result, captured = _named_document(
+            session_factory, monkeypatch, document=["DO"], msg_id=f"ZZT-drill-doc-{with_entity}",
+            with_entity=with_entity,
+        )
+        assert captured, "a named DO must re-run the report"
+        name, args = captured[0]
+        assert name == "crm_sales_report", (name, args)
+        assert args.get("group_by") == "delivery_order", args
+        for key in ("date_from", "date_to", "customer_ids", "warehouse_codes", "channel"):
+            assert args.get(key) == first.get(key), (key, args, first)
+
+    def test_document_so_is_not_an_option_and_reasks(self, session_factory, monkeypatch) -> None:
+        _ask(session_factory, monkeypatch, msg_id="ZZT-drill-doc-so-arm-1")
+        before = _open_question(session_factory).get("options")
+        result, captured = _named_document(
+            session_factory, monkeypatch, document=["SO"], msg_id="ZZT-drill-doc-so-1", with_entity=False,
+        )
+        assert captured == [], f"SO is not an option of this offer: {captured}"
+        reply = (result.reply or {}).get("text") or ""
+        assert "1. By product" in reply and "2. Delivery orders" in reply, reply
+        assert _open_question(session_factory).get("options") == before
+
+    def test_document_do_when_not_offered_reasks(self, session_factory, monkeypatch) -> None:
+        """After the Delivery orders drill the offer no longer holds that option."""
+        no_do = {**SALES_REPORT_HIT, "options": [{"key": "product", "label": "By product"}]}
+        _ask(session_factory, monkeypatch, hit=no_do, msg_id="ZZT-drill-doc-gone-arm-1")
+        result, captured = _named_document(
+            session_factory, monkeypatch, document=["DO"], msg_id="ZZT-drill-doc-gone-1", with_entity=False,
+            hit=no_do,
+        )
+        assert captured == [], f"Delivery orders was not offered: {captured}"
+        reply = (result.reply or {}).get("text") or ""
+        assert "1. By product" in reply, reply
+        assert _open_question(session_factory).get("kind") == "sales_report_detail"
+
+
 # --------------------------------------------------------------------------- #
 # AC-SR-28 - unchanged rules around the offer (AC-SR-29, the own-account miss staying a final
 # answer, is pinned in `test_customer_scope_lane.py` through the new MISS body)

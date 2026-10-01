@@ -54,6 +54,10 @@ OUTSTANDING_KINDS: frozenset[str] = frozenset({"outstanding_scope", *DETAIL_OFFE
 #: The scope an option names, as the documents the focus then carries. One table, read
 #: both ways: a picked option becomes a `document` list, and a `document` the parser
 #: emitted in WORDS ("sales order", "both") answers the same question.
+#: A position no roster ever prints (they count from 1): a pick of nothing on offer, which
+#: the generic re-print rule answers by asking the same question again.
+NOT_OFFERED = 0
+
 DOCUMENT_BY_SCOPE: dict[str, list[str]] = {"so": ["SO"], "do": ["DO"], "both": ["SO", "DO"]}
 SCOPE_BY_DOCUMENT: dict[tuple[str, ...], str] = {
     ("SO",): "so",
@@ -626,6 +630,23 @@ def decide(
                 **facts,
             )
         named_scope = _named_scope(verdict)
+        if named_scope is not None and pending.kind == "sales_report_detail":
+            # Fix round 1, B1 (AC-SR-28): "DO" / "delivery orders" typed at the sales
+            # report's drill offer comes back as `document: ["DO"]` (the parser's document
+            # enum). Here it picks the Delivery orders option; SO (or both), or DO when that
+            # option is not on offer, is a pick of nothing offered, re-asked like a number
+            # past the end. The outstanding kinds keep the named-document arm below.
+            offered = [
+                o["position"]
+                for o in pending.options
+                if (o.get("payload") or {}).get("value") == "delivery_order" and o.get("position") is not None
+            ]
+            if named_scope == "do" and offered:
+                return Decision(
+                    ANSWER, "named_document_pick", positions=tuple(offered[:1]), window=window,
+                    scope="delivery_order", **facts,
+                )
+            return Decision(ANSWER, "named_document_not_offered", positions=(NOT_OFFERED,), window=window, **facts)
         if named_scope is not None:
             # "Sales order", typed straight after the DO detail list, emitted
             # `document: ["SO"]` AND `reference_positions: [1]`, and the position won:
