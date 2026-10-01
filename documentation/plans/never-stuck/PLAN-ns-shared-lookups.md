@@ -1,6 +1,6 @@
 # PLAN: NS-SHARED-LOOKUPS (never-stuck lever L10)
 
-Status: Build (full track: RBAC read change). Lane NS-SHARED-LOOKUPS, PR #1423, branch
+Status: Review (full track: RBAC read change). Lane NS-SHARED-LOOKUPS, PR #1423, branch
 `claude/ns-shared-lookups-l10-rhjtxi`.
 
 Source: `documentation/reference/NEVER-STUCK-UI.md` S4.6 and
@@ -22,10 +22,10 @@ and nothing more. Every write stays on its current gate.
 
 | Lookup | Ruling | Backend change |
 |---|---|---|
-| People picker | open, id + name, active only | NEW `GET /user-management/users/lookup` (`get_current_user`). `/users/select` stays on `user_management.users.view`: it returns email, Respond.io ids and filters by phone. |
+| People picker | open, id + name, active only | NEW `GET /user-management/users/lookup` (`get_current_user`, staff callers only). Lists active, untrashed staff (a role other than `portal_user` / `guest`, not `is_integration`); a portal contact calling it gets 403 `people_lookup_staff_only` (security review round 1). `respond_user_id` only on the `respond_synced=true` opt-in the SLA and complaint assignee filters need. `/users/select` stays on `user_management.users.view`: it returns email, Respond.io ids and filters by phone. |
 | Project / task / lead status flow | salesperson-readable, same pattern as the quotation-approval graph | NEW `GET /project-sales/status-graph/{project\|project_task\|project_lead}` on `projects.projects.view` (the same slug `quotation-approval-graph` uses, `quotation_documents.py:395`). Any other entity is 404. `/system/statuses/graph/*` stays admin. No record counts. |
-| Contact access types, market segments | open read, editing locked | `GET /contact-access-types/` and `GET /market-segments/` relaxed from `reference_data.view` to `get_current_user`. Both return catalog rows only (code, name, description, flags), no personal data. `/contact-access-types/all`, `/{code}` and every write keep their slugs. |
-| Units, brands, categories, countries | open read | the four `/master-data/*/select` routes relaxed to `get_current_user_or_api_key` (API-key callers keep working), and their response narrowed to a select schema (see below). List, detail and write routes keep their slugs. |
+| Contact access types, market segments | open read, editing locked | `GET /contact-access-types/` and `GET /market-segments/` relaxed from `reference_data.view` to `get_current_user`. Both return catalog rows only (code, name, description, flags), no personal data. `/contact-access-types/all` and `/{code}` keep their slugs. The access-type POST / PUT / DELETE took only sign-in; they now need `reference_data.manage`, the market-segment writes' slug (crew ruling 1 Oct), and the admin screen hides them without it. |
+| Units, brands, categories, countries | open read | the four `/master-data/*/select` routes answer any signed-in session; an API key still needs its act-as user's `.view` slug (`require_session_or_api_key_permission`). Responses narrowed to a select schema (see below). List, detail and write routes keep their slugs. |
 | Roles list | KEEP LOCKED | none. `/roles/select` stays on `user_management.roles.view`. The consumers are admin screens; their in-place "no access" comes from #1418 (L5: the role hook throws, `SearchableSelect` renders the refusal). |
 
 Why a new people route rather than relaxing `/users/select`: that route's payload (email,
@@ -40,7 +40,9 @@ counts. The project-sales one serves exactly the three graphs project-sales scre
 
 ## Select schema (master data)
 
-Narrowed to the fields the frontend consumers read (traced per consumer in the PR body). Admin
+Narrowed to the fields the frontend consumers read: UOM `id, uom_code, uom_name, decimal_places`
+(divisibility, front-planning plan 6.4); brand `id, brand_code, brand_name, is_active`; category
+`id, category_code, category_name, is_active`; country `id, code, name` (unchanged). Admin
 configuration (chatbot weights and limits, brand access levels, purchasing flags, timestamps,
 product counts) leaves these four responses.
 
