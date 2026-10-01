@@ -141,3 +141,16 @@ Evidence per premise:
 S1 BE: model + migration + service + routes + compare via mapping (tester red first, coder).
 S2 FE: sheet-by-name parse, mapping service/hooks, modal, dropzone titles (vitest red first).
 S3 evidence: simulation before/after, agent-browser 1280/375, reviewer.
+
+## 6. Later rulings (1 Oct)
+
+- RMA / CG / RF / MKTPT / HQ document numbers: owner ruling (b), keep showing them as "Only in
+  your Excel" (explainable), no skip list. Evidence: the full-month DO snapshot 4ecfe74a (6,487
+  docs, 01/09-01/10) carries none of these prefixes; RMA enters sorento only through the Order
+  Tracking upload (`order_service.import_excel_tracking`), which stays.
+- Order Tracking re-import over an AutoCount-created order keeps the AutoCount-owned header
+  columns (`order_service.py:48-51`, `:3057-3060`, pinned by
+  `tests/test_autocount_do_ownership.py::test_master_sheet_keeps_autocount_columns`).
+- Out of scope, separate lane recommended: every DO line carries `FromDocDtlKey = 0`, which the
+  ingest reads as a link and warns "SO line not found" (`autocount_doc_ingest_service.py:159-167`,
+  `:847`).
