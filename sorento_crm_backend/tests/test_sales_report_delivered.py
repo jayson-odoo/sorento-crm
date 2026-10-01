@@ -96,6 +96,21 @@ def test_dataset_is_company_scoped_and_date_based_on_the_do_date():
     assert str(DATASET.date_bases[0].expr) == str(Order.order_date)
 
 
+def test_the_channel_rule_reads_demand_class_project_words():
+    """Fix round 1, nit N1: the SQL channel rule is built from `demand_class.PROJECT_SEGMENTS`,
+    the words `class_of` reads, never a second spelling of them."""
+    from sqlalchemy.dialects import postgresql
+
+    from app.services.reports.datasets.delivery_order_lines import CHANNEL_EXPR
+    from app.services.scm.demand_class import PROJECT_SEGMENTS
+
+    compiled = str(
+        CHANNEL_EXPR.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    ).replace("%%", "%")  # the psycopg2 dialect escapes a literal % as %%
+    for word in PROJECT_SEGMENTS:
+        assert f"'%{word}%'" in compiled, (word, compiled)
+
+
 # ============================================================ AC-SR-20: which DOs count
 
 

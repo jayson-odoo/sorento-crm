@@ -40,6 +40,7 @@ from app.models.order import Customer, Order, OrderLine, SalesOrder
 from app.models.product import Product
 from app.models.sales_agent import SalesAgent
 from app.services.reports import registry as reg
+from app.services.scm.demand_class import PROJECT_SEGMENTS
 
 #: A DO with no sales order, or a sales order with no agent, groups here.
 NO_AGENT = "(no agent)"
@@ -49,10 +50,10 @@ CHANNELS = ("project", "retail")
 
 _SEGMENT = sa.func.lower(sa.func.trim(Customer.market_segment_code))
 
-#: `demand_class.class_of`'s rule, in SQL: a segment naming project work (project,
-#: projects, contract) is Project, any other stated segment is Retail, none is NULL.
+#: `demand_class.class_of`'s rule, in SQL, over its own `PROJECT_SEGMENTS` words: a segment
+#: naming project work is Project, any other stated segment is Retail, none is NULL.
 CHANNEL_EXPR = sa.case(
-    (sa.or_(_SEGMENT.like("%project%"), _SEGMENT.like("%contract%")), sa.literal("project")),
+    (sa.or_(*(_SEGMENT.like(f"%{word}%") for word in sorted(PROJECT_SEGMENTS))), sa.literal("project")),
     (sa.func.coalesce(_SEGMENT, "") != "", sa.literal("retail")),
     else_=sa.null(),
 )
