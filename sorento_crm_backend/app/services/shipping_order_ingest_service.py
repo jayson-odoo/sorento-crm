@@ -1242,9 +1242,13 @@ class ShippingOrderIngestService(MasterRefResolver):
                     # wrote on this row is the only record of why it exists,
                     # and the row is being kept precisely so that record
                     # survives.
+                    # D33: the receipt figure about to be zeroed is its own
+                    # FRAGMENT, added only while the row still holds one, so a
+                    # second pass over an already-retired row (received 0) adds
+                    # nothing and `append_note`'s fragment dedupe holds.
                     row.allocation_notes = shipping_order_rules.append_note(
                         row.allocation_notes,
-                        f"{note} (received {int(row.quantity_received or 0)} carried)"
+                        f"{note}; received {int(row.quantity_received)} carried"
                         if row.quantity_received
                         else note,
                     )
