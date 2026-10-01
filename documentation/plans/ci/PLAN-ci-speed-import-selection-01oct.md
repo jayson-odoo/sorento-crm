@@ -1,4 +1,4 @@
-Status: small fix track (CI only, no product code, no migration) - in build
+Status: small fix track (CI only, no product code, no migration) - in review (PR #1426)
 
 # CI-SPEED: PR CI runs the tests that import what the PR changed; release shard 1 rebalanced
 
@@ -25,21 +25,29 @@ Owner approval: 1 Oct retro, decision 4.
    such as a `mock.patch` target). Changed test files are always selected. Cap by time
    (crew ruling 1 Oct, option b): the selection's estimated CPU seconds from the committed
    `.test_durations` (summed per file; a file with no history counts at the median file) above
-   3600 reports `full=true` instead of a list. #1411: 216 files, ~2668 CPU-s, under the budget. The selected list is printed in the job log.
+   3600 reports `full=true` instead of a list. The selected list is printed in the job log.
+   #1411: 218 files, 4741 CPU-s on the refreshed file (2668 on the old one, which under-priced
+   new tests), so it runs the full shards; either way `test_ingest_parity_security_fixes.py` runs
+   on the PR.
    A changed `scripts/` file also matches tests that load it by path or bare name; a changed
    `tests/<dir>/conftest.py` selects that directory, and `tests/conftest.py` reports `full=true`.
 2. `changes` checks out the backend tree (only when the PR changes backend code: `.py` under
    `app/`, `scripts/`, or a non-test helper under `tests/`) and
    runs the script. `backend_tests` becomes the selection; `backend_full=true` makes the six main
    shards and the SCM shards run on that PR (and the changed-files job steps aside).
-3. `test-backend-changed` runs the selection in two passes, like the shards: xdist `--dist
-   loadfile` for everything not migration / serial_ddl, then those serially.
+3. `test-backend-changed` runs the selection like the shards: tests/scm and the rest in separate
+   pytest sessions (a main-tree file importing `tests.scm.conftest` by name unregisters it as the
+   tests/scm conftest in a mixed session: 18 errors on #1411's selection), each with xdist `--dist
+   loadfile` for everything not `serial_ddl`, then `serial_ddl` serially; migration tests last.
 4. Release shard rebalance. Measured on release 36875899060 (main 53c5f7af): shard 1 job 43.8 min
    (xdist 39.5 min, 5854 tests = all 5227 of tests/chatbot/ plus the start of tests/), shards 2-6
    xdist 12.8 to 20.3 min. Cause: the committed `.test_durations` (last touched 29 Sep) lacks 2686
-   of shard 1's tests, which pytest-split prices at the 0.84 s average. Fix: refresh the missing
-   and stale entries (the sandbox cannot download Actions artifacts, so `tests/chatbot/` is
-   measured locally under the shard's flags), and give the serial migration / `serial_ddl` steps
+   of shard 1's tests, which pytest-split prices at the 0.84 s average. Fix (the sandbox cannot
+   download Actions artifacts, so measurements are local runs under the shard's flags): (i) all
+   tests/chatbot keys from a local run x1.25; (ii) each shard region rescaled by its measured
+   CI wall over modelled wall (run 36891698460); (iii) the 156 files (2856 tests) the file never
+   held, local x1.55, with the CI-only 397-674 s setup of `test_sales_achievement_perf.py` priced
+   at 535 s. Verified by test-only dispatch runs 36891698460, 36895403885, 36901464643. And give the serial migration / `serial_ddl` steps
    their own `serial` matrix entry instead of shard 1. That leg is a new check name: row 19 of
    `PLAN-ci-fast-gate-29sep.md`'s required-check table, which the owner adds to the ruleset.
 
