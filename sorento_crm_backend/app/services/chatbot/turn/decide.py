@@ -54,16 +54,16 @@ OUTSTANDING_KINDS: frozenset[str] = frozenset({"outstanding_scope", *DETAIL_OFFE
 #: The scope an option names, as the documents the focus then carries. One table, read
 #: both ways: a picked option becomes a `document` list, and a `document` the parser
 #: emitted in WORDS ("sales order", "both") answers the same question.
-#: A position no roster ever prints (they count from 1): a pick of nothing on offer, which
-#: the generic re-print rule answers by asking the same question again.
-NOT_OFFERED = 0
-
 DOCUMENT_BY_SCOPE: dict[str, list[str]] = {"so": ["SO"], "do": ["DO"], "both": ["SO", "DO"]}
 SCOPE_BY_DOCUMENT: dict[tuple[str, ...], str] = {
     ("SO",): "so",
     ("DO",): "do",
     ("DO", "SO"): "both",
 }
+
+#: A position no roster ever prints (they count from 1): a pick of nothing on offer, which
+#: the generic re-print rule answers by asking the same question again.
+NOT_OFFERED = 0
 
 
 @dataclass(frozen=True)
