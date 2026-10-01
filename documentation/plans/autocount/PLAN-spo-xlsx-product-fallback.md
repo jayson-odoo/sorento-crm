@@ -1,6 +1,6 @@
 # PLAN: SPO-XLSX-SUPERSEDE (round 2) - Excel rows with no destination superseded by AutoCount split lines
 
-Status: IN PROGRESS 2026-10-01, standard track (expected diff over 300 lines incl. tests; no migration; touches
+Status: REVIEWED 2026-10-01 (reviewer + security-reviewer findings fixed, awaiting CI + owner), standard track (expected diff over 300 lines incl. tests; no migration; touches
 receipts, so reviewer + security-reviewer). UAC: `spo-xlsx-product-fallback-acceptance-criteria.md` (same folder).
 Parent: `PLAN-spo-xlsx-supersede.md` (D25..D30), this adds D31..D36.
 
@@ -39,6 +39,9 @@ Verified on `757b41da2`:
 | D35 | **No false incoming on a received PL line.** `get_received_quantities_by_product` = per product `max(approved-pick total, sum(stated_received) of visible allocations on the shipment)`, so AutoCount's own statement that the lines arrived is never undercut by a pick hanging off another row. The chatbot's per-warehouse list shows only what is still to come per allocation (`allocated - max(received, stated)`, closed / fully received lines contribute 0) and drops warehouses at 0; the unallocated-gap arithmetic keeps the full allocated total. |
 | D33a | **Conservation guard** (crew ruling 1 Oct; security review S2). Before any superseded row is deleted or zeroed, `assert_supersede_conserved` proves the planned carry equals what the rows held, the replacement lines state at least that, and no GRN pick of ANY company still points at them; otherwise the record fails (ingest) or the document is rolled back, named and counted as aborted (repair script, which also runs the pure half in dry-run). The zeroed figure is frozen into `stated_received` on the retired row (N1). |
 | D35a | **Stated floor is capped and trusts the ingest principal** (security review S1). Each allocation contributes `least(stated_received, allocated_quantity)`. Consequence for the owner to note: the ESB's TransferedQty statement now decides PL receipt state alongside approved picks, so an inflated push can mark a container received (it could already mark the SPO line received under D26). |
+| D31a | **Fallback on a product's first push only** (review B1). A no-warehouse Excel group never joins the ESB keys, so on a re-push it would be offered every NEW line and pair on quantity alone, marking an unreceived line fully received. The ingest blocks the fallback for any product that already has a ref row on the `spo_number`; the repair script, which plans against the whole live line-set, is unaffected. A locked (D26a) group's lines are claimed before the fallback runs. |
+| D32a | **AutoCount GRN picks move whole** (review). A pick with a `dtl_key` is never split (its `(header, dtl_key)` identity is unique and a re-push would fold the chunk back); it goes to its first draw's line. Split chunks spread `quantity_expected` and `qty_accepted` like a receipt (never negative, never above the chunk). Capacity ignores picks on rejected GRNs. |
+| D34a | **Retired rows that still carry picks stay in the pool** (review B2): a GRN re-import must find the allocation its own picks already sit on, or it inserts a second copy of the receipt on a live sibling. Only a retired row nothing picks against is skipped. |
 | D36 | **Repair = the dedupe script, extended.** `scripts/dedupe_spo_xlsx_superseded.py` gets D31/D32 through the shared planner and the shared split repoint, stays DRY-RUN by default, and its summary adds the scope count (`shipments (PLs) touched`). Production apply is owner-gated. |
 
 ## 2. Not touched
