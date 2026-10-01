@@ -43,10 +43,11 @@ const RAW_PERMISSION_TEXT =
 /**
  * Copy a page shows when it decided there is nothing. The app's empty states open a line
  * with "No" / "Nothing" ("No proforma invoice behind this container.", "No projects match",
- * "Nothing is quoted on this project yet"), case-sensitive so "no" inside a word never
- * matches; plus the not-found states. Only read after a 403, so its breadth is bounded.
+ * "Nothing is quoted on this project yet"), case-sensitive and followed by a space so
+ * "no" inside a word and labels like "No-reply alert" never match; plus not-found states.
+ * Only read after a 403, so its breadth is bounded.
  */
-const EMPTY_LINE = /(?:^|\n)[ \t]*((?:No|Nothing)\b[^\n]{0,80})/;
+const EMPTY_LINE = /(?:^|\n)[ \t]*((?:No|Nothing) [^\n]{0,80})/;
 const NOT_FOUND = /\bnot found\b|doesn't exist|does not exist/i;
 const emptyStateText = (text: string) => text.match(EMPTY_LINE)?.[1] ?? text.match(NOT_FOUND)?.[0];
 
