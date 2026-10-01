@@ -2345,8 +2345,8 @@ def run_turn(
                             redis,
                             contact_respond_id,
                             ticket,
-                            timeout_s=float(
-                                getattr(settings, "chatbot_queue_wait_seconds", 45.0)
+                            timeout_s=dispatch.queue_wait_seconds(
+                                getattr(settings, "chatbot_queue_wait_seconds", 30.0)
                             ),
                         )
                     except dispatch.QueueWait:
@@ -5647,7 +5647,9 @@ def _run_answer(
         # console or replay turn the same way (finding 2a).
         session_payload = turn_tail.session_payload(state, answer, tail_ctx)
         if not dry_run:
-            turn_tail.persist(state, answer, tail_ctx)
+            turn_tail.persist(
+                state, answer, tail_ctx, base=remembered_before, turn_id=turn_id
+            )
             _log_session_write(db, turn_id=turn_id, contact_respond_id=contact_respond_id)
             written = True
 
@@ -7662,9 +7664,13 @@ def run_tail(
 
     written = (not dry_run) and write_session
     if written:
-        from app.services.conversation_variables_service import overwrite_for_contact
-
-        overwrite_for_contact(db, respond_io_id=contact_respond_id, state=payload)
+        turn_tail.write_merged(
+            db,
+            respond_io_id=contact_respond_id,
+            payload=payload,
+            base=before,
+            turn_id=turn_id,
+        )
         _log_session_write(db, turn_id=turn_id, contact_respond_id=contact_respond_id)
     turn_trace.record(
         "remembered",

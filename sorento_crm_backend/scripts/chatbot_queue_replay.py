@@ -24,7 +24,7 @@ import redis as redis_lib
 from app.services.chatbot import dispatch
 
 SCALE = 0.1  # 10 prod seconds per real second
-QUEUE_CAP_SECONDS = 45.0 * SCALE
+QUEUE_CAP_SECONDS = 30.0 * SCALE
 
 # (label, arrival offset s, work s) in PROD seconds from ticket 1's arrival (10:05:35 MYT).
 TIMELINE = [
@@ -98,7 +98,7 @@ def main() -> int:
     for t in threads:
         t.join()
 
-    print(f"contact {contact}, cap {QUEUE_CAP_SECONDS:.1f}s (prod 45 s at 10x)")
+    print(f"contact {contact}, cap {QUEUE_CAP_SECONDS:.1f}s (prod 30 s at 10x)")
     for label, *_ in TIMELINE:
         r = rows[label]
         print(

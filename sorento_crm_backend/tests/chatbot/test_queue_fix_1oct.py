@@ -299,3 +299,147 @@ def test_run_turn_leaves_no_heartbeat_thread_behind(
     # A duplicate delivery replays before any ticket is taken.
     engine_mod.run_turn(_envelope_for(contact, "ZZT-msg-no-leak-1"), session_factory=SessionLocal)
     assert _heartbeat_threads() == before
+
+
+# --------------------------------------------------------------------------- #
+# Crew decision (1 Oct): the reply is never lost, and a late turn merges its state
+# --------------------------------------------------------------------------- #
+
+
+def test_the_queue_wait_leaves_room_for_the_turn_inside_n8ns_budget():
+    from app.config import settings
+    from app.services.chatbot.llm_call import CALL_DEADLINE_SECONDS
+    from app.services.chatbot.send_order import N8N_CHAT_TURN_TIMEOUT_SECONDS
+
+    ceiling = dispatch.max_queue_wait_seconds()
+    assert (
+        ceiling + CALL_DEADLINE_SECONDS + dispatch.LANE_BUDGET_SECONDS + dispatch.QUEUE_MARGIN_SECONDS
+        <= N8N_CHAT_TURN_TIMEOUT_SECONDS
+    )
+    assert ceiling == 30.0
+    assert settings.chatbot_queue_wait_seconds <= ceiling
+    assert dispatch.queue_wait_seconds(45.0) == ceiling, "an old env value is clamped"
+    assert dispatch.queue_wait_seconds(10.0) == 10.0
+
+
+def test_the_engine_waits_with_the_clamped_value(
+    real_contacts, stub_engine_seams, stub_parser, monkeypatch
+):
+    from app.config import settings
+    from app.database import SessionLocal
+    from app.services.chatbot import engine as engine_mod
+
+    _enable_ordering(monkeypatch, queue_wait_seconds=999.0)
+    stub_parser()
+    seen: list[float] = []
+    monkeypatch.setattr(
+        dispatch, "wait_for_turn", lambda redis, c, t, *, timeout_s: seen.append(timeout_s)
+    )
+    assert settings.chatbot_queue_wait_seconds == 999.0
+    engine_mod.run_turn(
+        _envelope_for(real_contacts("clamp"), "ZZT-msg-clamp"), session_factory=SessionLocal
+    )
+    assert seen == [dispatch.max_queue_wait_seconds()]
+
+
+@pytest.fixture()
+def state_contact():
+    import json
+
+    from sqlalchemy import text
+
+    from app.database import SessionLocal
+
+    cid = f"ZZT-merge-{uuid.uuid4().hex[:10]}"
+    db = SessionLocal()
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+        ),
+        {"cid": cid, "phone": f"+6013{uuid.uuid4().hex[:8]}", "sv": json.dumps({})},
+    )
+    db.commit()
+    yield db, cid
+    db.rollback()
+    db.execute(text("DELETE FROM integration_log WHERE external_reference = :cid"), {"cid": cid})
+    db.execute(text("DELETE FROM respond_contacts WHERE respond_io_id = :cid"), {"cid": cid})
+    db.commit()
+    db.close()
+
+
+def _five(focus=None, open_question=None):
+    return {
+        "focus": focus,
+        "open_question": open_question,
+        "ideation": None,
+        "access_levels": [],
+        "contains_flyer": False,
+    }
+
+
+def _stored(db, cid):
+    from app.services.chatbot import session_state
+    from app.services.conversation_variables_service import get_for_contact
+
+    return session_state.five_keys({"session_vars": get_for_contact(db, respond_io_id=cid)})
+
+
+def test_an_unchanged_state_is_written_exactly(state_contact):
+    from app.services.chatbot.turn import tail
+    from app.services.conversation_variables_service import overwrite_for_contact
+
+    db, cid = state_contact
+    start = _five(focus={"products": ["A"]})
+    overwrite_for_contact(db, respond_io_id=cid, state=start)
+    mine = _five(focus={"products": ["B"]}, open_question={"kind": "pick"})
+    tail.write_merged(db, respond_io_id=cid, payload=mine, base=_stored(db, cid), turn_id="t2")
+    assert _stored(db, cid) == mine
+
+
+def test_a_late_turn_keeps_what_the_predecessor_wrote(state_contact, caplog):
+    import logging
+
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.turn import tail
+    from app.services.conversation_variables_service import overwrite_for_contact
+
+    db, cid = state_contact
+    overwrite_for_contact(db, respond_io_id=cid, state=_five(focus={"products": ["A"]}))
+    base = _stored(db, cid)  # the late turn reads here, then waits out the cap
+
+    slow = str(uuid.uuid4())
+    overwrite_for_contact(db, respond_io_id=cid, state=_five(focus={"products": ["SLOW"]}))
+    engine_mod._log_session_write(db, turn_id=slow, contact_respond_id=cid)
+
+    # The late turn only opened a question; it never touched focus.
+    mine = {**base, "open_question": {"kind": "pick"}}
+    with caplog.at_level(logging.WARNING, logger="app.services.chatbot.turn.tail"):
+        tail.write_merged(db, respond_io_id=cid, payload=mine, base=base, turn_id="late")
+    after = _stored(db, cid)
+    assert after["focus"] == {"products": ["SLOW"]}, "the predecessor's focus survives"
+    assert after["open_question"] == {"kind": "pick"}
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_both_changed_is_last_write_wins_with_a_warning_naming_both_turns(state_contact, caplog):
+    import logging
+
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.turn import tail
+    from app.services.conversation_variables_service import overwrite_for_contact
+
+    db, cid = state_contact
+    overwrite_for_contact(db, respond_io_id=cid, state=_five(focus={"products": ["A"]}))
+    base = _stored(db, cid)
+    slow = str(uuid.uuid4())
+    overwrite_for_contact(db, respond_io_id=cid, state=_five(focus={"products": ["SLOW"]}))
+    engine_mod._log_session_write(db, turn_id=slow, contact_respond_id=cid)
+
+    late = str(uuid.uuid4())
+    mine = {**base, "focus": {"products": ["LATE"]}}
+    with caplog.at_level(logging.WARNING, logger="app.services.chatbot.turn.tail"):
+        tail.write_merged(db, respond_io_id=cid, payload=mine, base=base, turn_id=late)
+    assert _stored(db, cid)["focus"] == {"products": ["LATE"]}
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings and late in warnings[0] and slow in warnings[0] and "focus" in warnings[0]

@@ -8,9 +8,10 @@
 # here from the composer's own question object, so there is nothing left to carry.
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Any, Mapping
 
-from app.services.conversation_variables_service import overwrite_for_contact
+from app.services.conversation_variables_service import get_for_contact, overwrite_for_contact
 from app.services.chatbot.turn.pending import to_wire
 from app.services.chatbot.turn.state import State, focus_to_wire
 
@@ -36,9 +37,106 @@ def session_payload(state: State, answer: Any, ctx: Any) -> dict[str, Any]:
     }
 
 
-def persist(state: State, answer: Any, ctx: Any) -> dict[str, Any]:
+logger = logging.getLogger(__name__)
+
+
+def _last_writer(db: Any, *, respond_io_id: str, turn_id: str | None) -> str | None:
+    """The turn that last wrote this contact's state: `_log_session_write`'s own row."""
+    from sqlalchemy import text
+
+    try:
+        row = db.execute(
+            text(
+                "SELECT business_id FROM integration_log "
+                "WHERE business_table = 'respond_contacts.session_vars' "
+                "AND external_reference = :cid AND CAST(business_id AS text) <> :tid "
+                "ORDER BY created_at DESC LIMIT 1"
+            ),
+            {"cid": respond_io_id, "tid": str(turn_id or "")},
+        ).first()
+    except Exception:  # noqa: BLE001 - a log lookup must never fail the write
+        return None
+    return str(row[0]) if row else None
+
+
+def write_merged(
+    db: Any,
+    *,
+    respond_io_id: str,
+    payload: dict[str, Any],
+    base: Mapping[str, Any] | None,
+    turn_id: str | None,
+) -> dict[str, Any]:
+    """Write this turn's five keys onto the state AS IT IS NOW, not as it was at the start.
+
+    CHATBOT-QUEUE-FIX (crew decision, 1 Oct): a turn that ran past a queue timeout
+    overlaps the slow predecessor for the same contact, and a blind overwrite would erase
+    whatever that predecessor wrote in between. Under the row lock: when the stored state
+    still equals `base` (what this turn read at its start, the overwhelming case) the
+    write is exactly `payload`. Otherwise a key this turn left unchanged keeps the other
+    turn's value, and a key BOTH changed is last-write-wins, logged at WARNING with both
+    turn ids. The written key set is always `payload`'s (legacy keys still migrate away).
+    """
+    from sqlalchemy import text
+
+    from app.services.chatbot import session_state
+
+    merged = payload
+    if base is not None:
+        # The same lock `overwrite_for_contact` takes, taken FIRST so the read below and
+        # the write after it are one critical section.
+        db.execute(
+            text("SELECT id FROM respond_contacts WHERE respond_io_id = :cid FOR UPDATE"),
+            {"cid": respond_io_id},
+        )
+        now = session_state.five_keys(
+            {"session_vars": get_for_contact(db, respond_io_id=respond_io_id)}
+        )
+        if any(now.get(k) != base.get(k) for k in payload):
+            merged = {}
+            clobbered: list[str] = []
+            for key, mine in payload.items():
+                theirs, start = now.get(key), base.get(key)
+                if mine == start and theirs != start:
+                    merged[key] = theirs
+                else:
+                    merged[key] = mine
+                    if theirs != start and theirs != mine:
+                        clobbered.append(key)
+            other = _last_writer(db, respond_io_id=respond_io_id, turn_id=turn_id)
+            if clobbered:
+                logger.warning(
+                    "chatbot session state: turn %s overwrote %s written by turn %s for "
+                    "contact %s (both changed it; last write wins)",
+                    turn_id,
+                    ", ".join(clobbered),
+                    other,
+                    respond_io_id,
+                )
+            else:
+                logger.info(
+                    "chatbot session state: turn %s merged onto turn %s's write for %s",
+                    turn_id,
+                    other,
+                    respond_io_id,
+                )
+    return overwrite_for_contact(db, respond_io_id=respond_io_id, state=merged)
+
+
+def persist(
+    state: State,
+    answer: Any,
+    ctx: Any,
+    *,
+    base: Mapping[str, Any] | None = None,
+    turn_id: str | None = None,
+) -> dict[str, Any]:
     db = getattr(ctx, "db", None)
     respond_io_id = getattr(ctx, "contact_respond_id", None)
-    return overwrite_for_contact(
-        db, respond_io_id=respond_io_id, state=session_payload(state, answer, ctx)
+    return write_merged(
+        db,
+        respond_io_id=respond_io_id,
+        payload=session_payload(state, answer, ctx),
+        base=base,
+        turn_id=turn_id,
     )

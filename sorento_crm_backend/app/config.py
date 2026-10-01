@@ -140,10 +140,11 @@ class Settings(BaseSettings):
     #
     # The longest a turn waits behind a predecessor that is still ALIVE (heart-beating; a
     # dead one is walked past within `dispatch.ALIVE_TTL_SECONDS`). Past it the turn runs
-    # anyway, possibly out of order (CHATBOT-QUEUE-FIX, 1 Oct). Deliberately below n8n's
-    # 90 s turn budget (`send_order.N8N_CHAT_TURN_TIMEOUT_SECONDS`): the waiter's own reply
-    # rides that same budget, so it must leave room to run. CHATBOT_QUEUE_WAIT_SECONDS.
-    chatbot_queue_wait_seconds: float = 45.0
+    # anyway, possibly out of order (CHATBOT-QUEUE-FIX, 1 Oct). The waiter's own reply
+    # rides n8n's same 90 s turn budget, so the value is capped at
+    # `dispatch.max_queue_wait_seconds()` (90 - 35 parser - 15 lane - 10 margin = 30 s);
+    # a higher env value is clamped there, never honoured. CHATBOT_QUEUE_WAIT_SECONDS.
+    chatbot_queue_wait_seconds: float = 30.0
     # Optional worker offload (AC-703). OFF by default: in-process is simpler and the
     # measured trigger for moving the turn off the API threads (beyond ~250 concurrent) has
     # not arrived. When true the request enqueues on the `chat` queue and waits for the

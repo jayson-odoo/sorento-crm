@@ -110,6 +110,36 @@ POLL_INTERVAL_SECONDS = 0.2
 SETTLE_MAX_STEPS = 64
 
 
+# The queue wait is what is LEFT of n8n's turn budget once the waiting turn's own work is
+# paid for (crew decision, 1 Oct: the reply must never be lost). A turn that waits the whole
+# cap and then runs still has to answer inside n8n's HTTP timeout, or n8n drops the reply.
+#   n8n turn budget   send_order.N8N_CHAT_TURN_TIMEOUT_SECONDS   90 s
+#   parser call       llm_call.CALL_DEADLINE_SECONDS             35 s
+#   lane work         LANE_BUDGET_SECONDS (DB + MCP fetches; prod looked_up <= 4.8 s)
+#   margin            QUEUE_MARGIN_SECONDS (respond.io / n8n hops, row writes)
+LANE_BUDGET_SECONDS = 15.0
+QUEUE_MARGIN_SECONDS = 10.0
+
+
+def max_queue_wait_seconds() -> float:
+    """The ceiling on `chatbot_queue_wait_seconds`, derived from the budgets above."""
+    from app.services.chatbot.llm_call import CALL_DEADLINE_SECONDS
+    from app.services.chatbot.send_order import N8N_CHAT_TURN_TIMEOUT_SECONDS
+
+    return max(
+        0.0,
+        N8N_CHAT_TURN_TIMEOUT_SECONDS
+        - CALL_DEADLINE_SECONDS
+        - LANE_BUDGET_SECONDS
+        - QUEUE_MARGIN_SECONDS,
+    )
+
+
+def queue_wait_seconds(configured: float) -> float:
+    """The wait a turn actually uses: the configured value, never above the ceiling."""
+    return min(float(configured), max_queue_wait_seconds())
+
+
 class QueueWait(RuntimeError):
     """The wait for this contact's turn exceeded the budget while a predecessor was still
     alive. The engine runs the turn anyway (ordering is best effort past the cap)."""
