@@ -1,4 +1,4 @@
-warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+# em/en dashes in the prompt text shown as "-" (repo dash guard)
 # production v3, 127534 chars rendered before, 130246 after
 # current_date left as {{current_date}} on both sides
 # domain_hint list: -> {{domains}}
@@ -48,9 +48,9 @@ warning: The `fitz` API is deprecated and will be removed in future. Use `import
 +  - "top_selling" -> a ranking of items by what was sold: "top selling", "best selling", "hot selling", "most sold", "top sellers", "best seller", "barang paling laku", "paling laris", "畅销". Domain "sales".
    - null -> DEFAULT. No delivery-status qualifier in the current message -> return all.
 @@ -767,3 +769,3 @@
-   "is_active": "true|false|null — lifecycle status filter from current message only, else null",
--  "order_status": "outstanding|delivered|null — ORDER delivery-status filter from current message only (order domain), else null",
-+  "order_status": "outstanding|delivered|so_outstanding|do_outstanding|outstanding_both|sales_report|sales_analysis|top_selling|null — ORDER delivery-status filter from current message only (order domain), else null",
+   "is_active": "true|false|null - lifecycle status filter from current message only, else null",
+-  "order_status": "outstanding|delivered|null - ORDER delivery-status filter from current message only (order domain), else null",
++  "order_status": "outstanding|delivered|so_outstanding|do_outstanding|outstanding_both|sales_report|sales_analysis|top_selling|null - ORDER delivery-status filter from current message only (order domain), else null",
    "correction": false,
 @@ -771,3 +773,3 @@
      "suggested_team": "purchasing|purchasing_certification|customer_service|marketing_product|marketing_form|warehouse|marketing_promotion|it_admin",
@@ -59,8 +59,8 @@ warning: The `fitz` API is deprecated and will be removed in future. Use `import
    },
 @@ -775,3 +777,3 @@
    "document": [], the papers the message named: SO|DO|PO|SPO|GRN codes, else []
--  "status": "outstanding|delivered|sales_report|null — the delivery/order status axis from the current message only, else null; it is sales_report on exactly the turns order_status is sales_report (see SALES REPORT below)",
-+  "status": "outstanding|delivered|so_outstanding|do_outstanding|outstanding_both|sales_report|sales_analysis|top_selling|null — the delivery/order status axis from the current message only, else null; it is sales_report on exactly the turns order_status is sales_report (see SALES REPORT below)",
+-  "status": "outstanding|delivered|sales_report|null - the delivery/order status axis from the current message only, else null; it is sales_report on exactly the turns order_status is sales_report (see SALES REPORT below)",
++  "status": "outstanding|delivered|so_outstanding|do_outstanding|outstanding_both|sales_report|sales_analysis|top_selling|null - the delivery/order status axis from the current message only, else null; it is sales_report on exactly the turns order_status is sales_report (see SALES REPORT below)",
    "asks": [] one {"domain","intent"} per domain the message names, ONLY when it names more than one; see ASKS
 @@ -818,3 +820,3 @@
    - "outstanding SO", "SO outstanding", "outstanding sales order" is order_status "so_outstanding" under domain_hint "order" / intent_hint "check_order", NEVER purchase_order / check_po; check_po needs a PO or supplier word.
