@@ -277,6 +277,43 @@ def test_a_legacy_do_with_more_than_one_distinct_total_sums_its_own_line_math(cl
     }, by_product["rows"]
 
 
+def test_a_product_filter_keeps_the_products_share_of_the_whole_do(client, db):
+    """Fix round 1, S3: the share is computed over the WHOLE DO, then filtered. ZZT-SHARE-B is
+    worth 200.00 of a repeated 1000.00 (A 800); asked for B alone it is still 200.00, never the
+    whole 1000.00 re-split over the one line left."""
+    cust, _p, wh = _world(db)
+    a = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SHARE-A")
+    b = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SHARE-B")
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
+            lines=[
+                line(a.id, wh.id, 2, price=D("100"), discount=D("0"), total=D("1000.00")),
+                line(b.id, wh.id, 1, price=D("100"), discount=D("0.5"), total=D("1000.00")),
+            ])
+    db.commit()
+
+    body = _get(client, customer_ids=cust.id, product_code="ZZT-SHARE-B")
+    assert money(body["total"]["amount"]) == D("200.00"), body
+    assert body["total"]["qty"] == 1, body
+
+
+def test_a_location_filter_keeps_that_warehouses_share_of_the_whole_do(client, db):
+    """Fix round 1, S3: a legacy DO split across two warehouses (weights 300 and 100 over a
+    repeated 400.00), filtered to one warehouse, answers that warehouse's share."""
+    cust, prod, _w = _world(db)
+    wh_a = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SPLIT-WA")
+    wh_b = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SPLIT-WB")
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
+            lines=[
+                line(prod.id, wh_a.id, 3, price=D("100"), total=D("400.00")),
+                line(prod.id, wh_b.id, 1, price=D("100"), total=D("400.00")),
+            ])
+    db.commit()
+
+    body = _get(client, customer_ids=cust.id, warehouse_codes="ZZT-SPLIT-WB")
+    assert money(body["total"]["amount"]) == D("100.00"), body
+    assert body["total"]["qty"] == 1, body
+
+
 def test_equal_shares_when_every_weight_is_zero(client, db):
     """No unit price on any line: weights are all 0, so the DOC total splits equally."""
     cust, _p, wh = _world(db)
