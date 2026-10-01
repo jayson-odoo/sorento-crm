@@ -215,7 +215,10 @@ export function PackingListDetailsTab() {
             />
             <div className="min-w-0">
               <p className="text-sm text-muted-foreground">Container size</p>
-              {editing ? (
+              {/* Without SCM read the sizes cannot be listed, so the field stays a value:
+                  an empty select would show the placeholder over a set size, with a clear
+                  button that wipes it unseen (PL-TABS-ACCESS). */}
+              {editing && canReadScm ? (
                 <SearchableSelect
                   triggerClassName="mt-1"
                   size="sm"

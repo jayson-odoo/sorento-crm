@@ -57,10 +57,11 @@ export function usePackingListSourceInvoices(
     queryFn: () => getPackingListSourceInvoices(packingListId as string),
     // False for a user without SCM read, for whom the endpoint 403s (PL-TABS-ACCESS).
     enabled: !!packingListId && enabled,
-    // Read for every tab, so a failure belongs on the one tab that shows it
-    // (`SourceProformaInvoicesCard`), not in a toast on Lines; and a 403 is an answer,
-    // so retrying it only doubles the wait.
-    retry: false,
+    // A 403 is an answer, so retrying it only doubles the wait; anything else gets the
+    // app's one retry. Silent because it is read for every tab: the failure is reported
+    // where the invoices would be (the card, Documents), not as a toast on Lines.
+    retry: (failureCount, error) =>
+      failureCount < 1 && !error.message.startsWith('Permission required:'),
     meta: { silent: true },
   });
 }

@@ -23,12 +23,15 @@ import {
 
 // A plain stub rather than `vi.fn()` + `mockImplementation`: under vitest 4.1 a rejection
 // from a mock implementation set after creation is reported as the test's own failure.
-const service = { calls: 0, fail: false };
+const service = {
+  calls: 0,
+  fail: false,
+  message: 'Permission required: scm.dashboard.view',
+};
 vi.mock('../services/packingListService', () => ({
   getPackingListSourceInvoices: async () => {
     service.calls += 1;
-    if (service.fail)
-      throw new Error('Permission required: scm.dashboard.view');
+    if (service.fail) throw new Error(service.message);
     return { invoices: [], by_shipment_line: {}, created_by: null };
   },
 }));
@@ -58,13 +61,16 @@ function appClient(toasts: string[]) {
 
 function wrapper(client: QueryClient) {
   return function Wrapper({ children }: { children: React.ReactNode }) {
-    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
   };
 }
 
 beforeEach(() => {
   service.calls = 0;
   service.fail = false;
+  service.message = 'Permission required: scm.dashboard.view';
 });
 afterEach(() => cleanup());
 
@@ -79,6 +85,17 @@ describe('usePackingListSourceInvoices', () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(service.calls).toBe(1);
     expect(toasts).toEqual([]);
+  });
+
+  it('still retries a server error once, like every other read', async () => {
+    service.fail = true;
+    service.message = 'Server error (502).';
+    const { result } = renderHook(() => usePackingListSourceInvoices('pl-1'), {
+      wrapper: wrapper(appClient([])),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(service.calls).toBe(2);
   });
 
   it('fetches nothing when told it may not', async () => {

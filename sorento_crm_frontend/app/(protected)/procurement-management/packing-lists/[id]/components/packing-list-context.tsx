@@ -80,6 +80,8 @@ interface PackingListContextValue {
   lineSupplierNames: string;
   checkpoints: ClearanceCheckpoint[];
   sourceInvoices: PackingListSourceInvoices | undefined;
+  /** That read failed. It is silent, so whoever shows the invoices must say so. */
+  sourceInvoicesFailed: boolean;
   editing: boolean;
   saving: boolean;
   draft: Record<string, string>;
@@ -131,9 +133,10 @@ export function PackingListProvider({
   const canReadScm = useHasPermission(SCM_READ_PERMISSION);
   // The proforma invoices behind this container, read ONCE for the four places that show
   // them: the Proforma invoices tab, the Lines column, the Timeline entry and Documents.
-  const { data: sourceInvoices } = usePackingListSourceInvoices(packingListId, {
-    enabled: canReadScm,
-  });
+  const { data: sourceInvoices, isError: sourceInvoicesFailed } = usePackingListSourceInvoices(
+    packingListId,
+    { enabled: canReadScm },
+  );
   const updateMutation = useUpdatePackingList();
 
   const [editing, setEditing] = useState(false);
@@ -390,6 +393,7 @@ export function PackingListProvider({
     lineSupplierNames,
     checkpoints,
     sourceInvoices,
+    sourceInvoicesFailed,
     editing,
     saving,
     draft,

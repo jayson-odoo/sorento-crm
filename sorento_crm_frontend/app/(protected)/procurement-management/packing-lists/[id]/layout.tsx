@@ -87,6 +87,7 @@ function PackingListToolbar({ id }: { id: string }) {
   const {
     packingList,
     isLoading,
+    canReadScm,
     lineSupplierNames,
     editing,
     saving,
@@ -179,13 +180,16 @@ function PackingListToolbar({ id }: { id: string }) {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem
-                    onClick={() => enqueueExport.mutate()}
-                    disabled={enqueueExport.isPending || !packingList}
-                  >
-                    <Download className="size-4" />
-                    Download packing list
-                  </DropdownMenuItem>
+                  {/* An SCM export: 403 without SCM read (PL-TABS-ACCESS). */}
+                  {canReadScm && (
+                    <DropdownMenuItem
+                      onClick={() => enqueueExport.mutate()}
+                      disabled={enqueueExport.isPending || !packingList}
+                    >
+                      <Download className="size-4" />
+                      Download packing list
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem onClick={() => setDownloadsOpen(true)}>
                     <History className="size-4" />
                     Download history

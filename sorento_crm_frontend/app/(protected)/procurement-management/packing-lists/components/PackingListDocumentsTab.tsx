@@ -20,8 +20,15 @@ import { usePackingListRecord } from '../[id]/components/packing-list-context';
 
 /** Every file this container is answered by: its own attachment and the invoices behind it. */
 export function PackingListDocumentsTab() {
-  const { packingListId, packingList, canReadScm, sourceInvoices, update, updatePending } =
-    usePackingListRecord();
+  const {
+    packingListId,
+    packingList,
+    canReadScm,
+    sourceInvoices,
+    sourceInvoicesFailed,
+    update,
+    updatePending,
+  } = usePackingListRecord();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [unlinkOpen, setUnlinkOpen] = useState(false);
 
@@ -92,7 +99,9 @@ export function PackingListDocumentsTab() {
         {canReadScm && (
           <div className="space-y-2">
             <p className="text-sm font-medium">Proforma invoices</p>
-            {invoices.length === 0 ? (
+            {sourceInvoicesFailed ? (
+              <p className="text-sm text-destructive">Could not load the proforma invoices.</p>
+            ) : invoices.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No proforma invoice behind this container.
               </p>

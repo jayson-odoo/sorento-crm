@@ -83,6 +83,8 @@ const state = {
   packingList: null as unknown,
   /** The proforma invoices behind the container - four readings of one payload. */
   sourceInvoices: undefined as unknown,
+  /** That read failed (a 5xx, say): Documents must not read it as "none". */
+  sourceInvoicesFailed: false,
   /** The container's audit trail, which is what the Timeline's History card lists. */
   history: undefined as unknown,
   /** The consolidated `build()` JSON (S7) - brand-per-line for the Lines grid's Logo
@@ -105,7 +107,11 @@ vi.mock('../hooks/usePackingLists', () => ({
   useUpdatePackingList: () => ({ mutateAsync: updatePackingList, isPending: false }),
   usePackingListSourceInvoices: (...args: unknown[]) => {
     calls.sourceInvoices.push(args);
-    return { data: state.sourceInvoices, isLoading: false, isError: false };
+    return {
+      data: state.sourceInvoices,
+      isLoading: false,
+      isError: state.sourceInvoicesFailed,
+    };
   },
   // The Timeline's History card reads the container's audit trail (R17).
   usePackingListHistory: () => ({ data: state.history, isLoading: false, isError: false }),
@@ -344,6 +350,7 @@ beforeEach(async () => {
   routerState.search = '';
   state.packingList = mixedContainer();
   state.sourceInvoices = undefined;
+  state.sourceInvoicesFailed = false;
   state.history = undefined;
   state.consolidated = undefined;
   updatePackingList.mockReset();
@@ -1145,6 +1152,36 @@ describe('a user without SCM read (PL-TABS-ACCESS)', () => {
     expect(calls.linePhotos.every((id) => id === null)).toBe(true);
   });
 
+  it('drops the Lines columns that are SCM reads or SCM actions (From PI, Photos)', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    await renderTab(<LinesPage />);
+
+    expect(screen.getByRole('columnheader', { name: 'Qty' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'From PI' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Photos' })).not.toBeInTheDocument();
+  });
+
+  it('offers no container-workbook download, which is an SCM export', async () => {
+    await renderTab(<DetailsPage />);
+    const menu = await openGear();
+
+    expect(within(menu).queryByText('Download packing list')).not.toBeInTheDocument();
+    expect(within(menu).getByText('Download history')).toBeInTheDocument();
+  });
+
+  it('keeps the container size as a value in edit mode, where its options cannot be read', async () => {
+    state.packingList = mixedContainer({
+      container_size_id: 'size-40hq',
+      container_size_code: '40HQ',
+    });
+    await renderTab(<DetailsPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    const field = screen.getByText('Container size').parentElement as HTMLElement;
+    expect(within(field).getByText('40HQ')).toBeInTheDocument();
+    expect(within(field).queryByRole('combobox')).not.toBeInTheDocument();
+  });
+
   it('keeps Details working without reading the SCM container sizes', async () => {
     await renderTab(<DetailsPage />);
 
@@ -1157,6 +1194,25 @@ describe('a user without SCM read (PL-TABS-ACCESS)', () => {
 });
 
 describe('a user with SCM read', () => {
+  it('says the proforma invoices could not be read on Documents, never "none"', async () => {
+    state.sourceInvoicesFailed = true;
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/documents';
+    await renderTab(<DocumentsPage />);
+
+    expect(screen.getByText('Could not load the proforma invoices.')).toBeInTheDocument();
+    expect(screen.queryByText('No proforma invoice behind this container.')).not.toBeInTheDocument();
+  });
+
+  it('keeps the From PI and Photos columns and the workbook download', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    await renderTab(<LinesPage />);
+
+    expect(screen.getByRole('columnheader', { name: 'From PI' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Photos' })).toBeInTheDocument();
+    const menu = await openGear();
+    expect(within(menu).getByText('Download packing list')).toBeInTheDocument();
+  });
+
   it('reads the proforma invoices and the planner as before', async () => {
     await renderTab(<DetailsPage />);
 

@@ -924,7 +924,9 @@ export function PackingListLinesTab() {
       });
     }
 
-    return cols;
+    // From PI and Photos are SCM reads (and Photos an SCM upload): without SCM read they
+    // would only ever say "none" and offer an action that 403s (PL-TABS-ACCESS).
+    return canReadScm ? cols : cols.filter((c) => c.id !== 'from_pi' && c.id !== 'photos');
     // `footerTotals` and `linePhotos.data` deliberately absent: both are fresh references on
     // every render for reasons that have nothing to do with an edit (a query result, and in
     // at least one test double, a fresh object literal per call) - the footer and Photos
@@ -933,7 +935,7 @@ export function PackingListLinesTab() {
     // `setLineField` and `removeLine` are stable (`useCallback`, empty deps, in
     // `packing-list-context.tsx`) so they cost nothing as dependencies here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, suppliers, supplierNameById, setLineField, removeLine, packingListId]);
+  }, [editing, suppliers, supplierNameById, setLineField, removeLine, packingListId, canReadScm]);
 
   const table = useReactTable({
     data: rows,
