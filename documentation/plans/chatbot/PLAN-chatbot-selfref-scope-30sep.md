@@ -1,6 +1,6 @@
 # PLAN: a linked contact's sales asks run the customer sales report
 
-Status: in progress on PR #1401, FULL track (mock v4 approved 2 Oct 2026, build started) (crew relabel, 30 Sep 2026: an additive grant
+Status: in progress on PR #1401, FULL track (mock v4 approved 2 Oct 2026; v4 built, review fix round 1 done, hand test filed) (crew relabel, 30 Sep 2026: an additive grant
 migration on an RBAC role plus a diff well over 300 lines; the earlier "small fix" label was
 wrong). The engine/resolver half of the lane is PARKED on PR #1403 (owner decision, 30 Sep
 2026: the parser prompt is fixed in production first).
