@@ -319,12 +319,30 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
     await generateExcelFile(rows, cols, `autocount-${entity}-differences.xlsx`);
   };
 
-  // Delivery orders: one headline over both files - the latest response's `summary` is
-  // already the two added up (the server stores them per source and sums them).
-  const latest = isDeliveryOrders
-    ? DO_SOURCES.map(({ source }) => results[source]).filter(Boolean).sort(
-        (a, b) => (a!.summary.compared_at < b!.summary.compared_at ? 1 : -1),
-      )[0] ?? null
+  // Delivery orders: one headline over the files on screen - each result's own
+  // `source_summary` added up (the server's combined `summary` still counts a file that was
+  // since removed or failed to parse). A result without one falls back to its `summary`.
+  const onScreen = isDeliveryOrders
+    ? DO_SOURCES.map(({ source }) => results[source]).filter(
+        (r): r is AutocountComparePullResult => Boolean(r),
+      )
+    : [];
+  const latest: { summary: AutocountPullCompareSummary } | null = isDeliveryOrders
+    ? onScreen.length
+      ? {
+          summary: onScreen
+            .map((r) => r.source_summary ?? r.summary)
+            .reduce((acc, cur) => ({
+              ...acc,
+              total: acc.total + cur.total,
+              matched: acc.matched + cur.matched,
+              different: acc.different + cur.different,
+              only_in_excel: acc.only_in_excel + cur.only_in_excel,
+              only_in_pull: acc.only_in_pull + cur.only_in_pull,
+              filename: `${acc.filename} and ${cur.filename}`,
+            })),
+        }
+      : null
     : single;
   const differencesCount = isDeliveryOrders
     ? DO_SOURCES.reduce((n, { source }) => n + (results[source]?.differences.length ?? 0), 0)
