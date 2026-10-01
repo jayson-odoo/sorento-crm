@@ -231,7 +231,10 @@ class IncomingStockService:
     # Shared helpers
     # ------------------------------------------------------------------
     def _warehouse_allocations_for(
-        self, shipment_product_pairs: list[tuple[str, str]]
+        self,
+        shipment_product_pairs: list[tuple[str, str]],
+        *,
+        outstanding_only: bool = False,
     ) -> dict[tuple[str, str], list[dict[str, Any]]]:
         """Aggregate allocated_quantity by warehouse for each (shipment_id, product_id) pair.
 
@@ -246,6 +249,14 @@ class IncomingStockService:
         away from this file for exactly that reason). A line AutoCount stopped naming is
         not allocated supply for this container any more than it is anywhere else, so
         counting it here credited coverage that no longer exists and understated the gap.
+
+        `outstanding_only` (D35, SPO-XLSX-SUPERSEDE round 2) is the list the caller SHOWS:
+        each allocation counts only what is still to come on it - `allocated - max(received,
+        stated_received)`, nothing at all once the line is closed or fully received - and a
+        warehouse left at 0 is dropped. Without it a container with one warehouse's share
+        already in read "Incoming 4, BRW-IB (22), BRW-NTC (77)". The default (full allocated
+        totals) stays the base of the unallocated-gap arithmetic, which measures against
+        `quantity_shipped` and so needs the undecremented allocation.
         """
         if not shipment_product_pairs:
             return {}
@@ -253,13 +264,30 @@ class IncomingStockService:
 
         shipment_ids = list({sid for sid, _ in shipment_product_pairs})
         product_ids = list({pid for _, pid in shipment_product_pairs})
+        if outstanding_only:
+            received = func.greatest(
+                func.coalesce(SPOAllocation.quantity_received, 0),
+                func.coalesce(SPOAllocation.stated_received, 0),
+            )
+            quantity = case(
+                (
+                    or_(
+                        SPOAllocation.line_status == "closed",
+                        SPOAllocation.receipt_status.in_(spo_supply.RECEIVED_RECEIPT_STATUSES),
+                    ),
+                    0,
+                ),
+                else_=func.greatest(SPOAllocation.allocated_quantity - received, 0),
+            )
+        else:
+            quantity = SPOAllocation.allocated_quantity
         rows = (
             self.db.query(
                 SPOAllocation.inbound_shipment_id,
                 SPOAllocation.product_id,
                 Warehouse.warehouse_code,
                 Warehouse.warehouse_name,
-                func.coalesce(func.sum(SPOAllocation.allocated_quantity), 0).label("allocated_qty"),
+                func.coalesce(func.sum(quantity), 0).label("allocated_qty"),
             )
             .join(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
             .filter(
@@ -279,6 +307,8 @@ class IncomingStockService:
         )
         result: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
         for shipment_id, product_id, wh_code, wh_name, qty in rows:
+            if outstanding_only and int(qty or 0) <= 0:
+                continue
             key = (str(shipment_id), str(product_id))
             result[key].append(
                 {
@@ -451,6 +481,7 @@ class IncomingStockService:
 
         pairs = [(str(r.shipment_id), str(r.product_id)) for r in rows]
         warehouse_map = self._warehouse_allocations_for(pairs)
+        outstanding_map = self._warehouse_allocations_for(pairs, outstanding_only=True)
         allocated_by_line = _allocated_by_line(rows, warehouse_map)
         attachment_map = self._attachments_for_shipments(
             [str(r.shipment_id) for r in rows]
@@ -488,7 +519,7 @@ class IncomingStockService:
                         ship_allocations,
                         allocated_by_line.get(str(r.id)),
                     ),
-                    "warehouse_allocations": ship_allocations,
+                    "warehouse_allocations": outstanding_map.get((str(r.shipment_id), pkey), []),
                     "attachment": attachment_map.get(str(r.shipment_id)),
                 }
             )
@@ -823,6 +854,7 @@ class IncomingStockService:
 
         pairs = [(str(r.shipment_id), str(r.product_id)) for r in line_rows]
         warehouse_map = self._warehouse_allocations_for(pairs)
+        outstanding_map = self._warehouse_allocations_for(pairs, outstanding_only=True)
         allocated_by_line = _allocated_by_line(line_rows, warehouse_map)
         attachment_map = self._attachments_for_shipments(page_ship_ids)
 
@@ -841,7 +873,9 @@ class IncomingStockService:
                         allocations,
                         allocated_by_line.get(str(r.id)),
                     ),
-                    "warehouse_allocations": allocations,
+                    "warehouse_allocations": outstanding_map.get(
+                        (skey, str(r.product_id)), []
+                    ),
                 }
             )
 
@@ -939,6 +973,7 @@ class IncomingStockService:
 
         pairs = [(str(shipment_uuid), str(r.product_id)) for r in line_rows]
         warehouse_map = self._warehouse_allocations_for(pairs)
+        outstanding_map = self._warehouse_allocations_for(pairs, outstanding_only=True)
 
         # S4/AC-D6: a product's own allocation is APPORTIONED across its own lines (the
         # same `(created_at, id)` order and the same `_apportion` `refresh_shipment_line_
@@ -966,7 +1001,9 @@ class IncomingStockService:
                     "product_name": r.product_name,
                     "remaining_incoming_quantity": int(r.remaining_incoming or 0),
                     "unallocated_quantity": gap if allocations and gap > 0 else None,
-                    "warehouse_allocations": allocations,
+                    "warehouse_allocations": outstanding_map.get(
+                        (str(shipment_uuid), str(r.product_id)), []
+                    ),
                 }
             )
 

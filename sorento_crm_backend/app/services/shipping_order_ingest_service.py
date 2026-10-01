@@ -1098,6 +1098,7 @@ class ShippingOrderIngestService(MasterRefResolver):
             if group.dropped_shipment_ids and warnings is not None:
                 warnings.append(WARN_SHIPMENT_MERGED)
             target: Optional[SPOAllocation] = None
+            group_rows: list[SPOAllocation] = []
             for line_plan in group.lines:
                 values = dict(unmatched[line_plan.index])
                 allocated = int(values.get("allocated_quantity") or 0)
@@ -1140,6 +1141,7 @@ class ShippingOrderIngestService(MasterRefResolver):
                     self.shipment_ids_touched.add(str(row.inbound_shipment_id))
                 counts["created"] += 1
                 consumed.add(line_plan.index)
+                group_rows.append(row)
                 if target is None:
                     target = row
                     # S5 (`PLAN-oi-replan-received-links.md`): the superseded
@@ -1186,10 +1188,34 @@ class ShippingOrderIngestService(MasterRefResolver):
                 if row.inbound_shipment_id:
                     self.shipment_ids_touched.add(str(row.inbound_shipment_id))
             if target is not None:
+                if group.split_receipts:
+                    # D32: a product-level fallback group's lines sit in
+                    # different locations, so its GRN picks are split over them
+                    # by capacity rather than all landing on the first line.
+                    shipping_order_rules.repoint_picking_lines_by_capacity(
+                        self.db,
+                        [str(row.id) for row in removing],
+                        [
+                            (str(row.id), row.warehouse_id, row.allocated_quantity)
+                            for row in group_rows
+                        ],
+                        company_id=self.company_id,
+                    )
                 shipping_order_rules.repoint_allocation_dependants(
                     self.db,
                     [str(row.id) for row in removing],
                     str(target.id),
+                    company_id=self.company_id,
+                )
+            if target is not None:
+                # D33: proven before anything is deleted or zeroed - a failure
+                # raises inside this record's savepoint and the push lands
+                # nothing for this document.
+                shipping_order_rules.assert_supersede_conserved(
+                    self.db,
+                    [str(row.id) for row in removing],
+                    sum(int(row.quantity_received or 0) for row in removing),
+                    sum(int(row.quantity_received or 0) for row in group_rows),
                     company_id=self.company_id,
                 )
             # S7 (D30): read BEFORE the rows go, so the trail names what was
@@ -1208,6 +1234,7 @@ class ShippingOrderIngestService(MasterRefResolver):
                 # no longer read as outstanding supply, and annotated so the
                 # next reader can see which document replaced them.
                 note = f"superseded by {payload.source_ref}"
+                retired_at = datetime.now(timezone.utc)
                 for row in removing:
                     row.line_status = LINE_CLOSED
                     # APPENDED, never overwritten (through the same helper the
@@ -1216,8 +1243,23 @@ class ShippingOrderIngestService(MasterRefResolver):
                     # and the row is being kept precisely so that record
                     # survives.
                     row.allocation_notes = shipping_order_rules.append_note(
-                        row.allocation_notes, note
+                        row.allocation_notes,
+                        f"{note} (received {int(row.quantity_received or 0)} carried)"
+                        if row.quantity_received
+                        else note,
                     )
+                    # D33 (SPO-XLSX-SUPERSEDE round 2): the row is RETIRED, not
+                    # merely closed. Its receipt now lives on the replacement
+                    # lines (carried above, picks moved), so it keeps none of
+                    # its own - left in place it stayed visible (R2) and was
+                    # counted a second time in the PL's "SPO allocated" - and
+                    # `retired_at` takes it out of the GRN pool (D34), so a
+                    # future GRN cannot FIFO onto it. The trail logged below
+                    # and the note above keep the old figure.
+                    row.quantity_received = 0
+                    row.receipt_status = RECEIPT_PENDING
+                    if row.retired_at is None:
+                        row.retired_at = retired_at
                 action = "closed"
                 if warnings is not None:
                     warnings.append(WARN_SUPERSEDED_CLOSED_ONLY)

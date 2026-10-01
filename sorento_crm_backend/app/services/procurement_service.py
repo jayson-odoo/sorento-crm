@@ -1093,7 +1093,7 @@ class InboundShipmentService:
             spo_numbers_by_product.setdefault(str(product_id), set()).add(normalized)
 
         if not spo_numbers_by_product:
-            return received_totals
+            return self._floor_by_stated_received(shipment_id, received_totals)
 
         product_ids = list(spo_numbers_by_product.keys())
         all_spo_numbers = {
@@ -1130,6 +1130,44 @@ class InboundShipmentService:
                 continue
             received_totals[product_key] = received_totals.get(product_key, 0) + int(total or 0)
 
+        return self._floor_by_stated_received(shipment_id, received_totals)
+
+    def _floor_by_stated_received(
+        self, shipment_id: str, received_totals: dict[str, int]
+    ) -> dict[str, int]:
+        """D35 (SPO-XLSX-SUPERSEDE round 2): per product, never less than what the
+        AutoCount lines on this shipment themselves STATE arrived.
+
+        `stated_received` is the declared receipt (AutoCount's TransferedQty, or a
+        supersede carry - `app/models/procurement.py`), written only by those
+        declarers, so it is the book's own word and not a second count of the same
+        picks. The pick total above can fall short of it when a GRN drew against a
+        row that is not on this shipment (the owner's GCXU6137164: 4 picked against
+        a PL-less Excel row, so the container read 95 of 99 and the chatbot reported
+        4 still incoming on an SPO AutoCount called fully received). `max`, never a
+        sum: when the picks do hang off these lines the two figures describe the
+        same goods. A RETIRED line is left out entirely: its frozen statement
+        (D28c/D28d) belongs to a document AutoCount stopped naming, and the live
+        line-set that replaced it states the same goods again - counting both would
+        call a container received that is still on the water. Its picks, if any,
+        are already in the total above.
+        """
+        stated_rows = (
+            self.db.query(
+                SPOAllocation.product_id,
+                func.coalesce(func.sum(SPOAllocation.stated_received), 0),
+            )
+            .filter(
+                SPOAllocation.inbound_shipment_id == shipment_id,
+                SPOAllocation.stated_received.isnot(None),
+                SPOAllocation.retired_at.is_(None),
+            )
+            .group_by(SPOAllocation.product_id)
+            .all()
+        )
+        for product_id, stated in stated_rows:
+            key = str(product_id)
+            received_totals[key] = max(received_totals.get(key, 0), int(stated or 0))
         return received_totals
 
     def refresh_shipment_line_statuses(self, shipment_id: str) -> None:

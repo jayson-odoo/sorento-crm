@@ -149,6 +149,11 @@ def build_allocation_pool(
     allocation_query = db.query(SPOAllocation).filter(
         SPOAllocation.product_id == str(product_id),
         SPOAllocation.spo_number.isnot(None),
+        # D34 (SPO-XLSX-SUPERSEDE round 2): a retired line - one AutoCount
+        # stopped naming, or an Excel row a push superseded without a delete
+        # grant - is not capacity. FIFO is by age, so a retired Excel row would
+        # otherwise be drawn before the AutoCount lines that replaced it.
+        SPOAllocation.retired_at.is_(None),
     )
     if company_id:
         allocation_query = allocation_query.filter(SPOAllocation.company_id == str(company_id))

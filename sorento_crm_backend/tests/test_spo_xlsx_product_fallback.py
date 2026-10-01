@@ -240,10 +240,16 @@ def _picked_on(env, allocation_id) -> int:
 
 
 def _pl_figures(env, case: _Case) -> tuple[int, int, str]:
-    """(SPO allocated, received, line status) exactly as the PL detail computes them."""
+    """(SPO allocated, received, line status) exactly as the PL detail computes them
+    (`api/v1/procurement/packing_lists.py`: the visible allocation total, the received
+    reader, and the status recomputed from those two - the persisted `line_status`
+    stays unfiltered by design, AC-H17 as narrowed)."""
     from sqlalchemy import func
 
-    from app.services.procurement_service import InboundShipmentService
+    from app.services.procurement_service import (
+        InboundShipmentService,
+        compute_inbound_shipment_line_status,
+    )
     from app.services.scm import spo_supply
 
     service = InboundShipmentService(env.db)
@@ -260,10 +266,11 @@ def _pl_figures(env, case: _Case) -> tuple[int, int, str]:
     received = service.get_received_quantities_by_product(case.shipment_id).get(
         str(case.product_id), 0
     )
-    status = env.db.execute(
-        text("SELECT line_status FROM inbound_shipment_lines WHERE id = :id"),
+    shipped = env.db.execute(
+        text("SELECT quantity_shipped FROM inbound_shipment_lines WHERE id = :id"),
         {"id": case.shipment_line_id},
     ).scalar()
+    status = compute_inbound_shipment_line_status(int(shipped), int(allocated), int(received))
     return int(allocated), int(received), status
 
 
@@ -459,9 +466,10 @@ class TestAcF9NoFalseIncomingOnReceivedLines:
         line reads partially received and the chatbot says incoming 4."""
         case = _owner_case(env)
         _seed_pre_repair_state(env, case)
-        _allocated, received, status = _pl_figures(env, case)
-        assert received == 99
-        assert status == "received"
+        allocated, received, _status = _pl_figures(env, case)
+        # The duplicate allocation is real data until the repair removes it, and the
+        # PL keeps saying so; what must stop is the false "still to come".
+        assert (allocated, received) == (194, 99)
         assert _incoming_shipments(env, case) == []
 
     def test_partly_received_pl_lists_only_the_warehouse_still_owed(self, env):

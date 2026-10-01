@@ -74,9 +74,11 @@ from app.services.procurement_service import InboundShipmentService
 from app.services.rules import shipping_order_rules
 from app.services.rules.shipping_order_rules import (
     append_note,
+    assert_supersede_conserved,
     carried_received,
     plan_xlsx_supersede,
     repoint_allocation_dependants,
+    repoint_picking_lines_by_capacity,
 )
 from app.services.shipping_order_ingest_service import (
     LINE_CLOSED,
@@ -289,6 +291,7 @@ def _apply_document(
             "links_moved": 0,
             "groups_kept": plan.groups_kept,
             "retired_marked": retired_marked,
+            "fallback_groups": 0,
             "shipment_ids": set(),
         }
 
@@ -299,17 +302,23 @@ def _apply_document(
         "links_moved": 0,
         "groups_kept": plan.groups_kept,
         "retired_marked": retired_marked,
+        "fallback_groups": 0,
         "shipment_ids": set(),
     }
 
     for group in plan.groups:
         target: Optional[SPOAllocation] = None
+        group_rows = [incoming_rows[line_plan.index] for line_plan in group.lines]
+        # Read before the carry raises them: the conservation guard (D33) compares
+        # what the removed rows held against what the lines hold AFTER the carry.
+        planned_received = 0
         for line_plan in group.lines:
             row = incoming_rows[line_plan.index]
             allocated = int(row.allocated_quantity or 0)
             received, closed = carried_received(
                 allocated, row.quantity_received, line_plan.carried_received
             )
+            planned_received += received
             if not dry_run:
                 row.quantity_received = received
                 # D28c: the carry is a STATEMENT about this line's receipt,
@@ -356,6 +365,20 @@ def _apply_document(
             # Nothing may be pending when the repoint widens its read under a
             # disabled company scope (same structural rule as the ingest).
             db.flush()
+            if group.split_receipts:
+                # D32/D36: a product-level fallback group (Excel rows that named
+                # no warehouse, the owner's GCXU6137164 shape) spans locations,
+                # so its GRN picks are split over the lines by capacity.
+                counts["links_moved"] += repoint_picking_lines_by_capacity(
+                    db,
+                    [str(row.id) for row in removing],
+                    [
+                        (str(row.id), row.warehouse_id, row.allocated_quantity)
+                        for row in group_rows
+                    ],
+                    company_id=company_id,
+                    dry_run=dry_run,
+                )
             counts["links_moved"] += repoint_allocation_dependants(
                 db,
                 [str(row.id) for row in removing],
@@ -371,9 +394,20 @@ def _apply_document(
             for row in removing
         )
         if not dry_run:
+            # D33: proven before the rows go; a failure raises out of the
+            # run before this document commits, so it is left exactly as it was.
+            assert_supersede_conserved(
+                db,
+                [str(row.id) for row in removing],
+                sum(int(row.quantity_received or 0) for row in removing),
+                planned_received,
+                company_id=company_id,
+            )
             for row in removing:
                 db.delete(row)
         counts["rows_removed"] += len(removing)
+        if group.split_receipts:
+            counts["fallback_groups"] += 1
         logger.info(
             "dedupe.spo_supersede spo_number=%s group=%s action=%s target=%s "
             "rows=[%s] dropped_shipments=%s",
@@ -429,7 +463,12 @@ def run(
         "links_moved": 0,
         "groups_kept": 0,
         "retired_marked": 0,
+        "fallback_groups": 0,
+        # D36: the scope count - distinct packing lists (inbound shipments) whose
+        # allocations this run changes or would change.
+        "shipments": 0,
     }
+    shipment_ids: set[str] = set()
     with company_scope(db, frozenset({company_id})):
         after: Optional[str] = None
         while True:
@@ -447,18 +486,23 @@ def run(
                     "links_moved",
                     "groups_kept",
                     "retired_marked",
+                    "fallback_groups",
                 ):
                     summary[key] += counts[key]
+                shipment_ids.update(counts["shipment_ids"])
                 print(
                     f"  {spo_number}: xlsx rows removed {counts['rows_removed']}, "
                     f"lines touched {counts['lines_touched']}, "
                     f"links moved {counts['links_moved']}, "
                     f"groups kept {counts['groups_kept']}, "
+                    f"product-fallback groups {counts['fallback_groups']}, "
+                    f"PLs touched {len(counts['shipment_ids'])}, "
                     f"old-DocKey rows retired {counts['retired_marked']}"
                 )
             after = numbers[-1]
             if len(numbers) < BATCH_SIZE:
                 break
+    summary["shipments"] = len(shipment_ids)
     if dry_run:
         # Nothing was written, but the sweep still opened a read transaction
         # per page - ended here so no snapshot is left held across the run.
@@ -513,6 +557,8 @@ def main() -> int:
         print(f"links moved:         {summary['links_moved']}")
         print(f"ref-less groups kept: {summary['groups_kept']}")
         print(f"old-DocKey rows retired: {summary['retired_marked']}")
+        print(f"product-fallback groups: {summary['fallback_groups']}")
+        print(f"PLs (shipments) touched: {summary['shipments']}")
     except ValueError as exc:
         print(str(exc))
         return 2
