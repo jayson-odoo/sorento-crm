@@ -280,7 +280,7 @@ const tabs = [
 
 ---
 
-## Review checklist (add to `documentation/reference/PR-CHECKLIST.md`)
+## Review checklist (the short form lives in `PR-CHECKLIST.md`, "Never stuck")
 
 - [ ] Every query consumer renders loading / no access / error + Retry / empty / data; no
       `isLoading || !data` skeleton, no `!data` "not found", no `.catch(() => [])`.
@@ -298,7 +298,7 @@ const tabs = [
 
 ## Automated guards
 
-Proposed in the audit report (section "Guards"): a route-permission manifest test (backend) and
+Proposed in the audit report (section 7, "Guards"): a route-permission manifest test (backend) and
 service-to-manifest test (frontend), a five-state / polling ratchet test, and a stuck-screen
 Playwright smoke that opens every route as admin, as a restricted user and with an expired
 session, and fails if anything is still loading after N seconds.
