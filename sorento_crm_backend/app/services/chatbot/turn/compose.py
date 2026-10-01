@@ -28,7 +28,7 @@ from app.services.chatbot.turn.state import (
     escalation_barred,
     offers_escalation,
 )
-from app.services.chatbot.turn.task import REFER_TO_SALESMAN
+from app.services.chatbot.turn import refer
 
 _ATTACHED_SENTENCE = "I have attached the file(s) below."
 
@@ -516,7 +516,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             elif escalation_barred(getattr(state, "profile", None)) and not clarifying_open:
                 # ESCALATION-CONTROL (owner ruling Q2): the miss is said above, then the
                 # salesman line stands where the offer would; no offer is armed.
-                text += f"\n\n{REFER_TO_SALESMAN}"
+                text = refer.after(text)
             carried = carried_for_gate
             if carried is not None and is_roster(carried.kind):
                 # Owner hand pass 2, item 8 (turns 29605e65 miss, then 586746d3 "5" and

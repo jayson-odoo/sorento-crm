@@ -1477,16 +1477,38 @@ def _availability_line(entry: dict) -> str:
     entry, `StockService._apply_stock_visibility`) ever appears."""
     code = _availability_label(entry)
     qty = entry.get("requested_qty")
+    return f"{code} x {qty}: {_availability_tail(entry)}"
+
+
+def _availability_tail(entry: dict) -> str:
+    """The sentence after "<code> x <Q>:" for one answered entry."""
     branch = entry.get("branch")
     if branch == "incoming":
-        tail = f"no stock at the moment, ETA {entry.get('eta')}."
-    else:
-        # Nit, review round 1: an unknown or missing branch is unreachable today
-        # (`products.category_id` is NOT NULL, so `inventory_service.py` never
-        # leaves `branch` unset) - but if a fallback is kept, `too_big` is the one
-        # of the four sentences that claims nothing about our stock either way.
-        tail = _AVAILABILITY_TAILS.get(branch, _AVAILABILITY_TAILS["too_big"])
-    return f"{code} x {qty}: {tail}"
+        return f"no stock at the moment, ETA {entry.get('eta')}."
+    # Nit, review round 1: an unknown or missing branch is unreachable today
+    # (`products.category_id` is NOT NULL, so `inventory_service.py` never
+    # leaves `branch` unset) - but if a fallback is kept, `too_big` is the one
+    # of the four sentences that claims nothing about our stock either way.
+    return _AVAILABILITY_TAILS.get(branch, _AVAILABILITY_TAILS["too_big"])
+
+
+def _stamp_refers(entries: Any) -> Any:
+    """CUSTOMER-ASKS-REFER-ONLY (owner ruling 1 Oct 2026): each answered entry carries
+    `refers_to_salesman`, read off the tail this presenter printed for it, so the backend's
+    Customer asks writer logs exactly the lines that referred the dealer (B3 `incoming`
+    does not). Only once every entry is answered, the same rule `_stock_availability`
+    prints the lines by; a reply still owing a quantity printed no tail at all."""
+    if not isinstance(entries, list):
+        return entries
+    rows = [e for e in entries if isinstance(e, dict)]
+    if not rows or any(e.get("needs_quantity") for e in rows):
+        return entries
+    return [
+        {**e, "refers_to_salesman": _availability_tail(e).endswith(REFER_TO_SALESMAN)}
+        if isinstance(e, dict) and e.get("branch")
+        else e
+        for e in entries
+    ]
 
 
 def _stock_availability(payload: dict, b: _Builder) -> None:
@@ -1804,6 +1826,8 @@ def present_response(tool_name: str, raw: str) -> str:
     for k in _PASSTHROUGH_KEYS:
         if k in data and _filled(data.get(k)):
             envelope[k] = data[k]
+    if stock_mode == "availability" and "stock_availability" in envelope:
+        envelope["stock_availability"] = _stamp_refers(envelope["stock_availability"])
     # QS-8: the summary in the ITEM shape, printed by the same renderer as the
     # rows. Only over a real answer (has_result AND rows on the page); absent
     # otherwise, never []. Exception boundary: a hostile leaf inside `summary`
