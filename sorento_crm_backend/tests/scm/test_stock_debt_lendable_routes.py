@@ -298,12 +298,23 @@ def test_a_tba_or_undated_far_line_never_lends(scm_app):
 
 def test_the_cell_value_is_the_same_with_and_without_date_to(scm_app):
     """R2: `date_to` hides rows and never moves stock. The nearer month's balance, and the
-    nearer line's own row, read the same whether the far line is on the page or not."""
+    nearer line's own row, read the same whether the far line is on the page or not.
+
+    The nearer line is due NEXT calendar month, never this one: on hand is counted in the
+    current month, and `date_to` drops the far line (and its pin) before the walk (R14),
+    so its 38 left over reads free in the current month on the narrowed page only. Due
+    `TODAY + 20`, the nearer month WAS the current month on the first 8 to 11 days of a
+    month, and the test went red on 1 Oct 2026 with the service unchanged
+    (TEST-DATEBOMB-1001)."""
     app, db, _uid = _client(scm_app, VIEW)
     far_due = DEFAULT_WINDOW + timedelta(days=60)
-    world = _owner_case(db, far_due=far_due, near_qty=50)
+    # 10 to 40 days out: inside `date_to` and the lend window, never in TODAY's month.
+    near_due = (TODAY.replace(day=1) + timedelta(days=32)).replace(day=10)
+    world = _owner_case(db, far_due=far_due, near_due=near_due, near_qty=50)
     product, marker = world["product"], world["marker"]
-    near_month = month_key(TODAY + timedelta(days=20))
+    current_month = month_key(TODAY)
+    near_month = month_key(near_due)
+    assert near_month != current_month
     date_to = (TODAY + timedelta(days=45)).isoformat()
 
     with TestClient(app) as c:
@@ -319,6 +330,12 @@ def test_the_cell_value_is_the_same_with_and_without_date_to(scm_app):
         m["key"]: m["balance"] for m in _row_of(narrowed, product.product_code)["months"]
     }
     assert whole_balance[near_month] == narrowed_balance[near_month] == 0
+    # `date_to` is a demand horizon (R14; owner ruling 1 Oct 2026, a19364058: "leave as
+    # is"): with the far line off the page its pin goes too, since `date_to` drops demand
+    # before the walk, so the 88 - 50 it held reads +38 free in the current month on the
+    # narrowed page only.
+    assert whole_balance[current_month] == 0
+    assert narrowed_balance[current_month] == 38
     assert month_key(far_due) not in narrowed_balance
     assert whole_balance[month_key(far_due)] == -50
 
