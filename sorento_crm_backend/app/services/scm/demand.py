@@ -181,6 +181,21 @@ def is_open_demand():
     ) & (demand_qty() > 0)
 
 
+def is_transferable_order():
+    """An order AutoCount has not marked Transferable = F (SO-TRANSFERABLE).
+
+    F means "not confirmed yet for the queue" (owner, 1 Oct 2026). Owner ruling (b): such an
+    order is out of the ONE assignment Stock Debt and the fulfilment board share (R21) and out
+    of the board's pile reads, so no stock is reserved for it anywhere until AutoCount flips it
+    to T. NULL is "the source never said" (every Excel / manual / older order) and counts like
+    T, hence `IS NOT FALSE` rather than `IS TRUE`.
+
+    Deliberately NOT part of `is_open_demand()`: the reorder run, `scm.committed_v`, coverage
+    and the outstanding / sales reports still count an F order until the owner rules on them.
+    """
+    return SalesOrder.is_transferable.isnot(False)
+
+
 def plan_qty():
     """What the BOARD plans for one line: `coalesce(qty_required, qty_ordered)`.
 

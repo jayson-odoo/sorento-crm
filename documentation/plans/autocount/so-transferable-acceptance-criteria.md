@@ -9,4 +9,4 @@
 - AC-TR-7 Stock Debt cell drill: F order lines are not listed in `demand`, and `demand_total_qty` excludes them.
 - AC-TR-8 The shared assignment (`assignments_for`, and the board ladder's `planning_assignments`) carries no F line, so no stock is reserved for it.
 - AC-TR-9 `GET /scm/sales-orders/{id}` returns `is_transferable`; `PUT /scm/sales-orders/{id}` cannot change it.
-- AC-TR-10 SO list shows a Transferable column (Yes / No / Not stated) and a Transferable filter; SO detail General tab shows a read-only Transferable field marked "From AutoCount" in view and edit; usable at 1280px and 375px.
+- AC-TR-10 SO list shows a Transferable column (Yes / No / Not stated) and a Transferable filter; SO detail General tab shows a read-only Transferable field in view and edit, marked "From AutoCount" only on an AutoCount order; usable at 1280px and 375px.

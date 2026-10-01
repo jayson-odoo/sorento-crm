@@ -25,9 +25,9 @@ sorento-crm; SOs with Transferable = F must NOT be considered in Stock Debt.
 - D1 Column `sales_orders.is_transferable BOOLEAN NULL`, no default. NULL = AutoCount never stated
   it (every pre-existing row, every Excel / manual / Order Inquiry SO); treated as transferable.
   Only an explicit FALSE is excluded (`is_transferable IS NOT FALSE`). (Crew decision, 1 Oct 2026.)
-- D2 Payload `CanonicalSalesOrder.transferable: Optional[bool]`. Pydantic's bool parsing already
-  accepts AutoCount's `T`/`F` (case-insensitive) as well as `true`/`false`; anything else fails
-  the record as malformed. Absent or null leaves the stored value untouched (same rule as
+- D2 Payload `CanonicalSalesOrder.transferable: Optional[bool]`. Pydantic's lax bool parsing
+  already accepts AutoCount's `T`/`F` (case-insensitive) alongside its other fixed boolean words
+  (`true`/`false`, `yes`/`no`, `1`/`0`, ...); anything else fails the record as malformed. Absent or null leaves the stored value untouched (same rule as
   `debtor_code`), so an older ESB build that does not send it never blanks a stated flag.
 - D3 AutoCount-owned. Written only by the ingest. Not in `SalesOrderUpdate` (the SO edit PUT
   ignores it), not editable in the UI. Read-back (`POST /external/read/sales_orders`) returns it as
@@ -36,15 +36,18 @@ sorento-crm; SOs with Transferable = F must NOT be considered in Stock Debt.
 - D4 Stock Debt excludes F in BOTH reads (`_products` and `_demand`), one helper
   `StockDebtService._transferable()`. Owner ruling (b), 1 Oct 2026: F leaves the SHARED
   assignment, so the fulfilment board's ladder (`ProjectSupplyService.planning_assignments`) skips
-  F lines too and R21 stays one reader. Consequence: an F order gets no stock reserved anywhere
+  F lines too and R21 stays one reader. The board's own pile reads (`_group_pile_members`,
+  `_check_group_borrow`, `_pile_book`, `_pile_read` in `project_supply_service.py`) apply the same
+  predicate, `demand.is_transferable_order()`, so an F line never ranks as competing demand
+  either. The board still LISTS an F order's lines (its row read is unchanged). Consequence: an F order gets no stock reserved anywhere
   until AutoCount flips it to T. F means "not confirmed yet for the queue" (owner).
 - D5 Not changed (owner to decide, listed in the scout report): `is_open_demand()` /
   `scm.committed_v` (reorder, netting, coverage, location stock, SPO conversion), outstanding
   report, sales report, chatbot.
 - D6 UI (owner ruling, 1 Oct 2026): a Transferable column on the SO list (Yes / No / Not stated
   `Badge`, not sortable) with a Transferable filter (`transferable=yes|no|unknown`), and a
-  read-only Transferable field on the SO detail General tab, worded "From AutoCount", the same in
-  view and edit. Reuses the existing column, filter and Field components; no mock.
+  read-only Transferable field on the SO detail General tab, the same in view and edit, with a
+  muted "From AutoCount" hint on AutoCount-sourced orders only. Reuses the existing column, filter and Field components; no mock.
 
 ## 2. Slices
 

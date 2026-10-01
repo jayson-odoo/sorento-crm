@@ -1121,6 +1121,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                         onChange={(v) => applyFilters({ transferable: v || undefined })}
                         options={TRANSFERABLE_FILTER_OPTIONS}
                         placeholder="All"
+                        clearable
                       />
                     </div>
                     <div>

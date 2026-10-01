@@ -173,6 +173,25 @@ def test_the_board_ladder_reserves_nothing_for_a_non_transferable_line(scm_app):
         assert round(sum(item.qty for item in line.assigned), 4) == line.line.open_qty
 
 
+def test_the_board_pile_queue_does_not_rank_a_non_transferable_line(scm_app):
+    """AC-TR-8, the board's own pile reads (`_pile_book`, `_pile_read`, `_group_pile_members`,
+    `_check_group_borrow`). They rank the lines competing for one pile; an F line competing
+    there would claim stock the shared assignment has already said it gets none of, which is
+    the R21 disagreement ruling (b) exists to prevent."""
+    from app.services.project_supply_service import ProjectSupplyService
+
+    _app, db = _client(scm_app)
+    book = _book(db)
+
+    queue = ProjectSupplyService(db).pile_book(
+        str(book["product"].id), str(book["warehouse"].id)
+    )
+
+    ids = {row["line_id"] for row in queue}
+    assert str(book["orders"]["F"][1].id) not in ids
+    assert {str(book["orders"][k][1].id) for k in ("T", "U")} <= ids
+
+
 # ------------------------------------------------------------------ the SO screens (AC-TR-9)
 
 

@@ -1756,10 +1756,14 @@ export function SalesOrderDetail({ id }: { id: string }) {
                       <Badge variant={flag.variant} appearance="light" size="md">
                         {flag.label}
                       </Badge>
-                      {/* `text-2xs`: a value hint, not a Field label (see Order type). */}
-                      <span className="text-2xs font-normal text-muted-foreground">
-                        From AutoCount
-                      </span>
+                      {/* `text-2xs`: a value hint, not a Field label (see Order type). Only on
+                          an AutoCount order: an Excel / manual / inquiry order never had the
+                          flag stated by AutoCount, so the hint would be untrue there. */}
+                      {so.source === 'autocount' ? (
+                        <span className="text-2xs font-normal text-muted-foreground">
+                          From AutoCount
+                        </span>
+                      ) : null}
                     </span>
                   );
                 })()}

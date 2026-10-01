@@ -195,7 +195,7 @@ describe('SO-TRANSFERABLE: the Transferable field on the General tab', () => {
     [null, 'Not stated'],
   ])('is_transferable=%s reads "%s", marked From AutoCount', (flag, words) => {
     useSalesOrder.mockReturnValue({
-      data: so({ is_transferable: flag }),
+      data: so({ is_transferable: flag, source: 'autocount' }),
       isLoading: false,
       isError: false,
     });
@@ -209,7 +209,22 @@ describe('SO-TRANSFERABLE: the Transferable field on the General tab', () => {
     expect(within(field).getByText('From AutoCount')).toBeInTheDocument();
   });
 
+  it('does not claim AutoCount on an order that did not come from it', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({ is_transferable: null, source: 'manual' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('General');
+
+    const field = within(orderRegion()).getByText('Transferable').parentElement as HTMLElement;
+    expect(within(field).getByText('Not stated')).toBeInTheDocument();
+    expect(within(field).queryByText('From AutoCount')).toBeNull();
+  });
+
   it('stays a read-only value in the edit session', () => {
+
     useSalesOrder.mockReturnValue({
       data: so({ is_transferable: false }),
       isLoading: false,

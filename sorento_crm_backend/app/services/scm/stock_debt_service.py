@@ -59,7 +59,12 @@ from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
 from app.services.project_supply_service import ProjectSupplyService, held_qty_expr
 from app.services.scm import order_link_service, sales_agent_service, spo_supply
-from app.services.scm.demand import demand_qty, is_open_demand, plan_qty
+from app.services.scm.demand import (
+    demand_qty,
+    is_open_demand,
+    is_transferable_order,
+    plan_qty,
+)
 from app.services.scm.front_planning_engine import (
     DEFAULT_LEAD_TIME_DAYS,
     later_order_can_wait,
@@ -729,7 +734,7 @@ class StockDebtService:
                 self._demand_span(ids),
                 SalesOrder.status == "open",
                 is_open_demand(),
-                self._transferable(),
+                is_transferable_order(),
             )
             .distinct()
             .all()
@@ -795,19 +800,6 @@ class StockDebtService:
             SalesOrderLine.warehouse_id.in_(list(warehouse_ids)),
             SalesOrderLine.warehouse_id.is_(None),
         )
-
-    @staticmethod
-    def _transferable():
-        """An order AutoCount has not marked Transferable = F (SO-TRANSFERABLE).
-
-        F means "not confirmed yet for the queue" (owner, 1 Oct 2026), so its lines are not
-        demand here. Used by the candidate read and by `_demand`, and `_demand` is the ONE
-        assignment the board's ladder reads too (R21, owner ruling (b) the same day): an F
-        order has no stock reserved for it anywhere until AutoCount flips it to T. NULL is
-        "the source never said" (every Excel / manual / older order) and counts like T,
-        hence `IS NOT FALSE` rather than `IS TRUE`.
-        """
-        return SalesOrder.is_transferable.isnot(False)
 
     def assignments_for(
         self,
@@ -1207,7 +1199,7 @@ class StockDebtService:
                 self._demand_span(warehouse_ids),
                 SalesOrder.status == "open",
                 is_open_demand(),
-                self._transferable(),
+                is_transferable_order(),
                 *extra_clauses,
             )
             .all()
