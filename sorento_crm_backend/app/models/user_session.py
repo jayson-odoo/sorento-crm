@@ -10,10 +10,9 @@ inside the NextAuth httpOnly cookie and is sent to every ``/api/v1/*`` call as
 request - so revocation (``revoked_at``) and expiry are instant, and role/status
 changes take effect on the next request (no stale-JWT window).
 
-Lifetimes:
- - "Remember me" checked  → 30-day rolling (``rolling=True``); each use re-extends
-    ``expires_at`` to now+30d, throttled to ~once/day (29-day threshold).
- - "Remember me" unchecked → 8-hour absolute (``rolling=False``); never slides.
+Lifetime: every sign-in is 30-day rolling (``rolling=True``); each use re-extends
+``expires_at`` to now+30d, throttled to ~once/day (29-day threshold). ``rolling=False``
+(8-hour absolute) survives only on rows minted while the "Remember me" box existed.
 
 No absolute cap on the rolling window (matches the portal). Sessions die only by
 expiry or explicit revoke (logout, password change, admin force-logout, block).
@@ -38,7 +37,8 @@ class UserSession(Base):
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     expires_at = Column(DateTime(timezone=False), nullable=False)
     revoked_at = Column(DateTime(timezone=False), nullable=True)
-    # True → 30-day sliding window; False → fixed 8h (remember-me unchecked).
+    # True → 30-day sliding window (every sign-in since SIGNIN-ALWAYS-SLIDE);
+    # False → fixed 8h, only on rows minted while the Remember me box existed.
     rolling = Column(Boolean, nullable=False, default=True, server_default="true")
     # Device metadata for the "your devices" UI + admin triage. Never shown raw - 
     # the FE parses a friendly label from user_agent.
