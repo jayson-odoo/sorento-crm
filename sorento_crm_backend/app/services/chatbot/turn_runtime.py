@@ -157,7 +157,7 @@ def contact_phone(db: Session, contact_respond_id: str) -> str | None:
 
 _PROFILE_COLUMNS = (
     "c.chatbot_profile, c.chatbot_stock_allowed, "
-    "c.notify_salesman, c.packing_list_allowed "
+    "c.notify_salesman, c.packing_list_allowed, c.escalation_allowed "
     "FROM respond_contacts c"
 )
 
@@ -174,7 +174,13 @@ def _fail_closed_profile() -> tuple[Profile, bool]:
     return Profile(stock_allowed=False), False
 
 
-def _profile_rows(db: Session, contact_respond_id: str, space_id: str | None) -> list[Any]:
+def _limit(limit: int | None) -> str:
+    return f" LIMIT {int(limit)}" if limit is not None else ""
+
+
+def _profile_rows(
+    db: Session, contact_respond_id: str, space_id: str | None, *, limit: int | None = 2
+) -> list[Any]:
     """This contact's rows under `space_id`, falling back to the NULL-workspace ones.
 
     Mirrors `field_access.resolve_contact_with_null_workspace_fallback`, which is the
@@ -187,7 +193,7 @@ def _profile_rows(db: Session, contact_respond_id: str, space_id: str | None) ->
     if not space_id:
         return list(
             db.execute(
-                text(f"SELECT {_PROFILE_COLUMNS} WHERE c.respond_io_id = :cid LIMIT 2"),
+                text(f"SELECT {_PROFILE_COLUMNS} WHERE c.respond_io_id = :cid{_limit(limit)}"),
                 {"cid": contact_respond_id},
             ).fetchall()
         )
@@ -196,7 +202,7 @@ def _profile_rows(db: Session, contact_respond_id: str, space_id: str | None) ->
             text(
                 f"SELECT {_PROFILE_COLUMNS} "
                 "JOIN respond_workspaces w ON w.id = c.workspace_id "
-                "WHERE c.respond_io_id = :cid AND w.space_id = :space LIMIT 2"
+                f"WHERE c.respond_io_id = :cid AND w.space_id = :space{_limit(limit)}"
             ),
             {"cid": contact_respond_id, "space": str(space_id)},
         ).fetchall()
@@ -207,7 +213,7 @@ def _profile_rows(db: Session, contact_respond_id: str, space_id: str | None) ->
         db.execute(
             text(
                 f"SELECT {_PROFILE_COLUMNS} "
-                "WHERE c.respond_io_id = :cid AND c.workspace_id IS NULL LIMIT 2"
+                f"WHERE c.respond_io_id = :cid AND c.workspace_id IS NULL{_limit(limit)}"
             ),
             {"cid": contact_respond_id},
         ).fetchall()
@@ -430,6 +436,9 @@ def load_profile(
             space_id = default_space_id(db)
         rows = _profile_rows(db, contact_respond_id, space_id)
     except Exception:  # noqa: BLE001 - a contact with no profile row is a blank profile
+        # Security review N1: an unreadable profile fails open (stock and escalation both
+        # allowed), so it must at least be visible.
+        logger.warning("chatbot: profile unreadable for %s", contact_respond_id, exc_info=True)
         return Profile(), False
     if not rows:
         return Profile(), False
@@ -440,7 +449,17 @@ def load_profile(
             contact_respond_id,
             len(rows),
         )
-        return _fail_closed_profile()
+        profile, recall = _fail_closed_profile()
+        # ESCALATION-CONTROL security review S2 (both rounds): the ambiguity denies stock,
+        # and denies the hand-off the same way - the rows share one respond.io id in one
+        # workspace, so they are the same person, and an operator who unticks the row they
+        # can see must not be undone by the duplicate. Blocked when ANY row is unticked.
+        # Every matching row, not the two the ambiguity check read (review nit: `LIMIT 2`
+        # would decide on two arbitrary rows of three).
+        every_row = _profile_rows(db, contact_respond_id, space_id, limit=None)
+        if any(_escalation_allowed(row) is False for row in every_row):
+            profile.escalation_allowed = False
+        return profile, recall
     row = rows[0]
     raw = row[0] if isinstance(row[0], dict) else {}
     ledgers = raw.get("default_ledgers")
@@ -461,6 +480,7 @@ def load_profile(
             stock_availability_only=_stock_availability_only(
                 db, contact_respond_id, space_id
             ),
+            escalation_allowed=_escalation_allowed(row),
         ),
         False,
     )
@@ -639,6 +659,13 @@ def order_brand_filter(
         jsc.nullish_str(live[b].get("brand_name") or live[b].get("brand_code")).strip() for b in ids
     ]
     return ids, [n for n in names if n]
+
+
+def _escalation_allowed(row: Any) -> bool:
+    """ESCALATION-CONTROL: `respond_contacts.escalation_allowed`, the one per-contact
+    switch. NOT NULL default true; `is not False` keeps the fail-open reading (allowed) if
+    it were ever NULL or missing from the row."""
+    return (row[4] if len(row) > 4 else None) is not False
 
 
 def _stock_availability_only(db: Session, contact_respond_id: str, space_id: str | None) -> bool:

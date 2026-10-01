@@ -688,6 +688,9 @@ class ContactService:
             "packing_list_allowed": bool(getattr(contact, "packing_list_allowed", False)),
             # Issue #1328: default ON, like chatbot_stock_allowed.
             "chatbot_eta_offset_applied": bool(getattr(contact, "chatbot_eta_offset_applied", True)),
+            # ESCALATION-CONTROL: the one per-contact switch, default ON - a row without
+            # the attribute is allowed. Listed by hand, like every field above.
+            "escalation_allowed": getattr(contact, "escalation_allowed", True) is not False,
             "created_at": contact.created_at,
             "updated_at": contact.updated_at,
             "created_by": contact.created_by,
