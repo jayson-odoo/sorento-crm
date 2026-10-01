@@ -55,9 +55,12 @@ export function PackingListDetailsTab() {
     suppliers,
     lineSupplierNames,
     checkpoints,
+    canReadScm,
   } = usePackingListRecord();
 
-  const containerSizes = useContainerSizes();
+  // An SCM read (403 without SCM read). The view reads `container_size_code` off the
+  // record, so only the edit select's options go without it (PL-TABS-ACCESS).
+  const containerSizes = useContainerSizes({ enabled: canReadScm });
 
   if (!packingList) return null;
   const record = packingList as unknown as Record<string, unknown>;
@@ -212,7 +215,10 @@ export function PackingListDetailsTab() {
             />
             <div className="min-w-0">
               <p className="text-sm text-muted-foreground">Container size</p>
-              {editing ? (
+              {/* Without SCM read the sizes cannot be listed, so the field stays a value:
+                  an empty select would show the placeholder over a set size, with a clear
+                  button that wipes it unseen (PL-TABS-ACCESS). */}
+              {editing && canReadScm ? (
                 <SearchableSelect
                   triggerClassName="mt-1"
                   size="sm"
