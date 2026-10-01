@@ -8,6 +8,11 @@ byte-identical to the source; it never labels, publishes or stages.
 
     venv/bin/python -m scripts.prompt_dynamic_identical_version --from-version 53
     venv/bin/python -m scripts.prompt_dynamic_identical_version --from-version 53 --save
+    venv/bin/python -m scripts.prompt_dynamic_identical_version --verify 55
+
+`--verify N` renders version N the way a turn does and compares it with the owner's
+production file (`alembic/data/chatbot_semantic_parser.prod-20261001.txt`), printing the
+first differing line when they part. Read-only.
 
 Omit --from-version to start from the `production` version.
 """
@@ -82,17 +87,53 @@ def build(db, *, from_version: int | None = None, save: bool = False) -> dict:
     return result
 
 
+def verify(db, version: int, snapshot) -> dict:
+    """Render version `version` (today's date for `{{current_date}}`) and compare it with the
+    owner's file rendered with the same date."""
+    from app.models.ai_prompt import AIPromptVersion
+    from app.services import ai_prompt_registry
+
+    row = db.query(AIPromptVersion).filter(AIPromptVersion.name == PROMPT_NAME, AIPromptVersion.version == version).one()
+    out, _ = ai_prompt_registry.render(db, PROMPT_NAME, current_date="D", override_version_id=row.id)
+    want = snapshot.read_text(encoding="utf-8").replace("{{current_date}}", "D")
+    if out == want:
+        return {"version": version, "equal": True, "first_difference": None, "chars": (len(out), len(want))}
+    a, b = out.splitlines(), want.splitlines()
+    i = next((k for k, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+    return {
+        "version": version,
+        "equal": False,
+        "first_difference": {
+            "line": i + 1,
+            "rendered": a[i] if i < len(a) else "<end>",
+            "file": b[i] if i < len(b) else "<end>",
+        },
+        "chars": (len(out), len(want)),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--from-version", type=int, default=None)
     parser.add_argument("--save", action="store_true")
+    parser.add_argument("--verify", type=int, default=None, metavar="N")
     args = parser.parse_args()
+
+    import pathlib
 
     import app.main  # noqa: F401  registers every model
     from app.database import SessionLocal
 
     db = SessionLocal()
     try:
+        if args.verify is not None:
+            snapshot = pathlib.Path(__file__).resolve().parents[1] / "alembic" / "data" / "chatbot_semantic_parser.prod-20261001.txt"
+            v = verify(db, args.verify, snapshot)
+            print(f"# v{v['version']} rendered == owner file: {v['equal']} ({v['chars'][0]} vs {v['chars'][1]} chars)")
+            if v["first_difference"]:
+                d = v["first_difference"]
+                print(f"    first difference at line {d['line']}:\n    rendered: {d['rendered']!r}\n    file:     {d['file']!r}")
+            return 0 if v["equal"] else 1
         result = build(db, from_version=args.from_version, save=args.save)
         if args.save:
             db.commit()
@@ -109,6 +150,9 @@ def main() -> int:
                     print(f"    only in the prompt text: {json.dumps(row['only_in_text'], ensure_ascii=False)}")
                 if row.get("only_in_registry"):
                     print(f"    only in the registry:    {json.dumps(row['only_in_registry'], ensure_ascii=False)}")
+                d = row.get("first_difference")
+                if d:
+                    print(f"    first difference, item {d['item']}: text {d['text']!r} | registry {d['registry']!r}")
         if args.save:
             print(f"# saved as v{result['saved_version']} (unlabelled)")
         return 0 if result["identical"] else 1

@@ -127,3 +127,13 @@ def test_verify_says_whether_a_version_renders_the_owner_file_and_where_it_parts
         no = script.verify(db, bad.version, SNAPSHOT)
         assert no["equal"] is False
         assert no["first_difference"]["line"] == 1
+
+
+def test_report_lines_are_the_owner_file_lines_even_after_an_earlier_swap():
+    """`teams` and `agents` share no line: 773 and 774 in the owner's file. A swap earlier in
+    the text must not shift the line the report gives for a later list."""
+    source = SNAPSHOT.read_text(encoding="utf-8")
+    with pg_session() as db:
+        _template, report = pv.identical_wording_layer(source, db)
+        lines = {r["variable"]: r["line"] for r in report if r["variable"] in ("teams", "agents")}
+        assert lines == {"teams": 773, "agents": 774}

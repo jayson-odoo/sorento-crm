@@ -469,3 +469,33 @@ Simulated dev on the sandbox (top v4, inside a transaction that was rolled back)
 - a re-run is a no-op.
 
 Kill test (seed removed): 3 red.
+
+Round 4, the same day. Crew applied the full crew SQL on dev. It created **v54**, the seed
+(132,040 characters), and **v55**, the variable version (130,682 characters). v55 swaps
+`{{teams}}` and `{{entity_kinds_detail}}` and keeps everything else literal.
+
+Each kept list was checked against the owner's text: where it first parts, and why. Measured on
+the sandbox with the Python renderers; rows that depend on dev's own data are marked UNVERIFIED.
+
+| List (line) | First difference, owner vs registry | Kind |
+| --- | --- | --- |
+| domains (82) | item 13: `purchase_cost` vs `purchase_order`; the registry also ends with `sales` | content: the owner's hint list omits `purchase_order`, which his own policy block (line 1674) lists; `sales` is this lane's |
+| domain_words (87) | item 1: `stock` vs `catalogue` | content: a hand list (with ETA, DO, SO, PO, price, photo...) that no registry holds |
+| access_levels (352) | sandbox: the table is empty | dev data, UNVERIFIED (the order or names of the `contact_access_types` rows on dev) |
+| entity_kinds (401) | item 13: end vs `specification` | content: the hint list omits `specification`, which the owner's own block (line 1687) lists |
+| statuses (643) | line 1: the owner wraps by hand (line lengths 89, 87, 38, 80, 35; no wrap width reproduces it); the registry also has 6 more statuses | format AND content; the format alone cannot swap, because the content differs |
+| status_values (770, 778, 821) | three different subsets in the owner's text vs one list of all 8 | content: one variable cannot equal three different lists |
+| agents (774) | item 6: end vs `ideation` (a code fallback when `access_agents` is empty) | dev data, UNVERIFIED (the active `access_agents` codes on dev) |
+| domains_detail (1662) | line 1: `master_products ... product narrows list_all.` vs no narrowing; plus the `sales` row | dev data (master_products narrowing) plus this lane's `sales` row: content |
+| specs (1691) | the crew SQL has no specs renderer, so it was never compared on dev | UNVERIFIED; the Python dry run on dev decides |
+
+No render-format gap was found that a renderer change would close so that a list swaps. The
+only format gap, statuses, also differs in content.
+
+`scripts.prompt_dynamic_identical_version` now prints the first differing item for each kept
+list, and gains `--verify N`. That flag renders version N and compares it with the owner's file,
+printing the first differing line. A report line-number bug turned up during the demo: `agents`
+was reported as 773, but it is on 774. It is now fixed and covered by a test.
+
+On the sandbox, the dry run from the seed rendered identical, and `--verify` on the variable
+version gave equal (132,025 = 132,025 characters).

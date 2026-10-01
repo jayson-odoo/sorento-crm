@@ -698,6 +698,21 @@ def _items(variable: str, text_value: str) -> list[str]:
     return [line.strip() for line in raw.splitlines() if line.strip()]
 
 
+def _first_item_difference(variable: str, literal: str, rendered: str) -> dict:
+    """The first item (1-based) where the hand list and the registry part; `<end>` when one
+    side runs out first."""
+    a, b = _items(variable, literal), _items(variable, rendered)
+    for i, (x, y) in enumerate(zip(a, b)):
+        if x != y:
+            return {"item": i + 1, "text": x, "registry": y}
+    i = min(len(a), len(b))
+    return {
+        "item": i + 1,
+        "text": a[i] if len(a) > i else "<end>",
+        "registry": b[i] if len(b) > i else "<end>",
+    }
+
+
 _IDENTICAL_CANDIDATES: tuple[tuple[str, str], ...] = (
     ("domains", r"domain_hint = ONE of: (?P<list>[a-z_]+(?: \| [a-z_]+)+) \| null"),
     ("status_values", r'"order_status": "(?P<list>[a-z_]+(?:\|[a-z_]+)*)\|null'),
@@ -724,7 +739,7 @@ def identical_wording_layer(template: str, db: Session) -> tuple[str, list[dict]
     seen_spans: set[tuple[int, int]] = set()
 
     def record(variable: str, m, literal: str, rendered: str) -> dict:
-        line = template[: m.start("list")].count("\n") + 1 if m else None
+        line = text[: m.start("list")].count("\n") + 1 if m else None
         row = {"variable": variable, "line": line}
         if m is None:
             row["action"] = "not found"
@@ -737,6 +752,7 @@ def identical_wording_layer(template: str, db: Session) -> tuple[str, list[dict]
                 only_in_text=[x for x in a if x not in b],
                 only_in_registry=[x for x in b if x not in a],
                 order_or_format_only=sorted(a) == sorted(b),
+                first_difference=_first_item_difference(variable, literal, rendered),
             )
         report.append(row)
         return row
@@ -785,6 +801,7 @@ def identical_wording_layer(template: str, db: Session) -> tuple[str, list[dict]
                     only_in_text=[x for x in a if x not in b],
                     only_in_registry=[x for x in b if x not in a],
                     order_or_format_only=sorted(a) == sorted(b),
+                    first_difference=_first_item_difference(variable, part, rendered),
                 )
             report.append(row)
             line0 += part.count("\n") + 2
