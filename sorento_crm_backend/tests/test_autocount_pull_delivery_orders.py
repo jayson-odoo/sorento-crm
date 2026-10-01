@@ -156,6 +156,7 @@ TRACKING_COLUMNS = (
     "actual_delivery_date", "pickup_time", "transporter", "driver_name", "lorry_plate",
     "checker", "trips", "delivery_days", "kpi_warning", "customer_ref", "salesman",
     "warehouse", "delivery_remarks", "delivery_remarks_cs", "remarks_cs", "order_status_id",
+    "order_type", "estimated_delivery_date",
 )
 
 
@@ -172,6 +173,7 @@ def _seed_tracking_row(db, ids: dict):
         kpi_warning=False, customer_ref="iPad ref", salesman="SEAN", warehouse="BRW",
         delivery_remarks="dr", delivery_remarks_cs="drcs", remarks_cs="rcs",
         order_status_id=ids["new_status"], debtor_code="OLD", debtor_name="Old name",
+        order_type="TRUCK", estimated_delivery_date=date(2026, 9, 28),
     )
     db.add(row)
     db.flush()
@@ -840,7 +842,15 @@ def test_compare_delivery_orders_is_pure_and_case_insensitive():
     pull_rows = _do_rows()
     excel = [{"doc number": "zzdo-0001", "product code": " zzac-p1 ", "warehouse": "zzac-wh1",
               "quantity": "10.0"}]
-    result = compare_delivery_orders(excel, pull_rows)
+    # AC-CMM-7: no alias guessing any more - the sheet's columns are named by a mapping; the
+    # header match is still trimmed and case-insensitive ("Doc Number" matches "doc number").
+    mapping = {"sheet_name": "Master", "columns": [
+        {"excel_header": "Doc Number", "transform": "text", "field": "doc_no"},
+        {"excel_header": " PRODUCT CODE", "transform": "text", "field": "item_code"},
+        {"excel_header": "Warehouse", "transform": "text", "field": "location"},
+        {"excel_header": "Quantity", "transform": "number", "field": "qty"},
+    ]}
+    result = compare_delivery_orders(excel, pull_rows, mapping)
     assert result["summary"] == {"total": 1, "matched": 1, "different": 0}
     assert result["differences"] == []
     assert result["only_in_excel"] == []

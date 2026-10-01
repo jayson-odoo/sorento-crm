@@ -36,6 +36,13 @@ from app.services.embedding_change_listener import (
     bulk_enqueue_embedding_events,
 )
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
+from app.services.order_field_ownership import (
+    AUTOCOUNT_OWNED_ORDER_COLUMNS,
+    autocount_owned_keys,
+    is_autocount_owned,
+    reject_autocount_line_edit,
+    reject_autocount_owned_edit,
+)
 from app.services.entity_resolver import (
     EntityFilterBuckets,
     resolve_entities_to_filters,
@@ -43,12 +50,6 @@ from app.services.entity_resolver import (
 
 logger = logging.getLogger(__name__)
 
-# The Master sheet columns an AutoCount-owned delivery order (`doc_key` set) keeps from the
-# DO ingest (#1354 S2, plan section 3). `customer_id` is what the sheet's debtor text resolves.
-AUTOCOUNT_OWNED_MASTER_COLUMNS = frozenset(
-    {"order_date", "created_time", "debtor_code", "debtor_name", "agent", "is_cancelled",
-     "customer_id"}
-)
 
 
 # Date-axis relaxation cap (§3.4). When a customer-scoped delivery query returns
@@ -1425,6 +1426,9 @@ class OrderService:
         if not order:
             raise handle_not_found("Order", order_id)
         self._attach_remarks_cs_locked(order)
+        order.autocount_owned_fields = (
+            sorted(AUTOCOUNT_OWNED_ORDER_COLUMNS) if is_autocount_owned(order) else []
+        )
         return order
 
     def _attach_remarks_cs_locked(self, order) -> None:
@@ -2356,6 +2360,8 @@ class OrderService:
         order = self.get_order(order_id)
 
         update_data = order_data.model_dump(exclude_unset=True)
+        # DO-OWNERSHIP-GUARD: AutoCount's fields on an AutoCount DO are not edited by hand.
+        reject_autocount_owned_edit(order, update_data)
         if update_data:
             update_data = self._normalize_uuid_fields(update_data)
 
@@ -2413,11 +2419,10 @@ class OrderService:
             # debtor_code / transporter text changes on update. Carry the
             # pre-existing values forward so the upsert sees full context even
             # if the caller only patched one field.
-            text_view = {
-                "debtor_name": update_data.get("debtor_name", order.debtor_name),
-                "debtor_code": update_data.get("debtor_code", order.debtor_code),
-                "transporter": update_data.get("transporter", order.transporter),
-            }
+            text_view = {"transporter": update_data.get("transporter", order.transporter)}
+            if not is_autocount_owned(order):  # AutoCount resolves its own customer
+                text_view["debtor_name"] = update_data.get("debtor_name", order.debtor_name)
+                text_view["debtor_code"] = update_data.get("debtor_code", order.debtor_code)
             synced = self._sync_order_master_refs(text_view)
             if "customer_id" in synced:
                 update_data["customer_id"] = synced["customer_id"]
@@ -2459,9 +2464,15 @@ class OrderService:
 
         return order
 
+    def _reject_autocount_line_edit(self, order_id: str) -> None:
+        """409 when the order is AutoCount-owned: the DO ingest rewrites its lines."""
+        order = self.db.query(Order).filter(Order.id == order_id).first()
+        if order is not None:
+            reject_autocount_line_edit(order)
+
     def create_order_line(self, order_id: str, data: OrderLineCreate):
         """Add a line to an order. Lines are ordered by line_sequence (multiple lines may share product+warehouse)."""
-        self.get_order(order_id)  # ensure order exists
+        reject_autocount_line_edit(self.get_order(order_id))  # ensure order exists
         next_seq = (
             self.db.query(func.coalesce(func.max(OrderLine.line_sequence), 0))
             .filter(OrderLine.order_id == order_id)
@@ -2476,6 +2487,7 @@ class OrderService:
 
     def update_order_line(self, order_id: str, line_id: str, data: OrderLineUpdate):
         """Update an order line."""
+        self._reject_autocount_line_edit(order_id)
         line = (
             self.db.query(OrderLine)
             .filter(OrderLine.id == line_id, OrderLine.order_id == order_id)
@@ -2491,6 +2503,7 @@ class OrderService:
 
     def delete_order_line(self, order_id: str, line_id: str):
         """Remove an order line."""
+        self._reject_autocount_line_edit(order_id)
         line = (
             self.db.query(OrderLine)
             .filter(OrderLine.id == line_id, OrderLine.order_id == order_id)
@@ -2506,6 +2519,7 @@ class OrderService:
         """Delete multiple lines from an order by line IDs."""
         if not line_ids:
             return {"message": "No order lines to delete", "deleted_count": 0}
+        self._reject_autocount_line_edit(order_id)
         deleted = (
             self.db.query(OrderLine)
             .filter(OrderLine.order_id == order_id, OrderLine.id.in_(line_ids))
@@ -2697,6 +2711,7 @@ class OrderService:
                         errors.append(f"Row {idx}: Order Number '{mapped_data['order_number']}' already exists")
                         continue
                 
+                sent_keys = [k for k in mapped_data if k != 'order_number']
                 # Calculate total if not provided
                 if 'total_amount' not in mapped_data or not mapped_data['total_amount']:
                     subtotal = mapped_data.get('subtotal_amount', Decimal("0")) or Decimal("0")
@@ -2705,9 +2720,18 @@ class OrderService:
                     mapped_data['total_amount'] = subtotal - discount + tax
                 
                 if existing_order:
-                    # Update existing order
+                    # Update existing order. On a row AutoCount owns, its columns stay
+                    # AutoCount's (DO-OWNERSHIP-GUARD) and the row says which it kept.
+                    # The warning names only what the row sent, not the total computed above.
+                    kept = autocount_owned_keys(existing_order, mapped_data)
+                    named = autocount_owned_keys(existing_order, sent_keys)
+                    if named:
+                        warnings.append(
+                            f"Row {idx}: Order {mapped_data['order_number']} - "
+                            f"{', '.join(named)} owned by AutoCount, not updated"
+                        )
                     for key, value in mapped_data.items():
-                        if key != 'order_number':  # Don't update order_number
+                        if key != 'order_number' and key not in kept:  # Don't update order_number
                             setattr(existing_order, key, value)
                     existing_order.updated_by = user_id
                     updated += 1
@@ -2732,7 +2756,8 @@ class OrderService:
         return {
             "created": created,
             "updated": updated,
-            "errors": errors
+            "errors": errors,
+            "warnings": warnings,
         }
 
     def import_excel_tracking(self, file_data: bytes, user_id: str, validate_only: bool = False, outcome=None):
@@ -3054,7 +3079,7 @@ class OrderService:
                     mapped = self._sync_order_master_refs(mapped)
                     # AutoCount DO ingest (#1354 S2, plan section 3): on a row AutoCount owns,
                     # the columns it sends are its own; the sheet keeps writing the rest.
-                    skip = AUTOCOUNT_OWNED_MASTER_COLUMNS if existing_order.doc_key is not None else ()
+                    skip = AUTOCOUNT_OWNED_ORDER_COLUMNS if is_autocount_owned(existing_order) else ()
                     for key, value in mapped.items():
                         if key != "order_number" and key not in skip:
                             setattr(existing_order, key, value)
