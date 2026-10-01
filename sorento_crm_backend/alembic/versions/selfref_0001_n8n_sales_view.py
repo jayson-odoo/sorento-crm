@@ -1,7 +1,7 @@
 """CHATBOT-SELFREF-SCOPE B1: the n8n integration role may read the sales reports.
 
 Revision ID: selfref_0001_n8n_sales_view
-Revises: oihr_0004_wide_line_table
+Revises: sotr_0001_so_is_transferable
 Create Date: 2026-09-30
 
 Production, 30 Sep 2026: "what is my sales this month" picked `crm_sales_analysis`, whose
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "selfref_0001_n8n_sales_view"
-down_revision = "oihr_0004_wide_line_table"
+down_revision = "sotr_0001_so_is_transferable"
 branch_labels = None
 depends_on = None
 

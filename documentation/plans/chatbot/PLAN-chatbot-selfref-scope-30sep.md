@@ -1,6 +1,6 @@
 # PLAN: a linked contact's sales asks run the customer sales report
 
-Status: in progress on PR #1401, FULL track (crew relabel, 30 Sep 2026: an additive grant
+Status: in progress on PR #1401, FULL track (mock v4 approved 2 Oct 2026, build started) (crew relabel, 30 Sep 2026: an additive grant
 migration on an RBAC role plus a diff well over 300 lines; the earlier "small fix" label was
 wrong). The engine/resolver half of the lane is PARKED on PR #1403 (owner decision, 30 Sep
 2026: the parser prompt is fixed in production first).
@@ -99,6 +99,73 @@ recorded here as they land; until then the recommendation is what is built.
 | 18 | A refinement re-runs the default view and re-offers | as is | pending |
 | 19 | Staff and n8n get the same delivered shape (the triple leaves the reply) | one shape | pending |
 | 20 | One account hides By customer; one product hides By product | as is | pending |
+
+## Design note: one dimension/measure model (owner, 2 Oct 2026)
+
+Owner, on approving mock v4: do not design for one case; a new perspective such as "top
+sales agent" must be a new dimension, not new code, so the parser can later map intent onto
+it. Q1 to Q5 of mock v4 answered (a) (`documentation/mockups/sales-report/index.html`).
+
+**The model already exists; this lane adds a dataset to it, not a second engine.**
+`app/services/reports/registry.py` declares a report as a `Dataset` of `Column`s tagged
+`dimension` or `measure`, `SelectParam` filters (each one a predicate), a `PeriodParam`
+and a pivot view (`rows` dimension x `cols` dimension x `measures`);
+`app/services/reports/engine.py::run` executes any view in grouped SQL, company scope
+fail-closed (`_predicates`). The chatbot's `crm_sales_analysis` already runs on it
+(`app/api/v1/sales/analysis.py:224`, a rows/cols/measures view over
+`datasets/sales_order_lines.py`).
+
+New: `app/services/reports/datasets/delivery_order_lines.py`, one row per DO line:
+
+- Rows: `orders` + `order_lines`, DO date (`orders.order_date`), not cancelled, not
+  deleted, replacement DOs (number `REP...`) left out (Q2 a).
+- Measures: `amount` (Q1 a: the DOC total once for a legacy DO, which writes it on every
+  line; the line total for an AutoCount `db1` line; a line's share of its DOC total is
+  weighted by qty x unit price x (1 - discount), computed once in the dataset's base
+  subquery so every grouping sums to the same Total), `qty`.
+- Dimensions: `customer`, `product`, `sales_agent` (the DO's SO's agent), `location`
+  (`order_lines.warehouse_id`), `channel` (the account's `market_segment_code`, project /
+  contract = Project, any other = Retail, `demand_class.class_of`'s rule in SQL; no segment
+  = in every channel), `day`, `week` (Monday to Sunday), `month`, `delivery_order`, and a
+  constant `all` (the one-column side of a one-dimension view).
+- Filters (`SelectParam`): `customer` (the contact's links), `product`, `location`,
+  `channel`. Company: the companies of the scoped accounts as the run's grant.
+
+The chatbot customer sales report = `engine.run` with one view per reply:
+
+| Ask | rows | cols | filters |
+| --- | --- | --- | --- |
+| default (Total + per-period lines) | `day` / `week` / `month` from the window (today and a week by day, a month by week, longer by month) | `all` | links, policy locations |
+| By customer / By product | `customer` / `product` | `all` | same |
+| Delivery orders | `delivery_order` | `all` | same |
+| "project only", "at WH-A" | (as above) | `all` | + `channel` / `location` |
+
+The route (`GET /order-management/sales-report`) gains `group_by` validated against the
+dataset's catalog dimensions; the presenter ranks by `amount`, caps at 10 with "and N
+more", and prints the v4 lines. The drill options are the catalog dimensions the reply
+offers (By customer only when the scope holds more than one account).
+
+**"Top sales agent" under this model:** `group_by=sales_agent`, ranked by `amount`, top N.
+No new code: the dimension is in the dataset now; what is missing is the parser mapping
+"top sales agent" onto `group_by` and the decision who may ask it (staff), both later.
+
+**Where access is enforced:** the route, when it carries a contact, resolves that contact's
+stock visibility policy (`stock_visibility.resolve_policy`): a named location outside it is
+refused (Q3 a, "Sorry, <location> isn't one of the locations you can check."), an empty
+include list answers no rows (Q4 a). An empty multi-select means "no filter" in the engine
+(`engine._predicates`), so the empty-policy case is answered before the engine runs, never
+passed through as `[]`.
+
+**NOT built now** (each with the trigger that builds it):
+
+- A DO count measure: the engine sums every measure (`_pivot`, `func.sum`); a distinct
+  count needs an aggregate kind on `Column`. Trigger: the first reply that prints a count.
+- The new dataset on the Reports screen: the definition is run directly, not
+  `reg.register`ed, so the screen's list does not change. Trigger: the owner wants it there.
+- Parser intent to dimension mapping (free "group by X" asks): the drill options and
+  `order_status=sales_report` cover today's asks. Trigger: the parser prompt work
+  (PROMPT-DYNAMIC) adds the sales domain.
+- Nested drills and a second measure in one reply (v3 annotation 8 withdrew nesting).
 
 ## Report shape (owner ruling 30 Sep 2026, mock v2)
 
