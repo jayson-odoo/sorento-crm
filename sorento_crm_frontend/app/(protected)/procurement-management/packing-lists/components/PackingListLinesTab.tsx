@@ -38,6 +38,9 @@ const numMeta = { headerClassName: 'text-end', cellClassName: 'text-end tabular-
 
 type SourceLink = { proforma_invoice_id: string; pi_number: string; qty: number };
 
+/** One shared empty map, so a container with no invoice links keeps a stable reference. */
+const NO_INVOICES_BY_LINE: Record<string, SourceLink[]> = {};
+
 /**
  * One grid row, in EITHER mode - the draft while editing, the stored line otherwise.
  *
@@ -189,7 +192,14 @@ export function PackingListLinesTab() {
     debouncedValue: search,
   } = useDebouncedSearch();
 
-  const invoicesByLine = sourceInvoices?.by_shipment_line ?? {};
+  // Memoised, never a fresh `{}` per render: without SCM read `sourceInvoices` is undefined,
+  // and a new object here rebuilt `viewRows` on every render, which re-rendered the grid in
+  // an endless loop (the page pegged a core, and no tab click could ever commit: the
+  // packing-list "hang", PL-TABS-ACCESS).
+  const invoicesByLine = useMemo(
+    () => sourceInvoices?.by_shipment_line ?? NO_INVOICES_BY_LINE,
+    [sourceInvoices],
+  );
 
   /** Brand per line, off the SAME `build()` JSON the Split card and the download both read -
    *  the only place a shipment line's brand is available on the wire (AC-G6: what she sees

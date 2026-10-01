@@ -1182,6 +1182,49 @@ describe('a user without SCM read (PL-TABS-ACCESS)', () => {
     expect(within(field).queryByRole('combobox')).not.toBeInTheDocument();
   });
 
+  // The packing-list "hang" (owner, 1 Oct): without SCM read the proforma invoices are
+  // undefined, and the Lines tab rebuilt its grid rows from a fresh `{}` on every render.
+  // TanStack resets the page index on every new row model, that reset is a state update,
+  // and the update re-rendered with new rows again: an endless loop that pegged the main
+  // thread, so no tab click out of Shipment lines could ever commit. It takes one render
+  // after mount to start (a query settling does it in the browser); here, a rerender.
+  it(
+    'settles on Shipment lines instead of re-rendering forever',
+    async () => {
+      routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const tree = () => (
+        <QueryClientProvider client={client}>
+          <Suspense fallback={null}>
+            <PackingListLayout params={PARAMS}>
+              <LinesPage />
+            </PackingListLayout>
+          </Suspense>
+        </QueryClientProvider>
+      );
+      let view!: ReturnType<typeof render>;
+      await act(async () => {
+        view = render(tree());
+      });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      await act(async () => {
+        view.rerender(tree());
+      });
+      const before = calls.consolidated.length;
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 300));
+      });
+
+      // A settled page renders a handful of times at most; the loop never stops (and on
+      // the old code this test does not reach this line at all: it times out).
+      expect(calls.consolidated.length - before).toBeLessThan(5);
+      expect(screen.getByText('SRTWT7443')).toBeInTheDocument();
+    },
+    5000,
+  );
+
   it('keeps Details working without reading the SCM container sizes', async () => {
     await renderTab(<DetailsPage />);
 
