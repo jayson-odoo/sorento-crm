@@ -111,6 +111,8 @@ function _attachRevisionHeader(
 let _cachedToken: string | null = null;
 let _cachedTokenExp = 0; // epoch seconds; 0 = unknown
 let _tokenInFlight: Promise<string | null> | null = null;
+export const TOKEN_FETCH_TIMEOUT_MS = 10_000;
+export { SIGN_OUT_CAP_MS } from "@/lib/session-end";
 const _TOKEN_REFRESH_MARGIN_S = 60; // refetch this many seconds before exp
 
 function _decodeJwtExp(token: string): number {
