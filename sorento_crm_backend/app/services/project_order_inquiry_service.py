@@ -10829,6 +10829,10 @@ def register_order_inquiry_post_commit_dispatch() -> None:
 
     @event.listens_for(Session, "after_commit")
     def _fire_pending_changed_with_links(session):  # noqa: ANN001
+        # A Preview runs the real write and rolls it back: its queues must survive every
+        # savepoint commit inside it and be discarded by the root rollback, never sent.
+        if session.info.get("confirm_preview"):
+            return
         pending = session.info.pop(_CHANGED_WITH_LINKS_PENDING_KEY, None)
         if not pending:
             return
@@ -10872,6 +10876,8 @@ def register_order_inquiry_post_commit_dispatch() -> None:
         same reason the dispatch above takes one: `after_commit` fires before this session
         has re-begun a usable transaction.
         """
+        if session.info.get("confirm_preview"):
+            return
         pending = session.info.pop(_PURCHASING_NOTIFY_PENDING_KEY, None)
         if not pending:
             return
