@@ -249,3 +249,19 @@ def test_the_stale_banner_is_quiet_for_a_wording_layer_production():
         db.flush()
         db.execute(text("UPDATE chatbot_domains SET switch_words = switch_words || '{zzt}'::text[] WHERE name = 'order'"))
         assert prompt_blocks_status(current_user={}, db=db).stale is False
+
+
+def test_the_seed_works_on_a_table_built_from_the_model():
+    """CI (run 36797594354): `scripts.bootstrap_env` builds `chatbot_status_words` with
+    `create_all` from the ORM model, whose `id` default is Python-side only, so the
+    migration's `CREATE TABLE IF NOT EXISTS` is skipped and its seed INSERT must name the
+    id itself or it fails with `null value in column "id"`."""
+    from app.models.chatbot_policy import ChatbotStatusWord
+
+    mod = _load("pdyn_0001_status_words_sales.py")
+    with pg_session() as db:
+        conn = db.connection()
+        conn.execute(text("DROP TABLE chatbot_status_words"))
+        ChatbotStatusWord.__table__.create(conn)
+        mod.apply(conn)
+        assert conn.execute(text("SELECT count(*) FROM chatbot_status_words")).scalar() == 8

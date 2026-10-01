@@ -499,7 +499,7 @@ export function PromptChipEditor({
           suppressContentEditableWarning
           spellCheck={false}
           data-testid="prompt-chip-editor"
-          className="max-h-[70vh] min-h-[320px] overflow-y-auto overflow-x-hidden whitespace-pre-wrap [overflow-wrap:anywhere] rounded-md border bg-background p-3 font-mono text-xs leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="max-h-[70dvh] min-h-[320px] overflow-y-auto overflow-x-hidden whitespace-pre-wrap [overflow-wrap:anywhere] rounded-md border bg-background p-3 font-mono text-xs leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onInput={() => {
             // Typing after a removal makes the removal final: Undo would roll the typing back.
             setUndoValue(null);

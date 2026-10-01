@@ -591,7 +591,7 @@ function RenderedPreview({
     <pre
       data-testid="prompt-preview"
       aria-readonly="true"
-      className="max-h-[70vh] min-h-[320px] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/20 p-3 font-mono text-xs leading-relaxed"
+      className="max-h-[70dvh] min-h-[320px] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/20 p-3 font-mono text-xs leading-relaxed"
     >
       {splitTemplate(template, registryNames).map((seg, i) =>
         seg.kind === 'text' ? (

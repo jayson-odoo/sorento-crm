@@ -17,7 +17,7 @@ seed, so an owner edit made before a re-run is never overwritten. `apply(bind)` 
 with `scripts.bootstrap_env` (a `create_all`-built database never runs this body).
 
 Revision ID: pdyn_0001_status_words_sales
-Revises: oihr_0004_wide_line_table
+Revises: esc1_0001_escalation_allowed
 Create Date: 2026-09-30
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "pdyn_0001_status_words_sales"
-down_revision = "oihr_0004_wide_line_table"
+down_revision = "esc1_0001_escalation_allowed"
 branch_labels = None
 depends_on = None
 
@@ -108,8 +108,10 @@ def seed_status_words(bind) -> None:
     for i, (domain, value, label, words) in enumerate(STATUS_WORDS):
         bind.execute(
             sa.text(
-                "INSERT INTO chatbot_status_words (domain, value, label, trigger_words, sort_order) "
-                "VALUES (:domain, :value, :label, CAST(:words AS text[]), :sort) "
+                # The id is named: a `create_all`-built table (scripts.bootstrap_env, CI) has
+                # no database default for it, only the model's Python-side one.
+                "INSERT INTO chatbot_status_words (id, domain, value, label, trigger_words, sort_order) "
+                "VALUES (gen_random_uuid(), :domain, :value, :label, CAST(:words AS text[]), :sort) "
                 "ON CONFLICT (value) DO NOTHING"
             ),
             {"domain": domain, "value": value, "label": label, "words": list(words), "sort": i},
