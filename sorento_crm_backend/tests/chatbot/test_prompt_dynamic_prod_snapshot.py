@@ -34,6 +34,13 @@ def _load():
     return module
 
 
+def _apply(mod, db):
+    """Run the migration on a database where it may already have run (CI migrates to head
+    and `bootstrap_env` applies it): its own row goes first, inside the rolled-back test."""
+    mod.remove(db.connection())
+    return mod.apply(db.connection())
+
+
 @pytest.fixture(autouse=True)
 def _fresh_cache():
     pv.clear_cache()
@@ -112,6 +119,7 @@ def test_seeded_registries_become_variables_and_the_render_equals_the_file():
     mod = _load()
     with pg_session() as db:
         _seed_registries_to_the_file(db)
+        mod.remove(db.connection())
         top = db.execute(text("SELECT max(version) FROM ai_prompt_versions WHERE name = :n"), {"n": KEY}).scalar()
         version = mod.apply(db.connection())
         assert version == int(top) + 1
@@ -127,7 +135,7 @@ def test_a_registry_that_differs_keeps_its_list_literal_and_is_reported():
     """Unseeded tables carry the `sales` domain and statuses the owner's text does not."""
     mod = _load()
     with pg_session() as db:
-        version = mod.apply(db.connection())
+        version = _apply(mod, db)
         row = _row(db, version)
         kept = {r["variable"]: r for r in row.config_json["identical_report"] if r["action"] == "kept literal"}
         assert "domains" in kept and "sales" in kept["domains"]["only_in_registry"]
@@ -139,6 +147,7 @@ def test_a_registry_that_differs_keeps_its_list_literal_and_is_reported():
 def test_never_labels_and_never_touches_an_existing_version():
     mod = _load()
     with pg_session() as db:
+        mod.remove(db.connection())
         before = {
             r.id: (r.version, r.template)
             for r in db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY)
@@ -156,7 +165,7 @@ def test_never_labels_and_never_touches_an_existing_version():
 def test_idempotent():
     mod = _load()
     with pg_session() as db:
-        assert mod.apply(db.connection()) is not None
+        assert _apply(mod, db) is not None
         count = db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count()
         assert mod.apply(db.connection()) is None
         assert db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count() == count
@@ -165,6 +174,7 @@ def test_idempotent():
 def test_downgrade_deletes_only_its_own_unlabelled_row():
     mod = _load()
     with pg_session() as db:
+        mod.remove(db.connection())
         count = db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count()
         version = mod.apply(db.connection())
         mod.remove(db.connection())

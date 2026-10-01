@@ -736,6 +736,7 @@ def seed_chatbot_policy() -> None:
     sales_s1 = _load("_sales_s1_reports_module", "sales_s1_reports_module.py")
     pdyn1 = _load("_pdyn_0001_status_words_sales", "pdyn_0001_status_words_sales.py")
     pdyn2 = _load("_pdyn_0002_wording_layer", "pdyn_0002_wording_layer.py")
+    pdyn3 = _load("_pdyn_0003_prod_identical", "pdyn_0003_prod_identical.py")
 
     with engine.begin() as conn:
         domains_inserted, kinds_inserted = s0.seed_domains_and_kinds(conn)
@@ -771,6 +772,10 @@ def seed_chatbot_policy() -> None:
     # published unlabelled (the owner promotes).
     with engine.begin() as conn:
         pdyn2.apply(conn)
+    # The owner's production text of 1 Oct 2026, unlabelled, variables only where the
+    # tables reproduce it exactly.
+    with engine.begin() as conn:
+        pdyn3.apply(conn)
     log.info(
         "chatbot policy seeded -> domains=%d kinds=%d (narrowing + first prompt "
         "version applied)",

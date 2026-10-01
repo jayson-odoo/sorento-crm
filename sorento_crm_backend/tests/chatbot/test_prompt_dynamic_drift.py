@@ -193,7 +193,16 @@ def test_no_version_after_the_wording_layer_carries_a_literal_registry_list():
             .all()
         )
         for row in later:
-            assert set(pv.literal_lists(row.template)) <= allowed, (
+            # The owner's production snapshot (`pdyn_0003_prod_identical`) keeps a list
+            # literal wherever the registry does not reproduce his text, and says so.
+            own = {
+                r["variable"]
+                for r in (row.config_json or {}).get("identical_report") or []
+                if str(r.get("action", "")).startswith("kept literal")
+            }
+            if "*" in own:  # the proof failed and the owner's text went in verbatim
+                continue
+            assert set(pv.literal_lists(row.template)) <= allowed | own, (
                 f"v{row.version} carries registry list(s) as literal text: "
                 f"{sorted(set(pv.literal_lists(row.template)) - allowed)}. Publish wording "
                 f"changes with chatbot_prompt_vars.publish_wording_edit, never the code constant."
