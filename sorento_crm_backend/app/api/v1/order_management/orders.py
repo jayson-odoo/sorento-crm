@@ -1964,6 +1964,14 @@ async def get_sales_report(
     )
     if scoped_customer_ids is not None:
         resolved_customer_ids = scoped_customer_ids
+        if group_by_norm == "sales_agent":
+            # Fix round 1, security N1: a customer-scoped contact asks about its own
+            # accounts; a ranking of the company's sales agents is staff information.
+            raise AppException(
+                403,
+                "That breakdown is not available for your account.",
+                code="group_by_not_allowed",
+            )
     if _no_subject and not scoped_customer_ids:
         raise _needs_subject()
     resolved_warehouse_codes = _normalize_entities(warehouse_codes)

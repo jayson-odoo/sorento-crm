@@ -1029,3 +1029,40 @@ def test_the_whole_report_is_aggregated_in_sql(client, db):
     report_calls = [c for c in calls if "order_lines" in c.lower()]
     assert report_calls, "no SELECT touched order_lines at all"
     assert any("group by" in c.lower() for c in report_calls), report_calls
+
+
+# ============================================================ fix round 1, security N1
+
+
+def test_a_customer_scoped_contact_may_not_rank_sales_agents(client, db):
+    """A linked (customer-scoped) contact asks about its own accounts; ranking the company's
+    sales agents is staff information. 403 `group_by_not_allowed`."""
+    cust, prod, wh = _world(db)
+    agent = seed_agent(db, code="ZZT-AGENT-SCOPED")
+    so = seed_so(db, customer_id=cust.id, agent_id=agent.id)
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), sales_order_id=so.id,
+            lines=[line(prod.id, wh.id, 1, price=D("10"), total=D("10.00"))])
+    contact = _contact(db)
+    _link(db, contact, cust)
+    db.commit()
+
+    resp = client.get(BASE, params={"group_by": "sales_agent", **_as_contact(contact)})
+    assert resp.status_code == 403, resp.text
+    assert "group_by_not_allowed" in resp.text, resp.text
+    # Every other drill stays open to it.
+    assert _get(client, group_by="product", **_as_contact(contact))["group_by"] == "product"
+
+
+def test_an_unlinked_contact_and_a_staff_caller_still_rank_sales_agents(client, db):
+    cust, prod, wh = _world(db)
+    agent = seed_agent(db, code="ZZT-AGENT-OPEN")
+    so = seed_so(db, customer_id=cust.id, agent_id=agent.id)
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), sales_order_id=so.id,
+            lines=[line(prod.id, wh.id, 1, price=D("10"), total=D("10.00"))])
+    contact = _contact(db)  # no customer link: not customer-scoped
+    db.commit()
+
+    staff = _get(client, customer_ids=cust.id, group_by="sales_agent")
+    assert [r["name"] for r in staff["rows"]] == ["ZZT-AGENT-OPEN"], staff["rows"]
+    unlinked = _get(client, customer_ids=cust.id, group_by="sales_agent", **_as_contact(contact))
+    assert [r["name"] for r in unlinked["rows"]] == ["ZZT-AGENT-OPEN"], unlinked["rows"]
