@@ -125,8 +125,11 @@ export function isAccessDenied(error: unknown): boolean {
 ```
 
 If a status-carrying error is ever added, only this function changes; call sites stay.
-`providers/query-provider.tsx:83-85` must use this helper too (it currently misses
-`Module not enabled:`, so a disabled module toasts the raw string).
+`providers/query-provider.tsx:83-85` must use this helper too. It currently matches
+`One of these permissions required:` with the colon, so it misses both the strict-mode variant
+`One of these permissions required (module may be disabled): ...` (`dependencies.py:456`) and
+`Module not enabled: ...`; both of those toast the raw backend string instead of the friendly
+permission toast.
 
 ## Rule 4. A 403 renders `AccessDenied` in place: no toast, no retry
 
