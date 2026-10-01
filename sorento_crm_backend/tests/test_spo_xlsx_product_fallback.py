@@ -903,3 +903,29 @@ class TestReviewerRound:
         )
         assert plan.groups == ()
         assert [g.reason for g in plan.locked_groups] == ["received_locked"]
+
+    def test_a_pick_on_a_rejected_grn_holds_no_capacity(self, env):
+        """Review should-fix 4: a 10 pick on a REJECTED GRN does not use the IB
+        line's room, so the Excel 22 @ IB lands there whole."""
+        from scripts import dedupe_spo_xlsx_superseded as script
+
+        case = _owner_case(env)
+        ib_row, ntc_row = _seed_pre_repair_state(env, case)
+        rejected = _header(env, case)
+        env.db.execute(
+            text("UPDATE picking_headers SET picking_status = 'rejected' WHERE id = :id"),
+            {"id": rejected},
+        )
+        _pick(env, rejected, ib_row.id, case.product_id, case.ib_id, 10)
+        env.db.commit()
+
+        script.run(env.db, env.company_a, dry_run=False)
+
+        moved_to_ib = env.db.execute(
+            text(
+                "SELECT coalesce(sum(quantity_picked), 0) FROM picking_lines "
+                "WHERE spo_allocation_id = :a AND picking_header_id <> :h"
+            ),
+            {"a": str(ib_row.id), "h": rejected},
+        ).scalar()
+        assert int(moved_to_ib) == 22
