@@ -33,7 +33,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.chatbot.contracts import DETAIL_OFFER_KINDS
+from app.services.chatbot.contracts import DETAIL_OFFER_KINDS, SALES_REPORT_GROUP_BYS
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS, Pending
 from app.services.chatbot.turn.state import KIND_FIELD_MAP, Focus
 
@@ -160,9 +160,17 @@ def _positions_by_label(pending: Pending, verdict: dict[str, Any]) -> list[int]:
         o["position"]
         for o in pending.options
         if o.get("position") is not None
-        and isinstance(o.get("label"), str)
-        and o["label"].strip().lower() in named
+        and named & _option_words(o)
     ]
+
+
+def _option_words(option: dict[str, Any]) -> set[str]:
+    """An option's label plus the aliases its own writer gave it (the sales report's
+    drill-downs: "DO" for Delivery orders, `presenters._SALES_OPTION_ALIASES`), each
+    lower-cased. Still an exact match: the aliases are data on the option, not words this
+    engine reads."""
+    words = [option.get("label"), *((option.get("payload") or {}).get("aliases") or [])]
+    return {w.strip().lower() for w in words if isinstance(w, str) and w.strip()}
 
 
 #: How far `broaden_to` widens the axis `broaden_axis` names (owner ruling, 17 Sep 2026).
@@ -346,6 +354,10 @@ def _named_scope(verdict: dict[str, Any]) -> str | None:
 def _picked_scope(pending: Pending, positions: list[int]) -> str | None:
     matched = [o for o in pending.options if o.get("position") in positions] if positions else []
     values = [(o.get("payload") or {}).get("value") for o in matched]
+    if pending.kind == "sales_report_detail":
+        # AC-SR-28: the sales report's drill-downs are a `group_by`, one at a time (the
+        # first picked); never a document.
+        return next((v for v in values if v in SALES_REPORT_GROUP_BYS), None)
     # "all" over the scope question picks every option, and every option at once IS the
     # widest one - answering "both" rather than the first row on the list.
     scope = "both" if "both" in values else next((v for v in values if v), None)
@@ -597,6 +609,11 @@ def decide(
         reading = _subject_reading(verdict, focus, pending, entities, window, facts)
         if not positions and reading.refines:
             return reading
+        if picked and picked[1] == "label_match" and pending.kind == "sales_report_detail":
+            # AC-SR-28: "by product", "DO" typed back at the drill offer arrives as an
+            # ENTITY (the label-match arm of `picked_positions`); that entity IS the pick,
+            # not a new subject. The outstanding report's kinds keep their order.
+            entities = []
         if entities:
             # D17 point 3: a stray position riding along with an entity is still a new
             # ask, because the parser is told never to emit both.

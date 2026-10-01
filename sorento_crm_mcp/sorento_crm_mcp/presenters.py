@@ -2582,9 +2582,8 @@ def _sales_report_options(report: dict) -> list[dict]:
 
 
 def _sales_report_has_result(report: dict) -> bool:
-    if _filled(report.get("group_by")):
-        return bool(_sales_report_rows(report))
-    return bool(_sales_report_periods(report))
+    """A period or a drill row came back (a drill body may carry either or both)."""
+    return bool(_sales_report_periods(report)) or bool(_sales_report_rows(report))
 
 
 def _sales_report_drill_lines(report: dict) -> list[str]:

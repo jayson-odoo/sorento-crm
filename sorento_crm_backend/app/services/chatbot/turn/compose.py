@@ -202,7 +202,13 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
                 # generic roster resolution reads it to build the fetch entity. Inert
                 # for the OUTSTANDING kinds (never reached: they short-circuit first).
                 "uuid": row.get("value"),
-                "payload": {"value": row.get("value")},
+                # The sales report's drill-downs carry their own typed aliases ("DO" for
+                # Delivery orders), which the label match reads (`decide._option_words`).
+                "payload": (
+                    {"value": row.get("value"), "aliases": list(row["aliases"])}
+                    if isinstance(row.get("aliases"), list) and row["aliases"]
+                    else {"value": row.get("value")}
+                ),
             }
             for i, row in enumerate(rows)
         ]

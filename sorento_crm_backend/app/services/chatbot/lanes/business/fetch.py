@@ -54,7 +54,12 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import UNDOMAINED_CHATBOT_TOOLS, is_timeline, named_count
+from app.services.chatbot.contracts import (
+    SALES_REPORT_GROUP_BYS,
+    UNDOMAINED_CHATBOT_TOOLS,
+    is_timeline,
+    named_count,
+)
 from app.services.chatbot.turn.policy import default_policy
 from app.services.chatbot.turn import policy_rows
 from app.services.product_spec_registry import display_spec_value
@@ -820,9 +825,12 @@ def entity_ids_transformer(
             channel = jsc.get(semantic_input, "outstanding_carried_channel")
         if jsc.truthy(channel):
             out["channel"] = jsc.js_string(channel)
+        # AC-SR-28: a drill-down picked off the open `sales_report_detail` offer re-runs
+        # this SAME tool with that `group_by` (the offer's own value, `SALES_REPORT_GROUP_BYS`);
+        # the window, accounts, location and channel ride on the carried keys above.
         detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
-        if detail_pick == "so":
-            out["detail"] = "so"
+        if detail_pick in SALES_REPORT_GROUP_BYS:
+            out["group_by"] = detail_pick
 
         # S18 (owner ruling, mid-lane): a PRODUCT-ONLY ask (a resolved product, no
         # customer) with no date window defaults to the CURRENT CALENDAR YEAR
@@ -2327,14 +2335,12 @@ def _sales_report_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
 def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     """S4 wiring point 7 (AC-1654/AC-1655/AC-1658): `crm_sales_report` never goes
     through the generic envelope below - mirrors `_outstanding_report_output` for
-    the sibling tool, the SAME reason: the report's shape (a month block per
-    bucket) has no row list to build items from.
+    the sibling tool, the SAME reason: the report's shape has no row list to build
+    items from.
 
-    `_outstanding_offer_from_text` is REUSED, not copied: this report's own single
-    closing sentence (`Reply 1 for the sales order list.`) is byte-identical to the
-    outstanding report's single-scope offer, so the same regex finds it and returns
-    the SAME one-row shape (`idx` 1, `Sales order list`, `so`) this tool's own
-    detail offer needs.
+    AC-SR-28: the drill-down offer is the presenter's own `options` roster (`{idx, label,
+    value, aliases}`, numbered by the presenter, the one writer of the numbering), never a
+    regex over the reply text. Those rows become the `sales_report_detail` open question.
     """
     envelope = result if isinstance(result, dict) else {}
     if "response" in envelope:
@@ -2359,7 +2365,16 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
         # string here is never a rendered report, so it is never treated as a result.
         text = result if isinstance(result, str) else jsc.js_string(result)
         has_result = False
-    offer = _outstanding_offer_from_text(text)
+    offer = [
+        {
+            "idx": row.get("idx"),
+            "label": row.get("label"),
+            "value": row.get("value"),
+            "aliases": [a for a in jsc.array(row.get("aliases")) if isinstance(a, str)],
+        }
+        for row in jsc.array(envelope.get("options"))
+        if isinstance(row, dict) and row.get("value") in SALES_REPORT_GROUP_BYS and row.get("idx")
+    ]
 
     outstanding_ask = (
         {
@@ -2367,7 +2382,7 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
             "last_result_set": offer,
             "filters": {
                 **_sales_report_filters_from_ctx(ctx),
-                "offer_text": _outstanding_offer_block(text),
+                "offer_text": _sales_report_offer_block(text),
             },
         }
         if offer
@@ -2397,6 +2412,17 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
         # already reuses this for, S4 point 9).
         "outstanding_report": True,
     }
+
+
+#: The heading the presenter prints above the drill-down options (`_sales_report`).
+_SALES_REPORT_DRILL_HEADING = "*Drill down:*"
+
+
+def _sales_report_offer_block(text: str) -> str:
+    """The drill-down block exactly as the customer was shown it (heading plus the numbered
+    options), kept verbatim for the out-of-range re-ask (AC-1102's rule)."""
+    at = (text or "").rfind(_SALES_REPORT_DRILL_HEADING)
+    return text[at:].strip() if at >= 0 else ""
 
 
 #: The miss line for an unrendered low stock payload (N6). The presenter carries the same
