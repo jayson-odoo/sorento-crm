@@ -379,7 +379,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                         />
                       </FormControl>
                       <FormDescription>
-                        Unique delivery order number
+                        {fromAutoCount('order_number') ? 'From AutoCount' : 'Unique delivery order number'}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

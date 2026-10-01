@@ -193,8 +193,10 @@ def test_bulk_import_skips_autocount_owned_keys(db):
     warnings = result["warnings"]
     assert len(warnings) == 1
     assert "ZZDO-OG-1" in warnings[0] and "owned by AutoCount" in warnings[0]
-    for key in ("order_date", "subtotal_amount", "total_amount", "remarks", "customer_id"):
-        assert key in warnings[0], key
+    named = set(warnings[0].split(" - ", 1)[1].split(" owned by")[0].split(", "))
+    # The row sent no total: the import computes one and keeps AutoCount's, but does not claim
+    # the row asked to change it.
+    assert named == {"order_date", "subtotal_amount", "tax_amount", "remarks", "customer_id"}
 
 
 def test_bulk_import_response_carries_warnings():

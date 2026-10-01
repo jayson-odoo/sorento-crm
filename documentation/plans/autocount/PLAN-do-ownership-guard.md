@@ -60,6 +60,12 @@ AutoCount never sends (RMA, `doc_key IS NULL`) stay fully Order-Tracking-written
 
 - `doc_date` tracking key is still only a year hint; nothing writes it. Out of scope.
 - A per-field ownership source column: only if a row ever needs mixed ownership beyond doc_key.
+- `DELETE /orders/{id}`, `DELETE /orders/bulk` and archive still remove an AutoCount DO with no
+  ownership check (pre-existing; not an edit, so outside the 1 Oct ruling). A hard-deleted
+  AutoCount DO is recreated by the next ingest without its Order Tracking fields. Raised to the
+  owner on PR #1410; build only on a ruling.
+- Pre-existing: the order edit / line routes gate on `get_current_user` only (no
+  `require_permission`). Unchanged by this lane.
 
 ## Overlap with #1408
 

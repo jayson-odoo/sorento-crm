@@ -2711,6 +2711,7 @@ class OrderService:
                         errors.append(f"Row {idx}: Order Number '{mapped_data['order_number']}' already exists")
                         continue
                 
+                sent_keys = [k for k in mapped_data if k != 'order_number']
                 # Calculate total if not provided
                 if 'total_amount' not in mapped_data or not mapped_data['total_amount']:
                     subtotal = mapped_data.get('subtotal_amount', Decimal("0")) or Decimal("0")
@@ -2721,12 +2722,13 @@ class OrderService:
                 if existing_order:
                     # Update existing order. On a row AutoCount owns, its columns stay
                     # AutoCount's (DO-OWNERSHIP-GUARD) and the row says which it kept.
-                    kept = autocount_owned_keys(
-                        existing_order, [k for k in mapped_data if k != 'order_number'])
-                    if kept:
+                    # The warning names only what the row sent, not the total computed above.
+                    kept = autocount_owned_keys(existing_order, mapped_data)
+                    named = autocount_owned_keys(existing_order, sent_keys)
+                    if named:
                         warnings.append(
                             f"Row {idx}: Order {mapped_data['order_number']} - "
-                            f"{', '.join(kept)} owned by AutoCount, not updated"
+                            f"{', '.join(named)} owned by AutoCount, not updated"
                         )
                     for key, value in mapped_data.items():
                         if key != 'order_number' and key not in kept:  # Don't update order_number

@@ -308,7 +308,7 @@ export default function OrderLinesCard({ orderId, lines, readOnly = false }: Ord
         rowSelection={readOnly ? undefined : rowSelection}
         onRowSelectionChange={readOnly ? undefined : setRowSelection}
         emptyTitle="No delivery order lines."
-        emptyBody="Import from Excel or add manually."
+        emptyBody={readOnly ? undefined : 'Import from Excel or add manually.'}
         // SF-8 (M5 run 3 review): a document's own line table renders every
         // row - a page-2 would hide lines the reader expects in one scroll.
         paginate={false}
