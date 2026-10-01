@@ -28,7 +28,7 @@
 <body>
 <header>
   <h1>Sales report on WhatsApp: default reply and drill-downs (v3)</h1>
-  <p>Mock for alignment (PR #1401), v3: the owner's eight annotations on v1 and three on v2 (numbering continues after list rows; a drill keeps the period; the open-question rule is the existing one). Contact: Jayson, linked to six HANLIM TRADING accounts, all retail. Copy-DB 2026 facts used: A/C I 164 SOs, A/C III 64, A/C IV 32, A/C II none. Amounts and the split by product are illustrative. Bold in a bubble is WhatsApp <code>*bold*</code>.</p>
+  <p>Mock for alignment (PR #1401), v3: the owner's eight annotations on v1 and three on v2 (numbering continues after list rows; a drill keeps the period; the open-question rule is the existing one). Contact: a test contact, linked to six ACME TRADING accounts, all retail. All names, codes and figures are made up. Amounts and the split by product are illustrative. Bold in a bubble is WhatsApp <code>*bold*</code>.</p>
 </header>
 <main>
 
@@ -36,7 +36,7 @@
   <h2>1. Default reply: "what's my sales this month" (a month is shown by week)</h2>
   <div class="chat">
     <div class="msg out">what's my sales this month</div>
-    <div class="msg in"><b>Customer:</b> HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
+    <div class="msg in"><b>Customer:</b> ACME TRADING SDN BHD, ACME TRADING SDN BHD [A/C I], ACME TRADING SDN BHD [A/C II], ACME TRADING SDN BHD [A/C III], ACME TRADING SDN BHD [A/C IV], ACME TRADING (TILES)
 <b>Product:</b> all
 <b>Delivery date:</b> 01/09/2026 to 30/09/2026
 
@@ -53,7 +53,7 @@
 3. Delivery orders</div>
   </div>
   <p class="note"><span class="q">Annotation 2 (line format).</span> Every figure line is <code>Qty n, RM x</code>, the top selling ranking's own row format (<code>presenters.py::_top_selling_row</code>: <code>CODE: Qty q, RM v</code>), so the two reports read the same. <span class="q">Annotation 3.</span> Header labels, <b>Total</b> and section titles are bold.</p>
-  <p class="note"><span class="q">Annotation 4 (channel and location).</span> No <b>Channel</b> line here: Jayson's six accounts are all retail, so the channel is fixed to retail in code and there is nothing to choose. Source: each linked account's <code>customers.market_segment_code</code>, read through <code>app/services/scm/demand_class.py::class_of</code> (a segment named project or contract is the project channel, every other segment is retail, the same rule the SO import uses to class demand). One class across the links: channel fixed, header hidden. Two classes: the header shows (section 5). No <b>Location</b> line either: the location filter is capped at the warehouses the contact may see, from <code>app/services/stock_visibility.py::resolve_policy</code> (the <code>stock_visibility_policies</code> table, per-contact override, then access type, then the global default, the same policy the stock ask already applies), and the line prints only when that policy is narrower than every warehouse or the asker named a location.</p>
+  <p class="note"><span class="q">Annotation 4 (channel and location).</span> No <b>Channel</b> line here: the contact's six accounts are all retail, so the channel is fixed to retail in code and there is nothing to choose. Source: each linked account's <code>customers.market_segment_code</code>, read through <code>app/services/scm/demand_class.py::class_of</code> (a segment named project or contract is the project channel, every other segment is retail, the same rule the SO import uses to class demand). One class across the links: channel fixed, header hidden. Two classes: the header shows (section 5). No <b>Location</b> line either: the location filter is capped at the warehouses the contact may see, from <code>app/services/stock_visibility.py::resolve_policy</code> (the <code>stock_visibility_policies</code> table, per-contact override, then access type, then the global default, the same policy the stock ask already applies), and the line prints only when that policy is narrower than every warehouse or the asker named a location.</p>
   <p class="note"><span class="q">Annotation 7 (period granularity).</span> The parser gives only the window; the grouping is decided in code from the window: one day prints that date, up to 7 days prints by day, up to a calendar month prints by week (Monday to Sunday, clipped to the window), longer prints by month, latest first. Only buckets with a delivery print.</p>
 </section>
 
@@ -61,7 +61,7 @@
   <h2>2. "what's my sales today" (one day: one line with the date)</h2>
   <div class="chat">
     <div class="msg out">what's my sales today</div>
-    <div class="msg in"><b>Customer:</b> HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
+    <div class="msg in"><b>Customer:</b> ACME TRADING SDN BHD, ACME TRADING SDN BHD [A/C I], ACME TRADING SDN BHD [A/C II], ACME TRADING SDN BHD [A/C III], ACME TRADING SDN BHD [A/C IV], ACME TRADING (TILES)
 <b>Product:</b> all
 <b>Delivery date:</b> 30/09/2026
 
@@ -80,7 +80,7 @@
   <h2>3. "this week" (by day) and "this year" (by month)</h2>
   <div class="chat">
     <div class="msg out">how's my sales this week</div>
-    <div class="msg in"><b>Customer:</b> HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
+    <div class="msg in"><b>Customer:</b> ACME TRADING SDN BHD, ACME TRADING SDN BHD [A/C I], ACME TRADING SDN BHD [A/C II], ACME TRADING SDN BHD [A/C III], ACME TRADING SDN BHD [A/C IV], ACME TRADING (TILES)
 <b>Product:</b> all
 <b>Delivery date:</b> 28/09/2026 to 04/10/2026
 
@@ -94,7 +94,7 @@
 2. By product
 3. Delivery orders</div>
     <div class="msg out">how's my sales this year?</div>
-    <div class="msg in"><b>Customer:</b> HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
+    <div class="msg in"><b>Customer:</b> ACME TRADING SDN BHD, ACME TRADING SDN BHD [A/C I], ACME TRADING SDN BHD [A/C II], ACME TRADING SDN BHD [A/C III], ACME TRADING SDN BHD [A/C IV], ACME TRADING (TILES)
 <b>Product:</b> all
 <b>Delivery date:</b> 01/01/2026 to 31/12/2026
 
@@ -122,9 +122,9 @@ Jan 2026: Qty 380, RM 26,800.00
   <div class="chat">
     <div class="msg out">1</div>
     <div class="msg in"><b>By customer</b>, delivery date 01/09/2026 to 30/09/2026
-1. HANLIM TRADING SDN BHD [A/C I]: Qty 820, RM 55,900.00
-2. HANLIM TRADING SDN BHD [A/C III]: Qty 300, RM 20,120.50
-3. HANLIM TRADING SDN BHD [A/C IV]: Qty 120, RM 8,300.00
+1. ACME TRADING SDN BHD [A/C I]: Qty 820, RM 55,900.00
+2. ACME TRADING SDN BHD [A/C III]: Qty 300, RM 20,120.50
+3. ACME TRADING SDN BHD [A/C IV]: Qty 120, RM 8,300.00
 <b>Total:</b> Qty 1,240, RM 84,320.50
 
 <b>Drill down:</b>
@@ -132,10 +132,10 @@ Jan 2026: Qty 380, RM 26,800.00
 5. Delivery orders</div>
     <div class="msg out">by product</div>
     <div class="msg in"><b>By product</b>, delivery date 01/09/2026 to 30/09/2026
-1. SRTWT7445: Qty 450, RM 30,100.00
-2. SRTKT39SS: Qty 300, RM 24,320.50
-3. SRTBT1010: Qty 280, RM 16,900.00
-4. SRTWC286-SH: Qty 210, RM 13,000.00
+1. PRD-A101: Qty 450, RM 30,100.00
+2. PRD-B210: Qty 300, RM 24,320.50
+3. PRD-C330: Qty 280, RM 16,900.00
+4. PRD-D405: Qty 210, RM 13,000.00
 <b>Total:</b> Qty 1,240, RM 84,320.50
 
 <b>Drill down:</b>
@@ -143,10 +143,10 @@ Jan 2026: Qty 380, RM 26,800.00
 6. Delivery orders</div>
     <div class="msg out">DO</div>
     <div class="msg in"><b>Delivery orders</b>, 01/09/2026 to 30/09/2026
-1. DO-2026-09-0412, 21/09/2026, HANLIM TRADING SDN BHD [A/C I]: Qty 120, RM 8,900.00
-2. DO-2026-09-0398, 18/09/2026, HANLIM TRADING SDN BHD [A/C III]: Qty 300, RM 20,100.00
-3. DO-2026-09-0371, 12/09/2026, HANLIM TRADING SDN BHD [A/C I]: Qty 400, RM 26,900.00
-4. DO-2026-09-0355, 08/09/2026, HANLIM TRADING SDN BHD [A/C IV]: Qty 420, RM 28,420.50
+1. DO-2026-09-0412, 21/09/2026, ACME TRADING SDN BHD [A/C I]: Qty 120, RM 8,900.00
+2. DO-2026-09-0398, 18/09/2026, ACME TRADING SDN BHD [A/C III]: Qty 300, RM 20,100.00
+3. DO-2026-09-0371, 12/09/2026, ACME TRADING SDN BHD [A/C I]: Qty 400, RM 26,900.00
+4. DO-2026-09-0355, 08/09/2026, ACME TRADING SDN BHD [A/C IV]: Qty 420, RM 28,420.50
 <b>Total:</b> Qty 1,240, RM 84,320.50
 
 <b>Drill down:</b>
@@ -162,7 +162,7 @@ Jan 2026: Qty 380, RM 26,800.00
   <h2>4b. A drill keeps the period: year, month, week, today (one total per row)</h2>
   <div class="chat">
     <div class="msg out">how's my sales this year?</div>
-    <div class="msg in"><b>Customer:</b> HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING (CERAMIC &amp; ELLECI)
+    <div class="msg in"><b>Customer:</b> ACME TRADING SDN BHD, ACME TRADING SDN BHD [A/C I], ACME TRADING SDN BHD [A/C II], ACME TRADING SDN BHD [A/C III], ACME TRADING SDN BHD [A/C IV], ACME TRADING (TILES)
 <b>Product:</b> all
 <b>Delivery date:</b> 01/01/2026 to 31/12/2026
 
@@ -177,9 +177,9 @@ Aug 2026: Qty 980, RM 66,150.00
 3. Delivery orders</div>
     <div class="msg out">1</div>
     <div class="msg in"><b>By customer</b>, delivery date 01/01/2026 to 31/12/2026
-1. HANLIM TRADING SDN BHD [A/C I]: Qty 4,560, RM 310,200.00
-2. HANLIM TRADING SDN BHD [A/C III]: Qty 1,690, RM 114,600.00
-3. HANLIM TRADING SDN BHD [A/C IV]: Qty 681, RM 46,500.00
+1. ACME TRADING SDN BHD [A/C I]: Qty 4,560, RM 310,200.00
+2. ACME TRADING SDN BHD [A/C III]: Qty 1,690, RM 114,600.00
+3. ACME TRADING SDN BHD [A/C IV]: Qty 681, RM 46,500.00
 <b>Total:</b> Qty 6,931, RM 471,300.00
 
 <b>Drill down:</b>
@@ -189,10 +189,10 @@ Aug 2026: Qty 980, RM 66,150.00
     <div class="msg in">(the section 1 reply: by week)</div>
     <div class="msg out">by product</div>
     <div class="msg in"><b>By product</b>, delivery date 01/09/2026 to 30/09/2026
-1. SRTWT7445: Qty 450, RM 30,100.00
-2. SRTKT39SS: Qty 300, RM 24,320.50
-3. SRTBT1010: Qty 280, RM 16,900.00
-4. SRTWC286-SH: Qty 210, RM 13,000.00
+1. PRD-A101: Qty 450, RM 30,100.00
+2. PRD-B210: Qty 300, RM 24,320.50
+3. PRD-C330: Qty 280, RM 16,900.00
+4. PRD-D405: Qty 210, RM 13,000.00
 <b>Total:</b> Qty 1,240, RM 84,320.50
 
 <b>Drill down:</b>
@@ -202,8 +202,8 @@ Aug 2026: Qty 980, RM 66,150.00
     <div class="msg in">(the section 3 reply: by day)</div>
     <div class="msg out">1</div>
     <div class="msg in"><b>By customer</b>, delivery date 28/09/2026 to 04/10/2026
-1. HANLIM TRADING SDN BHD [A/C I]: Qty 55, RM 3,800.00
-2. HANLIM TRADING SDN BHD [A/C III]: Qty 25, RM 1,700.00
+1. ACME TRADING SDN BHD [A/C I]: Qty 55, RM 3,800.00
+2. ACME TRADING SDN BHD [A/C III]: Qty 25, RM 1,700.00
 <b>Total:</b> Qty 80, RM 5,500.00
 
 <b>Drill down:</b>
@@ -213,8 +213,8 @@ Aug 2026: Qty 980, RM 66,150.00
     <div class="msg in">(the section 2 reply: one day)</div>
     <div class="msg out">2</div>
     <div class="msg in"><b>By product</b>, delivery date 30/09/2026
-1. SRTWT7445: Qty 30, RM 2,010.00
-2. SRTKT39SS: Qty 10, RM 750.00
+1. PRD-A101: Qty 30, RM 2,010.00
+2. PRD-B210: Qty 10, RM 750.00
 <b>Total:</b> Qty 40, RM 2,760.00
 
 <b>Drill down:</b>
@@ -269,13 +269,13 @@ Aug 2026: Qty 980, RM 66,150.00
   <h2>6. No sales on the asker's own accounts: a final answer, no escalation</h2>
   <div class="chat">
     <div class="msg out">what's my sales today</div>
-    <div class="msg in"><b>Customer:</b> HANLIM TRADING SDN BHD [A/C II]
+    <div class="msg in"><b>Customer:</b> ACME TRADING SDN BHD [A/C II]
 <b>Product:</b> all
 <b>Delivery date:</b> 30/09/2026
 
 No sales found.</div>
   </div>
-  <p class="note">Nothing offered, nothing armed, no "would you like me to escalate". (Shown for Mr Loo, linked to A/C II only, which has no 2026 delivery on the copy.)</p>
+  <p class="note">Nothing offered, nothing armed, no "would you like me to escalate". (Shown for a contact, linked to A/C II only, which has no 2026 delivery in this example.)</p>
 </section>
 
 <section>
@@ -283,16 +283,16 @@ No sales found.</div>
   <div class="chat">
     <div class="msg out">1</div>
     <div class="msg in"><b>By customer</b>, delivery date 01/09/2026 to 30/09/2026
-1. HANLIM TRADING SDN BHD [A/C I]: Qty 820, RM 55,900.00
-2. HANLIM TRADING SDN BHD [A/C III]: Qty 300, RM 20,120.50
-3. HANLIM TRADING SDN BHD [A/C IV]: Qty 120, RM 8,300.00
+1. ACME TRADING SDN BHD [A/C I]: Qty 820, RM 55,900.00
+2. ACME TRADING SDN BHD [A/C III]: Qty 300, RM 20,120.50
+3. ACME TRADING SDN BHD [A/C IV]: Qty 120, RM 8,300.00
 <b>Total:</b> Qty 1,240, RM 84,320.50
 
 <b>Drill down:</b>
 4. By product
 5. Delivery orders</div>
-    <div class="msg out">got stock for SRTWT7445?</div>
-    <div class="msg in">SRTWT7445 (Wall Tap 7445)
+    <div class="msg out">got stock for PRD-A101?</div>
+    <div class="msg in">PRD-A101 (Wall Tap 7445)
 Stock: 1,250 available
 ...</div>
     <div class="msg out">2</div>
