@@ -158,7 +158,7 @@ export function FileDropzone({
       >
         <Upload className="mx-auto size-5 text-muted-foreground" aria-hidden />
         <p
-          className="mt-2 truncate text-sm font-medium"
+          className="mt-2 break-words text-sm font-medium"
           title={dragging ? undefined : (title ?? 'Drop a file here, or click to browse')}
         >
           {dragging ? 'Drop it here' : (title ?? 'Drop a file here, or click to browse')}

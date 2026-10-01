@@ -175,6 +175,7 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
       return;
     }
     if (isDeliveryOrders && mappings.isLoading) {
+      clearResult();
       toast.error('The mapping is still loading. Try again in a moment.');
       return;
     }
@@ -188,8 +189,11 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
         toast.error('That file has no rows.');
         return;
       }
+      const postRows = entry
+        ? projectRows(rows, mappedHeaders(entry.kind))
+        : (rows as Record<string, unknown>[]);
       compareMutation.mutate(
-        { filename: file.name, rows: entry ? projectRows(rows, mappedHeaders(entry.kind)) : (rows as Record<string, unknown>[]), source },
+        { filename: file.name, rows: postRows, source },
         {
           onSuccess: (data) => {
             if (source) setResults((prev) => ({ ...prev, [source]: data }));
