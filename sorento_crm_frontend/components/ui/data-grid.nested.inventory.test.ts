@@ -187,6 +187,14 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'The DataGridTable of the same grid, not a second one',
   ],
   [
+    'app/(protected)/system-management/import-jobs/autocount-pull/components/CompareMappingDialog.tsx:246',
+    'Compare mapping rows, in a dialog opened from the Compare tab\'s Mapping button outside any grid\'s JSX, so no grid context. It KEEPS the default bound inside CardTable max-h-[50dvh], like ConvertToPackingListDialog',
+  ],
+  [
+    'app/(protected)/system-management/import-jobs/autocount-pull/components/CompareMappingDialog.tsx:255',
+    'The DataGridTable of the same grid, not a second one',
+  ],
+  [
     'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx:343',
     "S8's candidate DataGrid, in a dialog opened as a sibling of the worklist. Already scrollerMaxHeight={false}",
   ],

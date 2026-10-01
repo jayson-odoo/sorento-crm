@@ -6,7 +6,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Download } from 'lucide-react';
+import { Download, Settings2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardTable } from '@/components/ui/card';
@@ -16,7 +16,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { toast } from '@/lib/toast';
 import { generateExcelFile, parseExcelFile, type ColumnOption } from '@/lib/excel-utils';
-import { useComparePull } from '../hooks/useAutocountPull';
+import { useCompareMappings, useComparePull } from '../hooks/useAutocountPull';
+import { CompareMappingDialog } from './CompareMappingDialog';
 import { isCompareFullMatch } from '../types/compareMatch';
 import { buildCompareRows, type CompareRow } from './compareRows';
 import type {
@@ -47,23 +48,24 @@ const COMPARE_LISTING_KEY: Record<AutocountPullEntity, string> = {
 const DO_SOURCES: Array<{
   source: AutocountPullCompareSource;
   title: string;
-  hint: string;
   ariaLabel: string;
   unit: string;
+  /** The saved mapping this file is read with. */
+  kind: 'order_listing' | 'order_tracking';
 }> = [
   {
     source: 'lines',
-    title: 'Order Listing (macro), sheet Master',
-    hint: 'DO lines: Doc No, Doc Date, Item Code, Qty, Location, Unit Price, Discount, Total (Ex). Drop the .xlsm here, or click to browse.',
+    title: 'Order Listing (macro)',
     ariaLabel: 'Order Listing sheet to compare',
     unit: 'lines',
+    kind: 'order_listing',
   },
   {
     source: 'headers',
-    title: 'Order Tracking (macro), sheet Master',
-    hint: 'DO headers: Doc. No., Date, Debtor Code, Cancel. The Overall Tracking sheet is not compared; AutoCount does not carry it.',
+    title: 'Order Tracking (macro)',
     ariaLabel: 'Order Tracking sheet to compare',
     unit: 'documents',
+    kind: 'order_tracking',
   },
 ];
 
@@ -120,6 +122,15 @@ function formatDay(day: string | null | undefined): string {
   return match ? `${match[3]}/${match[2]}/${match[1]}` : day;
 }
 
+/** Only the columns the mapping reads travel to the server (a full macro sheet body is over
+ *  12 MB); a key matches a mapped header trimmed and case-insensitive, its spelling kept. */
+function projectRows(rows: unknown[], headers: Set<string> | null): Record<string, unknown>[] {
+  if (!headers) return rows as Record<string, unknown>[];
+  return (rows as Record<string, unknown>[]).map((row) =>
+    Object.fromEntries(Object.entries(row).filter(([key]) => headers.has(key.trim().toLowerCase()))),
+  );
+}
+
 type SourceResults = Partial<Record<AutocountPullCompareSource, AutocountComparePullResult>>;
 
 /**
@@ -136,20 +147,53 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
   const [single, setSingle] = useState<AutocountComparePullResult | null>(null);
   const [results, setResults] = useState<SourceResults>({});
   const compareMutation = useComparePull(jobId);
+  const mappings = useCompareMappings(isDeliveryOrders);
+  const [mappingOpen, setMappingOpen] = useState(false);
+  const hintFor = (kind: 'order_listing' | 'order_tracking'): string => {
+    const headers = mappings.data?.items.find((m) => m.kind === kind)?.columns.map((c) => c.excel_header);
+    return headers?.length
+      ? `Columns read: ${headers.join(', ')}. Drop the .xlsm here, or click to browse.`
+      : 'Drop the .xlsm here, or click to browse.';
+  };
+  const mappedHeaders = (kind: 'order_listing' | 'order_tracking'): Set<string> | null => {
+    const items = mappings.data?.items.find((m) => m.kind === kind)?.columns;
+    return items ? new Set(items.map((c) => c.excel_header.trim().toLowerCase())) : null;
+  };
+  const sheetFor = (kind: 'order_listing' | 'order_tracking'): string =>
+    mappings.data?.items.find((m) => m.kind === kind)?.sheet_name ?? 'Master';
   const accept = entity === 'products' ? '.xlsx,.xls' : '.xlsx,.xls,.xlsm';
 
   const handleFilesChange = async (next: File[], source?: AutocountPullCompareSource) => {
     setFiles((prev) => ({ ...prev, [source ?? 'single']: next }));
+    const clearResult = () => {
+      if (source) setResults((prev) => ({ ...prev, [source]: undefined }));
+      else setSingle(null);
+    };
     const file = next[0];
-    if (!file) return;
+    if (!file) {
+      clearResult();
+      return;
+    }
+    if (isDeliveryOrders && mappings.isLoading) {
+      clearResult();
+      toast.error('The mapping is still loading. Try again in a moment.');
+      return;
+    }
     try {
-      const rows = await parseExcelFile(file);
+      const entry = DO_SOURCES.find((d) => d.source === source);
+      const rows = entry
+        ? await parseExcelFile(file, { sheetName: sheetFor(entry.kind) })
+        : await parseExcelFile(file);
       if (rows.length === 0) {
+        clearResult();
         toast.error('That file has no rows.');
         return;
       }
+      const postRows = entry
+        ? projectRows(rows, mappedHeaders(entry.kind))
+        : (rows as Record<string, unknown>[]);
       compareMutation.mutate(
-        { filename: file.name, rows: rows as Record<string, unknown>[], source },
+        { filename: file.name, rows: postRows, source },
         {
           onSuccess: (data) => {
             if (source) setResults((prev) => ({ ...prev, [source]: data }));
@@ -158,6 +202,7 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
         },
       );
     } catch (error) {
+      clearResult();
       toast.error(error instanceof Error ? error.message : 'Could not read that file.');
     }
   };
@@ -274,12 +319,30 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
     await generateExcelFile(rows, cols, `autocount-${entity}-differences.xlsx`);
   };
 
-  // Delivery orders: one headline over both files - the latest response's `summary` is
-  // already the two added up (the server stores them per source and sums them).
-  const latest = isDeliveryOrders
-    ? DO_SOURCES.map(({ source }) => results[source]).filter(Boolean).sort(
-        (a, b) => (a!.summary.compared_at < b!.summary.compared_at ? 1 : -1),
-      )[0] ?? null
+  // Delivery orders: one headline over the files on screen - each result's own
+  // `source_summary` added up (the server's combined `summary` still counts a file that was
+  // since removed or failed to parse). A result without one falls back to its `summary`.
+  const onScreen = isDeliveryOrders
+    ? DO_SOURCES.map(({ source }) => results[source]).filter(
+        (r): r is AutocountComparePullResult => Boolean(r),
+      )
+    : [];
+  const latest: { summary: AutocountPullCompareSummary } | null = isDeliveryOrders
+    ? onScreen.length
+      ? {
+          summary: onScreen
+            .map((r) => r.source_summary ?? r.summary)
+            .reduce((acc, cur) => ({
+              ...acc,
+              total: acc.total + cur.total,
+              matched: acc.matched + cur.matched,
+              different: acc.different + cur.different,
+              only_in_excel: acc.only_in_excel + cur.only_in_excel,
+              only_in_pull: acc.only_in_pull + cur.only_in_pull,
+              filename: `${acc.filename} and ${cur.filename}`,
+            })),
+        }
+      : null
     : single;
   const differencesCount = isDeliveryOrders
     ? DO_SOURCES.reduce((n, { source }) => n + (results[source]?.differences.length ?? 0), 0)
@@ -315,17 +378,25 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
 
   return (
     <div className="space-y-4">
+      {isDeliveryOrders && (
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={() => setMappingOpen(true)}>
+            <Settings2 className="size-4" />
+            Mapping
+          </Button>
+        </div>
+      )}
       {isDeliveryOrders ? (
         <div className="grid gap-4 sm:grid-cols-2">
           {sources.map((entry) => {
             const result = results[entry.source];
             return (
-              <div key={entry.source} className="space-y-2">
+              <div key={entry.source} className="min-w-0 space-y-2">
                 {renderDropzone(
                   `autocount-compare-${jobId}-${entry.source}`,
                   entry.ariaLabel,
-                  entry.title,
-                  entry.hint,
+                  `${entry.title}, sheet ${sheetFor(entry.kind)}`,
+                  hintFor(entry.kind),
                   files[entry.source] ?? [],
                   entry.source,
                 )}
@@ -408,6 +479,9 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
             </CardTable>
           </Card>
         </DataGrid>
+      )}
+      {isDeliveryOrders && mappingOpen && (
+        <CompareMappingDialog open={mappingOpen} onOpenChange={setMappingOpen} />
       )}
     </div>
   );

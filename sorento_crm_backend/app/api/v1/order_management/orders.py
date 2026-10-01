@@ -2022,7 +2022,6 @@ async def get_sales_report(
 # router as the sales report: a report over orders, not an order row.
 # ---------------------------------------------------------------------------
 
-_TOP_SELLING_N_MAX = 100
 
 def _top_selling_is_staff(db: Session, contact_id: str) -> bool:
     """Alias of `contact_customer_scope.is_office_staff` (the one shared rule)."""
@@ -2080,7 +2079,7 @@ async def get_top_selling(
     n: Optional[int] = Query(
         None,
         description=(
-            "How many rows to return, 1 to 100. ABSENT = every ranked row (no cut-off, no "
+            "How many rows to return, 1 to 1000 (a safety ceiling, not a product limit). ABSENT = every ranked row (no cut-off, no "
             "paging); total_count always states the full count."
         ),
     ),
@@ -2155,7 +2154,7 @@ async def get_top_selling(
 ):
     """Top selling items or categories over a window (PLAN-chatbot-top-x-hot-selling-24sep, S2)."""
     from app.services.error_handler import AppException
-    from app.services.sales_report_service import current_year_window, top_selling
+    from app.services.sales_report_service import TOP_SELLING_N_CEILING, current_year_window, top_selling
 
     def _choice(value, name, allowed, default=None):
         norm = (value or "").strip().lower() or default
@@ -2179,9 +2178,10 @@ async def get_top_selling(
     if channel_norm is not None:
         channel_norm = _choice(channel_norm, "channel", ("dealer", "project"))
 
-    if n is not None and not 1 <= n <= _TOP_SELLING_N_MAX:
+    # The shared safety ceiling (owner, 30 Sep 2026: no 100 cap), not a product limit.
+    if n is not None and not 1 <= n <= TOP_SELLING_N_CEILING:
         raise AppException(
-            422, f"n must be between 1 and {_TOP_SELLING_N_MAX}", detail=str(n), code="invalid_n",
+            422, f"n must be between 1 and {TOP_SELLING_N_CEILING}", detail=str(n), code="invalid_n",
         )
 
     customer_query_stripped = (customer_query or "").strip() or None
