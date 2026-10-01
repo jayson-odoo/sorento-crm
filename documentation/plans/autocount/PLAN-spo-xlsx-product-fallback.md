@@ -2,7 +2,7 @@
 
 Status: IN PROGRESS 2026-10-01, standard track (expected diff over 300 lines incl. tests; no migration; touches
 receipts, so reviewer + security-reviewer). UAC: `spo-xlsx-product-fallback-acceptance-criteria.md` (same folder).
-Parent: `PLAN-spo-xlsx-supersede.md` (D25..D30), this adds D31..D35.
+Parent: `PLAN-spo-xlsx-supersede.md` (D25..D30), this adds D31..D36.
 
 ## 0. Why (owner case, prod, 1 Oct 2026)
 

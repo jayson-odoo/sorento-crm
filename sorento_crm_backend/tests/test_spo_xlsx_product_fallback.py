@@ -1,0 +1,549 @@
+"""RED tests for SPO-XLSX-SUPERSEDE round 2: Excel rows with no destination
+superseded by the AutoCount split lines, and no false "incoming".
+
+UAC: documentation/plans/autocount/spo-xlsx-product-fallback-acceptance-criteria.md (AC-F1..AC-F10).
+PLAN: documentation/plans/autocount/PLAN-spo-xlsx-product-fallback.md (D31..D36).
+
+The fixture is the owner's production case (PL GCXU6137164, SPO-2026/08-0074,
+SRTWCX8605-S-RL-PJ), scaled to nothing: the Excel upload wrote one row of 95
+(on the PL, location HQ, no warehouse) and one of 4 (no PL); an approved GR
+picked 22 @ BRW-IB + 73 @ BRW-NTC against the 95 row and 4 @ BRW-NTC against
+the 4 row; AutoCount then states two lines, BRW-IB 22 and BRW-NTC 77, both on
+the PL and both fully received. Shipped 99.
+
+Substrate reused from `tests/test_ingest_shipping_orders.py` (the `env`
+fixture and the record builders), the same way `test_spo_xlsx_supersede.py`
+reuses it.
+"""
+from __future__ import annotations
+
+import random
+import uuid
+from dataclasses import dataclass
+from datetime import date
+
+from sqlalchemy import text
+
+from app.models.procurement import (
+    InboundShipment,
+    InboundShipmentLine,
+    PickingHeader,
+    PickingLine,
+    SPOAllocation,
+)
+from tests._pg_fixture import unique_code
+from tests.test_ingest_shipping_orders import (
+    MARKER,
+    _seed_legacy_row,
+    _spo_line,
+    _spo_record,
+    _spo_rows,
+    env,  # noqa: F401 - pytest fixture, imported for reuse
+)
+
+__all__ = ["env"]
+
+
+# --------------------------------------------------------------------- fixture
+@dataclass
+class _Case:
+    number: str
+    product_id: str
+    ib_ref: str
+    ntc_ref: str
+    ib_id: str
+    ntc_id: str
+    shipment_id: str
+    shipment_line_id: str
+    container: str
+    excel_95: SPOAllocation
+    excel_4: SPOAllocation
+    pick_ib_22: PickingLine
+    pick_ntc_73: PickingLine
+    pick_ntc_4: PickingLine
+
+
+def _container() -> str:
+    # `extract_container_number` keys on four letters + seven digits.
+    return f"ZZTU{random.randint(10**6, 10**7 - 1)}"
+
+
+def _resolve_wh(env, ref: str) -> str:
+    return env.refs.resolve(entity_type="warehouses", source_ref=ref)
+
+
+def _pick(env, header_id, allocation_id, product_id, warehouse_id, qty) -> PickingLine:
+    line = PickingLine(
+        id=str(uuid.uuid4()),
+        company_id=env.company_a,
+        picking_header_id=header_id,
+        spo_allocation_id=allocation_id,
+        product_id=product_id,
+        source_warehouse_id=warehouse_id,
+        quantity_expected=qty,
+        quantity_picked=qty,
+    )
+    env.db.add(line)
+    env.db.flush()
+    return line
+
+
+def _owner_case(env, *, excel_warehouse: bool = False, with_receipts: bool = True) -> _Case:
+    """The owner's shape BEFORE any AutoCount push: two Excel rows, one GR."""
+    ib_ref = env.link_warehouse(env.company_a)
+    ntc_ref = env.link_warehouse(env.company_a)
+    ib_id, ntc_id = _resolve_wh(env, ib_ref), _resolve_wh(env, ntc_ref)
+    product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+    container = _container()
+    shipment = InboundShipment(
+        id=str(uuid.uuid4()),
+        company_id=env.company_a,
+        shipment_number=unique_code(f"{MARKER}-PL"),
+        shipping_container_number=container,
+        shipment_date=date(2026, 9, 1),
+        estimated_arrival_date=date(2026, 9, 20),
+        shipment_status="pending",
+    )
+    env.db.add(shipment)
+    env.db.flush()
+    shipment_line = InboundShipmentLine(
+        id=str(uuid.uuid4()),
+        company_id=env.company_a,
+        shipment_id=shipment.id,
+        product_id=product_id,
+        quantity_shipped=99,
+        quantity_received=0,
+        line_status="in_transit",
+    )
+    env.db.add(shipment_line)
+    env.db.flush()
+
+    number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+    received_95, received_4 = (95, 4) if with_receipts else (0, 0)
+    excel_95 = _seed_legacy_row(
+        env,
+        spo_number=number,
+        spo_line_number=1,
+        location_code="HQ",
+        allocated_quantity=95,
+        quantity_received=received_95,
+        line_status="closed" if with_receipts else "open",
+        inbound_shipment_id=shipment.id,
+    )
+    excel_4 = _seed_legacy_row(
+        env,
+        spo_number=number,
+        spo_line_number=2,
+        location_code="HQ",
+        allocated_quantity=4,
+        quantity_received=received_4,
+        line_status="closed" if with_receipts else "open",
+    )
+    if excel_warehouse:
+        excel_95.warehouse_id = ib_id
+        excel_4.warehouse_id = ib_id
+        env.db.flush()
+
+    picks = [None, None, None]
+    if with_receipts:
+        header = PickingHeader(
+            id=str(uuid.uuid4()),
+            company_id=env.company_a,
+            picking_number=unique_code(f"{MARKER}-GR"),
+            picking_type="goods_received",
+            picking_status="approved",
+            spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        picks = [
+            _pick(env, header.id, excel_95.id, product_id, ib_id, 22),
+            _pick(env, header.id, excel_95.id, product_id, ntc_id, 73),
+            _pick(env, header.id, excel_4.id, product_id, ntc_id, 4),
+        ]
+    env.db.commit()
+    return _Case(
+        number=number,
+        product_id=product_id,
+        ib_ref=ib_ref,
+        ntc_ref=ntc_ref,
+        ib_id=ib_id,
+        ntc_id=ntc_id,
+        shipment_id=str(shipment.id),
+        shipment_line_id=str(shipment_line.id),
+        container=container,
+        excel_95=excel_95,
+        excel_4=excel_4,
+        pick_ib_22=picks[0],
+        pick_ntc_73=picks[1],
+        pick_ntc_4=picks[2],
+    )
+
+
+def _autocount_record(env, case: _Case, *, ib_qty=22, ntc_qty=77, received=True) -> dict:
+    return _spo_record(
+        env,
+        number=case.number,
+        container_number=case.container,
+        supplier_ref=env.supplier_ref,
+        lines=[
+            _spo_line(
+                env,
+                warehouse_ref=case.ib_ref,
+                qty_ordered=ib_qty,
+                qty_received=ib_qty if received else 0,
+                line_number=1,
+            ),
+            _spo_line(
+                env,
+                warehouse_ref=case.ntc_ref,
+                qty_ordered=ntc_qty,
+                qty_received=ntc_qty if received else 0,
+                line_number=2,
+            ),
+        ],
+    )
+
+
+def _push(env, record: dict, *, may_delete: bool = True):
+    """The route's two halves: the ingest, then its post-commit shipment refresh."""
+    from app.services.procurement_service import InboundShipmentService
+    from app.services.shipping_order_ingest_service import ShippingOrderIngestService
+
+    svc = ShippingOrderIngestService(
+        env.db, integration_id=None, company_id=env.company_a, may_delete=may_delete
+    )
+    result = svc.ingest("shipping_orders", [record])
+    env.db.commit()
+    inbound = InboundShipmentService(env.db)
+    for shipment_id in sorted(svc.shipment_ids_touched):
+        inbound.refresh_shipment_line_statuses(shipment_id)
+    return result.records[0]
+
+
+def _row_by_wh(rows, warehouse_id: str):
+    matches = [r for r in rows if str(r["warehouse_id"] or "") == str(warehouse_id)]
+    assert len(matches) == 1, rows
+    return matches[0]
+
+
+def _picked_on(env, allocation_id) -> int:
+    return int(
+        env.db.execute(
+            text(
+                "SELECT coalesce(sum(quantity_picked), 0) FROM picking_lines "
+                "WHERE spo_allocation_id = :a"
+            ),
+            {"a": str(allocation_id)},
+        ).scalar()
+    )
+
+
+def _pl_figures(env, case: _Case) -> tuple[int, int, str]:
+    """(SPO allocated, received, line status) exactly as the PL detail computes them."""
+    from sqlalchemy import func
+
+    from app.services.procurement_service import InboundShipmentService
+    from app.services.scm import spo_supply
+
+    service = InboundShipmentService(env.db)
+    service.refresh_shipment_line_statuses(case.shipment_id)
+    allocated = (
+        env.db.query(func.coalesce(func.sum(SPOAllocation.allocated_quantity), 0))
+        .filter(
+            SPOAllocation.inbound_shipment_id == case.shipment_id,
+            SPOAllocation.product_id == case.product_id,
+            *spo_supply.visible_line_clauses(),
+        )
+        .scalar()
+    )
+    received = service.get_received_quantities_by_product(case.shipment_id).get(
+        str(case.product_id), 0
+    )
+    status = env.db.execute(
+        text("SELECT line_status FROM inbound_shipment_lines WHERE id = :id"),
+        {"id": case.shipment_line_id},
+    ).scalar()
+    return int(allocated), int(received), status
+
+
+def _incoming_shipments(env, case: _Case) -> list[dict]:
+    from app.services.incoming_stock_service import IncomingStockService
+
+    result = IncomingStockService(env.db).incoming_for_product(product_id=case.product_id)
+    return [
+        shipment
+        for product in result.get("data", [])
+        for shipment in product["shipments"]
+        if shipment["shipping_container_number"] == case.container
+    ]
+
+
+def _seed_pre_repair_state(env, case: _Case) -> list[SPOAllocation]:
+    """What production holds today: the push appended the AutoCount lines and
+    left the Excel rows (closed, GR picks still on them)."""
+    rows = []
+    for spo_line_number, (wh_id, wh_code_ref, qty) in enumerate(
+        ((case.ib_id, case.ib_ref, 22), (case.ntc_id, case.ntc_ref, 77)), start=3
+    ):
+        code = env.db.execute(
+            text("SELECT warehouse_code FROM warehouses WHERE id = :id"), {"id": wh_id}
+        ).scalar()
+        row = SPOAllocation(
+            company_id=env.company_a,
+            spo_number=case.number,
+            spo_line_number=spo_line_number,
+            product_id=case.product_id,
+            warehouse_id=wh_id,
+            location_code=code,
+            allocated_quantity=qty,
+            quantity_received=qty,
+            stated_received=qty,
+            receipt_status="fully_received",
+            line_status="closed",
+            source_system="autocount",
+            source_ref=f"{MARKER}:DTL-{uuid.uuid4().hex[:8]}",
+            source_doc_ref=f"{MARKER}:DOC-{case.number}",
+            inbound_shipment_id=case.shipment_id,
+            container_number=case.container,
+        )
+        env.db.add(row)
+        rows.append(row)
+    env.db.flush()
+    env.db.commit()
+    return rows
+
+
+# ============================================================================ #
+# AC-F1 / AC-F2 / AC-F3 / AC-F4: the owner case, first push, delete grant
+# ============================================================================ #
+class TestAcF1OwnerCaseFirstPush:
+    def test_excel_rows_are_superseded_by_the_autocount_split_lines(self, env):
+        """AC-F1. RED today: the Excel group `(p, loc:HQ)` meets no AutoCount
+        key, so both Excel rows are kept (closed) beside the two new lines -
+        four rows, and no `superseded` count on the verdict."""
+        case = _owner_case(env)
+        entry = _push(env, _autocount_record(env, case))
+
+        assert entry.lines.get("superseded") == 2, entry.lines
+        rows = _spo_rows(env, case.number)
+        assert len(rows) == 2, [(r["allocated_quantity"], r["source_ref"]) for r in rows]
+        ib = _row_by_wh(rows, case.ib_id)
+        ntc = _row_by_wh(rows, case.ntc_id)
+        assert (ib["allocated_quantity"], ib["quantity_received"]) == (22, 22)
+        assert (ntc["allocated_quantity"], ntc["quantity_received"]) == (77, 77)
+        assert ib["line_status"] == ntc["line_status"] == "closed"
+        assert ib["receipt_status"] == ntc["receipt_status"] == "fully_received"
+
+    def test_receipt_picks_move_to_the_autocount_lines_split_by_capacity(self, env):
+        """AC-F2. RED today: the picks stay on the kept Excel rows."""
+        case = _owner_case(env)
+        _push(env, _autocount_record(env, case))
+
+        rows = _spo_rows(env, case.number)
+        ib = _row_by_wh(rows, case.ib_id)
+        ntc = _row_by_wh(rows, case.ntc_id)
+        assert _picked_on(env, ib["id"]) == 22
+        assert _picked_on(env, ntc["id"]) == 77
+        assert _picked_on(env, case.excel_95.id) == 0
+        assert _picked_on(env, case.excel_4.id) == 0
+        total = env.db.execute(
+            text(
+                "SELECT coalesce(sum(pl.quantity_picked), 0) FROM picking_lines pl "
+                "JOIN picking_headers ph ON ph.id = pl.picking_header_id "
+                "WHERE ph.spo_number = :n"
+            ),
+            {"n": case.number},
+        ).scalar()
+        assert int(total) == 99
+
+    def test_pl_shows_allocated_99_received_99_received(self, env):
+        """AC-F3. RED today: allocated 194, received 95, partially received."""
+        case = _owner_case(env)
+        _push(env, _autocount_record(env, case))
+        assert _pl_figures(env, case) == (99, 99, "received")
+
+    def test_chatbot_does_not_report_the_pl_as_incoming(self, env):
+        """AC-F4. RED today: "Incoming 4, BRW-IB (22), BRW-NTC (77)"."""
+        case = _owner_case(env)
+        _push(env, _autocount_record(env, case))
+        assert _incoming_shipments(env, case) == []
+
+
+# ============================================================================ #
+# AC-F5 / AC-F6: the fallback needs reconciling quantities and no warehouse
+# ============================================================================ #
+class TestAcF5FallbackGuards:
+    def test_quantities_that_do_not_reconcile_keep_the_excel_rows(self, env):
+        """AC-F5 (guard, green before and after): 95 + 4 against 22 + 80."""
+        case = _owner_case(env)
+        entry = _push(env, _autocount_record(env, case, ntc_qty=80))
+        assert "superseded" not in entry.lines, entry.lines
+        ids = {str(r["id"]) for r in _spo_rows(env, case.number)}
+        assert {str(case.excel_95.id), str(case.excel_4.id)} <= ids
+        assert _picked_on(env, case.excel_95.id) == 95
+
+    def test_an_excel_row_naming_a_warehouse_is_never_fallback_paired(self, env):
+        """AC-F6 (guard): the Excel rows name BRW-IB, AutoCount says IB 22 +
+        NTC 77, so the keyed pass sees IB 22 < 99 received (D26a lock) and the
+        product fallback must not step in for a row that has a destination."""
+        case = _owner_case(env, excel_warehouse=True)
+        entry = _push(env, _autocount_record(env, case))
+        assert "superseded" not in entry.lines, entry.lines
+        ids = {str(r["id"]) for r in _spo_rows(env, case.number)}
+        assert {str(case.excel_95.id), str(case.excel_4.id)} <= ids
+
+
+# ============================================================================ #
+# AC-F7: no `.delete` grant - rows retired, not left visible
+# ============================================================================ #
+class TestAcF7ClosedOnlySupersedeRetires:
+    def test_closed_only_supersede_retires_the_excel_rows(self, env):
+        """AC-F7. RED today: kept (no supersede at all); and even a keyed
+        closed-only supersede leaves the row visible with its receipt."""
+        case = _owner_case(env)
+        entry = _push(env, _autocount_record(env, case), may_delete=False)
+
+        assert entry.lines.get("superseded") == 2, entry.lines
+        by_id = {str(r["id"]): r for r in _spo_rows(env, case.number)}
+        for excel in (case.excel_95, case.excel_4):
+            row = by_id[str(excel.id)]
+            assert row["line_status"] == "closed"
+            assert row["retired_at"] is not None
+            assert int(row["quantity_received"] or 0) == 0
+            assert "superseded by" in (row["allocation_notes"] or "")
+        assert _picked_on(env, case.excel_95.id) == 0
+        assert _pl_figures(env, case) == (99, 99, "received")
+
+
+# ============================================================================ #
+# AC-F8: future GRs land on the AutoCount lines
+# ============================================================================ #
+class TestAcF8FutureGrsLandOnAutocountLines:
+    def _pool_ids(self, env, case):
+        from app.services.grn_spo_matching import build_allocation_pool
+
+        pool = build_allocation_pool(
+            env.db,
+            product_id=case.product_id,
+            spo_number=case.number,
+            company_id=env.company_a,
+        )
+        return {entry.allocation_id: entry.available for entry in pool}
+
+    def test_pool_offers_only_autocount_lines_after_a_delete_supersede(self, env):
+        case = _owner_case(env, with_receipts=False)
+        _push(env, _autocount_record(env, case, received=False))
+        rows = _spo_rows(env, case.number)
+        ib = _row_by_wh(rows, case.ib_id)
+        ntc = _row_by_wh(rows, case.ntc_id)
+        assert self._pool_ids(env, case) == {str(ib["id"]): 22, str(ntc["id"]): 77}
+
+    def test_pool_offers_only_autocount_lines_after_a_closed_only_supersede(self, env):
+        """RED today: the retired-but-kept Excel rows (95 + 4, never received)
+        are older, so FIFO would draw the next GR against them."""
+        case = _owner_case(env, with_receipts=False)
+        _push(env, _autocount_record(env, case, received=False), may_delete=False)
+        rows = [r for r in _spo_rows(env, case.number) if r["source_ref"]]
+        ib = _row_by_wh(rows, case.ib_id)
+        ntc = _row_by_wh(rows, case.ntc_id)
+        assert self._pool_ids(env, case) == {str(ib["id"]): 22, str(ntc["id"]): 77}
+
+
+# ============================================================================ #
+# AC-F9: no false incoming even before the repair runs
+# ============================================================================ #
+class TestAcF9NoFalseIncomingOnReceivedLines:
+    def test_pre_repair_pl_reads_received_and_chatbot_is_silent(self, env):
+        """AC-F9. RED today: received 95 (the 4 hangs off a PL-less row) so the
+        line reads partially received and the chatbot says incoming 4."""
+        case = _owner_case(env)
+        _seed_pre_repair_state(env, case)
+        _allocated, received, status = _pl_figures(env, case)
+        assert received == 99
+        assert status == "received"
+        assert _incoming_shipments(env, case) == []
+
+    def test_partly_received_pl_lists_only_the_warehouse_still_owed(self, env):
+        """AC-F9. AutoCount IB 22 received, NTC 77 not yet: the chatbot still
+        lists the PL (77 to come) but only BRW-NTC, never BRW-IB (22).
+        RED today: both warehouses listed at their full allocation."""
+        case = _owner_case(env, with_receipts=False)
+        ib_row, ntc_row = _seed_pre_repair_state(env, case)
+        ntc_row.quantity_received = 0
+        ntc_row.stated_received = None
+        ntc_row.receipt_status = "pending"
+        ntc_row.line_status = "open"
+        # The Excel rows were never on the books for this variant.
+        env.db.delete(case.excel_95)
+        env.db.delete(case.excel_4)
+        env.db.commit()
+
+        _pl_figures(env, case)  # refresh the stored line figures
+        shipments = _incoming_shipments(env, case)
+        assert len(shipments) == 1, shipments
+        assert shipments[0]["remaining_incoming_quantity"] == 77
+        ntc_code = env.db.execute(
+            text("SELECT warehouse_code FROM warehouses WHERE id = :id"), {"id": case.ntc_id}
+        ).scalar()
+        assert shipments[0]["warehouse_allocations"] == [
+            {
+                "warehouse_code": ntc_code,
+                "warehouse_name": f"{MARKER} depot",
+                "allocated_quantity": 77,
+            }
+        ]
+        # The gap arithmetic still measures the full allocation: 99 shipped, 99 allocated.
+        assert shipments[0]["unallocated_quantity"] is None
+
+
+# ============================================================================ #
+# AC-F10: the repair script
+# ============================================================================ #
+class TestAcF10RepairScript:
+    def _run(self, env, *, dry_run):
+        from scripts import dedupe_spo_xlsx_superseded as script
+
+        return script.run(env.db, env.company_a, dry_run=dry_run)
+
+    def test_dry_run_writes_nothing_and_reports_the_scope(self, env, capsys):
+        """RED today: the Excel group has no keyed counterpart, so the script
+        reports nothing for this SPO and has no PL count at all."""
+        case = _owner_case(env)
+        _seed_pre_repair_state(env, case)
+        before = sorted(
+            (str(r["id"]), r["quantity_received"]) for r in _spo_rows(env, case.number)
+        )
+
+        summary = self._run(env, dry_run=True)
+
+        out = capsys.readouterr().out
+        assert case.number in out
+        assert summary["documents"] >= 1
+        assert summary["shipments"] >= 1
+        after = sorted(
+            (str(r["id"]), r["quantity_received"]) for r in _spo_rows(env, case.number)
+        )
+        assert after == before
+        assert _picked_on(env, case.excel_95.id) == 95
+
+    def test_apply_repairs_the_owner_case_and_is_idempotent(self, env):
+        case = _owner_case(env)
+        ib_row, ntc_row = _seed_pre_repair_state(env, case)
+        assert _pl_figures(env, case)[0] == 194  # the owner's screen, reproduced
+
+        self._run(env, dry_run=False)
+
+        rows = _spo_rows(env, case.number)
+        assert {str(r["id"]) for r in rows} == {str(ib_row.id), str(ntc_row.id)}
+        assert _picked_on(env, ib_row.id) == 22
+        assert _picked_on(env, ntc_row.id) == 77
+        assert _pl_figures(env, case) == (99, 99, "received")
+        assert _incoming_shipments(env, case) == []
+
+        second = self._run(env, dry_run=False)
+        assert case.number not in str(second)
+        assert {str(r["id"]) for r in _spo_rows(env, case.number)} == {
+            str(ib_row.id),
+            str(ntc_row.id),
+        }
