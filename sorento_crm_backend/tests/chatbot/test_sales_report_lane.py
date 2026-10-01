@@ -1081,7 +1081,7 @@ class TestHeaderSkipped:
             mcp_response=SALES_REPORT_HIT,
         )
         reply = (result.reply or {}).get("text") or ""
-        assert reply.startswith("Customer:"), (
+        assert reply.startswith("*Customer:*"), (
             f"the report's own header must be the first thing in the reply: {reply!r}"
         )
         assert "Dates: all dates" not in reply, (

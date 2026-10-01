@@ -322,7 +322,8 @@ def test_every_grouping_sums_to_the_same_total(client, db):
 )
 def test_grain_boundaries(client, db, days, grain):
     cust, prod, wh = _world(db)
-    start = date(2026, 8, 3)  # a Monday
+    # a Monday; a one-day window is the DO's own day so it covers the seeded delivery
+    start = date(2026, 8, 5) if days == 1 else date(2026, 8, 3)
     seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 5),
             lines=[line(prod.id, wh.id, 1, price=D("10"), total=D("10.00"))])
     db.commit()
