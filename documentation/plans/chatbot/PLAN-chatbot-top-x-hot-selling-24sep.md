@@ -55,6 +55,9 @@ later reader can tell a ruling from a proposal.
 
 - Owner ruling 26 Sep: **N.** A number in the message ranks that many, 1 to 100 (the owner's
   own example is "top 100"). No number = no cut-off: every ranked row. No invented default N.
+  SUPERSEDED 30 Sep 2026 (owner: "remove the cap, there is a use case of 100, 200"): N is
+  1 to 1000, a technical safety ceiling, and a long ranking is split into WhatsApp-sized
+  parts. See `PLAN-top-n-uncap-30sep.md`.
 - Owner ruling 26 Sep 01:50Z (amends the first reading of the N ruling): **no paging.** No
   "more", no "next", no "lagi" anywhere in the reply; the owner called paging "very not
   transparent". The header states the full count.

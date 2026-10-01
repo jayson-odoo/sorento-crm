@@ -477,6 +477,22 @@ def _outstanding_offer_closed(parse_output: dict[str, Any], db: Any) -> dict[str
     }
 
 
+def top_selling_ceiling_note(slot: dict[str, Any]) -> str | None:
+    """The line said above a ranking whose named N passed the shared safety ceiling
+    (owner, 30 Sep 2026: no 100 cap, and no silent clamp either). `fetch.py` asks the
+    route for the ceiling; this says so. None for every N at or under it, and for a
+    detail pick, which lists no ranking."""
+    from app.services.sales_report_service import TOP_SELLING_N_CEILING
+
+    top_n = slot.get("top_n")
+    if slot.get("detail_code") or isinstance(top_n, bool) or not isinstance(top_n, (int, float)):
+        return None
+    if int(top_n) <= TOP_SELLING_N_CEILING:
+        return None
+    # Promises no count: fewer items than the ceiling may have sold.
+    return f"I can list at most the top {TOP_SELLING_N_CEILING:,} in one reply."
+
+
 def _top_selling_question(slot: dict[str, Any]) -> tuple[str, str] | None:
     """S4 point 8a: the one question an unsettled top selling ask gets, in this order:
     the grain when the parser could not tell a category filter from a category ranking,
@@ -1748,6 +1764,9 @@ def run_fetch(
             if jsc.truthy(word)
         ]
         notes += [f"I don't know '{word}' as a category." for word in unknown]
+        ceiling_note = top_selling_ceiling_note(slot)
+        if ceiling_note:
+            notes.append(ceiling_note)
         if unknown:
             semantic_input["top_selling_drop"] = ["category_words", "category_code"]
         semantic_input["top_selling_notes"] = notes
