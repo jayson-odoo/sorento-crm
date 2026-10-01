@@ -149,16 +149,46 @@ describe('apiFetch deadline', () => {
   });
 
   it('an answer that arrives in time is returned untouched and the deadline is cleared', async () => {
-    fetchMock.mockImplementation(async (input: RequestInfo) => {
+    let sentSignal: AbortSignal | undefined;
+    fetchMock.mockImplementation(async (input: RequestInfo, init?: RequestInit) => {
       if (String(input).includes('/api/auth/token')) return json({ token: 'tok' });
+      sentSignal = init?.signal ?? undefined;
       return json({ ok: 1 });
     });
     const res = await apiFetch('/api/v1/master-data/products');
     expect(res.status).toBe(200);
     // Reading the body long after the read budget still works: the deadline covers
-    // the answer arriving, not the body being consumed.
+    // the answer arriving, not the body being consumed. A fired deadline would abort the
+    // signal the body (a download, an event stream) is read under.
     await vi.advanceTimersByTimeAsync(API_READ_TIMEOUT_MS * 2);
+    expect(sentSignal).toBeDefined();
+    expect(sentSignal!.aborted).toBe(false);
     expect(await res.json()).toEqual({ ok: 1 });
+  });
+
+  it("after the answer arrives, the caller's own abort still reaches the body", async () => {
+    let sentSignal: AbortSignal | undefined;
+    fetchMock.mockImplementation(async (input: RequestInfo, init?: RequestInit) => {
+      if (String(input).includes('/api/auth/token')) return json({ token: 'tok' });
+      sentSignal = init?.signal ?? undefined;
+      return json({ ok: 1 });
+    });
+    const controller = new AbortController();
+    await apiFetch('/api/v1/sla/conversation-events', { signal: controller.signal });
+    controller.abort();
+    expect(sentSignal!.aborted).toBe(true);
+  });
+
+  it("a Request's own signal is honoured", async () => {
+    const controller = new AbortController();
+    const s = track(
+      apiFetch(new Request('http://localhost/api/v1/x', { signal: controller.signal })),
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.done).toBe(true);
+    expect((s.error as Error).name).toBe('AbortError');
   });
 });
 

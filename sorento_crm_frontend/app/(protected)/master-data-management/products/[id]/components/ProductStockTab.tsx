@@ -34,7 +34,7 @@ function stockStatus(stock: Stock): 'low' | 'critical' | 'normal' | 'overstock' 
 
 export default function ProductStockTab({ productId }: ProductStockTabProps) {
   const router = useRouter();
-  const { data, isLoading, error } = useStockBalance({
+  const { data, isLoading, error, refetch } = useStockBalance({
     pageIndex: 0,
     pageSize: 100,
     product_id: productId,
@@ -124,6 +124,7 @@ export default function ProductStockTab({ productId }: ProductStockTabProps) {
         listingKey="master_data.products.view::stock"
         isLoading={isLoading}
         error={error}
+        onRetry={() => void refetch()}
         onRowClick={(row) =>
           row.product_id &&
           row.warehouse_id &&

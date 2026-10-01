@@ -42,7 +42,7 @@ function formatDiscount(line: PromotionProduct, listPrice?: number | null): stri
 
 export default function ProductPromotionsTab({ productId, listPrice }: ProductPromotionsTabProps) {
   const router = useRouter();
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['product-promotions', productId],
     queryFn: () => getPromotionsByProductId(productId),
     enabled: !!productId,
@@ -178,6 +178,7 @@ export default function ProductPromotionsTab({ productId, listPrice }: ProductPr
       }
       columns={columns}
       error={error}
+      onRetry={() => void refetch()}
       rows={lines}
       getRowId={(row) => row.id}
       listingKey="master_data.products.view::promotions"

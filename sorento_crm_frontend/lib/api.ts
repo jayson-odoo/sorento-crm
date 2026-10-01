@@ -131,9 +131,11 @@ const _FILE_BUILD_PATH = /\/(export|download|pdf)(\b|[/?.])|\.(xlsx|pdf|csv)(\?|
 
 function _defaultTimeoutMs(url: unknown, init: RequestInit | undefined): number {
   if (init?.body instanceof FormData) return API_UPLOAD_TIMEOUT_MS;
-  const method = (init?.method || 'GET').toUpperCase();
+  const request = typeof Request !== 'undefined' && url instanceof Request ? url : null;
+  const method = (init?.method || request?.method || 'GET').toUpperCase();
   if (method !== 'GET' && method !== 'HEAD') return API_WRITE_TIMEOUT_MS;
-  if (typeof url === 'string' && _FILE_BUILD_PATH.test(url)) return API_WRITE_TIMEOUT_MS;
+  const path = request ? request.url : url;
+  if (typeof path === 'string' && _FILE_BUILD_PATH.test(path)) return API_WRITE_TIMEOUT_MS;
   return API_READ_TIMEOUT_MS;
 }
 
@@ -147,7 +149,8 @@ async function _fetchWithDeadline(
   timeoutMs: number,
 ): Promise<Response> {
   const controller = new AbortController();
-  const callerSignal = init?.signal ?? undefined;
+  const callerSignal =
+    init?.signal ?? (typeof Request !== 'undefined' && url instanceof Request ? url.signal : undefined);
   let timedOut = false;
   const onCallerAbort = () => controller.abort(callerSignal?.reason);
   if (callerSignal) {
@@ -159,8 +162,11 @@ async function _fetchWithDeadline(
     controller.abort(new DOMException(REQUEST_TIMED_OUT_MESSAGE, 'TimeoutError'));
   }, timeoutMs);
   try {
+    // The caller-abort listener stays after the answer arrives, so a caller can still
+    // cancel the body (an event stream, a download); only the deadline stops here.
     return await fetch(url, { ...init, signal: controller.signal });
   } catch (error) {
+    callerSignal?.removeEventListener('abort', onCallerAbort);
     if (timedOut && !callerSignal?.aborted) {
       const timeoutError = new Error(REQUEST_TIMED_OUT_MESSAGE);
       timeoutError.name = 'TimeoutError';
@@ -169,7 +175,6 @@ async function _fetchWithDeadline(
     throw error;
   } finally {
     clearTimeout(timer);
-    callerSignal?.removeEventListener('abort', onCallerAbort);
   }
 }
 

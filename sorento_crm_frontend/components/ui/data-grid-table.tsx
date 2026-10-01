@@ -5,10 +5,8 @@ import { CSSProperties, Fragment, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
-import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import AccessDenied from '@/app/components/common/AccessDenied';
-import { isAccessDenied } from '@/lib/api-client';
+import { ListLoadFailure } from '@/components/common/ListLoadFailure';
 import { useDataGrid } from '@/components/ui/data-grid';
 import { DataGridTableDnd } from '@/components/ui/data-grid-table-dnd';
 import { Cell, Column, flexRender, Header, HeaderGroup, Row, Table } from '@tanstack/react-table';
@@ -1061,34 +1059,6 @@ function DataGridTableBodyRowCell<TData>({
   );
 }
 
-/**
- * A failed list read, in place of the empty state (NEVER-STUCK-UI S3, lever L2): "No data"
- * after a 403 or a 500 tells the user something false about their records.
- */
-function DataGridTableLoadFailure({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
-  if (isAccessDenied(error)) {
-    return (
-      <div data-testid="data-grid-no-access">
-        <AccessDenied inline title="You don't have access to this list" />
-      </div>
-    );
-  }
-  const message =
-    (error instanceof Error && error.message) || 'This list could not be loaded.';
-  return (
-    <div data-testid="data-grid-error" className="flex flex-col items-start gap-2">
-      <span role="alert" className="text-foreground">
-        {message}
-      </span>
-      {onRetry ? (
-        <Button type="button" variant="outline" size="sm" onClick={() => onRetry()}>
-          Retry
-        </Button>
-      ) : null}
-    </div>
-  );
-}
-
 function DataGridTableEmpty() {
   const { table, props } = useDataGrid();
   const totalColumns = table.getAllColumns().length;
@@ -1115,7 +1085,7 @@ function DataGridTableEmpty() {
           className="sticky start-0 flex w-fit flex-col items-start gap-3 px-4 py-6 text-start"
         >
           {failed ? (
-            <DataGridTableLoadFailure error={props.error} onRetry={props.onRetry} />
+            <ListLoadFailure error={props.error} onRetry={props.onRetry} />
           ) : (
             <span>{props.emptyMessage || 'No data available'}</span>
           )}

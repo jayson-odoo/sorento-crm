@@ -127,7 +127,7 @@ const ACCESS_DENIED_PREFIXES = [
   'Permission required:',
   // Covers the strict-mode "(module may be disabled)" variant too.
   'One of these permissions required',
-  'Module not enabled:',
+  'Module not enabled',   // `Module not enabled: x` and `Module not enabled for <doc type>`
 ];
 
 /** `get_current_user` 401 details (`dependencies.py`, `user_session_service.py`) and the
@@ -139,6 +139,7 @@ const SIGNED_OUT_MESSAGES = [
   'Session was revoked',
   'Session not found',
   'Account is not active',
+  'Invalid token',
 ];
 
 function errorMessage(error: unknown): string {

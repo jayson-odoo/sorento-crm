@@ -74,6 +74,24 @@ describe('SearchableSelect load failure', () => {
     expect(screen.getByRole('combobox')).toHaveTextContent('Alpha');
   });
 
+  it('options that are still there (a static "All" entry, a stale list) stay pickable under the failure line', async () => {
+    // Deliberate: the Users role filter always carries "All roles", so hiding the failure
+    // whenever any option exists would hide it exactly where audit row T13 needs it.
+    const onChange = vi.fn();
+    render(
+      <SearchableSelect
+        value=""
+        onChange={onChange}
+        options={[{ value: 'all', label: 'All roles' }]}
+        loadError={new Error('Permission required: user_management.roles.view')}
+      />,
+    );
+    openSingle();
+    await waitFor(() => expect(screen.getByTestId('select-load-failure')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('All roles'));
+    expect(onChange).toHaveBeenCalledWith('all');
+  });
+
   it('async: a rejected fetchOptions shows the failure and Retry runs it again', async () => {
     const fetchOptions = vi
       .fn()

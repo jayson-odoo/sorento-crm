@@ -125,8 +125,15 @@ export default function PriceTagRequestsList() {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await fetchData();
-    setIsRefreshing(false);
+    try {
+      await fetchData();
+    } catch (e) {
+      // Rows on screen stay; the grid only shows a failure in place of no rows, so say it here.
+      setLoadError(e);
+      if (data?.data?.length) toast.error(e instanceof Error ? e.message : 'Could not refresh the list.');
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   // Carried into the record URL so its prev/next pager walks the SAME searched,

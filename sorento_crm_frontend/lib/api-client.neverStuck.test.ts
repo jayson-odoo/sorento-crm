@@ -26,6 +26,7 @@ describe('isAccessDenied', () => {
     'One of these permissions required: a.b, c.d',
     'One of these permissions required (module may be disabled): a.b',
     'Module not enabled: scm',
+    'Module not enabled for purchase_order',
   ])('recognises the backend 403 "%s"', (m) => {
     expect(isAccessDenied(err(m))).toBe(true);
   });
@@ -52,6 +53,7 @@ describe('isSignedOut', () => {
     'Session was revoked',
     'Session not found',
     'Account is not active',
+    'Invalid token: signature mismatch',
   ])('recognises the 401 "%s"', (m) => {
     expect(isSignedOut(err(m))).toBe(true);
   });

@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from '@/lib/toast';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import type { ColumnDef, PaginationState, RowSelectionState } from '@tanstack/react-table';
@@ -60,6 +61,8 @@ export default function TicketsList() {
   });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<unknown>(null);
+  // Whether rows are on screen, read by the load effect without becoming a dependency.
+  const hasRowsRef = useRef(false);
   const {
     value: search,
     setValue: setSearch,
@@ -113,12 +116,16 @@ export default function TicketsList() {
         if (cancelled) return;
         setRows(res.data);
         setTotal(res.pagination.total);
+        hasRowsRef.current = res.data.length > 0;
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setRows([]);
-        setTotal(0);
+        // Rows on screen stay (a refresh after a bulk action failed); the grid shows the
+        // failure only in place of no rows, so a failure over rows is said in a toast.
         setLoadError(e);
+        if (hasRowsRef.current) {
+          toast.error(e instanceof Error ? e.message : 'Could not refresh the tickets.');
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
