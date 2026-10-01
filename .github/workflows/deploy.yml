@@ -1120,8 +1120,9 @@ jobs:
   # (point 5 of `changes`): the changed test files plus every test file
   # that imports a changed backend module, up to 3600 estimated CPU-s (above that the
   # shards run instead and this job skips). So the run step splits like the
-  # shards: xdist `--dist loadfile` for the bulk, then the `serial_ddl` and
-  # tests/test_migration_*.py files serially.
+  # shards: tests/scm and the rest in separate sessions, xdist `--dist
+  # loadfile` for the bulk, then the `serial_ddl` and tests/test_migration_*.py
+  # files serially.
   test-backend-changed:
     name: Backend changed tests (Postgres)
     needs: [changes]
@@ -1238,22 +1239,31 @@ jobs:
         env:
           FILES: ${{ steps.select.outputs.files }}
         run: |
-          # Two passes, the shards' split: everything that is neither a
-          # migration test nor `serial_ddl` under xdist `--dist loadfile`
-          # (the selection can reach ~200 files), then those two serially
-          # with nothing else on the database. Exit 5 (nothing collected,
+          # The shards' split. tests/scm and the rest run as separate pytest
+          # sessions, as on the shards: several main-tree files import
+          # `tests.scm.conftest` by module name, and in one session with
+          # tests/scm files that import keeps pytest from registering it as
+          # tests/scm's conftest (`fixture 'scm_app' not found`; #1411's
+          # selection hit it). Per tree: xdist `--dist loadfile` for
+          # everything but `serial_ddl`, then `serial_ddl` serially; then
+          # tests/test_migration_*.py serially. Exit 5 (nothing collected,
           # e.g. no `serial_ddl` test in the list) is not a failure; every
           # pass runs even after one fails, and the job fails on any.
-          pool=""; migrations=""
+          main=""; scm=""; migrations=""
           for f in $FILES; do
-            case "$f" in tests/test_migration_*.py) migrations="$migrations $f" ;; *) pool="$pool $f" ;; esac
+            case "$f" in
+              tests/test_migration_*.py) migrations="$migrations $f" ;;
+              tests/scm/*) scm="$scm $f" ;;
+              *) main="$main $f" ;;
+            esac
           done
           rc=0
           run() { python -m pytest -q -p no:cacheprovider "$@" || { r=$?; [ "$r" -eq 5 ] || rc=$r; }; }
-          if [ -n "$pool" ]; then
+          for pool in "$main" "$scm"; do
+            [ -n "$pool" ] || continue
             run -n auto --dist loadfile --durations=20 -m "not serial_ddl" $pool
             run -p no:xdist --durations=10 -m serial_ddl $pool
-          fi
+          done
           [ -z "$migrations" ] || run -p no:xdist --durations=10 $migrations
           exit "$rc"
 

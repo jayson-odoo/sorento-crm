@@ -1147,6 +1147,19 @@ def test_changed_files_run_in_the_shards_two_pass_split(tmp_path):
     assert "-p no:xdist" in calls[2] and calls[2].endswith("tests/test_migration_400_x.py")
 
 
+def test_scm_files_never_share_a_session_with_the_main_tree(tmp_path):
+    """#1411's selection: tests/test_product_discontinued_at_list.py imports
+    tests.scm.conftest by name, and in one session with tests/scm files pytest
+    then never registers it as tests/scm's conftest (`fixture 'scm_app' not
+    found`). The shards never mix the trees; neither may this job."""
+    rc, calls = _run_changed_step(tmp_path, "tests/test_a.py tests/scm/test_s.py tests/test_b.py")
+    assert rc == 0 and len(calls) == 4, calls
+    assert calls[0].endswith("tests/test_a.py tests/test_b.py") and "tests/scm" not in calls[0]
+    assert calls[1].endswith("tests/test_a.py tests/test_b.py") and "-m serial_ddl" in calls[1]
+    assert calls[2].endswith("tests/scm/test_s.py") and "--dist loadfile" in calls[2]
+    assert calls[3].endswith("tests/scm/test_s.py") and "-p no:xdist" in calls[3]
+
+
 def test_changed_files_step_fails_on_any_pass_but_runs_them_all(tmp_path):
     rc, calls = _run_changed_step(tmp_path, "tests/test_a.py tests/test_migration_400_x.py", PY_FAIL_ON="loadfile")
     assert rc == 1 and len(calls) == 3
