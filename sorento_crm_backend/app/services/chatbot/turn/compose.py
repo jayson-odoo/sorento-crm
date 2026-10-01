@@ -758,6 +758,12 @@ def compose_question(pending: Any, state: State | None = None) -> Answer:
     verbatim = str(offered.get("offer_text") or "").strip() if isinstance(offered, dict) else ""
     if verbatim:
         body = verbatim
+        positions = [o.get("position") for o in pending.options if isinstance(o.get("position"), int)]
+        if pending.kind == "sales_report_detail" and positions:
+            # PR #1401 fix round 3, F4 (mock v3 section 8, carried into v4): a re-print of
+            # the sales report's drill offer says which numbers it takes, first to last
+            # (the options continue after the rows printed, so the first may be 11).
+            body = f"Please reply with a number from {min(positions)} to {max(positions)}.\n" + verbatim
     elif len(labels) > MAX_MENU_OPTIONS and _in_ranking(state):
         # Owner retest of top selling round 4 (27 Sep 2026, R8): inside a ranking no
         # menu lists more than five options (it listed all 100 ranked codes under

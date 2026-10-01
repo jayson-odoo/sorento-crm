@@ -176,3 +176,36 @@ class TestF7ANewReportReplacesTheOffer:
         assert calls[0].get("group_by") == "delivery_order", calls
         assert calls[0]["customer_ids"] == [links[2]], calls
         assert "11. By customer" not in reply, reply
+
+
+class TestF4OutOfRangeSaysWhichNumbers:
+    def test_a_number_past_the_end_names_the_range_above_the_options(self, session_factory, monkeypatch) -> None:
+        _seed_contact(session_factory, variables={})
+        _turn(
+            session_factory, monkeypatch,
+            _parser_output(domain_hint="order", intent_hint="check_order", order_status="sales_report",
+                           entities=[{"raw": "ZZT", "hint": "customer", "canonical_code": None,
+                                      "current_message": True, "confident": True}]),
+            "my sales", SALES_REPORT_HIT,
+            matches={"ZZT": {"uuid": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "entity_type": "customer",
+                             "canonical_code": "ZZT"}},
+        )
+        reply, calls, _c = _turn(session_factory, monkeypatch, _pick(9), "9", SALES_REPORT_HIT)
+        assert calls == [], calls
+        assert reply.startswith("Please reply with a number from 1 to 2.\n"), reply
+        assert "1. By product" in reply and "2. Delivery orders" in reply, reply
+
+    def test_continued_numbering_names_the_first_and_last_option(self, session_factory, monkeypatch) -> None:
+        _seed_contact(session_factory, variables={})
+        _link_customers(session_factory, *LINKS)
+        _turn(
+            session_factory, monkeypatch,
+            _parser_output(domain_hint="order", intent_hint="check_order", order_status="sales_report",
+                           self_reference=True, entities=[], **WINDOW),
+            "my sales", DO_LIST_HIT,
+        )
+        assert _values(_offer(session_factory)) == [("customer", 11), ("product", 12)], _offer(session_factory)
+        reply, calls, _c = _turn(session_factory, monkeypatch, _pick(9), "9", DO_LIST_HIT)
+        assert calls == [], calls
+        assert reply.startswith("Please reply with a number from 11 to 12.\n"), reply
+        assert "11. By customer" in reply and "12. By product" in reply, reply
