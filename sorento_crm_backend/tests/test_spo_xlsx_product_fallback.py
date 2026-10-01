@@ -140,8 +140,11 @@ def _owner_case(env, *, excel_warehouse: bool = False, with_receipts: bool = Tru
         line_status="closed" if with_receipts else "open",
     )
     if excel_warehouse:
-        excel_95.warehouse_id = ib_id
-        excel_4.warehouse_id = ib_id
+        # A destination AutoCount never names: the keyed pass finds no counterpart
+        # (kept, not D26a-locked), so only the fallback could ever pair these rows.
+        other_id = _resolve_wh(env, env.link_warehouse(env.company_a))
+        excel_95.warehouse_id = other_id
+        excel_4.warehouse_id = other_id
         env.db.flush()
 
     picks = [None, None, None]
@@ -391,9 +394,10 @@ class TestAcF5FallbackGuards:
         assert _picked_on(env, case.excel_95.id) == 95
 
     def test_an_excel_row_naming_a_warehouse_is_never_fallback_paired(self, env):
-        """AC-F6 (guard): the Excel rows name BRW-IB, AutoCount says IB 22 +
-        NTC 77, so the keyed pass sees IB 22 < 99 received (D26a lock) and the
-        product fallback must not step in for a row that has a destination."""
+        """AC-F6 (guard): the Excel rows name a warehouse AutoCount never
+        names. The quantities reconcile (95 + 4 = 22 + 77), but a row with a
+        destination is a statement about where the goods went, so the product
+        fallback must not pair it with lines elsewhere."""
         case = _owner_case(env, excel_warehouse=True)
         entry = _push(env, _autocount_record(env, case))
         assert "superseded" not in entry.lines, entry.lines
