@@ -10,16 +10,32 @@
   "channel_shown": false,
   "location_token": null,
   "warehouse_codes": [],
-  "date_from": "2026-09-01",
+  "date_from": "2026-09-30",
   "date_to": "2026-09-30",
-  "grain": "month",
+  "grain": "day",
   "total": {
-    "qty": 0,
-    "amount": 0.0
+    "qty": 12,
+    "amount": 1500.0
   },
-  "periods": [],
+  "periods": [
+    {
+      "from": "2026-09-30",
+      "to": "2026-09-30",
+      "qty": 12,
+      "amount": 1500.0
+    }
+  ],
   "group_by": null,
   "rows": [],
   "more": 0,
-  "options": []
+  "options": [
+    {
+      "key": "product",
+      "label": "By product"
+    },
+    {
+      "key": "delivery_order",
+      "label": "Delivery orders"
+    }
+  ]
 }

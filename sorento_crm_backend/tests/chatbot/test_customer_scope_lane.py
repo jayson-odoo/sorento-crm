@@ -704,7 +704,7 @@ class TestScopedSalesAnalysisRunsTheSalesReport:
         (args,) = _calls(captured, SALES)
         assert args["customer_ids"] == links, args
         assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
-        assert "Sales orders:" in reply and "Ordered:" in reply, reply
+        assert "*Total:* Qty 10, RM 100.00" in reply, reply
         assert not (result.reply or {}).get("attachments"), result.reply
         events = _scope_events(session_factory, result)
         assert any(e.get("decision") == "sales_analysis_answered_as_sales_report" and e.get("ids") == links for e in events), events
