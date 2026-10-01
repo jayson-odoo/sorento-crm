@@ -401,3 +401,34 @@ Kill tests:
 - first run: v5, unlabelled, render equal to the file (132034 = 132034 characters). Only
   `{{teams}}` and `{{entity_kinds_detail}}` were replaced;
 - second run: "already published; nothing to do".
+
+Round 2, the same day. Crew's applier takes the comment body as `crew-migration:` plus ONE
+`sql` fence and nothing else (worker-contract.md:88). The first post put prose before the
+fence, and the applier ran it as SQL. The 152 KB file could not fit in one comment either
+(the limit is 65,536 characters).
+
+The generator now emits a compact `DO` block: 54,792 characters, a 54,818-character comment
+body. It encodes the owner's text in three steps:
+1. Its 83 distinct non-ASCII characters become `^` plus an index into a code-point table.
+2. The result is LZ77-coded with `~hex,hex;` back-references.
+3. Each pair of ASCII characters is packed into one code point from U+4E00.
+
+The block decodes this in plain PL/pgSQL, with no extension, and checks the sha256 against
+the file before writing anything. The pdyn_0001 statements are dropped, because crew already
+applied them.
+
+New tests:
+- the comment body is exactly the prefix plus one fence, and under the limit;
+- the encoding round-trips the owner's text.
+
+Kill tests:
+- always swap: 3 red;
+- LZ offset off by one: 5 red;
+- the sha "already published" guard removed: stays green, because the identical-template
+  guard also stops a second insert.
+
+main was merged at 41bf6c12f; `pdyn_0001` was re-parented onto `dcm_0001_compare_mappings`,
+leaving a single head `pdyn_0003_prod_identical`. The backlog clash on BL-068 was resolved by
+keeping main's entry and renumbering this lane's entry BL-069. On a fresh `bootstrap_env` DB,
+the PR's changed backend tests pass (197), and so does the chatbot subset for sales, business,
+engine, domain, status and prompt (1458 passed, 30 skipped, 5 xfailed).
