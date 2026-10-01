@@ -437,6 +437,11 @@ export function PromptChipEditor({
             e.preventDefault();
             insertPlainText(e.clipboardData.getData('text/plain'));
           }}
+          onDrop={(e) => {
+            // Plain text only, as for paste: a drop from another page would bring its HTML.
+            e.preventDefault();
+            insertPlainText(e.dataTransfer.getData('text/plain'));
+          }}
           onKeyDown={(e) => {
             if (isFindChord(e)) {
               e.preventDefault();

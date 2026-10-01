@@ -144,9 +144,18 @@ def _one_line(value: object) -> str:
 
     text = _LINE_BREAKS.sub(" ", str(value or ""))
     text = "".join(ch for ch in text if ch.isprintable() or ch == " ")
-    for marker in (BLOCKS_BEGIN, BLOCKS_END, "{{", "}}"):
-        text = text.replace(marker, " ")
-    return " ".join(text.split())
+    # Collapse whitespace BEFORE removing the markers: removing first let a doubled space
+    # inside a marker survive the replace and collapse back into the real marker
+    # (security pass 2, F1). Repeat until stable: removing one marker can join the halves
+    # of another.
+    text = " ".join(text.split())
+    while True:
+        before = text
+        for marker in (BLOCKS_BEGIN, BLOCKS_END, "{{", "}}"):
+            text = text.replace(marker, " ")
+        text = " ".join(text.split())
+        if text == before:
+            return text
 
 
 def _quoted(value: object) -> str:
