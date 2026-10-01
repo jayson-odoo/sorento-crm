@@ -65,7 +65,7 @@ export function PermissionsLoadError({
 }) {
   return (
     <LoadErrorState
-      className="min-h-[60vh]"
+      className="min-h-[60dvh]"
       title="Could not check your access"
       message="Your permissions did not load, so this page cannot tell what you are allowed to see. Retry, and if it keeps failing, reload the page."
       onRetry={onRetry}
