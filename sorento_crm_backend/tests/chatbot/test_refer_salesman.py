@@ -114,8 +114,13 @@ def _plan(*codes: str, domain: str = "incoming", uuids: dict[str, str] | None = 
     )
 
 
-def _build(reply: str, envelopes=(), plan: Plan | None = None, pending=None, message="", answered=()):
+def _build(
+    reply: str, envelopes=(), plan: Plan | None = None, pending=None, message="", answered=(), referred=True
+):
+    """CUSTOMER-ASKS-REFER-ONLY: whether the reply refers is the caller's flag (the turn's
+    `turn/refer.py` mark), never read off `reply`; these builder tests are of refer replies."""
     return refer_asks.referred_entries(
+        referred=referred,
         reply_text=reply,
         envelopes=list(envelopes),
         plan=plan or Plan(domains=[], fetch=[], ask=None, denied=[], trace=Trace()),
@@ -125,17 +130,10 @@ def _build(reply: str, envelopes=(), plan: Plan | None = None, pending=None, mes
     )
 
 
-def test_refers_reads_the_sentence_case_insensitively_and_nothing_else():
-    assert refer_asks.refers("SRT x 5: yes, we have stock. Please refer to your salesman.")
-    assert refer_asks.refers("please refer to your salesman")
-    assert not refer_asks.refers("How many units of SRT5674?")
-    assert not refer_asks.refers("")
-    assert not refer_asks.refers(None)
-
-
-def test_a_reply_without_the_sentence_builds_nothing():
+def test_a_turn_that_did_not_refer_builds_nothing():
+    """CUSTOMER-ASKS-REFER-ONLY: the reply text is not read for the sentence any more."""
     env = _envelope("incoming", figures=[_eta_item("SRT1", ["2026-09-08"])], entities=["SRT1"])
-    assert _build("SRT1\nETA: 2026-09-08", [env], _plan("SRT1")) == []
+    assert _build(f"SRT1\nETA: 2026-09-08\n\n{REFER_TO_SALESMAN}", [env], _plan("SRT1"), referred=False) == []
 
 
 def test_ac_rs10_a_dealer_eta_reply_is_one_incoming_eta_entry_per_product_line():
@@ -153,6 +151,7 @@ def test_ac_rs10_a_dealer_eta_reply_is_one_incoming_eta_entry_per_product_line()
             "requested_qty": None,
             "branch": "incoming_eta",
             "answer_summary": "ETA: 2026-09-08. Please refer to your salesman.",
+            "refers_to_salesman": True,
         },
         {
             "product_code": "SRT2",
@@ -160,6 +159,7 @@ def test_ac_rs10_a_dealer_eta_reply_is_one_incoming_eta_entry_per_product_line()
             "requested_qty": None,
             "branch": "incoming_eta",
             "answer_summary": "ETA: 2026-09-08, 2026-09-20. Please refer to your salesman.",
+            "refers_to_salesman": True,
         },
     ]
 
@@ -181,6 +181,7 @@ def test_ac_rs11_an_incoming_miss_is_one_referred_entry_per_missed_code():
             "requested_qty": None,
             "branch": "referred",
             "answer_summary": reply,
+            "refers_to_salesman": True,
         }
     ]
 
@@ -216,6 +217,7 @@ def test_ac_rs13_a_declined_did_you_mean_carries_the_typed_code_and_quantity():
             "requested_qty": 10,
             "branch": "referred",
             "answer_summary": REFER_TO_SALESMAN,
+            "refers_to_salesman": True,
         }
     ]
 
