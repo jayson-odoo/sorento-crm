@@ -1,0 +1,122 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { LoaderCircleIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { useIdeaMutations } from '@/hooks/useIdeas';
+
+/**
+ * Capture idea: the CRM modal over ss `IdeaCreateIn`. No product picker (the connection is scoped
+ * to the workspace's product); files go up after the idea exists.
+ */
+export function IdeaCaptureModal({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { create } = useIdeaMutations();
+  const [problem, setProblem] = useState('');
+  const [proposedSolution, setProposedSolution] = useState('');
+  const [impact, setImpact] = useState('');
+  const [department, setDepartment] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    setProblem('');
+    setProposedSolution('');
+    setImpact('');
+    setDepartment('');
+    setFiles([]);
+  }, [open]);
+
+  const canSave = problem.trim().length > 0 && !create.isPending;
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!canSave) return;
+    try {
+      await create.mutateAsync({ problem, proposedSolution, impact, department, files });
+      onOpenChange(false);
+    } catch {
+      // The hook toasted the reason; the modal stays open with what was typed.
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Capture idea</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="flex flex-col gap-4">
+          <DialogBody className="flex max-h-[70dvh] flex-col gap-4 overflow-y-auto">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="idea-problem">Problem statement</Label>
+              <Textarea
+                id="idea-problem"
+                value={problem}
+                onChange={(e) => setProblem(e.target.value)}
+                rows={3}
+                autoFocus
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="idea-solution">Proposed solution</Label>
+              <Textarea
+                id="idea-solution"
+                value={proposedSolution}
+                onChange={(e) => setProposedSolution(e.target.value)}
+                rows={2}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="idea-impact">Impact</Label>
+              <Textarea id="idea-impact" value={impact} onChange={(e) => setImpact(e.target.value)} rows={2} />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="idea-department">Department</Label>
+              <Input
+                id="idea-department"
+                value={department}
+                maxLength={120}
+                onChange={(e) => setDepartment(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="idea-files">Attachments</Label>
+              <Input
+                id="idea-files"
+                type="file"
+                multiple
+                onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+              />
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={!canSave}>
+              {create.isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
+              Capture
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
