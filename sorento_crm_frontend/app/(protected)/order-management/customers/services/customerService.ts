@@ -5,8 +5,8 @@ import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/u
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 
 
-export async function getCustomers(params: DataGridApiFetchParams & { status?: string }): Promise<DataGridApiResponse<Customer>> {
-  const { pageIndex, pageSize, sorting, searchQuery, status } = params;
+export async function getCustomers(params: DataGridApiFetchParams & { status?: string; customer_group_id?: string }): Promise<DataGridApiResponse<Customer>> {
+  const { pageIndex, pageSize, sorting, searchQuery, status, customer_group_id } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -15,6 +15,7 @@ export async function getCustomers(params: DataGridApiFetchParams & { status?: s
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
     ...(status ? { status } : {}),
+    ...(customer_group_id ? { customer_group_id } : {}),
   });
   const response = await apiFetch(`/api/v1/order-management/customers?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch customers');
