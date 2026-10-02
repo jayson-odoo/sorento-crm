@@ -1411,26 +1411,70 @@ def _customer_scope_gate(
     def _is_customer(e: dict[str, Any]) -> bool:
         return e.get("hint") == "customer" or e.get("entity_type") == "customer"
 
-    words = [
-        jsc.js_string(e.get("raw"))
+    named = [
+        e
         for e in entities
         if _is_customer(e) and e.get("current_message") is True and jsc.truthy(e.get("raw"))
     ]
+    words = [jsc.js_string(e.get("raw")) for e in named]
+    # ACCOUNT-LEDGER: the numbered account a word names, parallel to `words`; "my account 2"
+    # names no customer (raw null) and narrows the links themselves.
+    accounts = [_account_of(e) for e in named]
+    my_account = next(
+        (a for e in entities if _is_customer(e) and not jsc.truthy(e.get("raw")) and (a := _account_of(e))),
+        None,
+    )
+    from app.services import contact_customer_scope as scope_mod
+
+    links = scope_mod.ContactCustomerScope(
+        linked=tuple((c, n, k) for c, n, k in scope["linked"]),
+        staff=False,
+        levels=dict(scope.get("levels") or {}),
+    )
+    without_customers = {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}
     if not enforced:
         # Staff: "my" alone means the links; naming a customer is unscoped as today.
-        return (parse_output, list(scope["ids"]), False) if not words else (parse_output, None, False)
+        if words:
+            return parse_output, None, False
+        ids = list(scope["ids"])
+        if my_account is not None:
+            ids = [c for c in ids if links.levels.get(c) == my_account]
+            if not ids:
+                return without_customers, None, True
+        return parse_output, ids, False
     ids: list[str] | None = list(scope["ids"])
     if words:
-        from app.services import contact_customer_scope as scope_mod
-
-        ids = scope_mod.ContactCustomerScope(
-            linked=tuple((c, n, k) for c, n, k in scope["linked"]), staff=False
-        ).match_words(words)
+        ids = links.match_words(words, accounts)
+        if ids is None and any(accounts):
+            # Q3: a refusal over an account names only the contact's ledgers of that name.
+            of_name = links.match_words(words)
+            if of_name is not None:
+                scope["refusal"] = scope_mod.refusal_line_for(links, of_name)
+    elif my_account is not None:
+        ids = [c for c in ids if links.levels.get(c) == my_account] or None
     if ids is None:
-        return {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}, None, True
+        return without_customers, None, True
     if not in_order:
         return parse_output, None, False
-    return {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}, ids, False
+    return without_customers, ids, False
+
+
+def _account_of(entity: dict[str, Any]) -> int | None:
+    """The `account` the parser put on an entity: a whole number of at least 1, else None."""
+    value = entity.get("account")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 1 else None
+
+
+def _unnamed_account(verdict: dict[str, Any], parse_output: dict[str, Any]) -> int | None:
+    """ACCOUNT-LEDGER Q2: an Account number with no customer named THIS message (and no "my":
+    `self_reference` names the links). Nothing is carried from an earlier turn to fill it."""
+    if verdict.get("self_reference") is True:
+        return None
+    entities = [e for e in (parse_output.get("entities") or []) if isinstance(e, dict)]
+    customers = [e for e in entities if e.get("hint") == "customer" or e.get("entity_type") == "customer"]
+    if any(e.get("current_message") is True and jsc.truthy(e.get("raw")) for e in customers):
+        return None
+    return next((a for e in customers if not jsc.truthy(e.get("raw")) and (a := _account_of(e))), None)
 
 
 def _screen_resolver_for_scope(
@@ -3948,6 +3992,7 @@ def _run_stages(  # noqa: PLR0915
 
         top_selling_updates: dict[str, Any] = {}
         customer_scope_refused = False
+        account_question: str | None = None
         resolved_kinds: dict[str, dict[str, int]] = {}
         compatible_entities: list[dict[str, Any]] = []
         predicate: dict[str, Any] | None = None
@@ -4041,9 +4086,22 @@ def _run_stages(  # noqa: PLR0915
                 )
             elif isinstance(state_out.focus.top_selling, dict) and state_out.focus.top_selling.get("hop"):
                 resolver_parse_output = _without_carried_words(resolver_parse_output)
-            resolver_parse_output, scope_ids, scope_refused = _customer_scope_gate(
-                customer_scope, verdict, state_out.focus, resolver_parse_output, plan.domains
-            )
+            unnamed_account = _unnamed_account(verdict, resolver_parse_output)
+            if unnamed_account is not None:
+                resolver_parse_output = {
+                    **resolver_parse_output,
+                    "entities": [
+                        e
+                        for e in resolver_parse_output.get("entities") or []
+                        if not (isinstance(e, dict) and (e.get("hint") == "customer" or e.get("entity_type") == "customer"))
+                    ],
+                }
+                scope_ids, scope_refused = None, True
+                account_question = f"Which customer is Account {unnamed_account} for?"
+            else:
+                resolver_parse_output, scope_ids, scope_refused = _customer_scope_gate(
+                    customer_scope, verdict, state_out.focus, resolver_parse_output, plan.domains
+                )
             scope_ids = _drill_offer_subject(scope_ids, state_out.focus, plan.trace)
             if (
                 len(plan.domains) > 1
@@ -4109,6 +4167,10 @@ def _run_stages(  # noqa: PLR0915
             unplaced_tokens = resolve_outcome.unplaced_tokens
             spec_tier = resolve_outcome.spec_tier
             resolver_payload = resolve_outcome.payload
+            # ACCOUNT-LEDGER Q4: staff asked a level the typed name lacks.
+            staff_account_refusal = ((resolver_payload or {}).get("resolved") or {}).get("account_refusal")
+            if staff_account_refusal:
+                account_question, scope_refused = str(staff_account_refusal), True
             # CHATBOT-SELFREF-SCOPE R4: every scope decision is on the trace, with its
             # reason and the ids it dropped, so a refusal explains itself.
             screened_refused = False
@@ -4165,6 +4227,25 @@ def _run_stages(  # noqa: PLR0915
                 state_out, plan = turn_apply(
                     state_in,
                     verdict,
+                    policy,
+                    resolved_kinds,
+                    resolved_candidates,
+                    frozenset(unplaced_tokens),
+                )
+            if scope_ids is not None and plan.ask is not None and plan.ask.kind == "customer_pick":
+                # Two typed customer words armed a pick between the WORDS; the linked
+                # customers they matched are the turn's customers, so nothing is asked:
+                # the plan is made again without the words.
+                state_out, plan = turn_apply(
+                    state_in,
+                    {
+                        **verdict,
+                        "entities": [
+                            e
+                            for e in verdict.get("entities") or []
+                            if not (isinstance(e, dict) and (e.get("hint") == "customer" or e.get("entity_type") == "customer"))
+                        ],
+                    },
                     policy,
                     resolved_kinds,
                     resolved_candidates,
@@ -5211,7 +5292,9 @@ def _run_stages(  # noqa: PLR0915
         # no offer, nothing armed (`_customer_scope_gate`).
         if answer is None and customer_scope_refused and completes_here:
             stage[0] = "replied"
-            answer = turn_compose.Answer(text=str((customer_scope or {}).get("refusal") or ""))
+            answer = turn_compose.Answer(
+                text=account_question or str((customer_scope or {}).get("refusal") or "")
+            )
 
     if answer is not None and lane_error_text is None:
         if _dealer_stock_ask(state_out, plan) or _dealer_incoming_ask(state_out, plan):

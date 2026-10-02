@@ -178,6 +178,10 @@ def _build_json_schema() -> dict[str, Any]:
                         # parse. Required like every other key: strict mode.
                         "spec_key": string_or_null,
                         "spec_value": {"type": ["string", "number", "boolean", "null"]},
+                        # ACCOUNT-LEDGER: the numbered account the message names for a
+                        # customer ("Soon Heng account 1" -> 1); null otherwise. Required
+                        # like every key here (strict mode).
+                        "account": {"type": ["integer", "null"]},
                     },
                     "required": [
                         "raw",
@@ -189,6 +193,7 @@ def _build_json_schema() -> dict[str, Any]:
                         "quantity",
                         "spec_key",
                         "spec_value",
+                        "account",
                     ],
                 },
             },

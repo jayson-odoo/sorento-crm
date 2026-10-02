@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from typing import Any
 
@@ -46,6 +46,7 @@ from app.services.chatbot.lanes.business.gate import run_gate
 from app.services.chatbot.lanes.business.predicate import derive_predicate_words, derive_require
 from app.services.chatbot.lanes.business.services import ResolveGateServices
 from app.services.chatbot.lanes.business.tier_gate import tier_gate as run_tier_gate
+from app.services.ledger_family import ledger_family_key, ledger_family_label
 
 logger = logging.getLogger(__name__)
 
@@ -923,6 +924,102 @@ def exit_item(
 
 
 # --------------------------------------------------------------------------- #
+# Account level narrowing (ACCOUNT-LEDGER)
+# --------------------------------------------------------------------------- #
+
+
+def _folded(value: Any) -> str:
+    return " ".join(str(value or "").split()).lower()
+
+
+def _account_list(levels: list[int]) -> str:
+    names = [f"Account {n}" for n in levels]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def narrow_by_account(
+    parser: dict[str, Any], resolved: dict[str, Any], levels_of: Callable[[list[str]], dict[str, int | None]]
+) -> str | None:
+    """Staff: "Soon Heng account 1". For each customer word this message typed with an
+    `account`, drop the resolved customer matches whose `customers.account_level` differs
+    (read by uuid, one query). Returns the refusal line when a word is left with none,
+    else None. A word with no account, and every non-customer match, is untouched."""
+    asks = [
+        (_folded(e.get("raw")), str(e.get("raw")).strip(), e["account"])
+        for e in parser.get("entities") or []
+        if isinstance(e, dict)
+        and e.get("hint") == "customer"
+        and e.get("current_message") is True
+        and jsc.truthy(e.get("raw"))
+        and isinstance(e.get("account"), int)
+        and not isinstance(e.get("account"), bool)
+        and e["account"] >= 1
+    ]
+    resolutions = [r for r in resolved.get("resolutions") or [] if isinstance(r, dict)]
+    if not asks or not resolutions:
+        return None
+
+    def _customers(resolution: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            m for m in resolution.get("matches") or []
+            if isinstance(m, dict) and str(m.get("entity_type") or "").lower() == "customer"
+        ]
+
+    levels = levels_of(
+        [str(m.get("uuid")) for r in resolutions for m in _customers(r) if m.get("uuid")]
+    )
+    dropped: set[str] = set()
+    refusal: str | None = None
+    for folded, typed, account in asks:
+        for resolution in resolutions:
+            if _folded(resolution.get("token")) != folded:
+                continue
+            customers = _customers(resolution)
+            if not customers:
+                continue
+            kept = [m for m in customers if levels.get(str(m.get("uuid"))) == account]
+            if kept:
+                dropped |= {str(m.get("uuid")) for m in customers if m not in kept}
+                resolution["matches"] = [m for m in resolution["matches"] if m not in customers or m in kept]
+                continue
+            dropped |= {str(m.get("uuid")) for m in customers}
+            resolution["matches"] = [m for m in resolution["matches"] if m not in customers]
+            if refusal is None:
+                refusal = _no_such_account(typed, account, customers, levels)
+    if dropped:
+        for key in ("intersection",):
+            if isinstance(resolved.get(key), list):
+                resolved[key] = [m for m in resolved[key] if not _is_dropped(m, dropped)]
+        by_type = resolved.get("by_entity_type")
+        if isinstance(by_type, dict):
+            resolved["by_entity_type"] = {
+                k: [m for m in v if not _is_dropped(m, dropped)] if isinstance(v, list) else v
+                for k, v in by_type.items()
+            }
+    return refusal
+
+
+def _is_dropped(match: Any, dropped: set[str]) -> bool:
+    return (
+        isinstance(match, dict)
+        and str(match.get("entity_type") or "").lower() == "customer"
+        and str(match.get("uuid")) in dropped
+    )
+
+
+def _no_such_account(
+    typed: str, account: int, customers: list[dict[str, Any]], levels: dict[str, int | None]
+) -> str:
+    """Q4: one trading name says which levels it has; several names say the word has none."""
+    names = [str((m.get("display") or {}).get("customer_name") or m.get("canonical_code") or "") for m in customers]
+    if len({ledger_family_key(n) for n in names}) > 1:
+        return f'None of the customers matching "{typed}" has Account {account}.'
+    have = sorted({lvl for m in customers if (lvl := levels.get(str(m.get("uuid")))) is not None})
+    line = f"{ledger_family_label(names[0])} has no Account {account}."
+    return f"{line} It has {_account_list(have)}." if have else line
+
+
+# --------------------------------------------------------------------------- #
 # The walk
 # --------------------------------------------------------------------------- #
 
@@ -938,8 +1035,13 @@ def run(
     dry_run: bool = False,
     roster_caps: Mapping[str, int] | None = None,
     resolver_excluded_entity_ids: frozenset | None = None,
+    account_levels: Callable[[list[str]], dict[str, int | None]] | None = None,
 ) -> dict[str, Any]:
     """One pass through `sub-resolve-and-gate`. Returns the exit arm's item.
+
+    `account_levels` (ACCOUNT-LEDGER) reads `customers.account_level` by uuid; given, a
+    customer word typed with an `account` keeps only the matches at that level, and a word
+    left with none puts the refusal line on `resolved["account_refusal"]`.
 
     `space_id` is the default respond workspace's (D5), and it reaches the probes' own
     `semantic_input` where n8n hard-codes `364817`. `probe_default_start` is the
@@ -1015,6 +1117,11 @@ def run(
             excluded_entity_ids=resolver_excluded_entity_ids,
         )
     )
+
+    if account_levels is not None and isinstance(resolved, dict):
+        account_refusal = narrow_by_account(parser, resolved, account_levels)
+        if account_refusal:
+            resolved["account_refusal"] = account_refusal
 
     # ── a container-hinted token that is ONLY a product is a product (item F) ─
     # Placed HERE, between the resolver and the gate, because this is the first point in

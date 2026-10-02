@@ -26,6 +26,11 @@ import type { CustomerFormData } from '../types/customer.types';
 import ListPager from '@/components/common/ListPager';
 import { customersPagerQuery } from '../hooks/useCustomers';
 
+const ACCOUNT_LEVEL_OPTIONS = Array.from({ length: 9 }, (_, i) => ({
+  value: String(i + 1),
+  label: `Account ${i + 1}`,
+}));
+
 interface CustomerFormProps {
   customerId?: string;
   onSuccess?: () => void;
@@ -71,6 +76,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
       phone_number: '',
       is_active: true,
       sales_agent_id: null,
+      account_level: null,
     },
     mode: 'onTouched',
   });
@@ -88,6 +94,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
         phone_number: customer.phone_number || '',
         is_active: customer.is_active,
         sales_agent_id: customer.sales_agent_id || null,
+        account_level: customer.account_level ?? null,
       });
       setFormInitialized(true);
     }
@@ -110,6 +117,8 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
         // Already null or a real id - `field.onChange` normalizes '' to null on every
         // change, so there is nothing left here for `|| null` to catch.
         sales_agent_id: data.sales_agent_id ?? null,
+        // Explicit null clears the level: an omitted key would keep the old one.
+        account_level: data.account_level ?? null,
       };
 
       if (isEditMode && customerId) {
@@ -229,25 +238,48 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
                 />
               </div>
 
-              <FormField
-                control={form.control}
-                name="sales_agent_id"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Sales Agent</FormLabel>
-                    <FormControl>
-                      <SearchableSelect
-                        value={field.value || ''}
-                        onChange={(v) => field.onChange(v || null)}
-                        options={agentSelectOptions}
-                        placeholder="No sales agent"
-                        clearable
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="sales_agent_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Sales Agent</FormLabel>
+                      <FormControl>
+                        <SearchableSelect
+                          value={field.value || ''}
+                          onChange={(v) => field.onChange(v || null)}
+                          options={agentSelectOptions}
+                          placeholder="No sales agent"
+                          clearable
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="account_level"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Account level</FormLabel>
+                      <FormControl>
+                        <SearchableSelect
+                          aria-label="Account level"
+                          value={field.value ? String(field.value) : ''}
+                          onChange={(v) => field.onChange(v ? Number(v) : null)}
+                          options={ACCOUNT_LEVEL_OPTIONS}
+                          placeholder="No account level"
+                          clearable
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
             </div>
 
             {/* Status */}

@@ -2003,6 +2003,7 @@ def resolve_kinds(
             dry_run=dry_run,
             roster_caps=roster_caps,
             resolver_excluded_entity_ids=resolver_excluded_entity_ids,
+            account_levels=business_services.account_levels_reader(db),
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)
