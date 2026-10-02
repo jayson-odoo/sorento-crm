@@ -1,7 +1,7 @@
 # PLAN: combo (product set) stock in the chatbot stock answer (COMBO-STOCK)
 
-Status: Plan (scout done; behaviour card asked on PR #1443, awaiting owner). Track: small fix
-expected (no migration, no RBAC, no new ingest surface), confirmed once the card is answered.
+Status: Build (card answered 2 Oct; fix c pushed; header + set pick in progress). Track: small fix
+(no migration, no RBAC, no new ingest surface).
 
 ## Journey
 
@@ -62,6 +62,32 @@ the set's MEMBERS (explicit `product_set_members` link), never refused as filter
 The resolver's own docstring already names this as the design (`entity_resolver.py:931-938`:
 "For n8n's fan-out ... this is what feeds them").
 
-## Behaviour card
+## Behaviour card: answers (owner 2 Oct 2026; Q5 crew)
 
-Posted as `crew-ask` on PR #1443. Answers recorded here when they arrive.
+Access level = the contact's stock-visibility mode (`app/services/stock_visibility.py`:
+`detailed` / `compact` = full access, `availability` = dealer).
+
+| Q | Full access (detailed / compact) | Dealer (availability) |
+|---|---|---|
+| Q1 set code shape | Header (complete sets + limiting member) above today's member lines | Existing availability pattern only, no header |
+| Q2 locations | Complete sets PER WAREHOUSE as well as the total, like a product's per-location lines | Existing availability answer |
+| Q3 base code (e.g. SRTWC8608) | Today's prefix lines + "X is part of set(s) A, B - ask for the set code to see full-set stock" (membership from `product_set_members`) | Offer the sets containing the matched products as a pick; answer the chosen set |
+| Q4 short member | Limiting member named; member lines keep their PO/incoming text; a member with no stock row counts 0 | No extra detail |
+| Q5 scope | Inventory stock asks only (crew) | same |
+
+Numbers: the set figures are computed from the SAME stock tool rows the member lines print
+(crew note: resolver `display.available` sums `quantity_available` over all warehouses with no
+visibility filter, e.g. SC 949, while the bot's line said Total 1074; so the resolver's
+`complete_sets` is never shown).
+
+Dev examples (crew, read-only, 2 Oct): 9 SRTWC86% sets, qty 1 for every member.
+SRTWC8608-RL = SRTWCX8608-RL + SRTWCY8608 + SRTWC8608-SC; 8608-P-RL; 8608-RL-200;
+8608-RL-WEPLS; 8608-S-RL-UF (members X8608-S-RL-UF, Y8608, 8608-SC-UF); 8605-P-RL-PJ /
+8605-S-RL-PJ; 8610-SH (2 members); 8606-RL carries the 8608 members (likely a data error,
+surfaced as the links say, not special-cased).
+
+## Slices
+
+1. (c) set code expands to members for inventory: `gate.py` `_expand_product_set`. DONE.
+2. Full-access set header (Q1, Q2, Q4).
+3. Base code: "part of set(s)" line (full access) / set pick (dealer) (Q3).
