@@ -15,6 +15,7 @@ Postgres only; ss faked at httpx via tests/_ideation_ss_fake.py.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from jose import jwt
@@ -64,11 +65,54 @@ def _link_contact(e, phone: str | None) -> None:
     e.db.commit()
 
 
+def _set_user_phone(e, *, contact_number: str | None, verified: bool) -> None:
+    e.db.query(User).filter(User.id == e.user["id"]).update(
+        {
+            "contact_number": contact_number,
+            "phone_verified_at": datetime.now(timezone.utc) if verified else None,
+        }
+    )
+    e.db.commit()
+
+
+def _new_phone() -> str:
+    return f"+6011{uuid.uuid4().int % 10**7:07d}"
+
+
+def _assertion_claims(e) -> dict:
+    assert e.req("GET", "/ideas").status_code == 200
+    assert len(e.fake.session_calls) == 1
+    return _decode(e.fake.session_calls[-1]["assertion"])
+
+
 def test_gateway_assertion_carries_the_phone_of_the_users_respond_contact(env):  # noqa: F811
-    phone = f"+6011{uuid.uuid4().int % 10**7:07d}"
+    # AC: verified + matching (different but equivalent format) -> phone claim present
+    phone = _new_phone()
     _link_contact(env, phone)
-    assert env.req("GET", "/ideas").status_code == 200
-    assert _decode(env.fake.session_calls[-1]["assertion"])["phone"] == phone
+    _set_user_phone(env, contact_number=phone.lstrip("+"), verified=True)
+    assert _assertion_claims(env)["phone"] == phone
+
+
+def test_gateway_assertion_omits_phone_when_user_phone_is_not_verified(env):  # noqa: F811
+    phone = _new_phone()
+    _link_contact(env, phone)
+    _set_user_phone(env, contact_number=phone, verified=False)
+    assert "phone" not in _assertion_claims(env)
+
+
+def test_gateway_assertion_omits_phone_when_verified_number_differs_from_contact(env):  # noqa: F811
+    phone = _new_phone()
+    other = f"+6012{(uuid.uuid4().int % 10**7) :07d}"
+    assert other != phone
+    _link_contact(env, phone)
+    _set_user_phone(env, contact_number=other, verified=True)
+    assert "phone" not in _assertion_claims(env)
+
+
+def test_gateway_assertion_omits_phone_when_user_contact_number_is_null(env):  # noqa: F811
+    _link_contact(env, _new_phone())
+    _set_user_phone(env, contact_number=None, verified=True)
+    assert "phone" not in _assertion_claims(env)
 
 
 def test_gateway_assertion_has_no_phone_when_the_user_has_no_respond_contact(env):  # noqa: F811
