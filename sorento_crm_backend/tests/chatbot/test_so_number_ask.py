@@ -29,7 +29,7 @@ import pytest
 
 from tests.chatbot.test_customer_scope_lane import ORDERS, _calls, _link_customers
 from tests.chatbot.test_engine import _parser_output
-from tests.chatbot.test_outstanding_lane import _run_turn, _seed_contact
+from tests.chatbot.test_outstanding_lane import CONTACT_ID, _run_turn, _seed_contact
 
 SO = "SO422056"
 DUMP_DO = "DOZZTDUMP1"
@@ -68,7 +68,9 @@ def _turn(session_factory, monkeypatch, qf: dict[str, Any], body: str, attribute
 class TestUnresolvedSoNumberIsOneMissLine:
     @pytest.mark.parametrize("hint", ["order", "order_number", "customer_order"])
     def test_linked_dealer_gets_one_miss_line(self, session_factory, monkeypatch, hint) -> None:
-        """AC-SO-01: no such SO -> the one line, no DO rows, no customer names."""
+        """AC-SO-01: no such SO -> the one line, no DO rows, no customer names. Answered by
+        the SO lookup now; the `_answered_unfiltered` scope fix this lane started with is
+        guarded by `test_unplaced_non_so_word_is_a_miss_not_the_links_list` below."""
         _seed_contact(session_factory, variables={})
         _link_customers(session_factory, "ZZT OWN A", "ZZT OWN B")
 
@@ -330,3 +332,41 @@ class TestSoRevealKeyAndStaff:
         _seed_so(session_factory, "SO421624", customer_id=cust, debtor_name="ZZT ANY SDN BHD", lines=[(10, 10)])
         reply, _ = _so_turn(session_factory, monkeypatch, "SO421624")
         assert reply.strip() == _card("SO421624", "Open", "fully delivered", name="ZZT ANY SDN BHD"), reply
+
+
+class TestReviewRound1:
+    def test_spaced_so_number_still_gets_its_card(self, session_factory, monkeypatch) -> None:
+        """Reviewer S1: "SO 421624" folds to SO421624, exactly as the resolver's token key does."""
+        _seed_contact(session_factory, variables={})
+        own, = _link_customers(session_factory, "ZZT OWN A")
+        _seed_so(session_factory, "SO421624", customer_id=own, lines=[(10, 1)])
+        reply, _ = _so_turn(session_factory, monkeypatch, "SO 421624")
+        assert reply.strip() == _card("SO421624", "Open", "partly delivered"), reply
+
+    def test_debtor_code_of_a_link_in_another_company_is_not_in_scope(self, session_factory, monkeypatch) -> None:
+        """Security S1: one debtor code can name different debtors in two companies. An SO with
+        no customer id is in scope only on a link's code IN THE SAME COMPANY."""
+        from sqlalchemy import text
+
+        from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
+
+        _seed_contact(session_factory, variables={})
+        _link_customers(session_factory, "ZZT OWN A", codes={"ZZT OWN A": "ZZT-300-H001"})
+        db = session_factory()
+        seed_mocha(db)
+        # The contact's scope covers both companies, so the Mocha SO is visible at all.
+        db.execute(
+            text(
+                "INSERT INTO respond_contact_companies (id, respond_contact_id, company_id) "
+                "SELECT gen_random_uuid(), id, :company_id FROM respond_contacts WHERE respond_io_id = :cid"
+            ),
+            {"cid": str(CONTACT_ID), "company_id": MOCHA_ID},
+        )
+        db.commit()
+        _seed_so(
+            session_factory, "SO421999", customer_id=None, debtor_code="ZZT-300-H001",
+            debtor_name="ZZT OTHER DEBTOR", company_id=MOCHA_ID, lines=[(1, 0)],
+        )
+        reply, _ = _so_turn(session_factory, monkeypatch, "SO421999")
+        assert "OTHER DEBTOR" not in reply and "Ordered" not in reply, reply
+        assert reply.strip().startswith(REFUSAL_PREFIX), reply

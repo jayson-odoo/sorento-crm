@@ -27,13 +27,20 @@ from sqlalchemy.orm import Session
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 
 #: AutoCount's SO numbering ("SO422056"). A word of this shape that nothing placed is an SO ask.
-SO_NUMBER_RE = re.compile(r"^SO\d{4,}$", re.IGNORECASE)
+SO_NUMBER_RE = re.compile(r"^SO\d{4,}$")
+_SEPARATORS = re.compile(r"[\s-]+")
 
 CANCELLED_MARK = "❗ Cancelled"
 
 
+def so_key(word: str) -> str:
+    """"so 421624" and "SO-421624" are SO421624: AutoCount stores the number upper case and
+    unbroken, and the resolver's own token key folds the same separators away."""
+    return _SEPARATORS.sub("", word).upper()
+
+
 def is_so_number(word: Any) -> bool:
-    return isinstance(word, str) and bool(SO_NUMBER_RE.match(word.strip()))
+    return isinstance(word, str) and bool(SO_NUMBER_RE.match(so_key(word)))
 
 
 @dataclass
@@ -85,17 +92,18 @@ def lookup(
     """Answer each typed SO word. `linked` is the contact's enforced customer scope
     (`(id, name, code)` per link), or None when no scope is enforced (staff, unlinked).
 
-    In scope: the SO's customer is a link, or it has no customer and its debtor code is a
-    linked customer's code (both SO importers keep the code when it resolves to nobody)."""
+    In scope: the SO's customer is a link, or it has no customer and its debtor code is the
+    code of a link IN THE SAME COMPANY (both SO importers keep the code when it resolves to
+    nobody, and one code can name different debtors in two companies)."""
     typed = [w.strip() for w in words if is_so_number(w)]
     out = SoLookup()
     if not typed:
         return out
-    keys = {w.upper() for w in typed}
+    keys = {so_key(w) for w in typed}
     rows = (
         db.query(SalesOrder, Customer.customer_name)
         .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
-        .filter(func.upper(SalesOrder.so_number).in_(keys))
+        .filter(SalesOrder.so_number.in_(keys))
         .all()
     )
     by_number: dict[str, list[tuple[SalesOrder, str | None]]] = {}
@@ -115,18 +123,26 @@ def lookup(
 
     links = list(linked) if linked is not None else None
     link_ids = {str(i) for i, _n, _c in links} if links is not None else set()
-    link_codes = {(c or "").strip().upper() for _i, _n, c in links if c} if links is not None else set()
+    link_codes: set[tuple[str, str]] = set()
+    if link_ids and any(so.customer_id is None for so, _ in rows):
+        link_codes = {
+            (str(company_id), code.strip().upper())
+            for company_id, code in db.query(Customer.company_id, Customer.customer_code)
+            .filter(Customer.id.in_(link_ids))
+            .all()
+            if code
+        }
 
     def _in_scope(so: SalesOrder) -> bool:
         if links is None:
             return True
         if so.customer_id:
             return str(so.customer_id) in link_ids
-        return (so.debtor_code or "").strip().upper() in link_codes
+        return (str(so.company_id), (so.debtor_code or "").strip().upper()) in link_codes
 
     seen: set[str] = set()
     for word in typed:
-        key = word.upper()
+        key = so_key(word)
         if key in seen:
             continue
         seen.add(key)
