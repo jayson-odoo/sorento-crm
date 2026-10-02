@@ -492,6 +492,16 @@ def _answered(*pairs: tuple[str, int], lang: str = "en") -> str:
 #: here instead of being absorbed. Every H case opens in English, so a message with no marker
 #: word keeps English; a Malay or Chinese message switches the reply.
 _LANG: dict[str, str] = {
+    "1 and 3": "en",
+    "first and third": "en",
+    "the second and the fourth": "en",
+    "1, 2": "en",
+    "both SRTWC286-SH and SRTWC286-SH-150": "en",
+    "satu dan tiga": "ms",
+    "yang kedua dan ketiga": "ms",
+    "一和三": "zh",
+    "di er ge he di san ge": "en",
+    "all": "en",
     "both": "en",
     "both, 2 each": "en",
     "dua-dua": "ms",
@@ -549,6 +559,15 @@ def _lang(message: str) -> str:
     """The reply language the H case expects for `message` (a KeyError means the row was
     added without stating one)."""
     return _LANG[message]
+
+
+def _says(expected: str, message: str) -> str:
+    """`expected` as the reply to `message` reads: the final reply pass (slice 4) renders the
+    composer's own sentences in the message's language."""
+    lang = _lang(message)
+    if lang == "en":
+        return expected
+    return label_catalog.Localizer(lang, label_catalog.defaults(lang)).reply(expected)
 
 
 def test_g_1406_the_first_one_i_need_2(session_factory, monkeypatch, stub_access):
@@ -737,7 +756,7 @@ def test_h_pick_one_several_opens_their_quantities(session_factory, monkeypatch,
     c = EngineConsole(session_factory, monkeypatch, stub_access, phone="+60000009202")
     c.say("check stock srtwc286", stock(product("srtwc286")))
     out = c.say(message, reply(open_question_answer=answer("pick", picked=picked)))
-    assert out == _point_form([OWNER_FAMILY[p - 1] for p in picked])
+    assert out == _says(_point_form([OWNER_FAMILY[p - 1] for p in picked]), message)
 
 
 #: "both" over the two-option did-you-mean, with and without one quantity (pick_one).
@@ -761,7 +780,7 @@ def test_h_pick_one_both(session_factory, monkeypatch, stub_access, message, obj
     c.say("check stock STWC2867", stock(product("STWC2867")))
     out = c.say(message, reply(open_question_answer=obj))
     if qty is None:
-        assert out == _point_form(DYM)
+        assert out == _says(_point_form(DYM), message)
     else:
         assert out == _answered(*[(code, qty) for code in DYM], lang=_lang(message))
 
@@ -793,7 +812,7 @@ def test_h_confirm(session_factory, monkeypatch, stub_access, message, mode):
     if mode == "yes":
         assert out == _answered(("ELP3754", 10), lang=_lang(message))
     else:
-        assert out == task_mod.REFER_TO_SALESMAN
+        assert out == _says(task_mod.REFER_TO_SALESMAN, message)
 
 
 #: The point-form quantities question over three products (quantities).
