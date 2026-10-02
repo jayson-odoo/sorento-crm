@@ -116,3 +116,83 @@ quantity_on_hand, open_so_qty -> Outstanding, total_on_hand -> Total.
   - A second call inserts 0 rows.
   - A pre-existing `manual` row with different text wins and is unchanged afterwards.
   - `resolve(db, "en")` reads nothing and returns `IDENTITY`.
+
+# Slice 2: PO / SO / SPO / orders rows
+
+Tools localized (added to `fetch._LOCALIZED_TOOLS`): `crm_order_management_orders_list`,
+`crm_order_management_orders_by_product_list`, `crm_procurement_po_placed_list`,
+`crm_procurement_spo_allocations_last_receipt_list`, `crm_procurement_po_last_cost_list`.
+Presenter literals: `presenters.py` `_orders_list` (:411), `_orders_so_outstanding` (:441),
+`_purchase_orders_placed` (:471), `_spo_last_receipt` (:503), `_po_last_cost` (:553),
+`_orders_by_product` (:614), `_DEFAULT_INTRO` (:67-84), the intros at :1815-1836, and
+`fetch.py` order-status intros (:2960-2962) plus the flag lines (:3034-3040).
+Abbreviations PO / SO / SPO / GR stay as printed (owner Q3). Order STATUS values are data and
+are never translated.
+
+| English | ms | zh |
+|---|---|---|
+| Order Number | No. Pesanan | 订单号 |
+| Customer | Pelanggan | 客户 |
+| Order Date | Tarikh Pesanan | 订单日期 |
+| Actual Delivery Date | Tarikh Penghantaran Sebenar | 实际送货日期 |
+| Status | Status | 状态 |
+| Pickup Time | Masa Ambil | 提货时间 |
+| Transporter | Pengangkut | 运输商 |
+| Driver | Pemandu | 司机 |
+| Lorry Plate | No. Plat Lori | 车牌号 |
+| Products | Produk | 产品 |
+| SO Number | No. SO | SO 编号 |
+| Outstanding Qty | Kuantiti Belum Dihantar | 未交货数量 |
+| Requested Delivery Date | Tarikh Penghantaran Diminta | 要求送货日期 |
+| PO Number | No. PO | PO 编号 |
+| Ordered Qty | Kuantiti Dipesan | 订购数量 |
+| PO Date | Tarikh PO | PO 日期 |
+| Location | Lokasi | 位置 |
+| Supplier | Pembekal | 供应商 |
+| SPO Number | No. SPO | SPO 编号 |
+| Container Number | No. Kontena | 货柜号 |
+| SPO Quantity | Kuantiti SPO | SPO 数量 |
+| GR Quantity | Kuantiti GR | GR 数量 |
+| SPO Date | Tarikh SPO | SPO 日期 |
+| SPO Date (recorded) | Tarikh SPO (direkodkan) | SPO 日期（已记录） |
+| GR Date | Tarikh GR | GR 日期 |
+| PO Quantity | Kuantiti PO | PO 数量 |
+| Cost / unit | Kos / unit | 单位成本 |
+| Discount / unit | Diskaun / unit | 单位折扣 |
+| Cost after discount / unit | Kos selepas diskaun / unit | 折后单位成本 |
+| Here are the orders I found. | Berikut ialah pesanan yang saya temui. | 以下是我找到的订单。 |
+| Here is the PO placed I found. | Berikut ialah PO yang telah dibuat. | 以下是已下的 PO。 |
+| Here is the last SPO line per product. | Berikut ialah baris SPO terakhir bagi setiap produk. | 以下是每个产品的最后一行 SPO。 |
+| Here is the last purchase cost per product and location. | Berikut ialah kos belian terakhir bagi setiap produk dan lokasi. | 以下是每个产品和位置的最后采购成本。 |
+| Here is the outstanding SO I found. | Berikut ialah SO belum dihantar yang saya temui. | 以下是我找到的未交货 SO。 |
+| Here are the outstanding orders I found. | Berikut ialah pesanan belum dihantar yang saya temui. | 以下是我找到的未交货订单。 |
+| Here are the delivered orders I found. | Berikut ialah pesanan yang telah dihantar. | 以下是我找到的已送货订单。 |
+| No matching results found. | Tiada hasil yang sepadan ditemui. | 未找到匹配的结果。 |
+| No matching results found for {companies}. | Tiada hasil yang sepadan ditemui untuk {companies}. | 在 {companies} 中未找到匹配的结果。 |
+| Here are the results I found. | Berikut ialah hasil yang saya temui. | 以下是我找到的结果。 |
+| EXPIRED | TAMAT TEMPOH | 已过期 |
+| PENDING ALLOCATION | MENUNGGU PERUNTUKAN | 待分配 |
+| PARTIAL ALLOCATION | PERUNTUKAN SEBAHAGIAN | 部分分配 |
+
+FIELD_KEYS additions: so_number, outstanding_qty -> Outstanding Qty, order_date, customer,
+requested_delivery_date, po_number, ordered_qty, po_date, location, supplier, spo_number,
+container_number, spo_quantity, gr_quantity, spo_date (label "SPO Date" or "SPO Date (recorded)":
+by-label match covers both), gr_date, warehouse, po_quantity, unit_cost -> Cost / unit,
+discount_per_unit, unit_cost_after_discount.
+
+- **AC-CL20:** every label/intro literal of the five tools' presenters is catalogued (pinned
+  list above; presenter source is read where importable, as slice 1 does).
+- **AC-CL21:** a PO placed envelope rendered with the ms localizer: "*No. PO:* <po>",
+  "*Kuantiti Dipesan:* <n>", "*Pembekal:*" only when granted (restricted drop unchanged), intro
+  "Berikut ialah PO yang telah dibuat.". Every value byte-identical to the en render.
+- **AC-CL22:** SPO last-receipt zh: "*SPO 编号:*", "*货柜号:*", "*SPO 日期（已记录）:*" for a
+  recorded date; values unchanged.
+- **AC-CL23:** orders list ms: "*No. Pesanan:*", "*Pelanggan:*", "*Status:* <status value
+  unchanged>", the outstanding-orders intro when `order_status == "outstanding"`, and the flag
+  lines EXPIRED / PENDING ALLOCATION / PARTIAL ALLOCATION translated.
+- **AC-CL24:** PO last cost zh restricted cost fields: dropped without grant, translated labels
+  with grant ("*单位成本:*"); money values unchanged.
+- **AC-CL25:** "No matching results found for {companies}." localizes with the company names
+  re-inserted verbatim.
+- **AC-CL26:** tools outside slices 1-2 (outstanding report, top selling, promotions,
+  attachments) still render English with an ms localizer in ctx.

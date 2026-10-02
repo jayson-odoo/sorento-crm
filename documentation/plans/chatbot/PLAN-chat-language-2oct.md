@@ -1,6 +1,6 @@
 # PLAN: chatbot replies follow the user's language (CHAT-LANGUAGE)
 
-Status: Build, slice 1 (stock), red-first. Track: full (size L, cloud lane; touches the turn
+Status: Build. Slice 1 (stock) reviewed clean; slice 2 (PO/SO/SPO/orders) red-first. Track: full (size L, cloud lane; touches the turn
 engine and the translation module). The direction was approved by the owner on 2 Oct 2026.
 Behaviour card Q1-Q5 all answered (a) on 2 Oct (owner Q1-Q3, crew Q4-Q5).
 
