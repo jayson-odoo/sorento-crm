@@ -1,0 +1,535 @@
+'use client';
+
+import { useRef, useState, type ReactNode } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import {
+  Archive,
+  ArrowRight,
+  ClipboardList,
+  FileText,
+  Image as ImageIcon,
+  LoaderCircleIcon,
+  Lightbulb,
+  Mic,
+  Paperclip,
+  Pencil,
+  Split,
+  Trash2,
+  Undo2,
+  Upload,
+  Video,
+} from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardHeader } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import DetailActions from '@/components/common/DetailActions';
+import RecordNavigation from '@/components/common/RecordNavigation';
+import type { RecordAction } from '@/components/common/recordActions';
+import {
+  HARD_DELETE_WINDOW_SECONDS,
+  REVERSIBLE_WINDOW_SECONDS,
+  useIdeaDeferredAction,
+} from '@/hooks/useIdeaDeferredAction';
+import { useIdeaMutations, useIdeaQuery, useIdeasQuery } from '@/hooks/useIdeas';
+import { formatDateTime } from '@/lib/helpers';
+import { archiveIdea, deleteIdea } from '@/services/ideasService';
+import type { Idea, IdeaAttachment } from '@/types/ideas';
+import { IdeaComments } from './IdeaComments';
+import { IdeaStatusBadge } from './IdeaStatusBadge';
+import { VoteBox } from './VoteBox';
+import { useCanManageIdeas } from './ideasAccess';
+
+type IdeaTab = 'details' | 'attachments' | 'requirements';
+
+const IDEA_TABS: { value: IdeaTab; label: string; icon: typeof Lightbulb }[] = [
+  { value: 'details', label: 'Details', icon: Lightbulb },
+  { value: 'attachments', label: 'Attachments', icon: FileText },
+  { value: 'requirements', label: 'Business Requirements', icon: ClipboardList },
+];
+
+const SOURCE_LABEL: Record<string, string> = {
+  whatsapp: 'WhatsApp',
+  manual: 'Manual',
+  email: 'Email',
+  web: 'Web',
+};
+
+const ATTACHMENT_ICON: Record<IdeaAttachment['kind'], typeof FileText> = {
+  image: ImageIcon,
+  audio: Mic,
+  video: Video,
+  file: FileText,
+};
+
+function formatBytes(bytes: number | null): string {
+  if (bytes == null) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** A labelled read-only value, or its input while editing, in the same place. */
+function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      {htmlFor ? (
+        <Label htmlFor={htmlFor} className="text-xs text-muted-foreground">
+          {label}
+        </Label>
+      ) : (
+        <span className="text-xs text-muted-foreground">{label}</span>
+      )}
+      <div className="min-w-0 text-sm">{children}</div>
+    </div>
+  );
+}
+
+function Text({ value }: { value: string | null }) {
+  return value ? (
+    <p className="whitespace-pre-wrap break-words">{value}</p>
+  ) : (
+    <span className="text-muted-foreground">Not set</span>
+  );
+}
+
+/**
+ * The idea's own page. The header card holds the identity (vote box, title, status pill, meta
+ * strip) and the actions; line tabs below hold Details (with the comments under the fields),
+ * Attachments and Business Requirements. Edit swaps each value for its input in place.
+ *
+ * Action states (mock section 2): the primary is the next status move; Edit is the outline
+ * button to its left. Archived: primary Restore. Merged child: primary Unmerge, no Edit. No next
+ * move: Edit is the primary.
+ */
+export function IdeaDetail({ id }: { id: string }) {
+  const router = useRouter();
+  const canManage = useCanManageIdeas();
+  const { data: idea, isLoading, isError } = useIdeaQuery(id);
+  const { data: list } = useIdeasQuery({});
+  const { vote, update, move, restore, unmerge, upload } = useIdeaMutations();
+
+  const [tab, setTab] = useState<IdeaTab>('details');
+  const [isEditing, setIsEditing] = useState(false);
+  const [problem, setProblem] = useState('');
+  const [proposedSolution, setProposedSolution] = useState('');
+  const [impact, setImpact] = useState('');
+  const [department, setDepartment] = useState('');
+  const [rawText, setRawText] = useState('');
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const subject = idea?.title ?? idea?.problem ?? '';
+  const archiving = useIdeaDeferredAction({
+    verb: 'Archiving',
+    subject,
+    windowSeconds: REVERSIBLE_WINDOW_SECONDS,
+    surface: 'inline',
+    successMessage: 'Idea archived',
+    run: () => archiveIdea(id),
+  });
+  const deletion = useIdeaDeferredAction({
+    verb: 'Deleting',
+    subject,
+    windowSeconds: HARD_DELETE_WINDOW_SECONDS,
+    surface: 'inline',
+    successMessage: 'Idea deleted',
+    run: () => deleteIdea(id),
+    onCommitted: () => router.push('/ideas'),
+  });
+
+  const rows = list ?? [];
+  const index = rows.findIndex((row) => row.id === id);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-28 w-full rounded-xl" />
+        <Skeleton className="h-64 w-full rounded-xl" />
+      </div>
+    );
+  }
+
+  if (isError || !idea) {
+    return (
+      <Card className="flex flex-col items-center gap-1 p-10 text-center">
+        <div className="text-sm font-semibold">Idea not found</div>
+        <p className="max-w-md text-sm text-muted-foreground">
+          This idea does not exist, or it was deleted after this link was made.
+        </p>
+      </Card>
+    );
+  }
+
+  const isMergedChild = !!idea.mergedIntoId;
+  const advance = idea.transitions.find((t) => t.id === idea.advanceTransitionId) ?? null;
+  const busy = archiving.isPending || deletion.isPending;
+
+  const beginEdit = (current: Idea) => {
+    setProblem(current.problem);
+    setProposedSolution(current.proposedSolution ?? '');
+    setImpact(current.impact ?? '');
+    setDepartment(current.department ?? '');
+    setRawText(current.rawText);
+    setTab('details');
+    setIsEditing(true);
+  };
+
+  const handleSave = async () => {
+    if (!problem.trim() || update.isPending) return;
+    try {
+      await update.mutateAsync({
+        id: idea.id,
+        problem: problem.trim(),
+        proposedSolution: proposedSolution.trim() || null,
+        impact: impact.trim() || null,
+        department: department.trim() || null,
+        rawText,
+      });
+      setIsEditing(false);
+    } catch {
+      // The hook toasted the reason; the edit stays open so nothing typed is lost.
+    }
+  };
+
+  const gear: RecordAction[] = [];
+  if (canManage) {
+    if (!idea.statusIsArchived && !isMergedChild) {
+      gear.push({
+        key: 'idea.archive',
+        label: 'Archive',
+        icon: Archive,
+        disabled: busy,
+        run: archiving.start,
+      });
+    }
+    gear.push({
+      key: 'idea.delete',
+      label: 'Delete',
+      icon: Trash2,
+      kind: 'destructive',
+      disabled: busy,
+      run: deletion.start,
+    });
+  }
+
+  const editButton = (variant: 'primary' | 'outline') => (
+    <Button variant={variant} size="sm" className="gap-1.5" onClick={() => beginEdit(idea)}>
+      <Pencil className="size-4" />
+      Edit
+    </Button>
+  );
+
+  let primary: ReactNode = null;
+  if (canManage) {
+    if (isMergedChild) {
+      primary = (
+        <Button
+          variant="primary"
+          size="sm"
+          className="gap-1.5"
+          disabled={unmerge.isPending}
+          onClick={() => unmerge.mutate(idea.id)}
+        >
+          {unmerge.isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : <Split className="size-4" />}
+          Unmerge
+        </Button>
+      );
+    } else if (idea.statusIsArchived) {
+      primary = (
+        <>
+          {editButton('outline')}
+          <Button
+            variant="primary"
+            size="sm"
+            className="gap-1.5"
+            disabled={restore.isPending}
+            onClick={() => restore.mutate(idea.id)}
+          >
+            {restore.isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : <Undo2 className="size-4" />}
+            Restore
+          </Button>
+        </>
+      );
+    } else if (advance) {
+      primary = (
+        <>
+          {editButton('outline')}
+          <Button
+            variant="primary"
+            size="sm"
+            className="gap-1.5"
+            disabled={move.isPending}
+            onClick={() => move.mutate({ id: idea.id, toStatusId: advance.toStatusId })}
+          >
+            {move.isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : <ArrowRight className="size-4" />}
+            Move to {advance.toStatusLabel}
+          </Button>
+        </>
+      );
+    } else {
+      primary = editButton('primary');
+    }
+  }
+
+  const onPickFiles = async (files: FileList | null) => {
+    for (const file of Array.from(files ?? [])) {
+      await upload.mutateAsync({ id: idea.id, file }).catch(() => undefined);
+    }
+    if (fileInput.current) fileInput.current.value = '';
+  };
+
+  return (
+    <div className="space-y-5">
+      <Card>
+        <CardHeader className="block py-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 items-start gap-4">
+              <VoteBox
+                size="md"
+                count={idea.upvotes}
+                voted={idea.myVote === 'up'}
+                disabled={isMergedChild}
+                onVote={() => vote.mutate(idea.id)}
+              />
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <h2 className="break-words text-lg font-semibold" title={subject}>
+                  {subject}
+                </h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  <IdeaStatusBadge label={idea.statusLabel} color={idea.statusColor} />
+                  {isMergedChild ? (
+                    <Badge variant="outline" size="sm">
+                      Merged
+                    </Badge>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  {idea.ideaNumber ? <span>{idea.ideaNumber}</span> : null}
+                  <span>Submitted by {idea.submitterName}</span>
+                  <span>{SOURCE_LABEL[idea.source] ?? idea.source}</span>
+                  <span>{idea.productName}</span>
+                  <span>Captured {formatDateTime(idea.createdAt)}</span>
+                  {idea.mergedInto ? (
+                    <span className="min-w-0 truncate">
+                      Merged into{' '}
+                      <Link
+                        href={`/ideas/${idea.mergedInto.id}`}
+                        className="text-primary hover:underline"
+                        title={idea.mergedInto.title ?? undefined}
+                      >
+                        {idea.mergedInto.ideaNumber ?? idea.mergedInto.title}
+                      </Link>
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+            {isEditing ? (
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => setIsEditing(false)} disabled={update.isPending}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={handleSave}
+                  disabled={!problem.trim() || update.isPending}
+                >
+                  {update.isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
+                  Save
+                </Button>
+              </div>
+            ) : (
+              <DetailActions
+                pagerNode={
+                  <RecordNavigation
+                    index={index >= 0 ? index + 1 : null}
+                    total={rows.length}
+                    hasPrevious={index > 0}
+                    hasNext={index >= 0 && index < rows.length - 1}
+                    onPrevious={() => router.push(`/ideas/${rows[index - 1].id}`)}
+                    onNext={() => router.push(`/ideas/${rows[index + 1].id}`)}
+                    ariaLabel="idea"
+                  />
+                }
+                actions={gear}
+                pendingAction={archiving.countdown ?? deletion.countdown}
+                gearLabel="Idea options"
+                primary={primary}
+              />
+            )}
+          </div>
+        </CardHeader>
+      </Card>
+
+      <Tabs value={tab} onValueChange={(v) => setTab(v as IdeaTab)}>
+        <TabsList variant="line" className="mb-5">
+          {IDEA_TABS.map((t) => (
+            <TabsTrigger key={t.value} value={t.value} onClick={() => setTab(t.value)}>
+              <t.icon className="size-4" />
+              <span>{t.label}</span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        <TabsContent value="details">
+          <Card>
+            <div className="flex flex-col gap-5 p-5">
+              <section aria-label="Details" className="flex flex-col gap-4">
+                <Field label="Problem statement" htmlFor={isEditing ? 'idea-edit-problem' : undefined}>
+                  {isEditing ? (
+                    <Textarea
+                      id="idea-edit-problem"
+                      value={problem}
+                      onChange={(e) => setProblem(e.target.value)}
+                      rows={3}
+                    />
+                  ) : (
+                    <Text value={idea.problem} />
+                  )}
+                </Field>
+                <Field label="Proposed solution" htmlFor={isEditing ? 'idea-edit-solution' : undefined}>
+                  {isEditing ? (
+                    <Textarea
+                      id="idea-edit-solution"
+                      value={proposedSolution}
+                      onChange={(e) => setProposedSolution(e.target.value)}
+                      rows={2}
+                    />
+                  ) : (
+                    <Text value={idea.proposedSolution} />
+                  )}
+                </Field>
+                <Field label="Impact" htmlFor={isEditing ? 'idea-edit-impact' : undefined}>
+                  {isEditing ? (
+                    <Textarea
+                      id="idea-edit-impact"
+                      value={impact}
+                      onChange={(e) => setImpact(e.target.value)}
+                      rows={2}
+                    />
+                  ) : (
+                    <Text value={idea.impact} />
+                  )}
+                </Field>
+                <Field label="Department" htmlFor={isEditing ? 'idea-edit-department' : undefined}>
+                  {isEditing ? (
+                    <Input
+                      id="idea-edit-department"
+                      value={department}
+                      maxLength={120}
+                      onChange={(e) => setDepartment(e.target.value)}
+                      className="h-8"
+                    />
+                  ) : (
+                    <Text value={idea.department} />
+                  )}
+                </Field>
+                <Field label="Original message" htmlFor={isEditing ? 'idea-edit-raw' : undefined}>
+                  {isEditing ? (
+                    <Textarea
+                      id="idea-edit-raw"
+                      value={rawText}
+                      onChange={(e) => setRawText(e.target.value)}
+                      rows={3}
+                    />
+                  ) : (
+                    <Text value={idea.rawText} />
+                  )}
+                </Field>
+              </section>
+              <IdeaComments ideaId={idea.id} frozen={isMergedChild} canDeleteAny={canManage} />
+            </div>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="attachments">
+          <Card>
+            <section aria-label="Attachments" className="flex flex-col gap-3 p-5">
+              {canManage ? (
+                <div className="flex justify-end">
+                  <input
+                    ref={fileInput}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    aria-label="Upload attachments"
+                    onChange={(e) => void onPickFiles(e.target.files)}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={upload.isPending}
+                    onClick={() => fileInput.current?.click()}
+                  >
+                    {upload.isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                    Upload
+                  </Button>
+                </div>
+              ) : null}
+              {idea.attachments.length === 0 ? (
+                <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed py-8 text-center">
+                  <span className="text-sm font-medium">No attachments</span>
+                  <span className="text-sm text-muted-foreground">Files sent with this idea appear here.</span>
+                </div>
+              ) : (
+                <ul className="flex flex-col divide-y rounded-lg border">
+                  {idea.attachments.map((attachment) => {
+                    const Icon = ATTACHMENT_ICON[attachment.kind] ?? Paperclip;
+                    const detail = [
+                      formatBytes(attachment.sizeBytes),
+                      attachment.durationSec != null ? `${attachment.durationSec}s` : '',
+                    ]
+                      .filter(Boolean)
+                      .join(', ');
+                    return (
+                      <li key={attachment.id} className="flex min-w-0 items-center gap-3 px-3 py-2">
+                        <Icon className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate text-sm" title={attachment.name}>
+                          {attachment.name}
+                        </span>
+                        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{detail}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="requirements">
+          <Card>
+            <section aria-label="Business Requirements" className="flex flex-col gap-3 p-5">
+              {idea.businessRequirements.length === 0 ? (
+                <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed py-8 text-center">
+                  <span className="text-sm font-medium">No business requirements</span>
+                  <span className="text-sm text-muted-foreground">
+                    Requirements raised from this idea appear here.
+                  </span>
+                </div>
+              ) : (
+                <ul className="flex flex-col divide-y rounded-lg border">
+                  {idea.businessRequirements.map((br) => (
+                    <li key={br.id} className="flex min-w-0 items-center justify-between gap-3 px-3 py-2">
+                      <span className="min-w-0 truncate text-sm" title={br.title}>
+                        {br.title}
+                      </span>
+                      <IdeaStatusBadge label={br.statusLabel} color={br.statusColor} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
