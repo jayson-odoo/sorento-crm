@@ -31,7 +31,7 @@ import re
 from functools import cmp_to_key
 from typing import Any, Literal
 
-from app.services.chatbot import jsc
+from app.services.chatbot import jsc, label_catalog
 from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
 from app.services.product_spec_registry import SPEC_ACRONYMS
 from app.services.chatbot.tail.scope_block import live_brand_words
@@ -1560,7 +1560,9 @@ def run_crossdomain(
 # --------------------------------------------------------------------------- #
 
 _PROMO_ISO_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}")
-_DATA_LAST_UPDATED_RE = re.compile(r"_Data last updated:[^\n]*_")
+_DATA_LAST_UPDATED_RE = re.compile(
+    "_(?:" + "|".join(re.escape(lead) for lead in label_catalog.footer_leads()) + r")[^\n]*_"
+)
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 _LEADING_NEWLINES_RE = re.compile(r"^\n+")
 

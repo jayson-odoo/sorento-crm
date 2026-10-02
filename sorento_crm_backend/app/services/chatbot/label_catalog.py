@@ -81,6 +81,8 @@ FIELD_KEYS: dict[str, str] = {
     "total_on_hand": "Total",
 }
 
+FOOTER = "Data last updated: {ts}"
+
 _TOKEN = re.compile(r"\{(\w+)\}")
 
 
@@ -91,6 +93,26 @@ def tokens(text: str) -> list[str]:
 
 def tokens_match(a: str, b: str) -> bool:
     return tokens(a) == tokens(b)
+
+
+def footer_leads() -> tuple[str, ...]:
+    """The footer's lead-in ("Data last updated:") in every language, for the text matchers
+    that must recognise it wherever it prints."""
+    texts = (FOOTER, *(LABELS[FOOTER][lang] for lang in LANGUAGES if lang != "en"))
+    return tuple(dict.fromkeys(t.split("{ts}")[0].rstrip() for t in texts))
+
+
+def refer_sentences() -> tuple[str, ...]:
+    """The refer line in every language: the English constant, and the last sentence of each
+    translated verdict that ends with it. For the text matchers that ask "was it printed?"."""
+    found = [REFER_TO_SALESMAN]
+    for english, entry in LABELS.items():
+        if english.endswith(REFER_TO_SALESMAN):
+            for lang in LANGUAGES:
+                if lang in entry:
+                    pieces = [p for p in re.split(r"(?<=[.。])\s*", entry[lang].strip()) if p]
+                    found.append(pieces[-1])
+    return tuple(dict.fromkeys(found))
 
 
 def defaults(lang: str) -> dict[str, str]:

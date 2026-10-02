@@ -2602,6 +2602,9 @@ def _dmy(value: Any) -> str:
     return f"{parts[2]}/{parts[1]}/{parts[0]}" if len(parts) == 3 else text
 
 
+_LOCALIZED_TOOLS = frozenset({"crm_inventory_stock_balance_list"})
+
+
 def _field_label(loc: Localizer, f: Any) -> str:
     """The printed label of a field: translated when the localizer knows it, else as sent."""
     label = jsc.js_string(jsc.get(f, "label", jsc.UNDEFINED))
@@ -2635,7 +2638,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     e = _extract_envelope(result)
     # CHAT-LANGUAGE: render-only. The envelope, the items and `answers` stay English; the
     # localizer only rewrites the strings printed below (absent = identity, byte-identical).
-    loc = ctx.get("localizer") or IDENTITY
+    # Slice 1 covers the stock tool only; the other tools keep English until their slice.
+    loc = (ctx.get("localizer") or IDENTITY) if ctx.get("tool") in _LOCALIZED_TOOLS else IDENTITY
     # Read once, for both the restricted-field drop below and the spec-visibility
     # drop (PLAN-spec-visibility-policy.md "Chatbot seam") - one contact, one
     # `ctx.access`, two consumers.
@@ -3285,7 +3289,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             msg = header
         else:
             body = msg.strip()
-            footer = f"_Data last updated: {ts}_" if ts else ""
+            footer = f"_{loc.text(f'Data last updated: {ts}')}_" if ts else ""
             if other_brands:
                 if footer and body.endswith(footer):
                     body = f"{body[: -len(footer)].strip()}\n\n{other_brands}\n\n{footer}"
