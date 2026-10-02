@@ -87,7 +87,7 @@ export function IdeasListView() {
             </Link>
           );
         },
-        size: 240,
+        size: 220,
         enableSorting: false,
         meta: { headerTitle: 'Idea', skeleton: <Skeleton className="h-4 w-56" /> },
       },
@@ -113,7 +113,7 @@ export function IdeasListView() {
             {row.original.productName}
           </span>
         ),
-        size: 110,
+        size: 100,
         enableSorting: false,
         meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-4 w-24" /> },
       },
@@ -157,7 +157,7 @@ export function IdeasListView() {
             ) : null}
           </span>
         ),
-        size: 140,
+        size: 130,
         enableSorting: false,
         meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-5 w-16" /> },
       },

@@ -34,16 +34,15 @@ function IdeaCard({ idea, canDrag, onVote }: { idea: Idea; canDrag: boolean; onV
     <div className="flex items-start gap-2 rounded-md border bg-background p-2.5">
       <VoteBox count={idea.upvotes} voted={idea.myVote === 'up'} onVote={onVote} />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
+        {idea.ideaNumber ? <span className="text-xs tabular-nums text-muted-foreground">{idea.ideaNumber}</span> : null}
         <Link
           href={`/ideas/${idea.id}`}
-          className="line-clamp-2 break-words text-sm font-medium text-primary hover:underline"
+          className="line-clamp-2 text-sm font-medium text-primary [overflow-wrap:anywhere] hover:underline"
           title={label}
         >
           {label}
         </Link>
-        <span className="truncate text-xs text-muted-foreground">
-          {[idea.ideaNumber, idea.submitterName].filter(Boolean).join(' | ')}
-        </span>
+        <span className="truncate text-xs text-muted-foreground">{idea.submitterName}</span>
       </div>
       {canDrag ? (
         <KanbanItemHandle asChild>
@@ -136,7 +135,7 @@ export function IdeasBoardView() {
             </div>
           ) : null}
           {isLoading || !data ? (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
               {Array.from({ length: 5 }).map((_, i) => (
                 <Skeleton key={i} className="h-64 w-full" />
               ))}
@@ -148,7 +147,7 @@ export function IdeasBoardView() {
               getItemValue={(idea) => idea.id}
               onMove={handleMove}
             >
-              <KanbanBoard className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <KanbanBoard className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
                 {data.columns.map((column) => {
                   const ideas = columns[column.statusId] ?? [];
                   return (

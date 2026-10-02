@@ -115,14 +115,12 @@ function Text({ value }: { value: string | null }) {
  * button to its left. Archived: primary Restore. Merged child: primary Unmerge, no Edit. No next
  * move: Edit is the primary.
  */
-/** The page header: the idea number as the eyebrow and the idea's title once it has loaded. */
+/** The page header: the idea number. The full title lives in the record card beside the vote box. */
 export function IdeaDetailHeader({ id }: { id: string }) {
   const { data: idea } = useIdeaQuery(id);
   return (
     <PageHeader
-      title={idea ? (idea.title ?? idea.problem) : 'Idea'}
-      eyebrow={idea?.ideaNumber ?? undefined}
-      titleClassName="line-clamp-2"
+      title={idea?.ideaNumber ?? 'Idea'}
       actions={<BackToList listPath="/ideas" label="Back to ideas" />}
     />
   );
@@ -348,7 +346,6 @@ export function IdeaDetail({ id }: { id: string }) {
                   ) : null}
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  {idea.ideaNumber ? <span>{idea.ideaNumber}</span> : null}
                   <span>Submitted by {idea.submitterName}</span>
                   <span>{SOURCE_LABEL[idea.source] ?? idea.source}</span>
                   <span>{idea.productName}</span>

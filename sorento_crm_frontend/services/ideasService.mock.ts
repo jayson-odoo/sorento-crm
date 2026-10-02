@@ -60,22 +60,16 @@ function transitionsFor(status: string): IdeaTransition[] {
     toStatusId: to.id,
     toStatusLabel: to.label,
   });
-  switch (status) {
-    case 'draft':
-      return [make(byKey('new'))];
-    case 'new':
-      return ['triaged', 'linked', 'building', 'delivered'].map((k) => make(byKey(k)));
-    case 'triaged':
-      return ['new', 'linked', 'building', 'delivered'].map((k) => make(byKey(k)));
-    case 'linked':
-      return ['new', 'triaged', 'building', 'delivered'].map((k) => make(byKey(k)));
-    case 'building':
-      return ['new', 'triaged', 'linked', 'delivered'].map((k) => make(byKey(k)));
-    case 'delivered':
-      return ['new', 'triaged', 'linked', 'building', 'closed'].map((k) => make(byKey(k)));
-    default:
-      return [];
-  }
+  // The lifecycle graph: forward one step at a time, back where a triager might reconsider.
+  const GRAPH: Record<string, string[]> = {
+    draft: ['new'],
+    new: ['triaged'],
+    triaged: ['linked', 'new'],
+    linked: ['building'],
+    building: ['delivered'],
+    delivered: ['closed'],
+  };
+  return (GRAPH[status] ?? []).map((k) => make(byKey(k)));
 }
 
 /** The next status by the tenant's sort order. */
