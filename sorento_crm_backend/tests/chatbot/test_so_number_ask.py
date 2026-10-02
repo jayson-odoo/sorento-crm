@@ -370,3 +370,25 @@ class TestReviewRound1:
         reply, _ = _so_turn(session_factory, monkeypatch, "SO421999")
         assert "OTHER DEBTOR" not in reply and "Ordered" not in reply, reply
         assert reply.strip().startswith(REFUSAL_PREFIX), reply
+
+
+class TestRefusalGroupsTheLinksByFamily:
+    def test_refusal_names_the_family_with_a_count(self, session_factory, monkeypatch) -> None:
+        """Owner ruling (PR #1435, 2 Oct 2026): the "isn't under your account" sentence names
+        the linked customers the way #1433's header does (`ledger_family.family_words`),
+        never one name per ledger."""
+        _seed_contact(session_factory, variables={})
+        _link_customers(
+            session_factory,
+            "ZZT HANLIM TRADING SDN BHD [A/C I]",
+            "ZZT HANLIM TRADING SDN BHD [A/C II]",
+            "ZZT HANLIM TRADING SDN BHD [A/C III]",
+        )
+        from tests.chatbot.test_customer_scope_lane import _other_customer
+
+        foreign = _other_customer(session_factory, "ZZT FOREIGN SDN BHD")
+        _seed_so(session_factory, "SO421777", customer_id=foreign, lines=[(1, 1)])
+        reply, _ = _so_turn(session_factory, monkeypatch, "SO421777")
+        assert reply.strip() == (
+            f"{REFUSAL_PREFIX} I can only check on ZZT HANLIM TRADING SDN BHD (3 accounts)."
+        ), reply
