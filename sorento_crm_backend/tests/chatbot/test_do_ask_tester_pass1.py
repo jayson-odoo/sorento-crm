@@ -123,28 +123,28 @@ def _focus(*uuids: str) -> Any:
 
 
 def test_a_message_naming_no_customer_carries_the_focus_customer():
-    _out, ids, refused = engine_mod._customer_scope_gate(
+    _out, ids, refused, _line = engine_mod._customer_scope_gate(
         _SCOPE, {}, _focus(_A), {"entities": []}, ["order"]
     )
     assert (ids, refused) == ([_A], False)
 
 
 def test_a_carried_customer_outside_the_links_is_not_carried():
-    _out, ids, _refused = engine_mod._customer_scope_gate(
+    _out, ids, _refused, _line = engine_mod._customer_scope_gate(
         _SCOPE, {}, _focus("33333333-3333-4333-8333-333333333333"), {"entities": []}, ["order"]
     )
     assert ids == [_A, _B]
 
 
 def test_my_means_every_link_even_with_a_carried_customer():
-    _out, ids, _refused = engine_mod._customer_scope_gate(
+    _out, ids, _refused, _line = engine_mod._customer_scope_gate(
         _SCOPE, {"self_reference": True}, _focus(_A), {"entities": []}, ["order"]
     )
     assert ids == [_A, _B]
 
 
 def test_an_order_number_searches_every_link_whatever_the_carry():
-    _out, ids, _refused = engine_mod._customer_scope_gate(
+    _out, ids, _refused, _line = engine_mod._customer_scope_gate(
         _SCOPE, {}, _focus(_A), {"entities": [{"hint": "order", "raw": "202609-0916", "current_message": True}]}, ["order"]
     )
     assert ids == [_A, _B]

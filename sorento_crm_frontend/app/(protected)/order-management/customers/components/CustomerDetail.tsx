@@ -149,6 +149,12 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
                       : 'No sales agent assigned'}
                   </p>
                 </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Account level</p>
+                  <p className="font-medium">
+                    {customer.account_level ? `Account ${customer.account_level}` : 'No account level set'}
+                  </p>
+                </div>
               </CardContent>
             </Card>
 

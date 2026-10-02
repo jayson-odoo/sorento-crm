@@ -111,3 +111,45 @@ def family_words(names: list[str]) -> str | None:
     head = first[0] if len(first) == 1 else f"{_shared_label(first)} ({len(first)} accounts)"
     rest = len(families) - 1
     return f"{head} and {rest} more" if rest else head
+
+
+_ROMAN = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10}
+
+
+def account_level_from_name(name: str | None) -> int | None:
+    """The `A/C <n>` marker inside a `[..]` or `(..)` of a customer name, as a number.
+
+    Roman I..X or arabic, any case, whitespace tolerant. Read ONCE, by the `acct_ledger_0001`
+    seed; the live bot reads the `customers.account_level` setting, never the name.
+    """
+    if not name:
+        return None
+    depth = 0
+    run: list[str] = []
+    for ch in name.upper():
+        if ch in "[(":
+            if depth == 0:
+                run = []
+            depth += 1
+            continue
+        if ch in "])":
+            if depth == 1:
+                level = _marker_level("".join(run))
+                if level is not None:
+                    return level
+            depth = max(0, depth - 1)
+            continue
+        if depth >= 1:
+            run.append(ch)
+    return None
+
+
+def _marker_level(inside: str) -> int | None:
+    """`A/C II` -> 2, from the text inside one bracket pair; None when it is not a marker."""
+    text = " ".join(inside.split())
+    if not text.startswith("A/C "):
+        return None
+    token = text[4:].strip()
+    if token.isdigit():
+        return int(token) or None
+    return _ROMAN.get(token)
