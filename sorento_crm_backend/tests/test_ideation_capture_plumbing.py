@@ -139,3 +139,40 @@ def test_list_does_not_forward_mine_unless_it_is_exactly_true(env, value):  # no
     q = env.fake.calls[0]["query"]
     assert "mine" not in q
     assert q.get("filter") == "archived"
+
+
+# ---- ideas_manage claim (ss#111 section 4) ---------------------------------------------------------
+from tests.test_ideation_gateway import MANAGE, VIEW  # noqa: E402
+
+
+def test_assertion_carries_ideas_manage_true_for_a_manage_holder(env):  # noqa: F811
+    env.allow.clear()
+    env.allow.update({VIEW, MANAGE})
+    assert _assertion_claims(env)["ideas_manage"] is True
+
+
+def test_assertion_carries_ideas_manage_false_for_a_view_only_user(env):  # noqa: F811
+    env.allow.clear()
+    env.allow.add(VIEW)
+    claims = _assertion_claims(env)
+    assert "ideas_manage" in claims
+    assert claims["ideas_manage"] is False
+
+
+def test_ideas_manage_is_part_of_the_token_cache_key(env):  # noqa: F811
+    env.allow.clear()
+    env.allow.update({VIEW, MANAGE})
+    assert env.req("GET", "/ideas").status_code == 200
+    # same grant: the cached token is reused, no second assertion
+    assert env.req("GET", "/ideas").status_code == 200
+    assert len(env.fake.session_calls) == 1
+    # the manage grant is withdrawn: a fresh assertion with the new value
+    env.allow.discard(MANAGE)
+    assert env.req("GET", "/ideas").status_code == 200
+    assert len(env.fake.session_calls) == 2
+    assert _decode(env.fake.session_calls[0]["assertion"])["ideas_manage"] is True
+    assert _decode(env.fake.session_calls[1]["assertion"])["ideas_manage"] is False
+    # and granted again: another fresh one, true
+    env.allow.add(MANAGE)
+    assert env.req("GET", "/ideas").status_code == 200
+    assert _decode(env.fake.session_calls[-1]["assertion"])["ideas_manage"] is True

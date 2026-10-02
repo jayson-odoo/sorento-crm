@@ -476,8 +476,32 @@ describe('AC-D-05 attachments', () => {
     fireEvent.click(screen.getByRole('tab', { name: /Attachments/ }));
   }
 
-  it('every viewer gets the upload dropzone, manage or not (captain decision, UAC AC-A-08 / AC-D-05)', async () => {
+  it('a view-only viewer on someone else\'s idea (isMine false) sees no upload control', async () => {
+    renderDetail(makeIdea({ isMine: false }));
+    await loaded();
+    fireEvent.click(screen.getByRole('tab', { name: /Attachments/ }));
+    await screen.findByText('No attachments');
+    expect(screen.queryByLabelText('Upload attachments')).toBeNull();
+  });
+
+  it('a view-only viewer sees no upload control when isMine is absent', async () => {
     renderDetail(makeIdea());
+    await loaded();
+    fireEvent.click(screen.getByRole('tab', { name: /Attachments/ }));
+    await screen.findByText('No attachments');
+    expect(screen.queryByLabelText('Upload attachments')).toBeNull();
+  });
+
+  it('a view-only viewer on their own idea (isMine true) gets the upload control', async () => {
+    renderDetail(makeIdea({ isMine: true }));
+    await loaded();
+    fireEvent.click(screen.getByRole('tab', { name: /Attachments/ }));
+    expect(await screen.findByLabelText('Upload attachments')).toBeInTheDocument();
+  });
+
+  it('a manage holder always gets the upload control', async () => {
+    held.add(MANAGE);
+    renderDetail(makeIdea({ isMine: false }));
     await loaded();
     fireEvent.click(screen.getByRole('tab', { name: /Attachments/ }));
     expect(await screen.findByLabelText('Upload attachments')).toBeInTheDocument();
