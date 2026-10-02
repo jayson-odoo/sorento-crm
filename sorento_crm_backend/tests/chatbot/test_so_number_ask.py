@@ -430,6 +430,8 @@ class TestAllMySalesOrdersAfterAnSoCard:
         )
         reply = (result.reply or {}).get("text") or ""
         assert "SO422056" not in reply, reply
-        assert captured, "the self_reference ask must still run a fetch on the links"
-        _name, args = captured[-1]
-        assert args.get("customer_ids") == [own], args
+        # Owner option (2), 2 Oct 2026: "all my sales order" is the SO list over the links,
+        # whatever `order_status` the parser read ("outstanding" in the WORDS keeps the
+        # report): with no period it asks which one (`tests/chatbot/test_so_list.py`).
+        assert reply.startswith("Which period for ZZT HANLIM TRADING SDN BHD?"), reply
+        assert captured == [], captured

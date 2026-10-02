@@ -3861,6 +3861,16 @@ def _run_stages(  # noqa: PLR0915
         )
         if order_list_rule:
             turn_trace.add("order_list", {"verdict_rule": order_list_rule})
+        # SO-NUMBER-ASK: "all my sales orders" is the SO list whatever the parser read (the
+        # tester measured "okay how about all my sales order?" as an SO answer in 1 of 3
+        # runs): the words decide the document, as they decide the order list's brand above.
+        from app.services.chatbot import so_status as so_status_mod
+
+        verdict, so_list_rule = so_status_mod.so_list_verdict(
+            verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+        )
+        if so_list_rule:
+            turn_trace.add("so_list", {"verdict_rule": so_list_rule})
 
         # PR #1353 fix round 3: a bare position over an open roster is read by the
         # engine, and its positions win over the parser's (turn 3f56a40d: "2" read as 1).

@@ -281,3 +281,51 @@ def list_text(db: Session, names_by_id: dict[str, str], start: Any, end: Any) ->
                 parts.append(delivery)
         out.append(" - ".join(parts))
     return "\n".join(out)
+
+
+# --------------------------------------------------------------------------- #
+# The words decide an SO list ask (tester on 99f7edb3: the parser's reading of "okay how
+# about all my sales order?" was an SO answer in 1 of 3 runs and a DO answer in the others)
+# --------------------------------------------------------------------------- #
+
+_WORDS_RE = re.compile(r"[0-9a-z]+")
+_UPPER_SO_RE = re.compile(r"(?<![0-9A-Za-z])SOs?(?![0-9A-Za-z])")
+_TYPED_SO_NUMBER_RE = re.compile(r"(?<![0-9A-Za-z])SO[\s-]*\d{4,}", re.IGNORECASE)
+
+
+def names_sales_orders(text: str) -> bool:
+    """Does the message ask about sales orders as a list: "sales order(s)", "SOs", or "SO"
+    in capitals (a lower-case "so" is the English word), with no SO number typed and no
+    "outstanding" (that word, typo-tolerant, keeps the outstanding report)?"""
+    from app.services.chatbot.turn_runtime import _osa_distance
+
+    raw = text or ""
+    if _TYPED_SO_NUMBER_RE.search(raw):
+        return False
+    words = _WORDS_RE.findall(raw.casefold())
+    if any(len(w) >= 8 and _osa_distance(w, "outstanding") <= 2 for w in words):
+        return False
+    pairs = zip(words, words[1:])
+    return (
+        any(a == "sales" and b in ("order", "orders") for a, b in pairs)
+        or "sos" in words
+        or bool(_UPPER_SO_RE.search(raw))
+    )
+
+
+def so_list_verdict(verdict: dict[str, Any], text: str) -> tuple[dict[str, Any], str | None]:
+    """The verdict an SO list ask is applied with, and the rule that fired: the SO document,
+    the order domain, no status, whatever the parser read. Leaves a verdict the parser put
+    in another domain (a product or a promotion question) alone."""
+    domain = str(verdict.get("domain_hint") or "").strip()
+    if domain not in ("", "order") or not names_sales_orders(text):
+        return verdict, None
+    fixed = {
+        **verdict,
+        "domain_hint": "order",
+        "domain_in_message": True,
+        "document": ["SO"],
+        "status": None,
+        "order_status": None,
+    }
+    return fixed, "so_list_words"
