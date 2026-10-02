@@ -12,14 +12,14 @@ Row content, but no `seed_chatbot_policy` replay is needed: `policy_rows.py`'s s
 rows carry 50 themselves, and the model's `server_default` carries it for `create_all`.
 
 Revision ID: picker_no_cap_0001
-Revises: acct_ledger_0002_vocab
+Revises: grn_pull_0001_perm
 """
 from __future__ import annotations
 
 from alembic import op
 
 revision = "picker_no_cap_0001"
-down_revision = "acct_ledger_0002_vocab"
+down_revision = "grn_pull_0001_perm"
 branch_labels = None
 depends_on = None
 
