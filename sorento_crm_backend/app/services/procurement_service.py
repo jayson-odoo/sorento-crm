@@ -826,6 +826,7 @@ class InboundShipmentService:
         shipment_status: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "asc",
+        region: Optional[str] = None,
     ):
         """Build the filtered + sorted inbound-shipment query shared by
         ``list_shipments`` and ``neighbours`` so the two can never drift.
@@ -852,6 +853,10 @@ class InboundShipmentService:
                 # Supplier filter supplied but resolved to nothing -> empty set.
                 return q.filter(InboundShipment.id.is_(None)), True
             filters.append(shipment_supplier_predicate(supplier_ids))
+
+        region_norm = (region or "").strip().lower()
+        if region_norm:
+            filters.append(InboundShipment.regions.contains([region_norm]))
 
         status_norm = (shipment_status or "").strip().lower()
         if status_norm and status_norm != "all":
@@ -919,13 +924,15 @@ class InboundShipmentService:
         supplier_id: Optional[str] = None,
         shipment_status: Optional[str] = None,
         sort_field: str = "created_at",
-        sort_dir: str = "asc"
+        sort_dir: str = "asc",
+        region: Optional[str] = None,
     ):
         """List inbound shipments."""
         q, empty = self._build_list_query(
             query=query,
             supplier_id=supplier_id,
             shipment_status=shipment_status,
+            region=region,
             sort_field=sort_field,
             sort_dir=sort_dir,
         )
@@ -1740,6 +1747,8 @@ class InboundShipmentService:
             shipment_dict.get("shipment_status")
         )
         shipment_dict["created_by"] = created_by
+        if shipment_dict.get("regions") is None:
+            shipment_dict.pop("regions", None)  # the column default (West only)
         if not (shipment_dict.get("shipment_number") or "").strip():
             # The create form no longer asks for one: a shipment number is ours to issue,
             # and asking somebody to invent a unique string before they have typed anything
@@ -1805,6 +1814,8 @@ class InboundShipmentService:
         shipment = self.get_shipment(shipment_id)
 
         update_data = shipment_data.model_dump(exclude_unset=True, exclude={"shipment_lines"})
+        if update_data.get("regions") is None:
+            update_data.pop("regions", None)  # NOT NULL: an explicit null leaves it alone
         if "shipment_status" in update_data:
             update_data["shipment_status"] = _normalize_inbound_shipment_status(
                 update_data.get("shipment_status")

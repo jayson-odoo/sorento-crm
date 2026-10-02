@@ -80,6 +80,7 @@ export function packingListsListQueryKey(params: PackingListsListParams): QueryK
     params.searchQuery,
     params.supplier_id,
     params.shipment_status,
+    params.region,
   ];
 }
 

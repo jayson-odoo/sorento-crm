@@ -737,6 +737,7 @@ async def create_attachment(
     entity_id: Optional[str] = Form(None),
     directory_id: Optional[str] = Form(None),
     access_levels: Optional[str] = Form(None),
+    regions: Optional[str] = Form(None, description="JSON array of 'west' / 'east'; Packing List uploads."),
     target_entity_type: Optional[str] = Form(
         None,
         description="Field-linkage template: target table this doc describes (product/promotion/packing_list/form). Used to fan field links when later linked to a row.",
@@ -991,6 +992,18 @@ async def create_attachment(
         if not access_levels_payload:
             access_levels_payload = access_svc.get_default_access_levels()
 
+        regions_payload = None
+        if regions:
+            from app.schemas.regions import normalize_regions
+
+            try:
+                regions_payload = normalize_regions(json.loads(regions))
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="regions must be a JSON array holding west and/or east.",
+                )
+
         # Field-linkage template: target_entity_type + target_field_keys (JSON array).
         target_entity_type_clean = (target_entity_type or "").strip() or None
         target_field_keys_parsed: Optional[list[str]] = None
@@ -1036,6 +1049,8 @@ async def create_attachment(
                 existing_to_replace.target_entity_type = target_entity_type_clean  # type: ignore[assignment]
             if target_field_keys_parsed is not None:
                 existing_to_replace.target_field_keys = target_field_keys_parsed  # type: ignore[assignment]
+            if regions_payload is not None:
+                existing_to_replace.regions = regions_payload  # type: ignore[assignment]
             upload_batch_clean = (upload_batch_id or "").strip() or None
             if upload_batch_clean is not None:
                 existing_to_replace.upload_batch_id = upload_batch_clean  # type: ignore[assignment]
@@ -1081,6 +1096,7 @@ async def create_attachment(
             entity_id=entity_id,
             directory_id=directory_id,
             access_levels=access_levels_payload,
+            regions=regions_payload,
             storage_provider=provider,
             target_entity_type=target_entity_type_clean,
             target_field_keys=target_field_keys_parsed,

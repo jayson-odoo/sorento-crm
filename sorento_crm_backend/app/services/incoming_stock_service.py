@@ -33,7 +33,7 @@ from collections import defaultdict
 from datetime import date, datetime
 from typing import Any, Optional
 
-from sqlalchemy import and_, case, func, or_
+from sqlalchemy import and_, case, func, or_, true
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -93,6 +93,14 @@ def _not_draft_shipment_filter():
     equivalent guard - see the note there.
     """
     return InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS
+
+
+def _region_filter(regions):
+    """Filter clause: the shipment serves at least one of `regions`. `None` = no filter
+    (staff, bare API key), so the clause is always safe to AND in."""
+    if regions is None:
+        return true()
+    return InboundShipment.regions.overlap(sorted(regions))
 
 
 def _unallocated_quantity(
@@ -170,7 +178,7 @@ def _attachment_payload(attachment: Optional[Attachment]) -> Optional[dict[str, 
 
 
 def earliest_packing_list_shipment(
-    db: Session, product_ids: list[str]
+    db: Session, product_ids: list[str], regions=None
 ) -> dict[str, tuple[str, date, str]]:
     """R5 (chatbot stock ask v2 S3): the earliest still-incoming shipment WITH a
     packing list, for each product id, at ANY location (AC-SA304 to AC-SA309).
@@ -202,6 +210,7 @@ def earliest_packing_list_shipment(
         .filter(
             InboundShipmentLine.product_id.in_(product_ids),
             _not_draft_shipment_filter(),
+            _region_filter(regions),
             _still_incoming_filter(),
             InboundShipment.attachment_id.isnot(None),
             InboundShipment.estimated_arrival_date.isnot(None),
@@ -227,8 +236,10 @@ def earliest_packing_list_shipment(
 class IncomingStockService:
     """User-facing incoming-stock retrieval."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, regions=None):
         self.db = db
+        # The regions the asking contact may be told about; None = no contact, no filter.
+        self.regions = regions
 
     # ------------------------------------------------------------------
     # Shared helpers
@@ -446,6 +457,7 @@ class IncomingStockService:
             .filter(
                 _still_incoming_filter(),
                 _not_draft_shipment_filter(),
+                _region_filter(self.regions),
                 *product_filters,
                 *date_filters,
             )
@@ -568,6 +580,7 @@ class IncomingStockService:
                 .filter(
                     _still_incoming_filter(),
                     _not_draft_shipment_filter(),
+                    _region_filter(self.regions),
                     InboundShipmentLine.product_id.in_(candidate_ids),
                 )
                 .distinct()
@@ -622,7 +635,7 @@ class IncomingStockService:
                 incoming_lines.c.total_remaining,
             )
             .join(incoming_lines, incoming_lines.c.sid == InboundShipment.id)
-            .filter(_not_draft_shipment_filter())
+            .filter(_not_draft_shipment_filter(), _region_filter(self.regions))
         )
 
         if shipment_ids:
@@ -787,7 +800,12 @@ class IncomingStockService:
                 InboundShipmentLine,
                 InboundShipmentLine.shipment_id == InboundShipment.id,
             )
-            .filter(_not_draft_shipment_filter(), *line_filters, *shipment_filters)
+            .filter(
+                _not_draft_shipment_filter(),
+                _region_filter(self.regions),
+                *line_filters,
+                *shipment_filters,
+            )
             .distinct()
         )
         total = ship_q.count()
@@ -928,7 +946,11 @@ class IncomingStockService:
 
         shipment = (
             self.db.query(InboundShipment)
-            .filter(InboundShipment.id == shipment_uuid, _not_draft_shipment_filter())
+            .filter(
+                InboundShipment.id == shipment_uuid,
+                _not_draft_shipment_filter(),
+                _region_filter(self.regions),
+            )
             .first()
         )
         if not shipment:
@@ -1041,7 +1063,11 @@ class IncomingStockService:
         row = (
             self.db.query(InboundShipment.shipment_number, Attachment)
             .outerjoin(Attachment, Attachment.id == InboundShipment.attachment_id)
-            .filter(InboundShipment.id == resolved[0], _not_draft_shipment_filter())
+            .filter(
+                InboundShipment.id == resolved[0],
+                _not_draft_shipment_filter(),
+                _region_filter(self.regions),
+            )
             .first()
         )
         if not row:
