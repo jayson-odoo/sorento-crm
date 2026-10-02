@@ -1,10 +1,37 @@
 # PLAN: Chatbot report engine (one catalogue, one spec, one executor)
 
-Status: DESIGN, awaiting owner approval of `report-engine-behaviour-card.md`. No product code
-until approved. First build slice = top sales agent by product / brand (FULL track: new
-API-key route + a per-audience access rule; no migration).
+Status: building slice 1, red tests first (FULL track: new API-key route + a per-audience
+access rule; no migration). Card answered 2 Oct 2026 (`report-engine-behaviour-card.md`
+revision 2); section 0 below records how the answers change this plan, and wins over the
+sections after it where they differ.
 Lane: REPORT-ENGINE. Evidence: `report-engine-inventory.md` (deliverable 1, file:line for every
-claim below that is not cited inline). UAC: `report-engine-acceptance-criteria.md` (draft).
+claim below that is not cited inline). UAC: `report-engine-acceptance-criteria.md`.
+
+## 0. Owner answers applied (2 Oct 2026)
+
+- **Access (Q1, Q2).** The gate is the reveal grant `sales_orders.sales_report`
+  (`contact_field_reveal_service.py:51`), checked in the route off `contact_id`, the shape the
+  sales report route already uses (`orders.py:1918-1936`). No office-staff rule. Two audiences:
+  `DEALER` = the contact is customer-scoped (`enforce_customer_scope` returns its links,
+  `_contact_scope.py:32-78`; `ContactCustomerScope.enforced`, `contact_customer_scope.py:52-54`),
+  `FULL` = every other grant holder. A DEALER may use dimensions and filters product, brand,
+  category, month only (plus its forced own-customer filter); `FULL` may use the whole
+  catalogue. The "STAFF" ladder of 3.1 / 3.4 is replaced by this.
+- **Period (Q3).** Required. No catalogue default; the route answers 422 `period_required`.
+- **Basis (Q4).** `delivered` (DO lines, DO date, `delivery_order_lines`) and `ordered` (SO
+  lines, SO date). The spec carries `basis`, default `delivered`, and the reply header always
+  names it ("by delivered sales"). The ordered basis gets an ask definition over SO lines that
+  reuses `sales_order_lines`' base and per-line expressions (`datasets/sales_order_lines.py:93-115`,
+  `sales_report_service._per_line_exprs`), registered nowhere, so the Reports screen's Yearly
+  comparison catalogue does not change. Its amount is the Yearly comparison's ordered value
+  (`exprs["ordered_value"]`), its qty `exprs["ordered_qty"]`.
+- **Top N (Q5).** A ranking (one `group_by`) requires `top_n`; missing -> 422 `top_n_required`.
+- **Asking back.** The lane collects period and top N through the shared required-field helper
+  of LOWSTOCK-FILTER-ASK (#1445, `required_fields.collect` with an `AskType` per ask). Its API is
+  not settled yet, so slice 1 is built in two parts: **1a** catalogue, datasets, spec, route,
+  MCP tool + presenter, parser vocabulary (no dependency); **1b** the lane wiring
+  (`spec_from_parse` + the `AskType("sales_ranking", period, top_n)`) once crew relays the
+  helper's API.
 
 ## 1. Problem
 

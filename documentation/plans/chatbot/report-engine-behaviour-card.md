@@ -1,7 +1,30 @@
-# REPORT-ENGINE behaviour card, revision 1 (2 Oct 2026)
+# REPORT-ENGINE behaviour card, revision 2 (2 Oct 2026): owner answered
 
-Plan: `PLAN-report-engine.md`. Evidence: `report-engine-inventory.md`. Draft UAC:
+Plan: `PLAN-report-engine.md`. Evidence: `report-engine-inventory.md`. UAC:
 `report-engine-acceptance-criteria.md`.
+
+## Owner answers (2 Oct 2026), binding
+
+- **Q1: the grant is the gate.** Whoever holds the reveal grant `sales_orders.sales_report`
+  (`contact_field_reveal_service.py:51`; the one tuple the three sales asks share,
+  `chatbot/contracts.py:393`) may see sales-agent rankings. No extra office-staff rule.
+  A contact without the grant gets nothing (an unknown contact has no grants,
+  `head/access.py:58-63`, so it is refused too).
+- **Q2: (a).** A customer-linked contact (a dealer: `ContactCustomerScope.enforced`,
+  `contact_customer_scope.py:52-54`) slices its OWN sales by product, brand, category, month
+  only. Read with Q1: the dealer limit is what makes a dealer holding the grant still not see
+  agents, locations or channels.
+- **Q3: no default period.** Period is REQUIRED; when the message names none, the bot asks for it.
+- **Q4: both bases.** Delivered (DO date) and ordered (SO date). Taken from the message when
+  stated; otherwise delivered, and the header names the basis ("by delivered sales") so the user
+  can re-ask for ordered.
+- **Q5: (c).** No number given -> the bot asks "how many?".
+- **Required-field asks** (period, top N) use the shared required-field collection helper of
+  LOWSTOCK-FILTER-ASK (#1445, `app/services/chatbot/required_fields.py` on its branch), not an
+  ask-back of this lane's own. Crew relays its API when settled; until then this lane's route
+  refuses a missing field with a typed 422 and the lane wiring waits.
+
+Revision 1 text below is kept for the record; where it differs, the answers above win.
 
 ## In one paragraph
 

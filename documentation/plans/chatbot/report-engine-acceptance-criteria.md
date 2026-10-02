@@ -1,49 +1,62 @@
 # UAC: report engine, slice 1 (top sales agent by product / brand)
 
-Status: DRAFT, pending the owner's answers on `report-engine-behaviour-card.md`. Values marked
-[Qn] follow that card's recommendation and change with the answer.
-Plan: `PLAN-report-engine.md`.
+Status: FINAL for slice 1 (owner answers, `report-engine-behaviour-card.md` revision 2).
+Plan: `PLAN-report-engine.md` (section 0 records the answers).
+Part 1a = route + catalogue + presenter (AC-RE-1..17, 20); part 1b = lane wiring with the shared
+required-field helper of #1445 (AC-RE-18, 19), built once crew relays the helper's API.
 
 ## Journey
 
-An office staffer on WhatsApp asks "top 3 salesman for Sorento brand last month" and gets a
-ranked list of sales agents by delivered sales value. A dealer asking the same is told the
-breakdown is not available. No new tool is built for the next angle.
+A contact holding the Sales report access asks on WhatsApp "top 3 salesman for Sorento brand
+last month" and gets a ranked list of sales agents by delivered sales value, the header naming
+the basis. A dealer gets only its own sales, by product, brand, category or month. The next
+angle ("top customers for a brand") needs no new tool.
 
-## Acceptance criteria
+## Route and figures (part 1a)
 
-- **AC-RE-1** Staff (active "<brand> Office" access type) holding `sales_orders.sales_report`
-  asks "top sales agent for <product code> this year": the reply ranks sales agents by delivered
-  amount (DO lines, DO date), highest first, for products matching the code prefix, 1 Jan to
-  today, Malaysia time [Q3].
-- **AC-RE-2** Same with a brand ("for Sorento brand"): only DO lines whose product's brand is
-  that brand count.
-- **AC-RE-3** Same with a category ("for basin category").
-- **AC-RE-4** "top 3" prints 3 rows and "and N more" when there are more; no number given prints
-  10 [Q5].
-- **AC-RE-5** "bottom 5" ranks lowest first; an agent with no sale in the period is not listed.
-- **AC-RE-6** "by qty" ranks by quantity; default ranks by amount.
-- **AC-RE-7** DO lines with no sales order, or a sales order with no agent, appear as one row
-  "(no agent)"; the rows always sum to the printed total.
-- **AC-RE-8** The header names: measure, basis ("Delivered, by DO date"), period (dates), and
-  every filter by name (brand / product / category / customer / location / channel).
-- **AC-RE-9** "top 5 customers for Mocha brand last quarter", "which location sold most of
-  <code> in September", "sales by month for agent <name> this year" are answered by the same
-  tool with no code change beyond slice 1.
-- **AC-RE-10** A customer-linked contact (dealer) asking any sales-agent ranking or filter is
-  told "That breakdown is not available for your account." and no figure is returned [Q1].
-- **AC-RE-11** A contact with no customer links and no office access type is treated as a
-  dealer for AC-RE-10 (fail closed).
-- **AC-RE-12** A dealer asking "top products for my account this year" gets its OWN delivered
-  sales ranked by product; naming another customer is refused with the existing wording [Q2].
-- **AC-RE-13** A contact without `sales_orders.sales_report` gets the existing sales-report
-  refusal; nothing is computed.
-- **AC-RE-14** Figures come only from the contact's companies; a staffer in Sorento only never
-  sees Mocha figures.
-- **AC-RE-15** An ask to slice by something not in the catalogue ("by colour") is answered with
-  the list of what sales can be ranked by, not a guess.
-- **AC-RE-16** Totals and per-agent amounts equal, to the sen, what
-  `GET /order-management/sales-report?group_by=sales_agent` returns for the same product,
-  window and company (parity).
-- **AC-RE-17** The route refuses a request without `X-API-Key`; at most 10 asks per contact per
-  10 minutes.
+- **AC-RE-1** A grant holder asks rank sales agents for a product code prefix, a period, top N:
+  rows are sales agents by delivered amount (DO lines, DO date, Malaysia), highest first, only
+  DO lines of products matching the prefix, in the period, of the contact's companies.
+- **AC-RE-2** Same with a brand: only DO lines whose product's brand is that brand count.
+- **AC-RE-3** Same with a category.
+- **AC-RE-4** `top_n=3` returns 3 rows, `more` = the number of other ranked rows, and the total
+  of the WHOLE set (not only the 3).
+- **AC-RE-5** `sort=asc` ranks lowest first; an agent with no sale in the period is not listed.
+- **AC-RE-6** `measure=qty` ranks by quantity (ties by amount, then name); default amount
+  (ties by qty, then name).
+- **AC-RE-7** DO lines with no sales order, or a sales order with no agent, are one row
+  "(no agent)"; ranked rows plus `more` rows sum to the total.
+- **AC-RE-8** `basis=ordered` ranks by ordered value of SO lines filed by SO date (cancelled
+  orders and lines excluded, the Yearly comparison's ordered figure). No basis = delivered.
+  The body names the basis, the period and every filter by name; the reply header reads
+  "by delivered sales" / "by ordered sales".
+- **AC-RE-9** Group by customer, product, brand, category, location, channel or month, and
+  filter by customer, product, brand, category, sales agent, location or channel, all through
+  the same route: "top 5 customers for brand Mocha in Q3", "which location sold most of X in
+  September", "sales by month for agent JOHN this year".
+- **AC-RE-10** No period -> 422 `period_required`; nothing is computed.
+- **AC-RE-11** One `group_by` and no `top_n` -> 422 `top_n_required`. No `group_by` = the total
+  alone (number shape), no `top_n` needed.
+- **AC-RE-12** A contact without the reveal grant `sales_orders.sales_report` -> 403
+  `sales_report_not_enabled`; an unknown contact the same.
+- **AC-RE-13** A customer-linked contact (dealer) may group and filter by product, brand,
+  category, month only; anything else (sales agent, customer, location, channel) -> 403
+  `report_dimension_not_allowed`, wording "That breakdown is not available for your account.".
+- **AC-RE-14** A dealer's figures are only its linked customers'; naming another customer ->
+  403 `customer_not_permitted` (existing wording).
+- **AC-RE-15** A grant holder that is not customer-linked (staff, or a contact with no links)
+  may use every dimension, sales agent included (owner Q1).
+- **AC-RE-16** Figures come only from the contact's companies.
+- **AC-RE-17** An unknown measure / dimension / filter / basis -> 422 with the allowed list;
+  an empty resolved filter list -> 422 (never read as "no filter").
+- **AC-RE-20** Parity: on the same seed, delivered amounts per agent / customer / product equal
+  `GET /order-management/sales-report?group_by=...` to the sen. API key only; 10 asks per
+  contact per 10 minutes.
+
+## Lane (part 1b)
+
+- **AC-RE-18** An ask with no period gets the shared helper's period question; the answer runs
+  the same ask. An ask to rank with no number gets "how many?" through the same helper.
+- **AC-RE-19** The parser maps "salesman / sales agent / SA / rep", "brand", "category" onto
+  `group_by`, "ordered" / "delivered" onto the basis, and a word outside the catalogue ("by
+  colour") gets the list of what sales can be ranked by.
