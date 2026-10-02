@@ -254,6 +254,26 @@ Prompt cache:
 5. G2 fix in this lane. G1 fix as its own commit, merged only after the owner data step (55 internal contacts without an office type).
 6. Kill tests, reviewer, security review, hand-test script, PR ready.
 
+## Red test findings (tester, 2 Oct 2026; tests at 21debae7 and f08ed10b)
+
+- **Low stock refusal is swallowed on a real turn.**
+  - Setup: a contact without `scm.low_stock_report` asks for the low stock report.
+  - What already holds: no tool runs and no file is sent.
+  - The defect: the reply is "Could not find inventory. Would you like me to escalate to
+    warehouse team?", not "Low stock report is not enabled for your account.". `run_fetch`
+    builds the refusal (`lanes/business/__init__.py:1526-1527`), but the miss composer replaces
+    it.
+  - The fix is in this lane, at the same seam as the PROMPT_GATES refusal.
+- **About 30 `fake_resolve_config` stubs** under `tests/chatbot/` take no `grants` keyword. The
+  engine passes `grants` to `resolve_config`, so the coder sweeps the stubs (one line each).
+- **The relabel of `purchase_orders.placed`** is also pinned in
+  `sorento_crm_mcp/sorento_crm_mcp/catalog.py:1330` and
+  `sorento_crm_mcp/tests/test_field_reveal_keys_declared.py:112`, via
+  `tests/chatbot/test_field_reveal_keys_pinned_to_catalog.py`. Both sides change together.
+- **Matrix today:**
+  - Green: cost, the three sales statuses, the PO rung, supplier, other customers.
+  - Red: direct PO, SPO last in, the low stock reply text, and G1.
+
 ## Kill list (tests must fail when these are broken)
 
 - The strip keeps a tagged block for a contact without the grant.
