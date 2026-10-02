@@ -93,11 +93,38 @@ def _seed(
     return company_id, type_ids
 
 
-def _lane(session_factory: Any, monkeypatch: Any, company_id: str, *, product_raw: str = base.TOKEN):
+def _lane(
+    session_factory: Any,
+    monkeypatch: Any,
+    company_id: str,
+    *,
+    product_raw: str = base.TOKEN,
+    describe: bool = False,
+):
+    """The #750 lane. `describe=True` renders each probe row's "Attachment Type" the way the
+    real presenter does (`description or type_name`) instead of the type name alone."""
     db = session_factory()
     set_company_scope(db, frozenset({company_id}))
     calls: list[tuple[str, dict]] = []
     services = base._probe_services(db, monkeypatch, calls=calls)
+    if describe:
+        import json
+
+        from app.models.resources import AttachmentType
+        from app.services.ai_assistant_service import MCPRuntimeClient
+
+        stub = MCPRuntimeClient.call_tool
+        descriptions = {t.type_name: t.description for t in db.query(AttachmentType).all()}
+
+        def _described(client: Any, tool_name: str, args: dict[str, Any]) -> str:
+            envelope = json.loads(stub(client, tool_name, args))
+            for item in envelope.get("items") or []:
+                for field in item.get("fields") or []:
+                    if field.get("label") == "Attachment Type":
+                        field["value"] = descriptions.get(field["value"]) or field["value"]
+            return json.dumps(envelope)
+
+        monkeypatch.setattr(MCPRuntimeClient, "call_tool", _described)
     resolved, gate, offer = base._run_lane(
         db, services, parser=_parser(product_raw=product_raw), text=_text(product_raw)
     )
@@ -175,6 +202,49 @@ class TestBothTypesStayInScope:
 
         assert _type_uuids(gate) == {types[0][0]}, gate.get("gate_reason")
 
+    def test_a_word_that_named_none_of_its_several_types_still_drops_them(self) -> None:
+        """Reviewer S1: the parser split "container status list" into two words. "list"
+        matched Packing List and Stock_List and named neither, so - as before - both go;
+        only a word with ONE match keeps it unnamed."""
+        types = {
+            "status": ("aaaaaaaa-0000-4000-8000-000000000001", "container_status", "Container Status"),
+            "packing": ("aaaaaaaa-0000-4000-8000-000000000002", None, "Packing List"),
+            "stock": ("aaaaaaaa-0000-4000-8000-000000000003", None, "Stock_List"),
+        }
+
+        def match(key: str) -> dict[str, Any]:
+            uuid, code, name = types[key]
+            return {
+                "entity_type": "attachment_type",
+                "canonical_code": code or name,
+                "uuid": uuid,
+                "match_tier": "word",
+                "display": {"code": code, "type_name": name},
+            }
+
+        parser = {
+            "entities": [
+                {"raw": "container status", "hint": "attachment_type", "canonical_code": "container status",
+                 "confident": True, "current_message": True},
+                {"raw": "list", "hint": "attachment_type", "canonical_code": "list",
+                 "confident": True, "current_message": True},
+            ],
+            "match_mode": "or",
+            "domain_hint": "resource_attachment",
+            "intent_hint": "check_resource_attachment",
+            "message_type": "business_query",
+        }
+        resolver = {
+            "tokens": ["container status", "list"],
+            "resolutions": [
+                {"token": "container status", "resolved": True, "matches": [match("status")]},
+                {"token": "list", "resolved": True, "matches": [match("packing"), match("stock")]},
+            ],
+        }
+        gate = gate_mod.run_gate({}, parser=parser, resolver=resolver)
+
+        assert _type_uuids(gate) == {types["status"][0]}, gate.get("gate_reason")
+
 
 # --------------------------------------------------------------------------- #
 # R2: the picker stamps every asked type, per product
@@ -204,6 +274,27 @@ class TestPickerStampsEveryType:
         lines = base._picker_lines(offer.get("escalate_message"))
         for code in (SH, SH200):
             assert lines[code].endswith(f"- no {PHOTOS}, no {SPECS}"), lines[code]
+
+    def test_rows_that_print_the_type_description_still_stamp_has(self, session_factory, monkeypatch) -> None:
+        """Reviewer B1: the real presenter prints `description or type_name` in the
+        "Attachment Type" field (`sorento_crm_mcp.presenters._att_type`), and dev's types
+        carry descriptions. Seeded with dev's own wording, rows rendered presenter-style."""
+        from app.models.resources import AttachmentType
+
+        company_id, type_ids = _seed(session_factory, files={SH: [PHOTOS], SH200: [SPECS]})
+        db = session_factory()
+        for name, description in (
+            (PHOTOS, "Product Photos, Photo, Image, Pictures by Marketing"),
+            (SPECS, "Technical Specifications / Spec / Drawing by Marketing"),
+        ):
+            db.query(AttachmentType).filter(AttachmentType.id == type_ids[name]).update({"description": description})
+        db.commit()
+        _resolved, gate, offer, _calls = _lane(session_factory, monkeypatch, company_id, describe=True)
+
+        assert gate.get("require_specific") is True, gate.get("gate_reason")
+        lines = base._picker_lines(offer.get("escalate_message"))
+        assert lines[SH].endswith(f"- has {PHOTOS}, no {SPECS}"), lines[SH]
+        assert lines[SH200].endswith(f"- no {PHOTOS}, has {SPECS}"), lines[SH200]
 
     def test_numbering_and_order_stay_the_gates_own(self, session_factory, monkeypatch) -> None:
         company_id, _ = _seed(session_factory, files={SH: [PHOTOS], SH200: [SPECS]})
@@ -278,7 +369,9 @@ class TestNoSnakeCase:
 # --------------------------------------------------------------------------- #
 
 
-def _attachment_envelope(product_codes: list[str], rows: list[tuple[str, str]], asked: list[str]) -> dict:
+def _attachment_envelope(
+    product_codes: list[str], rows: list[tuple[str, str]], asked: list[str], *, labels: list[dict] | None = None
+) -> dict:
     figures = [
         {
             "fields": [
@@ -294,7 +387,7 @@ def _attachment_envelope(product_codes: list[str], rows: list[tuple[str, str]], 
         "denied": False,
         "entities": [*product_codes, *asked],
         "product_codes": list(product_codes),
-        "attachment_types": list(asked),
+        "attachment_types": labels if labels is not None else [{"name": n, "keys": [n]} for n in asked],
         "figures": figures,
         "files": [{"url": f"https://example.test/{c}.pdf", "filename": f"{c}.pdf"} for c, _ in rows],
         "miss": [] if rows else list(product_codes),
@@ -340,10 +433,24 @@ class TestFoundAnswerNamesTheGap:
         assert f"{SH200} has no {PHOTOS} or {SPECS}." in text, text
         assert f"{SH} has no" not in text, text
 
-    def test_a_slug_type_is_never_named_as_a_gap(self) -> None:
-        text = _compose_text(_attachment_envelope([SH], [(SH, PHOTOS)], [PHOTOS, "tech_spec"]))
+    def test_a_type_without_a_label_names_no_gap_at_all(self) -> None:
+        """`turn_runtime.attachment_type_labels` could not read a type: no line, never a
+        false or slug-named one."""
+        labels = [{"name": PHOTOS, "keys": [PHOTOS]}]
+        text = _compose_text(_attachment_envelope([SH], [(SH, PHOTOS)], [PHOTOS, "tech_spec"], labels=labels))
 
-        assert "tech_spec" not in text, text
+        assert "has no" not in text and "tech_spec" not in text, text
+
+    def test_a_row_printing_the_types_description_is_not_a_gap(self) -> None:
+        """Reviewer B1: the presenter prints `description or type_name`, and dev's real
+        Product Photos row describes itself "Product Photos, Photo, Image, Pictures by
+        Marketing" - a photo that IS on file must not read "has no Product Photos"."""
+        description = "Product Photos, Photo, Image, Pictures by Marketing"
+        labels = [{"name": PHOTOS, "keys": [PHOTOS, description]}, {"name": SPECS, "keys": [SPECS]}]
+        text = _compose_text(_attachment_envelope([SH], [(SH, description)], [PHOTOS, SPECS], labels=labels))
+
+        assert f"{SH} has no {PHOTOS}" not in text, text
+        assert f"{SH} has no {SPECS}." in text, text
 
 
 # --------------------------------------------------------------------------- #
@@ -576,6 +683,10 @@ class TestThePickKeepsBothTypes:
                 session_factory, product_id=product_id, attachment_type_id=type_id,
                 company_id=DEFAULT_COMPANY_ID, filename=name,
             )
+        # The backend's own row shape: the type is an object, and the presenter prints its
+        # description (dev's real wording, `_REAL_ATTACHMENT_TYPE_DESCRIPTIONS`).
+        from tests.chatbot.test_rearch_r7_live_parity_replay import _REAL_ATTACHMENT_TYPE_DESCRIPTIONS as descriptions
+
         rows = {
             both_code: [(PHOTOS, f"{both_code}.jpg"), (SPECS, f"{both_code}.pdf")],
             photo_code: [(PHOTOS, f"{photo_code}.jpg")],
@@ -586,7 +697,7 @@ class TestThePickKeepsBothTypes:
                 {
                     "product": {"product_code": code},
                     "attachment": {
-                        "attachment_type": type_name,
+                        "attachment_type": {"type_name": type_name, "description": descriptions[type_name]},
                         "original_filename": filename,
                         "file_path": f"https://example.test/{filename}",
                     },

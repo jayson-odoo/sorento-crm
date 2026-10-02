@@ -3066,6 +3066,9 @@ def make_tool_runner(
             unplaced=unplaced,
             raw_fragment=fragment,
             brand_names=brand_names,
+            attachment_types=(
+                attachment_type_labels(db, entities) if spec.domain == "product_attachment" else None
+            ),
         )
         if page_predicate is not None:
             # W4: what an "another N" after this page continues from; after the last page
@@ -3561,6 +3564,41 @@ def with_carried_entities(
     return {**parse_output, "entities": [*carried, *own]}
 
 
+def attachment_type_labels(db: Session, entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`[{name, keys}]` per attachment-type entity of a fetch, read by uuid (ATTACHMENT-MULTI R3).
+
+    `name` is `attachment_types.type_name`, what the customer reads (R5). `keys` are the
+    spellings an answer row's "Attachment Type" field can carry: the MCP presenter prints the
+    description when the type has one, else the name. An entity with no uuid, or a failed
+    read, yields `[]` - the composer then names no gap rather than a false one.
+    """
+    ids = [
+        jsc.js_string(e.get("uuid"))
+        for e in entities
+        if isinstance(e, dict)
+        and jsc.nullish_str(e.get("entity_type")).strip().lower() == "attachment_type"
+    ]
+    if not ids or not all(_UUID_TEXT.match(i) for i in ids):
+        return []
+    from app.models.resources import AttachmentType
+
+    try:
+        with db.begin_nested():
+            rows = db.query(AttachmentType).filter(AttachmentType.id.in_(ids)).all()
+    except Exception:  # noqa: BLE001 - fail closed: no gap line, never a wrong one
+        logger.warning("chatbot: attachment_type label lookup failed", exc_info=True)
+        return []
+    by_id = {str(row.id): row for row in rows}
+    out: list[dict[str, Any]] = []
+    for type_id in ids:
+        row = by_id.get(type_id)
+        if row is None or not row.type_name:
+            return []
+        keys = [k for k in (row.type_name, row.description) if k]
+        out.append({"name": row.type_name, "keys": keys})
+    return out
+
+
 def _is_certificate_type(db: Session, attachment_type_id: Any) -> bool:
     """`attachment_types.is_certificate` for the RESOLVED row, never the customer's
     own words. `False` for anything unresolved/unreadable - fail closed to the
@@ -3895,6 +3933,7 @@ def envelope_of(
     counted_set: bool = True,
     raw_fragment: dict[str, Any] | None = None,
     brand_names: list[str] | None = None,
+    attachment_types: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The kept lane's fetch fragment as the composer's envelope (AC-1530, AC-1531).
 
@@ -3934,17 +3973,9 @@ def envelope_of(
             )
             if name
         ],
-        # ATTACHMENT-MULTI R3: the document types this fetch asked for, by the name the
-        # rows print, so the composer can name a product that lacks one of them.
-        "attachment_types": [
-            name
-            for name in (
-                _answer_subject(e)
-                for e in entities
-                if jsc.nullish_str(e.get("entity_type")).strip().lower() == "attachment_type"
-            )
-            if name
-        ],
+        # ATTACHMENT-MULTI R3: the document types this fetch asked for, `{name, keys}`
+        # (`attachment_type_labels`), so the composer can name a product lacking one.
+        "attachment_types": list(attachment_types or []),
         "figures": figures,
         "files": [f for f in files if isinstance(f, dict)] if isinstance(files, list) else [],
         "miss": [] if has_result else codes,

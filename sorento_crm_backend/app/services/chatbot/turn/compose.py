@@ -97,8 +97,9 @@ def _types_without_files(
     ATTACHMENT-MULTI R3 (owner ruling 2 Oct 2026, Q2 (a)): the files that exist are sent and
     each gap is named, never silently skipped. Exact match on the rows' "Product Code" and
     "Attachment Type" fields; silent when no row carries both (nothing to match against).
-    An asked type that is a slug (`packing_list`) is never named: rows print the type's
-    human name, so a slug cannot be matched and would only ever read as a false gap.
+    Each asked type is `{name, keys}` (`turn_runtime.attachment_type_labels`): the presenter
+    prints a type's description when it has one, else its name, so both are keys. A type
+    with no such entry is never named - it could only ever read as a false gap.
     """
     present: set[tuple[str, str]] = set()
     for fig in figures:
@@ -109,15 +110,20 @@ def _types_without_files(
         }
         if fields.get("Product Code") and fields.get("Attachment Type"):
             present.add((fields["Product Code"].casefold(), fields["Attachment Type"].casefold()))
-    names = [str(t).strip() for t in asked_types if str(t).strip() and "_" not in str(t)]
-    if not present or not names:
+    types = [
+        (str(t.get("name")).strip(), {str(k).strip().casefold() for k in t.get("keys") or [] if k})
+        for t in asked_types
+        if isinstance(t, dict) and str(t.get("name") or "").strip() and t.get("keys")
+    ]
+    if not present or not types or len(types) != len(asked_types):
         return []
     out: list[tuple[str, list[str]]] = []
     for code in product_codes:
         code_text = str(code).strip()
         if not code_text or any(c.casefold() == code_text.casefold() for c, _ in out):
             continue
-        missing = [n for n in names if (code_text.casefold(), n.casefold()) not in present]
+        code_key = code_text.casefold()
+        missing = [name for name, keys in types if not any((code_key, k) in present for k in keys)]
         if missing:
             out.append((code_text, missing))
     return out
@@ -493,6 +499,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             and isinstance(product_codes, list)
             and product_codes
             and len(product_codes) <= HEADER_SUBJECT_MAX
+            and not (isinstance(header_override, str) and header_override.strip())
         ):
             gaps = _types_without_files(product_codes, env.get("attachment_types") or [], figures)
             if gaps:

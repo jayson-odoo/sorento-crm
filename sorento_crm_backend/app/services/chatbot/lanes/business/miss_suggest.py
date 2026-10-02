@@ -330,10 +330,14 @@ def _scoping_from(requires: list, *, gate: Any, resolved: Any) -> list:
     # names the type, so the human `type_name` rides along - only where it differs from the
     # code, so every type with no code (every product type on dev today) is byte-identical.
     type_name_by_uuid: dict[Any, Any] = {}
+    description_by_uuid: dict[Any, Any] = {}
     for match in _flat_matches(resolved):
-        name = jsc.get(jsc.get(match, "display"), "type_name")
-        if jsc.truthy(jsc.get(match, "uuid")) and jsc.truthy(name):
-            type_name_by_uuid.setdefault(jsc.get(match, "uuid"), name)
+        display = jsc.get(match, "display")
+        uuid = jsc.get(match, "uuid")
+        if jsc.truthy(uuid) and jsc.truthy(jsc.get(display, "type_name")):
+            type_name_by_uuid.setdefault(uuid, jsc.get(display, "type_name"))
+        if jsc.truthy(uuid) and jsc.truthy(jsc.get(display, "description")):
+            description_by_uuid.setdefault(uuid, jsc.get(display, "description"))
 
     def take(entity: Any) -> None:
         entity_type = jsc.nullish_str(jsc.get(entity, "entity_type"))
@@ -356,6 +360,18 @@ def _scoping_from(requires: list, *, gate: Any, resolved: Any) -> list:
     if len(out) == 0:
         for match in _flat_matches(resolved):
             take(match)
+    # A several-type ask stamps per type, and the MCP presenter prints a type's DESCRIPTION
+    # when it has one ("Product Photos, Photo, Image, Pictures by Marketing" on dev), so the
+    # annotator needs both spellings to know which row is which type. Only on such an ask,
+    # so every single-type plan stays byte-equal.
+    if sum(1 for row in out if row["entity_type"] == "attachment_type") > 1:
+        for row in out:
+            if row["entity_type"] != "attachment_type":
+                continue
+            if jsc.truthy(type_name_by_uuid.get(row["uuid"])):
+                row["type_name"] = type_name_by_uuid[row["uuid"]]
+            if jsc.truthy(description_by_uuid.get(row["uuid"])):
+                row["description"] = description_by_uuid[row["uuid"]]
     return out
 
 
@@ -1126,7 +1142,8 @@ def _asked_types(transform: Any) -> list[dict[str, Any]]:
     anything other than plain attachment types (a certificate keeps its family stamp).
 
     `name` is the human `type_name` (R5), never a slug code; `keys` are the spellings an
-    answer row's "Attachment Type" field can carry for it.
+    answer row's "Attachment Type" field can carry for it - the presenter prints the
+    description when the type has one, else the name.
     """
     out: list[dict[str, Any]] = []
     for entity in _scoping_entities(transform):
@@ -1136,7 +1153,8 @@ def _asked_types(transform: Any) -> list[dict[str, Any]]:
         name = jsc.nullish_str(jsc.get(entity, "type_name")).strip() or code
         if not name:
             return []
-        out.append({"name": name, "keys": {k for k in (_norm(name), _norm(code)) if k}})
+        description = jsc.get(entity, "description")
+        out.append({"name": name, "keys": {k for k in (_norm(name), _norm(code), _norm(description)) if k}})
     return out
 
 

@@ -1366,11 +1366,12 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     or _dc_norm(dc_name_by_uuid.get(e.get("uuid"))) in dc_wanted
                 )
 
-            # ATTACHMENT-MULTI (2 Oct 2026): narrowed PER CUSTOMER WORD. The rule is about one
-            # word matching several classes ("container status list"); a word that resolved
-            # to exactly one class already named it. Judged across every word at once, "photo
-            # and technical specifications" kept only the specs - "photo" is not spelt
-            # "Product Photos" - so the fetch never asked for the photo. A type row no
+            # ATTACHMENT-MULTI (2 Oct 2026): judged PER CUSTOMER WORD. A word that resolved to
+            # exactly one class already named it and keeps it: judged across every word at
+            # once, "photo and technical specifications" kept only the specs - "photo" is not
+            # spelt "Product Photos" - so the fetch never asked for the photo. A word that
+            # matched several classes keeps only the ones named, and none when it named none
+            # ("list" beside "container status"), which is the old rule. A type row no
             # resolution claims shares one group, which is the old whole-set rule exactly.
             dc_token_by_uuid: dict[Any, str] = {}
             for res in jsc.array(resolver.get("resolutions")):
@@ -1387,7 +1388,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             for group in dc_groups.values():
                 named = [e for e in group if _dc_named(e)]
                 dc_any_named = dc_any_named or len(named) > 0
-                dc_keep.extend(named if (named and len(group) > 1) else group)
+                dc_keep.extend(named if named else (group if len(group) == 1 else []))
             if not dc_any_named:
                 dc_keep = []
             if len(dc_keep) > 0:

@@ -3982,12 +3982,14 @@ def not_found_error_message(
                         else ""
                     )
                     attach_raw = jsc.get(attach_ent, "raw") if jsc.truthy(attach_ent) else None
+                    article = "a "
                     if len(attach_raws) > 1:
                         attach_raw = " or ".join(jsc.js_string(x) for x in attach_raws)
+                        article = ""  # "photo or technical specifications", never "a ... specifications"
                     if jsc.truthy(attach_raw) and prod_text:
-                        subject = f"a {jsc.js_string(attach_raw)} for {prod_text}"
+                        subject = f"{article}{jsc.js_string(attach_raw)} for {prod_text}"
                     elif jsc.truthy(attach_raw):
-                        subject = f"a {jsc.js_string(attach_raw)}"
+                        subject = f"{article}{jsc.js_string(attach_raw)}"
                     elif prod_text:
                         subject = f"attachments for {prod_text}"
                     else:
