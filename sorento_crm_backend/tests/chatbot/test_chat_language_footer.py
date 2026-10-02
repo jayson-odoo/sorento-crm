@@ -87,13 +87,14 @@ def test_item5_an_ms_verdict_plus_an_escalation_offer_does_not_double_the_refer_
 
 
 # --------------------------------------------------------------------------- #
-# Item 6 (S5): only the stock tool is localized in this slice
+# Item 6 (S5): only the catalogued tools are localized
 # --------------------------------------------------------------------------- #
 
 
-def test_item6_a_po_placed_envelope_with_an_ms_localizer_stays_english():
+def test_item6_a_tool_outside_the_localized_set_with_an_ms_localizer_stays_english():
+    """Slice 1 pinned a PO envelope here; slice 2 localizes it, so a still-English tool stands in."""
     envelope = {
-        "result_type": "po_placed",
+        "result_type": "products",
         "intro": "Stock summary for the requested products.",
         "items": [
             {
@@ -108,7 +109,7 @@ def test_item6_a_po_placed_envelope_with_an_ms_localizer_stays_english():
         "has_result": True,
         "last_updated_at": TS,
     }
-    ctx = {"semantic_input": {}, "tool": "crm_procurement_po_placed_list", "localizer": _loc("ms")}
+    ctx = {"semantic_input": {}, "tool": "crm_master_products_list", "localizer": _loc("ms")}
     text = fetch.output_structurer(envelope, ctx)["response"]
     assert "*Product Code:* SRTSWT3001" in text
     assert "*Total:* 51" in text
