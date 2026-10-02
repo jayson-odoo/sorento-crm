@@ -215,11 +215,20 @@ Consequences:
   or NEW to log this as a new idea." A number replies with that idea's link and drops the held
   message; NEW creates from the held original message.
 
-## 4. CRM side of the SS-IDEATION-OWN contract (provisional until ss posts the final one)
+## 4. CRM side of the SS-IDEATION-OWN contract (final: ss PR #111 head 8bcf160, `documentation/ideation/own-ideas-contract.md`; text relayed by crew)
+
+ss trust assumptions and how the CRM meets them:
+
+- One CRM user-id namespace per tenant: `crm_user_id` / `sub` is `users.id` of this install.
+- The `phone` claim must be a VERIFIED number. The CRM sends it only when `users.phone_verified_at`
+  is set (proved by a WhatsApp sign-in code, `phone_signin_service.py:432`; cleared on a number
+  change, `user_service.py:894,923`) AND `normalize_msisdn(users.contact_number)` equals
+  `normalize_msisdn(` the linked contact's `phone_number)` (identity S3's "signs in by WhatsApp
+  code" rule, `user_contact_link.py:126-130`). Otherwise no claim.
 
 - Assertion: `mint_embed_assertion` gains a `phone` claim = `respond_contacts.phone_number` of the
-  contact linked by `users.respond_contact_id`; the claim is absent when the user has no linked
-  contact or the contact has no phone. That is the same value the chatbot sends ss as
+  contact linked by `users.respond_contact_id`, under the verified rule above; the claim is absent
+  when the user has no linked contact, the contact has no phone, or the phone is not verified. That is the same value the chatbot sends ss as
   `submitter_contact_id` (`ideation_turn_service.py:980`), so the join is exact, never by name.
 - Gateway list: `GET /api/v1/ideation/ideas?mine=true` forwards `mine=true` to ss
   `GET /embed/ideas`; any other `mine` value is dropped. `isMine` on each idea is relayed as ss
