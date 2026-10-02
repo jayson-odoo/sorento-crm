@@ -13,6 +13,7 @@ from typing import Any
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
 from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
+from app.services.ledger_family import customer_group_of, customer_header_words
 from app.services.chatbot.turn.pending import (
     ask as pending_ask,
     is_roster,
@@ -755,6 +756,11 @@ def _subject_line(state: State | None, asked_kind: str) -> str:
             for r in rows
             if isinstance(r, dict)
         ]
+        if attr == "customers":
+            words = customer_header_words([(n, customer_group_of(n)) for n in names if n])
+            if words:
+                lines.append(f"{label}: {words}")
+            continue
         subjects = _header_subjects([n for n in names if n])
         if subjects:
             lines.append(f"{label}: {', '.join(subjects)}")

@@ -37,7 +37,7 @@ from functools import cmp_to_key
 from typing import Any
 
 from app.services.chatbot import jsc
-from app.services.ledger_family import customer_group_of, ledger_family_key
+from app.services.ledger_family import apart_from_group, customer_group_of, ledger_family_key
 
 # PLAN-chatbot-answer-half-reattach.md "Roster cap" (owner ruling 20 Sep 2026):
 # `roster_caps=None` (the parameter never supplied at all) means the CALLER predates
@@ -353,7 +353,8 @@ def _cust_base(match: Any) -> str:
     base = _BRACKET_OR_PAREN.sub(" ", base)
     base = _LEGAL_FORM.sub(" ", base)
     base = _NON_ALNUM_UPPER.sub(" ", base)
-    return base.strip()
+    # An ungrouped row beside a group of the same key: apart or joined, by the ONE switch.
+    return apart_from_group(base.strip())
 
 
 def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting it hides the order

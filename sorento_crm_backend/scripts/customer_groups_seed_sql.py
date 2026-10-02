@@ -6,6 +6,12 @@ SELECT from DATABASE_URL and writes nothing; the output is what gets reviewed an
 
     venv/bin/python scripts/customer_groups_seed_sql.py > customer-groups-seed.sql
 
+    venv/bin/python scripts/customer_groups_seed_sql.py --renames > customer-groups-renames.sql
+
+`--renames` prints, for a group seeded under the OLD naming rule (the label of its lead member,
+every bracketed run dropped) whose name is still that, an UPDATE to the shared-bracket name.
+A group the office renamed no longer equals the old name and is left alone. Read-only SELECTs.
+
 Re-running the output is a no-op: a group is inserted only when its (company, lower(name))
 is absent, and members are pointed at it only while they have no group.
 """
@@ -34,8 +40,52 @@ def _load_plan():
     return module.plan_groups
 
 
+def renames(connection) -> list[tuple[str, str, str]]:
+    """`[(group id, old name, new name)]` for groups still carrying the old seed name."""
+    from app.services.ledger_family import ledger_family_label, shared_bracket_label
+
+    members: dict[str, list] = {}
+    names: dict[str, str] = {}
+    for gid, gname, cname, level, code in connection.execute(
+        sa.text(
+            "SELECT g.id, g.name, c.customer_name, c.account_level, c.customer_code "
+            "FROM customer_groups g JOIN customers c ON c.customer_group_id = g.id "
+            "WHERE c.customer_name IS NOT NULL"
+        )
+    ).fetchall():
+        names[str(gid)] = gname
+        members.setdefault(str(gid), []).append((level if level is not None else 1 << 30, code or "", cname))
+    out = []
+    for gid, rows in members.items():
+        rows.sort(key=lambda r: (r[0], r[1]))
+        old = ledger_family_label(rows[0][2])
+        new = shared_bracket_label([r[2] for r in rows])
+        if names[gid] == old and new != old:
+            out.append((gid, old, new))
+    return sorted(out, key=lambda r: r[2].lower())
+
+
+def print_renames() -> None:
+    engine = sa.create_engine(os.environ["DATABASE_URL"])
+    with engine.connect() as connection:
+        plan = renames(connection)
+    print("-- CUSTOMER-GROUP renames: %d groups. Idempotent (guarded by the old name)." % len(plan))
+    print("BEGIN;")
+    for gid, old, new in plan:
+        o, n, g = _quote(old), _quote(new), _quote(gid)
+        print(
+            f"UPDATE customer_groups SET name = {n}, updated_at = now() WHERE id = {g}::uuid AND name = {o} "
+            "AND NOT EXISTS (SELECT 1 FROM customer_groups x WHERE x.company_id = customer_groups.company_id "
+            f"AND lower(x.name) = lower({n}) AND x.id <> customer_groups.id);"
+        )
+    print("COMMIT;")
+
+
 def main() -> None:
     sys.path.insert(0, str(ROOT))
+    if "--renames" in sys.argv[1:]:
+        print_renames()
+        return
     engine = sa.create_engine(os.environ["DATABASE_URL"])
     with engine.connect() as connection:
         rows = connection.execute(

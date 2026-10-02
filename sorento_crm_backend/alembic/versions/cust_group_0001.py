@@ -32,7 +32,7 @@ def plan_groups(rows) -> list[tuple[str, str, list[str]]]:
     `rows` are `(id, company_id, customer_code, customer_name, account_level,
     customer_group_id)`. Pure (no DB), so `scripts/customer_groups_seed_sql.py` can print
     the same plan as SQL."""
-    from app.services.ledger_family import ledger_family_key, ledger_family_label
+    from app.services.ledger_family import ledger_family_key, shared_bracket_label
 
     families: dict[tuple[str, str], list] = {}
     for row in rows:
@@ -48,7 +48,7 @@ def plan_groups(rows) -> list[tuple[str, str, list[str]]]:
         if any(m[5] is not None for m in members):
             continue
         lead = min(members, key=lambda m: (m[4] if m[4] is not None else 1 << 30, m[2]))
-        plan.append((company_id, ledger_family_label(lead[3]), [str(m[0]) for m in members]))
+        plan.append((company_id, shared_bracket_label([lead[3]] + [m[3] for m in members]), [str(m[0]) for m in members]))
     return plan
 
 

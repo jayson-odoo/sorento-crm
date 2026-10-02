@@ -14,7 +14,7 @@ package, which imports it, may not call `re` (AC-1520), and the rule was born th
 """
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -59,8 +59,8 @@ class _TurnGroups:
         self.by_name = {normalise_customer_name(k): v for k, v in mapping.items()}
         #: normalised group name -> group name (a group is its own customer)
         self.own = {normalise_customer_name(v): v for v in mapping.values()}
-        #: the comparison keys the groups answer with
-        self.keys = {_words(v) for v in mapping.values()}
+        #: the comparison keys the groups answer with -> the group's name
+        self.keys = {_words(v): v for v in mapping.values()}
 
 
 _GROUPS: ContextVar[_TurnGroups | None] = ContextVar("ledger_family_groups", default=None)
@@ -69,6 +69,21 @@ _GROUPS: ContextVar[_TurnGroups | None] = ContextVar("ledger_family_groups", def
 #: `JUBIN BMS (NS)` (no group) stays apart from the `JUBIN BMS SDN BHD` group it used to be
 #: merged into. No name rule can produce it.
 _UNGROUPED = " (NO GROUP)"
+
+#: Owner ruling pending (2 Oct 2026). Does an UNGROUPED ledger whose name-rule key equals a
+#: group's key (`JUBIN BMS (NS) SDN BHD` beside the `JUBIN BMS SDN BHD` group) JOIN that group
+#: (True) or stay a separate customer (False, today's behaviour)? The ONE switch: the header
+#: formatter, `ledger_family_key` and `gate._cust_base` all read it, so flipping it is this line.
+UNGROUPED_JOINS_NAME_MATCHED_GROUP = False
+
+
+def apart_from_group(key: str) -> str:
+    """`key` (an UNGROUPED row's name-rule key) as the turn compares it: kept apart from a
+    group of the turn with the same key unless `UNGROUPED_JOINS_NAME_MATCHED_GROUP`."""
+    groups = _GROUPS.get()
+    if not UNGROUPED_JOINS_NAME_MATCHED_GROUP and groups is not None and key in groups.keys:
+        return key + _UNGROUPED
+    return key
 
 
 @contextmanager
@@ -144,11 +159,7 @@ def ledger_family_key(text: str) -> str:
     group = customer_group_of(text)
     if group is not None:
         return _words(group)
-    key = _words(_without_brackets(text.upper()))
-    groups = _GROUPS.get()
-    if groups is not None and key in groups.keys:
-        return key + _UNGROUPED
-    return key
+    return apart_from_group(_words(_without_brackets(text.upper())))
 
 
 def ledger_family_label(text: str) -> str:
@@ -158,11 +169,87 @@ def ledger_family_label(text: str) -> str:
     if group is not None:
         return group
     groups = _GROUPS.get()
-    if groups is not None and _words(_without_brackets(text.upper())) in groups.keys:
+    name_key = _words(_without_brackets(text.upper()))
+    if groups is not None and name_key in groups.keys:
+        if UNGROUPED_JOINS_NAME_MATCHED_GROUP:
+            return groups.keys[name_key]
         # An ungrouped row sharing a group's key keeps its own parentheticals, so its line
         # reads `JUBIN BMS (NS) SDN BHD` beside the group's, not as the group's twin.
         return _without_marker(text).strip().strip("-").strip() or text
     return _label_without_marker(text)
+
+
+def _bracket_runs(text: str) -> list[str]:
+    """The top-level bracketed or parenthesised runs of `text`, each whole, upper-cased."""
+    runs: list[str] = []
+    depth = 0
+    cur: list[str] = []
+    for ch in text:
+        if ch in "[(":
+            if depth == 0:
+                cur = []
+            depth += 1
+        if depth:
+            cur.append(ch)
+        if ch in "])" and depth:
+            depth -= 1
+            if depth == 0:
+                runs.append(" ".join("".join(cur).upper().split()))
+    return runs
+
+
+def shared_bracket_label(names: Sequence[str]) -> str:
+    """The name several ledgers of one family share: the first name with every bracketed run
+    dropped EXCEPT those every name carries (`(SENTUL)`, `(M)`); a run only some carry
+    (`(CERAMIC & ELLECI)`) or an `[A/C n]` account marker is a ledger's, not the company's name."""
+    names = [n for n in names if n]
+    if not names:
+        return ""
+    shared = set(_bracket_runs(names[0]))
+    for name in names[1:]:
+        shared &= set(_bracket_runs(name))
+    # An account marker is the ledger's, never the company's name, even when all share it.
+    shared = {r for r in shared if _marker_level(r[1:-1].strip()) is None}
+    out: list[str] = []
+    depth = 0
+    run: list[str] = []
+    for ch in names[0]:
+        if ch in "[(":
+            if depth == 0:
+                run = []
+            depth += 1
+        if depth:
+            run.append(ch)
+            if ch in "])":
+                depth -= 1
+                if depth == 0:
+                    text = "".join(run)
+                    if " ".join(text.upper().split()) in shared:
+                        out.append(text)
+            continue
+        out.append(ch)
+    cleaned = " ".join("".join(out).split()).strip().strip("-").strip()
+    return cleaned or names[0]
+
+
+def customer_header_words(entries: Iterable[tuple[str, str | None]]) -> str:
+    """The words a `Customer:` line prints for `entries` = `(customer name, group name or None)`.
+
+    A ledger joins a company line ONLY through its explicit customer group (owner ruling (b),
+    2 Oct 2026: no automatic name-rule joining). One word per group (its name), one per
+    ungrouped ledger (its own full name); first-seen order, identical words once, no count,
+    none dropped. An ungrouped ledger whose name-rule key is a group's key (in these entries)
+    prints as that group only under `UNGROUPED_JOINS_NAME_MATCHED_GROUP`."""
+    pairs = [(str(n).strip(), g) for n, g in entries if n and str(n).strip()]
+    groups = {_words(g): g for _n, g in pairs if g}
+    words: list[str] = []
+    for name, group in pairs:
+        if not group and UNGROUPED_JOINS_NAME_MATCHED_GROUP:
+            group = groups.get(_words(_without_brackets(name.upper())))
+        word = group or name
+        if word not in words:
+            words.append(word)
+    return ", ".join(words)
 
 
 _ROMAN = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10}
