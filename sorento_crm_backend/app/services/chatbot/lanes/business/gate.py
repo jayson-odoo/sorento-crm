@@ -371,6 +371,55 @@ def _expanded_sets(matches: list[Any]) -> list[dict[str, Any]]:
     return list(out.values())
 
 
+def _norm_code(value: Any) -> str:
+    return "".join(jsc.js_string(value or "").split()).lower()
+
+
+def _prefix_products(matches: list[Any], parser: dict[str, Any]) -> list[dict[str, Any]]:
+    """Products a typed code reached WITHOUT being that product's own code ("SRTWC8608"
+    -> SRTWC8608-SC), each with the code the customer typed: owner Q3 (2 Oct 2026)
+    answers a base code with the sets those products belong to. A code typed in full is
+    never listed here.
+
+    Read off the codes, not `match_tier`: an AND-mode resolve (a single-token stock ask)
+    rewrites every tier to "and", so the tier no longer says prefix. Whatever reached
+    the product, it only decides whether the line or pick is OFFERED - which sets come
+    back is `product_set_members`, never this comparison. `matches` is the gate's own
+    flattened list (OR `resolutions` + AND `intersection` / `by_entity_type`)."""
+    typed = [
+        jsc.js_string(jsc.get(e, "raw") or "").strip()
+        for e in jsc.array(parser.get("entities"))
+        if jsc.lower_or_empty(jsc.get(e, "hint")) == "product" and jsc.truthy(jsc.get(e, "raw"))
+    ]
+    # A token that IS some matched product's own code is not a base code, even when the
+    # same token also reached its longer siblings ("…-SC" also pulls in "…-SC-UF").
+    matched_codes = {
+        _norm_code(jsc.get(m, "canonical_code"))
+        for m in matches
+        if jsc.get(m, "entity_type") == "product"
+    }
+    typed = [t for t in typed if _norm_code(t) not in matched_codes]
+    exact = {_norm_code(t) for t in typed}
+    out: dict[str, dict[str, Any]] = {}
+    for m in matches:
+        uuid = jsc.get(m, "uuid")
+        code = jsc.get(m, "canonical_code")
+        norm = _norm_code(code)
+        if (
+            jsc.get(m, "entity_type") != "product"
+            or not jsc.truthy(uuid)
+            or uuid in out
+            or not norm
+            or norm in exact
+        ):
+            continue
+        token = next((t for t in typed if _norm_code(t) and _norm_code(t) in norm), None)
+        if token is None:
+            continue
+        out[uuid] = {"token": token, "uuid": uuid, "code": code}
+    return list(out.values())
+
+
 def _display_name(match: Any) -> str | None:
     """The resolver's own human label for this record, or `None` when it gave none.
 
@@ -448,8 +497,10 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     flat.extend(_flatten_by_entity_type(resolver.get("by_entity_type")))
 
     product_sets: list[dict[str, Any]] = []
+    prefix_products: list[dict[str, Any]] = []
     if domain in SET_EXPANDING_DOMAINS:
         product_sets = _expanded_sets(flat)
+        prefix_products = _prefix_products(flat, parser)
         flat = [x for m in flat for x in _expand_product_set(m)]
 
     by_uuid: dict[Any, dict[str, Any]] = {}
@@ -1811,6 +1862,8 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     # exactly the keys it has today. Read by `run_fetch` for the full-access set header.
     if product_sets:
         out["product_sets"] = product_sets
+    if prefix_products:
+        out["prefix_products"] = prefix_products
     if cust_probe_entities and len(cust_probe_entities) > 0:
         out["customer_probe_entities"] = cust_probe_entities
     if cust_families and len(cust_families) > 0:

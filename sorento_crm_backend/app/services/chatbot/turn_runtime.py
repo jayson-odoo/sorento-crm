@@ -4011,6 +4011,8 @@ def envelope_of(
             fetched.get("outstanding_ask")
             or fetched.get("forms_ask")
             or fetched.get("alternatives_ask")
+            # COMBO-STOCK slice 3: a dealer's base-code ask offers the sets it is part of.
+            or fetched.get("set_ask")
         ),
         # AC-1139: this reply already states the scope it searched, in its own words
         # and its own order (the report's four header lines, and the same four above

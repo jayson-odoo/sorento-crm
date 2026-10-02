@@ -1972,6 +1972,26 @@ def run_fetch(
     ]
     if set_headers and isinstance(structured.get("response"), str):
         structured["response"] = "\n\n".join([*set_headers, structured["response"]])
+    # COMBO-STOCK slice 3 (owner Q3): a BASE code that reached set members by prefix.
+    # Full access keeps its lines and adds which sets each is part of; a dealer's
+    # availability answer is replaced by a pick of those sets, and its own rows are
+    # dropped so no product pick or quantity ask is armed beside it.
+    prefix_products = [p for p in jsc.array(gate.get("prefix_products")) if isinstance(p, dict)]
+    result_type = jsc.js_string((envelope or {}).get("result_type") or "") if isinstance(envelope, dict) else ""
+    if prefix_products and isinstance(structured.get("response"), str):
+        containing = set_stock_mod.sets_containing(db, [str(p.get("uuid")) for p in prefix_products])
+        if result_type == "stock_availability":
+            picked = set_stock_mod.set_pick(jsc.js_string(prefix_products[0].get("token") or ""), containing)
+            if picked is not None:
+                structured["response"], structured["set_ask"] = picked
+                structured["stock_availability"] = []
+                structured["answers"] = []
+        elif result_type in ("stock", "stock_compact"):
+            lines = set_stock_mod.part_of_set_lines(prefix_products, containing)
+            if lines:
+                structured["response"] = set_stock_mod.above_footer(
+                    structured["response"], "\n".join(lines)
+                )
     if trace is not None:
         restricted = envelope.get("restricted_fields") if isinstance(envelope, dict) else None
         if isinstance(restricted, dict) and restricted:

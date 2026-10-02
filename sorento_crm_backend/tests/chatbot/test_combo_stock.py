@@ -436,6 +436,13 @@ class TestSetHeaderUnit:
         }
         assert set_stock.set_header(product_set, _availability(["A"])) is None
 
+    def test_part_of_lines_sit_above_the_freshness_footer(self) -> None:
+        from app.services.chatbot.lanes.business import set_stock
+
+        out = set_stock.above_footer("Stock summary.\n\n1. A\n\n_Data last updated: 02/10/2026_", "A is part of set(s) S")
+        assert out == "Stock summary.\n\n1. A\n\nA is part of set(s) S\n\n_Data last updated: 02/10/2026_", out
+        assert set_stock.above_footer("Stock summary.", "X") == "Stock summary.\n\nX"
+
     def test_fractional_quantity_floors(self) -> None:
         from app.services.chatbot.lanes.business import set_stock
 
@@ -450,3 +457,210 @@ class TestSetHeaderUnit:
         header = set_stock.set_header(product_set, envelope)
         assert "B x1.5" in header, header
         assert "Complete sets: 6 (limited by B)" in header, header
+
+
+# --------------------------------------------------------------------------- #
+# Slice 3: a BASE code ("SRTWC8608", no set carries it) that prefix-matched member
+# products (owner Q3, 2 Oct 2026).
+# --------------------------------------------------------------------------- #
+
+
+def _session_vars(session_factory) -> dict[str, Any]:
+    from sqlalchemy import text
+
+    from tests.chatbot.test_rearch_r12_handpass12 import CONTACT_ID
+
+    db = session_factory()
+    try:
+        row = db.execute(
+            text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :cid"),
+            {"cid": str(CONTACT_ID)},
+        ).first()
+    finally:
+        db.close()
+    raw = row.session_vars if row is not None else {}
+    return json.loads(raw) if isinstance(raw, str) else (raw or {})
+
+
+def _add_set(session_factory, set_code: str, member_ids: list[str]) -> None:
+    db = session_factory()
+    try:
+        product_set = ProductSet(
+            set_code=set_code, name=f"ZZT {set_code}", company_id=DEFAULT_COMPANY_ID
+        )
+        db.add(product_set)
+        db.flush()
+        for position, member_id in enumerate(member_ids):
+            db.add(
+                ProductSetMember(
+                    product_set_id=product_set.id,
+                    product_id=member_id,
+                    quantity=1,
+                    sort_order=position,
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+
+
+def _seed_family(session_factory) -> dict[str, Any]:
+    """The SRTWC8608 shape, measured on dev 2 Oct: the base code is a prefix of the
+    seat cover (in several sets) and of the -UF seat cover; the pedestal and cistern
+    are named differently (X / Y) and are reached ONLY through the set links."""
+    tag = unique_code("", alpha=True)[-6:].upper()
+    base = f"ZZB{tag}8608"
+    codes = {
+        "sc": f"{base}-SC",
+        "sc_uf": f"{base}-SC-UF",
+        "ped": f"ZZX{tag}8608-RL",
+        "cis": f"ZZY{tag}8608",
+        "lonely": f"{base}-ZZ",
+    }
+    ids = {
+        key: str(_seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=code))
+        for key, code in codes.items()
+    }
+    sets = {"rl": f"ZZS{tag}8608-RL", "prl": f"ZZS{tag}8608-P-RL", "uf": f"ZZS{tag}8608-S-RL-UF"}
+    _add_set(session_factory, sets["rl"], [ids["ped"], ids["cis"], ids["sc"]])
+    _add_set(session_factory, sets["prl"], [ids["cis"], ids["sc"]])
+    _add_set(session_factory, sets["uf"], [ids["cis"], ids["sc_uf"]])
+    return {"base": base, "codes": codes, "ids": ids, "sets": sets}
+
+
+def _compact_codes(codes: list[str]) -> dict[str, Any]:
+    return _compact({str(i): (5, {"BRW": 5}) for i in range(len(codes))})(codes)
+
+
+def _ask_base(session_factory, monkeypatch, family, *, envelope, msg_id: str):
+    def _call(name: str, args: dict[str, Any]) -> str:
+        if name == STOCK_TOOL:
+            # Whatever products the call named, in a stable order.
+            by_id = {v: family["codes"][k] for k, v in family["ids"].items()}
+            codes = [by_id[p] for p in sorted(_product_ids(args)) if p in by_id]
+            return json.dumps(envelope(codes))
+        return _unknown_envelope()
+
+    mcp_call, calls = _mcp_double(other=_call)
+    result = _run_turn_engine(
+        session_factory,
+        monkeypatch,
+        qf=_stock_ask(family["base"]),
+        text_body=f"chck stock {family['base']}",
+        msg_id=msg_id,
+        mcp_call=mcp_call,
+    )
+    assert result.status == "done", result.error
+    return result, calls
+
+
+class TestBaseCodeFullAccess:
+    def test_each_member_line_says_which_sets_it_is_part_of(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_contact_and_get(session_factory)
+        family = _seed_family(session_factory)
+        result, _calls = _ask_base(
+            session_factory, monkeypatch, family, envelope=_compact_codes, msg_id="zzt-combo-base-full"
+        )
+        said = _said(result)
+        sets = family["sets"]
+        codes = family["codes"]
+        assert (
+            f"{codes['sc']} is part of set(s) {sets['prl']}, {sets['rl']} - "
+            "ask for the set code to see full-set stock."
+        ) in said, said
+        assert (
+            f"{codes['sc_uf']} is part of set(s) {sets['uf']} - "
+            "ask for the set code to see full-set stock."
+        ) in said, said
+        # A product in no set gets no line; the pedestal was never in the answer.
+        assert f"{codes['lonely']} is part of" not in said, said
+        assert codes["ped"] not in said, said
+
+    def test_an_exact_code_gets_no_part_of_set_line(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Q3 is the BASE code. A code typed in full is answered as today."""
+        _seed_contact_and_get(session_factory)
+        family = _seed_family(session_factory)
+
+        def _call(name: str, args: dict[str, Any]) -> str:
+            if name == STOCK_TOOL:
+                return json.dumps(_compact_codes([family["codes"]["sc"]]))
+            return _unknown_envelope()
+
+        mcp_call, _calls = _mcp_double(other=_call)
+        result = _run_turn_engine(
+            session_factory,
+            monkeypatch,
+            qf=_stock_ask(family["codes"]["sc"]),
+            text_body=f"chck stock {family['codes']['sc']}",
+            msg_id="zzt-combo-exact",
+            mcp_call=mcp_call,
+        )
+        assert "is part of set(s)" not in _said(result), _said(result)
+
+
+class TestBaseCodeDealer:
+    def test_a_dealer_is_offered_the_sets_as_a_pick(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_contact_and_get(session_factory)
+        family = _seed_family(session_factory)
+        result, _calls = _ask_base(
+            session_factory, monkeypatch, family, envelope=_availability, msg_id="zzt-combo-base-dealer"
+        )
+        said = _said(result)
+        sets = family["sets"]
+        expected = sorted(sets.values())
+        for position, code in enumerate(expected, start=1):
+            assert f"{position}. {code}" in said, said
+        # No member stock line and no number of ours beside the pick.
+        assert "yes, we have stock" not in said, said
+
+        question = _session_vars(session_factory).get("open_question") or {}
+        assert question.get("kind") == "product_pick", question
+        options = question.get("options") or []
+        assert [o.get("code") for o in options] == expected, options
+        rl = next(o for o in options if o.get("code") == sets["rl"])
+        ids = family["ids"]
+        assert sorted(rl.get("uuids") or []) == sorted([ids["ped"], ids["cis"], ids["sc"]]), rl
+
+    def test_picking_a_set_answers_over_that_sets_members(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_contact_and_get(session_factory)
+        family = _seed_family(session_factory)
+        _ask_base(
+            session_factory, monkeypatch, family, envelope=_availability, msg_id="zzt-combo-pick-1"
+        )
+        expected = sorted(family["sets"].values())
+        position = expected.index(family["sets"]["rl"]) + 1
+
+        def _call(name: str, args: dict[str, Any]) -> str:
+            if name == STOCK_TOOL:
+                return json.dumps(_availability(["X"]))
+            return _unknown_envelope()
+
+        mcp_call, calls = _mcp_double(other=_call)
+        result = _run_turn_engine(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
+                reference_positions=[position],
+                order_status=None,
+            ),
+            text_body=str(position),
+            msg_id="zzt-combo-pick-2",
+            mcp_call=mcp_call,
+        )
+        assert result.status == "done", result.error
+        stock_calls = [args for name, args in calls if name == STOCK_TOOL]
+        assert stock_calls, f"the pick must run the stock ask: {calls!r}"
+        ids = family["ids"]
+        assert _product_ids(stock_calls[-1]) == {ids["ped"], ids["cis"], ids["sc"]}, stock_calls

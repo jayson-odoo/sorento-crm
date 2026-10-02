@@ -14,12 +14,17 @@ Full access only. An `availability` envelope (a dealer) has no numbers by design
 (`sorento_crm_mcp.presenters._stock_availability`) and gets no header at all - a set
 count is a quantity of ours, which that mode exists never to reveal.
 
-Pure: no I/O.
+Slice 3 (owner Q3): a BASE code ("SRTWC8608") that reached member products by prefix.
+Full access keeps today's lines and adds which sets each product is part of; a dealer
+is offered those sets as a pick instead. Membership is read off `product_set_members`
+(`sets_containing`, the one ORM read here), never guessed from the code.
 """
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 from typing import Any
+
+from app.services.chatbot.turn.task import numbered
 
 #: The envelopes that carry numbers this header may restate: `detailed` (one row per
 #: product and location) and `compact` (one item per product, Total + locations).
@@ -147,3 +152,91 @@ def set_header(product_set: dict[str, Any], envelope: Any) -> str | None:
     if by_location:
         lines.append(f"By location: {', '.join(by_location)}")
     return "\n".join(lines)
+
+
+def sets_containing(db: Any, product_ids: list[str]) -> list[dict[str, Any]]:
+    """Every active set carrying any of `product_ids`, ordered by set code:
+    `{set_code, product_ids (the asked ones it carries), member_ids (all of its)}`.
+
+    ORM only: `ProductSet` carries `CompanyScopedMixin`, so the `do_orm_execute`
+    listener scopes this to the caller's company, and its members are read only
+    THROUGH a visible set (the same rule `entity_resolver._probe_product_set` keeps)."""
+    if db is None or not product_ids:
+        return []
+    from app.models.product_set import ProductSet, ProductSetMember
+
+    asked = {str(p) for p in product_ids}
+    hits = (
+        db.query(ProductSet.id, ProductSet.set_code, ProductSetMember.product_id)
+        .join(ProductSetMember, ProductSetMember.product_set_id == ProductSet.id)
+        .filter(ProductSetMember.product_id.in_(list(asked)), ProductSet.is_active.is_(True))
+        .all()
+    )
+    by_set: dict[str, dict[str, Any]] = {}
+    for set_id, set_code, product_id in hits:
+        row = by_set.setdefault(
+            str(set_id), {"set_id": str(set_id), "set_code": set_code, "product_ids": []}
+        )
+        row["product_ids"].append(str(product_id))
+    for set_id, row in by_set.items():
+        row["member_ids"] = [
+            str(member_id)
+            for (member_id,) in db.query(ProductSetMember.product_id)
+            .filter(ProductSetMember.product_set_id == set_id)
+            .order_by(ProductSetMember.sort_order)
+            .all()
+        ]
+    return sorted(by_set.values(), key=lambda r: str(r["set_code"]))
+
+
+def part_of_set_lines(prefix_products: list[dict[str, Any]], sets: list[dict[str, Any]]) -> list[str]:
+    """Full access (Q3a): one line per prefix-matched product that is in at least one
+    set, in the order the products were matched."""
+    lines: list[str] = []
+    seen: set[str] = set()
+    for product in prefix_products:
+        uuid = str(product.get("uuid") or "")
+        if not uuid or uuid in seen:
+            continue
+        seen.add(uuid)
+        codes = [str(s["set_code"]) for s in sets if uuid in s.get("product_ids", [])]
+        if codes:
+            lines.append(
+                f"{product.get('code')} is part of set(s) {', '.join(codes)} - "
+                "ask for the set code to see full-set stock."
+            )
+    return lines
+
+
+#: `fetch.output_structurer`'s closing line ("_Data last updated: <ts>_"): it stays last.
+_FOOTER_PREFIX = "_Data last updated:"
+
+
+def above_footer(response: str, block: str) -> str:
+    """`block` appended to `response`, kept above the data-freshness footer when the
+    reply ends with one - the same placement the counted-set lines use."""
+    body = response.rstrip()
+    head, sep, last = body.rpartition("\n")
+    if last.strip().startswith(_FOOTER_PREFIX):
+        return f"{head.rstrip()}\n\n{block}\n\n{last.strip()}" if sep else f"{block}\n\n{last.strip()}"
+    return f"{body}\n\n{block}"
+
+
+def set_pick(typed: str, sets: list[dict[str, Any]]) -> tuple[str, dict[str, Any]] | None:
+    """Dealer (Q3, availability access): the sets as a numbered pick, and the
+    `lane_ask` that arms it (`turn/compose.py::_lane_question`, kind `set_pick`). Each
+    row carries the set's members, which a pick answers over exactly like a set code."""
+    rows = [s for s in sets if s.get("member_ids")]
+    if not rows:
+        return None
+    labels = [str(s["set_code"]) for s in rows]
+    head = f"{typed} is part of {len(labels)} sets. Which one?" if len(labels) > 1 else f"{typed} is part of set {labels[0]}. Check it?"
+    ask = {
+        "kind": "set_pick",
+        "last_result_set": [
+            {"idx": i, "label": s["set_code"], "value": s["set_code"], "uuids": list(s["member_ids"])}
+            for i, s in enumerate(rows, start=1)
+        ],
+        "filters": {},
+    }
+    return "\n".join([head, *numbered(labels)]), ask

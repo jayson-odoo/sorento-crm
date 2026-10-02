@@ -197,6 +197,30 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
             continue
         rows = [r for r in (ask.get("last_result_set") or []) if isinstance(r, dict)]
         kind = str(ask.get("kind"))
+        if kind == "set_pick":
+            # COMBO-STOCK slice 3 (owner Q3, dealer): a product pick whose option carries
+            # the set's MEMBERS (`uuids`), so answering it runs the stock ask over them -
+            # the same entities a typed set code reaches (`gate._expand_product_set`).
+            # `stock_pick` keeps the dealer's own pick rules (a "no" refers the salesman).
+            options = [
+                {
+                    "position": int(row.get("idx") or i + 1),
+                    "label": row.get("label"),
+                    "code": row.get("value"),
+                    "uuids": [str(u) for u in (row.get("uuids") or []) if u],
+                    "entity_type": "product",
+                }
+                for i, row in enumerate(rows)
+                if row.get("uuids")
+            ]
+            if options:
+                return pending_ask(
+                    "product_pick",
+                    options,
+                    asked_at_turn=turn_no,
+                    payload={"domain": "inventory", "domains": ["inventory"], "stock_pick": True},
+                )
+            continue
         if kind == "top_selling_pick":
             # PLAN-chatbot-top-x-hot-selling-24sep.md S4: the ranked list's own roster
             # builder (`turn/pending.top_selling_pick`, S1): options carry the printed
