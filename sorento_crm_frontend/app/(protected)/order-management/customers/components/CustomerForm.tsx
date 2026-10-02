@@ -250,6 +250,8 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
                           value={field.value || ''}
                           onChange={(v) => field.onChange(v || null)}
                           options={agentSelectOptions}
+                          loadError={agentOptions.error}
+                          onRetry={() => void agentOptions.refetch()}
                           placeholder="No sales agent"
                           clearable
                         />
