@@ -7,9 +7,12 @@ When a shipping order (`spo_number`) carries AutoCount lines (`source_ref` set),
 AutoCount is the truth for it (owner ruling, 1 Oct 2026). The Excel-era rows
 (no `source_ref`, `source_system` NULL or `scm_upload`, no `po_line_id`) are:
 
-1. SUPERSEDED where AutoCount lists the same goods - same product at the same
-   warehouse / location, or (no warehouse on the Excel row) the same product
-   with exactly equal ordered totals. Their receipt is carried onto the
+1. SUPERSEDED where AutoCount lists the same product on the SPO: first at the
+   same warehouse / location; otherwise, at ANY warehouse (owner ruling after
+   #1411, e.g. Excel at BRW, AutoCount at BRW-NTC) or for an Excel row with no
+   warehouse, onto that product's remaining AutoCount lines, as long as those
+   lines can hold the receipt the Excel rows already carry (else "received
+   locked"). AutoCount's quantities win. Their receipt is carried onto the
    AutoCount lines (each line up to its own quantity, the rest on the last,
    never lowering what a line already states), their GRN picks move onto those
    lines (split by capacity, same warehouse first, when the lines sit at
@@ -20,9 +23,8 @@ AutoCount is the truth for it (owner ruling, 1 Oct 2026). The Excel-era rows
    only when received is 0 and no GRN pick, order-link claim or order-inquiry
    link (any company) points at them. Otherwise they are left untouched and
    reported ORPHAN-BLOCKED with the counts. No product substitution is guessed.
-3. KEPT, and reported, in every other case: the product is listed but the
-   quantities do not reconcile, or the AutoCount lines could not hold the
-   receipt the Excel rows already carry ("received locked").
+3. KEPT, and reported, in every other case: the AutoCount lines could not
+   hold the receipt the Excel rows already carry ("received locked").
 
 Only the newest AutoCount document version (DocKey) on the number is used; rows
 of an older DocKey are reported and never touched.
@@ -277,6 +279,7 @@ def plan_spo(excel_rows: list, lines: list) -> Plan:
 
     claimed: set = set()
     kept_groups = []
+    keyed_locked = []
     for key in sorted(rows_by_key, key=lambda k: (0 if (k[1] or "").startswith("wh:") else 1, str(k[0]), str(k[1]))):
         group_rows = rows_by_key[key]
         indexes = [i for i in lines_by_key.get(key, ()) if i not in claimed]
@@ -285,37 +288,45 @@ def plan_spo(excel_rows: list, lines: list) -> Plan:
             continue
         received = sum(_i(r["quantity_received"]) for r in group_rows)
         allocated = sum(_i(r["allocated_quantity"]) for r in group_rows)
-        if sum(_i(lines[i]["allocated_quantity"]) for i in indexes) < min(received, allocated):
-            plan.kept.extend((r, "received locked (AutoCount lines too small for the receipt)") for r in group_rows)
-            claimed.update(indexes)
-            continue
         claimed.update(indexes)
+        if sum(_i(lines[i]["allocated_quantity"]) for i in indexes) < min(received, allocated):
+            keyed_locked.append((key, group_rows))
+            continue
         plan.groups.append(Group(group_rows, [lines[i] for i in indexes], split=False))
 
-    listed = {str(line["product_id"]) for line in lines if line["product_id"]}
-    fallback: dict = {}
+    # Follow AutoCount (owner rulings, D37): a product with ANY Excel row the
+    # keyed pass could not settle - no line at its warehouse, no warehouse, a
+    # same-warehouse line too small for its receipt, or a sibling group that
+    # took every line - is planned as ONE pool: all its Excel rows against all
+    # its AutoCount lines, superseded when the lines can hold the receipt the
+    # rows carry, else received locked. A product AutoCount does not list at
+    # all is an orphan. A product the keyed pass settled keeps that result.
+    lines_by_product: dict = {}
+    for index, line in enumerate(lines):
+        if line["product_id"]:
+            lines_by_product.setdefault(str(line["product_id"]), []).append(index)
+    unsettled = {key[0] for key, _ in (*kept_groups, *keyed_locked) if key[0]}
+    pooled = {product for product in unsettled if product in lines_by_product}
+    plan.groups = [g for g in plan.groups if str(g.rows[0]["product_id"]) not in pooled]
     for key, group_rows in kept_groups:
-        if key[0] and not (key[1] or "").startswith("wh:") and key[0] in listed:
-            fallback.setdefault(key[0], []).extend(group_rows)
-        else:
-            for row in group_rows:
-                if str(row["product_id"]) not in listed:
-                    plan.orphans.append(row)
-                else:
-                    plan.kept.append((row, "product listed by AutoCount at another warehouse"))
-    for product, group_rows in fallback.items():
-        indexes = [i for i, line in enumerate(lines) if i not in claimed and str(line["product_id"]) == product]
+        if key[0] not in pooled:
+            plan.orphans.extend(group_rows)
+    for key, group_rows in keyed_locked:
+        if key[0] not in pooled:
+            plan.kept.extend((r, "received locked (AutoCount lines too small for the receipt)") for r in group_rows)
+    for product in sorted(pooled):
+        group_rows = [r for r in rows if str(r["product_id"]) == product]
+        indexes = lines_by_product[product]
         rows_total = sum(_i(r["allocated_quantity"]) for r in group_rows)
+        rows_received = sum(_i(r["quantity_received"]) for r in group_rows)
         lines_total = sum(_i(lines[i]["allocated_quantity"]) for i in indexes)
-        if indexes and rows_total == lines_total:
-            claimed.update(indexes)
-            group_rows.sort(key=lambda r: (r["spo_line_number"] if r["spo_line_number"] is not None else 10**9, str(r["id"])))
-            plan.groups.append(Group(group_rows, [lines[i] for i in indexes], split=True))
-        else:
+        if lines_total < min(rows_received, rows_total):
             plan.kept.extend(
-                (r, f"quantities do not reconcile (Excel {rows_total} vs AutoCount {lines_total})")
+                (r, f"received locked (AutoCount lines {lines_total} cannot hold the {rows_received} received)")
                 for r in group_rows
             )
+        else:
+            plan.groups.append(Group(group_rows, [lines[i] for i in indexes], split=True))
     return plan
 
 
