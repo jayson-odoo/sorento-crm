@@ -360,3 +360,43 @@ def test_S39_a_quantity_in_the_pick_replaces_the_typed_one(console):
     c = console(SRTWC286_SH_150=Stock(on_hand=50))
     assert c.say("srtwc286 x 10", stock(product("srtwc286", 10))) == PICK10
     assert c.say("2 of 2", _qty_of((2, 2))) == f"SRTWC286-SH-150 x 2: {TICK} {R}"
+
+
+# ================================================================== reviewer round 1
+
+
+def test_S21c_a_quantity_typed_over_a_handed_on_list_keeps_its_numbers(console):
+    """Reviewer B3: the SRTWC6022 list handed on as 11-12 stays 11-12 when "4" is typed."""
+    c = console()
+    c.say("srtwc286 x 10, srtwc6022", stock(product("srtwc286", 10), product("srtwc6022")))
+    c.say("2", _pick(2))
+    assert c.say("4", reply(demand_qty=4)) == PICK6022
+    assert c.say("12", _pick(12)) == f"SRTWC6022-SH-UF-NEW x 4: {CROSS} No incoming. {R}"
+
+
+def test_S40_exact_code_without_a_quantity_beside_a_vague_one_asks_the_pick_first(console):
+    """Reviewer B4: one question at a time, nothing lost. The pick comes first; the exact
+    code's quantity is asked once the pick is answered, and the pick's own x 10 stays."""
+    c = console(SRT5674=Stock(on_hand=100), SRTWC286_SH_150=Stock(on_hand=50))
+    assert c.say("SRT5674 and srtwc286 x 10", stock(product("SRT5674"), product("srtwc286", 10))) == PICK10
+    assert c.say("2", _pick(2)) == f"SRTWC286-SH-150 x 10: {TICK} {R}\n\nHow many units of SRT5674?"
+    assert c.say("5", reply(demand_qty=5)) == f"SRT5674 x 5: {TICK} {R}"
+
+
+def test_S41_a_picked_code_owing_a_quantity_does_not_drop_the_other_list(console):
+    """Reviewer S1: the SRTWC6022 list is asked before the picked code's quantity."""
+    c = console(SRTWC286_SH_150=Stock(on_hand=50))
+    first = c.say("srtwc286, srtwc6022 x 4", stock(product("srtwc286"), product("srtwc6022", 4)))
+    assert first == numbered("SRTWC286 matches 10 products. Which one?", OWNER_FAMILY) + f"\n\n{PICK6022}"
+    assert c.say("2", _pick(2)) == PICK6022
+    assert c.say("11", _pick(11)) == (
+        f"SRTWC6022-SH-UF x 4: {CROSS} No incoming. {R}\n\nHow many units of SRTWC286-SH-150?"
+    )
+    assert c.say("3", reply(demand_qty=3)) == f"SRTWC286-SH-150 x 3: {TICK} {R}"
+
+
+def test_S42_a_near_miss_inside_a_mix_is_listed_without_a_did_you_mean(console):
+    """Reviewer S4: the did-you-mean is for a message that names one code (S11)."""
+    c = console(SRT5674=Stock(on_hand=100), ELP3754=Stock(on_hand=20))
+    out = c.say("SRT5674 x 5, ELP3753 x 1", stock(product("SRT5674", 5), product("ELP3753", 1)))
+    assert out == f"SRT5674 x 5: {TICK} {R}\n\nCouldn't find: ELP3753."

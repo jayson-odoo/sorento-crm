@@ -103,3 +103,18 @@ def test_dealer_eta_is_one_line_per_code():
     ]
     for item in out["items"]:
         assert "\n" not in item["title"]
+
+
+def test_a_mixed_block_stamps_each_answered_entry_and_leaves_the_owed_one():
+    """AVAIL-MODE-REPLIES rule 5: an answered line is printed beside a product still owed
+    its quantity, so it is stamped for Customer asks on that turn; the owed one is not."""
+    from sorento_crm_mcp.presenters import _stamp_refers
+
+    stamped = _stamp_refers(
+        [
+            _entry(product_code="SRT5674", requested_qty=5),
+            _entry(product_code="CWCX604", requested_qty=None, needs_quantity=True, branch=None),
+        ]
+    )
+    assert stamped[0]["refers_to_salesman"] is True
+    assert "refers_to_salesman" not in stamped[1]
