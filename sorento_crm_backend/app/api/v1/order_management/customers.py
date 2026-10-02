@@ -244,6 +244,16 @@ async def update_customer(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Permission required: order_management.customers.edit",
                 )
+        if "customer_group_id" in customer_data.model_fields_set:
+            # Same gate as the Account level: a CHANGE (clearing included) needs edit.
+            current_group = service.get_customer(customer_id).customer_group_id
+            if str(customer_data.customer_group_id or "") != str(current_group or "") and not UserPermissionService(db).check_user_has_permission(
+                current_user["id"], "order_management.customers.edit"
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Permission required: order_management.customers.edit",
+                )
         customer = service.update_customer(customer_id, customer_data)
         return customer
     except HTTPException:

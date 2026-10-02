@@ -89,15 +89,38 @@ def _label_without_marker(text: str) -> str:
     return cleaned or text
 
 
+def _without_marker(text: str) -> str:
+    """`text` without its `[A/C n]` / `(A/C n)` account marker only; any other bracketed run
+    (`(NS)`, `(1990)`) is part of the name and stays."""
+    out: list[str] = []
+    run: list[str] | None = None
+    for ch in text:
+        if run is None:
+            if ch in "[(":
+                run = [ch]
+            else:
+                out.append(ch)
+            continue
+        run.append(ch)
+        if ch in "])":
+            inside = "".join(run[1:-1])
+            if _marker_level(" ".join(inside.upper().split())) is None:
+                out.extend(run)
+            run = None
+    if run is not None:
+        out.extend(run)
+    return " ".join("".join(out).split())
+
+
 def customer_group_of(text: str) -> str | None:
     """The group name the turn holds for this customer name, or None (use the name rule).
 
-    Found by the row's own name, then by its name without the ledger marker (`X [A/C II]`
+    Found by the row's own name, then by its name without the account marker only (`X [A/C II]`
     follows a grouped `X`), then as a group's own name (the group is its own customer)."""
     groups = _GROUPS.get()
     if groups is None:
         return None
-    for probe in (normalise_customer_name(text), normalise_customer_name(_label_without_marker(text))):
+    for probe in (normalise_customer_name(text), normalise_customer_name(_without_marker(text))):
         if probe in groups.by_name:
             return groups.by_name[probe]
         if probe in groups.own:
@@ -134,6 +157,11 @@ def ledger_family_label(text: str) -> str:
     group = customer_group_of(text)
     if group is not None:
         return group
+    groups = _GROUPS.get()
+    if groups is not None and _words(_without_brackets(text.upper())) in groups.keys:
+        # An ungrouped row sharing a group's key keeps its own parentheticals, so its line
+        # reads `JUBIN BMS (NS) SDN BHD` beside the group's, not as the group's twin.
+        return _without_marker(text).strip().strip("-").strip() or text
     return _label_without_marker(text)
 
 
