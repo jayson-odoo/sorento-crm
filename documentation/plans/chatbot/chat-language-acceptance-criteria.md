@@ -361,3 +361,148 @@ presenter (`:2915-2916`), so it is one catalog entry per noun.
   stays English.
 - Singular titles are tested by behaviour, not exact keys. The ceiling note is localized
   through the lane notes that `fetch.py:~2553` prepends.
+
+# Slice 4: the final reply pass (composer sentences, escalate offer, canned copy, dealer questions)
+
+**Finding (scout, 2 Oct, head bbd79ef8):** no live code decides an accepted escalation by its
+English text.
+- `head/output_exchange` is gone, and `session_state.offer_is_open()` reads `pending.kind`.
+- Acceptance is the parser's verdict, `is_escalation_confirmation` (`turn/decide.py:699-713`).
+- The English matchers that remain all run BEFORE the reply is sent:
+  - stripping an offer: `dealer_stock._ESCALATION` (:27), `order_list._OFFER_SENTENCE` (:226),
+    `escalation_control.strip_text`;
+  - block placement: `tail/compose.MARKERS`;
+  - one offer per turn: `sub_answer._ESCALATE_OFFER_RE`;
+  - company insertion: `reply_ladder` / `member_offer._ESCALATE_TO_TEAM_RE`.
+
+So card Q5's precondition ("matchers read a stored flag first") is met for acceptance. The
+pre-send matchers keep working because the translation happens after them.
+
+**Design: one final pass at the send point.** `Localizer.reply(text) -> str` runs on the turn's
+final reply text and on every `send_message` action's text, after every composer, stripper and
+matcher, right before the actions are returned. It:
+1. applies `lines()` (rules 1-4), then
+2. replaces each **inline sentence** from the catalog's `INLINE` set (exact or `{token}`
+   template). A sentence matches only where it starts at the start of a line or after
+   `". "`, `"? "`, `"! "`, `"\n"`, and only where the English shape matches through its final
+   punctuation. Tokens are re-inserted verbatim.
+
+Everything not in the catalog is unchanged. The pass is idempotent: an already-localized line
+matches no English key.
+
+Rules for the pass:
+- **Identity:** an `en`/IDENTITY turn is byte-identical to today.
+- **What the parser reads:** the stored reply (`previous_reply_text`) is the localized one. The
+  parser reads the dealer's next message against it, and acceptance stays the verdict.
+- **Registry-editable copy:** the English-only `chatbot_reply_copy` keys are translated only when
+  the rendered English equals the shipped default. A staff-edited English registry text stays as
+  edited, in English. Known and accepted: the registry is the English source.
+- **Joiners:** `_join_words` / `_join_words_and` take the localizer. " or " becomes " atau " /
+  "或", and " and " becomes " dan " / "和", inside compose's own sentences only, never inside a
+  presenter value.
+- **Domain labels** (`turn/policy_rows.py` `label=`) are catalogued as words, so
+  `"*{label}* for {codes}:"`, `"I could not fetch {label} just now, please try again."`,
+  `"*{label}*: this is not enabled for your account."` and `"Nothing on {x} either."` render
+  with the translated label.
+
+| English | ms | zh |
+|---|---|---|
+| stock | stok | 库存 |
+| orders | pesanan | 订单 |
+| incoming stock | stok masuk | 到货库存 |
+| promotions | promosi | 促销 |
+| forms | borang | 表格 |
+| product information | maklumat produk | 产品信息 |
+| product attachments | lampiran produk | 产品附件 |
+| resource attachments | lampiran sumber | 资料附件 |
+| goods receive | penerimaan barang | 收货 |
+| last in | kemasukan terakhir | 最近入库 |
+| outstanding purchase orders | pesanan belian tertunggak | 未完成采购订单 |
+| last purchase cost | kos belian terakhir | 最近采购成本 |
+| this request | permintaan ini | 此请求 |
+| *{label}* for {codes}: | *{label}* untuk {codes}: | {codes} 的*{label}*： |
+| I could not fetch {label} just now, please try again. | Saya tidak dapat mendapatkan {label} sekarang, sila cuba lagi. | 暂时无法获取{label}，请稍后再试。 |
+| *{label}*: this is not enabled for your account. | *{label}*: ini tidak diaktifkan untuk akaun anda. | *{label}*：您的账户未开通此功能。 |
+| Nothing on {names} either. | Tiada juga untuk {names}. | {names} 也没有。 |
+| Not checked: {names}. | Tidak disemak: {names}. | 未检查：{names}。 |
+| I could not find {names}. | Saya tidak dapat menemui {names}. | 找不到 {names}。 |
+| I have attached the file(s) below. | Saya telah melampirkan fail di bawah. | 我已在下方附上文件。 |
+| Would you like me to escalate to {team} team? | Adakah anda mahu saya rujuk kepada pasukan {team}? | 需要我转交给 {team} 团队吗？ |
+| Would you like me to escalate? | Adakah anda mahu saya rujuk kepada pasukan kami? | 需要我转交给相关团队吗？ |
+| Would you like me to escalate to *{company}* {team} team? | Adakah anda mahu saya rujuk kepada pasukan {team} *{company}*? | 需要我转交给 *{company}* 的 {team} 团队吗？ |
+| I am sorry the provided answer does not meet your requirements. Would you like me to escalate to {team} team? | Maaf, jawapan yang diberikan tidak memenuhi keperluan anda. Adakah anda mahu saya rujuk kepada pasukan {team}? | 抱歉，所提供的答案未能满足您的需求。需要我转交给 {team} 团队吗？ |
+| I am sorry the provided answer does not meet your requirements. Would you like me to escalate this to our team? | Maaf, jawapan yang diberikan tidak memenuhi keperluan anda. Adakah anda mahu saya rujuk perkara ini kepada pasukan kami? | 抱歉，所提供的答案未能满足您的需求。需要我转交给我们的团队吗？ |
+| No it's okay | Tidak mengapa | 不用了 |
+| Yes, escalate | Ya, rujuk | 是，转交 |
+| No, it's okay | Tidak, tidak mengapa | 不，不用了 |
+| Which team should take this? | Pasukan mana yang patut uruskan ini? | 应由哪个团队处理？ |
+| Which company do you mean? | Syarikat mana yang anda maksudkan? | 您指的是哪家公司？ |
+| Who should take this? | Siapa yang patut uruskan ini? | 应由谁处理？ |
+| Outstanding for which document? | Tertunggak untuk dokumen mana? | 查看哪种单据的未完成数量？ |
+| Which list would you like? | Senarai mana yang anda mahu? | 您要哪个列表？ |
+| Which one do you mean? | Yang mana satu anda maksudkan? | 您指的是哪一个？ |
+| Which kind of file do you need? | Jenis fail apa yang anda perlukan? | 您需要哪种文件？ |
+| Which item do you mean? Reply with a rank number from 1 to {count}. | Item mana yang anda maksudkan? Balas dengan nombor kedudukan dari 1 hingga {count}. | 您指的是哪个项目？请回复 1 到 {count} 之间的排名数字。 |
+| Please reply with a number from {min} to {max}. | Sila balas dengan nombor dari {min} hingga {max}. | 请回复 {min} 到 {max} 之间的数字。 |
+| How many units for each? | Berapa unit untuk setiap satu? | 每个需要多少件？ |
+| How many units of {code}? | Berapa unit {code}? | {code} 需要多少件？ |
+| Which one do you need {qty} of? | Yang mana satu anda perlukan sebanyak {qty}? | 您需要 {qty} 件的是哪一个？ |
+| Which one? | Yang mana satu? | 哪一个？ |
+| {typed} x {qty}: which one? | {typed} x {qty}: yang mana satu? | {typed} x {qty}：哪一个？ |
+| {typed} matches {total} products. Which one? | {typed} sepadan dengan {total} produk. Yang mana satu? | {typed} 匹配到 {total} 个产品。哪一个？ |
+| Couldn't find {shown}. Did you mean {label}? | Tidak dapat menemui {shown}. Adakah anda maksudkan {label}? | 找不到 {shown}。您是指 {label} 吗？ |
+| Couldn't find {shown}. Did you mean: | Tidak dapat menemui {shown}. Adakah anda maksudkan: | 找不到 {shown}。您是指： |
+| Please refer to your salesman. | Sila rujuk jurujual anda. | 请联系您的销售员。 |
+| Sorry, you are not allowed to access {team} | Maaf, anda tidak dibenarkan mengakses {team} | 抱歉，您无权访问 {team} |
+| Please specify your demand quantity | Sila nyatakan kuantiti yang anda perlukan | 请说明您需要的数量 |
+| Okay, noted. | Baik, dicatat. | 好的，已记录。 |
+| Escalation declined. | Rujukan dibatalkan. | 已取消转交。 |
+| Sorry, I ran into a problem understanding that. Please try again in a moment. | Maaf, saya menghadapi masalah memahami mesej itu. Sila cuba lagi sebentar lagi. | 抱歉，我暂时无法理解您的信息，请稍后再试。 |
+| Sorry, I didn't get that. What would you like to change in the ranking? | Maaf, saya tidak faham. Apa yang anda mahu ubah dalam senarai kedudukan? | 抱歉，我没听明白。您想如何调整排名？ |
+| Low stock report is not enabled for your account. | Laporan stok rendah tidak diaktifkan untuk akaun anda. | 您的账户未开通低库存报告。 |
+| Could not run the low stock report right now. | Laporan stok rendah tidak dapat dijalankan sekarang. | 暂时无法生成低库存报告。 |
+| Both | Kedua-duanya | 两者 |
+| Which customer is this outstanding report for? | Laporan tertunggak ini untuk pelanggan mana? | 这份未完成报告是哪个客户的？ |
+| Which category do you mean? Reply with one code: {codes} | Kategori mana yang anda maksudkan? Balas dengan satu kod: {codes} | 您指的是哪个类别？请回复一个代码：{codes} |
+| I could not match any product code in that photo. | Saya tidak dapat memadankan sebarang kod produk dalam gambar itu. | 我无法在那张照片中匹配到任何产品代码。 |
+| What would you like me to do with it? | Apa yang anda mahu saya lakukan dengannya? | 您希望我怎么处理？ |
+| Ask again with the correct code. | Sila tanya semula dengan kod yang betul. | 请用正确的代码再问一次。 |
+| I read {codes} from that photo. | Saya membaca {codes} daripada gambar itu. | 我从那张照片中读到 {codes}。 |
+
+The coder copies each English key EXACTLY from source; the scout's report gives the sites:
+- `turn/compose.py:35/364-881`;
+- `turn/task.py:58/362-378/814-823`;
+- `dealer_stock.py:101-104`;
+- `lanes/business/__init__.py:91-117/554-569/648`;
+- `chatbot_reply_copy.py:52-59/279-340/96`;
+- the `answer.py` offer suffixes (`:1727/2201/2232/2709/3138/3711/4438/4818/4849...5121`).
+
+The `answer.py` offer suffixes (`", or would you like me to escalate to {team} team?"`, the
+`"Reply with a number to continue"` leads, `"Reply 'all dates' to search without ..."`) are
+catalogued as inline templates in the same pattern. If a suffix shape cannot be matched by a
+whole-sentence template, catalog the whole line its builder prints.
+
+**Out of scope, recorded:**
+- `clarify_menu` (multi-line copy with `{{user_goal}}` parser prose).
+- The internal `out_of_scope` notes.
+- The parser prompt's English examples. The parser is multilingual and reads the localized
+  previous reply.
+- The admin Translations page language filter (one query param, slice 5 if wanted).
+- The required-fields helper (waits on #1445).
+
+- **AC-CL40:** `Localizer.reply` rules: identity for en; `lines()` then inline sentences;
+  sentence-boundary matching (an English catalog sentence inside a product name or after a
+  non-boundary is NOT replaced); tokens verbatim; idempotent (twice = once).
+- **AC-CL41:** the engine applies `reply` once, at the send point, to the reply text and every
+  `send_message` text, AFTER the strip/marker/company-insert matchers. One engine-console test:
+  - an ms dealer turn that misses ends with "Adakah anda mahu saya rujuk kepada pasukan
+    <team>?";
+  - the pending offer still arms;
+  - a following "ya" (parser verdict `is_escalation_confirmation`) still escalates.
+- **AC-CL42:** a barred contact's / dealer's offer stripping still works on an ms turn (the
+  stripping ran on English; the refer line appears once, translated).
+- **AC-CL43:** the dealer quantity questions and did-you-mean (task.py, dealer_stock) render ms/zh.
+- **AC-CL44:** a staff-edited English registry copy (render differs from the shipped default)
+  stays English in an ms turn.
+- **AC-CL45:** an en turn's full reply and actions are byte-identical to before slice 4 (run the
+  existing console/engine suites green).
