@@ -164,8 +164,8 @@ are never translated.
 | Here is the PO placed I found. | Berikut ialah PO yang telah dibuat. | 以下是已下的 PO。 |
 | Here is the last SPO line per product. | Berikut ialah baris SPO terakhir bagi setiap produk. | 以下是每个产品最近的 SPO 记录。 |
 | Here is the last purchase cost per product and location. | Berikut ialah kos belian terakhir bagi setiap produk dan lokasi. | 以下是每个产品和位置最近一次的采购成本。 |
-| Here is the outstanding SO I found. | Berikut ialah SO belum dihantar yang saya temui. | 以下是我找到的未交货 SO。 |
-| Here are the outstanding orders I found. | Berikut ialah pesanan belum dihantar yang saya temui. | 以下是我找到的未交货订单。 |
+| Here is the outstanding SO I found. | Berikut ialah SO tertunggak yang saya temui. | 以下是我找到的未交货 SO。 |
+| Here are the outstanding orders I found. | Berikut ialah pesanan tertunggak yang saya temui. | 以下是我找到的未交货订单。 |
 | Here are the delivered orders I found. | Berikut ialah pesanan yang telah dihantar. | 以下是我找到的已送货订单。 |
 | No matching results found. | Tiada hasil yang sepadan ditemui. | 未找到匹配的结果。 |
 | No matching results found for {companies}. | Tiada hasil yang sepadan ditemui untuk {companies}. | 在 {companies} 中未找到匹配的结果。 |

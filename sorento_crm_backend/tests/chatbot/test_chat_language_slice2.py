@@ -79,11 +79,11 @@ SLICE2: dict[str, tuple[str, str]] = {
         "以下是每个产品和位置最近一次的采购成本。",
     ),
     "Here is the outstanding SO I found.": (
-        "Berikut ialah SO belum dihantar yang saya temui.",
+        "Berikut ialah SO tertunggak yang saya temui.",
         "以下是我找到的未交货 SO。",
     ),
     "Here are the outstanding orders I found.": (
-        "Berikut ialah pesanan belum dihantar yang saya temui.",
+        "Berikut ialah pesanan tertunggak yang saya temui.",
         "以下是我找到的未交货订单。",
     ),
     "Here are the delivered orders I found.": (
@@ -653,7 +653,7 @@ def test_ac_cl23_outstanding_intro_when_order_status_is_outstanding():
     text = _render(
         env, TOOL_ORDERS, "ms", semantic_input={"order_status": "outstanding"}
     )
-    assert "Berikut ialah pesanan belum dihantar yang saya temui." in text
+    assert "Berikut ialah pesanan tertunggak yang saya temui." in text
     assert "Here are the outstanding orders" not in text
     zh = _render(env, TOOL_ORDERS, "zh", semantic_input={"order_status": "outstanding"})
     assert "以下是我找到的未交货订单。" in zh
@@ -713,7 +713,7 @@ def test_ac_cl23_so_outstanding_ms_with_the_grant():
     text = _assert_values_identical(
         env, TOOL_ORDERS, "ms", access=_grant("sales_orders.outstanding")
     )
-    assert "Berikut ialah SO belum dihantar yang saya temui." in text
+    assert "Berikut ialah SO tertunggak yang saya temui." in text
     assert "*No. SO:* SO-26-00981" in text
     assert "*Kuantiti Tertunggak:* 8" in text
     assert "*Pelanggan:* TAN BROTHERS HARDWARE" in text
@@ -746,7 +746,7 @@ def test_ac_cl23_orders_by_product_outstanding_intro_ms():
         "ms",
         semantic_input={"order_status": "outstanding"},
     )
-    assert "Berikut ialah pesanan belum dihantar yang saya temui." in text
+    assert "Berikut ialah pesanan tertunggak yang saya temui." in text
 
 
 # --------------------------------------------------------------------------- #
