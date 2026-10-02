@@ -125,8 +125,10 @@ def refusal_line_for(scope: ContactCustomerScope, ids: list[str]) -> str:
 
 
 def _refusal_for(names: list[str]) -> str:
-    if len(names) <= 1:
-        joined = names[0] if names else "your own account"
-    else:
-        joined = ", ".join(names[:-1]) + " and " + names[-1]
+    """The linked customers named the way the DO header names them (owner ruling on
+    PR #1435): one ledger by its own name, several ledgers of one trading name as
+    "HANLIM TRADING SDN BHD (6 accounts)", further families as "and N more"."""
+    from app.services.ledger_family import family_words
+
+    joined = family_words(names) or "your own account"
     return f"Sorry, that isn't under your account. I can only check on {joined}."

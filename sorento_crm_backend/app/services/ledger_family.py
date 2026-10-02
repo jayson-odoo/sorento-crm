@@ -5,6 +5,9 @@ marker: `CHIN CHUN HARDWARE SDN BHD - [A/C I]`, `HANLIM TRADING (JB) SDN BHD (SR
 of one name are one customer. `ledger_family_key` is the comparison key two such rows share;
 `ledger_family_label` is what the family is called.
 
+`family_words` names a list of customer rows that way in one line (DO-ASK-SIMPLIFY rule 1),
+for the chatbot's DO header and its empty-list (miss) header alike.
+
 Core, not the chatbot package: the chatbot's narrower (`app/services/chatbot/turn/narrow.py`)
 groups a customer roster by it, and the stock-ask record (`app/services/stock_ask_service.py`)
 names a customer-less ask by it (ASKS-UX item 4). Core must never import
@@ -55,6 +58,59 @@ def ledger_family_label(text: str) -> str:
     """What the family is CALLED: the row's own name without its ledger marker."""
     cleaned = " ".join(_without_brackets(text).split()).strip().strip("-").strip()
     return cleaned or text
+
+
+def _bracket_runs(text: str) -> list[str]:
+    """Every top-level bracketed or parenthesised run in `text`, brackets included."""
+    runs: list[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(text):
+        if ch in "[(":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch in "])" and depth:
+            depth -= 1
+            if depth == 0:
+                runs.append(text[start : i + 1])
+    return runs
+
+
+def _shared_label(names: list[str]) -> str:
+    """The family's name: the first row's name without the bracketed parts that tell its
+    ledgers apart ("[A/C I]", "[IBORN]"), keeping any every ledger shares, such as the
+    branch in "CHENG HUAT HARDWARE (SENTUL) SDN BHD"."""
+    first = names[0]
+    for run in _bracket_runs(first):
+        if not all(run in other for other in names[1:]):
+            first = first.replace(run, " ", 1)
+    cleaned = " ".join(first.split()).strip().strip("-").strip()
+    return cleaned or ledger_family_label(names[0])
+
+
+def family_words(names: list[str]) -> str | None:
+    """DO-ASK-SIMPLIFY rule 1 (owner, 2 Oct 2026): the customer rows in scope, named once.
+
+    One row prints its own full name. Several rows of one ledger family (the ledgers of one
+    trading name, `app/services/ledger_family.py`) print the family label with a count:
+    "HANLIM TRADING SDN BHD (6 accounts)". Several families print the first one and a count
+    of the rest: "CHIN CHUN HARDWARE SDN BHD (2 accounts) and 3 more". Each DO row still
+    carries its own full ledger name; only the header shortens.
+    """
+    # One ledger reached twice (a picked option carries its uuid twice) is one account.
+    kept = list(dict.fromkeys(name for name in names if name))
+    if not kept:
+        return None
+    if len(kept) == 1:
+        return kept[0]
+    families: dict[str, list[str]] = {}
+    for name in kept:
+        families.setdefault(ledger_family_key(name) or name, []).append(name)
+    first = next(iter(families.values()))
+    head = first[0] if len(first) == 1 else f"{_shared_label(first)} ({len(first)} accounts)"
+    rest = len(families) - 1
+    return f"{head} and {rest} more" if rest else head
 
 
 _ROMAN = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10}

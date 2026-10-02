@@ -48,6 +48,7 @@ Owner answers to behaviour card v2 (PR #1435, 2 Oct 2026):
 | 3 | Cancelled: header + `❗ Cancelled`, no delivery line. Closed with less delivered than ordered: `Closed`, delivery `partly delivered` (same words-only rule). |
 | 4 | Several SO numbers: one card per found SO, plus one miss line for the rest. |
 | 5 | Gated by the existing `sales_orders.outstanding` reveal key. |
+| 6 | (2 Oct, after the tester pass) The "isn't under your account" sentence names the linked customers the way #1433's DO header does: `HANLIM TRADING SDN BHD (6 accounts)`, further families `and N more`. Same rule, not a second one: `ledger_family.family_words`, copied byte for byte from #1433's branch so the two merge cleanly, used by `contact_customer_scope._refusal_for` (every scoped refusal, not only the SO one). |
 
 Data facts (crew, dev DB read-only): the SO->DO link is empty (0 of 37,996 `orders.sales_order_id`,
 0 of 99,335 `order_lines.sales_order_line_id`), so no DO numbers are listed. Delivery comes from

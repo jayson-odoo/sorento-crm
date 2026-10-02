@@ -116,18 +116,19 @@ def test_refusal_line_for_names_only_the_given_ledgers_in_link_order() -> None:
         scope_mod.refusal_line_for(scope, ["s-1"])
         == "Sorry, that isn't under your account. I can only check on SOON HENG HARDWARE CO.SDN.BHD. [A/C I]."
     )
+    # Owner ruling on PR #1435: several ledgers of one trading name are one family with a
+    # count, the same words the DO header uses (`ledger_family.family_words`).
     assert scope_mod.refusal_line_for(scope, ["h-4", "h-2"]) == (
         "Sorry, that isn't under your account. I can only check on "
-        "HANLIM TRADING SDN BHD [A/C II] and HANLIM TRADING SDN BHD [A/C IV]."
+        "HANLIM TRADING SDN BHD (2 accounts)."
     )
 
 
-def test_refusal_line_for_three_uses_commas_and_and() -> None:
+def test_refusal_line_for_two_families_names_the_first_and_counts_the_rest() -> None:
     line = scope_mod.refusal_line_for(_scope(), ["h-1", "h-2", "s-1"])
     assert line == (
         "Sorry, that isn't under your account. I can only check on "
-        "HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C II] and "
-        "SOON HENG HARDWARE CO.SDN.BHD. [A/C I]."
+        "HANLIM TRADING SDN BHD (2 accounts) and 1 more."
     )
 
 

@@ -66,9 +66,13 @@ OWN_A = "ZZT OWN A"
 
 
 def refusal(*names: str) -> str:
-    """AC-CS-11: `A.` / `A and B.` / `A, B and C.` in link order."""
-    joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
-    return f"Sorry, that isn't under your account. I can only check on {joined}."
+    """AC-CS-11, as the owner re-ruled it on PR #1435: the linked customers in link order,
+    named the way the DO header names them (`ledger_family.family_words`): one ledger by
+    its name, one trading name's ledgers as "X (N accounts)", further families "and N more".
+    The rule itself is pinned literally in `tests/test_contact_customer_scope_account.py`."""
+    from app.services.ledger_family import family_words
+
+    return f"Sorry, that isn't under your account. I can only check on {family_words(list(names))}."
 
 
 def _ent(raw: str, hint: str = "customer") -> dict[str, Any]:
