@@ -1,7 +1,8 @@
 # PLAN: combo (product set) stock in the chatbot stock answer (COMBO-STOCK)
 
-Status: Build (card answered 2 Oct; fix c pushed; header + set pick in progress). Track: small fix
-(no migration, no RBAC, no new ingest surface).
+Status: Review (slices 1-3 built, reviewer round 1 fixed; awaiting owner hand test). Track: standard
+(app diff ~430 lines, over the ~300 small fix line; no migration, no RBAC, no new ingest surface).
+UAC: `combo-stock-2oct-acceptance-criteria.md`.
 
 ## Journey
 
@@ -89,5 +90,37 @@ surfaced as the links say, not special-cased).
 ## Slices
 
 1. (c) set code expands to members for inventory: `gate.py` `_expand_product_set`. DONE.
-2. Full-access set header (Q1, Q2, Q4).
-3. Base code: "part of set(s)" line (full access) / set pick (dealer) (Q3).
+2. Full-access set header (Q1, Q2, Q4): `lanes/business/set_stock.py::set_header`, prepended in
+   `lanes/business/__init__.py::run_fetch`. DONE.
+3. Base code: "part of set(s)" line (full access) / set pick (dealer) (Q3): `gate._prefix_products`,
+   `set_stock.sets_containing` / `part_of_set_lines` / `set_pick`, armed through the existing
+   `lane_ask` seam (`turn_runtime.envelope_of` -> `turn/compose.py::_lane_question`). DONE.
+
+## Existing dealer availability pattern reused (owner: cite file:line)
+
+- Dealer = stock visibility mode `availability` (`app/services/stock_visibility.py:41`, `MODES`).
+- Set code for a dealer: no header; the answer is the presenter's own per-member availability
+  lines (`sorento_crm_mcp/presenters.py:1514` `_stock_availability`, `:1472`
+  `_availability_line`), quantity ask and stock task unchanged (`turn/task.py::after_reply`).
+- Base code for a dealer: a numbered pick in the existing picker format
+  (`turn/task.py:788` `numbered`), stored as a `product_pick` like every other roster
+  (`turn/pending.py:89` `ask`); the pick answers through `turn/apply.py:787` (option `uuids`).
+
+## Review round 1 (reviewer, Opus) and what was done
+
+- B1 dealer pick replaced a mixed answer: now only when the whole answer is one base code's products.
+- B2 a code typed in full beside its base code got a line: `exact` built before the filter.
+- S1/S2 the set pick was a `stock_pick` (a bare number read as a quantity, stamped 1:1 on
+  members): now a plain `product_pick`; the member answer asks its own quantity.
+- S4/M8 company scope and `is_active` of `sets_containing` now pinned by a test.
+- N2 a discontinued member supplies 0 (the resolver's own rule).
+- M2/M6/M7 survivors now killed by tests (tie, real `stock_availability` rows, no `stock_pick`).
+
+Accepted, not fixed (owner may overrule):
+- S3: "Stock" on the turn after a set code re-answers the members WITHOUT the header (focus
+  carries the member products, not the set). Trigger to fix: owner asks for it.
+- N1: a member the contact cannot see drops out of the header's member list.
+- N4: an inactive set still answers when typed in full (`_probe_product_set` does not filter
+  `is_active`); the base-code line and pick list active sets only.
+- N5: the detailed-mode header counts the page the tool returned (default 50 rows); a set has
+  2-3 members, so only a many-product ask could be cut.

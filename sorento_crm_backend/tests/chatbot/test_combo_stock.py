@@ -73,7 +73,7 @@ def _seed_set(
     return set_code, member_codes, [str(i) for i in member_ids]
 
 
-def _stock_ask(code: str) -> dict[str, Any]:
+def _stock_ask(code: str, *more: str) -> dict[str, Any]:
     return _parser_output(
         message_type="business_query",
         intent_hint="check_stock",
@@ -82,12 +82,13 @@ def _stock_ask(code: str) -> dict[str, Any]:
         continuation=False,
         entities=[
             {
-                "raw": code,
+                "raw": raw,
                 "hint": "product",
                 "canonical_code": None,
                 "current_message": True,
                 "confident": True,
             }
+            for raw in (code, *more)
         ],
         entity_op="new",
         document=[],
@@ -347,6 +348,27 @@ def _availability(codes: list[str]) -> dict[str, Any]:
     }
 
 
+def _availability_asking(codes: list[str]) -> dict[str, Any]:
+    """The dealer's FIRST answer when no quantity was given: the presenter asks, and the
+    backend's `stock_availability` rows say a quantity is still needed - the rows
+    `turn/task.py::after_reply` arms the family pick / quantity ask from."""
+    return {
+        "intro": "How many units do you need?",
+        "items": [
+            {"title": code, "fields": [], "flags": {"needs_quantity": True, "branch": None}}
+            for code in codes
+        ],
+        "stock_availability": [
+            {"product_code": code, "needs_quantity": True, "requested_qty": None}
+            for code in codes
+        ],
+        "has_result": True,
+        "attachments": [],
+        "result_type": "stock_availability",
+        "action_links": [],
+    }
+
+
 # Members 0, 1, 2; member 2 is taken TWICE per set.
 #   total:  0 -> 10, 1 -> 7, 2 -> 20//2 = 10          => 7 complete sets, limited by member 1
 #   BRW:    0 -> 6,  1 -> 7, 2 -> 10//2 = 5           => 5
@@ -482,11 +504,18 @@ def _session_vars(session_factory) -> dict[str, Any]:
     return json.loads(raw) if isinstance(raw, str) else (raw or {})
 
 
-def _add_set(session_factory, set_code: str, member_ids: list[str]) -> None:
+def _add_set(
+    session_factory,
+    set_code: str,
+    member_ids: list[str],
+    *,
+    company_id: str = DEFAULT_COMPANY_ID,
+    is_active: bool = True,
+) -> None:
     db = session_factory()
     try:
         product_set = ProductSet(
-            set_code=set_code, name=f"ZZT {set_code}", company_id=DEFAULT_COMPANY_ID
+            set_code=set_code, name=f"ZZT {set_code}", company_id=company_id, is_active=is_active
         )
         db.add(product_set)
         db.flush()
@@ -532,7 +561,7 @@ def _compact_codes(codes: list[str]) -> dict[str, Any]:
     return _compact({str(i): (5, {"BRW": 5}) for i in range(len(codes))})(codes)
 
 
-def _ask_base(session_factory, monkeypatch, family, *, envelope, msg_id: str):
+def _ask_base(session_factory, monkeypatch, family, *, envelope, msg_id: str, also: tuple[str, ...] = ()):
     def _call(name: str, args: dict[str, Any]) -> str:
         if name == STOCK_TOOL:
             # Whatever products the call named, in a stable order.
@@ -545,8 +574,8 @@ def _ask_base(session_factory, monkeypatch, family, *, envelope, msg_id: str):
     result = _run_turn_engine(
         session_factory,
         monkeypatch,
-        qf=_stock_ask(family["base"]),
-        text_body=f"chck stock {family['base']}",
+        qf=_stock_ask(family["base"], *also),
+        text_body=" ".join(["chck stock", family["base"], *also]),
         msg_id=msg_id,
         mcp_call=mcp_call,
     )
@@ -664,3 +693,98 @@ class TestBaseCodeDealer:
         assert stock_calls, f"the pick must run the stock ask: {calls!r}"
         ids = family["ids"]
         assert _product_ids(stock_calls[-1]) == {ids["ped"], ids["cis"], ids["sc"]}, stock_calls
+
+
+
+class TestReviewRound1:
+    """Reviewer findings on PR #1443 (B1, B2, M2, M6, M8, S4, N2)."""
+
+    def test_dealer_pick_survives_a_quantity_ask_answer(self, session_factory, monkeypatch) -> None:
+        """M6: with real `stock_availability` rows (needs_quantity), the open question is
+        still the SET pick, never the family pick of the prefix products."""
+        _seed_contact_and_get(session_factory)
+        family = _seed_family(session_factory)
+        result, _calls = _ask_base(
+            session_factory, monkeypatch, family, envelope=_availability_asking, msg_id="zzt-combo-r1-m6"
+        )
+        question = _session_vars(session_factory).get("open_question") or {}
+        assert [o.get("code") for o in question.get("options") or []] == sorted(family["sets"].values()), question
+        assert "How many units" not in _said(result), _said(result)
+        assert not (question.get("payload") or {}).get("stock_pick"), question
+
+    def test_dealer_with_another_product_keeps_its_answer(self, session_factory, monkeypatch) -> None:
+        """B1: a base code plus an ordinary product - no pick replaces the answer."""
+        _seed_contact_and_get(session_factory)
+        family = _seed_family(session_factory)
+        other = family["codes"]["ped"]
+        result, calls = _ask_base(
+            session_factory, monkeypatch, family, envelope=_availability, msg_id="zzt-combo-r1-b1", also=(other,)
+        )
+        said = _said(result)
+        assert f"{other} x 2: yes, we have stock." in said, said
+        assert "Which one?" not in said, said
+
+    def test_a_fully_typed_code_beside_its_base_code_gets_no_line(self, session_factory, monkeypatch) -> None:
+        """B2: "BASE BASE-SC" - SC was typed in full, so only SC-UF gets a line."""
+        _seed_contact_and_get(session_factory)
+        family = _seed_family(session_factory)
+        codes = family["codes"]
+        result, _calls = _ask_base(
+            session_factory, monkeypatch, family, envelope=_compact_codes, msg_id="zzt-combo-r1-b2", also=(codes["sc"],)
+        )
+        said = _said(result)
+        assert f"{codes['sc']} is part of" not in said, said
+        assert f"{codes['sc_uf']} is part of set(s)" in said, said
+
+    def test_another_companys_set_and_an_inactive_set_are_never_named(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """S4/M8: `sets_containing` reads through the scoped ProductSet, active only."""
+        from tests.chatbot.test_engine_company_scope import _seed_company
+
+        _seed_contact_and_get(session_factory)
+        family = _seed_family(session_factory)
+        other_company = _seed_company(session_factory, name="ZZT combo other")
+        foreign = f"ZZF{unique_code('', alpha=True)[-6:].upper()}8608-RL"
+        retired = f"ZZR{unique_code('', alpha=True)[-6:].upper()}8608-RL"
+        _add_set(session_factory, foreign, [family["ids"]["sc"]], company_id=other_company)
+        _add_set(session_factory, retired, [family["ids"]["sc"]], is_active=False)
+        result, _calls = _ask_base(
+            session_factory, monkeypatch, family, envelope=_compact_codes, msg_id="zzt-combo-r1-s4"
+        )
+        said = _said(result)
+        assert f"{family['codes']['sc']} is part of set(s)" in said, said
+        assert foreign not in said, said
+        assert retired not in said, said
+
+
+class TestSetHeaderEdges:
+    def _header(self, members, rows, *, flags=None):
+        from app.services.chatbot.lanes.business import set_stock
+
+        codes = [m[0] for m in members]
+        envelope = _compact(rows)(codes)
+        for item in envelope["items"]:
+            item["flags"] = (flags or {}).get(item["title"], {})
+        return set_stock.set_header(
+            {"set_code": "S-RL", "members": [{"product_code": c, "quantity": q} for c, q in members]},
+            envelope,
+        )
+
+    def test_a_tie_names_the_first_member(self) -> None:
+        """M2: two members tie at the minimum - the first in set order is named."""
+        header = self._header(
+            [("A", 1), ("B", 1), ("C", 1)],
+            {"0": (9, {"BRW": 9}), "1": (3, {"BRW": 3}), "2": (3, {"BRW": 3})},
+        )
+        assert "Complete sets: 3 (limited by B)" in header, header
+
+    def test_a_discontinued_member_supplies_nothing(self) -> None:
+        """N2: the resolver's own rule (`entity_resolver._probe_product_set`)."""
+        header = self._header(
+            [("A", 1), ("B", 1)],
+            {"0": (9, {"BRW": 9}), "1": (8, {"BRW": 8})},
+            flags={"B": {"discontinued": True}},
+        )
+        assert "Complete sets: 0 (limited by B)" in header, header
+        assert "By location: BRW 0" in header, header

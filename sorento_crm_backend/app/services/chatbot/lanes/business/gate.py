@@ -398,8 +398,10 @@ def _prefix_products(matches: list[Any], parser: dict[str, Any]) -> list[dict[st
         for m in matches
         if jsc.get(m, "entity_type") == "product"
     }
-    typed = [t for t in typed if _norm_code(t) not in matched_codes]
+    # Built BEFORE the base-code filter (review B2): a code typed in full is never a
+    # prefix product, even when a base code in the same message also reached it.
     exact = {_norm_code(t) for t in typed}
+    typed = [t for t in typed if _norm_code(t) not in matched_codes]
     out: dict[str, dict[str, Any]] = {}
     for m in matches:
         uuid = jsc.get(m, "uuid")

@@ -66,6 +66,7 @@ def _stock_by_code(envelope: dict[str, Any]) -> dict[str, tuple[Decimal, dict[st
     if result_type not in (_DETAILED, _COMPACT) or envelope.get("has_result") is not True:
         return None
     out: dict[str, tuple[Decimal, dict[str, Decimal]]] = {}
+    discontinued: set[str] = set()
     for item in envelope.get("items") or []:
         if not isinstance(item, dict):
             continue
@@ -94,6 +95,13 @@ def _stock_by_code(envelope: dict[str, Any]) -> dict[str, tuple[Decimal, dict[st
                 if location and str(location).strip() != "-":
                     loc = str(location).strip()
                     locations[loc] = locations.get(loc, Decimal(0)) + qty
+        if (item.get("flags") or {}).get("discontinued") is True:
+            # The resolver's and the set screen's own rule (`entity_resolver.
+            # _probe_product_set`): a discontinued member supplies nothing.
+            total, locations = Decimal(0), {loc: Decimal(0) for loc in locations}
+            discontinued.add(code)
+        elif code in discontinued:
+            total, locations = Decimal(0), {loc: Decimal(0) for loc in locations}
         out[code] = (total, locations)
     return out
 

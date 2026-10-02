@@ -201,7 +201,11 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
             # COMBO-STOCK slice 3 (owner Q3, dealer): a product pick whose option carries
             # the set's MEMBERS (`uuids`), so answering it runs the stock ask over them -
             # the same entities a typed set code reaches (`gate._expand_product_set`).
-            # `stock_pick` keeps the dealer's own pick rules (a "no" refers the salesman).
+            # NOT a `stock_pick` (review S1/S2): that payload reads a bare number as a
+            # quantity and stamps it onto every picked member 1:1, which is wrong for a
+            # set (a member taken twice per set needs twice the stock). A bare number
+            # picks the set; the member answer that follows asks its own quantity, as
+            # the existing availability pattern does.
             options = [
                 {
                     "position": int(row.get("idx") or i + 1),
@@ -218,7 +222,7 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
                     "product_pick",
                     options,
                     asked_at_turn=turn_no,
-                    payload={"domain": "inventory", "domains": ["inventory"], "stock_pick": True},
+                    payload={"domain": "inventory", "domains": ["inventory"]},
                 )
             continue
         if kind == "top_selling_pick":

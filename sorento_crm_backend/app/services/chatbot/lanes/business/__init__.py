@@ -1980,7 +1980,20 @@ def run_fetch(
     result_type = jsc.js_string((envelope or {}).get("result_type") or "") if isinstance(envelope, dict) else ""
     if prefix_products and isinstance(structured.get("response"), str):
         containing = set_stock_mod.sets_containing(db, [str(p.get("uuid")) for p in prefix_products])
-        if result_type == "stock_availability":
+        # Review B1: the pick REPLACES the dealer's answer, so it is offered only when the
+        # whole answer is one base code's products. A message that also named another
+        # product (or a second base code) keeps its availability lines untouched.
+        prefix_ids = {str(p.get("uuid")) for p in prefix_products}
+        answer_ids = {
+            str(e.get("uuid"))
+            for e in jsc.array(gate.get("compatible_entities"))
+            if isinstance(e, dict) and e.get("uuid")
+        }
+        one_base_code = (
+            len({jsc.js_string(p.get("token") or "") for p in prefix_products}) == 1
+            and answer_ids <= prefix_ids
+        )
+        if result_type == "stock_availability" and one_base_code:
             picked = set_stock_mod.set_pick(jsc.js_string(prefix_products[0].get("token") or ""), containing)
             if picked is not None:
                 structured["response"], structured["set_ask"] = picked
