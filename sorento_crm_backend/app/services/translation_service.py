@@ -514,12 +514,23 @@ def get_or_404(db: Session, memory_id: str) -> TranslationMemory:
     return row
 
 
+_TOKEN = re.compile(r"\{(\w+)\}")
+
+
+def tokens(text: str) -> list[str]:
+    """The sorted `{name}` placeholders of `text`."""
+    return sorted(_TOKEN.findall(text))
+
+
+def tokens_match(a: str, b: str) -> bool:
+    """Whether two texts carry the same placeholders (same multiset)."""
+    return tokens(a) == tokens(b)
+
+
 def _check_chatbot_wording(source_text: str, target_text: str) -> None:
     """A chatbot reply label or sentence (en -> ms/zh) is read by dealers unchecked, so a staff
     edit may not carry markup, a link, a number the English never had, or a different set of
     `{token}` placeholders (security review M2)."""
-    from app.services.chatbot.label_catalog import tokens_match
-
     lowered = target_text.lower()
     problem = None
     if "\n" in target_text or "\r" in target_text:

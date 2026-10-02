@@ -488,10 +488,67 @@ def _answered(*pairs: tuple[str, int], lang: str = "en") -> str:
     return "\n\n".join(f"{code} x {qty}: {verdict}" for code, qty in pairs)
 
 
+#: The reply language each H message must get, spelled out per message so a detection bug fails
+#: here instead of being absorbed. Every H case opens in English, so a message with no marker
+#: word keeps English; a Malay or Chinese message switches the reply.
+_LANG: dict[str, str] = {
+    "both": "en",
+    "both, 2 each": "en",
+    "dua-dua": "en",
+    "两个都要": "zh",
+    "liang ge dou yao, 3 each": "en",
+    "semua, 4 unit": "ms",
+    "1 and 2": "en",
+    "both of them please, 5": "en",
+    "the two, 1 each": "en",
+    "kedua-duanya": "en",
+    "the first one, I need 2": "en",
+    "1, I need 2": "en",
+    "first one x2": "en",
+    "number 1 please, 2 units": "en",
+    "SRTWC286-SH, 2 pcs": "en",
+    "the top one, two": "en",
+    "yang pertama, 2 unit": "ms",
+    "nombor satu, dua": "en",
+    "第一个，要两个": "zh",
+    "yi hao, liang ge": "en",
+    "yes": "en",
+    "ya": "en",
+    "betul, yang itu": "ms",
+    "对": "zh",
+    "yup that one": "en",
+    "no": "en",
+    "tak": "ms",
+    "bukan": "en",
+    "不是": "zh",
+    "nope, not that one": "en",
+    "1. 10, 2. 5, 3. 1": "en",
+    "10 / 5 / 1": "en",
+    "SRTWC286-SH 10, SRTWC286-SH-150 5, SRTWC286-SH-200 1": "en",
+    "3 for all": "en",
+    "semua 3": "ms",
+    "每个三个": "zh",
+    "first 10, second 5, third 1": "en",
+    "satu 10, dua 5, tiga 1": "en",
+    "yi 10 er 5 san 1": "en",
+    "dua dua ja": "en",
+    "make line 2 10": "en",
+    "the second one 10 instead": "en",
+    "SRTWC286-SH-150 10": "en",
+    "how about 5 for all of them": "en",
+    "semua 5": "ms",
+    "全部五个": "zh",
+    "yang pertama 1": "ms",
+    "di san ge yao 8": "en",
+    "first 1 and last 8": "en",
+    "tukar yang kedua jadi sepuluh": "ms",
+}
+
+
 def _lang(message: str) -> str:
-    """The reply language a message alone decides; the H cases all open in English, so a
-    message that decides nothing keeps English."""
-    return language.detect(message) or "en"
+    """The reply language the H case expects for `message` (a KeyError means the row was
+    added without stating one)."""
+    return _LANG[message]
 
 
 def test_g_1406_the_first_one_i_need_2(session_factory, monkeypatch, stub_access):

@@ -15,6 +15,10 @@ from typing import Any
 # are built from it, never spelled out.
 from app.services.chatbot.turn.task import REFER_TO_SALESMAN
 
+# The placeholder helpers live in core (a staff edit is checked there too); the chatbot package
+# may import core, never the reverse (AC-002).
+from app.services.translation_service import _TOKEN, tokens, tokens_match  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 LANGUAGES = ("en", "ms", "zh")
@@ -83,16 +87,6 @@ FIELD_KEYS: dict[str, str] = {
 
 FOOTER = "Data last updated: {ts}"
 
-_TOKEN = re.compile(r"\{(\w+)\}")
-
-
-def tokens(text: str) -> list[str]:
-    """The sorted `{name}` placeholders of `text`."""
-    return sorted(_TOKEN.findall(text))
-
-
-def tokens_match(a: str, b: str) -> bool:
-    return tokens(a) == tokens(b)
 
 
 def footer_leads() -> tuple[str, ...]:
