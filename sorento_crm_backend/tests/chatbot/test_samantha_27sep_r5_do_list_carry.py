@@ -138,13 +138,24 @@ OWNER_TURNS: list[tuple[str, dict[str, Any], str]] = [
 ]
 
 
+#: DO-ASK-SIMPLIFY rule 2: the five DO fields are per-contact reveals; this contact is an
+#: existing one, which the seed migration granted all five.
+_DO_REVEALS = (
+    "delivery_orders.status",
+    "delivery_orders.pickup_time",
+    "delivery_orders.transporter",
+    "delivery_orders.driver",
+    "delivery_orders.lorry_plate",
+)
+
+
 class _Replay(_Chat):
     """`_Chat` (real `engine.run_turn`, one contact, session carried between turns) with
     the two customers the owner named and a per-tool MCP double: the outstanding report
     and the orders list go through the real presenter, anything else is a miss."""
 
     def __init__(self, session_factory, monkeypatch):
-        super().__init__(session_factory, monkeypatch, attributes=["sales_orders.outstanding"], tool_body={})
+        super().__init__(session_factory, monkeypatch, attributes=["sales_orders.outstanding", *_DO_REVEALS], tool_body={})
         from app.services.chatbot import engine as engine_mod
         from app.services.chatbot.lanes.business.services import AnswerServices  # noqa: F401
 

@@ -1495,11 +1495,12 @@ class TestGroupFCustomerPickHeaderNamesEveryLedgerNotACode:
         assert result.status == "done", result.error
         said = _said(result)
 
-        for name in names:
-            assert name in said, (
-                f"the reply must name every ledger the pick covers ({names!r}), owner "
-                f"ruling 'print the 3 customer names': {said!r}"
-            )
+        # DO-ASK-SIMPLIFY rule 1 (owner, 2 Oct 2026) replaces "print the 3 customer names":
+        # the header names the first ledger and counts the rest. These names carry no
+        # bracketed ledger marker, so they are three families to `ledger_family_key`.
+        assert f"Customer: {names[0]} and 2 more" in said, (
+            f"the miss header must name the first ledger and count the rest: {said!r}"
+        )
         assert option_code not in said, f"no customer CODE must ever reach the reply text: {said!r}"
 
         # captain ruling 21 Sep: contract 36 keeps the customer roster open across a miss
