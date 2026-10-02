@@ -29,6 +29,9 @@ from app.services.chatbot.language import choose, detect, for_turn
         ("1", None),
         ("ok", None),
         ("stock ada?", None),
+        ("ya", "ms"),
+        ("bukan", "ms"),
+        ("satu dua tiga", "ms"),
     ],
 )
 def test_ac_cl05_detection_table(message, expected):
