@@ -154,7 +154,13 @@ Prompt cache:
     - switch home: Settings > Chatbot > Switches;
     - dealer holders: a SQL list, with the recommendation "revoke by list, no auto-deny by type";
     - unidentified contacts: they already hold zero grants, so there is no special case.
-- Q1, Q3, Q4, Q5 and (iii): pending.
+- **(iii) = (a), 2 Oct 2026: revoke by list, with no list now.** All current respond contacts
+  are internal users; real dealers are not onboarded yet, so there is no data change.
+  - A new contact starts with no reveal grant. The only writer is the admin PUT
+    (`api/v1/system/chatbot_field_reveals.py:83-100` -> `contact_field_reveal_service.py:86`).
+    `granted_keys` returns `[]` for a contact with no rows (`:73-83`).
+  - So future dealers get the trimmed prompt and every gated refusal by default.
+- Q1, Q3, Q4 and Q5: the recommendations await the owner's final yes.
 
 ## Slices (after the owner answers and #1405 merges, rebased on main)
 
