@@ -2,7 +2,7 @@
 
 Status: Option C chosen (owner, 2 Oct 2026). Size L, full pipeline track (new gateway router on an
 auth boundary + a public token page). Behaviour card done (sections 1, 2, 0); next = Phase 1 mock
-per CRM screen (section 12, slice M) in progress (Q2 answered (a)). Lane
+per CRM screen (section 12, slice M) built and browser-verified 2 Oct (M1-M5, commits 142ba323..a5b9af0f), waiting on the owner's hand test before slice U (UAC). Lane
 IDEATION-IN-CRM.
 
 ## 0. Owner decisions (2 Oct 2026)
@@ -420,7 +420,7 @@ token-as-credential page with no OTP: `/portal/ticket-draft/[token]`
 | # | Slice | Contents | Depends on | Gate |
 |---|---|---|---|---|
 | S0 | Behaviour card | Sections 0-2, this plan. | - | Done 2 Oct |
-| M | **Phase 1 mock per CRM screen** (next) | In the CRM app against mock data, no backend, no tests: (M1) `/ideas` list with vote box + capture modal; (M2) `/ideas/{id}` detail incl. header action states A-E from the mock, tabs, comments with reply and deleted-with-replies; (M3) `/ideas/board`; (M4) merge modal + merged-from + promote modal; (M5) `/portal/ideas/{token}` track page with public comments. Each at 375px and 1280px, dark and light. | - | Owner hand-test of the mock |
+| M | **Phase 1 mock per CRM screen** (next) | In the CRM app against mock data, no backend, no tests: (M1) `/ideas` list with vote box + capture modal; (M2) `/ideas/{id}` detail incl. header action states A-E from the mock, tabs, comments with reply and deleted-with-replies; (M3) `/ideas/board`; (M4) merge modal + merged-from + promote modal; (M5) `/portal/ideas/{token}` track page with public comments. Each at 375px and 1280px, dark and light. | - | Owner hand-test of the mock (built + agent-browser verified 2 Oct, 375/1280, light/dark) |
 | U | UAC file | `ideation-in-crm-acceptance-criteria.md` from sections 2, 9-11 and the approved mock. | M | Owner sign-off |
 | B1 | Gateway + baseline | Router (section 10), token cache, list / detail / capture / vote / status / edit / archive / delete / attachments wired; `/ideas` and `/ideas/{id}` switch from the iframe to the native pages (no feature flag). Tester-first. | U | pytest + vitest green, reviewer + security-reviewer |
 | B2 | Board, merge/unmerge, promote | M3, M4 wired. | B1 | same |
