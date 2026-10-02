@@ -117,14 +117,15 @@ def range_reply(
     days = (end - start).days + 1 if start is not None else None
     if days is not None and days <= MAX_DAYS:
         return None
-    suggestions = [_month(end)]
+    # Suggest the asked range's last month, then its first; never a month still to come.
+    suggestions = [_month(min(end, today))]
     if start is None:
         lead = ""
     else:
         months = (end.year - start.year) * 12 + end.month - start.month + 1
         span = f"{months} months" if months > 1 else f"{days} days"
         lead = f"That covers {span} ({_ddmmyyyy(start)} to {_ddmmyyyy(end)}). "
-        if _month(start) != _month(end):
+        if _month(start) not in suggestions:
             suggestions.append(_month(start))
     return (
         f"{lead}I can show up to {MAX_DAYS} days of delivery orders at a time:\n"

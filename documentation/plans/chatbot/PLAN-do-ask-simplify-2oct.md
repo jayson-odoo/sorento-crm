@@ -1,8 +1,35 @@
 # PLAN: simplify chatbot DO asks (DO-ASK-SIMPLIFY)
 
-Status: building. Card posted as crew-ask on PR #1433; Q5 answered by crew data (seed every existing contact); Q1-Q4, Q6 open. Rule 1 header built. Track: FULL
-(a data-seed migration for existing staff grants, and a field-reveal (access) change, so the
-security reviewer joins).
+Status: built on PR #1433, all four rules red-first then green; awaiting review and hand test.
+Track: FULL (a data-seed migration, and a field-reveal (access) change, so the security
+reviewer joins).
+
+## Owner answers (2 Oct 2026)
+
+- Q1 (a): cap = 31 days, inclusive, rolling.
+- Q2 (b): rules 3-4 apply to DEALERS only. Until ACCESS-MODEL lands, a dealer is a contact
+  linked to at least one customer and holding no office access type
+  (`contact_customer_scope(...).enforced`), behind ONE helper `app/services/chatbot/do_ask.py::
+  is_dealer` that ACCESS-MODEL replaces with the Dealer role (crew ruling).
+- Q3 (a): quantity asks exempt. Built extra under the same reason: the `outstanding` and
+  `so_outstanding` order buckets (no delivery date to range over) are exempt too.
+- Q4 (a): one switch per field (five keys).
+- Q5: EVERY existing contact gets the five grants at deploy (all are internal; crew data: tier
+  is NULL for all 100 dev contacts); new contacts start hidden.
+- Q6: header grouping as proposed.
+
+## As built
+
+| Rule | Where |
+|---|---|
+| 1 header | `tail/scope_block.py::family_words`, used by `_axis_words` (gate rows) and `_focus_words` (carried rows) for the Customer axis only |
+| 2 reveals | `sorento_crm_mcp/presenters.py::_orders_list` (keys + five `b.restrict`), `catalog.py` orders_list `restricted_fields`, `contact_field_reveal_service.FIELD_REVEAL_KEYS`, migration `do_ask_0001_reveals` |
+| 3-4 range | `app/services/chatbot/do_ask.py::range_reply`, called in `lanes/business/__init__.py::run_fetch` right before the trigger is built; answered with `_fixed_reply` (no fetch, no header, no escalate offer) |
+
+The ask-back names its suggestions as words to type (no numbered pick), so no pending kind was
+added: the answer ("this month") is an ordinary dated message, and the engine carries the open
+ask's subject onto it (`tests/chatbot/test_do_ask_range_engine.py` pins this end to end).
+The "Product: all products" drop (old Q5) was not built; the owner did not ask for it.
 
 ## Journey
 
@@ -44,10 +71,8 @@ selling (own lanes), `order_status=so_outstanding` (open SO lines, no DO yet).
   - several families: first family label + `and N more` (`CHIN CHUN HARDWARE SDN BHD and 3 more`).
   - a typed word that resolved to many rows keeps printing the typed word (`_one_typed_word`,
     `scope_block.py:199`), unchanged.
-- `Product: all products` is dropped when no product was named (the line says nothing). A named
-  product prints as today.
-- `Dates:` always prints the window (with rule 3 there is no "all dates" on a DO list any more,
-  except a numbers-only ask, which prints no Dates line).
+- (Not built: dropping `Product: all products` was proposed; the owner did not take it.)
+- `Dates:` prints as today.
 - Each DO row keeps its own `*Customer:*` line with the full ledger name, so the reader still
   sees which account each DO is on.
 
@@ -79,34 +104,33 @@ selling (own lanes), `order_status=so_outstanding` (open SO lines, no DO yet).
 
 ### Rule 3: a DO ask carries a date range, unless it names numbers
 
-- A DO ask with no `date_filter_start` and no `date_filter_end` (this turn or carried by
-  `_spec_window`, `turn_runtime.py:2327`) fetches nothing and asks back, a new pending kind
-  `period_pick`, keeping the subject on focus:
+- A dealer's DO ask with no `date_filter_start` and no `date_filter_end` (this turn or carried
+  by `_spec_window`, `turn_runtime.py:2327`) fetches nothing and asks back (as built):
 
   ```
-  Which period for HANLIM TRADING SDN BHD's delivery orders?
-  1. This month (Oct 2026)
-  2. Last month (Sep 2026)
+  Which period for HANLIM TRADING SDN BHD (6 accounts)?
+  - This month (Oct 2026)
+  - Last month (Sep 2026)
   Or type a month (e.g. August) or dates (e.g. 15 Sep to 10 Oct).
   ```
-  "1"/"2" or a typed month/dates answers it and the original ask runs with that window.
+  A typed period answers it and the original ask runs with that window (no numbered pick, no
+  pending kind; see "As built").
 - Exception: the ask names one or more DO/SO/order numbers (entity hint `order`, or a resolver
   hit typed `order` / `customer_order` / `order_number`): no range needed, no cap.
 - "This month" means the whole calendar month (01/10/2026 to 31/10/2026), not month to date.
 
 ### Rule 4: range cap
 
-- Recommended cap: at most 31 days, inclusive, counted from start to end (rolling, not "same
+- Cap (owner Q1 (a)): at most 31 days, inclusive, counted from start to end (rolling, not "same
   calendar month"). So "January", "February", "last week", "this month", "15 Sep to 10 Oct",
   "20 Dec to 10 Jan" are all fine; "January to June" and "January and February" (59 days) are
   refused. A start with no end ("since August") is measured to today.
-- Refusal, fetching nothing, with the same `period_pick` options taken from the asked range
-  (its last month first, then its first month):
+- Refusal, fetching nothing, suggesting the asked range's last month, then its first (as built):
 
   ```
-  That is 6 months (01/01/2026 to 30/06/2026). I can show up to one month of delivery orders at a time:
-  1. Jun 2026
-  2. Jan 2026
+  That covers 6 months (01/01/2026 to 30/06/2026). I can show up to 31 days of delivery orders at a time:
+  - Jun 2026
+  - Jan 2026
   Or type a month or dates.
   ```
 
@@ -117,7 +141,7 @@ selling (own lanes), `order_status=so_outstanding` (open SO lines, no DO yet).
 | 1 | "Delivery to hanlim" then pick all (handpass3-owner-17sep..., turn 0) | `*orders* for HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD (CERAMIC & ELLECI):` | ask-back "Which period for HANLIM TRADING SDN BHD's delivery orders?"; after "1": `Customer: HANLIM TRADING SDN BHD (6 accounts)` / `Dates: 01/10/2026 to 31/10/2026` |
 | 2 | "All" on the Chin Chun picker (same file, turn 2) | `*orders* for CHIN CHUN HARDWARE SDN BHD - [A/C I]` x6, `CHIN CHUN HOMEMART SDN BHD - [A/C I]` x4, `... AND TIMBER TRADING` x3, `JIMMY - I` x2 | `Customer: CHIN CHUN HARDWARE SDN BHD (N accounts) and 3 more` (identical names count once) |
 | 3 | "delivery status for hanlim" (case-072, turn 1); rows 202609-0916, 202609-0927 | `Customer: hanlim` / `Product: all products` / `Dates: all dates`, rows with Status `Picked Up / In Transit`, Driver `AZHAR`, Lorry Plate `VQP1678` | ask-back for the period; a dealer then sees rows without Status / Pickup Time / Transporter / Driver / Lorry Plate; a staff contact sees them as today |
-| 4 | "delivery for hanlim rpacc" then "only in 2026" (owner-15sep-chain-001, turns 6-7) | `Dates: all dates`, then `Dates: 01/01/2026 to 31/12/2026` | turn 6 asks the period; turn 7 is refused: "That is 12 months ... 1. Dec 2026 2. Jan 2026" |
+| 4 | "delivery for hanlim rpacc" then "only in 2026" (owner-15sep-chain-001, turns 6-7) | `Dates: all dates`, then `Dates: 01/01/2026 to 31/12/2026` | turn 6 asks the period; turn 7 is refused: "That covers 12 months ... - Dec 2026 - Jan 2026" |
 | 5 | "where is DO 202609-0916" | (no fixture) | no ask-back, no Dates line: `Order: 202609-0916` and the row |
 
 ### Edge cases
@@ -156,27 +180,30 @@ selling (own lanes), `order_status=so_outstanding` (open SO lines, no DO yet).
 
 ## Regression scenarios (DO asks)
 
-Contact D = dealer (no DO reveal grants), S = staff (`tier=office`, seeded grants). Today = Fri 2 Oct 2026.
+Contact D = dealer (linked to a customer, no office access type; a NEW contact, so no DO
+reveal grants). S = staff (an office access type or no customer link; an existing contact,
+so the five grants were seeded). Today = Fri 2 Oct 2026. "Pinned" names the test that holds it.
 
-| # | Contact | Message | Expected |
-|---|---|---|---|
-| R1 | D | "delivery to hanlim" | period ask-back, options Oct 2026 / Sep 2026; nothing fetched |
-| R2 | D | R1 then "1" | list for 01/10/2026 to 31/10/2026, header `Customer: HANLIM ...`, `Dates: 01/10/2026 to 31/10/2026` |
-| R3 | D | R1 then "August" | list for 01/08/2026 to 31/08/2026 |
-| R4 | D | "delivery to hanlim this month" | list, no ask-back; rows without Status / Pickup Time / Transporter / Driver / Lorry Plate |
-| R5 | S | "delivery to hanlim this month" | same rows WITH Status, Pickup Time, Transporter, Driver, Lorry Plate |
-| R6 | D | "delivery to hanlim last week" | list 21/09/2026 to 27/09/2026 |
-| R7 | D | "delivery to hanlim September" | list 01/09/2026 to 30/09/2026 |
-| R8 | D | "delivery to hanlim 15 Sep to 10 Oct" | list 15/09/2026 to 10/10/2026 (26 days, allowed under Q1 (a)) |
-| R9 | D | "delivery to hanlim 20 Dec 2025 to 10 Jan 2026" | list, 22 days across the year boundary |
-| R10 | D | "delivery to hanlim January to June" | refused with "That is 6 months ..." and options Jun 2026 / Jan 2026 |
-| R11 | D | "delivery to hanlim January and February" | refused (59 days) |
-| R12 | D | "delivery to hanlim this year" | refused, options Oct 2026 / Jan 2026 |
-| R13 | D | "where is DO 202609-0916" | the row, no ask-back, no Dates line |
-| R14 | D | "status of 202609-0916 and 202609-0927" | both rows, no ask-back |
-| R15 | D | "delivery to hanlim since August" | refused (01/08 to 02/10 = 63 days) |
-| R16 | D | R4 then "and chin chun?" | carried window, no re-ask |
-| R17 | D | R4 then "mocha only" | brand switch, same window |
-| R18 | S | linked to six HANLIM ledgers, "my deliveries this month" | header `Customer: HANLIM TRADING SDN BHD (6 accounts)` |
-| R19 | S | "delivery to hanlim account 1 this month" (after #1432) | header `Customer: HANLIM TRADING SDN BHD, Account 1` |
-| R20 | D | "outstanding DO for SRTWT7443" | outstanding report, unchanged (not a DO list ask) |
+| # | Contact | Message | Expected | Pinned |
+|---|---|---|---|---|
+| R1 | D | "delivery to hanlim" | period ask-back, This month (Oct 2026) / Last month (Sep 2026); nothing fetched | `test_do_ask_range.py`, `test_do_ask_range_engine.py` |
+| R2 | D | R1 then "this month" | the same ask runs for 01/10/2026 to 31/10/2026, carried customer | `test_do_ask_range_engine.py::test_the_answer_runs_the_same_ask_over_that_window` |
+| R3 | D | R1 then "August" | list for 01/08/2026 to 31/08/2026 | same path as R2 (parser dates) |
+| R4 | D | "delivery to hanlim this month" | list, no ask-back; rows without Status / Pickup Time / Transporter / Driver / Lorry Plate | `test_do_ask_range.py` (fetched), `test_do_field_reveals.py` (hidden) |
+| R5 | S | "delivery to hanlim" (no date) | list as today, no ask-back, all five fields | `test_staff_need_no_range`, `test_a_contact_with_every_grant_reads_today_s_reply` |
+| R6 | D | "delivery to hanlim last week" | list 21/09/2026 to 27/09/2026 | parametrised 31-day test |
+| R7 | D | "delivery to hanlim September" | list 01/09/2026 to 30/09/2026 | parametrised 31-day test |
+| R8 | D | "delivery to hanlim 15 Sep to 10 Oct" | list (26 days) | parametrised 31-day test |
+| R9 | D | "delivery to hanlim 20 Dec 2025 to 10 Jan 2026" | list (22 days, year boundary) | parametrised 31-day test |
+| R10 | D | "delivery to hanlim January to June" | "That covers 6 months (01/01/2026 to 30/06/2026) ..." - Jun 2026 / - Jan 2026 | `test_january_to_june_is_refused_with_suggestions` |
+| R11 | D | "delivery to hanlim January and February" | refused, "2 months" | `test_january_and_february_is_refused` |
+| R12 | D | "delivery to hanlim this year" | refused; suggestions stop at the current month: - Oct 2026 / - Jan 2026 | `test_suggestions_never_name_a_future_month` |
+| R13 | D | "where is DO 202609-0916" | the row, no ask-back | `test_naming_an_order_number_needs_no_range` |
+| R14 | D | "how many SRT320-CR did hanlim take" | quantity ask, no ask-back (Q3) | `test_a_quantity_ask_needs_no_range` |
+| R15 | D | "delivery to hanlim since August" | refused, measured to today (01/08/2026 to 02/10/2026) | `test_a_start_with_no_end_is_measured_to_today` |
+| R16 | D | "delivery to hanlim 1 Sep to 2 Oct" | refused (32 days) | `test_32_days_is_refused` |
+| R17 | S | "delivery to hanlim January to June" | list, never capped | `test_staff_are_never_capped` |
+| R18 | any | six HANLIM ledgers in scope | header `Customer: HANLIM TRADING SDN BHD (6 accounts)` | `test_do_ask_header.py` |
+| R19 | any | one ledger picked | header prints that ledger's full name | `test_one_ledger_prints_its_own_full_name` |
+| R20 | D | "outstanding DO for SRTWT7443" | outstanding report, unchanged (not a DO list ask) | report tool is not in `ORDER_TOOLS` |
+| R21 | D | brand switch / "and chin chun?" inside an open dated list | carried window, no re-ask | carried by `_spec_window` (not separately pinned) |

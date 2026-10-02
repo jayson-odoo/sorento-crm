@@ -153,6 +153,13 @@ def test_january_and_february_is_refused():
     assert "2 months" in said, said
 
 
+def test_suggestions_never_name_a_future_month():
+    said, calls = _run(start="2026-01-01", end="2026-12-31")
+    assert not _fetched(calls), calls
+    assert "Oct 2026" in said and "Jan 2026" in said, said
+    assert "Dec 2026" not in said, said
+
+
 def test_32_days_is_refused():
     said, calls = _run(start="2026-09-01", end="2026-10-02")
     assert not _fetched(calls), calls
