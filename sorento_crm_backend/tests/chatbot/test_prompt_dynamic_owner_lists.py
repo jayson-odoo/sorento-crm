@@ -115,3 +115,53 @@ def test_the_migration_is_idempotent_and_never_overrides_an_owner_edit():
 def test_the_seed_words_are_the_owner_words_in_his_order():
     owner = _owner("stock, incoming, ETA", " - in any language")
     assert list(_migration().DOMAIN_WORDS) == [w.strip() for w in owner.replace("\n", " ").split(",")]
+
+
+# --------------------------------------------------------------------------- #
+# Owner answer 6 (2 Oct 2026), access levels: APPROVED - order the active access types
+# as his text lists them (`pdyn_0005_access_level_order`). Agents and the master_products
+# narrowing are on hold.
+# --------------------------------------------------------------------------- #
+
+OWNER_ACCESS_LEVELS = [
+    "Sorento Dealer", "Mocha Dealer", "Mocha Office", "Cabana Dealer", "Cabana Office", "End User", "Sorento Office",
+]
+
+
+def _order_migration():
+    path = BACKEND / "alembic" / "versions" / "pdyn_0005_access_level_order.py"
+    spec = importlib.util.spec_from_file_location("_t_pdyn_0005", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_access_level_order_step_renders_the_owner_list_and_inserts_nothing():
+    with pg_session() as db:
+        db.execute(text("UPDATE contact_access_types SET is_active = false"))
+        for i, name in enumerate(reversed(OWNER_ACCESS_LEVELS)):
+            db.execute(
+                text(
+                    "INSERT INTO contact_access_types (code, name, is_active, sort_order, keywords, created_at, updated_at) "
+                    "VALUES (:c, :n, true, :s, '[]', now(), now())"
+                ),
+                {"c": f"zzt{i}", "n": name, "s": i},
+            )
+        db.flush()
+        count = db.execute(text("SELECT count(*) FROM contact_access_types")).scalar()
+        _order_migration().apply(db.connection())
+        pv.clear_cache()
+        assert pv.render_value(db, "access_levels") == _owner('["Sorento Dealer"', "\n")
+        assert db.execute(text("SELECT count(*) FROM contact_access_types")).scalar() == count
+
+
+def test_the_access_level_order_step_leaves_inactive_rows_alone():
+    with pg_session() as db:
+        db.execute(
+            text(
+                "INSERT INTO contact_access_types (code, name, is_active, sort_order, keywords, created_at, updated_at) "
+                "VALUES ('zztoff', 'Sorento Dealer', false, 77, '[]', now(), now())"
+            )
+        )
+        _order_migration().apply(db.connection())
+        assert db.execute(text("SELECT sort_order FROM contact_access_types WHERE code = 'zztoff'")).scalar() == 77
