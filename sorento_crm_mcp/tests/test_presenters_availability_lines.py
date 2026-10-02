@@ -30,7 +30,7 @@ def _entry(**over):
 def test_too_big_sentence():
     line = _availability_line(_entry(product_code="CWCX604", requested_qty=300, branch="too_big"))
     assert line == (
-        "CWCX604 x 300: the quantity is more than what I can confirm here. "
+        "CWCX604 x 300: 🚫 the quantity is more than what I can confirm here. "
         "Please refer to your salesman."
     )
 
@@ -83,7 +83,7 @@ def test_asked_order_multi_product_reply_reads_line_by_line():
     lines = [_availability_line(e) for e in entries]
     assert lines == [
         "SRT5674 x 50: ✅ Please refer to your salesman.",
-        "CWCX604 x 300: the quantity is more than what I can confirm here. "
+        "CWCX604 x 300: 🚫 the quantity is more than what I can confirm here. "
         "Please refer to your salesman.",
     ]
 

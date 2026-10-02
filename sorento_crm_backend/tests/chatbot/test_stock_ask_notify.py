@@ -47,7 +47,7 @@ from tests.chatbot.test_engine import stub_access  # noqa: F401 - a pytest fixtu
 from tests.chatbot.test_rearch_s3_attribute_first import SORENTO, _link_contact_company
 from tests.chatbot.test_rearch_s3_roster_from_resolver import _seed_contact
 
-TOO_BIG = "the quantity is more than what I can confirm here. Please refer to your salesman."
+TOO_BIG = "🚫 the quantity is more than what I can confirm here. Please refer to your salesman."
 IN_STOCK = "✅ Please refer to your salesman."
 NO_INCOMING = "❌ No incoming. Please refer to your salesman."
 

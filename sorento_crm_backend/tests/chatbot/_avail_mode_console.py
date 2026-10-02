@@ -27,7 +27,15 @@ from tests.chatbot.test_rearch_s3_attribute_first import SORENTO
 #: The codes every scenario can name, beside the round 9 console's own (the SRTWC286
 #: family, SRTWC287-S-150, ELP3754). Real Sorento codes from the hand tests and plan
 #: samples; SRTW2000 has a shipment, MWT5727SS-CR has none.
-CODES = ["SRT5674", "CWCX604", "SRTW2000", "MWT5727SS-CR", "SRTBF11201-NEW", "SRTWB7109"]
+CODES = [
+    "SRT5674",
+    "CWCX604",
+    "SRTW2000",
+    "MWT5727SS-CR",
+    # A second family ("check stock srtwc6022" placed both, answer_bridge hand pass 11).
+    "SRTWC6022-SH-UF",
+    "SRTWC6022-SH-UF-NEW",
+]
 
 
 @dataclass

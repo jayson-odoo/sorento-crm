@@ -375,7 +375,7 @@ def test_render_availability_answer():
     assert yes["items"][0]["flags"] == {"needs_quantity": False, "branch": "in_stock"}
     assert no["intro"] == ""
     assert no["items"][0]["title"] == (
-        "SRTBF11201-NEW x 50: the quantity is more than what I can confirm here. "
+        "SRTBF11201-NEW x 50: 🚫 the quantity is more than what I can confirm here. "
         "Please refer to your salesman."
     )
     assert no["items"][0]["flags"] == {"needs_quantity": False, "branch": "too_big"}

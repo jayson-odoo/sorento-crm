@@ -51,12 +51,13 @@ def test_no_incoming_is_a_cross():
     assert line == "SRT5674 x 150: ❌ No incoming. Please refer to your salesman."
 
 
-def test_too_big_has_no_emoji_and_claims_nothing():
+def test_too_big_is_blocked_and_claims_nothing():
+    """Owner v2 note 1 (2 Oct 2026): a blocked mark, never a tick or a cross, no count."""
     line = _availability_line(
         _entry(product_code="CWCX604", requested_qty=300, branch="too_big", available_qty=30)
     )
     assert line == (
-        "CWCX604 x 300: the quantity is more than what I can confirm here. "
+        "CWCX604 x 300: \U0001F6AB the quantity is more than what I can confirm here. "
         "Please refer to your salesman."
     )
     assert "✅" not in line and "❌" not in line
