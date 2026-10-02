@@ -1,0 +1,176 @@
+# UAC: Ideas inside Sorento CRM (lane IDEATION-IN-CRM)
+
+Plan: `PLAN-ideation-in-crm.md` (sections 0, 9-14 are the design). Approved mock:
+`documentation/mockups/ideation-in-crm/index.html` (owner "no problem", 2 Oct 2026; the open
+recommendations in that ask were accepted: Promote is one click, the track-page vote count is
+read-only, Product is hidden by default, the Phase 1 screens are kept and reworked).
+ss contracts: embed API on ss `main`; comment routes from ss lane IDEATION-COMMENTS (branch
+`crew/ideation-comments`, ss plan `sprint-5/19-ideation-comments.md`).
+
+Terms: "gateway" = the new CRM router `/api/v1/ideation`; "ss" = the shared service; "manage" =
+the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.board.view`.
+
+## A. Gateway and embed token
+
+- **AC-A-01** Every gateway call authenticates the CRM user (Bearer session or X-API-Key act-as user)
+  and requires view; a user without view gets 403 and ss is never called.
+- **AC-A-02** The gateway mints the assertion exactly as `ideation_embed_service.mint_embed_assertion`
+  does, exchanges it at ss `POST /embed/session`, and caches the embed token per CRM user id until
+  30 s before `expires_at`. A second call inside the window does not call `/embed/session` again.
+- **AC-A-03** An ss 401 on a cached token drops the cache entry, re-mints once and retries once; a
+  second 401 returns 502.
+- **AC-A-04** The embed token never appears in any gateway response body or header, and is never
+  logged.
+- **AC-A-05** ss unreachable or timing out returns 502 "The Ideas workspace isn't reachable right
+  now."; Ideas not configured returns 404 "The Ideas workspace isn't available on this deployment."
+- **AC-A-06** An ss 4xx is passed through with ss's status and message (`detail`/`message`), e.g. a
+  promote 403 surfaces ss's text.
+- **AC-A-07** The assertion `name` claim is the CRM user's display name: `users.name` trimmed, else
+  the literal `Sorento staff`. It is never the email address (a user with a blank name and an email
+  gets `Sorento staff`).
+- **AC-A-08** Route map (method, CRM path -> ss path, permission):
+  `GET /ideas?filter=` -> `GET /embed/ideas?filter=` (view);
+  `GET /ideas/board` -> `GET /embed/board` (view);
+  `GET /ideas/{id}` and `GET /ideas/{id}/merged` (view);
+  `POST /ideas` (view);
+  `PATCH /ideas/{id}` (manage);
+  `POST /ideas/{id}/vote` -> body `{"dir":"up"}` always (view);
+  `POST /ideas/{id}/status` (manage);
+  `PUT /ideas/reorder`, `POST /ideas/merge`, `POST /ideas/{id}/unmerge`, `POST /ideas/promote` (manage);
+  `POST /ideas/{id}/attachments` (manage), `GET /ideas/{id}/attachments/{aid}/content` streamed (view);
+  `GET|POST /ideas/{id}/comments`, `PATCH|DELETE /ideas/{id}/comments/{cid}` (view).
+  A view-only user calling a manage route gets 403 and ss is never called.
+- **AC-A-09** Archive and Delete run as server-deferred pending actions (`record_actions` handlers,
+  entity `idea`): the handler calls ss as the user who started the action (status `archived` / ss
+  `DELETE /embed/ideas/{id}`); Cancel inside the window means ss is never called.
+
+## B. Permission
+
+- **AC-B-01** `ideation.ideas.manage` exists in the permission registry (module ideation) and is
+  granted to admin/superadmin by the reference seed; the FE reads it through the normal permission
+  check (the Phase 1 admin fallback is removed).
+- **AC-B-02** Without manage, the idea page shows the vote box and comments only: no Edit, no Move,
+  no "..." menu; the board does not allow drag; the list shows no row actions beyond voting.
+
+## C. Ideas list (`/ideas`)
+
+- **AC-C-01** Reached by the sidebar "Ideas" entry; renders a DataGrid (fixed layout, resizable
+  columns, explicit sizes, truncate + title) with columns Votes, Idea, No., Product (hidden by
+  default), Submitter, Channel, Status, Captured (dd/MM/yyyy).
+- **AC-C-02** Column visibility and widths persist per user via
+  `/api/v1/list-query/column-config/ideation.board.view` and survive a reload.
+- **AC-C-03** The vote box toggles the viewer's upvote via the gateway without opening the row; the
+  count and filled state update; a merged child's box is disabled.
+- **AC-C-04** Status filter (SearchableSelect, clearable) includes Archived; default shows active
+  ideas; search filters by title, number, submitter.
+- **AC-C-05** Header CTA "Capture idea" opens a modal with Problem statement (required, inline
+  "Problem statement is required"), Proposed solution, Impact, Department, Original message,
+  Attachments; no Product picker. Save calls `POST /ideas` then uploads each dropped file to the new
+  idea; the new idea appears in the list.
+- **AC-C-06** Empty list: heading + hint, no button. Gateway error: error state with Retry.
+
+## D. Idea page (`/ideas/{id}`)
+
+- **AC-D-01** PageHeader title and breadcrumb are the idea number; the record card shows the vote
+  box (md), full title, status Badge (tenant label and colour from ss), metadata strip (Submitter,
+  Channel, Product, Captured dd/MM/yyyy, h:mm AM/PM), RecordNavigation, tabs Details / Attachments /
+  Business requirements.
+- **AC-D-02** Header states (manage holder): primary = "Move to <label of advance target>" from
+  `advanceTransitionId`/`transitions`, Edit outline to its left; no next move: Edit primary;
+  archived: Restore primary + Edit; merged child: Unmerge primary, no Edit, vote disabled, no comment
+  composer.
+- **AC-D-03** Edit swaps values for inputs in place (same layout); Save calls `PATCH /ideas/{id}`.
+- **AC-D-04** "..." menu: Promote to BR (one click: `POST /ideas/promote` with `{ideaIds:[id],
+  title:<idea title>}`, success toast, BR appears on the Business requirements tab; ss 403 message
+  shown as an error toast), Merge into another idea, Archive (5 s countdown), Delete (10 s countdown,
+  then back to the list). No confirm dialog anywhere.
+- **AC-D-05** Attachments tab lists files (download streams through the gateway) and a dropzone for
+  manage holders; Business requirements tab lists linked BRs read-only, empty state otherwise.
+- **AC-D-06** Unknown id: not-found state; no UUID is shown anywhere in the UI.
+
+## E. Comments (staff)
+
+- **AC-E-01** Comments render under Details oldest first, one reply level (ss flat list grouped by
+  `parentId`), author display name, time dd/MM/yyyy, h:mm AM/PM, an "edited" tag when `editedAt`.
+- **AC-E-02** Posting and replying call the gateway; a reply to a reply posts the top-level parent id.
+- **AC-E-03** Edit / Delete show only when ss says `canEdit` / `canDelete`; Delete is a 10 s
+  countdown with Cancel, no confirm dialog.
+- **AC-E-04** A deleted comment with replies shows "Comment deleted" and keeps its replies; a
+  deleted comment without replies is not shown (ss omits it).
+- **AC-E-05** A comment posted from the CRM is stored in ss with the CRM user's display name (AC-A-07),
+  never the email; another reader (staff or portal) sees that name.
+- **AC-E-06** Bodies render as plain text (no HTML); empty body is refused before calling ss.
+
+## F. Board (`/ideas/board`)
+
+- **AC-F-01** Reached by the List / Board switch on the list; lanes and order from ss `GET
+  /embed/board`; cards show the sm vote box, idea number, title clamped to 2 lines, submitter.
+- **AC-F-02** A manage holder drags by the grip: within a lane calls `PUT /ideas/reorder`; to another
+  lane calls `POST /ideas/{id}/status` with the transition to that lane; a move with no allowed
+  transition is refused ("This idea cannot move to that status.") and the card returns.
+
+## G. Merge and promote
+
+- **AC-G-01** Merge modal picks the survivor (SearchableSelect of active ideas, excluding this idea
+  and merged children) and calls `POST /ideas/merge`; the child then shows state E and the survivor
+  lists it under "Merged ideas" (`GET /ideas/{id}/merged`).
+- **AC-G-02** Unmerge calls `POST /ideas/{id}/unmerge` and restores the child's normal state.
+
+## H. Customer track page (`/portal/ideas/{token}`)
+
+- **AC-H-01** Route `FE/app/(auth)/portal/ideas/[token]/page.tsx` in the portal shell, no login.
+  Data from CRM public routes `GET /api/v1/public/portal/ideas/{token}` and
+  `GET|POST /api/v1/public/portal/ideas/{token}/comments`, proxying ss `GET /public/ideas/{token}` and
+  ss `GET|POST /public/ideas/{token}/comments`.
+- **AC-H-02** A token not matching `^[A-Za-z0-9_-]{16,64}$` is a 404 without calling ss; an ss 404 is
+  a uniform 404; the page shows "Idea not found" / "This link is not valid."
+- **AC-H-03** Responses carry `Cache-Control: no-store`, `X-Robots-Tag: noindex`,
+  `Referrer-Policy: no-referrer`.
+- **AC-H-04** The page shows title, status badge, idea number, submitted date, vote count READ-ONLY
+  (no vote control), the idea text, and the comment thread.
+- **AC-H-05** Posting a comment calls the CRM public POST; the comment shows the submitter's name
+  (ss sets it server-side) with a "You" tag for the just-posted comment; a client-sent name is never
+  forwarded.
+- **AC-H-06** Field allow-list: the CRM public proxy forwards only `id, parentId, authorName,
+  isSubmitter (authorKind == "public"), body, isDeleted, createdAt, editedAt` per comment and only
+  the documented idea fields; no email, author id, phone, or internal id beyond the comment id ever
+  reaches the browser. A test asserts no value containing `@` survives the proxy for a seeded email
+  author name.
+- **AC-H-07** Rate limit: the CRM public POST is limited per client IP (20 per 15 min) and per token
+  (5 per 15 min) before calling ss, answering 429 with `Retry-After` and "Too many comments. Try
+  again later."; the client IP is forwarded to ss as `X-Forwarded-For`.
+- **AC-H-08** Usable at 375px and 1280px; not-found state at both.
+
+## I. Removal and regression
+
+- **AC-I-01** `/ideas` and `/ideas/{id}` no longer render an iframe; `IdeationEmbed.tsx` and
+  `useIdeationEmbedSession.ts` are deleted; `POST /integrations/ideation/embed-session` stays (unused
+  by the FE) until a follow-up removes it.
+- **AC-I-02** Every screen is usable at 375px and 1280px, light and dark, with no console errors.
+- **AC-I-03** No em or en dash in any changed file.
+
+## Captain's test list (tester writes these RED first)
+
+Backend (`sorento_crm_backend/tests/`, Postgres fixture `tests/_pg_fixture.py`, ss mocked at the
+httpx boundary, never a real network call):
+- `test_ideation_gateway.py`: A-01 403 without view and ss not called; A-02 token cached (one
+  `/embed/session` call for two requests); A-03 401 re-mint once then 502; A-04 no token in body or
+  headers; A-05 502 on timeout, 404 unconfigured; A-06 ss 403 message passthrough; A-07 name claim
+  `users.name` and `Sorento staff` for blank name, never the email; A-08 each route forwards to the
+  right ss path/method/body, vote body is `{"dir":"up"}`, manage routes 403 for view-only and ss not
+  called; A-09 pending-action handlers call ss on commit and not on cancel.
+- `test_ideation_manage_permission.py`: B-01 slug registered and granted to admin/superadmin.
+- `test_public_portal_ideas.py`: H-02 bad token 404 without ss call, ss 404 uniform; H-03 headers;
+  H-05 client name not forwarded; H-06 allow-list strips email/author ids (seeded email author name
+  never appears); H-07 429 after 5 per token and 20 per IP with Retry-After, X-Forwarded-For forwarded.
+
+Frontend (vitest, `sorento_crm_frontend`):
+- `services/ideasService.test.ts`: every function hits the documented `/api/v1/ideation/...` path
+  and method; vote always posts up; promote posts `{ideaIds, title}`.
+- `components/ideas/IdeaDetail.test.tsx`: D-02 states A-E and no-manage F; D-04 menu items and
+  countdown, no confirm; promote 403 toast text from the error.
+- `components/ideas/IdeaComments.test.tsx`: E-01 order and one level; E-02 reply-to-reply posts the
+  top-level id; E-03 edit/delete visibility from flags, countdown; E-04 placeholder; E-06 plain text.
+- `components/ideas/IdeasListView.test.tsx`: C-01 Product hidden by default; C-03 vote does not
+  navigate; C-05 required message.
+- `components/ideas/PortalIdeaTrack.test.tsx`: H-04 no vote control; H-05 You tag; not-found state.

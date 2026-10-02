@@ -1,11 +1,11 @@
 # PLAN: Ideation inside the Sorento CRM portal (one system, one domain)
 
-Status: Option C chosen (owner, 2 Oct 2026). Size L, full pipeline track (new gateway router on an
-auth boundary + a public token page). Behaviour card done (sections 1, 2, 0). Slice M = the static
-mock `documentation/mockups/ideation-in-crm/index.html` (one section per CRM screen), filed for owner
-approval 2 Oct; BUILD IS PAUSED until the owner approves it. The in-app Phase 1 screens on this
-branch (commits 142ba323..a5b9af0f) were built ahead of that approval; they are frozen, not
-hand-tested, and will be reworked to the approved mock or reverted. Lane IDEATION-IN-CRM.
+Status: Option C chosen (owner, 2 Oct 2026). Size L, full pipeline track. Slice M static mock
+APPROVED by the owner 2 Oct ("no problem"; the ask's recommendations accepted: Promote one click,
+track-page vote count read-only, Product hidden by default, Phase 1 screens kept and reworked).
+Slice U done: `ideation-in-crm-acceptance-criteria.md`. Now in Phase 2 build (B1-B5 folded into one
+lane round): red tests, then gateway + native pages green, then review, security review, browser
+pass, hand test. Lane IDEATION-IN-CRM.
 
 ## 0. Owner decisions (2 Oct 2026)
 
@@ -466,6 +466,19 @@ only ship after it does.
   with a stated author identity for public posts (section 15 Q4). Comment authors are carried by
   display name from the embed `name` claim, never shown by email (section 10, commenter identity). Votes: `myVote` only ever `up`.
   Its components must stay free of a hard-coded domain (the mock already says so).
+
+- **ss IDEATION-COMMENTS, read 2 Oct (branch head `f9ce5aee`), three gaps the CRM cannot close alone:**
+  1. Embed comment author: `routers/embed.py` stores `author_name=(principal.email or "").strip() or "Portal user"`.
+     It must store `principal.name` (the CRM always sends a display name, AC-A-07), falling back to
+     "Portal user", never the email. Reads already mask email-shaped names (`_project_names`), so
+     today a CRM comment would show as "Portal user".
+  2. Public comment throttle keys on `client_ip(request)`. Behind the CRM proxy every customer has
+     the CRM backend's IP, so the 20-per-IP limit becomes one global limit. The CRM limits per real
+     client IP itself (AC-H-07) and forwards `X-Forwarded-For`; ss should trust that header only
+     from the CRM (or exempt the CRM caller from the per-IP bucket and keep the per-token one).
+  3. Embed viewers never moderate (`can_moderate=False`), so a CRM manage holder can delete only
+     their own comments. Accepted for this lane; raise with the owner if moderation from the CRM is
+     wanted.
 
 ## 14. Embed connection product scope (Q3)
 
