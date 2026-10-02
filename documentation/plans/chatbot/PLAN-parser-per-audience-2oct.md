@@ -274,6 +274,19 @@ Prompt cache:
   - Green: cost, the three sales statuses, the PO rung, supplier, other customers.
   - Red: direct PO, SPO last in, the low stock reply text, and G1.
 
+## Red-first proof (owner rule, 2 Oct 2026)
+
+The steps, in order:
+1. Every new or changed test is committed ALONE first, with a subject starting `test(red):`.
+2. Run those tests and post `crew-note: red-proof <sha> <command>` with the failing output.
+3. Commit the code.
+4. After green, break or revert the fix, show the same tests fail, restore it, and post
+   `crew-note: kill-proof`.
+5. The crew-done DoD lists the red-proof shas and the kill-proof.
+
+Already posted: the red-proof for 21debae7 (134 failed / 134 passed) and for f08ed10b (G1, 3
+failed / 2 passed). Both commits predate the prefix rule.
+
 ## Kill list (tests must fail when these are broken)
 
 - The strip keeps a tagged block for a contact without the grant.
