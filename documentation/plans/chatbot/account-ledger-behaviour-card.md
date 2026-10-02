@@ -68,7 +68,7 @@ Option b: no seed, the office sets levels by hand (the bot then answers nothing 
 | 5 | staff | "Soon Heng Trading account 2" | refused: has Account 1, Account 3 and Account 4 |
 | 6 | anyone | "account 2 outstanding" (no name) | "Which customer is Account 2 for?" |
 
-## One open question
+## Q6 (answered: a)
 
 Q6. Linked contact "my account 1" (names no customer, but "my" means its own links):
 (a) "my" counts as naming the customer: answer its level-1 links [rec: "my" already scopes to the links, `engine.py:1398-1400`];

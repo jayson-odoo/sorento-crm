@@ -1,6 +1,6 @@
 # PLAN: "account N" in a chatbot message selects the ledger whose Account level is N
 
-Status: planning, FULL track (migration: one additive column + one-time seed; permission check on one field; new parser key). Card revision 2 filed 2 Oct 2026 (owner answered Q1-Q5 of revision 1; Q6 open).
+Status: building, FULL track (migration: additive column + one-time NULL-only seed; permission check on one field; new parser key). Card final 2 Oct 2026 (owner: seed (a), Q6 (a), addendum approved, 403 rec approved). Red tests first.
 Lane: ACCOUNT-LEDGER (branch `crew/account-ledger`). Card: `account-ledger-behaviour-card.md`.
 UAC: `account-ledger-acceptance-criteria.md`.
 
@@ -35,7 +35,7 @@ UAC: `account-ledger-acceptance-criteria.md`.
    whose `account_level` differs (read by uuid in one query). All dropped -> refusal line
    naming the levels the name has.
 7. **Unnamed (Q2).** A customer entity with `account` and null raw, and no other customer
-   entity this message (and not "my" for a linked contact, pending Q6) -> reply
+   entity this message (and not "my": Q6 (a), "my" names the links) -> reply
    "Which customer is Account N for?", nothing fetched, nothing carried.
 8. **Refusal plumbing.** Reuse `customer_scope_refused` (`engine.py` ~4126, ~5212) with the
    turn's own refusal text.
