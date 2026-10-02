@@ -50,8 +50,10 @@ const TYPE_PACKING_LIST = {
   default_directory_id: null,
 };
 
-const mutateAsync = vi.fn(async () => ({ id: 'att-1' }));
-const startSession = vi.fn();
+const mutateAsync = vi.fn(async (_request: Record<string, unknown>) => ({ id: 'att-1' }));
+const startSession = vi.fn(
+  (_session: { uploader: (file: File) => Promise<unknown> }) => undefined,
+);
 
 vi.mock('../hooks/useAttachments', () => ({
   useUploadAttachment: () => ({ mutateAsync, isPending: false }),
@@ -137,11 +139,9 @@ describe('AttachmentUploadDialog - regions reach the upload request (AC-RPL-2)',
   async function submitAndRunUploader() {
     fireEvent.click(screen.getByRole('button', { name: /^Upload 1 Attachment$/ }));
     await waitFor(() => expect(startSession).toHaveBeenCalled());
-    const { uploader } = startSession.mock.calls[0][0] as {
-      uploader: (file: File) => Promise<unknown>;
-    };
+    const { uploader } = startSession.mock.calls[0][0];
     await uploader(new File(['x'], 'pl.pdf', { type: 'application/pdf' }));
-    return mutateAsync.mock.calls[0][0] as Record<string, unknown>;
+    return mutateAsync.mock.calls[0][0];
   }
 
   it('sends West only for a Packing List upload by default', async () => {

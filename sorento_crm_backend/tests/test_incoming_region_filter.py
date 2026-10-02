@@ -458,7 +458,7 @@ def test_ac_rpl_15_a_region_change_applies_on_the_next_route_call(client, db):
 # ============================================================== stock ask (AC-RPL-13)
 
 
-def _stock_ask(db, p, contact):
+def _stock_ask(db, p, contact, expect_branch="incoming"):
     _category_of(db, p).chatbot_max_qty = 200
     brw = _wh(db, unique_code("ZZTW")[:20])
     stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=0)
@@ -467,7 +467,9 @@ def _stock_ask(db, p, contact):
     result = StockService(db).list_stock(
         product_ids=[p.id], contact_id=contact.id, requested_quantities={p.id: 150}
     )
-    return _entry(result, p.id)
+    entry = _entry(result, p.id)
+    assert entry["branch"] == expect_branch
+    return entry
 
 
 def test_ac_rpl_13_stock_ask_for_a_west_contact_ignores_an_earlier_east_only_shipment(db):
@@ -485,8 +487,9 @@ def test_ac_rpl_13_stock_ask_gives_no_eta_from_an_east_only_container(db):
     p = product(db, company_id=DEFAULT_COMPANY_ID)
     _ship(db, p, EAST, eta=date(2026, 10, 1), with_attachment=True)
 
-    entry = _stock_ask(db, p, _contact(db))
-    assert entry["branch"] == "incoming"
+    # An East-only container is invisible to a West-only contact: the answer is
+    # "no_incoming" (saying "incoming" would leak that the East shipment exists).
+    entry = _stock_ask(db, p, _contact(db), expect_branch="no_incoming")
     assert entry["eta"] is None
     assert not entry["packing_list"]
 
