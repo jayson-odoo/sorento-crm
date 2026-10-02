@@ -1,7 +1,7 @@
 """Order inquiry row keeps the item code it had before a product change ("was X").
 
 Revision ID: oipf_0001_prev_item_code
-Revises: grn_pull_0001_perm
+Revises: picker_no_cap_0001
 Create Date: 2026-10-02
 
 `documentation/plans/scm/PLAN-oi-product-follow-2oct.md` R1: when AutoCount swaps the
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "oipf_0001_prev_item_code"
-down_revision = "grn_pull_0001_perm"
+down_revision = "picker_no_cap_0001"
 branch_labels = None
 depends_on = None
 
