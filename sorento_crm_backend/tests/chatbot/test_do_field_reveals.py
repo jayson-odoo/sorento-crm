@@ -84,3 +84,54 @@ def test_both_order_list_tools_declare_the_five_keys() -> None:
     for tool in ("crm_order_management_orders_list",):
         declared = {key for key, _label in specs[tool].restricted_fields}
         assert set(DO_KEYS) <= declared, (tool, declared)
+
+
+# --- security B1: the "not delivered yet" miss line names the status only with the grant --- #
+
+
+def _delivered_miss(**kwargs) -> str:
+    from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+    order_uuid = "33333333-3333-4333-9333-333333333333"
+    match = {
+        "entity_type": "order",
+        "uuid": order_uuid,
+        "canonical_code": "202609-0916",
+        "display": {"customer_name": "HANLIM TRADING SDN BHD [A/C I]", "status": "Picked Up / In Transit"},
+    }
+    resolved = {
+        "tokens": ["202609-0916"],
+        "unresolved_tokens": [],
+        "resolutions": [{"token": "202609-0916", "matches": [match]}],
+        "intersection": [match],
+        "by_entity_type": {"order": [match]},
+    }
+    parser = {
+        "domain_hint": "order",
+        "order_status": "delivered",
+        "entities": [{"hint": "order", "raw": "202609-0916"}],
+        "routing": {"suggested_team": "customer_service"},
+        "access_levels": [],
+    }
+    gate = {
+        "gate_passed": True,
+        "compatible_entities": [{"uuid": order_uuid, "entity_type": "order", "code": "202609-0916"}],
+    }
+    out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate, **kwargs)
+    return out.get("escalate_message") or ""
+
+
+def test_the_not_delivered_line_hides_the_status_without_the_grant() -> None:
+    message = _delivered_miss(granted_keys=[])
+    assert "hasn't been delivered yet." in message, message
+    assert "Picked Up" not in message and "current status" not in message, message
+
+
+def test_the_not_delivered_line_hides_the_status_when_no_grants_are_passed() -> None:
+    message = _delivered_miss()
+    assert "Picked Up" not in message, message
+
+
+def test_the_not_delivered_line_names_the_status_with_the_grant() -> None:
+    message = _delivered_miss(granted_keys=["delivery_orders.status"])
+    assert "current status: Picked Up / In Transit" in message, message
