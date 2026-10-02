@@ -11,11 +11,21 @@ this pins the whole chain the WhatsApp reply goes through.
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 
 from app.services.chatbot.lanes.business import fetch
 from app.services.contact_field_reveal_service import FIELD_REVEAL_KEYS
-from sorento_crm_mcp.catalog import CATALOG
-from sorento_crm_mcp.presenters import present_response
+
+# The MCP package sits next to this checkout's backend and is not installed in the backend
+# image CI runs; put it on the path first, the way
+# `test_field_reveal_keys_pinned_to_catalog.py` and `test_dealer_eta_stock_routing.py` do.
+_MCP_ROOT = Path(__file__).resolve().parents[3] / "sorento_crm_mcp"
+if str(_MCP_ROOT) not in sys.path:
+    sys.path.append(str(_MCP_ROOT))
+
+from sorento_crm_mcp.catalog import CATALOG  # noqa: E402
+from sorento_crm_mcp.presenters import present_response  # noqa: E402
 
 DO_KEYS = {
     "delivery_orders.status": "Status",
