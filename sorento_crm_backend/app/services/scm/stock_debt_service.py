@@ -59,7 +59,12 @@ from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
 from app.services.project_supply_service import ProjectSupplyService, held_qty_expr
 from app.services.scm import order_link_service, sales_agent_service, spo_supply
-from app.services.scm.demand import demand_qty, is_open_demand, plan_qty
+from app.services.scm.demand import (
+    demand_qty,
+    is_open_demand,
+    is_transferable_order,
+    plan_qty,
+)
 from app.services.scm.front_planning_engine import (
     DEFAULT_LEAD_TIME_DAYS,
     later_order_can_wait,
@@ -729,6 +734,7 @@ class StockDebtService:
                 self._demand_span(ids),
                 SalesOrder.status == "open",
                 is_open_demand(),
+                is_transferable_order(),
             )
             .distinct()
             .all()
@@ -1193,6 +1199,7 @@ class StockDebtService:
                 self._demand_span(warehouse_ids),
                 SalesOrder.status == "open",
                 is_open_demand(),
+                is_transferable_order(),
                 *extra_clauses,
             )
             .all()

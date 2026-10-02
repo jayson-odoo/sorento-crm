@@ -37,6 +37,7 @@ from typing import Optional
 from fastapi import APIRouter, Body, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
+from app.schemas.ingest_extras import collect_unknown_fields
 from app.api.v1.external.company_anchor import resolve_company_anchor
 from app.api.v1.external.permissions import require_external_permission_for_path
 from app.dependencies import get_external_api_user
@@ -924,10 +925,21 @@ def ingest_masters(
         company_id=company_id,
         **extra,
     )
-    try:
-        result = service.ingest(entity, records, dry_run=dry_run)
-    except UnsupportedIngestEntity as exc:
-        raise AppException(status_code=404, message=str(exc), code="UNKNOWN_ENTITY")
+    # Unknown payload keys are dropped by every canonical schema (owner decision, 1 Oct
+    # 2026); their NAMES, never their values, are logged once for the whole request so a
+    # field the ESB believes it sends is not lost silently.
+    with collect_unknown_fields() as unknown_fields:
+        try:
+            result = service.ingest(entity, records, dry_run=dry_run)
+        except UnsupportedIngestEntity as exc:
+            raise AppException(status_code=404, message=str(exc), code="UNKNOWN_ENTITY")
+    if unknown_fields:
+        logger.info(
+            "ingest.unknown_fields entity=%s integration=%s fields=%s",
+            entity,
+            current_user.get("integration_id"),
+            ",".join(sorted(unknown_fields)),
+        )
 
     if dry_run:
         # The service has already rolled back; this is the second of two locks
