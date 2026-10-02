@@ -12,6 +12,8 @@ SELECT from DATABASE_URL and writes nothing; the output is what gets reviewed an
 every bracketed run dropped) whose name is still that, an UPDATE to the shared-bracket name.
 A group the office renamed no longer equals the old name and is left alone. Read-only SELECTs.
 
+Never replay a pre-rename seed SQL file after renames: it recreates empty old-named groups.
+
 Re-running the output is a no-op: a group is inserted only when its (company, lower(name))
 is absent, and members are pointed at it only while they have no group.
 """
@@ -40,8 +42,9 @@ def _load_plan():
     return module.plan_groups
 
 
-def renames(connection) -> list[tuple[str, str, str]]:
-    """`[(group id, old name, new name)]` for groups still carrying the old seed name."""
+def renames(connection, skipped: list[str] | None = None) -> list[tuple[str, str, str]]:
+    """`[(group id, old name, new name)]` for groups still carrying the old seed name; the
+    names of groups it cannot rename by that rule go to `skipped`."""
     from app.services.ledger_family import ledger_family_label, shared_bracket_label
 
     members: dict[str, list] = {}
@@ -62,14 +65,19 @@ def renames(connection) -> list[tuple[str, str, str]]:
         new = shared_bracket_label([r[2] for r in rows])
         if names[gid] == old and new != old:
             out.append((gid, old, new))
+        elif names[gid] != old and skipped is not None:
+            skipped.append(names[gid])
     return sorted(out, key=lambda r: r[2].lower())
 
 
 def print_renames() -> None:
     engine = sa.create_engine(os.environ["DATABASE_URL"])
     with engine.connect() as connection:
-        plan = renames(connection)
+        skipped: list[str] = []
+        plan = renames(connection, skipped)
     print("-- CUSTOMER-GROUP renames: %d groups. Idempotent (guarded by the old name)." % len(plan))
+    for name in sorted(skipped, key=str.lower):
+        print("-- skipped: %s (members changed)" % name.replace("\n", " "))
     print("BEGIN;")
     for gid, old, new in plan:
         o, n, g = _quote(old), _quote(new), _quote(gid)

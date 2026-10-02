@@ -37,7 +37,7 @@ from functools import cmp_to_key
 from typing import Any
 
 from app.services.chatbot import jsc
-from app.services.ledger_family import apart_from_group, customer_group_of, ledger_family_key
+from app.services.ledger_family import apart_from_group, customer_group_of, group_key, ledger_family_key
 
 # PLAN-chatbot-answer-half-reattach.md "Roster cap" (owner ruling 20 Sep 2026):
 # `roster_caps=None` (the parameter never supplied at all) means the CALLER predates
@@ -349,7 +349,7 @@ def _cust_base(match: Any) -> str:
     # A customer group the turn holds for this name wins over the name rule.
     group = customer_group_of(name)
     if group is not None:
-        return ledger_family_key(group)
+        return group_key(group)
     base = name.upper()
     base = _BRACKET_OR_PAREN.sub(" ", base)
     base = _LEGAL_FORM.sub(" ", base)

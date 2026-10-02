@@ -57,8 +57,9 @@ class _TurnGroups:
     def __init__(self, mapping: Mapping[str, str]) -> None:
         #: normalised customer name -> group name
         self.by_name = {normalise_customer_name(k): v for k, v in mapping.items()}
-        #: normalised group name -> group name (a group is its own customer)
-        self.own = {normalise_customer_name(v): v for v in mapping.values()}
+        #: normalised group names, so a typed word equal to a group's name compares as the group
+        #: (a KEY only; it never makes a ledger a member: `customer_group_of` is exact-name)
+        self.own = {normalise_customer_name(v) for v in mapping.values()}
         #: the comparison keys the groups answer with -> the group's name
         self.keys = {_words(v): v for v in mapping.values()}
 
@@ -104,48 +105,26 @@ def _label_without_marker(text: str) -> str:
     return cleaned or text
 
 
-def _without_marker(text: str) -> str:
-    """`text` without its `[A/C n]` / `(A/C n)` account marker only; any other bracketed run
-    (`(NS)`, `(1990)`) is part of the name and stays."""
-    out: list[str] = []
-    run: list[str] | None = None
-    for ch in text:
-        if run is None:
-            if ch in "[(":
-                run = [ch]
-            else:
-                out.append(ch)
-            continue
-        run.append(ch)
-        if ch in "])":
-            inside = "".join(run[1:-1])
-            if _marker_level(" ".join(inside.upper().split())) is None:
-                out.extend(run)
-            run = None
-    if run is not None:
-        out.extend(run)
-    return " ".join("".join(out).split())
-
-
 def customer_group_of(text: str) -> str | None:
-    """The group name the turn holds for this customer name, or None (use the name rule).
+    """The group name the turn holds for this customer name, or None.
 
-    Found by the row's own name, then by its name without the account marker only (`X [A/C II]`
-    follows a grouped `X`), then as a group's own name (the group is its own customer)."""
+    By the row's exact normalised FULL name only (owner ruling (b), 2 Oct 2026): no
+    marker-stripped probe, no "is a group's own name" probe. A name the map leaves out
+    (rows in and out of a group, or in two) is ungrouped."""
     groups = _GROUPS.get()
     if groups is None:
         return None
-    for probe in (normalise_customer_name(text), normalise_customer_name(_without_marker(text))):
-        if probe in groups.by_name:
-            return groups.by_name[probe]
-        if probe in groups.own:
-            return groups.own[probe]
-    return None
+    return groups.by_name.get(normalise_customer_name(text))
 
 
 def _words(text: str) -> str:
     cleaned = "".join(ch if ch.isalnum() else " " for ch in text.upper())
     return " ".join(w for w in cleaned.split() if w not in _LEGAL_FORM_WORDS)
+
+
+def group_key(group_name: str) -> str:
+    """The comparison key of a customer GROUP, by its own name."""
+    return _words(group_name)
 
 
 def ledger_family_key(text: str) -> str:
@@ -158,7 +137,10 @@ def ledger_family_key(text: str) -> str:
     """
     group = customer_group_of(text)
     if group is not None:
-        return _words(group)
+        return group_key(group)
+    groups = _GROUPS.get()
+    if groups is not None and normalise_customer_name(text) in groups.own:
+        return group_key(text)
     return apart_from_group(_words(_without_brackets(text.upper())))
 
 
@@ -173,9 +155,8 @@ def ledger_family_label(text: str) -> str:
     if groups is not None and name_key in groups.keys:
         if UNGROUPED_JOINS_NAME_MATCHED_GROUP:
             return groups.keys[name_key]
-        # An ungrouped row sharing a group's key keeps its own parentheticals, so its line
-        # reads `JUBIN BMS (NS) SDN BHD` beside the group's, not as the group's twin.
-        return _without_marker(text).strip().strip("-").strip() or text
+        # An ungrouped row sharing a group's key is its own customer: its full name.
+        return text.strip()
     return _label_without_marker(text)
 
 
