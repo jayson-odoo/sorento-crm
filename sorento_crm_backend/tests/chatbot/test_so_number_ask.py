@@ -373,10 +373,10 @@ class TestReviewRound1:
 
 
 class TestRefusalGroupsTheLinksByFamily:
-    def test_refusal_names_the_family_with_a_count(self, session_factory, monkeypatch) -> None:
-        """Owner ruling (PR #1435, 2 Oct 2026): the "isn't under your account" sentence names
-        the linked customers the way #1433's header does (`ledger_family.family_words`),
-        never one name per ledger."""
+    def test_refusal_names_the_group_name_only(self, session_factory, monkeypatch) -> None:
+        """Owner rulings (PR #1435, 2 Oct 2026): the "isn't under your account" sentence names
+        the linked customers by group (`ledger_family.family_words`), never one name per
+        ledger, and by the GROUP NAME ONLY: no "(3 accounts)" count."""
         _seed_contact(session_factory, variables={})
         _link_customers(
             session_factory,
@@ -390,5 +390,5 @@ class TestRefusalGroupsTheLinksByFamily:
         _seed_so(session_factory, "SO421777", customer_id=foreign, lines=[(1, 1)])
         reply, _ = _so_turn(session_factory, monkeypatch, "SO421777")
         assert reply.strip() == (
-            f"{REFUSAL_PREFIX} I can only check on ZZT HANLIM TRADING SDN BHD (3 accounts)."
+            f"{REFUSAL_PREFIX} I can only check on ZZT HANLIM TRADING SDN BHD."
         ), reply
