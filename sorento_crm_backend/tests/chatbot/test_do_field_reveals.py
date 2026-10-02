@@ -79,11 +79,11 @@ def test_the_five_keys_are_on_the_field_reveals_checklist() -> None:
         assert key in listed, f"{key} missing from FIELD_REVEAL_KEYS"
 
 
-def test_both_order_list_tools_declare_the_five_keys() -> None:
+def test_the_orders_list_tool_declares_the_five_keys() -> None:
+    """Only the orders list shows the five fields; the by-product list shows none of them."""
     specs = {spec.name: spec for spec in CATALOG}
-    for tool in ("crm_order_management_orders_list",):
-        declared = {key for key, _label in specs[tool].restricted_fields}
-        assert set(DO_KEYS) <= declared, (tool, declared)
+    declared = {key for key, _label in specs["crm_order_management_orders_list"].restricted_fields}
+    assert set(DO_KEYS) <= declared, declared
 
 
 # --- security B1: the "not delivered yet" miss line names the status only with the grant --- #
