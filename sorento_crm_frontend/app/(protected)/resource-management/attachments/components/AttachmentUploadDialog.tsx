@@ -112,13 +112,13 @@ export default function AttachmentUploadDialog({
   const uploadManager = useUploadManager();
 
   const selectedType = attachmentTypes.find((type: AttachmentType) => type.id === selectedTypeId);
-  // Field linkage is now opt-in per attachment type (admin toggle), not a
-  // hardcoded product-photo name check.
   // Never carry a previous opening's choice over: every opening starts on West only.
   useEffect(() => {
     if (open) setRegions([...DEFAULT_PACKING_LIST_REGIONS]);
   }, [open]);
 
+  // Field linkage is now opt-in per attachment type (admin toggle), not a
+  // hardcoded product-photo name check.
   const showRegions = selectedType?.code === 'packing_list';
   const showFieldLinkageSection = !propEntityType && !!selectedType?.supports_field_linkage;
 

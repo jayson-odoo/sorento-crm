@@ -193,7 +193,6 @@ def get_incoming_for_product(
         resolve_or_empty,
     )
 
-    contact = _Contact(db, contact_id, space_id)
     resolved_product_filter: list[str] = []
     # Validated UUID list from the canonical param.
     uuid_list = parse_uuid_list(product_ids, param_name="product_ids")
@@ -207,6 +206,11 @@ def get_incoming_for_product(
             piece = piece.strip()
             if piece:
                 resolved_product_filter.append(piece)
+
+    try:
+        contact = _Contact(db, contact_id, space_id)
+    except Exception as e:
+        raise handle_internal_error(str(e))
 
     # Resolve entities → product_codes → push through legacy product_ids path.
     entity_echo = None
@@ -289,7 +293,10 @@ def get_incoming_shipments(
         resolve_or_empty,
     )
 
-    contact = _Contact(db, contact_id, space_id)
+    try:
+        contact = _Contact(db, contact_id, space_id)
+    except Exception as e:
+        raise handle_internal_error(str(e))
     entity_echo = None
     extra_query = query
     shipment_uuid_list = parse_uuid_list(shipment_ids, param_name="shipment_ids")

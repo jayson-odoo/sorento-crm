@@ -5180,6 +5180,9 @@ def resolve_references(
         ][:_ALTERNATIVES_CAP]
 
     _apply_company_scope(db, resolutions)
+    if regions is not None:
+        # Tier 3 (embedding) and any raw tier are not region aware.
+        _drop_hidden_shipments(db, resolutions, regions)
 
     # Entity pins run LAST, against the token's own SCOPED matches - see
     # `_apply_entity_pins` for the single-rule contract.
@@ -5412,28 +5415,30 @@ def _rag_resolve_phrase(
 
 
 def _drop_hidden_shipments(db: Session, aggregated: list, regions) -> None:
-    """The trigram and embedding tiers are not region aware: remove any inbound_shipment
-    match whose shipment number has no row serving `regions`."""
-    codes = {
-        m.canonical_code
+    """Remove every inbound_shipment match (and alternative) this contact's `regions` do not
+    serve. Keyed on the shipment uuid; a match with no uuid is dropped (fail closed)."""
+    ids = {
+        str(m.uuid)
         for tr in aggregated
-        for m in tr.matches
-        if m.entity_type == "inbound_shipment" and m.canonical_code
+        for m in list(tr.matches) + list(getattr(tr, "alternatives", None) or [])
+        if m.entity_type == "inbound_shipment" and m.uuid
     }
-    if not codes:
-        return
-    visible = {
-        n
-        for (n,) in db.query(InboundShipment.shipment_number)
-        .filter(InboundShipment.shipment_number.in_(codes), _region_overlap_clause(regions))
-        .all()
-    }
+    visible = set()
+    if ids:
+        visible = {
+            str(i)
+            for (i,) in db.query(InboundShipment.id)
+            .filter(InboundShipment.id.in_(ids), _region_overlap_clause(regions))
+            .all()
+        }
+
+    def _keep(m) -> bool:
+        return m.entity_type != "inbound_shipment" or (m.uuid is not None and str(m.uuid) in visible)
+
     for tr in aggregated:
-        tr.matches = [
-            m
-            for m in tr.matches
-            if m.entity_type != "inbound_shipment" or m.canonical_code in visible
-        ]
+        tr.matches = [m for m in tr.matches if _keep(m)]
+        if getattr(tr, "alternatives", None):
+            tr.alternatives = [m for m in tr.alternatives if _keep(m)]
         if len(tr.matches) < 2:
             tr.ambiguous = False
 

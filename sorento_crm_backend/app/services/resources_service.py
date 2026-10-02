@@ -2,7 +2,7 @@
 import logging
 import re
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from typing import Any, Optional, List
 
 logger = logging.getLogger(__name__)
@@ -882,17 +882,35 @@ class AttachmentService:
             )
             q = q.filter(base_mime.in_(sorted(wanted_mimes)))
         if contact_regions is not None:
-            # A contact never sees the file of a packing list outside its regions. The
-            # shipment's regions decide (not the attachment's own copy); a file linked to
-            # no shipment is untouched. Core table: the company scope must not make a
-            # shipment of another company read as "not linked".
-            from sqlalchemy import exists, select
+            # A contact never sees the file of a packing list outside its regions. A file is
+            # linked to a shipment through `inbound_shipments.attachment_id` OR an
+            # `entity_attachment_links` row; the linked shipments' regions decide. An
+            # unlinked file falls back to its own `regions` (NULL = visible). Core tables:
+            # the company scope must not make a shipment of another company read as unlinked.
+            from sqlalchemy import Text, cast, exists, select
+            from app.models.entity_attachment import EntityAttachmentLink
             from app.models.procurement import InboundShipment
 
             ship = InboundShipment.__table__
-            linked = select(ship.c.id).where(ship.c.attachment_id == Attachment.id)
+            link = EntityAttachmentLink.__table__
+            via_link = exists(
+                select(link.c.id).where(
+                    link.c.attachment_id == Attachment.id,
+                    link.c.entity_type == "inbound_shipment",
+                    link.c.entity_id == cast(ship.c.id, Text),
+                ).correlate_except(link)
+            )
+            linked = (
+                select(ship.c.id)
+                .where(or_(ship.c.attachment_id == Attachment.id, via_link))
+                .correlate_except(ship)
+            )
             visible = linked.where(ship.c.regions.overlap(sorted(contact_regions)))
-            q = q.filter(or_(~exists(linked), exists(visible)))
+            own = or_(
+                Attachment.regions.is_(None),
+                Attachment.regions.overlap(sorted(contact_regions)),
+            )
+            q = q.filter(or_(exists(visible), and_(~exists(linked), own)))
         if direct_access_only:
             if visible_attachment_type_ids is not None:
                 # A contact was resolved and holds per-contact grants, so the
