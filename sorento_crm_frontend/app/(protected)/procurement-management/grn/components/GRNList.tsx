@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Trash2, Upload } from 'lucide-react';
+import { CloudDownload, Plus, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -40,6 +40,8 @@ import { useImportJobDrawer } from '@/components/upload-activity';
 import { useQueryClient } from '@tanstack/react-query';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
+import { useAutocountPullAction } from '@/app/(protected)/system-management/import-jobs/autocount-pull/hooks/useAutocountPull';
+import { PullScopeDialog } from '@/app/(protected)/system-management/import-jobs/autocount-pull/components/PullScopeDialog';
 
 export default function GRNList() {
   const router = useRouter();
@@ -49,6 +51,10 @@ export default function GRNList() {
   const spoAllocationId = searchParams.get('spo_allocation_id');
 
   const [uploadMode, setUploadMode] = useState<'listing' | 'lines' | null>(null);
+  // AutoCount pull (PLAN-autocount-grn-pull-crm-02oct.md): the same shared action and DocDate
+  // dialog the Delivery Orders list uses; with an open pull the click reviews it.
+  const autocountPull = useAutocountPullAction('goods_receive_notes');
+  const [pullScopeOpen, setPullScopeOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
@@ -277,6 +283,19 @@ export default function GRNList() {
                 icon: Upload,
                 onClick: () => setUploadMode('lines'),
               },
+              ...(autocountPull.visible
+                ? [
+                    {
+                      key: 'autocount-pull',
+                      label: autocountPull.label,
+                      icon: CloudDownload,
+                      onClick: () => {
+                        if (autocountPull.hasOpenPull) void autocountPull.onSelect();
+                        else setPullScopeOpen(true);
+                      },
+                    },
+                  ]
+                : []),
             ]}
             bulkActions={[
               {
@@ -337,6 +356,15 @@ export default function GRNList() {
         grnIds={selectedRowIds(table)}
         onSuccess={() => setRowSelection({})}
       />
+      {autocountPull.visible && (
+        <PullScopeDialog
+          open={pullScopeOpen}
+          onOpenChange={setPullScopeOpen}
+          onPull={(scope) => autocountPull.onSelect(scope)}
+          documentLabel="goods receipt notes"
+          requireWindow
+        />
+      )}
     </DataGrid>
   );
 }
