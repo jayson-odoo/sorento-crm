@@ -68,7 +68,8 @@ OWN_A = "ZZT OWN A"
 def refusal(*names: str) -> str:
     """AC-CS-11: `A.` / `A and B.` / `A, B and C.` in link order."""
     joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
-    return f"Sorry, that isn't under your account. I can only check on {joined}."
+    # A group name that ends in "." ("CO.SDN.BHD.") ends the sentence itself.
+    return f"Sorry, that isn't under your account. I can only check on {joined}{'' if joined.endswith('.') else '.'}"
 
 
 def _ent(raw: str, hint: str = "customer") -> dict[str, Any]:

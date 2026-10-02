@@ -78,6 +78,13 @@ selling (own lanes), `order_status=so_outstanding` (open SO lines, no DO yet).
 
 ### Rule 1: compact header
 
+**Owner rule, 2 Oct 2026 (supersedes the counts below):** wherever the chatbot names a customer
+company (DO headers hit and miss, the period question, the customer-scope "not under your
+account" line) it prints the GROUP NAME ONLY, e.g. `HANLIM TRADING SDN BHD`: no
+`(N accounts)`, no `and N more`, no ledger marker. Several groups are listed by name, comma
+separated. `app/services/ledger_family.py::group_names` is the one rule (a family keeps the
+brackets every ledger shares, such as `(SENTUL)`; a single ledger drops its trailing marker).
+
 - The `Customer:` line groups the in-scope customer rows by ledger family (`ledger_family_key`,
   `app/services/ledger_family.py:43`, the rule the narrower and the stock-ask card already use)
   and prints the family label (`ledger_family_label`, `:54`):
