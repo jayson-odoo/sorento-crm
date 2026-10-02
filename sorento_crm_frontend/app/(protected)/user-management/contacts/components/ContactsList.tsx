@@ -105,7 +105,7 @@ export default function ContactsList() {
     [pagination, sorting, searchQuery, chatbotMemoryLevel],
   );
 
-  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching, error } = useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: contactsListQueryKey(listParams),
     queryFn: () => fetchContactsPage(listParams),
@@ -414,6 +414,8 @@ export default function ContactsList() {
       tableLayout={{ columnsVisibility: true }}
       recordCount={data?.pagination?.total || 0}
       isLoading={isLoading}
+      error={error}
+      onRetry={() => void refetch()}
       isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
     >
