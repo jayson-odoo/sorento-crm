@@ -333,24 +333,53 @@ def test_h07_another_token_is_not_blocked_by_the_first_tokens_budget(pub):
     assert _post(pub, other).status_code == 201
 
 
-def test_h07_twenty_first_post_from_one_ip_is_429_across_many_tokens(pub):
-    tokens = [f"Tok{i:02d}AbCdEfGhIjKl" for i in range(21)]
-    for t in tokens[:20]:
-        assert _post(pub, t).status_code == 201
-    resp = _post(pub, tokens[20])
+def test_h07_global_ceiling_of_200_across_all_tokens_is_429_with_retry_after(pub):
+    """AC-H-07: one ceiling across every token (no per-IP bucket any more)."""
+    for i in range(200):
+        assert _post(pub, f"Tok{i:03d}AbCdEfGhIjK").status_code == 201
+    resp = _post(pub, "Zz9yXw8vUt7sRq6p")
     assert resp.status_code == 429, resp.text
-    assert "Retry-After".lower() in {k.lower() for k in resp.headers}
-    assert len([c for c in pub.fake.calls if c["method"] == "POST"]) == 20
+    assert "Too many comments. Try again later." in message_of(resp)
+    assert int(resp.headers["retry-after"]) > 0
+    assert len([c for c in pub.fake.calls if c["method"] == "POST"]) == 200
 
 
-def test_h07_limits_and_windows_are_5_per_token_and_20_per_ip_per_15_minutes(pub):
+def test_h07_limits_are_5_per_token_and_200_global_per_15_minutes_and_no_ip_bucket(pub):
     _post(pub)
-    limits = {(h["limit"], h["window"]) for h in pub.hits}
-    assert (5, 900) in limits and (20, 900) in limits
+    limits = {(h["bucket"], h["limit"], h["window"]) for h in pub.hits}
+    assert any(limit == 5 and window == 900 for _, limit, window in limits)
+    assert any(limit == 200 and window == 900 for _, limit, window in limits)
+    assert not any(limit == 20 for _, limit, _ in limits), "the per-IP bucket is gone"
     assert all(TOKEN not in str(h["ident"]) for h in pub.hits), "the raw token must not be a redis key"
+    assert all(h["ident"] != "testclient" for h in pub.hits)
 
 
-def test_h07_client_ip_is_forwarded_to_ss_as_x_forwarded_for(pub):
-    assert _post(pub).status_code == 201
-    forwarded = pub.fake.calls[0]["headers"].get("x-forwarded-for")
-    assert forwarded == "testclient"  # request.client.host of the Starlette TestClient
+def test_h07_no_client_ip_is_forwarded_to_ss_even_when_the_client_sends_x_forwarded_for(pub):
+    pub.fake.route("POST", _COMMENTS_PATH, status=201, json_body=_ss_comment("c-9", kind="public"))
+    resp = pub.post(f"{BASE}/{TOKEN}/comments", json={"body": "hi"}, headers={"X-Forwarded-For": "6.6.6.6"})
+    assert resp.status_code == 201, resp.text
+    assert "x-forwarded-for" not in pub.fake.calls[0]["headers"]
+
+
+def test_h07_body_over_2000_characters_is_refused_before_ss(pub):
+    resp = pub.post(f"{BASE}/{TOKEN}/comments", json={"body": "x" * 2001})
+    assert resp.status_code == 422, resp.text
+    assert not pub.fake.calls
+
+
+@pytest.mark.parametrize(
+    "method, suffix, kw, ss_method, ss_path",
+    [
+        ("GET", "", {}, "GET", _IDEA_PATH),
+        ("GET", "/comments", {}, "GET", _COMMENTS_PATH),
+        ("POST", "/comments", {"json": {"body": "hi"}}, "POST", _COMMENTS_PATH),
+    ],
+    ids=["idea", "comments-get", "comments-post"],
+)
+def test_h07_a_non_json_2xx_from_ss_is_a_502_that_keeps_the_private_headers(
+    pub, method, suffix, kw, ss_method, ss_path
+):
+    pub.fake.route(ss_method, ss_path, content=b"<html>proxy page</html>", headers={"content-type": "text/html"})
+    resp = pub.request(method, f"{BASE}/{TOKEN}{suffix}", **kw)
+    assert resp.status_code == 502, resp.text
+    _assert_private_headers(resp)

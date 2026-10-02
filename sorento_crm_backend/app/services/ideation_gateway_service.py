@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
+from urllib.parse import quote
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -35,7 +37,9 @@ UNAVAILABLE = "The Ideas workspace isn't available on this deployment."
 _REFRESH_MARGIN_SECONDS = 30
 _DEFAULT_TOKEN_TTL_SECONDS = 300
 
-_cache: dict[str, tuple[str, float]] = {}
+# Keyed by (user id, connection id, ss base URL): a token is only valid for the connection it was
+# minted on, so a changed workspace config can never reuse an old one (AC-A-12).
+_cache: dict[tuple[str, str, str], tuple[str, float]] = {}
 _cache_lock = threading.Lock()
 
 
@@ -44,9 +48,23 @@ def clear_token_cache() -> None:
         _cache.clear()
 
 
-def _drop(user_id: str) -> None:
+def _drop(key: tuple[str, str, str]) -> None:
     with _cache_lock:
-        _cache.pop(user_id, None)
+        _cache.pop(key, None)
+
+
+def ss_path(*segments: str) -> str:
+    """An ss path from segments, each percent-encoded so an id can never add a path level, a
+    query string or a fragment (AC-A-10)."""
+    return "/" + "/".join(quote(str(seg), safe="") for seg in segments)
+
+
+def require_uuid(value: object, field: str = "id") -> str:
+    """The canonical lowercase UUID, else 422 and nothing reaches ss (AC-A-10)."""
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, AttributeError, TypeError):
+        raise AppException(422, f"{field} must be an id.", code="VALIDATION_ERROR")
 
 
 def _expiry_epoch(expires_at: Any) -> float:
@@ -62,19 +80,23 @@ def _expiry_epoch(expires_at: Any) -> float:
     return time.time() + _DEFAULT_TOKEN_TTL_SECONDS
 
 
+def _cache_key(user: dict[str, Any], config: Any) -> tuple[str, str, str]:
+    return (str(user.get("id") or ""), str(config.connection_id), str(config.base_url))
+
+
 def get_embed_token(db: Session, user: dict[str, Any], *, force_refresh: bool = False) -> str:
     """The user's embed token, from the cache while more than 30 s of it is left."""
-    user_id = str(user.get("id") or "")
-    if not force_refresh:
-        with _cache_lock:
-            hit = _cache.get(user_id)
-        if hit and hit[1] - _REFRESH_MARGIN_SECONDS > time.time():
-            return hit[0]
-
     config = _resolve_embed_config(db)
     if not config.is_ready:
         raise IdeationEmbedNotConfigured("ideation embed not configured for this deployment")
     assert config.base_url and config.connection_id and config.secret
+
+    key = _cache_key(user, config)
+    if not force_refresh:
+        with _cache_lock:
+            hit = _cache.get(key)
+        if hit and hit[1] - _REFRESH_MARGIN_SECONDS > time.time():
+            return hit[0]
 
     assertion = mint_embed_assertion(user, secret=config.secret, connection_id=config.connection_id)
     data = post_embed_session(
@@ -84,7 +106,7 @@ def get_embed_token(db: Session, user: dict[str, Any], *, force_refresh: bool = 
     if not token:
         raise IdeationEmbedUpstreamError("embed session response missing token")
     with _cache_lock:
-        _cache[user_id] = (token, _expiry_epoch(data.get("expires_at")))
+        _cache[key] = (token, _expiry_epoch(data.get("expires_at")))
     return token
 
 
@@ -138,7 +160,6 @@ def call_ss(
     ss 4xx otherwise passes through with ss's status and message, an unreachable or failing ss is a
     502, and a deployment without the connection configured is a 404.
     """
-    user_id = str(user.get("id") or "")
     kwargs: dict[str, Any] = {}
     if params:
         kwargs["params"] = params
@@ -158,7 +179,7 @@ def call_ss(
             resp = _send(config.base_url, method, path, token, **kwargs)
             if resp.status_code != 401:
                 break
-            _drop(user_id)
+            _drop(_cache_key(user, config))
         assert resp is not None
     except IdeationEmbedNotConfigured:
         raise AppException(404, UNAVAILABLE, code="IDEATION_NOT_CONFIGURED")
@@ -201,7 +222,13 @@ def user_for_requester(db: Session, user_id: str) -> dict[str, Any]:
     """The `user` dict an assertion needs, for a pending action committing as its requester."""
     from app.models.user import User
 
+    from app.models.user import UserStatus
+
     row = db.query(User).filter(User.id == str(user_id)).first()
     if row is None:
         raise AppException(404, "The user who started this action no longer exists.", code="NOT_FOUND")
+    # A parked action commits seconds later, as its requester: someone deactivated meanwhile
+    # must not still act in ss (AC-A-12).
+    if row.status != UserStatus.ACTIVE.value:
+        raise AppException(403, "The user who started this action is no longer active.", code="FORBIDDEN")
     return {"id": str(row.id), "email": row.email, "name": row.name}

@@ -196,10 +196,6 @@ _ROUTES = [
         "comments-patch", "PATCH", f"/ideas/{IDEA}/comments/{COMMENT}", {"json": {"body": "Agreed, sorry"}}, False,
         "PATCH", f"/embed/ideas/{IDEA}/comments/{COMMENT}", {}, {"body": "Agreed, sorry"}, 200,
     ),
-    (
-        "comments-delete", "DELETE", f"/ideas/{IDEA}/comments/{COMMENT}", {}, False,
-        "DELETE", f"/embed/ideas/{IDEA}/comments/{COMMENT}", {}, None, 204,
-    ),
 ]
 _ALL = [pytest.param(*r, id=r[0]) for r in _ROUTES]
 _MANAGE_ONLY = [pytest.param(*r, id=r[0]) for r in _ROUTES if r[4]]
@@ -675,3 +671,235 @@ def test_e03_comment_delete_is_not_sent_to_ss_until_the_window_lapses(pending):
     _lapse(e.db, resp.json()["id"])
     FormActionService(e.db).commit_due()
     assert [(c["method"], c["path"]) for c in e.fake.calls] == [("DELETE", f"/embed/ideas/{IDEA}/comments/{COMMENT}")]
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3 hardening (AC-A-01, A-10, A-11, A-12, E-05, D-05)                     #
+# --------------------------------------------------------------------------- #
+_BAD_IDS = ["%2E%2E", "%3F", "%23", "not-a-uuid", "..%2Fx"]
+
+# (method, path template, kwargs, manage?). `{i}` = idea id slot, `{c}` = comment/attachment slot.
+_ID_ROUTES = [
+    ("GET", "/ideas/{i}", {}),
+    ("GET", "/ideas/{i}/merged", {}),
+    ("GET", "/ideas/{i}/comments", {}),
+    ("GET", "/ideas/{i}/attachments/{c}/content", {}),
+    ("POST", "/ideas/{i}/vote", {}),
+    ("POST", "/ideas/{i}/unmerge", {}),
+    ("POST", "/ideas/{i}/status", {"json": {"toStatusId": "st-1"}}),
+    ("PATCH", "/ideas/{i}", {"json": {"problem": "x"}}),
+    ("POST", "/ideas/{i}/comments", {"json": {"body": "hi"}}),
+    ("PATCH", "/ideas/{i}/comments/{c}", {"json": {"body": "hi"}}),
+    ("POST", "/ideas/{i}/attachments", {"files": {"file": ("a.txt", b"x", "text/plain")}}),
+]
+
+
+@pytest.mark.parametrize("bad", _BAD_IDS)
+@pytest.mark.parametrize("method, template, kw", _ID_ROUTES, ids=[f"{m} {t}" for m, t, _ in _ID_ROUTES])
+def test_a10_a_malformed_idea_or_sub_id_is_refused_and_ss_is_never_called(env, bad, method, template, kw):
+    """AC-A-10: `%2E%2E` / `%3F` / `%23` (and plain junk) in ANY id slot never reach ss."""
+    for path in {template.format(i=bad, c=COMMENT), template.format(i=IDEA, c=bad)}:
+        if "{c}" not in template and bad not in path:
+            continue
+        resp = env.req(method, path, **kw)
+        assert resp.status_code in (404, 405, 422), (path, resp.status_code, resp.text)
+        assert not _ss_called(env), path
+
+
+def test_a10_view_only_user_cannot_reach_delete_idea_through_a_comment_id_with_dots(env):
+    """The reported blocker: `DELETE .../comments/%2E%2E` used to become ss `DELETE /embed/ideas/{id}`."""
+    env.allow.discard(MANAGE)
+    for method in ("DELETE", "PATCH", "GET"):
+        resp = env.req(method, f"/ideas/{IDEA}/comments/%2E%2E", json={"body": "x"} if method == "PATCH" else None)
+        assert resp.status_code in (404, 405, 422)
+    assert not _ss_called(env)
+
+
+def test_a10_ss_path_encodes_every_segment():
+    from app.services.ideation_gateway_service import ss_path
+
+    assert ss_path("embed", "ideas", "../x?y#z") == "/embed/ideas/..%2Fx%3Fy%23z"
+    assert ss_path("embed", "ideas", "a/b") == "/embed/ideas/a%2Fb"
+
+
+@pytest.mark.parametrize("bad", ["..", "%2E%2E", "a?b", "a#b", "not-a-uuid"])
+@pytest.mark.parametrize("key", ["idea.delete", "idea.archive", "idea_comment.delete"])
+def test_a10_parking_a_pending_action_with_a_non_uuid_entity_id_is_422(pending, key, bad):
+    e = pending
+    payload = {"idea_id": IDEA} if key == "idea_comment.delete" else {}
+    resp = e.client.post(
+        "/api/v1/pending-actions",
+        json={"action_key": key, "entity_type": key.split(".")[0], "entity_id": bad, "payload": payload},
+    )
+    assert resp.status_code == 422, resp.text
+    assert not _ss_called(e)
+
+
+@pytest.mark.parametrize("bad", ["..", "%2E%2E", "a?b", "not-a-uuid"])
+def test_a10_parking_a_comment_delete_with_a_non_uuid_idea_id_is_422(pending, bad):
+    e = pending
+    resp = e.client.post(
+        "/api/v1/pending-actions",
+        json={"action_key": "idea_comment.delete", "entity_type": "idea_comment", "entity_id": COMMENT,
+              "payload": {"idea_id": bad}},
+    )
+    assert resp.status_code == 422, resp.text
+    assert not _ss_called(e)
+
+
+@pytest.mark.parametrize(
+    "key, payload",
+    [
+        ("idea.delete", {"entity_id": "../x"}),
+        ("idea.archive", {"entity_id": "a?b"}),
+        ("idea_comment.delete", {"entity_id": COMMENT, "idea_id": "../x"}),
+        ("idea_comment.delete", {"entity_id": "..", "idea_id": IDEA}),
+    ],
+)
+def test_a10_the_handlers_revalidate_ids_at_commit(env, key, payload):
+    import app.services.record_actions  # noqa: F401
+    from app.services.error_handler import AppException
+    from app.services.form_action_registry import get_action
+
+    starter = env.login(name="Starter Sam")
+    with pytest.raises(AppException) as exc:
+        get_action(key).execute(env.db, {**payload, "requested_by_id": starter["id"]})
+    assert exc.value.status_code == 422
+    assert not _ss_called(env)
+
+
+def test_a10_comment_bodies_are_rebuilt_from_body_and_parent_id_only(env):
+    env.fake.route("POST", f"/embed/ideas/{IDEA}/comments", status=201, json_body={"id": COMMENT})
+    env.fake.route("PATCH", f"/embed/ideas/{IDEA}/comments/{COMMENT}", json_body={"id": COMMENT})
+    junk = {"authorName": "Mallory", "authorKind": "public", "isMine": True, "canDelete": True, "ideaId": "x"}
+    env.req("POST", f"/ideas/{IDEA}/comments", json={"body": "hi", "parentId": COMMENT, **junk})
+    env.req("PATCH", f"/ideas/{IDEA}/comments/{COMMENT}", json={"body": "hi2", **junk})
+    assert env.fake.calls[0]["json"] == {"body": "hi", "parentId": COMMENT}
+    assert env.fake.calls[1]["json"] == {"body": "hi2"}
+
+
+@pytest.mark.parametrize(
+    "method, path, sent, forwarded, ss_path",
+    [
+        ("PATCH", f"/ideas/{IDEA}", {"problem": "p", "productId": "other", "status": "closed"}, {"problem": "p"},
+         f"/embed/ideas/{IDEA}"),
+        ("POST", f"/ideas/{IDEA}/status", {"toStatusId": "s", "extra": 1}, {"toStatusId": "s"},
+         f"/embed/ideas/{IDEA}/status"),
+        ("PUT", "/ideas/reorder", {"orderedIds": [IDEA], "extra": 1}, {"orderedIds": [IDEA]}, "/embed/ideas/reorder"),
+        ("POST", "/ideas/merge", {"survivorId": IDEA, "ideaIds": [IDEA_B], "extra": 1},
+         {"survivorId": IDEA, "ideaIds": [IDEA_B]}, "/embed/ideas/merge"),
+        ("POST", "/ideas/promote", {"ideaIds": [IDEA], "title": "T", "extra": 1}, {"ideaIds": [IDEA], "title": "T"},
+         "/embed/ideas/promote"),
+        ("POST", "/ideas", {"problem": "p", "productId": "other", "source": "x"}, {"problem": "p"}, "/embed/ideas"),
+    ],
+)
+def test_a10_forwarded_bodies_are_rebuilt_from_an_explicit_field_list(env, method, path, sent, forwarded, ss_path):
+    env.fake.route(method, ss_path, status=200, json_body={"id": IDEA})
+    env.req(method, path, json=sent)
+    assert env.fake.calls[0]["json"] == forwarded
+
+
+def test_a01_writes_need_a_staff_session_reads_also_accept_an_api_key(env):
+    """AC-A-01: an act-as API key principal (resolved by the combined dependency only) can read,
+    but every write route rejects it because writes resolve through the session dependency."""
+    from fastapi import HTTPException
+
+    from app.dependencies import get_current_user
+
+    def _no_session():
+        raise HTTPException(status_code=401, detail="no staff session")
+
+    env.fake.route("POST", f"/embed/ideas/{IDEA}/vote", json_body={"id": IDEA})
+    app.dependency_overrides[get_current_user] = _no_session
+    assert env.req("GET", "/ideas").status_code == 200
+    assert env.req("GET", f"/ideas/{IDEA}/comments").status_code == 200
+    writes = [
+        ("POST", "/ideas", {"json": {"problem": "p"}}),
+        ("POST", f"/ideas/{IDEA}/vote", {}),
+        ("POST", f"/ideas/{IDEA}/comments", {"json": {"body": "hi"}}),
+        ("PATCH", f"/ideas/{IDEA}", {"json": {"problem": "p"}}),
+        ("POST", f"/ideas/{IDEA}/unmerge", {}),
+        ("POST", "/ideas/promote", {"json": {"ideaIds": [IDEA], "title": "T"}}),
+        ("POST", f"/ideas/{IDEA}/attachments", {"files": {"file": ("a.txt", b"x", "text/plain")}}),
+    ]
+    for method, path, kw in writes:
+        assert env.req(method, path, **kw).status_code == 401, (method, path)
+    assert [c["method"] for c in env.fake.calls] == ["GET", "GET"]
+
+
+def test_a11_status_route_refuses_archived_and_ss_is_not_called(env):
+    for body in ({"status": "archived"}, {"status": "Archived"}):
+        resp = env.req("POST", f"/ideas/{IDEA}/status", json=body)
+        assert resp.status_code in (403, 422), resp.text
+    assert not _ss_called(env)
+
+
+def test_a11_there_is_no_gateway_delete_for_comments_or_ideas(env):
+    for path in (f"/ideas/{IDEA}/comments/{COMMENT}", f"/ideas/{IDEA}"):
+        assert env.req("DELETE", path).status_code in (404, 405)
+    assert not _ss_called(env)
+
+
+def test_a12_token_cache_is_keyed_by_connection_and_base_url_too(env, monkeypatch):
+    from app.config import settings
+
+    env.req("GET", "/ideas")
+    env.req("GET", "/ideas")
+    assert len(env.fake.session_calls) == 1
+    monkeypatch.setattr(settings, "ideation_embed_connection_id", "a1b2c3d4-0000-4000-8000-000000000999")
+    env.req("GET", "/ideas")
+    assert len(env.fake.session_calls) == 2, "a different connection must not reuse the cached token"
+    monkeypatch.setattr(settings, "ideation_shared_service_url", "https://other-shared.test/be")
+    env.req("GET", "/ideas")
+    assert len(env.fake.session_calls) == 3, "a different ss base URL must not reuse the cached token"
+
+
+@pytest.mark.parametrize("status", ["INACTIVE", "BLOCKED"])
+def test_a12_a_pending_action_whose_requester_is_inactive_is_refused_at_commit(env, status):
+    import app.services.record_actions  # noqa: F401
+    from app.services.error_handler import AppException
+    from app.services.form_action_registry import get_action
+
+    starter = env.login(name="Leaver")
+    env.db.query(User).filter(User.id == starter["id"]).update({"status": status})
+    env.db.commit()
+    with pytest.raises(AppException) as exc:
+        get_action("idea.delete").execute(env.db, {"entity_id": IDEA, "requested_by_id": starter["id"]})
+    assert exc.value.status_code == 403
+    assert not _ss_called(env)
+
+
+def test_e05_an_email_shaped_author_name_is_masked_in_comment_post_and_patch_answers(env):
+    row = {"id": COMMENT, "authorName": "alex.staff@example.test", "body": "hi"}
+    env.fake.route("POST", f"/embed/ideas/{IDEA}/comments", status=201, json_body=row)
+    env.fake.route("PATCH", f"/embed/ideas/{IDEA}/comments/{COMMENT}", json_body=row)
+    posted = env.req("POST", f"/ideas/{IDEA}/comments", json={"body": "hi"})
+    patched = env.req("PATCH", f"/ideas/{IDEA}/comments/{COMMENT}", json={"body": "hi"})
+    for resp, code in ((posted, 201), (patched, 200)):
+        assert resp.status_code == code, resp.text
+        assert "@" not in resp.text and "example.test" not in resp.text
+        assert resp.json()["authorName"] == "Sorento staff"
+        assert resp.json()["body"] == "hi"
+
+
+def test_e05_a_plain_author_name_is_untouched(env):
+    env.fake.route("POST", f"/embed/ideas/{IDEA}/comments", status=201,
+                   json_body={"id": COMMENT, "authorName": "Alex Staff", "body": "hi"})
+    resp = env.req("POST", f"/ideas/{IDEA}/comments", json={"body": "hi"})
+    assert resp.json()["authorName"] == "Alex Staff"
+
+
+def test_d05_an_upload_above_the_ss_cap_is_413_and_ss_is_not_called(env, monkeypatch):
+    monkeypatch.setattr("app.api.v1.ideation.ideas.ATTACHMENT_CAP_BYTES", 10)
+    resp = env.req("POST", f"/ideas/{IDEA}/attachments", files={"file": ("big.bin", b"x" * 11, "text/plain")})
+    assert resp.status_code == 413, resp.text
+    assert not _ss_called(env)
+    env.fake.route("POST", f"/embed/ideas/{IDEA}/attachments", status=201, json_body={"id": ATT})
+    ok = env.req("POST", f"/ideas/{IDEA}/attachments", files={"file": ("ok.bin", b"x" * 10, "text/plain")})
+    assert ok.status_code == 201, ok.text
+
+
+def test_d05_the_cap_matches_the_ss_attachment_cap():
+    from app.api.v1.ideation.ideas import ATTACHMENT_CAP_BYTES
+
+    assert ATTACHMENT_CAP_BYTES == 25 * 1024 * 1024

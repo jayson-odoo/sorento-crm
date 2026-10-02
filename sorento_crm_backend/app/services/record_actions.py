@@ -2188,28 +2188,28 @@ def _requester(db: Session, payload: dict) -> dict:
 
 
 def _archive_idea(db: Session, payload: dict):
-    from app.services.ideation_gateway_service import call_ss
+    from app.services.ideation_gateway_service import call_ss, require_uuid, ss_path
 
     user = _requester(db, payload)
-    return call_ss(
-        db, user, "POST", f"/embed/ideas/{_entity_id(payload)}/status", json={"status": "archived"}
-    )
+    idea_id = require_uuid(_entity_id(payload), "idea")
+    return call_ss(db, user, "POST", ss_path("embed", "ideas", idea_id, "status"), json={"status": "archived"})
 
 
 def _delete_idea(db: Session, payload: dict):
-    from app.services.ideation_gateway_service import call_ss
+    from app.services.ideation_gateway_service import call_ss, require_uuid, ss_path
 
     user = _requester(db, payload)
-    return call_ss(db, user, "DELETE", f"/embed/ideas/{_entity_id(payload)}")
+    idea_id = require_uuid(_entity_id(payload), "idea")
+    return call_ss(db, user, "DELETE", ss_path("embed", "ideas", idea_id))
 
 
 def _delete_idea_comment(db: Session, payload: dict):
-    from app.services.ideation_gateway_service import call_ss
+    from app.services.ideation_gateway_service import call_ss, require_uuid, ss_path
 
     user = _requester(db, payload)
-    return call_ss(
-        db, user, "DELETE", f"/embed/ideas/{payload['idea_id']}/comments/{_entity_id(payload)}"
-    )
+    idea_id = require_uuid(payload.get("idea_id"), "idea")
+    comment_id = require_uuid(_entity_id(payload), "comment")
+    return call_ss(db, user, "DELETE", ss_path("embed", "ideas", idea_id, "comments", comment_id))
 
 
 register(

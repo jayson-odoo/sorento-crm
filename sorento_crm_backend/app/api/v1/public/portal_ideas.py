@@ -17,14 +17,13 @@ import re
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.services import rate_limit
-from app.services.client_ip import client_ip
 from app.services.ideation_embed_service import _TIMEOUT_SECONDS, _resolve_embed_config
 from app.services.ideation_gateway_service import ss_error_message
 
@@ -38,8 +37,8 @@ _PRIVATE_HEADERS = {
     "Referrer-Policy": "no-referrer",
 }
 _RATE_WINDOW_SECONDS = 900
-_IP_LIMIT = 20
 _TOKEN_LIMIT = 5
+_GLOBAL_LIMIT = 200
 _TOO_MANY = "Too many comments. Try again later."
 _UNAVAILABLE = "This page isn't available right now."
 _STAFF_NAME = "Sorento staff"
@@ -53,7 +52,7 @@ _IDEA_FIELDS = (
 class PortalCommentIn(BaseModel):
     """Only the text and the thread it replies to. Who is speaking is ss's decision."""
 
-    body: str = Field(min_length=1, max_length=5000)
+    body: str = Field(min_length=1, max_length=2000)
     parentId: Optional[str] = None
 
 
@@ -96,14 +95,16 @@ def _comment_view(raw: dict) -> dict:
     }
 
 
-def _ss(db: Session, method: str, path: str, *, json: Any = None, headers: Optional[dict] = None):
-    """The ss public call. Returns `(response, None)` or `(None, error reply)`."""
+def _ss(db: Session, method: str, path: str, *, json: Any = None):
+    """The ss public call. Returns `(parsed JSON body, None)` or `(None, error reply)`: a 2xx that
+    is not JSON is a 502 like any other ss fault, and never an unhandled error without the private
+    headers."""
     base = _resolve_embed_config(db).base_url
     if not base:
         return None, _not_found()
     try:
         with httpx.Client(timeout=_TIMEOUT_SECONDS) as client:
-            resp = client.request(method, base.rstrip("/") + path, json=json, headers=headers or {})
+            resp = client.request(method, base.rstrip("/") + path, json=json)
     except httpx.HTTPError:
         logger.warning("portal ideas: ss unreachable (%s)", method)
         return None, _reply(502, {"detail": _UNAVAILABLE})
@@ -113,17 +114,20 @@ def _ss(db: Session, method: str, path: str, *, json: Any = None, headers: Optio
         return None, _reply(502, {"detail": _UNAVAILABLE})
     if resp.status_code >= 400:
         return None, _reply(resp.status_code, {"detail": ss_error_message(resp, _UNAVAILABLE)})
-    return resp, None
+    try:
+        return resp.json(), None
+    except ValueError:
+        logger.warning("portal ideas: ss answered a non-JSON body")
+        return None, _reply(502, {"detail": _UNAVAILABLE})
 
 
 @router.get("/ideas/{token}")
 def read_idea(token: str, db: Session = Depends(get_db)):
     if not _TOKEN_RE.match(token):
         return _not_found()
-    resp, error = _ss(db, "GET", f"/public/ideas/{token}")
+    data, error = _ss(db, "GET", f"/public/ideas/{token}")
     if error is not None:
         return error
-    data = resp.json()
     return _reply(200, _idea_view(data if isinstance(data, dict) else {}))
 
 
@@ -131,22 +135,23 @@ def read_idea(token: str, db: Session = Depends(get_db)):
 def read_comments(token: str, db: Session = Depends(get_db)):
     if not _TOKEN_RE.match(token):
         return _not_found()
-    resp, error = _ss(db, "GET", f"/public/ideas/{token}/comments")
+    data, error = _ss(db, "GET", f"/public/ideas/{token}/comments")
     if error is not None:
         return error
-    data = resp.json()
     return _reply(200, [_comment_view(c) for c in data if isinstance(c, dict)] if isinstance(data, list) else [])
 
 
 @router.post("/ideas/{token}/comments")
-def post_comment(token: str, payload: PortalCommentIn, request: Request, db: Session = Depends(get_db)):
+def post_comment(token: str, payload: PortalCommentIn, db: Session = Depends(get_db)):
     if not _TOKEN_RE.match(token):
         return _not_found()
-    ip = client_ip(request)
+    # Per token (the authoritative limit) and one ceiling across every token. There is no per-IP
+    # bucket: behind the CRM's nginx the left-most X-Forwarded-For is client-controlled, so it
+    # would only let an attacker pick which bucket they land in (AC-H-07).
     token_key = hashlib.sha256(token.encode()).hexdigest()
     for bucket, ident, limit in (
-        ("ideas_public_comment_ip", ip, _IP_LIMIT),
         ("ideas_public_comment_token", token_key, _TOKEN_LIMIT),
+        ("ideas_public_comment_global", "all", _GLOBAL_LIMIT),
     ):
         result = rate_limit.hit(bucket, ident, limit=limit, window_seconds=_RATE_WINDOW_SECONDS)
         if not result.allowed:
@@ -158,11 +163,7 @@ def post_comment(token: str, payload: PortalCommentIn, request: Request, db: Ses
     body: dict[str, Any] = {"body": payload.body}
     if payload.parentId:
         body["parentId"] = payload.parentId
-    resp, error = _ss(
-        db, "POST", f"/public/ideas/{token}/comments", json=body,
-        headers={"X-Forwarded-For": ip} if ip else None,
-    )
+    data, error = _ss(db, "POST", f"/public/ideas/{token}/comments", json=body)
     if error is not None:
         return error
-    data = resp.json()
     return _reply(201, _comment_view(data if isinstance(data, dict) else {}))

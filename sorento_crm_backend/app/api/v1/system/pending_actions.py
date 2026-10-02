@@ -126,10 +126,21 @@ _ANY_OF_PERMISSIONS: dict = {
 }
 
 
-def _assert_required_payload(action_key: str, payload: dict) -> None:
+#: Actions whose ids become an ss URL path: the record id (and `payload.idea_id`) must be a UUID
+#: at park time, so a crafted id is refused here and not ten seconds later (AC-A-10).
+_UUID_ENTITY_ACTIONS = ("idea.archive", "idea.delete", "idea_comment.delete")
+
+
+def _assert_required_payload(action_key: str, payload: dict, entity_id: Optional[str] = None) -> None:
     for key in _REQUIRED_PAYLOAD_KEYS.get(action_key, ()):
         if not (payload or {}).get(key):
             raise handle_validation_error(f"{key!r} is required for {action_key!r}.")
+    if action_key in _UUID_ENTITY_ACTIONS:
+        from app.services.ideation_gateway_service import require_uuid
+
+        require_uuid(entity_id, "entity_id")
+        if action_key == "idea_comment.delete":
+            require_uuid((payload or {}).get("idea_id"), "idea_id")
 
 
 def _assert_entity_visible(db: Session, action_key: str, entity_id: str) -> None:
@@ -416,7 +427,7 @@ def create_pending_action(
         )
     actor_id = (current_user or {}).get("id")
     _assert_permission(db, actor_id, action.key, action.permission)
-    _assert_required_payload(body.action_key, body.payload)
+    _assert_required_payload(body.action_key, body.payload, body.entity_id)
     _assert_entity_visible(db, body.action_key, body.entity_id)
     _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
 
