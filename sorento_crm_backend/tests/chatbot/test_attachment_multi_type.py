@@ -436,10 +436,31 @@ class TestFoundAnswerNamesTheGap:
     def test_a_type_without_a_label_names_no_gap_at_all(self) -> None:
         """`turn_runtime.attachment_type_labels` could not read a type: no line, never a
         false or slug-named one."""
-        labels = [{"name": PHOTOS, "keys": [PHOTOS]}]
-        text = _compose_text(_attachment_envelope([SH], [(SH, PHOTOS)], [PHOTOS, "tech_spec"], labels=labels))
+        text = _compose_text(_attachment_envelope([SH], [(SH, PHOTOS)], [PHOTOS, "tech_spec"], labels=[]))
 
         assert "has no" not in text and "tech_spec" not in text, text
+
+    def test_the_label_lookup_reads_name_and_description_and_fails_closed(self, session_factory) -> None:
+        """`turn_runtime.attachment_type_labels`: name + description per uuid; an unknown
+        uuid, a non-uuid id or no type entity at all gives `[]` (no gap line)."""
+        from app.models.resources import AttachmentType
+        from app.services.chatbot.turn_runtime import attachment_type_labels
+
+        _company_id, type_ids = _seed(session_factory, files={})
+        db = session_factory()
+        db.query(AttachmentType).filter(AttachmentType.id == type_ids[PHOTOS]).update(
+            {"description": "Product Photos, Photo, Image, Pictures by Marketing"}
+        )
+        db.commit()
+        entity = lambda uuid: {"entity_type": "attachment_type", "uuid": uuid}  # noqa: E731
+
+        labels = attachment_type_labels(db, [entity(type_ids[PHOTOS]), {"entity_type": "product", "uuid": "x"}])
+        assert labels == [
+            {"name": PHOTOS, "keys": [PHOTOS, "Product Photos, Photo, Image, Pictures by Marketing"]}
+        ], labels
+        assert attachment_type_labels(db, [entity("aaaaaaaa-0000-4000-8000-00000000dead")]) == []
+        assert attachment_type_labels(db, [entity("not-a-uuid")]) == []
+        assert attachment_type_labels(db, [{"entity_type": "product", "uuid": type_ids[PHOTOS]}]) == []
 
     def test_a_row_printing_the_types_description_is_not_a_gap(self) -> None:
         """Reviewer B1: the presenter prints `description or type_name`, and dev's real
