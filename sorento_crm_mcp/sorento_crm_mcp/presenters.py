@@ -944,10 +944,12 @@ def _incoming_dealer(rows: list[dict], b: _Builder) -> None:
         if not isinstance(row, dict):
             continue
         etas = [e for e in row.get("etas") or [] if _filled(e)]
-        when = f"ETA: {', '.join(etas)}" if etas else "ETA: not confirmed yet"
+        when = f"ETA {', '.join(etas)}" if etas else "ETA not confirmed yet"
         code = row.get("product_code")
+        # AVAIL-MODE-REPLIES rule 3 (owner, 2 Oct 2026): one compact line per product,
+        # "<code>: ETA <dates>", never the code with the ETA on a line of its own.
         # `dealer_view` tells the engine's zero-stock ladder this line is a whole answer.
-        b.raw_item(f"{code}\n{when}" if _filled(code) else when, [], {"dealer_view": True})
+        b.raw_item(f"{code}: {when}" if _filled(code) else when, [], {"dealer_view": True})
 
 
 def _without_repeats(b: _Builder, start: int) -> None:
@@ -1462,10 +1464,16 @@ def _availability_label(entry: dict) -> Optional[str]:
 #: `incoming` is handled separately in `_availability_line` - it is the only branch
 #: whose sentence carries a date. REFER-SALESMAN (30 Sep 2026): the verdict is its own
 #: sentence and the refer is exactly `REFER_TO_SALESMAN`, on the same line.
+#
+#: AVAIL-MODE-REPLIES (owner, 2 Oct 2026): got stock / no stock read as a tick and a cross,
+#: never as words. `too_big` keeps its words and carries neither mark: it says nothing
+#: about our stock either way.
+STOCK_YES = "\u2705"
+STOCK_NO = "\u274c"
 _AVAILABILITY_TAILS = {
     "too_big": f"the quantity is more than what I can confirm here. {REFER_TO_SALESMAN}",
-    "in_stock": f"yes, we have stock. {REFER_TO_SALESMAN}",
-    "no_incoming": f"no stock and no incoming at the moment. {REFER_TO_SALESMAN}",
+    "in_stock": f"{STOCK_YES} {REFER_TO_SALESMAN}",
+    "no_incoming": f"{STOCK_NO} No incoming. {REFER_TO_SALESMAN}",
 }
 
 
@@ -1484,7 +1492,19 @@ def _availability_tail(entry: dict) -> str:
     """The sentence after "<code> x <Q>:" for one answered entry."""
     branch = entry.get("branch")
     if branch == "incoming":
-        return f"no stock at the moment, ETA {entry.get('eta')}."
+        return f"{STOCK_NO} ETA {entry.get('eta')}."
+    available = entry.get("available_qty")
+    if (
+        branch == "in_stock"
+        and isinstance(available, int)
+        and not isinstance(available, bool)
+        and available >= 1
+    ):
+        # AVAIL-MODE-REPLIES rule 2: some stock, short of the asked quantity, the ask
+        # within the category max. The backend sets `available_qty` in that case only
+        # (`inventory_service._apply_stock_visibility`), so it is the one figure of ours
+        # this mode ever prints.
+        return f"{STOCK_YES} {available} available. {REFER_TO_SALESMAN}"
     # Nit, review round 1: an unknown or missing branch is unreachable today
     # (`products.category_id` is NOT NULL, so `inventory_service.py` never
     # leaves `branch` unset) - but if a fallback is kept, `too_big` is the one
