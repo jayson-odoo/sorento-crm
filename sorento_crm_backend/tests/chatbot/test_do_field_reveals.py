@@ -135,3 +135,18 @@ def test_the_not_delivered_line_hides_the_status_when_no_grants_are_passed() -> 
 def test_the_not_delivered_line_names_the_status_with_the_grant() -> None:
     message = _delivered_miss(granted_keys=["delivery_orders.status"])
     assert "current status: Picked Up / In Transit" in message, message
+
+
+# --- tester pass 2: a value's own '*' never opens WhatsApp bold ---------------------------- #
+
+
+def test_an_asterisk_in_a_value_does_not_leave_a_stray_bold_marker() -> None:
+    """A product code like '*REPLACE' printed raw pairs its '*' with the next label's bold
+    marker, and the reply shows a stray '*'. A value's own '*' prints as the look-alike
+    U+2217, which WhatsApp does not read as formatting."""
+    row = {**_ROW, "lines": [{"product_code": "*REPLACE", "quantity": 1}]}
+    envelope = json.loads(present_response("crm_order_management_orders_list", json.dumps({"data": [row]})))
+    said = fetch.output_structurer(envelope, {"semantic_input": {}, "access": {"attributes": list(DO_KEYS)}})["response"]
+    assert "∗REPLACE (1)" in said, said
+    stars = [line for line in said.split("\n") if line.count("*") % 2]
+    assert not stars, f"a line with an unpaired '*': {stars!r}"
