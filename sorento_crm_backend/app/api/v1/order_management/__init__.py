@@ -6,6 +6,7 @@ from app.api.v1.order_management import (
     customers,
     customers_select,
     order_statuses,
+    report_ask,
 )
 
 router = APIRouter()
@@ -19,6 +20,8 @@ router.include_router(orders.outstanding_report_router, tags=["orders"])
 # `/order-management/sales-report`, a report over orders, not a row under
 # `/orders/*`.
 router.include_router(orders.sales_report_router, tags=["orders"])
+# No prefix, same reason: `/order-management/report-ask`, the chatbot's flexible sales report.
+router.include_router(report_ask.router, tags=["orders"])
 # `customers_select` FIRST. Both mount at `/customers`, and `customers.router` carries
 # `GET /{customer_id}` - so mounted first it matches `/customers/select`, tries to read
 # "select" as a customer id and answers 404 "Customer not found. Someone might have deleted
