@@ -284,6 +284,15 @@ LABELS: dict[str, dict[str, str]] = {
     'What would you like me to do with it?': {"ms": 'Apa yang anda mahu saya lakukan dengannya?', "zh": '您希望我怎么处理？'},
     'Ask again with the correct code.': {"ms": 'Sila tanya semula dengan kod yang betul.', "zh": '请用正确的代码再问一次。'},
     'I read {codes} from that photo.': {"ms": 'Saya membaca {codes} daripada gambar itu.', "zh": '我从那张照片中读到 {codes}。'},
+    # The answer.py offer suffixes (whole sentences as the builders print them).
+    'Reply with a number to continue.': {"ms": 'Balas dengan nombor untuk meneruskan.', "zh": '回复数字继续。'},
+    'Reply with a number to continue, or would you like me to escalate to {team} team?': {"ms": 'Balas dengan nombor untuk meneruskan, atau adakah anda mahu saya rujuk kepada pasukan {team}?', "zh": '回复数字继续，或需要我转交给 {team} 团队吗？'},
+    'Reply with a number to check its incoming.': {"ms": 'Balas dengan nombor untuk menyemak stok masuknya.', "zh": '回复数字查看其到货情况。'},
+    "Reply with a number to check its incoming, or reply 'yes' to escalate to {team} team.": {"ms": "Balas dengan nombor untuk menyemak stok masuknya, atau balas 'yes' untuk rujuk kepada pasukan {team}.", "zh": "回复数字查看其到货情况，或回复 'yes' 转交给 {team} 团队。"},
+    'Reply a number to pick.': {"ms": 'Balas nombor untuk memilih.', "zh": '回复数字选择。'},
+    "Reply a number to pick, or 'yes' to escalate to {team}.": {"ms": "Balas nombor untuk memilih, atau 'yes' untuk rujuk kepada {team}.", "zh": "回复数字选择，或回复 'yes' 转交给 {team}。"},
+    "Reply 'all dates' to search without the date filter.": {"ms": "Balas 'all dates' untuk mencari tanpa penapis tarikh.", "zh": "回复 'all dates' 可不限日期搜索。"},
+    "Reply 'all dates' to search without the date filter, or would you like me to escalate to {team} team?": {"ms": "Balas 'all dates' untuk mencari tanpa penapis tarikh, atau adakah anda mahu saya rujuk kepada pasukan {team}?", "zh": "回复 'all dates' 可不限日期搜索，或需要我转交给 {team} 团队吗？"},
     "PENDING ALLOCATION": {"ms": "MENUNGGU PERUNTUKAN", "zh": "待分配"},
     "PARTIAL ALLOCATION": {"ms": "PERUNTUKAN SEBAHAGIAN", "zh": "部分分配"},
 }
@@ -423,6 +432,14 @@ INLINE = frozenset(
         "What would you like me to do with it?",
         "Ask again with the correct code.",
         "I read {codes} from that photo.",
+        'Reply with a number to continue.',
+        'Reply with a number to continue, or would you like me to escalate to {team} team?',
+        'Reply with a number to check its incoming.',
+        "Reply with a number to check its incoming, or reply 'yes' to escalate to {team} team.",
+        'Reply a number to pick.',
+        "Reply a number to pick, or 'yes' to escalate to {team}.",
+        "Reply 'all dates' to search without the date filter.",
+        "Reply 'all dates' to search without the date filter, or would you like me to escalate to {team} team?",
     }
 )
 
