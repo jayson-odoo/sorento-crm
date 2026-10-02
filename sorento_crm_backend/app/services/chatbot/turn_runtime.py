@@ -1717,6 +1717,43 @@ def unplaced_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
     return {key: raw for key, raw in named.items() if key in missed}
 
 
+def absorbed_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
+    """Typed tokens the resolver answered ONLY with another typed token's exact match.
+
+    Prod turn f0a2 (1 Oct 2026), replayed on the crew copy: "Srtswt3001 / Srtswt3001-gm
+    stock". The resolver placed `srtswt3001` on SRTSWT3001-GM (a non-exact match), the
+    gate deduped the two tokens onto that one product, and SRTSWT3001 vanished: not in
+    `entities`, not in `unresolved_tokens`, so no sentence anywhere named it. A token
+    whose every matched code is a DIFFERENT code the customer also typed, and none of
+    whose matches is the token itself, has not been answered - it is reported unplaced,
+    so the reply says "I could not find SRTSWT3001." rather than nothing.
+    """
+    typed: dict[str, str] = {}
+    for entity in jsc.array(entities):
+        raw = jsc.nullish_str(jsc.get(entity, "raw")).strip()
+        key = _token_key(raw)
+        if key and key not in typed:
+            typed[key] = raw
+    if len(typed) < 2:
+        return {}
+    codes_by_token: dict[str, set[str]] = {}
+    for resolution in jsc.array(jsc.get(resolved, "resolutions")):
+        token = _token_key(jsc.get(resolution, "token"))
+        if token not in typed:
+            continue
+        bucket = codes_by_token.setdefault(token, set())
+        for match in jsc.array(jsc.get(resolution, "matches")):
+            code = _token_key(jsc.get(match, "canonical_code") or jsc.get(match, "code"))
+            if code:
+                bucket.add(code)
+    out: dict[str, str] = {}
+    for token, codes in codes_by_token.items():
+        others = set(typed) - {token}
+        if codes and token not in codes and codes <= others:
+            out[token] = typed[token]
+    return out
+
+
 def companies_by_uuid(resolved: Any) -> dict[str, dict[str, Any]]:
     """R-g (owner hand pass 7, 19 Sep 2026): the resolver's own COMPANY per match, keyed
     by uuid - `{"company_id", "company_name"}`, both stamped by the same pass
@@ -2023,6 +2060,8 @@ def resolve_kinds(
     gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
     compatible = [e for e in jsc.array(gate.get("compatible_entities")) if isinstance(e, dict)]
     unplaced = unplaced_tokens(entities, resolved)
+    for key, raw in absorbed_tokens(entities, resolved).items():
+        unplaced.setdefault(key, raw)
     compatible = _without_guesses(compatible, resolved, unplaced)
     if is_order_domain and live_brands_read:
         # #1262 fix lane round 3, S5: a brand word that is NOT on the live list, typed
@@ -3902,6 +3941,17 @@ def envelope_of(
         "domain": spec.domain,
         "denied": refused,
         "entities": codes,
+        # The PRODUCT subjects alone, for the composer's "No stock found for X" line: a
+        # customer pinned from an earlier turn is a subject too, and is not a stock code.
+        "product_codes": [
+            name
+            for name in (
+                _answer_subject(e)
+                for e in entities
+                if jsc.nullish_str(e.get("entity_type")).strip().lower() == "product"
+            )
+            if name
+        ],
         "figures": figures,
         "files": [f for f in files if isinstance(f, dict)] if isinstance(files, list) else [],
         "miss": [] if has_result else codes,
