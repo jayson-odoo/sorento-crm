@@ -37,7 +37,7 @@ Mock: `documentation/mockups/ACCESS-MODEL/index.html` (v3). IDs AC-AM-n.
   "Sorento/Cabana/Mocha Office" access types no longer decide customer scope.
 - AC-AM-10 No validity window: access does not lapse on a date (today's grants all end 2026-12-30/31).
 
-## Owner additions (pending answers to ask Q1-Q4)
+## Owner additions (ruled 2 Oct: Q1-Q4 all (a))
 
 - AC-AM-22 A contact may hold several roles at once (e.g. Sales office and Dealer); grants are the union;
   `sees_all_customers` and staff behaviour apply if ANY held role has them; a contact remove-override

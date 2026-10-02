@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chatbot Access mock v4</title>
+<title>Chatbot Access mock v5</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 /* tokens copied from sorento_crm_frontend/css/config.reui.css (light) */
@@ -105,10 +105,11 @@ a{color:var(--primary)}
 </style>
 </head>
 <body>
-<nav class="mocknav"><span>Mock v4:</span>
+<nav class="mocknav"><span>Mock v5:</span>
 <button data-v="contact" class="on" onclick="show('contact')">Contact access</button>
 <button data-v="roles" onclick="show('roles')">Chatbot roles</button>
-<button data-v="role" onclick="show('role')">Role: Purchasing</button></nav>
+<button data-v="role" onclick="show('role')">Role: Purchasing</button>
+<button data-v="chatbot" onclick="show('chatbot')">Contact chatbot settings</button></nav>
 <section class="view on" id="v-contact"><div class="container">
   <div class="crumb">User management / Contacts</div>
   <h1>Contact Details</h1>
@@ -131,7 +132,7 @@ a{color:var(--primary)}
     </div>
     <div class="card-b">
       <div class="row">
-        <a href="#" onclick="show('role');return false" class="badge primary" style="text-decoration:none">Purchasing <span class="x" title="Remove role">&times;</span></a>
+        <a href="#" onclick="show('role');return false" class="badge primary" style="text-decoration:none">Purchasing &middot; Office <span class="x" title="Remove role">&times;</span></a>
       </div>
       <div class="summary" style="margin-top:14px">
         <div class="stat"><b>12 of 13</b><span>domains granted &middot; 0 of 3 reports</span></div>
@@ -210,8 +211,8 @@ a{color:var(--primary)}
     </div>
     <div style="overflow-x:auto">
     <table class="grid">
-      <colgroup><col style="width:180px"><col><col style="width:110px"><col style="width:90px"><col style="width:150px" class="hide-sm"></colgroup>
-      <thead><tr><th>Role</th><th>Domains</th><th>Contacts</th><th>Customers</th><th class="hide-sm">Updated</th></tr></thead>
+      <colgroup><col style="width:180px"><col><col style="width:100px"><col style="width:100px"><col style="width:90px"><col style="width:150px" class="hide-sm"></colgroup>
+      <thead><tr><th>Role</th><th>Domains</th><th>Tier</th><th>Contacts</th><th>Customers</th><th class="hide-sm">Updated</th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
     </div>
@@ -239,6 +240,7 @@ a{color:var(--primary)}
     <div class="card-b">
       <label>Name</label><input class="input" placeholder="e.g. Project sales">
       <label>Description</label><input class="input">
+      <label>Tier</label><div class="select" style="width:100%">Select tier&hellip; (Dealer / Office / End user)</div>
       <label style="display:flex;align-items:center;gap:8px;margin-top:14px"><span class="switch" style="background:var(--input)"></span> Sees all customers</label>
     </div>
     <div class="foot"><button class="btn" onclick="document.getElementById('new').classList.remove('show')">Cancel</button><button class="btn primary">Create</button></div>
@@ -257,7 +259,7 @@ a{color:var(--primary)}
       <button class="btn primary">Save (0)</button>
     </div>
   </div>
-  <div class="meta">5 contacts &middot; Sees all customers &middot; Updated 2 Oct 2026</div>
+  <div class="meta">5 contacts &middot; Tier Office &middot; Sees all customers &middot; Updated 2 Oct 2026</div>
 
   <div class="card">
     <div class="card-h"><div class="card-t">Domains and fields</div><button class="btn">Expand all</button></div>
@@ -303,6 +305,7 @@ a{color:var(--primary)}
     <div class="card-b">
       <label>Name</label><input class="input" value="Purchasing">
       <label>Description</label><input class="input" value="Buyers: purchase orders, last cost, supplier">
+      <label>Tier</label><div class="select" style="width:100%">Office</div>
       <label style="display:flex;align-items:center;gap:8px;margin-top:14px"><span class="switch"></span> Sees all customers</label>
     </div>
     <div class="foot"><button class="btn" onclick="document.getElementById('edit').classList.remove('show')">Cancel</button><button class="btn primary">Save</button></div>
@@ -310,6 +313,37 @@ a{color:var(--primary)}
 </div>
 
 </section>
+<section class="view" id="v-chatbot"><div class="container">
+  <div class="crumb">User management / Contacts</div>
+  <h1>Contact Details</h1>
+  <div class="hero"><div class="name">Sorento - Jereen</div></div>
+  <div class="tabs"><div class="tab">Profile</div><div class="tab">Access</div><div class="tab">Routing</div><div class="tab">Chat</div><div class="tab active">Chatbot</div></div>
+  <div class="card">
+    <div class="card-h"><div class="card-t">Chatbot settings</div></div>
+    <div class="card-b">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">
+        <div><div style="font-size:13px;font-weight:500;margin-bottom:4px">Memory context level</div><div class="select" style="width:100%">(follow the system default)</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:16px">
+        <label class="row"><span class="switch"></span> Stock checks</label>
+        <label class="row"><span class="switch" style="background:var(--input)"></span> Notify salesman</label>
+        <label class="row"><span class="switch" style="background:var(--input)"></span> Packing list allowed</label>
+        <label class="row"><span class="switch"></span> ETA buffer days</label>
+        <label class="row"><span class="switch"></span> Chatbot hands over to support teams</label>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-h"><div class="card-t">Mock notes: element &rarr; existing component (not on the real screen)</div></div>
+    <div class="card-b" style="overflow-x:auto">
+      <table class="map"><tbody>
+        <tr><th>Removed</th><td>the Tier select (<code>ContactChatbotSection.tsx:90-94,199-206</code>). Tier now comes from the contact's roles (owner Q2, 2 Oct): on the Access tab role chip ("Purchasing &middot; Office"), set per role (Tier column on Chatbot roles, Tier select in the role dialog)</td></tr>
+        <tr><th>Kept</th><td>Memory context level and the five switches, unchanged; the REGION-PACKING-LIST lane adds its region control as its own row here</td></tr>
+        <tr><th>Stamps</th><td>"Has / no incoming stamp" (Incoming stock) and "Has / no attachment stamp" (Product attachments) are tree fields on the Access tab, ticked on every role; untick for one contact to hide them (owner Q3, Q4)</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+</div></section>
 <script>
 function show(v){document.querySelectorAll('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));document.querySelectorAll('.mocknav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));window.scrollTo(0,0);}
 
@@ -318,7 +352,7 @@ function show(v){document.querySelectorAll('.view').forEach(e=>e.classList.toggl
 const D = [
   {section:'Domains'},
   {n:'Product', s:'master_products', st:'role', e:['General Enquiries','purchasing','Purchasing - Product, Stock Inquiry']},
-  {n:'Product attachments', s:'product_attachment', st:'role', e:['General Enquiries','marketing_product','Marketing - Product']},
+  {n:'Product attachments', s:'product_attachment', st:'role', e:['General Enquiries','marketing_product','Marketing - Product'], f:[{n:'Has / no attachment stamp', st:'role'}]},
   {n:'Resource attachments', s:'resource_attachment', st:'role'},
   {n:'Promotions', s:'promotion', st:'role', e:['General Enquiries','marketing_promotion','Marketing - Promotion Sorento']},
   {n:'Forms', s:'forms', st:'role', e:['Marketing Form','marketing_form','Marketing - Forms']},
@@ -328,7 +362,7 @@ const D = [
     {n:'PO on order qty', st:'role', p:'removes the on-order lines'}]},
   {n:'Orders / DO', s:'order', st:'role', e:['Order Enquiries','customer_service','DO Customer Service']},
   {n:'Incoming stock', s:'incoming', st:'role', e:['Incoming Stock Enquiries','purchasing','Purchasing - Incoming'], f:[
-    {n:'ETA', st:'role'},{n:'Container no.', st:'role'},{n:'Remaining qty', st:'role'},
+    {n:'Has / no incoming stamp', st:'role'},{n:'ETA', st:'role'},{n:'Container no.', st:'role'},{n:'Remaining qty', st:'role'},
     {n:'Consignee', st:'add'},{n:'China forwarder', st:'add'},{n:'Malaysia forwarder', st:'add'},
     {n:'Liner code', st:'add'},{n:'COA permit no.', st:'add'},{n:'Delivery warehouse', st:'add'},
     {n:'ETD / ETC / loading / inspection dates', st:'add'},{n:'Free days, LOC, stacked', st:'add'}]},
@@ -368,17 +402,17 @@ D.forEach((d,i)=>{
 
 
 const R = [
-  ['Dealer', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock'], 0, 'Linked'],
-  ['Sales office', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock','Last in (SPO)','Purchase orders'], 87, 'All'],
-  ['Purchasing', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock','Last in (SPO)','Purchase orders','Last purchase cost'], 5, 'All'],
-  ['Warehouse', ['Product','Stock','Incoming stock','Last in (SPO)','Low stock report'], 0, 'All'],
-  ['Management', ['all 13 domains','3 reports'], 2, 'All'],
+  ['Dealer', 'Dealer', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock'], 0, 'Linked'],
+  ['Sales office', 'Office', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock','Last in (SPO)','Purchase orders'], 87, 'All'],
+  ['Purchasing', 'Office', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock','Last in (SPO)','Purchase orders','Last purchase cost'], 5, 'All'],
+  ['Warehouse', 'Office', ['Product','Stock','Incoming stock','Last in (SPO)','Low stock report'], 0, 'All'],
+  ['Management', 'Office', ['all 13 domains','3 reports'], 2, 'All'],
 ];
-document.getElementById('rows').innerHTML = R.map(([n,d,c,s])=>{
+document.getElementById('rows').innerHTML = R.map(([n,t,d,c,s])=>{
   const shown = d.slice(0,3).map(x=>`<span class="badge">${x}</span>`).join(' ');
   const more = d.length>3 ? ` <span class="badge outline">+${d.length-3}</span>` : '';
   return `<tr class="link" onclick="show('role')"><td><b style="font-weight:500">${n}</b></td>
-    <td title="${d.join(', ')}">${shown}${more}</td><td>${c}</td>
+    <td title="${d.join(', ')}">${shown}${more}</td><td>${t}</td><td>${c}</td>
     <td><span class="badge ${s==='All'?'primary':''}">${s}</span></td><td class="hide-sm">2 Oct 2026</td></tr>`;
 }).join('');
 
@@ -396,11 +430,11 @@ const E2 = {
 };
 const D2 = [
   {section:'Domains'},
-  {n:'Product', on:1, e:E2.product}, {n:'Product attachments', on:1, e:E2.mprod}, {n:'Resource attachments', on:1},
+  {n:'Product', on:1, e:E2.product}, {n:'Product attachments', on:1, e:E2.mprod, f:[{n:'Has / no attachment stamp',on:1}]}, {n:'Resource attachments', on:1},
   {n:'Promotions', on:1, e:E2.promo}, {n:'Forms', on:1, e:E2.forms}, {n:'Portal link', on:1},
   {n:'Stock', on:1, e:E2.wh, hint:'Stock visibility mode stays per contact (Profile tab)', f:[{n:'Outstanding SO on stock (sellable)',on:1},{n:'PO on order qty',on:1}]},
   {n:'Orders / DO', on:1, e:E2.cs},
-  {n:'Incoming stock', on:1, e:E2.inc, f:[{n:'ETA',on:1},{n:'Container no.',on:1},{n:'Remaining qty',on:1},{n:'Consignee',on:0},{n:'China forwarder',on:0},{n:'Malaysia forwarder',on:0},{n:'Liner code',on:0},{n:'COA permit no.',on:0},{n:'Delivery warehouse',on:0},{n:'ETD / ETC / loading / inspection dates',on:0},{n:'Free days, LOC, stacked',on:0}]},
+  {n:'Incoming stock', on:1, e:E2.inc, f:[{n:'Has / no incoming stamp',on:1},{n:'ETA',on:1},{n:'Container no.',on:1},{n:'Remaining qty',on:1},{n:'Consignee',on:0},{n:'China forwarder',on:0},{n:'Malaysia forwarder',on:0},{n:'Liner code',on:0},{n:'COA permit no.',on:0},{n:'Delivery warehouse',on:0},{n:'ETD / ETC / loading / inspection dates',on:0},{n:'Free days, LOC, stacked',on:0}]},
   {n:'Last in (SPO)', on:1, p:'SPO LAST RECEIPT', f:[{n:'SPO number',on:1}]},
   {n:'Purchase orders', on:1, e:E2.product, p:'PURCHASE ORDERS', f:[{n:'Supplier',on:1},{n:'PO number',on:1}]},
   {n:'Last purchase cost', on:1, e:E2.product, p:'LAST PURCHASE COST', f:[{n:'Supplier',on:1}]},

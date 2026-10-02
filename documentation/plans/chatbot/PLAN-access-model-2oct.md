@@ -18,7 +18,7 @@ pair; the Access tab shows role chips). The single-valued picker the owner means
 already multi (checkboxes, `ContactEditDialog.tsx:280-300`; on the prod copy 49 contacts hold more than one, 25 hold all 7).
 Tier is read in three places: staff behaviour (`is_staff_profile`, tier == office: no bot escalation
 offers, `turn/state.py:192-203`), the default promotion tier (`turn/narrow.py:411,426`), and the
-profile line the parser sees (`turn/memory.py:447-448`). Proposed (pending owner, ask Q1/Q2):
+profile line the parser sees (`turn/memory.py:447-448`). Owner ruled 2 Oct (Q1 a, Q2 a):
 - each role carries an `audience_tier` (dealer / office / end_user / none); a contact's tiers = the
   set over its roles; the Tier picker on the Chatbot tab is removed (one place to set it);
 - conflict rule = UNION, most permissive: grants are the union of roles; `sees_all_customers` if any
@@ -34,11 +34,15 @@ profile line the parser sees (`turn/memory.py:447-448`). Proposed (pending owner
   `incoming_by_code`; turn roster `turn_runtime.py:2304-2305`);
 - product attachment: per-uuid has/no attachment stamp (`lanes/business/answer.py:4160-4180`,
   `miss_suggest.py:573`).
-Proposed (pending owner, ask Q3/Q4): two `field` rows in the tree, `stamp.incoming` under Incoming stock
+Owner ruled 2 Oct (Q3 a, Q4 a; context: these switches are mainly for dealers, reveal less to them): two `field` rows in the tree, `stamp.incoming` under Incoming stock
 and `stamp.product_attachment` under Product attachments, ticked on every seeded role so today's
 behaviour holds; the per-contact switch is the existing field override (untick on the Access tab).
 Hidden stamp = the line prints bare and the "None of these have incoming" sentence is dropped; the
-roster itself is unchanged. Mock change: two extra rows (flagged; mock v5 after the answers).
+roster itself is unchanged. Mock v5: the two rows, Tier on the role (list column, role dialog, chip), Tier
+select removed from the contact Chatbot tab. Schema: `chatbot_roles.audience_tier` (dealer / office /
+end_user / NULL); `chatbot_profile.tier` stops being read (migration copies nothing: tier is NULL for all
+100 contacts on the prod copy, query in section 4); `EffectiveAccess.tiers: frozenset[str]` feeds
+`is_staff_profile` (office in tiers), the promotion default (tiers list) and the parser profile line.
 
 **C. Region (REGION-PACKING-LIST lane, agreed 2 Oct).** Region (West / East Malaysia; East sees both)
 is a contact fact owned by that lane: `respond_contacts.regions text[]` (default `{west}`), read by the
