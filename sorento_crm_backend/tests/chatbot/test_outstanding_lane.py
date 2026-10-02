@@ -300,14 +300,17 @@ def _capturing_mcp(response: Any = None):
             return _present_response()(name, json.dumps(_report_route_body(response, args)))
         if name == "crm_sales_report":
             # Same reason as the `crm_outstanding_report` branch above: the lane reads
-            # the PRESENTER's envelope (`has_result`, `response`), never the route body
-            # raw, so a fake that skipped the presenter armed nothing off a real hit.
-            # No scope handling here (the sales report has one bucket, not so/do) - only
-            # the detail pick's own `detail=so` echoed onto the body, the same field
-            # `_sales_report_envelope` reads to decide which text to render.
+            # the PRESENTER's envelope (`has_result`, `response`, `options`), never the
+            # route body raw, so a fake that skipped the presenter armed nothing off a
+            # real hit. A drill pick re-runs with `group_by`, which the real route echoes
+            # on its body and drops from the options it offers next (AC-SR-24: never the
+            # view just shown) - reproduced here, the way `_report_route_body` does for
+            # the outstanding report, so this double stays the route's shape.
             body = dict(response)
-            if args.get("detail") == "so":
-                body["detail"] = "so"
+            group_by = args.get("group_by")
+            if group_by:
+                body["group_by"] = group_by
+                body["options"] = [o for o in (body.get("options") or []) if o.get("key") != group_by]
             return _present_response()(name, json.dumps(body))
         return json.dumps(response)
 

@@ -222,6 +222,26 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _without_the_drill_pick_words(parse_output: dict[str, Any], pending: Any, trace: Any) -> dict[str, Any]:
+    """The resolver's input on a turn that ANSWERED the sales report's drill offer.
+
+    PR #1401 fix round 2, R2: "DO", "by product", "delivery orders" typed back at the
+    `sales_report_detail` offer settle the pick (`turn/decide.py`, the label / alias /
+    named-document arms), but the typed word also rode to the resolver as an entity, found
+    nothing, and the reply closed with "I could not find DO." The word that settled the pick
+    is the answer, not a subject, so it is dropped from what the resolver is asked about.
+    Round 4: the focus never holds it either (`turn/apply.py`, the same rule), so no later
+    turn carries it back here.
+    """
+    from app.services.chatbot.turn.apply import without_the_drill_pick_words
+
+    entities = parse_output.get("entities") or []
+    kept = without_the_drill_pick_words(entities, pending, trace)
+    if len(kept) == len(entities):
+        return parse_output
+    return {**parse_output, "entities": kept}
+
+
 def _without_carried_domain_on_a_roster_pick(
     parse_output: dict[str, Any], rules_fired: list[str]
 ) -> dict[str, Any]:
@@ -1418,15 +1438,17 @@ def _screen_resolver_for_scope(
     payload: dict[str, Any] | None,
     compatible: list[dict[str, Any]],
     candidates: dict[str, list[dict[str, Any]]],
-) -> tuple[bool, list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+) -> tuple[bool, list[dict[str, Any]], dict[str, list[dict[str, Any]]], list[str]]:
     """The post-resolver filter behind the gate, for a contact whose scope is enforced and
     whatever the domain or hint (the resolver re-types brand, category, order and product
     tokens as customers under `order`). Every customer row outside the contact's own is
     dropped from the resolver's answer; a token whose ONLY matches were other customers,
     or a picker that listed any, refuses the turn. A DO number still resolves, but never
     carries the owning customer's name (`display`). Returns
-    `(refused, compatible, candidates)`."""
+    `(refused, compatible, candidates, dropped_ids)`; `dropped_ids` (CHATBOT-SELFREF-SCOPE
+    R4) names the customer ids dropped, for the trace."""
     own = {str(i) for i in scope["ids"]}
+    dropped_ids: list[str] = []
 
     def _foreign(row: Any) -> bool:
         return (
@@ -1439,6 +1461,8 @@ def _screen_resolver_for_scope(
         kept = []
         for row in rows or []:
             if _foreign(row):
+                if str(row.get("uuid")) not in dropped_ids:
+                    dropped_ids.append(str(row.get("uuid")))
                 continue
             if isinstance(row, dict) and str(row.get("entity_type") or "").lower() in ("customer_order", "order"):
                 row = {k: v for k, v in row.items() if k not in ("display", "display_name")}
@@ -1483,7 +1507,28 @@ def _screen_resolver_for_scope(
         else rows
         for kind, rows in (candidates or {}).items()
     }
-    return refused, compatible, candidates
+    return refused, compatible, candidates, dropped_ids
+
+
+def _drill_offer_subject(scope_ids: list[str] | None, focus: Any, trace: Any) -> list[str] | None:
+    """The accounts a sales report drill pick re-runs over, for a customer-scoped contact.
+
+    PR #1401 fix round 3, F6/F7: a pick off the `sales_report_detail` offer settles the
+    OFFER's own accounts onto the focus (`apply._settle_question_subject`), which after
+    "sales of <one account>" is that one account. The scope gate then answered every
+    link ("the linked customers are this turn's customers"), so "1" drilled over all of
+    them. On an answering turn the offer's accounts, kept inside the links, are the subject.
+    """
+    answered = getattr(trace, "outstanding", None) or {}
+    if scope_ids is None or answered.get("kind") != "sales_report_detail":
+        return scope_ids
+    links = set(scope_ids)
+    settled = [
+        str(e.get("uuid"))
+        for e in getattr(focus, "customers", None) or []
+        if isinstance(e, dict) and str(e.get("uuid")) in links
+    ]
+    return settled or scope_ids
 
 
 def _scoped_compatible(
@@ -3970,6 +4015,9 @@ def _run_stages(  # noqa: PLR0915
             resolver_parse_output = _without_carried_domain_on_a_roster_pick(
                 resolver_parse_output, plan.trace.rules_fired
             )
+            resolver_parse_output = _without_the_drill_pick_words(
+                resolver_parse_output, state_in.pending, plan.trace
+            )
             # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4 (AC-1954): under `order`
             # the generic resolver re-types a category token as a customer
             # (`entity_resolver._DOMAIN_HINT_EXPANSIONS["order"]["category"]`), which
@@ -3996,6 +4044,7 @@ def _run_stages(  # noqa: PLR0915
             resolver_parse_output, scope_ids, scope_refused = _customer_scope_gate(
                 customer_scope, verdict, state_out.focus, resolver_parse_output, plan.domains
             )
+            scope_ids = _drill_offer_subject(scope_ids, state_out.focus, plan.trace)
             if (
                 len(plan.domains) > 1
                 and resolver_parse_output.get("entities")
@@ -4060,9 +4109,15 @@ def _run_stages(  # noqa: PLR0915
             unplaced_tokens = resolve_outcome.unplaced_tokens
             spec_tier = resolve_outcome.spec_tier
             resolver_payload = resolve_outcome.payload
+            # CHATBOT-SELFREF-SCOPE R4: every scope decision is on the trace, with its
+            # reason and the ids it dropped, so a refusal explains itself.
+            screened_refused = False
+            screened_dropped: list[str] = []
             if customer_scope and customer_scope.get("enforced"):
-                screened_refused, compatible_entities, resolved_candidates = _screen_resolver_for_scope(
-                    customer_scope, resolver_payload, compatible_entities, resolved_candidates
+                screened_refused, compatible_entities, resolved_candidates, screened_dropped = (
+                    _screen_resolver_for_scope(
+                        customer_scope, resolver_payload, compatible_entities, resolved_candidates
+                    )
                 )
                 scope_refused = scope_refused or screened_refused
             if scope_refused:
@@ -4070,12 +4125,33 @@ def _run_stages(  # noqa: PLR0915
                 # fetches or asks; the fixed line is the answer.
                 customer_scope_refused = True
                 resolved_kinds, resolved_candidates, unplaced_tokens, predicate = {}, {}, {}, None
-                turn_trace.add("customer_scope", {"refused": "customer_not_permitted"})
+                turn_trace.add(
+                    "customer_scope",
+                    {
+                        "refused": "customer_not_permitted",
+                        "reason": (
+                            "resolver_matched_only_other_customers"
+                            if screened_refused
+                            else "typed_customer_word_outside_links"
+                        ),
+                        "dropped": screened_dropped,
+                        "self_reference": verdict.get("self_reference") is True,
+                    },
+                )
                 resolver_payload = _pass_scope_gate(resolver_payload, [], force=True)
             elif scope_ids is not None:
                 # D3: the linked customers are this turn's customers.
                 compatible_entities = _scoped_compatible(customer_scope, scope_ids, compatible_entities)
                 resolver_payload = _pass_scope_gate(resolver_payload, compatible_entities, force=False)
+                turn_trace.add(
+                    "customer_scope",
+                    {
+                        "decision": "scoped_to_links",
+                        "ids": list(scope_ids),
+                        "self_reference": verdict.get("self_reference") is True,
+                        **({"dropped": screened_dropped} if screened_dropped else {}),
+                    },
+                )
             answer_parse_output = turn_runtime.answer_parse_output(
                 resolver_ctx["parse"]["output"],
                 gate=(resolver_payload or {}).get("gate"),

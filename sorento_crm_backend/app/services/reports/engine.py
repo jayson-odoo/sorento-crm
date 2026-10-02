@@ -923,6 +923,22 @@ def run(
     )
 
 
+def run_summary(
+    db: Session,
+    definition: reg.ReportDefinition,
+    params: Dict[str, Any],
+    view: ReportViewConfig,
+    *,
+    company_grants: Any = FROM_SESSION,
+) -> ReportPivotLayout:
+    """The summary (pivot) alone, uncapped: for a caller that prints no detail table and
+    ranks the whole grouping itself (the chatbot's sales report, one view per reply).
+    Same resolve, same predicates, same company arm as ``run``."""
+    ctx = resolve(db, definition, params, company_grants=company_grants)
+    with _unscoped(ctx):
+        return _pivot(ctx, view, cap=False)
+
+
 def _row_count(ctx: QueryContext) -> int:
     stmt = ctx.dataset.base(ctx).add_columns(func.count().label("n")).where(
         and_(*_predicates(ctx))
