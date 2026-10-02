@@ -546,3 +546,15 @@ a test-read `documentation/` path that CI would still classify as docs-only (CI 
 | 4 | statuses (643), status_values (770, 778) | keep his subsets; a row attribute, additive | D-B4: `chatbot_status_words.prompt_lists text[] NOT NULL DEFAULT '{}'` (same migration). Seeds: `outstanding` and `delivered` get `statuses`, `status_values`, `status_field_values`; `sales_report` gets `status_field_values`. `{{statuses}}` and `{{status_values}}` render only rows tagged with their own name. A new `{{status_field_values}}` renders line 778. The Status Words page edits the tags (a multi-select of the three list names). The API field is optional, and a missing field keeps the row's tags. |
 | 5 | status_values (821) | domain filter | Done: `{{order_status_values}}`. |
 | 6 | access_levels, agents, domains_detail, specs | (a) align the DB rows to the text | A crew-ask with the exact row changes and their risks, before any prod data change (owner-gated). |
+
+Browser check, owner answer 4 (agent-browser 0.27.0, session `pdyn5`, sandbox stack, 2 Oct 2026).
+Reached by sidebar clicks: System > Messaging > Status Words, then the `outstanding` row.
+- 1280: the modal shows "Parser prompt lists" with Status bullets, Order status values and
+  Status field values as chips.
+- The tag edit round-trips:
+  - Removing "Status field values" and saving set the row to `{statuses,status_values}`, and
+    `{{status_field_values}}` rendered `delivered|sales_report` with no publish.
+  - Re-adding the tag in the multi-select and saving restored
+    `{statuses,status_values,status_field_values}`.
+- 375: the dialog spans 0 to 375 and the field 25 to 335; the document is 375 wide, so there is
+  no overflow.
