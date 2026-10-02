@@ -1,8 +1,19 @@
 # PLAN: Ideation inside the Sorento CRM portal (one system, one domain)
 
-Status: Scouted, options written, waiting on the owner's choice (lane IDEATION-IN-CRM, 2 Oct 2026).
-No product code until the owner picks an option. The track is set by the option chosen: A or C is
-the full pipeline (it touches auth/session and adds a public ingest page); B is ops plus ss work.
+Status: Option C chosen (owner, 2 Oct 2026). Size L, full pipeline track (new gateway router on an
+auth boundary + a public token page). Behaviour card done (sections 1, 2, 0); next = Phase 1 mock
+per CRM screen (section 12, slice M), then the build slices. Lane IDEATION-IN-CRM.
+
+## 0. Owner decisions (2 Oct 2026)
+
+| Q | Decision |
+|---|---|
+| Q1 | **Option C**: CRM-native Ideas pages over the ss embed API, CRM backend as the gateway. |
+| Q2 | **Baseline AND extras**: list, detail, capture, vote, status, archive/delete, attachments, PLUS board reorder, merge/unmerge and promote-to-BR. |
+| Q3 | **Scope the ss embed connection to the CRM workspace's `ideation_product_id`.** Apply on dev only; crew gets the exact prod setting and asks the owner before touching prod (section 14). |
+| Q4 | **The public track page reuses the existing customer portal** (its routes and domain), not a new public path. Proposed URL in section 11. |
+| Q5 | **Separate ss lane** for `public_link_base_url` (crew runs it). This lane states the contract it needs (section 13). |
+| Add | **Fold in IDEATION-COMMENTS** in the CRM pages: comments (staff, and public read + post on the track page), upvote-only with the prominent vote box, primary "Move to <next state>" + secondary Edit. Design source: the approved mock `documentation/mockups/IDEATION-COMMENTS/index.html` (v2) on ss branch `crew/ideation-comments`, rebuilt with CRM components (section 9). |
 
 Repos read: `jayson-odoo/sorento-crm` (this repo, "CRM") and `jayson-odoo/foundryx-shared-service`
 ("ss", read-only clone at main, 2 Oct 2026). Paths below prefixed `ss:` are in the ss repo;
@@ -32,6 +43,11 @@ hands out ss links.
 | R6 | Ideas follow the CRM theme (light/dark and the CRM tokens), live when the user toggles. | Owner feedback (3) |
 | R7 | Ideas show dates in the CRM format (`dd/MM/yyyy`, date-time `dd/MM/yyyy, h:mm AM/PM`). | Owner feedback (4) |
 | R8 | Archive and Delete work from the CRM (found while scouting R4, same root cause). | Scout |
+| R9 | Board (status lanes, drag to reorder), merge / unmerge, promote-to-BR are available in the CRM. | Owner Q2 |
+| R10 | Staff can read, post, reply to (one level) and edit/delete their own comments on an idea; triage users can delete any. | IDEATION-COMMENTS |
+| R11 | Votes are upvote-only. A prominent vote box sits left of the title on the idea page and leads every list row and board card; clicking it votes without opening the idea; orange when the viewer has voted. | IDEATION-COMMENTS |
+| R12 | The idea page's primary action is "Move to <next status>" (tenant label); Edit is an outline button to its left. Restore is primary when archived, Unmerge when merged; Edit is primary when there is no next move. | IDEATION-COMMENTS |
+| R13 | The customer's track page lives under the CRM customer portal and shows comments, with public read and post. | Owner Q4 + IDEATION-COMMENTS |
 
 ## 3. What exists today (measured, not assumed)
 
@@ -281,7 +297,8 @@ already rejected embedding ss by iframe for the page builder, citing this embed'
 3. **Slice 2 (ss, small):** per-tenant `public_link_base_url` used by `mint_idea_link`.
    **Slice 3 (CRM):** public track page `/public/ideas/[token]` + BE proxy. Until slice 2 lands, the
    CRM rewrites the origin of relayed links (stop-gap).
-4. Board / merge / promote only if the owner wants them in the CRM (question 2).
+4. Board / merge / promote only if the owner wants them in the CRM (question 2). Superseded: the
+   owner chose all of them; the slice order is now section 12.
 
 Why: the owner's goal is one system. All four complaints (and archive/delete and deep links) are the
 same problem, two apps with two theme systems, two date formatters and two auth models stitched
@@ -294,7 +311,7 @@ If the owner wants the cheapest step now and C later: do step 1, plus Option A's
 and treat C as the follow-up. Most of A's protocol work would be thrown away by C, which is why it
 is not the recommendation.
 
-## 7. Open questions for the owner (filed as one crew-ask)
+## 7. First crew-ask (answered 2 Oct, see section 0)
 
 1. Which option: A, B or C? Recommendation C.
 2. Scope of the CRM Ideas pages: (a) baseline list/detail/capture/vote/status/archive/attachments, or
@@ -315,3 +332,153 @@ is not the recommendation.
 - `embed-token-refresh.ts:34-40` accepts a token message from any origin.
 - Capture-dialog attachments are silently dropped (section 4, R5).
 - Stale TODO in `ss:ssFE/lib/api-client.ts:64-69` (the Sorento listener shipped).
+
+## 9. CRM screens (design = IDEATION-COMMENTS mock v2, rebuilt with CRM components)
+
+The mock (ss `crew/ideation-comments`, commit `0841b7c`, `documentation/mockups/IDEATION-COMMENTS/index.html`)
+is the approved layout. Its element map (section 6) names ss components; the CRM equivalents:
+
+| Mock element | CRM component | Note |
+|---|---|---|
+| Page frame, breadcrumb, Back | `FE/components/common/PageHeader.tsx` | One CTA per page, in the header (DESIGN-LANGUAGE section 6). |
+| Vote box left of title (md), list rows and board cards (sm) | new `FE/components/ideas/VoteBox.tsx` (Button + `ChevronUp` + count; filled primary-accent when `myVote === 'up'`; disabled on a merged child) | Upvote only. Clicking in a list row or card stops propagation so the row does not open. |
+| Status under title | `Badge` (status pill per PR-CHECKLIST), colour from ss `statusColor` | Label = ss `statusLabel` (tenant label, never hard-coded). |
+| Primary "Move to <next>" / Restore / Unmerge, Edit outline to its left | PageHeader actions: primary `Button` + outline `Button` | Next move = ss `advanceTransitionId` + its target label from `transitions` (`ss:ssBE/modules/ideation/schemas.py` IdeaOut). Archived: primary Restore. Merged child: primary Unmerge, no Edit. No next move: Edit primary. |
+| "..." menu: Promote to BR, Archive, Delete | `DropdownMenu` with icon-button label | Archive and Delete are `useDeferredAction` countdowns (`FE/hooks/useDeferredAction.tsx`), never a confirm dialog (D7). |
+| Prev/next pager "1 / 9" | `FE/components/common/RecordNavigation.tsx` | |
+| Tabs Details / Attachments / Business Requirements | CRM line tabs | View = Edit layout: editing swaps values for inputs in place. BR tab shows the ss BR links read-only (ss returns them on the idea). |
+| Details rows | CRM detail field rows | "Votes" row removed (the box is the only vote control). Dates via `formatDateTime` (`FE/lib/helpers.ts:465`), so `21/07/2026, 9:05 AM`, not the mock's `21 Jul 2026, 9:05 AM` (R7 wins). |
+| Comments under Details (oldest first, one reply level, "edited" tag, "Comment deleted" placeholder when it has replies) | new `FE/components/ideas/IdeaComments.tsx` with `Textarea`, `Button`, `avatar.tsx` | Composer hidden (not disabled) on a merged child. Own comment: Edit / Delete; triage users may delete any (ss enforces). Empty state: heading + hint, no button. |
+| Comment delete | `useDeferredAction` countdown | The mock uses an AlertDialog confirm; the CRM forbids confirm dialogs (D7, `ConfirmDeleteDialog` retired). See section 15 Q1. |
+| Ideas list with vote box first column | CRM `DataGrid` (`tableLayout: { width: 'fixed', columnsResizable: true }`, `columnResizeMode: 'onChange'`, explicit `size`, `truncate` + `title`), `listingKey="ideation.board.view"` | Column prefs persist through `user_list_column_configs` (R4). Toolbar: search, status filter (`SearchableSelect`, clearable), Add = "Capture idea". `rowHref` = `/ideas/{id}`. |
+| Capture idea | CRM modal (create = modal by default) | Fields per `ss IdeaCreateIn`; no product picker (the connection is product-scoped, Q3). Attachments uploaded after create via the attachments route. |
+| Triage board | `FE/components/ui/kanban.tsx` + `sortable.tsx`, route `/ideas/board` | Lanes from ss `GET /embed/board`; drag = `PUT /embed/ideas/reorder`; card leads with the sm vote box. |
+| Merge | CRM modal from list multi-select or the detail "..." menu, target picked with `SearchableSelect` | `POST /embed/ideas/merge`. "Merged from" list on the target's detail page; Unmerge on the child. |
+| Promote to BR | "..." menu item, CRM modal for any fields ss requires | `POST /embed/ideas/promote`. ss resolves the CRM user's email to an ss user with `ideation.business_requirements.manage` (`ss:ssBE/modules/ideation/routers/embed.py:337-351`); otherwise 403. See section 15 Q3. |
+
+Both widths: usable and non-clipped at 375px and 1280px (mock section 5 is the 375px reference).
+
+## 10. Gateway contract (CRM backend -> ss embed API)
+
+New router `BE/app/api/v1/ideation/` mounted at `/api/v1/ideation`, wrapped in the module guard like
+every other domain. Per request: resolve the caller, mint the 120 s assertion exactly as
+`BE/app/services/ideation_embed_service.py:190-209` does, exchange it at ss `POST /embed/session`,
+cache the 5-minute embed token per CRM user (in-process or redis, key = user id, evict 30 s before
+`expires_at`, drop on a 401 and retry once). The token never leaves the backend.
+
+| CRM route | ss route | CRM permission |
+|---|---|---|
+| `GET /ideas?filter=` | `GET /embed/ideas?filter=` | `ideation.board.view` |
+| `GET /ideas/board` | `GET /embed/board` | view |
+| `GET /ideas/{id}`, `GET /ideas/{id}/merged` | same under `/embed` | view |
+| `POST /ideas` | `POST /embed/ideas` | view (capture is open to every viewer, as in ss) |
+| `PATCH /ideas/{id}` | `PATCH /embed/ideas/{id}` | manage (section 15 Q2) |
+| `POST /ideas/{id}/vote` | `POST /embed/ideas/{id}/vote` (always `up`) | view |
+| `POST /ideas/{id}/status` | `POST /embed/ideas/{id}/status` | manage |
+| `PUT /ideas/reorder`, `POST /ideas/merge`, `POST /ideas/{id}/unmerge`, `POST /ideas/promote` | same under `/embed` | manage |
+| `POST /ideas/{id}/attachments`, `GET .../attachments/{aid}/content` (streamed) | same under `/embed` | view (upload: manage) |
+| Delete / Archive | pending-action handlers in `BE/app/services/record_actions.py` (`entity_type="idea"`) that call ss `DELETE /embed/ideas/{id}` / `POST .../status {status:"archived"}` as the user who started the action | manage |
+| `GET/POST /ideas/{id}/comments`, `PATCH/DELETE /ideas/{id}/comments/{cid}` | ss comment routes from the IDEATION-COMMENTS lane (not on ss main yet) | view (post/edit own); delete-any enforced by ss |
+
+Errors: an ss 4xx passes through as an `AppException` with ss's message; ss down or timeout = 502
+"The Ideas workspace isn't reachable right now." Unconfigured = 404, as the embed route does today.
+
+## 11. Public track page under the customer portal (Q4)
+
+The customer portal is the `(auth)/portal` route tree on the CRM frontend host
+(`FE/app/(auth)/portal/`), whose links the backend builds from `settings.frontend_base_url`
+(`BE/app/services/portal_service.py:428-448`, `BE/app/config.py:305`). The portal already has a
+token-as-credential page with no OTP: `/portal/ticket-draft/[token]`
+(`FE/app/(auth)/portal/ticket-draft/[token]/page.tsx`).
+
+**Proposed URL: `{FRONTEND_BASE_URL}/portal/ideas/{status_token}`**, for example
+`https://fe-sorento.foundryx.my/portal/ideas/Ab3dEf9hJk2LmN0p` (host per environment; the
+`fe-sorento.foundryx.my` host is the one the CRM already cites for template links,
+`BE/app/services/respond_messaging_service.py:37`).
+
+- Route: `FE/app/(auth)/portal/ideas/[token]/page.tsx`. A static `ideas` segment outranks the
+  existing dynamic `/portal/[type]/[id]` (`FE/app/(auth)/portal/[type]/[id]/page.tsx`), which would
+  otherwise `notFound()` on an unknown kind. Inherits the portal layout and branded shell.
+- Data: new CRM public routes `GET /api/v1/public/portal/ideas/{token}` and
+  `GET|POST /api/v1/public/portal/ideas/{token}/comments`, proxying ss `GET /public/ideas/{token}` and
+  the ss public comment routes. Keep ss's `Cache-Control: no-store`, `X-Robots-Tag: noindex`,
+  `Referrer-Policy: no-referrer` and the token regex `^[A-Za-z0-9_-]{16,64}$`
+  (`ss:ssBE/modules/ideation/routers/public_ideas.py:28,45-51`). Rate-limit public POST per token.
+- The token is the credential (as on ss today and as WhatsApp promises: "no login needed",
+  `FE/services/whatsappTemplateService.ts:403-405`). No portal OTP, no slug: ss mints the link and
+  does not know portal slugs.
+- Links already sent on the ss domain keep working there; no redirect.
+
+## 12. Slices (size L)
+
+| # | Slice | Contents | Depends on | Gate |
+|---|---|---|---|---|
+| S0 | Behaviour card | Sections 0-2, this plan. | - | Done 2 Oct |
+| M | **Phase 1 mock per CRM screen** (next) | In the CRM app against mock data, no backend, no tests: (M1) `/ideas` list with vote box + capture modal; (M2) `/ideas/{id}` detail incl. header action states A-E from the mock, tabs, comments with reply and deleted-with-replies; (M3) `/ideas/board`; (M4) merge modal + merged-from + promote modal; (M5) `/portal/ideas/{token}` track page with public comments. Each at 375px and 1280px, dark and light. | - | Owner hand-test of the mock |
+| U | UAC file | `ideation-in-crm-acceptance-criteria.md` from sections 2, 9-11 and the approved mock. | M | Owner sign-off |
+| B1 | Gateway + baseline | Router (section 10), token cache, list / detail / capture / vote / status / edit / archive / delete / attachments wired; `/ideas` and `/ideas/{id}` switch from the iframe to the native pages (no feature flag). Tester-first. | U | pytest + vitest green, reviewer + security-reviewer |
+| B2 | Board, merge/unmerge, promote | M3, M4 wired. | B1 | same |
+| B3 | Staff comments | Comment routes through the gateway; IdeaComments wired. | B1 + ss IDEATION-COMMENTS merged | same |
+| B4 | Portal track page | Section 11 public routes + page, public comments. | B1 + ss IDEATION-COMMENTS + ss `public_link_base_url` lane merged | same + security-reviewer (public ingest) |
+| B5 | Remove the iframe | Delete `IdeationEmbed.tsx`, `useIdeationEmbedSession.ts`, `POST /integrations/ideation/embed-session` callers; keep the session mint code that the gateway reuses. | B1-B4 | browser pass |
+
+B3 and B4 can be mocked (M2, M5) and built against the ss branch contract before ss merges; they
+only ship after it does.
+
+## 13. Cross-lane contracts
+
+- **ss `public_link_base_url` lane:** `mint_idea_link` must return `{public_link_base_url}/{status_token}`
+  when the tenant (or Sorento's connection) has the base set, else today's
+  `{frontend_url}/public/ideas/{token}`. Sorento's value = `{FRONTEND_BASE_URL}/portal/ideas` (no
+  trailing slash). Both the intake `link` and the status-event `track_url` must use it
+  (`ss:ssBE/modules/ideation/services/sinks.py:45-60`, `services/intake.py:664,713,725`,
+  `services/status_events.py:112,136`). The CRM relays both unchanged
+  (`BE/app/services/ideation_turn_service.py:189`, `BE/app/services/ideation_status_update_service.py:197-200`),
+  so no CRM change is needed for links once ss ships.
+- **ss IDEATION-COMMENTS lane:** the CRM needs, on the embed API: list (oldest first, one reply
+  level, author name, `edited`, `deleted` with replies kept), create (with optional `parentId`),
+  edit own, delete (own, or any with triage); on the public API: list and create by status token,
+  with a stated author identity for public posts (section 15 Q4). Votes: `myVote` only ever `up`.
+  Its components must stay free of a hard-coded domain (the mock already says so).
+
+## 14. Embed connection product scope (Q3)
+
+What: ss `embed_connections.product_id` for Sorento's connection = the CRM default workspace's
+`respond_workspaces.ideation_product_id`.
+
+This sandbox may not connect to any shared DB, so crew applies it on **dev**:
+
+1. Read the two values from the CRM dev DB:
+   `SELECT ideation_product_id, ideation_embed_connection_id FROM respond_workspaces WHERE is_default IS TRUE;`
+   If `ideation_embed_connection_id` is blank, the value is `IDEATION_EMBED_CONNECTION_ID` in the
+   backend `.env` (row first, `.env` fallback: `BE/app/services/ideation_embed_service.py:151-187`).
+2. Set it on ss dev, preferably through the ss admin UI `/ideation/embed-connections` (edit the
+   Sorento connection, Product = that product) or `PATCH /ideation/embed-connections/{connection_id}`
+   `{"product_id": "<ideation_product_id>"}` (`ss:ssBE/modules/ideation/routers/embed_admin.py:134`).
+   SQL equivalent on the ss dev DB:
+   `UPDATE embed_connections SET product_id = '<ideation_product_id>' WHERE connection_id = '<connection_id>' AND product_id IS NULL;`
+3. Check: open Ideas in the CRM dev iframe; "Capture idea" shows one product and saves (no 403
+   `embed_scope_required`).
+
+**Prod: the same two steps with prod values. Held for the owner; crew asks before touching prod.**
+Side effect to state to the owner: a scoped connection only shows that product's ideas in the
+embed (`_assert_in_scope`, `ss:ssBE/modules/ideation/routers/embed.py:198-215`), and the Product
+column disappears in embed mode. Today Sorento's ideas all come from intake with that product
+(`ideation_turn_service.py:649`), so nothing should vanish; ideas captured in ss under another
+product would.
+
+## 15. Open questions (second crew-ask)
+
+1. Comment delete: the approved mock confirms with a dialog; CRM rule D7 forbids confirm dialogs.
+   (a) CRM deferred countdown (10 s, Cancel) like every other CRM delete, (b) keep the mock's
+   confirm. Recommendation (a).
+2. Who may run the triage actions in the CRM (status move, edit, merge/unmerge, board reorder,
+   archive, delete, promote)? (a) new CRM permission `ideation.ideas.manage`, while view, capture,
+   vote and comment stay on `ideation.board.view`, (b) everyone with `ideation.board.view` (ss
+   enforces nothing per embed user today). Recommendation (a).
+3. Promote-to-BR only works for a CRM user whose email is also an ss user with BR-manage. (a) show
+   Promote only to `ideation.ideas.manage` holders and surface ss's 403 message, (b) hide it unless
+   ss confirms the mapping (needs a new ss lookup). Recommendation (a).
+4. Who is the author of a comment posted on the public track page? (a) the idea's submitter (the
+   token holder; name from the idea), (b) a name typed by the poster. Recommendation (a): the link
+   only reaches the submitter's WhatsApp. The ss IDEATION-COMMENTS lane must implement the same.
