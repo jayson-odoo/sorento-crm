@@ -1852,6 +1852,7 @@ def run_fetch(
         # `check_access` to fill it from `contact_field_reveals`; until then it is
         # always None, so every restricted field stays hidden by construction.
         "access": ctx.get("access"),
+        "localizer": ctx.get("localizer"),
         # E2 (attribute-first asks): the resolver's `predicate` block, carried
         # through the gate untouched (`resolved`/`gate` are the same mutated dict,
         # `gate.py`'s own C4 bypass reads it off `resolver.get("predicate")` the

@@ -59,7 +59,7 @@ from app.services.chatbot.usage import record_parser_usage
 # Stages C to G (PLAN-chatbot-turn-rearch.md "Turn order"). `turn/` is the pure core -
 # APPLY, the narrower, the plan, the router, the composer, the tail - and `turn_runtime`
 # is everything that has to touch a database or a tool on its behalf.
-from app.services.chatbot import session_state, turn_runtime
+from app.services.chatbot import label_catalog, language as language_mod, session_state, turn_runtime
 from app.services.chatbot.turn import pending as turn_pending
 from app.services.chatbot.turn import question as turn_question
 from app.services.chatbot.turn import state as turn_state
@@ -4432,6 +4432,10 @@ def _run_stages(  # noqa: PLR0915
             except Exception:  # noqa: BLE001 - the lane's own handover stands
                 logger.warning("chatbot: the handover context did not build", exc_info=True)
         item = _stamp_item(access, branch_kind, {})
+        # CHAT-LANGUAGE: this turn's reply language, from the message's own words first. Pure,
+        # so every arm has it (`run_tail` carries `item["reply_language"]` to the next turn);
+        # the business lane below recomputes it once its codes and names are known.
+        item["reply_language"] = _turn_language(latest_user_message, remembered_before, profile)
 
         # Owner ruling, hand pass 10 (21 Sep 2026, `test_rearch_r10_handpass10_
         # replay.py::TestHandPass10PromotionAskRepeatsAfterATierPick`): a fresh
@@ -4782,6 +4786,21 @@ def _run_stages(  # noqa: PLR0915
             and not customer_scope_refused
         ):
             stage[0] = "looked_up"
+            # CHAT-LANGUAGE: the words of this turn that are data (codes, customer names) must
+            # not decide the language, and the catalog is read once, here, with the db open.
+            reply_language = _turn_language(
+                latest_user_message,
+                remembered_before,
+                state_out.profile,
+                strip=[
+                    str(e[k])
+                    for e in compatible_entities
+                    for k in ("raw", "canonical_code", "display_name")
+                    if isinstance(e, dict) and e.get(k)
+                ],
+            )
+            item["reply_language"] = reply_language
+            localizer = label_catalog.resolve(db, reply_language)
             turn_ctx = turn_runtime.TurnContext(
                 db=db,
                 contact_respond_id=contact_respond_id,
@@ -4818,7 +4837,10 @@ def _run_stages(  # noqa: PLR0915
                     # per-domain fetch context gets the same domain-aware fill this
                     # turn's own `ctx.parse.output` already got above.
                     policy=policy,
+                    localizer=localizer,
                 ),
+                localizer=localizer,
+                reply_language=reply_language,
                 granted_reveals=access.get("attributes"),
                 access_levels=list(verdict.get("access_levels") or []),
                 contains_flyer=bool(verdict.get("contains_flyer")),
@@ -5850,6 +5872,7 @@ def _run_answer(
             access_levels=list(verdict.get("access_levels") or []),
             contains_flyer=bool(verdict.get("contains_flyer")),
             ideation=remembered_before.get("ideation"),
+            reply_language=item.get("reply_language") or remembered_before.get("reply_language"),
         )
         # ONE payload for both kinds of turn: a live turn writes it, a dry run hands it
         # back as `session_patch` and writes nothing (D14). Same rule `run_tail` applies
@@ -6598,8 +6621,14 @@ def _run_casual_lane(
                 noted_language = next(
                     (s.get("value") for s in fallback.noted if s.get("key") == "language"), None
                 )
+                # CHAT-LANGUAGE: the message's own language first (owner Q2), then the clarifier's
+                # reading, the conversation's last language, the saved fact, a stated one.
                 reply_language = fallback_mod.pick_language(
-                    fallback.saved_language, noted_language, said.language
+                    language_mod.detect(_ctx_message_text(ctx).split("\n")[0]),
+                    said.language,
+                    (remembered_before or {}).get("reply_language"),
+                    fallback.saved_language,
+                    noted_language,
                 )
                 ack = said.text.strip()
                 # AC-MEM081: an ack stating a figure, code, price or date its own
@@ -7515,6 +7544,20 @@ def _stock_ask_answered_entries(envelopes: list[dict[str, Any]]) -> list[dict[st
     return entries
 
 
+def _turn_language(
+    latest_user_message: str,
+    remembered_before: Mapping[str, Any],
+    profile: Any,
+    *,
+    strip: Any = (),
+) -> str:
+    """`language.for_turn` on the typed line (the quoted `reply to:` line is not the customer's
+    words), against a copy so `remembered_before` stays the state the turn started with."""
+    carried = {"reply_language": remembered_before.get("reply_language")}
+    first_line = (latest_user_message or "").split("\n")[0]
+    return language_mod.for_turn(first_line, carried, getattr(profile, "language", None), strip=strip)
+
+
 def _ctx_message_text(ctx: Any) -> str:
     """What the customer typed this turn (`ctx.text.message.message.text`)."""
     inner = jsc.get(jsc.get(jsc.get(ctx, "text"), "message"), "message")
@@ -7939,6 +7982,8 @@ def run_tail(
         "ideation": item.get("ideation") if "ideation" in item else before.get("ideation"),
         "access_levels": list(before.get("access_levels") or []),
         "contains_flyer": bool(before.get("contains_flyer")),
+        # CHAT-LANGUAGE: this turn's language, else the one the conversation already had.
+        "reply_language": item.get("reply_language") or before.get("reply_language"),
     }
     SessionVars(**payload)
     reply_ladder.sanitize_em_dash(payload)

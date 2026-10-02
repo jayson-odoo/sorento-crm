@@ -18,7 +18,8 @@ from app.services.chatbot.turn.narrow import ledger_family_key
 from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire
 from app.services.chatbot.turn.state import KIND_FIELD_MAP
 
-FIVE_KEYS = ("focus", "open_question", "ideation", "access_levels", "contains_flyer")
+# `reply_language` is the sixth (CHAT-LANGUAGE); the name stays for the callers.
+FIVE_KEYS = ("focus", "open_question", "ideation", "access_levels", "contains_flyer", "reply_language")
 
 #: The pre-rearch marker kinds (`contracts.PENDING_KINDS`), by the name the turn package
 #: gives the SAME question (`turn/pending.PENDING_KINDS`). n8n's outer loop still writes
