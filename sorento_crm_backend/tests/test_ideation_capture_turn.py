@@ -41,6 +41,7 @@ CRM = "https://crm.example"
 PERM = "ideation.board.view"
 
 MSG = "i have an idea, the price tag should show promo price in red"
+SS_PUBLIC_LINK = "https://ss.example/public/track/abc"
 PROBLEM = "Customers keep asking why the price differs from the sticker"
 TITLE = "Promo price in red on price tags"
 
@@ -72,7 +73,7 @@ class Env:
         self.languages: list[str | None] = []
         # message_text -> IdeateExtraction; unknown text -> no idea content
         self.extractions: dict[str, IdeateExtraction] = {}
-        self.similar_result: dict | Exception = {"ideas": [], "total": 0}
+        self.similar_result: dict | Exception = {"matches": []}
         self.create_result: dict | Exception = {}
 
     # ---- seeding -------------------------------------------------------- #
@@ -157,33 +158,49 @@ class Env:
         self.extraction(text, fields=fields, title=TITLE, language=language)
         return text
 
-    def created(self, *, idea_id: str | None = None, captured: dict | None = None) -> str:
+    def created(self, *, idea_id: str | None = None) -> str:
         idea_id = idea_id or _uid()
         self.create_result = {
-            "status": "complete",
-            "id": idea_id,
+            "idea_id": idea_id,
             "idea_number": "IDEA-0184",
+            "status": "captured",
             "title": TITLE,
-            "captured": captured if captured is not None else {"problem": PROBLEM},
+            "link": SS_PUBLIC_LINK,
         }
         return idea_id
 
-    def sim(self, n: int, *, total: int | None = None) -> list[dict]:
+    def sim(self, n: int) -> list[dict]:
         ideas = [
-            {"id": _uid(), "idea_number": f"IDEA-01{i}0", "title": f"Existing idea number {i}"}
+            {
+                "idea_id": _uid(),
+                "idea_number": f"IDEA-01{i}0",
+                "title": f"Existing idea number {i}",
+                "problem": "Some problem",
+                "status": "new",
+                "status_label": "New",
+                "similarity": 0.8,
+                "created_at": "2026-10-01T09:00:00Z",
+                "link": f"https://ss.example/public/{i}",
+            }
             for i in range(1, n + 1)
         ]
-        self.similar_result = {"ideas": ideas, "total": total if total is not None else n}
+        self.similar_result = {"matches": ideas}
         return ideas
 
     def pointer(self, similar: list[dict], *, message: str = MSG, age: timedelta = timedelta(0),
-                is_test: bool = False, language: str | None = None) -> dict:
+                is_test: bool = False, language: str | None = None,
+                intake_ref: str | None = None) -> dict:
         held = {
             "status": "similar_offered",
             "message_text": message,
-            "similar": similar,
+            "fields": {"problem": PROBLEM},
+            "title": TITLE,
+            "similar": [
+                {k: s_[k] for k in ("idea_id", "idea_number", "title")} for s_ in similar
+            ],
             "updated_at": _now_iso(age),
             "is_test": is_test,
+            "intake_ref": intake_ref or _uid(),
         }
         if language is not None:
             held["language"] = language
@@ -333,37 +350,75 @@ def test_b_no_idea_content_asks_back(env):
 def test_c_no_similar_creates_one_shot(env):
     env.ready()
     env.idea_message()
-    idea_id = env.created(captured={"problem": PROBLEM})
+    idea_id = env.created()
     out = env.turn(MSG, submitter_name="WA Name")
 
     assert len(env.similar_calls) == 1
     assert len(env.create_calls) == 1
     p = env.create_calls[0]
-    assert p["capture_now"] is True
-    assert p["crm_user_id"] == env.user.id
-    assert p["submitter_contact_id"] == env.phone
-    assert p["message_text"] == MSG
-    assert p["fields"]["problem"] == PROBLEM
+    assert p["product_id"] == "prod-1"
+    assert p["problem"] == PROBLEM
+    assert p["submitter_crm_user_id"] == env.user.id
+    assert p["submitter_phone"] == env.phone
+    assert "submitter_name" in p
     assert p["title"] == TITLE
+    assert p["raw_transcript"] == MSG
     assert p["is_test"] is False
+    uuid.UUID(p["intake_ref"])  # a uuid string
+    # flat contract: none of the old wrapper keys
+    for old in ("capture_now", "fields", "message_text", "crm_user_id", "submitter_contact_id"):
+        assert old not in p
+    # optional fields are sent only when extracted
+    for opt in ("proposed_solution", "impact", "department"):
+        assert opt not in p
 
     sp = env.similar_calls[0]
-    assert sp["crm_user_id"] == env.user.id
-    assert sp["submitter_contact_id"] == env.phone
-    assert sp["problem"] == PROBLEM
+    assert sp["product_id"] == "prod-1"
+    assert sp["text"] == PROBLEM
+    assert sp["submitter_crm_user_id"] == env.user.id
+    assert sp["submitter_phone"] == env.phone
     assert sp["is_test"] is False
+    for old in ("problem", "title", "crm_user_id", "submitter_contact_id"):
+        assert old not in sp
 
     link = f"{CRM}/ideas/{idea_id}"
     assert out["status"] == "complete"
     assert out["link"] == link
     assert link in out["reply_text"]
     assert TITLE in out["reply_text"]
+    # the ss public link is never relayed
+    assert SS_PUBLIC_LINK not in out["reply_text"]
+    assert out["link"] != SS_PUBLIC_LINK
 
 
-def test_c_missing_list_names_absent_fields_only(env):
+def test_c_extracted_optional_fields_are_sent_flat(env):
+    env.ready()
+    env.idea_message(extra_fields={
+        "proposed_solution": "Show promo price in red",
+        "impact": "Fewer repeat questions",
+        "department": "Sales",
+    })
+    env.created()
+    env.turn(MSG)
+    p = env.create_calls[0]
+    assert p["proposed_solution"] == "Show promo price in red"
+    assert p["impact"] == "Fewer repeat questions"
+    assert p["department"] == "Sales"
+
+
+def test_c_fresh_creates_get_distinct_intake_refs(env):
     env.ready()
     env.idea_message()
-    env.created(captured={"problem": PROBLEM, "proposed_solution": "Show promo price in red"})
+    env.created()
+    env.turn(MSG)
+    env.turn(MSG)
+    assert env.create_calls[0]["intake_ref"] != env.create_calls[1]["intake_ref"]
+
+
+def test_c_missing_list_is_computed_from_what_was_sent(env):
+    env.ready()
+    env.idea_message(extra_fields={"proposed_solution": "Show promo price in red"})
+    env.created()
     reply = env.turn(MSG)["reply_text"]
     assert "Proposed solution" not in reply
     assert "Impact" in reply
@@ -371,17 +426,14 @@ def test_c_missing_list_names_absent_fields_only(env):
     assert "Photos or files" in reply
 
 
-def test_c_all_fields_captured_still_lists_photos(env):
+def test_c_all_fields_sent_still_lists_photos(env):
     env.ready()
-    env.idea_message()
-    env.created(
-        captured={
-            "problem": PROBLEM,
-            "proposed_solution": "Show promo price in red",
-            "impact": "Fewer repeat questions",
-            "department": "Sales",
-        }
-    )
+    env.idea_message(extra_fields={
+        "proposed_solution": "Show promo price in red",
+        "impact": "Fewer repeat questions",
+        "department": "Sales",
+    })
+    env.created()
     reply = env.turn(MSG)["reply_text"]
     assert "Proposed solution" not in reply
     assert "Impact" not in reply
@@ -389,10 +441,10 @@ def test_c_all_fields_captured_still_lists_photos(env):
     assert "Photos or files" in reply
 
 
-def test_c_nothing_captured_beyond_problem_lists_all_three_plus_photos(env):
+def test_c_only_problem_sent_lists_all_three_plus_photos(env):
     env.ready()
     env.idea_message()
-    env.created(captured={"problem": PROBLEM})
+    env.created()
     reply = env.turn(MSG)["reply_text"]
     for name in ("Proposed solution", "Impact", "Department", "Photos or files"):
         assert name in reply
@@ -415,13 +467,16 @@ def test_d_similar_found_offers_numbered_list_and_holds(env):
         line = next((ln for ln in lines if ln.lstrip().startswith(f"{n}")), None)
         assert line is not None, f"no line numbered {n}"
         assert idea["title"] in line
-        assert f"{CRM}/ideas/{idea['id']}" in line
+        assert f"{CRM}/ideas/{idea['idea_id']}" in line
 
     held = out["session_vars"]["ideation"]
     assert held["status"] == "similar_offered"
     assert held["message_text"] == MSG
-    assert [s["id"] for s in held["similar"]] == [i["id"] for i in ideas]
+    assert [s["idea_id"] for s in held["similar"]] == [i["idea_id"] for i in ideas]
     assert held["is_test"] is False
+    assert held["fields"]["problem"] == PROBLEM
+    assert held["title"] == TITLE
+    uuid.UUID(held["intake_ref"])
     assert env.persisted()["ideation"]["status"] == "similar_offered"
 
 
@@ -436,18 +491,18 @@ def test_d_is_test_turn_is_not_persisted(env):
     assert "ideation" not in env.persisted()
 
 
-def test_d_total_above_shown_adds_see_all_line(env):
+def test_d_three_matches_add_see_all_line(env):
     env.ready()
     env.idea_message()
-    env.sim(3, total=5)
+    env.sim(3)
     reply = env.turn(MSG)["reply_text"]
     assert f"{CRM}/ideas?view=mine" in reply
 
 
-def test_d_total_equal_shown_has_no_see_all_line(env):
+def test_d_two_matches_have_no_see_all_line(env):
     env.ready()
     env.idea_message()
-    env.sim(3, total=3)
+    env.sim(2)
     reply = env.turn(MSG)["reply_text"]
     assert "view=mine" not in reply
 
@@ -458,14 +513,14 @@ def test_d_total_equal_shown_has_no_see_all_line(env):
 def test_e_pick_number_replies_that_ideas_link(env):
     env.ready()
     similar = [
-        {"id": _uid(), "idea_number": "IDEA-0151", "title": "First held idea"},
-        {"id": _uid(), "idea_number": "IDEA-0097", "title": "Second held idea"},
+        {"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "First held idea"},
+        {"idea_id": _uid(), "idea_number": "IDEA-0097", "title": "Second held idea"},
     ]
     sv = env.pointer(similar)
     out = env.turn("2", session_vars_in=sv)
     assert out["status"] == "similar_picked"
-    assert f"{CRM}/ideas/{similar[1]['id']}" in out["reply_text"]
-    assert f"{CRM}/ideas/{similar[0]['id']}" not in out["reply_text"]
+    assert f"{CRM}/ideas/{similar[1]['idea_id']}" in out["reply_text"]
+    assert f"{CRM}/ideas/{similar[0]['idea_id']}" not in out["reply_text"]
     _no_ss(env)
     assert "ideation" not in out["session_vars"]
     assert env.extractor_calls == []
@@ -473,7 +528,7 @@ def test_e_pick_number_replies_that_ideas_link(env):
 
 def test_e_out_of_range_number_is_a_fresh_message(env):
     env.ready()
-    similar = [{"id": _uid(), "idea_number": "IDEA-0151", "title": "Only held idea"}]
+    similar = [{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Only held idea"}]
     sv = env.pointer(similar)
     env.extraction("3", fields={})
     out = env.turn("3", session_vars_in=sv)
@@ -489,18 +544,21 @@ def test_e_out_of_range_number_is_a_fresh_message(env):
 def test_f_new_creates_from_held_message(env, reply):
     env.ready()
     held = env.idea_message("chatbot should remember what the dealer asked before")
-    similar = [{"id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
-    sv = env.pointer(similar, message=held)
+    similar = [{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
+    ref = _uid()
+    sv = env.pointer(similar, message=held, intake_ref=ref)
     idea_id = env.created()
     out = env.turn(reply, session_vars_in=sv)
 
     assert env.similar_calls == []
     assert len(env.create_calls) == 1
     p = env.create_calls[0]
-    assert p["message_text"] == held
-    assert p["capture_now"] is True
-    assert p["fields"]["problem"] == PROBLEM
-    assert p["crm_user_id"] == env.user.id
+    assert p["raw_transcript"] == held
+    assert p["problem"] == PROBLEM
+    assert p["title"] == TITLE
+    assert p["intake_ref"] == ref
+    assert p["submitter_crm_user_id"] == env.user.id
+    assert p["submitter_phone"] == env.phone
     assert out["status"] == "complete"
     assert f"{CRM}/ideas/{idea_id}" in out["reply_text"]
     assert "ideation" not in out["session_vars"]
@@ -511,7 +569,7 @@ def test_f_new_creates_from_held_message(env, reply):
 # --------------------------------------------------------------------------- #
 def test_g_other_reply_drops_hold_and_runs_fresh(env):
     env.ready()
-    similar = [{"id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
+    similar = [{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
     sv = env.pointer(similar, message="old held message")
     other = env.idea_message("actually another idea: X should change")
     env.created()
@@ -530,7 +588,7 @@ def test_g_other_reply_drops_hold_and_runs_fresh(env):
 def test_h_stale_hold_new_is_a_fresh_message(env):
     env.ready()
     held = env.idea_message("held original idea text")
-    sv = env.pointer([{"id": _uid(), "idea_number": "IDEA-0151", "title": "Held"}],
+    sv = env.pointer([{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held"}],
                      message=held, age=timedelta(hours=25))
     env.extraction("new", fields={})
     out = env.turn("new", session_vars_in=sv)
@@ -545,7 +603,7 @@ def test_h_stale_hold_new_is_a_fresh_message(env):
 def test_i_live_hold_not_used_by_test_turn(env):
     env.ready()
     held = env.idea_message("held live idea text")
-    sv = env.pointer([{"id": _uid(), "idea_number": "IDEA-0151", "title": "Held"}],
+    sv = env.pointer([{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held"}],
                      message=held, is_test=False)
     env.extraction("new", fields={})
     out = env.turn("new", session_vars_in=sv, is_test=True)
@@ -585,16 +643,24 @@ def test_k_similar_lookup_failure_is_graceful_error(env):
     assert "ideation" not in out["session_vars"]
 
 
-def test_k_create_failure_is_graceful_error_and_pointer_untouched(env):
+def test_k_create_failure_keeps_pointer_and_retry_resends_same_intake_ref(env):
     env.ready()
     held = env.idea_message("held original idea text")
-    similar = [{"id": _uid(), "idea_number": "IDEA-0151", "title": "Held"}]
-    sv = env.pointer(similar, message=held)
+    similar = [{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held"}]
+    ref = _uid()
+    sv = env.pointer(similar, message=held, intake_ref=ref)
     env.create_result = IdeationServiceError("boom")
     out = env.turn("new", session_vars_in=sv)
     assert out["status"] == "error"
     assert out["reply_text"]
     assert out["session_vars"]["ideation"] == sv["ideation"]
+    assert out["session_vars"]["ideation"]["intake_ref"] == ref
+
+    # the second NEW (pointer as returned) resends the same intake_ref and succeeds
+    env.created()
+    out2 = env.turn("NEW", session_vars_in=out["session_vars"])
+    assert out2["status"] == "complete"
+    assert [c["intake_ref"] for c in env.create_calls] == [ref, ref]
 
 
 def test_k_create_failure_on_fresh_path_is_error(env):
@@ -621,14 +687,14 @@ def test_l_non_uuid_created_id_builds_no_crm_link(env):
 def test_l_non_uuid_similar_ideas_are_dropped(env):
     env.ready()
     env.idea_message()
-    good = {"id": _uid(), "idea_number": "IDEA-0151", "title": "Good similar idea"}
-    bad = {"id": "../../evil", "idea_number": "IDEA-0152", "title": "Bad similar idea"}
-    env.similar_result = {"ideas": [bad, good], "total": 2}
+    good = {"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Good similar idea"}
+    bad = {"idea_id": "../../evil", "idea_number": "IDEA-0152", "title": "Bad similar idea"}
+    env.similar_result = {"matches": [bad, good]}
     out = env.turn(MSG)
     assert "evil" not in out["reply_text"]
     assert "Bad similar idea" not in out["reply_text"]
-    assert f"{CRM}/ideas/{good['id']}" in out["reply_text"]
-    assert [s["id"] for s in out["session_vars"]["ideation"]["similar"]] == [good["id"]]
+    assert f"{CRM}/ideas/{good['idea_id']}" in out["reply_text"]
+    assert [s["idea_id"] for s in out["session_vars"]["ideation"]["similar"]] == [good["idea_id"]]
 
 
 # --------------------------------------------------------------------------- #
@@ -704,8 +770,8 @@ def test_n_ask_idea_renders_once(env):
 
 def test_n_complete_facts_exact(env):
     env.ready()
-    env.idea_message()
-    idea_id = env.created(captured={"problem": PROBLEM, "impact": "Fewer repeat questions"})
+    env.idea_message(extra_fields={"impact": "Fewer repeat questions"})
+    idea_id = env.created()
     out = env.turn(MSG)
     facts = _only_render(env, "complete")
     assert env.renders[0][2] == MSG
@@ -719,7 +785,7 @@ def test_n_complete_facts_exact(env):
 def test_n_complete_missing_order_when_nothing_captured(env):
     env.ready()
     env.idea_message()
-    env.created(captured={"problem": PROBLEM})
+    env.created()
     env.turn(MSG)
     facts = _only_render(env, "complete")
     assert facts["missing"] == ["Proposed solution", "Impact", "Department", "Photos or files"]
@@ -728,20 +794,20 @@ def test_n_complete_missing_order_when_nothing_captured(env):
 def test_n_similar_offered_facts_exact(env):
     env.ready()
     env.idea_message()
-    ideas = env.sim(3, total=5)
+    ideas = env.sim(3)
     env.turn(MSG)
     facts = _only_render(env, "similar_offered")
     assert env.renders[0][2] == MSG
     assert [(i["title"], i["link"]) for i in facts["similar"]] == [
-        (i["title"], f"{CRM}/ideas/{i['id']}") for i in ideas
+        (i["title"], f"{CRM}/ideas/{i['idea_id']}") for i in ideas
     ]
     assert facts["see_all"] == f"{CRM}/ideas?view=mine"
 
 
-def test_n_similar_offered_see_all_is_none_when_total_fits(env):
+def test_n_similar_offered_see_all_is_none_for_two_matches(env):
     env.ready()
     env.idea_message()
-    env.sim(2, total=2)
+    env.sim(2)
     env.turn(MSG)
     facts = _only_render(env, "similar_offered")
     assert facts["see_all"] is None
@@ -750,19 +816,19 @@ def test_n_similar_offered_see_all_is_none_when_total_fits(env):
 def test_n_similar_picked_facts(env):
     env.ready()
     similar = [
-        {"id": _uid(), "idea_number": "IDEA-0151", "title": "First held idea"},
-        {"id": _uid(), "idea_number": "IDEA-0097", "title": "Second held idea"},
+        {"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "First held idea"},
+        {"idea_id": _uid(), "idea_number": "IDEA-0097", "title": "Second held idea"},
     ]
     env.turn("2", session_vars_in=env.pointer(similar))
     facts = _only_render(env, "similar_picked")
     assert env.renders[0][2] == "2"
-    assert facts["link"] == f"{CRM}/ideas/{similar[1]['id']}"
+    assert facts["link"] == f"{CRM}/ideas/{similar[1]['idea_id']}"
 
 
 def test_n_new_user_message_is_current_not_held(env):
     env.ready()
     held = env.idea_message("chatbot should remember what the dealer asked before")
-    similar = [{"id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
+    similar = [{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
     env.created()
     env.turn("NEW", session_vars_in=env.pointer(similar, message=held))
     facts = _only_render(env, "complete")
@@ -841,7 +907,7 @@ def test_o_similar_offered_stores_language_on_pointer(env):
 def test_o_new_reply_renders_in_held_language(env):
     env.ready()
     held = env.idea_message("held original idea text", language="zh")
-    similar = [{"id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
+    similar = [{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
     env.created()
     env.turn("NEW", session_vars_in=env.pointer(similar, message=held, language="zh"))
     _only_render(env, "complete")
@@ -850,7 +916,7 @@ def test_o_new_reply_renders_in_held_language(env):
 
 def test_o_number_pick_renders_in_held_language(env):
     env.ready()
-    similar = [{"id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
+    similar = [{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
     env.turn("1", session_vars_in=env.pointer(similar, language="ms"))
     _only_render(env, "similar_picked")
     assert env.languages == ["ms"]
@@ -859,7 +925,7 @@ def test_o_number_pick_renders_in_held_language(env):
 def test_o_held_pointer_without_language_renders_en(env):
     env.ready()
     held = env.idea_message("held original idea text")
-    similar = [{"id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
+    similar = [{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
     env.created()
     env.turn("NEW", session_vars_in=env.pointer(similar, message=held))
     assert env.languages == ["en"]
@@ -868,7 +934,7 @@ def test_o_held_pointer_without_language_renders_en(env):
 def test_o_real_ms_complete_reply_keeps_exact_facts(env):
     env.ready()
     env.idea_message(language="ms")
-    idea_id = env.created(captured={"problem": PROBLEM})
+    idea_id = env.created()
     out = env.turn(MSG)
     reply = out["reply_text"]
     assert "IDEA-0184" in reply
