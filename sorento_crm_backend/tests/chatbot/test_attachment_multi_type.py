@@ -26,6 +26,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import pytest
+
 from app.models.base import set_company_scope
 from app.services.chatbot.lanes.business import gate as gate_mod
 from tests.chatbot import test_product_attachment_picker_stamp as base
@@ -674,7 +676,18 @@ class TestThePickKeepsBothTypes:
     photo-only member. The pick's fetch must ask for BOTH types and the reply must send the
     photo and name the missing specs (R1 + R3 through the whole turn, not just the lane)."""
 
-    def test_a_numbered_pick_fetches_both_types_and_names_the_gap(self, session_factory, monkeypatch) -> None:
+    @pytest.mark.parametrize(
+        ("second", "second_raw"),
+        [(SPECS, "technical specifications"), ("Certification", "certification")],
+        ids=["specs", "certification"],
+    )
+    def test_a_numbered_pick_fetches_both_types_and_names_the_gap(
+        self, session_factory, monkeypatch, second: str, second_raw: str
+    ) -> None:
+        """Tester re-run 2 Oct, finding 2: "photo and certification for CB11" then "3"
+        (CB110-R) sent the photo WITHOUT "CB110-R has no Certification." - the
+        certification case is the one that failed, so both are pinned. Finding 3 rides
+        along: the roster stamps the type_name "Certification", never "certificate"."""
         import json
 
         from app.services.company_scope import DEFAULT_COMPANY_ID
@@ -696,7 +709,7 @@ class TestThePickKeepsBothTypes:
         both_id = base._seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=both_code)
         photo_id = base._seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=photo_code)
         photos_id = _seed_real_attachment_type(session_factory, PHOTOS)
-        specs_id = _seed_real_attachment_type(session_factory, SPECS)
+        specs_id = _seed_real_attachment_type(session_factory, second)
         for product_id, type_id, name in (
             (both_id, photos_id, f"{both_code}.jpg"),
             (both_id, specs_id, f"{both_code}.pdf"),
@@ -711,7 +724,7 @@ class TestThePickKeepsBothTypes:
         from tests.chatbot.test_rearch_r7_live_parity_replay import _REAL_ATTACHMENT_TYPE_DESCRIPTIONS as descriptions
 
         rows = {
-            both_code: [(PHOTOS, f"{both_code}.jpg"), (SPECS, f"{both_code}.pdf")],
+            both_code: [(PHOTOS, f"{both_code}.jpg"), (second, f"{both_code}.pdf")],
             photo_code: [(PHOTOS, f"{photo_code}.jpg")],
         }
 
@@ -735,9 +748,9 @@ class TestThePickKeepsBothTypes:
             {"raw": family, "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
             {"raw": "photo", "hint": "attachment_type", "canonical_code": "photo", "current_message": True, "confident": True},
             {
-                "raw": "technical specifications",
+                "raw": second_raw,
                 "hint": "attachment_type",
-                "canonical_code": "technical specifications",
+                "canonical_code": second_raw,
                 "current_message": True,
                 "confident": True,
             },
@@ -749,12 +762,13 @@ class TestThePickKeepsBothTypes:
             routing={"suggested_team": "marketing_product", "suggested_agent": None, "team_source": None},
         )
         result1, _c1 = _run_turn_real(
-            session_factory, monkeypatch, qf=qf1, text_body=f"photo and technical specifications for {family}",
+            session_factory, monkeypatch, qf=qf1, text_body=f"photo and {second_raw} for {family}",
             msg_id="zzt-multi-roster-1", mcp_response={"data": []}, answer_mcp_probe=probe,
         )
         reply1 = (result1.reply or {}).get("text") or ""
         assert "Which product do you mean? Please choose:" in reply1, reply1
-        assert f"{photo_code} - has {PHOTOS}, no {SPECS}" in reply1, reply1
+        assert f"{photo_code} - has {PHOTOS}, no {second}" in reply1, reply1
+        assert "certificate" not in reply1, reply1
         options = (_session_of(session_factory).get("open_question") or {}).get("options") or []
         position = next(
             (o.get("position") for o in options if str(o.get("code") or "").upper() == photo_code.upper()),
@@ -782,5 +796,5 @@ class TestThePickKeepsBothTypes:
         fetches = [args for name, args in calls if name == "crm_master_product_attachments_list"]
         assert fetches, calls
         assert set(map(str, fetches[-1].get("attachment_type_ids") or [])) == {photos_id, specs_id}, fetches
-        assert f"{photo_code} has no {SPECS}." in reply2, reply2
+        assert f"{photo_code} has no {second}." in reply2, reply2
         assert "escalate" not in reply2.lower(), reply2
