@@ -8,6 +8,14 @@
 -- Needs this lane's migration first (oipf_0001_prev_item_code adds
 -- projects.order_inquiry_rows.previous_item_code). Step 0 refuses to run without it.
 --
+-- What this does NOT do (raw SQL skips the app):
+--   * no handover email to purchasing and no audit row. Rows purchasing had confirmed go
+--     back to To confirm, so tell purchasing by hand that these lines changed product;
+--   * the scope is wider than what a Confirm moves from now on (live ORDER / ORDER BACK
+--     rows with a catalogue code). The dry run below breaks the rows down by verb, by
+--     used (redirected) rows, and by catalogue / non-catalogue / blank code, so you can
+--     see exactly what "all" covers before committing.
+--
 -- How to run:
 --   1. Run the read-only check (oi-product-follow-prod-readonly.sql, Q4/Q5) and note
 --      rows_mismatched.
@@ -47,7 +55,24 @@ SELECT count(*)                                 AS rows_to_fix,
        count(*) FILTER (WHERE links > 0)        AS rows_with_link_kept,
        count(*) FILTER (WHERE old_ack_state IN ('acknowledged', 'changed')) AS rows_back_to_to_confirm
 FROM _oi_product_fix;
+SELECT r.verb,
+       r.redirected_to_pool                                  AS used_row,
+       CASE WHEN f.old_code IS NULL THEN 'blank code'
+            WHEN EXISTS (SELECT 1 FROM public.products p WHERE p.product_code = f.old_code)
+                 THEN 'catalogue code'
+            ELSE 'not a catalogue code' END                  AS old_code_kind,
+       count(*)                                              AS rows
+FROM _oi_product_fix f
+JOIN projects.order_inquiry_rows r ON r.id = f.row_id
+GROUP BY 1, 2, 3
+ORDER BY 1, 2, 3;
 SELECT * FROM _oi_product_fix ORDER BY new_code LIMIT 500;
+
+-- Mirror lines that step 2 will move (all orders, OI or not).
+SELECT count(*) AS mirror_lines_to_move
+FROM projects.sales_order_lines pl
+JOIN public.sales_order_lines sol ON sol.id = pl.core_sales_order_line_id
+WHERE pl.product_id IS DISTINCT FROM sol.product_id;
 
 -- Step 2: mirror lines follow the AutoCount line's product (what every ESB push does
 -- from this lane on, `_sync_mirror_line`).
@@ -62,6 +87,9 @@ WHERE sol.id = pl.core_sales_order_line_id
 UPDATE projects.order_inquiry_rows r
 SET previous_item_code = f.old_code,
     item_code          = f.new_code,
+    -- the same "was" rule a Confirm uses: this change moved the product only
+    previous_qty           = NULL,
+    previous_delivery_date = NULL,
     note = CASE WHEN r.note IS NULL OR r.note = ''
                 THEN 'Was item ' || coalesce(f.old_code, '-')
                 ELSE r.note || '; Was item ' || coalesce(f.old_code, '-')

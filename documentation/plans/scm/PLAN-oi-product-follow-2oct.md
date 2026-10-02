@@ -1,6 +1,6 @@
 # PLAN: OI line follows the SO line's product change from AutoCount (OI-PRODUCT-FOLLOW)
 
-Status: Build (owner answered the card 2 Oct; rulings R1-R6 below). S1 built.
+Status: built, review round 1 fixed, on hand test (feature track M, one migration). Owner rulings R1-R6 below.
 Track: feature (M, carries one migration, so not the small fix track). Cloud lane.
 Lane: OI-PRODUCT-FOLLOW, branch `claude/oi-product-sync-6uoz28`, PR #1442.
 Domain: scm (ESB sales order ingest, order inquiry rows, planning board apply).
@@ -93,30 +93,44 @@ removed line, GAP for a zeroed line.**
 - **R6 (Q5)** A line set to qty 0 in AutoCount stays as today (cancel balance on confirm).
   No change; the qty>0->0 auto-cancel proposal is dropped (S4 removed).
 
-## Design (per the rulings)
+## Design (per the rulings, as built)
 
 - **S1 mirror follows product (ingest).** `_sync_mirror_line` also copies `product_id`
   when the push carries it, same as the manual edit path. Fixes item 6 too.
-- **S2 OI row follows product (apply).** Migration: `order_inquiry_rows.previous_item_code`
-  (nullable). `_settle_row_in_place`: when the entry's `item_code` differs from the row's,
-  the row takes the new code, keeps the old in `previous_item_code`, notes "Was X", counts
-  as a real change (acknowledged -> `changed`, `changed_at`, `_dispatch_changed_with_links`,
-  handover "was"). Links stay exactly as they are (R2).
-- **S3 UI.** Item cell on the worklist and the OI Lines tab: new code, muted "was X" under
-  it, same look as the qty/date "was". History dialog "Was X." prefix.
-- **S4 email (R4)** The handover settled line carries `was.item_code`; the template prints
-  "change item code to <new> (was <old>)" beside the qty/date change lines.
+- **S2 OI row follows product (Confirm).** Migration `oipf_0001_prev_item_code`:
+  `order_inquiry_rows.previous_item_code` (nullable). `_settle_row_in_place`: when the
+  entry's `item_code` differs from the row's and the row's code is a catalogue code
+  (`_is_catalogue_code`; NOT compared with the mirror line, so a line swapped before S1,
+  SO423414, still moves), the row takes the new code, keeps the old in
+  `previous_item_code`, notes "Was item X", and counts as a real change (acknowledged ->
+  `changed`, `changed_at`, `_dispatch_changed_with_links`, handover). Links stay exactly as
+  they are (R2). When the settle DECLINES (two live rows, a lone placed row with no link,
+  every row actioned), `_restate_product` makes the same writes on every live buy row of
+  the line and `_tell_product_moves` puts it in the email once (review round 1, S2).
+- **"Was" rule (review S5).** Every real settle says what THIS change moved:
+  `previous_item_code` = old code only when the product moved, else NULL; a product-only
+  change clears `previous_qty` / `previous_delivery_date` (no false "Was 10 -> Now 10").
+- **S3 UI.** Product cell on the worklist and the OI Lines tab (one shared `ItemCodeCell`):
+  new code, muted "was X" under it. The History dialog shows it through the row's note
+  ("Was item X"), no separate prefix.
+- **S4 email (R4).** The settled handover line carries `was.item_code`; REMARK reads
+  "CHANGE ITEM CODE TO <new> (WAS <old>)" after any qty/date phrase, ITEM CODE prints the
+  new code, and the headline names CHANGE ITEM CODE. No template migration: the REMARK
+  cell already exists in every layout.
+- **Known limits.** A product RENAME (same product, new code) is not followed: the old
+  code is no longer a catalogue code. The undo email of a product swap names the current
+  code (the replay itself restores the column correctly).
 
-## Test list (red first)
+## Test list (red first, all built)
 
-- ESB re-push with a swapped product moves the mirror `product_id` (S1).
-- Apply of a `product_changed` row: OI row `item_code` = new, `previous_item_code` = old,
-  qty/date untouched when unchanged, acknowledged row -> `changed`.
-- Same with a PO link on the old product: link removed, stamp written, no link on the
-  new product, PO line untouched.
-- Idempotent re-push / re-apply: no second "was", `previous_item_code` not overwritten
-  with the new code.
-- Worklist + header-lines payload carry `previous_item_code`; FE Item cell renders "was X"
-  (vitest).
-- (S4) push with qty 0 on an open line -> `cancelled` + flag; already-0 line resent -> no
-  change.
+- `tests/test_oi_product_follow.py`: ESB re-push moves the mirror `product_id`; an
+  identical re-push leaves it.
+- `tests/test_oi_product_follow_apply.py`: Confirm restates in place with "was"; product-
+  only writes no previous qty/date; acknowledged -> changed; a linked row keeps its link
+  and is flagged (R2); a mirror still on the old product still moves (SO423414); a
+  non-catalogue code is never rewritten; a declined settle (placed, no link) still moves
+  and tells purchasing once; no "was" when nothing moved; email REMARK + headline; pure
+  remark join "ORDER 5, CHANGE ITEM CODE TO ..."; worklist payload carries
+  `previous_item_code`.
+- `orderInquiryWorklistColumns.productFollow.test.tsx`: the Product cell renders "was X"
+  only when the product moved.
