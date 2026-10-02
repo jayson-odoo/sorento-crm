@@ -1636,11 +1636,8 @@ class InboundShipmentService:
                 )
             # Update-in-place path: rewrite header + replace lines.
             shipment_dict = shipment_data.model_dump(exclude={"shipment_lines"})
-            # A matched re-upload never rewrites regions (only a staff update does), except
-            # onto a proforma-convert draft: that is a placeholder for this very container,
-            # so the upload's stated regions land on it.
-            if status_l != "draft":
-                shipment_dict.pop("regions", None)
+            # Regions stated by the upload (payload, else the attachment's) apply like any other
+            # field; none stated (None) leaves the container's own, via the `is not None` loop.
             shipment_dict["shipment_status"] = _normalize_inbound_shipment_status(
                 shipment_dict.get("shipment_status")
             )
