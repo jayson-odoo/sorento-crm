@@ -81,13 +81,48 @@ Entity kinds (product, customer, order, brand...) stay shared vocabulary in ever
 
 | Today | New |
 |---|---|
-| `access_agents` as a chatbot gate | gone from the chat turn; the gate is the domain tree. Table STAYS for team/SLA routing (`agent_teams`, `sla_service.py:2613`, `cs_routing_service.py:81`) and n8n preflight `external/access_agent.py:25-68` (Q4) |
+| `access_agents` as a chatbot gate | gone from the chat turn; the gate is the domain tree. Table STAYS as the ESCALATION path (section 3b: each domain names its agent + team set), team/SLA routing (`agent_teams`, `sla_service.py:2613`, `cs_routing_service.py:81`) and n8n preflight `external/access_agent.py:25-68` (Q4) |
 | `contact_agent_access` | not read by chat; migration converts holders to roles (section 4) |
 | `contact_field_reveals` | keys become domain grants or field ticks per the table above; per-contact leftovers become overrides; table retired after one release |
 | `agent_field_access` (agent-wide default) | `incoming` field ticks on each role; 3 contact override sets -> `contact_field_overrides` |
 | `contact_access_types` | unchanged: brand tier, promotion/attachment audience. "Office sees all customers" moves to `role.sees_all_customers` (Q3) |
 | `respond_contacts.chatbot_stock_allowed` etc. | unchanged switches (stock denial, escalation, packing list) |
 | `SUGGESTED_AGENTS`, `ENTITY_HINTS`, `FIELD_REVEAL_KEYS`, `CHATBOT_TOOL_DOMAINS` | derived from the tables; `default_policy()` readers take the loaded policy, except two that must stay on the seed (`lane_vocabulary.py:59` blank-install default, `fetch.py:1328` security allow-list) |
+
+## 3b. Agents stay as the ESCALATION path (owner, Lavish v1: "we need the linkage to agent mostly for escalation path")
+
+Today a hand-off is routed by two values (`lanes/escalation.py:1543-1553` `_next_assignee_body`):
+`agent_code` = the parser's `routing.suggested_agent` (a guess, default `general_enquiries`) and
+`team_code` = the domain's `chatbot_domains.escalation_team_code`. `/external/next-assignee` then picks
+the tier-1 team of that (agent, team set) in `agent_teams` and round-robins (`escalation_services.py:72-89`).
+
+New: agents stop gating ACCESS, and keep (and firm up) ROUTING. Each domain row names its escalation
+agent next to its team set (new column `chatbot_domains.escalation_agent_code`, FK `access_agents.code`),
+so the hand-off no longer depends on the parser's agent guess. Proposed per domain (agent_teams rows on
+the prod copy; tier-1 team in brackets):
+
+| Domain | Team set (today) | Escalation agent (new column) | Tier 1 |
+|---|---|---|---|
+| Product | purchasing | general_enquiries | Purchasing - Product, Stock Inquiry |
+| Product attachments | marketing_product | general_enquiries | Marketing - Product, Marketing Executive |
+| Promotions | marketing_promotion | general_enquiries | Marketing - Promotion Sorento, Marketing Executive |
+| Forms | marketing_form | marketing_form | Marketing - Forms |
+| Stock | warehouse | general_enquiries | Warehouse Executive |
+| Orders / DO | customer_service | order_enquiries | DO Customer Service, Customer Service Executive |
+| Incoming stock | purchasing | incoming_stock_enquiries | Purchasing - Incoming, Purchasing - Packing List |
+| Purchase orders, Last purchase cost | purchasing | general_enquiries | Purchasing - Product, Stock Inquiry |
+| Last in (SPO), Resource attachments, Portal link, Ideas | none today | none (no hand-off offered, as today) | - |
+| Outstanding SO, Sales report (new rows) | customer_service (proposed) | order_enquiries | DO Customer Service, Customer Service Executive |
+| Low stock report (new row) | warehouse (proposed) | general_enquiries | Warehouse Executive |
+
+Contact view: the Access tab lists, for each GRANTED domain, the team that takes its hand-off, plus
+today's switches that change it: "Can escalate to a person" (`respond_contacts.escalation_allowed`,
+#1406), dealer referral to their salesman (`stock_availability_only`, `turn/state.py:184-190`), and the
+contact's CS routing rules (`respond_contact_cs_routing`, 31 rows: purchase_request 17,
+sponsorship_form 14). Agents and team sets are edited where they are today (Access agents admin,
+`UM/access-agents/components/AccessAgentDetail.tsx:323-458`); the domain row only points at one.
+`contact_agent_access` (who HOLDS an agent) is not needed for routing: `next-assignee` reads
+`agent_teams`, not the contact's grants (UNVERIFIED for the n8n preflight path, checked in the plan).
 
 ## 4. No internal user loses access (100 contacts on the prod copy)
 
@@ -130,7 +165,7 @@ contact, zero "lost" rows before the migration is accepted.
 6. Dealer with linked customers -> order/outstanding answers scoped to them; contact with no links and no `sees_all_customers` role -> order asks refused (closes #1429 gap G1). Today unlinked = unscoped (`services.py:554-583`).
 7. Role edited -> applies on the next turn for every holder (no cache beyond the turn).
 8. 31 Dec lapse disappears: roles have no expiry.
-9. n8n preflight and SLA/team routing keep agents (Q4) - no change for flows outside the chat turn.
+9. Escalation: agent + team set come from the DOMAIN row (section 3b), not the parser's guess; a domain with no team offers no hand-off (as today). n8n preflight and SLA keep agents (Q4).
 10. Stock visibility (detailed / compact / availability, warehouses) stays its own setting shown inside the Stock domain (Q5).
 
 ## 7. Questions (owner)
@@ -149,9 +184,10 @@ Q3. Who sees all customers? (a) a flag on the role (Sales office / Purchasing / 
 **Recommend (a)**: one tree; 45 contacts carry an office type today, 92 would be internal roles; with 0
 customer links on the copy nobody changes scope now.
 
-Q4. Agents after the cut: (a) keep `access_agents` for team/SLA routing and n8n preflight, stop using it
-as the chat gate; (b) retire it entirely. **Recommend (a)**: 7 non-chat readers (routing, SLA,
-complaints, tickets) depend on agent ids; retiring is a separate lane.
+Q4. Agents after the cut: (a) keep `access_agents` + `agent_teams` as the escalation path, each domain row
+names its escalation agent (section 3b table), stop using agents as the chat ACCESS gate; (b) keep today's
+parser-guessed agent for escalation; (c) retire agents. **Recommend (a)**: owner wants agents for the
+escalation path, and a fixed domain->agent link makes the same ask always reach the same team.
 
 Q5. "Exact quantities" for dealers: (a) keep stock visibility mode (availability / compact / detailed)
 as today's separate setting, surfaced inside the Stock domain row; (b) turn it into field ticks.

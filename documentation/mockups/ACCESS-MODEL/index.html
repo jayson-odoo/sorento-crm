@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Contact Access mock v1</title>
+<title>Contact Access mock v2</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -63,6 +63,13 @@
   .stat{border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px}
   .stat b{display:block;font-size:18px;font-weight:600}
   .stat span{font-size:12px;color:var(--muted-fg)}
+  .esc{font-size:12px;color:var(--muted-fg);display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}
+  .esc b{font-weight:500;color:var(--foreground)}
+  .switch{width:32px;height:18px;border-radius:999px;background:var(--primary);position:relative;flex:none}
+  .switch:after{content:"";position:absolute;right:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff}
+  .esc-t{width:100%;border-collapse:collapse;font-size:13px}
+  .esc-t td,.esc-t th{padding:7px 8px;border-bottom:1px solid var(--border);text-align:left}
+  .esc-t th{font-weight:500;color:var(--muted-fg);font-size:12px}
   .map{font-size:13px}
   .map td,.map th{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
   .map code{font-size:12px}
@@ -118,7 +125,22 @@
     <ul class="tree" id="tree"></ul>
   </div>
 
-  <!-- 3. Media access (unchanged) -->
+  <!-- 3. Escalation (who takes a hand-off for this contact) -->
+  <div class="card">
+    <div class="card-h">
+      <div class="card-t">Escalation</div>
+      <div class="row"><span class="switch" aria-hidden="true"></span><span>Can escalate to a person</span></div>
+    </div>
+    <div class="card-b" style="overflow-x:auto">
+      <table class="esc-t">
+        <thead><tr><th>Domain</th><th>Agent</th><th>Team set</th><th>Tier 1 team</th></tr></thead>
+        <tbody id="esc"></tbody>
+      </table>
+      <div class="hint" style="margin-top:10px">Domains this contact is not granted are not listed. CS routing rules: none for this contact.</div>
+    </div>
+  </div>
+
+  <!-- 4. Media access (unchanged) -->
   <div class="card">
     <div class="card-h"><div class="card-t">Media Access</div></div>
     <div class="card-b muted-row">Unchanged (ContactMediaAccessSection).</div>
@@ -139,6 +161,8 @@
         <tr><th>Prompt hint under a row</th><td>plain <code>text-xs text-muted-foreground</code>; names the parser block that leaves the prompt when unticked (block titles from PR #1405 prod text)</td></tr>
         <tr><th>Save (n)</th><td>same changed-rows-only save as <code>UM/access-agents/components/AgentFieldAccessCard.tsx</code></td></tr>
         <tr><th>Stock visibility link</th><td>existing <code>components/stock-visibility/StockVisibilitySection.tsx</code> stays on Profile tab (Q5)</td></tr>
+        <tr><th>Hand-off line per domain</th><td>plain <code>text-xs text-muted-foreground</code>; agent + team set read from the domain row (new <code>chatbot_domains.escalation_agent_code</code> + existing <code>escalation_team_code</code>), tier-1 team from <code>agent_teams</code> (edited on the Access agents admin, <code>AccessAgentDetail.tsx:323-458</code>)</td></tr>
+        <tr><th>Escalation card</th><td><code>components/ui/card.tsx</code> + read-only <code>DataGrid</code>-style table; "Can escalate to a person" is the existing ESCALATION-CONTROL switch (<code>components/ui/switch.tsx</code>, PR #1406) moved beside it</td></tr>
         <tr><th>Removed from this tab</th><td>Access Agents grid (<code>ContactAccessAgentsTable.tsx</code>) and Field reveals switches (<code>ContactFieldRevealsSection.tsx</code>): both replaced by the tree</td></tr>
       </tbody></table>
     </div>
@@ -149,27 +173,27 @@
 // Purchasing role preset (behaviour card section 2) + this contact's real override:
 // Sorento - Jereen holds 20 incoming field overrides today (agent_field_access contact rows).
 const D = [
-  {n:'Product', s:'master_products', st:'role'},
-  {n:'Product attachments', s:'product_attachment', st:'role'},
+  {n:'Product', s:'master_products', st:'role', e:['General Enquiries','purchasing','Purchasing - Product, Stock Inquiry']},
+  {n:'Product attachments', s:'product_attachment', st:'role', e:['General Enquiries','marketing_product','Marketing - Product']},
   {n:'Resource attachments', s:'resource_attachment', st:'role'},
-  {n:'Promotions', s:'promotion', st:'role'},
-  {n:'Forms', s:'forms', st:'role'},
+  {n:'Promotions', s:'promotion', st:'role', e:['General Enquiries','marketing_promotion','Marketing - Promotion Sorento']},
+  {n:'Forms', s:'forms', st:'role', e:['Marketing Form','marketing_form','Marketing - Forms']},
   {n:'Portal link', s:'portal_link', st:'role'},
-  {n:'Stock', s:'inventory', st:'role', hint:'Visibility: Detailed (Profile tab)', f:[
+  {n:'Stock', s:'inventory', st:'role', hint:'Visibility: Detailed (Profile tab)', e:['General Enquiries','warehouse','Warehouse Executive'], f:[
     {n:'Outstanding SO on stock (sellable)', st:'role', p:'removes the sellable lines'},
     {n:'PO on order qty', st:'role', p:'removes the on-order lines'}]},
-  {n:'Orders / DO', s:'order', st:'role'},
-  {n:'Incoming stock', s:'incoming', st:'role', f:[
+  {n:'Orders / DO', s:'order', st:'role', e:['Order Enquiries','customer_service','DO Customer Service']},
+  {n:'Incoming stock', s:'incoming', st:'role', e:['Incoming Stock Enquiries','purchasing','Purchasing - Incoming'], f:[
     {n:'ETA', st:'role'},{n:'Container no.', st:'role'},{n:'Remaining qty', st:'role'},
     {n:'Consignee', st:'add'},{n:'China forwarder', st:'add'},{n:'Malaysia forwarder', st:'add'},
     {n:'Liner code', st:'add'},{n:'COA permit no.', st:'add'},{n:'Delivery warehouse', st:'add'},
     {n:'ETD / ETC / loading / inspection dates', st:'add'},{n:'Free days, LOC, stacked', st:'add'}]},
   {n:'Last in (SPO)', s:'spo_allocation', st:'role', p:'SPO LAST RECEIPT', f:[{n:'SPO number', st:'role'}]},
-  {n:'Purchase orders', s:'purchase_order', st:'role', p:'PURCHASE ORDERS', f:[{n:'Supplier', st:'role'},{n:'PO number', st:'role'}]},
-  {n:'Last purchase cost', s:'purchase_cost', st:'role', p:'LAST PURCHASE COST', f:[{n:'Supplier', st:'role'}]},
-  {n:'Outstanding SO report', s:'outstanding', st:'off', p:'ORDER_STATUS so_outstanding'},
-  {n:'Sales report', s:'sales', st:'off', p:'SALES REPORT, SALES ANALYSIS, TOP SELLING'},
-  {n:'Low stock report', s:'low_stock', st:'off', p:'LOW STOCK REPORT'},
+  {n:'Purchase orders', s:'purchase_order', st:'role', p:'PURCHASE ORDERS', e:['General Enquiries','purchasing','Purchasing - Product, Stock Inquiry'], f:[{n:'Supplier', st:'role'},{n:'PO number', st:'role'}]},
+  {n:'Last purchase cost', s:'purchase_cost', st:'role', p:'LAST PURCHASE COST', e:['General Enquiries','purchasing','Purchasing - Product, Stock Inquiry'], f:[{n:'Supplier', st:'role'}]},
+  {n:'Outstanding SO report', s:'outstanding', st:'off', p:'ORDER_STATUS so_outstanding', e:['Order Enquiries','customer_service','DO Customer Service']},
+  {n:'Sales report', s:'sales', st:'off', p:'SALES REPORT, SALES ANALYSIS, TOP SELLING', e:['Order Enquiries','customer_service','DO Customer Service']},
+  {n:'Low stock report', s:'low_stock', st:'off', p:'LOW STOCK REPORT', e:['General Enquiries','warehouse','Warehouse Executive']},
   {n:'Ideas', s:'ideate', st:'off', p:'IDEATION CONTINUATION'},
 ];
 const tag = st => st==='role' ? '<span class="badge">from Purchasing</span>'
@@ -185,12 +209,14 @@ D.forEach((d,i)=>{
     : d.hint ? `<small>${d.hint}</small>` : '';
   li.innerHTML = `<div class="d-h"><span class="chev">${hasF?'&#9654;':''}</span>
     <input type="checkbox" ${on(d.st)?'checked':''} aria-label="${d.n}">
-    <div class="lbl">${d.n}${offHint}</div><div class="src">${tag(d.st)}</div></div>` +
+    <div class="lbl">${d.n}${offHint}${d.e?`<div class="esc">Hand-off: <b>${d.e[2]}</b> &middot; ${d.e[0]} / ${d.e[1]}</div>`:'<div class="esc">No hand-off</div>'}</div><div class="src">${tag(d.st)}</div></div>` +
     (hasF ? `<div class="fields">${d.f.map(f=>`<div class="f"><input type="checkbox" ${on(f.st)?'checked':''} aria-label="${f.n}">
       <div class="lbl">${f.n}${f.p?`<small>Unticking ${f.p} from prompt</small>`:''}</div><div class="src">${tag(f.st)}</div></div>`).join('')}</div>` : '');
   if (hasF) li.querySelector('.d-h').addEventListener('click', e=>{ if(e.target.tagName!=='INPUT') li.classList.toggle('open'); });
   if (d.s==='incoming') li.classList.add('open');
   tree.appendChild(li);
+  if (on(d.st) && d.e) document.getElementById('esc').insertAdjacentHTML('beforeend',
+    `<tr><td>${d.n}</td><td>${d.e[0]}</td><td>${d.e[1]}</td><td>${d.e[2]}</td></tr>`);
 });
 </script>
 </body>
