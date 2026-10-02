@@ -3956,13 +3956,35 @@ def not_found_error_message(
                     if jsc.get(e, "hint") == "attachment_type" and jsc.truthy(jsc.get(e, "raw"))
                 ]
                 attach_ent = jsc.find(entities_list, lambda e: jsc.get(e, "hint") == "attachment_type")
+                # ATTACHMENT-MULTI (owner ruling 2 Oct 2026): a several-type miss names the
+                # OFFICIAL types the gate kept, `attachment_types.type_name` in the order the
+                # customer named them - "Product Photos or Technical Specifications", never
+                # "photo or technical specifications". A single-type miss is unchanged.
+                attach_names: list[str] = []
+                if len(attach_raws) > 1:
+                    kept_types = {
+                        jsc.get(c, "uuid")
+                        for c in jsc.array(jsc.get(g, "compatible_entities"))
+                        if jsc.get(c, "entity_type") == "attachment_type"
+                    }
+                    for res in jsc.array(jsc.get(r, "resolutions")):
+                        for m in jsc.array(jsc.get(res, "matches")):
+                            name = jsc.nullish_str(jsc.get(jsc.get(m, "display"), "type_name")).strip()
+                            if (
+                                jsc.get(m, "entity_type") == "attachment_type"
+                                and jsc.get(m, "uuid") in kept_types
+                                and name
+                                and name not in attach_names
+                            ):
+                                attach_names.append(name)
+                attach_words = attach_names if attach_names else attach_raws
                 if use_breakdown:
                     # combine the attachment-type qualifiers into ONE searched noun and fold
                     # them OUT of the "couldn't find" list, so they are not double-named
                     # ATTACHMENT-MULTI R4: several asked types are alternatives the miss
                     # sentence lists - "photo or technical specifications" - never one run-on.
                     attach_noun = (
-                        " or ".join(jsc.js_string(x) for x in attach_raws)
+                        " or ".join(jsc.js_string(x) for x in attach_words)
                         if attach_raws
                         else (
                             jsc.get(attach_ent, "raw")
@@ -3984,7 +4006,7 @@ def not_found_error_message(
                     attach_raw = jsc.get(attach_ent, "raw") if jsc.truthy(attach_ent) else None
                     article = "a "
                     if len(attach_raws) > 1:
-                        attach_raw = " or ".join(jsc.js_string(x) for x in attach_raws)
+                        attach_raw = " or ".join(jsc.js_string(x) for x in attach_words)
                         article = ""  # "photo or technical specifications", never "a ... specifications"
                     if jsc.truthy(attach_raw) and prod_text:
                         subject = f"{article}{jsc.js_string(attach_raw)} for {prod_text}"
