@@ -98,7 +98,7 @@ SRTSWT3001 x 10: 有库存。请联系您的销售员。
 Incoming in zh:
 
 ```
-SRTSWT3001 x 10: 目前没有库存，预计到货 15/10/2026。
+SRTSWT3001 x 10: 目前没有库存，ETA 15/10/2026。
 ```
 
 **D. Staff, detailed mode, "BRBC22102W 库存" (zh)**
@@ -126,12 +126,12 @@ Malay. Then "1" (a pick) -> still Malay.
 - **Q3. Abbreviations.** (a) PO, SO, SPO, DO, GR, ETA, ETC and O/S stay as they are in every
   language (they are what is printed on the documents); (b) translate them. **Rec: (a)**.
   Only spelled-out words translate: "PO Number" -> "No. PO" / "PO 编号".
-- **Q4. Where the ms/zh wording comes from.** (a) Reviewed ms/zh defaults ship in code and are
+- **Q4 (crew: a, 2 Oct). Where the ms/zh wording comes from.** (a) Reviewed ms/zh defaults ship in code and are
   written into the Translations page (source `ai`) the first time they are used. Staff correct
   them there, and a staff edit (`manual`) always wins. A chat turn never calls a model; an
   uncatalogued label stays English. (b) Ask the AI model on a miss during the turn. **Rec:
   (a)**: no added latency, and no model writes a word a dealer reads unchecked.
-- **Q5. Escalation offer.** "Would you like me to escalate to X team?" is matched as English
+- **Q5 (crew: a, 2 Oct). Escalation offer.** "Would you like me to escalate to X team?" is matched as English
   text in two places (`order_list.py:226`, the reply exchange). (a) Translate it in a later
   slice, after both matchers read a stored flag instead of the English text; until then it
   stays English. (b) Translate it now. **Rec: (a)**. Stock goes first, the offer goes last.
