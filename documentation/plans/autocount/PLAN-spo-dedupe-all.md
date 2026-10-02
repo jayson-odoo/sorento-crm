@@ -1,6 +1,6 @@
 # PLAN: SPO dedupe for all SPOs + container received refresh
 
-Status: in progress (small fix track: ops tooling, no migration, no UI, no auth change)
+Status: built, in review on PR #1428 (small fix track: ops tooling, no migration, no UI, no auth change)
 
 UAC: `spo-dedupe-all-acceptance-criteria.md`
 
@@ -44,6 +44,18 @@ list showed 99/99 received; the stored line said 95 until the page was opened.
    refreshes. Exit codes like the dedupe script.
 4. Nightly: `spo_container_relink_sweep` also refreshes open shipments (any line not
    fully received), per company, cheap.
+
+## Known limits (review round 1)
+
+- `open_shipment_ids` keys on line status only: a line stored `received` that
+  should now read lower, or a shipment whose lines all read `received` while its
+  `shipment_status` is stale, is not revisited nightly. `refresh_container_received.py
+  --container X` covers those on demand.
+- A shipment with an unallocated line computes `in_transit` forever, so it is
+  refreshed every night; the refresh also resets a manual `fully_received` header
+  to `in_transit` when its lines are not all received, exactly as opening the page
+  does. Count open shipments on prod with `--all-open` (dry run) before relying on it.
+- `IntervalTrigger(hours=24)` runs 24h after each scheduler start, not at a fixed time.
 
 ## Trigger for more machinery
 

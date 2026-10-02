@@ -99,6 +99,28 @@ class TestCandidates:
 
         assert _standalone().candidate_spo_numbers(env.db, str(env.company_a)) == sorted([a, b])
 
+    @pytest.mark.parametrize("other", [{"source_system": "manual"}, {"po_line_link": True}])
+    def test_a_row_process_spo_never_treats_as_excel_does_not_make_a_candidate(self, env, other):
+        """AutoCount + a ref-less row that is NOT Excel-era (another source system,
+        or raised from a PO line): `process_spo` would leave it alone, so `--all`
+        must not list it."""
+        from tests.test_spo_xlsx_supersede import _seed_po_line
+
+        number = _number("E")
+        _autocount_only(env, number)
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        row = SPOAllocation(
+            company_id=env.company_a, spo_number=number, spo_line_number=2, product_id=product_id,
+            allocated_quantity=10, quantity_received=0, line_status="open",
+            source_system=other.get("source_system", "scm_upload"),
+        )
+        if other.get("po_line_link"):
+            row.po_line_id = _seed_po_line(env, product_id=product_id)
+        env.db.add(row)
+        env.db.commit()
+
+        assert number not in _standalone().candidate_spo_numbers(env.db, str(env.company_a))
+
     def test_another_companys_spos_are_never_candidates(self, env):
         _ready(env, _number("A"))
 

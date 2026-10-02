@@ -133,7 +133,8 @@ Exit codes: 0 done, 1 bad arguments / unknown company / no DATABASE_URL,
 2 preflight failed, 3 at least one SPO was refused by a guard (rolled back,
 the run continued), 4 an unexpected database error (that SPO rolled back, the
 run STOPPED; SPOs before it stay committed), 5 every SPO committed but at
-least one packing list refresh failed.
+least one packing list refresh failed (a run that also aborted an SPO exits
+3; grep the log for REFRESH FAILED either way).
 """
 from __future__ import annotations
 
@@ -862,6 +863,11 @@ def _refresh_shipments(db, company_id: str, shipment_ids, refresh, out) -> bool:
         label = _shipment_label(db, shipment_id)
         if refresh is None:
             out(f"  packing list to re-open (refreshes its stored status): {label}")
+            continue
+        owner = db.execute(text("SELECT company_id FROM inbound_shipments WHERE id = :i"), {"i": shipment_id}).scalar()
+        if owner is not None and str(owner) != company_id:
+            out(f"  NOT REFRESHED: packing list {label} belongs to another company ({owner}) - open it by hand")
+            db.rollback()
             continue
         before = _stored_lines(db, shipment_id)
         db.rollback()  # end this read: the refresh commits on its own session
