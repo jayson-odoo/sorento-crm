@@ -3712,10 +3712,19 @@ def _answered_unfiltered(
     `unplaced` still names. `entities and not all(...)` is what actually gates the
     non-empty case below - an empty `entities` is falsy and skips that check rather than
     returning False for it, so this one guard clause covers both shapes.
+
+    A linked contact's customer-scope rows (`engine._scoped_compatible`, `scope: True`)
+    are not subjects either: the message did not type them, they only bound who the
+    answer may be about. SO-NUMBER-ASK (PR #1433 tester note): "status of SO422056"
+    left the SO token unplaced, the orders list ran on the dealer's twelve linked
+    customers alone, and the reply was a 20-row DO dump closed by "I could not find
+    SO422056." A dealer's own customer word never reaches this as unplaced - it is
+    answered from the links and never sent to the resolver (AC-CS-12).
     """
     if not unplaced:
         return False
-    if entities and not all(_entity_is_unplaced(e, unplaced) for e in entities):
+    subjects = [e for e in entities if not e.get("scope")]
+    if subjects and not all(_entity_is_unplaced(e, unplaced) for e in subjects):
         return False
     fetched = fragment.get("fetch") if isinstance(fragment.get("fetch"), dict) else {}
     if fetched.get("outstanding_report"):

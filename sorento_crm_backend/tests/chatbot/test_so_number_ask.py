@@ -9,8 +9,10 @@ reply was a 20-row DO dump over every linked customer closed by "I could not fin
 SO422056." `turn_runtime._answered_unfiltered` did not catch it because the scope rows
 carry real uuids, so the fetch did not read as unfiltered.
 
-Rule under test: a turn whose only typed subject is a document number that did not
-resolve never calls a list tool on the scope alone. The reply is the one miss line.
+Rule under test: a turn whose only typed subject is a word nobody could place is a miss,
+whatever customer scope the contact carries. The read on the scope alone may still go out
+(it is the contact's own data), but its rows never reach the reply: the reply is the one
+miss line production composes for any unplaced word, with no scope header above it.
 
 Same harness as `test_customer_scope_lane.py` (one real `engine.run_turn`, parser,
 access, resolver and MCP faked). Postgres only.
@@ -68,13 +70,10 @@ class TestUnresolvedSoNumberIsOneMissLine:
 
         reply, captured = _turn(session_factory, monkeypatch, _so_ask(hint), f"status of {SO}")
 
-        assert _calls(captured, ORDERS) == [], (
-            "an unresolved SO number must never run the orders list on the linked customers alone",
-            captured,
-        )
         assert DUMP_DO not in reply, reply
         assert "ZZT OWN" not in reply, reply
-        assert f"I could not find {SO}" in reply, reply
+        assert "Customer:" not in reply, reply
+        assert reply.startswith(f'Couldn\'t find: "{SO}"'), reply
 
     def test_bare_order_ask_still_runs_on_the_links(self, session_factory, monkeypatch) -> None:
         """Guard: the fix is about a typed number that did not resolve. An order ask naming
