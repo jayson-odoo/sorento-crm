@@ -15,10 +15,10 @@ UAC: `account-ledger-acceptance-criteria.md`.
 1. **Setting.** `customers.account_level SMALLINT NULL CHECK (>= 1)`, model
    `app/models/order.py:50` + `__audit_columns__`. Migration `acct_ledger_0001`: add column,
    seed ONCE from the `A/C <n>` name marker where null (2,284 rows on the 25 Sep copy).
-   Schemas `CustomerUpdate` / `CustomerCreate` / `CustomerResponse` (`app/schemas/order.py`);
-   any manual dict builder that serialises a customer gets the key too.
+   Schemas `CustomerUpdate` / `CustomerCreate` (1..9) / `CustomerResponse` (`app/schemas/order.py`).
 2. **Edit gate.** `PUT /customers/{id}` (`customers.py:215`) refuses a CHANGE to
-   `account_level` without `order_management.customers.edit` (403).
+   `account_level` without `order_management.customers.edit` (403); `POST /customers` refuses
+   a set level without it too (security review S1).
 3. **UI.** `CustomerForm.tsx` "Account level" clearable `SearchableSelect` (Account 1..9)
    in Basic Information; same read-only field in `CustomerDetail.tsx`. Types + zod schema.
 4. **Parser.** Entity key `account` (integer or null), `head/parser.py:139-193`, required.
@@ -36,8 +36,11 @@ UAC: `account-ledger-acceptance-criteria.md`.
    naming the levels the name has.
 7. **Unnamed (Q2).** A customer entity with `account` and null raw, and no other customer
    entity this message (and not "my": Q6 (a), "my" names the links) -> reply
-   "Which customer is Account N for?", nothing fetched, nothing carried.
-8. **Refusal plumbing.** Reuse `customer_scope_refused` (`engine.py` ~4126, ~5212) with the
+   "Which customer is Account N for?", nothing fetched, no customer carried. The answer turn
+   to that question keeps Account N for that one turn only (crew ruling 2 Oct 2026).
+8. **Enforced contacts never see the staff level refusal** (it is built from company-wide
+   resolver rows; security review B1). A resolver list cut at its cap never refuses (S-1).
+9. **Refusal plumbing.** Reuse `customer_scope_refused` (`engine.py` ~4126, ~5212) with the
    turn's own refusal text.
 
 ## Coordination
