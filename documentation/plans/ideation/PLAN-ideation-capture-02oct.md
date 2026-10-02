@@ -289,6 +289,20 @@ Order per turn:
      the question (an idea phrased as a question is then routed by the parser as usual); "cancel"
      ends it with the ask's `cancelled` text.
    Order: #1445 merges first; this lane then brings it in (crew coordinates) and wires the lane.
+   **Crew answers 2 Oct:** (1) = (a): the lane registers `AskType("ideation",
+   FieldSpec("problem"))` and uses `collect` / the engine's `reply_verdict`; core only checks
+   presence (AC-002 holds). (2) = (a): the core's localised ask-back text is what the user sees;
+   **`FieldSpec.question` is unused for ideation** (kept as the English fallback the helper
+   requires). CHAT-LANGUAGE (#1448) moves localisation into the helper later (option b).
+   **Vague reply never loops silently (crew):** "want to submit idea" twice must end in a clear
+   message. Flow: message 1 with no idea -> core `ask_idea` (localised ask-back), lane opens the
+   slot. The reply arrives via `required_ask_reply`; the lane calls the tool with
+   `ask_reply: true`. If the core still finds no idea in it -> status `ask_idea_gave_up`, a
+   localised closing reply (`ideation_capture_give_up`: en "I still couldn't find an idea in that.
+   When you're ready, send your idea in one message, for example what you'd like changed."), and
+   the lane opens NO new slot. So the second vague message always ends the ask with a clear
+   message, never a third ask. A reply that does carry an idea runs the normal flow. The core
+   response carries `language` so the lane never guesses it.
 5. Similar own ideas (FINAL contract, ss#111 section 2): `POST /ideation/intake/ideas/similar-own`
    `{product_id, text (= the extracted problem), submitter_crm_user_id (the linked user's id),
    submitter_phone (the contact phone), is_test}` -> `{matches: [{idea_id, idea_number, title,
