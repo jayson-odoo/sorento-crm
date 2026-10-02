@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CustomerGroupWrite(BaseModel):
@@ -28,4 +28,5 @@ class CustomerGroupSelect(BaseModel):
 
 
 class CustomerGroupCustomersAssign(BaseModel):
-    customer_ids: List[str]
+    # Capped so one request cannot lock thousands of rows or build a huge IN list.
+    customer_ids: List[str] = Field(max_length=500)

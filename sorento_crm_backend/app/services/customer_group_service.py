@@ -9,6 +9,7 @@ import uuid
 from typing import Optional
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, CustomerGroup
@@ -137,12 +138,20 @@ class CustomerGroupService:
         if q.first() is not None:
             raise handle_conflict(_DUPLICATE)
 
+    def _commit_name(self) -> None:
+        """Commit; a race past `_assert_name_free` hits the unique index and reads as the 409."""
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            raise handle_conflict(_DUPLICATE)
+
     def create_group(self, name: str) -> dict:
         cleaned = self._clean(name)
         group = CustomerGroup(name=cleaned)
         self._assert_name_free(cleaned, pending_company_id(group))
         self.db.add(group)
-        self.db.commit()
+        self._commit_name()
         self.db.refresh(group)
         return self._shape([group])[0]
 
@@ -151,7 +160,7 @@ class CustomerGroupService:
         cleaned = self._clean(name)
         self._assert_name_free(cleaned, group.company_id, exclude_id=group.id)
         group.name = cleaned
-        self.db.commit()
+        self._commit_name()
         self.db.refresh(group)
         return self._shape([group])[0]
 

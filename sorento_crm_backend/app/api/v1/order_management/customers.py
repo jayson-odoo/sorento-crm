@@ -15,7 +15,8 @@ from app.schemas.stock_ask import StockAskResponse, StockAskUpdate
 from app.services import contact_customer_service, stock_ask_service
 from app.schemas.contact_customer import CustomerLinkedContactsResponse
 from app.services.user_service import UserPermissionService
-from app.services.error_handler import handle_internal_error, handle_not_found
+import uuid
+from app.services.error_handler import handle_internal_error, handle_not_found, handle_unprocessable
 
 router = APIRouter()
 
@@ -32,6 +33,11 @@ async def get_customers(
     db: Session = Depends(get_db)
 ):
     """Get customers with pagination, search, and sorting."""
+    if customer_group_id is not None:
+        try:
+            uuid.UUID(customer_group_id)
+        except ValueError:
+            raise handle_unprocessable("Invalid customer group")
     try:
         service = CustomerService(db)
         result = service.list_customers(
@@ -206,7 +212,9 @@ async def create_customer(
 ):
     """Create a new customer."""
     try:
-        if customer_data.account_level is not None and not UserPermissionService(db).check_user_has_permission(
+        if (
+            customer_data.account_level is not None or customer_data.customer_group_id is not None
+        ) and not UserPermissionService(db).check_user_has_permission(
             current_user["id"], "order_management.customers.edit"
         ):
             raise HTTPException(
