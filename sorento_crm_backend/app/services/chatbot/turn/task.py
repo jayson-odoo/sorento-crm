@@ -785,11 +785,12 @@ def _group(rows: list[dict[str, Any]], token: str) -> list[dict[str, Any]]:
     ]
 
 
-def numbered(labels: list[str]) -> list[str]:
+def numbered(labels: list[str], start: int = 1) -> list[str]:
     """One "1. CODE" line per option, the format every other picker prints
     (`turn/compose.py::compose_question`). Owner ruling 26 Sep 2026 (round 3 hand test):
-    a which-one list is numbered, "like the other pickers"."""
-    return [f"{i}. {label}" for i, label in enumerate(labels, 1)]
+    a which-one list is numbered, "like the other pickers". `start` is where a list
+    sharing a message with the lists before it carries on (AVAIL-MODE-REPLIES)."""
+    return [f"{i}. {label}" for i, label in enumerate(labels, start)]
 
 
 def pick_question(
@@ -799,6 +800,7 @@ def pick_question(
     count: int | None = None,
     *,
     recognised: bool = True,
+    start: int = 1,
 ) -> str:
     """The family pick (owner hand test 26 Sep, slice 2, the scout's wording), one
     numbered code per line. A number is read as a position only while this question is
@@ -822,7 +824,7 @@ def pick_question(
         if total > len(lines)
         else []
     )
-    return "\n".join([head, *numbered(lines), *tail])
+    return "\n".join([head, *numbered(lines, start), *tail])
 
 
 def after_reply(
@@ -883,12 +885,13 @@ def after_reply(
         and not any((_row_label(row) or "").casefold() == token for row in rows)
     ]
     # AVAIL-MODE-REPLIES rule 5 (owner, 2 Oct 2026): one message may name exact codes,
-    # vague ones (a family, no exact code among it) and codes found nowhere. Each vague
-    # token is its own pick, asked ONE at a time (owner Q3 (a)): the first is this reply's
-    # question and the rest ride on its payload (`NEXT_PICKS`), asked once it is answered.
+    # vague ones (a family, no exact code among it) and codes found nowhere. Every vague
+    # token gets its which-one list in the SAME question (owner v2 note 3, Q3 (b)), the
+    # numbering running on from one list to the next so no two options share a number.
     # The rows outside every family are answered now when they carry a quantity, and
     # only the ones still owed one stay in the task.
-    picks: list[dict[str, Any]] = []
+    options: list[dict[str, Any]] = []
+    groups: list[dict[str, Any]] = []
     in_family: set[int] = set()
     for shown, token, entity in families:
         group = [
@@ -896,39 +899,40 @@ def after_reply(
             for row in _group(rows, token)
             if id(row) not in in_family and row.get("needs_quantity") is True
         ]
-        options = []
-        for row in group:
-            key, label = row.get("product_id"), _row_label(row)
-            if not key or not label:
-                continue
-            options.append(
-                {
-                    "position": len(options) + 1,
-                    "label": label,
-                    "code": label,
-                    "uuid": str(key),
-                    "entity_type": "product",
-                }
-            )
-        options = options[:MAX_SLOTS]
-        if len(options) < 2:
+        labelled = [
+            (row, _row_label(row)) for row in group if row.get("product_id") and _row_label(row)
+        ][:MAX_SLOTS]
+        if len(labelled) < 2:
             continue
         in_family.update(id(row) for row in group)
         quantity = _number(entity.get("quantity"))
         if quantity is None and len(families) == 1:
             quantity = _number(demand_qty)
-        picks.append({"typed": shown, "options": options, "count": len(group), "qty": quantity})
+        start = len(options) + 1
+        for row, label in labelled:
+            options.append(
+                {
+                    "position": len(options) + 1,
+                    "label": label,
+                    "code": label,
+                    "uuid": str(row["product_id"]),
+                    "entity_type": "product",
+                }
+            )
+        groups.append(
+            {
+                "typed": shown,
+                "qty": quantity,
+                "count": len(group),
+                "positions": list(range(start, len(options) + 1)),
+            }
+        )
 
     rest = [row for row in rows if id(row) not in in_family]
     owed = [row for row in rest if row.get("needs_quantity") is True]
-    if picks:
-        first, queued = picks[0], picks[1:]
+    if groups:
         kept = _rebuilt(tasks, owed, turn_no=turn_no, named_products=named_products) if owed else others
-        return StockReply(
-            tasks=kept,
-            text=pick_question(first["typed"], [o["label"] for o in first["options"]], first["qty"], first["count"]),
-            pick=stock_pick(first, queued),
-        )
+        return StockReply(tasks=kept, text=picks_question(options, groups), pick=stock_pick(options, groups))
 
     rebuilt = _rebuilt(tasks, owed, turn_no=turn_no, named_products=named_products)
     stock = next((task for task in rebuilt if task.kind == "stock_qty"), None)
@@ -938,24 +942,58 @@ def after_reply(
     return StockReply(tasks=rebuilt, text=text)
 
 
-#: AVAIL-MODE-REPLIES rule 5: the vague codes still to be asked after this pick, in the
-#: order named. Each entry is a pick as `after_reply` built it (`typed`, `options`, `count`,
-#: `qty`); `turn/apply.py::_spend_stock_pick` hands them on and the engine asks the next.
+#: AVAIL-MODE-REPLIES rule 5: the lists of a several-list pick the dealer has not answered
+#: yet (`{"options", "groups"}`, the numbers kept), handed on by
+#: `turn/apply.py::_spend_stock_pick` and asked again by `engine._stock_ask_reply`.
 NEXT_PICKS = "next_picks"
+#: The pick's own quantity per code, one per list (`after_reply`), for `_spend_stock_pick`.
+QTY_BY_CODE = "qty_by_code"
 
 
-def stock_pick(pick: dict[str, Any], queued: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """The `product_pick` a family's which-one question is stored as."""
+def picks_question(options: list[dict[str, Any]], groups: list[dict[str, Any]]) -> str:
+    """Every list of a pick in one message, each under its own header, numbered as the
+    options are (`groups[].positions`)."""
+    parts = []
+    for group in groups:
+        shown = [o for o in options if o.get("position") in group["positions"]]
+        if not shown:
+            continue
+        parts.append(
+            pick_question(
+                group["typed"],
+                [str(o["label"]) for o in shown],
+                group.get("qty"),
+                group.get("count"),
+                start=shown[0]["position"],
+            )
+        )
+    return "\n\n".join(parts)
+
+
+def stock_pick(options: list[dict[str, Any]], groups: list[dict[str, Any]]) -> dict[str, Any]:
+    """The `product_pick` a which-one question is stored as. With one list it is exactly
+    the single family pick it always was; with several, `groups` keeps each list's typed
+    token, quantity and positions."""
+    quantities = [g.get("qty") for g in groups]
+    by_code = {
+        str(o["label"]).casefold(): g["qty"]
+        for g in groups
+        if g.get("qty") is not None
+        for o in options
+        if o.get("position") in g["positions"]
+    }
     return {
-        "options": pick["options"],
+        "options": options,
         "payload": {
             "domain": "inventory",
             "domains": ["inventory"],
             "stock_pick": True,
-            "typed": pick["typed"],
-            "count": pick["count"],
-            "stock_qty": pick["qty"],
-            NEXT_PICKS: list(queued or []),
+            "typed": groups[0]["typed"],
+            "count": groups[0]["count"] if len(groups) == 1 else len(options),
+            # A quantity is owed (`question.of_pending`) only while some list has none.
+            "stock_qty": quantities[0] if all(q is not None for q in quantities) else None,
+            "groups": groups,
+            QTY_BY_CODE: by_code,
         },
     }
 

@@ -1466,12 +1466,13 @@ def _availability_label(entry: dict) -> Optional[str]:
 #: sentence and the refer is exactly `REFER_TO_SALESMAN`, on the same line.
 #
 #: AVAIL-MODE-REPLIES (owner, 2 Oct 2026): got stock / no stock read as a tick and a cross,
-#: never as words. `too_big` keeps its words and carries neither mark: it says nothing
-#: about our stock either way.
+#: never as words. `too_big` keeps its words behind a blocked mark (owner v2 note 1): it
+#: says nothing about our stock either way, so it is never a tick or a cross.
 STOCK_YES = "\u2705"
 STOCK_NO = "\u274c"
+STOCK_BLOCKED = "\U0001F6AB"
 _AVAILABILITY_TAILS = {
-    "too_big": f"the quantity is more than what I can confirm here. {REFER_TO_SALESMAN}",
+    "too_big": f"{STOCK_BLOCKED} the quantity is more than what I can confirm here. {REFER_TO_SALESMAN}",
     "in_stock": f"{STOCK_YES} {REFER_TO_SALESMAN}",
     "no_incoming": f"{STOCK_NO} No incoming. {REFER_TO_SALESMAN}",
 }

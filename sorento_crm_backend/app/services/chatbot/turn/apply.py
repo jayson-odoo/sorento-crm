@@ -3053,17 +3053,25 @@ def _stock_pick_requantified(state: State, verdict: dict[str, Any], trace: Trace
     if quantity is None or _names_a_product(verdict):
         return None
     payload = {**pending.payload, "stock_qty": quantity}
-    kept = replace(pending, payload=payload)
     trace.rules_fired.append("stock_pick_takes_quantity")
-    trace.task_question = task_mod.pick_question(
-        str(payload.get("typed") or ""),
-        [str(o.get("label")) for o in pending.options if o.get("label")],
-        quantity,
-        payload.get("count"),
-        # Round 9: a did-you-mean's typed code is one the resolver did not recognise,
-        # and a header never leads with it.
-        recognised=not payload.get("did_you_mean"),
-    )
+    groups = payload.get("groups")
+    if isinstance(groups, list) and len(groups) > 1:
+        # Several lists in one message: the number is the quantity of every list that
+        # had none (AVAIL-MODE-REPLIES), and they are asked again, numbers kept.
+        groups = [g if g.get("qty") is not None else {**g, "qty": quantity} for g in groups]
+        payload = task_mod.stock_pick(list(pending.options), groups)["payload"]
+        trace.task_question = task_mod.picks_question(list(pending.options), groups)
+    else:
+        trace.task_question = task_mod.pick_question(
+            str(payload.get("typed") or ""),
+            [str(o.get("label")) for o in pending.options if o.get("label")],
+            quantity,
+            payload.get("count"),
+            # Round 9: a did-you-mean's typed code is one the resolver did not recognise,
+            # and a header never leads with it.
+            recognised=not payload.get("did_you_mean"),
+        )
+    kept = replace(pending, payload=payload)
     focus = copy.deepcopy(state.focus)
     focus.domains = ["inventory"]
     asked = State(
@@ -3096,28 +3104,61 @@ def _spend_stock_pick(
     if _stock_pick(new_state.pending):
         new_state.pending = None
     trace.rules_fired.append("stock_pick_spent")
-    queued = asked.payload.get(task_mod.NEXT_PICKS)
-    if isinstance(queued, list) and queued:
-        # AVAIL-MODE-REPLIES rule 5, owner Q3 (a): the next vague code of the same message
-        # is asked once this one is answered (`engine._stock_ask_reply`).
-        verdict[task_mod.NEXT_PICKS] = queued
-        trace.rules_fired.append("stock_pick_next_queued")
+    labels = {str(o.get("label")).strip().casefold() for o in asked.options if o.get("label")}
+    _hand_on_unanswered_lists(asked, specs, verdict, trace)
     quantity = _stated_quantity(asked.payload.get("stock_qty"))
     by_code = asked.payload.get(STOCK_QTY_BY_CODE) or {}
-    if (quantity is None and not by_code) or _message_states_a_quantity(verdict):
+    list_qty = asked.payload.get(task_mod.QTY_BY_CODE) or {}
+    if (quantity is None and not by_code and not list_qty) or _message_states_a_quantity(verdict):
         return
-    labels = {str(o.get("label")).strip().casefold() for o in asked.options if o.get("label")}
     for spec in specs:
         stamped = {}
         for e in spec.entities:
             if not isinstance(e, dict) or not e.get("uuid") or not _row_codes(e) & labels:
                 continue
             own = next((by_code[c] for c in _row_codes(e) if c in by_code), None)
+            if own is None:
+                # AVAIL-MODE-REPLIES: each list of a several-list pick carries its own
+                # typed quantity.
+                own = next((list_qty[c] for c in _row_codes(e) if c in list_qty), None)
             if own is not None or quantity is not None:
                 stamped[str(e["uuid"])] = own if own is not None else quantity
         if stamped:
             spec.filters["requested_quantities"] = stamped
             trace.rules_fired.append("stock_pick_carries_quantity")
+
+
+def _hand_on_unanswered_lists(asked: Any, specs: list[Any], verdict: dict[str, Any], trace: Trace) -> None:
+    """AVAIL-MODE-REPLIES rule 5 (owner v2 note 3): a pick that showed several lists in one
+    message and was answered for only some of them hands the others on, numbers kept, for
+    `engine._stock_ask_reply` to ask again under the answered lines."""
+    groups = asked.payload.get("groups")
+    if not isinstance(groups, list) or len(groups) < 2:
+        return
+    fetched = {
+        code
+        for spec in specs
+        for e in spec.entities
+        if isinstance(e, dict) and e.get("uuid")
+        for code in _row_codes(e)
+    }
+    by_position = {o.get("position"): o for o in asked.options}
+    open_groups = [
+        g
+        for g in groups
+        if not any(
+            str(by_position.get(p, {}).get("label") or "").strip().casefold() in fetched
+            for p in g.get("positions") or []
+        )
+    ]
+    if not open_groups or len(open_groups) == len(groups):
+        return
+    positions = {p for g in open_groups for p in g["positions"]}
+    verdict[task_mod.NEXT_PICKS] = {
+        "options": [o for o in asked.options if o.get("position") in positions],
+        "groups": open_groups,
+    }
+    trace.rules_fired.append("stock_pick_lists_still_open")
 
 
 def apply(

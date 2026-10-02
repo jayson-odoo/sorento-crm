@@ -5244,6 +5244,8 @@ def _run_stages(  # noqa: PLR0915
             # PR #1329 (ETA policy): a dealer's incoming reply is the same, so an
             # incoming miss no longer offers the purchasing team.
             answer = _dealer_refers_to_salesman(answer)
+            if _dealer_incoming_ask(state_out, plan):
+                answer = _dealer_names_the_miss(answer, envelopes)
         elif in_ranking_conversation:
             answer = _without_escalation_offer(answer)
         return _run_answer(
@@ -5625,15 +5627,13 @@ def _stock_ask_reply(
         return answer if not reply.text else turn_compose.Answer(text=reply.text)
     # AVAIL-MODE-REPLIES rule 5 (owner, 2 Oct 2026): ONE combined reply - the answered
     # lines in the order asked, then the codes found nowhere, then at most one question
-    # (this reply's own, else the next vague code queued on the pick just answered).
+    # (this reply's own, else the lists of the pick just answered that are still open).
     text, pick = reply.text, reply.pick
     queued = verdict.get(turn_task.NEXT_PICKS)
-    if not text and isinstance(queued, list) and queued:
-        first = queued[0]
-        text = turn_task.pick_question(
-            first["typed"], [o["label"] for o in first["options"]], first.get("qty"), first.get("count")
-        )
-        pick = turn_task.stock_pick(first, queued[1:])
+    if not text and isinstance(queued, dict) and queued.get("groups"):
+        # The lists of the last pick the dealer has not answered, numbers kept.
+        text = turn_task.picks_question(queued["options"], queued["groups"])
+        pick = turn_task.stock_pick(queued["options"], queued["groups"])
     misses = _unplaced_tokens(envelopes)
     if not text and not misses:
         return answer
@@ -5650,13 +5650,38 @@ def _stock_ask_reply(
     return dataclasses_replace(answer, text="\n\n".join(parts), question=question, sections=[])
 
 
+#: `turn/compose.py`'s once-per-turn line for a token nothing placed.
+_COMPOSE_MISS = re.compile(r"\n*I could not find [^\n]*\.[ \t]*$")
+
+
+def _dealer_names_the_miss(answer: Any, envelopes: list[dict[str, Any]]) -> Any:
+    """AVAIL-MODE-REPLIES rule 5 for a dealer's ETA ask: a code found nowhere is named as
+    "Couldn't find: X, Y." after the ETA lines and before the refer line, the same
+    sentence the stock mix uses (compose prints "I could not find X." after the refer
+    line). A reply without that line (a total miss, already named) is left as it is."""
+    text = getattr(answer, "text", "") or ""
+    misses = _unplaced_tokens(envelopes)
+    if not misses or not _COMPOSE_MISS.search(text):
+        return answer
+    body = _COMPOSE_MISS.sub("", text).rstrip()
+    line = f"Couldn't find: {', '.join(misses)}."
+    from app.services.chatbot.turn.task import REFER_TO_SALESMAN
+
+    if body.endswith(REFER_TO_SALESMAN):
+        head = body[: -len(REFER_TO_SALESMAN)].rstrip()
+        parts = [head, line, REFER_TO_SALESMAN] if head else [line, REFER_TO_SALESMAN]
+    else:
+        parts = [body, line] if body else [line]
+    return dataclasses_replace(answer, text="\n\n".join(parts))
+
+
 def _stock_answer_lines(envelopes: list[dict[str, Any]]) -> list[str]:
     """The answered lines the presenter printed ("<code> x <Q>: ..."), in the order asked."""
     lines: list[str] = []
     for envelope in envelopes or []:
         if not isinstance(envelope, dict) or not envelope.get("stock_availability"):
             continue
-        for item in envelope.get("items") or envelope.get("answers") or []:
+        for item in envelope.get("figures") or envelope.get("items") or envelope.get("answers") or []:
             flags = item.get("flags") if isinstance(item, dict) else None
             title = item.get("title") if isinstance(item, dict) else None
             if isinstance(flags, dict) and flags.get("branch") and not flags.get("needs_quantity") and title:
