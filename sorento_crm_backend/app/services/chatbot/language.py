@@ -28,7 +28,9 @@ def detect(message: str, *, strip: Iterable[str] = ()) -> str | None:
     text = message or ""
     for phrase in strip:
         if phrase:
-            text = re.sub(re.escape(phrase), " ", text, flags=re.IGNORECASE)
+            text = re.sub(
+                r"(?<!\w)" + re.escape(phrase) + r"(?!\w)", " ", text, flags=re.IGNORECASE
+            )
     if any("一" <= ch <= "鿿" for ch in text):
         return "zh"
     words = _WORD.findall(text.lower())

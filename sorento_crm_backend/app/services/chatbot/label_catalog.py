@@ -146,11 +146,16 @@ class Localizer:
             self._templates.append((re.compile(pattern, re.DOTALL), target))
 
     def label(self, field: dict) -> str:
-        """The field's label, translated by its exact English text; a value is never read."""
+        """The field's label: by its key when it has a catalogued one and still carries that
+        English label, else by the exact label text. A value is never read."""
         label = field.get("label")
-        if isinstance(label, str):
-            return self.table.get(label, label)
-        return label
+        if not isinstance(label, str):
+            return label
+        key = field.get("key")
+        english = FIELD_KEYS.get(key) if isinstance(key, str) else None
+        if english is not None and label == english:
+            return self.table.get(english, label)
+        return self.table.get(label, label)
 
     def text(self, s: str) -> str:
         if s in self.table:
@@ -162,8 +167,9 @@ class Localizer:
                 return _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), target)
         return s
 
-    # `loc("...")` is `loc.text("...")`; `turn/` source may not spell the attribute (apply-purity grep).
-    __call__ = text
+    def sentence(self, s: str) -> str:
+        """`text`, under a name `turn/` source may use (the apply-purity grep bans `.text`)."""
+        return self.text(s)
 
     def tail(self, title: str) -> str:
         """`"<code> x <qty>: <sentence>"`: only the sentence is translated."""

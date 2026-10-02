@@ -617,7 +617,7 @@ class SessionVars(BaseModel):
     access_levels: list[str] = Field(default_factory=list)
     contains_flyer: bool = False
     # CHAT-LANGUAGE: the language the last decided reply was in, carried to the next turn.
-    reply_language: str | None = None
+    reply_language: Literal["en", "ms", "zh"] | None = None
 
 
 # The widths the `chatbot.turns` columns actually have. Validated on the way IN so an

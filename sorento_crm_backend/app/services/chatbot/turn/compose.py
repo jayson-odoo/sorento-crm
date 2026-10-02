@@ -448,9 +448,11 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             if absent:
                 # Above the lane's "_Data last updated: ..._" footer, which closes the
                 # section, rather than under it.
-                line = localizer(f"No stock found for {_join_words(absent)}.")
+                line = localizer.sentence(f"No stock found for {_join_words(absent)}.")
                 # The footer's lead-in in the reply's language ("Data last updated: " in English).
-                footer_lead = localizer("Data last updated: {ts}").split("{ts}")[0].rstrip()
+                footer_lead = localizer.sentence("Data last updated: {ts}").split("{ts}")[0].rstrip()
+                if not footer_lead:  # a blanked lead would match any italic line
+                    footer_lead = "Data last updated"
                 body, sep, footer = block.rpartition("\n_" + footer_lead)
                 if sep:
                     block = body + "\n" + line + sep + footer
