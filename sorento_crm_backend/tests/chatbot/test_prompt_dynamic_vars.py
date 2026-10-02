@@ -48,6 +48,7 @@ def _names(db) -> list[str]:
 def test_parser_key_declares_every_registry_variable():
     assert set(PROMPT_KEYS[KEY].registry_variables) == {
         "domains", "domain_words", "domains_detail", "statuses", "status_values", "order_status_values",
+        "status_field_values",
         "entity_kinds", "entity_kinds_detail", "specs", "brands", "teams", "agents",
         "access_levels",
     }
@@ -133,22 +134,38 @@ def test_status_words_are_seeded_with_the_sales_words():
         assert rows["sales_report"][0] == "sales"
 
 
-def test_statuses_render_every_row_with_its_words():
+def test_statuses_render_every_tagged_row_with_its_words():
+    """Owner answer 4 (2 Oct 2026): `{{statuses}}` and `{{status_values}}` render the rows
+    tagged for them (`prompt_lists`), each with its words; an untagged row stays out."""
     with pg_session() as db:
         value = f"zzt_{uuid.uuid4().hex[:6]}"
+        hidden = f"zzt_{uuid.uuid4().hex[:6]}"
         db.add(ChatbotStatusWord(domain="order", value=value, label="a test status",
-                                 trigger_words=["zzt word"], sort_order=999))
+                                 trigger_words=["zzt word"], sort_order=999,
+                                 prompt_lists=["statuses", "status_values"]))
+        db.add(ChatbotStatusWord(domain="order", value=hidden, label="not listed",
+                                 trigger_words=["zzt hidden"], sort_order=1000))
         db.flush()
         # Arrows are padded and lines wrapped to the owner's layout (test_prompt_dynamic_formats),
         # so compare with the whitespace folded.
         out = " ".join(chatbot_prompt_vars.render_statuses(db).split())
         assert f'- "{value}" -> a test status: "zzt word".' in out
         assert '- "outstanding" -> orders NOT yet delivered: "outstanding", "pending"' in out
-        assert '"sales_report"' in out and 'Domain "sales".' in out
+        assert hidden not in out and '"sales_report"' not in out
         values = chatbot_prompt_vars.VARIABLES["status_values"].render(db).split("|")
-        assert values[0] == "outstanding" and value in values
+        assert values[0] == "outstanding" and value in values and hidden not in values
+
+
+def test_domain_words_are_the_curated_list_and_fall_back_to_the_union_without_it():
+    """Owner answer 2 (2 Oct 2026): the curated `chatbot_domain_words` list; an install
+    without it falls back to every switch word and status word."""
+    with pg_session() as db:
         words = chatbot_prompt_vars.VARIABLES["domain_words"].render(db)
-        assert "zzt word" in words and "top selling" in words and "stock" in words
+        assert words.startswith("stock, incoming, ETA") and "top selling" not in words
+        db.execute(text("DELETE FROM chatbot_domain_words"))
+        db.flush()
+        words = chatbot_prompt_vars.VARIABLES["domain_words"].render(db)
+        assert "top selling" in words and "stock" in words
 
 
 def test_teams_and_agents_fall_back_to_the_code_lists_on_an_empty_table():

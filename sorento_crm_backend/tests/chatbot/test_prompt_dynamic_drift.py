@@ -170,7 +170,7 @@ def test_the_rendered_lists_follow_a_registry_change_without_a_publish():
     with pg_session() as db:
         wording, _ = pv.wording_layer(_production(db).template, db)
         before = _render(db, wording)
-        db.execute(text("UPDATE chatbot_status_words SET trigger_words = trigger_words || '{zzt drift word}'::text[] WHERE value = 'sales_report'"))
+        db.execute(text("UPDATE chatbot_status_words SET trigger_words = trigger_words || '{zzt drift word}'::text[] WHERE value = 'outstanding'"))
         pv.clear_cache()
         after = _render(db, wording)
         assert '"zzt drift word"' not in before and '"zzt drift word"' in after

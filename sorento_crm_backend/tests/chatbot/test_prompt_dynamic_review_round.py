@@ -105,7 +105,8 @@ def test_b2_deferred_delete_removes_the_row_and_its_render():
 
     with pg_session() as db:
         value = f"zzt_{uuid.uuid4().hex[:8]}"
-        row = ChatbotStatusWord(domain="order", value=value, label="doomed", trigger_words=["zzt doomed"])
+        row = ChatbotStatusWord(domain="order", value=value, label="doomed", trigger_words=["zzt doomed"],
+                                prompt_lists=["statuses"])
         db.add(row)
         db.commit()
         assert value in pv.render_value(db, "statuses")

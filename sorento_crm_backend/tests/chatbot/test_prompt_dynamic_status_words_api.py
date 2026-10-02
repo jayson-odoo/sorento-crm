@@ -163,8 +163,9 @@ def test_registry_variables_panel_lists_every_source(client, pg_db):
     rows = {r["name"]: r for r in res.json()}
     assert set(rows) == set(chatbot_prompt_vars.VARIABLE_NAMES)
     assert rows["statuses"]["source"] == "Chatbot Status Words"
-    assert rows["statuses"]["count"] >= 8
-    assert '"sales_report"' in rows["statuses"]["rendered"]
+    # Owner answer 4 (2 Oct 2026): the bullets list the rows tagged for them only.
+    assert rows["statuses"]["count"] >= 2
+    assert '"outstanding"' in rows["statuses"]["rendered"]
 
 
 # --------------------------------------------------------------------------- #

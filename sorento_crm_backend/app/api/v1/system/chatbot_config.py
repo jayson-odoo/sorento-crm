@@ -552,6 +552,9 @@ _STATUS_SORTS = {"value", "label", "domain", "sort_order", "updated_at"}
 # so the table has a ceiling like its word lists do (security review L1).
 STATUS_WORDS_MAX = 100
 
+#: The parser prompt lists a status row can be in (`pdyn_0004_prompt_lists.PROMPT_LISTS`).
+STATUS_PROMPT_LISTS = ("statuses", "status_values", "status_field_values")
+
 # A quote or backtick in a word or label would close the quotes the prompt renders it
 # in and read as an instruction (security review L2).
 _QUOTE_CHARS = ('"', "`")
@@ -563,11 +566,15 @@ class ChatbotStatusWordBody(BaseModel):
     label: str = Field(min_length=1, max_length=128)
     trigger_words: list[str] = Field(default_factory=list)
     sort_order: int = 0
+    # The parser prompt lists the row is in (owner answer 4, 2 Oct 2026). Optional: an
+    # update that leaves it out keeps the row's lists.
+    prompt_lists: list[str] | None = None
 
 
 class ChatbotStatusWordResponse(ChatbotStatusWordBody):
     id: str
     updated_at: datetime
+    prompt_lists: list[str] = Field(default_factory=list)
 
 
 def _status_out(row: ChatbotStatusWord) -> ChatbotStatusWordResponse:
@@ -578,6 +585,7 @@ def _status_out(row: ChatbotStatusWord) -> ChatbotStatusWordResponse:
         label=row.label,
         trigger_words=list(row.trigger_words or []),
         sort_order=int(row.sort_order or 0),
+        prompt_lists=list(row.prompt_lists or []),
         updated_at=row.updated_at,
     )
 
@@ -591,6 +599,11 @@ def _validate_status(db: Session, body: ChatbotStatusWordBody) -> None:
             raise _unprocessable("Status words and their meaning may not contain quotes or backticks.")
     if db.query(ChatbotDomain).filter(ChatbotDomain.name == body.domain).first() is None:
         raise _unprocessable(f"Unknown chatbot domain {body.domain!r}.")
+    if body.prompt_lists is not None:
+        unknown = [name for name in body.prompt_lists if name not in STATUS_PROMPT_LISTS]
+        if unknown:
+            raise _unprocessable(f"Unknown parser prompt list(s): {', '.join(unknown)}.")
+        body.prompt_lists = list(dict.fromkeys(body.prompt_lists))
 
 
 def _find_status(db: Session, status_id: str) -> ChatbotStatusWord:
@@ -667,7 +680,7 @@ def create_status_word(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"A status word with value {body.value!r} already exists.",
         )
-    row = ChatbotStatusWord(**body.model_dump())
+    row = ChatbotStatusWord(**{**body.model_dump(), "prompt_lists": body.prompt_lists or []})
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -694,7 +707,7 @@ def update_status_word(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"A status word with value {body.value!r} already exists.",
         )
-    for field, value in body.model_dump().items():
+    for field, value in body.model_dump(exclude_none=True).items():
         setattr(row, field, value)
     db.commit()
     db.refresh(row)

@@ -144,7 +144,14 @@ def _renderers() -> dict[str, str]:
     return {
         "teams": _q("|".join(escalation_teams())),
         "domains": "(SELECT string_agg(name, ' | ' ORDER BY sort_order, name) FROM chatbot_domains)",
-        "status_values": "(SELECT string_agg(value, '|' ORDER BY sort_order, value) FROM chatbot_status_words)",
+        "status_values": (
+            "(SELECT string_agg(value, '|' ORDER BY sort_order, value) FROM chatbot_status_words "
+            "WHERE 'status_values' = ANY(prompt_lists))"
+        ),
+        "status_field_values": (
+            "(SELECT string_agg(value, '|' ORDER BY sort_order, value) FROM chatbot_status_words "
+            "WHERE 'status_field_values' = ANY(prompt_lists))"
+        ),
         "order_status_values": (
             "(SELECT string_agg(value, '|' ORDER BY sort_order, value) FROM chatbot_status_words WHERE domain = 'order')"
         ),
@@ -200,6 +207,32 @@ def _candidates(source: str) -> list[tuple[int, int, str]]:
 # --------------------------------------------------------------------------- #
 
 
+def _pdyn_0004_sql() -> str:
+    """The owner's prompt-list tags and curated domain words (migration `pdyn_0004_prompt_lists`),
+    as idempotent statements the crew copy applies before the version is built."""
+    mod = _load("pdyn_0004_prompt_lists.py")
+    lines = [
+        "ALTER TABLE chatbot_status_words ADD COLUMN IF NOT EXISTS prompt_lists text[] NOT NULL DEFAULT '{}';",
+    ]
+    for value, lists in mod.STATUS_PROMPT_LISTS.items():
+        lines.append(
+            f"UPDATE chatbot_status_words SET prompt_lists = {_array(lists)} "
+            f"WHERE value = {_q(value)} AND prompt_lists = '{{}}';"
+        )
+    lines.append(
+        "CREATE TABLE IF NOT EXISTS chatbot_domain_words (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "
+        "word text NOT NULL UNIQUE, sort_order integer NOT NULL DEFAULT 0, "
+        "created_at timestamp without time zone NOT NULL DEFAULT now(), "
+        "updated_at timestamp without time zone NOT NULL DEFAULT now());"
+    )
+    for i, word in enumerate(mod.DOMAIN_WORDS):
+        lines.append(
+            f"INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), {_q(word)}, {i}) "
+            "ON CONFLICT (word) DO NOTHING;"
+        )
+    return "\n".join(lines)
+
+
 def build_sql(lookup: bool = False, seed: bool = True) -> str:
     """`lookup=True` carries no text: it takes the owner's text from a version already on
     the database whose text (CRLF folded, trailing newlines trimmed) has the file's sha256,
@@ -216,6 +249,7 @@ def build_sql(lookup: bool = False, seed: bool = True) -> str:
     pick = "CASE var " + " ".join(f"WHEN {_q(n)} THEN r_{n}" for n in renderers) + " END"
     return "\n".join(
         [
+            _pdyn_0004_sql(),
             "DO $crew$",
             "DECLARE",
             *[f"r_{name} text := {sql};" for name, sql in renderers.items()],

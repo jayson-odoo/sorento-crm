@@ -57,6 +57,11 @@ def _domain_names(db: Session) -> list[str]:
 
 
 def _domain_words(db: Session) -> list[str]:
+    """The curated DOMAIN IN MESSAGE list (`chatbot_domain_words`, owner answer 2). An
+    install without that list falls back to every switch word and status word."""
+    curated = list(db.execute(sql("SELECT word FROM chatbot_domain_words ORDER BY sort_order, word")).scalars())
+    if curated:
+        return _dedupe(curated)
     words: list[str] = []
     for row in db.execute(sql("SELECT switch_words FROM chatbot_domains ORDER BY sort_order, name")):
         words.extend(row[0] or [])
@@ -70,7 +75,7 @@ def _status_rows(db: Session) -> list[dict]:
         dict(r)
         for r in db.execute(
             sql(
-                "SELECT domain, value, label, trigger_words FROM chatbot_status_words "
+                "SELECT domain, value, label, trigger_words, prompt_lists FROM chatbot_status_words "
                 "ORDER BY sort_order, value"
             )
         ).mappings()
@@ -215,8 +220,13 @@ def _status_line(row: dict, pad: int = 0) -> str:
     return _wrap(tokens, indent="    ")
 
 
+def _listed(db: Session, prompt_list: str) -> list[dict]:
+    """The status rows tagged for one parser prompt list (owner answer 4, 2 Oct 2026)."""
+    return [r for r in _status_rows(db) if prompt_list in (r.get("prompt_lists") or [])]
+
+
 def render_statuses(db: Session) -> str:
-    rows = _status_rows(db)
+    rows = _listed(db, "statuses")
     pad = max((len(_quoted(r["value"])) for r in rows), default=0)
     return "\n".join(_status_line(row, pad) for row in rows)
 
@@ -275,7 +285,7 @@ VARIABLES: dict[str, RegistryVariable] = {
         ),
         RegistryVariable(
             "domain_words", "Domain words", "Chatbot Domains + Status Words", _DOMAINS_HREF,
-            ("chatbot_domains", "chatbot_status_words"),
+            ("chatbot_domains", "chatbot_status_words", "chatbot_domain_words"),
             render_domain_words, lambda db: len(_domain_words(db)),
         ),
         RegistryVariable(
@@ -284,13 +294,20 @@ VARIABLES: dict[str, RegistryVariable] = {
         ),
         RegistryVariable(
             "statuses", "Status words", "Chatbot Status Words", _STATUS_HREF,
-            ("chatbot_status_words",), render_statuses, lambda db: len(_status_rows(db)),
+            ("chatbot_status_words",), render_statuses, lambda db: len(_listed(db, "statuses")),
         ),
         RegistryVariable(
             "status_values", "Status values", "Chatbot Status Words", _STATUS_HREF,
             ("chatbot_status_words",),
-            lambda db: "|".join(_one_line(r["value"]) for r in _status_rows(db)),
-            lambda db: len(_status_rows(db)),
+            lambda db: "|".join(_one_line(r["value"]) for r in _listed(db, "status_values")),
+            lambda db: len(_listed(db, "status_values")),
+        ),
+        RegistryVariable(
+            # The `status` field's values, line 778 of the owner's text (owner answer 4).
+            "status_field_values", "Status values - status field", "Chatbot Status Words", _STATUS_HREF,
+            ("chatbot_status_words",),
+            lambda db: "|".join(_one_line(r["value"]) for r in _listed(db, "status_field_values")),
+            lambda db: len(_listed(db, "status_field_values")),
         ),
         RegistryVariable(
             # The owner's "full set" line lists only the order-domain statuses (crew Q5,
@@ -727,7 +744,7 @@ def _items(variable: str, text_value: str) -> list[str]:
     raw = (text_value or "").strip()
     if variable in ("domains",):
         return [v for v in _re.split(r"\s*\|\s*", raw) if v]
-    if variable in ("status_values", "order_status_values", "teams", "agents", "entity_kinds"):
+    if variable in ("status_values", "order_status_values", "status_field_values", "teams", "agents", "entity_kinds"):
         return [v for v in raw.split("|") if v]
     if variable == "access_levels":
         try:
@@ -757,7 +774,7 @@ def _first_item_difference(variable: str, literal: str, rendered: str) -> dict:
 _IDENTICAL_CANDIDATES: tuple[tuple[str, str], ...] = (
     ("domains", r"domain_hint = ONE of: (?P<list>[a-z_]+(?: \| [a-z_]+)+) \| null"),
     ("status_values", r'"order_status": "(?P<list>[a-z_]+(?:\|[a-z_]+)*)\|null'),
-    ("status_values", r'"status": "(?P<list>[a-z_]+(?:\|[a-z_]+)*)\|null'),
+    ("status_field_values", r'"status": "(?P<list>[a-z_]+(?:\|[a-z_]+)*)\|null'),
     ("order_status_values", r"The full set is now: (?P<list>[a-z_]+(?:\|[a-z_]+)*)\|null"),
     ("teams", r'"suggested_team": "(?P<list>[a-z_]+(?:\|[a-z_]+)+)"'),
     ("agents", r'"suggested_agent": "(?P<list>[a-z_]+(?:\|[a-z_]+)+)"'),

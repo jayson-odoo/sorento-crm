@@ -1,8 +1,33 @@
+ALTER TABLE chatbot_status_words ADD COLUMN IF NOT EXISTS prompt_lists text[] NOT NULL DEFAULT '{}';
+UPDATE chatbot_status_words SET prompt_lists = ARRAY['statuses', 'status_values', 'status_field_values']::text[] WHERE value = 'outstanding' AND prompt_lists = '{}';
+UPDATE chatbot_status_words SET prompt_lists = ARRAY['statuses', 'status_values', 'status_field_values']::text[] WHERE value = 'delivered' AND prompt_lists = '{}';
+UPDATE chatbot_status_words SET prompt_lists = ARRAY['status_field_values']::text[] WHERE value = 'sales_report' AND prompt_lists = '{}';
+CREATE TABLE IF NOT EXISTS chatbot_domain_words (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), word text NOT NULL UNIQUE, sort_order integer NOT NULL DEFAULT 0, created_at timestamp without time zone NOT NULL DEFAULT now(), updated_at timestamp without time zone NOT NULL DEFAULT now());
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'stock', 0) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'incoming', 1) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'ETA', 2) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'delivery', 3) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'order', 4) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'outstanding', 5) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'DO', 6) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'SO', 7) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'PO', 8) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'purchase cost', 9) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'promo', 10) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'price', 11) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'spec', 12) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'photo', 13) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'catalogue', 14) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'certificate', 15) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'forms', 16) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'shipment', 17) ON CONFLICT (word) DO NOTHING;
+INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'GRN', 18) ON CONFLICT (word) DO NOTHING;
 DO $crew$
 DECLARE
 r_teams text := 'purchasing|purchasing_certification|customer_service|marketing_product|marketing_form|warehouse|marketing_promotion|it_admin';
 r_domains text := (SELECT string_agg(name, ' | ' ORDER BY sort_order, name) FROM chatbot_domains);
-r_status_values text := (SELECT string_agg(value, '|' ORDER BY sort_order, value) FROM chatbot_status_words);
+r_status_values text := (SELECT string_agg(value, '|' ORDER BY sort_order, value) FROM chatbot_status_words WHERE 'status_values' = ANY(prompt_lists));
+r_status_field_values text := (SELECT string_agg(value, '|' ORDER BY sort_order, value) FROM chatbot_status_words WHERE 'status_field_values' = ANY(prompt_lists));
 r_order_status_values text := (SELECT string_agg(value, '|' ORDER BY sort_order, value) FROM chatbot_status_words WHERE domain = 'order');
 r_entity_kinds text := (SELECT string_agg(kind, '|' ORDER BY sort_order, kind) FROM chatbot_entity_kinds);
 r_agents text := COALESCE((SELECT string_agg(code, '|' ORDER BY COALESCE(array_position(ARRAY['general_enquiries', 'order_enquiries', 'incoming_stock_enquiries', 'marketing_form', 'it_support', 'ideation']::text[], code), 6), code COLLATE "C") FROM access_agents WHERE is_active), 'general_enquiries|order_enquiries|incoming_stock_enquiries|marketing_form|it_support|ideation');
@@ -10,7 +35,7 @@ r_access_levels text := (SELECT CASE WHEN bool_and(position('"' in name) = 0 AND
 r_entity_kinds_detail text := (SELECT string_agg(format('Entity kind %s: resolver %s. Did-you-mean %s. Default narrowing %s.', kind, resolver_source, CASE WHEN did_you_mean THEN 'on' ELSE 'off' END, default_narrowing), chr(10) ORDER BY kind) FROM chatbot_entity_kinds);
 starts int[] := ARRAY[5140, 5440, 27294, 31323, 52711, 61678, 61851, 62002, 62341, 64873, 118134, 120495, 121763];
 lens int[] := ARRAY[181, 150, 108, 118, 333, 21, 124, 84, 34, 68, 2359, 1266, 10246];
-vars text[] := ARRAY['domains', 'domain_words', 'access_levels', 'entity_kinds', 'statuses', 'status_values', 'teams', 'agents', 'status_values', 'order_status_values', 'domains_detail', 'entity_kinds_detail', 'specs']::text[];
+vars text[] := ARRAY['domains', 'domain_words', 'access_levels', 'entity_kinds', 'statuses', 'status_values', 'teams', 'agents', 'status_field_values', 'order_status_values', 'domains_detail', 'entity_kinds_detail', 'specs']::text[];
 lines int[] := ARRAY[82, 87, 352, 401, 643, 770, 773, 774, 778, 821, 1662, 1677, 1691];
 tbl int[] := ARRAY[8212, 8230, 8592, 8594, 9473, 9888, 19968, 19977, 19978, 19979, 19981, 20004, 20010, 20040, 20108, 20160, 20179, 20204, 20215, 20250, 20302, 20505, 20986, 21040, 21319, 21333, 21334, 21527, 21578, 21644, 21806, 21834, 22810, 22909, 23384, 23545, 23569, 24046, 24050, 24211, 24471, 24577, 24635, 25104, 25105, 25253, 25353, 25968, 26102, 26159, 26368, 26410, 26412, 26495, 26684, 27424, 27425, 27454, 27599, 27809, 29366, 30021, 30340, 31532, 32423, 34920, 35201, 35268, 35746, 36135, 36141, 36817, 36824, 36827, 37117, 37319, 37327, 37329, 38065, 38144, 38754, 39069, 65292];
 idx text := '!"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]_`abcdefghijklmnopqrstuvwxyz{|}';
@@ -293,12 +318,12 @@ v := NULL;
 tpl := t;
 FOR i IN REVERSE array_length(starts, 1)..1 LOOP
 var := vars[i]; lit := substr(t, starts[i], lens[i]);
-rendered := CASE var WHEN 'teams' THEN r_teams WHEN 'domains' THEN r_domains WHEN 'status_values' THEN r_status_values WHEN 'order_status_values' THEN r_order_status_values WHEN 'entity_kinds' THEN r_entity_kinds WHEN 'agents' THEN r_agents WHEN 'access_levels' THEN r_access_levels WHEN 'entity_kinds_detail' THEN r_entity_kinds_detail END;
+rendered := CASE var WHEN 'teams' THEN r_teams WHEN 'domains' THEN r_domains WHEN 'status_values' THEN r_status_values WHEN 'status_field_values' THEN r_status_field_values WHEN 'order_status_values' THEN r_order_status_values WHEN 'entity_kinds' THEN r_entity_kinds WHEN 'agents' THEN r_agents WHEN 'access_levels' THEN r_access_levels WHEN 'entity_kinds_detail' THEN r_entity_kinds_detail END;
 act := CASE WHEN rendered IS NOT NULL AND rendered = lit THEN 'replaced' ELSE 'kept literal' END;
 IF act = 'replaced' THEN tpl := overlay(tpl placing '{{' || var || '}}' from starts[i] for lens[i]); END IF;
 rep := jsonb_build_object('variable', var, 'line', lines[i], 'action', act, 'reason', CASE
 WHEN act = 'replaced' THEN NULL
-WHEN rendered IS NULL AND NOT var = ANY(ARRAY['teams', 'domains', 'status_values', 'order_status_values', 'entity_kinds', 'agents', 'access_levels', 'entity_kinds_detail']::text[]) THEN 'no SQL renderer: the alembic migration decides this list from the tables'
+WHEN rendered IS NULL AND NOT var = ANY(ARRAY['teams', 'domains', 'status_values', 'status_field_values', 'order_status_values', 'entity_kinds', 'agents', 'access_levels', 'entity_kinds_detail']::text[]) THEN 'no SQL renderer: the alembic migration decides this list from the tables'
 ELSE 'the registry renders different text' END) || rep;
 END LOOP;
 IF EXISTS (SELECT 1 FROM ai_prompt_versions WHERE name = 'chatbot_semantic_parser' AND template = tpl) THEN

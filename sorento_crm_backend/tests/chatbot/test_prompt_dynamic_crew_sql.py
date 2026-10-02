@@ -220,7 +220,7 @@ def test_the_lookup_comment_is_small_and_sql_only():
     sql = gen.build_sql(lookup=True)
     body = gen.comment_body(sql)
     assert body.startswith("crew-migration:\n```sql\n") and body.endswith("\n```") and body.count("```") == 2
-    assert len(body) < 8000
+    assert len(body) < 12000  # the pdyn_0004 statements plus the DO block, still posted by hand
 
 
 def test_the_dev_seed_puts_the_owner_text_verbatim_then_the_variable_version_renders_it():

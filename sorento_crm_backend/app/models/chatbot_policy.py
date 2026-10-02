@@ -100,6 +100,27 @@ class ChatbotStatusWord(Base):
     label = Column(Text, nullable=False)
     trigger_words = Column(ARRAY(Text), nullable=False, server_default="{}")
     sort_order = Column(Integer, nullable=False, server_default="0")
+    # The parser prompt lists this row is in (owner answer 4, 2 Oct 2026; migration
+    # `pdyn_0004_prompt_lists`): `{{statuses}}`, `{{status_values}}` and
+    # `{{status_field_values}}` each render only the rows tagged with their own name.
+    prompt_lists = Column(ARRAY(Text), nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ChatbotDomainWord(Base):
+    """One word of the parser prompt's DOMAIN IN MESSAGE list (owner answer 2, 2 Oct 2026;
+    migration `pdyn_0004_prompt_lists`). A curated list, in `sort_order`: it is the owner's
+    own choice of words, not the union of the domains' switch words."""
+
+    __tablename__ = "chatbot_domain_words"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    word = Column(Text, nullable=False, unique=True)
+    sort_order = Column(Integer, nullable=False, server_default="0")
     created_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now()
