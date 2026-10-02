@@ -381,3 +381,14 @@ header `Top {n} {group label plural} by {basis_label}, {filters}, {from} to {to}
 `Bottom {n}`), numbered rows `1. NAME RM 1,200.00, 30 pcs`, `and N more`, `Total RM ..., N pcs`;
 number shape: `Sales by {basis_label}, {filters}, {from} to {to}: RM ..., N pcs`; `refused`
 prints `message`.
+
+Captain rulings on the tester's open points (2 Oct 2026):
+
+- A dealer naming another customer in `customer_ids` gets `enforce_customer_scope`'s own 403
+  `customer_not_permitted` (that check runs before the dimension check); naming its own
+  customers is allowed and changes nothing. The `report_dimension_not_allowed` filter list
+  for a dealer is therefore sales agent, location (`warehouse_codes`) and channel.
+- Channel rows read "Dealer" / "Project team" on both bases (the delivered dataset's raw
+  `retail` / `project` are mapped in `ask.py`; the ordered dataset already prints them).
+- Month rows rank by the measure like every other dimension (not chronological).
+- The header's N is the number of rows printed.
