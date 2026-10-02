@@ -2352,6 +2352,9 @@ _DISPLAY_NAME_KEYS: tuple[str, ...] = (
 
 # Which axes are active comes from the GATE (`compatible_entities`), never from the parser's
 # hints: a bare code is often hinted `order` and matched by the resolver as a product.
+#: `axis_words`' answer for an axis that prints no header line this turn.
+_NO_LINE = object()
+
 _AXES: tuple[dict[str, Any], ...] = (
     {"label": "Customer", "types": ["customer"], "hints": ["customer"], "always": True, "allText": "all customers"},
     {"label": "Product", "types": ["product"], "hints": ["product"], "always": True, "allText": "all products"},
@@ -3603,6 +3606,17 @@ def not_found_error_message(
             ]
             if not rows:
                 return None  # axis never put in scope
+            if axis["label"] == "Customer":
+                # DO-ASK-SIMPLIFY tester pass 1 (`tail/scope_block._axis_words`): the
+                # forced links of an order NUMBER ask print no Customer line, and the
+                # grouped name wins over the typed word when the DB has named every row.
+                if all(jsc.truthy(jsc.get(row, "scope")) for row in rows) and any(
+                    jsc.truthy(e) and _nf_norm_raw(jsc.get(e, "entity_type")) in _ORDER_TYPES for e in compat
+                ):
+                    return _NO_LINE
+                named = [jsc.nullish_str(jsc.get(row, "display_name")).strip() for row in rows]
+                if all(named):
+                    return family_words(named)
             words: list[str] = []
             for res in jsc.array(jsc.get(r, "resolutions")):  # 1. the customer's own token
                 matches = jsc.get(res, "matches")
@@ -3668,6 +3682,8 @@ def not_found_error_message(
                 head: list[str] = []
                 for axis in _AXES:
                     words = axis_words(axis)
+                    if words is _NO_LINE:
+                        continue
                     if axis.get("always"):
                         head.append(f"{axis['label']}: {words or axis['allText']}")
                     elif words:

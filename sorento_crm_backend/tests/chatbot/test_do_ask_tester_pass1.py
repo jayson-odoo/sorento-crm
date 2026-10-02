@@ -201,3 +201,23 @@ def test_rows_with_no_resolved_name_keep_the_typed_word():
         resolver_json={"resolutions": [{"token": "hanlim", "matches": [{"entity_type": "customer"}]}]},
     )
     assert "Customer: hanlim" in header and "300-H001" not in header, header
+
+
+def test_a_do_number_miss_header_prints_no_customer_line_of_forced_links():
+    """The same rule on the miss composer's own header (`answer.not_found_error_message`)."""
+    from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+    rows = [
+        {"entity_type": "order", "code": "SO422056", "title": "SO422056"},
+        {"uuid": _A, "entity_type": "customer", "code": "A1", "display_name": "ZZT A", "scope": True},
+        {"uuid": _B, "entity_type": "customer", "code": "B1", "display_name": "ZZT B", "scope": True},
+    ]
+    out = not_found_error_message(
+        {},
+        parser={"domain_hint": "order", "entities": [{"hint": "order", "raw": "SO422056"}], "routing": {"suggested_team": "customer_service"}},
+        resolved={"tokens": ["SO422056"], "unresolved_tokens": ["SO422056"], "resolutions": [], "intersection": [], "by_entity_type": {}},
+        gate={"gate_passed": True, "compatible_entities": rows},
+    )
+    message = out.get("escalate_message") or ""
+    assert "Order: SO422056" in message, message
+    assert "Customer:" not in message, message
