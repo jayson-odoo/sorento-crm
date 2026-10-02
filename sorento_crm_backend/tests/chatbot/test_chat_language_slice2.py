@@ -915,10 +915,11 @@ def test_ac_cl26_attachments_with_an_ms_localizer_renders_as_with_none():
     assert "Gudang" not in ms
 
 
-def test_ac_cl26_outstanding_report_with_an_ms_localizer_renders_as_with_none():
+def test_ac_cl26_low_stock_report_with_an_ms_localizer_renders_as_with_none():
+    """Slice 3 localizes the outstanding report on purpose; the low stock report is still English."""
     text = "Product: BRBC22102W\nOutstanding SO: 12\nTotal: 51"
-    env = {"response": text, "has_result": True, "result_type": "outstanding_report"}
-    tool = "crm_outstanding_report"
+    env = {"response": text, "has_result": True, "result_type": "low_stock_report"}
+    tool = "crm_low_stock_report"
     bare = fetch.output_structurer(copy.deepcopy(env), _ctx(tool))
     ms = fetch.output_structurer(copy.deepcopy(env), _ctx(tool, "ms"))
     assert ms["response"] == bare["response"]
@@ -926,15 +927,15 @@ def test_ac_cl26_outstanding_report_with_an_ms_localizer_renders_as_with_none():
     assert "Jumlah" not in ms["response"] and "Belum Dihantar" not in ms["response"]
 
 
-def test_ac_cl26_top_selling_with_an_ms_localizer_renders_as_with_none():
+def test_ac_cl26_sales_analysis_with_an_ms_localizer_renders_as_with_none():
+    """Slice 3 localizes top selling on purpose; the sales analysis text is still English."""
     text = "Top selling products\n1. BRBC22102W - 120 units\n2. SRTSWT3001 - 80 units"
     env = {
         "response": text,
         "has_result": True,
-        "result_type": "top_selling",
-        "result_set": [{"product_code": "BRBC22102W"}],
+        "result_type": "sales_analysis",
     }
-    tool = "crm_top_selling_report"
+    tool = "crm_sales_analysis"
     bare = fetch.output_structurer(copy.deepcopy(env), _ctx(tool))
     ms = fetch.output_structurer(copy.deepcopy(env), _ctx(tool, "ms"))
     assert ms["response"] == bare["response"]
