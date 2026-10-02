@@ -954,12 +954,22 @@ def _account_list(levels: list[int]) -> str:
 
 
 def narrow_by_account(
-    parser: dict[str, Any], resolved: dict[str, Any], levels_of: Callable[[list[str]], dict[str, int | None]]
+    parser: dict[str, Any],
+    resolved: dict[str, Any],
+    levels_of: Callable[[list[str]], dict[str, int | None]],
+    *,
+    exact_names: bool = True,
 ) -> str | None:
     """Staff: "Soon Heng account 1". For each customer word this message typed with an
     `account`, drop the resolved customer matches whose `customers.account_level` differs
     (read by uuid, one query). Returns the refusal line when a word is left with none,
-    else None. A word with no account, and every non-customer match, is untouched."""
+    else None. A word with no account, and every non-customer match, is untouched.
+
+    `exact_names=False` (an ENFORCED contact) turns the exact trading name rule off: its
+    own linked ledger can carry the typed word inside a longer name ("ABC TRADING
+    ENTERPRISE") while a foreign ledger IS the word ("ABC TRADING"), and the rule would
+    drop the contact's own row as a sibling. The scope screen after the resolver keeps
+    only the contact's links anyway."""
     asks = [
         (_folded(_token_of(e)), str(e.get("raw")).strip(), e["account"])
         for e in parser.get("entities") or []
@@ -984,6 +994,11 @@ def narrow_by_account(
         if isinstance(t, dict)
         for c in t.get("coverage") or []
     )
+    if and_shaped and len(asks) > 1:
+        # Several customer words share the AND rows and none of them can be told apart:
+        # narrow once by the SET of levels asked, never refuse (one word's narrowing must
+        # not leave the next word refusing off what is left).
+        return _narrow_and_by_levels(resolved, {account for _, _, account in asks}, levels_of)
 
     def _customers(resolution: dict[str, Any]) -> list[dict[str, Any]]:
         return [
@@ -1007,7 +1022,11 @@ def narrow_by_account(
             # alone (crew ruling, 2 Oct 2026): the names merely carrying its words (SOON
             # GUAN HENG TRADING) are dropped for this word, so neither their levels nor
             # their rows answer it. No match of that exact name -> every match counts.
-            exact = [m for m in customers if ledger_family_key(_match_name(m)) == ledger_family_key(typed)]
+            exact = (
+                [m for m in customers if ledger_family_key(_match_name(m)) == ledger_family_key(typed)]
+                if exact_names
+                else []
+            )
             if exact:
                 siblings = [m for m in customers if m not in exact]
                 dropped |= {str(m.get("uuid")) for m in siblings}
@@ -1037,6 +1056,29 @@ def narrow_by_account(
                 for k, v in by_type.items()
             }
     return refusal
+
+
+def _narrow_and_by_levels(
+    resolved: dict[str, Any], asked: set[int], levels_of: Callable[[list[str]], dict[str, int | None]]
+) -> None:
+    """The AND rows' customer matches whose level is one of `asked`; the rest are dropped.
+    Left alone when that would drop every customer row (nothing to refuse from here)."""
+    customers = [
+        m for m in resolved.get("intersection") or []
+        if isinstance(m, dict) and str(m.get("entity_type") or "").lower() == "customer"
+    ]
+    levels = levels_of([str(m.get("uuid")) for m in customers if m.get("uuid")])
+    dropped = {str(m.get("uuid")) for m in customers if levels.get(str(m.get("uuid"))) not in asked}
+    if not dropped or len(dropped) == len({str(m.get("uuid")) for m in customers}):
+        return None
+    resolved["intersection"] = [m for m in resolved["intersection"] if not _is_dropped(m, dropped)]
+    by_type = resolved.get("by_entity_type")
+    if isinstance(by_type, dict):
+        resolved["by_entity_type"] = {
+            k: [m for m in v if not _is_dropped(m, dropped)] if isinstance(v, list) else v
+            for k, v in by_type.items()
+        }
+    return None
 
 
 def _match_name(match: dict[str, Any]) -> str:
@@ -1094,6 +1136,7 @@ def run(
     roster_caps: Mapping[str, int] | None = None,
     resolver_excluded_entity_ids: frozenset | None = None,
     account_levels: Callable[[list[str]], dict[str, int | None]] | None = None,
+    account_exact_names: bool = True,
 ) -> dict[str, Any]:
     """One pass through `sub-resolve-and-gate`. Returns the exit arm's item.
 
@@ -1177,7 +1220,9 @@ def run(
     )
 
     if account_levels is not None and isinstance(resolved, dict):
-        account_refusal = narrow_by_account(parser, resolved, account_levels)
+        account_refusal = narrow_by_account(
+            parser, resolved, account_levels, exact_names=account_exact_names
+        )
         if account_refusal:
             resolved["account_refusal"] = account_refusal
 

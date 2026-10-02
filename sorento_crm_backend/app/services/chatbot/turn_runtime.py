@@ -1897,6 +1897,7 @@ def resolve_kinds(
     stamp_promotion: bool = False,
     stamp_purchase_order: bool = False,
     roster_caps: Mapping[str, int] | None = None,
+    enforced_scope: bool = False,
 ) -> ResolveOutcome:
     """Ask the resolver what each named token actually IS (AC-1527).
 
@@ -2041,6 +2042,8 @@ def resolve_kinds(
             roster_caps=roster_caps,
             resolver_excluded_entity_ids=resolver_excluded_entity_ids,
             account_levels=business_services.account_levels_reader(db),
+            # ACCOUNT-LEDGER: an enforced contact's own ledger is never an exact-name sibling.
+            account_exact_names=not enforced_scope,
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)

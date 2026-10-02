@@ -4235,6 +4235,7 @@ def _run_stages(  # noqa: PLR0915
                         plan.ask is not None and "purchase_order" in plan.domains
                     ),
                     roster_caps=roster_caps,
+                    enforced_scope=bool((customer_scope or {}).get("enforced")),
                 )
             )
             resolved_kinds = resolve_outcome.resolved_kinds
