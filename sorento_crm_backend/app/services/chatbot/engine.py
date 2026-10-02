@@ -393,6 +393,53 @@ def _with_repeated_codes_summed(verdict: dict[str, Any], message: str) -> dict[s
     return summed
 
 
+#: Words that make a message an ETA ask whatever else it says (the incoming domain's own
+#: switch words, `turn/policy_rows.py`, plus the Malay and Chinese a dealer types).
+_ETA_WORDS = re.compile(
+    r"\b(?:eta|incoming|arriv\w*|shipments?|containers?|coming|when|bila|sampai|tiba)\b|几时|什么时候|到货|到",
+    re.IGNORECASE,
+)
+
+
+def _as_a_stock_ask_by_its_own_words(verdict: dict[str, Any], message: str) -> dict[str, Any]:
+    """AVAIL-MODE-REPLIES (tester re-run on 2eb2a00ef): the live parser intermittently read
+    a plain "CWCX611 x 300" as `check_incoming` and the dealer was told "ETA not confirmed
+    yet". A message whose own words name a product WITH a quantity and no ETA word is a
+    stock ask, so the incoming reading is put back to stock. One prompt, read the same
+    way every time by the engine (owner: no second prompt)."""
+    incoming = (
+        verdict.get("intent_hint") == "check_incoming"
+        or verdict.get("domain_hint") == "incoming"
+        or any(isinstance(a, dict) and a.get("domain") == "incoming" for a in verdict.get("asks") or [])
+    )
+    text = str(message or "")
+    if not incoming or _ETA_WORDS.search(text):
+        return verdict
+    codes = {
+        str(e.get(k)).strip()
+        for e in verdict.get("entities") or []
+        if isinstance(e, dict) and e.get("hint") in (None, "product")
+        for k in ("raw", "canonical_code")
+        if isinstance(e.get(k), str) and e.get(k).strip()
+    }
+    with_qty = any(
+        re.search(rf"(?<![\w-]){re.escape(code)}(?![\w-])\s*(?:x|\*|qty|:|-|=)?\s*\d+", text, re.IGNORECASE)
+        for code in codes
+    )
+    if not with_qty:
+        return verdict
+    asks = [
+        {**a, "domain": "inventory"} if isinstance(a, dict) and a.get("domain") == "incoming" else a
+        for a in verdict.get("asks") or []
+    ]
+    return {
+        **verdict,
+        "intent_hint": "check_stock",
+        "domain_hint": "inventory",
+        **({"asks": asks} if verdict.get("asks") else {}),
+    }
+
+
 def _is_bare_all(message: str) -> bool:
     text = re.sub(r"\s+", " ", str(message or "").strip().lower()).rstrip(".!? ")
     return bool(_BARE_ALL.fullmatch(text))
@@ -3981,6 +4028,11 @@ def _run_stages(  # noqa: PLR0915
         )
 
         if getattr(getattr(state_in, "profile", None), "stock_availability_only", False):
+            typed = jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+            stock_ask = _as_a_stock_ask_by_its_own_words(verdict, typed)
+            if stock_ask is not verdict:
+                turn_trace.add("stock_ask_by_its_own_words", {"parser_intent": verdict.get("intent_hint")})
+                verdict = stock_ask
             summed = _with_repeated_codes_summed(
                 verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
             )

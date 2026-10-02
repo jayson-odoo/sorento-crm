@@ -91,3 +91,5 @@ for a family (every match is listed), and the shared miss sentence for codes not
 
 The dealer ETA view lists every product asked (no shipment: "ETA not confirmed yet") and
 tells dates as dd/mm/yyyy (`eta_policy.dealer_view`, `tests/test_avail_mode_dealer_eta.py`).
+| S46, S46b | CWCX604 x 300 / SRT5674 x 50, read by the parser as `check_incoming` (intermittent, tester re-run on 2eb2a00ef) | stock ask by the message's own words: the 🚫 / ✅ line, never "ETA not confirmed yet" |
+| S46c | SRTW2000 x 10 when arrive? / ETA SRTW2000 x 10 / ... bila sampai | an ETA word keeps the ETA route: `SRTW2000: ETA 19/10/2026` + R |
