@@ -68,6 +68,8 @@ class Env:
         self.extractor_calls: list[str] = []
         self.similar_calls: list[dict] = []
         self.create_calls: list[dict] = []
+        self.renders: list[tuple[str, dict, str]] = []
+        self.languages: list[str | None] = []
         # message_text -> IdeateExtraction; unknown text -> no idea content
         self.extractions: dict[str, IdeateExtraction] = {}
         self.similar_result: dict | Exception = {"ideas": [], "total": 0}
@@ -141,12 +143,18 @@ class Env:
         self.seed_user()
 
     # ---- scripting ------------------------------------------------------ #
-    def extraction(self, text: str, *, fields: dict | None = None, title: str = "") -> None:
-        self.extractions[text] = IdeateExtraction(fields=fields or {}, title=title)
+    def extraction(self, text: str, *, fields: dict | None = None, title: str = "",
+                   language: str | None = None) -> None:
+        ex = IdeateExtraction(fields=fields or {}, title=title)
+        # set after construction so a missing dataclass field fails in the service under
+        # test, not in this fixture
+        ex.language = language
+        self.extractions[text] = ex
 
-    def idea_message(self, text: str = MSG, *, extra_fields: dict | None = None) -> str:
+    def idea_message(self, text: str = MSG, *, extra_fields: dict | None = None,
+                     language: str | None = None) -> str:
         fields = {"problem": PROBLEM, **(extra_fields or {})}
-        self.extraction(text, fields=fields, title=TITLE)
+        self.extraction(text, fields=fields, title=TITLE, language=language)
         return text
 
     def created(self, *, idea_id: str | None = None, captured: dict | None = None) -> str:
@@ -169,16 +177,17 @@ class Env:
         return ideas
 
     def pointer(self, similar: list[dict], *, message: str = MSG, age: timedelta = timedelta(0),
-                is_test: bool = False) -> dict:
-        return {
-            "ideation": {
-                "status": "similar_offered",
-                "message_text": message,
-                "similar": similar,
-                "updated_at": _now_iso(age),
-                "is_test": is_test,
-            }
+                is_test: bool = False, language: str | None = None) -> dict:
+        held = {
+            "status": "similar_offered",
+            "message_text": message,
+            "similar": similar,
+            "updated_at": _now_iso(age),
+            "is_test": is_test,
         }
+        if language is not None:
+            held["language"] = language
+        return {"ideation": held}
 
     # ---- act ------------------------------------------------------------ #
     def turn(self, message: str, *, session_vars_in: dict | None = None, is_test: bool = False,
@@ -221,6 +230,14 @@ def env(monkeypatch):
                 raise e.create_result
             return e.create_result
 
+        from app.services.ideation_capture_replies import render_reply as _real_render
+
+        def _render(kind, facts, *, user_message, language):  # noqa: ANN001
+            e.renders.append((kind, facts, user_message))
+            e.languages.append(language)
+            return _real_render(kind, facts, user_message=user_message, language=language)
+
+        monkeypatch.setattr(svc, "render_reply", _render)
         monkeypatch.setattr(svc, "extract_ideate_turn", _extract)
         monkeypatch.setattr(svc, "call_similar_own", _similar)
         monkeypatch.setattr(svc, "call_create_idea", _create)
@@ -228,6 +245,14 @@ def env(monkeypatch):
         monkeypatch.setattr(svc.settings, "ideation_shared_service_url", "")
         monkeypatch.setattr(svc.settings, "ideation_intake_api_key", "")
         yield e
+
+
+def _only_render(e: Env, kind: str) -> dict:
+    """Exactly one render_reply call this turn, of ``kind``; returns its facts."""
+    assert len(e.renders) == 1, e.renders
+    got_kind, facts, _msg = e.renders[0]
+    assert got_kind == kind
+    return facts
 
 
 def _no_ss(e: Env) -> None:
@@ -645,3 +670,209 @@ def test_m_endpoint_routes_to_capture_service(monkeypatch):
     assert resp.json()["status"] == "ask_idea"
     assert seen["respond_io_id"] == "rio-1"
     assert seen["message_text"] == "an idea"
+
+
+# --------------------------------------------------------------------------- #
+# N - every reply goes through render_reply(kind, facts, *, user_message)     #
+# --------------------------------------------------------------------------- #
+def test_n_no_access_renders_once(env):
+    env.seed_workspace()
+    env.seed_contact()
+    env.idea_message()
+    env.turn(MSG)
+    _only_render(env, "no_access")
+    assert env.renders[0][2] == MSG
+
+
+def test_n_unconfigured_renders_once(env):
+    env.seed_workspace(product_id=None)
+    env.seed_contact()
+    env.seed_user()
+    env.idea_message()
+    env.turn(MSG)
+    _only_render(env, "unconfigured")
+    assert env.renders[0][2] == MSG
+
+
+def test_n_ask_idea_renders_once(env):
+    env.ready()
+    env.extraction("want to submit idea", fields={})
+    env.turn("want to submit idea")
+    _only_render(env, "ask_idea")
+    assert env.renders[0][2] == "want to submit idea"
+
+
+def test_n_complete_facts_exact(env):
+    env.ready()
+    env.idea_message()
+    idea_id = env.created(captured={"problem": PROBLEM, "impact": "Fewer repeat questions"})
+    out = env.turn(MSG)
+    facts = _only_render(env, "complete")
+    assert env.renders[0][2] == MSG
+    assert facts["idea_number"] == "IDEA-0184"
+    assert facts["title"] == TITLE
+    assert facts["link"] == f"{CRM}/ideas/{idea_id}"
+    assert facts["missing"] == ["Proposed solution", "Department", "Photos or files"]
+    assert out["link"] == facts["link"]
+
+
+def test_n_complete_missing_order_when_nothing_captured(env):
+    env.ready()
+    env.idea_message()
+    env.created(captured={"problem": PROBLEM})
+    env.turn(MSG)
+    facts = _only_render(env, "complete")
+    assert facts["missing"] == ["Proposed solution", "Impact", "Department", "Photos or files"]
+
+
+def test_n_similar_offered_facts_exact(env):
+    env.ready()
+    env.idea_message()
+    ideas = env.sim(3, total=5)
+    env.turn(MSG)
+    facts = _only_render(env, "similar_offered")
+    assert env.renders[0][2] == MSG
+    assert [(i["title"], i["link"]) for i in facts["similar"]] == [
+        (i["title"], f"{CRM}/ideas/{i['id']}") for i in ideas
+    ]
+    assert facts["see_all"] == f"{CRM}/ideas?view=mine"
+
+
+def test_n_similar_offered_see_all_is_none_when_total_fits(env):
+    env.ready()
+    env.idea_message()
+    env.sim(2, total=2)
+    env.turn(MSG)
+    facts = _only_render(env, "similar_offered")
+    assert facts["see_all"] is None
+
+
+def test_n_similar_picked_facts(env):
+    env.ready()
+    similar = [
+        {"id": _uid(), "idea_number": "IDEA-0151", "title": "First held idea"},
+        {"id": _uid(), "idea_number": "IDEA-0097", "title": "Second held idea"},
+    ]
+    env.turn("2", session_vars_in=env.pointer(similar))
+    facts = _only_render(env, "similar_picked")
+    assert env.renders[0][2] == "2"
+    assert facts["link"] == f"{CRM}/ideas/{similar[1]['id']}"
+
+
+def test_n_new_user_message_is_current_not_held(env):
+    env.ready()
+    held = env.idea_message("chatbot should remember what the dealer asked before")
+    similar = [{"id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
+    env.created()
+    env.turn("NEW", session_vars_in=env.pointer(similar, message=held))
+    facts = _only_render(env, "complete")
+    assert env.renders[0][2] == "NEW"
+    assert facts["title"] == TITLE
+
+
+def test_n_error_renders_once(env):
+    env.ready()
+    env.idea_message()
+    env.similar_result = IdeationServiceError("boom")
+    env.turn(MSG)
+    _only_render(env, "error")
+    assert env.renders[0][2] == MSG
+
+
+# --------------------------------------------------------------------------- #
+# O - language follows the user's message                                     #
+# --------------------------------------------------------------------------- #
+def test_o_extractor_language_is_passed_to_render(env):
+    env.ready()
+    env.idea_message(language="ms")
+    env.created()
+    env.turn(MSG)
+    _only_render(env, "complete")
+    assert env.languages == ["ms"]
+
+
+@pytest.mark.parametrize("lang", [None, "fr"])
+def test_o_none_or_unknown_language_falls_back_to_en(env, lang):
+    env.ready()
+    env.idea_message(language=lang)
+    env.created()
+    env.turn(MSG)
+    assert env.languages == ["en"]
+
+
+def test_o_ask_idea_follows_language(env):
+    env.ready()
+    env.extraction("nak hantar idea", fields={}, language="ms")
+    env.turn("nak hantar idea")
+    _only_render(env, "ask_idea")
+    assert env.languages == ["ms"]
+
+
+def test_o_no_access_follows_language_and_still_no_ss_call(env):
+    env.seed_workspace()
+    env.seed_contact()
+    env.idea_message(language="zh")
+    env.turn(MSG)
+    _only_render(env, "no_access")
+    assert env.languages == ["zh"]
+    _no_ss(env)
+
+
+def test_o_unconfigured_follows_language(env):
+    env.seed_workspace(product_id=None)
+    env.seed_contact()
+    env.seed_user()
+    env.idea_message(language="ms")
+    env.turn(MSG)
+    _only_render(env, "unconfigured")
+    assert env.languages == ["ms"]
+    _no_ss(env)
+
+
+def test_o_similar_offered_stores_language_on_pointer(env):
+    env.ready()
+    env.idea_message(language="zh")
+    env.sim(2)
+    out = env.turn(MSG)
+    assert env.languages == ["zh"]
+    assert out["session_vars"]["ideation"]["language"] == "zh"
+
+
+def test_o_new_reply_renders_in_held_language(env):
+    env.ready()
+    held = env.idea_message("held original idea text", language="zh")
+    similar = [{"id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
+    env.created()
+    env.turn("NEW", session_vars_in=env.pointer(similar, message=held, language="zh"))
+    _only_render(env, "complete")
+    assert env.languages == ["zh"]
+
+
+def test_o_number_pick_renders_in_held_language(env):
+    env.ready()
+    similar = [{"id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
+    env.turn("1", session_vars_in=env.pointer(similar, language="ms"))
+    _only_render(env, "similar_picked")
+    assert env.languages == ["ms"]
+
+
+def test_o_held_pointer_without_language_renders_en(env):
+    env.ready()
+    held = env.idea_message("held original idea text")
+    similar = [{"id": _uid(), "idea_number": "IDEA-0151", "title": "Held similar"}]
+    env.created()
+    env.turn("NEW", session_vars_in=env.pointer(similar, message=held))
+    assert env.languages == ["en"]
+
+
+def test_o_real_ms_complete_reply_keeps_exact_facts(env):
+    env.ready()
+    env.idea_message(language="ms")
+    idea_id = env.created(captured={"problem": PROBLEM})
+    out = env.turn(MSG)
+    reply = out["reply_text"]
+    assert "IDEA-0184" in reply
+    assert TITLE in reply
+    assert f"{CRM}/ideas/{idea_id}" in reply
+    for name in ("Proposed solution", "Impact", "Department", "Photos or files"):
+        assert name in reply
