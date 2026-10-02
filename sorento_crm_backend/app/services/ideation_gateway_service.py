@@ -235,7 +235,6 @@ def relay(resp: httpx.Response) -> Response:
 
 def user_for_requester(db: Session, user_id: str) -> dict[str, Any]:
     """The `user` dict an assertion needs, for a pending action committing as its requester."""
-    
     from app.models.user import UserStatus
 
     row = db.query(User).filter(User.id == str(user_id)).first()

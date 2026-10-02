@@ -1009,6 +1009,38 @@ def test_q_other_session_vars_keys_survive_a_complete_turn(env):
     assert env.persisted()["focus"] == {"x": 1}
 
 
+@pytest.mark.parametrize("outcome", ["similar_offered", "complete"])
+def test_q_a_key_written_by_another_writer_during_the_turn_survives(env, outcome):
+    """Review SF7: the turn reads session_vars, then runs the LLM extractor and the ss calls,
+    then writes. A key another writer (the chatbot tail, a parallel turn) lands in between
+    must survive; the write re-reads the row and changes only `ideation`."""
+    from app.services.conversation_variables_service import get_for_contact, overwrite_for_contact
+
+    env.ready(session_vars={"focus": {"x": 1}})
+    env.idea_message()
+    if outcome == "similar_offered":
+        env.sim(2)
+    else:
+        env.created()
+    real_similar = env.svc.call_similar_own
+
+    def _similar_and_concurrent_write(base_url, api_key, payload):  # noqa: ANN001
+        current = get_for_contact(env.db, respond_io_id=env.rio)
+        overwrite_for_contact(env.db, respond_io_id=env.rio, state={**current, "written_meanwhile": 7})
+        return real_similar(base_url, api_key, payload)
+
+    env.svc.call_similar_own = _similar_and_concurrent_write
+    try:
+        out = env.turn(MSG)
+    finally:
+        env.svc.call_similar_own = real_similar
+    assert out["status"] == outcome
+    persisted = env.persisted()
+    assert persisted["written_meanwhile"] == 7
+    assert persisted["focus"] == {"x": 1}
+    assert out["session_vars"]["written_meanwhile"] == 7
+
+
 @pytest.mark.parametrize("base", [None, ""])
 def test_q_similar_offered_reply_has_no_none_or_dangling_link_without_a_base_url(env, base):
     env.mp.setattr(env.svc.settings, "frontend_base_url", base)

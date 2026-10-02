@@ -227,11 +227,16 @@ def handle_capture_turn(
         link: str | None = None,
         user_message: str = text_in,
     ) -> dict[str, Any]:
-        new_sv = dict(session_vars)
+        # A live write re-reads the row first: the extractor and the ss calls run in between, and
+        # whatever another writer landed meanwhile must survive. Only `ideation` is this turn's.
+        writes = persist and not is_test
+        # The raw row, not get_for_contact: that one migrates `focus` on read and must not write it.
+        base = _get_contact_row(db, respond_io_id).session_vars if writes else session_vars
+        new_sv = dict(base)
         new_sv.pop("ideation", None)
         if pointer:
             new_sv["ideation"] = pointer
-        if persist and not is_test:
+        if writes:
             overwrite_for_contact(db, respond_io_id=respond_io_id, state=new_sv)
         out: dict[str, Any] = {
             "status": status,
