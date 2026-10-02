@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy import or_
+from sqlalchemy import false, or_
 from sqlalchemy.orm import Session
 
 from app.api.v1.order_management._contact_scope import (
@@ -74,7 +74,8 @@ def _lookup(
 ) -> list[str]:
     """The names of `ids`, inside the contact's companies. An id naming no row is 404, so a
     named filter never quietly widens to "no filter"."""
-    cond = model.company_id.in_(sorted(grants)) if grants else True
+    # No company of its own: every id is outside the contact's companies (fail closed).
+    cond = model.company_id.in_(sorted(grants)) if grants else false()
     if grants and shared:
         cond = or_(model.company_id.is_(None), cond)
     with company_scope(db, None):
@@ -280,7 +281,9 @@ def report_ask(
         if c
     }
 
-    products = _resolve_products(db, code) if code else []
+    # Matched inside the contact's companies, like every other lookup and the run itself.
+    with company_scope(db, frozenset(grants)):
+        products = _resolve_products(db, code) if code else []
     if code and not products:
         raise handle_not_found("Product", product_code)
     echo = _echo(

@@ -829,11 +829,49 @@ def test_s2_run_ask_with_an_empty_filter_list_returns_zero_rows(db):
     from app.services.reports import ask
 
     _ranking_world(db)
-    out = ask.run_ask(
-        db, basis="delivered", measure="amount", group_by="sales_agent",
-        date_from=_date(2026, 9, 1), date_to=_date(2026, 9, 30),
-        filters={"brand": []}, warehouse_codes=[],
-        policy=SimpleNamespace(warehouse_ids=None, excluded_warehouse_ids=None), top_n=10,
-    )
+    def _run(filters):
+        return ask.run_ask(
+            db, basis="delivered", measure="amount", group_by="sales_agent",
+            date_from=_date(2026, 9, 1), date_to=_date(2026, 9, 30),
+            filters=filters, warehouse_codes=[],
+            policy=SimpleNamespace(warehouse_ids=None, excluded_warehouse_ids=None), top_n=10,
+            company_grants=[DEFAULT_COMPANY_ID],
+        )
+
+    # Control (re-review N1): with a real company grant the same run HAS rows, so the empty
+    # brand list below is zero rows because of the guard, not because of the company arm.
+    assert _run({})["total_count"] > 0
+    out = _run({"brand": []})
     assert out["rows"] == [] and out["total_count"] == 0, out
     assert out["total"]["qty"] == 0 and money(out["total"]["amount"]) == D("0.00"), out
+
+
+def test_a_contact_with_no_company_cannot_read_names_through_the_echo(client, db):
+    """Re-review S1-new: with no company of its own, a named id is outside every company the
+    contact holds, so it is 404 and its name never comes back."""
+    from app.models.company import RespondContactCompany
+
+    mocha = seed_mocha(db)
+    secret = seed_customer(db, name="ZZT SECRET MOCHA CUST", company_id=mocha.id)
+    contact = _contact(db)
+    db.query(RespondContactCompany).filter(RespondContactCompany.respond_contact_id == contact.id).delete()
+    db.commit()
+    resp = _ask(client, contact, customer_ids=[secret.id])
+    assert resp.status_code == 404, resp.text
+    assert "ZZT SECRET MOCHA CUST" not in resp.text
+
+
+def test_product_code_is_matched_inside_the_contacts_companies(client, db):
+    """Re-review S2-new: the product prefix resolves under the CONTACT's companies, not the
+    session scope (the test client's session is the default company)."""
+    mocha = seed_mocha(db)
+    mocha_cust = seed_customer(db, name=unique_code("MochaCust"), company_id=mocha.id)
+    code = unique_code("ZZTPM", alpha=True)
+    prod_m = product(db, company_id=mocha.id, code=code)
+    wh_m = warehouse(db, company_id=mocha.id)
+    seed_do(db, customer_id=mocha_cust.id, order_date=SEP, source_book="db1", company_id=mocha.id,
+            lines=[line(prod_m.id, wh_m.id, 7, price=D("1"), total=D("70.00"))])
+    contact = _contact(db)
+    _only_company(db, contact, mocha.id)
+    body = _ok(client, contact, product_code=code)
+    assert body["total"]["qty"] == 7 and money(body["total"]["amount"]) == D("70.00"), body["total"]
