@@ -1,12 +1,11 @@
 # PLAN: GRN pull from AutoCount with PO/SPO line linkage (GRN-PULL-CRM)
 
-Status: **plan + UAC + red tests drafted; behaviour card with the owner (crew-ask on PR
-#1427); no implementation until answered.** Track: full L (new permission slug + grant
+Status: **owner answered Q3-Q5 (2 Oct); Q1/Q2 split design held for live evidence; red tests for
+the settled rules in progress; no implementation yet.** Track: full L (new permission slug + grant
 migration, prod data linkage, cross-repo with shared-service lane GRN-PULL-SS). Branch
 `claude/grn-pull-crm-2pnmf9` (the sandbox's designated branch; the brief named
 `crew/grn-pull-crm`), base `main` 066b966e. UAC: `autocount-grn-pull-crm-02oct-acceptance-criteria.md`
-(AC-GP-01 onward). Rules that wait on an owner answer are marked **(pending Qn)**; each is
-written to the recommendation and changes only if the owner rules otherwise.
+(AC-GP-01 onward). Rules held for the live evidence are marked **(held)**; the rest follow the owner rulings in 0.1.
 
 Scope: Goods Receive Notes pulled on request by DocDate, same path as the DO pull
 (shared-service snapshot -> CRM preview/compare -> review -> user confirms). Push stays OFF.
@@ -28,6 +27,29 @@ Paths: `be/` = `sorento_crm_backend/`, `fe/` = `sorento_crm_frontend/`.
 | Split vs AutoCount line identity | `be/app/models/procurement.py:840` | `uq_picking_lines_header_dtl_key`: one picking line per AutoCount DtlKey; an AutoCount line cannot be split the way an upload line is. |
 | Cancelled GRN and SPO capacity | `grn_spo_matching.py:185,292` | Pool excludes `rejected` only, so a cancelled GRN's linked lines still consume SPO capacity. `compute_received_for_allocation` counts `approved` only (`procurement_service.py:4499`), so the receipt figure is already right. |
 | Shared-service GRN snapshot | crew, 2 Oct | Not on ss main (`pull_gateway_service.py:54-59`). Lane GRN-PULL-SS adds it to the contract in 1.2. `From*` line keys seen only in an ss fixture; live presence unverified, so absent keys must behave as blank. |
+
+## 0.1 Owner rulings (2 Oct, relayed by crew)
+
+- **Q3 (a)**: `FromDocNo` wins; `OurPONo` is hand typed and only used when `FromDocNo` is blank.
+- **Q4 (a)**: the SPO capacity pool excludes `cancelled` GRNs as well as `rejected`.
+- **Q5 (a)**: two-dropzone compare, lines = "DETAIL LISTING ... .xlsx", listing = "GRN Listing -
+  Macro Version ... .xlsm" (column structure coming from crew).
+- **Q1 / Q2 REJECTED as proposed**: "AutoCount can relate the PO/SPO to GR, we are supposed to
+  be able to". Every GRN line must link to a PO line or SPO line(s); "unlinked + flagged" is
+  not an accepted outcome for a line that names its source. PO lines link too. **The split /
+  several-candidates design is HELD** until crew's live evidence: does AutoCount already split
+  a receipt per SPO line, and is `FromDocDtlKey` ever > 0.
+- Dev examples (Excel-imported, company SRT; dev has 0 AutoCount-ingested GRNs, no cancelled GRN):
+  - SPO, same product split: `GR-2026/09-0090` (`SPO-2026/09-0010`: SRT756-32-CR 175 BRW on SPO
+    line 99 + 5 BRW-HP on line 100; SRT1000-CR - NEW 2640 over 7 SPO lines in 3 warehouses);
+    `GR-2026/09-0075` (SRTWC7405-SC, `SPO-2026/09-0050` line 32 twice, 43 + 24, line 33 43).
+  - SPO, one line per product: `GR-2026/09-0079` (`SPO-2026/09-0005`).
+  - PO by text only (no `po_line_id` on dev): `GR-2026/09-0070` (`PO-2026/09-0018`),
+    `GR-2026/09-0092` (`PO-2026/09-0020`).
+  - No source document: `FGR2026/09-0022`, `FGR2026/09-0024`, `GR-2026/07-0001`.
+
+Consequence for 1.3: R2a/R2b outcomes "ambiguous" and "over receipt" are placeholders until
+the held design lands; the single-candidate cases are settled.
 
 ## 1. Design
 
@@ -53,36 +75,54 @@ null = blank (pinned).
 
 ### 1.3 Line linkage (the ingest change; one resolver used by push, pull and the waiting fill)
 
-Source document of a line: `FromDocNo`, else `OurPONo` **(pending Q3)**. Order of rules:
+Live evidence (crew, 2 Oct, db1 + db2, read-only): `FromDocDtlKey` = 0 on every GRN line
+(257 + 71); `FromDocNo` filled on 246 of 257, `OurPONo` blank on all; `FromDocType` reads
+`PO` even when `FromDocNo` is an SPO; AutoCount ALREADY writes one GRN line per SPO line, in
+the SPO's Seq order, the same item repeating (GR-2026/09-0090 66 lines = SPO-2026/09-0010 66
+lines; GR-2026/09-0075 38 = SPO-2026/09-0050 38); the GRN Location can differ from the SPO's
+(BRW -> MWH, BRW -> BRW-RSV). Rulings: Q3 a, Q4 a, D1 a, D2 a, D4 accept (crew); D3 with the
+owner, built as (a) behind `_unmatched_item` so it can change.
 
-| Rule | Condition | Result |
-| --- | --- | --- |
-| R1 exact | `FromDocDtlKey > 0` | `_po_or_spo_line` unchanged; none or several: `po_line_unresolved`. |
-| R4 type | `FromDocType` present and not `PO` | Unlinked, `from_doc_type_unsupported`. `FullTransferOption` / `FullTransferFromDocList` stay in `source_record` only. |
-| R2a SPO | source doc's `_spo_match_key` matches an `spo_allocations.spo_number` in the anchor company | Reuse `build_allocation_pool(product, spo, exclude_header_ids={this GRN}, company)` + `draw_fifo(pool, warehouse=Location, qty)`. One draw from one allocation covering the whole qty: `spo_allocation_id`. Exactly one allocation of that product in the SPO: link to it even past its capacity, warning `spo_over_receipt`. Else unlinked, `spo_line_ambiguous` **(pending Q1)**. `spo_number_raw` = the source doc (so the forward matcher and the Excel upload read the same statement). |
-| R2b PO | source doc equals a `purchase_orders.po_number` in the anchor company | PO lines of that PO with the line's product; several: narrowed to `warehouse_id == Location`. One: `po_line_id` (+ `purchase_order_id`). Several: `po_line_ambiguous`. None: `po_line_unresolved` **(pending Q2)**. `purchase_order_lines.qty_received` is never written (the PO feed owns it). |
-| R2c neither | source doc in neither table | Unlinked, `purchase_order_unresolved`; the end-of-batch fill retries it. |
-| R3 none | no `FromDocNo`, no `OurPONo` | Unlinked, no warning. |
+1. **Source document**: `FromDocNo`, else `OurPONo` (Q3 a). Neither: no source, unlinked,
+   no warning (the only silent unlinked case; 11 of 257 live lines).
+2. **Exact key** `FromDocDtlKey > 0`: existing `_po_or_spo_line`, unchanged.
+3. **PO or SPO by the number's table, never `FromDocType`**: `_spo_match_key` matches an
+   `spo_allocations.spo_number` in the anchor company -> SPO; else an exact
+   `purchase_orders.po_number` -> PO; neither -> `purchase_order_unresolved`, waiting fill.
+4. **Candidates**: that document's lines with the GRN line's product, in line order (SPO:
+   `spo_line_number`, which the SPO ingest assigns in Seq order,
+   `shipping_order_ingest_service.py:533-539,1065`; Seq itself is not stored, `:921`. PO:
+   the DtlKey in `source_ref`, D4). SPO lines retired with no picks are skipped (pool rule).
+   Location is never a key.
+5. **Remaining** per candidate = ordered (`allocated_quantity` / `qty_ordered`) minus the
+   drawn qty of OTHER GRNs' lines linked to it (`quantity_picked`), rejected and cancelled
+   GRNs excluded (Q4 a). For SPO this is `grn_spo_matching.build_allocation_pool`'s
+   arithmetic, refactored into a candidates function that keeps zero-remaining rows and
+   sorts by line number; the pool keeps its FIFO order for the upload. One shared function.
+6. **Choice (D1 a)**: GRN lines of a product in `Seq` order; each takes a DIFFERENT unused
+   candidate: first with remaining == qty; else first with remaining >= qty; else first with
+   any remaining (`over_receipt`); else the last candidate (`over_receipt`). Remaining is
+   decremented as lines take candidates. One GRN line = one PO/SPO line; nothing is split.
+7. **No candidate (D3, owner pending)**: the product is not on the named document:
+   `item_not_on_order`, line link null, but the header link is kept: `purchase_order_id`
+   (PO) or `spo_number_raw` + `from_doc_type='SPO'` (SPO).
+8. **Written columns**: `po_line_id` + `purchase_order_id` (PO) or `spo_allocation_id` +
+   `spo_number_raw` (SPO); `from_doc_*` as sent (`from_dtl_key` None for 0).
+9. **Re-push** of the same GRN excludes its own lines from "other GRNs" (the upload's
+   `exclude_header_ids`), so it keeps its links. A link to a different target replaces the
+   old one; an unresolvable re-push never unsets a link (existing `keep_links`).
+10. **Adoption of an Excel GRN (D2 a)**: per product, the AutoCount line claims the stored
+    lines without `dtl_key` whose `quantity_picked`, in stored order, add up to its qty; the
+    first claimed keeps its id, the rest are deleted (their SPO lines' receipt recomputed,
+    `legacy_links_released`); the link comes from rules 2-7 (the Excel FIFO link is
+    replaced). A single exact-qty claim is the old behaviour.
+11. **Waiting fill**: lines with `from_doc_no`, no `from_dtl_key`, both links null, newest
+    first, bounded by `MAX_WAITING_LINKS`, through the same resolver.
+12. **Batch order**: the pull feeds the ingest sorted by (DocDate, DocKey), so earlier
+    receipts take their lines first; preview and apply identical.
 
-PO is tried before SPO only when the number is an exact `po_number` (SPO and PO share one
-AutoCount table, `:775-777`; their numbers do not collide in practice: `PO-...` vs `SPO-...`).
-A number matching both is `po_line_ambiguous` (no guess).
-
-Pool consumption within one GRN: lines of the same GRN draw from ONE pool per (SPO, product),
-built once per document, so two lines of one GRN cannot both take the same capacity (the
-upload's rule, `procurement_service.py:4427-4431`).
-
-Cancelled GRN (R6): pool excludes `cancelled` as well as `rejected` **(pending Q4)**; the
-cancelled GRN keeps its links for audit.
-
-Waiting-link fill (`_fill_waiting_links`, `:1109`): the GRN branch adds lines with
-`from_doc_no` set, both links null, no `from_dtl_key`, ordered newest first, bounded by
-`MAX_WAITING_LINKS`, resolved with the same R2 resolver.
-
-Warnings join `CONTRACT_2_7_WARNINGS` and the pull's human wording map: `spo_line_ambiguous`
-"SPO line ambiguous", `spo_over_receipt` "received more than the SPO line has left",
-`po_line_ambiguous` "PO line ambiguous", `from_doc_type_unsupported` "source document type
-not linked".
+Warnings join `CONTRACT_2_7_WARNINGS` and the pull's wording map: `over_receipt` "received
+more than the order line has left", `item_not_on_order` "item not on the named PO / SPO".
 
 ### 1.4 Preview / apply
 
@@ -99,12 +139,25 @@ helper both callers import, no copy). Audit actor as DO (job actor scope).
   doc_date, creditor_code, creditor_name, item_code, description, location, qty, uom,
   from_doc_no, link` where `link` is the preview's verdict for the line (`PO line` / `SPO line` /
   `unlinked` / `ambiguous`; read from the stored outcome identity, not recomputed).
-- **Compare (pending Q5)**: `source=lines` = the GRN lines sheet, keyed (Doc No, Item Code,
-  Location) using the upload's own header aliases (`import_tasks.py:2239-2242`), Qty summed per
-  key, plus "stated source" (Excel "Our PO No." / line SPO columns `:1683`) vs `FromDocNo`,
-  `_spo_match_key`-normalised; `source=headers` = the GRN listing sheet keyed by Doc No on
-  Date and stated SPO ("Transfer From"). Windowed by the pull's DocDate window exactly as DO
-  (`pull_window`, `_excel_day`). Only-in either side is a difference, never a delete.
+- **Compare (Q5 a)**, two dropzones (the DO compare UI unchanged). Real files (crew, read-only;
+  never committed, fixtures use made-up values in the same shape):
+  - `lines` = "DETAIL LISTING ddmmyyyy.xlsx", sheet `Sheet`, header row 1, 34 columns incl.
+    `Doc No`, `Doc Date`, `Creditor Code`, `Our PO No.` (= AutoCount `FromDocNo`), `Cancelled`,
+    `Item Code`, `Location`, `Qty` (`Total` / `Tax` / `Local Total` appear twice: header and
+    line; read by first match only where needed). Last row is a totals row with no Doc No
+    (skipped). Rows are NOT in AutoCount Seq order and a document's rows are scattered:
+    compare by (Doc No, Item Code, Location) with Qty as a MULTISET per key (sorted lists of
+    quantities, so 2 + 98 vs 100 is a difference and 106/24 vs 24/106 is not), plus `Our PO
+    No.` vs `FromDocNo` (`_spo_match_key`-normalised) per key. Never by position.
+  - `headers` = "GRN Listing - Macro Version dd.mm.yyyy.xlsm", sheet `Master` read BY NAME
+    (fallback: the active sheet): `Doc. No.`, `Transfer From`, `Date`, `Creditor Code`,
+    `Cancelled`; totals row skipped. Keyed by Doc No on Date, Creditor Code, Transfer From,
+    Cancelled. **Flag:** the existing listing importer reads `workbook.active`
+    (`import_tasks.py:1808,2213`), which in this file is `Template` (10 docs) not `Master`
+    (27). Not this lane's fix; recorded for the backlog.
+  - Windowed by the pull's DocDate window as DO (`pull_window`, `_excel_day`). A document only
+    in AutoCount (live 2026-10-01: GR-2026/10-0006, 33 lines, missing from the listing) is an
+    expected "in AutoCount, not in your Excel" difference; only-in never deletes.
 
 ### 1.6 Frontend (reuse, no new UI)
 
@@ -123,7 +176,7 @@ job page ("AutoCount GRN Pull", Back to Goods Receive Notes), the GRN list's Act
 
 1. This plan + UAC + red tests (`be/tests/test_autocount_pull_goods_receive_notes.py`,
    `be/tests/test_ingest_autocount_grn_line_link.py`). **Done before the owner's answer.**
-2. Owner answers -> adjust the pending rules and their tests.
+2. Live evidence (crew) -> write the held split design (Q1/Q2) and its tests.
 3. Backend: ingest R2/R4 + pool `cancelled` + waiting fill; maps + slug + migration + gate;
    preview / apply / hook; rows / download / compare.
 4. Frontend switches + vitest.

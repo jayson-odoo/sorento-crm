@@ -1,7 +1,8 @@
 # UAC: GRN pull from AutoCount with PO/SPO line linkage (GRN-PULL-CRM)
 
-Plan: `PLAN-autocount-grn-pull-crm-02oct.md`. Criteria marked **(pending Qn)** follow the
-recommendation on the behaviour card and change if the owner rules otherwise.
+Plan: `PLAN-autocount-grn-pull-crm-02oct.md`. Owner rulings 2 Oct: Q3 (a), Q4 (a), Q5 (a);
+Q1 / Q2 as proposed rejected ("every GRN line must link"), design held for live evidence.
+Criteria marked **(held)** are rewritten once that lands.
 
 ## Entity, permission, migration
 
@@ -33,22 +34,23 @@ recommendation on the behaviour card and change if the owner rules otherwise.
 - **AC-GP-20 [BE]** `FromDocDtlKey > 0` keeps the exact rule (existing AC-AG033).
 - **AC-GP-21 [BE]** Key 0, `FromDocType "PO"`, `FromDocNo` = a PO holding ONE line of the
   product: `po_line_id` and `purchase_order_id` set, no warning. (Owner sample
-  `PO-2026/07-0013`.) **(pending Q2)**
+  `PO-2026/07-0013`; dev `GR-2026/09-0070` / `PO-2026/09-0018`.)
 - **AC-GP-22 [BE]** Same, the PO holds the product on two lines, one in the GRN's Location:
-  that one links. Both in other warehouses (or both in the same one): unlinked,
-  `po_line_ambiguous`. **(pending Q2)**
+  that one links. Both in other warehouses (or both in the same one): **(held)**, the owner
+  wants a link, never "ambiguous".
 - **AC-GP-23 [BE]** Key 0, `FromDocNo` = an SPO whose product has one allocation with enough
   capacity: `spo_allocation_id` set, `spo_number_raw` = the SPO; after apply the
   allocation's received quantity includes the line (receipt hook ran).
-- **AC-GP-24 [BE]** Key 0, SPO with the product on two allocations and a qty no single one
-  covers: unlinked, `spo_line_ambiguous`, nothing guessed. **(pending Q1)**
+- **AC-GP-24 [BE] (held)** Key 0, SPO with the product on several allocations (dev
+  `GR-2026/09-0090`: SRT1000-CR 2640 over 7 SPO lines in 3 warehouses; `GR-2026/09-0075`):
+  every line links to SPO line(s); the shape waits on the live evidence.
 - **AC-GP-25 [BE]** Key 0, SPO with ONE allocation of the product, qty above its remaining
-  capacity: linked, warning `spo_over_receipt`. **(pending Q1)**
+  capacity: linked to it (the only candidate), warning `spo_over_receipt`.
 - **AC-GP-26 [BE]** Two GRNs against the same SPO allocation (partial receipts): the second
   sees the first's draw; when the first used it up and the SPO has a second allocation of
   the product, the second GRN links to that one.
 - **AC-GP-27 [BE]** `FromDocNo` set and `OurPONo` set to a different document: `FromDocNo`
-  wins. **(pending Q3)**
+  wins (Q3 a).
 - **AC-GP-28 [BE]** No `FromDocNo`, no `OurPONo`: unlinked, no linkage warning.
 - **AC-GP-29 [BE]** `FromDocType` other than `PO` (e.g. `GR`): unlinked,
   `from_doc_type_unsupported`.
@@ -56,7 +58,7 @@ recommendation on the behaviour card and change if the owner rules otherwise.
   arrives later, the next GRN batch fills the line link.
 - **AC-GP-31 [BE]** A PO / SPO with the same number in company B never links.
 - **AC-GP-32 [BE]** A cancelled GRN's lines no longer consume SPO capacity: a later GRN for
-  the same SPO and product links to the allocation the cancelled one had used. **(pending Q4)**
+  the same SPO and product links to the allocation the cancelled one had used (Q4 a).
 - **AC-GP-33 [BE]** Unknown ItemCode: `retryable`. Unknown Location: lands with no
   warehouse (unchanged).
 
@@ -73,7 +75,7 @@ recommendation on the behaviour card and change if the owner rules otherwise.
 - **AC-GP-51 [BE]** `GET /download.xlsx` header row matches AC-GP-50 in words.
 - **AC-GP-52 [BE]** `POST /compare source=lines` keys by (Doc No, Item Code, Location), sums
   Qty, compares the stated source ("Our PO No.") with `FromDocNo` normalised; `source=headers`
-  keys by Doc No. **(pending Q5)**
+  keys by Doc No (Q5 a; column aliases fixed once crew sends the two real files' headers).
 
 ## Frontend
 
