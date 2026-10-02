@@ -57,7 +57,7 @@ import {
   useConversationSLATestOverrides,
 } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useConversationSLATracking';
 import EventLogTable from '@/app/(protected)/sla-management/conversation-sla-tracking/components/EventLogTable';
-import { getUsersSelect } from '@/services/userSelectService';
+import { getUserLookup } from '@/services/userSelectService';
 import { escalateFormTracking } from './formSLAService';
 import { toast } from '@/lib/toast';
 
@@ -130,8 +130,8 @@ export default function FormSLATrackerDetail({
     error: usersSelectError,
     refetch: refetchUsersSelect,
   } = useQuery({
-    queryKey: ['users-select', 'form-sla-test-override'],
-    queryFn: () => getUsersSelect(),
+    queryKey: ['user-lookup', 'form-sla-test-override'],
+    queryFn: () => getUserLookup(),
     enabled: assigneeDialogOpen && canTestOverride,
     staleTime: 1000 * 60 * 5,
   });
@@ -714,9 +714,8 @@ export default function FormSLATrackerDetail({
                 { value: '', label: 'No assignee' },
                 ...usersSelect.map((user) => ({
                   value: user.id,
-                  label: user.name || user.email || 'Unnamed user',
-                  searchText: `${user.name ?? ''} ${user.email ?? ''}`.trim(),
-                  description: user.email ?? undefined,
+                  label: user.name || 'Unnamed user',
+                  searchText: user.name ?? '',
                 })),
               ]}
               placeholder="No assignee"

@@ -42,8 +42,7 @@ export function AssignLeadDialog({
 
   const options = (users.data ?? []).map((user) => ({
     value: user.id,
-    label: user.name || user.email || 'Unnamed user',
-    description: user.name ? (user.email ?? undefined) : undefined,
+    label: user.name || 'Unnamed user',
   }));
   const pending = busy || Boolean(submitting);
 

@@ -18,7 +18,7 @@ import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { Switch } from '@/components/ui/switch';
-import { useStatusGraph } from '@/app/(protected)/system-management/status-graphs/hooks/useStatusGraphs';
+import { useProjectStatusGraph } from '@/app/(protected)/project-sales/_shared/hooks/useProjectStatusGraph';
 import {
   useChangeProjectStatus,
   useProjectParties,
@@ -103,7 +103,7 @@ export function PipelineClient() {
     onlyCritical,
   ]);
 
-  const graph = useStatusGraph('project', null, false);
+  const graph = useProjectStatusGraph('project');
   const developers = useProjectParties({ party_type: 'developer', limit: 200 });
   const types = useProjectTypes();
   const move = useChangeProjectStatus();

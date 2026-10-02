@@ -28,7 +28,7 @@ import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import { getUsersSelect } from '@/services/userSelectService';
+import { getUserLookup } from '@/services/userSelectService';
 import {
   useOrderInquiryHeaders,
   useOrderInquiryWorklistSummary,
@@ -183,8 +183,8 @@ export function OrderInquiryHeadersList() {
   //     registered `Project` row (0 of 738 headers on the prod copy), so the REGISTERED
   //     project list (`useProjects`) matched nothing and is dropped here.
   const usersQuery = useQuery({
-    queryKey: ['oi-header-raised-by-users'],
-    queryFn: () => getUsersSelect(),
+    queryKey: ['user-lookup', 'with-inactive'],
+    queryFn: () => getUserLookup({ include_inactive: true }),
     staleTime: 5 * 60 * 1000,
   });
   const worklistSummary = useOrderInquiryWorklistSummary({});
@@ -193,7 +193,7 @@ export function OrderInquiryHeadersList() {
     () => ({
       raisedBy: (usersQuery.data ?? []).map((user) => ({
         value: user.id,
-        label: user.name || user.email || 'Unnamed user',
+        label: user.name || 'Unnamed user',
       })),
       agents: (worklistSummary.data?.agents ?? []).map((entry) => ({
         value: entry.label,

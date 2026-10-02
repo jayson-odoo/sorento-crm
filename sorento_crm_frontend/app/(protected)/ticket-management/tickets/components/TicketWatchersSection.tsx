@@ -8,7 +8,7 @@ import {
   SearchableSelect,
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
-import { getUsersSelect, type UserSelectItem } from '@/services/userSelectService';
+import { getUserLookup, type UserLookupItem } from '@/services/userSelectService';
 import {
   addTicketWatchers,
   removeTicketWatcher,
@@ -21,14 +21,14 @@ interface Props {
 }
 
 export default function TicketWatchersSection({ ticket, onChange }: Props) {
-  const [users, setUsers] = useState<UserSelectItem[]>([]);
+  const [users, setUsers] = useState<UserLookupItem[]>([]);
   const [adding, setAdding] = useState(false);
   const [pendingUserId, setPendingUserId] = useState('');
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState<unknown>(null);
 
   const loadUsers = useCallback(() => {
-    getUsersSelect()
+    getUserLookup()
       .then((rows) => {
         setUsers(rows);
         setLoadError(null);
@@ -53,9 +53,8 @@ export default function TicketWatchersSection({ ticket, onChange }: Props) {
         .filter((u) => !watcherIds.has(u.id))
         .map((u) => ({
           value: u.id,
-          label: u.name || u.email || 'Unnamed user',
-          searchText: `${u.name ?? ''} ${u.email ?? ''}`,
-          description: u.email ?? undefined,
+          label: u.name || 'Unnamed user',
+          searchText: u.name ?? '',
         })),
     [users, watcherIds],
   );

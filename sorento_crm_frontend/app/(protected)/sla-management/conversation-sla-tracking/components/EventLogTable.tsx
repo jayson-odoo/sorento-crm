@@ -38,6 +38,7 @@ import { useConversationSLAEventLogs, useDeleteConversationSLAEventLog } from '.
 import { formatDateTime, formatDuration, parseDateTimeAsUTC } from '@/lib/helpers';
 import type { ConversationSLAEventLog } from '../types/conversationSLATracking.types';
 import { useQuery } from '@tanstack/react-query';
+import { getUserLookup } from '@/services/userSelectService';
 import { apiFetch } from '@/lib/api';
 
 function toYYYYMMDD(d: Date): string {
@@ -149,16 +150,12 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
     error: respondUsersError,
     refetch: refetchRespondUsers,
   } = useQuery({
-    queryKey: ['respond-synced-users'],
-    queryFn: async () => {
-      const response = await apiFetch('/api/user-management/users/select?respond_synced=successful');
-      if (!response.ok) throw new Error('Failed to fetch users');
-      return response.json();
-    },
+    queryKey: ['user-lookup', 'respond-synced', 'with-inactive'],
+    queryFn: () => getUserLookup({ respond_synced: true, include_inactive: true }),
     staleTime: 1000 * 60 * 5,
   });
 
-  const users = Array.isArray(respondUsers) ? respondUsers : respondUsers?.data ?? [];
+  const users = respondUsers ?? [];
 
   const { data: currentUser } = useQuery({
     queryKey: ['account-profile'],
@@ -412,9 +409,9 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
                         onRetry={() => void refetchRespondUsers()}
                         options={[
                           { value: '__all__', label: 'All' },
-                          ...users.map((u: { id: string; name?: string; email?: string }) => ({
+                          ...users.map((u) => ({
                             value: u.id,
-                            label: u.name || u.email || u.id,
+                            label: u.name || 'Unnamed user',
                           })),
                         ]}
                         placeholder="All"
