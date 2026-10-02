@@ -127,7 +127,7 @@ export function IdeasListView() {
             {row.original.ideaNumber ?? '-'}
           </span>
         ),
-        size: 90,
+        size: 110,
         enableSorting: false,
         meta: {
           headerTitle: 'No.',

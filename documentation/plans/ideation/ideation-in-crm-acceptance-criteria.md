@@ -76,7 +76,8 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
 - **AC-C-03** The vote box toggles the viewer's upvote via the gateway without opening the row; the
   count and filled state update; a merged child's box is disabled.
 - **AC-C-04** Status filter (SearchableSelect, clearable) includes Archived; default shows active
-  ideas; search filters by title, number, submitter.
+  ideas; search is passed to ss (`search`), which today matches the title only (number and submitter
+  search need ss; PLAN section 13 item 9).
 - **AC-C-05** Header CTA "Capture idea" opens a modal with Problem statement (required, inline
   "Problem statement is required"), Proposed solution, Impact, Department, Original message,
   Attachments; no Product picker. Save calls `POST /ideas` then uploads each dropped file to the new
@@ -96,7 +97,7 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
   composer.
 - **AC-D-03** Edit swaps values for inputs in place (same layout); Save calls `PATCH /ideas/{id}`.
 - **AC-D-04** "..." menu: Promote to BR (one click: `POST /ideas/promote` with `{ideaIds:[id],
-  title:<idea title>}`, success toast naming the new BR number from the response; ss 403 message
+  title:<idea title>}`, success toast naming the new BR by its title (ss returns no BR number); ss 403 message
   shown as an error toast), Merge into another idea, Archive (5 s countdown), Delete (10 s countdown,
   then back to the list). No confirm dialog anywhere.
 - **AC-D-05** Attachments tab lists files (download goes through the gateway, buffered, and saves as a
@@ -162,6 +163,16 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
   `X-Forwarded-For` is sent to ss: behind the CRM's nginx the left-most XFF is client-controlled
   (security review M2). Body limit 2000 characters, matching ss's public limit.
 - **AC-H-08** Usable at 375px and 1280px; not-found state at both.
+
+## J. Known ss-side gaps found by the end-of-lane browser pass (2 Oct, local ss on crew/ideation-comments)
+
+Not CRM defects; recorded so the hand test expects them. Each is a PLAN section 13 ask.
+- Deleting an idea that has an attachment fails in ss (pending action outcome "failed"; ss backlog
+  BL-SS-285, attachments FK). Ideas without attachments delete fine.
+- The idea page vote box does not show the viewer's own vote: ss `GET /embed/ideas/{id}` serialises
+  with `voter_id=None`. List and board show it correctly.
+- An idea captured from the CRM shows submitter "Unknown embed": ss embed create passes `actor=None`
+  and no submitter name. Same root as AC-E-05 (ss ignores the `name` claim).
 
 ## I. Removal and regression
 
