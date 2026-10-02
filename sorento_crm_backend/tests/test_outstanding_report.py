@@ -831,14 +831,11 @@ def test_customer_ids_echo_the_resolved_names_in_the_header(client, db):
 
 
 def test_customer_header_dedupes_ledger_names(client, db):
-    """AC-1163 (R19, owner ruling, 13 Sep 2026, live trace): a FULLSHUN outstanding ask
-    printed "FULLSHUN SANITARYWARE SDN BHD" five times among 14 ledger names - one
-    company, several `customers` rows (one per ledger/branch), and `_customer_echo`
-    joins EVERY MATCHED ROW's name with no dedupe at all. The fix is DISTINCT names, in
-    FIRST-SEEN order (the order `customer_ids` arrived in - never alphabetical, which
-    `ORDER BY customer_name` gives today and which would put the asterisked SHOWCASE
-    name first). The asterisk is real ledger data and is never stripped or
-    transformed."""
+    """AC-1163 (R19, 13 Sep 2026) joined DISTINCT ledger names. The owner REVERSED it on
+    2 Oct 2026 (CUSTOMER-GROUP): the header names a customer COMPANY once - its customer
+    group, else the name rule's shared label - never ledger by ledger, and with no count.
+    These six FULLSHUN ledgers (the asterisk and `[A/C III]` are ledger data) share one name
+    rule family and no group, so the header is their shared label, once."""
     plain_1 = customer(db, company_id=DEFAULT_COMPANY_ID, name="FULLSHUN SANITARYWARE SDN BHD")
     plain_2 = customer(db, company_id=DEFAULT_COMPANY_ID, name="FULLSHUN SANITARYWARE SDN BHD")
     plain_3 = customer(db, company_id=DEFAULT_COMPANY_ID, name="FULLSHUN SANITARYWARE SDN BHD")
@@ -856,11 +853,39 @@ def test_customer_header_dedupes_ledger_names(client, db):
     ids = ",".join([plain_1.id, plain_2.id, plain_3.id, showcase.id, ac3_1.id, ac3_2.id])
     resp = client.get(BASE, params={"customer_ids": ids, "scope": "so"})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["customer_name"] == (
-        "FULLSHUN SANITARYWARE SDN BHD, "
-        "*FULLSHUN SANITARYWARE SDN BHD (SHOWCASE), "
-        "FULLSHUN SANITARYWARE SDN BHD [A/C III]"
-    ), resp.json()
+    assert resp.json()["customer_name"] == "FULLSHUN SANITARYWARE SDN BHD", resp.json()
+
+
+def test_customer_header_names_the_customer_group_on_the_route(client, db):
+    """CUSTOMER-GROUP: six HANLIM ledgers in one group -> the group name, once, no count."""
+    from sqlalchemy import text
+
+    gid = str(uuid.uuid4())
+    db.execute(
+        text(
+            "INSERT INTO customer_groups (id, company_id, name, created_at, updated_at) "
+            "VALUES (:i, :c, 'HANLIM TRADING SDN BHD', now(), now())"
+        ),
+        {"i": gid, "c": DEFAULT_COMPANY_ID},
+    )
+    ids = []
+    for name in (
+        "HANLIM TRADING SDN BHD [A/C I]",
+        "HANLIM TRADING SDN BHD [A/C II]",
+        "HANLIM TRADING SDN BHD [A/C III]",
+        "HANLIM TRADING SDN BHD [A/C IV]",
+        "HANLIM TRADING SDN BHD",
+        "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+    ):
+        row = customer(db, company_id=DEFAULT_COMPANY_ID, name=name)
+        db.execute(text("UPDATE customers SET customer_group_id = :g WHERE id = :c"), {"g": gid, "c": row.id})
+        ids.append(row.id)
+    db.commit()
+
+    resp = client.get(BASE, params={"customer_ids": ",".join(ids), "scope": "so"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["customer_name"] == "HANLIM TRADING SDN BHD", resp.json()
 
 
 def test_fractional_quantities_round_to_whole_units(client, db):

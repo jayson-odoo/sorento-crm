@@ -153,3 +153,43 @@ def test_the_same_family_in_two_companies_is_two_groups():
         assert list(_groups(db, DEFAULT_COMPANY_ID)) == ["TWIN SDN BHD"]
         assert list(_groups(db, MOCHA_ID)) == ["TWIN SDN BHD"]
         assert _groups(db, DEFAULT_COMPANY_ID)["TWIN SDN BHD"] != _groups(db, MOCHA_ID)["TWIN SDN BHD"]
+
+
+# ============================================================ seed naming: shared bracketed runs
+
+
+def _plan(names_levels, company=DEFAULT_COMPANY_ID):
+    """`plan_groups` rows are (id, company_id, code, name, level, group_id); pure, no DB."""
+    rows = [
+        (str(uuid.uuid4()), company, f"ZZT-{i:02d}", name, level, None)
+        for i, (name, level) in enumerate(names_levels)
+    ]
+    return [group_name for _c, group_name, _ids in _load().plan_groups(rows)]
+
+
+def test_group_name_keeps_a_bracketed_run_every_member_shares():
+    assert _plan([("SCR MARKETING (M) SDN BHD [A/C IV]", 4), ("SCR MARKETING (M) SDN BHD [A/C I]", 1)]) == [
+        "SCR MARKETING (M) SDN BHD"
+    ]
+    assert _plan(
+        [("CHENG HUAT HARDWARE (SENTUL) SDN BHD [A/C I]", 1), ("CHENG HUAT HARDWARE (SENTUL) SDN BHD [A/C II]", 2)]
+    ) == ["CHENG HUAT HARDWARE (SENTUL) SDN BHD"]
+
+
+def test_group_name_drops_a_bracketed_run_only_some_members_carry():
+    hanlim = [
+        ("HANLIM TRADING SDN BHD [A/C I]", 1),
+        ("HANLIM TRADING SDN BHD [A/C II]", 2),
+        ("HANLIM TRADING SDN BHD [A/C III]", 3),
+        ("HANLIM TRADING SDN BHD [A/C IV]", 4),
+        ("HANLIM TRADING SDN BHD", None),
+        ("HANLIM TRADING SDN BHD (CERAMIC & ELLECI)", None),
+    ]
+    assert _plan(hanlim) == ["HANLIM TRADING SDN BHD"]
+    jubin = [
+        ("JUBIN BMS (NS) SDN BHD [A/C I]", 1),
+        ("JUBIN BMS (KLANG) SDN BHD [A/C I]", 1),
+        ("JUBIN BMS (1990) SDN BHD [A/C III]", 3),
+        ("JUBIN BMS SDN BHD", None),
+    ]
+    assert _plan(jubin) == ["JUBIN BMS SDN BHD"]
