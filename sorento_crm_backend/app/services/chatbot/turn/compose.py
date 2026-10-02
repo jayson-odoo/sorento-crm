@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from app.services.chatbot.label_catalog import IDENTITY
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
 from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
@@ -317,6 +318,7 @@ def _routing_brand(ctx: Any) -> Any:
 
 
 def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: Any) -> Answer:
+    localizer = getattr(ctx, "localizer", None) or IDENTITY
     sections: list[Section] = []
     seen_rows: set[tuple] = set()
     text_parts: list[str] = []
@@ -446,8 +448,10 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             if absent:
                 # Above the lane's "_Data last updated: ..._" footer, which closes the
                 # section, rather than under it.
-                line = f"No stock found for {_join_words(absent)}."
-                body, sep, footer = block.rpartition("\n_Data last updated")
+                line = localizer.text(f"No stock found for {_join_words(absent)}.")
+                # The footer's lead-in in the reply's language ("Data last updated: " in English).
+                footer_lead = localizer.text("Data last updated: {ts}").split("{ts}")[0].rstrip()
+                body, sep, footer = block.rpartition("\n_" + footer_lead)
                 if sep:
                     block = body + "\n" + line + sep + footer
                 else:

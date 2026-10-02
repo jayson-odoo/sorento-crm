@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
+from app.services.chatbot.label_catalog import IDENTITY, Localizer
 from app.services.chatbot.contracts import (
     SALES_REPORT_GROUP_BYS,
     UNDOMAINED_CHATBOT_TOOLS,
@@ -2601,6 +2602,12 @@ def _dmy(value: Any) -> str:
     return f"{parts[2]}/{parts[1]}/{parts[0]}" if len(parts) == 3 else text
 
 
+def _field_label(loc: Localizer, f: Any) -> str:
+    """The printed label of a field: translated when the localizer knows it, else as sent."""
+    label = jsc.js_string(jsc.get(f, "label", jsc.UNDEFINED))
+    return loc.label(f) if isinstance(f, dict) and "label" in f else label
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -2626,6 +2633,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             "own_header": True,
         }
     e = _extract_envelope(result)
+    # CHAT-LANGUAGE: render-only. The envelope, the items and `answers` stay English; the
+    # localizer only rewrites the strings printed below (absent = identity, byte-identical).
+    loc = ctx.get("localizer") or IDENTITY
     # Read once, for both the restricted-field drop below and the spec-visibility
     # drop (PLAN-spec-visibility-policy.md "Chatbot seam") - one contact, one
     # `ctx.access`, two consumers.
@@ -2961,7 +2971,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     msg = (
         ""
         if plain_lines
-        else jsc.js_string(e.get("intro") or "Here are the results.").strip() + "\n\n"
+        else loc.text(jsc.js_string(e.get("intro") or "Here are the results.").strip()) + "\n\n"
     )
     if isinstance(ctx.get("predicate"), dict):
         # Round 3 W1 (owner hand test on PR #833, "the message too long already"): a
@@ -2986,7 +2996,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             summary_lines = "\n".join(
                 # `${f.label}` on an absent key renders the WORD `undefined`, not "None"
                 # - and this string is sent to a customer.
-                f"*{jsc.js_string(f.get('label', jsc.UNDEFINED))}:* {_fmt_value(f.get('value'))}"
+                f"*{_field_label(loc, f)}:* {_fmt_value(f.get('value'))}"
                 for f in si["fields"]
                 if isinstance(f, dict)
             )
@@ -3014,7 +3024,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
 
     def _item_line(position: int, it: Any, *, numbered: bool = True) -> str:
         field_lines = "\n".join(
-            f"*{jsc.js_string(jsc.get(f, 'label', jsc.UNDEFINED))}:* "
+            f"*{_field_label(loc, f)}:* "
             f"{_fmt_value(jsc.get(f, 'value'))}"
             for f in (jsc.get(it, "fields") or [])
         )
@@ -3024,14 +3034,14 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         # `availability` item's title carries the whole verdict sentence (ported from
         # PR #1118 for chatbot-stock-ask-v2 S3, review round 3, Observation B).
         if not field_lines:
-            field_lines = jsc.nullish_str(jsc.get(it, "title")).strip()
+            field_lines = loc.tail(jsc.nullish_str(jsc.get(it, "title")).strip())
         # Chatbot stock ask v2 S3 fix round 1, Blocking 1 (R14/AC-SA312): an answered
         # `availability` item's title already starts "<code> x <Q>:", so it is not
         # numbered (plan sample (g) shows plain lines, not a numbered list).
         line = field_lines if not numbered else f"{position}. {field_lines}"
         flags = jsc.get(it, "flags")
         if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "discontinued")):
-            line += "\n⚠️  *(PRODUCT DISCONTINUED)*"
+            line += f"\n⚠️  *({loc.text('PRODUCT DISCONTINUED')})*"
         if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "expired")):
             line += "\n⚠️  *(EXPIRED)*"
         if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "unallocated")):
@@ -3180,7 +3190,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     stock_availability_reply = jsc.js_string(e.get("result_type") or "") == "stock_availability"
     ts = None if stock_availability_reply else _fmt_ts(e.get("last_updated_at"))
     if ts:
-        msg += f"_Data last updated: {ts}_"
+        msg += f"_{loc.text(f'Data last updated: {ts}')}_"
 
     # E2 (attribute-first asks, AC-1316): a HAS turn's set-answer header, PREPENDED
     # as its own line ahead of everything above - the block itself (intro, items,
