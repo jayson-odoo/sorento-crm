@@ -56,6 +56,10 @@ class TestTransformerForcesTheScope:
         """AC-CS-31: no customer asked for -> `customer_ids` is the whole scope."""
         a, b, _z = ids
         out = fetch.entity_ids_transformer(_trigger(tool, [a, b], []))
+        if tool == "crm_report_ask":
+            # REPORT-ENGINE 1b N3: the route forces the links itself, so none are added here.
+            assert not out.get("customer_ids"), out
+            return
         assert out["customer_ids"] == [a, b], out
 
     def test_a_subset_requested_is_kept(self, tool, ids) -> None:
@@ -76,7 +80,8 @@ class TestTransformerForcesTheScope:
         """AC-CS-31: `customer_query` is never sent for a scoped contact."""
         a, _b, _z = ids
         out = fetch.entity_ids_transformer(_trigger(tool, [a], [], customer_query="hanlim"))
-        assert out["customer_ids"] == [a], out
+        # REPORT-ENGINE 1b N3: for crm_report_ask the route forces the links, so none are added here.
+        assert out.get("customer_ids") == (None if tool == "crm_report_ask" else [a]), out
         assert "customer_query" not in out, out
 
 
