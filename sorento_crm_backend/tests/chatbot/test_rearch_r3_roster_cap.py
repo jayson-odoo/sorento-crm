@@ -94,7 +94,8 @@ class TestMigrationExistsAndChainsOntoTheCurrentHead:
 
 
 class TestModelColumn:
-    def test_chatbot_entity_kind_has_roster_cap_defaulting_to_10(self) -> None:
+    def test_chatbot_entity_kind_has_roster_cap_defaulting_to_50(self) -> None:
+        # PICKER-NO-CAP (owner, 2 Oct 2026): the default moved from 10 to the S3 ceiling.
         from app.models.chatbot_policy import ChatbotEntityKind
 
         assert hasattr(ChatbotEntityKind, "roster_cap"), (
@@ -111,7 +112,7 @@ class TestModelColumn:
             db.add(row)
             db.commit()
             db.refresh(row)
-            assert row.roster_cap == 10, f"server_default must be 10, got {row.roster_cap!r}"
+            assert row.roster_cap == 50, f"server_default must be 50, got {row.roster_cap!r}"
 
 
 # --------------------------------------------------------------------------- #
@@ -263,7 +264,9 @@ class TestCustomerRosterCap:
             f"customer roster held {len(entities)} options, cap was {cap}: {entities}"
         )
 
-    def test_a_missing_customer_key_or_none_means_10(self) -> None:
+    def test_a_missing_customer_key_means_50_and_none_means_10(self) -> None:
+        """A supplied mapping missing the kind gets the column's own default (50 since
+        PICKER-NO-CAP); `roster_caps=None` (a raw port-replay caller) keeps 10."""
         parser = {
             "domain_hint": "order",
             "entities": [{"raw": "zzt", "hint": "customer", "current_message": True}],
@@ -278,9 +281,9 @@ class TestCustomerRosterCap:
         gate_none = gate_mod.run_gate(
             {}, parser=parser, resolver=resolver, roster_caps=None
         )
-        for label, gate in (("missing key", gate_missing_key), ("roster_caps=None", gate_none)):
-            entities = gate.get("compatible_entities") or []
-            assert len(entities) <= 10, f"{label}: default must be 10, got {len(entities)}"
+        assert len(gate_missing_key.get("compatible_entities") or []) == 12
+        entities = gate_none.get("compatible_entities") or []
+        assert len(entities) <= 10, f"roster_caps=None: default must be 10, got {len(entities)}"
 
 
 class TestProductRosterCap:
