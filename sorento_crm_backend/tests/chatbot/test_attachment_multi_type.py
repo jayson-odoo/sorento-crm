@@ -332,7 +332,9 @@ class TestMissWording:
 
         message = offer.get("escalate_message") or ""
         assert gate.get("gate_passed") is True, gate.get("gate_reason")
-        assert "But no photo or technical specifications matched these." in message, message
+        # Owner ruling 2 Oct 2026 (test list review): the OFFICIAL type names, never the
+        # customer's raw words.
+        assert f"But no {PHOTOS} or {SPECS} matched these." in message, message
 
     def test_the_found_bullets_name_both_types_under_a_human_label(
         self, session_factory, monkeypatch
