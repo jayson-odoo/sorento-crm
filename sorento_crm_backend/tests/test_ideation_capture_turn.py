@@ -232,10 +232,10 @@ def env(monkeypatch):
 
         from app.services.ideation_capture_replies import render_reply as _real_render
 
-        def _render(kind, facts, *, user_message, language):  # noqa: ANN001
+        def _render(kind, facts, *, user_message, language, db=None):  # noqa: ANN001
             e.renders.append((kind, facts, user_message))
             e.languages.append(language)
-            return _real_render(kind, facts, user_message=user_message, language=language)
+            return _real_render(kind, facts, user_message=user_message, language=language, db=db)
 
         monkeypatch.setattr(svc, "render_reply", _render)
         monkeypatch.setattr(svc, "extract_ideate_turn", _extract)

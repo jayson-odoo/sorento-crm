@@ -204,7 +204,7 @@ def handle_capture_turn(
             overwrite_for_contact(db, respond_io_id=respond_io_id, state=new_sv)
         out: dict[str, Any] = {
             "status": status,
-            "reply_text": render_reply(kind, facts, user_message=user_message, language=language),
+            "reply_text": render_reply(kind, facts, user_message=user_message, language=language, db=db),
             "session_vars": new_sv,
             "offered_media": [],
         }

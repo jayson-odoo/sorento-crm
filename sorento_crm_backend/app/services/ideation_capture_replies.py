@@ -26,22 +26,19 @@ logger = logging.getLogger(__name__)
 _PREFIX = "ideation_capture_"
 
 
-def _template(name: str, language: str) -> str:
-    """The `.ms` / `.zh` text for `name`, the registry's live text first, else the shipped one."""
+def _template(name: str, language: str, db: Any) -> str:
+    """The `.ms` / `.zh` text for `name`, the registry's live text first, else the shipped one.
+    No session (a caller outside a turn): the shipped text."""
     short = f"{_PREFIX}{name}{language_suffix(language)}"
     if short not in CHATBOT_REPLY_COPY:
         short = f"{_PREFIX}{name}"
     registry_key, shipped, _tokens = CHATBOT_REPLY_COPY[short]
+    if db is None:
+        return shipped
     try:
-        from app.database import SessionLocal
         from app.services.ai_prompt_registry import get_prompt
 
-        db = SessionLocal()
-        try:
-            live = get_prompt(db, registry_key).text
-        finally:
-            db.close()
-        return live or shipped
+        return get_prompt(db, registry_key).text or shipped
     except Exception:  # noqa: BLE001 - a bot that cannot read its copy still answers
         logger.warning("ideation capture copy %s could not be resolved", registry_key, exc_info=True)
         return shipped
@@ -54,27 +51,30 @@ def _fill(text: str, **values: Any) -> str:
     return text
 
 
-def render_reply(kind: str, facts: dict[str, Any], *, user_message: str, language: str | None) -> str:
+def render_reply(
+    kind: str, facts: dict[str, Any], *, user_message: str, language: str | None, db: Any = None
+) -> str:
     """The reply for `kind` built from `facts`, in `language` (en / ms / zh, else en).
 
     `user_message` is the message being answered; it is part of the seam so a later language
-    mechanism can read it, and is not used by the shipped templates.
+    mechanism can read it, and is not used by the shipped templates. `db` is the turn's session,
+    used only to read the registry's live wording.
     """
     lang = language if language in FALLBACK_LANGUAGES else "en"
 
     if kind == "similar_offered":
-        lines = [_template("similar_offered", lang)]
+        lines = [_template("similar_offered", lang, db)]
         for n, idea in enumerate(facts.get("similar") or [], start=1):
             lines.append(f"{n}. {idea.get('title')} - {idea.get('link')}")
-        lines.append(_template("similar_offered_reply", lang))
+        lines.append(_template("similar_offered_reply", lang, db))
         if facts.get("see_all"):
-            lines.append(_fill(_template("similar_offered_see_all", lang), link=facts["see_all"]))
+            lines.append(_fill(_template("similar_offered_see_all", lang, db), link=facts["see_all"]))
         return "\n".join(lines)
 
     if kind == "complete":
         name = "complete" if facts.get("link") else "complete_no_link"
         return _fill(
-            _template(name, lang),
+            _template(name, lang, db),
             idea_number=facts.get("idea_number"),
             title=facts.get("title"),
             missing=", ".join(facts.get("missing") or []),
@@ -83,9 +83,9 @@ def render_reply(kind: str, facts: dict[str, Any], *, user_message: str, languag
 
     if kind == "similar_picked":
         return _fill(
-            _template("similar_picked", lang),
+            _template("similar_picked", lang, db),
             idea_number=facts.get("idea_number"),
             link=facts.get("link"),
         )
 
-    return _template(kind, lang)
+    return _template(kind, lang, db)
