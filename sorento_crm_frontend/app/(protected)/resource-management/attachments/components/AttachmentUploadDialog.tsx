@@ -87,7 +87,11 @@ export default function AttachmentUploadDialog({
   const showFolderPicker = defaultDirectoryId == null;
   const { data: directoryTree = [] } = useDirectoryTree(false, { enabled: showFolderPicker });
   const directoryOptions = showFolderPicker ? flattenDirectoryOptions(directoryTree) : [];
-  const { data: accessTypeOptions = [] } = useContactAccessTypes();
+  const {
+    data: accessTypeOptions = [],
+    error: accessTypesError,
+    refetch: refetchAccessTypes,
+  } = useContactAccessTypes();
   const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
   // Phase 2: real uploader wired into the Upload Activity drawer. The
   // startSession `uploader` closure runs uploadMutation.mutateAsync for each
@@ -527,6 +531,8 @@ export default function AttachmentUploadDialog({
             <Label>Access Levels</Label>
             <AccessLevelsMultiSelect
               options={accessTypeOptions}
+              loadError={accessTypesError}
+              onRetry={() => void refetchAccessTypes()}
               value={accessLevels}
               onChange={setAccessLevels}
             />
