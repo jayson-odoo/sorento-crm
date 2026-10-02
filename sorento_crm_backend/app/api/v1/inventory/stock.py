@@ -106,10 +106,26 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
     # `warehouse_id`. Subtracting the product total on every warehouse row - the first cut
     # - reported the same demand two, three, four times over and printed "oversold" against
     # a warehouse that was not.
-    open_so_total = service.open_so_qty_by_product(list(product_ids))
-    open_so_by_warehouse, _unlocated = service.open_so_qty_by_product_warehouse(
+    open_so_by_warehouse, unlocated = service.open_so_qty_by_product_warehouse(
         list(product_ids)
     )
+    # STOCK-TOTAL-OS-SCOPE (owner decision 2 Oct 2026): under a contact's visibility
+    # policy the product TOTAL's open SO is the sum over the warehouses that contact may
+    # see - the same rule its location lines are filtered by - so a hidden warehouse's
+    # demand is never shown or hinted. Lines with no warehouse ride separately as
+    # `unassigned_open_so_qty` (only when > 0) and are not part of the total. The staff
+    # path (no contact, no policy) keeps the product total: every line, unlocated included.
+    policy = service.resolved_policy
+    unassigned: dict[str, int] = {}
+    if policy is not None:
+        visible = service.visible_warehouse_ids(policy)
+        open_so_total: dict[str, int] = {}
+        for (pid, wid), qty in open_so_by_warehouse.items():
+            if wid in visible:
+                open_so_total[pid] = open_so_total.get(pid, 0) + qty
+        unassigned = {pid: qty for pid, qty in unlocated.items() if qty > 0}
+    else:
+        open_so_total = service.open_so_qty_by_product(list(product_ids))
 
     # Company feed gate: look up the (small, handful-of-rows) no-feed set FIRST.
     # Empty on the common all-feed-on path, which skips `company_id_by_product`
@@ -134,6 +150,11 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
             oh = 0
         target["open_so_qty"] = open_qty
         target["sellable"] = oh - open_qty
+
+    def _attach_total(target: dict, pid: str, on_hand) -> None:
+        _attach(target, open_so_total.get(pid, 0), on_hand)
+        if unassigned.get(pid):
+            target["unassigned_open_so_qty"] = unassigned[pid]
 
     for serialized, row in zip(body.get("data") or [], rows):
         pid = str(getattr(row, "product_id", "") or "")
@@ -163,7 +184,7 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
         pid = str(entry.get("product_id") or "")
         if not pid or not _feed_on(pid):
             continue
-        _attach(entry, open_so_total.get(pid, 0), entry.get("total_on_hand"))
+        _attach_total(entry, pid, entry.get("total_on_hand"))
         for loc in entry.get("locations") or []:
             if not isinstance(loc, dict):
                 continue
@@ -176,7 +197,7 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
     # product (`on_hand_total_by_product`), not over `data`. Only under `include_sellable`
     # (this function), so a caller that never asked is byte-identical.
     if not body.get("stock_summary") and rows:
-        on_hand_total = service.on_hand_total_by_product(list(product_ids))
+        on_hand_total = service.on_hand_total_by_product(list(product_ids), policy=policy)
         summary: list[dict] = []
         seen: set[str] = set()
         for serialized, row in zip(body.get("data") or [], rows):
@@ -194,7 +215,7 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
             # The entry itself is still emitted (a no-feed product's total_on_hand
             # is real) - only the open-SO/sellable attachment is withheld.
             if _feed_on(pid, getattr(row, "company_id", None)):
-                _attach(entry, open_so_total.get(pid, 0), entry["total_on_hand"])
+                _attach_total(entry, pid, entry["total_on_hand"])
             summary.append(entry)
         body["stock_summary"] = summary
     return JSONResponse(content=body)

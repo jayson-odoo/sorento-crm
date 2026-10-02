@@ -629,6 +629,10 @@ class StockService:
     
     def __init__(self, db: Session):
         self.db = db
+        # The stock-visibility policy the last `list_stock` call resolved for its contact
+        # (None on the staff path). `_with_sellable` reads it so the product Total's O/S
+        # is narrowed by the same location rule the lines are (STOCK-TOTAL-OS-SCOPE).
+        self.resolved_policy = None
     
     def list_stock(
         self,
@@ -698,6 +702,7 @@ class StockService:
         resolved_contact_id = None
         if contact_id:
             policy = resolve_policy(self.db, contact_id, space_id)
+            self.resolved_policy = policy
             # Chatbot stock ask v2 S3, R7: the SAME internal id `resolve_policy`
             # itself resolves `contact_id`/`space_id` against - resolved again here
             # (one cheap extra lookup) so `_apply_stock_visibility` can read that
@@ -1190,7 +1195,20 @@ class StockService:
         rows = self.db.query(Warehouse.warehouse_code, Warehouse.id).filter(Warehouse.warehouse_code.in_(codes)).all()
         return {str(code): str(wid) for code, wid in rows}
 
-    def on_hand_total_by_product(self, product_ids: list[str]) -> dict[str, int]:
+    def visible_warehouse_ids(self, policy) -> set[str]:
+        """The active warehouses a stock-visibility policy lets the contact see: the same
+        `warehouse_criterion` + active filter the location lines are read through, so a
+        total built on this set covers exactly the lines the reply can name."""
+        from app.services.stock_visibility import warehouse_criterion
+
+        rows = (
+            self.db.query(Warehouse.id)
+            .filter(Warehouse.is_active.is_(True), warehouse_criterion(policy, Warehouse.id))
+            .all()
+        )
+        return {str(wid) for (wid,) in rows}
+
+    def on_hand_total_by_product(self, product_ids: list[str], policy=None) -> dict[str, int]:
         """`quantity_on_hand` summed over EVERY warehouse row of each product (review round
         2, S2): the per-product "Available" line must never be a sum over the returned
         PAGE, which is short of the truth for a product held in more warehouses than the
@@ -1207,6 +1225,10 @@ class StockService:
         pred = build_company_predicate(Stock, get_company_scope(self.db))
         if pred is not None:
             q = q.filter(pred)
+        if policy is not None:
+            # Under a contact's policy the total covers the locations it may see, never a
+            # hidden one (STOCK-TOTAL-OS-SCOPE): the same rule the rows were filtered by.
+            q = q.filter(Stock.warehouse_id.in_(self.visible_warehouse_ids(policy)))
         return {str(pid): int(qty or 0) for pid, qty in q.group_by(Stock.product_id).all()}
 
     def no_feed_company_ids(self) -> set[str]:
