@@ -117,3 +117,12 @@ def test_view_only_owner_path_still_drops_non_whitelisted_fields(env):
         "department": "d",
         "rawText": "r",
     }
+
+
+def test_non_json_2xx_on_the_ownership_lookup_is_502_and_no_patch_is_sent(env):
+    _view_only(env)
+    env.fake.route("GET", SS_PATH, status=200, content=b"<html>not json</html>",
+                   headers={"content-type": "text/html"})
+    resp = env.req("PATCH", f"/ideas/{IDEA}", json={"problem": "Edited"})
+    assert resp.status_code == 502, resp.text
+    assert _methods(env) == ["GET"]

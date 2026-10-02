@@ -209,6 +209,18 @@ class Env:
     # ---- act ------------------------------------------------------------ #
     def turn(self, message: str, *, session_vars_in: dict | None = None, is_test: bool = False,
              submitter_name: str | None = None) -> dict:
+        # A live turn reads the held list from the contact's DB row only (L1), so a live
+        # pointer the test supplies is landed in the row, flat, the way the chatbot tail
+        # persists it. A test turn still takes the caller's pointer.
+        if session_vars_in is not None and not is_test:
+            self.contact.session_vars = {**(self.contact.session_vars or {}), **session_vars_in}
+            self.db.flush()
+            session_vars_in = None
+        return self.raw_turn(message, session_vars_in=session_vars_in, is_test=is_test,
+                             submitter_name=submitter_name)
+
+    def raw_turn(self, message: str, *, session_vars_in: dict | None = None, is_test: bool = False,
+                 submitter_name: str | None = None) -> dict:
         return self.svc.handle_capture_turn(
             self.db,
             respond_io_id=self.rio,
@@ -966,3 +978,93 @@ def test_p_missing_required_problem_forces_ask_back_even_with_a_problem(env):
     assert out["status"] == "ask_idea"
     _no_ss(env)
     assert "ideation" not in out["session_vars"]
+
+
+# --------------------------------------------------------------------------- #
+# Q - phase 3 fix round                                                       #
+# --------------------------------------------------------------------------- #
+def test_q_other_session_vars_keys_survive_a_similar_offered_turn(env):
+    env.ready(session_vars={"focus": {"x": 1}})
+    env.idea_message()
+    env.sim(2)
+    out = env.turn(MSG)
+    assert out["status"] == "similar_offered"
+    assert out["session_vars"]["focus"] == {"x": 1}
+    persisted = env.persisted()
+    assert persisted["focus"] == {"x": 1}
+    assert persisted["ideation"]["status"] == "similar_offered"
+
+
+def test_q_other_session_vars_keys_survive_a_complete_turn(env):
+    env.ready(session_vars={"focus": {"x": 1}})
+    env.idea_message()
+    env.created()
+    out = env.turn(MSG)
+    assert out["status"] == "complete"
+    assert out["session_vars"]["focus"] == {"x": 1}
+    assert env.persisted()["focus"] == {"x": 1}
+
+
+@pytest.mark.parametrize("base", [None, ""])
+def test_q_similar_offered_reply_has_no_none_or_dangling_link_without_a_base_url(env, base):
+    env.mp.setattr(env.svc.settings, "frontend_base_url", base)
+    env.ready()
+    env.idea_message()
+    ideas = env.sim(2)
+    reply = env.turn(MSG)["reply_text"]
+    assert "None" not in reply
+    numbered = [ln for ln in reply.splitlines() if ln.lstrip()[:2] in ("1.", "2.")]
+    assert len(numbered) == 2
+    for ln, idea in zip(numbered, ideas):
+        assert idea["title"] in ln
+        assert " - " not in ln
+        assert not ln.rstrip().endswith("-")
+
+
+@pytest.mark.parametrize("base", [None, ""])
+def test_q_similar_picked_reply_has_no_none_or_dangling_colon_without_a_base_url(env, base):
+    env.mp.setattr(env.svc.settings, "frontend_base_url", base)
+    env.ready()
+    similar = [{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "First held idea"}]
+    reply = env.turn("1", session_vars_in=env.pointer(similar))["reply_text"]
+    assert "None" not in reply
+    assert not reply.endswith(": ")
+    assert not reply.rstrip().endswith(":")
+
+
+def test_q_live_turn_ignores_a_pointer_that_only_the_caller_carries(env):
+    env.ready()
+    similar = [{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held"}]
+    env.extraction("1", fields={})
+    out = env.raw_turn("1", session_vars_in=env.pointer(similar), is_test=False)
+    assert env.extractor_calls == ["1"]
+    assert out["status"] != "similar_picked"
+
+
+def test_q_live_turn_reads_the_pointer_from_the_db_row(env):
+    env.ready()
+    similar = [{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held"}]
+    env.contact.session_vars = env.pointer(similar)
+    env.db.flush()
+    out = env.raw_turn("1", session_vars_in=None, is_test=False)
+    assert out["status"] == "similar_picked"
+    assert env.extractor_calls == []
+
+
+def test_q_test_turn_still_honours_the_callers_pointer(env):
+    env.ready()
+    similar = [{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held"}]
+    out = env.raw_turn("1", session_vars_in=env.pointer(similar, is_test=True), is_test=True)
+    assert out["status"] == "similar_picked"
+    assert env.extractor_calls == []
+
+
+@pytest.mark.parametrize("bad", ["x", None, 7, ["a"]])
+def test_q_malformed_held_item_is_a_fresh_message_not_an_error(env, bad):
+    env.ready()
+    sv = env.pointer([])
+    sv["ideation"]["similar"] = [bad]
+    env.extraction("1", fields={})
+    out = env.turn("1", session_vars_in=sv)
+    assert env.extractor_calls == ["1"]
+    assert out["status"] == "ask_idea"

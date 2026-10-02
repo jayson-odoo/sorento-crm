@@ -507,6 +507,21 @@ describe('AC-D-05 attachments', () => {
     expect(await screen.findByLabelText('Upload attachments')).toBeInTheDocument();
   });
 
+  it('an isMine merged child (non-manage) has no Edit and no upload control', async () => {
+    renderDetail(
+      makeIdea({
+        isMine: true,
+        mergedIntoId: 'idea-9',
+        mergedInto: { id: 'idea-9', ideaNumber: 'IDEA-0009', title: 'Survivor' },
+      }),
+    );
+    await loaded();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: /Attachments/ }));
+    await screen.findByText('No attachments');
+    expect(screen.queryByLabelText('Upload attachments')).toBeNull();
+  });
+
   it('a download saves through an anchor with the download attribute and never window.open of a blob', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
     const createObjectURL = vi.fn(() => 'blob:fake');

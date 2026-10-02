@@ -318,4 +318,38 @@ describe('IDEATION-CAPTURE My ideas / All ideas toggle', () => {
     expect(selected(screen.getByRole('radio', { name: 'All ideas' }))).toBe(false);
     expect(svc.listIdeas.mock.calls[0][0].mine).toBe(true);
   });
+
+  function renderRerenderable() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (
+      <QueryClientProvider client={client}>
+        <IdeasListView />
+      </QueryClientProvider>
+    );
+    const utils = render(tree);
+    return { ...utils, rerenderSame: () => utils.rerender(tree) };
+  }
+
+  it('follows the URL: search params change from "" to view=mine after mount selects My ideas and queries mine', async () => {
+    const { rerenderSame } = renderRerenderable();
+    await screen.findByText('Faster quotes');
+    expect(selected(screen.getByRole('radio', { name: 'All ideas' }))).toBe(true);
+    urlState.search = 'view=mine';
+    rerenderSame();
+    await waitFor(() => expect(selected(screen.getByRole('radio', { name: 'My ideas' }))).toBe(true));
+    await waitFor(() =>
+      expect(svc.listIdeas).toHaveBeenLastCalledWith(expect.objectContaining({ mine: true })),
+    );
+  });
+
+  it('follows the URL back: view=mine to "" after mount selects All ideas and queries without mine', async () => {
+    urlState.search = 'view=mine';
+    const { rerenderSame } = renderRerenderable();
+    await screen.findByText('Faster quotes');
+    expect(selected(screen.getByRole('radio', { name: 'My ideas' }))).toBe(true);
+    urlState.search = '';
+    rerenderSame();
+    await waitFor(() => expect(selected(screen.getByRole('radio', { name: 'All ideas' }))).toBe(true));
+    await waitFor(() => expect(svc.listIdeas.mock.calls.at(-1)?.[0].mine).toBeFalsy());
+  });
 });
