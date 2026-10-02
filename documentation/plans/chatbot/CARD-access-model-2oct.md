@@ -6,7 +6,9 @@ mock v3 tabs "Chatbot roles" + "Role: Purchasing" in `documentation/mockups/ACCE
 seed rows only. Q2 not answered yet: build on rec (a), crew confirms. Q3 (a) "sees all customers" is a
 flag on the role. Q4 (a) agents kept for escalation / routing / SLA / n8n only, not the chat gate.
 Q5 (a) stock visibility mode stays as is, shown inside the Stock domain. Mock v2 escalation linkage
-seen, no change.
+seen, no change. Q2 (2 Oct, later): yes, Kay and Darren -> Sales office, Mr Loo gains Ideas. N1 (2 Oct):
+neither nested nor top-level domains: a separate REPORTS section holds Low stock report, Outstanding SO
+report and every other report-type grant (Sales report), parser domain list unchanged (mock v4).
 
 Lane ACCESS-MODEL, size L, 2 Oct 2026. Card before any code. Paths under `sorento_crm_backend/app/`
 unless shown otherwise. Data facts are from the local prod copy `sorento_ai_automation_0925`

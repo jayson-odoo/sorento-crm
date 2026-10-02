@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chatbot Access mock v3</title>
+<title>Chatbot Access mock v4</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 /* tokens copied from sorento_crm_frontend/css/config.reui.css (light) */
@@ -100,11 +100,12 @@ a{color:var(--primary)}
 .mocknav button{background:transparent;border:0;color:#a1a1aa;font:inherit;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}
 .mocknav button.on{background:#3f3f46;color:#fff}
 .mocknav span{color:#71717a;padding:6px 8px 6px 0;white-space:nowrap}
+.sec{padding:14px 20px 6px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg);background:#fafafa;border-bottom:1px solid var(--border)}
 .view{display:none} .view.on{display:block}
 </style>
 </head>
 <body>
-<nav class="mocknav"><span>Mock v3:</span>
+<nav class="mocknav"><span>Mock v4:</span>
 <button data-v="contact" class="on" onclick="show('contact')">Contact access</button>
 <button data-v="roles" onclick="show('roles')">Chatbot roles</button>
 <button data-v="role" onclick="show('role')">Role: Purchasing</button></nav>
@@ -133,7 +134,7 @@ a{color:var(--primary)}
         <a href="#" onclick="show('role');return false" class="badge primary" style="text-decoration:none">Purchasing <span class="x" title="Remove role">&times;</span></a>
       </div>
       <div class="summary" style="margin-top:14px">
-        <div class="stat"><b>12 of 16</b><span>domains granted</span></div>
+        <div class="stat"><b>12 of 13</b><span>domains granted &middot; 0 of 3 reports</span></div>
         <div class="stat"><b>8</b><span>incoming fields added for this contact only</span></div>
         <div class="stat"><b>All customers</b><span>customer scope (from role)</span></div>
       </div>
@@ -187,6 +188,7 @@ a{color:var(--primary)}
         <tr><th>Stock visibility link</th><td>existing <code>components/stock-visibility/StockVisibilitySection.tsx</code> stays on Profile tab (Q5)</td></tr>
         <tr><th>Hand-off line per domain</th><td>plain <code>text-xs text-muted-foreground</code>; agent + team set read from the domain row (new <code>chatbot_domains.escalation_agent_code</code> + existing <code>escalation_team_code</code>), tier-1 team from <code>agent_teams</code> (edited on the Access agents admin, <code>AccessAgentDetail.tsx:323-458</code>)</td></tr>
         <tr><th>Escalation card</th><td><code>components/ui/card.tsx</code> + read-only <code>DataGrid</code>-style table; "Can escalate to a person" is the existing ESCALATION-CONTROL switch (<code>components/ui/switch.tsx</code>, PR #1406) moved beside it</td></tr>
+        <tr><th>Reports section</th><td>section heading row in the same tree (<code>text-xs uppercase text-muted-foreground</code>, as PageHeader crumb); a report ticked without its parent domain shows "Needs Stock" / "Needs Orders / DO" and does not answer (owner 2 Oct: report-type grants under Reports; parser domain list unchanged)</td></tr>
         <tr><th>Removed from this tab</th><td>Access Agents grid (<code>ContactAccessAgentsTable.tsx</code>) and Field reveals switches (<code>ContactFieldRevealsSection.tsx</code>): both replaced by the tree</td></tr>
       </tbody></table>
     </div>
@@ -314,6 +316,7 @@ function show(v){document.querySelectorAll('.view').forEach(e=>e.classList.toggl
 // Purchasing role preset (behaviour card section 2) + this contact's real override:
 // Sorento - Jereen holds 20 incoming field overrides today (agent_field_access contact rows).
 const D = [
+  {section:'Domains'},
   {n:'Product', s:'master_products', st:'role', e:['General Enquiries','purchasing','Purchasing - Product, Stock Inquiry']},
   {n:'Product attachments', s:'product_attachment', st:'role', e:['General Enquiries','marketing_product','Marketing - Product']},
   {n:'Resource attachments', s:'resource_attachment', st:'role'},
@@ -332,10 +335,11 @@ const D = [
   {n:'Last in (SPO)', s:'spo_allocation', st:'role', p:'SPO LAST RECEIPT', f:[{n:'SPO number', st:'role'}]},
   {n:'Purchase orders', s:'purchase_order', st:'role', p:'PURCHASE ORDERS', e:['General Enquiries','purchasing','Purchasing - Product, Stock Inquiry'], f:[{n:'Supplier', st:'role'},{n:'PO number', st:'role'}]},
   {n:'Last purchase cost', s:'purchase_cost', st:'role', p:'LAST PURCHASE COST', e:['General Enquiries','purchasing','Purchasing - Product, Stock Inquiry'], f:[{n:'Supplier', st:'role'}]},
-  {n:'Outstanding SO report', s:'outstanding', st:'off', p:'ORDER_STATUS so_outstanding', e:['Order Enquiries','customer_service','DO Customer Service']},
-  {n:'Sales report', s:'sales', st:'off', p:'SALES REPORT, SALES ANALYSIS, TOP SELLING', e:['Order Enquiries','customer_service','DO Customer Service']},
-  {n:'Low stock report', s:'low_stock', st:'off', p:'LOW STOCK REPORT', e:['General Enquiries','warehouse','Warehouse Executive']},
   {n:'Ideas', s:'ideate', st:'off', p:'IDEATION CONTINUATION'},
+  {section:'Reports'},
+  {n:'Outstanding SO report', s:'outstanding', st:'off', hint2:'Needs Orders / DO', p:'ORDER_STATUS so_outstanding', e:['Order Enquiries','customer_service','DO Customer Service']},
+  {n:'Sales report', s:'sales', st:'off', p:'SALES REPORT, SALES ANALYSIS, TOP SELLING', e:['Order Enquiries','customer_service','DO Customer Service']},
+  {n:'Low stock report', s:'low_stock', st:'off', hint2:'Needs Stock', p:'LOW STOCK REPORT', e:['General Enquiries','warehouse','Warehouse Executive']},
 ];
 const tag = st => st==='role' ? '<span class="badge">from Purchasing</span>'
   : st==='add' ? '<span class="badge success">added here</span>'
@@ -343,14 +347,16 @@ const tag = st => st==='role' ? '<span class="badge">from Purchasing</span>'
 const on = st => st==='role' || st==='add';
 const tree = document.getElementById('tree');
 D.forEach((d,i)=>{
+  if (d.section) { tree.insertAdjacentHTML('beforeend', `<li class="sec">${d.section}</li>`); return; }
   const li = document.createElement('li'); li.className='d';
   const hasF = d.f && d.f.length;
   const offHint = !on(d.st) && d.p ? `<small class="hint off">Not in this contact's prompt: ${d.p}</small>`
     : on(d.st) && d.p ? `<small>Unticking removes from prompt: ${d.p}</small>`
     : d.hint ? `<small>${d.hint}</small>` : '';
+  const needs = d.hint2 ? `<small>${d.hint2}</small>` : '';
   li.innerHTML = `<div class="d-h"><span class="chev">${hasF?'&#9654;':''}</span>
     <input type="checkbox" ${on(d.st)?'checked':''} aria-label="${d.n}">
-    <div class="lbl">${d.n}${offHint}${d.e?`<div class="esc">Hand-off: <b>${d.e[2]}</b> &middot; ${d.e[0]} / ${d.e[1]}</div>`:'<div class="esc">No hand-off</div>'}</div><div class="src">${tag(d.st)}</div></div>` +
+    <div class="lbl">${d.n}${needs}${offHint}${d.e?`<div class="esc">Hand-off: <b>${d.e[2]}</b> &middot; ${d.e[0]} / ${d.e[1]}</div>`:'<div class="esc">No hand-off</div>'}</div><div class="src">${tag(d.st)}</div></div>` +
     (hasF ? `<div class="fields">${d.f.map(f=>`<div class="f"><input type="checkbox" ${on(f.st)?'checked':''} aria-label="${f.n}">
       <div class="lbl">${f.n}${f.p?`<small>Unticking ${f.p} from prompt</small>`:''}</div><div class="src">${tag(f.st)}</div></div>`).join('')}</div>` : '');
   if (hasF) li.querySelector('.d-h').addEventListener('click', e=>{ if(e.target.tagName!=='INPUT') li.classList.toggle('open'); });
@@ -366,7 +372,7 @@ const R = [
   ['Sales office', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock','Last in (SPO)','Purchase orders'], 87, 'All'],
   ['Purchasing', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock','Last in (SPO)','Purchase orders','Last purchase cost'], 5, 'All'],
   ['Warehouse', ['Product','Stock','Incoming stock','Last in (SPO)','Low stock report'], 0, 'All'],
-  ['Management', ['all 16'], 2, 'All'],
+  ['Management', ['all 13 domains','3 reports'], 2, 'All'],
 ];
 document.getElementById('rows').innerHTML = R.map(([n,d,c,s])=>{
   const shown = d.slice(0,3).map(x=>`<span class="badge">${x}</span>`).join(' ');
@@ -389,6 +395,7 @@ const E2 = {
   inc:['Incoming Stock Enquiries','purchasing','Purchasing - Incoming'],
 };
 const D2 = [
+  {section:'Domains'},
   {n:'Product', on:1, e:E2.product}, {n:'Product attachments', on:1, e:E2.mprod}, {n:'Resource attachments', on:1},
   {n:'Promotions', on:1, e:E2.promo}, {n:'Forms', on:1, e:E2.forms}, {n:'Portal link', on:1},
   {n:'Stock', on:1, e:E2.wh, hint:'Stock visibility mode stays per contact (Profile tab)', f:[{n:'Outstanding SO on stock (sellable)',on:1},{n:'PO on order qty',on:1}]},
@@ -397,18 +404,20 @@ const D2 = [
   {n:'Last in (SPO)', on:1, p:'SPO LAST RECEIPT', f:[{n:'SPO number',on:1}]},
   {n:'Purchase orders', on:1, e:E2.product, p:'PURCHASE ORDERS', f:[{n:'Supplier',on:1},{n:'PO number',on:1}]},
   {n:'Last purchase cost', on:1, e:E2.product, p:'LAST PURCHASE COST', f:[{n:'Supplier',on:1}]},
-  {n:'Outstanding SO report', on:0, e:E2.cs, p:'ORDER_STATUS so_outstanding'},
-  {n:'Sales report', on:0, e:E2.cs, p:'SALES REPORT, SALES ANALYSIS, TOP SELLING'},
-  {n:'Low stock report', on:0, e:E2.wh, p:'LOW STOCK REPORT'},
   {n:'Ideas', on:0, p:'IDEATION CONTINUATION'},
+  {section:'Reports'},
+  {n:'Outstanding SO report', on:0, hint2:'Needs Orders / DO', e:E2.cs, p:'ORDER_STATUS so_outstanding'},
+  {n:'Sales report', on:0, e:E2.cs, p:'SALES REPORT, SALES ANALYSIS, TOP SELLING'},
+  {n:'Low stock report', on:0, hint2:'Needs Stock', e:E2.wh, p:'LOW STOCK REPORT'},
 ];
 const rtree=document.getElementById('rtree');
 D2.forEach(d=>{
+  if (d.section) { rtree.insertAdjacentHTML('beforeend', `<li class="sec">${d.section}</li>`); return; }
   const li=document.createElement('li'); li.className='d'; const hasF=d.f&&d.f.length;
   const some=hasF && d.on && d.f.some(f=>!f.on);
   const sub = d.p ? `<small>${d.on?'Unticking removes from prompt':'Not in prompt'}: ${d.p}</small>` : d.hint ? `<small>${d.hint}</small>` : '';
   li.innerHTML=`<div class="d-h"><span class="chev">${hasF?'&#9654;':''}</span><input type="checkbox" ${d.on?'checked':''} aria-label="${d.n}">
-    <div class="lbl">${d.n}${sub}${d.e?`<div class="esc">Hand-off: <b>${d.e[2]}</b> &middot; ${d.e[0]} / ${d.e[1]}</div>`:'<div class="esc">No hand-off</div>'}</div>
+    <div class="lbl">${d.n}${d.hint2?`<small>${d.hint2}</small>`:''}${sub}${d.e?`<div class="esc">Hand-off: <b>${d.e[2]}</b> &middot; ${d.e[0]} / ${d.e[1]}</div>`:'<div class="esc">No hand-off</div>'}</div>
     <div class="src">${hasF?`<span class="badge outline">${d.f.filter(f=>f.on).length} of ${d.f.length} fields</span>`:''}</div></div>`+
     (hasF?`<div class="fields">${d.f.map(f=>`<div class="f"><input type="checkbox" ${f.on?'checked':''} aria-label="${f.n}"><div class="lbl">${f.n}</div><div></div></div>`).join('')}</div>`:'');
   if(some) li.querySelector('input').indeterminate=true;

@@ -1,6 +1,6 @@
 # PLAN - Chatbot access model: roles -> domains -> fields, one registry
 
-Status: planned, awaiting mock v3 approval (2 Oct 2026). Track: L / standard (migration, RBAC,
+Status: planned, mock approved (v4 = v3 + Reports section), red tests landing; build after #1405 and #1429 merge (2 Oct 2026). Track: L / standard (migration, RBAC,
 prompt). Lane ACCESS-MODEL, branch `crew/access-model`, one PR. Depends on PR #1405 (prompt
 variables, open) and PR #1429 (per-audience trim, docs only, open); slices S1 to S6 do not touch their
 files, S7 rebases onto them once merged.
@@ -24,22 +24,30 @@ switched to compare `row.name`) and `attributes` (field keys, which KEEP today's
 `sales_orders.outstanding`, `sales_orders.sales_report`, `scm.low_stock_report`,
 `incoming_stock.<field>`). No grant constant moves; the leak surface is the one function.
 
-Grant keys that today gate a whole ask stay field rows of kind `ask` under their parent domain
-(`scm.low_stock_report` under Stock, `sales_orders.outstanding` under Orders) instead of new
-`chatbot_domains` rows, because a new domain row enters the parser's domain vocabulary
-(`{{domains}}` in #1405) and would change routing. The UI lists them as nested rows under Stock and
-Orders (mock v3 shows them top level: relayed as plan note N1). `sales` is a real domain row (#1405).
+**Reports section (owner 2 Oct, N1).** Report-type grants sit in their own REPORTS section of the
+tree, not under a domain: Low stock report (`scm.low_stock_report`), Outstanding SO report
+(`sales_orders.outstanding`), Sales report (`sales` domain from #1405: report, analysis, top selling).
+Reports is a grouping in the UI and the grant model only; the parser domain list is unchanged:
+- `chatbot_domain_fields.kind = 'report'` for the two ask grants; they keep their OWNING parser domain
+  (`inventory`, `order`) for enforcement, so a report answers only when its owning domain is also
+  granted (UI: "Needs Stock" / "Needs Orders / DO"). Granting the report never grants the domain
+  (that would open every stock/order ask).
+- `chatbot_domains.access_section` (NULL, or `reports`): the `sales` row is `reports`, so the whole
+  domain lists under Reports; its grant is the domain grant as for any other domain.
+- No new `chatbot_domains` row, no routing change. A future report = a `report` field row (or a domain
+  row with `access_section = 'reports'`).
 
 ## Schema (one Alembic revision, additive; down_revision re-parented at PR time)
 
 | Table | Columns | Notes |
 |---|---|---|
-| `chatbot_domain_fields` | id, domain_name FK `chatbot_domains.name` ON UPDATE CASCADE, key (unique), label, kind (`field`/`ask`), prompt_tag NULL, sort_order | seeded: 7 reveal keys + 23 incoming fields (`field_access.GATED_FIELDS`) + `spo_allocation.spo_number`, `purchase_orders.po_number` (new, enforced in S5) |
+| `chatbot_domain_fields` | id, domain_name FK `chatbot_domains.name` ON UPDATE CASCADE, key (unique), label, kind (`field`/`report`), prompt_tag NULL, sort_order | seeded: 7 reveal keys + 23 incoming fields (`field_access.GATED_FIELDS`) + `spo_allocation.spo_number`, `purchase_orders.po_number` (new, enforced in S5) |
 | `chatbot_roles` | id, code (unique, slug of name at create, immutable), name, description, sees_all_customers bool, sort_order, created_by/updated_by | `__company_shared__ = True` (LESSONS: seeded reference table) |
 | `chatbot_role_domains` | role_id FK CASCADE, domain_name FK | PK (role_id, domain_name) |
 | `chatbot_role_fields` | role_id FK CASCADE, field_key FK `chatbot_domain_fields.key` | PK (role_id, field_key) |
 | `contact_chatbot_roles` | contact_id FK `respond_contacts.id` CASCADE, role_id FK RESTRICT | PK pair; RESTRICT backs AC-AM-3 |
 | `contact_access_overrides` | id, contact_id FK CASCADE, domain_name, field_key NULL, granted bool, updated_by | partial uniques: (contact, domain) where field NULL; (contact, field) where field NOT NULL (pattern `agent_field_access`, `models/access.py:519-534`) |
+| `chatbot_domains.access_section` | Text NULL (`reports`) | `sales` row seeded `reports` |
 | `chatbot_domains.escalation_agent_code` | Text NULL FK `access_agents.code` ON UPDATE CASCADE ON DELETE SET NULL | seeded per card 3b |
 
 Data step (same revision): `reveal_key` NULL on `inventory` and `order` rows (they are fields now);
@@ -115,8 +123,5 @@ vs `field_access.py:278-328`) - `effective_access` uses one resolver for both.
 
 ## Notes to relay
 
-- N1: low stock report and outstanding SO report render nested under Stock / Orders (stored as `ask`
-  fields) rather than as top-level rows as in mock v3; reason above.
-- N2: Q2 (Kay, Darren -> Sales office; Mr Loo gains Ideas) built on (a) pending owner confirmation;
-  a different answer changes only seed rows.
+- N1 resolved (owner 2 Oct): Reports section, see above. N2 resolved: Q2 yes.
 - N3: crew shared dev DB `sorento_ai_automation_0921` (main checkout `.env`) does not exist locally.

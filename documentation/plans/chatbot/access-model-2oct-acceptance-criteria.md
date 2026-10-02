@@ -16,6 +16,11 @@ Mock: `documentation/mockups/ACCESS-MODEL/index.html` (v3). IDs AC-AM-n.
   with its ticks.
 - AC-AM-4 Adding/removing a contact on the role page and on the contact Access tab write the same row; contact role/override writes need `user_management.contacts.edit` (as field reveals today, `system/chatbot_field_reveals.py:48,86`); reads need `user_management.access_agents.view`.
 
+- AC-AM-4b The tree has two sections, Domains and Reports. Reports lists every report-type grant: Low
+  stock report, Outstanding SO report, Sales report. A report answers only when its owning domain is
+  granted too (Low stock report needs Stock, Outstanding SO report needs Orders / DO); granting a
+  report never grants its owning domain. The parser's domain list is unchanged by this lane.
+
 ## Contact access
 
 - AC-AM-5 A contact's access = union of its roles' ticks, then its own overrides (domain or field,
