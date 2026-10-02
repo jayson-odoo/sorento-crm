@@ -435,7 +435,7 @@ crew relays when it lands on main, then main is merged here). FULL track: adds a
 migration (a parser prompt version, label unmoved).
 
 **Parser** (`app/services/chatbot/head/parser.py` strict schema + `chatbot_parser_prompt.py`
-addendum `REPORT_ASK_ADDENDUM`, appended after `MEMORY_ADDENDUM`):
+addendum `REPORT_ASK_ADDENDUM`, inserted before `MEMORY_ADDENDUM`, which existing tests pin as the tail):
 - `order_status` gains `"sales_ranking"`: sales ranked or totalled BY one dimension, for a
   sales agent / salesman, customer, brand, category, location, channel or month: "top 3
   salesman for Sorento brand last month", "which location sold most SR1234 in September",
@@ -511,3 +511,8 @@ ranking cancelled."; two misses -> the give-up line. AC-RE-19a parser maps "sale
 agent / SA", "brand", "category", "by location", "by month" onto `group_by` with
 `order_status=sales_ranking`; AC-RE-19b "by colour" -> the catalogue line; AC-RE-19c a brand
 word naming no brand -> "I don't know 'X' as a brand."; AC-RE-19d the header names the basis.
+
+Captain rulings on the 1b tester's points: `order_status` stays a free string in the strict
+schema (no enum added); the helper's miss line uses the field nouns `period` and `number`
+(`FieldSpec.noun`); `report_ask_words` holds the raw words per hint (low stock's shape); a
+forged `report_ask_words` from the parser is stripped and the ask runs without that filter.

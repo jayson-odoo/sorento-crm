@@ -875,3 +875,40 @@ def test_product_code_is_matched_inside_the_contacts_companies(client, db):
     _only_company(db, contact, mocha.id)
     body = _ok(client, contact, product_code=code)
     assert body["total"]["qty"] == 7 and money(body["total"]["amount"]) == D("70.00"), body["total"]
+
+
+# ================================================================ slice 1b: product_ids
+
+
+def test_1b_product_ids_counts_only_the_named_products(client, db):
+    w = _ranking_world(db)
+    body = _ok(client, _full(db), group_by="sales_agent", top_n=10, product_ids=[w.p1.id])
+    assert _rows(body) == [("ZZT-AG-1", 10, D("1000.00")), ("ZZT-AG-2", 20, D("600.00"))], body["rows"]
+    assert money(body["total"]["amount"]) == D("1600.00") and body["total"]["qty"] == 30, body["total"]
+
+
+def test_1b_product_ids_and_product_code_are_anded(client, db):
+    w = _ranking_world(db)
+    # ids = p1 and p3; the prefix ZZTBB names only p3: the AND leaves p3.
+    body = _ok(client, _full(db), group_by="sales_agent", top_n=10, product_ids=[w.p1.id, w.p3.id],
+               product_code="ZZTBB")
+    assert _rows(body) == [("ZZT-AG-3", 30, D("3000.00")), ("ZZT-AG-1", 5, D("500.00"))], body["rows"]
+
+
+def test_1b_blank_product_ids_is_422_empty_filter(client, db):
+    _ranking_world(db)
+    resp = _ask(client, _full(db), group_by="sales_agent", top_n=3, product_ids="")
+    assert resp.status_code == 422 and _code(resp) == "empty_filter", resp.text
+    assert "product_ids" in str(resp.json().get("detail")), resp.text
+
+
+def test_1b_an_unknown_product_id_is_404(client, db):
+    _ranking_world(db)
+    resp = _ask(client, _full(db), group_by="sales_agent", top_n=3, product_ids=[str(uuid.uuid4())])
+    assert resp.status_code == 404 and _code(resp) == "NOT_FOUND", resp.text
+
+
+def test_1b_more_than_50_product_ids_is_too_many_values(client, db):
+    resp = _ask(client, _full(db), group_by="product", top_n=3, product_ids=[str(uuid.uuid4()) for _ in range(51)])
+    assert resp.status_code == 422 and _code(resp) == "too_many_values", resp.text
+    assert "product_ids" in str(resp.json().get("detail")), resp.text
