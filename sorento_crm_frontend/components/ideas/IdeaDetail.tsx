@@ -622,19 +622,21 @@ export function IdeaDetail({ id }: { id: string }) {
               aria-label="Attachments"
               className="flex flex-col gap-3 p-5"
             >
-              <FileDropzone
-                multiple
-                disabled={upload.isPending}
-                files={[]}
-                onFilesChange={(files) => void onPickFiles(files)}
-                aria-label="Upload attachments"
-                title={
-                  upload.isPending
-                    ? 'Uploading...'
-                    : 'Drop files here or click to upload'
-                }
-                hint=""
-              />
+              {canManage || idea.isMine === true ? (
+                <FileDropzone
+                  multiple
+                  disabled={upload.isPending}
+                  files={[]}
+                  onFilesChange={(files) => void onPickFiles(files)}
+                  aria-label="Upload attachments"
+                  title={
+                    upload.isPending
+                      ? 'Uploading...'
+                      : 'Drop files here or click to upload'
+                  }
+                  hint=""
+                />
+              ) : null}
               {idea.attachments.length === 0 ? (
                 <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed py-8 text-center">
                   <span className="text-sm font-medium">No attachments</span>

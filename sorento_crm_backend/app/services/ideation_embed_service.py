@@ -128,7 +128,12 @@ def _resolve_embed_config(db: Session | None) -> _EmbedConfig:
 
 
 def mint_embed_assertion(
-    user: dict[str, Any], *, secret: str, connection_id: str, phone: str | None = None
+    user: dict[str, Any],
+    *,
+    secret: str,
+    connection_id: str,
+    phone: str | None = None,
+    ideas_manage: bool | None = None,
 ) -> str:
     """Sign a short-lived assertion identifying the logged-in user for the embed
     connection. Signed with the resolved embed signing secret (never the app JWT
@@ -151,6 +156,9 @@ def mint_embed_assertion(
     }
     if phone:
         payload["phone"] = phone
+    if ideas_manage is not None:
+        # ss refuses a non-manager's write on someone else's idea (403 not_owner).
+        payload["ideas_manage"] = bool(ideas_manage)
     return jwt.encode(payload, secret, algorithm=settings.jwt_algorithm)
 
 

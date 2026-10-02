@@ -47,13 +47,13 @@ from app.services.ideation_turn_service import (
     _now_iso,
     _parse_iso,
     _resolve_ideation_config,
-    call_create_idea,
 )
 from app.services.user_service import UserPermissionService
 
 logger = logging.getLogger(__name__)
 
-_SIMILAR_OWN_PATH = "/ideation/intake/similar-own"
+_SIMILAR_OWN_PATH = "/ideation/intake/ideas/similar-own"
+_CREATE_PATH = "/ideation/intake/ideas"
 _VIEW_PERMISSION = "ideation.board.view"
 _HOLD_MAX_AGE = timedelta(hours=24)
 _MAX_SIMILAR = 3
@@ -69,12 +69,13 @@ _REQUIRED_FIELDS: tuple[str, ...] = ("problem",)
 _EDGE = " \t\r\n.,!?;:'\"()[]"
 
 
-def call_similar_own(base_url: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """POST to ss `/ideation/intake/similar-own` (server-to-server HTTP).
+def _post_json(base_url: str, api_key: str, path: str, payload: dict[str, Any], what: str) -> dict[str, Any]:
+    """POST `payload` to ss `path` (server-to-server HTTP) and return the JSON object.
 
     Raises `IdeationServiceError` on any transport/HTTP/parse failure so the caller replies
-    gracefully instead of 500ing."""
-    url = base_url.rstrip("/") + _SIMILAR_OWN_PATH
+    gracefully instead of 500ing. ss errors are `{"error": {"code", "message"}}`: the code is
+    logged, never shown."""
+    url = base_url.rstrip("/") + path
     try:
         with httpx.Client(timeout=_TIMEOUT_SECONDS) as client:
             resp = client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"})
@@ -85,17 +86,34 @@ def call_similar_own(base_url: str, api_key: str, payload: dict[str, Any]) -> di
             detail = exc.response.json()
         except (ValueError, json.JSONDecodeError):
             detail = exc.response.text
+        error = detail.get("error") if isinstance(detail, dict) else None
+        code = error.get("code") if isinstance(error, dict) else None
+        logger.warning("ideation %s refused by ss: status=%s code=%s", what, exc.response.status_code, code)
         raise IdeationServiceError(
-            f"similar-own request failed: {exc}",
+            f"{what} request failed: {exc}",
             status_code=exc.response.status_code,
             response_detail=detail,
         ) from exc
     except httpx.HTTPError as exc:
-        raise IdeationServiceError(f"similar-own request failed: {exc}") from exc
+        raise IdeationServiceError(f"{what} request failed: {exc}") from exc
     except (ValueError, json.JSONDecodeError) as exc:
-        raise IdeationServiceError(f"similar-own returned a malformed body: {exc}") from exc
+        raise IdeationServiceError(f"{what} returned a malformed body: {exc}") from exc
     if not isinstance(data, dict):
-        raise IdeationServiceError("similar-own returned a non-object body")
+        raise IdeationServiceError(f"{what} returned a non-object body")
+    return data
+
+
+def call_similar_own(base_url: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """POST ss `/ideation/intake/ideas/similar-own`; the answer is `{matches: [...]}`."""
+    return _post_json(base_url, api_key, _SIMILAR_OWN_PATH, payload, "similar-own")
+
+
+def call_create_idea(base_url: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """POST ss `/ideation/intake/ideas` (flat fields). Success is a 2xx with
+    `status == "captured"` and a UUID `idea_id`; anything else is an `IdeationServiceError`."""
+    data = _post_json(base_url, api_key, _CREATE_PATH, payload, "create idea")
+    if data.get("status") != "captured" or _valid_uuid(data.get("idea_id")) is None:
+        raise IdeationServiceError(f"create idea returned an unexpected body: status={data.get('status')!r}")
     return data
 
 
@@ -157,8 +175,9 @@ def _access_user(db: Session, respond_io_id: str) -> User | None:
     return user
 
 
-def _missing_list(captured: dict[str, Any]) -> list[str]:
-    missing = [label for key, label in _OPTIONAL_FIELDS if not captured.get(key)]
+def _missing_list(sent: dict[str, Any]) -> list[str]:
+    """What the CRM did not send, in the reply's order (ss returns no `captured`)."""
+    missing = [label for key, label in _OPTIONAL_FIELDS if not sent.get(key)]
     return [*missing, _PHOTOS]
 
 
@@ -212,7 +231,7 @@ def handle_capture_turn(
             out["link"] = link
         return out
 
-    # A bare number or NEW answers the held list; the extractor is not needed for either number.
+    # A bare number or NEW answers the held list; neither needs the extractor.
     choice: str | int | None = None
     if held is not None:
         token = text_in.strip(_EDGE)
@@ -228,9 +247,6 @@ def handle_capture_turn(
         extraction = extract_ideate_turn(db, message_text=text_in)
         language = _language(extraction.language)
         held = None
-    elif choice == "new":
-        extraction = extract_ideate_turn(db, message_text=held["message_text"])
-        language = _language(held.get("language") or extraction.language)
     else:
         language = _language(held.get("language"))
 
@@ -247,32 +263,40 @@ def handle_capture_turn(
         facts = {
             "idea_number": idea.get("idea_number"),
             "title": idea.get("title"),
-            "link": _idea_link(idea.get("id")),
+            "link": _idea_link(idea.get("idea_id")),
         }
         return finish("similar_picked", "similar_picked", facts, language)
 
-    assert extraction is not None
-    source_text = held["message_text"] if choice == "new" else text_in
-    fields = {
-        key: cleaned
-        for key, value in extraction.fields.items()
-        if (cleaned := normalise_field_value(key, value))
-    }
-    title = normalise_title(extraction.title)
-    if _missing_required(fields):
-        return finish("ask_idea", "ask_idea", {}, language)
+    if choice == "new":
+        # Create from the HELD message: its fields, title and intake_ref ride on the pointer.
+        fields = dict(held.get("fields") or {})
+        title = str(held.get("title") or "")
+        source_text = held["message_text"]
+        intake_ref = _valid_uuid(held.get("intake_ref")) or str(uuid.uuid4())
+    else:
+        assert extraction is not None
+        source_text = text_in
+        fields = {
+            key: cleaned
+            for key, value in extraction.fields.items()
+            if (cleaned := normalise_field_value(key, value))
+        }
+        title = normalise_title(extraction.title)
+        if _missing_required(fields):
+            return finish("ask_idea", "ask_idea", {}, language)
+        # Minted once the create is decided; a list offer keeps it so NEW (even retried after
+        # an ss failure) lands on the same idea.
+        intake_ref = str(uuid.uuid4())
 
-    if choice != "new":
         try:
             found = call_similar_own(
                 config.base_url,
                 config.api_key,
                 {
                     "product_id": config.product_id,
-                    "submitter_contact_id": contact.phone_number,
-                    "crm_user_id": user.id,
-                    "title": title,
-                    "problem": fields.get("problem", ""),
+                    "text": fields.get("problem", ""),
+                    "submitter_crm_user_id": user.id,
+                    "submitter_phone": contact.phone_number,
                     "is_test": bool(is_test),
                 },
             )
@@ -280,31 +304,29 @@ def handle_capture_turn(
             logger.warning("ideation similar-own failed for respond_io_id=%s", respond_io_id, exc_info=True)
             return finish("error", "error", {}, language, persist=False)
 
-        raw = [i for i in (found.get("ideas") or []) if isinstance(i, dict)]
+        raw = [m for m in (found.get("matches") or []) if isinstance(m, dict)]
         shown = [
             {
-                "id": clean,
-                "idea_number": i.get("idea_number"),
-                "title": str(i.get("title") or ""),
+                "idea_id": clean,
+                "idea_number": m.get("idea_number"),
+                "title": str(m.get("title") or ""),
             }
-            for i in raw
-            if (clean := _valid_uuid(i.get("id")))
+            for m in raw
+            if (clean := _valid_uuid(m.get("idea_id")))
         ][:_MAX_SIMILAR]
         if shown:
-            try:
-                total = int(found.get("total") or 0)
-            except (TypeError, ValueError):
-                total = 0
             facts = {
-                "similar": [
-                    {**s, "link": _idea_link(s["id"])} for s in shown
-                ],
-                "see_all": _crm_link("ideas?view=mine") if total > len(raw) else None,
+                "similar": [{**s, "link": _idea_link(s["idea_id"])} for s in shown],
+                # ss returns no total: a full page of 3 may be hiding more.
+                "see_all": _crm_link("ideas?view=mine") if len(raw) >= _MAX_SIMILAR else None,
             }
             pointer: dict[str, Any] = {
                 "status": "similar_offered",
                 "message_text": text_in,
+                "fields": fields,
+                "title": title,
                 "similar": shown,
+                "intake_ref": intake_ref,
                 "updated_at": _now_iso(),
                 "is_test": bool(is_test),
             }
@@ -314,14 +336,16 @@ def handle_capture_turn(
 
     payload: dict[str, Any] = {
         "product_id": config.product_id,
-        "capture_now": True,
-        "crm_user_id": user.id,
-        "submitter_contact_id": contact.phone_number,
-        "message_text": source_text,
+        "problem": fields.get("problem", ""),
+        "submitter_crm_user_id": user.id,
+        "submitter_phone": contact.phone_number,
         "raw_transcript": source_text,
-        "fields": fields,
         "is_test": bool(is_test),
+        "intake_ref": intake_ref,
     }
+    for key, _label in _OPTIONAL_FIELDS:
+        if fields.get(key):
+            payload[key] = fields[key]
     name = contact.display_name or _derive_display_name(submitter_name, None, None)
     if name:
         payload["submitter_name"] = name
@@ -335,15 +359,16 @@ def handle_capture_turn(
     except IdeationServiceError:
         logger.warning("ideation capture create failed for respond_io_id=%s", respond_io_id, exc_info=True)
         return finish("error", "error", {}, language, pointer=held, persist=False)
-    if result.get("status") != "complete":
+    if result.get("status") != "captured":
         logger.warning("ideation capture create answered %r", result.get("status"))
         return finish("error", "error", {}, language, pointer=held, persist=False)
 
-    link = _idea_link(result.get("id"))
+    # The CRM link is built here from the id; ss's public `link` is never relayed.
+    link = _idea_link(result.get("idea_id"))
     facts = {
         "idea_number": result.get("idea_number"),
         "title": result.get("title") or title,
         "link": link,
-        "missing": _missing_list(result.get("captured") or {}),
+        "missing": _missing_list(payload),
     }
     return finish("complete", "complete", facts, language, link=link)

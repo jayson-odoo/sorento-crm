@@ -577,9 +577,10 @@ def test_g_other_reply_drops_hold_and_runs_fresh(env):
 
     assert env.extractor_calls == [other]
     assert len(env.similar_calls) == 1
-    assert env.similar_calls[0]["problem"] == PROBLEM
+    assert env.similar_calls[0]["text"] == PROBLEM
     assert out["status"] == "complete"
-    assert all(c["message_text"] != "old held message" for c in env.create_calls)
+    # The create is built from THIS message, never the dropped held one.
+    assert all(c.get("raw_transcript") == other for c in env.create_calls)
 
 
 # --------------------------------------------------------------------------- #
