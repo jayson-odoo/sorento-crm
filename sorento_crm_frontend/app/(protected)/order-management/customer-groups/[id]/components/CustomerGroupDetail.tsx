@@ -237,7 +237,11 @@ function LedgersTab({ groupId, canEdit }: { groupId: string; canEdit: boolean })
       searchQuery: debouncedSearch,
     });
   const add = useAddCustomerGroupCustomers(groupId);
-  const picker = useCustomerMultiPicker(() => false);
+  // A ledger already in THIS group is shown but cannot be ticked; the rest say where they are.
+  const picker = useCustomerMultiPicker(
+    (option) => option.customerGroupId === groupId,
+    (option) => (option.customerGroupName ? `in ${option.customerGroupName}` : 'no group'),
+  );
 
   // Remove asks nothing (D7): the row dims and a toast counts down with Cancel. The payload
   // names the group so the server clears it only while the ledger is still in it.

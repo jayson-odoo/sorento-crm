@@ -86,7 +86,11 @@ export async function getCustomerSalesAgentsSelect(): Promise<CustomerSalesAgent
 export const CUSTOMER_SELECT_PAGE_SIZE = 50;
 
 /** A customers-select option; `salesAgentId` lets a caller disable "already on this agent". */
-export type CustomerSelectOption = SearchableSelectOption & { salesAgentId?: string | null };
+export type CustomerSelectOption = SearchableSelectOption & {
+  salesAgentId?: string | null;
+  customerGroupId?: string | null;
+  customerGroupName?: string | null;
+};
 
 /**
  * One page of customers for the contact card's "Add customers" and the sales agent tab's
@@ -111,6 +115,8 @@ export async function searchCustomersSelect(
     sales_agent_id?: string | null;
     sales_agent_code?: string | null;
     sales_agent_name?: string | null;
+    customer_group_id?: string | null;
+    customer_group_name?: string | null;
   };
   const search = new URLSearchParams({
     limit: String(CUSTOMER_SELECT_PAGE_SIZE),
@@ -129,6 +135,8 @@ export async function searchCustomersSelect(
       ? `${c.sales_agent_code} - ${c.sales_agent_name ?? ''}`.replace(/ - $/, '')
       : 'No sales agent',
     salesAgentId: c.sales_agent_id ?? null,
+    customerGroupId: c.customer_group_id ?? null,
+    customerGroupName: c.customer_group_name ?? null,
   }));
 }
 
