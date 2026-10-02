@@ -20,16 +20,14 @@ import httpx
 from fastapi import Response
 from sqlalchemy.orm import Session
 
-from app.models.access import RespondContact
-from app.models.user import User
 from app.services.error_handler import AppException
-from app.services.phone_utils import normalize_msisdn
-from app.services.user_service import UserPermissionService
 from app.services.ideation_embed_service import (
     IdeationEmbedNotConfigured,
     IdeationEmbedUpstreamError,
     _TIMEOUT_SECONDS,
     _resolve_embed_config,
+    user_ideas_manage,
+    user_phone,
     mint_embed_assertion,
     post_embed_session,
 )
@@ -87,35 +85,8 @@ def _expiry_epoch(expires_at: Any) -> float:
     return time.time() + _DEFAULT_TOKEN_TTL_SECONDS
 
 
-def _user_phone(db: Session, user: dict[str, Any]) -> str | None:
-    """The linked contact's phone, only when it is a VERIFIED number: `users.phone_verified_at`
-    is set and the user's own number equals the contact's. Otherwise None (no claim)."""
-    user_id = user.get("id")
-    if not user_id:
-        return None
-    row = (
-        db.query(RespondContact.phone_number, User.contact_number, User.phone_verified_at)
-        .join(User, User.respond_contact_id == RespondContact.id)
-        .filter(User.id == str(user_id))
-        .first()
-    )
-    if row is None or row.phone_verified_at is None:
-        return None
-    contact_phone = (row.phone_number or "").strip()
-    own = normalize_msisdn(row.contact_number)
-    if not contact_phone or own is None or own != normalize_msisdn(contact_phone):
-        return None
-    return contact_phone
-
-
 def _cache_key(user: dict[str, Any], config: Any) -> tuple[str, str, str]:
     return (str(user.get("id") or ""), str(config.connection_id), str(config.base_url))
-
-
-def _ideas_manage(db: Session, user: dict[str, Any]) -> bool:
-    return bool(
-        UserPermissionService(db).check_user_has_permission(user.get("id"), "ideation.ideas.manage")
-    )
 
 
 def get_embed_token(db: Session, user: dict[str, Any], *, force_refresh: bool = False) -> str:
@@ -125,8 +96,8 @@ def get_embed_token(db: Session, user: dict[str, Any], *, force_refresh: bool = 
         raise IdeationEmbedNotConfigured("ideation embed not configured for this deployment")
     assert config.base_url and config.connection_id and config.secret
 
-    phone = _user_phone(db, user)
-    ideas_manage = _ideas_manage(db, user)
+    phone = user_phone(db, user)
+    ideas_manage = user_ideas_manage(db, user)
     key = _cache_key(user, config)
     claims: _Claims = (phone or "", ideas_manage)
     if not force_refresh:
@@ -263,8 +234,7 @@ def relay(resp: httpx.Response) -> Response:
 
 def user_for_requester(db: Session, user_id: str) -> dict[str, Any]:
     """The `user` dict an assertion needs, for a pending action committing as its requester."""
-    from app.models.user import User
-
+    
     from app.models.user import UserStatus
 
     row = db.query(User).filter(User.id == str(user_id)).first()

@@ -36,8 +36,7 @@ emits:
 
 ``confirm`` is no longer read from the model (AC-1201): it is DERIVED here from
 ``review_action`` and the draft's status, so there is exactly one place (this
-function) that decides it - ``handle_turn`` just reads ``.confirm`` off the result,
-same as before this slice.
+function) that decides it - the old draft flow read ``.confirm`` off the result.
 
 Reuses the same provider plumbing as before (``get_provider`` + ``json_schema``
 forced output) and the prompt registry (``ideate_extractor`` key). On any failure
@@ -305,9 +304,9 @@ def extract_ideate_turn(
     Never raises - degrades to an empty extraction on any failure. ``confirm`` is
     derived here (AC-1201) by ``derive_confirm``: only a yes while ``status ==
     "review"`` (D-CONFIRM / AC-1208 / AC-1211, owner ruling 26 Sep 2026) - a
-    confirmation only means anything once the draft is being reviewed. ``handle_turn``
-    derives it again after its own normalisation, so an empty (failed) extraction
-    still lets a plain yes submit. ``cancel`` has no such gate:
+    confirmation only means anything once the draft is being reviewed. The old draft flow
+    derived it again after its own normalisation, so an empty (failed) extraction
+    still let a plain yes submit. ``cancel`` has no such gate:
     the caller reads ``review_action == "cancel"`` directly and honours it at any
     status (AC-1211).
     """

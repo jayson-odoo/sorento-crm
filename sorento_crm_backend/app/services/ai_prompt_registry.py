@@ -989,7 +989,8 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     # --- S3: the composed WhatsApp reply for an ideate turn, written from FACTS
     #     the shared-service response carries. shared-service's own template text
     #     is the fallback when the composed reply fails a deterministic check
-    #     (R5). See `ideation_turn_service.compose_ideate_reply`. ---
+    #     (R5). Now only the access-denied reply uses it:
+    #     `ideation_turn_service.compose_ideate_denial_reply`. ---
     "ideate_reply": PromptKeySpec(
         name="ideate_reply",
         role="Ideate reply composer - point-form WhatsApp reply from intake facts",

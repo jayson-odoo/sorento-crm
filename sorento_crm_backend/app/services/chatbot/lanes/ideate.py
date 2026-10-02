@@ -106,8 +106,7 @@ def build_reply(result: Mapping[str, Any]) -> dict[str, Any]:
     shapes. `ideate_status` defaults to `'error'`, which is the JS's own fallback and the
     reason a tool that answers without a status still reads as a failure on the trace.
 
-    No raw ``link`` append (AC-1216): the composed reply (S3's
-    ``compose_ideate_reply``, or its shared-service template fallback) already
+    No raw ``link`` append (AC-1216): the capture turn's reply copy already
     carries the link itself, deliberately, via the facts block - appending it again
     here would risk a doubled URL rather than fixing a missing one.
     """

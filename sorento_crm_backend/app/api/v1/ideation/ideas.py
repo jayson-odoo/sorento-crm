@@ -170,7 +170,10 @@ def update_idea(idea_id: UUID, payload: dict = Body(...), user: dict = _write, d
     # A manager edits any idea. Anyone else (view only) edits only their own, and ss alone says
     # whose it is (`isMine`); a non-2xx on the lookup is relayed by `call_ss` (404 stays 404).
     if not UserPermissionService(db).check_user_has_permission(user["id"], MANAGE):
-        idea = call_ss(db, user, "GET", path).json()
+        try:
+            idea = call_ss(db, user, "GET", path).json()
+        except ValueError:
+            raise AppException(502, UNREACHABLE, code="IDEATION_UNREACHABLE")
         if not (isinstance(idea, dict) and idea.get("isMine") is True):
             raise AppException(403, "You can only edit your own ideas.", code="FORBIDDEN")
     return _forward(db, user, "PATCH", path, json=body)

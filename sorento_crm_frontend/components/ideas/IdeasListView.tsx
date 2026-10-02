@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -51,11 +51,16 @@ export function IdeasListView() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [mine, setMine] = useState(searchParams.get('view') === 'mine');
+  // The URL is the source of truth; `picked` only bridges the moment between a click and the
+  // router catching up, and is dropped as soon as the URL says anything new.
+  const urlMine = searchParams.get('view') === 'mine';
+  const [picked, setPicked] = useState<boolean | null>(null);
+  useEffect(() => setPicked(null), [urlMine]);
+  const mine = picked ?? urlMine;
   const changeView = (next: string) => {
     if (!next) return;
     const isMine = next === 'mine';
-    setMine(isMine);
+    setPicked(isMine);
     const params = new URLSearchParams(searchParams.toString());
     if (isMine) params.set('view', 'mine');
     else params.delete('view');

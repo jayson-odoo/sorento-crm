@@ -295,6 +295,12 @@ IDEATION_CAPTURE_SIMILAR_PICKED = {
     "ms": "Buka {{idea_number}} untuk menambah ini: {{link}}",
     "zh": "打开 {{idea_number}} 补充这些内容：{{link}}",
 }
+#: No CRM base URL to build a link from: point at the page instead of a blank link.
+IDEATION_CAPTURE_SIMILAR_PICKED_NO_LINK = {
+    "en": "Open {{idea_number}} in the CRM Ideas page to add this.",
+    "ms": "Buka {{idea_number}} di halaman Idea CRM untuk menambah ini.",
+    "zh": "请在 CRM 的创意页面打开 {{idea_number}} 补充这些内容。",
+}
 IDEATION_CAPTURE_COMPLETE = {
     "en": (
         "Idea {{idea_number}} is in: {{title}}\n"
@@ -353,6 +359,10 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
     "ideation_capture_similar_offered_reply": (IDEATION_CAPTURE_SIMILAR_OFFERED_REPLY, ()),
     "ideation_capture_similar_offered_see_all": (IDEATION_CAPTURE_SIMILAR_OFFERED_SEE_ALL, ("link",)),
     "ideation_capture_similar_picked": (IDEATION_CAPTURE_SIMILAR_PICKED, ("idea_number", "link")),
+    "ideation_capture_similar_picked_no_link": (
+        IDEATION_CAPTURE_SIMILAR_PICKED_NO_LINK,
+        ("idea_number",),
+    ),
     "ideation_capture_complete": (
         IDEATION_CAPTURE_COMPLETE,
         ("idea_number", "title", "missing", "link"),

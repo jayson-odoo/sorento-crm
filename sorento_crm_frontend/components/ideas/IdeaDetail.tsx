@@ -622,7 +622,7 @@ export function IdeaDetail({ id }: { id: string }) {
               aria-label="Attachments"
               className="flex flex-col gap-3 p-5"
             >
-              {canManage || idea.isMine === true ? (
+              {canManage || (idea.isMine === true && !isMergedChild) ? (
                 <FileDropzone
                   multiple
                   disabled={upload.isPending}

@@ -165,7 +165,7 @@ class _ContactState:
         self.phone_number = phone_number
         self.session_vars = session_vars
         # Human name from respond_contacts (WS-A). None when the CRM has no name
-        # for this contact → handle_turn falls back to the n8n-supplied name.
+        # for this contact → the capture turn falls back to the n8n-supplied name.
         self.display_name = display_name
         # R7/AC-1207: the code of the FIRST ContactAccessType in the contact's
         # access_types relationship order (sort_order, then code). None when the
@@ -477,7 +477,9 @@ def sweep_idle_ideation_drafts(db: Session, *, now: datetime | None = None) -> d
         try:
             session_vars = _coerce_to_dict(contact.session_vars)
             ideation = session_vars.get("ideation") or {}
-            if not ideation:
+            # Only the old draft flow's pointers (they carry a draft_id) drain here; a
+            # capture-flow held list has no draft in ss, so there is nothing to remind or close.
+            if not ideation or not ideation.get("draft_id"):
                 continue
             updated_at = _parse_iso(ideation.get("updated_at"))
             reminded_at = _parse_iso(ideation.get("reminded_at"))

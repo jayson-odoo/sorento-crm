@@ -152,7 +152,12 @@ def _held_pointer(ideation_state: dict[str, Any], is_test: bool) -> dict[str, An
         return None
     if bool(ideation_state.get("is_test")) != bool(is_test):
         return None
-    if not isinstance(ideation_state.get("similar"), list) or not ideation_state.get("message_text"):
+    similar = ideation_state.get("similar")
+    if (
+        not isinstance(similar, list)
+        or not all(isinstance(item, dict) for item in similar)
+        or not ideation_state.get("message_text")
+    ):
         return None
     updated = _parse_iso(ideation_state.get("updated_at"))
     if updated is None or datetime.now(timezone.utc) - updated >= _HOLD_MAX_AGE:
@@ -194,13 +199,18 @@ def handle_capture_turn(
     `session_vars` is the full updated blob. A test turn never persists it."""
     contact = _get_contact_row(db, respond_io_id)
     session_vars = contact.session_vars
-    caller_sv = session_vars_in or {}
-    ideation_state = (
-        caller_sv.get("ideation")
-        or (caller_sv.get("variables") or {}).get("ideation")
-        or session_vars.get("ideation")
-        or {}
-    )
+    if is_test:
+        # A dry run carries its own pointer (it is never persisted): the caller's first.
+        caller_sv = session_vars_in or {}
+        ideation_state = (
+            caller_sv.get("ideation")
+            or (caller_sv.get("variables") or {}).get("ideation")
+            or session_vars.get("ideation")
+            or {}
+        )
+    else:
+        # A live turn trusts only what this service persisted, in the contact's own row.
+        ideation_state = session_vars.get("ideation") or {}
     held = _held_pointer(ideation_state, is_test)
     text_in = (message_text or "").strip()
 
@@ -358,9 +368,6 @@ def handle_capture_turn(
         result = call_create_idea(config.base_url, config.api_key, payload)
     except IdeationServiceError:
         logger.warning("ideation capture create failed for respond_io_id=%s", respond_io_id, exc_info=True)
-        return finish("error", "error", {}, language, pointer=held, persist=False)
-    if result.get("status") != "captured":
-        logger.warning("ideation capture create answered %r", result.get("status"))
         return finish("error", "error", {}, language, pointer=held, persist=False)
 
     # The CRM link is built here from the id; ss's public `link` is never relayed.

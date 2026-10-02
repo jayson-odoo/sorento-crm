@@ -65,7 +65,10 @@ def render_reply(
     if kind == "similar_offered":
         lines = [_template("similar_offered", lang, db)]
         for n, idea in enumerate(facts.get("similar") or [], start=1):
-            lines.append(f"{n}. {idea.get('title')} - {idea.get('link')}")
+            line = f"{n}. {idea.get('title')}"
+            if idea.get("link"):
+                line += f" - {idea['link']}"
+            lines.append(line)
         lines.append(_template("similar_offered_reply", lang, db))
         if facts.get("see_all"):
             lines.append(_fill(_template("similar_offered_see_all", lang, db), link=facts["see_all"]))
@@ -82,8 +85,9 @@ def render_reply(
         )
 
     if kind == "similar_picked":
+        name = "similar_picked" if facts.get("link") else "similar_picked_no_link"
         return _fill(
-            _template("similar_picked", lang, db),
+            _template(name, lang, db),
             idea_number=facts.get("idea_number"),
             link=facts.get("link"),
         )
