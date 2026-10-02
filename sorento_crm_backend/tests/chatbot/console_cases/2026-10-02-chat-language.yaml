@@ -85,3 +85,59 @@ cases:
             - "SRTWC286"
           reply_not_contains:
             - "Product Code"
+
+  # ═══ Slices 2-4 (PO/SO/SPO/orders, reports, final reply pass) ═══
+  - name: A Malay PO ask answers with Malay labels, PO stays PO, values unchanged
+    cold: true
+    live_only: true
+    text: "ada PO untuk SRTWC286?"
+    expect:
+      branch_kind: business_query
+      reply_contains:
+        - "SRTWC286"
+      reply_not_contains:
+        - "PO Number"
+        - "Here is the PO placed I found."
+      no_uuid: true
+
+  - name: A Chinese outstanding report keeps every number and offers the lists in Chinese
+    cold: true
+    live_only: true
+    text: "SRTWC286 未交货订单"
+    expect:
+      branch_kind: business_query
+      reply_not_contains:
+        - "Sales order outstanding"
+        - "Reply with a number for detail"
+      no_uuid: true
+
+  - name: The parser still reads a reply to a Malay "how many" ranking question
+    cold: true
+    live_only: true
+    turns:
+      - text: "barang paling laris bulan ini"
+        expect:
+          reply_not_contains:
+            - "do you want to see?"
+      - text: "20"
+        expect:
+          branch_kind: business_query
+          reply_not_contains:
+            - "do you want to see?"
+            - "Sorry, I didn't get that"
+
+  - name: A Malay miss offers escalation in Malay, and "ya" escalates (Malay confirmation)
+    cold: true
+    live_only: true
+    turns:
+      - text: "ada stok ZZNOPE999?"
+        expect:
+          reply_contains:
+            - "Adakah anda mahu saya rujuk kepada pasukan"
+          reply_not_contains:
+            - "Would you like me to escalate"
+      - text: "ya"
+        expect:
+          reply_not_contains:
+            - "This inquiry has been routed"
+            - "Your request is out of the scope"
