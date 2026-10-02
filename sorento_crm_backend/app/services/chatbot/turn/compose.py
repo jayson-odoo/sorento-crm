@@ -788,7 +788,7 @@ def _short_question(pending: Any) -> str:
     return f"{header} I found {count}, please type a little more of the name."
 
 
-def compose_question(pending: Any, state: State | None = None) -> Answer:
+def compose_question(pending: Any, state: State | None = None, localizer: Any = None) -> Answer:
     """The ask, as an Answer: the subject line, the header, the numbered roster, and the
     same pending back.
 
@@ -819,6 +819,9 @@ def compose_question(pending: Any, state: State | None = None) -> Answer:
     verbatim = str(offered.get("offer_text") or "").strip() if isinstance(offered, dict) else ""
     if verbatim:
         body = verbatim
+        if pending.kind == "outstanding_detail" and localizer is not None:
+            # CHAT-LANGUAGE: the stored offer text stays English; its re-print is in the turn's.
+            body = localizer.lines(verbatim)
         positions = [o.get("position") for o in pending.options if isinstance(o.get("position"), int)]
         if pending.kind == "sales_report_detail" and positions:
             # PR #1401 fix round 3, F4 (mock v3 section 8, carried into v4): a re-print of

@@ -2273,7 +2273,9 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
         # ever stripped, AC-S1-3's own narrow fix) - a bare, non-envelope string is
         # NEVER a rendered report, so it must never reach `response` either, the
         # same "never treated as a result" rule `has_result` already states above.
-        "response": text if "response" in envelope else "",
+        # CHAT-LANGUAGE slice 3: the offer above was parsed from the ENGLISH text; only what is
+        # printed is localized, last (the stored offer text stays English).
+        "response": (ctx.get("localizer") or IDENTITY).lines(text) if "response" in envelope else "",
         "response_intro": None,
         "answers": [],
         "attachments": [],
@@ -2565,7 +2567,9 @@ def _top_selling_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     return {
-        "response": text,
+        # CHAT-LANGUAGE slice 3: the roster above came from the English envelope; the notes and
+        # the ranking are localized last, line by line.
+        "response": (ctx.get("localizer") or IDENTITY).lines(text),
         "response_intro": None,
         "answers": [],
         "attachments": [],

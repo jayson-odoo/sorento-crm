@@ -5375,7 +5375,12 @@ def _run_stages(  # noqa: PLR0915
                     state_out,
                     focus=dataclasses_replace(state_out.focus, customers=focus_customers_named),
                 )
-            answer = turn_compose.compose_question(plan.ask, subject_state)
+            ask_localizer = (
+                label_catalog.resolve(db, item.get("reply_language") or "en", dry_run=dry_run)
+                if plan.ask.kind == "outstanding_detail"
+                else None
+            )
+            answer = turn_compose.compose_question(plan.ask, subject_state, ask_localizer)
 
         # -- the REFUSAL: a denied stock check is an answer, not silence ------- #
         # `stock_denied` is one of the three business branch kinds, so it is outside

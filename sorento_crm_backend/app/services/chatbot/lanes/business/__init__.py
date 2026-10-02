@@ -699,7 +699,11 @@ def _sales_analysis_axis_unsupported(group_by: str) -> dict[str, Any]:
 
 
 def _outstanding_detail_reoffer(
-    filters: dict[str, Any], rows: list[dict[str, Any]], *, kind: str = "outstanding_detail"
+    filters: dict[str, Any],
+    rows: list[dict[str, Any]],
+    *,
+    kind: str = "outstanding_detail",
+    localizer: Any = None,
 ) -> dict[str, Any]:
     """AC-1143(c): an out-of-range number against an OPEN detail offer re-prints that
     offer, fetches nothing, and leaves it open - the same `structured` shape (and so the
@@ -719,6 +723,8 @@ def _outstanding_detail_reoffer(
         text = "Reply with a number for detail:\n" + "\n".join(
             f"{jsc.js_string(row.get('idx'))}. {jsc.js_string(row.get('label'))}" for row in rows
         )
+    if kind == "outstanding_detail" and localizer is not None:
+        text = localizer.lines(text)  # CHAT-LANGUAGE: the stored offer stays English
     structured: dict[str, Any] = {
         "response": text,
         "outstanding_ask": {
@@ -1383,7 +1389,10 @@ def run_fetch(
             # deploy keeps re-printing the kind it always did.
             reask_kind = detail_reask.get("kind") or "outstanding_detail"
             return _outstanding_detail_reoffer(
-                detail_reask.get("filters") or {}, reoffer_rows, kind=reask_kind
+                detail_reask.get("filters") or {},
+                reoffer_rows,
+                kind=reask_kind,
+                localizer=ctx.get("localizer"),
             )
 
     reask_filters = parse_output.get("outstanding_reask_filters")

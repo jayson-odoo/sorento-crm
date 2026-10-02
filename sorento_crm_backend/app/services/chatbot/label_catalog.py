@@ -152,6 +152,73 @@ LABELS: dict[str, dict[str, str]] = {
         "ms": "Tiada kos belian ditemui untuk {codes}.",
         "zh": "未找到 {codes} 的采购成本。",
     },
+    # Slice 3: the outstanding report and top selling (finished text, `Localizer.lines`). The
+    # singular titles are the presenter's `Top 1 selling item` forms.
+    "Sales orders": {"ms": "Pesanan jualan", "zh": "销售订单"},
+    "Order date range": {"ms": "Julat tarikh pesanan", "zh": "订单日期范围"},
+    "Delivery orders": {"ms": "Pesanan penghantaran", "zh": "送货单"},
+    "DO qty": {"ms": "Kuantiti DO", "zh": "DO 数量"},
+    "DO date range": {"ms": "Julat tarikh DO", "zh": "DO 日期范围"},
+    "Product": {"ms": "Produk", "zh": "产品"},
+    "Order date": {"ms": "Tarikh pesanan", "zh": "订单日期"},
+    "Brand": {"ms": "Jenama", "zh": "品牌"},
+    "DO Number": {"ms": "No. DO", "zh": "DO 编号"},
+    "DO Qty": {"ms": "Kuantiti DO", "zh": "DO 数量"},
+    "Category": {"ms": "Kategori", "zh": "类别"},
+    "Sales agent": {"ms": "Ejen jualan", "zh": "销售代理"},
+    "Channel": {"ms": "Saluran", "zh": "渠道"},
+    "Delivery date": {"ms": "Tarikh penghantaran", "zh": "送货日期"},
+    "Ranked by": {"ms": "Disusun mengikut", "zh": "排名依据"},
+    "Basis": {"ms": "Asas", "zh": "基准"},
+    "Items with sales": {"ms": "Item dengan jualan", "zh": "有销售的项目"},
+    "Categories with sales": {"ms": "Kategori dengan jualan", "zh": "有销售的类别"},
+    "all": {"ms": "semua", "zh": "全部"},
+    "{from} to {to}": {"ms": "{from} hingga {to}", "zh": "{from} 至 {to}"},
+    "Amount": {"ms": "Amaun", "zh": "金额"},
+    "Quantity": {"ms": "Kuantiti", "zh": "数量"},
+    "Delivered (transferred to DO)": {"ms": "Dihantar (dipindahkan ke DO)", "zh": "已送货（已转 DO）"},
+    "Sales order outstanding": {"ms": "Pesanan jualan belum dihantar", "zh": "未交货销售订单"},
+    "Delivery order outstanding": {"ms": "Pesanan penghantaran belum dihantar", "zh": "未送达送货单"},
+    "By location": {"ms": "Mengikut lokasi", "zh": "按位置"},
+    "By customer": {"ms": "Mengikut pelanggan", "zh": "按客户"},
+    "By product": {"ms": "Mengikut produk", "zh": "按产品"},
+    "By month": {"ms": "Mengikut bulan", "zh": "按月份"},
+    "Sales order list": {"ms": "Senarai pesanan jualan", "zh": "销售订单列表"},
+    "Delivery order list": {"ms": "Senarai pesanan penghantaran", "zh": "送货单列表"},
+    "Both lists": {"ms": "Kedua-dua senarai", "zh": "两个列表"},
+    "No open sales order.": {"ms": "Tiada pesanan jualan terbuka.", "zh": "没有未完成的销售订单。"},
+    "No outstanding delivery order.": {"ms": "Tiada pesanan penghantaran belum dihantar.", "zh": "没有未送达的送货单。"},
+    "Sales order figures are not enabled for your account.": {"ms": "Angka pesanan jualan tidak diaktifkan untuk akaun anda.", "zh": "您的账户未开通销售订单数据。"},
+    "Reply with a number for detail:": {"ms": "Balas dengan nombor untuk butiran:", "zh": "回复数字查看详情："},
+    "Reply 1 for the sales order list.": {"ms": "Balas 1 untuk senarai pesanan jualan.", "zh": "回复 1 查看销售订单列表。"},
+    "Reply 1 for the delivery order list.": {"ms": "Balas 1 untuk senarai pesanan penghantaran.", "zh": "回复 1 查看送货单列表。"},
+    "No sales found.": {"ms": "Tiada jualan ditemui.", "zh": "未找到销售记录。"},
+    "By quantity or by amount?": {"ms": "Mengikut kuantiti atau amaun?", "zh": "按数量还是按金额？"},
+    "Do you want the top items inside one category, or the categories ranked against each other?": {"ms": "Anda mahu item teratas dalam satu kategori, atau kategori disusun antara satu sama lain?", "zh": "您要看某一类别内的热销项目，还是各类别之间的排名？"},
+    "Delivered (transferred to DO) or ordered?": {"ms": "Dihantar (dipindahkan ke DO) atau dipesan?", "zh": "已送货（已转 DO）还是已订购？"},
+    "Sorry, I can only share sales figures for your own account.": {"ms": "Maaf, saya hanya boleh berkongsi angka jualan untuk akaun anda sendiri.", "zh": "抱歉，我只能提供您本人账户的销售数据。"},
+    "Items with no sale in this period are not ranked.": {"ms": "Item tanpa jualan dalam tempoh ini tidak disenaraikan.", "zh": "此期间没有销售的项目不参与排名。"},
+    "Categories with no sale in this period are not ranked.": {"ms": "Kategori tanpa jualan dalam tempoh ini tidak disenaraikan.", "zh": "此期间没有销售的类别不参与排名。"},
+    "Reply with a rank number to see that category's top items.": {"ms": "Balas dengan nombor kedudukan untuk melihat item teratas kategori itu.", "zh": "回复排名数字查看该类别的热销项目。"},
+    "Reply with a rank number to see that item's customers and months.": {"ms": "Balas dengan nombor kedudukan untuk melihat pelanggan dan bulan bagi item itu.", "zh": "回复排名数字查看该项目的客户和月份。"},
+    "Sales report is not enabled for your account.": {"ms": "Laporan jualan tidak diaktifkan untuk akaun anda.", "zh": "您的账户未开通销售报告。"},
+    "Note: only {pct}% of sales orders in this period carry a sales agent.": {"ms": "Nota: hanya {pct}% pesanan jualan dalam tempoh ini mempunyai ejen jualan.", "zh": "注：此期间只有 {pct}% 的销售订单带有销售代理。"},
+    "Top {n} selling items": {"ms": "{n} item paling laris", "zh": "最畅销的 {n} 个项目"},
+    "Top {n} selling categories": {"ms": "{n} kategori paling laris", "zh": "最畅销的 {n} 个类别"},
+    "Bottom {n} selling items": {"ms": "{n} item paling kurang laris", "zh": "最滞销的 {n} 个项目"},
+    "Bottom {n} selling categories": {"ms": "{n} kategori paling kurang laris", "zh": "最滞销的 {n} 个类别"},
+    "Top selling items": {"ms": "Item paling laris", "zh": "最畅销项目"},
+    "Top selling categories": {"ms": "Kategori paling laris", "zh": "最畅销类别"},
+    "Least sold items": {"ms": "Item paling kurang dijual", "zh": "销量最少的项目"},
+    "Least sold categories": {"ms": "Kategori paling kurang dijual", "zh": "销量最少的类别"},
+    "{code}: customers and months": {"ms": "{code}: pelanggan dan bulan", "zh": "{code}：客户和月份"},
+    "How many items do you want to see? Reply with a number from 1 to {max}.": {"ms": "Berapa banyak item yang anda mahu lihat? Balas dengan nombor dari 1 hingga {max}.", "zh": "您想看多少个项目？请回复 1 到 {max} 之间的数字。"},
+    "How many categories do you want to see? Reply with a number from 1 to {max}.": {"ms": "Berapa banyak kategori yang anda mahu lihat? Balas dengan nombor dari 1 hingga {max}.", "zh": "您想看多少个类别？请回复 1 到 {max} 之间的数字。"},
+    "I can list at most the top {n} in one reply.": {"ms": "Saya boleh senaraikan paling banyak {n} teratas dalam satu balasan.", "zh": "我一次最多只能列出前 {n} 个。"},
+    "Top {n} selling item": {"ms": "{n} item paling laris", "zh": "最畅销的 {n} 个项目"},
+    "Top {n} selling category": {"ms": "{n} kategori paling laris", "zh": "最畅销的 {n} 个类别"},
+    "Bottom {n} selling item": {"ms": "{n} item paling kurang laris", "zh": "最滞销的 {n} 个项目"},
+    "Bottom {n} selling category": {"ms": "{n} kategori paling kurang laris", "zh": "最滞销的 {n} 个类别"},
     "PENDING ALLOCATION": {"ms": "MENUNGGU PERUNTUKAN", "zh": "待分配"},
     "PARTIAL ALLOCATION": {"ms": "PERUNTUKAN SEBAHAGIAN", "zh": "部分分配"},
 }
@@ -241,6 +308,15 @@ def defaults(lang: str) -> dict[str, str]:
     }
 
 
+#: Report value words `Localizer.lines` translates after a catalogued label. An explicit set, never
+#: "any catalog key", so data that happens to read like a label (a status named "Status") is safe.
+VALUE_WORDS = frozenset({"all", "Amount", "Quantity", "Ordered", "Delivered (transferred to DO)"})
+RANGE = "{from} to {to}"
+_DATE_RANGE = re.compile(r"(?P<from>\d{2}/\d{2}/\d{4}) to (?P<to>\d{2}/\d{2}/\d{4})")
+_NUMBERED = re.compile(r"\d+\. ")
+_WRAPPERS = (("*_", "_*"), ("*", "*"), ("_", "_"))
+
+
 class Localizer:
     """Rewrites catalogued labels and sentences for `language`; everything else is untouched."""
 
@@ -250,8 +326,8 @@ class Localizer:
         # `{token}` entries as (whole-string regex over the English shape, target).
         self._templates: list[tuple[re.Pattern[str], str]] = []
         for english, target in table.items():
-            if not tokens(english):
-                continue
+            if not tokens(english) or english == RANGE:
+                continue  # the date range is a VALUE template, applied by `lines` only
             pattern = ""
             pos = 0
             for m in _TOKEN.finditer(english):
@@ -281,6 +357,54 @@ class Localizer:
                 values = m.groupdict()
                 return _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), target)
         return s
+
+    def lines(self, text: str) -> str:
+        """Finished report text, line by line: the first rule that matches wins.
+
+        1. a catalogued sentence, bare or inside one wrapper (`*x*`, `*_x_*`, `_x_`);
+        2. `"<n>. <sentence>"`;
+        3. a label line (`"<label>: <value>"`, bold `"*<label>:* <value>"`, optionally led by
+           `"<n>. "`) whose label is catalogued: the label translates, and the value only when
+           it is exactly a `VALUE_WORDS` entry or a `dd/mm/yyyy to dd/mm/yyyy` range;
+        4. anything else, unchanged (rank lines, months, codes, `Unassigned`).
+        The join is byte-exact."""
+        if not self.table or not text:
+            return text
+        return "\n".join(self._line(line) for line in text.split("\n"))
+
+    def _line(self, line: str) -> str:
+        for left, right in _WRAPPERS:
+            if len(line) > len(left) + len(right) and line.startswith(left) and line.endswith(right):
+                inner = line[len(left) : len(line) - len(right)]
+                done = self.text(inner)
+                if done != inner:
+                    return left + done + right
+        done = self.text(line)
+        if done != line:
+            return done
+        number = _NUMBERED.match(line)
+        prefix, rest = (number.group(0), line[number.end() :]) if number else ("", line)
+        if prefix:
+            done = self.text(rest)
+            if done != rest:
+                return prefix + done
+        for left, sep in (("*", ":* "), ("", ": ")):
+            if not rest.startswith(left):
+                continue
+            head, found, value = rest[len(left) :].partition(sep)
+            if not found or head not in self.table:
+                continue
+            return prefix + left + self.table[head] + sep + self._value(value)
+        return line
+
+    def _value(self, value: str) -> str:
+        if value in VALUE_WORDS and value in self.table:
+            return self.table[value]
+        m = _DATE_RANGE.fullmatch(value)
+        if m and RANGE in self.table:
+            values = m.groupdict()
+            return _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), self.table[RANGE])
+        return value
 
     def sentence(self, s: str) -> str:
         """`text`, under a name `turn/` source may use (the apply-purity grep bans `.text`)."""
