@@ -30,6 +30,7 @@ from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business import services as business_services
+from app.services.chatbot.lanes.business import set_stock as set_stock_mod
 from app.services.chatbot.turn import policy_rows
 from app.services.chatbot.lanes.business.services import (
     FetchServices,
@@ -1957,6 +1958,20 @@ def run_fetch(
         return _error_fragment(envelope["error"])
 
     structured = fetch_mod.output_structurer(envelope, trigger)
+    # COMBO-STOCK slice 2 (owner Q1/Q2/Q4, 2 Oct 2026): a set code answered over its
+    # members (`gate._expand_product_set`) opens with how many complete sets that stock
+    # makes. Counted off THIS envelope, the rows the member lines below print, and
+    # `set_header` answers None for a dealer's availability envelope (no numbers of ours).
+    set_headers = [
+        header
+        for header in (
+            set_stock_mod.set_header(product_set, envelope)
+            for product_set in jsc.array(gate.get("product_sets"))
+        )
+        if header
+    ]
+    if set_headers and isinstance(structured.get("response"), str):
+        structured["response"] = "\n\n".join([*set_headers, structured["response"]])
     if trace is not None:
         restricted = envelope.get("restricted_fields") if isinstance(envelope, dict) else None
         if isinstance(restricted, dict) and restricted:

@@ -39,7 +39,9 @@ from tests.chatbot.test_rearch_r12_handpass12 import STOCK_TOOL, _said, _unknown
 NEEDS_SCOPE_OPENING = "That would search every stock we have"
 
 
-def _seed_set(session_factory, *, members: int = 3) -> tuple[str, list[str], list[str]]:
+def _seed_set(
+    session_factory, *, members: int = 3, quantities: tuple[float, ...] = ()
+) -> tuple[str, list[str], list[str]]:
     """A set whose members' codes share NOTHING with the set code, so a pass can only
     come from the explicit `product_set_members` link, never from a prefix match."""
     tag = unique_code("", alpha=True)[-8:].upper()
@@ -61,7 +63,7 @@ def _seed_set(session_factory, *, members: int = 3) -> tuple[str, list[str], lis
                 ProductSetMember(
                     product_set_id=product_set.id,
                     product_id=member_id,
-                    quantity=1,
+                    quantity=quantities[position] if position < len(quantities) else 1,
                     sort_order=position,
                 )
             )
@@ -120,13 +122,23 @@ def _stock_envelope(codes: list[str]) -> dict[str, Any]:
     }
 
 
-def _run_set_ask(session_factory, monkeypatch, *, msg_id: str):
+def _run_set_ask(
+    session_factory,
+    monkeypatch,
+    *,
+    msg_id: str,
+    quantities: tuple[float, ...] = (),
+    envelope=None,
+):
+    """`envelope(member_codes) -> dict` is what the stock tool answers; default is a
+    plain compact page with Total 5 for every member."""
     _seed_contact_and_get(session_factory)
-    set_code, member_codes, member_ids = _seed_set(session_factory)
+    set_code, member_codes, member_ids = _seed_set(session_factory, quantities=quantities)
+    build = envelope or _stock_envelope
 
     def _call(name: str, args: dict[str, Any]) -> str:
         if name == STOCK_TOOL:
-            return json.dumps(_stock_envelope(member_codes))
+            return json.dumps(build(member_codes))
         return _unknown_envelope()
 
     mcp_call, calls = _mcp_double(other=_call)
@@ -249,3 +261,192 @@ class TestGateExpandsASetForInventory:
         """Owner ruling Q5 (crew, 2 Oct 2026): inventory stock asks only this lane."""
         out = _gate("promotion", _set_match("ZZSET-RL", MEMBERS))
         assert out["compatible_entities"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Slice 2: the full-access set header (owner Q1, Q2, Q4, 2 Oct 2026).
+# --------------------------------------------------------------------------- #
+
+
+def _compact(rows: dict[str, tuple[int, dict[str, int]]], *, missing: tuple[str, ...] = ()):
+    """`stock_compact` (`sorento_crm_mcp.presenters._stock_compact`): one item per
+    product, Product Code, Total, then one plain field per location code."""
+
+    def build(codes: list[str]) -> dict[str, Any]:
+        items = []
+        for index, code in enumerate(codes):
+            if code in missing or str(index) in missing:
+                continue
+            total, locations = rows[str(index)]
+            fields: list[dict[str, Any]] = [
+                {"key": "product_code", "label": "Product Code", "value": code},
+                {"label": "Total", "value": total},
+            ]
+            fields += [{"label": loc, "value": qty} for loc, qty in locations.items()]
+            items.append({"title": code, "fields": fields, "flags": {}})
+        return {
+            "intro": "Stock summary for the requested products.",
+            "items": items,
+            "has_result": True,
+            "attachments": [],
+            "result_type": "stock_compact",
+            "action_links": [],
+        }
+
+    return build
+
+
+def _detailed(rows: dict[str, dict[str, int]]):
+    """`stock` (`presenters._stock`): one item per (product, location) row."""
+
+    def build(codes: list[str]) -> dict[str, Any]:
+        items = []
+        for index, code in enumerate(codes):
+            for loc, qty in rows[str(index)].items():
+                items.append(
+                    {
+                        "title": code,
+                        "fields": [
+                            {"key": "product_code", "label": "Product Code", "value": code},
+                            {"key": "warehouse", "label": "Warehouse", "value": f"WH {loc}"},
+                            {"key": "system_location", "label": "System Location", "value": loc},
+                            {"key": "quantity_on_hand", "label": "Quantity On Hand", "value": qty},
+                        ],
+                        "flags": {"discontinued": False},
+                    }
+                )
+        return {
+            "intro": "Stock details found for the requested products.",
+            "items": items,
+            "has_result": True,
+            "attachments": [],
+            "result_type": "stock",
+            "action_links": [],
+        }
+
+    return build
+
+
+def _availability(codes: list[str]) -> dict[str, Any]:
+    """`stock_availability` (`presenters._stock_availability`): the dealer's lines, no
+    numbers of ours at all."""
+    return {
+        "intro": "",
+        "items": [
+            {
+                "title": f"{code} x 2: yes, we have stock. Please refer to your salesman.",
+                "fields": [],
+                "flags": {"needs_quantity": False, "branch": "in_stock"},
+            }
+            for code in codes
+        ],
+        "has_result": True,
+        "attachments": [],
+        "result_type": "stock_availability",
+        "action_links": [],
+    }
+
+
+# Members 0, 1, 2; member 2 is taken TWICE per set.
+#   total:  0 -> 10, 1 -> 7, 2 -> 20//2 = 10          => 7 complete sets, limited by member 1
+#   BRW:    0 -> 6,  1 -> 7, 2 -> 10//2 = 5           => 5
+#   KL:     0 -> 4,  1 -> 0, 2 -> 10//2 = 5           => 0
+COMPACT_ROWS = {
+    "0": (10, {"BRW": 6, "KL": 4}),
+    "1": (7, {"BRW": 7, "KL": 0}),
+    "2": (20, {"BRW": 10, "KL": 10}),
+}
+DETAILED_ROWS = {
+    "0": {"BRW": 6, "KL": 4},
+    "1": {"BRW": 7},
+    "2": {"BRW": 10, "KL": 10},
+}
+
+
+class TestFullAccessSetHeader:
+    def test_compact_reply_opens_with_complete_sets_and_the_limiting_member(
+        self, session_factory, monkeypatch
+    ) -> None:
+        result, _calls, set_code, codes, _ids = _run_set_ask(
+            session_factory,
+            monkeypatch,
+            msg_id="zzt-combo-header-compact",
+            quantities=(1, 1, 2),
+            envelope=_compact(COMPACT_ROWS),
+        )
+        said = _said(result)
+        assert said.startswith(f"*{set_code}* is a set of {codes[0]} x1, {codes[1]} x1, {codes[2]} x2."), said
+        assert f"Complete sets: 7 (limited by {codes[1]})" in said, said
+        assert "By location: BRW 5, KL 0" in said, said
+        # Q1: the header sits ABOVE today's member lines, which stay.
+        for code in codes:
+            assert said.index(code) < len(said)
+        assert said.index("Complete sets") < said.index("Total"), said
+
+    def test_detailed_reply_counts_from_the_per_location_rows(
+        self, session_factory, monkeypatch
+    ) -> None:
+        result, _calls, set_code, codes, _ids = _run_set_ask(
+            session_factory,
+            monkeypatch,
+            msg_id="zzt-combo-header-detailed",
+            quantities=(1, 1, 2),
+            envelope=_detailed(DETAILED_ROWS),
+        )
+        said = _said(result)
+        assert f"Complete sets: 7 (limited by {codes[1]})" in said, said
+        # Member 1 has no KL row at all: it counts 0 there (Q4).
+        assert "By location: BRW 5, KL 0" in said, said
+
+    def test_a_member_missing_from_the_reply_counts_zero_and_is_named(
+        self, session_factory, monkeypatch
+    ) -> None:
+        result, _calls, _set_code, codes, _ids = _run_set_ask(
+            session_factory,
+            monkeypatch,
+            msg_id="zzt-combo-header-missing",
+            envelope=_compact(COMPACT_ROWS, missing=("2",)),
+        )
+        said = _said(result)
+        assert f"Complete sets: 0 (limited by {codes[2]})" in said, said
+
+    def test_a_dealer_availability_reply_gets_no_header_and_no_number(
+        self, session_factory, monkeypatch
+    ) -> None:
+        result, _calls, set_code, codes, _ids = _run_set_ask(
+            session_factory,
+            monkeypatch,
+            msg_id="zzt-combo-header-dealer",
+            envelope=_availability,
+        )
+        said = _said(result)
+        assert "Complete sets" not in said, said
+        assert "is a set of" not in said, said
+        for code in codes:
+            assert f"{code} x 2: yes, we have stock." in said, said
+
+
+class TestSetHeaderUnit:
+    def test_header_is_none_without_a_stock_envelope(self) -> None:
+        from app.services.chatbot.lanes.business import set_stock
+
+        product_set = {
+            "set_code": "S-RL",
+            "members": [{"product_code": "A", "quantity": 1}],
+        }
+        assert set_stock.set_header(product_set, _availability(["A"])) is None
+
+    def test_fractional_quantity_floors(self) -> None:
+        from app.services.chatbot.lanes.business import set_stock
+
+        product_set = {
+            "set_code": "S-RL",
+            "members": [
+                {"product_code": "A", "quantity": 1},
+                {"product_code": "B", "quantity": 1.5},
+            ],
+        }
+        envelope = _compact({"0": (9, {"BRW": 9}), "1": (10, {"BRW": 10})})(["A", "B"])
+        header = set_stock.set_header(product_set, envelope)
+        assert "B x1.5" in header, header
+        assert "Complete sets: 6 (limited by B)" in header, header

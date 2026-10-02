@@ -350,6 +350,27 @@ def _expand_product_set(match: Any) -> list[Any]:
     ]
 
 
+def _expanded_sets(matches: list[Any]) -> list[dict[str, Any]]:
+    """The sets `_expand_product_set` is about to replace, one row per set code, in
+    match order: what `set_stock.set_header` writes the complete-sets line from."""
+    out: dict[str, dict[str, Any]] = {}
+    for m in matches:
+        if jsc.get(m, "entity_type") != "product_set":
+            continue
+        code = jsc.js_string(jsc.get(m, "canonical_code") or "")
+        members = [
+            {
+                "product_code": jsc.get(member, "product_code"),
+                "quantity": jsc.get(member, "quantity"),
+            }
+            for member in jsc.array(jsc.get(jsc.get(m, "display"), "members"))
+            if jsc.truthy(jsc.get(member, "uuid"))
+        ]
+        if code and members and code not in out:
+            out[code] = {"set_code": code, "members": members}
+    return list(out.values())
+
+
 def _display_name(match: Any) -> str | None:
     """The resolver's own human label for this record, or `None` when it gave none.
 
@@ -426,8 +447,10 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     flat.extend(jsc.array(resolver.get("intersection")))
     flat.extend(_flatten_by_entity_type(resolver.get("by_entity_type")))
 
-    flat = [_expand_product_set(m) if domain in SET_EXPANDING_DOMAINS else [m] for m in flat]
-    flat = [m for group in flat for m in group]
+    product_sets: list[dict[str, Any]] = []
+    if domain in SET_EXPANDING_DOMAINS:
+        product_sets = _expanded_sets(flat)
+        flat = [x for m in flat for x in _expand_product_set(m)]
 
     by_uuid: dict[Any, dict[str, Any]] = {}
     for m in flat:
@@ -1784,6 +1807,10 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     out["gate_reason"] = gate_reason
     out["gate_clarification"] = gate_clarification  # '' when nothing to ask
     out["compatible_entities"] = compatible_entities
+    # COMBO-STOCK: written only when a set was expanded, so every other turn's gate keeps
+    # exactly the keys it has today. Read by `run_fetch` for the full-access set header.
+    if product_sets:
+        out["product_sets"] = product_sets
     if cust_probe_entities and len(cust_probe_entities) > 0:
         out["customer_probe_entities"] = cust_probe_entities
     if cust_families and len(cust_families) > 0:
