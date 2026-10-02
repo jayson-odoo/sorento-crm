@@ -17,7 +17,7 @@ import {
   API_READ_TIMEOUT_MS,
   API_WRITE_TIMEOUT_MS,
   API_UPLOAD_TIMEOUT_MS,
-  AUTH_TOKEN_TIMEOUT_MS,
+  TOKEN_FETCH_TIMEOUT_MS,
 } from './api';
 import { REQUEST_TIMED_OUT_MESSAGE } from './api-client';
 
@@ -75,7 +75,7 @@ describe('apiFetch deadline', () => {
   it('the budgets are the standard ones', () => {
     expect(API_READ_TIMEOUT_MS).toBe(30_000);
     expect(API_WRITE_TIMEOUT_MS).toBe(120_000);
-    expect(AUTH_TOKEN_TIMEOUT_MS).toBe(10_000);
+    expect(TOKEN_FETCH_TIMEOUT_MS).toBe(10_000);
     expect(API_UPLOAD_TIMEOUT_MS).toBeGreaterThanOrEqual(600_000);
   });
 
@@ -201,7 +201,7 @@ describe('auth token fetch deadline', () => {
       return json({});
     });
     const s = track(apiFetch('/api/v1/master-data/products'));
-    await vi.advanceTimersByTimeAsync(AUTH_TOKEN_TIMEOUT_MS - 1);
+    await vi.advanceTimersByTimeAsync(TOKEN_FETCH_TIMEOUT_MS - 1);
     expect(apiSeen).toBe(false);
     await vi.advanceTimersByTimeAsync(2);
     // The token fetch settled (as "no token"); what happens to a token-less request is the

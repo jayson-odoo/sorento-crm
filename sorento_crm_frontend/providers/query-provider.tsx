@@ -16,6 +16,7 @@ import { isAccessDenied, isRefused } from '@/lib/api-client';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { registerRevisionStaleHandler } from '@/lib/revision-fence';
 import { pendingEntityStore } from '@/lib/pending-entity-store';
+import { isSessionEnding, registerViewAsEndedHandler } from '@/lib/session-end';
 
 type RetryOption = boolean | number | ((failureCount: number, error: Error) => boolean) | undefined;
 
@@ -101,6 +102,10 @@ export function createAppQueryClient(): QueryClient {
         // asked; a page-level destructive toast for one of those tells the user
         // their work is in trouble when nothing about it is.
         if (query.meta?.silent) return;
+
+        // The session is on its way to /signin: every query is failing for that
+        // one reason, and the redirect is the answer, not a stack of red toasts.
+        if (isSessionEnding()) return;
 
         // A record the user has just watched a delete commit on is GONE, and
         // every query still keyed on it now 404s: the detail read, its tabs,
@@ -190,6 +195,15 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
       void queryClient.invalidateQueries();
     });
     return () => registerRevisionStaleHandler(null);
+  }, [queryClient]);
+
+  // View-as ended server-side (SESSION-NEVER-STUCK): whatever is cached may be the
+  // target's data, so refetch everything as the admin's own.
+  useEffect(() => {
+    registerViewAsEndedHandler(() => {
+      void queryClient.invalidateQueries();
+    });
+    return () => registerViewAsEndedHandler(null);
   }, [queryClient]);
 
   return (
