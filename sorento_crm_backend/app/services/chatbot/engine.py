@@ -1383,7 +1383,7 @@ def _customer_scope_gate(
     focus: Any,
     parse_output: dict[str, Any],
     domains: Any,
-) -> tuple[dict[str, Any], list[str] | None, bool]:
+) -> tuple[dict[str, Any], list[str] | None, bool, str | None]:
     """PLAN-chatbot-customer-scope-29sep.md D3: the upstream block, run BEFORE the
     resolver. Returns `(the resolver's input, the linked customer ids the turn is
     scoped to or None, refused)`.
@@ -1400,12 +1400,12 @@ def _customer_scope_gate(
     "our") means the links for staff too. Unlinked contacts, staff without "my" and top
     selling (its own block, `_top_selling_dealer_scope`) are untouched."""
     if not scope or focus.status == "top_selling":
-        return parse_output, None, False
+        return parse_output, None, False, None
     self_reference = verdict.get("self_reference") is True
     enforced = bool(scope.get("enforced"))
     in_order = "order" in (domains or ())
     if not (enforced or (self_reference and in_order)):
-        return parse_output, None, False
+        return parse_output, None, False, None
     entities = [e for e in (parse_output.get("entities") or []) if isinstance(e, dict)]
 
     def _is_customer(e: dict[str, Any]) -> bool:
@@ -1435,13 +1435,14 @@ def _customer_scope_gate(
     if not enforced:
         # Staff: "my" alone means the links; naming a customer is unscoped as today.
         if words:
-            return parse_output, None, False
+            return parse_output, None, False, None
         ids = list(scope["ids"])
         if my_account is not None:
             ids = [c for c in ids if links.levels.get(c) == my_account]
             if not ids:
-                return without_customers, None, True
-        return parse_output, ids, False
+                return without_customers, None, True, None
+        return parse_output, ids, False, None
+    narrowed_refusal: str | None = None
     ids: list[str] | None = list(scope["ids"])
     if words:
         ids = links.match_words(words, accounts)
@@ -1449,14 +1450,14 @@ def _customer_scope_gate(
             # Q3: a refusal over an account names only the contact's ledgers of that name.
             of_name = links.match_words(words)
             if of_name is not None:
-                scope["refusal"] = scope_mod.refusal_line_for(links, of_name)
+                narrowed_refusal = scope_mod.refusal_line_for(links, of_name)
     elif my_account is not None:
         ids = [c for c in ids if links.levels.get(c) == my_account] or None
     if ids is None:
-        return without_customers, None, True
+        return without_customers, None, True, narrowed_refusal
     if not in_order:
-        return parse_output, None, False
-    return without_customers, ids, False
+        return parse_output, None, False, None
+    return without_customers, ids, False, None
 
 
 def _account_of(entity: dict[str, Any]) -> int | None:
@@ -4086,6 +4087,7 @@ def _run_stages(  # noqa: PLR0915
                 )
             elif isinstance(state_out.focus.top_selling, dict) and state_out.focus.top_selling.get("hop"):
                 resolver_parse_output = _without_carried_words(resolver_parse_output)
+            gate_refusal: str | None = None
             unnamed_account = _unnamed_account(verdict, resolver_parse_output)
             if unnamed_account is not None:
                 resolver_parse_output = {
@@ -4096,10 +4098,10 @@ def _run_stages(  # noqa: PLR0915
                         if not (isinstance(e, dict) and (e.get("hint") == "customer" or e.get("entity_type") == "customer"))
                     ],
                 }
-                scope_ids, scope_refused = None, True
+                scope_ids, scope_refused, gate_refusal = None, True, None
                 account_question = f"Which customer is Account {unnamed_account} for?"
             else:
-                resolver_parse_output, scope_ids, scope_refused = _customer_scope_gate(
+                resolver_parse_output, scope_ids, scope_refused, gate_refusal = _customer_scope_gate(
                     customer_scope, verdict, state_out.focus, resolver_parse_output, plan.domains
                 )
             scope_ids = _drill_offer_subject(scope_ids, state_out.focus, plan.trace)
@@ -4169,8 +4171,10 @@ def _run_stages(  # noqa: PLR0915
             resolver_payload = resolve_outcome.payload
             # ACCOUNT-LEDGER Q4: staff asked a level the typed name lacks.
             staff_account_refusal = ((resolver_payload or {}).get("resolved") or {}).get("account_refusal")
-            if staff_account_refusal:
+            if staff_account_refusal and not (customer_scope or {}).get("enforced"):
                 account_question, scope_refused = str(staff_account_refusal), True
+            elif gate_refusal:
+                account_question = gate_refusal
             # CHATBOT-SELFREF-SCOPE R4: every scope decision is on the trace, with its
             # reason and the ids it dropped, so a refusal explains itself.
             screened_refused = False

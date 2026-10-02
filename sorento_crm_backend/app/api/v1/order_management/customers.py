@@ -204,6 +204,13 @@ async def create_customer(
 ):
     """Create a new customer."""
     try:
+        if customer_data.account_level is not None and not UserPermissionService(db).check_user_has_permission(
+            current_user["id"], "order_management.customers.edit"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission required: order_management.customers.edit",
+            )
         service = CustomerService(db)
         customer = service.create_customer(customer_data)
         return customer
