@@ -136,6 +136,9 @@ class Localizer:
                 return _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), target)
         return s
 
+    # `loc("...")` is `loc.text("...")`; `turn/` source may not spell the attribute (apply-purity grep).
+    __call__ = text
+
     def tail(self, title: str) -> str:
         """`"<code> x <qty>: <sentence>"`: only the sentence is translated."""
         whole = self.text(title)
