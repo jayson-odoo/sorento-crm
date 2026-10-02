@@ -80,7 +80,12 @@ def _source() -> str:
 
 
 def _expected(date: str = "TODAY") -> str:
-    return _source().replace("{{current_date}}", date)
+    """The owner's file plus ACCOUNT_LEDGER_ADDENDUM just before the policy blocks (#1432
+    merged first; every variable version carries the block)."""
+    from app.services.chatbot_parser_prompt import ACCOUNT_LEDGER_ADDENDUM, BLOCKS_BEGIN
+
+    src = _source().replace(BLOCKS_BEGIN, f"{ACCOUNT_LEDGER_ADDENDUM.strip(chr(10))}\n\n{BLOCKS_BEGIN}", 1)
+    return src.replace("{{current_date}}", date)
 
 
 def _render(db, version_id: str) -> str:

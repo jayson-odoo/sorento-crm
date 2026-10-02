@@ -77,7 +77,8 @@ def test_save_publishes_one_unlabelled_identical_version():
         result = script.build(db, from_version=prod.version, save=True)
         assert result["identical"] is True
         row = db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY, AIPromptVersion.version == result["saved_version"]).one()
-        assert _render_template(db, row.template) == prod.template
+        # Plus the account block (#1432), which every rebuilt version carries.
+        assert _render_template(db, row.template) == pv.with_account_block(prod.template)
         assert db.query(AIPromptLabel).filter(AIPromptLabel.version_id == row.id).count() == 0
         assert {(l.label, l.version_id) for l in db.query(AIPromptLabel).filter(AIPromptLabel.name == KEY)} == labels_before
 
@@ -111,12 +112,20 @@ def test_a_kept_list_reports_the_first_item_where_text_and_registry_part():
         assert row["first_difference"] == {"item": len(names), "text": "zzt_not_a_domain", "registry": names[-1]}
 
 
+def _with_block(source: str) -> str:
+    """The owner's file plus the account block (#1432), built by hand: the reference
+    `verify` compares a rebuild with."""
+    from app.services.chatbot_parser_prompt import ACCOUNT_LEDGER_ADDENDUM, BLOCKS_BEGIN
+
+    return source.replace(BLOCKS_BEGIN, f"{ACCOUNT_LEDGER_ADDENDUM.strip(chr(10))}\n\n{BLOCKS_BEGIN}", 1)
+
+
 def test_verify_says_whether_a_version_renders_the_owner_file_and_where_it_parts():
     source = SNAPSHOT.read_text(encoding="utf-8")
     script = _script()
     with pg_session() as db:
         good = AIPromptVersion(id=str(uuid.uuid4()), name=KEY, version=90000 + uuid.uuid4().int % 9999,
-                               template=source, commit_message="t", config_json={})
+                               template=_with_block(source), commit_message="t", config_json={})
         bad = AIPromptVersion(id=str(uuid.uuid4()), name=KEY, version=good.version + 1,
                               template=source.replace("Sorento Semantic Parser", "Sorento Semantic Parsex", 1),
                               commit_message="t", config_json={})
