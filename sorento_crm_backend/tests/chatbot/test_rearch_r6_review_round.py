@@ -1006,7 +1006,8 @@ class TestMissArmRosterHasNoMinimumTwoGuard:
 
 
 # --------------------------------------------------------------------------- #
-# REVIEWER item 11b (S4) - `turn/narrow.py::_ROSTER_CAP = 10` is a literal AC-1710
+# REVIEWER item 11b (S4) - `turn/narrow.py::_ROSTER_CAP` (10 then, 50 since
+# PICKER-NO-CAP) is a literal AC-1710
 # forbids by name, still live for `customer`/`attachment_type`/`kind_pick` rosters
 # (the `product` kind's own roster moved to `gate.py`, R5/R6). `decide()` has no
 # `roster_cap` parameter today - AC-1710 says this must key off `chatbot_entity_
@@ -1027,7 +1028,7 @@ class TestNarrowPyCustomerRosterHonoursConfiguredCapNotTheLiteral:
         )
         assert len(outcome.ask_options) <= 3, (
             f"AC-1710/S4: a customer roster must honour a CONFIGURED cap, never "
-            f"narrow.py's own literal `_ROSTER_CAP = 10`: {outcome.ask_options!r}"
+            f"narrow.py's own literal `_ROSTER_CAP`: {outcome.ask_options!r}"
         )
 
 
