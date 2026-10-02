@@ -138,9 +138,10 @@ def _put_in_group(db, customer_id, group_id) -> None:
 
 def _group_of(db, customer_id):
     db.expire_all()
-    return db.execute(
+    value = db.execute(
         text("SELECT customer_group_id FROM customers WHERE id = :c"), {"c": str(customer_id)}
     ).scalar_one()
+    return str(value) if value is not None else None
 
 
 def _group_exists(db, group_id) -> bool:
@@ -475,6 +476,27 @@ def test_ac7_customer_list_filters_by_group(client, db):
 
 
 # ============================================================ AC-8 permissions
+
+
+def test_ac8_put_changing_the_group_needs_customers_edit_unchanged_does_not(client, db, state):
+    g = _group(db, "ZZT PUT GUARD")
+    other = _group(db, "ZZT PUT OTHER")
+    c = _customer(db, group_id=g)
+    db.commit()
+    state["granted"] = {VIEW}
+
+    changed = client.put(f"{CUSTOMERS}/{c.id}", json={"customer_group_id": other})
+    assert changed.status_code == 403, changed.text
+    assert "Permission required: order_management.customers.edit" in changed.text
+    assert _group_of(db, c.id) == g
+
+    cleared = client.put(f"{CUSTOMERS}/{c.id}", json={"customer_group_id": None})
+    assert cleared.status_code == 403, cleared.text
+    assert _group_of(db, c.id) == g
+
+    unchanged = client.put(f"{CUSTOMERS}/{c.id}", json={"customer_group_id": g, "customer_name": "ZZT RENAMED"})
+    assert unchanged.status_code == 200, unchanged.text
+    assert _group_of(db, c.id) == g
 
 
 def test_ac8_reads_need_customers_view(client, db, state):

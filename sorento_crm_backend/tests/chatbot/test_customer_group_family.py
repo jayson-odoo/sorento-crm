@@ -154,6 +154,45 @@ def test_ac13_a_name_the_rule_merges_splits_when_only_one_is_grouped():
     assert {o["uuids"][0] for o in options} == {ns, y1990}
 
 
+def test_ac13_jubin_real_scenario_roster_and_exact_name_gate():
+    from app.services.chatbot.lanes.business import resolve_gate
+
+    lf = _seam()
+    group = "JUBIN BMS SDN BHD"
+    plain, a1, a3, ns = _u(), _u(), _u(), _u()
+    names = {
+        plain: "JUBIN BMS (1990) SDN BHD",
+        a1: "JUBIN BMS (1990) SDN BHD [A/C I]",
+        a3: "JUBIN BMS (1990) SDN BHD [A/C III]",
+        ns: "JUBIN BMS (NS) SDN BHD [A/C I]",
+    }
+    mapping = {names[u]: group for u in (plain, a1, a3)}
+
+    with lf.customer_groups(mapping):
+        options = _roster([_cand(names[u], u) for u in (plain, a1, a3, ns)])
+        assert len(options) == 2
+        by_label = {o["label"]: o for o in options}
+        assert sorted(by_label[group]["uuids"]) == sorted([plain, a1, a3])
+        (ns_line,) = [o for o in options if o["label"] != group]
+        assert ns_line["uuids"] == [ns]
+
+        matches = [
+            {"uuid": u, "entity_type": "customer", "display": {"customer_name": names[u]}}
+            for u in (plain, a1, a3, ns)
+        ]
+        parser = {
+            "entities": [{"hint": "customer", "current_message": True, "raw": "jubin bms sdn bhd", "account": 1}]
+        }
+        resolved = {"resolutions": [{"token": "jubin bms sdn bhd", "matches": list(matches)}]}
+        levels = {plain: None, a1: 1, a3: 3, ns: 1}
+
+        refusal = resolve_gate.narrow_by_account(parser, resolved, lambda ids: {i: levels.get(i) for i in ids})
+
+    assert refusal is None
+    kept = {m["uuid"] for m in resolved["resolutions"][0]["matches"]}
+    assert kept == {a1}, f"the NS ledger must not answer for the group's name: {kept}"
+
+
 # ============================================================ AC-14 one test per call site
 
 

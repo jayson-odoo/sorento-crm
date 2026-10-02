@@ -49,13 +49,14 @@ def _groups(db, company_id=DEFAULT_COMPANY_ID) -> dict[str, str]:
     rows = db.execute(
         text("SELECT id, name FROM customer_groups WHERE company_id = :c"), {"c": company_id}
     ).fetchall()
-    return {name: gid for gid, name in rows}
+    return {name: str(gid) for gid, name in rows}
 
 
 def _group_of(db, customer_id):
-    return db.execute(
+    value = db.execute(
         text("SELECT customer_group_id FROM customers WHERE id = :c"), {"c": customer_id}
     ).scalar_one()
+    return str(value) if value is not None else None
 
 
 def _run(db) -> None:
