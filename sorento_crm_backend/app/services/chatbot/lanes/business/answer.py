@@ -34,6 +34,7 @@ from typing import Any, Literal
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
 from app.services.product_spec_registry import SPEC_ACRONYMS
+from app.services.ledger_family import family_words
 from app.services.chatbot.tail.scope_block import live_brand_words
 from app.services.chatbot.turn import refer
 
@@ -3622,6 +3623,17 @@ def not_found_error_message(
                     if value and value not in words:
                         words.append(value)
             if not words:  # 3. last resort: the gate's own label
+                if axis["label"] == "Customer":
+                    # DO-ASK-SIMPLIFY rule 1 (owner, 2 Oct 2026): one family, one name
+                    # with a count - the same line the hit header prints.
+                    return family_words(
+                        [
+                            jsc.nullish_str(
+                                jsc.get(row, "display_name") or jsc.get(row, "title") or jsc.get(row, "code")
+                            ).strip()
+                            for row in rows
+                        ]
+                    )
                 for row in rows:
                     # Hand pass 12, Group F: a multi-ledger customer pick's own rows
                     # carry a real per-row `display_name` (`turn_runtime.

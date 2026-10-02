@@ -1845,15 +1845,13 @@ def run_fetch(
 
     # DO-ASK-SIMPLIFY security S1 (PR #1433): a transporter named on a DO list ask would
     # filter the rows by it, telling the contact who carried each one. Without the
-    # `delivery_orders.transporter` reveal it is dropped here: no filter, and (the gate is
-    # the same dict the scope header reads) no "Transporter:" header line.
+    # `delivery_orders.transporter` reveal the ask is refused before any fetch (review S5:
+    # dropping the filter silently would answer a different question).
     if tool_name in fetch_mod.ORDER_TOOLS and not do_ask.granted(ctx, do_ask.TRANSPORTER_KEY):
-        kept = [e for e in entities if not (isinstance(e, dict) and e.get("entity_type") == "transporter")]
-        if len(kept) != len(entities):
-            entities = kept
-            gate["compatible_entities"] = kept
+        if any(isinstance(e, dict) and e.get("entity_type") == "transporter" for e in entities):
             if trace is not None:
-                trace.add("field_reveal", {"dropped_filter": "transporter_ids", "tool": tool_name})
+                trace.add("field_reveal", {"refused": "transporter_filter", "tool": tool_name})
+            return _fixed_reply(do_ask.TRANSPORTER_REFUSED)
 
     trigger = {
         "tool": tool_name,

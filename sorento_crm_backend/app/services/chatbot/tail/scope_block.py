@@ -21,7 +21,7 @@ import re
 from typing import Any, Mapping
 
 from app.services.chatbot.turn.state import focus_row_label
-from app.services.ledger_family import ledger_family_key, ledger_family_label
+from app.services.ledger_family import family_words
 
 # NARROWED (main, captain ruling 2026-08-24, ported verbatim): this header describes
 # a DELIVERY ORDER search specifically - it used to gate on "domains the CRM
@@ -99,30 +99,6 @@ def _fold(value: Any) -> str:
     duplicated as a plain string op (not imported) because this module answers to no
     purity guard, but the fold rule itself is one rule, not two."""
     return re.sub(r"[-\s]+", "", str(value or "")).strip().lower()
-
-
-def family_words(names: list[str]) -> str | None:
-    """DO-ASK-SIMPLIFY rule 1 (owner, 2 Oct 2026): the customer rows in scope, named once.
-
-    One row prints its own full name. Several rows of one ledger family (the ledgers of one
-    trading name, `app/services/ledger_family.py`) print the family label with a count:
-    "HANLIM TRADING SDN BHD (6 accounts)". Several families print the first one and a count
-    of the rest: "CHIN CHUN HARDWARE SDN BHD (2 accounts) and 3 more". Each DO row still
-    carries its own full ledger name; only the header shortens.
-    """
-    # One ledger reached twice (a picked option carries its uuid twice) is one account.
-    kept = list(dict.fromkeys(name for name in names if name))
-    if not kept:
-        return None
-    if len(kept) == 1:
-        return kept[0]
-    families: dict[str, list[str]] = {}
-    for name in kept:
-        families.setdefault(ledger_family_key(name) or name, []).append(name)
-    first = next(iter(families.values()))
-    head = first[0] if len(first) == 1 else f"{ledger_family_label(first[0])} ({len(first)} accounts)"
-    rest = len(families) - 1
-    return f"{head} and {rest} more" if rest else head
 
 
 def _raw_of_token(qf: Mapping[str, Any], token: str) -> str:

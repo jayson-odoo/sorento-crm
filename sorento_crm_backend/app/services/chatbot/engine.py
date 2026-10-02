@@ -4918,7 +4918,7 @@ def _run_stages(  # noqa: PLR0915
                         and not run_fetch_mod.envelope_missed(envelopes[0])
                         and not envelopes[0].get("own_header")
                     ):
-                        from app.services.chatbot import answer_bridge, do_ask
+                        from app.services.chatbot import answer_bridge
                         from app.services.chatbot.tail import scope_block as scope_block_mod
 
                         # Hand pass 12 round 3, Group F (owner ruling): a bare positional
@@ -4949,15 +4949,10 @@ def _run_stages(  # noqa: PLR0915
                                 (ctx.get("parse") or {}).get("output") or {}, fetch_plan.fetch[0]
                             ),
                             gate_json=scope_block_mod.with_brand_names(
-                                # DO-ASK-SIMPLIFY security S1: no transporter line
-                                # without the `delivery_orders.transporter` reveal.
-                                do_ask.header_gate(
-                                    (
-                                        resolver_payload.get("gate")
-                                        if isinstance(resolver_payload, dict)
-                                        else None
-                                    ),
-                                    ctx,
+                                (
+                                    resolver_payload.get("gate")
+                                    if isinstance(resolver_payload, dict)
+                                    else None
                                 ),
                                 envelopes[0],
                             ),

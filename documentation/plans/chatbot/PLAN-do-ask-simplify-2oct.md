@@ -31,6 +31,20 @@ added: the answer ("this month") is an ordinary dated message, and the engine ca
 ask's subject onto it (`tests/chatbot/test_do_ask_range_engine.py` pins this end to end).
 The "Product: all products" drop (old Q5) was not built; the owner did not ask for it.
 
+Review round 1 (security + reviewer, PR #1433), all red-first:
+- The "hasn't been delivered yet" miss line names the order's status only with
+  `delivery_orders.status` (`answer.not_found_error_message(granted_keys=...)`).
+- A DO list ask that names a transporter, from a contact without `delivery_orders.transporter`,
+  is refused in one line ("Sorry, delivery orders can't be looked up by transporter for your
+  account."), nothing fetched: filtering would reveal the carrier, and dropping the filter
+  silently would answer a different question.
+- The period question runs after the customer-scope backstop, so it never names a customer
+  outside the contact's links.
+- The empty-list (miss) header groups customers the same way (`family_words` moved to the core
+  module `app/services/ledger_family.py`, shared by both headers).
+- Refusal wording: whole calendar months in months, anything else in days; swapped dates are
+  put right; suggestions never name a month still to come.
+
 ## Journey
 
 A dealer or staff contact asks the WhatsApp bot about delivery orders (DO). The reply opens
@@ -89,8 +103,9 @@ selling (own lanes), `order_status=so_outstanding` (open SO lines, no DO yet).
 | Lorry Plate | `delivery_orders.lorry_plate` | hidden |
 
 - Built the same way as `purchase_orders.supplier`: the presenter passes the 3-tuple key and
-  calls `b.restrict(...)`; the catalogue declares the pairs on both order tools'
-  `restricted_fields`; `FIELD_REVEAL_KEYS` gains the five pairs (the pin test enforces both).
+  calls `b.restrict(...)`; the catalogue declares the pairs on the orders list tool's
+  `restricted_fields` only (the by-product list shows none of the five);
+  `FIELD_REVEAL_KEYS` gains the five pairs (the pin test enforces both).
   The Contacts > Access > Field reveals checklist then lists them with no UI change.
 - Naming: `delivery_orders.<field>` sits beside `sales_orders.*` / `purchase_orders.*`. For
   the ACCESS-MODEL table (`PROMPT_GATES`, PR #1429) these are field parts of domain `order`;
@@ -128,7 +143,7 @@ selling (own lanes), `order_status=so_outstanding` (open SO lines, no DO yet).
 - Refusal, fetching nothing, suggesting the asked range's last month, then its first (as built):
 
   ```
-  That covers 6 months (01/01/2026 to 30/06/2026). I can show up to 31 days of delivery orders at a time:
+  That is 6 months (01/01/2026 to 30/06/2026). I can show up to 31 days of delivery orders at a time:
   - Jun 2026
   - Jan 2026
   Or type a month or dates.
@@ -138,10 +153,10 @@ selling (own lanes), `order_status=so_outstanding` (open SO lines, no DO yet).
 
 | # | Message | Header today | Header proposed |
 |---|---|---|---|
-| 1 | "Delivery to hanlim" then pick all (handpass3-owner-17sep..., turn 0) | `*orders* for HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD (CERAMIC & ELLECI):` | ask-back "Which period for HANLIM TRADING SDN BHD's delivery orders?"; after "1": `Customer: HANLIM TRADING SDN BHD (6 accounts)` / `Dates: 01/10/2026 to 31/10/2026` |
+| 1 | "Delivery to hanlim" then pick all (handpass3-owner-17sep..., turn 0) | `*orders* for HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD (CERAMIC & ELLECI):` | ask-back "Which period for HANLIM TRADING SDN BHD (6 accounts)?"; after "1": `Customer: HANLIM TRADING SDN BHD (6 accounts)` / `Dates: 01/10/2026 to 31/10/2026` |
 | 2 | "All" on the Chin Chun picker (same file, turn 2) | `*orders* for CHIN CHUN HARDWARE SDN BHD - [A/C I]` x6, `CHIN CHUN HOMEMART SDN BHD - [A/C I]` x4, `... AND TIMBER TRADING` x3, `JIMMY - I` x2 | `Customer: CHIN CHUN HARDWARE SDN BHD (N accounts) and 3 more` (identical names count once) |
 | 3 | "delivery status for hanlim" (case-072, turn 1); rows 202609-0916, 202609-0927 | `Customer: hanlim` / `Product: all products` / `Dates: all dates`, rows with Status `Picked Up / In Transit`, Driver `AZHAR`, Lorry Plate `VQP1678` | ask-back for the period; a dealer then sees rows without Status / Pickup Time / Transporter / Driver / Lorry Plate; a staff contact sees them as today |
-| 4 | "delivery for hanlim rpacc" then "only in 2026" (owner-15sep-chain-001, turns 6-7) | `Dates: all dates`, then `Dates: 01/01/2026 to 31/12/2026` | turn 6 asks the period; turn 7 is refused: "That covers 12 months ... - Dec 2026 - Jan 2026" |
+| 4 | "delivery for hanlim rpacc" then "only in 2026" (owner-15sep-chain-001, turns 6-7) | `Dates: all dates`, then `Dates: 01/01/2026 to 31/12/2026` | turn 6 asks the period; turn 7 is refused: "That is 12 months ... - Dec 2026 - Jan 2026" |
 | 5 | "where is DO 202609-0916" | (no fixture) | no ask-back, no Dates line: `Order: 202609-0916` and the row |
 
 ### Edge cases
@@ -195,7 +210,7 @@ so the five grants were seeded). Today = Fri 2 Oct 2026. "Pinned" names the test
 | R7 | D | "delivery to hanlim September" | list 01/09/2026 to 30/09/2026 | parametrised 31-day test |
 | R8 | D | "delivery to hanlim 15 Sep to 10 Oct" | list (26 days) | parametrised 31-day test |
 | R9 | D | "delivery to hanlim 20 Dec 2025 to 10 Jan 2026" | list (22 days, year boundary) | parametrised 31-day test |
-| R10 | D | "delivery to hanlim January to June" | "That covers 6 months (01/01/2026 to 30/06/2026) ..." - Jun 2026 / - Jan 2026 | `test_january_to_june_is_refused_with_suggestions` |
+| R10 | D | "delivery to hanlim January to June" | "That is 6 months (01/01/2026 to 30/06/2026) ..." - Jun 2026 / - Jan 2026 (whole months in months, anything else in days: "That is 32 days") | `test_january_to_june_is_refused_with_suggestions` |
 | R11 | D | "delivery to hanlim January and February" | refused, "2 months" | `test_january_and_february_is_refused` |
 | R12 | D | "delivery to hanlim this year" | refused; suggestions stop at the current month: - Oct 2026 / - Jan 2026 | `test_suggestions_never_name_a_future_month` |
 | R13 | D | "where is DO 202609-0916" | the row, no ask-back | `test_naming_an_order_number_needs_no_range` |
