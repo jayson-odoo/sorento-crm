@@ -1,15 +1,17 @@
 /**
- * Access model S6 (AC-AM-7). Red test: the Access tab still renders the Access Agents grid and the
- * Field reveals card; it must instead render roles + the tree under "What the chatbot answers".
- * Hook names pinned (hooks/useChatbotAccess.ts): useChatbotRegistry, useChatbotRoles,
- * useContactAccess(contactId), useSetContactAccess(contactId).
+ * Access model S6, mock v8 (AC-AM-7, AC-AM-22, AC-AM-25). Red test: the Access tab still renders the
+ * Access Agents grid and Field reveals card. Hooks (hooks/useChatbotAccess.ts): useChatbotRegistry,
+ * useChatbotRoles (items carry audience_tier + sees_all_customers), useContactAccess(contactId)
+ * (GET shape + regions), useSetContactAccess(contactId) -> { mutate({role_ids, overrides, regions}) }.
  */
 import React from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import ContactAccessPage from './page';
+
+const mutate = vi.fn();
 
 vi.mock('@/lib/api', () => ({ apiFetch: () => new Promise(() => {}) }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -22,34 +24,41 @@ vi.mock('next/navigation', () => ({
 vi.mock('../components/contact-context', () => ({
   useContact: () => ({ isLoading: false, contactId: 'c1' }),
 }));
-vi.mock('../components/ContactMediaAccessSection', () => ({
-  default: () => <div>media-access-stub</div>,
-}));
+vi.mock('../components/ContactMediaAccessSection', () => ({ default: () => <div>media-access-stub</div> }));
 vi.mock('@/hooks/useChatbotAccess', () => ({
   useChatbotRegistry: () => ({
     data: {
       domains: [
-        { name: 'incoming', label: 'Incoming stock', supported: true, access_section: null, escalation_agent_code: 'inc', escalation_team_code: 'purchasing',
+        { name: 'incoming', label: 'Incoming stock', group: 'Stock and incoming', supported: true, access_section: null, escalation_agent_code: 'inc', escalation_team_code: 'purchasing',
           fields: [{ key: 'incoming.eta', label: 'ETA', kind: 'field' }, { key: 'incoming.consignee', label: 'Consignee', kind: 'field' }] },
+        { name: 'ideate', label: 'Share ideas', group: 'Other', supported: true, access_section: null, escalation_agent_code: null, escalation_team_code: null, fields: [] },
       ],
     },
     isLoading: false,
     isError: false,
   }),
-  useChatbotRoles: () => ({ data: [{ id: 'r1', code: 'purchasing', name: 'Purchasing', domains: ['incoming'], fields: ['incoming.eta'], contact_count: 5 }], isLoading: false, isError: false }),
+  useChatbotRoles: () => ({
+    data: [{ id: 'r1', code: 'purchasing', name: 'Purchasing', audience_tier: 'office', sees_all_customers: true, domains: ['incoming'], fields: ['incoming.eta'], contact_count: 5 }],
+    isLoading: false,
+    isError: false,
+  }),
   useContactAccess: () => ({
     data: {
       roles: [{ id: 'r1', code: 'purchasing', name: 'Purchasing' }],
       overrides: [{ domain_name: 'incoming', field_key: 'incoming.consignee', granted: true }],
+      regions: ['west'],
       effective: { domains: ['incoming'], attributes: ['incoming.eta', 'incoming.consignee'], sees_all_customers: true },
     },
     isLoading: false,
     isError: false,
   }),
-  useSetContactAccess: () => ({ mutate: vi.fn(), isPending: false }),
+  useSetContactAccess: () => ({ mutate, isPending: false }),
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  mutate.mockReset();
+});
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -59,18 +68,63 @@ function renderPage() {
     </QueryClientProvider>,
   );
 }
+const checked = (el: HTMLElement) =>
+  (el as HTMLInputElement).checked === true || el.getAttribute('aria-checked') === 'true' || el.getAttribute('data-state') === 'checked';
 
-describe('Contact Access tab', () => {
-  it('AC-AM-7 renders What the chatbot answers with role chip and override badge', () => {
+describe('Contact Access tab (v8)', () => {
+  it('AC-AM-7 renders the summary, the role chip with tier and the customers line', () => {
     renderPage();
-    expect(screen.getByText('What the chatbot answers')).toBeTruthy();
-    expect(screen.getAllByText('Purchasing').length).toBeGreaterThan(0);
-    expect(screen.getByText('added here')).toBeTruthy();
+    expect(screen.getByText(/This contact can/)).toBeTruthy();
+    expect(screen.getByText('Purchasing · Office')).toBeTruthy();
+    expect(screen.getAllByText(/All customers/i).length).toBeGreaterThan(0);
   });
 
-  it('AC-AM-7 no longer renders the Access Agents grid or the Field reveals switches', () => {
+  it('AC-AM-7 renders switches, a collapsed Advanced section, and the changed row with Reset to role', () => {
+    renderPage();
+    expect(screen.getByRole('switch', { name: 'Incoming stock' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('switch', { name: 'Share ideas' }).getAttribute('aria-checked')).toBe('false');
+    expect(screen.getByText('Advanced')).toBeTruthy();
+    expect(screen.getByText(/Changed for this contact/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reset to role' })).toBeTruthy();
+  });
+
+  it('AC-AM-7 the old Access Agents grid and Field reveals are gone', () => {
     renderPage();
     expect(screen.queryByText('Access Agents')).toBeNull();
     expect(screen.queryByText('Field reveals')).toBeNull();
+  });
+
+  it('AC-AM-25 shows region checkboxes and the last region cannot be unticked', () => {
+    renderPage();
+    const west = screen.getByRole('checkbox', { name: 'West Malaysia' });
+    expect(checked(west)).toBe(true);
+    fireEvent.click(west);
+    expect(checked(screen.getByRole('checkbox', { name: 'West Malaysia' }))).toBe(true);
+    expect(screen.queryByRole('button', { name: /Save \(\d+\)/ })).toBeNull();
+  });
+
+  it('AC-AM-7 Save shows (n) per change and sends one PUT with role_ids, overrides and regions', () => {
+    renderPage();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'East Malaysia' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Share ideas' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save (2)' }));
+    expect(mutate).toHaveBeenCalledTimes(1);
+    const p = mutate.mock.calls[0][0] as { role_ids: string[]; overrides: unknown[]; regions: string[] };
+    expect(p.role_ids).toEqual(['r1']);
+    expect([...p.regions].sort()).toEqual(['east', 'west']);
+    expect(p.overrides).toEqual(
+      expect.arrayContaining([
+        { domain_name: 'incoming', field_key: 'incoming.consignee', granted: true },
+        { domain_name: 'ideate', field_key: null, granted: true },
+      ]),
+    );
+  });
+
+  it('AC-AM-7 Reset to role counts as a change and drops that row overrides from the PUT', () => {
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to role' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save (1)' }));
+    const p = mutate.mock.calls[0][0] as { overrides: { domain_name: string }[] };
+    expect(p.overrides.filter((o) => o.domain_name === 'incoming')).toEqual([]);
   });
 });

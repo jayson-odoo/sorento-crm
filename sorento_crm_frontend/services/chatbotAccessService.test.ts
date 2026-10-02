@@ -56,20 +56,20 @@ describe('chatbotAccessService', () => {
     expect(lastCall()).toMatchObject({ url: '/api/v1/system/chatbot/roles', method: 'GET' });
   });
 
-  it('AC-AM-1 createRole POSTs the body to /roles', async () => {
-    const input = { name: 'Auditor', description: 'x', sees_all_customers: true };
+  it('AC-AM-1 and AC-AM-23 createRole POSTs audience_tier and sees_all_customers to /roles', async () => {
+    const input = { name: 'Auditor', description: 'x', audience_tier: 'office', sees_all_customers: true };
     apiFetch.mockReturnValue(ok({ id: 'r9', ...input }));
     await createRole(input);
     expect(lastCall()).toMatchObject({ url: '/api/v1/system/chatbot/roles', method: 'POST', body: input });
   });
 
-  it('AC-AM-1 updateRole PATCHes /roles/{id}', async () => {
+  it('AC-AM-23 updateRole PATCHes tier and customers on /roles/{id}', async () => {
     apiFetch.mockReturnValue(ok({ id: 'r1' }));
-    await updateRole('r1', { name: 'Buying' });
+    await updateRole('r1', { name: 'Buying', audience_tier: 'dealer', sees_all_customers: false });
     expect(lastCall()).toMatchObject({
       url: '/api/v1/system/chatbot/roles/r1',
       method: 'PATCH',
-      body: { name: 'Buying' },
+      body: { name: 'Buying', audience_tier: 'dealer', sees_all_customers: false },
     });
   });
 
@@ -94,18 +94,19 @@ describe('chatbotAccessService', () => {
     });
   });
 
-  it('AC-AM-4 getContactAccess GETs /contacts/{id}/access', async () => {
-    const body = { roles: [], overrides: [], effective: { domains: [], attributes: [], sees_all_customers: false } };
+  it('AC-AM-4 and AC-AM-25 getContactAccess (with regions) GETs /contacts/{id}/access', async () => {
+    const body = { roles: [], overrides: [], regions: ['west'], effective: { domains: [], attributes: [], sees_all_customers: false } };
     apiFetch.mockReturnValue(ok(body));
     expect(await getContactAccess('c1')).toEqual(body);
     expect(lastCall()).toMatchObject({ url: '/api/v1/system/chatbot/contacts/c1/access', method: 'GET' });
   });
 
-  it('AC-AM-4 setContactAccess PUTs role_ids and overrides', async () => {
+  it('AC-AM-4 and AC-AM-25 setContactAccess PUTs role_ids, overrides and regions', async () => {
     apiFetch.mockReturnValue(ok({}));
     const payload = {
       role_ids: ['r1'],
       overrides: [{ domain_name: 'incoming', field_key: 'consignee', granted: true }],
+      regions: ['west', 'east'],
     };
     await setContactAccess('c1', payload);
     expect(lastCall()).toMatchObject({
@@ -117,6 +118,6 @@ describe('chatbotAccessService', () => {
 
   it('AC-AM-4 a 422 on setContactAccess rejects with the extracted message', async () => {
     apiFetch.mockReturnValue(fail(422, { detail: 'Unknown role' }));
-    await expect(setContactAccess('c1', { role_ids: ['x'], overrides: [] })).rejects.toThrow('Unknown role');
+    await expect(setContactAccess('c1', { role_ids: ['x'], overrides: [], regions: ['west'] })).rejects.toThrow('Unknown role');
   });
 });

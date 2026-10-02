@@ -1,9 +1,8 @@
 /**
- * Access model S6 (AC-AM-2). Red test: chatbot-roles/[id]/page.tsx does not exist.
- * Hook names pinned (hooks/useChatbotAccess.ts):
- *   useChatbotRegistry() -> { data: {domains}, isLoading, isError }
- *   useChatbotRole(id)   -> { data: Role, isLoading, isError }
- *   useSetRoleGrants(id) -> { mutate({domains, fields}), isPending }
+ * Access model S6, mock v8 (AC-AM-1, AC-AM-2, AC-AM-3, AC-AM-7, AC-AM-23). Red test: page.tsx absent.
+ * Hooks (hooks/useChatbotAccess.ts): useChatbotRegistry, useChatbotRole(id), useSetRoleGrants(id)
+ * -> { mutate({domains, fields}) }, useUpdateChatbotRole(id), useDeleteChatbotRole,
+ * useChatbotRoleContacts(id) -> { data: [{ id, name }] }.
  */
 import React from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -21,23 +20,21 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+const dom = (name: string, label: string, group: string) => ({
+  name, label, group, supported: true, access_section: null, escalation_agent_code: null, escalation_team_code: null, fields: [],
+});
 vi.mock('@/hooks/useChatbotAccess', () => ({
   useChatbotRegistry: () => ({
-    data: {
-      domains: [
-        { name: 'master_products', label: 'Product', supported: true, access_section: null, escalation_agent_code: null, escalation_team_code: null, fields: [] },
-        { name: 'portal_link', label: 'Portal link', supported: true, access_section: null, escalation_agent_code: null, escalation_team_code: null, fields: [] },
-        { name: 'forms', label: 'Forms', supported: true, access_section: null, escalation_agent_code: null, escalation_team_code: null, fields: [] },
-      ],
-    },
+    data: { domains: [dom('master_products', 'Product details', 'Products and marketing'), dom('portal_link', 'Their request portal link', 'Products and marketing'), dom('forms', 'Forms', 'Products and marketing')] },
     isLoading: false,
     isError: false,
   }),
   useChatbotRole: () => ({
-    data: { id: 'r1', code: 'purchasing', name: 'Purchasing', description: '', sees_all_customers: true, domains: ['master_products'], fields: [], contact_count: 5 },
+    data: { id: 'r1', code: 'purchasing', name: 'Purchasing', description: '', audience_tier: 'office', sees_all_customers: true, domains: ['master_products'], fields: [], contact_count: 1 },
     isLoading: false,
     isError: false,
   }),
+  useChatbotRoleContacts: () => ({ data: [{ id: 'c1', name: 'Sorento - Jereen' }], isLoading: false, isError: false }),
   useSetRoleGrants: () => ({ mutate, isPending: false }),
   useUpdateChatbotRole: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteChatbotRole: () => ({ mutate: vi.fn(), isPending: false }),
@@ -57,23 +54,37 @@ function renderPage() {
   );
 }
 
-describe('Chatbot role page', () => {
-  it('AC-AM-2 shows the saved ticks and the tree headings', () => {
+describe('Chatbot role page (v8)', () => {
+  it('AC-AM-1 shows Name, Tier and the customers radio from the role', () => {
     renderPage();
-    expect(screen.getByRole('checkbox', { name: 'Product' }).getAttribute('aria-checked')).toBe('true');
-    expect(screen.getByRole('checkbox', { name: 'Portal link' }).getAttribute('aria-checked')).toBe('false');
-    expect(screen.getByText('Domains')).toBeTruthy();
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Purchasing');
+    expect(screen.getByText('Tier')).toBeTruthy();
+    expect(screen.getByText('Office')).toBeTruthy();
+    expect((screen.getByRole('radio', { name: /All customers/ }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('radio', { name: /Only the customers linked/ }) as HTMLInputElement).checked).toBe(false);
   });
 
-  it('AC-AM-2 Save shows (2) after two ticks and writes the full set once', () => {
+  it('AC-AM-7 shows switches in role mode with the saved state', () => {
     renderPage();
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Portal link' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Forms' }));
-    const save = screen.getByRole('button', { name: 'Save (2)' });
-    fireEvent.click(save);
+    expect(screen.getByRole('switch', { name: 'Product details' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('switch', { name: 'Forms' }).getAttribute('aria-checked')).toBe('false');
+    expect(screen.queryByText(/Reset to role/)).toBeNull();
+  });
+
+  it('AC-AM-4 lists the contacts with this role and has a Delete button', () => {
+    renderPage();
+    expect(screen.getByText('Sorento - Jereen')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Delete/ })).toBeTruthy();
+  });
+
+  it('AC-AM-2 Save (2) after two switches and one setRoleGrants with the full set', () => {
+    renderPage();
+    fireEvent.click(screen.getByRole('switch', { name: 'Their request portal link' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Forms' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save (2)' }));
     expect(mutate).toHaveBeenCalledTimes(1);
-    const payload = mutate.mock.calls[0][0] as { domains: string[]; fields: string[] };
-    expect([...payload.domains].sort()).toEqual(['forms', 'master_products', 'portal_link']);
-    expect(payload.fields).toEqual([]);
+    const p = mutate.mock.calls[0][0] as { domains: string[]; fields: string[] };
+    expect([...p.domains].sort()).toEqual(['forms', 'master_products', 'portal_link']);
+    expect(p.fields).toEqual([]);
   });
 });

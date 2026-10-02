@@ -1,6 +1,7 @@
 /**
- * Access model S6 (AC-AM-1, AC-AM-3). Red test: chatbot-roles/page.tsx and hooks/useChatbotAccess.ts
- * do not exist. Hook names pinned: useChatbotRoles() -> { data: Role[], isLoading, isError }.
+ * Access model S6, mock v8 (AC-AM-1, AC-AM-23). Red test: chatbot-roles/page.tsx and
+ * hooks/useChatbotAccess.ts do not exist. useChatbotRoles() -> { data: Role[], isLoading, isError }.
+ * Columns: Role, Tier, Customers, Contacts.
  */
 import React from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -19,8 +20,8 @@ vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/hooks/useChatbotAccess', () => ({
   useChatbotRoles: () => ({
     data: [
-      { id: 'r1', code: 'purchasing', name: 'Purchasing', description: 'Buying team', sees_all_customers: true, domains: ['inventory'], fields: [], contact_count: 5 },
-      { id: 'r2', code: 'dealer', name: 'Dealer', description: '', sees_all_customers: false, domains: [], fields: [], contact_count: 0 },
+      { id: 'r1', code: 'purchasing', name: 'Purchasing', description: '', audience_tier: 'office', sees_all_customers: true, domains: [], fields: [], contact_count: 5 },
+      { id: 'r2', code: 'dealer', name: 'Dealer', description: '', audience_tier: 'dealer', sees_all_customers: false, domains: [], fields: [], contact_count: 0 },
     ],
     isLoading: false,
     isError: false,
@@ -41,10 +42,20 @@ function renderPage() {
 }
 
 describe('Chatbot Roles list page', () => {
-  it('AC-AM-1 renders a row per role with its contact count', () => {
+  it('AC-AM-1 has the Role, Tier, Customers and Contacts columns', () => {
+    renderPage();
+    for (const h of ['Role', 'Tier', 'Customers', 'Contacts']) {
+      expect(screen.getAllByText(h).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('AC-AM-23 renders a row per role with tier, customers scope and contact count', () => {
     renderPage();
     expect(screen.getByText('Purchasing')).toBeTruthy();
-    expect(screen.getByText('Dealer')).toBeTruthy();
+    expect(screen.getAllByText('Dealer').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('Office')).toBeTruthy();
+    expect(screen.getByText('All')).toBeTruthy();
+    expect(screen.getByText('Linked only')).toBeTruthy();
     expect(screen.getByText('5')).toBeTruthy();
   });
 
