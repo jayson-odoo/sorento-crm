@@ -2,7 +2,7 @@
 
 The crew copy's dev DB is migrated with plain SQL posted as ONE `crew-migration:` PR
 comment, and a GitHub comment holds at most 65,536 characters. This writes the SQL twin of
-`pdyn_0003_prod_identical` to `documentation/plans/chatbot/crew-migration-prompt-dynamic.sql`,
+`pdyn_0003_prod_identical` to `sorento_crm_backend/alembic/data/crew-migration-prompt-dynamic.sql`,
 small enough for that comment:
 
 - ONE unlabelled `chatbot_semantic_parser` version from the owner's production text (132 KB).
@@ -34,7 +34,7 @@ import sys
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 SNAPSHOT = BACKEND / "alembic" / "data" / "chatbot_semantic_parser.prod-20261001.txt"
-OUT = BACKEND.parent / "documentation" / "plans" / "chatbot" / "crew-migration-prompt-dynamic.sql"
+OUT = BACKEND / "alembic" / "data" / "crew-migration-prompt-dynamic.sql"
 KEY = "chatbot_semantic_parser"
 COMMENT_LIMIT = 65536
 ESC = "^"

@@ -24,7 +24,7 @@ from tests.chatbot.test_prompt_dynamic_prod_snapshot import _seed_registries_to_
 KEY = "chatbot_semantic_parser"
 BACKEND = pathlib.Path(__file__).resolve().parents[2]
 SNAPSHOT = BACKEND / "alembic" / "data" / "chatbot_semantic_parser.prod-20261001.txt"
-SQL_FILE = BACKEND.parent / "documentation" / "plans" / "chatbot" / "crew-migration-prompt-dynamic.sql"
+SQL_FILE = BACKEND / "alembic" / "data" / "crew-migration-prompt-dynamic.sql"
 SHA = hashlib.sha256(SNAPSHOT.read_bytes()).hexdigest()
 
 

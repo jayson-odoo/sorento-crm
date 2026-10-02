@@ -365,7 +365,7 @@ The crew copy's dev DB is migrated by SQL, not alembic. Its last crew-migration 
 97a3eba5) carried only pdyn_0001, so dev stayed at v53.
 
 `scripts/prompt_dynamic_crew_sql.py` generates
-`documentation/plans/chatbot/crew-migration-prompt-dynamic.sql`. The file is 152 KB, over
+`sorento_crm_backend/alembic/data/crew-migration-prompt-dynamic.sql`. The file is 152 KB, over
 GitHub's 65,536-character comment limit, so it is committed instead of pasted. It holds:
 - pdyn_0001's idempotent statements;
 - a `DO` block that does what pdyn_0003 does.
@@ -455,7 +455,7 @@ Crew's ruling has two parts:
   and no label.
 - Kill test (match with CRLF folded and trailing newlines trimmed): 2 red.
 
-**The crew SQL for dev** (the full `documentation/plans/chatbot/crew-migration-prompt-dynamic.sql`,
+**The crew SQL for dev** (the full `sorento_crm_backend/alembic/data/crew-migration-prompt-dynamic.sql`,
 55,862-character comment body):
 1. It decodes the owner's text and checks its sha256.
 2. It inserts that text verbatim, unlabelled, with commit message
@@ -531,3 +531,7 @@ are built yet.
 
 **Rebuild on dev:** `scripts.prompt_dynamic_identical_version --from-version 54 --save`, then
 `--verify N`. Expected swaps: teams, order_status_values, entity_kinds_detail and specs.
+
+The crew SQL moved to `sorento_crm_backend/alembic/data/crew-migration-prompt-dynamic.sql`, next
+to the owner text it encodes. Its test reads it, and `tests/test_ci_docs_only_filter.py` rejects
+a test-read `documentation/` path that CI would still classify as docs-only (CI run on e2bc03b0).
