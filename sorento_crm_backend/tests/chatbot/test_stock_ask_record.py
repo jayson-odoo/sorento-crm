@@ -81,7 +81,7 @@ def test_ac_sa501_a_live_turn_writes_one_open_row_per_answered_product(
     # CUSTOMER-ASKS-REFER-ONLY (1 Oct 2026): B3's line does not refer the dealer to the
     # salesman, so it is answered but not a Customer ask.
     assert set(rows) == {"ZZTSA4-BIG", "ZZTSA4-INS", "ZZTSA4-NOI"}
-    assert "ZZTSA4-INC x 150: no stock at the moment, ETA 19/10/2026." in reply
+    assert "ZZTSA4-INC x 150: ❌ ETA 19/10/2026." in reply
     expected = {
         "ZZTSA4-BIG": ("too_big", 300, f"ZZTSA4-BIG x 300: {TOO_BIG}"),
         "ZZTSA4-INS": ("in_stock", 50, f"ZZTSA4-INS x 50: {IN_STOCK}"),

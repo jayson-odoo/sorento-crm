@@ -279,7 +279,7 @@ INCOMING = _v("incoming", "check_incoming")
 def _dealer_reply(etas: list[str]) -> str:
     # REFER-SALESMAN (30 Sep 2026): the one refer sentence, with or without a salesperson
     # on the customer; the name is never printed.
-    return f"{CODE}\nETA: {', '.join(etas)}\n\nPlease refer to your salesman."
+    return f"{CODE}: ETA {', '.join(etas)}\n\nPlease refer to your salesman."
 
 
 # --------------------------------------------------------- the dealer stock ask

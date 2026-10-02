@@ -63,7 +63,7 @@ def test_answered_reply_carries_no_intro_and_no_numbering():
             "SRT-INSTOCK",
             5,
             "in_stock",
-            "yes, we have stock. Please refer to your salesman.",
+            "\u2705 Please refer to your salesman.",
         ),
     ]
     out = fetch.output_structurer(_availability_envelope(entries), {"semantic_input": {}})
@@ -76,7 +76,7 @@ def test_answered_reply_carries_no_intro_and_no_numbering():
     assert out["response"] == (
         "SRT-TOOBIG x 250: the quantity is more than what I can confirm here. "
         "Please refer to your salesman.\n\n"
-        "SRT-INSTOCK x 5: yes, we have stock. Please refer to your salesman."
+        "SRT-INSTOCK x 5: \u2705 Please refer to your salesman."
     )
 
 

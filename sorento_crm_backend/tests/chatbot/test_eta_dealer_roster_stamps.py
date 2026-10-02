@@ -4,7 +4,7 @@ contact 437264483, a dealer, prompt v50).
 Turn 562961e4 "eta srtwc286": the ten-row roster stamped EVERY row "no incoming", while
 turn ca1eb616 "all" fetched ETAs for SRTWC286-SH-NEW, -NEW-200 and -NEW-P. The dealer view
 (`eta_policy.dealer_view`, presented by the MCP's `_incoming_dealer`) prints each product
-as ONE title, "<code>\\nETA: <dates>", with no field, and `pickers.annotate_incoming`
+as ONE title, "<code>\: ETA <dates>", with no field, and `pickers.annotate_incoming`
 read the whole title as the code, so nothing matched.
 
 Turn a3d0d2c7 "5" (SRTWC286-SH-NEW-150, no incoming): the dealer was told "No incoming,
@@ -53,7 +53,7 @@ def dealer_item(code: str, etas: list[str]) -> dict[str, Any]:
     """One line of the MCP presenter's dealer envelope, byte for byte
     (`sorento_crm_mcp/presenters.py::_incoming_dealer`, pinned by
     `sorento_crm_mcp/tests/test_presenters.py::test_dealer_view_is_one_line_per_product_and_the_salesperson`)."""
-    return {"title": f"{code}\nETA: {', '.join(etas)}", "fields": [], "flags": {"dealer_view": True}}
+    return {"title": f"{code}: ETA {', '.join(etas)}", "fields": [], "flags": {"dealer_view": True}}
 
 
 def dealer_envelope(etas: dict[str, list[str]]) -> dict[str, Any]:

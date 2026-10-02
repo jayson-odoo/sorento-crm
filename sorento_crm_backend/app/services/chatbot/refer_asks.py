@@ -90,7 +90,7 @@ def referred_entries(
             }
         )
 
-    # 1. A dealer incoming reply: one line per product, "<code>\nETA: <dates>".
+    # 1. A dealer incoming reply: one line per product, "<code>: ETA <dates>".
     for envelope in envelopes:
         for item in _figures(envelope):
             flags = jsc.get(item, "flags")
@@ -165,12 +165,21 @@ def _figures(envelope: dict[str, Any]) -> list[Any]:
     return []
 
 
+#: AVAIL-MODE-REPLIES rule 3 (2 Oct 2026): the dealer's ETA line is "<code>: ETA <dates>".
+_ONE_LINE_ETA = re.compile(r"^(?P<code>.+?):\s+(?P<when>ETA\b.*)$")
+
+
 def _dealer_line(title: Any) -> tuple[str, str]:
-    """`"<code>\\nETA: <dates>"` -> (code, "ETA: <dates>"); a title with no code (the
-    `/shipments` route) -> ("", the line)."""
+    """`"<code>: ETA <dates>"` -> (code, "ETA <dates>"); a title with no code (the
+    `/shipments` route) -> ("", the line). The two-line `"<code>\\nETA: <dates>"` an older
+    presenter printed still reads the same way."""
     lines = [ln.strip() for ln in str(title or "").splitlines() if ln.strip()]
     if not lines:
         return "", ""
+    if len(lines) == 1:
+        one = _ONE_LINE_ETA.match(lines[0])
+        if one:
+            return one.group("code").strip(), one.group("when").strip()
     if len(lines) == 1:
         return ("", lines[0]) if lines[0].upper().startswith("ETA") else (lines[0], "")
     return lines[0], " ".join(lines[1:])

@@ -1,7 +1,6 @@
 # PLAN: availability-mode stock replies + multi-code scenarios (AVAIL-MODE-REPLIES)
 
-Status: Plan, behaviour card posted to PR #1430 as crew-ask (2 Oct 2026); building the
-unblocked parts meanwhile. Track: full (wording + logic, expected diff over 300 lines with the
+Status: Build. Behaviour card final (owner answers 2 Oct 2026, below). Slice 1 built. Track: full (wording + logic, expected diff over 300 lines with the
 scenario suite), no migration, no auth/RBAC change, no new ingest surface.
 
 Owner ask (2 Oct 2026, after a stakeholder demo): emoji got/no stock, category-max qty logic,
@@ -82,6 +81,15 @@ Paths under `sorento_crm_backend/app/services/` unless marked `mcp:` (`sorento_c
 - Q > X and some stock: too_big unchanged (the number is never shown above X).
 - X unset (0): every Q is too_big, unchanged.
 - Code in two companies: summed before the branch (unchanged, `inventory_service.py:1636-1650`).
+
+## Owner rulings (2 Oct 2026, answers to the crew-ask)
+
+- Q1 (a): a short in-stock line shows only "✅ N available", no ETA for the shortfall.
+- Q2 (a): a code named twice adds up into one line ("SRT5674 x 2 ... SRT5674 x 3" is x 5).
+- Q3 (a): one picker at a time; the second vague code is asked after the first is picked.
+- Q4 (b): refuse ONLY the explicit "all" signal; a customer picking every number
+  ("1,2,3,4,5,6,7") is allowed and answered. This supersedes rule 4's wider proposal.
+- Q5 (a): above the category max keep "more than what I can confirm here", no count.
 
 ## Slices
 1. Presenter wording (emoji + partial line + ETA one-liner) and its consumers (`refer_asks`, `pickers.annotate_incoming`).
