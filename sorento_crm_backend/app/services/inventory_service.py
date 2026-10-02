@@ -1208,22 +1208,24 @@ class StockService:
         rows = self.db.query(Warehouse.warehouse_code, Warehouse.id).filter(Warehouse.warehouse_code.in_(codes)).all()
         return {str(code): str(wid) for code, wid in rows}
 
-    def visible_warehouse_ids(self, policy) -> set[str]:
-        """The active warehouses a stock-visibility policy lets the contact see, narrowed
-        to the ones the question named (`requested_warehouse_ids`): the same
-        `warehouse_criterion` + active + requested filters the location lines are read
-        through, so a total built on this set covers exactly the lines the reply can name."""
+    def visible_warehouse_ids(self, policy) -> dict[str, str]:
+        """`{warehouse_id: warehouse_code}` for the active warehouses a stock-visibility
+        policy lets the contact see, narrowed to the ones the question named
+        (`requested_warehouse_ids`): the same `warehouse_criterion` + active + requested
+        filters the location lines are read through, so a total built on this set covers
+        exactly the lines the reply can name."""
         from app.services.stock_visibility import warehouse_criterion
 
         rows = (
-            self.db.query(Warehouse.id)
+            self.db.query(Warehouse.id, Warehouse.warehouse_code)
             .filter(Warehouse.is_active.is_(True), warehouse_criterion(policy, Warehouse.id))
             .all()
         )
-        visible = {str(wid) for (wid,) in rows}
-        if self.requested_warehouse_ids is not None:
-            visible &= self.requested_warehouse_ids
-        return visible
+        return {
+            str(wid): code
+            for wid, code in rows
+            if self.requested_warehouse_ids is None or str(wid) in self.requested_warehouse_ids
+        }
 
     def on_hand_total_by_product(self, product_ids: list[str], policy=None) -> dict[str, int]:
         """`quantity_on_hand` summed over EVERY warehouse row of each product (review round
@@ -1245,7 +1247,7 @@ class StockService:
         if policy is not None:
             # Under a contact's policy the total covers the locations it may see, never a
             # hidden one (STOCK-TOTAL-OS-SCOPE): the same rule the rows were filtered by.
-            q = q.filter(Stock.warehouse_id.in_(self.visible_warehouse_ids(policy)))
+            q = q.filter(Stock.warehouse_id.in_(list(self.visible_warehouse_ids(policy))))
         return {str(pid): int(qty or 0) for pid, qty in q.group_by(Stock.product_id).all()}
 
     def no_feed_company_ids(self) -> set[str]:

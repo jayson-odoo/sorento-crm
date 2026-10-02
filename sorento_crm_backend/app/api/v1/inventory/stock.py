@@ -116,6 +116,7 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
     # this reply (owner option b). The staff path (no contact, no policy) keeps the
     # product total: every line, unlocated included.
     policy = service.resolved_policy
+    visible: dict[str, str] = {}
     if policy is not None:
         visible = service.visible_warehouse_ids(policy)
         open_so_total: dict[str, int] = {}
@@ -186,6 +187,22 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
                 continue
             wid = wh_id_by_code.get(str(loc.get("warehouse_code") or ""))
             loc["open_so_qty"] = open_so_by_warehouse.get((pid, wid), 0) if wid else 0
+        if policy is not None:
+            # Owner ruling (a), hand test of #1431 (SO414050 on BRW-IB): the Total's O/S
+            # must equal the sum of the printed lines. A visible warehouse with open SO
+            # but no line - no stock row for the product, or a 0-on-hand line that
+            # `hide_zero_locations` dropped - is printed as `<code>: 0 (O/S: n)`.
+            locations = entry.setdefault("locations", [])
+            printed = {
+                str(loc.get("warehouse_code")) for loc in locations if isinstance(loc, dict)
+            }
+            for vwid, code in visible.items():
+                qty = open_so_by_warehouse.get((pid, vwid), 0)
+                if qty > 0 and code and code not in printed:
+                    locations.append(
+                        {"warehouse_code": code, "quantity_on_hand": 0, "open_so_qty": qty}
+                    )
+            locations.sort(key=lambda loc: str(loc.get("warehouse_code") or ""))
     # DETAILED mode carries a per-product summary too (review round 2, S2): the chatbot's
     # "Open SO n, Available n" line reads the product TOTAL from here, never a sum over
     # the page of rows, which is short of the truth for a product held in more warehouses
