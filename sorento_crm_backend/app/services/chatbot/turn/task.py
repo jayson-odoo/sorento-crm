@@ -931,8 +931,16 @@ def after_reply(
     rest = [row for row in rows if id(row) not in in_family]
     owed = [row for row in rest if row.get("needs_quantity") is True]
     if groups:
-        kept = _rebuilt(tasks, owed, turn_no=turn_no, named_products=named_products) if owed else others
-        return StockReply(tasks=kept, text=picks_question(options, groups), pick=stock_pick(options, groups))
+        # One question at a time (reviewer B4): the pick is asked now, and a code still
+        # owed its quantity rides on it (`OWED`), asked once every list is answered.
+        carried = [
+            {"key": str(row["product_id"]), "label": _row_label(row)}
+            for row in owed
+            if row.get("product_id") and _row_label(row)
+        ]
+        return StockReply(
+            tasks=others, text=picks_question(options, groups), pick=stock_pick(options, groups, carried)
+        )
 
     rebuilt = _rebuilt(tasks, owed, turn_no=turn_no, named_products=named_products)
     stock = next((task for task in rebuilt if task.kind == "stock_qty"), None)
@@ -948,6 +956,41 @@ def after_reply(
 NEXT_PICKS = "next_picks"
 #: The pick's own quantity per code, one per list (`after_reply`), for `_spend_stock_pick`.
 QTY_BY_CODE = "qty_by_code"
+#: Codes still owed a quantity while a pick is open (`{"key", "label"}` each): asked by
+#: `engine._stock_ask_reply` once no list is left open, never beside a pick.
+OWED = "owed"
+
+
+def owed_of(tasks: tuple[Task, ...]) -> list[dict[str, Any]]:
+    """The open stock task's slots still owed a quantity, as `OWED` entries."""
+    task = next((t for t in tasks if t.kind == "stock_qty" and t.status == OPEN), None)
+    if task is None:
+        return []
+    return [{"key": slot.key, "label": slot.label} for slot in task.slots if slot.value is None]
+
+
+def with_owed(
+    tasks: tuple[Task, ...], owed: list[dict[str, Any]], *, turn_no: int
+) -> tuple[tuple[Task, ...], str | None]:
+    """The stock task asking every code still owed a quantity: the open task's own owed
+    slots and `owed`, once each in that order, and its question."""
+    slots: list[Slot] = []
+    for entry in [*owed_of(tasks), *owed]:
+        key, label = entry.get("key"), entry.get("label")
+        if key and label and all(slot.key != key for slot in slots):
+            slots.append(Slot(key=str(key), label=str(label)))
+    others = tuple(t for t in tasks if t.kind != "stock_qty")
+    if not slots:
+        return tasks, None
+    task = Task(
+        kind="stock_qty",
+        domain="inventory",
+        status=OPEN,
+        opened_at_turn=turn_no,
+        touched_at_turn=turn_no,
+        slots=tuple(slots[:MAX_SLOTS]),
+    )
+    return others + (task,), StockQtyTask().question(task)
 
 
 def picks_question(options: list[dict[str, Any]], groups: list[dict[str, Any]]) -> str:
@@ -970,7 +1013,9 @@ def picks_question(options: list[dict[str, Any]], groups: list[dict[str, Any]]) 
     return "\n\n".join(parts)
 
 
-def stock_pick(options: list[dict[str, Any]], groups: list[dict[str, Any]]) -> dict[str, Any]:
+def stock_pick(
+    options: list[dict[str, Any]], groups: list[dict[str, Any]], owed: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """The `product_pick` a which-one question is stored as. With one list it is exactly
     the single family pick it always was; with several, `groups` keeps each list's typed
     token, quantity and positions."""
@@ -994,6 +1039,7 @@ def stock_pick(options: list[dict[str, Any]], groups: list[dict[str, Any]]) -> d
             "stock_qty": quantities[0] if all(q is not None for q in quantities) else None,
             "groups": groups,
             QTY_BY_CODE: by_code,
+            OWED: list(owed or []),
         },
     }
 

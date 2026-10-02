@@ -3059,7 +3059,7 @@ def _stock_pick_requantified(state: State, verdict: dict[str, Any], trace: Trace
         # Several lists in one message: the number is the quantity of every list that
         # had none (AVAIL-MODE-REPLIES), and they are asked again, numbers kept.
         groups = [g if g.get("qty") is not None else {**g, "qty": quantity} for g in groups]
-        payload = task_mod.stock_pick(list(pending.options), groups)["payload"]
+        payload = task_mod.stock_pick(list(pending.options), groups, payload.get(task_mod.OWED))["payload"]
         trace.task_question = task_mod.picks_question(list(pending.options), groups)
     else:
         trace.task_question = task_mod.pick_question(
@@ -3070,6 +3070,8 @@ def _stock_pick_requantified(state: State, verdict: dict[str, Any], trace: Trace
             # Round 9: a did-you-mean's typed code is one the resolver did not recognise,
             # and a header never leads with it.
             recognised=not payload.get("did_you_mean"),
+            # Reviewer B3: a list handed on from a several-list pick keeps its numbers.
+            start=min((o.get("position") or 1) for o in pending.options),
         )
     kept = replace(pending, payload=payload)
     focus = copy.deepcopy(state.focus)
@@ -3106,6 +3108,10 @@ def _spend_stock_pick(
     trace.rules_fired.append("stock_pick_spent")
     labels = {str(o.get("label")).strip().casefold() for o in asked.options if o.get("label")}
     _hand_on_unanswered_lists(asked, specs, verdict, trace)
+    owed = asked.payload.get(task_mod.OWED)
+    if isinstance(owed, list) and owed:
+        # Reviewer B4: the codes owed a quantity beside this pick, asked once no list is open.
+        verdict[task_mod.OWED] = owed
     quantity = _stated_quantity(asked.payload.get("stock_qty"))
     by_code = asked.payload.get(STOCK_QTY_BY_CODE) or {}
     list_qty = asked.payload.get(task_mod.QTY_BY_CODE) or {}

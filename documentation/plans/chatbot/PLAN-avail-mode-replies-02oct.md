@@ -1,6 +1,6 @@
 # PLAN: availability-mode stock replies + multi-code scenarios (AVAIL-MODE-REPLIES)
 
-Status: Build. Behaviour card final (owner answers 2 Oct 2026, below). Slice 1 built. Track: full (wording + logic, expected diff over 300 lines with the
+Status: Review. Slices 1 to 4 built to the owner-approved catalogue v2 (`documentation/mockups/avail-mode-scenarios/index.html`); reviewer round 1 fixed. Track: full (wording + logic, expected diff over 300 lines with the
 scenario suite), no migration, no auth/RBAC change, no new ingest surface.
 
 Owner ask (2 Oct 2026, after a stakeholder demo): emoji got/no stock, category-max qty logic,
@@ -50,7 +50,7 @@ Paths under `sorento_crm_backend/app/services/` unless marked `mcp:` (`sorento_c
    - in stock, short of Q, Q <= X (NEW): `SRT5674 x 50: ✅ 30 available. Please refer to your salesman.`
    - no stock, shipment due: `SRTW2000 x 150: ❌ ETA 19/10/2026.`
    - no stock, nothing incoming: `SRT5674 x 150: ❌ No incoming. Please refer to your salesman.`
-   - Q > X (unchanged, no emoji, reveals nothing): `CWCX604 x 300: the quantity is more than what I can confirm here. Please refer to your salesman.`
+   - Q > X (reveals nothing; 🚫 added by v2 note 1): `CWCX604 x 300: 🚫 the quantity is more than what I can confirm here. Please refer to your salesman.`
 2. Category max: new rule applies only when Q <= X. "Has stock" = available >= 1 after the
    open-SO subtraction. Stays branch `in_stock` (no new branch value, so no CHECK-constraint
    migration on `stock_asks.branch`); the entry gains `available_qty` only in that case.
@@ -64,7 +64,7 @@ Paths under `sorento_crm_backend/app/services/` unless marked `mcp:` (`sorento_c
 5. Multi-code message, one combined reply, in this order:
    1. answered lines (exact codes, and a prefix that matches exactly ONE code, answered as that code), in asked order;
    2. `Couldn't find: FOO99, BAR12.` for codes with no match (no did-you-mean inside a mix; a whole-miss single code keeps today's did-you-mean);
-   3. the open question, at most one: a family picker for the FIRST vague token, else the quantity question for codes still owed one.
+   3. the open question, at most one: every vague token's picker in one message (v2), else the quantity question for codes still owed one.
    Duplicates of one code are one line. Nothing already answered is lost when a question is open.
 6. Full mode (staff, compact / detailed) is untouched by every rule above.
 
@@ -73,7 +73,7 @@ Paths under `sorento_crm_backend/app/services/` unless marked `mcp:` (`sorento_c
 - (b) "SRT5674 x 50, CWCX604 x 300, FOO99 x 1" (CWCX604 X 200): `SRT5674 x 50: ✅ ...` / `CWCX604 x 300: the quantity is more than ...` / `Couldn't find: FOO99.`
 - (c) "SRT5674 x 5, SRTWC286 x 10" (SRTWC286 is a family): `SRT5674 x 5: ✅ Please refer to your salesman.` then `SRTWC286 x 10: which one?` `1. SRTWC286-SH` `2. SRTWC286-SH-150`; reply "all" gives `Please reply with the number of the code you need.` and the list stays open.
 - (d) "ETA SRTW2000 and MWT5727SS-CR": `SRTW2000: ETA 19/10/2026` / `MWT5727SS-CR: ETA not confirmed yet`.
-- (e) "FOO99 and BAR12 got stock?": `Couldn't find: FOO99, BAR12.` (+ refer line as today).
+- (e) "FOO99 and BAR12 got stock?": the shared `Couldn't find: "FOO99" (product), "BAR12" (product).` + refer line (owner kept it, S23).
 
 ### Edge cases
 - available <= 0 (open SO over on hand): no stock, rules as before.
@@ -86,14 +86,23 @@ Paths under `sorento_crm_backend/app/services/` unless marked `mcp:` (`sorento_c
 
 - Q1 (a): a short in-stock line shows only "✅ N available", no ETA for the shortfall.
 - Q2 (a): a code named twice adds up into one line ("SRT5674 x 2 ... SRT5674 x 3" is x 5).
-- Q3 (a): one picker at a time; the second vague code is asked after the first is picked.
+- Q3 (a): one picker at a time. SUPERSEDED by the owner's v2 note 3 (2 Oct 2026): Q3 (b),
+  every picker in ONE message, the numbering running on from one list to the next
+  (SRTWC286 1-10, SRTWC6022 11-12); a list left unanswered is asked again with its numbers.
 - Q4 (b): refuse ONLY the explicit "all" signal; a customer picking every number
   ("1,2,3,4,5,6,7") is allowed and answered. This supersedes rule 4's wider proposal.
 - Q5 (a): above the category max keep "more than what I can confirm here", no count.
+  v2 note 1: that line carries 🚫.
+- v2 note 2: quantity + position replies to a picker ("2 of 3", "2 of the third one",
+  "2 of 1 and 5 of 3"); the number after "of" is the option.
+- Not found, every code (S12, S23): the shared `Couldn't find: "X" (product).` sentence
+  stays (both modes). Inside a mix: `Couldn't find: X, Y.`, no did-you-mean (S42).
+- One question at a time (reviewer round 1): pickers first; a code owed a quantity (an
+  exact code typed without one, or the code just picked) is asked once no list is open.
 
 ## Slices
 1. Presenter wording (emoji + partial line + ETA one-liner) and its consumers (`refer_asks`, `pickers.annotate_incoming`).
 2. Partial in-stock: `available_qty` on the entry, `stock_ask_branch` truth table, notification phrase.
 3. No "all" over availability pickers.
 4. Multi-code combined reply (`turn/task.py::after_reply`, `engine._stock_ask_reply`).
-5. Scenario suite `tests/chatbot/test_avail_mode_scenarios.py` + catalogue `tests/chatbot/AVAIL-MODE-SCENARIOS.md`.
+5. Scenario suite `sorento_crm_backend/tests/chatbot/test_avail_mode_scenarios.py` (S01-S42) + catalogue `sorento_crm_backend/tests/chatbot/AVAIL-MODE-SCENARIOS.md` + owner page `documentation/mockups/avail-mode-scenarios/index.html`.

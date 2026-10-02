@@ -5624,16 +5624,27 @@ def _stock_ask_reply(
         for envelope in envelopes or []
     )
     if not block_seen:
-        return answer if not reply.text else turn_compose.Answer(text=reply.text)
+        return answer
     # AVAIL-MODE-REPLIES rule 5 (owner, 2 Oct 2026): ONE combined reply - the answered
     # lines in the order asked, then the codes found nowhere, then at most one question
     # (this reply's own, else the lists of the pick just answered that are still open).
     text, pick = reply.text, reply.pick
     queued = verdict.get(turn_task.NEXT_PICKS)
-    if not text and isinstance(queued, dict) and queued.get("groups"):
-        # The lists of the last pick the dealer has not answered, numbers kept.
+    owed = [e for e in verdict.get(turn_task.OWED) or [] if isinstance(e, dict)]
+    if not pick and isinstance(queued, dict) and queued.get("groups"):
+        # The lists of the last pick the dealer has not answered, numbers kept. Pickers
+        # come first (reviewer S1): a code owed a quantity, including the one just
+        # picked, rides on them and is asked once no list is left open.
+        carried = [*owed, *turn_task.owed_of(tuple(state_out.focus.tasks or ()))]
+        state_out.focus.tasks = tuple(t for t in state_out.focus.tasks or () if t.kind != "stock_qty")
         text = turn_task.picks_question(queued["options"], queued["groups"])
-        pick = turn_task.stock_pick(queued["options"], queued["groups"])
+        pick = turn_task.stock_pick(queued["options"], queued["groups"], carried)
+    elif not pick and owed:
+        # Reviewer B4: the pick is answered, so the codes owed a quantity beside it are
+        # asked now, in one question with any the picked code owes itself.
+        state_out.focus.tasks, text = turn_task.with_owed(
+            tuple(state_out.focus.tasks or ()), owed, turn_no=turn_no
+        )
     misses = _unplaced_tokens(envelopes)
     if not text and not misses:
         return answer

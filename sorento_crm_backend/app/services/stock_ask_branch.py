@@ -32,7 +32,8 @@ def branch(
     (`short_of`), never "no stock" while some is there."""
     if q > x:
         return "too_big"
-    if available >= q or available >= 1:
+    if available >= min(q, 1):
+        # Covered, or some stock short of `q` (rule 2); `q` is always >= 1 here.
         return "in_stock"
     if shipment_date is not None:
         return "incoming"
