@@ -355,6 +355,9 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             missed_domains.append(domain)
 
         label = row.label if row else domain
+        # The domain label is policy wording, not a value: it reads in the reply's language
+        # wherever a composer sentence below prints it.
+        shown_label = localizer.sentence(label) if isinstance(label, str) else label
         subjects = _with_quantities(_header_subjects(entities), state)
         # W6 (owner hand test round 2, turn 1): a long subject list is counted, never
         # dumped as one line of codes ("*stock* for BRBC22102W, BRBC22108W-1A, ...").
@@ -371,7 +374,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         if isinstance(header_override, str) and header_override.strip():
             header = header_override.strip()
         else:
-            header = f"*{label}* for {codes}:" if codes else f"*{label}*:"
+            header = f"*{shown_label}* for {codes}:" if codes else f"*{shown_label}*:"
         # R-d (owner hand pass 7, 19 Sep 2026): the lane's own `lane_text` IS the
         # section, whether or not it carries rows. `lanes/business/fetch.py::
         # output_structurer` already renders the production intro, the per-row
@@ -398,7 +401,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         # `lane_text`, so it is caught by name, once, here, and answered with the
         # SAME neutral line the `error` arm below already gives a broken fetch.
         if isinstance(lane_words, str) and "Error executing tool" in lane_words:
-            block = header + "\n" + f"I could not fetch {label} just now, please try again."
+            block = header + "\n" + f"I could not fetch {shown_label} just now, please try again."
         elif isinstance(lane_words, str) and lane_words.strip():
             block = lane_words.strip()
             # Hand pass 12, Group H: a missed leg of a MULTI-domain ask must name
@@ -418,14 +421,14 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         elif rows_text:
             block = header + "\n" + "\n\n".join(rows_text)
         elif env.get("denied"):
-            block = f"*{label}*: this is not enabled for your account."
+            block = f"*{shown_label}*: this is not enabled for your account."
         elif env.get("error"):
             # The fetch BROKE - the tool timed out or the call failed - which is neither
             # an answer nor a miss, and the section had nothing to print but its own
             # header. Measured on turn 32425b9a (16 Sep 2026): the MCP call timed out and
             # the customer read `*orders* for HANLIM TRADING SDN BHD:` and nothing else,
             # which reads as "there are none" rather than "ask me again".
-            block = header + "\n" + f"I could not fetch {label} just now, please try again."
+            block = header + "\n" + f"I could not fetch {shown_label} just now, please try again."
         else:
             block = header
         # Prod turn f0a2 (1 Oct 2026, "Srtswt3001 / Srtswt3001-gm stock"): both codes
@@ -450,7 +453,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             if absent:
                 # Above the lane's "_Data last updated: ..._" footer, which closes the
                 # section, rather than under it.
-                line = localizer.sentence(f"No stock found for {_join_words(absent)}.")
+                line = localizer.sentence(f"No stock found for {_join_words(absent, localizer)}.")
                 # The footer in whichever language printed it; the last one in the block closes
                 # the section (`footer_leads` drops a blanked lead, which would match any line).
                 split = None
@@ -482,10 +485,10 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         rungs_tried = [r for r in (env.get("rungs_tried") or []) if isinstance(r, str)]
         if rungs_tried:
             names = [
-                (policy.domain(r).label if (policy and policy.domain(r)) else r)
+                localizer.sentence(policy.domain(r).label if (policy and policy.domain(r)) else r)
                 for r in rungs_tried
             ]
-            block = block + "\n" + f"Nothing on {_join_words(names)} either."
+            block = block + "\n" + f"Nothing on {_join_words(names, localizer)} either."
         # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
         # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D15: "just proceed"
         # answered the products that had a quantity and dropped the rest, so the
@@ -523,7 +526,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             if isinstance(token, str) and token and token not in unplaced:
                 unplaced.append(token)
     if unplaced and text.strip():
-        text += "\n" + f"I could not find {_join_words(unplaced)}."
+        text += "\n" + f"I could not find {_join_words(unplaced, localizer)}."
 
     offer = None
     # ONE open question per turn, and when a lane asked one it is the lane's: a domain
@@ -713,14 +716,15 @@ _ASK_HEADERS: dict[str, str] = {
 }
 
 
-def _join_words(names: list[str]) -> str:
-    """`a`, `a or b`, `a, b or c` - the list grammar the rung line reads with."""
+def _join_words(names: list[str], localizer: Any = IDENTITY) -> str:
+    """`a`, `a or b`, `a, b or c` - the list grammar the rung line reads with. The joiner comes
+    from the catalog, so a composer sentence reads in the reply's language."""
     clean = [n for n in names if n]
     if not clean:
         return ""
     if len(clean) == 1:
         return clean[0]
-    return ", ".join(clean[:-1]) + " or " + clean[-1]
+    return ", ".join(clean[:-1]) + localizer.sentence(" or ") + clean[-1]
 
 
 #: How the scope line names each axis - the report's own words for the same filters
@@ -847,7 +851,7 @@ def compose_question(pending: Any, state: State | None = None, localizer: Any = 
     return Answer(sections=[], question=pending, offer=None, canned=[], files=[], actions=[action], text=body)
 
 
-def _join_words_and(items: list[str]) -> str:
+def _join_words_and(items: list[str], localizer: Any = IDENTITY) -> str:
     """"a", "a and b", "a, b and c" - the same shape `media_extract.wording.join_
     phrase` uses, copied rather than imported (`turn/` reads no module outside its
     own package and `contracts.py`). NOT `_join_words` above: that one joins on
@@ -858,11 +862,16 @@ def _join_words_and(items: list[str]) -> str:
         return ""
     if len(values) == 1:
         return values[0]
-    return ", ".join(values[:-1]) + " and " + values[-1]
+    return ", ".join(values[:-1]) + localizer.sentence(" and ") + values[-1]
 
 
 def entities_only_reply(
-    placed: list[str], unplaced: list[str], *, from_photo: bool, media_prefixed: bool = False
+    placed: list[str],
+    unplaced: list[str],
+    *,
+    from_photo: bool,
+    media_prefixed: bool = False,
+    localizer: Any = IDENTITY,
 ) -> str:
     """S3 (PLAN-chatbot-media-into-turn.md): the entities-only arm's own deterministic
     reply (AC-1824/AC-1825) - never an LLM, never a roster. `placed`/`unplaced` are the
@@ -892,7 +901,7 @@ def entities_only_reply(
         if from_photo and not media_prefixed:
             parts.append("I could not match any product code in that photo.")
         if unplaced:
-            parts.append(f"Couldn't find {_join_words_and(unplaced)}.")
+            parts.append(f"Couldn't find {_join_words_and(unplaced, localizer)}.")
         parts.append(
             "What would you like me to do with it?" if from_photo else "Ask again with the correct code."
         )
@@ -901,13 +910,13 @@ def entities_only_reply(
     parts = []
     if not media_prefixed:
         lead = (
-            f"I read {_join_words_and(placed)} from that photo."
+            f"I read {_join_words_and(placed, localizer)} from that photo."
             if from_photo
-            else f"I have {_join_words_and(placed)}."
+            else f"I have {_join_words_and(placed, localizer)}."
         )
         parts.append(lead)
     if unplaced:
-        parts.append(f"Couldn't find {_join_words_and(unplaced)}.")
+        parts.append(f"Couldn't find {_join_words_and(unplaced, localizer)}.")
     parts.append(
         "What would you like me to do with it?" if from_photo else "What would you like me to know?"
     )

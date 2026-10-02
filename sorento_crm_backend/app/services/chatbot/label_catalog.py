@@ -443,28 +443,6 @@ INLINE = frozenset(
     }
 )
 
-#: The domain label words (`turn/policy_rows.py` `label=`): translated where they ride in a
-#: composer sentence's `{label}` / `{names}` token, with the " or " / " and " joiners.
-DOMAIN_LABELS = frozenset(
-    {
-        "stock",
-        "orders",
-        "incoming stock",
-        "promotions",
-        "forms",
-        "product information",
-        "product attachments",
-        "resource attachments",
-        "goods receive",
-        "last in",
-        "outstanding purchase orders",
-        "last purchase cost",
-        "this request",
-    }
-)
-_WORD_TOKENS = ("label", "names")
-_JOINERS = re.compile(r"(, | or | and )")
-
 #: Report value words `Localizer.lines` translates after a catalogued label. An explicit set, never
 #: "any catalog key", so data that happens to read like a label (a status named "Status") is safe.
 VALUE_WORDS = frozenset({"all", "Amount", "Quantity", "Ordered", "Delivered (transferred to DO)"})
@@ -565,7 +543,7 @@ class Localizer:
         found: list[tuple[int, int, int, str]] = []
         for regex, target, fixed, names in self._inline:
             for m in regex.finditer(text):
-                values = {k: self._word_token(k, v) for k, v in m.groupdict().items()}
+                values = m.groupdict()
                 found.append((m.start(), m.end(), fixed, _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), target)))
         found.sort(key=lambda f: (f[0], -f[2]))
         out, pos = [], 0
@@ -577,17 +555,6 @@ class Localizer:
             pos = end
         out.append(text[pos:])
         return "".join(out)
-
-    def _word_token(self, name: str, value: str) -> str:
-        """A `{label}` / `{names}` value: its domain label words and joiners translate."""
-        if name not in _WORD_TOKENS:
-            return value
-        parts = _JOINERS.split(value)
-        translated = [
-            self.table.get(part, part) if (part in DOMAIN_LABELS or part in (" or ", " and ")) else part
-            for part in parts
-        ]
-        return "".join(translated)
 
     def _line(self, line: str) -> str:
         for left, right in _WRAPPERS:

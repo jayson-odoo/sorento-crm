@@ -6228,7 +6228,11 @@ def _run_entities_only_arm(
     )
 
     text = turn_compose.entities_only_reply(
-        placed, unplaced, from_photo=from_photo, media_prefixed=media_prefixed
+        placed,
+        unplaced,
+        from_photo=from_photo,
+        media_prefixed=media_prefixed,
+        localizer=label_catalog.resolve(db, item.get("reply_language") or "en", dry_run=dry_run),
     )
     answer = turn_compose.Answer(text=text)
     # `_run_answer` opens and commits its OWN session for the tail (persist, close);
