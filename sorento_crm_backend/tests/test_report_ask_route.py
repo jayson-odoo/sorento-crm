@@ -373,6 +373,8 @@ def test_ac_re_9_group_by_channel(client, db):
     body = _ok(client, _full(db), group_by="channel", top_n=5)
     assert body["group_by"] == "channel", body
     assert [(r["qty"], money(r["amount"])) for r in body["rows"]] == [(3, D("300.00")), (1, D("100.00"))], body
+    # Captain ruling (PLAN section 10): channel rows read Dealer / Project team on both bases.
+    assert [r["name"] for r in body["rows"]] == ["Project team", "Dealer"], body
 
 
 # ================================================================ AC-RE-10 / 11: period, top_n
