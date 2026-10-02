@@ -5,8 +5,8 @@ prompt). Lane ACCESS-MODEL, branch `crew/access-model`, one PR. Depends on PR #1
 variables, open) and PR #1429 (per-audience trim, docs only, open); slices S1 to S6 do not touch their
 files, S7 rebases onto them once merged.
 
-Inputs: behaviour card `CARD-access-model-2oct.md` (owner answers Q1, Q3, Q4, Q5 = (a); Q2 pending,
-built on (a)), UAC `access-model-2oct-acceptance-criteria.md`, mock v3
+Inputs: behaviour card `CARD-access-model-2oct.md` (owner answers Q1 to Q5 = (a), Q2 confirmed 2 Oct), UAC
+`access-model-2oct-acceptance-criteria.md`, mock v5
 `documentation/mockups/ACCESS-MODEL/index.html`. Paths under `sorento_crm_backend/app/` unless shown.
 
 ## Owner additions (2 Oct, later): multi-role, stamps, region
