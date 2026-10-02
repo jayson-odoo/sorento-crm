@@ -2,7 +2,7 @@
 
 Status: Option C chosen (owner, 2 Oct 2026). Size L, full pipeline track (new gateway router on an
 auth boundary + a public token page). Behaviour card done (sections 1, 2, 0); next = Phase 1 mock
-per CRM screen (section 12, slice M) in progress, assuming Q2 (a) until the owner answers. Lane
+per CRM screen (section 12, slice M) in progress (Q2 answered (a)). Lane
 IDEATION-IN-CRM.
 
 ## 0. Owner decisions (2 Oct 2026)
@@ -16,7 +16,7 @@ IDEATION-IN-CRM.
 | Q5 | **Separate ss lane** for `public_link_base_url` (crew runs it). This lane states the contract it needs (section 13). |
 | Add | **Fold in IDEATION-COMMENTS** in the CRM pages: comments (staff, and public read + post on the track page), upvote-only with the prominent vote box, primary "Move to <next state>" + secondary Edit. Design source: the approved mock `documentation/mockups/IDEATION-COMMENTS/index.html` (v2) on ss branch `crew/ideation-comments`, rebuilt with CRM components (section 9). |
 | 2nd ask Q1 | Comment delete = CRM deferred countdown (D7), not the mock's confirm. (crew, 2 Oct) |
-| 2nd ask Q2 | **Open, with the owner.** Mocks assume (a): new `ideation.ideas.manage` for triage actions. |
+| 2nd ask Q2 | **(a), owner 2 Oct:** new CRM permission `ideation.ideas.manage` gates status move, edit, merge/unmerge, board reorder, archive, delete, promote; view, capture, vote and comment stay on `ideation.board.view`. Seeded in B1 (permission registry + admin grants). |
 | 2nd ask Q3 | Promote shown to manage holders; ss's 403 message surfaced when the email has no ss BR-manage user. |
 | 2nd ask Q4 | Public comment author = the idea's submitter (same as IDEATION-COMMENTS P1 a). |
 | 2nd ask Q5 | Track URL `{FRONTEND_BASE_URL}/portal/ideas/{status_token}` approved. |
@@ -473,7 +473,7 @@ column disappears in embed mode. Today Sorento's ideas all come from intake with
 (`ideation_turn_service.py:649`), so nothing should vanish; ideas captured in ss under another
 product would.
 
-## 15. Second crew-ask (Q1, Q3-Q5 answered 2 Oct, see section 0; Q2 open with the owner)
+## 15. Second crew-ask (all answered 2 Oct, see section 0)
 
 1. Comment delete: the approved mock confirms with a dialog; CRM rule D7 forbids confirm dialogs.
    (a) CRM deferred countdown (10 s, Cancel) like every other CRM delete, (b) keep the mock's
