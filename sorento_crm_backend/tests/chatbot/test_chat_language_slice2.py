@@ -800,7 +800,8 @@ def test_ac_cl24_po_cost_ms_labels():
         _po_cost_envelope(),
         TOOL_PO_COST,
         "ms",
-        access=_grant("purchase_orders.cost"),
+        # Both grants: the value-identity check needs every field rendered, supplier included.
+        access=_grant("purchase_orders.cost", "purchase_orders.supplier"),
     )
     assert "*Kos / unit:* MYR 12.50" in text
     assert "*Diskaun / unit:* MYR 0.00" in text
