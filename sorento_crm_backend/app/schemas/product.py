@@ -674,3 +674,43 @@ class ProductAttachmentResponse(ProductAttachmentBase):
     
     class Config:
         from_attributes = True
+
+
+# ---------------------------------------------------------------- select rows
+# The four master-data `/select` routes answer ANY signed-in user (owner ruling 1 Oct
+# 2026, never-stuck L10): quotation / SO / PO line editors, the SCM filter bar, series,
+# price floors and the dealer-kit picker read them. So they carry only what a picker
+# shows, never the admin configuration on the full row (chatbot weights and limits, brand
+# access levels, purchasing flag, timestamps, product counts).
+
+
+class UnitOfMeasureSelectItem(BaseModel):
+    id: str
+    uom_code: str
+    uom_name: str
+    # How many decimals a quantity in this unit takes (front-planning plan 6.4): line
+    # editors need it to accept 1.5 kg but not 1.5 pieces.
+    decimal_places: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class BrandSelectItem(BaseModel):
+    id: str
+    brand_code: str
+    brand_name: str
+    is_active: bool = True
+
+    class Config:
+        from_attributes = True
+
+
+class ProductCategorySelectItem(BaseModel):
+    id: str
+    category_code: str
+    category_name: str
+    is_active: bool = True
+
+    class Config:
+        from_attributes = True
