@@ -127,7 +127,9 @@ def _resolve_embed_config(db: Session | None) -> _EmbedConfig:
     )
 
 
-def mint_embed_assertion(user: dict[str, Any], *, secret: str, connection_id: str) -> str:
+def mint_embed_assertion(
+    user: dict[str, Any], *, secret: str, connection_id: str, phone: str | None = None
+) -> str:
     """Sign a short-lived assertion identifying the logged-in user for the embed
     connection. Signed with the resolved embed signing secret (never the app JWT
     secret) so the shared-service verifies it against the embed connection only."""
@@ -147,6 +149,8 @@ def mint_embed_assertion(user: dict[str, Any], *, secret: str, connection_id: st
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=_ASSERTION_TTL_SECONDS)).timestamp()),
     }
+    if phone:
+        payload["phone"] = phone
     return jwt.encode(payload, secret, algorithm=settings.jwt_algorithm)
 
 

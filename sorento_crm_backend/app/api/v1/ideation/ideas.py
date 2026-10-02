@@ -70,6 +70,8 @@ def _masked_comment(resp: httpx.Response) -> Response:
 @router.get("/ideas")
 def list_ideas(request: Request, user: dict = _read, db: Session = Depends(get_db)):
     params = {k: v for k, v in request.query_params.items() if k in ("filter", "search")}
+    if request.query_params.get("mine") == "true":
+        params["mine"] = "true"
     return _forward(db, user, "GET", ss_path("embed", "ideas"), params=params)
 
 

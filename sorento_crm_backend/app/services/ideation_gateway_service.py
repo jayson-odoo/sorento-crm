@@ -20,6 +20,8 @@ import httpx
 from fastapi import Response
 from sqlalchemy.orm import Session
 
+from app.models.access import RespondContact
+from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.ideation_embed_service import (
     IdeationEmbedNotConfigured,
@@ -37,9 +39,9 @@ UNAVAILABLE = "The Ideas workspace isn't available on this deployment."
 _REFRESH_MARGIN_SECONDS = 30
 _DEFAULT_TOKEN_TTL_SECONDS = 300
 
-# Keyed by (user id, connection id, ss base URL): a token is only valid for the connection it was
+# Keyed by (user id, connection id, ss base URL, phone): a token is only valid for the connection it was
 # minted on, so a changed workspace config can never reuse an old one (AC-A-12).
-_cache: dict[tuple[str, str, str], tuple[str, float]] = {}
+_cache: dict[tuple[str, str, str, str], tuple[str, float]] = {}
 _cache_lock = threading.Lock()
 
 
@@ -48,7 +50,7 @@ def clear_token_cache() -> None:
         _cache.clear()
 
 
-def _drop(key: tuple[str, str, str]) -> None:
+def _drop(key: tuple[str, str, str, str]) -> None:
     with _cache_lock:
         _cache.pop(key, None)
 
@@ -80,8 +82,29 @@ def _expiry_epoch(expires_at: Any) -> float:
     return time.time() + _DEFAULT_TOKEN_TTL_SECONDS
 
 
-def _cache_key(user: dict[str, Any], config: Any) -> tuple[str, str, str]:
-    return (str(user.get("id") or ""), str(config.connection_id), str(config.base_url))
+def _user_phone(db: Session, user: dict[str, Any]) -> str | None:
+    """The phone of the respond contact linked to the user, None when unlinked or blank."""
+    user_id = user.get("id")
+    if not user_id:
+        return None
+    phone = (
+        db.query(RespondContact.phone_number)
+        .join(User, User.respond_contact_id == RespondContact.id)
+        .filter(User.id == str(user_id))
+        .scalar()
+    )
+    return (phone or "").strip() or None
+
+
+def _cache_key(
+    user: dict[str, Any], config: Any, phone: str | None
+) -> tuple[str, str, str, str]:
+    return (
+        str(user.get("id") or ""),
+        str(config.connection_id),
+        str(config.base_url),
+        phone or "",
+    )
 
 
 def get_embed_token(db: Session, user: dict[str, Any], *, force_refresh: bool = False) -> str:
@@ -91,14 +114,17 @@ def get_embed_token(db: Session, user: dict[str, Any], *, force_refresh: bool = 
         raise IdeationEmbedNotConfigured("ideation embed not configured for this deployment")
     assert config.base_url and config.connection_id and config.secret
 
-    key = _cache_key(user, config)
+    phone = _user_phone(db, user)
+    key = _cache_key(user, config, phone)
     if not force_refresh:
         with _cache_lock:
             hit = _cache.get(key)
         if hit and hit[1] - _REFRESH_MARGIN_SECONDS > time.time():
             return hit[0]
 
-    assertion = mint_embed_assertion(user, secret=config.secret, connection_id=config.connection_id)
+    assertion = mint_embed_assertion(
+        user, secret=config.secret, connection_id=config.connection_id, phone=phone
+    )
     data = post_embed_session(
         config.base_url, {"connection_id": config.connection_id, "assertion": assertion}
     )
@@ -179,7 +205,7 @@ def call_ss(
             resp = _send(config.base_url, method, path, token, **kwargs)
             if resp.status_code != 401:
                 break
-            _drop(_cache_key(user, config))
+            _drop(_cache_key(user, config, _user_phone(db, user)))
         assert resp is not None
     except IdeationEmbedNotConfigured:
         raise AppException(404, UNAVAILABLE, code="IDEATION_NOT_CONFIGURED")
