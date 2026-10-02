@@ -228,6 +228,52 @@ Consequences:
   (`components/ui/toggle-group.tsx`), default All ideas (today's behaviour), state in the URL as
   `?view=mine` so the chatbot's "See all your ideas" link opens the right view.
 
+## 4a. C1 design: the chatbot turn (provisional ss shapes, swapped for the final contract when crew relays it)
+
+New service `BE/app/services/ideation_capture_service.py`, `handle_capture_turn(db, *, respond_io_id,
+message_text, session_vars_in=None, is_test=False)`; `POST /external/ideation/turn`
+(`BE/app/api/v1/external/ideation.py:48`) calls it instead of `handle_turn`. Request fields
+`media_selection` and `is_new_idea` are accepted and ignored (old n8n callers keep working).
+Response keeps `{status, reply_text, link?, session_vars, offered_media: []}`.
+
+Order per turn:
+
+1. Contact by `respond_io_id` (404 as today). ss config not ready: today's "isn't set up" reply,
+   status `unconfigured`.
+2. Access gate (Q2): user with `users.respond_contact_id == contact.id`, `status == active`, not
+   trashed, and `UserPermissionService.check_user_has_permission(user.id, "ideation.board.view")`
+   (`BE/app/services/user_service.py:1538`). Else: status `no_access`, the no-access reply, no ss
+   call, the `ideation` pointer cleared.
+3. Held similar-list (`ideation.status == "similar_offered"`, same `is_test`, under 24h old):
+   - a bare number 1..N: status `similar_picked`, reply that idea's link, pointer cleared;
+   - `new` (any case, surrounding spaces and punctuation ignored): create from the HELD message;
+   - anything else: pointer dropped, the message runs as a fresh idea message.
+   An old draft-shaped pointer (`draft_id`, from before this lane) is dropped; its ss draft is
+   left as is (ss drafts are not shown on the board).
+4. Fresh message: the existing extractor (`extract_ideate_turn`, `ideation_extractor.py`) with no
+   prior draft context; fields normalised as today. No `problem` extracted: status `ask_idea`,
+   the ask-back reply, no pointer, no ss call.
+5. Similar own ideas: ss `POST /ideation/intake/similar-own` `{product_id, submitter_contact_id
+   (contact phone), crm_user_id, title, problem, is_test}` -> `{ideas: [{id, idea_number,
+   title}], total}` (top 3, ss-ranked). Any: status `similar_offered`, pointer
+   `{status, message_text, similar, updated_at, is_test}`, the numbered reply (Q4); `total > 3`
+   adds the "See all your ideas" line with `{FRONTEND_BASE_URL}/ideas?view=mine`.
+6. Create: ss `POST /ideation/intake/create-idea` with `capture_now: true`, `crm_user_id`,
+   `submitter_contact_id`, `submitter_name`, `message_text`, `raw_transcript` (= the one
+   message), `fields`, `title`, `submitter_tier`, `is_test` -> `{status: "complete", id,
+   idea_number, title, captured}`. Reply: created, CRM link `{FRONTEND_BASE_URL}/ideas/{id}`,
+   missing list = Proposed solution, Impact, Department not in `captured`, then Photos or files.
+   Pointer cleared.
+7. ss failure anywhere: today's graceful "couldn't save" reply, status `error`, pointer untouched.
+8. `is_test`: pointer never persisted (as today); `is_test` sent to ss.
+
+Wording lives in one module (`ideation_capture_replies.py`) so Q5 changes one file. Until Q5 the
+card's proposed wording is used. The CRM link is built only from `settings.frontend_base_url` and
+the ss `id` validated as a UUID; no ss-supplied URL is relayed for the CRM link.
+
+C2 (after C1 green): remove the dead draft path (`handle_turn`, media lookback, the composer's
+draft statuses) and the tests that only covered it; the idle sweep stays until old pointers drain.
+
 ## 5. Slices
 
 | # | Slice | Depends on | State |
