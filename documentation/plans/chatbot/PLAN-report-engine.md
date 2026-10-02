@@ -516,3 +516,15 @@ Captain rulings on the 1b tester's points: `order_status` stays a free string in
 schema (no enum added); the helper's miss line uses the field nouns `period` and `number`
 (`FieldSpec.noun`); `report_ask_words` holds the raw words per hint (low stock's shape); a
 forged `report_ask_words` from the parser is stripped and the ask runs without that filter.
+
+### 1b fix round rulings (security review, 2 Oct 2026)
+
+- **F1.** A dealer (the turn's contact is customer-scoped) whose ask names a sales agent or a
+  location word, or groups by a staff dimension, gets "That breakdown is not available for your
+  account." straight away: the lane never resolves agent or location words for a dealer (so the
+  unknown-word line cannot be used to probe agent names). Brand and category words resolve as
+  before.
+- **F2.** Tests pin: a dealer naming another customer is refused; an answering turn runs only the
+  carried args (a customer or sales agent entity on the reply turn never reaches the request);
+  `contact_id` / `space_id` always come from the turn even if the carried args hold one; a route
+  `product_ids` of another company's real product is 404.
