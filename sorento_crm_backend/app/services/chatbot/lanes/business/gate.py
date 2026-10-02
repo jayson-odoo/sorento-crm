@@ -1539,7 +1539,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 df_lines = []
                 for t in df_lost:
                     h = _df_hint_of(t)
-                    df_lines.append(f'"{jsc.js_string(_df_raw_of(t))}"' + (f" ({h})" if h else ""))
+                    df_lines.append(f'"{jsc.js_string(_df_raw_of(t))}"' + (f" ({h.replace('_', ' ')})" if h else ""))
                 gate_clarification = f"Couldn't find: {', '.join(df_lines)}.\n\n{gate_clarification}"
                 out["gate_clarification"] = gate_clarification
 

@@ -242,6 +242,12 @@ DOMAIN_LABELS = {
     "incoming": "incoming stock",
     "forms": "forms",
     "portal_link": "this request",
+    # ATTACHMENT-MULTI: the four ALLOWED domains this map lacked, in `turn/policy_rows.py`'s
+    # own words, so the fallback below never prints a domain key.
+    "spo_allocation": "last in",
+    "purchase_cost": "last purchase cost",
+    "resource_attachment": "resource attachments",
+    "purchase_order": "outstanding purchase orders",
 }
 
 
@@ -262,7 +268,7 @@ def access_level_choice_message(
     names = out.get("name") if isinstance(out.get("name"), list) else []
     q = parser if isinstance(parser, dict) else {}
     domain = q.get("domain_hint") or "this enquiry"
-    domain_label = DOMAIN_LABELS.get(q.get("domain_hint")) or domain
+    domain_label = DOMAIN_LABELS.get(q.get("domain_hint")) or _plain_words(domain)
 
     entitled = out.get("entitled_tiers") if isinstance(out.get("entitled_tiers"), list) else []
     held = [t for t in ASK_ORDER if t in entitled]
@@ -3157,7 +3163,7 @@ def not_found_error_message(
         # filter is enough to continue.
         scope_word = _SCOPE_WORD.get(
             jsc.js_string(domain_hint if jsc.truthy(domain_hint) else "").lower()
-        ) or jsc.js_string(domain_hint if jsc.truthy(domain_hint) else "that")
+        ) or _plain_words(domain_hint if jsc.truthy(domain_hint) else "that")
         asked: list[str] = []
         for entity_type in (allowed_types if isinstance(allowed_types, list) else []):
             word = _HUMAN_SCOPE.get(
@@ -3197,7 +3203,7 @@ def not_found_error_message(
         unresolved_text = ", ".join(jsc.js_string(t) for t in unresolved if not_access(t))
 
         if resolved_types and token_text:
-            requested = f"{'/'.join(jsc.js_string(t) for t in resolved_types)} {token_text}"
+            requested = f"{'/'.join(_prettify_type(t) for t in resolved_types)} {token_text}"
         elif token_text:
             requested = token_text
         elif unresolved_text:
@@ -3731,7 +3737,9 @@ def not_found_error_message(
 
         if len(vague_unresolved) > 0:
             is_clarification = True  # so escalate-catalog's is_escalate_offer is false
-            labels = _human_list(allowed_types if isinstance(allowed_types, list) else [])
+            labels = _human_list(
+                [_prettify_type(t) for t in (allowed_types if isinstance(allowed_types, list) else [])]
+            )
             captured = ", ".join(jsc.js_string(t) for t in vague_unresolved)
             unresolved_set = {_nf_norm_raw(t) for t in unresolved}
             resolved_ents = [
@@ -3744,7 +3752,7 @@ def not_found_error_message(
             resolved_summary = ", ".join(
                 x
                 for x in (
-                    f"{jsc.js_string(jsc.get(e, 'hint') or 'item')} {jsc.js_string(jsc.get(e, 'raw'))}".strip()
+                    f"{_prettify_type(jsc.get(e, 'hint') or 'item')} {jsc.js_string(jsc.get(e, 'raw'))}".strip()
                     for e in resolved_ents
                 )
                 if jsc.truthy(x)
@@ -4786,7 +4794,7 @@ def build_suggest_offer(
             # parser hint FALLBACK, bare when neither is known.
             first_pick = s["picks"][0] if s["picks"] else None
             type_label = _prettify_type(jsc.get(jsc.get(first_pick, "m"), "entity_type")) or (
-                jsc.get(src_ent, "hint") if src_ent is not None and jsc.truthy(jsc.get(src_ent, "hint")) else ""
+                _prettify_type(jsc.get(src_ent, "hint")) if src_ent is not None and jsc.truthy(jsc.get(src_ent, "hint")) else ""
             )
             type_sfx = f" ({jsc.js_string(type_label)})" if jsc.truthy(type_label) else ""
             cand_lines: list[str] = []
@@ -4857,7 +4865,7 @@ def build_suggest_offer(
             src_ent = ent_of_tok(d1["token"])
             first_pick = picks[0] if picks else None
             d1_type_label = _prettify_type(jsc.get(jsc.get(first_pick, "m"), "entity_type")) or (
-                jsc.get(src_ent, "hint") if src_ent is not None and jsc.truthy(jsc.get(src_ent, "hint")) else ""
+                _prettify_type(jsc.get(src_ent, "hint")) if src_ent is not None and jsc.truthy(jsc.get(src_ent, "hint")) else ""
             )
             d1_type_sfx = f" ({jsc.js_string(d1_type_label)})" if jsc.truthy(d1_type_label) else ""
             out["suggest_offer"] = True

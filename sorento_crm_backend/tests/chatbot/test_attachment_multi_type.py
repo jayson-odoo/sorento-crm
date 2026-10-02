@@ -344,3 +344,191 @@ class TestFoundAnswerNamesTheGap:
         text = _compose_text(_attachment_envelope([SH], [(SH, PHOTOS)], [PHOTOS, "tech_spec"]))
 
         assert "tech_spec" not in text, text
+
+
+# --------------------------------------------------------------------------- #
+# Q5 (a): every customer-facing snake_case leak the sweep found, one test each
+# --------------------------------------------------------------------------- #
+
+
+def _product(code: str, uuid: str) -> dict[str, Any]:
+    return {
+        "entity_type": "product",
+        "canonical_code": code,
+        "uuid": uuid,
+        "match_tier": "prefix",
+        "company_name": "ZZT Co",
+    }
+
+
+class TestEveryLeakIsHuman:
+    def test_the_dropped_filter_line_names_the_kind_in_words(self) -> None:
+        """gate.py "Couldn't find: "x" (customer_order)." above a picker."""
+        parser = {
+            "domain_hint": "incoming",
+            "intent_hint": "check_incoming",
+            "match_mode": "or",
+            "message_type": "business_query",
+            "entities": [
+                {"raw": "srtwc286", "hint": "product", "confident": True, "current_message": True},
+                {"raw": "zz999", "hint": "customer_order", "confident": True, "current_message": True},
+            ],
+        }
+        resolver = {
+            "tokens": ["srtwc286", "zz999"],
+            "unresolved_tokens": ["zz999"],
+            "resolutions": [
+                {
+                    "token": "srtwc286",
+                    "resolved": False,
+                    "ambiguous": True,
+                    "matches": [
+                        _product(SH, "11111111-1111-4111-8111-111111111111"),
+                        _product(SH200, "22222222-2222-4222-8222-222222222222"),
+                    ],
+                },
+                {"token": "zz999", "resolved": False, "matches": []},
+            ],
+        }
+        text = gate_mod.run_gate({}, parser=parser, resolver=resolver).get("gate_clarification") or ""
+
+        assert 'Couldn\'t find: "zz999" (customer order).' in text, text
+        assert text.split("\n\n", 1)[-1].startswith("Which product do you mean? Please choose:"), text
+        assert not _SNAKE_RE.findall(text), text
+
+    def test_the_could_not_find_sentence_names_the_kind_in_words(self) -> None:
+        """answer.py `requested`: "Could not find incoming for inbound_shipment C123"."""
+        from app.services.chatbot.lanes.business import answer as answer_mod
+
+        out = answer_mod.not_found_error_message(
+            {},
+            parser={
+                "domain_hint": "incoming",
+                "routing": {"suggested_team": "purchasing"},
+                "entities": [{"raw": "C123", "hint": "inbound_shipment", "confident": True}],
+            },
+            resolved={
+                "tokens": ["C123"],
+                "unresolved_tokens": [],
+                "by_entity_type": {"inbound_shipment": [{"uuid": "u1", "canonical_code": "C123"}]},
+            },
+            gate={"gate_passed": True, "gate_reason": "ok"},
+        )
+        text = out.get("escalate_message") or ""
+
+        assert "Could not find incoming for inbound shipment C123." in text, text
+        assert not _SNAKE_RE.findall(text), text
+
+    def test_the_vague_token_clarify_names_kinds_in_words(self) -> None:
+        """answer.py "I understood customer_order DO123 ... is that a customer_order, ...?"."""
+        from app.services.chatbot.lanes.business import answer as answer_mod
+
+        out = answer_mod.not_found_error_message(
+            {},
+            parser={
+                "domain_hint": "order",
+                "routing": {"suggested_team": "customer_service"},
+                "entities": [
+                    {"raw": "zzq", "hint": "product", "confident": False},
+                    {"raw": "DO123", "hint": "customer_order", "confident": True},
+                ],
+            },
+            resolved={"unresolved_tokens": ["zzq"], "resolutions": [{"token": "zzq", "matches": []}]},
+            gate={
+                "gate_passed": False,
+                "gate_reason": "x",
+                "gate_debug": {"allowed_lookup": ["customer_order", "inbound_shipment", "product"]},
+            },
+        )
+        text = out.get("escalate_message") or ""
+
+        assert "I understood customer order DO123" in text, text
+        assert "is that a customer order, inbound shipment, or product?" in text, text
+        assert not _SNAKE_RE.findall(text), text
+
+    def test_the_needs_a_filter_reply_names_the_domain_in_words(self) -> None:
+        """answer.py "That would search every resource_attachment we have"."""
+        from app.services.chatbot.lanes.business import answer as answer_mod
+
+        out = answer_mod.not_found_error_message(
+            {},
+            parser={"domain_hint": "resource_attachment", "entities": [], "routing": {"suggested_team": "marketing_product"}},
+            resolved={},
+            gate={
+                "gate_passed": False,
+                "gate_reason": "no entities and 'resource_attachment' requires a scoping entity",
+                "gate_debug": {"allowed_lookup": ["attachment_type", "attachment"]},
+            },
+        )
+        text = out.get("escalate_message") or ""
+
+        assert "That would search every resource attachment we have" in text, text
+        assert not _SNAKE_RE.findall(text), text
+
+    def test_the_did_you_mean_label_falls_back_to_the_kind_in_words(self) -> None:
+        """answer.py D1 multi-token: a candidate with no entity_type printed the parser's
+        raw hint ("customer_order")."""
+        from app.services.chatbot.lanes.business import answer as answer_mod
+
+        parser = {
+            "domain_hint": "order",
+            "message_type": "business_query",
+            "routing": {"suggested_team": "customer_service"},
+            "entities": [
+                {"raw": "do12x", "hint": "customer_order", "confident": True},
+                {"raw": "do34y", "hint": "customer_order", "confident": True},
+            ],
+        }
+        resolved = {
+            "tokens": ["do12x", "do34y"],
+            "unresolved_tokens": ["do12x", "do34y"],
+            "resolutions": [
+                {"token": "do12x", "resolved": False, "matches": [], "alternatives": [{"canonical_code": "DO12X1", "uuid": None}]},
+                {"token": "do34y", "resolved": False, "matches": [], "alternatives": [{"canonical_code": "DO34Y1", "uuid": None}]},
+            ],
+        }
+        gate = {"gate_passed": True, "gate_reason": "ok"}
+        miss = answer_mod.not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        text = answer_mod.build_suggest_offer(miss, parser=parser, resolved=resolved, gate=gate).get(
+            "suggest_response"
+        ) or ""
+
+        assert '"do12x" (customer order) - did you mean:' in text, text
+        assert not _SNAKE_RE.findall(text), text
+
+    def test_the_kind_pick_option_names_the_kind_in_words(self) -> None:
+        """turn/reconcile.py: "water closet (attachment_type)" (owner transcript)."""
+        from app.services.chatbot.turn.reconcile import apply_reconciliation
+
+        from tests.chatbot._turn_helpers import entity
+
+        result = apply_reconciliation(
+            [entity("water closet", hint="category")],
+            {"water closet": {"promotion": 1, "attachment_type": 1}},
+        )
+
+        labels = [o.get("label") for o in result.kind_pick_options or []]
+        assert "water closet (attachment type)" in labels, labels
+        assert all(not _SNAKE_RE.findall(label or "") for label in labels), labels
+        # The label is display only; the kind the pick re-types to stays the key.
+        assert {o.get("entity_type") for o in result.kind_pick_options} == {"promotion", "attachment_type"}
+
+    def test_the_not_allowed_reply_names_the_team_in_words(self) -> None:
+        """canned.py: "Sorry, you are not allowed to access incoming_stock_enquiries"
+        (prod samples, 1 turn on dev)."""
+        from app.services.chatbot.copy import CannedCopy
+        from app.services.chatbot.lanes.canned import access_denied_text
+
+        ctx = {"parse": {"output": {"routing": {"suggested_agent": "incoming_stock_enquiries"}}}}
+        text = access_denied_text(None, ctx, CannedCopy(templates={}))
+
+        assert text == "Sorry, you are not allowed to access incoming stock enquiries", text
+
+    def test_the_access_level_ask_names_a_domain_the_label_map_lacked(self) -> None:
+        """answer.py DOMAIN_LABELS: `purchase_cost` fell back to the raw key."""
+        from app.services.chatbot.lanes.business import answer as answer_mod
+
+        out = answer_mod.access_level_choice_message({"name": []}, parser={"domain_hint": "purchase_cost"})
+        text = out.get("escalate_message") or ""
+
+        assert "You have no access levels configured to get last purchase cost." in text, text

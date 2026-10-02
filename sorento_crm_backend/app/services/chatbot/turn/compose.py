@@ -172,7 +172,7 @@ def _team_pick_question(
         if not team or team in seen:
             continue
         seen.add(team)
-        teams.append((team, row.label if row else domain))
+        teams.append((team, row.label if row else str(domain).replace("_", " ")))
 
     if not teams:
         return None
@@ -385,7 +385,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         if envelope_missed(env):
             missed_domains.append(domain)
 
-        label = row.label if row else domain
+        label = row.label if row else str(domain).replace("_", " ")
         subjects = _with_quantities(_header_subjects(entities), state)
         # W6 (owner hand test round 2, turn 1): a long subject list is counted, never
         # dumped as one line of codes ("*stock* for BRBC22102W, BRBC22108W-1A, ...").
