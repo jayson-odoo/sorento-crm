@@ -80,9 +80,9 @@ def client(db):  # noqa: F811
 
 def _registry(db):
     make_domain(db, "zzt_stock")
-    make_domain(db, "zzt_orders")
+    make_domain(db, "zzt_orders", access_section="reports")
     make_field(db, "zzt_stock", "zzt.stock.sellable", label="Sellable")
-    make_field(db, "zzt_orders", "zzt.orders.outstanding", kind="ask", label="Outstanding")
+    make_field(db, "zzt_orders", "zzt.orders.outstanding", kind="report", label="Outstanding")
 
 
 def _create(client, name: str = "ZZT Project sales", **extra) -> dict:
@@ -119,11 +119,13 @@ class TestRegistry:
         assert set(body) == {"domains"}
         by_name = {d["name"]: d for d in body["domains"]}
         stock = by_name["zzt_stock"]
-        assert {"name", "label", "supported", "escalation_agent_code", "escalation_team_code", "fields"} <= set(stock)
+        assert {"name", "label", "supported", "access_section", "escalation_agent_code", "escalation_team_code", "fields"} <= set(stock)
         assert stock["escalation_agent_code"] == "zzt_agent"
         assert stock["escalation_team_code"] == "warehouse"
         assert stock["fields"] == [{"key": "zzt.stock.sellable", "label": "Sellable", "kind": "field"}]
-        assert by_name["zzt_orders"]["fields"][0]["kind"] == "ask"
+        assert by_name["zzt_orders"]["fields"][0]["kind"] == "report"
+        assert by_name["zzt_orders"]["access_section"] == "reports"
+        assert stock["access_section"] is None
 
     def test_requires_view_permission(self, client, db):
         _GRANTS.discard(ACCESS_VIEW)

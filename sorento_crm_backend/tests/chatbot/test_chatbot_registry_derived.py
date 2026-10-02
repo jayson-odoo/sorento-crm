@@ -1,7 +1,7 @@
 """ACCESS-MODEL S5: registry derivations (AC-AM-15, PLAN S5).
 
 (a) `contact_field_reveal_service.field_reveal_keys(db)` and `GET /system/chatbot/field-reveal-keys`
-    read `chatbot_domain_fields` rows of kind field/ask whose key is a legacy reveal key.
+    read `chatbot_domain_fields` rows of kind field/report whose key is a legacy reveal key.
 (b) The incoming REST gate (`field_access.decide` / `apply_field_access`, signatures unchanged)
     decides `incoming_stock` field visibility for a chat contact from `effective_access`
     attributes (`incoming_stock.<field>`), not from `agent_field_access`.
@@ -46,7 +46,7 @@ def _seed_reveal_rows(db):
     make_domain(db, "order")
     make_domain(db, "incoming")
     make_field(db, "inventory", "inventory.sellable", label="Sellable stock")
-    make_field(db, "order", "sales_orders.outstanding", kind="ask", label="Outstanding SO")
+    make_field(db, "order", "sales_orders.outstanding", kind="report", label="Outstanding SO")
     make_field(db, "incoming", "incoming_stock.consignee", label="Consignee")  # not a legacy key
     make_field(db, "order", "zzt.other", label="Other")  # not a legacy key
 

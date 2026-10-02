@@ -43,7 +43,7 @@ def _world(session_factory):
     make_domain(db, "zzt_cost", reveal_key="zzt.cost")
     make_domain(db, "zzt_orders")
     make_field(db, "zzt_stock", "zzt.stock.sellable")
-    make_field(db, "zzt_orders", "zzt.orders.outstanding", kind="ask")
+    make_field(db, "zzt_orders", "zzt.orders.outstanding", kind="report")
     return db, wid
 
 
@@ -174,6 +174,41 @@ class TestRoleUnion:
         assert _ea(db, rio).sees_all_customers is False
         give_role(db, pk, make_role(db, rid("r2"), domains=[], sees_all=True))
         assert _ea(db, rio).sees_all_customers is True
+
+
+class TestReports:
+    """Owner N1 / AC-AM-4b: a report needs its owning domain; it never grants it."""
+
+    def test_a_report_tick_without_its_domain_grants_neither(self, session_factory):
+        db, wid = _world(session_factory)
+        pk, rio = make_contact(db, workspace_id=wid)
+        give_role(db, pk, make_role(db, rid("r"), domains=["zzt_stock"], fields=["zzt.orders.outstanding"]))
+        access = _ea(db, rio)
+        assert "zzt.orders.outstanding" not in access.attributes
+        assert "zzt_orders" not in access.domains
+
+    def test_a_report_tick_with_its_domain_is_an_attribute(self, session_factory):
+        db, wid = _world(session_factory)
+        pk, rio = make_contact(db, workspace_id=wid)
+        give_role(db, pk, make_role(db, rid("r"), domains=["zzt_orders"], fields=["zzt.orders.outstanding"]))
+        access = _ea(db, rio)
+        assert access.attributes == ("zzt.orders.outstanding",)
+        assert access.domains == frozenset({"zzt_orders"})
+
+    def test_removing_the_owning_domain_drops_the_report(self, session_factory):
+        db, wid = _world(session_factory)
+        pk, rio = make_contact(db, workspace_id=wid)
+        give_role(db, pk, make_role(db, rid("r"), domains=["zzt_orders"], fields=["zzt.orders.outstanding"]))
+        override(db, pk, "zzt_orders", granted=False)
+        assert _ea(db, rio).attributes == ()
+
+    def test_a_report_add_override_never_grants_the_domain(self, session_factory):
+        db, wid = _world(session_factory)
+        pk, rio = make_contact(db, workspace_id=wid)
+        override(db, pk, "zzt_orders", field_key="zzt.orders.outstanding", granted=True)
+        access = _ea(db, rio)
+        assert access.attributes == ()
+        assert access.domains == frozenset()
 
 
 class TestOverrides:

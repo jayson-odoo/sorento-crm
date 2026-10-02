@@ -11,13 +11,13 @@ from the diff between role ticks and legacy keys, never by name.
 Registry rows (`chatbot_domains`, `chatbot_domain_fields`) are seeded by `_registry` below
 because the blank schema has no migration seed. Placement used (PLAN "Schema" + CARD section 2):
   * `inventory`      fields `inventory.sellable`, `purchase_orders.placed` (on order),
-                     `scm.low_stock_report` (kind ask)
-  * `order`          field `sales_orders.outstanding` (kind ask)
+                     `scm.low_stock_report` (kind report)
+  * `order`          field `sales_orders.outstanding` (kind report)
   * `purchase_order` fields `purchase_orders.supplier`, `purchase_orders.po_number`
   * `incoming`       fields `incoming_stock.<gated field>` x23
   * domain reveal_key (granted with the domain): `purchase_cost` -> purchase_orders.cost,
     `sales` -> sales_orders.sales_report, `purchase_order` -> purchase_orders.placed
-  * NO `outstanding` and NO `low_stock` domain rows (PLAN N1): both are `ask` fields.
+  * NO `outstanding` and NO `low_stock` domain rows (PLAN N1): both are `report` fields (owner N1: a Reports section).
 """
 from __future__ import annotations
 
@@ -72,10 +72,12 @@ def _registry(db) -> None:
     ):
         make_domain(db, name, reveal_key=key)
     make_domain(db, "goods_receive", supported=False)
+    db.execute(text("UPDATE chatbot_domains SET access_section = 'reports' WHERE name = 'sales'"))
+    db.commit()
     make_field(db, "inventory", K_SELLABLE)
     make_field(db, "inventory", K_PLACED)
-    make_field(db, "inventory", K_LOW, kind="ask")
-    make_field(db, "order", K_OUTSTANDING, kind="ask")
+    make_field(db, "inventory", K_LOW, kind="report")
+    make_field(db, "order", K_OUTSTANDING, kind="report")
     make_field(db, "purchase_order", K_SUPPLIER)
     make_field(db, "purchase_order", "purchase_orders.po_number")
     for f in INCOMING_FIELDS:
@@ -224,7 +226,7 @@ class TestSeedDefaultRoles:
         assert {f for f in office if f.startswith("incoming_stock.")} == {eta, qty, container}
         assert {K_SELLABLE, K_PLACED} <= office
         assert K_SUPPLIER not in office
-        assert not office & {K_OUTSTANDING, K_LOW}, "the two ask fields are Management and Warehouse only"
+        assert not office & {K_OUTSTANDING, K_LOW}, "the two reports are Warehouse (low stock) and Management (both) only"
         assert K_LOW in _role_fields(db, "warehouse")
         assert K_SUPPLIER in _role_fields(db, "purchasing")
         assert {f for f in _role_fields(db, "warehouse") if f.startswith("incoming_stock.")} == {
@@ -234,6 +236,23 @@ class TestSeedDefaultRoles:
 
         every_key = {k for (k,) in db.query(ChatbotDomainField.key).all()}
         assert _role_fields(db, "management") == every_key
+
+    def test_reports_section_ticks(self, session_factory):
+        """Owner N1: Reports are `report` fields (plus the `sales` domain, access_section reports)."""
+        from app.models.chatbot_access import ChatbotDomainField
+        from app.models.chatbot_policy import ChatbotDomain
+
+        db, _wid = _seeded(session_factory)
+        kinds = {k: kind for k, kind in db.query(ChatbotDomainField.key, ChatbotDomainField.kind)}
+        assert kinds[K_LOW] == kinds[K_OUTSTANDING] == "report"
+        assert db.query(ChatbotDomain).filter(ChatbotDomain.name == "sales").one().access_section == "reports"
+        assert "sales" in _role_domains(db, "management")
+        assert {K_LOW, K_OUTSTANDING} <= _role_fields(db, "management")
+        assert K_LOW in _role_fields(db, "warehouse")
+        assert K_OUTSTANDING not in _role_fields(db, "warehouse")
+        for code in ("dealer", "sales_office", "purchasing"):
+            assert not _role_fields(db, code) & {K_LOW, K_OUTSTANDING}, code
+            assert "sales" not in _role_domains(db, code), code
 
     def test_seeding_twice_changes_nothing(self, session_factory):
         from app.models.chatbot_access import ChatbotRole, ChatbotRoleDomain, ChatbotRoleField
@@ -382,7 +401,7 @@ class TestMapLegacyContacts:
         access = _access(db, pk)
         assert set(ALL_SEVEN) <= set(access.attributes)
         assert {"ideate", "sales", "purchase_cost"} <= access.domains
-        assert not access.domains & {"low_stock", "outstanding"}, "ask fields, never domains"
+        assert not access.domains & {"low_stock", "outstanding"}, "reports are fields, never domains"
 
     def test_reveal_keys_but_no_agent_gets_no_role(self, session_factory):
         from app.services.chatbot.access_seed import map_legacy_contacts

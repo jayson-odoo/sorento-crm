@@ -63,6 +63,7 @@ def make_domain(
     reveal_key: str | None = None,
     supported: bool = True,
     escalation_team_code: str | None = None,
+    access_section: str | None = None,
     sort_order: int = 0,
 ):
     from app.models.chatbot_policy import ChatbotDomain
@@ -76,6 +77,7 @@ def make_domain(
         reveal_key=reveal_key,
         supported=supported,
         escalation_team_code=escalation_team_code,
+        access_section=access_section,
         sort_order=sort_order,
     )
     db.add(row)
