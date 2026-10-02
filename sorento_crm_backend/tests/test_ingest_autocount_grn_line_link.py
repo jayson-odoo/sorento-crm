@@ -539,3 +539,85 @@ def test_gp_n2_waiting_fill_never_reaches_company_b(env):
     lines = _lines(env)
     assert lines[P1_LINE].po_line_id is None and lines[P1_LINE].purchase_order_id is None
     assert lines[P2_LINE].spo_allocation_id is None
+
+
+# ===================================================================== e2e gaps (crew, 2 Oct)
+def _push_spo(env, number: str, lines: list[tuple[str, int]]) -> list[str]:
+    """An SPO arriving through the existing AutoCount SPO path: the shipping-order ingest
+    (`ShippingOrderIngestService`), the route's commit, then its post-commit hooks
+    (`_run_document_hooks`), exactly as `POST /external/ingest/shipping_orders` runs them.
+    Lines `(ItemCode, qty)` in AutoCount Seq order; returns the SPO lines' ids in
+    `spo_line_number` order."""
+    import zlib
+
+    from app.api.v1.external.ingest import _run_document_hooks
+    from app.services.shipping_order_ingest_service import ShippingOrderIngestService
+
+    doc_key = zlib.crc32(number.encode()) % 10**6
+    svc = ShippingOrderIngestService(env.db, integration_id=None, company_id=env.company)
+    result = svc.ingest("shipping_orders", [{
+        "source_ref": f"db1:{doc_key}", "spo_number": number, "status": "open",
+        "lines": [
+            {"source_ref": f"db1:{doc_key}:{doc_key * 100 + i}", "product_code": code,
+             "qty_ordered": str(qty), "warehouse_code": "ZZAC-WH1"}
+            for i, (code, qty) in enumerate(lines, start=1)
+        ],
+    }])
+    assert result.records[0].outcome.value in ("created", "updated"), result.records[0].errors
+    env.db.commit()
+    _run_document_hooks(env.db, "shipping_orders", svc, actor=None)
+    env.db.expire_all()
+    rows = (env.db.query(SPOAllocation)
+            .filter(SPOAllocation.company_id == env.company, SPOAllocation.spo_number == number)
+            .order_by(SPOAllocation.spo_line_number).all())
+    return [str(r.id) for r in rows]
+
+
+def test_gp_e2e_waiting_lines_link_when_their_spo_arrives_through_the_spo_ingest(env):
+    """Crew e2e gap 1 + 2 (GR-2026/10-0006 against SPO-2026/09-0115, not on dev): the GRN
+    lands first, every line waits with `from_doc_no` kept (`our_po_no` and
+    `spo_number_raw` are NULL, AutoCount sends no OurPONo); the SPO then arrives through
+    the shipping-order ingest and its post-commit hook links the waiting lines at once,
+    k-th line of an item to the k-th SPO line of that item, quantity confirming, and the
+    SPO lines' received quantities follow. No later GRN batch is needed."""
+    _wh(env, "ZZAC-MWH")
+    rec = _doc(800115, "ZZGRN-0115", [
+        ("ZZAC-P1", 106, "ZZAC-MWH", "SPO-ZZ-0115"),
+        ("ZZAC-P1", 24, "ZZAC-MWH", "SPO-ZZ-0115"),
+        ("ZZAC-P2", 5, "ZZAC-MWH", "SPO-ZZ-0115"),
+        ("ZZAC-P1", 195, "ZZAC-MWH", "SPO-ZZ-0115"),
+    ])
+    r = _push(env, rec)["db1:GRN:800115"]
+    assert "purchase_order_unresolved" in r["warnings"]
+    for line in env.grn_lines(env.grn(800115).id):
+        assert (line.from_doc_no, line.our_po_no, line.spo_number_raw) == ("SPO-ZZ-0115", None, None)
+        assert line.spo_allocation_id is None and line.po_line_id is None
+
+    spo = _push_spo(env, "SPO-ZZ-0115", [("ZZAC-P1", 106), ("ZZAC-P1", 24), ("ZZAC-P2", 5),
+                                         ("ZZAC-P1", 195)])
+
+    assert _links(env, 800115) == spo
+    received = {str(a.id): a.quantity_received for a in env.db.query(SPOAllocation)
+                .filter(SPOAllocation.id.in_(spo)).all()}
+    assert [received[i] for i in spo] == [106, 24, 5, 195]
+
+
+def test_gp_e2e_quantity_confirms_when_the_spo_lists_an_item_in_another_order(env):
+    """The SPO lists P1 24 before P1 106; the GRN receives 106 then 24. Each GRN line takes
+    the SPO line whose remaining equals its quantity (D1 a), not the bare position."""
+    rec = _doc(800116, "ZZGRN-0116", [("ZZAC-P1", 106, "ZZAC-WH1", "SPO-ZZ-0116"),
+                                      ("ZZAC-P1", 24, "ZZAC-WH1", "SPO-ZZ-0116")])
+    _push(env, rec)
+    first, second = _push_spo(env, "SPO-ZZ-0116", [("ZZAC-P1", 24), ("ZZAC-P1", 106)])
+    assert _links(env, 800116) == [second, first]
+
+
+def test_gp_e2e_spo_arrival_never_links_another_companys_waiting_line(env):
+    rec = _doc(800117, "ZZGRN-0117", [("ZZAC-P2", 20, "ZZAC-WH1", "SPO-ZZ-0117")])
+    _push(env, rec)
+    line = env.grn_lines(env.grn(800117).id)[0]
+    line.company_id = env.company_b  # the same waiting line, but company B's
+    env.db.commit()
+    _push_spo(env, "SPO-ZZ-0117", [("ZZAC-P2", 20)])
+    env.db.expire_all()
+    assert env.db.get(PickingLine, line.id).spo_allocation_id is None

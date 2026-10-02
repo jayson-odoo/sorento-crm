@@ -668,6 +668,20 @@ class TestConfirmAndApply:
         assert sorted(r["value"] for r in written) == ["ZZDO-0001", "ZZDO-0002"]
         assert {r["outcome"] for r in written} == {"created"}
 
+    def test_dp_20c_apply_job_carries_the_outcome_envelope(self, task_db, monkeypatch):
+        """GRN-PULL-CRM crew e2e gap 4, same defect on the DO apply: the job page's Outcome
+        card reads `import_jobs.result.breakdown`."""
+        db, factory = task_db
+        fake = _FakeFoundryX()
+        _patch_foundryx(monkeypatch, fake, db)
+        _seed_masters(db)
+        job_id = _prepare_do_apply(db, fake, rows=_do_rows())
+        _run_apply(monkeypatch, factory, job_id)
+        result = db.execute(text("SELECT result FROM import_jobs WHERE id = :id"),
+                            {"id": str(job_id)}).scalar()
+        assert result and set(result["breakdown"]) == {"successful", "skipped", "failed"}
+        assert result["counts"]["successful"] == 2
+
     def test_dp_21_apply_adopts_and_keeps_tracking_columns(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()

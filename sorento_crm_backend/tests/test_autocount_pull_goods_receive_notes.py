@@ -390,6 +390,12 @@ class TestApply:
         (grn,) = _grns(db, 800001)
         assert grn["source_book"] == BOOK
         assert "source_ref" not in grn["source_record"]
+        # Crew e2e gap 4: the apply job carries the outcome envelope the job page's Outcome
+        # card reads; without it a fresh job read "ran before per-row outcome capture".
+        result = db.execute(text("SELECT result FROM import_jobs WHERE id = :id"),
+                            {"id": str(job_id)}).scalar()
+        assert result and set(result["breakdown"]) == {"successful", "skipped", "failed"}
+        assert result["counts"]["successful"] == 1
         db.expire_all()
         line = db.query(PickingLine).filter(PickingLine.dtl_key == 810002).one()
         assert line.spo_allocation_id == alloc
@@ -540,6 +546,24 @@ class TestRowsDownloadCompare:
         fields = {(d["doc_no"], d["field"]): (d["excel"], d["pull"]) for d in resp.json()["differences"]}
         assert fields == {("ZZGRN-0001", "source_doc"): ("SPO-2026/07-0001, SPO-2026/07-0002",
                                                           "SPO-2026/07-0001")}
+
+    def test_gp52f_the_totals_row_is_not_counted_as_a_line_or_a_document(self, env):
+        """Crew e2e gap 3: the Detail Listing reported 72 lines in the window against
+        AutoCount's 71 - the sheet's last row is a totals row with no Doc No (and so no
+        date), which the window kept. Rows with no document number are neither in the
+        window nor ignored outside it: they are not lines."""
+        owner = env.user(SLUG)
+        env.as_user(owner)
+        job_id, rows = _seed_review_job(env, owner=owner)
+        lines = env.client.post(f"{PULLS_URL}/{job_id}/compare",
+                                json={"filename": "d.xlsx", "rows": _detail_listing(rows),
+                                      "source": "lines"}).json()
+        assert (lines["rows_in_window"], lines["ignored_outside_window"]) == (2, 0)
+        listing = _grn_listing(rows) + [{"Doc. No.": "", "Sub-Total (ex)": 745}]
+        headers = env.client.post(f"{PULLS_URL}/{job_id}/compare",
+                                  json={"filename": "l.xlsm", "rows": listing,
+                                        "source": "headers"}).json()
+        assert (headers["rows_in_window"], headers["ignored_outside_window"]) == (1, 0)
 
     def test_gp52b_split_quantity_is_a_difference(self, env):
         owner = env.user(SLUG)
