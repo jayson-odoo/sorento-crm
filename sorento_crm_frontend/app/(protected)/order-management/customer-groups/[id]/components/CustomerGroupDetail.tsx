@@ -20,7 +20,6 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import BackToList from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
@@ -70,12 +69,9 @@ export default function CustomerGroupDetail({ groupId }: { groupId: string }) {
     onCommitted: () => router.push(LIST_PATH),
   });
 
-  const backLink = <BackToList listPath={LIST_PATH} label="Back to customer groups" />;
-
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
         <Skeleton className="h-24 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
@@ -85,7 +81,6 @@ export default function CustomerGroupDetail({ groupId }: { groupId: string }) {
   if (isError || !group) {
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
         <Card className="flex flex-col items-center gap-2 p-10 text-center">
           <div className="text-sm font-semibold">Customer group not found</div>
         </Card>

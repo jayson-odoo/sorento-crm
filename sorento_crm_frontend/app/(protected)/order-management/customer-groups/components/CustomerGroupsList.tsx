@@ -23,6 +23,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { FormDialogScaffold } from '@/components/common/FormDialogScaffold';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -34,6 +35,7 @@ import type { CustomerGroup } from '../types/customerGroup.types';
 
 export default function CustomerGroupsList() {
   const router = useRouter();
+  const canEdit = useHasPermission('order_management.customers.edit');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'name', desc: false }]);
   const {
@@ -210,10 +212,12 @@ export default function CustomerGroupsList() {
               onRefresh={() => void refetch()}
               isRefreshing={isFetching && !isLoading}
               primaryAction={
-                <Button onClick={() => setAddOpen(true)}>
-                  <Plus />
-                  Add group
-                </Button>
+                canEdit ? (
+                  <Button onClick={() => setAddOpen(true)}>
+                    <Plus />
+                    Add group
+                  </Button>
+                ) : undefined
               }
             />
           </CardHeader>
