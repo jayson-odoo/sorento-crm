@@ -1,6 +1,9 @@
 """R3 RED tests - roster cap is data (UAC AC-1710; PLAN-chatbot-answer-half-reattach.md
 "Roster cap (owner ruling 20 Sep 2026): configurable, default 10").
 
+PICKER-NO-CAP (owner, 2 Oct 2026): the default is now 50, the S3 ceiling (migration
+`picker_no_cap_0001`); the history below describes the column as R3 introduced it.
+
 New column `chatbot_entity_kinds.roster_cap` (INTEGER NOT NULL, server_default 10),
 migration `chatbot_rearch_s10` (down_revision `chatbot_rearch_s9`, the current single
 head), exposed on `ChatbotEntityKindBody`/`ChatbotEntityKindResponse`/`_kind_out`
