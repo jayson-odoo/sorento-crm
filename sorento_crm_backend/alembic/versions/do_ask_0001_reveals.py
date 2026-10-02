@@ -13,6 +13,10 @@ adjusts per contact on Contacts > Access > Field reveals.
 Data only, idempotent: `ON CONFLICT DO NOTHING` on (contact, key), so a key an admin already
 revoked stays revoked. A create_all database has no contacts to seed, so
 `scripts.bootstrap_env` needs nothing.
+
+The downgrade deletes EVERY row for the five keys, including grants and revocations an
+admin made after the upgrade; that is safe because the code before this lane never reads
+these keys.
 """
 import sqlalchemy as sa
 from alembic import op

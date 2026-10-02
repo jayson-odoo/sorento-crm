@@ -2998,8 +2998,14 @@ def not_found_error_message(
     gate: dict[str, Any] | None,
     entitlement_levels: Any = None,
     profile: Any = None,
+    granted_keys: Any = None,
 ) -> dict[str, Any]:
     """`not-found-error-message`: the miss reply, its search-scope header and its bullets.
+
+    `granted_keys` (DO-ASK-SIMPLIFY security B1): the contact's `contact_field_reveals`
+    grants (`ctx["access"]["attributes"]`). The "hasn't been delivered yet" line names the
+    order's current status only with `delivery_orders.status`; None is the empty set, so a
+    caller that passes nothing never leaks it.
 
     `profile` (#1262 slice 11, F8 follow-up): the SAME staff-audience gate `turn/
     compose.py` and `answer_bridge.py`'s cross-domain ladder already apply -
@@ -4031,8 +4037,11 @@ def not_found_error_message(
                         )
                         if order_status == "delivered":
                             status = jsc.get(display, "status")
+                            status_shown = jsc.truthy(status) and "delivery_orders.status" in (
+                                granted_keys if isinstance(granted_keys, (list, tuple, set, frozenset)) else ()
+                            )
                             status_text = (
-                                f" - current status: {jsc.js_string(status)}" if jsc.truthy(status) else ""
+                                f" - current status: {jsc.js_string(status)}" if status_shown else ""
                             )
                             # Owner ruling (10 Sep 2026, reverses the 6 Sep 2026 ruling):
                             # `orders.estimated_delivery_date` is not a real promise - the

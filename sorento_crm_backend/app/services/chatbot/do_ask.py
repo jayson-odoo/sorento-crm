@@ -45,6 +45,32 @@ def is_dealer(ctx: dict[str, Any]) -> bool:
     return bool(isinstance(scope, dict) and scope.get("enforced"))
 
 
+#: The reveal keys a DO answer path checks outside `output_structurer` (security round 1).
+STATUS_KEY = "delivery_orders.status"
+TRANSPORTER_KEY = "delivery_orders.transporter"
+
+
+def granted(ctx: dict[str, Any], key: str) -> bool:
+    """Does this contact hold the `contact_field_reveals` grant `key`? (`ctx["access"]
+    ["attributes"]`, filled by `head/access.py`; None is the empty grant set.)"""
+    access = ctx.get("access") if isinstance(ctx, dict) else None
+    attributes = access.get("attributes") if isinstance(access, dict) else None
+    return isinstance(attributes, (list, tuple, set, frozenset)) and key in attributes
+
+
+def header_gate(gate: Any, ctx: dict[str, Any]) -> Any:
+    """The gate the order scope header reads, minus transporter rows when the contact does
+    not hold `delivery_orders.transporter` (security S1): the header would otherwise name
+    the transporter the rows were filtered by. A copy; the gate itself is untouched."""
+    if not isinstance(gate, dict) or granted(ctx, TRANSPORTER_KEY):
+        return gate
+    rows = gate.get("compatible_entities")
+    if not isinstance(rows, list):
+        return gate
+    kept = [e for e in rows if not (isinstance(e, dict) and e.get("entity_type") == "transporter")]
+    return gate if len(kept) == len(rows) else {**gate, "compatible_entities": kept}
+
+
 def today_myt() -> date:
     """Today in Malaysia time (UTC+8, no DST), the formula `fetch._current_myt_year` uses."""
     return (datetime.now(timezone.utc) + timedelta(hours=8)).date()

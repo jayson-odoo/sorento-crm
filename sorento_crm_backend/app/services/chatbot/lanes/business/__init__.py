@@ -1843,19 +1843,17 @@ def run_fetch(
             semantic_input["order_status"] = "outstanding"
             semantic_input["so_bucket_refused"] = True
 
-    # DO-ASK-SIMPLIFY rules 3-4 (owner, 2 Oct 2026): a dealer's DO list ask with no
-    # range, or a range over 31 days, is answered with one line and fetches nothing.
-    range_line = do_ask.range_reply(
-        ctx=ctx,
-        tool_name=tool_name,
-        order_tools=fetch_mod.ORDER_TOOLS,
-        entities=entities,
-        semantic_input=semantic_input,
-    )
-    if range_line is not None:
-        if trace is not None:
-            trace.add("do_range", {"asked": range_line.split("\n", 1)[0]})
-        return _fixed_reply(range_line)
+    # DO-ASK-SIMPLIFY security S1 (PR #1433): a transporter named on a DO list ask would
+    # filter the rows by it, telling the contact who carried each one. Without the
+    # `delivery_orders.transporter` reveal it is dropped here: no filter, and (the gate is
+    # the same dict the scope header reads) no "Transporter:" header line.
+    if tool_name in fetch_mod.ORDER_TOOLS and not do_ask.granted(ctx, do_ask.TRANSPORTER_KEY):
+        kept = [e for e in entities if not (isinstance(e, dict) and e.get("entity_type") == "transporter")]
+        if len(kept) != len(entities):
+            entities = kept
+            gate["compatible_entities"] = kept
+            if trace is not None:
+                trace.add("field_reveal", {"dropped_filter": "transporter_ids", "tool": tool_name})
 
     trigger = {
         "tool": tool_name,
@@ -1898,6 +1896,21 @@ def run_fetch(
                 },
             )
         return _fixed_reply(str(customer_scope.get("refusal") or ""))
+    # DO-ASK-SIMPLIFY rules 3-4 (owner, 2 Oct 2026): a dealer's DO list ask with no
+    # range, or a range over 31 days, is answered with one line and fetches nothing.
+    # After the customer-scope backstop above (security S2), so the question never
+    # names a customer outside the contact's links.
+    range_line = do_ask.range_reply(
+        ctx=ctx,
+        tool_name=tool_name,
+        order_tools=fetch_mod.ORDER_TOOLS,
+        entities=entities,
+        semantic_input=semantic_input,
+    )
+    if range_line is not None:
+        if trace is not None:
+            trace.add("do_range", {"asked": range_line.split("\n", 1)[0]})
+        return _fixed_reply(range_line)
     # CHATBOT-SELFREF-SCOPE (owner rule Q6a): on a self-reference turn a carried account
     # did not narrow the report (`fetch._self_reference`); say so on the trace.
     carried_ids = [u for u in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if fetch_mod.is_uuid(u)]
@@ -2227,6 +2240,7 @@ def complete_answer(
     elif exit_kind == "not_found" or fetch_arm == "error":
         lane_item = _run_miss_half(
             payload,
+            granted_keys=(ctx.get("access") or {}).get("attributes"),
             parser=parser,
             resolved=resolved,
             gate=gate,
@@ -2326,6 +2340,7 @@ def complete_answer(
             }
             lane_item = _run_miss_half(
                 miss_payload,
+                granted_keys=(ctx.get("access") or {}).get("attributes"),
                 parser=parser,
                 resolved=resolved,
                 gate=gate,
@@ -2457,6 +2472,7 @@ def _run_miss_half(
     answer_mod: Any,
     dry_run: bool,
     build_result: Any = None,
+    granted_keys: Any = None,
 ) -> dict[str, Any]:
     """`not-found-error-message` -> `sub-miss-suggest` -> `build-suggest-offer` ->
     `tag-not-found`.
@@ -2467,7 +2483,7 @@ def _run_miss_half(
     the composer's own output untagged, so what the tail grades is unchanged.
     """
     not_found = answer_mod.not_found_error_message(
-        payload, parser=parser, resolved=resolved, gate=gate
+        payload, parser=parser, resolved=resolved, gate=gate, granted_keys=granted_keys
     )
     fragments["not_found"] = not_found
 
