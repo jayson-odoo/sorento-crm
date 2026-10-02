@@ -818,13 +818,15 @@ def pick_question(
         head = f"{typed} x {qty}: which one?"
     else:
         head = f"{typed} matches {total} products. Which one?"
-    lines = labels[:MAX_NAMED]
+    # PICKER-NO-CAP (owner, 2 Oct 2026): every option the pick carries is printed, so
+    # every number the dealer can reply with is one they can see. Only matches past the
+    # carried options (`count`, the stock tool's own total) are counted.
     tail = (
-        [f"and {total - len(lines)} others, reply with the full code."]
-        if total > len(lines)
+        [f"and {total - len(labels)} others, reply with the full code."]
+        if total > len(labels)
         else []
     )
-    return "\n".join([head, *numbered(lines, start), *tail])
+    return "\n".join([head, *numbered(labels, start), *tail])
 
 
 def after_reply(

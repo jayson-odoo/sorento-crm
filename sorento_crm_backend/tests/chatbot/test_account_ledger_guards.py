@@ -6,7 +6,8 @@
   (`token_coverage[].coverage[].truncated`) never refuses and never narrows when no row has
   the asked level: the level may sit past the cut.
 * B-2 / B-3: `resolve_entity_body` lifts `limit` from 15 to the route's 200 ONLY when a
-  customer word typed this message carries an `account`; otherwise it stays 15.
+  customer word typed this message carries an `account`; otherwise it stays at the plain
+  lookup limit (15 then, 50 since PICKER-NO-CAP).
 
 Pure unit tests: `narrow_by_account` with a stub level reader, `resolve_entity_body` with a
 hand-built ctx. No database.
@@ -99,5 +100,7 @@ def test_b2_a_customer_word_with_an_account_lifts_the_limit_to_200() -> None:
         pytest.param([_ask("Soon Heng", 1, current_message=False)], id="carried-word"),
     ],
 )
-def test_b3_no_account_on_a_customer_word_keeps_the_limit_at_15(entities) -> None:
-    assert resolve_entity_body(_ctx(entities))["limit"] == 15
+def test_b3_no_account_on_a_customer_word_keeps_the_lookup_limit(entities) -> None:
+    # PICKER-NO-CAP (owner, 2 Oct 2026): the plain lookup limit is 50 (was 15), the
+    # roster ceiling, so a picker can list every match it is allowed to print.
+    assert resolve_entity_body(_ctx(entities))["limit"] == 50

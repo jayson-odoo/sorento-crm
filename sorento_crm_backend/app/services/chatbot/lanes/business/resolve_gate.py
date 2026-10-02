@@ -476,6 +476,13 @@ def _query_text(ctx: dict[str, Any]) -> str:
 #: `inbound_shipment` on the next).
 _CODE_BEARING_HINTS = ("product", "inbound_shipment")
 
+#: PICKER-NO-CAP (owner, 2 Oct 2026; crew-tester chat pass on PR #1436): the lookup's
+#: `limit` - the route cuts every token's matches to it BEFORE any roster cap is read,
+#: so it must be at least the widest roster a picker may print. 50 is that ceiling
+#: (`chatbot_entity_kinds.roster_cap`'s default and its S3 maximum). At 15, "incoming
+#: AMS" with 20 matches listed 15.
+_LOOKUP_LIMIT = 50
+
 
 def _names_a_typed_code(parse_output: dict[str, Any]) -> bool:
     """Did this turn name a product CODE, rather than only words that describe a set?
@@ -614,7 +621,7 @@ def resolve_entity_body(
         # ACCOUNT-LEDGER: "Soon Heng account 1" narrows the customer rows by level AFTER
         # the resolver answers, so the rows must not be cut first (31 "Soon Heng" rows on
         # the copy, the level-one ledgers past row 15). The route's own maximum.
-        "limit": 200 if any(_asks_an_account(x) for x in entities) else 15,
+        "limit": 200 if any(_asks_an_account(x) for x in entities) else _LOOKUP_LIMIT,
         "spec_fallback": True,
         # Fix round 10 on PR #833 ("for #833 yeah exact only"): exact values, no ranking guess.
         "exact_match": True,
