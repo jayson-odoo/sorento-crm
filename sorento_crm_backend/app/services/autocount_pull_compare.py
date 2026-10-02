@@ -275,12 +275,15 @@ def window_excel_rows(
     mapping = mapping or DEFAULT_MAPPINGS["order_listing"]
     kept: list[dict] = []
     ignored = 0
-    for row in excel_rows:
-        fields = _mapped_row(row, mapping)
-        # A row with no document number is not a line or a document: the listing's own
-        # totals row (GRN-PULL-CRM e2e gap 3: 72 "lines" against AutoCount's 71). It is
-        # neither in the window nor ignored outside it; the compares skip it anyway.
-        if not str(fields.get("doc_no") or "").strip():
+    mapped = [(row, _mapped_row(row, mapping)) for row in excel_rows]
+    # When the sheet carries the mapped document number column, a row without one is not a
+    # line or a document: the listing's own totals row (GRN-PULL-CRM e2e gap 3: 72 "lines"
+    # against AutoCount's 71). The browser's parser leaves a blank cell out of the row, so
+    # "without one" is the key absent or blank. It is neither in the window nor ignored
+    # outside it; the compares skip it anyway. A sheet with no such column is left alone.
+    has_doc_column = any("doc_no" in fields for _, fields in mapped)
+    for row, fields in mapped:
+        if has_doc_column and not str(fields.get("doc_no") or "").strip():
             continue
         if start is None and end is None:
             kept.append(row)

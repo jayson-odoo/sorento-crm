@@ -205,6 +205,29 @@ gateway, so `PullStartBody` refuses a GRN start without both days or a `docNo`, 
 dialog requires both days (`requireWindow`), and "Pull again" re-pulls the same scope. DO is
 unchanged in this lane (its start still allows no scope); flagged to crew.
 
+## 1.9 Crew end-to-end pass (2 Oct, on 4a7cf723) and what changed
+
+Pass: pull 7 documents / 71 lines, compare as expected, Confirm created 7, re-pull
+idempotent, GR-0002..0005 linked to SPO-0085..0088. Gaps closed, red-first (baad9127) then
+fixed (34a67357 + this commit), each fix killed by its test:
+
+1. **Waiting lines link when their SPO arrives.** `link_waiting_grn_lines` runs from the
+   shipping-order ingest's post-commit hook (`_run_document_hooks`, next to forward
+   matching, which skips AutoCount GRNs) over the AutoCount GRN lines naming the SPO
+   (`from_doc_no`, `our_po_no` or `spo_number_raw`, matched the upload's way), through
+   `_grn_links` (k-th line, quantity confirms), then the receipt hook. No later GRN batch
+   is needed. Tests `test_gp_e2e_*` (GR-2026/10-0006 / SPO-2026/09-0115 shape, the reordered
+   SPO, company B never reached).
+2. **`from_doc_no` is what a re-link reads.** AutoCount sends no OurPONo, so an unlinked
+   line has `our_po_no` and `spo_number_raw` NULL and keeps `from_doc_no`; pinned in the same
+   test before the SPO arrives.
+3. **The totals row is not a line.** `window_excel_rows` leaves out rows without a document
+   number when the sheet carries that column (the browser parser omits blank cells, so the
+   key is absent); 72 became 71. Test `test_gp52f`.
+4. **Apply job Outcome card.** The DO and GRN applies write the `result` envelope
+   (`ImportOutcome.finalize`); a fresh job no longer reads "ran before per-row outcome
+   capture". Tests `test_gp40`, `test_dp_20c`.
+
 ## 2. Build order (tests first)
 
 1. This plan + UAC + red tests (`be/tests/test_autocount_pull_goods_receive_notes.py`,

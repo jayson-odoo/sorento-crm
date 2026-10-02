@@ -448,7 +448,7 @@ def _detail_listing(rows: list[dict]) -> list[dict]:
                 "Item Code": line["ItemCode"], "Location": line["Location"], "Qty": line["Qty"],
                 "UOM": line["UOM"], "Unit Price": line["UnitPrice"], "Total (Ex)": line["SubTotal"],
             })
-    out.append({"Check": "", "Doc No": "", "Qty": sum(r["Qty"] for r in out)})  # totals row
+    out.append({"Qty": sum(r["Qty"] for r in out)})  # totals row: blank cells are left out
     return out
 
 
@@ -559,7 +559,8 @@ class TestRowsDownloadCompare:
                                 json={"filename": "d.xlsx", "rows": _detail_listing(rows),
                                       "source": "lines"}).json()
         assert (lines["rows_in_window"], lines["ignored_outside_window"]) == (2, 0)
-        listing = _grn_listing(rows) + [{"Doc. No.": "", "Sub-Total (ex)": 745}]
+        # The browser's parser leaves blank cells out: a totals row has no Doc No key at all.
+        listing = _grn_listing(rows) + [{"Sub-Total (ex)": 745}, {"Doc. No.": " "}]
         headers = env.client.post(f"{PULLS_URL}/{job_id}/compare",
                                   json={"filename": "l.xlsm", "rows": listing,
                                         "source": "headers"}).json()
