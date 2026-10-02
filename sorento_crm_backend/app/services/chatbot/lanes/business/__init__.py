@@ -27,6 +27,7 @@ import time
 from app.services.chatbot import contracts
 from app.services.chatbot import copy as reply_copy
 from app.services.chatbot import jsc
+from app.services.chatbot import do_ask
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business import services as business_services
@@ -1841,6 +1842,20 @@ def run_fetch(
         if _OUTSTANDING_SO_GRANT not in granted:
             semantic_input["order_status"] = "outstanding"
             semantic_input["so_bucket_refused"] = True
+
+    # DO-ASK-SIMPLIFY rules 3-4 (owner, 2 Oct 2026): a dealer's DO list ask with no
+    # range, or a range over 31 days, is answered with one line and fetches nothing.
+    range_line = do_ask.range_reply(
+        ctx=ctx,
+        tool_name=tool_name,
+        order_tools=fetch_mod.ORDER_TOOLS,
+        entities=entities,
+        semantic_input=semantic_input,
+    )
+    if range_line is not None:
+        if trace is not None:
+            trace.add("do_range", {"asked": range_line.split("\n", 1)[0]})
+        return _fixed_reply(range_line)
 
     trigger = {
         "tool": tool_name,
