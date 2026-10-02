@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { GripVertical, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -69,14 +69,21 @@ export function IdeasBoardView() {
   const [modalOpen, setModalOpen] = useState(false);
   const { data, isLoading, isError, error, dataUpdatedAt } = useIdeaBoardQuery();
   const { vote, move, reorder } = useIdeaMutations();
-  const [columns, setColumns] = useState<Columns>({});
+  // Every lane key exists from the first render: the server's lanes are the base, and a drag
+  // only layers an optimistic override on top of them.
+  const base = useMemo<Columns>(
+    () => Object.fromEntries((data?.columns ?? []).map((c) => [c.statusId, c.ideas])),
+    [data],
+  );
+  const [override, setOverride] = useState<Columns | null>(null);
+  const columns = override ?? base;
+  const setColumns = setOverride;
 
   // `dataUpdatedAt`, not `data`: a refused move refetches identical data, and the board still has
   // to snap back to it.
   useEffect(() => {
-    if (!data) return;
-    setColumns(Object.fromEntries(data.columns.map((c) => [c.statusId, c.ideas])));
-  }, [data, dataUpdatedAt]);
+    setOverride(null);
+  }, [dataUpdatedAt]);
 
   const handleMove = ({ event, activeContainer, activeIndex, overContainer, overIndex }: KanbanMoveEvent) => {
     const ideaId = String(event.active.id);

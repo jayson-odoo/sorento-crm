@@ -61,7 +61,7 @@ export function IdeaMergeModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Merge into another idea</DialogTitle>
         </DialogHeader>

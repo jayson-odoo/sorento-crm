@@ -3,11 +3,12 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { Plus } from 'lucide-react';
+import { Columns3, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -54,6 +55,7 @@ export function IdeasListView() {
     () => [
       {
         id: 'votes',
+        accessorFn: (row) => row.upvotes,
         header: ({ column }) => <DataGridColumnHeader title="Votes" column={column} />,
         cell: ({ row }) => (
           <VoteBox
@@ -63,13 +65,14 @@ export function IdeasListView() {
             onVote={() => vote.mutate(row.original.id)}
           />
         ),
-        size: 80,
+        size: 72,
         enableSorting: false,
         enableResizing: false,
         meta: { headerTitle: 'Votes', skeleton: <Skeleton className="h-9 w-10" /> },
       },
       {
         id: 'idea',
+        accessorFn: (row) => row.title ?? row.problem,
         header: ({ column }) => <DataGridColumnHeader title="Idea" column={column} />,
         cell: ({ row }) => {
           const label = row.original.title ?? row.original.problem;
@@ -84,60 +87,65 @@ export function IdeasListView() {
             </Link>
           );
         },
-        size: 420,
+        size: 240,
         enableSorting: false,
         meta: { headerTitle: 'Idea', skeleton: <Skeleton className="h-4 w-56" /> },
       },
       {
         id: 'ideaNumber',
+        accessorFn: (row) => row.ideaNumber ?? '',
         header: ({ column }) => <DataGridColumnHeader title="No." column={column} />,
         cell: ({ row }) => (
           <span className="block truncate tabular-nums text-muted-foreground" title={row.original.ideaNumber ?? ''}>
             {row.original.ideaNumber ?? '-'}
           </span>
         ),
-        size: 110,
+        size: 90,
         enableSorting: false,
         meta: { headerTitle: 'No.', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         id: 'product',
+        accessorFn: (row) => row.productName,
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.productName}>
             {row.original.productName}
           </span>
         ),
-        size: 150,
+        size: 110,
         enableSorting: false,
         meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'submitter',
+        accessorFn: (row) => row.submitterName,
         header: ({ column }) => <DataGridColumnHeader title="Submitter" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.submitterName}>
             {row.original.submitterName}
           </span>
         ),
-        size: 140,
+        size: 100,
         enableSorting: false,
         meta: { headerTitle: 'Submitter', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         id: 'source',
+        accessorFn: (row) => row.source,
         header: ({ column }) => <DataGridColumnHeader title="Channel" column={column} />,
         cell: ({ row }) => (
           <Badge variant="outline" size="sm">
             {SOURCE_LABEL[row.original.source] ?? row.original.source}
           </Badge>
         ),
-        size: 120,
+        size: 100,
         enableSorting: false,
         meta: { headerTitle: 'Channel', skeleton: <Skeleton className="h-5 w-16" /> },
       },
       {
         id: 'status',
+        accessorFn: (row) => row.statusLabel,
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
           <span className="flex items-center gap-1.5">
@@ -149,15 +157,16 @@ export function IdeasListView() {
             ) : null}
           </span>
         ),
-        size: 190,
+        size: 140,
         enableSorting: false,
         meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-5 w-16" /> },
       },
       {
         id: 'createdAt',
+        accessorFn: (row) => row.createdAt,
         header: ({ column }) => <DataGridColumnHeader title="Captured" column={column} />,
         cell: ({ row }) => <span className="tabular-nums">{formatDate(row.original.createdAt)}</span>,
-        size: 120,
+        size: 100,
         enableSorting: false,
         meta: { headerTitle: 'Captured', skeleton: <Skeleton className="h-4 w-20" /> },
       },
@@ -233,7 +242,16 @@ export function IdeasListView() {
                     clearable
                   />
                 </div>
-                <div className="sm:ms-auto">
+                <div className="flex items-center gap-2 sm:ms-auto">
+                  <DataGridColumnVisibility
+                    table={table}
+                    trigger={
+                      <Button variant="outline" size="sm" className="gap-1">
+                        <Columns3 className="size-4" />
+                        Columns
+                      </Button>
+                    }
+                  />
                   <IdeasViewToggle active="list" />
                 </div>
               </CardHeader>

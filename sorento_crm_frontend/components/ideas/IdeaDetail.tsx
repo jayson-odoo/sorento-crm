@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -19,7 +19,6 @@ import {
   Split,
   Trash2,
   Undo2,
-  Upload,
   Video,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -30,7 +29,11 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import BackToList from '@/components/common/BackToList';
+import { PageHeader } from '@/components/common/PageHeader';
 import DetailActions from '@/components/common/DetailActions';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { FileDropzone } from '@/components/common/FileDropzone';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import type { RecordAction } from '@/components/common/recordActions';
 import {
@@ -112,6 +115,19 @@ function Text({ value }: { value: string | null }) {
  * button to its left. Archived: primary Restore. Merged child: primary Unmerge, no Edit. No next
  * move: Edit is the primary.
  */
+/** The page header: the idea number as the eyebrow and the idea's title once it has loaded. */
+export function IdeaDetailHeader({ id }: { id: string }) {
+  const { data: idea } = useIdeaQuery(id);
+  return (
+    <PageHeader
+      title={idea ? (idea.title ?? idea.problem) : 'Idea'}
+      eyebrow={idea?.ideaNumber ?? undefined}
+      titleClassName="line-clamp-2"
+      actions={<BackToList listPath="/ideas" label="Back to ideas" />}
+    />
+  );
+}
+
 export function IdeaDetail({ id }: { id: string }) {
   const router = useRouter();
   const canManage = useCanManageIdeas();
@@ -128,7 +144,6 @@ export function IdeaDetail({ id }: { id: string }) {
   const [impact, setImpact] = useState('');
   const [department, setDepartment] = useState('');
   const [rawText, setRawText] = useState('');
-  const fileInput = useRef<HTMLInputElement>(null);
 
   const subject = idea?.title ?? idea?.problem ?? '';
   const archiving = useIdeaDeferredAction({
@@ -301,11 +316,10 @@ export function IdeaDetail({ id }: { id: string }) {
     }
   }
 
-  const onPickFiles = async (files: FileList | null) => {
-    for (const file of Array.from(files ?? [])) {
+  const onPickFiles = async (files: File[]) => {
+    for (const file of files) {
       await upload.mutateAsync({ id: idea.id, file }).catch(() => undefined);
     }
-    if (fileInput.current) fileInput.current.value = '';
   };
 
   return (
@@ -382,9 +396,12 @@ export function IdeaDetail({ id }: { id: string }) {
                     ariaLabel="idea"
                   />
                 }
-                actions={gear}
+                gear={
+                  gear.length > 0 ? (
+                    <DetailActionsMenu actions={gear} trigger="ellipsis" ariaLabel="Idea options" />
+                  ) : undefined
+                }
                 pendingAction={archiving.countdown ?? deletion.countdown}
-                gearLabel="Idea options"
                 primary={primary}
               />
             )}
@@ -478,26 +495,15 @@ export function IdeaDetail({ id }: { id: string }) {
           <Card>
             <section aria-label="Attachments" className="flex flex-col gap-3 p-5">
               {canManage ? (
-                <div className="flex justify-end">
-                  <input
-                    ref={fileInput}
-                    type="file"
-                    multiple
-                    className="hidden"
-                    aria-label="Upload attachments"
-                    onChange={(e) => void onPickFiles(e.target.files)}
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5"
-                    disabled={upload.isPending}
-                    onClick={() => fileInput.current?.click()}
-                  >
-                    {upload.isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : <Upload className="size-4" />}
-                    Upload
-                  </Button>
-                </div>
+                <FileDropzone
+                  multiple
+                  disabled={upload.isPending}
+                  files={[]}
+                  onFilesChange={(files) => void onPickFiles(files)}
+                  aria-label="Upload attachments"
+                  title={upload.isPending ? 'Uploading...' : 'Drop files here or click to upload'}
+                  hint=""
+                />
               ) : null}
               {idea.attachments.length === 0 ? (
                 <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed py-8 text-center">

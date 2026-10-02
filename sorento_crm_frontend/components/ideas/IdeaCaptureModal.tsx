@@ -33,6 +33,7 @@ export function IdeaCaptureModal({
   const [impact, setImpact] = useState('');
   const [department, setDepartment] = useState('');
   const [files, setFiles] = useState<File[]>([]);
+  const [touched, setTouched] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -41,13 +42,15 @@ export function IdeaCaptureModal({
     setImpact('');
     setDepartment('');
     setFiles([]);
+    setTouched(false);
   }, [open]);
 
-  const canSave = problem.trim().length > 0 && !create.isPending;
+  const problemError = touched && problem.trim().length === 0 ? 'Problem statement is required' : null;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!canSave) return;
+    setTouched(true);
+    if (!problem.trim() || create.isPending) return;
     try {
       await create.mutateAsync({ problem, proposedSolution, impact, department, files });
       onOpenChange(false);
@@ -58,7 +61,7 @@ export function IdeaCaptureModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Capture idea</DialogTitle>
         </DialogHeader>
@@ -70,9 +73,17 @@ export function IdeaCaptureModal({
                 id="idea-problem"
                 value={problem}
                 onChange={(e) => setProblem(e.target.value)}
+                onBlur={() => setTouched(true)}
+                aria-invalid={!!problemError}
+                aria-describedby={problemError ? 'idea-problem-error' : undefined}
                 rows={3}
                 autoFocus
               />
+              {problemError ? (
+                <p id="idea-problem-error" className="text-xs text-destructive">
+                  {problemError}
+                </p>
+              ) : null}
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="idea-solution">Proposed solution</Label>
@@ -110,7 +121,7 @@ export function IdeaCaptureModal({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={!canSave}>
+            <Button type="submit" variant="primary" disabled={create.isPending}>
               {create.isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
               Capture
             </Button>

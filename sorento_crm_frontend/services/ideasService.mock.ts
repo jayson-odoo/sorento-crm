@@ -5,7 +5,7 @@
  *
  * How each header state of the idea page is reached (mock section 2):
  *   A  Draft, next move "Move to New"        : "I wish the CRM could remind me before a DO SLA breaches"
- *   B  Voted, next move "Move to Discussed"  : "Let CS bulk-export orders to Excel with column presets"
+ *   B  Voted, next move "Move to Triaged"    : "Let CS bulk-export orders to Excel with column presets"
  *   C  Closed, no next move, Edit is primary : "E2E Idea 20260928-1349 Bravo - problem statement"
  *   D  Archived, primary Restore             : "a brand new test idea about export scheduling"
  *   E  Merged child, primary Unmerge         : "Remind me before a DO SLA breaches"
@@ -189,8 +189,6 @@ let ideas: Idea[] = [
     upvotes: 2,
     myVote: 'up',
     priority: 2,
-    // The tenant relabelled Triaged as "Discussed" (mock section 2, state B).
-    transitions: [],
   }),
   seed({
     id: 'idea-sla-child',
@@ -264,15 +262,6 @@ let ideas: Idea[] = [
     priority: 5,
   }),
 ];
-
-// State B's relabel: the move out of New is offered as "Discussed" on this one idea.
-ideas = ideas.map((idea) => {
-  if (idea.id !== 'idea-export') return idea;
-  const transitions = idea.transitions.map((t) =>
-    t.toStatusId === 's-triaged' ? { ...t, label: 'Move to Discussed', toStatusLabel: 'Discussed' } : t,
-  );
-  return { ...idea, transitions };
-});
 
 const CURRENT_USER = 'Demo User';
 
@@ -428,9 +417,8 @@ export async function moveIdeaToStatus(id: string, toStatusId: string): Promise<
   const transition = idea.transitions.find((t) => t.toStatusId === toStatusId);
   if (!transition) throw new Error('This idea cannot move to that status.');
   const target = STATUSES.find((s) => s.id === toStatusId) as StatusRow;
-  const moved = withStatus(idea, target.key);
-  // A relabelled move keeps the tenant's label on the status pill.
-  return put({ ...moved, statusLabel: transition.toStatusLabel });
+  void transition;
+  return put(withStatus(idea, target.key));
 }
 
 export async function restoreIdea(id: string): Promise<Idea> {

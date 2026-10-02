@@ -1,8 +1,6 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
-import { PageHeader } from '@/components/common/PageHeader';
-import BackToList from '@/components/common/BackToList';
-import { IdeaDetail } from '@/components/ideas/IdeaDetail';
+import { IdeaDetail, IdeaDetailHeader } from '@/components/ideas/IdeaDetail';
 
 export const metadata: Metadata = {
   title: 'Idea',
@@ -14,7 +12,7 @@ export default async function IdeaDetailPage({ params }: { params: Promise<{ id:
   return (
     <>
       <Container>
-        <PageHeader title="Idea" actions={<BackToList listPath="/ideas" label="Back to ideas" />} />
+        <IdeaDetailHeader id={id} />
       </Container>
       <Container>
         <IdeaDetail id={id} />

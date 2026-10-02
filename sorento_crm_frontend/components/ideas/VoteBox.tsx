@@ -32,7 +32,7 @@ export function VoteBox({ count, voted, disabled, size = 'sm', onVote, className
       type="button"
       variant={voted ? 'primary' : 'outline'}
       aria-pressed={voted}
-      aria-label={voted ? `Remove your upvote, ${count} votes` : `Upvote, ${count} votes`}
+      aria-label={`${voted ? 'Remove your upvote' : 'Upvote'}, ${count} ${count === 1 ? 'vote' : 'votes'}${voted ? ', you have voted' : ''}`}
       title={voted ? 'Remove upvote' : 'Upvote'}
       disabled={disabled}
       onClick={handle}
