@@ -784,11 +784,13 @@ def _in_ranking(state: State | None) -> bool:
     return bool(focus is not None and (focus.status == "top_selling" or focus.top_selling))
 
 
-def _short_question(pending: Any) -> str:
+def _short_question(pending: Any, localizer: Any = IDENTITY) -> str:
     count = len(pending.options)
     if pending.kind == "top_selling_pick":
         return f"Which item do you mean? Reply with a rank number from 1 to {count}."
-    header = _ASK_HEADERS.get(pending.kind, "Which one do you mean?")
+    # The header is a sentence of its own: it reads in the reply's language before the
+    # composed line carries it, the same way a domain label does.
+    header = localizer.sentence(_ASK_HEADERS.get(pending.kind, "Which one do you mean?"))
     return f"{header} I found {count}, please type a little more of the name."
 
 
@@ -837,7 +839,7 @@ def compose_question(pending: Any, state: State | None = None, localizer: Any = 
         # menu lists more than five options (it listed all 100 ranked codes under
         # "2025?"); the bot asks one short question in words and a typed number or
         # name still picks, off the same stored options.
-        body = _short_question(pending)
+        body = _short_question(pending, localizer or IDENTITY)
         labels = []
     action: dict[str, Any] = {
         "kind": "send_message",

@@ -72,3 +72,17 @@ def test_item6_a_result_is_localized_with_its_own_items_language(session_factory
     en = _result({"reply_language": "en"}, "Would you like me to escalate?")
     engine._localize_result(en, session_factory, True)
     assert en.actions[0]["text"] == "Would you like me to escalate?"
+
+
+def test_item7_the_accepted_escalation_confirmation_is_malay(session_factory, monkeypatch, stub_access):
+    from tests.chatbot.test_chat_language_slice4_engine import _confirmation
+    from tests.chatbot.test_escalation_agent_carry import _capture_next_assignee, _capture_sla
+
+    c = _staff_console(session_factory, monkeypatch, stub_access, "+60000009703")
+    _capture_next_assignee(monkeypatch)
+    _capture_sla(monkeypatch)
+    assert c.say(MS_ASK, stock(product("ZZNOPE999"))) == MS_OFFER
+    c.say("ya", _confirmation())
+    sent = [a["text"] for a in _latest_row(session_factory).response["actions"] if a.get("kind") == "send_message"]
+    assert any("Pertanyaan ini telah diserahkan kepada pegawai bertanggungjawab (PIC) daripada pasukan" in t for t in sent), sent
+    assert not any("routed" in t for t in sent), sent

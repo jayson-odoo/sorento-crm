@@ -7613,10 +7613,8 @@ def _stock_ask_answered_entries(envelopes: list[dict[str, Any]]) -> list[dict[st
 
 
 def _ask_localizer(ask: Any, db: Session, item: Mapping[str, Any], *, dry_run: bool) -> Any:
-    """CHAT-LANGUAGE: the localizer a re-asked question prints with. Only the outstanding detail
-    offer is localized (its stored text stays English); any other question reads nothing."""
-    if getattr(ask, "kind", None) != "outstanding_detail":
-        return None
+    """CHAT-LANGUAGE: the localizer a question prints with: its stored offer text and its short
+    header read in the turn's language (the stored text stays English). English reads nothing."""
     return label_catalog.resolve(db, item.get("reply_language") or "en", dry_run=dry_run)
 
 

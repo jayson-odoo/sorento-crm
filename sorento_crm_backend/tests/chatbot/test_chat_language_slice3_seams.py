@@ -54,7 +54,7 @@ def test_a_run_fetch_reask_without_a_localizer_is_english():
     assert _run_fetch(None)["fetch"]["response"] == OFFER
 
 
-def test_b_the_ask_path_localizes_only_an_outstanding_detail_question(monkeypatch):
+def test_b_the_ask_path_uses_the_turns_language(monkeypatch):
     seen = []
 
     def fake_resolve(db, lang, *, dry_run=False):
@@ -65,9 +65,6 @@ def test_b_the_ask_path_localizes_only_an_outstanding_detail_question(monkeypatc
     ask = SimpleNamespace(kind="outstanding_detail")
     loc = engine._ask_localizer(ask, object(), {"reply_language": "ms"}, dry_run=True)
     assert loc.lines("Both lists") == "Kedua-dua senarai"
-    assert seen == [("ms", True)]
-    # Any other kind of question is not localized, and reads nothing.
-    assert engine._ask_localizer(SimpleNamespace(kind="product_pick"), object(), {"reply_language": "ms"}, dry_run=False) is None
     assert seen == [("ms", True)]
     # No language on the item reads as English (the identity localizer, via resolve).
     monkeypatch.setattr(label_catalog, "resolve", lambda db, lang, *, dry_run=False: IDENTITY if lang == "en" else None)
