@@ -1,7 +1,7 @@
 # PLAN: Chatbot report engine (one catalogue, one spec, one executor)
 
-Status: building slice 1, red tests first (FULL track: new API-key route + a per-audience
-access rule; no migration). Card answered 2 Oct 2026 (`report-engine-behaviour-card.md`
+Status: building slice 1a, review fix round 1 (FULL track: new API-key route + a per-audience
+access rule; no migration). 1b (lane wiring) waits on the #1445 helper API. Card answered 2 Oct 2026 (`report-engine-behaviour-card.md`
 revision 2); section 0 below records how the answers change this plan, and wins over the
 sections after it where they differ.
 Lane: REPORT-ENGINE. Evidence: `report-engine-inventory.md` (deliverable 1, file:line for every
@@ -392,3 +392,37 @@ Captain rulings on the tester's open points (2 Oct 2026):
   `retail` / `project` are mapped in `ask.py`; the ordered dataset already prints them).
 - Month rows rank by the measure like every other dimension (not chronological).
 - The header's N is the number of rows printed.
+
+### Fix round 1 rulings (reviewer + security-reviewer, 2 Oct 2026)
+
+- **Pool pins (B1).** `crm_report_ask` joins `fetch.CUSTOMER_SCOPED_TOOLS`; it is an
+  `UNCALLABLE_READS` row in `tests/chatbot/test_tool_pool_is_read_only.py` ("needs period and
+  top_n from the lane; wired in 1b"). MCP `TOOL_REQUIRED_QUERY_HINTS["crm_report_ask"] =
+  ("contact_id", "space_id", "date_from", "date_to")`.
+- **A named filter never widens (B2).** A filter param PRESENT in the query but resolving to
+  nothing (blank, whitespace, `customer_ids=` etc., `product_code=" "`, blank
+  `warehouse_codes`) -> 422 `empty_filter`, `detail` = the param name. An id that names no row
+  (brand / category / sales agent / customer, inside the contact's companies) -> 404 `NOT_FOUND`
+  (`handle_not_found("<Thing>", ...)`), like `product_code`.
+- **Unknown query keys** -> 422 `unknown_param`, `detail` = the key. Every enum 422
+  (`unknown_basis`, `unknown_measure`, `unknown_sort`, `unknown_group_by`, `invalid_channel`)
+  carries `detail = "allowed: a, b, ..."`.
+- **List caps.** More than 50 values in any list param -> 422 `too_many_values`, detail = the
+  param (the sales report's cap).
+- **Dates.** A year outside 1900..2200 -> 422 `date_out_of_range`.
+- **Company grant from the contact.** The run's company grant is the resolved contact's own
+  `respond_contact_companies` rows (the `analysis.py:260-268` read), passed to
+  `engine.run_summary(company_grants=...)`, never the session scope. No company -> zero rows.
+  `contact_id` / `space_id` are stripped before the pair check.
+- **Busy.** Rate limit answers through `ReportAskResponse` with `status: "busy"`; tested.
+- **One location helper.** The location-policy block of `delivered_sales_report` and `ask.py`
+  becomes one shared function in `sales_report_delivered.py`, called by both.
+- **Echo.** A dealer naming its own customers sees them echoed. Filters in the header are
+  joined by "; ", values inside one filter by ", " (the presenter test is the pin).
+- **One word set.** `ask.py` keeps one dimension list and one filter list, shared by both
+  bases, until a word differs from its key.
+- **Known semantics, documented not changed.** Channel: delivered reads the account's segment
+  (no segment = in every channel); ordered reads the SO's `demand_class` (NULL = in none).
+  Ordered basis under a location policy: an SO line with no warehouse is outside every capped
+  location (fail closed); the share is unmeasured (no dev data in the sandbox), golden-asks
+  item.
