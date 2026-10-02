@@ -185,9 +185,26 @@ def test_item1_seeded_defaults_are_visible_from_a_second_session():
     _scratch_cleanup(scoped)
     try:
         with Session(bind=scoped) as turn_session:
+            # An uncommitted write of the TURN: seeding on this session would commit it.
+            turn_session.add(
+                TranslationMemory(
+                    source_text="ZZT turn marker",
+                    source_lang="en",
+                    target_lang="xx",
+                    target_text="marker",
+                    source="ai",
+                )
+            )
+            turn_session.flush()
             label_catalog.resolve(turn_session, "ms")
             turn_session.rollback()  # the turn never committed anything itself
         with Session(bind=scoped) as other:
+            assert (
+                other.query(TranslationMemory)
+                .filter(TranslationMemory.source_text == "ZZT turn marker")
+                .count()
+                == 0
+            ), "the seed committed the turn's own transaction"
             rows = (
                 other.query(TranslationMemory)
                 .filter(
