@@ -95,13 +95,17 @@ class TestTheAddendumIsTaught:
             ACCOUNT_LEDGER_ADDENDUM,
             ESCALATION_CONFIRMATION_ADDENDUM,
             MEMORY_ADDENDUM,
+            REPORT_ASK_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
         )
 
         _mod, addendum = _prompt()
         assert SEMANTIC_PARSER_PROMPT.endswith(MEMORY_ADDENDUM)
         # ACCOUNT_LEDGER_ADDENDUM (ACCOUNT-LEDGER) now sits between this one and MEMORY.
+        # REPORT-ENGINE slice 1b: REPORT_ASK_ADDENDUM sits between ACCOUNT_LEDGER_ADDENDUM and MEMORY_ADDENDUM.
         before_memory = SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM).removesuffix(
+            REPORT_ASK_ADDENDUM
+        ).removesuffix(
             ACCOUNT_LEDGER_ADDENDUM
         )
         assert before_memory.endswith(addendum), (

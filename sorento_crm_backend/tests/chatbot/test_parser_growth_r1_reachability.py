@@ -43,6 +43,7 @@ from app.services.chatbot_parser_prompt import (
     LOW_STOCK_ADDENDUM,
     ESCALATION_CONFIRMATION_ADDENDUM,
     MEMORY_ADDENDUM,
+    REPORT_ASK_ADDENDUM,
     PO_SPO_WAREHOUSE_ADDENDUM,
     SELF_REFERENCE_ADDENDUM,
     QUANTITY_ADDENDUM,
@@ -135,6 +136,11 @@ class TestTheSchemaDeclaresTheTwoNewKeys:
             *GROUP_BY_AXES,
             "month",
             "year",
+            # REPORT-ENGINE slice 1b: the `sales_ranking` ask's dimensions.
+            "sales_agent",
+            "brand",
+            "category",
+            "channel",
             None,
         ]
 
@@ -177,7 +183,8 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         stacked after the live text, so `GROWTH_R1_ADDENDUM` is still exactly the tail
         once the later ones are off."""
         for body in (SEMANTIC_PARSER_PROMPT,):
-            assert body.removesuffix(MEMORY_ADDENDUM).removesuffix(ACCOUNT_LEDGER_ADDENDUM).removesuffix(PO_SPO_WAREHOUSE_ADDENDUM).removesuffix(
+            # REPORT-ENGINE slice 1b: REPORT_ASK_ADDENDUM sits between ACCOUNT_LEDGER_ADDENDUM and MEMORY_ADDENDUM.
+            assert body.removesuffix(MEMORY_ADDENDUM).removesuffix(REPORT_ASK_ADDENDUM).removesuffix(ACCOUNT_LEDGER_ADDENDUM).removesuffix(PO_SPO_WAREHOUSE_ADDENDUM).removesuffix(
                 ESCALATION_CONFIRMATION_ADDENDUM
             ).removesuffix(SELF_REFERENCE_ADDENDUM).removesuffix(TOP_SELLING_ADDENDUM).removesuffix(
                 KNOWN_BRANDS_ADDENDUM
