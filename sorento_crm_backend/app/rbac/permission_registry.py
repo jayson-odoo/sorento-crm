@@ -77,7 +77,7 @@ PERMISSION_REGISTRY.append({
 PERMISSION_REGISTRY.append({
     "slug": "user_management.reference_data.view",
     "name": "View Reference Data",
-    "description": "Permission to read shared reference catalogs (contact access types, market segments) used by pickers across modules.",
+    "description": "Opens the Market Segments admin screen. The catalogs themselves (contact access types, market segments) are readable by every signed-in user since 1 Oct 2026.",
 })
 # `.view` reads the shared catalogs; `.manage` is the narrower authority to WRITE
 # them (market-segment create/update/delete). A view grant permitting a hard
@@ -86,7 +86,7 @@ PERMISSION_REGISTRY.append({
 PERMISSION_REGISTRY.append({
     "slug": "user_management.reference_data.manage",
     "name": "Manage Reference Data",
-    "description": "Permission to create, update and delete shared reference catalogs (currently market segments).",
+    "description": "Permission to create, update and delete shared reference catalogs (contact access types, market segments).",
 })
 
 # Delivery Order Management

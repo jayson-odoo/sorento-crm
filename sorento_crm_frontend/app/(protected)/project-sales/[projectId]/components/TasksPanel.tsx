@@ -18,7 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { useStatusGraph } from '@/app/(protected)/system-management/status-graphs/hooks/useStatusGraphs';
+import { useProjectStatusGraph } from '@/app/(protected)/project-sales/_shared/hooks/useProjectStatusGraph';
 import type { Status } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 import { useProjectTasks, useTaskMutations } from '../../_shared/hooks/useProjects';
 import {
@@ -68,7 +68,7 @@ export function TasksPanel({ project }: { project: Project }) {
   );
   const [view, setView] = React.useState<TaskView>('sections');
   const tasks = useProjectTasks(project.id, phase === 'all' ? undefined : phase);
-  const graph = useStatusGraph('project_task', project.template_id ?? null, false);
+  const graph = useProjectStatusGraph('project_task', project.template_id ?? null);
   const { remove } = useTaskMutations(project.id);
 
   const [creating, setCreating] = React.useState(false);

@@ -11,6 +11,8 @@ import { toast } from '@/lib/toast';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { registerRevisionStaleHandler } from '@/lib/revision-fence';
 import { pendingEntityStore } from '@/lib/pending-entity-store';
+import { isAccessDenied } from '@/lib/api-client';
+import { isSessionEnding, registerViewAsEndedHandler } from '@/lib/session-end';
 
 const QueryProvider = ({ children }: { children: ReactNode }) => {
   const [queryClient] = useState(() => {
@@ -53,6 +55,10 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
           // their work is in trouble when nothing about it is.
           if (query.meta?.silent) return;
 
+          // The session is on its way to /signin: every query is failing for that
+          // one reason, and the redirect is the answer, not a stack of red toasts.
+          if (isSessionEnding()) return;
+
           // A record the user has just watched a delete commit on is GONE, and
           // every query still keyed on it now 404s: the detail read, its tabs,
           // its counts. That is the answer we asked for, not a stack of red
@@ -80,9 +86,7 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
           // independently. Without deduplication that produces a stack of red
           // toasts. Sonner dedupes by `id`, so a single fixed id collapses
           // them into one.
-          const isPermissionError =
-            message.startsWith('Permission required:') ||
-            message.startsWith('One of these permissions required:');
+          const isPermissionError = isAccessDenied(error);
 
           if (isPermissionError) {
             toast.custom(
@@ -139,6 +143,15 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
       void queryClient.invalidateQueries();
     });
     return () => registerRevisionStaleHandler(null);
+  }, [queryClient]);
+
+  // View-as ended server-side (SESSION-NEVER-STUCK): whatever is cached may be the
+  // target's data, so refetch everything as the admin's own.
+  useEffect(() => {
+    registerViewAsEndedHandler(() => {
+      void queryClient.invalidateQueries();
+    });
+    return () => registerViewAsEndedHandler(null);
   }, [queryClient]);
 
   return (

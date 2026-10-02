@@ -125,6 +125,22 @@ class UserSelectResponse(BaseModel):
         from_attributes = True
 
 
+class UserLookupItem(BaseModel):
+    """People picker row for any signed-in user (never-stuck L10, owner ruling 1 Oct 2026).
+
+    Id and name only. ``respond_user_id`` is present only when the caller asked for
+    Respond.io-synced users (the SLA and complaint assignee filters key on it); the route
+    drops it otherwise. No email, phone or account state: those stay behind
+    ``user_management.users.view`` on ``/users/select``.
+    """
+    id: str
+    name: Optional[str] = None
+    respond_user_id: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class UserRolePermissionRef(BaseModel):
     """Minimal permission ref for role response."""
     id: str
