@@ -561,13 +561,27 @@ def _compact_codes(codes: list[str]) -> dict[str, Any]:
     return _compact({str(i): (5, {"BRW": 5}) for i in range(len(codes))})(codes)
 
 
-def _ask_base(session_factory, monkeypatch, family, *, envelope, msg_id: str, also: tuple[str, ...] = ()):
+def _ask_base(
+    session_factory,
+    monkeypatch,
+    family,
+    *,
+    envelope,
+    msg_id: str,
+    also: tuple[str, ...] = (),
+    others: dict[str, Any] | None = None,
+):
+    """`others` maps a non-stock tool name to the envelope it answers (the zero-stock
+    ladder's incoming / PO probes); anything else answers an unknown envelope."""
+
     def _call(name: str, args: dict[str, Any]) -> str:
         if name == STOCK_TOOL:
             # Whatever products the call named, in a stable order.
             by_id = {v: family["codes"][k] for k, v in family["ids"].items()}
             codes = [by_id[p] for p in sorted(_product_ids(args)) if p in by_id]
             return json.dumps(envelope(codes))
+        if others and name in others:
+            return json.dumps(others[name])
         return _unknown_envelope()
 
     mcp_call, calls = _mcp_double(other=_call)
@@ -788,3 +802,120 @@ class TestSetHeaderEdges:
         )
         assert "Complete sets: 0 (limited by B)" in header, header
         assert "By location: BRW 0" in header, header
+
+
+
+class TestTesterPassDealerPick:
+    """crew-tester pass on dev (PR #1443 comment 5952540166), steps 5 and 6: with real PO
+    rows behind the base code's products, the zero-stock ladder appended "No stock and
+    no incoming for ..., but PO is placed:" plus PO detail to the DEALER's set pick, and
+    its own question replaced the pick, so "3" answered the prefix products instead of
+    the set. The ladder is off for any reply carrying a `stock_availability` block; the
+    set pick had emptied that block."""
+
+    def _po_envelope(self, code: str) -> dict[str, Any]:
+        from tests.chatbot.test_rearch_r11_zero_stock_ladder import _po_rows
+
+        return _po_rows(code)
+
+    def _ask(self, session_factory, monkeypatch, family, msg_id):
+        from app.services.chatbot import turn_runtime
+        from tests.chatbot.test_rearch_r11_zero_stock_ladder import INCOMING_TOOL, PO_TOOL, _incoming_rows
+
+        # The tester's contact is a real availability-only dealer (`profile.
+        # stock_availability_only`), which is what routes the dealer's own engine arms.
+        monkeypatch.setattr(turn_runtime, "_stock_availability_only", lambda *a, **k: True)
+        # Dev's own settings row: the cross-domain ladder is ON for inventory.
+        from app.models.user import SystemSetting
+
+        db = session_factory()
+        try:
+            for row in db.query(SystemSetting).all():
+                row.chatbot_crossdomain_ladder = {
+                    "inventory": ["incoming", "purchase_order"],
+                    "incoming": ["inventory", "purchase_order"],
+                }
+            db.commit()
+        finally:
+            db.close()
+
+        return _ask_base(
+            session_factory,
+            monkeypatch,
+            family,
+            envelope=_availability_asking,
+            msg_id=msg_id,
+            others={
+                PO_TOOL: self._po_envelope(family["codes"]["sc"]),
+                INCOMING_TOOL: _incoming_rows(family["codes"]["sc"]),
+            },
+        )
+
+    def test_the_ladder_sees_the_dealer_availability_block(self, session_factory, monkeypatch) -> None:
+        """The ladder's own off switch for a dealer (`answer.crossdomain_zeroset`: a
+        non-empty `stock_availability` block). This harness's resolve-side probes answer
+        nothing, so the PO block itself cannot render here; what the ladder is HANDED is
+        exactly what decided it on dev."""
+        from app.services.chatbot import answer_bridge
+
+        seen: list[dict[str, Any]] = []
+        real = answer_bridge._run_crossdomain_ladder
+
+        def _spy(**kwargs):
+            seen.append(dict(kwargs.get("item") or {}))
+            return real(**kwargs)
+
+        monkeypatch.setattr(answer_bridge, "_run_crossdomain_ladder", _spy)
+        _seed_contact_and_get(session_factory)
+        family = _seed_family(session_factory)
+        self._ask(session_factory, monkeypatch, family, "zzt-combo-t6-spy")
+        assert seen, "the hit ladder must have been consulted on this stock turn"
+        assert all(item.get("stock_availability") for item in seen), seen
+
+    def test_the_set_pick_is_armed_and_no_ladder_block_reaches_the_dealer(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_contact_and_get(session_factory)
+        family = _seed_family(session_factory)
+        result, _calls = self._ask(session_factory, monkeypatch, family, "zzt-combo-t6-a")
+        said = _said(result)
+        assert "Which one?" in said, said
+        for needle in ("PO is placed", "Ordered", "Outstanding", "No stock", "incoming"):
+            assert needle not in said, (needle, said)
+        question = _session_vars(session_factory).get("open_question") or {}
+        assert [o.get("code") for o in question.get("options") or []] == sorted(
+            family["sets"].values()
+        ), question
+
+    def test_answering_the_pick_runs_that_sets_members(self, session_factory, monkeypatch) -> None:
+        _seed_contact_and_get(session_factory)
+        family = _seed_family(session_factory)
+        self._ask(session_factory, monkeypatch, family, "zzt-combo-t6-b")
+        # Still a dealer on the answering turn (monkeypatch persists for the test).
+        position = sorted(family["sets"].values()).index(family["sets"]["rl"]) + 1
+
+        def _call(name: str, args: dict[str, Any]) -> str:
+            if name == STOCK_TOOL:
+                return json.dumps(_availability(["X"]))
+            return _unknown_envelope()
+
+        mcp_call, calls = _mcp_double(other=_call)
+        result = _run_turn_engine(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
+                reference_positions=[position],
+                order_status=None,
+            ),
+            text_body=str(position),
+            msg_id="zzt-combo-t6-c",
+            mcp_call=mcp_call,
+        )
+        assert result.status == "done", result.error
+        stock_calls = [args for name, args in calls if name == STOCK_TOOL]
+        ids = family["ids"]
+        assert stock_calls and _product_ids(stock_calls[-1]) == {ids["ped"], ids["cis"], ids["sc"]}, stock_calls

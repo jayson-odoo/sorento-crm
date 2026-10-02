@@ -1997,7 +1997,14 @@ def run_fetch(
             picked = set_stock_mod.set_pick(jsc.js_string(prefix_products[0].get("token") or ""), containing)
             if picked is not None:
                 structured["response"], structured["set_ask"] = picked
-                structured["stock_availability"] = []
+                # ONE marker row, never an empty list (crew-tester pass on dev, step 5/6):
+                # a non-empty `stock_availability` block is the dealer's own off switch for
+                # the zero-stock ladder (`answer.crossdomain_zeroset`). Emptied, the ladder
+                # read the pick's empty answer as "no stock", appended "No stock and no
+                # incoming ..., but PO is placed" with PO detail, and its own question
+                # replaced the set pick. The row names no product, branch or quantity, so
+                # the stock task, family pick and Customer asks readers all skip it.
+                structured["stock_availability"] = [{"set_pick": True}]
                 structured["answers"] = []
         elif result_type in ("stock", "stock_compact"):
             lines = set_stock_mod.part_of_set_lines(prefix_products, containing)

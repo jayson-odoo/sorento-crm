@@ -92,7 +92,11 @@ def world(session_factory):
     srt_basins = [make(sorento, basin_category, "WASH BASIN", "ZZR3B", f"Sorento Counter Basin {i}") for i in range(2)]
     srt_basins.append(make(sorento, basin_category, "GLASS WASH BASIN", "GBZZR3", "Sorento Glass Basin"))
     mch_basins = [make(mocha, basin_category, "GLASS WASH BASIN", "GBZZR3M", "Mocha Glass Basin")]
-    srt_tubs = [make(sorento, tub_category, "BATHTUB", "ZZR3T", f"Sorento Bathtub {i}") for i in range(2)]
+    # "ZZR3U", not "ZZR3T": the alpha suffix (letters a-p) starting "ap" made a tub's code
+    # read "...zzr3tap..." with the dash dropped, so round 4's bare "tap" ask answered that
+    # tub by code instead of the taps (PR #1443 CI shard 1, `test_r5_answering_the_clarify_
+    # runs_the_counted_set_the_customer_asked_for`). No non-tap prefix may end in "t".
+    srt_tubs = [make(sorento, tub_category, "BATHTUB", "ZZR3U", f"Sorento Bathtub {i}") for i in range(2)]
     for p in srt_ptrap + srt_strap + mch_ptrap + srt_basins + mch_basins:
         _stock_for(db, product_id=p.id, warehouse_id=wh.id)
     for p in srt_basins + mch_basins:
@@ -555,7 +559,7 @@ def test_w4_incoming_names_the_other_brands_with_incoming(chat, world):
         category_id=_class_category(db, "BT"),
         uom_id=world["srt_tubs"][0].base_uom_id,
         noun="BATHTUB",
-        prefix="ZZR3MT",
+        prefix="ZZR3MU",  # not "...T": see the srt_tubs note in `world`
         name="Mocha Bathtub",
     )
     _incoming_for(db, product_id=mocha_tub.id)
