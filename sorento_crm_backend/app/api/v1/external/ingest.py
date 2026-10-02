@@ -61,6 +61,7 @@ from app.services.autocount_doc_ingest_service import (
     AutocountDocIngestService,
     AutocountDocReadService,
     parse_deletion_body,
+    run_grn_receipt_hook as _run_grn_receipt_hook,
 )
 from app.services.document_ingest_service import (
     DOCUMENT_ENTITIES,
@@ -736,30 +737,6 @@ def _book(payload: dict) -> str:
             code="INVALID_BODY",
         )
     return book
-
-
-def _run_grn_receipt_hook(db: Session, service) -> None:
-    """An AutoCount GRN write moved picking lines that point at SPO allocations (a carried
-    Excel link released, a cancel, an exact link): recompute those allocations' receipt the
-    way an approved Excel GRN does. After the batch commit, best effort, like the others."""
-    touched = getattr(service, "touched_allocation_ids", set())
-    if not touched:
-        return
-    try:
-        from app.services.procurement_service import InboundShipmentService, PickingHeaderService
-
-        allocations = db.query(SPOAllocation).filter(SPOAllocation.id.in_(list(touched))).all()
-        proc = PickingHeaderService(db)
-        shipment_ids = proc._sync_received_for_allocations(
-            allocations, released=getattr(service, "released_allocation_ids", set())
-        )
-        db.commit()
-        inbound = InboundShipmentService(db)
-        for shipment_id in shipment_ids:
-            inbound.refresh_shipment_line_statuses(shipment_id)
-    except Exception:  # noqa: BLE001 - the ingest itself already committed
-        db.rollback()
-        logger.warning("ingest.grn_receipt_hook_failed", exc_info=True)
 
 
 def _cancel_vanished(entity: str, payload: dict, dry_run: bool, db: Session, current_user: dict):

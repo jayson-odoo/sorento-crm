@@ -444,7 +444,7 @@ class TestRowsDownloadCompare:
         job_id, _ = _seed_review_job(env, owner=owner)
         resp = env.client.get(f"{PULLS_URL}/{job_id}/rows")
         assert resp.status_code == 200, resp.text
-        items = resp.json()["items"]
+        items = resp.json()["data"]
         assert len(items) == 2
         assert set(items[0]) >= {"doc_no", "doc_date", "creditor_code", "creditor_name",
                                  "item_code", "description", "location", "qty", "uom",

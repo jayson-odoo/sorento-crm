@@ -515,6 +515,31 @@ def _parse(entity: str, raw: dict) -> _Doc:
     )
 
 
+def run_grn_receipt_hook(db: Session, service: "AutocountDocIngestService") -> None:
+    """An AutoCount GRN write moved picking lines that point at SPO allocations (a carried
+    Excel link released, a cancel, an exact or line-order link): recompute those
+    allocations' receipt the way an approved Excel GRN does. After the batch commit, best
+    effort. One function for the push route and the pull's apply (GRN-PULL-CRM)."""
+    touched = getattr(service, "touched_allocation_ids", set())
+    if not touched:
+        return
+    try:
+        from app.services.procurement_service import InboundShipmentService, PickingHeaderService
+
+        allocations = db.query(SPOAllocation).filter(SPOAllocation.id.in_(list(touched))).all()
+        proc = PickingHeaderService(db)
+        shipment_ids = proc._sync_received_for_allocations(
+            allocations, released=getattr(service, "released_allocation_ids", set())
+        )
+        db.commit()
+        inbound = InboundShipmentService(db)
+        for shipment_id in shipment_ids:
+            inbound.refresh_shipment_line_statuses(shipment_id)
+    except Exception:  # noqa: BLE001 - the ingest itself already committed
+        db.rollback()
+        logger.warning("ingest.grn_receipt_hook_failed", exc_info=True)
+
+
 # ============================================================================ the service
 @dataclass
 class _Verdict:
