@@ -243,6 +243,7 @@ def test_gp24_kth_grn_line_of_an_item_takes_the_kth_spo_line(env):
     """Live GR-2026/09-0090 / SPO-2026/09-0010 shape: one GRN line per SPO line, the same
     item repeated (SRTWT167 BRW-BB x4: 106/24/195/675), and the GRN's Location CHANGED
     against the SPO's (BRW -> MWH): Location is never a key, and nothing is FIFO-split."""
+    _wh(env, "ZZAC-MWH")
     spo = _spo(env, "SPO-ZZ-0090", (env.p1, 106), (env.p1, 24), (env.p2, 5), (env.p1, 195),
                (env.p1, 675), warehouse_id=env.wh1)
     rec = _doc(800090, "ZZGRN-0090", [
@@ -306,7 +307,7 @@ def test_gp26b_repush_of_the_same_grn_keeps_its_own_line(env):
     again["Details"][0]["Qty"] = 99
     again["LastModified"] = "2026-07-28T10:00:00.000"
     r = _push(env, again)[REF]
-    assert "over_receipt" not in r["warnings"]
+    assert "over_receipt" not in r.get("warnings", [])
     assert _lines(env)[P2_LINE].spo_allocation_id == alloc
 
 
@@ -326,14 +327,18 @@ def test_gp_d2_adopting_a_split_excel_grn_merges_to_one_line(env):
                        quantity_picked=98, spo_allocation_id=line2, company_id=env.company)
     env.db.add_all([keep, gone])
     env.db.commit()
-    keep_id = str(keep.id)
+    keep_id, gone_id = str(keep.id), str(gone.id)
 
     rec = _doc(800750, "ZZGRN-0750", [("ZZAC-P1", 100, "ZZAC-WH1", "SPO-ZZ-0750")])
     r = _push(env, rec)["db1:GRN:800750"]
     assert r["outcome"] == "updated" and "adopted_by_doc_no" in r["warnings"]
     rows = env.grn_lines(header.id)
-    assert [(str(l.id), l.quantity_picked, l.spo_allocation_id) for l in rows] == [
-        (keep_id, 100, line1)]
+    # One row. Which of the two keeps its id is stored order, which the Excel rows (same
+    # transaction, no Seq) do not fix; either is one of the CRM's own ids, never a new one.
+    assert [(l.quantity_picked, l.spo_allocation_id) for l in rows] == [(100, line1)]
+    assert str(rows[0].id) in {keep_id, gone_id}
+    env.db.expire_all()
+    assert env.db.get(SPOAllocation, line2).quantity_received == 0  # the moved link released
 
 
 # ===================================================================== Q3 a, no source
@@ -416,5 +421,30 @@ def test_gp32_cancelled_grn_no_longer_consumes_spo_capacity(env):
 
     second = _another(_grn(line=1, doc_no="SPO-ZZ-0320"), 800002, "ZZGRN-0002", 820001)
     r = _push(env, second)["db1:GRN:800002"]
-    assert "over_receipt" not in r["warnings"]
+    assert "over_receipt" not in r.get("warnings", [])
     assert {l.dtl_key: l for l in env.grn_lines(env.grn(800002).id)}[820002].spo_allocation_id == alloc
+
+
+def test_gp_d3_product_not_on_the_spo_keeps_the_spo_number(env):
+    """D3 for an SPO: no header table, so the document link is `spo_number_raw`."""
+    _spo(env, "SPO-ZZ-0330", (env.p1, 10), warehouse_id=env.wh1)  # P1 only; line 1 is P2
+    r = _push(env, _grn(line=1, doc_no="SPO-ZZ-0330"))[REF]
+    assert "item_not_on_order" in r["warnings"]
+    line = _lines(env)[P2_LINE]
+    assert line.spo_allocation_id is None
+    assert line.spo_number_raw == "SPO-ZZ-0330"
+
+
+def test_gp_forward_matching_never_splits_an_autocount_grn_line(env):
+    """The Excel-side forward matcher FIFO-splits waiting lines into new rows; an AutoCount
+    GRN line is one row per DtlKey and waits for the ingest's own fill instead."""
+    from app.services.grn_spo_matching import forward_match_grn_lines_for_spo
+
+    _push(env, _grn(line=1, doc_no="SPO-ZZ-0340"))
+    line = _lines(env)[P2_LINE]
+    line.spo_number_raw = "SPO-ZZ-0340"  # as stated, still waiting for its SPO line
+    env.db.commit()
+    _spo(env, "SPO-ZZ-0340", (env.p2, 5), (env.p2, 15), warehouse_id=env.wh1)
+    result = forward_match_grn_lines_for_spo(env.db, "SPO-ZZ-0340", company_id=env.company)
+    assert result.candidate_lines == 0
+    assert len(env.grn_lines(env.grn(800001).id)) == 2
