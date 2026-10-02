@@ -7,14 +7,14 @@ could already import GRNs may pull them instead), integration roles excluded. `a
 granted explicitly too.
 
 Revision ID: grn_pull_0001_perm
-Revises: selfref_0001_n8n_sales_view
+Revises: acct_ledger_0002_vocab
 Create Date: 2026-10-02
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "grn_pull_0001_perm"
-down_revision = "selfref_0001_n8n_sales_view"
+down_revision = "acct_ledger_0002_vocab"
 branch_labels = None
 depends_on = None
 

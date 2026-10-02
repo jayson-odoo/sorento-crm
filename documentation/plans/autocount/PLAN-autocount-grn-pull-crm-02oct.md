@@ -1,8 +1,9 @@
 # PLAN: GRN pull from AutoCount with PO/SPO line linkage (GRN-PULL-CRM)
 
-Status: **built (ingest linkage, pull entity, compare, frontend); in Phase 3 review.** All
-card questions answered (Q3 a, Q4 a, Q5 a; Q1/Q2 replaced by line-order matching, owner
-accepted 2 Oct; D1 a, D2 a, D4 accept; D3 a by the owner). PR #1427. Track: full L (new permission slug + grant
+Status: **built, reviewed, crew e2e passed, owner hand test PASS (2 Oct); merge approved with
+ss#107. Migration re-parented onto `acct_ledger_0002_vocab` after #1432.** All card questions
+answered (Q3 a, Q4 a, Q5 a; Q1/Q2 replaced by line-order matching; D1 a, D2 a, D4 accept;
+D3 a). PR #1427. Track: full L (new permission slug + grant
 migration, prod data linkage, cross-repo with shared-service lane GRN-PULL-SS). Branch
 `claude/grn-pull-crm-2pnmf9` (the sandbox's designated branch; the brief named
 `crew/grn-pull-crm`), base `main` 066b966e. UAC: `autocount-grn-pull-crm-02oct-acceptance-criteria.md`
