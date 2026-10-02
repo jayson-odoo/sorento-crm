@@ -1,7 +1,8 @@
 # PLAN: Chatbot report engine (one catalogue, one spec, one executor)
 
-Status: building slice 1a, review fix round 1 (FULL track: new API-key route + a per-audience
-access rule; no migration). 1b (lane wiring) waits on the #1445 helper API. Card answered 2 Oct 2026 (`report-engine-behaviour-card.md`
+Status: slice 1a built and reviewed (reviewer + security-reviewer, two fix rounds closed);
+slice 1b (parser vocabulary + lane wiring) blocked on the #1445 required-field helper API relay.
+FULL track (new API-key route + a per-audience access rule; no migration). Card answered 2 Oct 2026 (`report-engine-behaviour-card.md`
 revision 2); section 0 below records how the answers change this plan, and wins over the
 sections after it where they differ.
 Lane: REPORT-ENGINE. Evidence: `report-engine-inventory.md` (deliverable 1, file:line for every
