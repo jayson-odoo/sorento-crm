@@ -15,12 +15,18 @@ demand inside the Total (prod: MWC7624-RL-S10 `Total 54 (O/S: 531)`, `BRW 0 (O/S
 ## Rule
 
 - Total O/S = sum of open SO qty on warehouses the contact may see: the same
-  `warehouse_criterion(policy, ...)` and active-warehouse filter the location lines use.
+  `warehouse_criterion(policy, ...)`, active-warehouse filter and question warehouse
+  narrowing (`warehouse_ids` / `warehouse_id`) the location lines use.
 - Open SO lines with no warehouse print on their own line, `Unassigned O/S: N`, only when N > 0,
   and are not added to Total O/S.
 - Open SO on a hidden warehouse is never shown or hinted.
 - No `contact_id` (staff grid, no policy): unchanged; the summary keeps the product total.
-- Open-SO aggregates AND the company predicate in by hand (column-only aggregate).
+- Company scope: the open-SO aggregates are already scoped by the session `do_orm_execute`
+  listener (`SalesOrderLine` is `CompanyScopedMixin`; the compiled SQL carries
+  `sales_order_lines.company_id IN (...)`). Guarded by a test, no code change.
+- Detailed mode under a policy: the per-product summary (`total_on_hand`, `open_so_qty`) is
+  narrowed the same way; it was summing hidden warehouses. The presenter does not render that
+  summary, so the reply text is unchanged there.
 
 ## UAC
 
@@ -29,3 +35,4 @@ demand inside the Total (prod: MWC7624-RL-S10 `Total 54 (O/S: 531)`, `BRW 0 (O/S
 2. No unassigned lines: no `Unassigned O/S` line.
 3. Staff call (no contact): Total O/S unchanged (all lines).
 4. Open SO of another company is not counted when the request is company scoped.
+5. A warehouse named in the question narrows Total O/S the same way it narrows the lines.

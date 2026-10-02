@@ -102,8 +102,8 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
             product_ids.add(str(pid))
     # TWO aggregations, and the split is the point (review, should-fix 5). A per-warehouse
     # ROW gets that warehouse's own open SO; the product SUMMARY row gets the product
-    # total, which is the per-warehouse quantities plus the lines that carry no
-    # `warehouse_id`. Subtracting the product total on every warehouse row - the first cut
+    # total (staff path: the per-warehouse quantities plus the lines that carry no
+    # `warehouse_id`; under a contact's policy: see below). Subtracting the product total on every warehouse row - the first cut
     # - reported the same demand two, three, four times over and printed "oversold" against
     # a warehouse that was not.
     open_so_by_warehouse, unlocated = service.open_so_qty_by_product_warehouse(
@@ -164,12 +164,12 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
             continue
         wid = str(getattr(row, "warehouse_id", "") or "")
         # A detailed row IS a (product, warehouse) pair. With no warehouse on the row at
-        # all there is nothing to narrow by, so it takes the product total - the same
-        # answer it had before, for the one row shape that has no better one.
+        # all there is nothing to narrow by, so it takes the product total (visible-only
+        # under a policy) - the one row shape that has no better answer.
         open_qty = open_so_by_warehouse.get((pid, wid), 0) if wid else open_so_total.get(pid, 0)
         _attach(serialized, open_qty, getattr(row, "quantity_on_hand", None))
-    # COMPACT entries: the product total on the entry (the unlocated remainder lives
-    # here only), and each warehouse line's own open SO on the location (D1, owner
+    # COMPACT entries: the product total on the entry (under a policy the unassigned
+    # remainder rides beside it as `unassigned_open_so_qty`), and each warehouse line's own open SO on the location (D1, owner
     # console pass 8 Sep: "*BRW:* 0 (O/S: 12)"). Locations carry a code, not an id, so the
     # codes are resolved once through the service.
     summary_entries = [e for e in (body.get("stock_summary") or []) if isinstance(e, dict)]

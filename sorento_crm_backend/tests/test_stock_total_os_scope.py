@@ -242,3 +242,32 @@ def test_open_so_aggregates_are_company_scoped(db):
 
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
     assert service.open_so_qty_by_product([p.id]) == {p.id: 550}
+
+
+@pytest.mark.parametrize("narrow", ["warehouse_ids", "warehouse_id"])
+def test_compact_total_os_follows_a_warehouse_named_in_the_question(db, narrow):
+    """"MWC7624 at W1" under an every-warehouse policy: the lines read W1 only, so the
+    Total's O/S is W1's 10, not W1 + W2 (17)."""
+    w1, _w2, p = _seed(db)
+    contact = _contact(db)
+    _policy(db, contact, mode="compact")
+    kwargs = {"warehouse_ids": [w1.id]} if narrow == "warehouse_ids" else {"warehouse_id": w1.id}
+
+    entry = _sellable_body(db, product_ids=[p.id], contact_id=contact.id, **kwargs)["stock_summary"][0]
+
+    assert entry["total_on_hand"] == 54
+    assert entry["open_so_qty"] == 10
+    assert entry["unassigned_open_so_qty"] == 3
+
+
+def test_detailed_summary_follows_a_warehouse_named_in_the_question(db):
+    w1, _w2, p = _seed(db)
+    contact = _contact(db)
+    _policy(db, contact, mode="detailed")
+
+    entry = _sellable_body(
+        db, product_ids=[p.id], contact_id=contact.id, warehouse_ids=[w1.id]
+    )["stock_summary"][0]
+
+    assert entry["total_on_hand"] == 54
+    assert entry["open_so_qty"] == 10

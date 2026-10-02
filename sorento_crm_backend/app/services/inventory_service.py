@@ -633,6 +633,9 @@ class StockService:
         # (None on the staff path). `_with_sellable` reads it so the product Total's O/S
         # is narrowed by the same location rule the lines are (STOCK-TOTAL-OS-SCOPE).
         self.resolved_policy = None
+        # The warehouses the question itself narrowed to (`warehouse_ids` AND the singular
+        # `warehouse_id`), None when it named none. Read beside `resolved_policy`.
+        self.requested_warehouse_ids: Optional[set[str]] = None
     
     def list_stock(
         self,
@@ -891,6 +894,16 @@ class StockService:
                 )
                 return payload
             q = q.filter(Stock.warehouse_id.in_(resolved_wh_ids))
+
+        # Both narrowings filter the rows (ANDed), so the Total's O/S answers the same set.
+        if warehouse_ids:
+            self.requested_warehouse_ids = {str(w) for w in warehouse_ids}
+        if resolved_wh_ids is not None:
+            named = {str(w) for w in resolved_wh_ids}
+            self.requested_warehouse_ids = (
+                named if self.requested_warehouse_ids is None
+                else self.requested_warehouse_ids & named
+            )
 
         if product_id:
             resolved_pid = _resolve_stock_product_id(self.db, product_id)
@@ -1196,9 +1209,10 @@ class StockService:
         return {str(code): str(wid) for code, wid in rows}
 
     def visible_warehouse_ids(self, policy) -> set[str]:
-        """The active warehouses a stock-visibility policy lets the contact see: the same
-        `warehouse_criterion` + active filter the location lines are read through, so a
-        total built on this set covers exactly the lines the reply can name."""
+        """The active warehouses a stock-visibility policy lets the contact see, narrowed
+        to the ones the question named (`requested_warehouse_ids`): the same
+        `warehouse_criterion` + active + requested filters the location lines are read
+        through, so a total built on this set covers exactly the lines the reply can name."""
         from app.services.stock_visibility import warehouse_criterion
 
         rows = (
@@ -1206,7 +1220,10 @@ class StockService:
             .filter(Warehouse.is_active.is_(True), warehouse_criterion(policy, Warehouse.id))
             .all()
         )
-        return {str(wid) for (wid,) in rows}
+        visible = {str(wid) for (wid,) in rows}
+        if self.requested_warehouse_ids is not None:
+            visible &= self.requested_warehouse_ids
+        return visible
 
     def on_hand_total_by_product(self, product_ids: list[str], policy=None) -> dict[str, int]:
         """`quantity_on_hand` summed over EVERY warehouse row of each product (review round
@@ -1299,7 +1316,8 @@ class StockService:
         each - "Sellable 0 (oversold by 80)" against a warehouse holding 20, which is
         arithmetic the customer can see is wrong. The plan is explicit: per warehouse
         where the SO line has one, and the remainder (lines with no `warehouse_id`) on
-        the PRODUCT TOTAL row only, never spread across the warehouse rows. A0 measured
+        the PRODUCT TOTAL row only, never spread across the warehouse rows (under a
+        contact's policy it rides beside the total instead, STOCK-TOTAL-OS-SCOPE). A0 measured
         that remainder at 0.8% of open lines, which is why it is a small correction and
         not a redesign - but a small correction applied to every row is still wrong on
         every row.
