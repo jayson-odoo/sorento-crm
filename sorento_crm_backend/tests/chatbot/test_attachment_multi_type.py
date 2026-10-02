@@ -808,3 +808,66 @@ class TestThePickKeepsBothTypes:
         assert set(map(str, fetches[-1].get("attachment_type_ids") or [])) == {photos_id, specs_id}, fetches
         assert f"{photo_code} has no {second}." in reply2, reply2
         assert "escalate" not in reply2.lower(), reply2
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling 2 Oct 2026 (hand test "photo and cert for strwc286"): a product that
+# is not found and has no did-you-mean candidate is named alone, offer kept
+# --------------------------------------------------------------------------- #
+
+
+class TestUnfoundProductWithNoCandidates:
+    def _lane_with_no_candidates(self, session_factory, monkeypatch, *, two_types: bool):
+        """The dev trace's own shape (turn 641, 2 Oct): the product token matched nothing
+        and the resolver had no alternatives for it (best trigram 0.25 < the 0.30 floor);
+        the document words resolved. A literal payload, like #750's AC-3, because the blank
+        schema has no pg_trgm."""
+        import copy
+
+        company_id = base._seed_company(session_factory, name="ZZT Unfound Co")
+        base._seed_contact_in(session_factory, [company_id])
+        base._seed_product(session_factory, company_id=company_id, code=SH)
+        photos = base._seed_attachment_type(session_factory, PHOTOS)
+        cert = base._seed_attachment_type(session_factory, "Certification", is_certificate=True)
+        db = session_factory()
+        set_company_scope(db, frozenset({company_id}))
+        services = base._probe_services(db, monkeypatch, calls=[])
+        parser = base._parser(product_raw="strwc286")
+        resolved = base.TestD1Surfaces()._resolver_payload(token="strwc286", products=[], type_uuid=photos)
+        if two_types:
+            parser["entities"].append(
+                {"raw": "cert", "hint": "attachment_type", "canonical_code": "certificate",
+                 "confident": True, "current_message": True}
+            )
+            extra = copy.deepcopy(resolved["resolutions"][1])
+            extra["token"] = "cert"
+            extra["matches"][0].update(
+                {"canonical_code": "Certification", "uuid": cert, "display": {"type_name": "Certification"}}
+            )
+            resolved["resolutions"].append(extra)
+            resolved["tokens"].append("cert")
+        _resolved, gate, offer = base._run_lane(
+            db, services, parser=parser, text="photo and cert for strwc286", resolved=resolved
+        )
+        return gate, offer
+
+    def test_two_types_reply_names_only_the_unfound_product_and_keeps_the_offer(
+        self, session_factory, monkeypatch
+    ) -> None:
+        gate, offer = self._lane_with_no_candidates(session_factory, monkeypatch, two_types=True)
+
+        message = offer.get("escalate_message") or ""
+        assert gate.get("gate_passed") is False, gate.get("gate_reason")
+        assert offer.get("suggest_offer") is not True, offer.get("suggest_response")
+        assert message == (
+            'Couldn\'t find "strwc286" (product). '
+            "Would you like me to escalate to marketing product team?"
+        ), message
+
+    def test_one_type_reply_is_the_same_shape(self, session_factory, monkeypatch) -> None:
+        _gate, offer = self._lane_with_no_candidates(session_factory, monkeypatch, two_types=False)
+
+        message = offer.get("escalate_message") or ""
+        assert message.startswith('Couldn\'t find "strwc286" (product).'), message
+        assert "matched these" not in message and "Here's what you want" not in message, message
+        assert "Would you like me to escalate to" in message, message
