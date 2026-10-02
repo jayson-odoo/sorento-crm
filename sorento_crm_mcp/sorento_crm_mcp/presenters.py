@@ -1409,8 +1409,9 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
             fields.append({"key": "product_code", "label": "Product Code", "value": code_field})
         total = _stock_int(entry.get("total_on_hand"))
         # D1 (owner console pass, 8 Sep 2026): with `include_sellable` the Total and every
-        # warehouse line carry an "(O/S: n)" suffix - the product's open SO on the Total
-        # (the unlocated remainder lives there only), the warehouse's own on its line. The
+        # warehouse line carry an "(O/S: n)" suffix - the open SO on the warehouses the
+        # contact may see on the Total (STOCK-TOTAL-OS-SCOPE: never a hidden warehouse's,
+        # and the unassigned remainder is its own line below), the warehouse's own on its line. The
         # suffix is a `granted_value` on a keyed, RESTRICTED field: the CRM's field drop
         # swaps it in under `inventory.sellable` and strips it otherwise, so the plain
         # number is what an ungranted contact reads and nothing is dropped. Without
@@ -1444,6 +1445,13 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
                 # No `key` on the plain pair: the label IS data (the location the contact
                 # is allowed to see), not a CRM field name a consumer could match on.
                 fields.append({"label": str(code), "value": qty})
+        # STOCK-TOTAL-OS-SCOPE (owner decision 2 Oct 2026): open SO with no warehouse is
+        # not part of the Total's O/S, so it gets its own line, only when there is some.
+        # Keyed and restricted with no plain value: an ungranted contact reads nothing.
+        unassigned = _stock_int(entry.get("unassigned_open_so_qty"))
+        if with_os and isinstance(unassigned, int) and unassigned > 0:
+            fields.append({"key": "unassigned_open_so_qty", "label": "Unassigned O/S", "value": unassigned})
+            b.restrict("unassigned_open_so_qty", "inventory.sellable")
         b.raw_item(entry.get("product_code"), fields, dict(entry.get("flags") or {}))
 
 def _availability_entries(payload: dict) -> list[dict]:

@@ -6,6 +6,8 @@ last_updated_at, has_result}.
 """
 import json
 
+import pytest
+
 from sorento_crm_mcp.presenters import present_response
 
 
@@ -1860,3 +1862,43 @@ def test_incoming_rows_that_differ_still_print_apart():
     ]
     out = env("crm_incoming_stock_list", {"data": rows})
     assert len(out["items"]) == 2
+
+
+def _compact_with_unassigned(unassigned):
+    entry = {
+        "product_id": "p1", "product_code": "MWC7624-RL-S10", "product_name": "MWC7624-RL-S10",
+        "total_on_hand": 54, "open_so_qty": 0, "sellable": 54,
+        "locations": [
+            {"warehouse_code": "BRW", "quantity_on_hand": 0, "open_so_qty": 0},
+            {"warehouse_code": "MWH", "quantity_on_hand": 54, "open_so_qty": 0},
+        ],
+        "flags": {},
+    }
+    if unassigned is not None:
+        entry["unassigned_open_so_qty"] = unassigned
+    return env("crm_inventory_stock_balance_list", {
+        "data": [],
+        "stock_visibility": {"mode": "compact", "source": "access_type"},
+        "stock_summary": [entry],
+    })
+
+
+def test_stock_compact_unassigned_os_is_its_own_restricted_line_after_the_locations():
+    """STOCK-TOTAL-OS-SCOPE: open SO with no warehouse is not in the Total's O/S; it rides
+    as `Unassigned O/S: N`, keyed and restricted with no plain value, so an ungranted
+    contact reads nothing of it."""
+    out = _compact_with_unassigned(12)
+    fields = out["items"][0]["fields"]
+    assert [f["label"] for f in fields] == ["Product Code", "Total", "BRW", "MWH", "Unassigned O/S"]
+    assert fields[1]["granted_value"] == "54 (O/S: 0)"
+    assert fields[-1] == {"key": "unassigned_open_so_qty", "label": "Unassigned O/S", "value": 12}
+    assert "granted_value" not in fields[-1]
+    assert out["restricted_fields"]["unassigned_open_so_qty"] == "inventory.sellable"
+
+
+@pytest.mark.parametrize("unassigned", [None, 0])
+def test_stock_compact_no_unassigned_line_when_there_is_none(unassigned):
+    out = _compact_with_unassigned(unassigned)
+    labels = [f["label"] for f in out["items"][0]["fields"]]
+    assert "Unassigned O/S" not in labels
+    assert "unassigned_open_so_qty" not in out["restricted_fields"]
