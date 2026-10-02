@@ -37,6 +37,17 @@ Mock: `documentation/mockups/ACCESS-MODEL/index.html` (v3). IDs AC-AM-n.
   "Sorento/Cabana/Mocha Office" access types no longer decide customer scope.
 - AC-AM-10 No validity window: access does not lapse on a date (today's grants all end 2026-12-30/31).
 
+## Owner additions (pending answers to ask Q1-Q4)
+
+- AC-AM-22 A contact may hold several roles at once (e.g. Sales office and Dealer); grants are the union;
+  `sees_all_customers` and staff behaviour apply if ANY held role has them; a contact remove-override
+  still beats every role.
+- AC-AM-23 Tier (Dealer / Office / End user) is a property of the role (`audience_tier`), not a single
+  contact picker; a contact with Dealer and Office roles gets staff behaviour and promotions for both tiers.
+- AC-AM-24 The incoming stamp and the product-attachment stamp are tree fields ticked on every seeded
+  role; unticking one for a contact makes that contact's rosters print without it (and without the
+  "None of these have incoming stock right now." line); the roster rows and order are unchanged.
+
 ## Enforcement and prompt read ONE tree
 
 - AC-AM-11 `effective_access(db, contact)` is the only reader of roles/overrides for a chat turn. Both

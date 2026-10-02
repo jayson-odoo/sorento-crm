@@ -9,6 +9,42 @@ Inputs: behaviour card `CARD-access-model-2oct.md` (owner answers Q1, Q3, Q4, Q5
 built on (a)), UAC `access-model-2oct-acceptance-criteria.md`, mock v3
 `documentation/mockups/ACCESS-MODEL/index.html`. Paths under `sorento_crm_backend/app/` unless shown.
 
+## Owner additions (2 Oct, later): multi-role, stamps, region
+
+**A. More than one role per contact.** The model already allows it (`contact_chatbot_roles` PK is the
+pair; the Access tab shows role chips). The single-valued picker the owner means is the chatbot
+**Tier** select (Dealer / Office / End user), `ContactChatbotSection.tsx:90-94,199-206`, stored as
+`respond_contacts.chatbot_profile.tier` (one string, `turn/state.py:166`). Contact access types are
+already multi (checkboxes, `ContactEditDialog.tsx:280-300`; on the prod copy 49 contacts hold more than one, 25 hold all 7).
+Tier is read in three places: staff behaviour (`is_staff_profile`, tier == office: no bot escalation
+offers, `turn/state.py:192-203`), the default promotion tier (`turn/narrow.py:411,426`), and the
+profile line the parser sees (`turn/memory.py:447-448`). Proposed (pending owner, ask Q1/Q2):
+- each role carries an `audience_tier` (dealer / office / end_user / none); a contact's tiers = the
+  set over its roles; the Tier picker on the Chatbot tab is removed (one place to set it);
+- conflict rule = UNION, most permissive: grants are the union of roles; `sees_all_customers` if any
+  role has it; staff behaviour if any role is office; promotions answer for every tier held (the
+  narrower already accepts a list, `turn/narrow.py:414-424`). Restrictions for one person are a
+  contact remove-override, which beats every role (AC-AM-5);
+- unaffected by roles: stock visibility mode (Q5, per contact) and the dealer salesman referral that
+  reads it (`turn/state.py:184-190`).
+
+**B. Per-contact stamp switches.** Two stamps today:
+- incoming: " - has incoming" / " - no incoming" on a product roster line plus "None of these have
+  incoming stock right now." (`lanes/business/pickers.py:82-118`; carried as data
+  `incoming_by_code`; turn roster `turn_runtime.py:2304-2305`);
+- product attachment: per-uuid has/no attachment stamp (`lanes/business/answer.py:4160-4180`,
+  `miss_suggest.py:573`).
+Proposed (pending owner, ask Q3/Q4): two `field` rows in the tree, `stamp.incoming` under Incoming stock
+and `stamp.product_attachment` under Product attachments, ticked on every seeded role so today's
+behaviour holds; the per-contact switch is the existing field override (untick on the Access tab).
+Hidden stamp = the line prints bare and the "None of these have incoming" sentence is dropped; the
+roster itself is unchanged. Mock change: two extra rows (flagged; mock v5 after the answers).
+
+**C. Region (REGION-PACKING-LIST lane, coming).** Region (West / East Malaysia; East sees both) is a
+SCOPE dimension like customer scope, not a domain: proposed shape for that lane is a role flag set or a
+contact-level value read through `EffectiveAccess` (add `regions: frozenset[str]`), so enforcement keeps
+one reader. Answered when that lane asks.
+
 ## Key design choice: keep every enforcement seam, change only what fills it
 
 Today four seams already enforce access, keyed on strings:
