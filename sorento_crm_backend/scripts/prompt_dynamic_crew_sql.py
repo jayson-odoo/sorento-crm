@@ -230,6 +230,9 @@ def _pdyn_0004_sql() -> str:
             f"INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), {_q(word)}, {i}) "
             "ON CONFLICT (word) DO NOTHING;"
         )
+    order = _load("pdyn_0005_access_level_order.py")
+    for i, name in enumerate(order.ACCESS_LEVEL_ORDER, start=1):
+        lines.append(f"UPDATE contact_access_types SET sort_order = {i} WHERE is_active AND name = {_q(name)};")
     return "\n".join(lines)
 
 

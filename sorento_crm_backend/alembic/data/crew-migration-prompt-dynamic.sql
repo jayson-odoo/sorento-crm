@@ -22,6 +22,13 @@ INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(
 INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'forms', 16) ON CONFLICT (word) DO NOTHING;
 INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'shipment', 17) ON CONFLICT (word) DO NOTHING;
 INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'GRN', 18) ON CONFLICT (word) DO NOTHING;
+UPDATE contact_access_types SET sort_order = 1 WHERE is_active AND name = 'Sorento Dealer';
+UPDATE contact_access_types SET sort_order = 2 WHERE is_active AND name = 'Mocha Dealer';
+UPDATE contact_access_types SET sort_order = 3 WHERE is_active AND name = 'Mocha Office';
+UPDATE contact_access_types SET sort_order = 4 WHERE is_active AND name = 'Cabana Dealer';
+UPDATE contact_access_types SET sort_order = 5 WHERE is_active AND name = 'Cabana Office';
+UPDATE contact_access_types SET sort_order = 6 WHERE is_active AND name = 'End User';
+UPDATE contact_access_types SET sort_order = 7 WHERE is_active AND name = 'Sorento Office';
 DO $crew$
 DECLARE
 r_teams text := 'purchasing|purchasing_certification|customer_service|marketing_product|marketing_form|warehouse|marketing_promotion|it_admin';
