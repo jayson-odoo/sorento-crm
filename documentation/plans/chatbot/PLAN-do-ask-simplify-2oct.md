@@ -15,7 +15,10 @@ reviewer joins).
   `so_outstanding` order buckets (no delivery date to range over) are exempt too.
 - Q4 (a): one switch per field (five keys).
 - Q5: EVERY existing contact gets the five grants at deploy (all are internal; crew data: tier
-  is NULL for all 100 dev contacts); new contacts start hidden.
+  is NULL for all 100 dev contacts); new contacts start hidden. Owner rule change (2 Oct
+  2026, after the tester pass): every existing contact ENDS with all five switched ON, a switch
+  already off is turned on (`ON CONFLICT ... DO UPDATE SET granted = true`), so no current user
+  sees any change; dealers are not in yet, so none is left out (closes security S3).
 - Q6: header grouping as proposed.
 
 ## As built

@@ -10,9 +10,11 @@ reveals (`contact_field_reveals`, keys `delivery_orders.*`), hidden by default. 
 the five here; a contact created after this migration starts with them hidden, and the owner
 adjusts per contact on Contacts > Access > Field reveals.
 
-Data only, idempotent: `ON CONFLICT DO NOTHING` on (contact, key), so a key an admin already
-revoked stays revoked. A create_all database has no contacts to seed, so
-`scripts.bootstrap_env` needs nothing.
+Owner rule change (2 Oct 2026): every EXISTING contact ends with ALL five switched on, so no
+current user sees any change; a DO switch already off (an earlier seed, a test copy) is turned
+on (`ON CONFLICT ... DO UPDATE SET granted = true`), and the owner adjusts per contact after.
+Dealer contacts are not in yet, so none is left out. Data only and idempotent. A create_all
+database has no contacts to seed, so `scripts.bootstrap_env` needs nothing.
 
 The downgrade deletes EVERY row for the five keys, including grants and revocations an
 admin made after the upgrade; that is safe because the code before this lane never reads
@@ -36,14 +38,14 @@ KEYS = (
 
 
 def seed_do_reveals(bind) -> None:
-    """Grant the five keys to every existing respond contact."""
+    """Switch the five keys ON for every existing respond contact."""
     for key in KEYS:
         bind.execute(
             sa.text(
                 "INSERT INTO contact_field_reveals (id, respond_contact_id, field_key, granted, created_by) "
                 "SELECT gen_random_uuid(), c.id, :key, true, 'migration:do_ask_0001_reveals' "
                 "FROM respond_contacts c "
-                "ON CONFLICT (respond_contact_id, field_key) DO NOTHING"
+                "ON CONFLICT (respond_contact_id, field_key) DO UPDATE SET granted = true"
             ),
             {"key": key},
         )
