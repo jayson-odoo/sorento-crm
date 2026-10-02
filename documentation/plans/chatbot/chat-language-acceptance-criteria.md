@@ -136,13 +136,13 @@ are never translated.
 | Order Date | Tarikh Pesanan | 订单日期 |
 | Actual Delivery Date | Tarikh Penghantaran Sebenar | 实际送货日期 |
 | Status | Status | 状态 |
-| Pickup Time | Masa Ambil | 提货时间 |
+| Pickup Time | Masa Pengambilan | 提货时间 |
 | Transporter | Pengangkut | 运输商 |
 | Driver | Pemandu | 司机 |
 | Lorry Plate | No. Plat Lori | 车牌号 |
 | Products | Produk | 产品 |
 | SO Number | No. SO | SO 编号 |
-| Outstanding Qty | Kuantiti Belum Dihantar | 未交货数量 |
+| Outstanding Qty | Kuantiti Tertunggak | 未交货数量 |
 | Requested Delivery Date | Tarikh Penghantaran Diminta | 要求送货日期 |
 | PO Number | No. PO | PO 编号 |
 | Ordered Qty | Kuantiti Dipesan | 订购数量 |
@@ -162,8 +162,8 @@ are never translated.
 | Cost after discount / unit | Kos selepas diskaun / unit | 折后单位成本 |
 | Here are the orders I found. | Berikut ialah pesanan yang saya temui. | 以下是我找到的订单。 |
 | Here is the PO placed I found. | Berikut ialah PO yang telah dibuat. | 以下是已下的 PO。 |
-| Here is the last SPO line per product. | Berikut ialah baris SPO terakhir bagi setiap produk. | 以下是每个产品的最后一行 SPO。 |
-| Here is the last purchase cost per product and location. | Berikut ialah kos belian terakhir bagi setiap produk dan lokasi. | 以下是每个产品和位置的最后采购成本。 |
+| Here is the last SPO line per product. | Berikut ialah baris SPO terakhir bagi setiap produk. | 以下是每个产品最近的 SPO 记录。 |
+| Here is the last purchase cost per product and location. | Berikut ialah kos belian terakhir bagi setiap produk dan lokasi. | 以下是每个产品和位置最近一次的采购成本。 |
 | Here is the outstanding SO I found. | Berikut ialah SO belum dihantar yang saya temui. | 以下是我找到的未交货 SO。 |
 | Here are the outstanding orders I found. | Berikut ialah pesanan belum dihantar yang saya temui. | 以下是我找到的未交货订单。 |
 | Here are the delivered orders I found. | Berikut ialah pesanan yang telah dihantar. | 以下是我找到的已送货订单。 |
@@ -171,6 +171,22 @@ are never translated.
 | No matching results found for {companies}. | Tiada hasil yang sepadan ditemui untuk {companies}. | 在 {companies} 中未找到匹配的结果。 |
 | Here are the results I found. | Berikut ialah hasil yang saya temui. | 以下是我找到的结果。 |
 | EXPIRED | TAMAT TEMPOH | 已过期 |
+| Customers | Pelanggan | 客户 |
+| SO | SO | SO |
+| SO Date | Tarikh SO | SO 日期 |
+| Ordered | Dipesan | 订购 |
+| Transferred to DO | Dipindahkan ke DO | 已转 DO |
+| SO Outstanding | SO Tertunggak | SO 未交货 |
+| DO | DO | DO |
+| DO Date | Tarikh DO | DO 日期 |
+| Delivered | Dihantar | 已送货 |
+| Delivery Date | Tarikh Penghantaran | 送货日期 |
+| DO Outstanding | DO Tertunggak | DO 未送达 |
+| Not every breakdown is shown (em dash) add a customer, a product or a date range. | Tidak semua pecahan dipaparkan. Tambah pelanggan, produk atau julat tarikh. | 并非所有明细都已显示，请加上客户、产品或日期范围。 |
+| No orders found for {codes}. | Tiada pesanan ditemui untuk {codes}. | 未找到 {codes} 的订单。 |
+| No last in found for {codes}. | Tiada SPO ditemui untuk {codes}. | 未找到 {codes} 的 SPO。 |
+| No outstanding purchase orders found for {codes}. | Tiada PO ditemui untuk {codes}. | 未找到 {codes} 的 PO。 |
+| No last purchase cost found for {codes}. | Tiada kos belian ditemui untuk {codes}. | 未找到 {codes} 的采购成本。 |
 | PENDING ALLOCATION | MENUNGGU PERUNTUKAN | 待分配 |
 | PARTIAL ALLOCATION | PERUNTUKAN SEBAHAGIAN | 部分分配 |
 
@@ -212,12 +228,17 @@ byte-exactly). For each line, the first rule that matches wins:
 1. **Exact sentence:** the whole line, or the line inside one formatting wrapper (`*x*`,
    `*_x_*`, `_x_`), is a catalog entry (exact or `{token}` template). The wrapper is kept.
 2. **Numbered:** `"<n>. <rest>"` where `<rest>` matches rule 1. The number is kept.
-3. **Label line:** `"<label>: <value>"`, split at the first `": "`, where `<label>` is
-   catalogued. The value is unchanged except for two cases:
-   - A value of exactly `all` becomes the catalog word for "all".
-   - A value matching `dd/mm/yyyy to dd/mm/yyyy` gets the catalog's `{from} to {to}` template.
-   - Anything else in the value is untouched, including Qty, RM, O/S, codes, names and
-     `Unassigned`.
+3. **Label line:** the line is `"<label>: <value>"` or the bold form `"*<label>:* <value>"`,
+   optionally led by `"<n>. "`. It splits at the first `": "` / `":* "`, and `<label>` must be
+   catalogued. The label is translated and the wrapper and number are kept. The value is
+   unchanged except in three cases:
+   - It is exactly one of the value words `VALUE_WORDS = {"all", "Amount", "Quantity",
+     "Ordered", "Delivered (transferred to DO)"}`, which become their catalog translation.
+     This set is explicit, never "any catalog key", so data such as a status named "Status"
+     is never translated.
+   - It matches `dd/mm/yyyy to dd/mm/yyyy`, which gets the catalog's `{from} to {to}`
+     template.
+   - Anything else in the value (Qty, RM, O/S, codes, names, `Unassigned`) is left as it is.
 4. **Otherwise** the line is unchanged.
 
 **Never translated:**
@@ -319,3 +340,24 @@ presenter (`:2915-2916`), so it is one catalog entry per noun.
 - **AC-CL34:** the outstanding offer re-print (stored English `offer_text`) prints in the
   turn's language when re-asked.
 - **AC-CL35:** no localizer or `en`: both reports are byte-identical to today.
+
+## Known gaps (slice 4)
+
+- The multi-company total-miss line `*{names}:* no {what} records found for ...`
+  (`lanes/business/fetch.py` ~3168-3187) and the presenter's "A or B" company join
+  (`presenters.py::_company_names`, ~1641) stay English until slice 4.
+- The EXPIRED / PENDING ALLOCATION / PARTIAL ALLOCATION flag lines are translated, but no slice 2
+  tool sets those flags today.
+- The summary table rows above: the truncation notice key carries an em dash in the presenter
+  (the catalog spells it with an escape); SO and DO labels are identity entries, kept so the
+  table is explicit.
+
+**Rulings on the tester's contract questions (2 Oct):**
+- Rule 3 carries the explicit `VALUE_WORDS` set (AC-CL33's `Ranked by: 金额` stands).
+- Rule 3 covers the bold detail rows of `_outstanding_detail` (`1. *SO Number:* X`, `*DO Qty:* 5`).
+- AC-CL34's seams are `compose_question(pending, state, localizer=None)` and
+  `_outstanding_detail_reoffer(..., localizer=None)`; the engine passes the turn's localizer
+  (`engine.py:~5378`, `lanes/business/__init__.py:~1385`). The stored `filters.offer_text`
+  stays English.
+- Singular titles are tested by behaviour, not exact keys. The ceiling note is localized
+  through the lane notes that `fetch.py:~2553` prepends.
