@@ -831,11 +831,10 @@ def test_customer_ids_echo_the_resolved_names_in_the_header(client, db):
 
 
 def test_customer_header_dedupes_ledger_names(client, db):
-    """AC-1163 (R19, 13 Sep 2026) joined DISTINCT ledger names. The owner REVERSED it on
-    2 Oct 2026 (CUSTOMER-GROUP): the header names a customer COMPANY once - its customer
-    group, else the name rule's shared label - never ledger by ledger, and with no count.
-    These six FULLSHUN ledgers (the asterisk and `[A/C III]` are ledger data) share one name
-    rule family and no group, so the header is their shared label, once."""
+    """AC-1163 (R19, 13 Sep 2026): DISTINCT ledger names, first-seen order. Briefly reversed
+    on 2 Oct 2026 for CUSTOMER-GROUP, then restored by the owner's ruling (b) the same day:
+    "we shouldn't do automated process like this, very dangerous". Only an explicit customer
+    group joins ledgers; an ungrouped ledger prints its own name, identical names once."""
     plain_1 = customer(db, company_id=DEFAULT_COMPANY_ID, name="FULLSHUN SANITARYWARE SDN BHD")
     plain_2 = customer(db, company_id=DEFAULT_COMPANY_ID, name="FULLSHUN SANITARYWARE SDN BHD")
     plain_3 = customer(db, company_id=DEFAULT_COMPANY_ID, name="FULLSHUN SANITARYWARE SDN BHD")
@@ -853,7 +852,11 @@ def test_customer_header_dedupes_ledger_names(client, db):
     ids = ",".join([plain_1.id, plain_2.id, plain_3.id, showcase.id, ac3_1.id, ac3_2.id])
     resp = client.get(BASE, params={"customer_ids": ids, "scope": "so"})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["customer_name"] == "FULLSHUN SANITARYWARE SDN BHD", resp.json()
+    assert resp.json()["customer_name"] == (
+        "FULLSHUN SANITARYWARE SDN BHD, "
+        "*FULLSHUN SANITARYWARE SDN BHD (SHOWCASE), "
+        "FULLSHUN SANITARYWARE SDN BHD [A/C III]"
+    ), resp.json()
 
 
 def test_customer_header_names_the_customer_group_on_the_route(client, db):

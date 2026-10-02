@@ -1,6 +1,6 @@
 """CUSTOMER-GROUP, owner requirement 2 Oct 2026: the report's `customer_name` echo
 (`outstanding_report_service._customer_echo`, which every `Customer:` header of the report
-lanes prints) names a customer COMPANY once, by its customer group, name rule as the fallback.
+lanes prints) names a customer COMPANY once, by its customer group, an ungrouped ledger under its own name (owner ruling (b), 2 Oct: no automatic name-rule joining).
 
 The owner REVERSED AC-1163 (distinct ledger names joined) on 2 Oct 2026: ledgers of one
 group print as the group name only, no count. Postgres only (`blank_session`); every row is
@@ -99,7 +99,7 @@ def test_echo_for_six_hanlim_ledgers_is_the_group_name_only():
         assert _customer_echo(db, None, ids) == HANLIM
 
 
-def test_echo_falls_back_to_the_name_rule_for_ungrouped_ledgers():
+def test_echo_prints_ungrouped_ledgers_by_their_own_names():
     from app.services.outstanding_report_service import _customer_echo
 
     with blank_session() as db:
@@ -113,4 +113,7 @@ def test_echo_falls_back_to_the_name_rule_for_ungrouped_ledgers():
             ],
         )
 
-        assert _customer_echo(db, None, ids) == "CHENG HUAT HARDWARE (SENTUL) SDN BHD, KEDAI X SDN BHD [A/C I]"
+        assert _customer_echo(db, None, ids) == (
+            "CHENG HUAT HARDWARE (SENTUL) SDN BHD [A/C I], "
+            "CHENG HUAT HARDWARE (SENTUL) SDN BHD [A/C II], KEDAI X SDN BHD [A/C I]"
+        )
