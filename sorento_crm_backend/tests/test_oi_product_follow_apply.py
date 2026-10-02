@@ -4,8 +4,10 @@ The planning board applies a `product_changed` row: the line's order inquiry row
 restated IN PLACE on the new product, exactly the way a qty / date change already is
 (`_settle_row_in_place`), with the old code kept as `previous_item_code` ("was X").
 
-Recommended path of the behaviour card (Q1 (a): on apply; Q2 (a): a link on a document of
-the OLD product is given back, never re-pointed). Owner answer pending when written.
+Owner rulings 2 Oct (plan R1/R2/R4): the switch happens when CS clicks Confirm in
+fulfilment planning (the apply); a link already on the row is KEPT and the change is
+flagged with the existing qty/date mechanism (acknowledged -> changed, `changed_at`); the
+handover email says "CHANGE ITEM CODE TO <new> (WAS <old>)".
 
 Runs on the real database, rolled back (same fixture as the board-apply suite).
 """
@@ -24,6 +26,11 @@ from app.models.project_so import (
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.scm.outstanding_diff import PRODUCT_CHANGED, Change, Line
 
+from .test_order_inquiry_handover_automation import (
+    _captured_dispatches,
+    _handover_calls,
+    _register,
+)
 from .test_planning_change_apply_on_board import (  # noqa: F401 - fixtures reused
     _build,
     _confirm,
@@ -147,8 +154,11 @@ def test_an_acknowledged_row_goes_back_to_to_confirm_on_a_product_swap(api):
     assert row.changed_at is not None
 
 
-def test_a_link_on_the_old_products_po_is_given_back_not_re_pointed(api):
-    fx = _swap_fixture(api, linked=True)
+def test_a_linked_row_keeps_its_link_and_is_flagged_changed(api):
+    """R2: the link follows AutoCount and flows through - nothing is unlinked - and the
+    change is flagged the way a qty/date change on a linked row already is."""
+    fx = _swap_fixture(api, linked=True, acknowledged=True)
+    link_id = str(fx["link"].id)
 
     response = _apply(fx)
     assert response.status_code == 200, response.text
@@ -157,11 +167,53 @@ def test_a_link_on_the_old_products_po_is_given_back_not_re_pointed(api):
 
     row = _live_order_rows(fx)[0]
     assert row.item_code == fx["new"].product_code
+    assert row.previous_item_code == fx["old"].product_code
     links = ProjectOrderInquiryService(fx["world"].db)._links_of(row.id)
-    assert links == [], (
-        "Q2 (a): a PO line for the OLD product is not cover for the new one"
+    assert [str(link.id) for link in links] == [link_id], "R2: the link is kept"
+    assert Decimal(str(links[0].qty)) == Decimal("10")
+    assert row.ack_state == ACK_CHANGED
+    assert row.changed_at is not None
+
+
+def test_handover_email_says_change_item_code_to_new_was_old(api, monkeypatch):
+    """R4: on Confirm the handover line to purchasing names the change, in the REMARK
+    beside the qty/date phrases, and prints the NEW code in ITEM CODE."""
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    fx = _swap_fixture(api, acknowledged=True)
+    calls.clear()
+
+    response = _apply(fx)
+    assert response.status_code == 200, response.text
+    fx["world"].db.commit()
+
+    matches = _handover_calls(calls)
+    assert matches, "a product change must dispatch a handover"
+    lines = matches[-1]["context"]["handover"]["lines"]
+    mine = [entry for entry in lines if entry["item_code"] == fx["new"].product_code]
+    assert len(mine) == 1, lines
+    expected = (
+        f"CHANGE ITEM CODE TO {fx['new'].product_code} (WAS {fx['old'].product_code})"
     )
-    assert "202609-S0776" in (row.note or ""), "the give-back is stamped on the row"
+    assert expected in mine[0]["remark"], mine[0]
+    assert (mine[0]["was"] or {}).get("item_code") == fx["old"].product_code
+
+
+def test_handover_remark_joins_product_and_qty_change():
+    """R4, pure: product + qty in one settle read as one REMARK, qty phrase first."""
+    from types import SimpleNamespace
+
+    from app.services.project_order_inquiry_service import handover_remark
+
+    row = SimpleNamespace(
+        verb=IV_ORDER, qty=Decimal("15"), delivery_date=DUE, cited_document=None,
+        note=None, item_code="MWCY7604-SH",
+    )
+    remark = handover_remark(
+        "settled", row, {"qty": Decimal("10"), "item_code": "MWCY7604"}
+    )
+    assert remark == "ORDER 5, CHANGE ITEM CODE TO MWCY7604-SH (WAS MWCY7604)"
 
 
 def test_a_plain_qty_settle_writes_no_previous_item_code(api):
