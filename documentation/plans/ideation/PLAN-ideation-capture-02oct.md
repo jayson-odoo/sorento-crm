@@ -196,6 +196,28 @@ Photos or files (always listed, since photos are no longer picked up from the ch
 
 ## 3. Owner answers
 
-(pending)
+| Q | Answer |
+|---|---|
+| Q1 | **(a)**, crew 2 Oct: crew spawned ss lane SS-IDEATION-OWN (one-shot create returning id + idea number, own-similar lookup by phone / CRM user id and never by name, embed `mine=true` + `isMine`, assertion `phone` claim). This lane builds the CRM side against that contract; SS-IDEATION-OWN posts the final API contract and crew relays it. |
+| Q2-Q5 | (with the owner) |
 
-## 4. Slices (filled in after section 3)
+## 4. CRM side of the SS-IDEATION-OWN contract (provisional until ss posts the final one)
+
+- Assertion: `mint_embed_assertion` gains a `phone` claim = `respond_contacts.phone_number` of the
+  contact linked by `users.respond_contact_id`; the claim is absent when the user has no linked
+  contact or the contact has no phone. That is the same value the chatbot sends ss as
+  `submitter_contact_id` (`ideation_turn_service.py:980`), so the join is exact, never by name.
+- Gateway list: `GET /api/v1/ideation/ideas?mine=true` forwards `mine=true` to ss
+  `GET /embed/ideas`; any other `mine` value is dropped. `isMine` on each idea is relayed as ss
+  sends it (the gateway already relays bodies unchanged).
+- FE: `IdeaListParams.mine`, `Idea.isMine`; the list toolbar gets a My ideas | All ideas toggle
+  (`components/ui/toggle-group.tsx`), default All ideas (today's behaviour), state in the URL as
+  `?view=mine` so the chatbot's "See all your ideas" link opens the right view.
+
+## 5. Slices
+
+| # | Slice | Depends on | State |
+|---|---|---|---|
+| P1 | Plumbing: phone claim, `mine` forward, My/All toggle (section 4) | Q1 | red tests in progress |
+| C1 | Chatbot one-message flow (section 2.1-2.5) | Q2-Q5 + SS-IDEATION-OWN contract | held |
+| E1 | Own-idea edit with `ideation.board.view` | Q3 | held |
