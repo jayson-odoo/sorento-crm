@@ -305,3 +305,30 @@ def test_compact_total_os_equals_the_sum_of_the_printed_lines(db, hide_zero):
 
     printed = sum(loc["open_so_qty"] for loc in entry["locations"])
     assert entry["open_so_qty"] == printed, (entry["open_so_qty"], entry["locations"])
+    # Owner ruling (a): the warehouse is printed as `<code>: 0 (O/S: n)`, never dropped,
+    # including a 0-on-hand line `hide_zero_locations` would otherwise drop.
+    lines = {loc["warehouse_code"]: loc for loc in entry["locations"]}
+    assert entry["open_so_qty"] == 13
+    assert lines[no_stock_row.warehouse_code] == {
+        "warehouse_code": no_stock_row.warehouse_code, "quantity_on_hand": 0, "open_so_qty": 1,
+    }
+    assert lines[zero_line.warehouse_code]["quantity_on_hand"] == 0
+    assert lines[zero_line.warehouse_code]["open_so_qty"] == 2
+    codes = [loc["warehouse_code"] for loc in entry["locations"]]
+    assert codes == sorted(codes)
+    assert entry["total_on_hand"] == 54
+
+
+def test_hide_zero_still_drops_a_zero_line_with_no_open_so(db):
+    """The ruling prints a hidden line only when it carries O/S: a 0-on-hand warehouse with
+    no open SO stays dropped under `hide_zero_locations`."""
+    w1, _w2, p = _seed(db, unassigned=0)
+    empty = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("EMPTY"))
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=empty.id, on_hand=0)
+    contact = _contact(db)
+    _policy(db, contact, mode="compact", warehouse_ids=[w1.id, empty.id], hide_zero_locations=True)
+
+    entry = _sellable_body(db, product_ids=[p.id], contact_id=contact.id)["stock_summary"][0]
+
+    assert [loc["warehouse_code"] for loc in entry["locations"]] == [w1.warehouse_code]
+    assert entry["open_so_qty"] == 10
