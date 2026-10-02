@@ -1905,7 +1905,7 @@ class ProjectOrderInquiryService:
         product_moved = (
             bool(new_item_code)
             and new_item_code != previous_item_code
-            and self._is_other_product(previous_item_code, entry.get("line"))
+            and self._is_catalogue_code(previous_item_code)
         )
         changed = qty_or_date_moved or product_moved
 
@@ -1971,20 +1971,21 @@ class ProjectOrderInquiryService:
             )
         return True
 
-    def _is_other_product(self, item_code: Optional[str], line: Any) -> bool:
-        """OI-PRODUCT-FOLLOW: whether `item_code` names a REAL product other than the one
-        the line's mirror now carries - the only shape that is a product change. A row
-        whose code is not a catalogue code at all (a sheet's own spelling) is not
-        restated, so a Confirm never rewrites what it cannot read as a product."""
-        if not item_code or line is None or not getattr(line, "product_id", None):
+    def _is_catalogue_code(self, item_code: Optional[str]) -> bool:
+        """OI-PRODUCT-FOLLOW: whether `item_code` is a real product code. Only then is a
+        differing entry code read as a product change: a row whose code is a sheet's own
+        spelling is never rewritten by a Confirm. Deliberately NOT compared with the
+        mirror line's product - a line AutoCount swapped before the mirror learnt to
+        follow (S1) still carries the old product there, and its Confirm must still move
+        the row (SO423414)."""
+        if not item_code:
             return False
-        old_product_id = (
+        return (
             self.db.query(Product.id)
             .filter(Product.product_code == item_code)
             .limit(1)
             .scalar()
-        )
-        return old_product_id is not None and str(old_product_id) != str(line.product_id)
+        ) is not None
 
     def _stamp_date_move(
         self,

@@ -54,7 +54,9 @@ from .test_planning_changes import (
 DUE = date(2026, 11, 20)
 
 
-def _swap_fixture(api, *, linked: bool = False, acknowledged: bool = False):
+def _swap_fixture(
+    api, *, linked: bool = False, acknowledged: bool = False, mirror_stale: bool = False
+):
     """One line of product A confirmed as a Buy of 10 (one ORDER row), then AutoCount
     swaps the line to product B on the same DtlKey and the ESB raises one
     `product_changed` row. The mirror already names B (S1)."""
@@ -84,7 +86,8 @@ def _swap_fixture(api, *, linked: bool = False, acknowledged: bool = False):
     db.commit()
 
     core.product_id = new_product.id
-    line.product_id = new_product.id
+    if not mirror_stale:
+        line.product_id = new_product.id
     db.commit()
 
     change = Change(
@@ -214,6 +217,21 @@ def test_handover_remark_joins_product_and_qty_change():
         "settled", row, {"qty": Decimal("10"), "item_code": "MWCY7604"}
     )
     assert remark == "ORDER 5, CHANGE ITEM CODE TO MWCY7604-SH (WAS MWCY7604)"
+
+
+def test_a_line_swapped_before_the_mirror_followed_still_moves_on_confirm(api):
+    """SO423414 shape: AutoCount swapped the product BEFORE S1 shipped, so the board's
+    mirror line still names the OLD product. The Confirm must still move the OI row."""
+    fx = _swap_fixture(api, mirror_stale=True)
+
+    response = _apply(fx)
+    assert response.status_code == 200, response.text
+    fx["world"].db.commit()
+    fx["world"].db.expire_all()
+
+    row = _live_order_rows(fx)[0]
+    assert row.item_code == fx["new"].product_code
+    assert row.previous_item_code == fx["old"].product_code
 
 
 def test_a_plain_qty_settle_writes_no_previous_item_code(api):
