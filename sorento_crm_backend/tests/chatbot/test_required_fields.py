@@ -15,14 +15,14 @@ from app.services.chatbot import required_fields as rf
 CATEGORIES = {"water tap": ["SRT-FT", "CB-FT"], "water closet": ["SRT-WC"], "srt-ft": ["SRT-FT"]}
 
 
-def _category(_db, word: str) -> rf.Resolved:
+def _category(_db, word: str, _extras=None) -> rf.Resolved:
     found = CATEGORIES.get(word.strip().lower())
     if found is None:
         return rf.Resolved("unknown")
     return rf.Resolved("ok", value=found, label=", ".join(found))
 
 
-def _colour(_db, word: str) -> rf.Resolved:
+def _colour(_db, word: str, _extras=None) -> rf.Resolved:
     w = word.strip().lower()
     if w == "blue":
         return rf.Resolved("ok", value="BL", label="Blue")
@@ -165,7 +165,7 @@ class TestNumberedPick:
         assert out.reply.startswith("I don't know '7' as a colour.")
 
     def test_all_on_a_pick_settles_all_where_allowed(self):
-        def _amb(_db, word):
+        def _amb(_db, word, _extras):
             return rf.Resolved("ambiguous", options=((["SRT-FT"], "SRT-FT"), (["CB-FT"], "CB-FT")))
 
         spec = rf.FieldSpec(name="category", noun="category", question="Which?", resolve=_amb)
@@ -174,6 +174,56 @@ class TestNumberedPick:
         assert first.reply == 'Which category do you mean? Reply with a number or "all":\n1. SRT-FT\n2. CB-FT'
         out = rf.collect(None, ask, slot=first.slot, reply="all")
         assert out.done and out.values["category"]["value"] == rf.ALL
+
+
+OPTIONAL_COLOUR = rf.FieldSpec(
+    name="colour", noun="colour", question="Which colour?", resolve=_colour, allow_all=False, required=False,
+)
+WITH_OPTIONAL = rf.AskType(
+    name="test_opt", fields=(CATEGORY, OPTIONAL_COLOUR), reroute={}, cancelled="c", give_up="g {word}",
+)
+
+
+class TestOptionalField:
+    def test_an_optional_field_is_never_asked(self):
+        out = _start(WITH_OPTIONAL, category="water tap")
+        assert out.done and "colour" not in out.values
+
+    def test_an_optional_field_given_is_taken(self):
+        out = _start(WITH_OPTIONAL, category="water tap", colour="blue")
+        assert out.done and out.values["colour"]["value"] == "BL"
+
+    def test_an_unknown_optional_word_is_not_taken_and_not_asked(self):
+        out = _start(WITH_OPTIONAL, category="water tap", colour="spaceship")
+        assert out.done and "colour" not in out.values
+
+    def test_an_ambiguous_optional_word_is_a_numbered_pick(self):
+        out = _start(WITH_OPTIONAL, category="water tap", colour="bl")
+        assert out.reply == "Which colour do you mean? Reply with a number:\n1. Blue\n2. Black"
+        picked = _reply(WITH_OPTIONAL, out, "1")
+        assert picked.done and picked.values["colour"]["value"] == "BL"
+
+    def test_an_optional_word_given_before_the_question_is_still_read_after_it(self):
+        first = _start(WITH_OPTIONAL, colour="blue")
+        assert first.reply == CATEGORY.question
+        out = rf.collect(None, WITH_OPTIONAL, slot=first.slot, reply="water tap", given={"colour": "blue"})
+        assert out.done and out.values["colour"]["value"] == "BL"
+
+    def test_a_caller_resolved_value_is_taken_as_is(self):
+        out = _start(ONE, category=rf.Resolved("ok", value=["SRT-FT", "SRT-WC"], label="SRT-FT, SRT-WC"))
+        assert out.done and out.values["category"]["value"] == ["SRT-FT", "SRT-WC"]
+
+    def test_the_resolver_sees_the_extras(self):
+        seen = {}
+
+        def _spy(_db, word, extras):
+            seen.update(extras)
+            return rf.Resolved("ok", value=word, label=word)
+
+        spec = rf.FieldSpec(name="category", noun="category", question="?", resolve=_spy)
+        ask = rf.AskType(name="t", fields=(spec,), reroute={}, cancelled="c", give_up="g")
+        rf.collect(None, ask, given={"category": "tap"}, extras={"brand": "Sorento"})
+        assert seen == {"brand": "Sorento"}
 
 
 class TestConfigIsTheRequiredSet:

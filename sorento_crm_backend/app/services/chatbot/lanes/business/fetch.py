@@ -954,6 +954,15 @@ def entity_ids_transformer(
                 product_codes.append(jsc.js_string(code))
         if product_codes:
             out["product_codes"] = product_codes
+        # LOWSTOCK-FILTER-ASK: the workbook filters `run_fetch` settled before calling
+        # (`low_stock_ask.route_filters`). Absent keys keep the old whole-book call.
+        filters = jsc.get(semantic_input, "low_stock_filters")
+        if isinstance(filters, dict):
+            for key in ("categories", "suppliers"):
+                if filters.get(key):
+                    out[key] = list(filters[key])
+            if filters.get("split") and filters["split"] != "none":
+                out["split"] = filters["split"]
         # #892 (console, 14 Sep): this tool REQUIRES both ids - the route 422s without
         # them, and they drive the company scope the write needs - so it must NOT depend on
         # the shared tail below surviving a refactor or a None `semantic_input`. Carry them

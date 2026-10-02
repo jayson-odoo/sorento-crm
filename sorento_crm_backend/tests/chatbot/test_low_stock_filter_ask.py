@@ -45,7 +45,7 @@ READY = {
     "status": "ready",
     "low_count": 3,
     "all_count": 10,
-    "as_of": "2026-10-02T08:00:00+08:00",
+    "as_of": "2026-10-02",
     "attachments": [{
         "url": "https://cdn.example.com/exports/low-stock/x/low-stock-02102026.xlsx",
         "filename": "low-stock-02102026.xlsx",
@@ -140,7 +140,7 @@ def _seed(session_factory) -> None:
                 brand_hint=brand, search_synonyms=CLASS_SYNONYMS[label], company_id=DEFAULT_COMPANY_ID,
             ))
         for code, name in (
-            ("JBC", "JINBAICHUAN"),
+            ("JBC", "JINBAICHUAN TRADING"),
             ("JBCH", "JINBAICHUAN HARDWARE"),
             ("XTT", "XIAMEN TAIYANG TECHNOLOGY"),
         ):
@@ -331,11 +331,11 @@ class TestSupplierPick:
         text, calls = console.say(_ask(_e("water tap", "category")), "low stock water tap jinbaichuan")
         assert calls == []
         assert text == (
-            "Which supplier do you mean? Reply with a number:\n1. JINBAICHUAN\n2. JINBAICHUAN HARDWARE"
+            "Which supplier do you mean? Reply with a number:\n1. JINBAICHUAN HARDWARE\n2. JINBAICHUAN TRADING"
         )
-        _text, calls = console.say(_reply(intent_hint=None, message_type="casual"), "1")
+        _text, calls = console.say(_reply(intent_hint=None, message_type="casual"), "2")
         (args,) = calls
-        assert args.get("suppliers") == ["JINBAICHUAN"], args
+        assert args.get("suppliers") == ["JINBAICHUAN TRADING"], args
         assert sorted(args.get("categories")) == ["CB-FT", "SRT-FT"], args
 
 
