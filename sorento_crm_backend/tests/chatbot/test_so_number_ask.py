@@ -392,3 +392,44 @@ class TestRefusalGroupsTheLinksByFamily:
         assert reply.strip() == (
             f"{REFUSAL_PREFIX} I can only check on ZZT HANLIM TRADING SDN BHD."
         ), reply
+
+
+class TestAllMySalesOrdersAfterAnSoCard:
+    """Owner hand test on #1435: "status of SO422056" (card), then "okay how about all my
+    sales order?" replied `Couldn't find: "SO422056" (order).` The SO lane answered the word
+    itself, but it stayed on the focus carry (`focus.extra["order"]`, no uuid), so the next
+    order turn handed it to the resolver again and named it as a miss. "my" is the
+    CHATBOT-SELFREF-SCOPE `self_reference` path: the second turn is answered from the
+    contact's own links through that path, and the old SO number plays no part in it."""
+
+    @pytest.mark.parametrize("order_status", [None, "so_outstanding"])
+    def test_all_my_sales_orders_drops_the_answered_so(self, session_factory, monkeypatch, order_status) -> None:
+        from tests.chatbot.test_outstanding_lane import _session_of
+
+        _seed_contact(session_factory, variables={})
+        own, = _link_customers(session_factory, "ZZT HANLIM TRADING SDN BHD [A/C III]")
+        _seed_so(session_factory, "SO422056", customer_id=own, status="closed", lines=[(3, 3)])
+
+        first, _ = _so_turn(session_factory, monkeypatch, "SO422056")
+        assert first.startswith("*SO422056*"), first
+        carried = ((_session_of(session_factory).get("focus") or {}).get("extra") or {}).get("order") or []
+        assert not any(isinstance(r, dict) and r.get("raw") == "SO422056" for r in carried), carried
+
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                domain_hint="order", intent_hint="check_order", order_status=order_status,
+                entities=[], self_reference=True,
+            ),
+            text_body="okay how about all my sales order?",
+            msg_id=f"ZZT-so-all-{uuid.uuid4().hex[:10]}",
+            attributes=[OUTSTANDING_KEY],
+            matches={},
+            mcp_response={"has_result": True, "response": "ZZT ROWS"},
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "SO422056" not in reply, reply
+        assert captured, "the self_reference ask must still run a fetch on the links"
+        _name, args = captured[-1]
+        assert args.get("customer_ids") == [own], args
