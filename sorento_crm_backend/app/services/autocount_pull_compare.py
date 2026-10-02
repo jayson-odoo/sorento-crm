@@ -272,13 +272,20 @@ def window_excel_rows(
     the column the `mapping` maps to `doc_date` (default: the Order Listing mapping)."""
     start = _excel_day(from_day) if from_day else None
     end = _excel_day(to_day) if to_day else None
-    if start is None and end is None:
-        return list(excel_rows), 0
     mapping = mapping or DEFAULT_MAPPINGS["order_listing"]
     kept: list[dict] = []
     ignored = 0
     for row in excel_rows:
-        day = _mapped_row(row, mapping).get("doc_date")
+        fields = _mapped_row(row, mapping)
+        # A row with no document number is not a line or a document: the listing's own
+        # totals row (GRN-PULL-CRM e2e gap 3: 72 "lines" against AutoCount's 71). It is
+        # neither in the window nor ignored outside it; the compares skip it anyway.
+        if not str(fields.get("doc_no") or "").strip():
+            continue
+        if start is None and end is None:
+            kept.append(row)
+            continue
+        day = fields.get("doc_date")
         if day is None or (start is None or day >= start) and (end is None or day <= end):
             kept.append(row)
         else:

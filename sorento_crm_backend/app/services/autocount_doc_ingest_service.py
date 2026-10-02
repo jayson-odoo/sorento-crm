@@ -547,6 +547,26 @@ def run_grn_receipt_hook(db: Session, service: "AutocountDocIngestService") -> N
         logger.warning("ingest.grn_receipt_hook_failed", exc_info=True)
 
 
+def link_waiting_grn_lines(db: Session, *, company_id: str, numbers: set[str]) -> None:
+    """When a PO or SPO arrives (the shipping-order ingest's post-commit hook), link the
+    AutoCount GRN lines that were waiting for it, at once, through the same resolver the GRN
+    ingest uses (crew e2e gap 1: GR-2026/10-0006 landed before SPO-2026/09-0115). Then the
+    receipt of every SPO line it linked is recomputed. Best effort after the caller's own
+    commit: a failure is logged and the next GRN batch's fill retries."""
+    if not company_id or not numbers:
+        return
+    service = AutocountDocIngestService(db, None, company_id=str(company_id), book="")
+    try:
+        with company_scope(db, frozenset({str(company_id)})):
+            service._link_waiting_grn_lines(set(numbers))
+        db.commit()
+    except Exception:  # noqa: BLE001 - the document itself already committed
+        db.rollback()
+        logger.warning("ingest.grn_waiting_link_failed", exc_info=True)
+        return
+    run_grn_receipt_hook(db, service)
+
+
 # ============================================================================ the service
 @dataclass
 class _Verdict:
@@ -1392,63 +1412,86 @@ class AutocountDocIngestService(MasterRefResolver):
                     row.po_line_id, row.spo_allocation_id = po_line, spo_line
                     if spo_line:
                         self.touched_allocation_ids.add(spo_line)
-            # Lines that name a source document (FromDocNo, else OurPONo, else the SPO an
-            # adopted Excel line stated) and hold no line link yet - the PO or SPO had not
-            # arrived when they landed (plan 1.3 rule 11). A D3 line (product not on the
-            # document, its document link already held) is retried too, so it links the day
-            # the document gains the product; the newest `MAX_WAITING_LINKS` bound stays.
-            # Review B1: an adopted Excel line still waiting for its SPO keeps the SPO it
-            # stated (`spo_number_raw`), and forward matching skips AutoCount GRNs, so this
-            # fill is the one path that links it.
-            waiting = (
-                self.db.query(PickingLine)
-                .filter(PickingLine.company_id == self.company_id,
-                        PickingLine.dtl_key.isnot(None),
-                        PickingLine.po_line_id.is_(None),
-                        PickingLine.spo_allocation_id.is_(None),
-                        # <= 0: stored before `_link_key` existed, names no line.
-                        or_(PickingLine.from_dtl_key.is_(None), PickingLine.from_dtl_key <= 0),
-                        or_(PickingLine.from_doc_no.isnot(None),
-                            PickingLine.our_po_no.isnot(None),
-                            PickingLine.spo_number_raw.isnot(None)))
-                .order_by(PickingLine.created_at.desc())
-                .limit(MAX_WAITING_LINKS)
-                .all()
-            )
-            by_header: dict[str, list[PickingLine]] = {}
-            for row in waiting:
-                by_header.setdefault(str(row.picking_header_id), []).append(row)
-            for header_id, rows in by_header.items():
-                # Siblings already linked keep their lines: counted as other receipts (no
-                # exclusion) and marked used, so a waiting line never takes one of them.
-                held = {
-                    str(target)
-                    for (po_line, spo_line) in (
-                        self.db.query(PickingLine.po_line_id, PickingLine.spo_allocation_id)
-                        .filter(PickingLine.company_id == self.company_id,
-                                PickingLine.picking_header_id == header_id)
-                        .all()
-                    )
-                    for target in (po_line, spo_line) if target
-                }
-                asks = [
-                    _LinkAsk(order=(row.seq is None, row.seq or 0, str(row.id)),
-                             product_id=str(row.product_id), qty=row.quantity_picked or 0,
-                             from_doc_type=row.from_doc_type,
-                             from_doc_no=row.from_doc_no or row.spo_number_raw,
-                             our_po_no=row.our_po_no, from_dtl_key=None)
-                    for row in rows
-                ]
-                links = self._grn_links(asks, [], exclude_header_id=None, used=held)
-                for row, link in zip(rows, links):
-                    if not link.get(_FORCE_LINKS):
-                        continue  # the document is still not here; the row is left as it was
-                    for column, value in _columns(link).items():
-                        if column in ("from_doc_type", "from_doc_no") and getattr(row, column):
-                            continue
-                        setattr(row, column, value)
-                    if link.get("spo_allocation_id"):
-                        self.touched_allocation_ids.add(link["spo_allocation_id"])
+            self._link_waiting_grn_lines()
+        self.db.flush()
+
+    def _link_waiting_grn_lines(self, numbers: Optional[set[str]] = None) -> None:
+        """Link waiting AutoCount GRN lines through `_grn_links` (plan 1.3 rule 11): at the
+        end of every GRN batch over the newest waiting lines, and when a PO / SPO arrives
+        (`link_waiting_grn_lines`) over the lines that name it."""
+        # Lines that name a source document (FromDocNo, else OurPONo, else the SPO an
+        # adopted Excel line stated) and hold no line link yet - the PO or SPO had not
+        # arrived when they landed (plan 1.3 rule 11). A D3 line (product not on the
+        # document, its document link already held) is retried too, so it links the day
+        # the document gains the product; the newest `MAX_WAITING_LINKS` bound stays.
+        # Review B1: an adopted Excel line still waiting for its SPO keeps the SPO it
+        # stated (`spo_number_raw`), and forward matching skips AutoCount GRNs, so this
+        # fill is the one path that links it.
+        query = (
+            self.db.query(PickingLine)
+            .filter(PickingLine.company_id == self.company_id,
+                    PickingLine.dtl_key.isnot(None),
+                    PickingLine.po_line_id.is_(None),
+                    PickingLine.spo_allocation_id.is_(None),
+                    # <= 0: stored before `_link_key` existed, names no line.
+                    or_(PickingLine.from_dtl_key.is_(None), PickingLine.from_dtl_key <= 0),
+                    or_(PickingLine.from_doc_no.isnot(None),
+                        PickingLine.our_po_no.isnot(None),
+                        PickingLine.spo_number_raw.isnot(None)))
+        )
+        if numbers:
+            # Narrowed to the documents that just arrived (`link_waiting_grn_lines`), matched
+            # the upload's way on every column a line may name its source in.
+            from app.services.grn_spo_matching import _spo_match_key_sql
+            from app.services.procurement_service import _spo_match_key
+
+            keys = sorted({k for k in (_spo_match_key(n) for n in numbers) if k})
+            if not keys:
+                return
+            query = query.filter(or_(
+                _spo_match_key_sql(PickingLine.from_doc_no).in_(keys),
+                _spo_match_key_sql(PickingLine.our_po_no).in_(keys),
+                _spo_match_key_sql(PickingLine.spo_number_raw).in_(keys),
+            ))
+        waiting = (
+            query.order_by(PickingLine.created_at.desc())
+            .limit(MAX_WAITING_LINKS)
+            .all()
+        )
+        by_header: dict[str, list[PickingLine]] = {}
+        for row in waiting:
+            by_header.setdefault(str(row.picking_header_id), []).append(row)
+        for header_id, rows in by_header.items():
+            # Siblings already linked keep their lines: counted as other receipts (no
+            # exclusion) and marked used, so a waiting line never takes one of them.
+            held = {
+                str(target)
+                for (po_line, spo_line) in (
+                    self.db.query(PickingLine.po_line_id, PickingLine.spo_allocation_id)
+                    .filter(PickingLine.company_id == self.company_id,
+                            PickingLine.picking_header_id == header_id)
+                    .all()
+                )
+                for target in (po_line, spo_line) if target
+            }
+            asks = [
+                _LinkAsk(order=(row.seq is None, row.seq or 0, str(row.id)),
+                         product_id=str(row.product_id), qty=row.quantity_picked or 0,
+                         from_doc_type=row.from_doc_type,
+                         from_doc_no=row.from_doc_no or row.spo_number_raw,
+                         our_po_no=row.our_po_no, from_dtl_key=None)
+                for row in rows
+            ]
+            links = self._grn_links(asks, [], exclude_header_id=None, used=held)
+            for row, link in zip(rows, links):
+                if not link.get(_FORCE_LINKS):
+                    continue  # the document is still not here; the row is left as it was
+                for column, value in _columns(link).items():
+                    if column in ("from_doc_type", "from_doc_no") and getattr(row, column):
+                        continue
+                    setattr(row, column, value)
+                if link.get("spo_allocation_id"):
+                    self.touched_allocation_ids.add(link["spo_allocation_id"])
         self.db.flush()
 
     # ================================================================== deletions

@@ -889,7 +889,10 @@ def _apply_delivery_orders(db, job: ImportJob, snapshot_id: str) -> dict:
 
     outcome_writer = ImportOutcome(job.id)
     tally = _tally_delivery_orders(outcome_writer, records, result)
-    outcome_writer.flush()
+    # The job page's Outcome card reads this envelope (GRN-PULL-CRM e2e gap 4: without it a
+    # fresh apply read "ran before per-row outcome capture existed").
+    job.result = outcome_writer.finalize(
+        f"Delivery orders applied: {len(records)} document(s).", total_rows=len(records))
     return {
         "total": len(result.records),
         "created": tally["created"],
@@ -1157,7 +1160,8 @@ def _apply_goods_receive_notes(db, job: ImportJob, snapshot_id: str) -> dict:
 
     outcome_writer = ImportOutcome(job.id)
     tally = _tally_delivery_orders(outcome_writer, records, result, GOODS_RECEIVE_NOTES_ENTITY)
-    outcome_writer.flush()
+    job.result = outcome_writer.finalize(
+        f"Goods receipt notes applied: {len(records)} document(s).", total_rows=len(records))
     return {
         "total": len(result.records),
         "created": tally["created"],

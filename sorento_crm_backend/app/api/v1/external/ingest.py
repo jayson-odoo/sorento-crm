@@ -61,6 +61,7 @@ from app.services.autocount_doc_ingest_service import (
     AutocountDocIngestService,
     AutocountDocReadService,
     parse_deletion_body,
+    link_waiting_grn_lines,
     run_grn_receipt_hook as _run_grn_receipt_hook,
 )
 from app.services.document_ingest_service import (
@@ -503,6 +504,11 @@ def _run_shipping_order_forward_match_hook(
     except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
         db.rollback()
         logger.warning("ingest.shipping_order_forward_match_hook_failed", exc_info=True)
+    # AutoCount GRN lines are never forward-matched (one row per DtlKey); the ones waiting
+    # for these SPOs link through the GRN ingest's own resolver (GRN-PULL-CRM e2e gap 1).
+    link_waiting_grn_lines(
+        db, company_id=service.company_id, numbers=set(service.spo_numbers_touched)
+    )
 
 
 def _run_shipping_order_book_repair_hook(
