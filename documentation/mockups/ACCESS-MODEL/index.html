@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chatbot Access mock v6</title>
+<title>Chatbot Access mock v7</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 /* tokens copied from sorento_crm_frontend/css/config.reui.css (light) */
@@ -101,11 +101,17 @@ a{color:var(--primary)}
 .mocknav button.on{background:#3f3f46;color:#fff}
 .mocknav span{color:#71717a;padding:6px 8px 6px 0;white-space:nowrap}
 .sec{padding:14px 20px 6px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg);background:#fafafa;border-bottom:1px solid var(--border)}
+.prev{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:6px 0 10px}
+.prev .pv-h{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg);margin-bottom:4px}
+.bubble{background:#dcf8c6;border-radius:10px;padding:8px 10px;font-size:12.5px;line-height:1.45;white-space:pre-wrap;font-family:Inter,system-ui,sans-serif;color:#111}
+.bubble b{font-weight:600}
+.f .lbl small.help{color:var(--muted-fg)}
+@media (max-width:640px){.prev{grid-template-columns:1fr}}
 .view{display:none} .view.on{display:block}
 </style>
 </head>
 <body>
-<nav class="mocknav"><span>Mock v6:</span>
+<nav class="mocknav"><span>Mock v7:</span>
 <button data-v="contact" class="on" onclick="show('contact')">Contact access</button>
 <button data-v="roles" onclick="show('roles')">Chatbot roles</button>
 <button data-v="role" onclick="show('role')">Role: Purchasing</button>
@@ -195,6 +201,7 @@ a{color:var(--primary)}
         <tr><th>Hand-off line per domain</th><td>plain <code>text-xs text-muted-foreground</code>; agent + team set read from the domain row (new <code>chatbot_domains.escalation_agent_code</code> + existing <code>escalation_team_code</code>), tier-1 team from <code>agent_teams</code> (edited on the Access agents admin, <code>AccessAgentDetail.tsx:323-458</code>)</td></tr>
         <tr><th>Escalation card</th><td><code>components/ui/card.tsx</code> + read-only <code>DataGrid</code>-style table; "Can escalate to a person" is the existing ESCALATION-CONTROL switch (<code>components/ui/switch.tsx</code>, PR #1406) moved beside it</td></tr>
         <tr><th>Reports section</th><td>section heading row in the same tree (<code>text-xs uppercase text-muted-foreground</code>, as PageHeader crumb); a report ticked without its parent domain shows "Needs Stock" / "Needs Orders / DO" and does not answer (owner 2 Oct: report-type grants under Reports; parser domain list unchanged)</td></tr>
+        <tr><th>Stamp rows</th><td>owner v6 note "how are we controlling the stamping?": set per ROLE (Role page, ticked by default) and per CONTACT (this tab: untick = hidden for this contact, badge "removed here"); label, one-line help (<code>text-xs text-muted-foreground</code>) and a before/after preview built from the real picker text (<code>lanes/business/gate.py:928</code>, <code>lanes/business/pickers.py:112</code>, <code>lanes/business/answer.py:4701</code>) and real 25 Sep data (SRT5674 family: only SRT5674-N has incoming; SRT5674, -BL, -NL have Product Photos). Help line and preview are an owner-requested exception to the no-explanation rule</td></tr>
         <tr><th>Region</th><td><code>SearchableMultiSelect</code> (clearable, West / East Malaysia) as chips in the Roles card, beside customer scope; per contact, not per role; East also sees West (owner 2 Oct). Data is illustrative: no region column exists on the prod copy yet (REGION-PACKING-LIST adds it)</td></tr>
         <tr><th>Removed from this tab</th><td>Access Agents grid (<code>ContactAccessAgentsTable.tsx</code>) and Field reveals switches (<code>ContactFieldRevealsSection.tsx</code>): both replaced by the tree</td></tr>
       </tbody></table>
@@ -351,6 +358,12 @@ a{color:var(--primary)}
   </div>
 </div></section>
 <script>
+const PV = {
+  inc: ['Incoming stock search needs to be more specific. Multiple matches found. Please choose:\n1. SRT5674<b> - no incoming</b>\n2. SRT5674-BL<b> - no incoming</b>\n3. SRT5674-N<b> - has incoming</b>\n4. SRT5674-NL<b> - no incoming</b>', 'Incoming stock search needs to be more specific. Multiple matches found. Please choose:\n1. SRT5674\n2. SRT5674-BL\n3. SRT5674-N\n4. SRT5674-NL'],
+  att: ['Product attachments search needs to be more specific. Multiple matches found. Please choose:\n1. SRT5674<b> - has Product Photos</b>\n2. SRT5674-BL<b> - has Product Photos</b>\n3. SRT5674-N<b> - no Product Photos</b>\n4. SRT5674-NL<b> - has Product Photos</b>', 'Product attachments search needs to be more specific. Multiple matches found. Please choose:\n1. SRT5674\n2. SRT5674-BL\n3. SRT5674-N\n4. SRT5674-NL'],
+};
+function prevHtml(k){ return `<div class="prev"><div><div class="pv-h">Ticked: the contact sees</div><div class="bubble">${PV[k][0]}</div></div><div><div class="pv-h">Unticked: the contact sees</div><div class="bubble">${PV[k][1]}</div></div></div>`; }
+function fieldExtra(f){ return (f.help?`<small class="help">${f.help}</small>`:'') ; }
 function show(v){document.querySelectorAll('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));document.querySelectorAll('.mocknav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));window.scrollTo(0,0);}
 
 // Purchasing role preset (behaviour card section 2) + this contact's real override:
@@ -358,7 +371,7 @@ function show(v){document.querySelectorAll('.view').forEach(e=>e.classList.toggl
 const D = [
   {section:'Domains'},
   {n:'Product', s:'master_products', st:'role', e:['General Enquiries','purchasing','Purchasing - Product, Stock Inquiry']},
-  {n:'Product attachments', s:'product_attachment', st:'role', e:['General Enquiries','marketing_product','Marketing - Product'], f:[{n:'Has / no attachment stamp', st:'role'}]},
+  {n:'Product attachments', s:'product_attachment', st:'role', e:['General Enquiries','marketing_product','Marketing - Product'], f:[{n:'Show has/no attachment in pickers', st:'role', help:'Adds &quot;- has Product Photos&quot; / &quot;- no Product Photos&quot; after each product when the bot asks the contact to pick one. Untick to hide it.', pv:'att'}]},
   {n:'Resource attachments', s:'resource_attachment', st:'role'},
   {n:'Promotions', s:'promotion', st:'role', e:['General Enquiries','marketing_promotion','Marketing - Promotion Sorento']},
   {n:'Forms', s:'forms', st:'role', e:['Marketing Form','marketing_form','Marketing - Forms']},
@@ -368,7 +381,7 @@ const D = [
     {n:'PO on order qty', st:'role', p:'removes the on-order lines'}]},
   {n:'Orders / DO', s:'order', st:'role', e:['Order Enquiries','customer_service','DO Customer Service']},
   {n:'Incoming stock', s:'incoming', st:'role', e:['Incoming Stock Enquiries','purchasing','Purchasing - Incoming'], f:[
-    {n:'Has / no incoming stamp', st:'role'},{n:'ETA', st:'role'},{n:'Container no.', st:'role'},{n:'Remaining qty', st:'role'},
+    {n:'Show has/no incoming stock in pickers', st:'role', help:'Adds &quot;- has incoming&quot; / &quot;- no incoming&quot; after each product when the bot asks the contact to pick one. Untick to hide it.', pv:'inc'},{n:'ETA', st:'role'},{n:'Container no.', st:'role'},{n:'Remaining qty', st:'role'},
     {n:'Consignee', st:'add'},{n:'China forwarder', st:'add'},{n:'Malaysia forwarder', st:'add'},
     {n:'Liner code', st:'add'},{n:'COA permit no.', st:'add'},{n:'Delivery warehouse', st:'add'},
     {n:'ETD / ETC / loading / inspection dates', st:'add'},{n:'Free days, LOC, stacked', st:'add'}]},
@@ -398,9 +411,9 @@ D.forEach((d,i)=>{
     <input type="checkbox" ${on(d.st)?'checked':''} aria-label="${d.n}">
     <div class="lbl">${d.n}${needs}${offHint}${d.e?`<div class="esc">Hand-off: <b>${d.e[2]}</b> &middot; ${d.e[0]} / ${d.e[1]}</div>`:'<div class="esc">No hand-off</div>'}</div><div class="src">${tag(d.st)}</div></div>` +
     (hasF ? `<div class="fields">${d.f.map(f=>`<div class="f"><input type="checkbox" ${on(f.st)?'checked':''} aria-label="${f.n}">
-      <div class="lbl">${f.n}${f.p?`<small>Unticking ${f.p} from prompt</small>`:''}</div><div class="src">${tag(f.st)}</div></div>`).join('')}</div>` : '');
+      <div class="lbl">${f.n}${fieldExtra(f)}${f.p?`<small>Unticking ${f.p} from prompt</small>`:''}</div><div class="src">${tag(f.st)}</div></div>${f.pv?prevHtml(f.pv):''}`).join('')}</div>` : '');
   if (hasF) li.querySelector('.d-h').addEventListener('click', e=>{ if(e.target.tagName!=='INPUT') li.classList.toggle('open'); });
-  if (d.s==='incoming') li.classList.add('open');
+  if (d.s==='incoming' || d.s==='product_attachment') li.classList.add('open');
   tree.appendChild(li);
   if (on(d.st) && d.e) document.getElementById('esc').insertAdjacentHTML('beforeend',
     `<tr><td>${d.n}</td><td>${d.e[0]}</td><td>${d.e[1]}</td><td>${d.e[2]}</td></tr>`);
@@ -436,11 +449,11 @@ const E2 = {
 };
 const D2 = [
   {section:'Domains'},
-  {n:'Product', on:1, e:E2.product}, {n:'Product attachments', on:1, e:E2.mprod, f:[{n:'Has / no attachment stamp',on:1}]}, {n:'Resource attachments', on:1},
+  {n:'Product', on:1, e:E2.product}, {n:'Product attachments', on:1, e:E2.mprod, f:[{n:'Show has/no attachment in pickers',on:1, help:'Adds &quot;- has Product Photos&quot; / &quot;- no Product Photos&quot; after each product when the bot asks the contact to pick one. Untick to hide it.', pv:'att'}]}, {n:'Resource attachments', on:1},
   {n:'Promotions', on:1, e:E2.promo}, {n:'Forms', on:1, e:E2.forms}, {n:'Portal link', on:1},
   {n:'Stock', on:1, e:E2.wh, hint:'Stock visibility mode stays per contact (Profile tab)', f:[{n:'Outstanding SO on stock (sellable)',on:1},{n:'PO on order qty',on:1}]},
   {n:'Orders / DO', on:1, e:E2.cs},
-  {n:'Incoming stock', on:1, e:E2.inc, f:[{n:'Has / no incoming stamp',on:1},{n:'ETA',on:1},{n:'Container no.',on:1},{n:'Remaining qty',on:1},{n:'Consignee',on:0},{n:'China forwarder',on:0},{n:'Malaysia forwarder',on:0},{n:'Liner code',on:0},{n:'COA permit no.',on:0},{n:'Delivery warehouse',on:0},{n:'ETD / ETC / loading / inspection dates',on:0},{n:'Free days, LOC, stacked',on:0}]},
+  {n:'Incoming stock', on:1, e:E2.inc, f:[{n:'Show has/no incoming stock in pickers',on:1, help:'Adds &quot;- has incoming&quot; / &quot;- no incoming&quot; after each product when the bot asks the contact to pick one. Untick to hide it.', pv:'inc'},{n:'ETA',on:1},{n:'Container no.',on:1},{n:'Remaining qty',on:1},{n:'Consignee',on:0},{n:'China forwarder',on:0},{n:'Malaysia forwarder',on:0},{n:'Liner code',on:0},{n:'COA permit no.',on:0},{n:'Delivery warehouse',on:0},{n:'ETD / ETC / loading / inspection dates',on:0},{n:'Free days, LOC, stacked',on:0}]},
   {n:'Last in (SPO)', on:1, p:'SPO LAST RECEIPT', f:[{n:'SPO number',on:1}]},
   {n:'Purchase orders', on:1, e:E2.product, p:'PURCHASE ORDERS', f:[{n:'Supplier',on:1},{n:'PO number',on:1}]},
   {n:'Last purchase cost', on:1, e:E2.product, p:'LAST PURCHASE COST', f:[{n:'Supplier',on:1}]},
@@ -459,7 +472,7 @@ D2.forEach(d=>{
   li.innerHTML=`<div class="d-h"><span class="chev">${hasF?'&#9654;':''}</span><input type="checkbox" ${d.on?'checked':''} aria-label="${d.n}">
     <div class="lbl">${d.n}${d.hint2?`<small>${d.hint2}</small>`:''}${sub}${d.e?`<div class="esc">Hand-off: <b>${d.e[2]}</b> &middot; ${d.e[0]} / ${d.e[1]}</div>`:'<div class="esc">No hand-off</div>'}</div>
     <div class="src">${hasF?`<span class="badge outline">${d.f.filter(f=>f.on).length} of ${d.f.length} fields</span>`:''}</div></div>`+
-    (hasF?`<div class="fields">${d.f.map(f=>`<div class="f"><input type="checkbox" ${f.on?'checked':''} aria-label="${f.n}"><div class="lbl">${f.n}</div><div></div></div>`).join('')}</div>`:'');
+    (hasF?`<div class="fields">${d.f.map(f=>`<div class="f"><input type="checkbox" ${f.on?'checked':''} aria-label="${f.n}"><div class="lbl">${f.n}${fieldExtra(f)}</div><div></div></div>${f.pv?prevHtml(f.pv):''}`).join('')}</div>`:'');
   if(some) li.querySelector('input').indeterminate=true;
   if(hasF) li.querySelector('.d-h').addEventListener('click',e=>{ if(e.target.tagName!=='INPUT') li.classList.toggle('open'); });
   rtree.appendChild(li);
