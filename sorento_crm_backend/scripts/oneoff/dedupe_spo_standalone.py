@@ -40,15 +40,25 @@ SAFETY
 - Preflight: refuses to run unless every table and column it reads or writes
   exists on the target DB (`stated_received` from migration 488, `retired_at`,
   `scm.order_link_claim`, `projects.order_inquiry_links`, ...).
-- Plain SQL through the app's own DATABASE_URL; it imports nothing from the
-  app at all, so it runs against whatever code the container holds. Raw SQL
-  bypasses the ORM audit listeners, so KEEP THE LOG (tee it): it names every
-  row deleted with its quantities, every link moved old -> new and every
-  quantity carried.
-- It does not recompute the packing lists' stored line statuses. After an
-  apply it prints each packing list it touched: open each one once in the
-  CRM (Procurement > Packing Lists); the detail page recomputes and saves the
-  status the chatbot reads.
+- Plain SQL through the app's own DATABASE_URL; the plan and the writes import
+  nothing from the app, so they run against whatever code the container
+  holds. Raw SQL bypasses the ORM audit listeners, so KEEP THE LOG (tee it):
+  it names every row deleted with its quantities, every link moved old -> new
+  and every quantity carried.
+- After each SPO commits, --apply refreshes the stored received figures of
+  every packing list (inbound shipment) it touched, through the app's own
+  `InboundShipmentService.refresh_shipment_line_statuses` (what opening the
+  packing list page runs), and prints each line it changed. The dry run lists
+  those packing lists. A refresh that fails is reported (REFRESH FAILED, exit 5)
+  and the run goes on: that SPO is already committed, open that packing list
+  by hand or run `refresh_container_received.py` for it.
+
+--all scans the company for every SPO holding BOTH an Excel-era row and an
+AutoCount row, in `spo_number` order. --limit N takes the first N; the run
+then prints `next batch: --start-after <last>` for the next call. It ends with
+the SPOs that (would) change, those with rows left for review (ORPHAN-BLOCKED
+or kept) and those aborted by a guard. `grep '=>'` on the log gives one
+summary line per SPO.
 
 RUN IT IN THE PROD BACKEND CONTAINER (docker exec)
 --------------------------------------------------
@@ -97,7 +107,8 @@ kills the process and rolls back the SPO in flight.
     docker compose start worker worker_fast
     docker compose ps --services --filter status=running   # workers back up
 
-    # 4. open each packing list the apply printed, once, in the CRM
+    # 4. the apply refreshed each packing list it touched (grep REFRESH FAILED;
+    #    open any such one in the CRM)
     # 5. run the dry run again. It should report nothing left to do. If it
     #    proposes ANY new carry or delete, do not apply it without review: a
     #    group the first run kept can only match lines the first run already
@@ -121,7 +132,8 @@ DATABASE_URL comes from the environment only (no flag, so no password lands in
 Exit codes: 0 done, 1 bad arguments / unknown company / no DATABASE_URL,
 2 preflight failed, 3 at least one SPO was refused by a guard (rolled back,
 the run continued), 4 an unexpected database error (that SPO rolled back, the
-run STOPPED; SPOs before it stay committed).
+run STOPPED; SPOs before it stay committed), 5 every SPO committed but at
+least one packing list refresh failed.
 """
 from __future__ import annotations
 
