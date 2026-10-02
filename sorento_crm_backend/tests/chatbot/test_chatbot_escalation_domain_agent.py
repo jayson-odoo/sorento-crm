@@ -84,7 +84,9 @@ def test_the_domain_agent_overrides_the_parsers_guess():
 
 
 def test_the_parser_agent_is_the_fallback_only_when_the_row_has_none():
-    out = _routed(_policy(inventory=None), "inventory", parser_agent="incoming_stock_enquiries")
+    policy = _policy(inventory=None)
+    assert policy.domain("inventory").escalation_agent_code is None  # the field exists, and is empty
+    out = _routed(policy, "inventory", parser_agent="incoming_stock_enquiries")
     assert out["routing"]["suggested_agent"] == "incoming_stock_enquiries"
 
 
@@ -106,7 +108,9 @@ def test_sla_body_carries_the_domain_agent():
 def test_bodies_fall_back_to_the_parser_agent_when_the_row_has_none():
     from app.services.chatbot.lanes.escalation import _next_assignee_body, _sla_body
 
-    out = _routed(_policy(inventory=None), "inventory", parser_agent="it_support")
+    policy = _policy(inventory=None)
+    assert policy.domain("inventory").escalation_agent_code is None
+    out = _routed(policy, "inventory", parser_agent="it_support")
     assert _next_assignee_body(_ctx(out), dict(_ITEM))["agent_code"] == "it_support"
     assert _sla_body(_ctx(out), dict(_ITEM), {"assignee_id": "u-1"})["agent_code"] == "it_support"
 
