@@ -227,6 +227,7 @@ class TestR1TheSoldWords:
     def test_the_prompt_teaches_every_phrase(self) -> None:
         from app.services.chatbot_parser_prompt import (
             ESCALATION_CONFIRMATION_ADDENDUM,
+            ACCOUNT_LEDGER_ADDENDUM,
             MEMORY_ADDENDUM,
             PO_SPO_WAREHOUSE_ADDENDUM,
             SELF_REFERENCE_ADDENDUM,
@@ -240,7 +241,7 @@ class TestR1TheSoldWords:
         for words in ('"best selling", "hot selling", "top items", "most sold"', '"worst 100 hot selling bathtub"',
                       '"fanny water closet" -> {raw: "fanny", hint: "sales_agent"}', '"can show me the DO"'):
             assert words in TOP_SELLING_ADDENDUM, words
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM).removesuffix(PO_SPO_WAREHOUSE_ADDENDUM).removesuffix(
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM).removesuffix(ACCOUNT_LEDGER_ADDENDUM).removesuffix(PO_SPO_WAREHOUSE_ADDENDUM).removesuffix(
             ESCALATION_CONFIRMATION_ADDENDUM
         ).removesuffix(SELF_REFERENCE_ADDENDUM).endswith(
             TOP_SELLING_ADDENDUM
