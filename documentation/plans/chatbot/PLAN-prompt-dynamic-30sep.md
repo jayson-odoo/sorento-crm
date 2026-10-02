@@ -558,3 +558,14 @@ Reached by sidebar clicks: System > Messaging > Status Words, then the `outstand
     `{statuses,status_values,status_field_values}`.
 - 375: the dialog spans 0 to 375 and the field 25 to 335; the document is 375 wide, so there is
   no overflow.
+
+Owner answers, round 2 (2 Oct 2026):
+- **Q-A (a):** the owner applies the 3 text edits (lines 82 and 401, plus the `sales` line in the
+  policy block) himself, as a new plain-text version; the rebuild starts from it.
+- **access_levels reorder:** approved, as `pdyn_0005_access_level_order`.
+- **Q-B (b):** `access_agents.in_parser_prompt`, as `pdyn_0006_agents_in_prompt`. `{{agents}}`
+  renders flagged rows only.
+- **master_products narrowing:** fixed on DEV only (crew-migration). The owner ran the
+  read-only prod check `SELECT narrowing FROM chatbot_domains WHERE name='master_products'`,
+  which returned `{"product": "list_all"}`. Prod already matches his text, and this PR changes no
+  prod narrowing data.
