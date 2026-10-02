@@ -411,7 +411,8 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             # nothing" fallback is replaced, and only when there is a subject to name.
             from app.services.chatbot.lanes.business.fetch import NO_RESULT_INTRO
 
-            if block == NO_RESULT_INTRO and codes:
+            # An ms / zh render of the same fallback is the same miss.
+            if block in (NO_RESULT_INTRO, localizer.sentence(NO_RESULT_INTRO)) and codes:
                 subject_label = label.lower() if isinstance(label, str) else str(domain)
                 block = f"No {subject_label} found for {codes}."
         elif rows_text:

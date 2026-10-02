@@ -2602,7 +2602,16 @@ def _dmy(value: Any) -> str:
     return f"{parts[2]}/{parts[1]}/{parts[0]}" if len(parts) == 3 else text
 
 
-_LOCALIZED_TOOLS = frozenset({"crm_inventory_stock_balance_list"})
+_LOCALIZED_TOOLS = frozenset(
+    {
+        "crm_inventory_stock_balance_list",
+        "crm_order_management_orders_list",
+        "crm_order_management_orders_by_product_list",
+        "crm_procurement_po_placed_list",
+        "crm_procurement_spo_allocations_last_receipt_list",
+        "crm_procurement_po_last_cost_list",
+    }
+)
 
 
 def _field_label(loc: Localizer, f: Any) -> str:
@@ -2638,7 +2647,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     e = _extract_envelope(result)
     # CHAT-LANGUAGE: render-only. The envelope, the items and `answers` stay English; the
     # localizer only rewrites the strings printed below (absent = identity, byte-identical).
-    # Slice 1 covers the stock tool only; the other tools keep English until their slice.
+    # Slices 1 and 2 cover the stock and the PO / SO / SPO / orders tools; the rest keep English.
     loc = (ctx.get("localizer") or IDENTITY) if ctx.get("tool") in _LOCALIZED_TOOLS else IDENTITY
     # Read once, for both the restricted-field drop below and the spec-visibility
     # drop (PLAN-spec-visibility-policy.md "Chatbot seam") - one contact, one
@@ -3047,11 +3056,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "discontinued")):
             line += f"\n⚠️  *({loc.text('PRODUCT DISCONTINUED')})*"
         if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "expired")):
-            line += "\n⚠️  *(EXPIRED)*"
+            line += f"\n⚠️  *({loc.text('EXPIRED')})*"
         if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "unallocated")):
-            line += "\n\U0001f6a9  *(PENDING ALLOCATION)*"
+            line += f"\n\U0001f6a9  *({loc.text('PENDING ALLOCATION')})*"
         elif jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "partially_allocated")):
-            line += "\n\U0001f6a9  *(PARTIAL ALLOCATION)*"
+            line += f"\n\U0001f6a9  *({loc.text('PARTIAL ALLOCATION')})*"
         return line
 
     # A3 (AC-905/AC-906): grouped sections, ONE generic branch for every tool - the
