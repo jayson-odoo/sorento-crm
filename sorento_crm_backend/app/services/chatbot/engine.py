@@ -352,9 +352,77 @@ _BARE_ALL = re.compile(
 )
 
 
+def _with_repeated_codes_summed(verdict: dict[str, Any], message: str) -> dict[str, Any]:
+    """AVAIL-MODE-REPLIES (owner Q2 (a)): a code named twice in one message asks for the
+    quantities added up. The live parser merges "SRT5674 x 2, SRT5674 x 3" into ONE
+    entity carrying the last quantity (`entity_op: replace_combine`, tester-local pass on
+    7fa5d654, step 12), so the quantities are read off the message beside that code. A
+    code the parser kept as two entities is summed later (`turn_runtime._spec_quantities`)
+    and is left alone here."""
+    entities = verdict.get("entities")
+    if not isinstance(entities, list):
+        return verdict
+    products = [e for e in entities if isinstance(e, dict) and e.get("hint") in (None, "product")]
+    changed = False
+    out = []
+    for entity in entities:
+        if entity in products and entity.get("quantity") is not None:
+            codes = {
+                str(entity.get(k)).strip()
+                for k in ("raw", "canonical_code")
+                if isinstance(entity.get(k), str) and entity.get(k).strip()
+            }
+            twins = [
+                e for e in products
+                if e is not entity and codes & {str(e.get(k) or "").strip() for k in ("raw", "canonical_code")}
+            ]
+            for code in sorted(codes, key=len, reverse=True):
+                found = re.findall(
+                    rf"(?<![\w-]){re.escape(code)}(?![\w-])\s*(?:x|\*|qty|:|-|=)?\s*(\d+)", message or "", re.IGNORECASE
+                )
+                if len(found) >= 2 and not twins:
+                    entity = {**entity, "quantity": sum(int(n) for n in found)}
+                    changed = True
+                    break
+        out.append(entity)
+    if not changed:
+        return verdict
+    summed = {**verdict, "entities": out}
+    if len(products) == 1 and verdict.get("demand_qty") is not None:
+        summed["demand_qty"] = out[entities.index(products[0])]["quantity"]
+    return summed
+
+
 def _is_bare_all(message: str) -> bool:
     text = re.sub(r"\s+", " ", str(message or "").strip().lower()).rstrip(".!? ")
     return bool(_BARE_ALL.fullmatch(text))
+
+
+_ORDINALS = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+    "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
+}
+#: AVAIL-MODE-REPLIES (owner v2 note 2): "<qty> of <option>" over a stock pick - "2 of 3",
+#: "2 of the third one", "2 of 3rd product", "2 pcs of no 3". The number after "of" is
+#: always the option. The live parser read "2 of 3" as option 2, quantity 3 (tester-local
+#: pass on 7fa5d654, step 7), so the engine reads the shape itself, as it reads "all".
+_QTY_OF_OPTION = re.compile(
+    r"(\d+)\s*(?:pcs|pc|units?|nos|x)?\s+of\s+(?:the\s+)?(?:no\.?\s*|number\s+|#)?"
+    r"(\d+|" + "|".join(_ORDINALS) + r")(?:st|nd|rd|th)?(?:\s+(?:one|product|code|item))?",
+    re.IGNORECASE,
+)
+
+
+def _quantity_of_option(message: str) -> list[tuple[int, int]] | None:
+    """`[(option, quantity), ...]` when the message's own words pair each quantity with an
+    option ("2 of 1 and 5 of 3"), else None."""
+    pairs = []
+    for qty, option in _QTY_OF_OPTION.findall(str(message or "")):
+        position = _ORDINALS.get(option.lower()) or (int(option) if option.isdigit() else None)
+        if position is None or int(qty) < 1:
+            return None
+        pairs.append((position, int(qty)))
+    return pairs or None
 
 
 def _with_the_engine_pick(verdict: dict[str, Any], pending: Any, message: str) -> dict[str, Any]:
@@ -368,6 +436,23 @@ def _with_the_engine_pick(verdict: dict[str, Any], pending: Any, message: str) -
     all (a quantity, a top-N count - the readers before this one already settled
     those), and a reading that already agrees.
     """
+    pairs = _quantity_of_option(message) if pending is not None and (pending.payload or {}).get("stock_pick") else None
+    offered = {o.get("position") for o in (getattr(pending, "options", None) or [])}
+    if pairs and all(position in offered for position, _qty in pairs):
+        positions = [position for position, _qty in pairs]
+        return {
+            **verdict,
+            "reference_positions": positions,
+            "demand_qty": pairs[0][1] if len(pairs) == 1 else None,
+            "open_question_answer": {
+                "mode": "pick",
+                "picked": positions,
+                "items": [{"position": p, "code": None, "qty": q} for p, q in pairs],
+                "qty_for_all": None,
+            },
+            "domain_in_message": False,
+            "asks": [],
+        }
     if pending is not None and (pending.payload or {}).get("stock_pick") and _is_bare_all(message):
         # `apply._stock_pick_refuses_all` keeps the list open on exactly this reading.
         return {
@@ -3829,6 +3914,14 @@ def _run_stages(  # noqa: PLR0915
             _stock_task_is_the_current_question,
             _stock_task_owed_a_number,
         )
+
+        if getattr(getattr(state_in, "profile", None), "stock_availability_only", False):
+            summed = _with_repeated_codes_summed(
+                verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+            )
+            if summed is not verdict:
+                turn_trace.add("repeated_code_summed", {"entities": summed.get("entities")})
+                verdict = summed
 
         owed_task = _stock_task_owed_a_number(state_in.focus)
         if owed_task is None or not _stock_task_is_the_current_question(state_in, owed_task, verdict):

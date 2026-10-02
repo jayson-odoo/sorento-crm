@@ -78,3 +78,16 @@ for a family (every match is listed), and the shared miss sentence for codes not
 | S36, S37 | 2 of 3 / i want 2 of the third one / 2 of 3rd product | `SRTWC286-SH-200 x 2: ...` | - |
 | S38 | 2 of 1 and 5 of 3 | two lines, x 2 and x 5 | - |
 | S39 | 2 of 2 (after "x 10") | `SRTWC286-SH-150 x 2: ...` (the pick's quantity wins) | - |
+
+## The live parser's own readings (tester-local pass on 7fa5d654)
+
+| Id | Dealer | Parser read it as | Bot |
+| --- | --- | --- | --- |
+| S43, S43b | 2 of 3 / 2 of the third one / i want 2 of 3rd product / 2 of no 3 / 2 pcs of 3 | option 2, qty 3 | `SRTWC286-SH-200 x 2: ...` (the engine reads "N of M" itself) |
+| S43c | 2 of 1 and 5 of 3 | options 2 and 5 | `SRTWC286-SH x 2` and `SRTWC286-SH-200 x 5` lines |
+| S44 | SRT5674 x 2, SRT5674 x 3 | one entity, qty 3 (`replace_combine`) | `SRT5674 x 5: ✅ R` |
+| S44b | SRT5674 x 2 for site 3 | qty 2 | `SRT5674 x 2: ✅ R` (a code named once is not summed) |
+| S45 | ETA SRTW2000 and FOO99 (no shipment) | both codes | `SRTW2000: ETA not confirmed yet`, `Couldn't find: FOO99.`, R |
+
+The dealer ETA view lists every product asked (no shipment: "ETA not confirmed yet") and
+tells dates as dd/mm/yyyy (`eta_policy.dealer_view`, `tests/test_avail_mode_dealer_eta.py`).

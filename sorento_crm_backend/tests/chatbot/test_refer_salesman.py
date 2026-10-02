@@ -32,6 +32,7 @@ from tests.chatbot.test_dealer_eta_stock_routing import (  # noqa: F401 - fixtur
     INCOMING_TOOL,
     SALESPERSON,
     TOLD_ETA,
+    dealer_date,
     Console,
     _mcp,
     _seed,
@@ -316,7 +317,7 @@ def live(session_factory, monkeypatch, stub_access):
 def test_ac_rs04_ac_rs10_a_dealer_incoming_eta_turn_writes_an_incoming_eta_row(live, session_factory):
     c = live(dealer=True, salesperson=True)
     reply = c.say(f"incoming {CODE}", INCOMING)
-    assert reply == f"{CODE}: ETA {TOLD_ETA}\n\n{REFER_TO_SALESMAN}"
+    assert reply == f"{CODE}: ETA {dealer_date(TOLD_ETA)}\n\n{REFER_TO_SALESMAN}"
     assert SALESPERSON not in reply
 
     rows = _rows(session_factory)
@@ -324,22 +325,26 @@ def test_ac_rs04_ac_rs10_a_dealer_incoming_eta_turn_writes_an_incoming_eta_row(l
         (CODE, "incoming_eta", None, "open", "live")
     ]
     row = rows[0]
-    assert row.answer_summary == f"ETA {TOLD_ETA}. {REFER_TO_SALESMAN}"
+    assert row.answer_summary == f"ETA {dealer_date(TOLD_ETA)}. {REFER_TO_SALESMAN}"
     assert row.product_id is not None, "resolved by code within the ask's company"
     assert row.customer_id is not None and row.contact_id is not None
     assert row.company_id == SORENTO
     assert row.notified_agent is False and row.notify_skip_reason == "not_notified_branch"
 
 
-def test_ac_rs11_a_dealer_incoming_miss_writes_a_referred_row(live, session_factory):
+def test_ac_rs11_a_dealer_incoming_ask_with_no_shipment_writes_an_incoming_eta_row(live, session_factory):
+    """AVAIL-MODE-REPLIES (tester-local pass on 7fa5d654, step 15): a product the dealer
+    asked about with no shipment is told "ETA not confirmed yet" (catalogue S15), no
+    longer a miss, so its row is the ETA reply's own `incoming_eta`."""
     c = live(dealer=True, salesperson=True, shipments=False)
     reply = c.say(f"incoming {CODE}", INCOMING)
+    assert reply.startswith(f"{CODE}: ETA not confirmed yet"), reply
     assert reply.endswith(REFER_TO_SALESMAN), reply
     assert "escalate" not in reply.lower() and "purchasing" not in reply.lower()
 
     rows = _rows(session_factory)
-    assert [(r.product_code, r.branch, r.quantity) for r in rows] == [(CODE, "referred", None)]
-    assert rows[0].answer_summary == reply
+    assert [(r.product_code, r.branch, r.quantity) for r in rows] == [(CODE, "incoming_eta", None)]
+    assert rows[0].answer_summary == f"ETA not confirmed yet. {REFER_TO_SALESMAN}"
     assert rows[0].product_id is not None
 
 
