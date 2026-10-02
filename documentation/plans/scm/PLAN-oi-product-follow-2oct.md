@@ -1,6 +1,6 @@
 # PLAN: OI line follows the SO line's product change from AutoCount (OI-PRODUCT-FOLLOW)
 
-Status: Plan, behaviour card posted to the owner (PR #1442), no code before the answers.
+Status: Build (owner answered the card 2 Oct; rulings R1-R6 below). S1 built.
 Track: feature (M, carries one migration, so not the small fix track). Cloud lane.
 Lane: OI-PRODUCT-FOLLOW, branch `claude/oi-product-sync-6uoz28`, PR #1442.
 Domain: scm (ESB sales order ingest, order inquiry rows, planning board apply).
@@ -76,21 +76,36 @@ removed line, GAP for a zeroed line.**
   or (c) the row's `so_line_id` / mirror core link is NULL so no line status reaches it
   (Q2 `mirror_core_line` NULL). Q1 + Q2 tell which.
 
-## Proposed design (pending the card's answers)
+## Owner rulings (2 Oct, on the card)
+
+- **R1 (Q1)** The OI line switches to the new product when CS clicks Confirm in fulfilment
+  planning: the same apply moment as qty/date today.
+- **R2 (Q2)** A row already linked to a PO/SPO line is NOT unlinked. The link follows
+  AutoCount and flows through; the change is flagged with the EXISTING mechanism the
+  qty/date change uses on linked rows (`ack_state` -> `changed`, `changed_at`,
+  `_dispatch_changed_with_links`). No new unlink behaviour.
+- **R3 (Q3)** Fix ALL rows already wrong on prod. Correction script for the owner:
+  BEGIN, dry-run count first, default ROLLBACK, plus the read-only check. Crew never runs it.
+- **R4 (email)** On Confirm the handover email to purchasing says
+  "change item code to <new>" (was <old>), in the same style as the qty/date change lines.
+- **R5 (Q4)** New SO lines: today's flow (they appear on Confirm in fulfilment planning).
+  No change.
+- **R6 (Q5)** A line set to qty 0 in AutoCount stays as today (cancel balance on confirm).
+  No change; the qty>0->0 auto-cancel proposal is dropped (S4 removed).
+
+## Design (per the rulings)
 
 - **S1 mirror follows product (ingest).** `_sync_mirror_line` also copies `product_id`
   when the push carries it, same as the manual edit path. Fixes item 6 too.
 - **S2 OI row follows product (apply).** Migration: `order_inquiry_rows.previous_item_code`
   (nullable). `_settle_row_in_place`: when the entry's `item_code` differs from the row's,
   the row takes the new code, keeps the old in `previous_item_code`, notes "Was X", counts
-  as a real change (acknowledged -> `changed`, handover "was"). Links on documents of the
-  OLD product are given back (`_remove_links`, which stamps "Unlinked from ..."), never
-  re-pointed (Q2). Rows the supersede path re-raises for a product-changed line carry
-  `previous_item_code` too.
+  as a real change (acknowledged -> `changed`, `changed_at`, `_dispatch_changed_with_links`,
+  handover "was"). Links stay exactly as they are (R2).
 - **S3 UI.** Item cell on the worklist and the OI Lines tab: new code, muted "was X" under
   it, same look as the qty/date "was". History dialog "Was X." prefix.
-- **S4 (only if Q5 = a)** ESB marks a line cancelled on the >0 -> 0 transition, like the
-  manual edit path.
+- **S4 email (R4)** The handover settled line carries `was.item_code`; the template prints
+  "change item code to <new> (was <old>)" beside the qty/date change lines.
 
 ## Test list (red first)
 
