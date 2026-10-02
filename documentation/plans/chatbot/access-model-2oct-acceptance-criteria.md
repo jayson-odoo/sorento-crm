@@ -50,8 +50,11 @@ Mock: `documentation/mockups/ACCESS-MODEL/index.html` (v3). IDs AC-AM-n.
 
 - AC-AM-25 Region is a per-contact scope (West, East, or both; East also sees West), set on the
   contact Access tab. `EffectiveAccess.regions` carries the expanded set and is the only thing the
-  incoming / packing-list answers read for region. Duplicate respond.io rows get the intersection;
-  an unresolved contact gets West only. Region never grants or removes a domain or field.
+  incoming / packing-list answers read for region (`eta_policy.contact_regions`). Stored as
+  `respond_contacts.regions` (`west`/`east`, non-empty, default West). Duplicate respond.io rows get the
+  intersection of raw sets then expansion; an empty or unresolved set gets West only. The contact
+  access GET/PUT carries `regions`; an empty list or an unknown code is 422. Region never grants or
+  removes a domain or field.
 
 ## Enforcement and prompt read ONE tree
 

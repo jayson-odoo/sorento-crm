@@ -44,21 +44,24 @@ end_user / NULL); `chatbot_profile.tier` stops being read (migration copies noth
 100 contacts on the prod copy, query in section 4); `EffectiveAccess.tiers: frozenset[str]` feeds
 `is_staff_profile` (office in tiers), the promotion default (tiers list) and the parser profile line.
 
-**C. Region (owner 2 Oct: IN the access model).** Region (West / East Malaysia, multi; East also sees
-West) is a SCOPE like customer scope, not a domain and not a field: it narrows what the incoming /
-packing-list answers return, it never grants a domain. Shape (final column names follow the
-REGION-PACKING-LIST lane's proposal, which supersedes the earlier "contact fact read outside the
-access model" agreement):
-- source: a contact-level set of regions (that lane's `respond_contacts.regions`, values `west` / `east`,
-  non-empty); East held => West visible too (expansion done once, in `effective_access`);
-- `EffectiveAccess.regions: frozenset[str]` (expanded); the incoming routes read it from
-  `effective_access` instead of the contact row, so enforcement keeps ONE reader;
-- duplicate respond.io rows: intersection of the expanded sets, as AC-AM-8; unresolved contact =
-  `{west}` (that lane's AC-RPL-11 default, fail closed);
-- set on the contact Access tab (Roles card, beside customer scope), not on the Chatbot settings
-  card: mock v6. Not a role property (owner: "like customer scope", which is per contact).
-Order of work: whichever lane merges first owns the column migration; the other rebases. This lane's
-S2 adds `regions` to `EffectiveAccess` and S5 points `eta_policy.rules_for_contact` at it.
+**C. Region (owner 2 Oct: IN the access model; shape agreed with REGION-PACKING-LIST).** Region
+(West / East Malaysia, multi; East also sees West) is a SCOPE like customer scope: it narrows incoming /
+packing-list answers and never grants a domain or field. Per contact, not per role.
+- Column, THIS lane's migration (S1): `respond_contacts.regions text[] NOT NULL DEFAULT '{west}'`,
+  `CHECK (cardinality(regions) >= 1 AND regions <@ '{west,east}')`. Codes `west` / `east`, labels
+  West Malaysia / East Malaysia. Backfill = the default (every contact West only, their owner Q2);
+  staff tick East by hand on the Access tab Roles card (mock v6).
+- `EffectiveAccess.regions: frozenset[str]` (S2): `east` in the raw set => `{east, west}`, else `{west}`.
+  Duplicate respond.io rows = intersection of the raw sets, then expand; empty or unresolved = `{west}`.
+  No contact in play (staff, bare API key) never reaches `effective_access`: the caller passes no
+  filter (their side).
+- One reader on their side: `app/services/eta_policy.py::contact_regions(db, resolved_contact_id)`
+  returns `{west}` until this lane lands; S5 repoints its body at `effective_access(...).regions`.
+  Callers: `api/v1/incoming_stock.py` `_Contact` (5 contact routes) and the stock ask's
+  `earliest_packing_list_shipment`. Their data side (`inbound_shipments.regions`,
+  `attachments.regions`, array-overlap filter) is theirs.
+- Contact access API (S4) GET/PUT `/contacts/{id}/access` carries `regions` (raw set, validated
+  against the CHECK) so the Access tab writes it with roles and overrides in one PUT.
 
 ## Key design choice: keep every enforcement seam, change only what fills it
 
