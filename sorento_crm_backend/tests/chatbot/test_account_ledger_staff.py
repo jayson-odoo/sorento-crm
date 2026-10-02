@@ -128,7 +128,9 @@ def test_account_1_lists_only_the_level_one_ledgers(session_factory, monkeypatch
     assert any(T_1 in line for line in lines), lines
     for other in ("[A/C II]", "[A/C III]", "[A/C IV]"):
         assert other not in reply, (other, reply)
-    roster_ids = {str(r.get("uuid")) for r in _session_of(session_factory).get("last_result_set") or []}
+    roster_ids = {
+        str(o.get("uuid")) for o in (_session_of(session_factory).get("open_question") or {}).get("options") or []
+    }
     assert roster_ids == {rows[H_1]["id"], rows[T_1]["id"]}, roster_ids
 
 
