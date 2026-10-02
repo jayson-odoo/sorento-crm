@@ -2,7 +2,8 @@
 
 Status: Option C chosen (owner, 2 Oct 2026). Size L, full pipeline track (new gateway router on an
 auth boundary + a public token page). Behaviour card done (sections 1, 2, 0); next = Phase 1 mock
-per CRM screen (section 12, slice M), then the build slices. Lane IDEATION-IN-CRM.
+per CRM screen (section 12, slice M) in progress, assuming Q2 (a) until the owner answers. Lane
+IDEATION-IN-CRM.
 
 ## 0. Owner decisions (2 Oct 2026)
 
@@ -14,6 +15,11 @@ per CRM screen (section 12, slice M), then the build slices. Lane IDEATION-IN-CR
 | Q4 | **The public track page reuses the existing customer portal** (its routes and domain), not a new public path. Proposed URL in section 11. |
 | Q5 | **Separate ss lane** for `public_link_base_url` (crew runs it). This lane states the contract it needs (section 13). |
 | Add | **Fold in IDEATION-COMMENTS** in the CRM pages: comments (staff, and public read + post on the track page), upvote-only with the prominent vote box, primary "Move to <next state>" + secondary Edit. Design source: the approved mock `documentation/mockups/IDEATION-COMMENTS/index.html` (v2) on ss branch `crew/ideation-comments`, rebuilt with CRM components (section 9). |
+| 2nd ask Q1 | Comment delete = CRM deferred countdown (D7), not the mock's confirm. (crew, 2 Oct) |
+| 2nd ask Q2 | **Open, with the owner.** Mocks assume (a): new `ideation.ideas.manage` for triage actions. |
+| 2nd ask Q3 | Promote shown to manage holders; ss's 403 message surfaced when the email has no ss BR-manage user. |
+| 2nd ask Q4 | Public comment author = the idea's submitter (same as IDEATION-COMMENTS P1 a). |
+| 2nd ask Q5 | Track URL `{FRONTEND_BASE_URL}/portal/ideas/{status_token}` approved. |
 
 Repos read: `jayson-odoo/sorento-crm` (this repo, "CRM") and `jayson-odoo/foundryx-shared-service`
 ("ss", read-only clone at main, 2 Oct 2026). Paths below prefixed `ss:` are in the ss repo;
@@ -427,10 +433,10 @@ only ship after it does.
 
 ## 13. Cross-lane contracts
 
-- **ss `public_link_base_url` lane:** `mint_idea_link` must return `{public_link_base_url}/{status_token}`
-  when the tenant (or Sorento's connection) has the base set, else today's
-  `{frontend_url}/public/ideas/{token}`. Sorento's value = `{FRONTEND_BASE_URL}/portal/ideas` (no
-  trailing slash). Both the intake `link` and the status-event `track_url` must use it
+- **ss `public_link_base_url` lane (SS-PUBLIC-LINK-BASE):** the setting supports a `{token}`
+  placeholder (crew, 2 Oct); `mint_idea_link` substitutes the status token when the tenant (or
+  Sorento's connection) has it set, else today's `{frontend_url}/public/ideas/{token}`. Sorento's
+  value = `{FRONTEND_BASE_URL}/portal/ideas/{token}`. Both the intake `link` and the status-event `track_url` must use it
   (`ss:ssBE/modules/ideation/services/sinks.py:45-60`, `services/intake.py:664,713,725`,
   `services/status_events.py:112,136`). The CRM relays both unchanged
   (`BE/app/services/ideation_turn_service.py:189`, `BE/app/services/ideation_status_update_service.py:197-200`),
@@ -467,7 +473,7 @@ column disappears in embed mode. Today Sorento's ideas all come from intake with
 (`ideation_turn_service.py:649`), so nothing should vanish; ideas captured in ss under another
 product would.
 
-## 15. Open questions (second crew-ask)
+## 15. Second crew-ask (Q1, Q3-Q5 answered 2 Oct, see section 0; Q2 open with the owner)
 
 1. Comment delete: the approved mock confirms with a dialog; CRM rule D7 forbids confirm dialogs.
    (a) CRM deferred countdown (10 s, Cancel) like every other CRM delete, (b) keep the mock's
