@@ -1,7 +1,8 @@
 # PLAN: several attachment types in one ask + human labels in the attachment picker
 
-Status: Plan (behaviour card filed as crew-ask on PR #1437; waiting on owner answers, no code yet).
-Track: to be named once the answers fix the diff size (expected: small fix track, no migration).
+Status: Build complete on PR #1437, in review (owner answered Q1-Q5 all (a), 2 Oct 2026).
+Track: small fix track (no migration, no auth/RBAC change, no new ingest surface).
+UAC: `attachment-multi-type-2oct-acceptance-criteria.md`.
 Lane: ATTACHMENT-MULTI (owner, 2 Oct 2026).
 
 ## Owner ask
@@ -72,6 +73,24 @@ entity kind already exist in `turn/policy_rows.py`; that is the one source to re
 - R4 Miss sentence names the types with "or": "But no Product Photos or Technical Drawing matched these."
 - R5 No snake_case key reaches a customer; type nouns are `attachment_types.type_name`, never `code`.
 
-## Work
+## Root cause found during build (not in the first card)
 
-Filled in once the answers land.
+`gate.py` document-class precision (~1336) judged every asked word at once and kept only the
+types whose name equalled a parser word, so "photo" (not spelt "Product Photos") was dropped
+even on an exact product: the fetch never asked for the photo. Fixed by narrowing per customer
+word; a word that resolved to one type keeps it.
+
+## Work (landed)
+
+- `gate.py` per-word document-class narrowing; picker header "Which product do you mean?
+  Please choose:"; dropped-filter kind in words.
+- `miss_suggest.py` `_scoping_from` carries `type_name`; `_annotate` emits `dym_has_by_type`
+  for a several-type ask only (single-type captures byte-equal); stamp noun prefers type_name.
+- `answer.py` one `_stamp()` for the three has/no surfaces; "or"-joined miss noun; found bullet
+  names every type under "attachment type"; leaks via `_prettify_type` / `_plain_words`;
+  `DOMAIN_LABELS` gains the four missing domains.
+- `turn/compose.py` R3 gap line beside the existing "No stock found for" rule;
+  `turn_runtime.envelope_of` carries `attachment_types`.
+- `turn/reconcile.py`, `lanes/canned.py`, `turn/compose.py` fallbacks: kind / agent / domain
+  said in words.
+- ACCESS-MODEL: the stamp is one seam, `answer.build_suggest_offer::_stamp`.
