@@ -102,6 +102,14 @@ describe('AC-H-04 what the page shows', () => {
   });
 });
 
+describe('heading fallback', () => {
+  it('an idea with no title falls back to its problem statement as the page heading', async () => {
+    svc.getPortalIdea.mockResolvedValue({ ...IDEA, title: null });
+    render(<PortalIdeaTrack token={TOKEN} />);
+    expect(await screen.findByRole('heading', { name: 'Quotes take too long to write' })).toBeInTheDocument();
+  });
+});
+
 describe('AC-H-05 posting', () => {
   it('posts the body only and tags the just-posted comment "You"', async () => {
     svc.postPortalComment.mockResolvedValue(

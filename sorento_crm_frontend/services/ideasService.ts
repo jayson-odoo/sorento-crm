@@ -5,7 +5,7 @@
  * `/api/v1/ideation/*`, which calls the ss embed API as the signed-in user (PLAN-ideation-in-crm
  * section 10). ss's camelCase shapes pass through unchanged; the few mappings are noted below.
  *
- *   listIdeas         GET    /ideation/ideas?filter=<active|archived|all>&query=      view
+ *   listIdeas         GET    /ideation/ideas?filter=<archived|all>&search=            view
  *   getBoard          GET    /ideation/ideas/board                                    view
  *   getIdea           GET    /ideation/ideas/{id}                                     view
  *   getMergedChildren GET    /ideation/ideas/{id}/merged                              view
@@ -13,7 +13,8 @@
  *   updateIdea        PATCH  /ideation/ideas/{id}                                     manage
  *   voteIdea          POST   /ideation/ideas/{id}/vote  {dir: 'up'}                   view
  *   moveIdeaToStatus  POST   /ideation/ideas/{id}/status  {toStatusId}                manage
- *   restoreIdea       POST   /ideation/ideas/{id}/status  {status: 'new'}             manage
+ *   restoreIdea       POST   /ideation/ideas/{id}/status  {toStatusId}                manage
+ *                     (one of the idea's own outgoing transitions; no status key is hardcoded)
  *   reorderIdeas      PUT    /ideation/ideas/reorder  {orderedIds}                    manage
  *   mergeIdeas        POST   /ideation/ideas/merge  {survivorId, ideaIds}             manage
  *   unmergeIdea       POST   /ideation/ideas/{id}/unmerge                             manage
@@ -51,8 +52,18 @@ export const IDEA_STATUS_FILTER_OPTIONS = [
 
 type Raw = Record<string, unknown>;
 
+/** A gateway refusal: the server's message, plus the HTTP status for callers that branch on 404. */
+export class IdeasApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'IdeasApiError';
+    this.status = status;
+  }
+}
+
 async function read<T>(response: Response, fallback: string): Promise<T> {
-  if (!response.ok) throw new Error(await extractApiError(response, fallback));
+  if (!response.ok) throw new IdeasApiError(await extractApiError(response, fallback), response.status);
   return response.json();
 }
 
@@ -81,7 +92,6 @@ function toIdea(raw: Raw): Idea {
     ...(raw as unknown as Idea),
     transitions: (raw.transitions as Idea['transitions'] | undefined) ?? [],
     attachments: ((raw.attachments as Raw[] | undefined) ?? []).map(toAttachment),
-    businessRequirements: (raw.businessRequirements as Idea['businessRequirements'] | undefined) ?? [],
   };
 }
 
@@ -103,7 +113,7 @@ function toComment(raw: Raw): IdeaComment {
 export async function listIdeas(params: IdeaListParams): Promise<Idea[]> {
   const search = new URLSearchParams();
   if (params.status) search.set('filter', params.status);
-  if (params.query?.trim()) search.set('query', params.query.trim());
+  if (params.query?.trim()) search.set('search', params.query.trim());
   const qs = search.toString();
   const rows = await read<Raw[]>(await apiFetch(`${BASE}/ideas${qs ? `?${qs}` : ''}`), 'Failed to load ideas');
   return rows.map(toIdea);
@@ -144,7 +154,7 @@ export async function uploadAttachment(id: string, file: File): Promise<IdeaAtta
 /** The bytes of an uploaded attachment, streamed through the gateway. */
 export async function fetchAttachment(ideaId: string, attachmentId: string): Promise<Blob> {
   const response = await apiFetch(`${BASE}/ideas/${ideaId}/attachments/${attachmentId}/content`);
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to download the file'));
+  if (!response.ok) throw new IdeasApiError(await extractApiError(response, 'Failed to download the file'), response.status);
   return response.blob();
 }
 
@@ -192,10 +202,10 @@ export async function moveIdeaToStatus(id: string, toStatusId: string): Promise<
   );
 }
 
-export async function restoreIdea(id: string): Promise<Idea> {
+export async function restoreIdea(id: string, toStatusId: string): Promise<Idea> {
   return toIdea(
     await read<Raw>(
-      await apiFetch(`${BASE}/ideas/${id}/status`, jsonInit('POST', { status: 'new' })),
+      await apiFetch(`${BASE}/ideas/${id}/status`, jsonInit('POST', { toStatusId })),
       'Failed to restore the idea',
     ),
   );
@@ -215,7 +225,10 @@ export async function unmergeIdea(id: string): Promise<void> {
   await read(await apiFetch(`${BASE}/ideas/${id}/unmerge`, jsonInit('POST')), 'Failed to unmerge the idea');
 }
 
-export async function promoteIdea(id: string, input: IdeaPromoteInput): Promise<{ id: string }> {
+export async function promoteIdea(
+  id: string,
+  input: IdeaPromoteInput,
+): Promise<{ id: string; title?: string | null }> {
   return read(
     await apiFetch(`${BASE}/ideas/promote`, jsonInit('POST', { ideaIds: [id], title: input.title })),
     'Failed to promote the idea',

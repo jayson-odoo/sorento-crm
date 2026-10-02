@@ -17,6 +17,8 @@ import {
 } from '@/components/ui/kanban';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Container } from '@/components/common/container';
+import LoadErrorState from '@/components/common/LoadErrorState';
+import { toast } from '@/lib/toast';
 import { PageHeader } from '@/components/common/PageHeader';
 import { useIdeaBoardQuery, useIdeaMutations } from '@/hooks/useIdeas';
 import type { Idea } from '@/types/ideas';
@@ -28,13 +30,31 @@ import { useCanManageIdeas } from './ideasAccess';
 
 type Columns = Record<string, Idea[]>;
 
-function IdeaCard({ idea, canDrag, onVote }: { idea: Idea; canDrag: boolean; onVote: () => void }) {
+export const NOT_ALLOWED_MESSAGE = 'This idea cannot move to that status.';
+
+function IdeaCard({
+  idea,
+  canDrag,
+  onVote,
+}: {
+  idea: Idea;
+  canDrag: boolean;
+  onVote: () => void;
+}) {
   const label = idea.title ?? idea.problem;
   return (
     <div className="flex items-start gap-2 rounded-md border bg-background p-2.5">
-      <VoteBox count={idea.upvotes} voted={idea.myVote === 'up'} onVote={onVote} />
+      <VoteBox
+        count={idea.upvotes}
+        voted={idea.myVote === 'up'}
+        onVote={onVote}
+      />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        {idea.ideaNumber ? <span className="text-xs tabular-nums text-muted-foreground">{idea.ideaNumber}</span> : null}
+        {idea.ideaNumber ? (
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {idea.ideaNumber}
+          </span>
+        ) : null}
         <Link
           href={`/ideas/${idea.id}`}
           className="line-clamp-2 text-sm font-medium text-primary [overflow-wrap:anywhere] hover:underline"
@@ -42,7 +62,9 @@ function IdeaCard({ idea, canDrag, onVote }: { idea: Idea; canDrag: boolean; onV
         >
           {label}
         </Link>
-        <span className="truncate text-xs text-muted-foreground">{idea.submitterName}</span>
+        <span className="truncate text-xs text-muted-foreground">
+          {idea.submitterName}
+        </span>
       </div>
       {canDrag ? (
         <KanbanItemHandle asChild>
@@ -66,12 +88,23 @@ function IdeaCard({ idea, canDrag, onVote }: { idea: Idea; canDrag: boolean; onV
 export function IdeasBoardView() {
   const canManage = useCanManageIdeas();
   const [modalOpen, setModalOpen] = useState(false);
-  const { data, isLoading, isError, error, dataUpdatedAt } = useIdeaBoardQuery();
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    dataUpdatedAt,
+    refetch,
+    isFetching,
+  } = useIdeaBoardQuery();
   const { vote, move, reorder } = useIdeaMutations();
   // Every lane key exists from the first render: the server's lanes are the base, and a drag
   // only layers an optimistic override on top of them.
   const base = useMemo<Columns>(
-    () => Object.fromEntries((data?.columns ?? []).map((c) => [c.statusId, c.ideas])),
+    () =>
+      Object.fromEntries(
+        (data?.columns ?? []).map((c) => [c.statusId, c.ideas]),
+      ),
     [data],
   );
   const [override, setOverride] = useState<Columns | null>(null);
@@ -84,7 +117,13 @@ export function IdeasBoardView() {
     setOverride(null);
   }, [dataUpdatedAt]);
 
-  const handleMove = ({ event, activeContainer, activeIndex, overContainer, overIndex }: KanbanMoveEvent) => {
+  const handleMove = ({
+    event,
+    activeContainer,
+    activeIndex,
+    overContainer,
+    overIndex,
+  }: KanbanMoveEvent) => {
     const ideaId = String(event.active.id);
     const source = columns[activeContainer] ?? [];
     const target = columns[overContainer] ?? [];
@@ -101,10 +140,24 @@ export function IdeasBoardView() {
       return;
     }
 
+    // A card moves only along one of its own transitions; anything else never reaches ss.
+    const transition = card.transitions.find(
+      (t) => t.toStatusId === overContainer,
+    );
+    if (!transition) {
+      setOverride(null);
+      toast.error(NOT_ALLOWED_MESSAGE);
+      return;
+    }
+
     const nextSource = source.filter((idea) => idea.id !== ideaId);
     const nextTarget = [...target];
     nextTarget.splice(Math.min(overIndex, nextTarget.length), 0, card);
-    setColumns({ ...columns, [activeContainer]: nextSource, [overContainer]: nextTarget });
+    setColumns({
+      ...columns,
+      [activeContainer]: nextSource,
+      [overContainer]: nextTarget,
+    });
     move.mutate(
       { id: ideaId, toStatusId: overContainer },
       { onSuccess: () => reorder.mutate(nextTarget.map((idea) => idea.id)) },
@@ -129,12 +182,15 @@ export function IdeasBoardView() {
           <div className="flex justify-end">
             <IdeasViewToggle active="board" />
           </div>
-          {isError ? (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-              {error instanceof Error ? error.message : 'Failed to load the board.'}
-            </div>
-          ) : null}
-          {isLoading || !data ? (
+          {isError && !data ? (
+            <LoadErrorState
+              className="rounded-lg border"
+              title="Could not load the board"
+              message={error instanceof Error ? error.message : undefined}
+              onRetry={() => void refetch()}
+              retrying={isFetching}
+            />
+          ) : isLoading || !data ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
               {Array.from({ length: 5 }).map((_, i) => (
                 <Skeleton key={i} className="h-64 w-full" />
@@ -157,15 +213,29 @@ export function IdeasBoardView() {
                       className="min-h-[200px] gap-2 rounded-lg border bg-muted/20 p-3"
                     >
                       <div className="mb-1 flex items-center justify-between gap-2">
-                        <IdeaStatusBadge label={column.title} color={column.color} />
-                        <span className="text-xs tabular-nums text-muted-foreground">{ideas.length}</span>
+                        <IdeaStatusBadge
+                          label={column.title}
+                          color={column.color}
+                        />
+                        <span className="text-xs tabular-nums text-muted-foreground">
+                          {ideas.length}
+                        </span>
                       </div>
-                      <KanbanColumnContent value={column.statusId} className="min-h-10">
+                      <KanbanColumnContent
+                        value={column.statusId}
+                        className="min-h-10"
+                      >
                         {ideas.length === 0 ? (
-                          <p className="px-1 text-xs text-muted-foreground">No ideas</p>
+                          <p className="px-1 text-xs text-muted-foreground">
+                            No ideas
+                          </p>
                         ) : (
                           ideas.map((idea) => (
-                            <KanbanItem key={idea.id} value={idea.id} disabled={!canManage}>
+                            <KanbanItem
+                              key={idea.id}
+                              value={idea.id}
+                              disabled={!canManage}
+                            >
                               <IdeaCard
                                 idea={idea}
                                 canDrag={canManage}
@@ -186,7 +256,11 @@ export function IdeasBoardView() {
                     .find((i) => i.id === value);
                   return idea ? (
                     <Card className="shadow-lg">
-                      <IdeaCard idea={idea} canDrag={false} onVote={() => undefined} />
+                      <IdeaCard
+                        idea={idea}
+                        canDrag={false}
+                        onVote={() => undefined}
+                      />
                     </Card>
                   ) : null;
                 }}

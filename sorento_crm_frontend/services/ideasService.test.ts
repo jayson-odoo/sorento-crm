@@ -56,13 +56,14 @@ beforeEach(() => {
 });
 
 describe('reads', () => {
-  it('listIdeas: GET /ideas with the status as `filter` and the search as `query`', async () => {
+  it('listIdeas: GET /ideas with the status as `filter` and the search as `search`', async () => {
     apiFetch.mockResolvedValue(ok([]));
     await service.listIdeas({ query: 'quote', status: 'archived' });
     const c = call();
     expect([c.path, c.method]).toEqual([`${BASE}/ideas`, 'GET']);
     expect(c.params.get('filter')).toBe('archived');
-    expect(c.params.get('query')).toBe('quote');
+    expect(c.params.get('search')).toBe('quote');
+    expect(c.params.has('query')).toBe(false);
   });
 
   it('listIdeas: no filter and no query when neither is set', async () => {
@@ -70,7 +71,7 @@ describe('reads', () => {
     await service.listIdeas({});
     const c = call();
     expect(c.params.get('filter') || '').toBe('');
-    expect(c.params.get('query') || '').toBe('');
+    expect(c.params.get('search') || '').toBe('');
   });
 
   it('getBoard: GET /ideas/board', async () => {
@@ -171,11 +172,16 @@ describe('writes', () => {
     expect(c.body).toEqual({ toStatusId: 'st-9' });
   });
 
-  it('restoreIdea: POST /ideas/{id}/status with {status: "new"}', async () => {
-    await service.restoreIdea('idea-1');
+  it('restoreIdea (AC-D-02): POST /ideas/{id}/status with the transition target, no hardcoded status key', async () => {
+    await service.restoreIdea('idea-1', 'st-9');
     const c = call();
     expect([c.path, c.method]).toEqual([`${BASE}/ideas/idea-1/status`, 'POST']);
-    expect(c.body).toEqual({ status: 'new' });
+    expect(c.body).toEqual({ toStatusId: 'st-9' });
+  });
+
+  it('a gateway refusal carries its HTTP status so the page can tell 404 from the rest (AC-D-06)', async () => {
+    apiFetch.mockResolvedValue(fail(404, 'Idea not found.'));
+    await expect(service.getIdea('x')).rejects.toMatchObject({ status: 404 });
   });
 
   it('reorderIdeas: PUT /ideas/reorder with {orderedIds}', async () => {

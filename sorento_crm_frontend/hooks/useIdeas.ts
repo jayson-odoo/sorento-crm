@@ -112,7 +112,7 @@ export function useIdeaMutations() {
   });
 
   const restore = useMutation({
-    mutationFn: (id: string) => restoreIdea(id),
+    mutationFn: ({ id, toStatusId }: { id: string; toStatusId: string }) => restoreIdea(id, toStatusId),
     onSuccess: () => {
       refresh();
       toast.success('Idea restored');
@@ -149,9 +149,9 @@ export function useIdeaMutations() {
 
   const promote = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) => promoteIdea(id, { title }),
-    onSuccess: () => {
+    onSuccess: (created) => {
       refresh();
-      toast.success('Business requirement created');
+      toast.success(created?.title ? `Business requirement created: ${created.title}` : 'Business requirement created');
     },
     // ss's own 403 wording reaches the user as the toast.
     onError,

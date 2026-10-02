@@ -58,6 +58,7 @@ const svc = vi.hoisted(() => ({
   mergeIdeas: vi.fn(),
   promoteIdea: vi.fn(),
   uploadAttachment: vi.fn(),
+  fetchAttachment: vi.fn(),
   addComment: vi.fn(),
   editComment: vi.fn(),
   createIdea: vi.fn(),
@@ -113,7 +114,6 @@ function makeIdea(over: Record<string, unknown> = {}) {
     mergedIntoId: null,
     mergedInto: null,
     mergedCount: 0,
-    businessRequirements: [],
     ...over,
   };
 }
@@ -175,7 +175,15 @@ describe('AC-D-02 header states for a manage holder', () => {
     expect(screen.queryByRole('button', { name: /Move to/ })).toBeNull();
     svc.restoreIdea.mockResolvedValue(makeIdea());
     fireEvent.click(restore);
-    await waitFor(() => expect(svc.restoreIdea).toHaveBeenCalledWith('idea-1'));
+    // AC-D-02: it posts the idea's own outgoing transition target, never a hardcoded key.
+    await waitFor(() => expect(svc.restoreIdea).toHaveBeenCalledWith('idea-1', 'st-triaged'));
+  });
+
+  it('AC-D-02: an archived-flagged idea with NO outgoing transition (closed, duplicate) shows no Restore; Edit is primary', async () => {
+    renderDetail(makeIdea({ statusIsArchived: true, statusLabel: 'Closed', transitions: [], advanceTransitionId: null }));
+    await loaded();
+    expect(screen.queryByRole('button', { name: /Restore/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
   });
 
   it('state D: a merged child shows Unmerge, no Edit, a disabled vote box and no comment composer', async () => {
@@ -250,14 +258,14 @@ describe('AC-D-04 the "..." menu', () => {
   });
 
   it('Promote is ONE click: posts {title: the idea title} at once, toasts success, opens no dialog', async () => {
-    svc.promoteIdea.mockResolvedValue({ id: 'br-1' });
+    svc.promoteIdea.mockResolvedValue({ id: 'br-1', title: 'Quote templates' });
     await openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: /Promote to BR/ }));
     await waitFor(() =>
       expect(svc.promoteIdea).toHaveBeenCalledWith('idea-1', expect.objectContaining({ title: 'Faster quotes' })),
     );
     expect(screen.queryByRole('dialog')).toBeNull();
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('Quote templates')));
   });
 
   it("an ss 403 on promote shows ss's own message as an error toast", async () => {
@@ -357,12 +365,13 @@ describe('AC-D-01 record card and AC-D-06', () => {
     expect(document.body.textContent).toMatch(/\d{2}\/\d{2}\/\d{4}, \d{1,2}:\d{2} (AM|PM)/);
   });
 
-  it('has the three tabs Details, Attachments, Business Requirements', async () => {
+  it('has the tabs Details and Attachments and NO Business requirements tab (ss returns no BR links, AC-D-05)', async () => {
     renderDetail(makeIdea());
     await loaded();
-    for (const name of ['Details', 'Attachments', 'Business Requirements']) {
+    for (const name of ['Details', 'Attachments']) {
       expect(screen.getByRole('tab', { name: new RegExp(name) })).toBeInTheDocument();
     }
+    expect(screen.queryByRole('tab', { name: /Business Requirements/ })).toBeNull();
   });
 
   it('never prints the record id anywhere in the UI', async () => {
@@ -370,6 +379,24 @@ describe('AC-D-01 record card and AC-D-06', () => {
     renderDetail(makeIdea({ id: '7c1d0b7e-0000-4000-8000-00000000a001' }));
     await loaded();
     expect(document.body.textContent).not.toContain('7c1d0b7e-0000-4000-8000-00000000a001');
+  });
+
+  it('AC-D-06: any error other than a 404 is an error state with Retry, not "not found"', async () => {
+    svc.getIdea.mockRejectedValue(
+      Object.assign(new Error("The Ideas workspace isn't reachable right now."), { status: 502 }),
+    );
+    svc.listIdeas.mockResolvedValue([]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <IdeaDetail id="idea-1" />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("The Ideas workspace isn't reachable right now.")).toBeInTheDocument();
+    expect(screen.queryByText('Idea not found')).toBeNull();
+    svc.getIdea.mockResolvedValue(makeIdea());
+    fireEvent.click(screen.getByRole('button', { name: /Retry/ }));
+    expect(await screen.findByRole('heading', { name: /Faster quotes/ })).toBeInTheDocument();
   });
 
   it('an unknown id renders the not-found state', async () => {
@@ -385,23 +412,61 @@ describe('AC-D-01 record card and AC-D-06', () => {
   });
 });
 
-describe('AC-D-05 attachments and business requirements', () => {
-  it('lists linked business requirements read-only with an empty state otherwise', async () => {
-    renderDetail(
-      makeIdea({
-        businessRequirements: [{ id: 'br-1', title: 'Quote templates', statusLabel: 'Draft', statusColor: 'grey' }],
-      }),
-    );
-    await loaded();
-    fireEvent.click(screen.getByRole('tab', { name: /Business Requirements/ }));
-    expect(await screen.findByText('Quote templates')).toBeInTheDocument();
-    expect(screen.getByText('Draft')).toBeInTheDocument();
+describe('AC-D-05 attachments', () => {
+  const att = (over: Record<string, unknown>) => ({
+    id: 'att-1',
+    kind: 'file',
+    name: 'brief.pdf',
+    sizeBytes: 10,
+    durationSec: null,
+    hasContent: true,
+    url: '',
+    ...over,
   });
+
+  async function openAttachments(attachments: unknown[]) {
+    renderDetail(makeIdea({ attachments }));
+    await loaded();
+    fireEvent.click(screen.getByRole('tab', { name: /Attachments/ }));
+  }
 
   it('every viewer gets the upload dropzone, manage or not (captain decision, UAC AC-A-08 / AC-D-05)', async () => {
     renderDetail(makeIdea());
     await loaded();
     fireEvent.click(screen.getByRole('tab', { name: /Attachments/ }));
     expect(await screen.findByLabelText('Upload attachments')).toBeInTheDocument();
+  });
+
+  it('a download saves through an anchor with the download attribute and never window.open of a blob', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const createObjectURL = vi.fn(() => 'blob:fake');
+    Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      expect(this.download).toBe('brief.pdf');
+      expect(this.href).toContain('blob:fake');
+    });
+    svc.fetchAttachment.mockResolvedValue(new Blob(['x']));
+    await openAttachments([att({})]);
+    fireEvent.click(await screen.findByRole('button', { name: 'brief.pdf' }));
+    await waitFor(() => expect(click).toHaveBeenCalled());
+    expect(svc.fetchAttachment).toHaveBeenCalledWith('idea-1', 'att-1');
+    expect(open).not.toHaveBeenCalled();
+    click.mockRestore();
+    open.mockRestore();
+  });
+
+  it('a link attachment opens only for http/https; a javascript: or data: link is plain text', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    await openAttachments([
+      att({ id: 'a1', name: 'web.png', hasContent: false, url: 'https://cdn.test/web.png' }),
+      att({ id: 'a2', name: 'evil.txt', hasContent: false, url: 'javascript:alert(1)' }),
+      att({ id: 'a3', name: 'data.txt', hasContent: false, url: 'data:text/html,<b>x</b>' }),
+    ]);
+    fireEvent.click(await screen.findByRole('button', { name: 'web.png' }));
+    expect(open).toHaveBeenCalledWith('https://cdn.test/web.png', '_blank', 'noopener,noreferrer');
+    expect(screen.queryByRole('button', { name: 'evil.txt' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'data.txt' })).toBeNull();
+    expect(screen.getByText('evil.txt')).toBeInTheDocument();
+    open.mockRestore();
   });
 });

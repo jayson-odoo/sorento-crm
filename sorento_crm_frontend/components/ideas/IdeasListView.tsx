@@ -2,7 +2,11 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import {
+  ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
 import { Columns3, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,7 +21,10 @@ import LoadErrorState from '@/components/common/LoadErrorState';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import {
+  isSearchInFlight,
+  useDebouncedSearch,
+} from '@/hooks/useDebouncedSearch';
 import { useIdeaMutations, useIdeasQuery } from '@/hooks/useIdeas';
 import { formatDate } from '@/lib/helpers';
 import { IDEA_STATUS_FILTER_OPTIONS } from '@/services/ideasService';
@@ -45,10 +52,11 @@ export function IdeasListView() {
     debouncedValue: debouncedSearch,
     isSettling,
   } = useDebouncedSearch();
-  const { data, isLoading, isFetching, isError, error, refetch } = useIdeasQuery({
-    query: debouncedSearch,
-    status,
-  });
+  const { data, isLoading, isFetching, isError, error, refetch } =
+    useIdeasQuery({
+      query: debouncedSearch,
+      status,
+    });
   const { vote } = useIdeaMutations();
   // `mutate` is stable across renders; the mutation object is not, and columns that depend on it
   // are rebuilt (and every cell remounted) each time a request changes state.
@@ -60,7 +68,9 @@ export function IdeasListView() {
       {
         id: 'votes',
         accessorFn: (row) => row.upvotes,
-        header: ({ column }) => <DataGridColumnHeader title="Votes" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Votes" column={column} />
+        ),
         cell: ({ row }) => (
           <VoteBox
             count={row.original.upvotes}
@@ -72,12 +82,17 @@ export function IdeasListView() {
         size: 72,
         enableSorting: false,
         enableResizing: false,
-        meta: { headerTitle: 'Votes', skeleton: <Skeleton className="h-9 w-10" /> },
+        meta: {
+          headerTitle: 'Votes',
+          skeleton: <Skeleton className="h-9 w-10" />,
+        },
       },
       {
         id: 'idea',
         accessorFn: (row) => row.title ?? row.problem,
-        header: ({ column }) => <DataGridColumnHeader title="Idea" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Idea" column={column} />
+        ),
         cell: ({ row }) => {
           const label = row.original.title ?? row.original.problem;
           return (
@@ -93,25 +108,38 @@ export function IdeasListView() {
         },
         size: 220,
         enableSorting: false,
-        meta: { headerTitle: 'Idea', skeleton: <Skeleton className="h-4 w-56" /> },
+        meta: {
+          headerTitle: 'Idea',
+          skeleton: <Skeleton className="h-4 w-56" />,
+        },
       },
       {
         id: 'ideaNumber',
         accessorFn: (row) => row.ideaNumber ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="No." column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="No." column={column} />
+        ),
         cell: ({ row }) => (
-          <span className="block truncate tabular-nums text-muted-foreground" title={row.original.ideaNumber ?? ''}>
+          <span
+            className="block truncate tabular-nums text-muted-foreground"
+            title={row.original.ideaNumber ?? ''}
+          >
             {row.original.ideaNumber ?? '-'}
           </span>
         ),
         size: 90,
         enableSorting: false,
-        meta: { headerTitle: 'No.', skeleton: <Skeleton className="h-4 w-16" /> },
+        meta: {
+          headerTitle: 'No.',
+          skeleton: <Skeleton className="h-4 w-16" />,
+        },
       },
       {
         id: 'product',
         accessorFn: (row) => row.productName,
-        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Product" column={column} />
+        ),
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.productName}>
             {row.original.productName}
@@ -119,12 +147,17 @@ export function IdeasListView() {
         ),
         size: 100,
         enableSorting: false,
-        meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: {
+          headerTitle: 'Product',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
       },
       {
         id: 'submitter',
         accessorFn: (row) => row.submitterName,
-        header: ({ column }) => <DataGridColumnHeader title="Submitter" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Submitter" column={column} />
+        ),
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.submitterName}>
             {row.original.submitterName}
@@ -132,12 +165,17 @@ export function IdeasListView() {
         ),
         size: 100,
         enableSorting: false,
-        meta: { headerTitle: 'Submitter', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: {
+          headerTitle: 'Submitter',
+          skeleton: <Skeleton className="h-4 w-20" />,
+        },
       },
       {
         id: 'source',
         accessorFn: (row) => row.source,
-        header: ({ column }) => <DataGridColumnHeader title="Channel" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Channel" column={column} />
+        ),
         cell: ({ row }) => (
           <Badge variant="outline" size="sm">
             {SOURCE_LABEL[row.original.source] ?? row.original.source}
@@ -145,15 +183,23 @@ export function IdeasListView() {
         ),
         size: 100,
         enableSorting: false,
-        meta: { headerTitle: 'Channel', skeleton: <Skeleton className="h-5 w-16" /> },
+        meta: {
+          headerTitle: 'Channel',
+          skeleton: <Skeleton className="h-5 w-16" />,
+        },
       },
       {
         id: 'status',
         accessorFn: (row) => row.statusLabel,
-        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Status" column={column} />
+        ),
         cell: ({ row }) => (
           <span className="flex items-center gap-1.5">
-            <IdeaStatusBadge label={row.original.statusLabel} color={row.original.statusColor} />
+            <IdeaStatusBadge
+              label={row.original.statusLabel}
+              color={row.original.statusColor}
+            />
             {row.original.mergedIntoId ? (
               <Badge variant="outline" size="sm">
                 Merged
@@ -163,16 +209,28 @@ export function IdeasListView() {
         ),
         size: 130,
         enableSorting: false,
-        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-5 w-16" /> },
+        meta: {
+          headerTitle: 'Status',
+          skeleton: <Skeleton className="h-5 w-16" />,
+        },
       },
       {
         id: 'createdAt',
         accessorFn: (row) => row.createdAt,
-        header: ({ column }) => <DataGridColumnHeader title="Captured" column={column} />,
-        cell: ({ row }) => <span className="tabular-nums">{formatDate(row.original.createdAt)}</span>,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Captured" column={column} />
+        ),
+        cell: ({ row }) => (
+          <span className="tabular-nums">
+            {formatDate(row.original.createdAt)}
+          </span>
+        ),
         size: 100,
         enableSorting: false,
-        meta: { headerTitle: 'Captured', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: {
+          headerTitle: 'Captured',
+          skeleton: <Skeleton className="h-4 w-20" />,
+        },
       },
     ],
     [castVote],
@@ -196,7 +254,9 @@ export function IdeasListView() {
     ) : (
       <div className="flex w-full flex-col items-center gap-1 py-6">
         <span className="text-sm font-medium">No ideas yet</span>
-        <span className="text-sm text-muted-foreground">Captured ideas appear here.</span>
+        <span className="text-sm text-muted-foreground">
+          Captured ideas appear here.
+        </span>
       </div>
     );
 
@@ -215,7 +275,7 @@ export function IdeasListView() {
       </Container>
       <Container>
         <div className="space-y-3">
-          {isError ? (
+          {isError && !data ? (
             <LoadErrorState
               className="rounded-lg border"
               title="Could not load ideas"
@@ -223,53 +283,58 @@ export function IdeasListView() {
               onRetry={() => void refetch()}
               retrying={isFetching}
             />
-          ) : null}
-          <DataGrid
-            table={table}
-            recordCount={rows.length}
-            isLoading={isLoading}
-            listingKey={IDEAS_VIEW_PERMISSION}
-            tableLayout={{ width: 'fixed', columnsResizable: true }}
-            emptyMessage={emptyMessage}
-            rowHref={(row) => `/ideas/${row.id}`}
-          >
-            <Card>
-              <CardHeader className="flex flex-wrap items-center gap-3 py-3">
-                <ListSearchInput
-                  value={searchQuery}
-                  onChange={setSearchQuery}
-                  isSettling={isSearchInFlight(isSettling, isFetching, debouncedSearch)}
-                  placeholder="Search ideas..."
-                  className="w-full sm:w-64"
-                />
-                <div className="w-full sm:w-48">
-                  <SearchableSelect
-                    value={status}
-                    onChange={setStatus}
-                    options={IDEA_STATUS_FILTER_OPTIONS}
-                    placeholder="All statuses"
-                    emptyMessage="No statuses."
-                    clearable
+          ) : (
+            <DataGrid
+              table={table}
+              recordCount={rows.length}
+              isLoading={isLoading}
+              listingKey={IDEAS_VIEW_PERMISSION}
+              tableLayout={{ width: 'fixed', columnsResizable: true }}
+              emptyMessage={emptyMessage}
+              rowHref={(row) => `/ideas/${row.id}`}
+            >
+              <Card>
+                <CardHeader className="flex flex-wrap items-center gap-3 py-3">
+                  <ListSearchInput
+                    value={searchQuery}
+                    onChange={setSearchQuery}
+                    isSettling={isSearchInFlight(
+                      isSettling,
+                      isFetching,
+                      debouncedSearch,
+                    )}
+                    placeholder="Search ideas..."
+                    className="w-full sm:w-64"
                   />
-                </div>
-                <div className="flex items-center gap-2 sm:ms-auto">
-                  <DataGridColumnVisibility
-                    table={table}
-                    trigger={
-                      <Button variant="outline" size="sm" className="gap-1">
-                        <Columns3 className="size-4" />
-                        Columns
-                      </Button>
-                    }
-                  />
-                  <IdeasViewToggle active="list" />
-                </div>
-              </CardHeader>
-              <CardTable>
-                <DataGridTable />
-              </CardTable>
-            </Card>
-          </DataGrid>
+                  <div className="w-full sm:w-48">
+                    <SearchableSelect
+                      value={status}
+                      onChange={setStatus}
+                      options={IDEA_STATUS_FILTER_OPTIONS}
+                      placeholder="All statuses"
+                      emptyMessage="No statuses."
+                      clearable
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 sm:ms-auto">
+                    <DataGridColumnVisibility
+                      table={table}
+                      trigger={
+                        <Button variant="outline" size="sm" className="gap-1">
+                          <Columns3 className="size-4" />
+                          Columns
+                        </Button>
+                      }
+                    />
+                    <IdeasViewToggle active="list" />
+                  </div>
+                </CardHeader>
+                <CardTable>
+                  <DataGridTable />
+                </CardTable>
+              </Card>
+            </DataGrid>
+          )}
         </div>
       </Container>
       <IdeaCaptureModal open={modalOpen} onOpenChange={setModalOpen} />

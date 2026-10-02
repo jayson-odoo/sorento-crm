@@ -230,6 +230,18 @@ describe('AC-E-03 Edit / Delete follow the ss flags', () => {
       commit_at: serverTime(10_000),
       window_seconds: 10,
     });
+    // The server answers `current` with what is parked (Reviewer 4: items no longer poll from mount).
+    pending.getCurrentPendingAction.mockResolvedValue({
+      pending: {
+        id: 'pa-9',
+        action_key: 'idea_comment.delete',
+        entity_type: 'idea_comment',
+        entity_id: 'c1',
+        commit_at: serverTime(10_000),
+        window_seconds: 10,
+      },
+      last_outcome: null,
+    });
     const confirm = vi.spyOn(window, 'confirm');
     renderComments([{ id: 'c1', body: 'Mine to delete', canEdit: true, canDelete: true }]);
     await screen.findByText('Mine to delete');

@@ -104,7 +104,7 @@ export function PortalIdeaTrack({ token }: { token: string }) {
             {idea.upvotes}
           </div>
           <div className="flex min-w-0 flex-col gap-1.5">
-            <h1 className="break-words text-lg font-semibold">{idea.title}</h1>
+            <h1 className="break-words text-lg font-semibold">{idea.title || idea.problem}</h1>
             <div className="flex flex-wrap items-center gap-2">
               <IdeaStatusBadge label={idea.statusLabel} color={idea.statusColor} />
             </div>

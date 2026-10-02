@@ -92,7 +92,6 @@ function idea(over: Record<string, unknown> = {}) {
     mergedIntoId: null,
     mergedInto: null,
     mergedCount: 0,
-    businessRequirements: [],
     ...over,
   };
 }
@@ -257,6 +256,15 @@ describe('AC-C-06 empty and error states', () => {
     svc.listIdeas.mockResolvedValue([idea()]);
     fireEvent.click(screen.getByRole('button', { name: /Retry/ }));
     expect(await screen.findByText('Faster quotes')).toBeInTheDocument();
+  });
+});
+
+describe('AC-C-06 error OR empty, never both', () => {
+  it('a gateway error shows the error state and not the empty-state heading', async () => {
+    svc.listIdeas.mockRejectedValue(new Error("The Ideas workspace isn't reachable right now."));
+    renderList();
+    expect(await screen.findByText("The Ideas workspace isn't reachable right now.")).toBeInTheDocument();
+    expect(screen.queryByText('No ideas yet')).toBeNull();
   });
 });
 

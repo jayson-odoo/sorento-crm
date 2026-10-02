@@ -35,18 +35,10 @@ export interface IdeaMergedInto {
   title: string | null;
 }
 
-/** A Business Requirement linked to an idea, read-only here. */
-export interface IdeaBusinessRequirement {
-  id: string;
-  title: string;
-  statusLabel: string;
-  statusColor: IdeaStatusColor;
-}
-
 export interface Idea {
   id: string;
   productName: string;
-  /** The lifecycle key (`new`, `triaged`, ...). */
+  /** The lifecycle key ss uses (`captured`, `triaged`, ...). */
   status: string;
   statusId: string;
   statusLabel: string;
@@ -73,8 +65,6 @@ export interface Idea {
   mergedIntoId: string | null;
   mergedInto: IdeaMergedInto | null;
   mergedCount: number;
-  /** The BRs linked to the idea (read-only BR tab). ss does not return them yet, so it reads empty. */
-  businessRequirements: IdeaBusinessRequirement[];
 }
 
 export interface IdeaListParams {

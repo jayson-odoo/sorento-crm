@@ -2,14 +2,23 @@
 
 import { useMemo, useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { CornerDownRight, LoaderCircleIcon, Pencil, Trash2 } from 'lucide-react';
+import {
+  CornerDownRight,
+  LoaderCircleIcon,
+  Pencil,
+  Trash2,
+} from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
-import { IDEAS_KEY, useIdeaCommentsQuery, useIdeaMutations } from '@/hooks/useIdeas';
+import {
+  IDEAS_KEY,
+  useIdeaCommentsQuery,
+  useIdeaMutations,
+} from '@/hooks/useIdeas';
 import { formatDateTime } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import type { IdeaComment } from '@/types/ideas';
@@ -28,7 +37,9 @@ function initials(name: string): string {
 function CommentAvatar({ name, small }: { name: string; small?: boolean }) {
   return (
     <Avatar className={small ? 'size-6' : 'size-8'}>
-      <AvatarFallback className="text-[0.6875rem] font-medium">{initials(name)}</AvatarFallback>
+      <AvatarFallback className="text-[0.6875rem] font-medium">
+        {initials(name)}
+      </AvatarFallback>
     </Avatar>
   );
 }
@@ -83,12 +94,25 @@ function Composer({
         />
         <div className="flex justify-end gap-2">
           {onCancel ? (
-            <Button type="button" variant="outline" size="sm" onClick={onCancel}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onCancel}
+            >
               Cancel
             </Button>
           ) : null}
-          <Button type="button" variant="primary" size="sm" disabled={!canSubmit} onClick={submit}>
-            {pending ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            disabled={!canSubmit}
+            onClick={submit}
+          >
+            {pending ? (
+              <LoaderCircleIcon className="size-4 animate-spin" />
+            ) : null}
             {submitLabel}
           </Button>
         </div>
@@ -116,8 +140,6 @@ function CommentItem({ ideaId, comment, small, frozen, onReply }: ItemProps) {
     verb: 'Deleting',
     subject: 'Comment',
     surface: 'inline',
-    // Read from mount, like a record page: a countdown survives a reload and the thread is short.
-    watchFromMount: true,
     successMessage: 'Comment deleted',
     payload: { idea_id: ideaId },
     invalidateKeys: [IDEAS_KEY],
@@ -150,7 +172,11 @@ function CommentItem({ ideaId, comment, small, frozen, onReply }: ItemProps) {
           autoFocus
           onCancel={() => setEditing(false)}
           onSubmit={async (body) => {
-            await editComment.mutateAsync({ id: ideaId, commentId: comment.id, body });
+            await editComment.mutateAsync({
+              id: ideaId,
+              commentId: comment.id,
+              body,
+            });
             setEditing(false);
           }}
         />
@@ -159,24 +185,39 @@ function CommentItem({ ideaId, comment, small, frozen, onReply }: ItemProps) {
   }
 
   return (
-    <div className={cn('flex items-start gap-3 py-3', removal.isPending && 'opacity-60')}>
+    <div
+      className={cn(
+        'flex items-start gap-3 py-3',
+        removal.isPending && 'opacity-60',
+      )}
+    >
       <CommentAvatar name={comment.authorName} small={small} />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
           <span className="font-medium">{comment.authorName}</span>
-          <span className="text-xs text-muted-foreground">{formatDateTime(comment.createdAt)}</span>
+          <span className="text-xs text-muted-foreground">
+            {formatDateTime(comment.createdAt)}
+          </span>
           {comment.editedAt ? (
             <Badge variant="outline" size="xs">
               edited
             </Badge>
           ) : null}
         </div>
-        <p className="whitespace-pre-wrap break-words text-sm">{comment.body}</p>
+        <p className="whitespace-pre-wrap break-words text-sm">
+          {comment.body}
+        </p>
         {removal.countdown ? (
           <div className="pt-1">{removal.countdown}</div>
         ) : frozen ? null : (
           <div className="flex flex-wrap items-center gap-1 pt-0.5">
-            <Button type="button" variant="dim" size="sm" className="h-7 gap-1 px-1.5" onClick={onReply}>
+            <Button
+              type="button"
+              variant="dim"
+              size="sm"
+              className="h-7 gap-1 px-1.5"
+              onClick={onReply}
+            >
               <CornerDownRight className="size-3.5" />
               Reply
             </Button>
@@ -193,7 +234,13 @@ function CommentItem({ ideaId, comment, small, frozen, onReply }: ItemProps) {
               </Button>
             ) : null}
             {canDelete ? (
-              <Button type="button" variant="dim" size="sm" className="h-7 gap-1 px-1.5" onClick={() => removal.start()}>
+              <Button
+                type="button"
+                variant="dim"
+                size="sm"
+                className="h-7 gap-1 px-1.5"
+                onClick={() => removal.start()}
+              >
                 <Trash2 className="size-3.5" />
                 Delete
               </Button>
@@ -210,9 +257,15 @@ function CommentItem({ ideaId, comment, small, frozen, onReply }: ItemProps) {
  * deleted" placeholder when a deleted comment still has replies. Delete is the deferred
  * countdown, in place of the row's actions (D7), not a dialog.
  */
-export function IdeaComments({ ideaId, frozen }: { ideaId: string; frozen: boolean }) {
+export function IdeaComments({
+  ideaId,
+  frozen,
+}: {
+  ideaId: string;
+  frozen: boolean;
+}) {
   const { data: session } = useSession();
-  const me = session?.user?.name ?? 'Demo User';
+  const me = session?.user?.name ?? '';
   const { data: comments, isLoading } = useIdeaCommentsQuery(ideaId);
   const { addComment } = useIdeaMutations();
   const [replyTo, setReplyTo] = useState<string | null>(null);
@@ -223,14 +276,20 @@ export function IdeaComments({ ideaId, frozen }: { ideaId: string; frozen: boole
     return {
       // A deleted comment stays only as the placeholder its replies hang from.
       threads: top
-        .map((c) => ({ root: c, replies: all.filter((r) => r.parentId === c.id && !r.deleted) }))
+        .map((c) => ({
+          root: c,
+          replies: all.filter((r) => r.parentId === c.id && !r.deleted),
+        }))
         .filter(({ root, replies }) => !root.deleted || replies.length > 0),
       count: all.filter((c) => !c.deleted).length,
     };
   }, [comments]);
 
   return (
-    <section aria-label="Comments" className="flex flex-col gap-3 border-t pt-5">
+    <section
+      aria-label="Comments"
+      className="flex flex-col gap-3 border-t pt-5"
+    >
       <h3 className="flex items-center gap-2 text-sm font-semibold">
         Comments
         <Badge variant="secondary" size="sm" shape="circle">
@@ -258,7 +317,9 @@ export function IdeaComments({ ideaId, frozen }: { ideaId: string; frozen: boole
       ) : threads.length === 0 ? (
         <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed py-6 text-center">
           <span className="text-sm font-medium">No comments yet</span>
-          <span className="text-sm text-muted-foreground">Comments on this idea appear here.</span>
+          <span className="text-sm text-muted-foreground">
+            Comments on this idea appear here.
+          </span>
         </div>
       ) : (
         <div className="flex flex-col divide-y">
@@ -279,7 +340,7 @@ export function IdeaComments({ ideaId, frozen }: { ideaId: string; frozen: boole
                       comment={reply}
                       small
                       frozen={frozen}
-                            onReply={() => setReplyTo(root.id)}
+                      onReply={() => setReplyTo(root.id)}
                     />
                   ))}
                   {replyTo === root.id ? (
@@ -293,7 +354,11 @@ export function IdeaComments({ ideaId, frozen }: { ideaId: string; frozen: boole
                         autoFocus
                         onCancel={() => setReplyTo(null)}
                         onSubmit={async (body) => {
-                          await addComment.mutateAsync({ id: ideaId, body, parentId: root.id });
+                          await addComment.mutateAsync({
+                            id: ideaId,
+                            body,
+                            parentId: root.id,
+                          });
                           setReplyTo(null);
                         }}
                       />

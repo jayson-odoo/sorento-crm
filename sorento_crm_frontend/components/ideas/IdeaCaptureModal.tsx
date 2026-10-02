@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { FileDropzone } from '@/components/common/FileDropzone';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -115,11 +116,13 @@ export function IdeaCaptureModal({
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="idea-files">Attachments</Label>
-              <Input
+              <FileDropzone
                 id="idea-files"
-                type="file"
                 multiple
-                onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+                files={files}
+                onFilesChange={setFiles}
+                title="Drop files here or click to upload"
+                hint=""
               />
             </div>
           </DialogBody>
