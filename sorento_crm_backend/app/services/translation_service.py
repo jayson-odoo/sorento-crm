@@ -35,7 +35,7 @@ from app.models.translation_memory import SOURCE_AI, SOURCE_MANUAL, TranslationM
 from app.models.user import User
 from app.services import ai_prompt_registry
 from app.services.ai_assistant_service import AIAssistantConfigService
-from app.services.error_handler import handle_not_found
+from app.services.error_handler import AppException, handle_not_found
 from app.services.llm_provider import get_provider, resolve_api_key, resolve_model
 
 logger = logging.getLogger(__name__)
@@ -514,6 +514,30 @@ def get_or_404(db: Session, memory_id: str) -> TranslationMemory:
     return row
 
 
+def _check_chatbot_wording(source_text: str, target_text: str) -> None:
+    """A chatbot reply label or sentence (en -> ms/zh) is read by dealers unchecked, so a staff
+    edit may not carry markup, a link, a number the English never had, or a different set of
+    `{token}` placeholders (security review M2)."""
+    from app.services.chatbot.label_catalog import tokens_match
+
+    lowered = target_text.lower()
+    problem = None
+    if "\n" in target_text or "\r" in target_text:
+        problem = "a line break"
+    elif any(ch in target_text for ch in "*_~"):
+        problem = "formatting characters (* _ ~)"
+    elif "http" in lowered or "www." in lowered:
+        problem = "a link"
+    elif {ch for ch in target_text if ch.isdigit()} - {ch for ch in source_text if ch.isdigit()}:
+        problem = "a number that is not in the English wording"
+    elif not tokens_match(source_text, target_text):
+        problem = "different {placeholders} from the English wording"
+    elif len(target_text) > max(3 * len(source_text), 40):
+        problem = "more text than the English wording allows"
+    if problem:
+        raise AppException(422, f"This reply wording cannot contain {problem}.")
+
+
 def update_target_text(
     db: Session, memory_id: str, target_text: str, *, user_id: Optional[str] = None
 ) -> TranslationMemory:
@@ -522,7 +546,21 @@ def update_target_text(
     row sharing this word (S2, text glossary lane) BEFORE the commit below, same ``zh ->
     en`` only rule (R5) as ``remember()``."""
     row = get_or_404(db, memory_id)
-    row.target_text = target_text.strip()
+    new_text = target_text.strip()
+    chatbot = row.source_lang == "en"
+    if chatbot:
+        _check_chatbot_wording(row.source_text, new_text)
+        from app.services import audit_service
+
+        audit_service.record(
+            db,
+            event="translation.chatbot_edit",
+            entity_type="translation_memory",
+            entity_id=row.id,
+            old_values={"target_text": row.target_text},
+            new_values={"target_text": new_text},
+        )
+    row.target_text = new_text
     row.source = SOURCE_MANUAL
     row.created_by = user_id
     if row.source_lang == "zh" and row.target_lang == "en":

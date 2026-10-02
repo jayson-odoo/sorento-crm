@@ -221,3 +221,88 @@ def test_delete_a_missing_row_is_404(client):
     c, _db, _actor = client
     resp = c.delete(f"{BASE}/{uuid.uuid4()}")
     assert resp.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 1, item 7 (security M2): staff edits of CHATBOT reply wording (en -> ms/zh)
+# --------------------------------------------------------------------------- #
+
+CHATBOT_SOURCE = "no stock at the moment, ETA {eta}."
+
+
+def _chatbot_row(db, **over) -> TranslationMemory:
+    defaults = dict(
+        source_text=CHATBOT_SOURCE,
+        source_lang="en",
+        target_lang="ms",
+        target_text="tiada stok buat masa ini, ETA {eta}.",
+        source="ai",
+    )
+    defaults.update(over)
+    return _row(db, **defaults)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "tiada stok\nbuat masa ini, ETA {eta}.",
+        "tiada *stok* buat masa ini, ETA {eta}.",
+        "tiada _stok_ buat masa ini, ETA {eta}.",
+        "tiada ~stok~ buat masa ini, ETA {eta}.",
+        "tiada stok, lihat http://x.test ETA {eta}.",
+        "tiada stok, lihat WWW.x.test ETA {eta}.",
+        "tiada stok 123 ETA {eta}.",
+        "tiada stok buat masa ini.",
+        "tiada stok buat masa ini, ETA {eta} {extra}.",
+        "tiada stok " + "yang sangat panjang " * 10 + "ETA {eta}.",
+    ],
+)
+def test_item7_a_chatbot_edit_with_a_forbidden_shape_is_rejected(client, bad):
+    c, db, _actor = client
+    row = _chatbot_row(db)
+    db.commit()
+    resp = c.put(f"{BASE}/{row.id}", json={"target_text": bad})
+    assert resp.status_code == 422, resp.text
+    db.expire_all()
+    assert db.query(TranslationMemory).filter(TranslationMemory.id == row.id).one().target_text == (
+        "tiada stok buat masa ini, ETA {eta}."
+    )
+
+
+def test_item7_a_valid_chatbot_edit_is_saved_and_audited(client):
+    from app.models.audit import AuditLog
+
+    c, db, _actor = client
+    row = _chatbot_row(db)
+    db.commit()
+    new = "tiada stok sekarang, ETA {eta}."
+    resp = c.put(f"{BASE}/{row.id}", json={"target_text": new})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["source"] == "manual"
+    audit = (
+        db.query(AuditLog)
+        .filter(AuditLog.event == "translation.chatbot_edit", AuditLog.entity_id == row.id)
+        .one()
+    )
+    assert audit.entity_type == "translation_memory"
+    assert audit.old_values == {"target_text": "tiada stok buat masa ini, ETA {eta}."}
+    assert audit.new_values == {"target_text": new}
+
+
+def test_item7_digits_already_in_the_source_are_allowed(client):
+    c, db, _actor = client
+    row = _chatbot_row(
+        db, source_text="Top 3 results", target_text="3 hasil teratas", target_lang="ms"
+    )
+    db.commit()
+    resp = c.put(f"{BASE}/{row.id}", json={"target_text": "3 hasil teratas sekali"})
+    assert resp.status_code == 200, resp.text
+
+
+def test_item7_zh_to_en_rows_are_not_subject_to_the_chatbot_checks(client):
+    c, db, _actor = client
+    row = _row(db, source_text="座厕", target_text="Toilet bowl", source="ai")
+    db.commit()
+    text = "Toilet *bowl*\nsee www.x.test 99 " + "very long " * 20
+    resp = c.put(f"{BASE}/{row.id}", json={"target_text": text})
+    assert resp.status_code == 200, resp.text
