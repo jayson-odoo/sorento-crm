@@ -1,8 +1,8 @@
 # CARD - Packing list region (West / East Malaysia)
 
-Lane REGION-PACKING-LIST, size L. Status: behaviour card v2 (owner Lavish note on mock v1, 2 Oct 2026: a packing list can carry more than one
-region; contact regions multi-select). Q1-Q5 still open.
-Paths under `sorento_crm_backend/app/` unless shown. Data from the crew dev DB `sorento_cagent_stack`.
+Lane REGION-PACKING-LIST, size L. Status: ANSWERED 2 Oct 2026. Q1 = (b) contact region grant lives in the ACCESS-MODEL access model (contact
+side waits for that lane); Q2 (a); Q3 (a); Q4 (a) workbook fine as is; Q5 (a). Mock v2 approved, default West
+Malaysia only. Rule 4 below (contact column + Chatbot settings card) is superseded by Q1 (b): see the PLAN.
 
 ## Rules
 
