@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
   getCoreRowModel,
@@ -16,6 +17,7 @@ import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visib
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Container } from '@/components/common/container';
 import LoadErrorState from '@/components/common/LoadErrorState';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -46,6 +48,20 @@ const SOURCE_LABEL: Record<string, string> = {
 export function IdeasListView() {
   const [modalOpen, setModalOpen] = useState(false);
   const [status, setStatus] = useState('');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [mine, setMine] = useState(searchParams.get('view') === 'mine');
+  const changeView = (next: string) => {
+    if (!next) return;
+    const isMine = next === 'mine';
+    setMine(isMine);
+    const params = new URLSearchParams(searchParams.toString());
+    if (isMine) params.set('view', 'mine');
+    else params.delete('view');
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+  };
   const {
     value: searchQuery,
     setValue: setSearchQuery,
@@ -56,6 +72,7 @@ export function IdeasListView() {
     useIdeasQuery({
       query: debouncedSearch,
       status,
+      mine,
     });
   const { vote } = useIdeaMutations();
   // `mutate` is stable across renders; the mutation object is not, and columns that depend on it
@@ -316,6 +333,19 @@ export function IdeasListView() {
                       clearable
                     />
                   </div>
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    value={mine ? 'mine' : 'all'}
+                    onValueChange={changeView}
+                  >
+                    <ToggleGroupItem value="mine" className="px-3">
+                      My ideas
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="all" className="px-3">
+                      All ideas
+                    </ToggleGroupItem>
+                  </ToggleGroup>
                   <div className="flex items-center gap-2 sm:ms-auto">
                     <DataGridColumnVisibility
                       table={table}
