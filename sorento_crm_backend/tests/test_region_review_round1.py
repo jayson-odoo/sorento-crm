@@ -244,8 +244,10 @@ def _external_body(db, attachment_id, number, **header):
 
 
 @pytest.mark.parametrize("how", ["payload_west", "attachment_west", "nothing_stated"])
-def test_a_matched_reupload_keeps_the_existing_shipments_regions(client, db, how):
-    """Red today: the match branch overwrites regions with the resolved default or value."""
+def test_a_matched_reupload_takes_the_uploads_regions(client, db, how):
+    """Owner ruling 2 Oct: a re-upload onto an existing container takes the regions the
+    user chose (payload, else the uploaded attachment's). An upload that states none
+    leaves the container's regions alone (never nulled). Red today for the first two."""
     number = unique_code("MATCH")[:40]
     made = client.post(
         STAFF, json={"shipment_number": number, "shipment_date": "2026-10-01", "regions": ["east"]}
@@ -258,7 +260,8 @@ def test_a_matched_reupload_keeps_the_existing_shipments_regions(client, db, how
     res = client.post(EXTERNAL, json=_external_body(db, att.id, number, **header))
     assert res.status_code == 201, res.text
     assert res.json()["shipment"]["id"] == sid  # it did match the existing one
-    assert _stored(db, sid) == {"east"}
+    expected = {"east"} if how == "nothing_stated" else {"west"}
+    assert _stored(db, sid) == expected
 
 
 # ------------------------------------------------------------------ 4. rules expansion
