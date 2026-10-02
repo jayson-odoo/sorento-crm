@@ -125,7 +125,10 @@ describe('CustomersList - Group', () => {
   it('AC-21: picking a Group in the filter passes customer_group_id to the list query', async () => {
     renderList();
 
-    fireEvent.click(screen.getByRole('button', { name: /filters?/i }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: /filters?/i }), {
+      button: 0,
+      ctrlKey: false,
+    });
     const combo = await screen.findByRole('combobox', { name: 'Group' });
     fireEvent.click(combo);
     fireEvent.click(await screen.findByRole('option', { name: /HANLIM TRADING SDN BHD/ }));

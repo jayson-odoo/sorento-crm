@@ -41,11 +41,10 @@ vi.mock('../../services/customerGroupService', async (importOriginal) => ({
   ...services,
 }));
 
-const customerSvc = vi.hoisted(() => ({
-  searchCustomersSelect: vi.fn(),
-  CUSTOMER_SELECT_PAGE_SIZE: 50,
-}));
-vi.mock('@/app/(protected)/order-management/customers/services/customerService', () => customerSvc);
+// The picker runs the REAL `searchCustomersSelect` mapping; only the HTTP call under it is
+// stubbed, so what the option shows is decided by the code under test, not by this file.
+const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
+vi.mock('@/lib/api', () => ({ apiFetch: api.apiFetch }));
 
 const deferred = vi.hoisted(() => ({
   startRecord: vi.fn(),
@@ -105,10 +104,12 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
   SearchableMultiSelect: (props: {
     value: string[];
     onChange: (v: string[]) => void;
-    fetchOptions?: (q: string) => Promise<{ value: string; label: string; disabled?: boolean }[]>;
+    fetchOptions?: (
+      q: string,
+    ) => Promise<{ value: string; label: string; description?: string; disabled?: boolean }[]>;
   }) => {
     const [opts, setOpts] = React.useState<
-      { value: string; label: string; disabled?: boolean }[]
+      { value: string; label: string; description?: string; disabled?: boolean }[]
     >([]);
     return (
       <div>
@@ -130,6 +131,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
                 )
               }
             />
+            <span>{o.description}</span>
           </label>
         ))}
       </div>
@@ -154,9 +156,16 @@ const LEDGERS = [
   { id: 'c-3', customer_code: '300-H118', customer_name: 'HANLIM TRADING SDN BHD (CERAMIC & ELLECI)', account_level: null, is_active: true },
 ];
 
+// Rows as GET /customers/select returns them.
+const SELECT_ROWS = [
+  { id: 'free-1', customer_code: '300-H119', customer_name: 'HANLIM TRADING SDN BHD [A/C IV]', customer_group_id: 'grp-9', customer_group_name: 'JUBIN KEMUNING SDN BHD' },
+  { id: 'free-2', customer_code: '300-H030', customer_name: 'HANLIM TRADING SDN BHD', customer_group_id: null, customer_group_name: null },
+  { id: 'own-1', customer_code: '300-H070', customer_name: 'HANLIM TRADING SDN BHD [A/C II]', customer_group_id: 'grp-1', customer_group_name: 'HANLIM TRADING SDN BHD' },
+];
 const OPTIONS = [
-  { value: 'free-1', label: '300-H119 HANLIM TRADING SDN BHD [A/C IV]', disabled: false },
-  { value: 'free-2', label: '300-H030 HANLIM TRADING SDN BHD', disabled: false },
+  { label: '300-H119 - HANLIM TRADING SDN BHD [A/C IV]' },
+  { label: '300-H030 - HANLIM TRADING SDN BHD' },
+  { label: '300-H070 - HANLIM TRADING SDN BHD [A/C II]' },
 ];
 
 function page(rows: typeof LEDGERS) {
@@ -183,8 +192,11 @@ beforeEach(() => {
   services.getCustomerGroupCustomers.mockResolvedValue(page(LEDGERS));
   services.updateCustomerGroup.mockResolvedValue({ ...GROUP, name: 'HANLIM RENAMED' });
   services.addCustomerGroupCustomers.mockResolvedValue({ data: [] });
-  customerSvc.searchCustomersSelect.mockReset();
-  customerSvc.searchCustomersSelect.mockResolvedValue(OPTIONS);
+  api.apiFetch.mockReset();
+  api.apiFetch.mockResolvedValue({
+    ok: true,
+    json: async () => ({ data: SELECT_ROWS }),
+  });
 });
 afterEach(() => cleanup());
 
@@ -268,6 +280,24 @@ describe('CustomerGroupDetail', () => {
       'free-1',
       'free-2',
     ]);
+  });
+
+  it('mock 5: the picker shows each customer\'s current group, "no group" when none', async () => {
+    renderDetail();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'open picker' }));
+    await screen.findByLabelText(OPTIONS[0].label);
+    expect(screen.getByText('in JUBIN KEMUNING SDN BHD')).toBeInTheDocument();
+    expect(screen.getByText('no group')).toBeInTheDocument();
+  });
+
+  it('mock 5: a customer already in THIS group is shown but cannot be ticked', async () => {
+    renderDetail();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'open picker' }));
+    expect(await screen.findByLabelText(OPTIONS[2].label)).toBeDisabled();
+    expect(screen.getByLabelText(OPTIONS[0].label)).toBeEnabled();
+    expect(screen.getByLabelText(OPTIONS[1].label)).toBeEnabled();
   });
 
   it('AC-18: an empty group shows "No ledgers in this group"', async () => {

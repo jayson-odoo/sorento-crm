@@ -551,3 +551,23 @@ def test_ac9_select_returns_id_name_ledger_count_searched_on_the_server(client, 
     assert response.status_code == 200, response.text
     rows = response.json()["data"]
     assert [(r["id"], r["name"], r["ledger_count"]) for r in rows] == [(g, "ZZT SELECT ME", 2)]
+
+
+# ============================================ mock section 5: picker shows current group
+
+
+def test_mock5_customers_select_carries_group_id_and_name_null_when_none(client, db):
+    g = _group(db, "ZZT PICKER GROUP")
+    member = _customer(db, group_id=g)
+    loner = _customer(db)
+    db.commit()
+
+    response = client.get(f"{CUSTOMERS}/select", params={"query": "ZZT", "limit": 50})
+
+    assert response.status_code == 200, response.text
+    rows = {r["id"]: r for r in response.json()["data"]}
+    assert rows[str(member.id)]["customer_group_id"] == g
+    assert rows[str(member.id)]["customer_group_name"] == "ZZT PICKER GROUP"
+    assert "customer_group_name" in rows[str(loner.id)]
+    assert rows[str(loner.id)]["customer_group_name"] is None
+    assert rows[str(loner.id)]["customer_group_id"] is None
