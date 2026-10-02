@@ -106,24 +106,22 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
     # `warehouse_id`; under a contact's policy: see below). Subtracting the product total on every warehouse row - the first cut
     # - reported the same demand two, three, four times over and printed "oversold" against
     # a warehouse that was not.
-    open_so_by_warehouse, unlocated = service.open_so_qty_by_product_warehouse(
+    open_so_by_warehouse, _unlocated = service.open_so_qty_by_product_warehouse(
         list(product_ids)
     )
     # STOCK-TOTAL-OS-SCOPE (owner decision 2 Oct 2026): under a contact's visibility
     # policy the product TOTAL's open SO is the sum over the warehouses that contact may
     # see - the same rule its location lines are filtered by - so a hidden warehouse's
-    # demand is never shown or hinted. Lines with no warehouse ride separately as
-    # `unassigned_open_so_qty` (only when > 0) and are not part of the total. The staff
-    # path (no contact, no policy) keeps the product total: every line, unlocated included.
+    # demand is never shown or hinted. Lines with no warehouse are not shown anywhere in
+    # this reply (owner option b). The staff path (no contact, no policy) keeps the
+    # product total: every line, unlocated included.
     policy = service.resolved_policy
-    unassigned: dict[str, int] = {}
     if policy is not None:
         visible = service.visible_warehouse_ids(policy)
         open_so_total: dict[str, int] = {}
         for (pid, wid), qty in open_so_by_warehouse.items():
             if wid in visible:
                 open_so_total[pid] = open_so_total.get(pid, 0) + qty
-        unassigned = {pid: qty for pid, qty in unlocated.items() if qty > 0}
     else:
         open_so_total = service.open_so_qty_by_product(list(product_ids))
 
@@ -153,8 +151,6 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
 
     def _attach_total(target: dict, pid: str, on_hand) -> None:
         _attach(target, open_so_total.get(pid, 0), on_hand)
-        if unassigned.get(pid):
-            target["unassigned_open_so_qty"] = unassigned[pid]
 
     for serialized, row in zip(body.get("data") or [], rows):
         pid = str(getattr(row, "product_id", "") or "")
@@ -168,8 +164,8 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
         # under a policy) - the one row shape that has no better answer.
         open_qty = open_so_by_warehouse.get((pid, wid), 0) if wid else open_so_total.get(pid, 0)
         _attach(serialized, open_qty, getattr(row, "quantity_on_hand", None))
-    # COMPACT entries: the product total on the entry (under a policy the unassigned
-    # remainder rides beside it as `unassigned_open_so_qty`), and each warehouse line's own open SO on the location (D1, owner
+    # COMPACT entries: the product total on the entry (under a policy, visible warehouses
+    # only and no unassigned remainder), and each warehouse line's own open SO on the location (D1, owner
     # console pass 8 Sep: "*BRW:* 0 (O/S: 12)"). Locations carry a code, not an id, so the
     # codes are resolved once through the service.
     summary_entries = [e for e in (body.get("stock_summary") or []) if isinstance(e, dict)]

@@ -1317,7 +1317,7 @@ class StockService:
         arithmetic the customer can see is wrong. The plan is explicit: per warehouse
         where the SO line has one, and the remainder (lines with no `warehouse_id`) on
         the PRODUCT TOTAL row only, never spread across the warehouse rows (under a
-        contact's policy it rides beside the total instead, STOCK-TOTAL-OS-SCOPE). A0 measured
+        contact's policy it is not shown at all, STOCK-TOTAL-OS-SCOPE). A0 measured
         that remainder at 0.8% of open lines, which is why it is a small correction and
         not a redesign - but a small correction applied to every row is still wrong on
         every row.

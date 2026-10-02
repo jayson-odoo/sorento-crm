@@ -2,7 +2,7 @@
 
 Status: in progress (small fix track: no migration, no RBAC change, no new ingest surface)
 
-Owner decision 2 Oct 2026, option (a).
+Owner decision 2 Oct 2026: option (a), revised the same day to option (b) (no Unassigned line).
 
 ## Problem
 
@@ -17,8 +17,8 @@ demand inside the Total (prod: MWC7624-RL-S10 `Total 54 (O/S: 531)`, `BRW 0 (O/S
 - Total O/S = sum of open SO qty on warehouses the contact may see: the same
   `warehouse_criterion(policy, ...)`, active-warehouse filter and question warehouse
   narrowing (`warehouse_ids` / `warehouse_id`) the location lines use.
-- Open SO lines with no warehouse print on their own line, `Unassigned O/S: N`, only when N > 0,
-  and are not added to Total O/S.
+- Open SO lines with no warehouse are not shown anywhere in this reply: not in Total O/S and
+  not on a line of their own (option b).
 - Open SO on a hidden warehouse is never shown or hinted.
 - No `contact_id` (staff grid, no policy): unchanged; the summary keeps the product total.
 - Company scope: the open-SO aggregates are already scoped by the session `do_orm_execute`
@@ -31,8 +31,8 @@ demand inside the Total (prod: MWC7624-RL-S10 `Total 54 (O/S: 531)`, `BRW 0 (O/S
 ## UAC
 
 1. Policy includes only W1; open SO 10 on W1, 7 on hidden W2, 3 with no warehouse:
-   Total O/S 10, Unassigned O/S 3, nothing reads 7 or 20.
-2. No unassigned lines: no `Unassigned O/S` line.
+   Total O/S 10, nothing reads 3, 7, 13, 17 or 20.
+2. No `Unassigned O/S` line in any reply.
 3. Staff call (no contact): Total O/S unchanged (all lines).
 4. Open SO of another company is not counted when the request is company scoped.
 5. A warehouse named in the question narrows Total O/S the same way it narrows the lines.

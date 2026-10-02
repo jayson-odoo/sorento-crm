@@ -4,8 +4,8 @@
 
 - Total O/S = open SO qty on the warehouses the contact may see (the same
   `warehouse_criterion` the location lines are filtered by).
-- Open SO lines with NO warehouse ride separately as `unassigned_open_so_qty`, only when
-  > 0, and are NOT added to Total O/S.
+- Open SO lines with NO warehouse are not shown anywhere in this reply (owner option b,
+  2 Oct 2026): not in Total O/S and not on a line of their own.
 - Open SO on a hidden warehouse is never shown or hinted.
 - No contact (staff grid): unchanged, the product total.
 - The open-SO aggregates are company scoped.
@@ -121,14 +121,14 @@ def test_compact_total_os_counts_only_visible_warehouses(db, rule):
     entry = body["stock_summary"][0]
     assert entry["total_on_hand"] == 54
     assert entry["open_so_qty"] == 10, "hidden W2's 7 and the unassigned 3 are not Total O/S"
-    assert entry["unassigned_open_so_qty"] == 3
+    assert "unassigned_open_so_qty" not in entry
     assert entry["sellable"] == 44
     assert [loc["open_so_qty"] for loc in entry["locations"]] == [10]
 
 
 def test_compact_hidden_warehouse_open_so_is_never_in_the_body(db):
-    """Neither the hidden warehouse's 7, nor any sum that includes it (17, 20), appears
-    anywhere in the answer."""
+    """Neither the hidden warehouse's 7, the unassigned 3, nor any sum that includes them
+    (13, 17, 20), appears anywhere in the answer."""
     w1, w2, p = _seed(db)
     contact = _contact(db)
     _policy(db, contact, mode="compact", warehouse_ids=[w1.id])
@@ -146,10 +146,10 @@ def test_compact_hidden_warehouse_open_so_is_never_in_the_body(db):
             yield node
 
     seen = set(numbers(body["stock_summary"]))
-    assert not seen & {7, 17, 20}, seen
+    assert not seen & {3, 7, 13, 17, 20}, seen
 
 
-def test_compact_no_unassigned_lines_means_no_unassigned_key(db):
+def test_compact_without_unassigned_lines_reads_the_same(db):
     w1, _w2, p = _seed(db, unassigned=0)
     contact = _contact(db)
     _policy(db, contact, mode="compact", warehouse_ids=[w1.id])
@@ -162,7 +162,7 @@ def test_compact_no_unassigned_lines_means_no_unassigned_key(db):
 
 def test_compact_every_warehouse_policy_counts_both(db):
     """A policy naming neither list = every active warehouse: Total O/S is W1 + W2, and
-    the unassigned remainder still rides separately."""
+    the unassigned remainder is still not shown."""
     _w1, _w2, p = _seed(db)
     contact = _contact(db)
     _policy(db, contact, mode="compact")
@@ -170,7 +170,7 @@ def test_compact_every_warehouse_policy_counts_both(db):
     entry = _sellable_body(db, product_ids=[p.id], contact_id=contact.id)["stock_summary"][0]
 
     assert entry["open_so_qty"] == 17
-    assert entry["unassigned_open_so_qty"] == 3
+    assert "unassigned_open_so_qty" not in entry
 
 
 def test_compact_inactive_warehouse_open_so_is_not_counted(db):
@@ -202,7 +202,7 @@ def test_detailed_summary_under_policy_counts_only_visible_warehouses(db):
     entry = body["stock_summary"][0]
     assert entry["total_on_hand"] == 54
     assert entry["open_so_qty"] == 10
-    assert entry["unassigned_open_so_qty"] == 3
+    assert "unassigned_open_so_qty" not in entry
     assert entry["sellable"] == 44
 
 
@@ -257,7 +257,7 @@ def test_compact_total_os_follows_a_warehouse_named_in_the_question(db, narrow):
 
     assert entry["total_on_hand"] == 54
     assert entry["open_so_qty"] == 10
-    assert entry["unassigned_open_so_qty"] == 3
+    assert "unassigned_open_so_qty" not in entry
 
 
 def test_detailed_summary_follows_a_warehouse_named_in_the_question(db):
