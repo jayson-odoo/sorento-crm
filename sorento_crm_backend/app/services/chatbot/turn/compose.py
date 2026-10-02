@@ -92,7 +92,7 @@ def _codes_without_rows(entities: list[Any], figures: list[dict[str, Any]]) -> l
 def _types_without_files(
     product_codes: list[Any], asked_types: list[Any], figures: list[dict[str, Any]]
 ) -> list[tuple[str, list[str]]]:
-    """`[(CODE, [missing type, ...])]` for each requested product lacking an asked type.
+    """`[(code, [missing type, ...])]` for each requested product lacking an asked type.
 
     ATTACHMENT-MULTI R3 (owner ruling 2 Oct 2026, Q2 (a)): the files that exist are sent and
     each gap is named, never silently skipped. Exact match on the rows' "Product Code" and
@@ -115,11 +115,11 @@ def _types_without_files(
     out: list[tuple[str, list[str]]] = []
     for code in product_codes:
         code_text = str(code).strip()
-        if not code_text or any(c == code_text.upper() for c, _ in out):
+        if not code_text or any(c.casefold() == code_text.casefold() for c, _ in out):
             continue
         missing = [n for n in names if (code_text.casefold(), n.casefold()) not in present]
         if missing:
-            out.append((code_text.upper(), missing))
+            out.append((code_text, missing))
     return out
 
 

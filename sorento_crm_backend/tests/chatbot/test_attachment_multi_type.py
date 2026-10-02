@@ -532,3 +532,121 @@ class TestEveryLeakIsHuman:
         text = out.get("escalate_message") or ""
 
         assert "You have no access levels configured to get last purchase cost." in text, text
+
+
+# --------------------------------------------------------------------------- #
+# The pick: "1" over a two-type roster answers both types (engine end to end)
+# --------------------------------------------------------------------------- #
+
+
+class TestThePickKeepsBothTypes:
+    """`engine.run_turn` twice, real resolver: the roster turn, then a numbered pick of the
+    photo-only member. The pick's fetch must ask for BOTH types and the reply must send the
+    photo and name the missing specs (R1 + R3 through the whole turn, not just the lane)."""
+
+    def test_a_numbered_pick_fetches_both_types_and_names_the_gap(self, session_factory, monkeypatch) -> None:
+        import json
+
+        from app.services.company_scope import DEFAULT_COMPANY_ID
+        from tests.chatbot.test_engine import _parser_output
+        from tests.chatbot.test_outstanding_lane import _present_response, _session_of
+        from tests.chatbot.test_rearch_r5_production_decides import (
+            _family_base,
+            _mcp_double,
+            _mcp_probe_for,
+            _run_turn_real,
+            _run_turn_with_mcp_call,
+            _seed_contact_and_get,
+        )
+        from tests.chatbot.test_rearch_r7_live_parity_replay import _seed_real_attachment_type
+
+        _seed_contact_and_get(session_factory)
+        family = _family_base("ZZTMULTI")
+        both_code, photo_code = f"{family}A", f"{family}B"
+        both_id = base._seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=both_code)
+        photo_id = base._seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=photo_code)
+        photos_id = _seed_real_attachment_type(session_factory, PHOTOS)
+        specs_id = _seed_real_attachment_type(session_factory, SPECS)
+        for product_id, type_id, name in (
+            (both_id, photos_id, f"{both_code}.jpg"),
+            (both_id, specs_id, f"{both_code}.pdf"),
+            (photo_id, photos_id, f"{photo_code}.jpg"),
+        ):
+            base._seed_file_for(
+                session_factory, product_id=product_id, attachment_type_id=type_id,
+                company_id=DEFAULT_COMPANY_ID, filename=name,
+            )
+        rows = {
+            both_code: [(PHOTOS, f"{both_code}.jpg"), (SPECS, f"{both_code}.pdf")],
+            photo_code: [(PHOTOS, f"{photo_code}.jpg")],
+        }
+
+        def _raw_rows(codes: list[str]) -> list[dict[str, Any]]:
+            return [
+                {
+                    "product": {"product_code": code},
+                    "attachment": {
+                        "attachment_type": type_name,
+                        "original_filename": filename,
+                        "file_path": f"https://example.test/{filename}",
+                    },
+                    "company_name": "Sorento",
+                }
+                for code in codes
+                for type_name, filename in rows[code]
+            ]
+
+        probe = _mcp_probe_for({"crm_master_product_attachments_list": _raw_rows([both_code, photo_code])})
+        entities = [
+            {"raw": family, "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
+            {"raw": "photo", "hint": "attachment_type", "canonical_code": "photo", "current_message": True, "confident": True},
+            {
+                "raw": "technical specifications",
+                "hint": "attachment_type",
+                "canonical_code": "technical specifications",
+                "current_message": True,
+                "confident": True,
+            },
+        ]
+        qf1 = _parser_output(
+            domain_hint="product_attachment",
+            intent_hint="check_product_attachment",
+            entities=entities,
+            routing={"suggested_team": "marketing_product", "suggested_agent": None, "team_source": None},
+        )
+        result1, _c1 = _run_turn_real(
+            session_factory, monkeypatch, qf=qf1, text_body=f"photo and technical specifications for {family}",
+            msg_id="zzt-multi-roster-1", mcp_response={"data": []}, answer_mcp_probe=probe,
+        )
+        reply1 = (result1.reply or {}).get("text") or ""
+        assert "Which product do you mean? Please choose:" in reply1, reply1
+        assert f"{photo_code} - has {PHOTOS}, no {SPECS}" in reply1, reply1
+        options = (_session_of(session_factory).get("open_question") or {}).get("options") or []
+        position = next(
+            (o.get("position") for o in options if str(o.get("code") or "").upper() == photo_code.upper()),
+            None,
+        )
+        assert position is not None, options
+
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def _answer(name: str, args: dict[str, Any]) -> str:
+            calls.append((name, dict(args)))
+            if name != "crm_master_product_attachments_list":
+                return json.dumps({"data": []})
+            return _present_response()(name, json.dumps({"data": _raw_rows([photo_code])}))
+
+        qf2 = _parser_output(
+            message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+            reference_positions=[position],
+        )
+        result2 = _run_turn_with_mcp_call(
+            session_factory, monkeypatch, qf=qf2, text_body=str(position),
+            msg_id="zzt-multi-roster-2", mcp_call=_mcp_double(other=_answer)[0], answer_mcp_probe=probe,
+        )
+        reply2 = (result2.reply or {}).get("text") or ""
+        fetches = [args for name, args in calls if name == "crm_master_product_attachments_list"]
+        assert fetches, calls
+        assert set(map(str, fetches[-1].get("attachment_type_ids") or [])) == {photos_id, specs_id}, fetches
+        assert f"{photo_code} has no {SPECS}." in reply2, reply2
+        assert "escalate" not in reply2.lower(), reply2
