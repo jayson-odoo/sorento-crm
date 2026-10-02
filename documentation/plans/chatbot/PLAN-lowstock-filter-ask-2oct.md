@@ -1,6 +1,6 @@
 # PLAN: low stock report asks for its filters before it runs (LOWSTOCK-FILTER-ASK)
 
-Status: building, Phase 2 green on the lane tests (route 35, helper 33, full-turn 22); full chatbot suite regression run in progress. Track: feature (chatbot lane + route params; no migration).
+Status: in review, PR #1445 ready (2 Oct 2026). Reviewer + security reviewer rounds fixed; full tests/chatbot 5240 passed on 147009ab; owner hand test posted. Track: feature (no migration).
 Card: `lowstock-filter-ask-behaviour-card.md` (holds the Step 1 trace with file:line).
 
 ## Owner report (2 Oct 2026)
