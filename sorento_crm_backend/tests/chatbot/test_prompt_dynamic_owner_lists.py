@@ -165,3 +165,69 @@ def test_the_access_level_order_step_leaves_inactive_rows_alone():
         )
         _order_migration().apply(db.connection())
         assert db.execute(text("SELECT sort_order FROM contact_access_types WHERE code = 'zztoff'")).scalar() == 77
+
+
+# --------------------------------------------------------------------------- #
+# Owner Q-B (2 Oct 2026) = (b): `access_agents.in_parser_prompt`, seeded for his five
+# agents; `{{agents}}` renders the flagged active rows only (`pdyn_0006_agents_in_prompt`).
+# Kept simple: lane ACCESS-MODEL will later turn agents into role presets.
+# --------------------------------------------------------------------------- #
+
+OWNER_AGENTS = ["general_enquiries", "order_enquiries", "incoming_stock_enquiries", "marketing_form", "it_support"]
+
+
+def _agents_migration():
+    path = BACKEND / "alembic" / "versions" / "pdyn_0006_agents_in_prompt.py"
+    spec = importlib.util.spec_from_file_location("_t_pdyn_0006", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _put_agents(db, codes: list[str], active: bool = True) -> None:
+    for code in codes:
+        db.execute(
+            text(
+                "INSERT INTO access_agents (id, code, name, is_active, assign_to_new_internal_contacts, "
+                "synced_to_excel, created_at, updated_at) VALUES (gen_random_uuid(), :c, :c, :a, false, false, now(), now()) "
+                "ON CONFLICT (code) DO UPDATE SET is_active = :a"
+            ),
+            {"c": code, "a": active},
+        )
+
+
+def test_agents_render_the_flagged_rows_only_and_give_the_owner_line():
+    mod = _agents_migration()
+    with pg_session() as db:
+        mod.apply(db.connection())
+        db.execute(text("UPDATE access_agents SET in_parser_prompt = false"))
+        _put_agents(db, OWNER_AGENTS + ["ideation", "complaint", "purchase_request"])
+        mod.apply(db.connection())
+        pv.clear_cache()
+        assert pv.render_value(db, "agents") == "|".join(OWNER_AGENTS)
+        owner_line = _owner('"suggested_agent": "', "\n")
+        assert '"suggested_agent": "' + pv.render_value(db, "agents") + '"' in owner_line
+
+
+def test_an_inactive_flagged_agent_stays_out():
+    mod = _agents_migration()
+    with pg_session() as db:
+        mod.apply(db.connection())
+        db.execute(text("UPDATE access_agents SET in_parser_prompt = false"))
+        _put_agents(db, OWNER_AGENTS)
+        mod.apply(db.connection())
+        db.execute(text("UPDATE access_agents SET is_active = false WHERE code = 'it_support'"))
+        pv.clear_cache()
+        assert "it_support" not in pv.render_value(db, "agents").split("|")
+
+
+def test_the_agents_seed_never_overrides_an_owner_edit():
+    mod = _agents_migration()
+    with pg_session() as db:
+        mod.apply(db.connection())
+        _put_agents(db, OWNER_AGENTS)
+        db.execute(text("UPDATE access_agents SET in_parser_prompt = false"))
+        db.execute(text("UPDATE access_agents SET in_parser_prompt = true WHERE code = 'order_enquiries'"))
+        mod.apply(db.connection())
+        flagged = set(db.execute(text("SELECT code FROM access_agents WHERE in_parser_prompt")).scalars())
+        assert flagged == {"order_enquiries"}

@@ -58,10 +58,12 @@ def _load(revision: str):
 def test_the_lane_migrations_run_in_alembic_order_on_a_database_without_the_new_column_or_table():
     order = _pdyn_in_upgrade_order()
     assert order.index("pdyn_0004_prompt_lists") < order.index("pdyn_0002_wording_layer")
+    assert order.index("pdyn_0006_agents_in_prompt") < order.index("pdyn_0002_wording_layer")
     with pg_session() as db:
         conn = db.connection()
         conn.execute(text("ALTER TABLE chatbot_status_words DROP COLUMN prompt_lists"))
         conn.execute(text("DROP TABLE chatbot_domain_words"))
+        conn.execute(text("ALTER TABLE access_agents DROP COLUMN IF EXISTS in_parser_prompt"))
         # Neither wording-layer version exists yet, and production is the owner's text.
         tokened = "SELECT id FROM ai_prompt_versions WHERE name = :n AND template ~ '[{][{](?!current_date)'"
         conn.execute(text(f"DELETE FROM ai_prompt_labels WHERE version_id IN ({tokened})"), {"n": KEY})
