@@ -27,9 +27,18 @@ Mock: `documentation/mockups/ACCESS-MODEL/index.html` (v3). IDs AC-AM-n.
   add or remove). For the same domain/field a contact "remove" beats any role "add".
 - AC-AM-6 Deny by default: a contact with no role and no add-override reaches no domain; every domain
   ask gets the canned no-access reply (`lanes/canned.py`), and its prompt holds no domain-tagged block.
-- AC-AM-7 The contact Access tab shows roles (chips, add/remove), the domain tree with field ticks,
-  "from <role>" / "added here" / "removed here" badges, and for each prompt-tagged domain/field the
-  prompt block it removes. The Access Agents grid and the Field reveals switches are gone from the tab.
+- AC-AM-7 (mock v8, final) The contact Access tab is one page read top-down: a summary box ("This
+  contact can ask about ...", customers, region, extra details, "cannot ask: ..."), then 1 Roles (chips
+  with tier, add/remove), 2 Customers they can ask about (read-only, from the roles), 3 Region (West /
+  East checkboxes, at least one), 4 What they can ask (one switch per domain, grouped in plain-English
+  sections; details open ONE level as a checklist; the two stamp switches with their before/after
+  preview sit in the details of Incoming stock and Product photos and documents). A row that follows the
+  roles shows nothing extra; a row the contact differs on is highlighted with "Changed for this contact"
+  and a "Reset to role" action that removes that contact's overrides for the row. One sticky Save bar
+  shows the number of unsaved changes and sends one PUT. No keys, codes or prompt hints are shown;
+  hand-off teams sit in a collapsed "Advanced" section. The old Access Agents grid and Field reveals
+  switches are gone. The role page has the same shape (name and tier, customers radio, switches,
+  contacts, Advanced).
 - AC-AM-8 Two contact rows sharing one respond.io id in one workspace get the INTERSECTION of their
   access (fail closed).
 - AC-AM-9 A role with "Sees all customers" unscopes order answers; a contact with linked customers and

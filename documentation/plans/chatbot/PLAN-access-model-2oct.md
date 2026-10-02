@@ -1,6 +1,6 @@
 # PLAN - Chatbot access model: roles -> domains -> fields, one registry
 
-Status: planned, mock v4 FINAL (owner ok 2 Oct 2026); red tests S1-S5 + Reports posted on #1434, S6 + S7 red tests in progress; build after #1405 and #1429 merge. Track: L / standard (migration, RBAC,
+Status: planned, mock v8 FINAL (owner ok 2 Oct 2026; v5-v8 added stamps, tier on role, region, simplified layout); red tests S1-S5 + Reports posted on #1434, S6 + S7 red tests in progress; build after #1405 and #1429 merge. Track: L / standard (migration, RBAC,
 prompt). Lane ACCESS-MODEL, branch `crew/access-model`, one PR. Depends on PR #1405 (prompt
 variables, open) and PR #1429 (per-audience trim, docs only, open); slices S1 to S6 do not touch their
 files, S7 rebases onto them once merged.
@@ -145,8 +145,8 @@ path) and stop being read by the chat path; dropping them is a later lane.
   `predicate.py:148,390`, `fetch.py:1771` (no session; named trigger: the next change to switch words
   or base property words). SPO number / PO number field gates added to the presenters' restricted
   fields. Tests: `tests/test_chatbot_registry_derived.py`, extend `tests/test_field_access*.py`.
-- **S6 Frontend.** Chatbot Roles list `app/(protected)/user-management/chatbot-roles/page.tsx`, role page
-  `[id]/page.tsx`, shared `components/chatbot-access/AccessTree.tsx`, contact Access tab replaces
+- **S6 Frontend (mock v8).** Chatbot Roles list `app/(protected)/user-management/chatbot-roles/page.tsx`, role page
+  `[id]/page.tsx`, shared `components/chatbot-access/AccessSwitches.tsx` (grouped switches, one-level details, stamp previews) + `AccessSummary.tsx`, contact Access tab replaces
   `ContactAccessAgentsTable` + `ContactFieldRevealsSection` with roles + tree + escalation card; service
   `services/chatbotAccessService.ts`, hooks `hooks/useChatbotAccess.ts`; menu entry
   `config/menu.config.tsx` Access group. Vitest for tree tick logic (indeterminate, override badges,
