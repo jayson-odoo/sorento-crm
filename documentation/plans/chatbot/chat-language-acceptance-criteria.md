@@ -196,3 +196,126 @@ discount_per_unit, unit_cost_after_discount.
   re-inserted verbatim.
 - **AC-CL26:** tools outside slices 1-2 (outstanding report, top selling, promotions,
   attachments) still render English with an ms localizer in ctx.
+
+# Slice 3: outstanding report + top selling (finished text)
+
+These two reports arrive as finished text (`presenters._outstanding_report` / `_outstanding_detail` /
+`_top_selling`), shown verbatim by `fetch._outstanding_report_output` (:2224) and
+`fetch._top_selling_output` (:2526). The backend PARSES that English text (offer roster
+`fetch.py:2050-2073`, offer block `:2148-2164`, part markers `engine.py:131-158`), so the order is:
+**parse the English first, localize the outgoing text last.** The stored `filters.offer_text`
+stays English; its re-print (`turn/compose.py:~818`, `lanes/business/__init__.py:~717`) is
+localized with the turn's localizer.
+
+**Contract:** `Localizer.lines(text) -> str`, applied per line (`\n`-split, joined back
+byte-exactly). For each line, the first rule that matches wins:
+1. **Exact sentence:** the whole line, or the line inside one formatting wrapper (`*x*`,
+   `*_x_*`, `_x_`), is a catalog entry (exact or `{token}` template). The wrapper is kept.
+2. **Numbered:** `"<n>. <rest>"` where `<rest>` matches rule 1. The number is kept.
+3. **Label line:** `"<label>: <value>"`, split at the first `": "`, where `<label>` is
+   catalogued. The value is unchanged except for two cases:
+   - A value of exactly `all` becomes the catalog word for "all".
+   - A value matching `dd/mm/yyyy to dd/mm/yyyy` gets the catalog's `{from} to {to}` template.
+   - Anything else in the value is untouched, including Qty, RM, O/S, codes, names and
+     `Unassigned`.
+4. **Otherwise** the line is unchanged.
+
+**Never translated:**
+- Rank/data lines such as `1. CODE: Qty 3, RM 5.00`: their "label" is a code, which is not
+  catalogued.
+- Month labels (`Sep 2026`), channel values (`Dealer`, `Project`), the `(k/m)` part markers and
+  `Unassigned`. "Unassigned" stays English because `decide._positions_by_label` matches the
+  typed answer against it.
+
+Localized tools: `crm_outstanding_report`, `crm_top_selling_report`, at the two output functions.
+The parse runs on English and only the response text is localized.
+
+| English | ms | zh |
+|---|---|---|
+| Sales orders | Pesanan jualan | 销售订单 |
+| Ordered | Dipesan | 订购 |
+| Transferred to DO | Dipindahkan ke DO | 已转 DO |
+| Order date range | Julat tarikh pesanan | 订单日期范围 |
+| Delivery orders | Pesanan penghantaran | 送货单 |
+| DO qty | Kuantiti DO | DO 数量 |
+| Delivered | Dihantar | 已送货 |
+| DO date range | Julat tarikh DO | DO 日期范围 |
+| Product | Produk | 产品 |
+| Order date | Tarikh pesanan | 订单日期 |
+| Brand | Jenama | 品牌 |
+| DO Number | No. DO | DO 编号 |
+| DO Qty | Kuantiti DO | DO 数量 |
+| DO Date | Tarikh DO | DO 日期 |
+| Category | Kategori | 类别 |
+| Sales agent | Ejen jualan | 销售代理 |
+| Channel | Saluran | 渠道 |
+| Delivery date | Tarikh penghantaran | 送货日期 |
+| Ranked by | Disusun mengikut | 排名依据 |
+| Basis | Asas | 基准 |
+| Items with sales | Item dengan jualan | 有销售的项目 |
+| Categories with sales | Kategori dengan jualan | 有销售的类别 |
+| all | semua | 全部 |
+| {from} to {to} | {from} hingga {to} | {from} 至 {to} |
+| Amount | Amaun | 金额 |
+| Quantity | Kuantiti | 数量 |
+| Delivered (transferred to DO) | Dihantar (dipindahkan ke DO) | 已送货（已转 DO） |
+| Sales order outstanding | Pesanan jualan belum dihantar | 未交货销售订单 |
+| Delivery order outstanding | Pesanan penghantaran belum dihantar | 未送达送货单 |
+| By location | Mengikut lokasi | 按位置 |
+| By customer | Mengikut pelanggan | 按客户 |
+| By product | Mengikut produk | 按产品 |
+| By month | Mengikut bulan | 按月份 |
+| Sales order list | Senarai pesanan jualan | 销售订单列表 |
+| Delivery order list | Senarai pesanan penghantaran | 送货单列表 |
+| Both lists | Kedua-dua senarai | 两个列表 |
+| No open sales order. | Tiada pesanan jualan terbuka. | 没有未完成的销售订单。 |
+| No outstanding delivery order. | Tiada pesanan penghantaran belum dihantar. | 没有未送达的送货单。 |
+| Sales order figures are not enabled for your account. | Angka pesanan jualan tidak diaktifkan untuk akaun anda. | 您的账户未开通销售订单数据。 |
+| Reply with a number for detail: | Balas dengan nombor untuk butiran: | 回复数字查看详情： |
+| Reply 1 for the sales order list. | Balas 1 untuk senarai pesanan jualan. | 回复 1 查看销售订单列表。 |
+| Reply 1 for the delivery order list. | Balas 1 untuk senarai pesanan penghantaran. | 回复 1 查看送货单列表。 |
+| No sales found. | Tiada jualan ditemui. | 未找到销售记录。 |
+| By quantity or by amount? | Mengikut kuantiti atau amaun? | 按数量还是按金额？ |
+| Do you want the top items inside one category, or the categories ranked against each other? | Anda mahu item teratas dalam satu kategori, atau kategori disusun antara satu sama lain? | 您要看某一类别内的热销项目，还是各类别之间的排名？ |
+| Delivered (transferred to DO) or ordered? | Dihantar (dipindahkan ke DO) atau dipesan? | 已送货（已转 DO）还是已订购？ |
+| Sorry, I can only share sales figures for your own account. | Maaf, saya hanya boleh berkongsi angka jualan untuk akaun anda sendiri. | 抱歉，我只能提供您本人账户的销售数据。 |
+| Items with no sale in this period are not ranked. | Item tanpa jualan dalam tempoh ini tidak disenaraikan. | 此期间没有销售的项目不参与排名。 |
+| Categories with no sale in this period are not ranked. | Kategori tanpa jualan dalam tempoh ini tidak disenaraikan. | 此期间没有销售的类别不参与排名。 |
+| Reply with a rank number to see that category's top items. | Balas dengan nombor kedudukan untuk melihat item teratas kategori itu. | 回复排名数字查看该类别的热销项目。 |
+| Reply with a rank number to see that item's customers and months. | Balas dengan nombor kedudukan untuk melihat pelanggan dan bulan bagi item itu. | 回复排名数字查看该项目的客户和月份。 |
+| Sales report is not enabled for your account. | Laporan jualan tidak diaktifkan untuk akaun anda. | 您的账户未开通销售报告。 |
+| Note: only {pct}% of sales orders in this period carry a sales agent. | Nota: hanya {pct}% pesanan jualan dalam tempoh ini mempunyai ejen jualan. | 注：此期间只有 {pct}% 的销售订单带有销售代理。 |
+| Top {n} selling items | {n} item paling laris | 最畅销的 {n} 个项目 |
+| Top {n} selling categories | {n} kategori paling laris | 最畅销的 {n} 个类别 |
+| Bottom {n} selling items | {n} item paling kurang laris | 最滞销的 {n} 个项目 |
+| Bottom {n} selling categories | {n} kategori paling kurang laris | 最滞销的 {n} 个类别 |
+| Top selling items | Item paling laris | 最畅销项目 |
+| Top selling categories | Kategori paling laris | 最畅销类别 |
+| Least sold items | Item paling kurang dijual | 销量最少的项目 |
+| Least sold categories | Kategori paling kurang dijual | 销量最少的类别 |
+| {code}: customers and months | {code}: pelanggan dan bulan | {code}：客户和月份 |
+| How many items do you want to see? Reply with a number from 1 to {max}. | Berapa banyak item yang anda mahu lihat? Balas dengan nombor dari 1 hingga {max}. | 您想看多少个项目？请回复 1 到 {max} 之间的数字。 |
+| How many categories do you want to see? Reply with a number from 1 to {max}. | Berapa banyak kategori yang anda mahu lihat? Balas dengan nombor dari 1 hingga {max}. | 您想看多少个类别？请回复 1 到 {max} 之间的数字。 |
+| I can list at most the top {n} in one reply. | Saya boleh senaraikan paling banyak {n} teratas dalam satu balasan. | 我一次最多只能列出前 {n} 个。 |
+
+The presenter's singular forms ("Top 1 selling item", "Top selling item") get the same
+treatment: add the singular entries alongside the plural ones (the coder lists them from the
+source at `presenters.py:~2777-2783`). The "How many ... see?" sentence is ONE line in the
+presenter (`:2915-2916`), so it is one catalog entry per noun.
+
+- **AC-CL30:** every outstanding/top-selling fixed literal listed above is catalogued (pinned).
+- **AC-CL31:** `Localizer.lines` rules 1-4. Wrapped headings keep their wrapper. Numbered lines
+  keep the number. Label lines translate the label only. `all` and the date range translate.
+  `1. SRTWC286: Qty 3, RM 1,234.50`, `Sep 2026: Qty 3, RM 5.00`, `Unassigned: 5 (O/S: 2)`
+  (label part) and `(2/3)` are unchanged. Unknown lines are unchanged. The English localizer
+  is the identity.
+- **AC-CL32:** an outstanding report rendered ms: header lines, block lines and the offer
+  sentence are translated, and every number, code and name is byte-identical to the English
+  render. The detail roster (`answers`/`result_set`, the armed offer options) is IDENTICAL to
+  the English render: the parse ran on English.
+- **AC-CL33:** top selling zh: title, "Ranked by: 金额"/"数量", basis, notes and the trailing
+  ask are translated. Rank lines are unchanged, and the `result_set` roster is identical to
+  English. A part-split reply keeps its `(k/m)` markers.
+- **AC-CL34:** the outstanding offer re-print (stored English `offer_text`) prints in the
+  turn's language when re-asked.
+- **AC-CL35:** no localizer or `en`: both reports are byte-identical to today.
