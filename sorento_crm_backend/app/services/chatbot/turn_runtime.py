@@ -2810,6 +2810,11 @@ def make_tool_runner(
             # there (owner hand test: "okay how about all my sales order?" replied
             # `Couldn't find: "SO422056"` over the `self_reference` answer).
             _drop_focus_entities(focus, [{"entity_type": "order", "raw": w} for w in so_numbers])
+        elif _asks_for_so_list(domain, verdict, focus, lane_out):
+            # "all my sales orders" / "my SOs": the SO list over the customers in scope
+            # (`lanes/business/run_fetch`'s `so_list` arm). The document is read off the
+            # focus too, so a typed period answering "Which period?" runs the same ask.
+            lane_out = {**lane_out, "so_list": True}
         # Ported from PR #1118 (not merged), D13/D20: the dealer's own quantity per
         # product, resolved to uuids here - `lanes/business/fetch.py` reads it
         # straight off the lane input.
@@ -3727,6 +3732,21 @@ def _so_numbers_asked(domain: str, verdict: dict[str, Any], unplaced: dict[str, 
     if not typed or any(_token_key(t) not in unplaced for t in typed):
         return []
     return [unplaced[_token_key(t)] for t in typed if so_status.is_so_number(t)]
+
+
+def _asks_for_so_list(domain: str, verdict: dict[str, Any], focus: Focus, lane_out: dict[str, Any]) -> bool:
+    """An order ask about sales orders with no SO number and no status word: the SO list
+    (owner option (2) on PR #1435). "outstanding" keeps the outstanding report; a message
+    that typed a subject of its own (a product, an order number) keeps today's answer."""
+    if domain != "order" or jsc.js_string(lane_out.get("order_status") or "").strip():
+        return False
+    document = [str(d).upper() for d in (verdict.get("document") or focus.document or [])]
+    if document != ["SO"]:
+        return False
+    return not any(
+        isinstance(e, dict) and e.get("current_message") is not False and e.get("hint") != "customer"
+        for e in jsc.array(verdict.get("entities"))
+    )
 
 
 def _answered_unfiltered(

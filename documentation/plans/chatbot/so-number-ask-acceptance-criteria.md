@@ -32,3 +32,18 @@ Plan: `PLAN-so-number-ask.md`. Every case runs as a chat turn (Chatbot Console, 
 - AC-SO-13: a contact without `sales_orders.outstanding` gets `Sales order figures are not
   enabled for your account.` and no SO data.
 - AC-SO-14: a contact with no enforced scope (staff) sees any SO of its own company.
+
+## SO list ("all my sales orders" / "my SOs")
+
+- AC-SO-20: no period -> `Which period for <group>?` with This month / Last month; nothing listed.
+- AC-SO-21: a typed period answering that question runs the list for it.
+- AC-SO-22: `Sales orders for <group>, <d Mon yyyy> to <d Mon yyyy>:` then one line per SO,
+  newest first, every status: `SO422095 - 21 Sep 2026 - Closed - fully delivered`.
+- AC-SO-23: a cancelled row reads `SO418652 - 27 Aug 2026 - ❗ Cancelled` (no delivery word).
+- AC-SO-24: customers spanning groups: every group named once in the header, each row carries
+  its group after the date.
+- AC-SO-25: more than 31 days is refused with the period's last and first months suggested.
+- AC-SO-26: an empty period reads `No sales orders for <group> from <d> to <d>.`
+- AC-SO-27: without `sales_orders.outstanding`: `Sales order figures are not enabled for your account.`
+- AC-SO-28: another customer's SOs never appear; "outstanding" still runs the outstanding report.
+- AC-SO-29: after an SO card, "okay how about all my sales order?" never names that SO.

@@ -169,3 +169,115 @@ def reply_text(result: SoLookup, *, refusal: str) -> str:
         joined = words[0] if len(words) == 1 else ", ".join(words[:-1]) + " or " + words[-1]
         parts.append(f"I could not find {joined}.")
     return "\n\n".join(parts)
+
+
+# --------------------------------------------------------------------------- #
+# The SO LIST: "all my sales orders" / "my SOs" (owner option (2), behaviour card rulings)
+# --------------------------------------------------------------------------- #
+
+
+def _day(d: Any) -> str:
+    return f"{d.day} {d:%b %Y}"
+
+
+def period_reply(start: Any, end: Any, subject: str | None) -> str | None:
+    """Q1 (a): the DO ask's period rule for an SO list, or None when the period is fine.
+
+    The same rule as `do_ask.range_reply` (its cap, its "today", its month and span words),
+    in the words of a sales order list; `do_ask` is the DO list's own and is not bent to
+    speak about sales orders."""
+    from datetime import timedelta
+
+    from app.services.chatbot import do_ask
+
+    today = do_ask.today_myt()
+    if start is None and end is None:
+        this_month = today.replace(day=1)
+        last_month = (this_month - timedelta(days=1)).replace(day=1)
+        return (f"Which period for {subject}?\n" if subject else "Which period?\n") + (
+            f"- This month ({do_ask._month(this_month)})\n"
+            f"- Last month ({do_ask._month(last_month)})\n"
+            "Or type a month (e.g. August) or dates (e.g. 15 Sep to 10 Oct)."
+        )
+    end = end or today
+    if start is not None and start > end:
+        start, end = end, start
+    days = (end - start).days + 1 if start is not None else None
+    if days is not None and days <= do_ask.MAX_DAYS:
+        return None
+    last = min(end, today)
+    suggestions = [do_ask._month(last)]
+    lead = ""
+    if start is not None:
+        if start <= last and do_ask._month(start) not in suggestions:
+            suggestions.append(do_ask._month(start))
+        lead = (
+            f"That is {do_ask._span(start, end, days)} "
+            f"({do_ask._ddmmyyyy(start)} to {do_ask._ddmmyyyy(end)}). "
+        )
+    return (
+        f"{lead}I can show up to {do_ask.MAX_DAYS} days of sales orders at a time:\n"
+        + "".join(f"- {s}\n" for s in suggestions)
+        + "Or type a month or dates."
+    )
+
+
+def customer_names(db: Session, customer_ids: Iterable[str]) -> dict[str, str]:
+    """The customers' names, in the order given (link order), so the header reads as the
+    contact's own accounts are listed everywhere else."""
+    ids = list(dict.fromkeys(str(i) for i in customer_ids if i))
+    if not ids:
+        return {}
+    found = {
+        str(cid): name or ""
+        for cid, name in db.query(Customer.id, Customer.customer_name).filter(Customer.id.in_(ids)).all()
+    }
+    return {cid: found[cid] for cid in ids if cid in found}
+
+
+def list_text(db: Session, names_by_id: dict[str, str], start: Any, end: Any) -> str:
+    """Q2 (a) newest first, every status; Q3 (a) the group named once, or on every row when
+    the customers span groups. Only SOs whose customer is one of `names_by_id` (the turn's
+    customers in scope), on the engine's company-scoped session."""
+    from app.services.ledger_family import family_words, group_names
+
+    header_names = family_words(list(names_by_id.values())) or "your account"
+    window = f"{_day(start)} to {_day(end)}"
+    rows = (
+        db.query(SalesOrder)
+        .filter(
+            SalesOrder.customer_id.in_(list(names_by_id)),
+            SalesOrder.order_date >= start,
+            SalesOrder.order_date <= end,
+        )
+        .order_by(SalesOrder.order_date.desc(), SalesOrder.so_number.desc())
+        .all()
+    )
+    if not rows:
+        return f"No sales orders for {header_names} from {_day(start)} to {_day(end)}."
+    lines_by_so: dict[str, list[tuple[Any, Any]]] = {}
+    for so_id, ordered, delivered in (
+        db.query(SalesOrderLine.sales_order_id, SalesOrderLine.qty_ordered, SalesOrderLine.qty_delivered)
+        .filter(
+            SalesOrderLine.sales_order_id.in_([so.id for so in rows]),
+            func.coalesce(SalesOrderLine.line_status, "") != "cancelled",
+        )
+        .all()
+    ):
+        lines_by_so.setdefault(str(so_id), []).append((ordered, delivered))
+    several_groups = len(group_names(list(names_by_id.values()))) > 1
+    out = [f"Sales orders for {header_names}, {window}:"]
+    for so in rows:
+        parts = [so.so_number, _day(so.order_date)]
+        if several_groups:
+            group = group_names([so.debtor_name or names_by_id.get(str(so.customer_id)) or ""])
+            if group:
+                parts.append(group[0])
+        status = _status_words(so.status)
+        parts.append(status)
+        if status != CANCELLED_MARK:
+            delivery = _delivery_words(lines_by_so.get(str(so.id), []))
+            if delivery:
+                parts.append(delivery)
+        out.append(" - ".join(parts))
+    return "\n".join(out)

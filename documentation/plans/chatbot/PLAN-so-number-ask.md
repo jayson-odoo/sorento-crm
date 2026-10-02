@@ -87,6 +87,27 @@ Design (simplest thing that works):
 Trigger to widen: SO resolution as a real resolver kind (picker, fuzzy did-you-mean, DO list per
 SO) once `orders.sales_order_id` is actually populated by the ingest.
 
+## Fix, part 3: the SO list ("all my sales orders", owner option (2), 2 Oct 2026)
+
+Owner: "when I ask for SO, I genuinely want to see SO"; the outstanding report is triggered
+only by the word "outstanding". Behaviour card rulings:
+
+| Q | Ruling |
+|---|--------|
+| 1 | A period, the same as the DO ask: no period asks "Which period?" (This month / Last month, words to type); at most 31 days, rolling. |
+| 2 | Newest order date first, every status; a cancelled row carries the marker (`SO418652 - 27 Aug 2026 - ❗ Cancelled`). |
+| 3 | The company named once in the header, group name only; when the customers span groups each row carries its group name after the date. |
+| 4 | Gated by `sales_orders.outstanding` (before the period question). |
+
+Design: `turn_runtime._asks_for_so_list` marks an order ask whose document is SO (typed, or
+carried on `focus.document` so a typed period answers the question), with no status word and
+no subject of its own; `run_fetch`'s `so_list` arm takes the customers in scope off the gate
+(the links on a scoped or `self_reference` turn), checks the key, applies
+`so_status.period_reply` (the DO ask's rule from `do_ask.py`, copied byte for byte from #1433,
+in a sales order list's words), and renders `so_status.list_text`. No row cap beyond the
+31-day window (not ruled). Hand-test bug fixed on the way (`99f7edb3`): an SO the card answered
+is dropped from the focus, so "okay how about all my sales order?" no longer names it as a miss.
+
 ## Tests
 
 `sorento_crm_backend/tests/chatbot/test_so_number_ask.py`, red first, through one real

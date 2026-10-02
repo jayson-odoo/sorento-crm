@@ -1376,6 +1376,38 @@ def run_fetch(
             # (`answer_bridge._miss_triggers`).
             fragment["fetch"]["so_status"] = True
             return fragment
+    # SO-NUMBER-ASK, the SO list ("all my sales orders"): the customers in scope (the
+    # links on a scoped or "my" turn, a resolved customer otherwise), behind the same SO
+    # reveal key (Q4), over a period of at most 31 days asked like the DO list's (Q1).
+    customer_ids = [
+        str(e.get("uuid"))
+        for e in jsc.array(entities)
+        if isinstance(e, dict) and e.get("entity_type") == "customer" and fetch_mod.is_uuid(e.get("uuid"))
+    ]
+    if parse_output.get("so_list") is True and parse_output.get("domain_hint") == "order" and customer_ids and db is not None:
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        if _OUTSTANDING_SO_GRANT not in granted:
+            if trace is not None:
+                trace.add("so_list", {"refused": "not_granted", "needs": _OUTSTANDING_SO_GRANT})
+            return _fixed_reply(fetch_mod.SO_NOT_ENABLED_MESSAGE)
+        from app.services.chatbot import do_ask, so_status
+        from app.services.ledger_family import family_words
+
+        names_by_id = so_status.customer_names(db, customer_ids)
+        start = do_ask._parse(parse_output.get("date_filter_start"))
+        end = do_ask._parse(parse_output.get("date_filter_end"))
+        asked = so_status.period_reply(start, end, family_words(list(names_by_id.values())))
+        if asked is not None:
+            if trace is not None:
+                trace.add("so_list", {"period_asked": True, "customers": len(names_by_id)})
+            return _fixed_reply(asked)
+        end = end or do_ask.today_myt()
+        start, end = (start, end) if start <= end else (end, start)
+        if trace is not None:
+            trace.add("so_list", {"from": start.isoformat(), "to": end.isoformat(), "customers": len(names_by_id)})
+        return _fixed_reply(so_status.list_text(db, names_by_id, start, end))
     # #1262 fix lane round 3, B1-r2: an order turn's brand ids are resolved ONCE, by
     # `turn_runtime.order_brand_filter` in the tool runner (typed words first, else the
     # brand the conversation carries), and the header names the same ids. Taken as is,
