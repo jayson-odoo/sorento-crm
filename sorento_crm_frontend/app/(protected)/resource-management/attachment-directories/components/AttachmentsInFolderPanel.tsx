@@ -74,7 +74,7 @@ import { useAttachmentTypes } from '../../attachment-types/hooks/useAttachmentTy
 import { useCompany } from '@/app/providers/CompanyProvider';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Calendar } from '@/components/ui/calendar';
-import { getUsersSelect, type UserSelectItem } from '@/services/userSelectService';
+import { getUserLookup, type UserLookupItem } from '@/services/userSelectService';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { CalendarDays } from 'lucide-react';
@@ -166,9 +166,9 @@ export default function AttachmentsInFolderPanel({
   const uploadedAtFrom = uploadedRange?.from ? format(uploadedRange.from, 'yyyy-MM-dd') : '';
   const uploadedAtTo = uploadedRange?.to ? format(uploadedRange.to, 'yyyy-MM-dd') : '';
 
-  const { data: usersSelect = [] as UserSelectItem[] } = useQuery({
-    queryKey: ['users-select', 'attachment-filter'],
-    queryFn: () => getUsersSelect({ status: 'ACTIVE' }),
+  const { data: usersSelect = [] as UserLookupItem[] } = useQuery({
+    queryKey: ['user-lookup', 'attachment-filter'],
+    queryFn: () => getUserLookup(),
     staleTime: 5 * 60 * 1000,
   });
   const { data: attachmentTypesData } = useAttachmentTypes({
@@ -1166,7 +1166,7 @@ export default function AttachmentsInFolderPanel({
                           { value: '__all__', label: 'All users' },
                           ...usersSelect.map((u) => ({
                             value: u.id,
-                            label: u.name?.trim() || u.email || 'Unnamed user',
+                            label: u.name?.trim() || 'Unnamed user',
                           })),
                         ]}
                         placeholder="All users"

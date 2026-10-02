@@ -111,6 +111,51 @@ export async function codedError(response: Response, fallback: string): Promise<
   return error;
 }
 
+/** An API failure carrying its HTTP status, so a consumer can tell a refusal or a missing
+ *  record from a fault (NEVER-STUCK-UI S3). */
+export interface ApiError extends Error {
+  status: number;
+}
+
+/** The same message `extractApiError` produces, carrying the response status alongside it. */
+export async function apiError(response: Response, fallback: string): Promise<ApiError> {
+  const error = new Error(await extractApiError(response, fallback)) as ApiError;
+  error.status = response.status;
+  return error;
+}
+
+function statusOf(error: unknown): number | undefined {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+/** The backend's 403 `detail` prefixes (`dependencies.py`, `modules/runtime/guards.py`),
+ *  for errors built by plain `extractApiError`, which carry no status. */
+const ACCESS_DENIED_PREFIXES = [
+  'Permission required:',
+  'One of these permissions required', // covers the "(module may be disabled)" variant
+  'Module not enabled:',
+  'One of these modules must be enabled:',
+];
+
+/** The backend refused this read: render `AccessDenied`, never an error card or "not found". */
+export function isAccessDenied(error: unknown): boolean {
+  if (statusOf(error) === 403) return true;
+  const msg = error instanceof Error ? error.message : '';
+  return ACCESS_DENIED_PREFIXES.some((p) => msg.startsWith(p));
+}
+
+/** The record does not exist. Only a 404 says so; a refusal or a 500 does not. */
+export function isNotFound(error: unknown): boolean {
+  return statusOf(error) === 404;
+}
+
+/** React Query `retry` for a record read: one retry for a fault, none for an answer
+ *  that will not change (a refusal or a missing record). */
+export function retryUnlessRefused(failureCount: number, error: unknown): boolean {
+  return failureCount < 1 && !isAccessDenied(error) && !isNotFound(error);
+}
+
 /**
  * Build URLSearchParams for DataGrid-backed list endpoints.
  * Uses page (1-based), limit, sort, dir, query, plus any extra params.

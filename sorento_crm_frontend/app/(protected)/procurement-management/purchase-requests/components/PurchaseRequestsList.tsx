@@ -33,7 +33,7 @@ import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import { useQuery } from '@tanstack/react-query';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { usePurchaseRequests } from '../hooks/usePurchaseRequests';
-import { getUsersForApproverSelect } from '../services/purchaseRequestService';
+import { getUserLookup } from '@/services/userSelectService';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -178,8 +178,8 @@ export default function PurchaseRequestsList({
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data: assigneeOptions = [] } = useQuery({
-    queryKey: ['pr-assignee-options'],
-    queryFn: getUsersForApproverSelect,
+    queryKey: ['user-lookup', 'with-inactive'],
+    queryFn: () => getUserLookup({ include_inactive: true }),
     staleTime: 5 * 60_000,
   });
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -533,8 +533,8 @@ export default function PurchaseRequestsList({
                         { value: '__unassigned__', label: 'Unassigned' },
                         ...assigneeOptions.map((u) => ({
                           value: u.id,
-                          label: u.name?.trim() || u.email,
-                          searchText: `${u.name ?? ''} ${u.email}`,
+                          label: u.name?.trim() || 'Unnamed user',
+                          searchText: u.name ?? '',
                         })),
                       ]}
                     />

@@ -23,7 +23,11 @@ export default function AccessDenied({
   description = DEFAULT_DESCRIPTION,
 }: AccessDeniedProps) {
   return (
-    <div className="flex min-h-[60vh] flex-col items-center justify-center px-4 py-10 text-center">
+    <div
+      className="flex min-h-[60vh] flex-col items-center justify-center px-4 py-10 text-center"
+      // Read by the never-stuck smoke: a 403 on the page must end here, not in an empty state.
+      data-access-denied=""
+    >
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
         <ShieldAlert className="h-8 w-8 text-muted-foreground" />
       </div>
