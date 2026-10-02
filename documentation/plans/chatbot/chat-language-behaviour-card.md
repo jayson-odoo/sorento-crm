@@ -117,13 +117,13 @@ Malay. Then "1" (a pick) -> still Malay.
 
 ## Questions (max 5, each with a recommendation)
 
-- **Q1. Manglish tie** ("stock ada?": 1 Malay word, 1 English word). (a) keep the
+- **Q1 (owner: a, 2 Oct). Manglish tie** ("stock ada?": 1 Malay word, 1 English word). (a) keep the
   conversation's language; (b) Malay. **Rec: (a)**. A tie is no evidence, and a flip on a tie
   reads as random.
-- **Q2. Saved language vs the message.** (a) the message's own language wins, and the saved
+- **Q2 (owner: a, 2 Oct). Saved language vs the message.** (a) the message's own language wins, and the saved
   fact is only used when nothing else decides; (b) the saved fact always wins. **Rec: (a)**,
   because the ask is "follow the user's language".
-- **Q3. Abbreviations.** (a) PO, SO, SPO, DO, GR, ETA, ETC and O/S stay as they are in every
+- **Q3 (owner: a, 2 Oct). Abbreviations.** (a) PO, SO, SPO, DO, GR, ETA, ETC and O/S stay as they are in every
   language (they are what is printed on the documents); (b) translate them. **Rec: (a)**.
   Only spelled-out words translate: "PO Number" -> "No. PO" / "PO 编号".
 - **Q4 (crew: a, 2 Oct). Where the ms/zh wording comes from.** (a) Reviewed ms/zh defaults ship in code and are

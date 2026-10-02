@@ -2,8 +2,7 @@
 
 Status: Build, slice 1 (stock), red-first. Track: full (size L, cloud lane; touches the turn
 engine and the translation module). The direction was approved by the owner on 2 Oct 2026.
-The behaviour card questions are open (`chat-language-behaviour-card.md`); the slice 1 tests are
-written to the recommendations and flip if an answer differs.
+Behaviour card Q1-Q5 all answered (a) on 2 Oct (owner Q1-Q3, crew Q4-Q5).
 
 ## Owner ask
 
