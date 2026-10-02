@@ -190,9 +190,10 @@ def test_gp21_key_zero_links_the_one_po_line_of_the_product(env):
 def test_gp22_po_lines_of_one_product_are_taken_in_dtl_key_order(env):
     """D4: PO lines carry no line number; AutoCount's DtlKey orders them. The first-written
     row has the HIGHER DtlKey, so insertion order would give the wrong answer."""
-    _, (second, first) = _po(env, "PO-ZZ-0022", (env.p1, 40, 7202), (env.p1, 60, 7201))
-    rec = _doc(800022, "ZZGRN-0022", [("ZZAC-P1", 60, "ZZAC-WH1", "PO-ZZ-0022"),
-                                      ("ZZAC-P1", 40, "ZZAC-WH1", "PO-ZZ-0022")])
+    # Equal quantities everywhere (review B2), so only the DtlKey order can decide.
+    _, (second, first) = _po(env, "PO-ZZ-0022", (env.p1, 50, 7202), (env.p1, 50, 7201))
+    rec = _doc(800022, "ZZGRN-0022", [("ZZAC-P1", 50, "ZZAC-WH1", "PO-ZZ-0022"),
+                                      ("ZZAC-P1", 50, "ZZAC-WH1", "PO-ZZ-0022")])
     r = _push(env, rec)["db1:GRN:800022"]
     assert _link_warnings(r) == set()
     assert _links(env, 800022) == [first, second]
@@ -448,3 +449,93 @@ def test_gp_forward_matching_never_splits_an_autocount_grn_line(env):
     result = forward_match_grn_lines_for_spo(env.db, "SPO-ZZ-0340", company_id=env.company)
     assert result.candidate_lines == 0
     assert len(env.grn_lines(env.grn(800001).id)) == 2
+
+
+
+# ===================================================================== fix round (review)
+def test_gp_b1_adopted_excel_line_waiting_for_its_spo_links_when_it_arrives(env):
+    """Review B1: an Excel GRN line states SPO-ZZ-0401 before the SPO exists; AutoCount
+    adopts the GRN (its line naming the same SPO); when the SPO arrives the next batch's
+    waiting fill links it (forward matching skips AutoCount GRNs)."""
+    header = PickingHeader(picking_number="ZZGRN-0001", picking_type="goods_received",
+                           picking_status="approved", company_id=env.company)
+    env.db.add(header)
+    env.db.flush()
+    env.db.add(PickingLine(picking_header_id=header.id, product_id=env.p2, quantity_expected=20,
+                           quantity_picked=20, spo_number_raw="SPO-ZZ-0401",
+                           company_id=env.company))
+    env.db.commit()
+    r = _push(env, _grn(line=1, doc_no="SPO-ZZ-0401"))[REF]
+    assert "purchase_order_unresolved" in r["warnings"]
+    assert _lines(env)[P2_LINE].spo_allocation_id is None
+    (alloc,) = _spo(env, "SPO-ZZ-0401", (env.p2, 20), warehouse_id=env.wh1)
+    _push(env, _another(grn_records()[0], 800009, "ZZGRN-0009", 810090))
+    assert _lines(env)[P2_LINE].spo_allocation_id == alloc
+
+
+def test_gp_s4_a_line_moving_from_a_po_to_an_spo_keeps_one_link(env):
+    _, (po_line,) = _po(env, "PO-ZZ-0402", (env.p2, 20, 8001))
+    (alloc,) = _spo(env, "SPO-ZZ-0402", (env.p2, 20), warehouse_id=env.wh1)
+    _push(env, _grn(line=1, doc_no="PO-ZZ-0402"))
+    assert _lines(env)[P2_LINE].po_line_id == po_line
+    moved = _grn(line=1, doc_no="SPO-ZZ-0402")
+    moved["LastModified"] = "2026-07-28T10:00:00.000"
+    _push(env, moved)
+    line = _lines(env)[P2_LINE]
+    assert (line.spo_allocation_id, line.po_line_id, line.purchase_order_id) == (alloc, None, None)
+    back = _grn(line=1, doc_no="PO-ZZ-0402")
+    back["LastModified"] = "2026-07-29T10:00:00.000"
+    _push(env, back)
+    line = _lines(env)[P2_LINE]
+    assert (line.po_line_id, line.spo_allocation_id, line.spo_number_raw) == (po_line, None, None)
+    env.db.expire_all()
+    assert env.db.get(SPOAllocation, alloc).quantity_received == 0  # receipt given back
+
+
+def test_gp_s5_an_spo_the_crm_raised_links_its_spo_line_not_its_po_line(env):
+    """A CRM-raised SPO is a purchase order AND SPO lines under one number: the SPO wins."""
+    _, (po_line,) = _po(env, "S-SPO-ZZ-0403", (env.p2, 20, None))
+    (alloc,) = _spo(env, "S-SPO-ZZ-0403", (env.p2, 20), warehouse_id=env.wh1)
+    _push(env, _grn(line=1, doc_no="S-SPO-ZZ-0403"))
+    line = _lines(env)[P2_LINE]
+    assert (line.spo_allocation_id, line.po_line_id) == (alloc, None)
+
+
+def test_gp_s6_waiting_fill_never_takes_a_line_a_sibling_holds(env):
+    """SPO lines L1, L2, L3 all used up (L1, L2 by other GRNs, L3 by line A of this GRN);
+    line B waits. The fill must leave L3 to A: the last line no sibling holds is L2."""
+    l1, l2, l3 = _spo(env, "SPO-ZZ-0404", (env.p2, 20), (env.p2, 20), (env.p2, 20),
+                      warehouse_id=env.wh1)
+    for key, number in ((800441, "ZZGRN-0441"), (800442, "ZZGRN-0442")):
+        _push(env, _doc(key, number, [("ZZAC-P2", 20, "ZZAC-WH1", "SPO-ZZ-0404")]))
+    _push(env, _doc(800443, "ZZGRN-0443", [("ZZAC-P2", 20, "ZZAC-WH1", "SPO-ZZ-0404"),
+                                           ("ZZAC-P2", 20, "ZZAC-WH1", "SPO-ZZ-0404")]))
+    assert _links(env, 800441) == [l1] and _links(env, 800442) == [l2]
+    a_line, b_line = sorted(env.grn_lines(env.grn(800443).id), key=lambda l: l.seq)
+    assert a_line.spo_allocation_id == l3
+    b_line.spo_allocation_id = None  # as if B had landed before the SPO line was free
+    env.db.commit()
+    _push(env, _another(grn_records()[0], 800009, "ZZGRN-0009", 810090))
+    assert _links(env, 800443) == [l3, l2]
+
+
+def test_gp_s7_over_receipt_takes_the_first_line_with_anything_left(env):
+    """D1 (a) rung 3: no line has 10 left (5 and 3), so the first with any remaining."""
+    first, second = _spo(env, "SPO-ZZ-0405", (env.p2, 5), (env.p2, 3), warehouse_id=env.wh1)
+    r = _push(env, _doc(800451, "ZZGRN-0451", [("ZZAC-P2", 10, "ZZAC-WH1", "SPO-ZZ-0405")]))
+    assert "over_receipt" in r["db1:GRN:800451"]["warnings"]
+    assert _links(env, 800451) == [first]
+
+
+def test_gp_n2_waiting_fill_never_reaches_company_b(env):
+    """Security review N2: a line waiting on PO-ZZ-0406 / SPO-ZZ-0407 stays unlinked when
+    company B, not this one, receives documents with those numbers."""
+    rec = _grn(doc_no="PO-ZZ-0406")
+    _with_from(rec, 1, "PO", "SPO-ZZ-0407", 0)
+    _push(env, rec)
+    _po(env, "PO-ZZ-0406", (env.p1, 100, 8101), company=env.company_b)
+    _spo(env, "SPO-ZZ-0407", (env.p2, 20), company=env.company_b)
+    _push(env, _another(grn_records()[0], 800009, "ZZGRN-0009", 810090))
+    lines = _lines(env)
+    assert lines[P1_LINE].po_line_id is None and lines[P1_LINE].purchase_order_id is None
+    assert lines[P2_LINE].spo_allocation_id is None

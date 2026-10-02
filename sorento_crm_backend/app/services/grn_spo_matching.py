@@ -174,8 +174,8 @@ def spo_line_candidates(
     *,
     product_id: str,
     spo_number: Optional[str],
+    company_id: str,
     exclude_header_ids: Iterable[str] = (),
-    company_id: Optional[str] = None,
 ) -> list[PoolEntry]:
     """Every line of ``spo_number`` carrying ``product_id``, in LINE order, with what each
     has left - the AutoCount GRN ingest's candidates (GRN-PULL-CRM plan 1.3).
@@ -186,6 +186,9 @@ def spo_line_candidates(
     order; Seq itself is not stored), not age; and a line with nothing left is KEPT, so an
     over-receipt can still land on the line it belongs to.
     """
+    if not company_id:
+        # Security review N1: no company would read every company's lines.
+        raise ValueError("spo_line_candidates needs the company the GRN belongs to")
     key = _spo_match_key(spo_number)
     if not key:
         return []
@@ -194,8 +197,7 @@ def spo_line_candidates(
         SPOAllocation.spo_number.isnot(None),
         _spo_match_key_sql(SPOAllocation.spo_number) == key,
     )
-    if company_id:
-        query = query.filter(SPOAllocation.company_id == str(company_id))
+    query = query.filter(SPOAllocation.company_id == str(company_id))
     rows = query.order_by(
         SPOAllocation.spo_line_number.asc().nulls_last(),
         SPOAllocation.created_at.asc(),

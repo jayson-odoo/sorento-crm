@@ -174,7 +174,8 @@ class TestEntityMaps:
         nobody = env.user("order_management.orders.autocount_pull")
         env.as_user(nobody)
         before = _job_count(env.db)
-        assert env.post_pull(ENTITY).status_code == 403
+        resp = env.client.post(PULLS_URL, json={"entity": ENTITY, "scope": JULY})
+        assert resp.status_code == 403
         assert env.fake.calls == [] and _job_count(env.db) == before
 
         owner = env.user(SLUG)
@@ -187,6 +188,21 @@ class TestEntityMaps:
         assert _job_row(env.db, body["job_id"])["job_type"] == PULL_JOB_TYPE
         build = [c for c in env.fake.calls if c["method"] == "POST"]
         assert build[0]["json"] == {"companyCode": env.company_a_code, "entity": ENTITY, **JULY}
+
+    @pytest.mark.parametrize("scope", [None, {}, {"fromDay": "2026-07-01"}])
+    def test_gp02c_a_grn_pull_always_names_a_window_or_a_document(self, env, scope):
+        """GRN-PULL-SS (ss#107): the gateway refuses a goods-receive-notes build with no
+        scope, so the CRM refuses it first, in words, and calls nothing."""
+        owner = env.user(SLUG)
+        env.as_user(owner)
+        before = _job_count(env.db)
+        body = {"entity": ENTITY} if scope is None else {"entity": ENTITY, "scope": scope}
+        resp = env.client.post(PULLS_URL, json=body)
+        assert resp.status_code == 422, resp.text
+        assert "From day and a To day" in resp.text
+        assert env.fake.calls == [] and _job_count(env.db) == before
+        one = env.client.post(PULLS_URL, json={"entity": ENTITY, "scope": {"docNo": "GR-2026/10-0006"}})
+        assert one.status_code == 200, one.text
 
     def test_gp02b_a_do_only_user_cannot_read_a_grn_pull(self, env):
         do_only = env.user("order_management.orders.autocount_pull")
@@ -460,8 +476,8 @@ class TestRowsDownloadCompare:
         assert resp.status_code == 200, resp.text
         sheet = openpyxl.load_workbook(io.BytesIO(resp.content)).active
         assert [c.value for c in sheet[1]] == [
-            "Doc No", "Doc Date", "Creditor Code", "Creditor Name", "Item Code", "Description",
-            "Location", "Qty", "UOM", "Our PO No.",
+            "Doc No", "Doc Date", "Creditor Code", "Creditor Name", "Our PO No.", "Item Code",
+            "Description", "Location", "Qty", "UOM",
         ]
         assert sheet.max_row == 3
 
@@ -492,6 +508,38 @@ class TestRowsDownloadCompare:
         fields = {(d["item_code"], d["field"]): (d["excel"], d["pull"]) for d in body["differences"]}
         assert fields == {("ZZAC-P2", "qty"): ("19", "20")}
         assert body["source_summary"]["matched"] == 1 and body["source_summary"]["different"] == 1
+
+    def test_gp52d_lines_source_document_that_differs_is_a_difference(self, env):
+        owner = env.user(SLUG)
+        env.as_user(owner)
+        rows = _grn_rows()
+        rows[0]["Details"][0].update({"FromDocType": "PO", "FromDocNo": "SPO-2026/07-0001"})
+        job_id, _ = _seed_review_job(env, owner=owner, rows=rows)
+        sheet = _detail_listing(rows)
+        sheet[0]["Our PO No."] = "SPO-2026/07-0099"
+        resp = env.client.post(f"{PULLS_URL}/{job_id}/compare",
+                               json={"filename": "d.xlsx", "rows": sheet, "source": "lines"})
+        fields = {(d["item_code"], d["field"]): (d["excel"], d["pull"]) for d in resp.json()["differences"]}
+        assert fields == {("ZZAC-P1", "source_doc"): ("SPO-2026/07-0099", "SPO-2026/07-0001")}
+
+    def test_gp52e_listing_transfer_from_that_differs_is_a_difference(self, env):
+        owner = env.user(SLUG)
+        env.as_user(owner)
+        rows = _grn_rows()
+        for detail in rows[0]["Details"]:
+            detail.update({"FromDocType": "PO", "FromDocNo": "SPO-2026/07-0001"})
+        job_id, _ = _seed_review_job(env, owner=owner, rows=rows)
+        sheet = _grn_listing(rows)
+        sheet[0]["Transfer From"] = "spo-2026.07-0001"  # same document: agrees
+        same = env.client.post(f"{PULLS_URL}/{job_id}/compare",
+                               json={"filename": "l.xlsm", "rows": sheet, "source": "headers"})
+        assert same.json()["differences"] == []
+        sheet[0]["Transfer From"] = "SPO-2026/07-0001, SPO-2026/07-0002"
+        resp = env.client.post(f"{PULLS_URL}/{job_id}/compare",
+                               json={"filename": "l.xlsm", "rows": sheet, "source": "headers"})
+        fields = {(d["doc_no"], d["field"]): (d["excel"], d["pull"]) for d in resp.json()["differences"]}
+        assert fields == {("ZZGRN-0001", "source_doc"): ("SPO-2026/07-0001, SPO-2026/07-0002",
+                                                          "SPO-2026/07-0001")}
 
     def test_gp52b_split_quantity_is_a_difference(self, env):
         owner = env.user(SLUG)

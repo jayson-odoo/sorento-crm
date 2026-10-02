@@ -90,6 +90,12 @@ class PullStartBody(BaseModel):
     def _scope_only_for_documents(self):
         if self.scope and self.entity not in pull_service.DOCUMENT_ENTITIES:
             raise ValueError("scope is accepted for delivery_orders and goods_receive_notes only")
+        # GRN-PULL-SS (ss#107): the gateway answers a goods-receive-notes build with no
+        # scope 422, so the CRM refuses it here, in words, instead of relaying that.
+        if self.entity == "goods_receive_notes":
+            scope = self.scope or {}
+            if not (scope.get("docNo") or (scope.get("fromDay") and scope.get("toDay"))):
+                raise ValueError("a goods receive notes pull needs a From day and a To day")
         return self
 
 

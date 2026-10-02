@@ -612,6 +612,7 @@ def compare_goods_receive_notes(
     excel_by_key: dict[tuple[str, str, str], dict] = {}
     excel_qty: dict[tuple[str, str, str], list[Decimal]] = {}
     excel_source: dict[tuple[str, str, str], set[str]] = {}
+    excel_source_text: dict[tuple[str, str, str], set[str]] = {}
     for row in excel_rows:
         fields = _mapped_row(row, mapping)
         key = (_key(fields.get("doc_no")), _key(fields.get("item_code")), _key(fields.get("location")))
@@ -620,6 +621,8 @@ def compare_goods_receive_notes(
         excel_by_key.setdefault(key, fields)
         excel_qty.setdefault(key, []).append(fields.get("qty") or Decimal("0"))
         excel_source.setdefault(key, set()).update(_source_keys(fields.get("source_doc")))
+        if str(fields.get("source_doc") or "").strip():
+            excel_source_text.setdefault(key, set()).add(str(fields["source_doc"]).strip())
 
     pull_by_key: dict[tuple[str, str, str], tuple[dict, dict]] = {}
     pull_qty: dict[tuple[str, str, str], list[Decimal]] = {}
@@ -657,7 +660,7 @@ def compare_goods_receive_notes(
         if "qty" in mapped_fields and sorted(excel_qty[key]) != sorted(pull_qty[key]):
             row_diffs.append(("qty", _qty_text(excel_qty[key]), _qty_text(pull_qty[key])))
         if "source_doc" in mapped_fields and excel_source[key] and excel_source[key] != pull_source.get(key, set()):
-            excel_text = ", ".join(sorted({str(excel_by_key[key].get("source_doc") or "").strip()}))
+            excel_text = ", ".join(sorted(excel_source_text.get(key, set())))
             row_diffs.append(("source_doc", excel_text or None,
                               ", ".join(sorted(pull_source_text.get(key, set()))) or None))
         if row_diffs:

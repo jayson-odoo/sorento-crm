@@ -1081,8 +1081,10 @@ def _doc_date_order(row) -> tuple:
     its PO / SPO lines first, whatever order the snapshot serves documents in."""
     if not isinstance(row, dict):
         return ("", 0)
-    doc_key = row.get("DocKey")
-    return (str(row.get("DocDate") or ""), doc_key if isinstance(doc_key, int) else 0)
+    doc_key = str(row.get("DocKey") or "").strip()
+    # DocDate is AutoCount's ISO text (`2026-10-01T00:00:00`): ordered as text it orders as a
+    # date; a numeric DocKey sent as a string still orders by its value.
+    return (str(row.get("DocDate") or "")[:10], int(doc_key) if doc_key.isdigit() else 0)
 
 
 def _preview_goods_receive_notes(db, job: ImportJob, pull: dict) -> dict:

@@ -863,8 +863,8 @@ def map_goods_receive_note_rows(rows: list[dict]) -> list[dict]:
 
 
 _GOODS_RECEIVE_NOTES_TEMPLATE_HEADER = (
-    "Doc No", "Doc Date", "Creditor Code", "Creditor Name", "Item Code", "Description",
-    "Location", "Qty", "UOM", "Our PO No.",
+    "Doc No", "Doc Date", "Creditor Code", "Creditor Name", "Our PO No.", "Item Code",
+    "Description", "Location", "Qty", "UOM",
 )
 
 
@@ -881,8 +881,8 @@ def build_goods_receive_notes_workbook(mapped_rows: list[dict]) -> bytes:
     for row in mapped_rows:
         sheet.append([
             row.get("doc_no"), row.get("doc_date"), row.get("creditor_code"),
-            row.get("creditor_name"), row.get("item_code"), row.get("description"),
-            row.get("location"), row.get("qty"), row.get("uom"), row.get("from_doc_no"),
+            row.get("creditor_name"), row.get("from_doc_no"), row.get("item_code"),
+            row.get("description"), row.get("location"), row.get("qty"), row.get("uom"),
         ])
     _neutralize_formula_cells(sheet)
     buffer = io.BytesIO()
