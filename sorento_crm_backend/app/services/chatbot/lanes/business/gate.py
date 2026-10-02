@@ -320,6 +320,36 @@ def _cust_name(match: Any) -> str:
     return raw.strip()
 
 
+#: COMBO-STOCK (PLAN-combo-stock-2oct.md, 2 Oct 2026): domains where a placed product SET
+#: answers as its members. `inventory` only (crew ruling Q5): a set is never stocked, so
+#: its stock IS its members' stock. Trigger to widen: a measured set-code miss in another
+#: domain (incoming, order inquiry).
+SET_EXPANDING_DOMAINS: frozenset[str] = frozenset({"inventory"})
+
+
+def _expand_product_set(match: Any) -> list[Any]:
+    """A `product_set` match becomes one `product` match per member; anything else is
+    returned as is. Membership is `entity_resolver._probe_product_set`'s own
+    `display.members`, read off `product_set_members` - the explicit link, never the
+    code's shape. A set with no members expands to nothing, which leaves the token
+    unscoped exactly as before rather than inventing a subject."""
+    if jsc.get(match, "entity_type") != "product_set":
+        return [match]
+    set_code = jsc.get(match, "canonical_code")
+    return [
+        {
+            "entity_type": "product",
+            "canonical_code": jsc.get(member, "product_code"),
+            "uuid": jsc.get(member, "uuid"),
+            "match_field": "product_set",
+            "match_tier": "product_set",
+            "display": {"product_set": set_code},
+        }
+        for member in jsc.array(jsc.get(jsc.get(match, "display"), "members"))
+        if jsc.truthy(jsc.get(member, "uuid"))
+    ]
+
+
 def _display_name(match: Any) -> str | None:
     """The resolver's own human label for this record, or `None` when it gave none.
 
@@ -396,6 +426,9 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     flat.extend(jsc.array(resolver.get("intersection")))
     flat.extend(_flatten_by_entity_type(resolver.get("by_entity_type")))
 
+    flat = [_expand_product_set(m) if domain in SET_EXPANDING_DOMAINS else [m] for m in flat]
+    flat = [m for group in flat for m in group]
+
     by_uuid: dict[Any, dict[str, Any]] = {}
     for m in flat:
         if jsc.truthy(m) and jsc.truthy(jsc.get(m, "uuid")):
@@ -444,6 +477,8 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             matches = jsc.array(jsc.get(resolution, "matches"))
             if not matches:
                 continue
+            if domain in SET_EXPANDING_DOMAINS:
+                matches = [x for m in matches for x in _expand_product_set(m)]
             types = [jsc.get(m, "entity_type") for m in matches if jsc.truthy(m)]
             if types and not any(t in allowed for t in types):
                 token = jsc.get(resolution, "token")
