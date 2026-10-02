@@ -308,7 +308,7 @@ def test_item7_zh_to_en_rows_are_not_subject_to_the_chatbot_checks(client):
     assert resp.status_code == 200, resp.text
 
 
-def test_slice4_a_joiner_edit_must_keep_the_spaces_of_the_source(client):
+def test_slice4_a_joiner_edit_must_keep_the_outer_spacing_the_row_has(client):
     c, db, _actor = client
     row = _chatbot_row(db, source_text=" or ", target_text=" atau ")
     db.commit()
@@ -320,3 +320,43 @@ def test_slice4_a_joiner_edit_must_keep_the_spaces_of_the_source(client):
     assert ok.status_code == 200, ok.text
     db.expire_all()
     assert db.query(TranslationMemory).filter(TranslationMemory.id == row.id).one().target_text == " lalu "
+
+
+def test_final_a_zh_joiner_without_spaces_can_be_re_saved_as_it_is(client):
+    c, db, _actor = client
+    row = _chatbot_row(db, source_text=" or ", target_text="或", target_lang="zh")
+    db.commit()
+    assert c.put(f"{BASE}/{row.id}", json={"target_text": "或"}).status_code == 200
+    # Spaces the row never had are not added: they are trimmed.
+    assert c.put(f"{BASE}/{row.id}", json={"target_text": " 或 "}).status_code == 200
+    db.expire_all()
+    assert db.query(TranslationMemory).filter(TranslationMemory.id == row.id).one().target_text == "或"
+
+
+def test_final_formatting_characters_are_allowed_only_up_to_the_english_count(client):
+    c, db, _actor = client
+    row = _chatbot_row(
+        db, source_text="*{label}* for {codes}:", target_text="*{label}* untuk {codes}:"
+    )
+    db.commit()
+    ok = c.put(f"{BASE}/{row.id}", json={"target_text": "*{label}* bagi {codes}:"})
+    assert ok.status_code == 200, ok.text
+    bad = c.put(f"{BASE}/{row.id}", json={"target_text": "*{label}* _bagi_ {codes}:"})
+    assert bad.status_code == 422, bad.text
+    extra = c.put(f"{BASE}/{row.id}", json={"target_text": "**{label}** bagi {codes}:"})
+    assert extra.status_code == 422, extra.text
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "tiada stok, lihat acme.com ETA {eta}.",
+        "tiada stok, lihat Acme-Shop.CO.my ETA {eta}.",
+        "tiada `stok` ETA {eta}.",
+    ],
+)
+def test_final_a_bare_domain_or_a_backtick_is_rejected(client, bad):
+    c, db, _actor = client
+    row = _chatbot_row(db)
+    db.commit()
+    assert c.put(f"{BASE}/{row.id}", json={"target_text": bad}).status_code == 422
