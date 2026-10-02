@@ -54,7 +54,7 @@ async def list_customer_groups(
 @router.get("/select", response_model=dict)
 async def select_customer_groups(
     query: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(require_permission(_VIEW)),
     db: Session = Depends(get_db),
 ):
