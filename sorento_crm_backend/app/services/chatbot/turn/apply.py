@@ -25,6 +25,7 @@ from dataclasses import replace
 from typing import Any
 
 from app.services.chatbot import contracts
+from app.services.chatbot.turn import refer
 from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.decide import (
     ANSWER,
@@ -666,6 +667,48 @@ def _answer_outstanding(
     return focus, carried, None, True
 
 
+#: The words a named document arrives as, which settle a sales report drill pick too.
+_DRILL_DOCUMENT_WORDS = frozenset({"do", "delivery order", "delivery orders"})
+
+
+def without_the_drill_pick_words(
+    entities: list[Any], pending: Pending | None, trace: Trace
+) -> list[Any]:
+    """`entities` less the typed word that settled a sales report drill pick.
+
+    PR #1401 fix rounds 2 and 4: "DO", "by product", "delivery orders" typed back at the
+    `sales_report_detail` offer settle the pick (`turn/decide.py`, the label / alias /
+    named-document arms). That word is the answer, not a subject: written onto the focus
+    (`focus.extra["order"]`) it rode along on every later turn, nothing resolved it, and
+    each reply closed with "I could not find DO.". Only a turn whose pick actually ran a
+    drill (`trace.outstanding` names one of the report's lists) drops anything, and only
+    an entity of THIS message whose raw or code is one of the offer's own words.
+    """
+    from app.services.chatbot.turn.decide import _option_words
+
+    answered = trace.outstanding or {}
+    if (
+        pending is None
+        or pending.kind != "sales_report_detail"
+        or answered.get("kind") != "sales_report_detail"
+        or answered.get("detail") not in contracts.SALES_REPORT_GROUP_BYS
+    ):
+        return entities
+    words = set(_DRILL_DOCUMENT_WORDS)
+    for option in pending.options:
+        words |= _option_words(option)
+
+    def _settles_the_pick(e: Any) -> bool:
+        if not isinstance(e, dict) or e.get("current_message") is not True:
+            return False
+        typed = {
+            str(v).strip().lower() for v in (e.get("raw"), e.get("canonical_code")) if isinstance(v, str)
+        }
+        return bool(typed & words)
+
+    return [e for e in entities if not _settles_the_pick(e)]
+
+
 def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dict[str, Any] | None = None):
     # Returns (focus_after, pending_after, short_circuit_plan, domain_locked).
     #
@@ -703,7 +746,7 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             # A "no" that also names a position ("no, the 2nd one") is a pick, not a
             # decline.
             trace.rules_fired.append("stock_pick_declined")
-            trace.task_question = task_mod.REFER_TO_SALESMAN
+            trace.task_question = refer.sentence()
             focus.domains = ["inventory"]
             return (
                 focus,
@@ -3246,6 +3289,9 @@ def _apply(
         unchanged = replace(state, focus=closed_focus, pending=pending_after)
         return unchanged, pending_short_circuit
 
+    # PR #1401 fix round 4: the word that settled a sales report drill pick is not a
+    # subject, so it never reaches the focus to be carried into the next turn.
+    entities = without_the_drill_pick_words(entities, state.pending, trace)
     focus = _focus_rules(
         focus_after_pending,
         verdict,
