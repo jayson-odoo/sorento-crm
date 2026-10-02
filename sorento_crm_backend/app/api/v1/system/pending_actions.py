@@ -106,6 +106,8 @@ def _record_action(action_key: str):
 # to give the click anything to show the refusal on.
 _REQUIRED_PAYLOAD_KEYS: dict = {
     "project_sales_order.undo_confirm": ("decision_id",),
+    # The ss comment route is addressed by idea AND comment, and the row only holds the comment.
+    "idea_comment.delete": ("idea_id",),
 }
 
 # A record action whose PARK gate accepts more than one grant (SF-4,

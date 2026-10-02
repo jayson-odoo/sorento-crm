@@ -180,7 +180,7 @@ _ROUTES = [
     ),
     (
         "attach", "POST", f"/ideas/{IDEA}/attachments",
-        {"files": {"file": ("brief.txt", b"hello zzt", "text/plain")}}, True,
+        {"files": {"file": ("brief.txt", b"hello zzt", "text/plain")}}, False,
         "POST", f"/embed/ideas/{IDEA}/attachments", {}, None, 201,
     ),
     (
