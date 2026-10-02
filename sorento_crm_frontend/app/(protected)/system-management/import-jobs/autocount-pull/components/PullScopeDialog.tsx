@@ -52,6 +52,8 @@ export interface PullScopeDialogProps {
    *  gateway's default). The dialog closes itself before calling. */
   onPull: (scope: AutocountPullScope | null) => void | Promise<void>;
   companyLabel?: string;
+  /** What is pulled, in the title and the sentence under it; delivery orders when absent. */
+  documentLabel?: string;
 }
 
 /**
@@ -60,7 +62,13 @@ export interface PullScopeDialogProps {
  * Stock pull the whole book and never see this dialog; a Delivery Orders click with an open
  * pull goes straight to "Review pull" and skips it too.
  */
-export function PullScopeDialog({ open, onOpenChange, onPull, companyLabel }: PullScopeDialogProps) {
+export function PullScopeDialog({
+  open,
+  onOpenChange,
+  onPull,
+  companyLabel,
+  documentLabel = 'delivery orders',
+}: PullScopeDialogProps) {
   const [fromDay, setFromDay] = useState<string>('');
   const [toDay, setToDay] = useState<string>('');
 
@@ -87,10 +95,10 @@ export function PullScopeDialog({ open, onOpenChange, onPull, companyLabel }: Pu
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Pull delivery orders from AutoCount</DialogTitle>
+          <DialogTitle>Pull {documentLabel} from AutoCount</DialogTitle>
           <DialogDescription>
-            {companyLabel ? `${companyLabel}. ` : ''}AutoCount builds a snapshot of the delivery
-            orders dated inside this window; you review it before anything changes.
+            {companyLabel ? `${companyLabel}. ` : ''}AutoCount builds a snapshot of the{' '}
+            {documentLabel} dated inside this window; you review it before anything changes.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 sm:grid-cols-2">

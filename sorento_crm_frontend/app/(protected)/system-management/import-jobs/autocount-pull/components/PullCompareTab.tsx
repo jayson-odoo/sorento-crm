@@ -20,11 +20,13 @@ import { useCompareMappings, useComparePull } from '../hooks/useAutocountPull';
 import { CompareMappingDialog } from './CompareMappingDialog';
 import { isCompareFullMatch } from '../types/compareMatch';
 import { buildCompareRows, type CompareRow } from './compareRows';
-import type {
-  AutocountComparePullResult,
-  AutocountPullCompareSource,
-  AutocountPullCompareSummary,
-  AutocountPullEntity,
+import {
+  isDocumentEntity,
+  type AutocountComparePullResult,
+  type AutocountPullCompareSource,
+  type AutocountPullCompareSummary,
+  type AutocountPullEntity,
+  type CompareMappingKind,
 } from '../types/autocountPull.types';
 
 export interface PullCompareTabProps {
@@ -41,18 +43,21 @@ const COMPARE_LISTING_KEY: Record<AutocountPullEntity, string> = {
   products: 'master_data.products.autocount_pull::compare',
   stock_balances: 'inventory.stock.autocount_pull::compare',
   delivery_orders: 'order_management.orders.autocount_pull::compare',
+  goods_receive_notes: 'procurement.grn.autocount_pull::compare',
 };
 
-/** The two macro files a delivery-orders pull is compared with (owner decision 30 Sep, mock
- *  section 2). `Overall Tracking` is not compared (owner Q6): AutoCount has none of it. */
-const DO_SOURCES: Array<{
+interface CompareSourceEntry {
   source: AutocountPullCompareSource;
   title: string;
   ariaLabel: string;
   unit: string;
   /** The saved mapping this file is read with. */
-  kind: 'order_listing' | 'order_tracking';
-}> = [
+  kind: CompareMappingKind;
+}
+
+/** The two macro files a delivery-orders pull is compared with (owner decision 30 Sep, mock
+ *  section 2). `Overall Tracking` is not compared (owner Q6): AutoCount has none of it. */
+const DO_SOURCES: CompareSourceEntry[] = [
   {
     source: 'lines',
     title: 'Order Listing (macro)',
@@ -69,8 +74,38 @@ const DO_SOURCES: Array<{
   },
 ];
 
+/** The two files a GRN pull is compared with (owner Q5 a, 2 Oct): the "DETAIL LISTING"
+ *  export (lines) and the "GRN Listing" macro, read from its `Master` sheet by name. */
+const GRN_SOURCES: CompareSourceEntry[] = [
+  {
+    source: 'lines',
+    title: 'Detail Listing',
+    ariaLabel: 'GRN Detail Listing sheet to compare',
+    unit: 'lines',
+    kind: 'grn_detail_listing',
+  },
+  {
+    source: 'headers',
+    title: 'GRN Listing (macro)',
+    ariaLabel: 'GRN Listing sheet to compare',
+    unit: 'documents',
+    kind: 'grn_listing',
+  },
+];
+
+const NO_SOURCES: CompareSourceEntry[] = [];
+
+const SOURCES_BY_ENTITY: Record<AutocountPullEntity, CompareSourceEntry[]> = {
+  products: NO_SOURCES,
+  stock_balances: NO_SOURCES,
+  delivery_orders: DO_SOURCES,
+  goods_receive_notes: GRN_SOURCES,
+};
+
 function noun(entity: AutocountPullEntity): string {
-  return entity === 'delivery_orders' ? 'delivery order lines and documents' : 'items';
+  if (entity === 'delivery_orders') return 'delivery order lines and documents';
+  if (entity === 'goods_receive_notes') return 'GRN lines and documents';
+  return 'items';
 }
 
 function summaryHeadline(
@@ -105,7 +140,7 @@ function summaryHeadline(
   if (summary.only_in_excel) parts.push(`${summary.only_in_excel} only in your Excel`);
   if (summary.only_in_pull) parts.push(`${summary.only_in_pull} only in AutoCount`);
   const advisory =
-    entity === 'delivery_orders'
+    isDocumentEntity(entity)
       ? ' Confirm applies the AutoCount pull as it is; the differences are for you to check.'
       : '';
   return {
@@ -141,25 +176,26 @@ type SourceResults = Partial<Record<AutocountPullCompareSource, AutocountCompare
  * cut to the pulled DocDate window, one headline and one grid grouped by a Source column.
  */
 export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
-  const isDeliveryOrders = entity === 'delivery_orders';
-  const sources = isDeliveryOrders ? DO_SOURCES : [];
+  // Delivery orders and goods receive notes: two files, one dropzone each.
+  const isDeliveryOrders = isDocumentEntity(entity);
+  const sources = SOURCES_BY_ENTITY[entity];
   const [files, setFiles] = useState<Partial<Record<AutocountPullCompareSource | 'single', File[]>>>({});
   const [single, setSingle] = useState<AutocountComparePullResult | null>(null);
   const [results, setResults] = useState<SourceResults>({});
   const compareMutation = useComparePull(jobId);
   const mappings = useCompareMappings(isDeliveryOrders);
   const [mappingOpen, setMappingOpen] = useState(false);
-  const hintFor = (kind: 'order_listing' | 'order_tracking'): string => {
+  const hintFor = (kind: CompareMappingKind): string => {
     const headers = mappings.data?.items.find((m) => m.kind === kind)?.columns.map((c) => c.excel_header);
     return headers?.length
-      ? `Columns read: ${headers.join(', ')}. Drop the .xlsm here, or click to browse.`
-      : 'Drop the .xlsm here, or click to browse.';
+      ? `Columns read: ${headers.join(', ')}. Drop the file here, or click to browse.`
+      : 'Drop the file here, or click to browse.';
   };
-  const mappedHeaders = (kind: 'order_listing' | 'order_tracking'): Set<string> | null => {
+  const mappedHeaders = (kind: CompareMappingKind): Set<string> | null => {
     const items = mappings.data?.items.find((m) => m.kind === kind)?.columns;
     return items ? new Set(items.map((c) => c.excel_header.trim().toLowerCase())) : null;
   };
-  const sheetFor = (kind: 'order_listing' | 'order_tracking'): string =>
+  const sheetFor = (kind: CompareMappingKind): string =>
     mappings.data?.items.find((m) => m.kind === kind)?.sheet_name ?? 'Master';
   const accept = entity === 'products' ? '.xlsx,.xls' : '.xlsx,.xls,.xlsm';
 
@@ -180,7 +216,7 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
       return;
     }
     try {
-      const entry = DO_SOURCES.find((d) => d.source === source);
+      const entry = sources.find((d) => d.source === source);
       const rows = entry
         ? await parseExcelFile(file, { sheetName: sheetFor(entry.kind) })
         : await parseExcelFile(file);
@@ -287,11 +323,11 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
   // rows first, then the headers file's, each labelled by its Source.
   const rows = useMemo<CompareRow[]>(() => {
     if (!isDeliveryOrders) return single ? buildCompareRows(single, entity) : [];
-    return DO_SOURCES.flatMap(({ source }) => {
+    return sources.flatMap(({ source }) => {
       const result = results[source];
       return result ? buildCompareRows(result, entity, source) : [];
     });
-  }, [single, results, entity, isDeliveryOrders]);
+  }, [single, results, entity, isDeliveryOrders, sources]);
 
   const table = useReactTable({
     columns,
@@ -323,7 +359,7 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
   // `source_summary` added up (the server's combined `summary` still counts a file that was
   // since removed or failed to parse). A result without one falls back to its `summary`.
   const onScreen = isDeliveryOrders
-    ? DO_SOURCES.map(({ source }) => results[source]).filter(
+    ? sources.map(({ source }) => results[source]).filter(
         (r): r is AutocountComparePullResult => Boolean(r),
       )
     : [];
@@ -345,7 +381,7 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
       : null
     : single;
   const differencesCount = isDeliveryOrders
-    ? DO_SOURCES.reduce((n, { source }) => n + (results[source]?.differences.length ?? 0), 0)
+    ? sources.reduce((n, { source }) => n + (results[source]?.differences.length ?? 0), 0)
     : single?.differences.length ?? 0;
   const headline = latest ? summaryHeadline(latest.summary, differencesCount, entity) : null;
   const windowLine =
@@ -481,7 +517,11 @@ export function PullCompareTab({ jobId, entity, window }: PullCompareTabProps) {
         </DataGrid>
       )}
       {isDeliveryOrders && mappingOpen && (
-        <CompareMappingDialog open={mappingOpen} onOpenChange={setMappingOpen} />
+        <CompareMappingDialog
+          open={mappingOpen}
+          onOpenChange={setMappingOpen}
+          entity={entity === 'goods_receive_notes' ? 'goods_receive_notes' : 'delivery_orders'}
+        />
       )}
     </div>
   );
