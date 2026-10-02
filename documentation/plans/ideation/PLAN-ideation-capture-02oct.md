@@ -1,7 +1,8 @@
 # PLAN: Ideation capture from one message (IDEATION-CAPTURE)
 
-Status: Review fix round (Phase 3). Q1-Q5 answered, built on the final SS-IDEATION-OWN contract
-(ss#111); reviewer + security-reviewer reported 2 Oct, fixes in progress. Open owner asks: seed
+Status: Hand test (Phase 3 done: review + security review fixed and re-reviewed, kill tests
+killed). Q1-Q5 answered, built on the final SS-IDEATION-OWN contract (ss#111). Remaining: wire the
+#1445 helper into the ideate lane after #1445 merges (do not merge before). Open owner asks: seed
 migration for the new copy + extractor prompt, verified phone for chatbot senders. Track: full (L). Base `claude/ideation-crm-scout-k1b2e7` (PR #1438, IDEATION-IN-CRM).
 Lane branch `claude/ideation-capture-0hctm7` (the sandbox only pushes this name).
 
@@ -376,4 +377,5 @@ draft statuses) and the tests that only covered it; the idle sweep stays until o
 | C1 | Chatbot one-message flow (section 2.1-2.5, Q2 access gate, Q4 numbered list, Q5 language) | SS-IDEATION-OWN contract | done, review fixes in progress |
 | C2 | Remove the dead multi-turn draft path and media lookback | C1 | done |
 | E1 | Own-idea edit: gateway PATCH allows `isMine` or manage; Edit and upload shown on own ideas | Q3 | done |
-| R1 | Review fixes: sweep ignores held lists, chatbot keeps a held list in the ideate lane, embed-session route claims (security H1), DB-only held list for live turns (L1), no-link replies, URL-derived My/All state, merged-child upload | Phase 3 | in progress |
+| R1 | Review fixes: sweep ignores held lists, chatbot keeps a held list in the ideate lane, embed-session route claims (security H1), DB-only held list for live turns (L1), no-link replies, URL-derived My/All state, merged-child upload, vague-reply end (core), re-read before write | Phase 3 | done |
+| H1 | Wire #1445 `required_fields` into the ideate lane (AskType, slot, `ask_reply: true` on the answer) | #1445 merged | waiting |
