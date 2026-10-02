@@ -253,6 +253,12 @@ Order per turn:
 4. Fresh message: the existing extractor (`extract_ideate_turn`, `ideation_extractor.py`) with no
    prior draft context; fields normalised as today. No `problem` extracted: status `ask_idea`,
    the ask-back reply, no pointer, no ss call.
+   **Owner rule 2 Oct:** required-field collection goes through ONE shared helper, being built
+   by LOWSTOCK-FILTER-ASK (#1445; config per ask type: required fields, take from the message if
+   valid, ask only the missing ones). This lane builds no ask-back logic of its own: the check
+   is one adapter, `_missing_required(fields) -> list[str]`, with ideation's required set
+   `["problem"]`; when crew relays the helper API, the adapter's body becomes the helper call
+   and the ask-back sentence comes from the helper's ask for the missing field.
 5. Similar own ideas: ss `POST /ideation/intake/similar-own` `{product_id, submitter_contact_id
    (contact phone), crm_user_id, title, problem, is_test}` -> `{ideas: [{id, idea_number,
    title}], total}` (top 3, ss-ranked). Any: status `similar_offered`, pointer
