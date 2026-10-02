@@ -115,3 +115,49 @@ def test_item6_a_po_placed_envelope_with_an_ms_localizer_stays_english():
     assert "PRODUCT DISCONTINUED" in text
     assert "_Data last updated: 02/10/2026 09:15:30_" in text
     assert "Jumlah" not in text and "Ringkasan" not in text and "dikemas" not in text
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 2, items 3 and 4: any language, and a staff-edited wording, is still recognised
+# --------------------------------------------------------------------------- #
+
+
+def _edited_ms() -> Localizer:
+    table = {
+        **label_catalog.defaults("ms"),
+        "Data last updated: {ts}": "Dikemas kini: {ts}",
+        f"yes, we have stock. {label_catalog.REFER_TO_SALESMAN}": "ya, ada. Sila hubungi jurujual anda.",
+    }
+    return Localizer("ms", table)
+
+
+def test_item4_an_edited_footer_is_still_recognised():
+    loc = _edited_ms()
+    assert "Dikemas kini:" in label_catalog.footer_leads(loc)
+    assert "Dikemas kini:" not in label_catalog.footer_leads()
+    match = answer_mod._data_last_updated_re(loc).search("x\n\n_Dikemas kini: 02/10/2026 09:15_")
+    assert match and match.group(0) == "_Dikemas kini: 02/10/2026 09:15_"
+
+
+def test_item4_an_edited_refer_sentence_is_still_recognised():
+    from app.services.chatbot import dealer_stock
+
+    loc = _edited_ms()
+    assert "Sila hubungi jurujual anda." in label_catalog.refer_sentences(loc)
+    body = "A1 x 1: ya, ada. Sila hubungi jurujual anda."
+    text, _ = dealer_stock.without_escalation(
+        f"{body}\n\nWould you like me to escalate to the warehouse team?", None, localizer=loc
+    )
+    assert text == body
+
+
+def test_item3_compose_splits_on_any_languages_footer():
+    from types import SimpleNamespace
+
+    from app.services.chatbot.turn.compose import compose
+    from tests.chatbot.test_chat_language_render import _env, _policy, _state
+
+    # An English footer under an ms turn (a reply the lane did not localize).
+    lane = "*Product Code:* SRTSWT3001-GM\n\n_Data last updated: 02/10/2026 09:15:30_"
+    text = compose([_env(lane)], _state(), _policy(), ctx=SimpleNamespace(localizer=_loc("ms"))).text
+    assert text.index("Tiada stok ditemui") < text.index("_Data last updated")

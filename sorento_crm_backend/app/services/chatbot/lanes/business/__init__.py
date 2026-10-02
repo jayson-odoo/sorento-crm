@@ -2244,7 +2244,7 @@ def complete_answer(
             not_allowed_check_stock=bool(payload.get("not_allowed_check_stock")),
         )
         promo = answer_mod.promo_picker(
-            validated, parser=parser, resolved=resolved, gate=gate
+            validated, parser=parser, resolved=resolved, gate=gate, localizer=ctx.get("localizer")
         )
         # n8n feeds `crossdomain-zeroset` the PROMO-PICKER's output; this feeds it the
         # VALIDATOR item. Equivalent only because `promo_picker` returns its input

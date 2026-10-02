@@ -1560,9 +1560,15 @@ def run_crossdomain(
 # --------------------------------------------------------------------------- #
 
 _PROMO_ISO_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}")
-_DATA_LAST_UPDATED_RE = re.compile(
-    "_(?:" + "|".join(re.escape(lead) for lead in label_catalog.footer_leads()) + r")[^\n]*_"
-)
+
+
+def _data_last_updated_re(localizer: Any = None) -> re.Pattern[str]:
+    """The freshness footer in any language, plus the turn localizer's own wording."""
+    leads = "|".join(re.escape(lead) for lead in label_catalog.footer_leads(localizer))
+    return re.compile("_(?:" + leads + r")[^\n]*_")
+
+
+_DATA_LAST_UPDATED_RE = _data_last_updated_re()
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 _LEADING_NEWLINES_RE = re.compile(r"^\n+")
 
@@ -1658,6 +1664,7 @@ def promo_picker(
     parser: dict[str, Any] | None,
     resolved: dict[str, Any] | None,
     gate: dict[str, Any] | None = None,
+    localizer: Any = None,
 ) -> dict[str, Any]:
     """`promo-picker`: the promotion answer's ordering, pick, roster and strict miss.
 
@@ -2098,7 +2105,7 @@ def promo_picker(
         # the customer actually uses.
         # D11-reproduced: `promo-picker.js:468`'s own `_tail` match, over the response
         # THIS turn built (never the customer's words).
-        tail_match = _DATA_LAST_UPDATED_RE.search(jsc.js_string(env.get("response") or ""))
+        tail_match = _data_last_updated_re(localizer).search(jsc.js_string(env.get("response") or ""))
         tail = tail_match.group(0) if tail_match else None
         swapped = (
             None

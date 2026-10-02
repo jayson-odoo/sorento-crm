@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from app.services.chatbot import label_catalog
 from app.services.chatbot.label_catalog import IDENTITY
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
 from app.services.chatbot.turn.fetch import envelope_missed
@@ -449,13 +450,15 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                 # Above the lane's "_Data last updated: ..._" footer, which closes the
                 # section, rather than under it.
                 line = localizer.sentence(f"No stock found for {_join_words(absent)}.")
-                # The footer's lead-in in the reply's language ("Data last updated: " in English).
-                footer_lead = localizer.sentence("Data last updated: {ts}").split("{ts}")[0].rstrip()
-                if not footer_lead:  # a blanked lead would match any italic line
-                    footer_lead = "Data last updated"
-                body, sep, footer = block.rpartition("\n_" + footer_lead)
-                if sep:
-                    block = body + "\n" + line + sep + footer
+                # The footer in whichever language printed it; the last one in the block closes
+                # the section (`footer_leads` drops a blanked lead, which would match any line).
+                split = None
+                for lead in label_catalog.footer_leads(localizer):
+                    head, found, rest = block.rpartition("\n_" + lead)
+                    if found and (split is None or len(head) > len(split[0])):
+                        split = (head, found, rest)
+                if split:
+                    block = split[0] + "\n" + line + split[1] + split[2]
                 else:
                     block = block + "\n" + line
         # The window the fetch ran with, stated under the header it belongs to (browser

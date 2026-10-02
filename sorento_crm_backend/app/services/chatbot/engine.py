@@ -4641,6 +4641,7 @@ def _run_stages(  # noqa: PLR0915
         #    standing (R6 deletes the now-shadowed `narrow` arms) but never reaches
         #    `turn_compose.compose_question` while `answer` is already set here.
         answer: Any = None
+        localizer: Any = None  # CHAT-LANGUAGE: set when the business lane resolves one
         # Set the moment the bridge itself answers (either arm) - the FETCH section
         # below always assigns `answer` too (even `turn_compose.compose([])`'s own
         # empty Answer, for a plan with nothing to fetch), so `answer is None` alone
@@ -5420,7 +5421,7 @@ def _run_stages(  # noqa: PLR0915
             # reply, a dealer is referred to their salesman, never offered a team.
             # PR #1329 (ETA policy): a dealer's incoming reply is the same, so an
             # incoming miss no longer offers the purchasing team.
-            answer = _dealer_refers_to_salesman(answer)
+            answer = _dealer_refers_to_salesman(answer, localizer)
         elif in_ranking_conversation:
             answer = _without_escalation_offer(answer)
         return _run_answer(
@@ -5739,7 +5740,7 @@ def _without_escalation_offer(answer: Any) -> Any:
     return dataclasses_replace(answer, text=text, question=question, offer=None)
 
 
-def _dealer_refers_to_salesman(answer: Any) -> Any:
+def _dealer_refers_to_salesman(answer: Any, localizer: Any = None) -> Any:
     from app.services.chatbot import dealer_stock as dealer_mod
 
     if getattr(answer, "question", None) is not None and (
@@ -5747,7 +5748,7 @@ def _dealer_refers_to_salesman(answer: Any) -> Any:
     ):
         return answer
     text, question = dealer_mod.without_escalation(
-        getattr(answer, "text", "") or "", getattr(answer, "question", None)
+        getattr(answer, "text", "") or "", getattr(answer, "question", None), localizer=localizer
     )
     if text == (getattr(answer, "text", "") or "") and question is getattr(answer, "question", None):
         return answer

@@ -89,23 +89,29 @@ FOOTER = "Data last updated: {ts}"
 
 
 
-def footer_leads() -> tuple[str, ...]:
+def footer_leads(localizer: Any = None) -> tuple[str, ...]:
     """The footer's lead-in ("Data last updated:") in every language, for the text matchers
-    that must recognise it wherever it prints."""
-    texts = (FOOTER, *(LABELS[FOOTER][lang] for lang in LANGUAGES if lang != "en"))
-    return tuple(dict.fromkeys(t.split("{ts}")[0].rstrip() for t in texts))
+    that must recognise it wherever it prints. `localizer` adds its own (staff-edited) wording."""
+    texts = [FOOTER, *(LABELS[FOOTER][lang] for lang in LANGUAGES if lang != "en")]
+    if localizer is not None and FOOTER in localizer.table:
+        texts.append(localizer.table[FOOTER])
+    leads = (t.split("{ts}")[0].rstrip() for t in texts)
+    return tuple(dict.fromkeys(lead for lead in leads if lead))
 
 
-def refer_sentences() -> tuple[str, ...]:
+def refer_sentences(localizer: Any = None) -> tuple[str, ...]:
     """The refer line in every language: the English constant, and the last sentence of each
-    translated verdict that ends with it. For the text matchers that ask "was it printed?"."""
+    translated verdict that ends with it. For the text matchers that ask "was it printed?".
+    `localizer` adds its own (staff-edited) wording of the same verdicts."""
     found = [REFER_TO_SALESMAN]
     for english, entry in LABELS.items():
         if english.endswith(REFER_TO_SALESMAN):
-            for lang in LANGUAGES:
-                if lang in entry:
-                    pieces = [p for p in re.split(r"(?<=[.。])\s*", entry[lang].strip()) if p]
-                    found.append(pieces[-1])
+            texts = [entry[lang] for lang in LANGUAGES if lang in entry]
+            if localizer is not None and english in localizer.table:
+                texts.append(localizer.table[english])
+            for text in texts:
+                pieces = [p for p in re.split(r"(?<=[.。])\s*", text.strip()) if p]
+                found.append(pieces[-1])
     return tuple(dict.fromkeys(found))
 
 
