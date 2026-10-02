@@ -37,11 +37,12 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
   `POST /ideas/{id}/vote` -> body `{"dir":"up"}` always (view);
   `POST /ideas/{id}/status` (manage);
   `PUT /ideas/reorder`, `POST /ideas/merge`, `POST /ideas/{id}/unmerge`, `POST /ideas/promote` (manage);
-  `POST /ideas/{id}/attachments` (manage), `GET /ideas/{id}/attachments/{aid}/content` streamed (view);
+  `POST /ideas/{id}/attachments` (view: attachments are not a triage action in owner Q2, and capture lets every viewer attach), `GET /ideas/{id}/attachments/{aid}/content` streamed (view);
   `GET|POST /ideas/{id}/comments`, `PATCH|DELETE /ideas/{id}/comments/{cid}` (view).
   A view-only user calling a manage route gets 403 and ss is never called.
-- **AC-A-09** Archive and Delete run as server-deferred pending actions (`record_actions` handlers,
-  entity `idea`): the handler calls ss as the user who started the action (status `archived` / ss
+- **AC-A-09** Archive and Delete run as server-deferred pending actions (`record_actions` handlers
+  `idea.archive` / `idea.delete`, entity `idea`, permission manage; comment delete is
+  `idea_comment.delete`, entity `idea_comment`, permission view, payload `{idea_id}`): the handler calls ss as the user who started the action (status `archived` / ss
   `DELETE /embed/ideas/{id}`); Cancel inside the window means ss is never called.
 
 ## B. Permission
@@ -85,7 +86,7 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
   shown as an error toast), Merge into another idea, Archive (5 s countdown), Delete (10 s countdown,
   then back to the list). No confirm dialog anywhere.
 - **AC-D-05** Attachments tab lists files (download streams through the gateway) and a dropzone for
-  manage holders; Business requirements tab lists linked BRs read-only, empty state otherwise.
+  every viewer; Business requirements tab lists linked BRs read-only, empty state otherwise.
 - **AC-D-06** Unknown id: not-found state; no UUID is shown anywhere in the UI.
 
 ## E. Comments (staff)
@@ -136,8 +137,10 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
   the documented idea fields; no email, author id, phone, or internal id beyond the comment id ever
   reaches the browser. A test asserts no value containing `@` survives the proxy for a seeded email
   author name.
-- **AC-H-07** Rate limit: the CRM public POST is limited per client IP (20 per 15 min) and per token
-  (5 per 15 min) before calling ss, answering 429 with `Retry-After` and "Too many comments. Try
+- **AC-H-07** Rate limit: the CRM public POST is limited per token (5 per 15 min, key = sha256 of the
+  token; the authoritative limit) and per client IP (20 per 15 min; IP = left-most `X-Forwarded-For`
+  else the socket peer, the same rule as `app/api/v1/public/quotation_sign.py:_client_ip`, so it is
+  defence in depth only, as XFF is client-influenced) before calling ss, answering 429 with `Retry-After` and "Too many comments. Try
   again later."; the client IP is forwarded to ss as `X-Forwarded-For`.
 - **AC-H-08** Usable at 375px and 1280px; not-found state at both.
 
