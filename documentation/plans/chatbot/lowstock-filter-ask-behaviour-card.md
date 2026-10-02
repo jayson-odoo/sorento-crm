@@ -1,6 +1,7 @@
 # Behaviour card: the low stock report asks for its filters before it runs (LOWSTOCK-FILTER-ASK)
 
-Status: ASKED (2 Oct 2026), waiting on owner answers Q1-Q5. No code until answered.
+Status: RULED (2 Oct 2026). Crew: Q1 (a), Q5 (a). Owner: Q2 shared helper, category only; Q3 (a); Q4 a+b+c.
+The "Proposed behaviour" section below is SUPERSEDED by "Ruled behaviour" at the end.
 Plan: `PLAN-lowstock-filter-ask-2oct.md`.
 
 ## Step 1 - what happens today (trace, `main` 6864cd0b)
@@ -128,3 +129,68 @@ Edge cases:
   (a) match against the supplier master list; (b) match only suppliers that appear on the
   low stock rows (needs the run first, which breaks "no run before filters").
   **Recommend (a)**.
+
+## Rulings (2 Oct 2026)
+
+- **Q1 (crew): (a)** the filters narrow the WORKBOOK of the existing whole-book run. No migration.
+- **Q2 (owner): a SHARED required-field collection helper.** Config per ask type: a list of
+  required fields. For each field: take it from the message if given and valid, accept "all"
+  if the user insists, otherwise ask only for what is missing. Changing the required set is
+  config, not new code. For the low stock report the required set is **product category
+  only**. Supplier and group-by are NOT asked: taken in when the message gives them,
+  otherwise no supplier filter and no grouping. Neutral chatbot module; IDEATION-CAPTURE
+  (#1444) reuses it.
+- **Q3 (owner): (a)** a brand narrows the categories through `product_categories.brand_hint`.
+- **Q4 (owner): a+b+c** group-by values: supplier, category, supplier x category, none.
+- **Q5 (crew): (a)** a supplier word matches the supplier master list (whole word,
+  case-insensitive), several matches -> numbered pick.
+
+## Ruled behaviour (supersedes "Proposed behaviour")
+
+The bot runs NOTHING until the product category is settled. Everything else is optional.
+
+| field | asked? | from the message | none given |
+| --- | --- | --- | --- |
+| category | YES (the only question) | a category word ("water tap", "SRT-FT"), narrowed by a brand word ("Sorento") | ask |
+| brand | no | a brand word narrows the category; a brand alone settles the category as all of that brand's categories | no narrowing |
+| supplier | no | a supplier name in the message (several matches -> numbered pick) | no supplier filter |
+| group by | no | "by supplier", "by category", "by supplier and category" | no grouping |
+| location | no | a warehouse word (already wired, run scope) | whole book |
+
+Wording (exact):
+
+- The one question: `Which product category? Reply with a category (e.g. water tap) or "all".`
+- Several categories for one word: `Which category do you mean? Reply with a number or "all":` then `1. SRT-FT` lines.
+- Several suppliers for one word: `Which supplier do you mean? Reply with a number:` then `1. JINBAICHUAN` lines.
+- A word that matches nothing: `I don't know 'xyz' as a category.` + the question again.
+- The second miss in a row: `I still can't place 'xyz'. Ask for the low stock report again with a category or "all".` (ends the ask; never-stuck).
+- "cancel" / "stop": `Low stock report cancelled.`
+- Settled: the existing ready / pending / busy / error lines, with one filter line under the first:
+  `Low stock report - as of 02/10/2026` / `Category: SRT-FT | Supplier: all | Grouping: none` / `Low: 12 of 40 planned products`.
+
+Examples:
+
+1. "Sorento water tap low stock list" -> brand Sorento + class Tap -> SRT-FT -> runs at once,
+   no question.
+2. "low stock report" -> `Which product category? ...` -> "water closet" -> runs (all suppliers, no grouping).
+3. "low stock report" -> question -> "all" -> runs the whole book (today's file).
+4. "low stock water tap jinbaichuan by supplier" -> category Tap (every brand's tap categories),
+   supplier JINBAICHUAN, split by supplier -> runs.
+5. "Sorento low stock" -> brand alone -> every Sorento category -> runs.
+
+Edge cases:
+
+- A contact without `purchase_orders.supplier`: a supplier word or a supplier grouping in
+  the message is not taken (the column is hidden for them); the filter line says
+  `Supplier: all` and the grouping drops to category / none.
+- While the question is open, a message the parser reads as a different ask with more than
+  three words (or a question mark) drops the question and is answered normally. A short
+  reply is always read as the answer.
+- A product-code ask ("low stock for SRTWT7408") names its own scope: no question.
+- Grant refusal, rate limit, a plan already running, a failed run: unchanged lines.
+
+## Shared helper API (`app/services/chatbot/required_fields.py`)
+
+Neutral module, no low stock knowledge. An ask type registers a `FieldSpec` list; the
+helper owns the slot, the question, the answer reading, "all", numbered picks, misses and
+cancel. See the module docstring for the full contract (the PR body repeats it).
