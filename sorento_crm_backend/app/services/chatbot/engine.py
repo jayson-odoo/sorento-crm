@@ -6618,18 +6618,7 @@ def _run_casual_lane(
             answer_shape = said.shape
             text = said.text
             if fallback is not None and (said.shape == "ack" or fallback.kind == "history"):
-                noted_language = next(
-                    (s.get("value") for s in fallback.noted if s.get("key") == "language"), None
-                )
-                # CHAT-LANGUAGE: the message's own language first (owner Q2), then the clarifier's
-                # reading, the conversation's last language, the saved fact, a stated one.
-                reply_language = fallback_mod.pick_language(
-                    language_mod.detect(_ctx_message_text(ctx).split("\n")[0]),
-                    said.language,
-                    (remembered_before or {}).get("reply_language"),
-                    fallback.saved_language,
-                    noted_language,
-                )
+                reply_language = _fallback_language(ctx, fallback, remembered_before, said.language)
                 ack = said.text.strip()
                 # AC-MEM081: an ack stating a figure, code, price or date its own
                 # input never had is replaced by the canned one for the language.
@@ -6650,7 +6639,7 @@ def _run_casual_lane(
             text = GENERIC_ERROR_REPLY
     if failed is not None and fallback is not None and fallback.kind == "history" and fallback.copy is not None:
         # The history list needs no model: behind the canned ack it still answers.
-        reply_language = fallback_mod.pick_language(fallback.saved_language)
+        reply_language = _fallback_language(ctx, fallback, remembered_before, None)
         text = fallback_mod.compose(
             fallback.copy.render_in("fallback_ack", reply_language), fallback, fallback.copy, reply_language
         )
@@ -6761,8 +6750,13 @@ def _run_casual_lane(
     # `response` for a kind it has no case for, and wins the ladder - the reply comes out
     # blank. The turn ROW keeps `low_signal` either way; `branch_kind` is read off the row.
     central = {"response": text}
+    if reply_language:
+        # What was replied is what the next turn inherits (`complete_turn` runs the tail on
+        # THIS item, not the engine's own).
+        item["reply_language"] = reply_language
     answer = {
         **central,
+        **({"reply_language": item["reply_language"]} if item.get("reply_language") else {}),
         "outcome_fragment": {
             "central-exchange": central,
             "build-miss-member-offer": None,
@@ -7542,6 +7536,21 @@ def _stock_ask_answered_entries(envelopes: list[dict[str, Any]]) -> list[dict[st
             continue
         entries.extend(stock_ask_service.answered_entries(block))
     return entries
+
+
+def _fallback_language(
+    ctx: Any, fallback: Any, remembered_before: Mapping[str, Any] | None, said_language: str | None
+) -> str:
+    """The fallback reply's language: one the contact STATED this turn, then the message's own
+    words, the clarifier's reading, the conversation's last language, the saved fact."""
+    stated = next((s.get("value") for s in fallback.noted if s.get("key") == "language"), None)
+    return fallback_mod.pick_language(
+        stated,
+        language_mod.detect(_ctx_message_text(ctx).split("\n")[0]),
+        said_language,
+        (remembered_before or {}).get("reply_language"),
+        fallback.saved_language,
+    )
 
 
 def _turn_language(

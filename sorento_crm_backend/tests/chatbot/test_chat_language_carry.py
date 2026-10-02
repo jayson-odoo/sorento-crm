@@ -86,3 +86,36 @@ class _Trace:
 
     def add(self, *a, **k):
         return None
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 1, item 3 (B3 + S3): the fallback lane's language order
+# --------------------------------------------------------------------------- #
+
+from tests.chatbot.test_memory_s4_fallback_replay import (  # noqa: E402,F401 - fixtures
+    _run_turn,
+    _seed_contact,
+    lane,
+    sent_text,
+)
+
+
+def test_item3_a_language_stated_this_turn_beats_the_message_and_is_carried(
+    session_factory, stub_access, lane
+):
+    """"please reply in Chinese" is English words, but the parser noted language zh: the
+    reply is zh and zh is what the next turn inherits."""
+    _seed_contact(session_factory, {}, level="full")
+    result, _prompt = _run_turn(
+        session_factory,
+        stub_access,
+        message="please reply in Chinese",
+        verdict_overrides={
+            "message_type": "casual",
+            "profile_statements": [{"key": "language", "value": "zh"}],
+        },
+        n=1,
+        console=True,
+    )
+    assert result.session_patch["reply_language"] == "zh"
+    assert any("\u4e00" <= ch <= "\u9fff" for ch in sent_text(result)), sent_text(result)
