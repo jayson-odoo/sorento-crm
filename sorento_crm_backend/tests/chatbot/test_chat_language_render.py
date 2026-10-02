@@ -317,9 +317,9 @@ def test_ac_cl10_a_restricted_keyed_open_so_label_is_translated_when_granted():
 
 def test_ac_cl10_an_uncatalogued_label_stays_english_in_a_translated_reply():
     env = _detailed_envelope()
-    env["items"][0]["fields"].append({"key": "brand", "label": "Brand", "value": "SRT"})
+    env["items"][0]["fields"].append({"key": "finish", "label": "Finish", "value": "SRT"})
     text = fetch.output_structurer(env, _ctx("zh"))["response"]
-    assert "*Brand:* SRT" in text
+    assert "*Finish:* SRT" in text
 
 
 # --------------------------------------------------------------------------- #
