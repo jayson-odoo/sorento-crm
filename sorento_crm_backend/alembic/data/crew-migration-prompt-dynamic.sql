@@ -22,6 +22,8 @@ INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(
 INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'forms', 16) ON CONFLICT (word) DO NOTHING;
 INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'shipment', 17) ON CONFLICT (word) DO NOTHING;
 INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), 'GRN', 18) ON CONFLICT (word) DO NOTHING;
+ALTER TABLE access_agents ADD COLUMN IF NOT EXISTS in_parser_prompt boolean NOT NULL DEFAULT false;
+UPDATE access_agents SET in_parser_prompt = true WHERE code = ANY(ARRAY['general_enquiries', 'order_enquiries', 'incoming_stock_enquiries', 'marketing_form', 'it_support']::text[]) AND NOT EXISTS (SELECT 1 FROM access_agents WHERE in_parser_prompt);
 UPDATE contact_access_types SET sort_order = 1 WHERE is_active AND name = 'Sorento Dealer';
 UPDATE contact_access_types SET sort_order = 2 WHERE is_active AND name = 'Mocha Dealer';
 UPDATE contact_access_types SET sort_order = 3 WHERE is_active AND name = 'Mocha Office';
@@ -37,7 +39,7 @@ r_status_values text := (SELECT string_agg(value, '|' ORDER BY sort_order, value
 r_status_field_values text := (SELECT string_agg(value, '|' ORDER BY sort_order, value) FROM chatbot_status_words WHERE 'status_field_values' = ANY(prompt_lists));
 r_order_status_values text := (SELECT string_agg(value, '|' ORDER BY sort_order, value) FROM chatbot_status_words WHERE domain = 'order');
 r_entity_kinds text := (SELECT string_agg(kind, '|' ORDER BY sort_order, kind) FROM chatbot_entity_kinds);
-r_agents text := COALESCE((SELECT string_agg(code, '|' ORDER BY COALESCE(array_position(ARRAY['general_enquiries', 'order_enquiries', 'incoming_stock_enquiries', 'marketing_form', 'it_support', 'ideation']::text[], code), 6), code COLLATE "C") FROM access_agents WHERE is_active), 'general_enquiries|order_enquiries|incoming_stock_enquiries|marketing_form|it_support|ideation');
+r_agents text := COALESCE((SELECT string_agg(code, '|' ORDER BY COALESCE(array_position(ARRAY['general_enquiries', 'order_enquiries', 'incoming_stock_enquiries', 'marketing_form', 'it_support', 'ideation']::text[], code), 6), code COLLATE "C") FROM access_agents WHERE is_active AND in_parser_prompt), 'general_enquiries|order_enquiries|incoming_stock_enquiries|marketing_form|it_support|ideation');
 r_access_levels text := (SELECT CASE WHEN bool_and(position('"' in name) = 0 AND position(chr(92) in name) = 0 AND name !~ '[[:cntrl:]]') THEN '[' || string_agg('"' || name || '"', ',' ORDER BY sort_order NULLS LAST, name) || ']' END FROM contact_access_types WHERE is_active);
 r_entity_kinds_detail text := (SELECT string_agg(format('Entity kind %s: resolver %s. Did-you-mean %s. Default narrowing %s.', kind, resolver_source, CASE WHEN did_you_mean THEN 'on' ELSE 'off' END, default_narrowing), chr(10) ORDER BY kind) FROM chatbot_entity_kinds);
 starts int[] := ARRAY[5140, 5440, 27294, 31323, 52711, 61678, 61851, 62002, 62341, 64873, 118134, 120495, 121763];

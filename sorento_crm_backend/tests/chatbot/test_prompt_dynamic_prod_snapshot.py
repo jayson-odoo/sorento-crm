@@ -101,14 +101,14 @@ def _seed_registries_to_the_file(db) -> None:
         text("UPDATE chatbot_domains SET narrowing = '{\"product\": \"list_all\"}'::jsonb WHERE name = 'master_products'")
     )
     db.execute(text("DELETE FROM chatbot_status_words WHERE value NOT IN ('outstanding', 'delivered')"))
-    db.execute(text("UPDATE access_agents SET is_active = false"))
+    db.execute(text("UPDATE access_agents SET is_active = false, in_parser_prompt = false"))
     for code in ("general_enquiries", "order_enquiries", "incoming_stock_enquiries", "marketing_form", "it_support"):
         db.execute(
             text(
                 "INSERT INTO access_agents (id, code, name, is_active, assign_to_new_internal_contacts, "
-                "synced_to_excel, created_at, updated_at) "
-                "VALUES (gen_random_uuid(), :c, :c, true, false, false, now(), now()) "
-                "ON CONFLICT (code) DO UPDATE SET is_active = true"
+                "synced_to_excel, in_parser_prompt, created_at, updated_at) "
+                "VALUES (gen_random_uuid(), :c, :c, true, false, false, true, now(), now()) "
+                "ON CONFLICT (code) DO UPDATE SET is_active = true, in_parser_prompt = true"
             ),
             {"c": code},
         )

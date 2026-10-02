@@ -119,7 +119,11 @@ def _agents(db: Session) -> list[str]:
     from app.modules.chatbot.lane_vocabulary import suggested_agents
 
     known = list(suggested_agents())
-    codes = list(db.execute(sql("SELECT code FROM access_agents WHERE is_active")).scalars())
+    # The agents the owner flagged for the prompt (owner Q-B, 2 Oct 2026); an install with
+    # none flagged falls back to the code list.
+    codes = list(
+        db.execute(sql("SELECT code FROM access_agents WHERE is_active AND in_parser_prompt")).scalars()
+    )
     if not codes:
         return known
     order = {code: i for i, code in enumerate(known)}

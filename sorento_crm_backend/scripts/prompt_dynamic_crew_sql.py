@@ -158,7 +158,7 @@ def _renderers() -> dict[str, str]:
         "entity_kinds": "(SELECT string_agg(kind, '|' ORDER BY sort_order, kind) FROM chatbot_entity_kinds)",
         "agents": (
             "COALESCE((SELECT string_agg(code, '|' ORDER BY COALESCE(array_position("
-            f"{_array(known)}, code), {len(known)}), code COLLATE \"C\") FROM access_agents WHERE is_active), "
+            f"{_array(known)}, code), {len(known)}), code COLLATE \"C\") FROM access_agents WHERE is_active AND in_parser_prompt), "
             f"{_q('|'.join(known))})"
         ),
         "access_levels": (
@@ -230,6 +230,12 @@ def _pdyn_0004_sql() -> str:
             f"INSERT INTO chatbot_domain_words (id, word, sort_order) VALUES (gen_random_uuid(), {_q(word)}, {i}) "
             "ON CONFLICT (word) DO NOTHING;"
         )
+    agents = _load("pdyn_0006_agents_in_prompt.py")
+    lines.append("ALTER TABLE access_agents ADD COLUMN IF NOT EXISTS in_parser_prompt boolean NOT NULL DEFAULT false;")
+    lines.append(
+        f"UPDATE access_agents SET in_parser_prompt = true WHERE code = ANY({_array(agents.PROMPT_AGENTS)}) "
+        "AND NOT EXISTS (SELECT 1 FROM access_agents WHERE in_parser_prompt);"
+    )
     order = _load("pdyn_0005_access_level_order.py")
     for i, name in enumerate(order.ACCESS_LEVEL_ORDER, start=1):
         lines.append(f"UPDATE contact_access_types SET sort_order = {i} WHERE is_active AND name = {_q(name)};")

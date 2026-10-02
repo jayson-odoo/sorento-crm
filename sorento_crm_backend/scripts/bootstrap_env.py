@@ -739,6 +739,7 @@ def seed_chatbot_policy() -> None:
     pdyn3 = _load("_pdyn_0003_prod_identical", "pdyn_0003_prod_identical.py")
     pdyn4 = _load("_pdyn_0004_prompt_lists", "pdyn_0004_prompt_lists.py")
     pdyn5 = _load("_pdyn_0005_access_level_order", "pdyn_0005_access_level_order.py")
+    pdyn6 = _load("_pdyn_0006_agents_in_prompt", "pdyn_0006_agents_in_prompt.py")
 
     with engine.begin() as conn:
         domains_inserted, kinds_inserted = s0.seed_domains_and_kinds(conn)
@@ -770,6 +771,7 @@ def seed_chatbot_policy() -> None:
     with engine.begin() as conn:
         pdyn4.apply(conn)
         pdyn5.apply(conn)
+        pdyn6.apply(conn)
     # LAST, and after every narrowing step: it renders the blocks from the tables as
     # they now stand and leaves `production` on that version.
     with engine.begin() as conn:
