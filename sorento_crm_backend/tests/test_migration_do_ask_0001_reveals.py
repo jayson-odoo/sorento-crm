@@ -4,7 +4,8 @@ Owner, 2 Oct 2026: all current respond contacts are internal, so each one is gra
 `delivery_orders.*` reveal keys by the migration; a contact created afterwards starts hidden
 (no row). Pinned against the migration's own function, the way
 `test_migration_selfref_0001_n8n_sales_view.py` pins its grant: every contact gains the five,
-a key an admin already revoked stays revoked, running it twice changes nothing, and the
+a DO switch already off is switched on (owner rule change, 2 Oct 2026), a contact
+created afterwards has none, running it twice changes nothing, and the
 downgrade removes only these five keys.
 
 A `test_migration_*` file: CI runs it serially (LESSONS 97).
@@ -78,7 +79,10 @@ def test_every_existing_contact_gains_the_five_keys(db):
     assert _rows(db, b) == {key: True for key in KEYS}
 
 
-def test_a_key_an_admin_already_revoked_stays_revoked(db):
+def test_an_existing_contact_ends_with_every_do_field_switched_on(db):
+    """Owner rule change (2 Oct 2026): every EXISTING contact defaults to ALL DO-ask fields
+    revealed, so no current user sees any change. A DO switch already off on an existing
+    contact (an earlier seed, a test copy) is switched on; the owner adjusts afterwards."""
     contact = _contact(db)
     db.execute(
         text(
@@ -90,7 +94,14 @@ def test_a_key_an_admin_already_revoked_stays_revoked(db):
 
     _migration_module().seed_do_reveals(db.connection())
 
-    assert _rows(db, contact)["delivery_orders.driver"] is False
+    assert _rows(db, contact) == {key: True for key in KEYS}
+
+
+def test_a_contact_created_after_the_migration_has_no_do_field(db):
+    """The new-contact default stays as built: no row, so every DO field is hidden."""
+    _migration_module().seed_do_reveals(db.connection())
+    later = _contact(db)
+    assert _rows(db, later) == {}
 
 
 def test_other_keys_are_untouched(db):
