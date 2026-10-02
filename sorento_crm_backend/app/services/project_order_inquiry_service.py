@@ -407,6 +407,13 @@ def handover_remark(
             parts.append(f"CANCEL BALANCE {_qty_str(qty_diff)} NOS")
         elif qty_key == IV_ORDER:
             parts.append(f"ORDER {_qty_str(qty_diff)}")
+        # OI-PRODUCT-FOLLOW R4: AutoCount swapped the line's product and Confirm moved
+        # the row onto it - purchasing reads the change in the same REMARK cell.
+        old_code = (was or {}).get("item_code")
+        if old_code:
+            parts.append(
+                f"CHANGE ITEM CODE TO {getattr(row, 'item_code', None) or '-'} (WAS {old_code})"
+            )
         return ", ".join(parts)
     if kind == "cancelled":
         old_qty = (was or {}).get("qty")
@@ -1887,9 +1894,20 @@ class ProjectOrderInquiryService:
         # confirmation states one - an entry that names none is not proposing a date
         # change, whatever the row's own date already reads.
         required_date = entry.get("required_date")
-        changed = need != previous_qty or (
+        qty_or_date_moved = need != previous_qty or (
             required_date is not None and required_date != previous_date
         )
+        # OI-PRODUCT-FOLLOW R1: the entry names the line's LIVE product (`_carried_lines`
+        # patches the identity), so a product AutoCount swapped reaches the row here, at
+        # Confirm, like the qty and date do. Links are left as they are (R2).
+        new_item_code = entry.get("item_code") or None
+        previous_item_code = row.item_code
+        product_moved = (
+            bool(new_item_code)
+            and new_item_code != previous_item_code
+            and self._is_other_product(previous_item_code, entry.get("line"))
+        )
+        changed = qty_or_date_moved or product_moved
 
         row.qty = need
         # Only when the confirmation states one. A line whose new composition carries no
@@ -1900,14 +1918,24 @@ class ProjectOrderInquiryService:
             row.stock_location = entry.get("stock_location")
         row.supply_decision_id = decision.id
         row.order_inquiry_id = inquiry.id
+        if product_moved:
+            row.item_code = new_item_code
+            row.previous_item_code = previous_item_code
         if changed:
-            row.note = f"{row.note}; {moved}" if row.note else moved
+            was_note = moved if qty_or_date_moved else None
+            if product_moved:
+                product_note = f"Was item {previous_item_code or '-'}"
+                was_note = f"{was_note}; {product_note}" if was_note else product_note
+            row.note = f"{row.note}; {was_note}" if row.note else was_note
+        if qty_or_date_moved:
             # The same two facts as figures, for the Was / Now table (the note above is
             # the sentence a person reads, and stays one). Written on every REAL settle,
             # not only on a row purchasing has read: the question they answer is "what
-            # did this row say before", which has the same answer either way.
+            # did this row say before", which has the same answer either way. Not on a
+            # product-only change: that would print a false "Was 10 -> Now 10".
             row.previous_qty = previous_qty
             row.previous_delivery_date = previous_date
+        if changed:
             # The handshake, if there is one to speak of (`PLAN-scm-oi-handshake.md`
             # section 3, REVERSED again by `PLAN-oi-confirm-per-so.md` S1/R2, owner ruling
             # 17 Sep 2026: "change is inevitable ... need to change that back to be To
@@ -1936,10 +1964,27 @@ class ProjectOrderInquiryService:
                 handover_was["qty"] = previous_qty
             if required_date is not None and required_date != previous_date:
                 handover_was["delivery_date"] = previous_date
+            if product_moved:
+                handover_was["item_code"] = previous_item_code
             self._record_handover(
                 row, kind="settled", was=handover_was, actor_user_id=actor_user_id
             )
         return True
+
+    def _is_other_product(self, item_code: Optional[str], line: Any) -> bool:
+        """OI-PRODUCT-FOLLOW: whether `item_code` names a REAL product other than the one
+        the line's mirror now carries - the only shape that is a product change. A row
+        whose code is not a catalogue code at all (a sheet's own spelling) is not
+        restated, so a Confirm never rewrites what it cannot read as a product."""
+        if not item_code or line is None or not getattr(line, "product_id", None):
+            return False
+        old_product_id = (
+            self.db.query(Product.id)
+            .filter(Product.product_code == item_code)
+            .limit(1)
+            .scalar()
+        )
+        return old_product_id is not None and str(old_product_id) != str(line.product_id)
 
     def _stamp_date_move(
         self,
@@ -4985,6 +5030,7 @@ class ProjectOrderInquiryService:
                         else None
                     ),
                     "previous_delivery_date": row.previous_delivery_date,
+                    "previous_item_code": row.previous_item_code,
                 }
             )
         return out
