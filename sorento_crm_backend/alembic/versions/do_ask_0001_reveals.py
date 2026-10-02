@@ -1,7 +1,7 @@
 """DO-ASK-SIMPLIFY rule 2: every contact that exists today keeps the five DO fields.
 
 Revision ID: do_ask_0001_reveals
-Revises: grn_pull_0001_perm
+Revises: picker_no_cap_0001
 Create Date: 2026-10-02
 
 The DO list's Status, Pickup Time, Transporter, Driver and Lorry Plate became per-contact
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "do_ask_0001_reveals"
-down_revision = "grn_pull_0001_perm"
+down_revision = "picker_no_cap_0001"
 branch_labels = None
 depends_on = None
 
