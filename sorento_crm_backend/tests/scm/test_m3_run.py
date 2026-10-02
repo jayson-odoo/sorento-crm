@@ -23,7 +23,7 @@ from sqlalchemy import text
 
 from app.services.scm import reorder_engine as eng
 from app.services.scm import reorder_run_service as svc
-from tests.scm.conftest import as_user, requires_pg, seed_user
+from tests.scm.conftest import _REF_PRODUCT_CODE, as_user, requires_pg, seed_user
 
 pytestmark = requires_pg
 
@@ -31,7 +31,15 @@ pytestmark = requires_pg
 # --- controlled fixture builders (all inside the savepoint) -----------------
 
 def _mk_product(db, code):
-    cat, uom = db.execute(text(
+    # The suite's OWN reference product first (`conftest.ensure_reference_data`, seeded
+    # inside this test's savepoint by `scm_app`). Borrowing ANY product's category raced
+    # under xdist: another worker's test commits a category and deletes it at teardown
+    # (e.g. `tests/test_variant_link_service.py`), and an insert pointing at it between
+    # the two fails `products_category_id_fkey` (PR #1443 CI shard 6, AC-OB-7).
+    row = db.execute(text(
+        "SELECT category_id, base_uom_id FROM products WHERE product_code = :ref"
+    ), {"ref": _REF_PRODUCT_CODE}).fetchone()
+    cat, uom = row or db.execute(text(
         "SELECT category_id, base_uom_id FROM products WHERE category_id IS NOT NULL LIMIT 1"
     )).fetchone()
     pid = str(uuid.uuid4())
