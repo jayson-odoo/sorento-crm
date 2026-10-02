@@ -528,3 +528,26 @@ forged `report_ask_words` from the parser is stripped and the ask runs without t
   carried args (a customer or sales agent entity on the reply turn never reaches the request);
   `contact_id` / `space_id` always come from the turn even if the carried args hold one; a route
   `product_ids` of another company's real product is 404.
+
+### 1b fix round rulings (code review, 2 Oct 2026)
+
+- **S1 parser overlap.** The addendum gains: a company's own totals by month, year or channel
+  with no brand, sales agent, category, location or product named and no ranking word stay
+  `sales_analysis`; "sales report of X" stays `sales_report`; ranking products / categories stays
+  `top_selling`. The examples use a brand that is not a company name. Console cases (live model)
+  go in `tests/chatbot/console_cases/2026-10-02-report-ask.yaml`.
+- **S2 month breakdown.** `group_by=month` never asks "How many?": `top_n` is settled as 100 (every
+  month of the period). Owner Q5's "how many?" is about rankings; a month breakdown is a trend.
+- **S3 several matches.** A brand or category word matching more than one row runs nothing and
+  says `'<word>' matches several <brands|categories>: A, B. Ask again naming one.` (no silent
+  widening, the PR #1273 rule). An exact name / code match wins alone. Several sales agent rows
+  for one word (FANNY I, FANNY II) stay a union: one person.
+- **S4 products.** A named product goes to the route as `product_code` = its code (the sales
+  report's PREFIX rule, S19: "SRT5674" covers "SRT5674-N"), not `product_ids`.
+- **S5.** Test: a customer or product carried from an earlier message never becomes a filter.
+- **N2 open-ended period.** A start date alone ("since September") is start to today (Malaysia);
+  an end date alone is a miss (asked).
+- **N3 dealer links.** For `crm_report_ask` the customer-scope tail does not add the dealer's
+  linked customers (the route forces them itself, `enforce_customer_scope`); the out-of-scope
+  check stays. So a dealer with more than 50 links still gets an answer, and the header does not
+  list every account.
