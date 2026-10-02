@@ -15,10 +15,13 @@ Plan: `PLAN-account-ledger-2oct.md`. Examples use dev data (25 Sep prod copy, le
 - AC-7: Same contact: "Soon Heng account 1" answers SOON HENG HARDWARE CO.SDN.BHD. [A/C I];
   "Soon Heng account 2" refuses naming only that linked ledger; no unlinked ledger is named.
 - AC-8: Staff, "Soon Heng account 1 outstanding": the which-customer list shows only level-1
-  ledgers: SOON HENG HARDWARE CO.SDN.BHD. [A/C I], SOON HENG PLUMBING & SANITARY WORKS [A/C I],
-  SOON HENG TRADING [A/C I] and one line for SHING SOON HENG HARDWARE SDN BHD (its two [A/C I]
-  rows); a pick answers that one only. A resolver list cut at its 25-row cap never produces a
-  "has no Account" refusal.
+  ledgers of every customer the search matches today (live, 2 Oct 2026: SHING SOON HENG HARDWARE
+  SDN BHD [A/C I], SOON GUAN HENG TRADING SDN BHD [A/C I], SOON HENG PLUMBING & SANITARY WORKS
+  [A/C I], SOON HENG TRADING [A/C I], SOON HENG HARDWARE CO.SDN.BHD. [A/C I]); a pick answers that
+  one only. A cut-off resolver list never produces a "has no Account" refusal.
+- AC-8b: When the typed word is exactly one trading name ("Soon Heng Trading account 1"), only
+  that name's ledgers count: answered directly for SOON HENG TRADING [A/C I], no picker; AC-9's
+  refusal holds whatever accounts the similar names have.
 - AC-9: Staff, "Soon Heng Trading account 2": refused, naming Account 1, Account 3 and Account 4.
 - AC-10: "account 2 outstanding" with no customer named this message: "Which customer is
   Account 2 for?", nothing fetched, no customer carried from earlier turns. The ANSWER to that
