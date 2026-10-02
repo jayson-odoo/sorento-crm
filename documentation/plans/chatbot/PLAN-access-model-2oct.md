@@ -1,0 +1,122 @@
+# PLAN - Chatbot access model: roles -> domains -> fields, one registry
+
+Status: planned, awaiting mock v3 approval (2 Oct 2026). Track: L / standard (migration, RBAC,
+prompt). Lane ACCESS-MODEL, branch `crew/access-model`, one PR. Depends on PR #1405 (prompt
+variables, open) and PR #1429 (per-audience trim, docs only, open); slices S1 to S6 do not touch their
+files, S7 rebases onto them once merged.
+
+Inputs: behaviour card `CARD-access-model-2oct.md` (owner answers Q1, Q3, Q4, Q5 = (a); Q2 pending,
+built on (a)), UAC `access-model-2oct-acceptance-criteria.md`, mock v3
+`documentation/mockups/ACCESS-MODEL/index.html`. Paths under `sorento_crm_backend/app/` unless shown.
+
+## Key design choice: keep every enforcement seam, change only what fills it
+
+Today four seams already enforce access, keyed on strings:
+- domain gate `turn/apply.py:2199-2203` reads `Profile.grants` (dormant: `grants=None`, `turn_runtime.py:475`);
+- field/ask gates read `ctx.access.attributes` (reveal keys): `output_structurer` `lanes/business/fetch.py:2604-2716`,
+  `lanes/business/__init__.py:62,68,99,1394,1459-1470,1522,1601,1671`, `answer.py:1155,1161`, `engine.py:3985-3988`;
+- incoming REST columns `field_access.py:365-589` via `agent_field_access`;
+- turn refusal `engine.py:4259-4264` on `access.allowed` (agent check).
+
+The new tree fills the SAME inputs: `effective_access()` returns `domains` (-> `Profile.grants`, gate
+switched to compare `row.name`) and `attributes` (field keys, which KEEP today's reveal-key strings:
+`inventory.sellable`, `purchase_orders.placed`, `purchase_orders.supplier`, `purchase_orders.cost`,
+`sales_orders.outstanding`, `sales_orders.sales_report`, `scm.low_stock_report`,
+`incoming_stock.<field>`). No grant constant moves; the leak surface is the one function.
+
+Grant keys that today gate a whole ask stay field rows of kind `ask` under their parent domain
+(`scm.low_stock_report` under Stock, `sales_orders.outstanding` under Orders) instead of new
+`chatbot_domains` rows, because a new domain row enters the parser's domain vocabulary
+(`{{domains}}` in #1405) and would change routing. The UI lists them as nested rows under Stock and
+Orders (mock v3 shows them top level: relayed as plan note N1). `sales` is a real domain row (#1405).
+
+## Schema (one Alembic revision, additive; down_revision re-parented at PR time)
+
+| Table | Columns | Notes |
+|---|---|---|
+| `chatbot_domain_fields` | id, domain_name FK `chatbot_domains.name` ON UPDATE CASCADE, key (unique), label, kind (`field`/`ask`), prompt_tag NULL, sort_order | seeded: 7 reveal keys + 23 incoming fields (`field_access.GATED_FIELDS`) + `spo_allocation.spo_number`, `purchase_orders.po_number` (new, enforced in S5) |
+| `chatbot_roles` | id, code (unique, slug of name at create, immutable), name, description, sees_all_customers bool, sort_order, created_by/updated_by | `__company_shared__ = True` (LESSONS: seeded reference table) |
+| `chatbot_role_domains` | role_id FK CASCADE, domain_name FK | PK (role_id, domain_name) |
+| `chatbot_role_fields` | role_id FK CASCADE, field_key FK `chatbot_domain_fields.key` | PK (role_id, field_key) |
+| `contact_chatbot_roles` | contact_id FK `respond_contacts.id` CASCADE, role_id FK RESTRICT | PK pair; RESTRICT backs AC-AM-3 |
+| `contact_access_overrides` | id, contact_id FK CASCADE, domain_name, field_key NULL, granted bool, updated_by | partial uniques: (contact, domain) where field NULL; (contact, field) where field NOT NULL (pattern `agent_field_access`, `models/access.py:519-534`) |
+| `chatbot_domains.escalation_agent_code` | Text NULL FK `access_agents.code` ON UPDATE CASCADE ON DELETE SET NULL | seeded per card 3b |
+
+Data step (same revision): `reveal_key` NULL on `inventory` and `order` rows (they are fields now);
+create the 5 roles + ticks (card section 2); assign contacts by the mapping rules in
+`access-model-2oct-mapping.sql` (pure SQL INSERT ... SELECT, no ORM); write overrides for the four
+exception contacts generically (computed from the diff between role ticks and today's keys, not by
+name). `contact_field_reveals`, `agent_field_access`, `contact_agent_access` are left untouched (rollback
+path) and stop being read by the chat path; dropping them is a later lane.
+
+## Slices (commits on the lane, red tests first per owner rule 2 Oct)
+
+- **S1 Schema + seed + mapping.** Models in `app/models/chatbot_access.py`, migration, loss-check test.
+  Tests: `tests/test_chatbot_access_migration.py` (seed a chain of contacts mirroring the 9 mapping
+  shapes; assert roles/overrides; AC-AM-19/20; new domain row ticks nobody AC-AM-16).
+- **S2 `effective_access` + turn wiring.** `app/services/chatbot/access_tree.py::effective_access(db, *,
+  contact_respond_id, space_id) -> EffectiveAccess(domains, attributes, sees_all_customers, roles)`;
+  union of roles, overrides applied, intersection across duplicate rows (AC-AM-8), fail closed on read
+  error. `head/access.check_access` returns `allowed=True` iff the contact resolves (agent check dropped
+  from the chat turn, AC-AM-11), `attributes` from the tree. `load_profile` sets `grants=domains`;
+  `apply.py:2199` compares `row.name`. Access read moved before `parser.resolve_config`
+  (`engine.py:3475` vs `3738`, AC-AM-13). Customer scope: `contact_customer_scope.is_office_staff`
+  reads `sees_all_customers`; unlinked + not-all -> refused for order/outstanding/sales (AC-AM-9).
+  Tests: `tests/test_chatbot_access_tree.py`, `tests/test_chatbot_access_turn_gate.py`,
+  `tests/test_contact_customer_scope_role_flag.py`.
+- **S3 Escalation agent from the domain.** `_next_assignee_body` / `_sla_body`
+  (`lanes/escalation.py:1543-1580`) take `agent_code` from the domain row's `escalation_agent_code`,
+  falling back to the parser value only when the row has none. Tests:
+  `tests/test_chatbot_escalation_domain_agent.py` (AC-AM-17/18).
+- **S4 Admin API.** `app/api/v1/system/chatbot_roles.py` (mounted with the chatbot module guard like
+  `chatbot_field_reveals.py`): roles CRUD (`reference_data.manage`; delete 409 when held), role ticks
+  GET/PUT (changed rows), contact roles + overrides GET/PUT (`contacts.edit`), registry GET (domains +
+  fields + escalation agent/team + tier-1 team names). Audit via `__audit_track__`. Tests:
+  `tests/test_chatbot_roles_api.py` incl. RBAC denials and `response_model` field assertions.
+- **S5 Registry derivations.** `FIELD_REVEAL_KEYS` and `GATED_FIELDS` read `chatbot_domain_fields`;
+  `field_access.allowed_fields_for` (incoming REST) reads the contact's tree instead of
+  `agent_field_access`; `SUGGESTED_AGENTS` from active `access_agents`; `CHATBOT_TOOL_DOMAINS` from
+  `chatbot_domains.tools`. `default_policy()` call sites move to the loaded `Policy` where it is one
+  call away (sites 2, 3, 6, 7, 10, 11 in the research map: `answer.py:2308,3108`, `fetch.py:206,297`,
+  `resolve_gate.py:197`, `tier_gate.py:38`); sites that stay on the seed: `lane_vocabulary.py:59`
+  (blank-install default), `fetch.py:1328` (security allow-list), and the pure helpers
+  `predicate.py:148,390`, `fetch.py:1771` (no session; named trigger: the next change to switch words
+  or base property words). SPO number / PO number field gates added to the presenters' restricted
+  fields. Tests: `tests/test_chatbot_registry_derived.py`, extend `tests/test_field_access*.py`.
+- **S6 Frontend.** Chatbot Roles list `app/(protected)/user-management/chatbot-roles/page.tsx`, role page
+  `[id]/page.tsx`, shared `components/chatbot-access/AccessTree.tsx`, contact Access tab replaces
+  `ContactAccessAgentsTable` + `ContactFieldRevealsSection` with roles + tree + escalation card; service
+  `services/chatbotAccessService.ts`, hooks `hooks/useChatbotAccess.ts`; menu entry
+  `config/menu.config.tsx` Access group. Vitest for tree tick logic (indeterminate, override badges,
+  changed-rows save) and services. agent-browser 1280/375 on the crew copy.
+- **S7 Prompt trim (after #1405 and #1429 merge; rebase first).** Generalise #1429's planned
+  `PROMPT_GATES` to `chatbot_domain_fields.prompt_tag` + domain name tags: `{{#only <domain>}}` /
+  `{{#only <field key>}}`; render per contact from `EffectiveAccess`; migration publishes the tagged
+  prod text and proves full-access render = current production byte-for-byte. Leak matrix
+  `tests/test_chatbot_access_leak_matrix.py` (role preset x domain x field: prompt absent AND refused,
+  AC-AM-12/14).
+
+## Migration on a dev copy + hand test
+
+Idempotent SQL for crew at `crew/state/migrations/ACCESS-MODEL.sql` (CREATE ... IF NOT EXISTS, INSERT
+... ON CONFLICT DO NOTHING; the `reveal_key` UPDATE on two rows is held for the owner as destructive).
+Before the hand test: apply on a private clone of the prod copy, run mapping SQL part A/B + the loss
+check, record counts in the PR. Hand-test script `laneboard/scripts/<PR>.md`: owner opens Sorento -
+Jereen Access tab, unticks Last purchase cost, asks the bot "last cost <product>" -> refused, prompt
+preview lacks LAST PURCHASE COST; creates role "Project sales", ticks Orders, assigns a test contact.
+
+## Review
+
+reviewer + security-reviewer (auth/RBAC/permission boundary) in parallel after S6, browser pass
+1280/375. Security notes to carry: agent create route needs only sign-in today
+(`api/v1/user_management/access_agents.py:91-95`, `get_current_user`), out of scope but reported;
+`evaluate_agent` lacks the NULL-workspace fallback the reveal path has (`mcp_access_service.py:59-80`
+vs `field_access.py:278-328`) - `effective_access` uses one resolver for both.
+
+## Notes to relay
+
+- N1: low stock report and outstanding SO report render nested under Stock / Orders (stored as `ask`
+  fields) rather than as top-level rows as in mock v3; reason above.
+- N2: Q2 (Kay, Darren -> Sales office; Mr Loo gains Ideas) built on (a) pending owner confirmation;
+  a different answer changes only seed rows.
+- N3: crew shared dev DB `sorento_ai_automation_0921` (main checkout `.env`) does not exist locally.
