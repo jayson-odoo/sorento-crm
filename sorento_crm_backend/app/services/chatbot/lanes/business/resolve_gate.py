@@ -598,7 +598,10 @@ def resolve_entity_body(
         ),
         "domain": parse_output.get("domain_hint") if jsc.truthy(parse_output.get("domain_hint")) else "",
         "fallback_to_all_types": True,
-        "limit": 15,
+        # ACCOUNT-LEDGER: "Soon Heng account 1" narrows the customer rows by level AFTER
+        # the resolver answers, so the rows must not be cut first (31 "Soon Heng" rows on
+        # the copy, the level-one ledgers past row 15). The route's own maximum.
+        "limit": 200 if any(_asks_an_account(x) for x in entities) else 15,
         "spec_fallback": True,
         # Fix round 10 on PR #833 ("for #833 yeah exact only"): exact values, no ranking guess.
         "exact_match": True,
@@ -947,17 +950,27 @@ def narrow_by_account(
     asks = [
         (_folded(_token_of(e)), str(e.get("raw")).strip(), e["account"])
         for e in parser.get("entities") or []
-        if isinstance(e, dict)
-        and e.get("hint") == "customer"
-        and e.get("current_message") is True
-        and jsc.truthy(e.get("raw"))
-        and isinstance(e.get("account"), int)
-        and not isinstance(e.get("account"), bool)
-        and e["account"] >= 1
+        if _asks_an_account(e)
     ]
     resolutions = [r for r in resolved.get("resolutions") or [] if isinstance(r, dict)]
+    and_shaped = not resolutions and isinstance(resolved.get("intersection"), list)
+    if and_shaped:
+        # The AND answer (the live default `match_mode`) has no per-token `resolutions`:
+        # its rows sit in `intersection`, and every row there matched EVERY token, so the
+        # customer rows belong to each customer word typed. One stand-in resolution with
+        # no token carries them; the `dropped` sweep below rewrites `intersection` and
+        # `by_entity_type` from it.
+        resolutions = [{"token": None, "matches": list(resolved["intersection"])}]
     if not asks or not resolutions:
         return None
+    # The AND answer flags a list cut at the body's `limit` on `token_coverage`, not on
+    # the rows (the OR rows carry `display.truncated_more_available` instead).
+    and_cut = and_shaped and any(
+        isinstance(c, dict) and str(c.get("entity_type") or "").lower() == "customer" and c.get("truncated")
+        for t in resolved.get("token_coverage") or []
+        if isinstance(t, dict)
+        for c in t.get("coverage") or []
+    )
 
     def _customers(resolution: dict[str, Any]) -> list[dict[str, Any]]:
         return [
@@ -972,7 +985,7 @@ def narrow_by_account(
     refusal: str | None = None
     for folded, typed, account in asks:
         for resolution in resolutions:
-            if _folded(resolution.get("token")) != folded:
+            if resolution.get("token") is not None and _folded(resolution.get("token")) != folded:
                 continue
             customers = _customers(resolution)
             if not customers:
@@ -982,7 +995,7 @@ def narrow_by_account(
                 dropped |= {str(m.get("uuid")) for m in customers if m not in kept}
                 resolution["matches"] = [m for m in resolution["matches"] if m not in customers or m in kept]
                 continue
-            if any((m.get("display") or {}).get("truncated_more_available") for m in customers):
+            if and_cut or any((m.get("display") or {}).get("truncated_more_available") for m in customers):
                 # The resolver cut its list: the level may sit past the cut, so never
                 # refuse (or narrow) off an incomplete list.
                 continue
@@ -1003,6 +1016,19 @@ def narrow_by_account(
     return refusal
 
 
+def _asks_an_account(entity: Any) -> bool:
+    """A customer word typed THIS message with an `account` N >= 1 ("Soon Heng account 1")."""
+    return (
+        isinstance(entity, dict)
+        and entity.get("hint") == "customer"
+        and entity.get("current_message") is True
+        and jsc.truthy(entity.get("raw"))
+        and isinstance(entity.get("account"), int)
+        and not isinstance(entity.get("account"), bool)
+        and entity["account"] >= 1
+    )
+
+
 def _is_dropped(match: Any, dropped: set[str]) -> bool:
     return (
         isinstance(match, dict)
@@ -1014,8 +1040,17 @@ def _is_dropped(match: Any, dropped: set[str]) -> bool:
 def _no_such_account(
     typed: str, account: int, customers: list[dict[str, Any]], levels: dict[str, int | None]
 ) -> str:
-    """Q4: one trading name says which levels it has; several names say the word has none."""
-    names = [str((m.get("display") or {}).get("customer_name") or m.get("canonical_code") or "") for m in customers]
+    """Q4: one trading name says which levels it has; several names say the word has none.
+
+    A word that IS one trading name ("Soon Heng Trading") speaks for that name alone: the
+    resolver also returns names merely carrying its words (SOON GUAN HENG TRADING), and
+    those do not turn the typed name's own answer into "None of ..."."""
+    def _name(m: dict[str, Any]) -> str:
+        return str((m.get("display") or {}).get("customer_name") or m.get("canonical_code") or "")
+
+    exact = [m for m in customers if ledger_family_key(_name(m)) == ledger_family_key(typed)]
+    customers = exact or customers
+    names = [_name(m) for m in customers]
     if len({ledger_family_key(n) for n in names}) > 1:
         return f'None of the customers matching "{typed}" has Account {account}.'
     have = sorted({lvl for m in customers if (lvl := levels.get(str(m.get("uuid")))) is not None})
