@@ -20,6 +20,7 @@ import httpx
 from fastapi import Response
 from sqlalchemy.orm import Session
 
+from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.ideation_embed_service import (
     IdeationEmbedNotConfigured,

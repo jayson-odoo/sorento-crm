@@ -321,13 +321,15 @@ describe('IDEATION-CAPTURE My ideas / All ideas toggle', () => {
 
   function renderRerenderable() {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const tree = (
+    // A NEW element each time: re-rendering the same element reference lets React bail out, so
+    // the component would never read the changed search params (what a real navigation does).
+    const tree = () => (
       <QueryClientProvider client={client}>
         <IdeasListView />
       </QueryClientProvider>
     );
-    const utils = render(tree);
-    return { ...utils, rerenderSame: () => utils.rerender(tree) };
+    const utils = render(tree());
+    return { ...utils, rerenderSame: () => utils.rerender(tree()) };
   }
 
   it('follows the URL: search params change from "" to view=mine after mount selects My ideas and queries mine', async () => {

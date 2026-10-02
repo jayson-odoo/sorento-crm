@@ -52,6 +52,7 @@ def ideation_turn(
             message_text=payload.message_text,
             submitter_name=payload.submitter_name,
             session_vars_in=payload.session_vars,
+            ask_reply=payload.ask_reply,
             is_test=payload.is_test,
         )
         response_payload = IdeationTurnResponse(**result)

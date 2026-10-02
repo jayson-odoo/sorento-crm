@@ -194,9 +194,11 @@ def handle_capture_turn(
     submitter_name: str | None = None,
     session_vars_in: dict[str, Any] | None = None,
     is_test: bool = False,
+    ask_reply: bool = False,
 ) -> dict[str, Any]:
     """Handle one ideate turn. Returns `{status, reply_text, link?, session_vars, offered_media}`;
-    `session_vars` is the full updated blob. A test turn never persists it."""
+    `session_vars` is the full updated blob. A test turn never persists it. `language` is the one
+    the reply was written in. `ask_reply` marks an answer to the ask-back."""
     contact = _get_contact_row(db, respond_io_id)
     session_vars = contact.session_vars
     if is_test:
@@ -236,6 +238,7 @@ def handle_capture_turn(
             "reply_text": render_reply(kind, facts, user_message=user_message, language=language, db=db),
             "session_vars": new_sv,
             "offered_media": [],
+            "language": language,
         }
         if link:
             out["link"] = link
@@ -293,6 +296,10 @@ def handle_capture_turn(
         }
         title = normalise_title(extraction.title)
         if _missing_required(fields):
+            if ask_reply:
+                # The user answered the ask-back and still gave no idea: end the ask with a
+                # statement, never a second identical question.
+                return finish("ask_idea_gave_up", "ask_idea_gave_up", {}, language)
             return finish("ask_idea", "ask_idea", {}, language)
         # Minted once the create is decided; a list offer keeps it so NEW (even retried after
         # an ss failure) lands on the same idea.

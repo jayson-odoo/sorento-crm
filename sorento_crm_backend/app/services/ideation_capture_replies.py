@@ -24,6 +24,8 @@ from app.services.chatbot_reply_copy import (
 logger = logging.getLogger(__name__)
 
 _PREFIX = "ideation_capture_"
+#: Reply kinds whose copy key differs from the kind.
+_COPY_NAME = {"ask_idea_gave_up": "give_up"}
 
 
 def _template(name: str, language: str, db: Any) -> str:
@@ -92,4 +94,4 @@ def render_reply(
             link=facts.get("link"),
         )
 
-    return _template(kind, lang, db)
+    return _template(_COPY_NAME.get(kind, kind), lang, db)

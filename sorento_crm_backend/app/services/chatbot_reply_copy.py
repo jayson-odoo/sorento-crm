@@ -275,6 +275,18 @@ IDEATION_CAPTURE_ASK_IDEA = {
     "ms": "Boleh! Apakah idea anda? Beritahu saya apa yang anda mahu ubah, dalam satu mesej.",
     "zh": "好的！您的创意是什么？请用一条消息告诉我您想改进什么。",
 }
+#: The ask-back was answered twice without an idea in it: a statement, not another question.
+IDEATION_CAPTURE_GIVE_UP = {
+    "en": (
+        "I still couldn't find an idea in that. When you're ready, send your idea in one "
+        "message, for example what you'd like changed."
+    ),
+    "ms": (
+        "Saya masih tidak menjumpai idea dalam mesej itu. Bila anda sudah bersedia, hantar "
+        "idea anda dalam satu mesej, contohnya apa yang anda mahu ubah."
+    ),
+    "zh": "我还是没能从中找到创意。准备好后，请用一条消息发送您的创意，例如您想改进什么。",
+}
 IDEATION_CAPTURE_SIMILAR_OFFERED = {
     "en": "You already have ideas like this:",
     "ms": "Anda sudah ada idea yang serupa:",
@@ -355,6 +367,7 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
     "ideation_capture_no_access": (IDEATION_CAPTURE_NO_ACCESS, ()),
     "ideation_capture_unconfigured": (IDEATION_CAPTURE_UNCONFIGURED, ()),
     "ideation_capture_ask_idea": (IDEATION_CAPTURE_ASK_IDEA, ()),
+    "ideation_capture_give_up": (IDEATION_CAPTURE_GIVE_UP, ()),
     "ideation_capture_similar_offered": (IDEATION_CAPTURE_SIMILAR_OFFERED, ()),
     "ideation_capture_similar_offered_reply": (IDEATION_CAPTURE_SIMILAR_OFFERED_REPLY, ()),
     "ideation_capture_similar_offered_see_all": (IDEATION_CAPTURE_SIMILAR_OFFERED_SEE_ALL, ("link",)),
