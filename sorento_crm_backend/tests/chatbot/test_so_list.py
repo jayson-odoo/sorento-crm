@@ -204,3 +204,65 @@ class TestSoListGateAndScope:
             session_factory, monkeypatch, _list_ask(order_status="so_outstanding"), "my outstanding SOs",
         )
         assert [name for name, _ in captured] == ["crm_outstanding_report"], captured
+
+
+class TestOwnersTwoTurnTranscriptIsDeterministic:
+    """Tester on 99f7edb3: "status of SO422056" then "okay how about all my sales order?"
+    gave the SO summary in 1 of 3 runs and a DO answer in the others: the parser does not
+    reliably emit `document: ["SO"]` for that sentence. The engine decides from the words
+    (`so_status.so_list_verdict`), so every parser reading below must give the SO list's
+    period question, never a DO answer, the outstanding report or the old SO number."""
+
+    TURN_2 = "okay how about all my sales order?"
+
+    @pytest.mark.parametrize(
+        "parsed",
+        [
+            {"document": ["SO"], "self_reference": True},
+            {"document": None, "self_reference": True},
+            {"document": [], "self_reference": True, "status": "outstanding"},
+            {"document": ["DO"], "self_reference": True},
+            {"document": None, "self_reference": False, "domain_hint": None},
+        ],
+        ids=["so_document", "no_document", "outstanding_status", "do_document", "no_domain"],
+    )
+    def test_all_my_sales_order_after_the_card_is_the_so_list(self, session_factory, monkeypatch, parsed) -> None:
+        _seed_hanlim(session_factory)
+        first, _ = _turn(
+            session_factory, monkeypatch,
+            _parser_output(
+                domain_hint="order", intent_hint="check_order", order_status=None,
+                entities=[{"raw": "SO422056", "hint": "order_number", "canonical_code": None,
+                           "current_message": True, "confident": True}],
+            ),
+            "status of SO422056",
+        )
+        assert first.startswith("*SO422056*"), first
+        verdict = dict(domain_hint="order", intent_hint="check_order", order_status=None, entities=[])
+        verdict.update(parsed)
+        reply, captured = _turn(session_factory, monkeypatch, _parser_output(**verdict), self.TURN_2)
+        assert reply.startswith("Which period for HANLIM TRADING SDN BHD?\n- This month ("), reply
+        assert "SO422056" not in reply and "Couldn't find" not in reply, reply
+        assert captured == [], captured
+
+    def test_lowercase_so_as_a_filler_word_is_not_an_so_ask(self, session_factory, monkeypatch) -> None:
+        """'so' alone is ordinary English ("so what about my orders"): no SO list."""
+        _seed_hanlim(session_factory)
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _parser_output(domain_hint="order", intent_hint="check_order", order_status=None, entities=[],
+                           self_reference=True),
+            "so what about my orders",
+        )
+        assert not reply.startswith("Which period for") or "sales orders" not in reply, reply
+        assert "Sales orders for" not in reply, reply
+
+    def test_outstanding_in_the_words_keeps_the_outstanding_report(self, session_factory, monkeypatch) -> None:
+        _seed_hanlim(session_factory)
+        _reply, captured = _turn(
+            session_factory, monkeypatch,
+            _parser_output(domain_hint="order", intent_hint="check_order", order_status=None, entities=[],
+                           document=["SO"], status="outstanding", self_reference=True),
+            "my outstsnding sales orders",
+        )
+        assert [name for name, _ in captured] == ["crm_outstanding_report"], captured
