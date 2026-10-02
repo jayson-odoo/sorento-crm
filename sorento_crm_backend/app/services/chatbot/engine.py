@@ -4800,7 +4800,7 @@ def _run_stages(  # noqa: PLR0915
                 ],
             )
             item["reply_language"] = reply_language
-            localizer = label_catalog.resolve(db, reply_language)
+            localizer = label_catalog.resolve(db, reply_language, dry_run=dry_run)
             turn_ctx = turn_runtime.TurnContext(
                 db=db,
                 contact_respond_id=contact_respond_id,

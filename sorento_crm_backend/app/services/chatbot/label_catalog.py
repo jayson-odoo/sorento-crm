@@ -155,54 +155,71 @@ class Localizer:
 IDENTITY = Localizer("en", {})
 
 
-def resolve(db: Any, lang: str) -> Localizer:
+def resolve(db: Any, lang: str, *, dry_run: bool = False) -> Localizer:
     """One read of this language's memory rows, a catalog default for each gap.
 
     A memory row wins (staff `manual` or a stored `ai` default) when it keeps the English
     tokens; a missing default is inserted as `ai`, never overwriting. A chat turn must never
     fail on this, so a database error logs and the code defaults serve.
+
+    The read runs in a savepoint, so a failed SELECT never aborts the turn's transaction. The
+    seed is written on its own short session and committed at once: the turn's session may not
+    commit before the reply, and no lock may be held across the turn. A dry run seeds nothing.
     """
     if lang not in LANGUAGES or lang == "en":
         return IDENTITY
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy.orm import Session
 
-    from app.models.translation_memory import SOURCE_AI, TranslationMemory
+    from app.models.translation_memory import TranslationMemory
 
     base = defaults(lang)
     table = dict(base)
     try:
-        rows = (
-            db.query(TranslationMemory)
-            .filter(
-                TranslationMemory.source_lang == "en",
-                TranslationMemory.target_lang == lang,
-                TranslationMemory.source_text.in_(list(LABELS)),
-            )
-            .all()
-        )
-        have = set()
-        for row in rows:
-            have.add(row.source_text)
-            if tokens_match(row.source_text, row.target_text):
-                table[row.source_text] = row.target_text
-        missing = [
-            {
-                "source_text": english,
-                "source_lang": "en",
-                "target_lang": lang,
-                "target_text": target,
-                "source": SOURCE_AI,
-            }
-            for english, target in base.items()
-            if english not in have
-        ]
-        if missing:
-            with db.begin_nested():
-                db.execute(
-                    pg_insert(TranslationMemory)
-                    .values(missing)
-                    .on_conflict_do_nothing(constraint="uq_translation_memory_phrase")
+        with db.begin_nested():
+            rows = (
+                db.query(TranslationMemory)
+                .filter(
+                    TranslationMemory.source_lang == "en",
+                    TranslationMemory.target_lang == lang,
+                    TranslationMemory.source_text.in_(list(LABELS)),
                 )
+                .all()
+            )
+            have = {row.source_text for row in rows}
+            for row in rows:
+                if tokens_match(row.source_text, row.target_text):
+                    table[row.source_text] = row.target_text
+        missing = {english: target for english, target in base.items() if english not in have}
+        if missing and not dry_run:
+            _seed(Session(bind=db.get_bind()), lang, missing)
     except Exception:
         logger.warning("label_catalog.resolve failed for %s; using code defaults", lang, exc_info=True)
     return Localizer(lang, table)
+
+
+def _seed(seed_db: Any, lang: str, missing: dict[str, str]) -> None:
+    """Insert catalog defaults as `ai` rows on `seed_db`, never overwriting, then commit."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.translation_memory import SOURCE_AI, TranslationMemory
+
+    try:
+        seed_db.execute(
+            pg_insert(TranslationMemory)
+            .values(
+                [
+                    {
+                        "source_text": english,
+                        "source_lang": "en",
+                        "target_lang": lang,
+                        "target_text": target,
+                        "source": SOURCE_AI,
+                    }
+                    for english, target in missing.items()
+                ]
+            )
+            .on_conflict_do_nothing(constraint="uq_translation_memory_phrase")
+        )
+        seed_db.commit()
+    finally:
+        seed_db.close()

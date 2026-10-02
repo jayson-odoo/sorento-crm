@@ -156,3 +156,88 @@ def test_ac_cl04_resolve_ignores_a_memory_row_that_adds_a_token(db):
     _add(db, "Total", "Jumlah {extra}", "manual")
     loc = label_catalog.resolve(db, "ms")
     assert loc.label({"label": "Total", "value": 1}) == "Jumlah"
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 1, item 1: the seed rides a SEPARATE short session, never the turn's
+# --------------------------------------------------------------------------- #
+
+
+def _scratch_cleanup(engine) -> None:
+    from sqlalchemy.orm import Session
+
+    with Session(bind=engine) as cleanup:
+        cleanup.query(TranslationMemory).filter(
+            TranslationMemory.source_lang == "en",
+            TranslationMemory.target_lang == "ms",
+            TranslationMemory.source_text.in_(list(label_catalog.LABELS)),
+        ).delete(synchronize_session=False)
+        cleanup.commit()
+
+
+def test_item1_seeded_defaults_are_visible_from_a_second_session():
+    """The turn's own session may never commit before the reply; the seed must persist anyway."""
+    from sqlalchemy.orm import Session
+
+    from tests._pg_fixture import blank_schema_engine
+
+    scoped = blank_schema_engine()
+    _scratch_cleanup(scoped)
+    try:
+        with Session(bind=scoped) as turn_session:
+            label_catalog.resolve(turn_session, "ms")
+            turn_session.rollback()  # the turn never committed anything itself
+        with Session(bind=scoped) as other:
+            rows = (
+                other.query(TranslationMemory)
+                .filter(
+                    TranslationMemory.source_lang == "en",
+                    TranslationMemory.target_lang == "ms",
+                    TranslationMemory.source_text.in_(list(label_catalog.LABELS)),
+                )
+                .all()
+            )
+            assert len(rows) == len(label_catalog.LABELS)
+            assert {r.source for r in rows} == {"ai"}
+    finally:
+        _scratch_cleanup(scoped)
+
+
+def test_item1_dry_run_reads_but_writes_nothing():
+    from sqlalchemy.orm import Session
+
+    from tests._pg_fixture import blank_schema_engine
+
+    scoped = blank_schema_engine()
+    _scratch_cleanup(scoped)
+    try:
+        with Session(bind=scoped) as turn_session:
+            loc = label_catalog.resolve(turn_session, "ms", dry_run=True)
+            # The code defaults still serve the reply.
+            assert loc.label({"label": "Total", "value": 1}) == "Jumlah"
+        with Session(bind=scoped) as other:
+            assert (
+                other.query(TranslationMemory)
+                .filter(
+                    TranslationMemory.target_lang == "ms",
+                    TranslationMemory.source_text.in_(list(label_catalog.LABELS)),
+                )
+                .count()
+                == 0
+            )
+    finally:
+        _scratch_cleanup(scoped)
+
+
+def test_item1_a_failing_select_leaves_the_session_usable(db, monkeypatch):
+    from sqlalchemy import text
+
+    def bad_query(*args, **kwargs):
+        db.execute(text("SELECT * FROM table_that_does_not_exist_zz"))
+
+    monkeypatch.setattr(db, "query", bad_query)
+    loc = label_catalog.resolve(db, "ms")
+    monkeypatch.undo()
+    # The turn's transaction was not aborted: a follow-up query works.
+    assert db.execute(text("SELECT 1")).scalar() == 1
+    assert loc.label({"label": "Total", "value": 1}) == "Jumlah"
