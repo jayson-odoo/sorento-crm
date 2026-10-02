@@ -89,3 +89,16 @@ def test_S33_all_after_a_refusal_then_a_number_answers_that_code(console):
     out = c.say("2", reply(reference_positions=[2], open_question_answer=answer("pick", picked=[2])))
 
     assert out.startswith("SRTWC286-SH-150 x 10: ✅"), out
+
+
+@pytest.mark.parametrize("typed", ["all", "All of them", "semua", "all pls"])
+def test_S34_all_read_by_the_parser_as_every_position_is_still_refused(console, typed):
+    """The live prompt reads "all" / "semua" over a pick as EVERY position; the engine
+    reads the bare word itself, so the parser's expansion is not a way round rule 4."""
+    c = console()
+    c.say("check stock srtwc286 x 10", stock(product("srtwc286", 10)))
+    every = list(range(1, len(OWNER_FAMILY) + 1))
+
+    out = c.say(typed, reply(reference_positions=every, open_question_answer=answer("pick", picked=every)))
+
+    assert out == NOT_ALL

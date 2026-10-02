@@ -341,6 +341,22 @@ def _bare_roster_positions(pending: Any, message: str) -> list[int] | None:
     return positions
 
 
+#: AVAIL-MODE-REPLIES rule 4 (owner, 2 Oct 2026): a message that is nothing but "all" over
+#: an availability-mode stock pick. The parser's prompt reads "all" / "semua" over a pick as
+#: EVERY position, which is indistinguishable from "1,2,3" by then, so the engine reads the
+#: bare word itself (owner Q4 (b): only the explicit "all" is refused; every number typed
+#: out is a pick).
+_BARE_ALL = re.compile(
+    r"(?:all(?: of (?:them|it|these|those))?|every ?one|everything|semua|全部|都要)"
+    r"(?: (?:please|pls|plz))?"
+)
+
+
+def _is_bare_all(message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(message or "").strip().lower()).rstrip(".!? ")
+    return bool(_BARE_ALL.fullmatch(text))
+
+
 def _with_the_engine_pick(verdict: dict[str, Any], pending: Any, message: str) -> dict[str, Any]:
     """The verdict with the engine's own reading of a bare pick (`_bare_roster_positions`).
 
@@ -352,6 +368,14 @@ def _with_the_engine_pick(verdict: dict[str, Any], pending: Any, message: str) -
     all (a quantity, a top-N count - the readers before this one already settled
     those), and a reading that already agrees.
     """
+    if pending is not None and (pending.payload or {}).get("stock_pick") and _is_bare_all(message):
+        # `apply._stock_pick_refuses_all` keeps the list open on exactly this reading.
+        return {
+            **verdict,
+            "reference_positions": [],
+            "open_question_answer": {"mode": "all", "picked": [], "items": [], "qty_for_all": None},
+            "broaden_axis": "all",
+        }
     positions = _bare_roster_positions(pending, message)
     if positions is None:
         return verdict
