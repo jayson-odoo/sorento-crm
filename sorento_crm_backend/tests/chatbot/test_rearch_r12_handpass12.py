@@ -1496,10 +1496,10 @@ class TestGroupFCustomerPickHeaderNamesEveryLedgerNotACode:
         said = _said(result)
 
         # DO-ASK-SIMPLIFY rule 1 (owner, 2 Oct 2026) replaces "print the 3 customer names":
-        # the header names the first ledger and counts the rest. These names carry no
+        # the header names each group once (owner, 2 Oct: group names only, no count). These names carry no
         # bracketed ledger marker, so they are three families to `ledger_family_key`.
-        assert f"Customer: {names[0]} and 2 more" in said, (
-            f"the miss header must name the first ledger and count the rest: {said!r}"
+        assert f"Customer: {', '.join(names)}" in said, (
+            f"the miss header must name each group once, no count: {said!r}"
         )
         assert option_code not in said, f"no customer CODE must ever reach the reply text: {said!r}"
 

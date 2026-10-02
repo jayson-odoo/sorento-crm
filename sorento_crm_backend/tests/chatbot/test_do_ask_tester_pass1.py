@@ -5,7 +5,7 @@
    (`engine._customer_scope_gate`: "all of them for a message naming none").
    A DO-number ask is NOT narrowed by that carry (the number is the subject; it searches
    every own account), and its header prints no Customer line made of the forced links.
-2. The header names the grouped customer ("HANLIM TRADING SDN BHD (6 accounts)"), not the
+2. The header names the grouped customer ("HANLIM TRADING SDN BHD"), not the
    word the contact typed ("hanlim"), whenever every row carries a resolved name.
 """
 from __future__ import annotations
@@ -180,7 +180,7 @@ def test_the_header_prints_the_grouped_name_not_the_typed_word():
         gate_json={"compatible_entities": rows},
         resolver_json={"resolutions": [{"token": "hanlim", "matches": [{"entity_type": "customer"}]}]},
     )
-    assert "Customer: HANLIM TRADING SDN BHD (3 accounts)" in header, header
+    assert "Customer: HANLIM TRADING SDN BHD" in header, header
 
 
 def test_carried_rows_print_the_grouped_name_not_the_typed_word():
@@ -188,7 +188,7 @@ def test_carried_rows_print_the_grouped_name_not_the_typed_word():
     header = scope_block.search_scope_header(
         domain="order", qf={"entities": []}, gate_json={"compatible_entities": []}, resolver_json={}, focus_customers=rows
     )
-    assert "Customer: HANLIM TRADING SDN BHD (3 accounts)" in header, header
+    assert "Customer: HANLIM TRADING SDN BHD" in header, header
 
 
 def test_rows_with_no_resolved_name_keep_the_typed_word():
