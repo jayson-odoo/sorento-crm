@@ -55,6 +55,23 @@ def test_two_and_words_with_accounts_narrow_by_the_set_of_levels_and_never_refus
     assert {m["uuid"] for m in resolved["by_entity_type"]["customer"]} == kept
 
 
+def test_two_and_words_with_no_row_at_any_asked_level_leave_the_rows_alone() -> None:
+    """The leave-alone arm: narrowing by {1, 3} would drop EVERY customer row, so nothing is
+    dropped and nothing is refused (the multi-word AND path never refuses)."""
+    rows = [
+        _row("t2", "SOON HENG TRADING [A/C II]"),
+        _row("t4", "SOON HENG TRADING [A/C IV]"),
+        _row("h2", "SOON HENG HARDWARE [A/C II]"),
+    ]
+    levels = {"t2": 2, "t4": 4, "h2": 2}
+    resolved: dict[str, Any] = {"intersection": list(rows), "by_entity_type": {"customer": list(rows)}}
+    parser = {"entities": [_acct("Soon Heng Trading", 1), _acct("Soon Heng Hardware", 3)]}
+    refusal = narrow_by_account(parser, resolved, lambda ids: levels)
+    assert refusal is None, refusal
+    assert resolved["intersection"] == rows
+    assert resolved["by_entity_type"] == {"customer": rows}
+
+
 # ------------------------------------------------------------------ enforced contact, exact name
 
 OWN = "ABC TRADING ENTERPRISE [A/C I]"
