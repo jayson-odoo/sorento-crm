@@ -646,7 +646,11 @@ def _answer_outstanding(
     focus.status = status_word
     if asked_for:
         # Contract 121: the answer goes back to the domain the question was asked for.
-        focus.domains = [asked_for]
+        # R7 (PLAN-prompt-dynamic-30sep D9): a sales report's drill offer is asked under
+        # `sales`, and a document named with its own status ("DO outstanding") is the
+        # outstanding report's new ask (decide's fix round 2, R1), which is `order`'s.
+        named_away_from_sales = named_scope and asked_for == contracts.SALES_DOMAIN
+        focus.domains = ["order"] if named_away_from_sales else [asked_for]
     # A document the message NAMED is a new scope, not a pick off the offer: the REPORT
     # re-runs for that document and the old question goes with it (row 5). A POSITION is
     # the offer's own answer and keeps contract 39's rule, where a detail offer is the
