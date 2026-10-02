@@ -354,7 +354,7 @@ is the approved layout. Its element map (section 6) names ss components; the CRM
 | Primary "Move to <next>" / Restore / Unmerge, Edit outline to its left | PageHeader actions: primary `Button` + outline `Button` | Next move = ss `advanceTransitionId` + its target label from `transitions` (`ss:ssBE/modules/ideation/schemas.py` IdeaOut). Archived: primary Restore. Merged child: primary Unmerge, no Edit. No next move: Edit primary. |
 | "..." menu: Promote to BR, Archive, Delete | `DropdownMenu` with icon-button label | Archive and Delete are `useDeferredAction` countdowns (`FE/hooks/useDeferredAction.tsx`), never a confirm dialog (D7). |
 | Prev/next pager "1 / 9" | `FE/components/common/RecordNavigation.tsx` | |
-| Tabs Details / Attachments / Business Requirements | CRM line tabs | View = Edit layout: editing swaps values for inputs in place. BR tab shows the ss BR links read-only (ss returns them on the idea). |
+| Tabs Details / Attachments / Business Requirements | CRM line tabs | View = Edit layout: editing swaps values for inputs in place. BR tab: not shown in this lane; ss `IdeaOut` carries no BR links (measured 2 Oct, code review), so it waits for the ss ask in section 13. |
 | Details rows | CRM detail field rows | "Votes" row removed (the box is the only vote control). Dates via `formatDateTime` (`FE/lib/helpers.ts:465`), so `21/07/2026, 9:05 AM`, not the mock's `21 Jul 2026, 9:05 AM` (R7 wins). |
 | Comments under Details (oldest first, one reply level, "edited" tag, "Comment deleted" placeholder when it has replies) | new `FE/components/ideas/IdeaComments.tsx` with `Textarea`, `Button`, `avatar.tsx` | Composer hidden (not disabled) on a merged child. Own comment: Edit / Delete; triage users may delete any (ss enforces). Empty state: heading + hint, no button. |
 | Comment delete | `useDeferredAction` countdown | The mock uses an AlertDialog confirm; the CRM forbids confirm dialogs (D7, `ConfirmDeleteDialog` retired). See section 15 Q1. |
@@ -479,6 +479,13 @@ only ship after it does.
   3. Embed viewers never moderate (`can_moderate=False`), so a CRM manage holder can delete only
      their own comments. Accepted for this lane; raise with the owner if moderation from the CRM is
      wanted.
+
+- **Further ss asks from Phase 3 review (2 Oct):** (4) BR links on an idea (field on `IdeaOut` or an
+  embed `GET /embed/ideas/{id}/business-requirements`) so the CRM can show the Business requirements
+  tab; (5) a `can_manage` claim in the assertion and embed token so ss enforces triage writes itself
+  instead of trusting the CRM route shape (security review C1, defence in depth); (6) public comment
+  per-IP throttle: exempt the CRM caller, since the CRM no longer forwards `X-Forwarded-For` and
+  enforces per-token + global limits itself.
 
 ## 14. Embed connection product scope (Q3)
 

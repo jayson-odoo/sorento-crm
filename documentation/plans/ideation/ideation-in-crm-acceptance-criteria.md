@@ -12,8 +12,9 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
 
 ## A. Gateway and embed token
 
-- **AC-A-01** Every gateway call authenticates the CRM user (Bearer session or X-API-Key act-as user)
-  and requires view; a user without view gets 403 and ss is never called.
+- **AC-A-01** Every gateway READ authenticates the CRM user (Bearer session or X-API-Key act-as user);
+  every gateway WRITE requires a real staff session (no X-API-Key), per the
+  `require_permission_with_api_key` policy (security review M1). All routes require view; a user without view gets 403 and ss is never called.
 - **AC-A-02** The gateway mints the assertion exactly as `ideation_embed_service.mint_embed_assertion`
   does, exchanges it at ss `POST /embed/session`, and caches the embed token per CRM user id until
   30 s before `expires_at`. A second call inside the window does not call `/embed/session` again.
@@ -44,6 +45,18 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
   `idea.archive` / `idea.delete`, entity `idea`, permission manage; comment delete is
   `idea_comment.delete`, entity `idea_comment`, permission view, payload `{idea_id}`): the handler calls ss as the user who started the action (status `archived` / ss
   `DELETE /embed/ideas/{id}`); Cancel inside the window means ss is never called.
+
+- **AC-A-10** Every id that reaches an ss path (idea, comment, attachment ids in routes, and
+  `entity_id` / `payload.idea_id` in pending actions, at park time and at commit) must be a UUID,
+  else 422 and ss is never called; `call_ss` also percent-encodes each path segment. Request bodies
+  forwarded to ss are rebuilt from an explicit field list per route (comments: `body`, `parentId`
+  only). Regression tests cover `%2E%2E`, `%3F`, `%23` and an extra-field body (security review C1,
+  code review B1).
+- **AC-A-11** Archive and comment delete have no direct gateway write: the status route refuses
+  `archived` (only the pending action archives) and there is no gateway DELETE comment route (only
+  the pending action deletes).
+- **AC-A-12** The embed token cache key is (user id, connection id, ss base URL); a pending action
+  whose requester is inactive at commit is refused.
 
 ## B. Permission
 
@@ -78,16 +91,20 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
   Business requirements.
 - **AC-D-02** Header states (manage holder): primary = "Move to <label of advance target>" from
   `advanceTransitionId`/`transitions`, Edit outline to its left; no next move: Edit primary;
-  archived: Restore primary + Edit; merged child: Unmerge primary, no Edit, vote disabled, no comment
+  archived with an outgoing transition: Restore primary (posts that transition's `toStatusId`; no
+  hardcoded status key anywhere) + Edit; merged child: Unmerge primary, no Edit, vote disabled, no comment
   composer.
 - **AC-D-03** Edit swaps values for inputs in place (same layout); Save calls `PATCH /ideas/{id}`.
 - **AC-D-04** "..." menu: Promote to BR (one click: `POST /ideas/promote` with `{ideaIds:[id],
-  title:<idea title>}`, success toast, BR appears on the Business requirements tab; ss 403 message
+  title:<idea title>}`, success toast naming the new BR number from the response; ss 403 message
   shown as an error toast), Merge into another idea, Archive (5 s countdown), Delete (10 s countdown,
   then back to the list). No confirm dialog anywhere.
-- **AC-D-05** Attachments tab lists files (download streams through the gateway) and a dropzone for
-  every viewer; Business requirements tab lists linked BRs read-only, empty state otherwise.
-- **AC-D-06** Unknown id: not-found state; no UUID is shown anywhere in the UI.
+- **AC-D-05** Attachments tab lists files (download goes through the gateway, buffered, and saves as a
+  file; it is never opened inline; link attachments open only for http/https) and a dropzone for
+  every viewer; uploads above the ss attachment cap are refused by the gateway with 413 before
+  reading the whole body. The Business requirements tab is NOT shown in this lane: ss returns no BR
+  links on an idea (cross-lane ask, PLAN section 13); it returns when ss does.
+- **AC-D-06** Unknown id (404): not-found state; any other error: error state with Retry; no UUID is shown anywhere in the UI.
 
 ## E. Comments (staff)
 
@@ -99,7 +116,9 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
 - **AC-E-04** A deleted comment with replies shows "Comment deleted" and keeps its replies; a
   deleted comment without replies is not shown (ss omits it).
 - **AC-E-05** A comment posted from the CRM is stored in ss with the CRM user's display name (AC-A-07),
-  never the email; another reader (staff or portal) sees that name.
+  never the email; another reader (staff or portal) sees that name. SHIP GATE: needs the ss
+  IDEATION-COMMENTS change (store `principal.name`); until then the gateway masks any email-shaped
+  `authorName` in comment POST/PATCH responses.
 - **AC-E-06** Bodies render as plain text (no HTML); empty body is refused before calling ss.
 
 ## F. Board (`/ideas/board`)
@@ -138,10 +157,10 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
   reaches the browser. A test asserts no value containing `@` survives the proxy for a seeded email
   author name.
 - **AC-H-07** Rate limit: the CRM public POST is limited per token (5 per 15 min, key = sha256 of the
-  token; the authoritative limit) and per client IP (20 per 15 min; IP = left-most `X-Forwarded-For`
-  else the socket peer, the same rule as `app/api/v1/public/quotation_sign.py:_client_ip`, so it is
-  defence in depth only, as XFF is client-influenced) before calling ss, answering 429 with `Retry-After` and "Too many comments. Try
-  again later."; the client IP is forwarded to ss as `X-Forwarded-For`.
+  token) and by one global ceiling across all tokens (200 per 15 min) before calling ss, answering
+  429 with `Retry-After` and "Too many comments. Try again later.". No per-IP bucket and no
+  `X-Forwarded-For` is sent to ss: behind the CRM's nginx the left-most XFF is client-controlled
+  (security review M2). Body limit 2000 characters, matching ss's public limit.
 - **AC-H-08** Usable at 375px and 1280px; not-found state at both.
 
 ## I. Removal and regression
