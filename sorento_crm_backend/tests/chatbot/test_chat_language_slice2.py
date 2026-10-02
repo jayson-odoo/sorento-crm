@@ -267,7 +267,7 @@ def _orders_envelope(*, flags: dict | None = None) -> dict:
                     {"label": "Status", "value": "Partially Delivered"},
                     {"label": "Pickup Time", "value": "09:30"},
                     {"label": "Transporter", "value": "FAST LOGISTICS"},
-                    {"label": "Driver", "value": "Customer"},  # a value equal to a catalog key: never translated
+                    {"label": "Driver", "value": "Total"},  # a value equal to a catalog key: never translated
                     {"label": "Lorry Plate", "value": "WXY 1234"},
                     {"label": "Warehouse", "value": "BRW"},
                     {"label": "Products", "value": "BRBC22102W (12), SRTSWT3001 (4)"},
