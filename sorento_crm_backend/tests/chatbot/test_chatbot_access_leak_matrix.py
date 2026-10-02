@@ -26,6 +26,8 @@ from tests.chatbot.test_chatbot_access_migration import (
     K_PLACED,
     K_SALES,
     K_SELLABLE,
+    K_STAMP_ATTACHMENT,
+    K_STAMP_INCOMING,
     K_SUPPLIER,
     PURCHASING_DOMAINS,
     SALES_OFFICE_DOMAINS,
@@ -52,6 +54,8 @@ FIELD_OWNER = {
     K_OUTSTANDING: "order",
     K_SUPPLIER: "purchase_order",
     "purchase_orders.po_number": "purchase_order",
+    K_STAMP_INCOMING: "incoming",
+    K_STAMP_ATTACHMENT: "product_attachment",
     **{f"incoming_stock.{f}": "incoming" for f in INCOMING_FIELDS},
 }
 #: reveal keys that ride in with a granted domain

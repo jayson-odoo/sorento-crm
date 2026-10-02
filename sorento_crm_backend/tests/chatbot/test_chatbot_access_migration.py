@@ -51,6 +51,10 @@ ALL_AGENTS = FIVE_AGENTS + ("conversation_analysis", "ideation")
 K_SELLABLE, K_PLACED = "inventory.sellable", "purchase_orders.placed"
 K_SUPPLIER, K_COST = "purchase_orders.supplier", "purchase_orders.cost"
 K_OUTSTANDING, K_SALES, K_LOW = "sales_orders.outstanding", "sales_orders.sales_report", "scm.low_stock_report"
+K_STAMP_INCOMING, K_STAMP_ATTACHMENT = "stamp.incoming", "stamp.product_attachment"
+#: Owner ruling 2 Oct: stamps are ticked on EVERY seeded preset, Dealer included. A pending
+#: owner follow-up may untick them on Dealer; flip this ONE constant if that lands.
+DEALER_HAS_STAMPS = True
 ALL_SEVEN = (K_SELLABLE, K_PLACED, K_SUPPLIER, K_COST, K_OUTSTANDING, K_SALES, K_LOW)
 
 DEALER_DOMAINS = {
@@ -82,6 +86,8 @@ def _registry(db) -> None:
     make_field(db, "purchase_order", "purchase_orders.po_number")
     for f in INCOMING_FIELDS:
         make_field(db, "incoming", f"incoming_stock.{f}")
+    make_field(db, "incoming", K_STAMP_INCOMING)
+    make_field(db, "product_attachment", K_STAMP_ATTACHMENT)
 
 
 def _agents(db) -> dict[str, str]:
