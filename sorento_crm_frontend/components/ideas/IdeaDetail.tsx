@@ -374,6 +374,9 @@ export function IdeaDetail({ id }: { id: string }) {
     } else {
       primary = editButton('primary');
     }
+  } else if (idea.isMine === true && !isMergedChild) {
+    // The submitter edits their own idea with view access alone; every other action stays manage-only.
+    primary = editButton('primary');
   }
 
   const openAttachment = async (attachment: IdeaAttachment) => {

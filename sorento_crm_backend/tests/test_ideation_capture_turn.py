@@ -876,3 +876,26 @@ def test_o_real_ms_complete_reply_keeps_exact_facts(env):
     assert f"{CRM}/ideas/{idea_id}" in reply
     for name in ("Proposed solution", "Impact", "Department", "Photos or files"):
         assert name in reply
+
+
+# --------------------------------------------------------------------------- #
+# P - the required-field decision goes through _missing_required              #
+# --------------------------------------------------------------------------- #
+def test_p_missing_required_empty_lets_a_problemless_message_proceed(env):
+    env.ready()
+    env.extraction("want to submit idea", fields={})
+    env.created()
+    env.mp.setattr(env.svc, "_missing_required", lambda fields: [])
+    out = env.turn("want to submit idea")
+    assert out["status"] == "complete"
+    assert len(env.create_calls) == 1
+
+
+def test_p_missing_required_problem_forces_ask_back_even_with_a_problem(env):
+    env.ready()
+    env.idea_message()
+    env.mp.setattr(env.svc, "_missing_required", lambda fields: ["problem"])
+    out = env.turn(MSG)
+    assert out["status"] == "ask_idea"
+    _no_ss(env)
+    assert "ideation" not in out["session_vars"]
