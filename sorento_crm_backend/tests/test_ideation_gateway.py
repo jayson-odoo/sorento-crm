@@ -903,3 +903,16 @@ def test_d05_the_cap_matches_the_ss_attachment_cap():
     from app.api.v1.ideation.ideas import ATTACHMENT_CAP_BYTES
 
     assert ATTACHMENT_CAP_BYTES == 25 * 1024 * 1024
+
+
+@pytest.mark.parametrize(
+    "method, path, ss_status",
+    [("POST", f"/ideas/{IDEA}/comments", 201), ("PATCH", f"/ideas/{IDEA}/comments/{COMMENT}", 200)],
+)
+def test_e05_a_non_json_2xx_from_ss_on_a_comment_write_is_a_502_unreachable(env, method, path, ss_status):
+    ss_path = path.replace("/ideas/", "/embed/ideas/")
+    env.fake.route(method, ss_path, status=ss_status, content=b"<html>proxy</html>",
+                   headers={"content-type": "text/html"})
+    resp = env.req(method, path, json={"body": "hi"})
+    assert resp.status_code == 502, resp.text
+    assert UNREACHABLE in message_of(resp)

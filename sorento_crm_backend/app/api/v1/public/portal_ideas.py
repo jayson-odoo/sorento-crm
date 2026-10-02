@@ -148,12 +148,15 @@ def post_comment(token: str, payload: PortalCommentIn, db: Session = Depends(get
     # Per token (the authoritative limit) and one ceiling across every token. There is no per-IP
     # bucket: behind the CRM's nginx the left-most X-Forwarded-For is client-controlled, so it
     # would only let an attacker pick which bucket they land in (AC-H-07).
+    # Both are CHECKED first but CHARGED only when ss accepts the comment: a well-formed token ss
+    # does not know costs the caller nothing, so random tokens cannot use up the shared ceiling.
     token_key = hashlib.sha256(token.encode()).hexdigest()
-    for bucket, ident, limit in (
+    buckets = (
         ("ideas_public_comment_token", token_key, _TOKEN_LIMIT),
         ("ideas_public_comment_global", "all", _GLOBAL_LIMIT),
-    ):
-        result = rate_limit.hit(bucket, ident, limit=limit, window_seconds=_RATE_WINDOW_SECONDS)
+    )
+    for bucket, ident, limit in buckets:
+        result = rate_limit.peek(bucket, ident, limit=limit, window_seconds=_RATE_WINDOW_SECONDS)
         if not result.allowed:
             return _reply(
                 429,
@@ -166,4 +169,6 @@ def post_comment(token: str, payload: PortalCommentIn, db: Session = Depends(get
     data, error = _ss(db, "POST", f"/public/ideas/{token}/comments", json=body)
     if error is not None:
         return error
+    for bucket, ident, _limit in buckets:
+        rate_limit.record(bucket, ident, window_seconds=_RATE_WINDOW_SECONDS)
     return _reply(201, _comment_view(data if isinstance(data, dict) else {}))

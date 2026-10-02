@@ -96,19 +96,21 @@ def pub(monkeypatch):
     configure_embed_settings(monkeypatch)
     fake = FakeSS().install(monkeypatch)
 
-    # In-memory fixed-window counter with rate_limit.hit's semantics.
+    # In-memory fixed-window counter with rate_limit.peek / record semantics (check, then charge).
     counts: dict[tuple, int] = {}
     hits: list[dict] = []
 
-    def _hit(bucket, ident, *, limit, window_seconds):
+    def _peek(bucket, ident, *, limit, window_seconds):
         hits.append({"bucket": bucket, "ident": ident, "limit": limit, "window": window_seconds})
-        key = (bucket, ident)
-        counts[key] = counts.get(key, 0) + 1
-        if counts[key] > limit:
+        if counts.get((bucket, ident), 0) >= limit:
             return rate_limit.RateResult(allowed=False, retry_after_seconds=window_seconds)
         return rate_limit.RateResult(allowed=True)
 
-    monkeypatch.setattr(rate_limit, "hit", _hit)
+    def _record(bucket, ident, *, window_seconds):
+        counts[(bucket, ident)] = counts.get((bucket, ident), 0) + 1
+
+    monkeypatch.setattr(rate_limit, "peek", _peek)
+    monkeypatch.setattr(rate_limit, "record", _record)
 
     with blank_session() as db:
         def _db():
@@ -119,6 +121,7 @@ def pub(monkeypatch):
             client = TestClient(app)
             client.fake = fake  # type: ignore[attr-defined]
             client.hits = hits  # type: ignore[attr-defined]
+            client.counts = counts  # type: ignore[attr-defined]
             yield client
         finally:
             app.dependency_overrides.clear()
@@ -383,3 +386,26 @@ def test_h07_a_non_json_2xx_from_ss_is_a_502_that_keeps_the_private_headers(
     resp = pub.request(method, f"{BASE}/{TOKEN}{suffix}", **kw)
     assert resp.status_code == 502, resp.text
     _assert_private_headers(resp)
+
+
+def test_h07_random_unknown_tokens_do_not_consume_the_global_bucket(pub):
+    """N1: ss 404s a well-formed but unknown token, which must cost the caller nothing."""
+    for i in range(210):
+        t = f"Rnd{i:03d}AbCdEfGhIjK"
+        pub.fake.route("POST", f"/public/ideas/{t}/comments", status=404, json_body=_NOT_FOUND_BODY)
+        assert pub.post(f"{BASE}/{t}/comments", json={"body": "x"}).status_code == 404
+    assert not any(v for v in pub.counts.values()), "nothing was charged for unknown tokens"
+    assert _post(pub).status_code == 201  # a real customer still gets through
+
+
+def test_h07_a_successful_post_charges_both_buckets(pub):
+    assert _post(pub).status_code == 201
+    token_buckets = {b: n for (b, i), n in pub.counts.items() if b.endswith("token")}
+    global_buckets = {b: n for (b, i), n in pub.counts.items() if b.endswith("global")}
+    assert sum(token_buckets.values()) == 1 and sum(global_buckets.values()) == 1
+
+
+def test_h07_a_failed_ss_post_is_not_charged(pub):
+    pub.fake.route("POST", _COMMENTS_PATH, status=422, json_body={"detail": "Comment cannot be empty."})
+    assert pub.post(f"{BASE}/{TOKEN}/comments", json={"body": "x"}).status_code == 422
+    assert not any(pub.counts.values())

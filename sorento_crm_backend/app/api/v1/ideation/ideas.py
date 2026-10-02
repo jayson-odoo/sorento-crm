@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.services.error_handler import AppException
-from app.services.ideation_gateway_service import call_ss, relay, ss_path
+from app.services.ideation_gateway_service import UNREACHABLE, call_ss, relay, ss_path
 
 VIEW = "ideation.board.view"
 MANAGE = "ideation.ideas.manage"
@@ -55,7 +55,10 @@ def _comment_body(payload: dict) -> dict:
 def _masked_comment(resp: httpx.Response) -> Response:
     """A comment answer with an email-shaped author name masked (AC-E-05 ship gate: ss stores the
     assertion's `name`, and until it stores the display name an address must not be echoed)."""
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError:
+        raise AppException(502, UNREACHABLE, code="IDEATION_UNREACHABLE")
     if isinstance(data, dict) and isinstance(data.get("authorName"), str) and "@" in data["authorName"]:
         data = {**data, "authorName": _STAFF_NAME}
     return JSONResponse(data, status_code=resp.status_code)
