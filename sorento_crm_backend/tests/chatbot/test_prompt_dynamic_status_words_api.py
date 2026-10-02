@@ -68,7 +68,7 @@ def _value() -> str:
 
 def _body(value: str, **over) -> dict:
     body = {"domain": "order", "value": value, "label": "a test status",
-            "trigger_words": ["zzt pending word"], "sort_order": 900}
+            "trigger_words": ["zzt pending word"], "sort_order": 900, "prompt_lists": ["statuses"]}
     body.update(over)
     return body
 
@@ -165,3 +165,36 @@ def test_registry_variables_panel_lists_every_source(client, pg_db):
     assert rows["statuses"]["source"] == "Chatbot Status Words"
     assert rows["statuses"]["count"] >= 8
     assert '"sales_report"' in rows["statuses"]["rendered"]
+
+
+# --------------------------------------------------------------------------- #
+# Owner answer 4 (2 Oct 2026, D-B4): which parser prompt lists a row is in.
+# --------------------------------------------------------------------------- #
+
+
+def test_prompt_lists_round_trip_and_an_untagged_row_stays_out_of_the_bullets(client, pg_db):
+    value = _value()
+    res = client.post(BASE, json=_body(value, prompt_lists=[]))
+    assert res.status_code == 201, res.text
+    assert res.json()["prompt_lists"] == []
+    assert value not in _rendered_statuses(pg_db)
+    row_id = res.json()["id"]
+    res = client.put(f"{BASE}/{row_id}", json=_body(value, prompt_lists=["statuses", "status_values"]))
+    assert res.status_code == 200, res.text
+    assert res.json()["prompt_lists"] == ["statuses", "status_values"]
+    assert value in _rendered_statuses(pg_db)
+
+
+def test_an_update_without_prompt_lists_keeps_the_row_tags(client):
+    value = _value()
+    row_id = client.post(BASE, json=_body(value, prompt_lists=["status_field_values"])).json()["id"]
+    body = _body(value)
+    body.pop("prompt_lists")
+    res = client.put(f"{BASE}/{row_id}", json=body)
+    assert res.status_code == 200, res.text
+    assert res.json()["prompt_lists"] == ["status_field_values"]
+
+
+def test_an_unknown_prompt_list_is_refused(client):
+    res = client.post(BASE, json=_body(_value(), prompt_lists=["zzt_not_a_list"]))
+    assert res.status_code == 422, res.text

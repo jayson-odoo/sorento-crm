@@ -535,3 +535,14 @@ are built yet.
 The crew SQL moved to `sorento_crm_backend/alembic/data/crew-migration-prompt-dynamic.sql`, next
 to the owner text it encodes. Its test reads it, and `tests/test_ci_docs_only_filter.py` rejects
 a test-read `documentation/` path that CI would still classify as docs-only (CI run on e2bc03b0).
+
+## Owner answers of 2 Oct 2026 to the per-list table, and the design
+
+| # | List | Owner answer | Design |
+| --- | --- | --- | --- |
+| 1 | domains (82) | (a) add `purchase_order` and `sales` to the hint text; the registry rows win | No code. The text change is the owner's (on the Prompts page); the proposed line is posted for him. |
+| 2 | domain_words (87) | (a) a curated list in the DB, seeded with his 19 words in his order | D-B2: a new table `chatbot_domain_words` (`word` unique, `sort_order`), additive migration `pdyn_0004_prompt_lists`, seeded with the 19 words. `{{domain_words}}` renders that table with the 89-column wrap. No admin page in this PR (trigger: the owner asks to edit the list in the UI). |
+| 3 | entity_kinds (401) | (a) add `specification` | As 1: a text change, the owner's. |
+| 4 | statuses (643), status_values (770, 778) | keep his subsets; a row attribute, additive | D-B4: `chatbot_status_words.prompt_lists text[] NOT NULL DEFAULT '{}'` (same migration). Seeds: `outstanding` and `delivered` get `statuses`, `status_values`, `status_field_values`; `sales_report` gets `status_field_values`. `{{statuses}}` and `{{status_values}}` render only rows tagged with their own name. A new `{{status_field_values}}` renders line 778. The Status Words page edits the tags (a multi-select of the three list names). The API field is optional, and a missing field keeps the row's tags. |
+| 5 | status_values (821) | domain filter | Done: `{{order_status_values}}`. |
+| 6 | access_levels, agents, domains_detail, specs | (a) align the DB rows to the text | A crew-ask with the exact row changes and their risks, before any prod data change (owner-gated). |
