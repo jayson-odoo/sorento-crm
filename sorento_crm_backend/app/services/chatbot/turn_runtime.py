@@ -2805,6 +2805,11 @@ def make_tool_runner(
         if so_numbers:
             lane_out = {**lane_out, "so_numbers": so_numbers}
             envelope_unplaced = {k: v for k, v in unplaced.items() if v not in so_numbers}
+            # Answered here, so never carried: a word left on `focus.extra["order"]` without a
+            # uuid is handed to the resolver again on the next order turn and named as a miss
+            # there (owner hand test: "okay how about all my sales order?" replied
+            # `Couldn't find: "SO422056"` over the `self_reference` answer).
+            _drop_focus_entities(focus, [{"entity_type": "order", "raw": w} for w in so_numbers])
         # Ported from PR #1118 (not merged), D13/D20: the dealer's own quantity per
         # product, resolved to uuids here - `lanes/business/fetch.py` reads it
         # straight off the lane input.
