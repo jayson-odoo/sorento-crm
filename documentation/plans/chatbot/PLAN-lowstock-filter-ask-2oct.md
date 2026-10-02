@@ -1,6 +1,7 @@
 # PLAN: low stock report asks for its filters before it runs (LOWSTOCK-FILTER-ASK)
 
-Status: planning (Step 1 trace in progress). Lane LOWSTOCK-FILTER-ASK.
+Status: planning, behaviour card ASKED (2 Oct 2026), waiting on owner Q1-Q5. Track: feature (chatbot lane + route param; no migration expected). Lane LOWSTOCK-FILTER-ASK.
+Card: `lowstock-filter-ask-behaviour-card.md` (holds the Step 1 trace with file:line).
 
 ## Owner report (2 Oct 2026)
 
