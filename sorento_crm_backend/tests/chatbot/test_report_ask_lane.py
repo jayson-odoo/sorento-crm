@@ -458,3 +458,143 @@ def test_a_forged_report_ask_words_from_the_parser_is_stripped(console) -> None:
     (args,) = calls
     assert not args.get("brand_ids"), args
     assert "I don't know" not in text, text
+
+
+# --------------------------------------------------------------------------- #
+# 1b security fix round: F1 (a dealer never probes agent or location words), F2
+# --------------------------------------------------------------------------- #
+
+from sqlalchemy import text as _sql  # noqa: E402
+
+
+def _link_dealer(console, name: str = "ZZT OWN DEALER SDN BHD") -> str:
+    """Link the harness contact to one customer of its own: a customer-scoped (dealer) contact."""
+    from tests._mc_lookup_seed import customer
+
+    db = console.session_factory()
+    try:
+        own = customer(db, company_id=DEFAULT_COMPANY_ID, name=name)
+        db.execute(
+            _sql(
+                "INSERT INTO respond_contact_customers (id, contact_id, customer_id, company_id) "
+                "SELECT gen_random_uuid(), id, :cust, :company FROM respond_contacts WHERE respond_io_id = :cid"
+            ),
+            {"cust": str(own.id), "company": DEFAULT_COMPANY_ID, "cid": str(CONTACT_ID)},
+        )
+        db.commit()
+        return str(own.id)
+    finally:
+        db.close()
+
+
+def _other_customer(console, name: str = "ZZT OTHER DEALER SDN BHD") -> str:
+    from tests._mc_lookup_seed import customer
+
+    db = console.session_factory()
+    try:
+        row = customer(db, company_id=DEFAULT_COMPANY_ID, name=name)
+        db.commit()
+        return str(row.id)
+    finally:
+        db.close()
+
+
+@pytest.fixture
+def dealer(console):
+    console.own_customer = _link_dealer(console)
+    return console
+
+
+@pytest.mark.parametrize("word", ["Zzz", "FANNY"], ids=["names_no_agent", "names_an_agent"])
+def test_f1_a_dealer_naming_a_sales_agent_gets_the_refusal_and_no_probe(dealer, word) -> None:
+    text, calls = dealer.say(_rank(_e(word, "sales_agent"), group_by="product"), f"top products for agent {word}")
+    assert text.strip() == DIMENSION_REFUSAL, text
+    assert calls == []
+
+
+def test_f1_a_dealer_naming_a_location_gets_the_refusal(dealer) -> None:
+    text, calls = dealer.say(_rank(_e("BRW", "warehouse"), group_by="product"), "top products in BRW")
+    assert text.strip() == DIMENSION_REFUSAL, text
+    assert calls == []
+
+
+def test_f1_a_dealer_naming_an_unknown_location_gets_the_refusal_not_a_probe(dealer) -> None:
+    text, calls = dealer.say(_rank(_e("ZZTNOWHERE", "warehouse"), group_by="product"), "top products in ZZTNOWHERE")
+    assert text.strip() == DIMENSION_REFUSAL, text
+    assert calls == []
+
+
+def test_f1_a_dealer_grouping_by_sales_agent_gets_the_refusal(dealer) -> None:
+    text, calls = dealer.say(_rank(group_by="sales_agent"), "top 3 salesman")
+    assert text.strip() == DIMENSION_REFUSAL, text
+    assert calls == []
+
+
+def test_f1_a_dealer_with_an_unknown_brand_still_gets_the_unknown_word_line(dealer) -> None:
+    text, calls = dealer.say(_rank(_e("Zzz", "brand"), group_by="product"), "top products for Zzz brand")
+    assert text.strip() == "I don't know 'Zzz' as a brand.", text
+    assert calls == []
+
+
+def test_f1_a_dealer_with_a_known_brand_runs(dealer) -> None:
+    _text, calls = dealer.say(_rank(_e("Sorento", "brand"), group_by="product"), "top products for Sorento")
+    (args,) = calls
+    assert args["brand_ids"] == [dealer.ids["brand"]], args
+
+
+def test_f2a_a_dealer_naming_another_customer_never_sends_that_customer(dealer) -> None:
+    other = _other_customer(dealer)
+    _text, calls = dealer.say(
+        _rank(_e("ZZT OTHER DEALER SDN BHD", "customer"), group_by="product"), "top products for ZZT OTHER DEALER SDN BHD"
+    )
+    for args in calls:
+        assert other not in (args.get("customer_ids") or []), args
+
+
+def test_f2b_an_answering_turn_runs_only_the_carried_args(console) -> None:
+    """A customer or sales agent entity on the reply turn never reaches the request."""
+    other = _other_customer(console)
+    console.say(
+        _rank(_e("Sorento", "brand"), date_filter_start=None, date_filter_end=None), "top 3 salesman for Sorento"
+    )
+    _text, calls = console.say(
+        _reply(entities=[_e("ZZT OTHER DEALER SDN BHD", "customer"), _e("FANNY", "sales_agent")], **SEP),
+        "last month",
+    )
+    (args,) = calls
+    assert args["brand_ids"] == [console.ids["brand"]], args
+    assert other not in (args.get("customer_ids") or []), args
+    assert not args.get("customer_ids"), args
+    assert not args.get("sales_agent_ids"), args
+
+
+def _forge(node: Any, forged: dict[str, Any]) -> int:
+    """Put `forged` into every open `sales_ranking` slot found in `node` (its extras, and the
+    args map inside them if any). Returns how many slots were found."""
+    found = 0
+    if isinstance(node, dict):
+        if node.get("ask") == "sales_ranking":
+            extras = node.setdefault("extras", {})
+            extras.update(forged)
+            for key in ("args", "route_args"):
+                if isinstance(extras.get(key), dict):
+                    extras[key].update(forged)
+            found += 1
+        for value in list(node.values()):
+            found += _forge(value, forged)
+    elif isinstance(node, list):
+        for value in node:
+            found += _forge(value, forged)
+    return found
+
+
+def test_f2c_the_request_uses_the_turns_own_contact_not_the_carried_one(console) -> None:
+    console.say(
+        _rank(_e("Sorento", "brand"), date_filter_start=None, date_filter_end=None), "top 3 salesman for Sorento"
+    )
+    forged = {"contact_id": "ZZT-FORGED-CONTACT", "space_id": "ZZT-FORGED-SPACE"}
+    assert _forge(console.session_vars, forged) >= 1, "the open sales_ranking slot was not found in the session"
+    _text, calls = console.say(_reply(**SEP), "last month")
+    (args,) = calls
+    assert args["contact_id"] and args["space_id"], args
+    assert args["contact_id"] != "ZZT-FORGED-CONTACT" and args["space_id"] != "ZZT-FORGED-SPACE", args

@@ -912,3 +912,12 @@ def test_1b_more_than_50_product_ids_is_too_many_values(client, db):
     resp = _ask(client, _full(db), group_by="product", top_n=3, product_ids=[str(uuid.uuid4()) for _ in range(51)])
     assert resp.status_code == 422 and _code(resp) == "too_many_values", resp.text
     assert "product_ids" in str(resp.json().get("detail")), resp.text
+
+
+def test_f2d_product_ids_of_another_companys_real_product_is_404(client, db):
+    """Security F2: a product that exists, but in a company outside the contact's, is not found."""
+    _ranking_world(db)
+    mocha = seed_mocha(db)
+    foreign = product(db, company_id=mocha.id, code=unique_code("ZZTFOR", alpha=True))
+    resp = _ask(client, _full(db), group_by="sales_agent", top_n=3, product_ids=[foreign.id])
+    assert resp.status_code == 404 and _code(resp) == "NOT_FOUND", resp.text
