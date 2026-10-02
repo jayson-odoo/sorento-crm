@@ -54,7 +54,9 @@ def test_ac10_mapped_name_follows_the_group_and_everything_else_follows_the_rule
     rule_key = lf.ledger_family_key(f"{HOMEMART} [A/C I]")
     rule_label = lf.ledger_family_label(f"{HOMEMART} [A/C I]")
 
-    with lf.customer_groups({HOMEMART: HARDWARE}):
+    # Exact full names only (ruling (b)): the marker-stripped probe is gone, so the mapping
+    # names the bare row AND the `[A/C I]` row.
+    with lf.customer_groups({HOMEMART: HARDWARE, f"{HOMEMART} [A/C I]": HARDWARE}):
         assert lf.ledger_family_key(f"{HOMEMART} [A/C I]") == lf.ledger_family_key(HARDWARE)
         assert lf.ledger_family_key(HOMEMART) == lf.ledger_family_key(HARDWARE)
         assert lf.ledger_family_label(HOMEMART) == HARDWARE
