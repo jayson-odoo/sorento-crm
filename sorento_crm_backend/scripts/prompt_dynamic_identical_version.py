@@ -10,9 +10,13 @@ byte-identical to the source; it never labels, publishes or stages.
     venv/bin/python -m scripts.prompt_dynamic_identical_version --from-version 53 --save
     venv/bin/python -m scripts.prompt_dynamic_identical_version --verify 55
 
+    venv/bin/python -m scripts.prompt_dynamic_identical_version --verify 57 --against 56
+
 `--verify N` renders version N the way a turn does and compares it with the owner's
 production file (`alembic/data/chatbot_semantic_parser.prod-20261001.txt`), printing the
-first differing line when they part. Read-only.
+first differing line when they part. `--against M` compares with version M rendered the
+same way instead (owner Q-A = (a): the rebuild of his edited plain-text version is checked
+against that version, so his edits are not differences). Read-only.
 
 Omit --from-version to start from the `production` version.
 """
@@ -87,21 +91,30 @@ def build(db, *, from_version: int | None = None, save: bool = False) -> dict:
     return result
 
 
-def verify(db, version: int, snapshot) -> dict:
-    """Render version `version` (today's date for `{{current_date}}`) and compare it with the
-    owner's file rendered with the same date."""
+def verify(db, version: int, snapshot=None, *, against_version: int | None = None) -> dict:
+    """Render version `version` (a fixed date for `{{current_date}}`) and compare it with the
+    owner's file, or with version `against_version`, rendered with the same date."""
     from app.models.ai_prompt import AIPromptVersion
     from app.services import ai_prompt_registry
 
-    row = db.query(AIPromptVersion).filter(AIPromptVersion.name == PROMPT_NAME, AIPromptVersion.version == version).one()
-    out, _ = ai_prompt_registry.render(db, PROMPT_NAME, current_date="D", override_version_id=row.id)
-    want = snapshot.read_text(encoding="utf-8").replace("{{current_date}}", "D")
+    def rendered(v: int) -> str:
+        row = db.query(AIPromptVersion).filter(AIPromptVersion.name == PROMPT_NAME, AIPromptVersion.version == v).one()
+        out, _ = ai_prompt_registry.render(db, PROMPT_NAME, current_date="D", override_version_id=row.id)
+        return out
+
+    out = rendered(version)
+    if against_version is not None:
+        want, against = rendered(against_version), f"v{against_version}"
+    else:
+        want, against = snapshot.read_text(encoding="utf-8").replace("{{current_date}}", "D"), snapshot.name
     if out == want:
-        return {"version": version, "equal": True, "first_difference": None, "chars": (len(out), len(want))}
+        return {"version": version, "against": against, "equal": True, "first_difference": None,
+                "chars": (len(out), len(want))}
     a, b = out.splitlines(), want.splitlines()
     i = next((k for k, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
     return {
         "version": version,
+        "against": against,
         "equal": False,
         "first_difference": {
             "line": i + 1,
@@ -112,12 +125,17 @@ def verify(db, version: int, snapshot) -> dict:
     }
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--from-version", type=int, default=None)
     parser.add_argument("--save", action="store_true")
     parser.add_argument("--verify", type=int, default=None, metavar="N")
-    args = parser.parse_args()
+    parser.add_argument("--against", type=int, default=None, metavar="M")
+    return parser.parse_args(argv)
+
+
+def main() -> int:
+    args = parse_args()
 
     import pathlib
 
@@ -128,11 +146,11 @@ def main() -> int:
     try:
         if args.verify is not None:
             snapshot = pathlib.Path(__file__).resolve().parents[1] / "alembic" / "data" / "chatbot_semantic_parser.prod-20261001.txt"
-            v = verify(db, args.verify, snapshot)
-            print(f"# v{v['version']} rendered == owner file: {v['equal']} ({v['chars'][0]} vs {v['chars'][1]} chars)")
+            v = verify(db, args.verify, snapshot, against_version=args.against)
+            print(f"# v{v['version']} rendered == {v['against']}: {v['equal']} ({v['chars'][0]} vs {v['chars'][1]} chars)")
             if v["first_difference"]:
                 d = v["first_difference"]
-                print(f"    first difference at line {d['line']}:\n    rendered: {d['rendered']!r}\n    file:     {d['file']!r}")
+                print(f"    first difference at line {d['line']}:\n    rendered:  {d['rendered']!r}\n    reference: {d['file']!r}")
             return 0 if v["equal"] else 1
         result = build(db, from_version=args.from_version, save=args.save)
         if args.save:
