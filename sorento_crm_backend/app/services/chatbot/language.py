@@ -12,9 +12,13 @@ from app.services.chatbot.label_catalog import LANGUAGES
 
 _MALAY = frozenset(
     "ada tak berapa boleh nak saya stok barang bila sampai sudah belum ini itu untuk dengan "
-    "mana harga lagi tolong".split()
+    "mana harga lagi tolong kat yang apa dah ni tu betul mahu perlu semua".split()
 )
-_ENGLISH = frozenset("do have how many what when is are can please stock check".split())
+_ENGLISH = frozenset(
+    "do does did have has how many what when where which who is are can could will would please "
+    "stock check any the an in on for of with still left there you your my need want got "
+    "available incoming arriving".split()
+)
 _WORD = re.compile(r"[^\W\d_]+")
 
 

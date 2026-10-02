@@ -11,6 +11,10 @@ import logging
 import re
 from typing import Any
 
+# The one spelling of the refer line (CUSTOMER-ASKS-REFER-ONLY guards): the verdict keys below
+# are built from it, never spelled out.
+from app.services.chatbot.turn.task import REFER_TO_SALESMAN
+
 logger = logging.getLogger(__name__)
 
 LANGUAGES = ("en", "ms", "zh")
@@ -37,15 +41,15 @@ LABELS: dict[str, dict[str, str]] = {
         "ms": "Berapa unit yang anda perlukan?",
         "zh": "您需要多少件？",
     },
-    "yes, we have stock. Please refer to your salesman.": {
+    f"yes, we have stock. {REFER_TO_SALESMAN}": {
         "ms": "ya, stok ada. Sila rujuk jurujual anda.",
         "zh": "有库存。请联系您的销售员。",
     },
-    "no stock and no incoming at the moment. Please refer to your salesman.": {
+    f"no stock and no incoming at the moment. {REFER_TO_SALESMAN}": {
         "ms": "tiada stok dan tiada barang masuk buat masa ini. Sila rujuk jurujual anda.",
         "zh": "目前没有库存，也没有到货。请联系您的销售员。",
     },
-    "the quantity is more than what I can confirm here. Please refer to your salesman.": {
+    f"the quantity is more than what I can confirm here. {REFER_TO_SALESMAN}": {
         "ms": "kuantiti ini melebihi apa yang boleh saya sahkan di sini. Sila rujuk jurujual anda.",
         "zh": "这个数量超出我在这里可以确认的范围。请联系您的销售员。",
     },

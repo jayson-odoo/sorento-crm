@@ -32,6 +32,7 @@ from typing import Any
 import pytest
 
 from app.services.chatbot import dealer_stock as dealer
+from app.services.chatbot import label_catalog, language
 from app.services.chatbot.head import parser as parser_mod
 from app.services.chatbot.turn import pending as turn_pending
 from app.services.chatbot.turn import task as task_mod
@@ -481,8 +482,16 @@ def _point_form(codes: list[str], values: dict[int, int] | None = None) -> str:
     )
 
 
-def _answered(*pairs: tuple[str, int]) -> str:
-    return "\n\n".join(f"{code} x {qty}: {TOO_BIG}" for code, qty in pairs)
+def _answered(*pairs: tuple[str, int], lang: str = "en") -> str:
+    """CHAT-LANGUAGE: the verdict sentence follows the dealer's language (`lang`)."""
+    verdict = label_catalog.Localizer(lang, label_catalog.defaults(lang)).text(TOO_BIG)
+    return "\n\n".join(f"{code} x {qty}: {verdict}" for code, qty in pairs)
+
+
+def _lang(message: str) -> str:
+    """The reply language a message alone decides; the H cases all open in English, so a
+    message that decides nothing keeps English."""
+    return language.detect(message) or "en"
 
 
 def test_g_1406_the_first_one_i_need_2(session_factory, monkeypatch, stub_access):
@@ -648,7 +657,7 @@ PICK_WITH_QTY = [
 def test_h_pick_one_with_a_quantity(session_factory, monkeypatch, stub_access, message, obj):
     c = EngineConsole(session_factory, monkeypatch, stub_access, phone="+60000009201")
     c.say("check stock STWC2867", stock(product("STWC2867")))
-    assert c.say(message, reply(open_question_answer=obj)) == _answered(("SRTWC286-SH", 2))
+    assert c.say(message, reply(open_question_answer=obj)) == _answered(("SRTWC286-SH", 2), lang=_lang(message))
 
 
 #: Several picked off the family list (pick_one, "both" / "all" / "1 and 3").
@@ -697,7 +706,7 @@ def test_h_pick_one_both(session_factory, monkeypatch, stub_access, message, obj
     if qty is None:
         assert out == _point_form(DYM)
     else:
-        assert out == _answered(*[(code, qty) for code in DYM])
+        assert out == _answered(*[(code, qty) for code in DYM], lang=_lang(message))
 
 
 #: The one-option did-you-mean (confirm): five yeses answer it, five noes refer.
@@ -725,7 +734,7 @@ def test_h_confirm(session_factory, monkeypatch, stub_access, message, mode):
     # carries the yes or the no.
     out = c.say(message, reply(open_question_answer=answer(mode)))
     if mode == "yes":
-        assert out == _answered(("ELP3754", 10))
+        assert out == _answered(("ELP3754", 10), lang=_lang(message))
     else:
         assert out == task_mod.REFER_TO_SALESMAN
 
@@ -752,7 +761,7 @@ def test_h_quantities(session_factory, monkeypatch, stub_access, message, obj, q
     c = EngineConsole(session_factory, monkeypatch, stub_access, phone="+60000009205")
     c.say("check stock srtwc286", stock(product("srtwc286")))
     assert c.say("1 2 3", reply(open_question_answer=answer("pick", picked=[1, 2, 3]))) == _point_form(three)
-    assert c.say(message, reply(open_question_answer=obj)) == _answered(*zip(three, qtys))
+    assert c.say(message, reply(open_question_answer=obj)) == _answered(*zip(three, qtys), lang=_lang(message))
 
 
 #: Revising a three-product answer (last_answer).
@@ -779,7 +788,9 @@ def test_h_last_answer(session_factory, monkeypatch, stub_access, message, obj, 
     assert c.say("3 each", reply(open_question_answer=answer("all", qty_for_all=3))) == _answered(
         *[(code, 3) for code in three]
     )
-    assert c.say(message, reply(correction=True, open_question_answer=obj)) == _answered(*zip(three, qtys))
+    assert c.say(message, reply(correction=True, open_question_answer=obj)) == _answered(
+        *zip(three, qtys), lang=_lang(message)
+    )
 
 
 def test_h_family_order_survives_a_reshuffled_heap(session_factory, monkeypatch, stub_access):
