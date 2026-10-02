@@ -450,3 +450,28 @@ def test_error_message_column_wins_over_payload_error(client):
     file = r.json()["sessions"][0]["files"][0]
     assert file["error_code"] == "DUPLICATE_PACKING_LIST"
     assert file["error_message"].startswith("Container TEMU1234567 (shipment date")
+
+
+def test_resubmit_refuses_an_untyped_attachment(client, monkeypatch):
+    """Resubmit's no-prior-log fallback must not claim a send for an untyped
+    file: the webhook helper skips it (owner rule, 2 Oct 2026), so the honest
+    answer is a 400, and still no n8n log row."""
+    from app.models.integration import IntegrationLog
+
+    monkeypatch.setattr(
+        "app.api.v1.resources.attachments.get_n8n_attachment_webhook_url",
+        lambda _db: "https://n8n.test/hook",
+    )
+    c, db = client
+    aid = _add_attachment(db, filename="supplier stock list.xlsx", untyped=True)
+
+    r = c.post(f"/api/v1/resource-management/attachments/{aid}/resubmit")
+
+    assert r.status_code == 400, r.text
+    assert "no attachment type" in r.text
+    assert (
+        db.query(IntegrationLog)
+        .filter(IntegrationLog.business_table == "attachments", IntegrationLog.business_id == aid)
+        .count()
+        == 0
+    )
