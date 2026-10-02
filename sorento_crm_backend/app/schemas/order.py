@@ -45,7 +45,7 @@ class CustomerCreate(CustomerBase):
     # Who sells to this customer (`sales_agents.id`). Optional: most of the 6,397 existing
     # rows have never had one set. `None` on create is the same as omitting it.
     sales_agent_id: Optional[str] = None
-    account_level: Optional[int] = Field(default=None, ge=1, le=32767)
+    account_level: Optional[int] = Field(default=None, ge=1, le=9)
 
 
 class CustomerUpdate(BaseModel):
@@ -57,7 +57,7 @@ class CustomerUpdate(BaseModel):
     # from "field omitted, leave alone").
     sales_agent_id: Optional[str] = None
     # `null` clears the level; omitted leaves it alone.
-    account_level: Optional[int] = Field(default=None, ge=1, le=32767)
+    account_level: Optional[int] = Field(default=None, ge=1, le=9)
 
 
 class CustomerSimple(BaseModel):

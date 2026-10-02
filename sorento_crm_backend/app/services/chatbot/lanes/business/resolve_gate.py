@@ -945,7 +945,7 @@ def narrow_by_account(
     (read by uuid, one query). Returns the refusal line when a word is left with none,
     else None. A word with no account, and every non-customer match, is untouched."""
     asks = [
-        (_folded(e.get("raw")), str(e.get("raw")).strip(), e["account"])
+        (_folded(_token_of(e)), str(e.get("raw")).strip(), e["account"])
         for e in parser.get("entities") or []
         if isinstance(e, dict)
         and e.get("hint") == "customer"
@@ -981,6 +981,10 @@ def narrow_by_account(
             if kept:
                 dropped |= {str(m.get("uuid")) for m in customers if m not in kept}
                 resolution["matches"] = [m for m in resolution["matches"] if m not in customers or m in kept]
+                continue
+            if any((m.get("display") or {}).get("truncated_more_available") for m in customers):
+                # The resolver cut its list: the level may sit past the cut, so never
+                # refuse (or narrow) off an incomplete list.
                 continue
             dropped |= {str(m.get("uuid")) for m in customers}
             resolution["matches"] = [m for m in resolution["matches"] if m not in customers]
