@@ -44,8 +44,8 @@ roster itself is unchanged. Mock change: two extra rows (flagged; mock v5 after 
 is a contact fact owned by that lane: `respond_contacts.regions text[]` (default `{west}`), read by the
 incoming routes themselves (`eta_policy.rules_for_contact`, `incoming_stock_service.py`). This lane does
 not touch it and `EffectiveAccess` does not carry it; trigger to expose `EffectiveAccess.regions`
-read-only = a second reader outside incoming. Agreed asks to that lane: duplicate respond.io rows take
-the intersection of regions (as AC-AM-8); its control sits in its own block of
+read-only = a second reader outside incoming. Agreed with that lane: duplicate respond.io rows resolve to no contact (`field_access.py:258-268,316-328`) and so get West only, never the union (stricter than
+AC-AM-8 intersection, still fail closed); its control sits in its own block of
 `ContactChatbotSection.tsx` because Q2 (a) here removes the Tier picker from the same file.
 
 ## Key design choice: keep every enforcement seam, change only what fills it
