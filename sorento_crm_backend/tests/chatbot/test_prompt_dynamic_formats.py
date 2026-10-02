@@ -52,6 +52,8 @@ def test_domain_words_render_the_owner_layout_from_rows_that_match_his_content()
     owner = _owner("stock, incoming, ETA", " - in any language")
     words = [w.strip() for w in owner.replace("\n", " ").split(",")]
     with pg_session() as db:
+        # The union fallback (no curated list) is what this pins (reviewer pass 3, N1).
+        db.execute(text("DELETE FROM chatbot_domain_words"))
         db.execute(text("UPDATE chatbot_domains SET switch_words = '{}'"))
         db.execute(text("UPDATE chatbot_status_words SET trigger_words = '{}'"))
         db.execute(

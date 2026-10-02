@@ -284,7 +284,9 @@ VARIABLES: dict[str, RegistryVariable] = {
             lambda db: " | ".join(_one_line(n) for n in _domain_names(db)), lambda db: len(_domain_names(db)),
         ),
         RegistryVariable(
-            "domain_words", "Domain words", "Chatbot Domains + Status Words", _DOMAINS_HREF,
+            # The owner's curated list (answer 2); no admin page edits it yet (trigger: the
+            # owner asks to edit the list in the UI). Reviewer pass 3, S2.
+            "domain_words", "Domain words", "Domain words (no page yet)", "",
             ("chatbot_domains", "chatbot_status_words", "chatbot_domain_words"),
             render_domain_words, lambda db: len(_domain_words(db)),
         ),
@@ -543,7 +545,11 @@ def wording_layer(template: str, db: Session) -> tuple[str, list[str]]:
         report.append(f"{label}: -> {{{{{token}}}}}")
 
     domains = _domain_names(db)
-    statuses = [r["value"] for r in _status_rows(db)]
+    # Each pipe list goes to the variable that renders that line's OWN list (reviewer pass
+    # 3, S1): the variables render tagged or domain-filtered rows since the owner's answer 4.
+    def values_of(variable: str) -> list[str]:
+        return _pipe_values(render_value(db, variable))
+
     pipe_rule(
         "domain_hint list",
         r"domain_hint = ONE of: (?P<list>[a-z_]+(?:\s*\|\s*[a-z_]+)+?)\s*\|\s*null",
@@ -552,17 +558,17 @@ def wording_layer(template: str, db: Session) -> tuple[str, list[str]]:
     pipe_rule(
         "OUTPUT order_status",
         r'"order_status": "(?P<list>[a-z_]+(?:\|[a-z_]+)*?)\|null',
-        "status_values", statuses,
+        "status_values", values_of("status_values"),
     )
     pipe_rule(
         "OUTPUT status",
         r'"status": "(?P<list>[a-z_]+(?:\|[a-z_]+)*?)\|null',
-        "status_values", statuses,
+        "status_field_values", values_of("status_field_values"),
     )
     pipe_rule(
         "order_status full set",
         r"The full set is now: (?P<list>[a-z_]+(?:\|[a-z_]+)*?)\|null",
-        "status_values", statuses,
+        "order_status_values", values_of("order_status_values"),
     )
     pipe_rule(
         "OUTPUT suggested_team",
@@ -602,7 +608,7 @@ def wording_layer(template: str, db: Session) -> tuple[str, list[str]]:
         report.append("status bullets: not found (reworded or absent), kept")
     else:
         literal = _re.findall(r'^  - "([a-z_]+)"', m.group("list"), flags=_re.M)
-        rows = {r["value"]: r for r in _status_rows(db)}
+        rows = {r["value"]: r for r in _listed(db, "statuses")}
         # Swapped only when the hand bullets say EXACTLY what the rows render (whitespace
         # aside): any word of the owner's own inside a bullet keeps the block literal
         # (review S5), because `{{statuses}}` renders only what the rows hold.

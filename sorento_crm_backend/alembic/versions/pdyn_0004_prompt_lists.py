@@ -10,8 +10,12 @@
 
 Additive and idempotent. `apply(bind)` is shared with `scripts.bootstrap_env`.
 
+Chained right after pdyn_0001 and BEFORE the wording-layer migrations (pdyn_0002,
+pdyn_0003): they call the renderers, which read the column and table this adds (reviewer
+pass 3, B1).
+
 Revision ID: pdyn_0004_prompt_lists
-Revises: pdyn_0003_prod_identical
+Revises: pdyn_0001_status_words_sales
 Create Date: 2026-10-02
 """
 from __future__ import annotations
@@ -20,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "pdyn_0004_prompt_lists"
-down_revision = "pdyn_0003_prod_identical"
+down_revision = "pdyn_0001_status_words_sales"
 branch_labels = None
 depends_on = None
 

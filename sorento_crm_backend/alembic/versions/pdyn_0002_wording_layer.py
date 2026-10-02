@@ -14,7 +14,7 @@ Idempotent: does nothing once any version carries a registry variable. `apply(bi
 shared with `scripts.bootstrap_env`.
 
 Revision ID: pdyn_0002_wording_layer
-Revises: pdyn_0001_status_words_sales
+Revises: pdyn_0004_prompt_lists
 Create Date: 2026-09-30
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ from sqlalchemy import text as sql
 from sqlalchemy.orm import Session
 
 revision = "pdyn_0002_wording_layer"
-down_revision = "pdyn_0001_status_words_sales"
+down_revision = "pdyn_0004_prompt_lists"
 branch_labels = None
 depends_on = None
 

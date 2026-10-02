@@ -52,7 +52,7 @@ describe('ChatbotStatusWordModal prompt lists', () => {
     renderModal(ROW);
     expect(screen.getByText('Parser prompt lists')).toBeInTheDocument();
     expect(screen.getByText(/Status bullets/)).toBeInTheDocument();
-    expect(screen.getByText(/Order status values/)).toBeInTheDocument();
+    expect(screen.getByText(/order_status field values/)).toBeInTheDocument();
   });
 
   it('sends the row lists on save', () => {

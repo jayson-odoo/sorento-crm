@@ -155,7 +155,7 @@ def test_every_rendered_list_equals_its_registry():
         v = lambda name: pv.render_value(db, name)  # noqa: E731
         assert one(r"domain_hint = ONE of: (.*?) \| null") == v("domains")
         assert one(r'"order_status": "(.*?)\|null') == v("status_values")
-        assert one(r'"status": "(.*?)\|null') == v("status_values")
+        assert one(r'"status": "(.*?)\|null') == v("status_field_values")  # its own list (review 3, S1)
         assert one(r'"suggested_team": "(.*?)"') == v("teams")
         assert one(r'"suggested_agent": "(.*?)"') == v("agents")
         assert one(r'"hint": "([a-z_|]+)"') == v("entity_kinds")

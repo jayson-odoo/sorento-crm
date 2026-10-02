@@ -29,8 +29,8 @@ const BLANK: ChatbotStatusWordInput = {
 /** The parser prompt lists a status row can be in (backend `STATUS_PROMPT_LISTS`). */
 const PROMPT_LIST_OPTIONS = [
   { value: 'statuses', label: 'Status bullets' },
-  { value: 'status_values', label: 'Order status values' },
-  { value: 'status_field_values', label: 'Status field values' },
+  { value: 'status_values', label: 'order_status field values' },
+  { value: 'status_field_values', label: 'status field values' },
 ];
 
 const VALUE_PATTERN = /^[a-z][a-z0-9_]*$/;
