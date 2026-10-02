@@ -81,6 +81,24 @@ def test_csv_filters_are_split_like_the_other_list_params(scm_app, monkeypatch):
     assert kwargs.get("split") == "category", kwargs
 
 
+def test_a_supplier_name_with_a_comma_stays_one_supplier(scm_app, monkeypatch):
+    """Lists arrive as repeated params (the MCP compiler keeps a list a list); a supplier
+    NAME is never split on its commas."""
+    app, db, key, _uid = _api_key_caller(scm_app)
+    contact = _contact(db, granted=(GRANT_KEY, SUPPLIER_KEY))
+    db.flush()
+    calls = _fake_queue(monkeypatch)
+    _patch_wait(monkeypatch, on_wait=_timeout)
+
+    with TestClient(app) as c:
+        resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(
+            contact, suppliers=["FOSHAN SANITARY CO., LTD", "JINBAICHUAN"],
+        ))
+
+    assert resp.status_code == 200, resp.text
+    assert _export_kwargs(calls).get("suppliers") == ["FOSHAN SANITARY CO., LTD", "JINBAICHUAN"]
+
+
 def test_no_filters_keeps_the_old_call_shape(scm_app, monkeypatch):
     """A bare call (every filter settled as "all") is today's two-sheet workbook."""
     app, db, key, _uid = _api_key_caller(scm_app)

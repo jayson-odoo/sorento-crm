@@ -117,6 +117,19 @@ def _csv_list(values: Optional[list[str]]) -> Optional[list[str]]:
     return out or None
 
 
+def _name_list(values: Optional[list[str]]) -> Optional[list[str]]:
+    """Supplier NAMES, one per repeated param, never split on commas: a name like
+    "Foshan Co., Ltd" is one supplier. Same `_MAX_CODES` cap as `_csv_list`."""
+    out = [str(v).strip() for v in values or () if str(v).strip()]
+    if len(out) > _MAX_CODES:
+        raise AppException(
+            status_code=422,
+            message=f"Narrow the scope - at most {_MAX_CODES} suppliers per report.",
+            code="too_many_codes",
+        )
+    return out or None
+
+
 def _sync_wait_seconds(db: Session) -> int:
     """How long to hold the turn: `system_settings.low_stock_sync_wait_seconds`, read LIVE
     per request (AC-43), CAPPED BY THE TRANSPORT TIMEOUT.
@@ -379,6 +392,9 @@ def _prepare(
     contact_id: str,
     space_id: str,
     principal_id: str,
+    categories: Optional[list[str]] = None,
+    suppliers: Optional[list[str]] = None,
+    split: str = "none",
 ) -> Union[dict, _Prepared]:
     """Every BLOCKING step of a turn, in ONE function run on a worker thread (security B1 /
     reviewer S4): the reveal-key read, the rate-limit hit, the company resolve, `create_run`,
@@ -428,6 +444,12 @@ def _prepare(
             code="low_stock_report_not_enabled",
         )
     include_supplier = SUPPLIER_GRANT in keys
+    # LOWSTOCK-FILTER-ASK: a supplier filter or a supplier split for a contact whose
+    # workbook hides the Supplier column would leak, through the kept rows or the sheet
+    # titles, what the column hides. The lane never offers either; refuse here before
+    # anything is created rather than let `export_low_stock` fail after the run.
+    if not include_supplier and (suppliers or split in ("supplier", "supplier_category")):
+        return _error_answer()
 
     # --- who owns the run and the file (AC-42) ----------------------------------------
     # The CRM user the chatting contact is linked to, so the workbook lands in THEIR My
@@ -492,6 +514,9 @@ def _prepare(
             run_id,
             owner_user_id,
             include_supplier=include_supplier,
+            split=split,
+            suppliers=suppliers,
+            categories=categories,
             queue_name="imports",
             job_timeout=600,
             depends_on=run_job,
@@ -541,6 +566,9 @@ async def low_stock_report(
     date_to: Optional[date] = Query(None),
     contact_id: str = Query(...),
     space_id: str = Query(...),
+    categories: Optional[list[str]] = Query(None),
+    suppliers: Optional[list[str]] = Query(None),
+    split: str = Query("none"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(_RUN),
 ):
@@ -581,12 +609,21 @@ async def low_stock_report(
     ever handed to something less trusted, this route needs a per-contact proof of intent
     (a signed turn id, or the contact's own inbound message id) before it sends anything.
     """
+    from app.services.scm.workbook_split import SPLIT_VALUES
+
+    # LOWSTOCK-FILTER-ASK: the filters the chat settled before asking (category codes,
+    # supplier names, the group-by), applied to the WORKBOOK of the whole-book run - the
+    # same `categories` / `suppliers` / `split` the in-app page sends. An unknown split is
+    # refused before anything is created.
+    if split not in SPLIT_VALUES:
+        raise AppException(422, f"split must be one of {', '.join(SPLIT_VALUES)}.")
     prepared = await asyncio.to_thread(
         _prepare, db,
         warehouse_codes=warehouse_codes, product_codes=product_codes,
         date_from=date_from, date_to=date_to,
         contact_id=contact_id, space_id=space_id,
         principal_id=str(current_user["id"]),
+        categories=_csv_list(categories), suppliers=_name_list(suppliers), split=split,
     )
     if isinstance(prepared, dict):
         return prepared
