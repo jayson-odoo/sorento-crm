@@ -23,7 +23,7 @@ SLICE1: dict[str, tuple[str, str]] = {
     "Warehouse": ("Gudang", "仓库"),
     "System Location": ("Lokasi Sistem", "系统位置"),
     "Quantity On Hand": ("Kuantiti Ada", "现有数量"),
-    "Outstanding": ("Belum Dihantar", "未交货"),
+    "Outstanding": ("Tertunggak", "未交货"),
     "Total": ("Jumlah", "总数"),
     "Stock summary for the requested products.": (
         "Ringkasan stok untuk produk yang diminta.",

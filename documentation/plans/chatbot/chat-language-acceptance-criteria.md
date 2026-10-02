@@ -53,7 +53,7 @@ Rendering:
 | Warehouse | Gudang | 仓库 |
 | System Location | Lokasi Sistem | 系统位置 |
 | Quantity On Hand | Kuantiti Ada | 现有数量 |
-| Outstanding | Belum Dihantar | 未交货 |
+| Outstanding | Tertunggak | 未交货 |
 | Total | Jumlah | 总数 |
 | Stock summary for the requested products. | Ringkasan stok untuk produk yang diminta. | 所请求产品的库存摘要。 |
 | Stock details found for the requested products. | Butiran stok untuk produk yang diminta. | 所请求产品的库存详情。 |
@@ -272,7 +272,7 @@ The parse runs on English and only the response text is localized.
 | Channel | Saluran | 渠道 |
 | Delivery date | Tarikh penghantaran | 送货日期 |
 | Ranked by | Disusun mengikut | 排名依据 |
-| Basis | Asas | 基准 |
+| Basis | Asas | 统计口径 |
 | Items with sales | Item dengan jualan | 有销售的项目 |
 | Categories with sales | Kategori dengan jualan | 有销售的类别 |
 | all | semua | 全部 |
@@ -280,8 +280,8 @@ The parse runs on English and only the response text is localized.
 | Amount | Amaun | 金额 |
 | Quantity | Kuantiti | 数量 |
 | Delivered (transferred to DO) | Dihantar (dipindahkan ke DO) | 已送货（已转 DO） |
-| Sales order outstanding | Pesanan jualan belum dihantar | 未交货销售订单 |
-| Delivery order outstanding | Pesanan penghantaran belum dihantar | 未送达送货单 |
+| Sales order outstanding | Pesanan jualan tertunggak | 未交货销售订单 |
+| Delivery order outstanding | Pesanan penghantaran tertunggak | 未送达送货单 |
 | By location | Mengikut lokasi | 按位置 |
 | By customer | Mengikut pelanggan | 按客户 |
 | By product | Mengikut produk | 按产品 |
@@ -290,7 +290,7 @@ The parse runs on English and only the response text is localized.
 | Delivery order list | Senarai pesanan penghantaran | 送货单列表 |
 | Both lists | Kedua-dua senarai | 两个列表 |
 | No open sales order. | Tiada pesanan jualan terbuka. | 没有未完成的销售订单。 |
-| No outstanding delivery order. | Tiada pesanan penghantaran belum dihantar. | 没有未送达的送货单。 |
+| No outstanding delivery order. | Tiada pesanan penghantaran tertunggak. | 没有未送达的送货单。 |
 | Sales order figures are not enabled for your account. | Angka pesanan jualan tidak diaktifkan untuk akaun anda. | 您的账户未开通销售订单数据。 |
 | Reply with a number for detail: | Balas dengan nombor untuk butiran: | 回复数字查看详情： |
 | Reply 1 for the sales order list. | Balas 1 untuk senarai pesanan jualan. | 回复 1 查看销售订单列表。 |
@@ -506,3 +506,12 @@ whole-sentence template, catalog the whole line its builder prints.
   stays English in an ms turn.
 - **AC-CL45:** an en turn's full reply and actions are byte-identical to before slice 4 (run the
   existing console/engine suites green).
+
+## Known gap (slice 3 fix round)
+
+- The outstanding detail offer's quick-reply buttons (`turn/compose.py` ~844) stay English: the
+  typed-answer matcher `decide._positions_by_label` compares a typed answer with the English
+  option labels. The printed offer text is localized; the buttons follow in a later slice.
+- Rule 3 skips a value shaped like a breakdown row (`5 (O/S: 2)`), so a customer named like a
+  catalog label stays untouched. A `Qty ...` value is NOT skipped: `Total: Qty 3, RM 5.00` is a real
+  totals line and must translate (AC-CL31, AC-CL33).

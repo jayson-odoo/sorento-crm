@@ -35,7 +35,7 @@ LABELS: dict[str, dict[str, str]] = {
     "Warehouse": {"ms": "Gudang", "zh": "仓库"},
     "System Location": {"ms": "Lokasi Sistem", "zh": "系统位置"},
     "Quantity On Hand": {"ms": "Kuantiti Ada", "zh": "现有数量"},
-    "Outstanding": {"ms": "Belum Dihantar", "zh": "未交货"},
+    "Outstanding": {"ms": "Tertunggak", "zh": "未交货"},
     "Total": {"ms": "Jumlah", "zh": "总数"},
     "Stock summary for the requested products.": {
         "ms": "Ringkasan stok untuk produk yang diminta.",
@@ -169,7 +169,7 @@ LABELS: dict[str, dict[str, str]] = {
     "Channel": {"ms": "Saluran", "zh": "渠道"},
     "Delivery date": {"ms": "Tarikh penghantaran", "zh": "送货日期"},
     "Ranked by": {"ms": "Disusun mengikut", "zh": "排名依据"},
-    "Basis": {"ms": "Asas", "zh": "基准"},
+    "Basis": {"ms": "Asas", "zh": "统计口径"},
     "Items with sales": {"ms": "Item dengan jualan", "zh": "有销售的项目"},
     "Categories with sales": {"ms": "Kategori dengan jualan", "zh": "有销售的类别"},
     "all": {"ms": "semua", "zh": "全部"},
@@ -177,8 +177,8 @@ LABELS: dict[str, dict[str, str]] = {
     "Amount": {"ms": "Amaun", "zh": "金额"},
     "Quantity": {"ms": "Kuantiti", "zh": "数量"},
     "Delivered (transferred to DO)": {"ms": "Dihantar (dipindahkan ke DO)", "zh": "已送货（已转 DO）"},
-    "Sales order outstanding": {"ms": "Pesanan jualan belum dihantar", "zh": "未交货销售订单"},
-    "Delivery order outstanding": {"ms": "Pesanan penghantaran belum dihantar", "zh": "未送达送货单"},
+    "Sales order outstanding": {"ms": "Pesanan jualan tertunggak", "zh": "未交货销售订单"},
+    "Delivery order outstanding": {"ms": "Pesanan penghantaran tertunggak", "zh": "未送达送货单"},
     "By location": {"ms": "Mengikut lokasi", "zh": "按位置"},
     "By customer": {"ms": "Mengikut pelanggan", "zh": "按客户"},
     "By product": {"ms": "Mengikut produk", "zh": "按产品"},
@@ -187,7 +187,7 @@ LABELS: dict[str, dict[str, str]] = {
     "Delivery order list": {"ms": "Senarai pesanan penghantaran", "zh": "送货单列表"},
     "Both lists": {"ms": "Kedua-dua senarai", "zh": "两个列表"},
     "No open sales order.": {"ms": "Tiada pesanan jualan terbuka.", "zh": "没有未完成的销售订单。"},
-    "No outstanding delivery order.": {"ms": "Tiada pesanan penghantaran belum dihantar.", "zh": "没有未送达的送货单。"},
+    "No outstanding delivery order.": {"ms": "Tiada pesanan penghantaran tertunggak.", "zh": "没有未送达的送货单。"},
     "Sales order figures are not enabled for your account.": {"ms": "Angka pesanan jualan tidak diaktifkan untuk akaun anda.", "zh": "您的账户未开通销售订单数据。"},
     "Reply with a number for detail:": {"ms": "Balas dengan nombor untuk butiran:", "zh": "回复数字查看详情："},
     "Reply 1 for the sales order list.": {"ms": "Balas 1 untuk senarai pesanan jualan.", "zh": "回复 1 查看销售订单列表。"},
@@ -313,6 +313,7 @@ def defaults(lang: str) -> dict[str, str]:
 VALUE_WORDS = frozenset({"all", "Amount", "Quantity", "Ordered", "Delivered (transferred to DO)"})
 RANGE = "{from} to {to}"
 _DATE_RANGE = re.compile(r"(?P<from>\d{2}/\d{2}/\d{4}) to (?P<to>\d{2}/\d{2}/\d{4})")
+_BREAKDOWN_VALUE = re.compile(r"\d[\d,]* \(O/S: ")
 _NUMBERED = re.compile(r"\d+\. ")
 _WRAPPERS = (("*_", "_*"), ("*", "*"), ("_", "_"))
 
@@ -392,8 +393,8 @@ class Localizer:
             if not rest.startswith(left):
                 continue
             head, found, value = rest[len(left) :].partition(sep)
-            if not found or head not in self.table:
-                continue
+            if not found or head not in self.table or _BREAKDOWN_VALUE.match(value):
+                continue  # a breakdown row (`5 (O/S: 2)`) whose name collides with a label is data
             return prefix + left + self.table[head] + sep + self._value(value)
         return line
 

@@ -924,7 +924,7 @@ def test_ac_cl26_low_stock_report_with_an_ms_localizer_renders_as_with_none():
     ms = fetch.output_structurer(copy.deepcopy(env), _ctx(tool, "ms"))
     assert ms["response"] == bare["response"]
     assert "Outstanding SO: 12" in ms["response"]
-    assert "Jumlah" not in ms["response"] and "Belum Dihantar" not in ms["response"]
+    assert "Jumlah" not in ms["response"] and "Tertunggak" not in ms["response"]
 
 
 def test_ac_cl26_sales_analysis_with_an_ms_localizer_renders_as_with_none():

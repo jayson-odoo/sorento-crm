@@ -36,3 +36,13 @@ def test_a_value_equal_to_a_non_value_word_catalog_key_is_untouched(lang):
 def test_a_value_word_after_a_catalogued_label_does_translate():
     assert _loc("ms").lines("Product: all") == "Produk: semua"
     assert _loc("zh").lines("Ranked by: Amount") == "排名依据: 金额"
+
+
+@pytest.mark.parametrize("lang", ["ms", "zh"])
+def test_a_breakdown_row_named_like_a_catalog_label_stays_data(lang):
+    loc = _loc(lang)
+    assert loc.lines("Total: 3 (O/S: 0)") == "Total: 3 (O/S: 0)"
+    assert loc.lines("Product: 1,204 (O/S: 6)") == "Product: 1,204 (O/S: 6)"
+    # A real totals line still translates.
+    assert loc.lines("Total: 51") == loc.table["Total"] + ": 51"
+    assert loc.lines("Total: Qty 3, RM 5.00") == loc.table["Total"] + ": Qty 3, RM 5.00"

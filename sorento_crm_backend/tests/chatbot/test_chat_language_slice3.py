@@ -55,7 +55,7 @@ SLICE3: dict[str, tuple[str, str]] = {
     "Channel": ("Saluran", "渠道"),
     "Delivery date": ("Tarikh penghantaran", "送货日期"),
     "Ranked by": ("Disusun mengikut", "排名依据"),
-    "Basis": ("Asas", "基准"),
+    "Basis": ("Asas", "统计口径"),
     "Items with sales": ("Item dengan jualan", "有销售的项目"),
     "Categories with sales": ("Kategori dengan jualan", "有销售的类别"),
     "all": ("semua", "全部"),
@@ -63,8 +63,8 @@ SLICE3: dict[str, tuple[str, str]] = {
     "Amount": ("Amaun", "金额"),
     "Quantity": ("Kuantiti", "数量"),
     "Delivered (transferred to DO)": ("Dihantar (dipindahkan ke DO)", "已送货（已转 DO）"),
-    "Sales order outstanding": ("Pesanan jualan belum dihantar", "未交货销售订单"),
-    "Delivery order outstanding": ("Pesanan penghantaran belum dihantar", "未送达送货单"),
+    "Sales order outstanding": ("Pesanan jualan tertunggak", "未交货销售订单"),
+    "Delivery order outstanding": ("Pesanan penghantaran tertunggak", "未送达送货单"),
     "By location": ("Mengikut lokasi", "按位置"),
     "By customer": ("Mengikut pelanggan", "按客户"),
     "By product": ("Mengikut produk", "按产品"),
@@ -74,7 +74,7 @@ SLICE3: dict[str, tuple[str, str]] = {
     "Both lists": ("Kedua-dua senarai", "两个列表"),
     "No open sales order.": ("Tiada pesanan jualan terbuka.", "没有未完成的销售订单。"),
     "No outstanding delivery order.": (
-        "Tiada pesanan penghantaran belum dihantar.",
+        "Tiada pesanan penghantaran tertunggak.",
         "没有未送达的送货单。",
     ),
     "Sales order figures are not enabled for your account.": (
@@ -280,7 +280,7 @@ def test_ac_cl31_rule1_whole_line_sentence():
     assert zh.lines("No sales found.") == "未找到销售记录。"
     assert ms.lines("Reply with a number for detail:") == "Balas dengan nombor untuk butiran:"
     assert zh.lines("Reply 1 for the sales order list.") == "回复 1 查看销售订单列表。"
-    assert ms.lines("No outstanding delivery order.") == "Tiada pesanan penghantaran belum dihantar."
+    assert ms.lines("No outstanding delivery order.") == "Tiada pesanan penghantaran tertunggak."
 
 
 def test_ac_cl31_rule1_template_sentence_reinserts_the_values():
@@ -304,7 +304,7 @@ def test_ac_cl31_rule1_template_sentence_reinserts_the_values():
 
 def test_ac_cl31_rule1_a_wrapped_heading_keeps_its_wrapper():
     ms, zh = _loc("ms"), _loc("zh")
-    assert ms.lines("*Sales order outstanding*") == "*Pesanan jualan belum dihantar*"
+    assert ms.lines("*Sales order outstanding*") == "*Pesanan jualan tertunggak*"
     assert zh.lines("*Delivery order outstanding*") == "*未送达送货单*"
     assert ms.lines("*_By location_*") == "*_Mengikut lokasi_*"
     assert zh.lines("*_By customer_*") == "*_按客户_*"
@@ -329,7 +329,7 @@ def test_ac_cl31_rule3_a_label_line_translates_the_label_only():
     assert ms.lines("Sales orders: 3") == "Pesanan jualan: 3"
     assert ms.lines("Transferred to DO: 4") == "Dipindahkan ke DO: 4"
     assert zh.lines("Delivery orders: 2") == "送货单: 2"
-    assert ms.lines("Outstanding: 6") == "Belum Dihantar: 6"
+    assert ms.lines("Outstanding: 6") == "Tertunggak: 6"
     assert ms.lines("Product: SRTWC286") == "Produk: SRTWC286"
     assert ms.lines("Customer: Hanlim Trading") == "Pelanggan: Hanlim Trading"
     assert ms.lines("Location: IB (BRW-IB, MWH-IB)") == "Lokasi: IB (BRW-IB, MWH-IB)"
@@ -527,22 +527,22 @@ def test_ac_cl32_outstanding_report_ms_translates_headers_blocks_and_offer():
         "Pelanggan: semua",
         "Lokasi: IB (BRW-IB, MWH-IB)",
         "Tarikh pesanan: 01/09/2026 hingga 30/09/2026",
-        "*Pesanan jualan belum dihantar*",
+        "*Pesanan jualan tertunggak*",
         "Pesanan jualan: 3",
         "Dipesan: 1,234",
         "Dipindahkan ke DO: 4",
-        "Belum Dihantar: 6",
+        "Tertunggak: 6",
         "Julat tarikh pesanan: 01/09/2026 hingga 30/09/2026",
         "*_Mengikut lokasi_*",
         "BRW-IB: 10 (O/S: 6)",
         "*_Mengikut pelanggan_*",
         "Unassigned: 5 (O/S: 2)",
         "HANLIM TRADING: 5 (O/S: 4)",
-        "*Pesanan penghantaran belum dihantar*",
+        "*Pesanan penghantaran tertunggak*",
         "Pesanan penghantaran: 2",
         "Kuantiti DO: 8",
         "Dihantar: 3",
-        "Belum Dihantar: 5",
+        "Tertunggak: 5",
         "Julat tarikh DO: semua",
         "Balas dengan nombor untuk butiran:",
         "1. Senarai pesanan jualan",
@@ -619,7 +619,7 @@ def test_ac_cl32_a_miss_and_a_refused_half_translate_their_sentences():
     miss["has_result"] = False
     ms = _structure(TOOL_OUTSTANDING, miss, "ms")
     assert "Tiada pesanan jualan terbuka." in ms["response"].split("\n")
-    assert "Tiada pesanan penghantaran belum dihantar." in ms["response"].split("\n")
+    assert "Tiada pesanan penghantaran tertunggak." in ms["response"].split("\n")
     assert "Tarikh pesanan: semua" in ms["response"].split("\n")
     assert ms["has_result"] is False
     assert ms["outstanding_ask"] is None
@@ -654,7 +654,7 @@ def test_ac_cl33_top_selling_zh_translates_title_metric_basis_notes_and_ask():
     for expected in (
         "*最畅销的 3 个项目*",
         "排名依据: 金额",
-        "基准: 订购",
+        "统计口径: 订购",
         "有销售的项目: 12",
         "客户: 全部",
         "类别: 全部",
@@ -672,7 +672,7 @@ def test_ac_cl33_ranked_by_quantity_and_the_delivered_basis_translate():
     env = _envelope(TOOL_TOP, _top_report(rank_by="quantity", basis="delivered"))
     zh = _structure(TOOL_TOP, env, "zh")["response"].split("\n")
     assert "排名依据: 数量" in zh
-    assert "基准: 已送货（已转 DO）" in zh
+    assert "统计口径: 已送货（已转 DO）" in zh
     ms = _structure(TOOL_TOP, env, "ms")["response"].split("\n")
     assert "Disusun mengikut: Kuantiti" in ms
     assert "Asas: Dihantar (dipindahkan ke DO)" in ms
