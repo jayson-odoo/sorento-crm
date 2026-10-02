@@ -3,14 +3,113 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Contact Access mock v3</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
+<title>Chatbot Access mock v3</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
+<style>
+/* tokens copied from sorento_crm_frontend/css/config.reui.css (light) */
+  :root{
+    --background:#fff; --foreground:#09090b; --card:#fff; --primary:#3b82f6; --primary-fg:#fff;
+    --muted:#f4f4f5; --muted-fg:#71717a; --border:oklch(94% 0.004 286.32); --input:#e4e4e7;
+    --success:#15803d; --warning:#a16207; --info:#7c3aed; --destructive:#dc2626; --radius:.5rem;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--background);color:var(--foreground);font:14px/1.45 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  .container{max-width:1280px;margin:0 auto;padding:20px 16px 48px}
+  .crumb{font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg)}
+  h1{font-size:20px;font-weight:600;margin:4px 0 2px}
+  .meta{font-size:13px;color:var(--muted-fg);margin-bottom:16px}
+  .hero{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  .hero .name{font-size:16px;font-weight:600}
+  .btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--radius);border:1px solid var(--input);background:#fff;font:inherit;font-size:13px;font-weight:500;cursor:pointer}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-fg)}
+  .btn.ghost{border-color:transparent;background:transparent;color:var(--muted-fg)}
+  .tabs{display:flex;gap:32px;border-bottom:1px solid var(--border);margin-bottom:20px;overflow-x:auto}
+  .tab{padding:10px 0;font-size:14px;font-weight:500;color:var(--muted-fg);border-bottom:2px solid transparent;white-space:nowrap}
+  .tab.active{color:var(--primary);border-color:var(--primary)}
+  .card{border:1px solid var(--border);border-radius:12px;background:var(--card);box-shadow:0 1px 2px rgba(0,0,0,.05);margin-bottom:20px}
+  .card-h{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+  .card-t{font-size:15px;font-weight:600}
+  .card-b{padding:16px 20px}
+  .badge{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:500;background:var(--muted);color:var(--foreground);white-space:nowrap}
+  .badge.primary{background:#eff6ff;color:#1d4ed8}
+  .badge.success{background:#f0fdf4;color:var(--success)}
+  .badge.warning{background:#fefce8;color:var(--warning)}
+  .badge.destructive{background:#fef2f2;color:var(--destructive)}
+  .badge.outline{background:transparent;border:1px solid var(--input);color:var(--muted-fg)}
+  .badge .x{cursor:pointer;opacity:.6}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .select{min-width:220px;height:32px;border:1px solid var(--input);border-radius:var(--radius);padding:0 10px;display:inline-flex;align-items:center;color:var(--muted-fg);font-size:13px}
+  /* domain tree */
+  .tree{list-style:none;margin:0;padding:0}
+  .d{border-bottom:1px solid var(--border)}
+  .d:last-child{border-bottom:0}
+  .d-h{display:grid;grid-template-columns:20px 18px minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 20px;cursor:pointer}
+  .d-h:hover{background:#fafafa}
+  .chev{color:var(--muted-fg);font-size:12px;transition:transform .2s cubic-bezier(.2,0,0,1)}
+  .d.open .chev{transform:rotate(90deg)}
+  .lbl{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lbl small{display:block;font-weight:400;color:var(--muted-fg);font-size:12px;overflow:hidden;text-overflow:ellipsis}
+  .src{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+  .fields{display:none;padding:2px 20px 12px 68px}
+  .d.open .fields{display:block}
+  .f{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:10px;align-items:center;padding:5px 0}
+  .f .lbl{font-weight:400}
+  input[type=checkbox]{width:16px;height:16px;accent-color:var(--primary);margin:0}
+  .hint{font-size:12px;color:var(--muted-fg)}
+  .hint.off{color:var(--warning)}
+  .muted-row{color:var(--muted-fg)}
+  .summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .stat{border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px}
+  .stat b{display:block;font-size:18px;font-weight:600}
+  .stat span{font-size:12px;color:var(--muted-fg)}
+  .esc{font-size:12px;color:var(--muted-fg);display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}
+  .esc b{font-weight:500;color:var(--foreground)}
+  .switch{width:32px;height:18px;border-radius:999px;background:var(--primary);position:relative;flex:none}
+  .switch:after{content:"";position:absolute;right:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff}
+  .esc-t{width:100%;border-collapse:collapse;font-size:13px}
+  .esc-t td,.esc-t th{padding:7px 8px;border-bottom:1px solid var(--border);text-align:left}
+  .esc-t th{font-weight:500;color:var(--muted-fg);font-size:12px}
+  .map{font-size:13px}
+  .map td,.map th{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+  .map code{font-size:12px}
+  @media (max-width:640px){
+    .d-h{grid-template-columns:16px 18px minmax(0,1fr);padding:10px 16px}
+    .d-h .src{grid-column:3;justify-content:flex-start}
+    .fields{padding-left:52px;padding-right:16px}
+    .card-h,.card-b{padding-left:16px;padding-right:16px}
+    .summary{grid-template-columns:1fr}
+    .select{min-width:0;width:100%}
+  }
+.grid{width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px}
+.grid th{font-size:12px;font-weight:500;color:var(--muted-fg);text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);background:#fafafa}
+.grid td{padding:10px 12px;border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grid tr.link:hover td{background:#fafafa;cursor:pointer}
+.toolbar{display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+.search{height:32px;border:1px solid var(--input);border-radius:var(--radius);padding:0 10px;min-width:240px;font:inherit;font-size:13px}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;padding:16px}
+.overlay.show{display:flex}
+.modal{background:#fff;border-radius:12px;width:100%;max-width:480px;box-shadow:0 10px 30px rgba(0,0,0,.2)}
+.modal .card-b label{display:block;font-size:13px;font-weight:500;margin:10px 0 4px}
+.input{width:100%;height:34px;border:1px solid var(--input);border-radius:var(--radius);padding:0 10px;font:inherit;font-size:13px}
+.foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--border)}
+.countdown{border-color:var(--destructive);color:var(--destructive)}
+a{color:var(--primary)}
+@media (max-width:640px){.search{min-width:0;width:100%}.grid .hide-sm{display:none}}
+
+.mocknav{position:sticky;top:0;z-index:5;background:#18181b;color:#fff;display:flex;gap:4px;padding:8px 16px;overflow-x:auto;font-size:13px}
+.mocknav button{background:transparent;border:0;color:#a1a1aa;font:inherit;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.mocknav button.on{background:#3f3f46;color:#fff}
+.mocknav span{color:#71717a;padding:6px 8px 6px 0;white-space:nowrap}
+.view{display:none} .view.on{display:block}
+</style>
 </head>
 <body>
-<div class="container">
-  <div class="crumb">User management / Contacts &middot; <a href="roles.html">mock: Chatbot Roles admin &rarr;</a></div>
+<nav class="mocknav"><span>Mock v3:</span>
+<button data-v="contact" class="on" onclick="show('contact')">Contact access</button>
+<button data-v="roles" onclick="show('roles')">Chatbot roles</button>
+<button data-v="role" onclick="show('role')">Role: Purchasing</button></nav>
+<section class="view on" id="v-contact"><div class="container">
+  <div class="crumb">User management / Contacts</div>
   <h1>Contact Details</h1>
   <div class="meta">Respond.io ID hidden in mock &middot; data: local prod copy 25 Sep, contact "Sorento - Jereen"</div>
 
@@ -31,7 +130,7 @@
     </div>
     <div class="card-b">
       <div class="row">
-        <a href="role.html" class="badge primary" style="text-decoration:none">Purchasing <span class="x" title="Remove role">&times;</span></a>
+        <a href="#" onclick="show('role');return false" class="badge primary" style="text-decoration:none">Purchasing <span class="x" title="Remove role">&times;</span></a>
       </div>
       <div class="summary" style="margin-top:14px">
         <div class="stat"><b>12 of 16</b><span>domains granted</span></div>
@@ -94,7 +193,124 @@
   </div>
 </div>
 
+</section>
+<section class="view" id="v-roles"><div class="container">
+  <div class="crumb">User management / Access</div>
+  <div class="hero" style="margin-top:4px">
+    <h1>Chatbot Roles</h1>
+    <button class="btn primary" onclick="document.getElementById('new').classList.add('show')">Add role</button>
+  </div>
+
+  <div class="card">
+    <div class="card-h toolbar">
+      <input class="search" placeholder="Search roles">
+      <span class="hint">5 roles</span>
+    </div>
+    <div style="overflow-x:auto">
+    <table class="grid">
+      <colgroup><col style="width:180px"><col><col style="width:110px"><col style="width:90px"><col style="width:150px" class="hide-sm"></colgroup>
+      <thead><tr><th>Role</th><th>Domains</th><th>Contacts</th><th>Customers</th><th class="hide-sm">Updated</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><div class="card-t">Mock notes: element &rarr; existing component (not on the real screen)</div></div>
+    <div class="card-b" style="overflow-x:auto">
+      <table class="map"><tbody>
+        <tr><th>Menu entry</th><td>"Chatbot Roles" under User management &gt; Access (<code>config/menu.config.tsx:760-782</code>, next to AI Agents); "Roles" there is staff RBAC, so this one is named apart</td></tr>
+        <tr><th>List</th><td><code>DataGrid</code> with <code>tableLayout: { width: 'fixed', columnsResizable: true }</code>, <code>rowHref</code> to the role page, toolbar search (pattern <code>UM/access-agents/components/AccessAgentsList.tsx</code>)</td></tr>
+        <tr><th>Header + Add</th><td><code>components/common/PageHeader.tsx</code>, one CTA</td></tr>
+        <tr><th>Add role modal</th><td><code>components/ui/dialog.tsx</code> form: name, description, "Sees all customers" <code>Switch</code>; create = modal (CRUD standard); ticks are set on the role page</td></tr>
+        <tr><th>Domain count chips</th><td><code>components/common/PillOverflow.tsx</code> + <code>Badge</code></td></tr>
+        <tr><th>Customers column</th><td><code>Badge</code> "All" / "Linked"</td></tr>
+        <tr><th>Data</th><td>Role presets from card section 2; contact counts = mapping SQL part B on the 25 Sep prod copy</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="new" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal">
+    <div class="card-h"><div class="card-t">Add role</div></div>
+    <div class="card-b">
+      <label>Name</label><input class="input" placeholder="e.g. Project sales">
+      <label>Description</label><input class="input">
+      <label style="display:flex;align-items:center;gap:8px;margin-top:14px"><span class="switch" style="background:var(--input)"></span> Sees all customers</label>
+    </div>
+    <div class="foot"><button class="btn" onclick="document.getElementById('new').classList.remove('show')">Cancel</button><button class="btn primary">Create</button></div>
+  </div>
+</div>
+
+</section>
+<section class="view" id="v-role"><div class="container">
+  <div class="crumb"><a href="#" onclick="show('roles');return false">Chatbot Roles</a> / Purchasing</div>
+  <div class="hero" style="margin-top:4px">
+    <h1>Purchasing</h1>
+    <div class="row">
+      <button class="btn ghost" aria-label="Previous role">&lsaquo;</button><button class="btn ghost" aria-label="Next role">&rsaquo;</button>
+      <button class="btn" onclick="document.getElementById('edit').classList.add('show')">Rename</button>
+      <button class="btn" id="del" onclick="startDelete()">Delete</button>
+      <button class="btn primary">Save (0)</button>
+    </div>
+  </div>
+  <div class="meta">5 contacts &middot; Sees all customers &middot; Updated 2 Oct 2026</div>
+
+  <div class="card">
+    <div class="card-h"><div class="card-t">Domains and fields</div><button class="btn">Expand all</button></div>
+    <ul class="tree" id="rtree"></ul>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><div class="card-t">Contacts with this role</div><div class="select">Add contacts&hellip;</div></div>
+    <div style="overflow-x:auto">
+    <table class="grid">
+      <colgroup><col><col style="width:200px" class="hide-sm"><col style="width:100px"></colgroup>
+      <thead><tr><th>Contact</th><th class="hide-sm">Other roles</th><th></th></tr></thead>
+      <tbody>
+        <tr class="link"><td><a href="#" onclick="show('contact');return false">Sorento - Jereen</a></td><td class="hide-sm">-</td><td><button class="btn ghost">Unlink</button></td></tr>
+        <tr class="link"><td>Vixx Loo</td><td class="hide-sm">-</td><td><button class="btn ghost">Unlink</button></td></tr>
+        <tr class="link"><td>CK@Sorento</td><td class="hide-sm">-</td><td><button class="btn ghost">Unlink</button></td></tr>
+        <tr class="link"><td>Jayden Loo</td><td class="hide-sm">-</td><td><button class="btn ghost">Unlink</button></td></tr>
+        <tr class="link"><td>CK Lee</td><td class="hide-sm">-</td><td><button class="btn ghost">Unlink</button></td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><div class="card-t">Mock notes: element &rarr; existing component (not on the real screen)</div></div>
+    <div class="card-b" style="overflow-x:auto">
+      <table class="map"><tbody>
+        <tr><th>Page</th><td><code>/user-management/chatbot-roles/[id]</code>; <code>PageHeader</code> + <code>RecordNavigation</code>; read-only metadata line under the header (<code>ContactMeta</code> pattern, <code>UM/contacts/[id]/layout.tsx:154</code>)</td></tr>
+        <tr><th>View = Edit</th><td>ticks are edited in place; one Save (n) sends changed rows only (<code>AgentFieldAccessCard.tsx</code> pattern)</td></tr>
+        <tr><th>Domain tree</th><td>same component as the contact Access tab (<code>collapsible.tsx</code> + <code>checkbox.tsx</code> indeterminate), without "added here" badges; the hand-off line reads the domain row</td></tr>
+        <tr><th>Rename</th><td><code>components/ui/dialog.tsx</code> modal: name, description, "Sees all customers" <code>Switch</code></td></tr>
+        <tr><th>Delete</th><td><code>components/common/DeferredActionButton.tsx</code>: 10 s countdown with Cancel, no confirm dialog; refused while contacts hold the role (server 409 names the count)</td></tr>
+        <tr><th>Contacts</th><td><code>DataGrid</code> + <code>SearchableMultiSelect</code> to add; Unlink = 5 s reversible deferred action (<code>useDeferredRowAction</code>, as <code>ContactCustomersSection.tsx</code>)</td></tr>
+        <tr><th>Holders</th><td>the 5 Purchasing contacts from mapping SQL part A on the 25 Sep prod copy</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="edit" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal">
+    <div class="card-h"><div class="card-t">Rename role</div></div>
+    <div class="card-b">
+      <label>Name</label><input class="input" value="Purchasing">
+      <label>Description</label><input class="input" value="Buyers: purchase orders, last cost, supplier">
+      <label style="display:flex;align-items:center;gap:8px;margin-top:14px"><span class="switch"></span> Sees all customers</label>
+    </div>
+    <div class="foot"><button class="btn" onclick="document.getElementById('edit').classList.remove('show')">Cancel</button><button class="btn primary">Save</button></div>
+  </div>
+</div>
+
+</section>
 <script>
+function show(v){document.querySelectorAll('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));document.querySelectorAll('.mocknav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));window.scrollTo(0,0);}
+
 // Purchasing role preset (behaviour card section 2) + this contact's real override:
 // Sorento - Jereen holds 20 incoming field overrides today (agent_field_access contact rows).
 const D = [
@@ -143,6 +359,63 @@ D.forEach((d,i)=>{
   if (on(d.st) && d.e) document.getElementById('esc').insertAdjacentHTML('beforeend',
     `<tr><td>${d.n}</td><td>${d.e[0]}</td><td>${d.e[1]}</td><td>${d.e[2]}</td></tr>`);
 });
+
+
+const R = [
+  ['Dealer', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock'], 0, 'Linked'],
+  ['Sales office', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock','Last in (SPO)','Purchase orders'], 87, 'All'],
+  ['Purchasing', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock','Last in (SPO)','Purchase orders','Last purchase cost'], 5, 'All'],
+  ['Warehouse', ['Product','Stock','Incoming stock','Last in (SPO)','Low stock report'], 0, 'All'],
+  ['Management', ['all 16'], 2, 'All'],
+];
+document.getElementById('rows').innerHTML = R.map(([n,d,c,s])=>{
+  const shown = d.slice(0,3).map(x=>`<span class="badge">${x}</span>`).join(' ');
+  const more = d.length>3 ? ` <span class="badge outline">+${d.length-3}</span>` : '';
+  return `<tr class="link" onclick="show('role')"><td><b style="font-weight:500">${n}</b></td>
+    <td title="${d.join(', ')}">${shown}${more}</td><td>${c}</td>
+    <td><span class="badge ${s==='All'?'primary':''}">${s}</span></td><td class="hide-sm">2 Oct 2026</td></tr>`;
+}).join('');
+
+
+function startDelete(){
+  const b=document.getElementById('del'); let n=10; b.classList.add('countdown');
+  const t=setInterval(()=>{ b.textContent=`Deleting in ${n}s · Cancel`; if(--n<0){clearInterval(t);b.textContent='Refused: 5 contacts hold this role';} },1000);
+  b.onclick=()=>{clearInterval(t);b.classList.remove('countdown');b.textContent='Delete';b.onclick=startDelete;};
+}
+const E2 = {
+  product:['General Enquiries','purchasing','Purchasing - Product, Stock Inquiry'], mprod:['General Enquiries','marketing_product','Marketing - Product'],
+  promo:['General Enquiries','marketing_promotion','Marketing - Promotion Sorento'], forms:['Marketing Form','marketing_form','Marketing - Forms'],
+  wh:['General Enquiries','warehouse','Warehouse Executive'], cs:['Order Enquiries','customer_service','DO Customer Service'],
+  inc:['Incoming Stock Enquiries','purchasing','Purchasing - Incoming'],
+};
+const D2 = [
+  {n:'Product', on:1, e:E2.product}, {n:'Product attachments', on:1, e:E2.mprod}, {n:'Resource attachments', on:1},
+  {n:'Promotions', on:1, e:E2.promo}, {n:'Forms', on:1, e:E2.forms}, {n:'Portal link', on:1},
+  {n:'Stock', on:1, e:E2.wh, hint:'Stock visibility mode stays per contact (Profile tab)', f:[{n:'Outstanding SO on stock (sellable)',on:1},{n:'PO on order qty',on:1}]},
+  {n:'Orders / DO', on:1, e:E2.cs},
+  {n:'Incoming stock', on:1, e:E2.inc, f:[{n:'ETA',on:1},{n:'Container no.',on:1},{n:'Remaining qty',on:1},{n:'Consignee',on:0},{n:'China forwarder',on:0},{n:'Malaysia forwarder',on:0},{n:'Liner code',on:0},{n:'COA permit no.',on:0},{n:'Delivery warehouse',on:0},{n:'ETD / ETC / loading / inspection dates',on:0},{n:'Free days, LOC, stacked',on:0}]},
+  {n:'Last in (SPO)', on:1, p:'SPO LAST RECEIPT', f:[{n:'SPO number',on:1}]},
+  {n:'Purchase orders', on:1, e:E2.product, p:'PURCHASE ORDERS', f:[{n:'Supplier',on:1},{n:'PO number',on:1}]},
+  {n:'Last purchase cost', on:1, e:E2.product, p:'LAST PURCHASE COST', f:[{n:'Supplier',on:1}]},
+  {n:'Outstanding SO report', on:0, e:E2.cs, p:'ORDER_STATUS so_outstanding'},
+  {n:'Sales report', on:0, e:E2.cs, p:'SALES REPORT, SALES ANALYSIS, TOP SELLING'},
+  {n:'Low stock report', on:0, e:E2.wh, p:'LOW STOCK REPORT'},
+  {n:'Ideas', on:0, p:'IDEATION CONTINUATION'},
+];
+const rtree=document.getElementById('rtree');
+D2.forEach(d=>{
+  const li=document.createElement('li'); li.className='d'; const hasF=d.f&&d.f.length;
+  const some=hasF && d.on && d.f.some(f=>!f.on);
+  const sub = d.p ? `<small>${d.on?'Unticking removes from prompt':'Not in prompt'}: ${d.p}</small>` : d.hint ? `<small>${d.hint}</small>` : '';
+  li.innerHTML=`<div class="d-h"><span class="chev">${hasF?'&#9654;':''}</span><input type="checkbox" ${d.on?'checked':''} aria-label="${d.n}">
+    <div class="lbl">${d.n}${sub}${d.e?`<div class="esc">Hand-off: <b>${d.e[2]}</b> &middot; ${d.e[0]} / ${d.e[1]}</div>`:'<div class="esc">No hand-off</div>'}</div>
+    <div class="src">${hasF?`<span class="badge outline">${d.f.filter(f=>f.on).length} of ${d.f.length} fields</span>`:''}</div></div>`+
+    (hasF?`<div class="fields">${d.f.map(f=>`<div class="f"><input type="checkbox" ${f.on?'checked':''} aria-label="${f.n}"><div class="lbl">${f.n}</div><div></div></div>`).join('')}</div>`:'');
+  if(some) li.querySelector('input').indeterminate=true;
+  if(hasF) li.querySelector('.d-h').addEventListener('click',e=>{ if(e.target.tagName!=='INPUT') li.classList.toggle('open'); });
+  rtree.appendChild(li);
+});
+
 </script>
 </body>
 </html>
