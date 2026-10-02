@@ -40,10 +40,13 @@ behaviour holds; the per-contact switch is the existing field override (untick o
 Hidden stamp = the line prints bare and the "None of these have incoming" sentence is dropped; the
 roster itself is unchanged. Mock change: two extra rows (flagged; mock v5 after the answers).
 
-**C. Region (REGION-PACKING-LIST lane, coming).** Region (West / East Malaysia; East sees both) is a
-SCOPE dimension like customer scope, not a domain: proposed shape for that lane is a role flag set or a
-contact-level value read through `EffectiveAccess` (add `regions: frozenset[str]`), so enforcement keeps
-one reader. Answered when that lane asks.
+**C. Region (REGION-PACKING-LIST lane, agreed 2 Oct).** Region (West / East Malaysia; East sees both)
+is a contact fact owned by that lane: `respond_contacts.regions text[]` (default `{west}`), read by the
+incoming routes themselves (`eta_policy.rules_for_contact`, `incoming_stock_service.py`). This lane does
+not touch it and `EffectiveAccess` does not carry it; trigger to expose `EffectiveAccess.regions`
+read-only = a second reader outside incoming. Agreed asks to that lane: duplicate respond.io rows take
+the intersection of regions (as AC-AM-8); its control sits in its own block of
+`ContactChatbotSection.tsx` because Q2 (a) here removes the Tier picker from the same file.
 
 ## Key design choice: keep every enforcement seam, change only what fills it
 
