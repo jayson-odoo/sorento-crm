@@ -473,6 +473,31 @@ def require_any_permission(permission_slugs: List[str]):
     return _require
 
 
+def require_session_or_api_key_permission(permission_slug: str):
+    """A shared lookup: any signed-in session reads it; an API key still needs ``permission_slug``.
+
+    Owner ruling 1 Oct 2026 (never-stuck L10) opens pickers such as the master-data selects
+    to every signed-in user. An integration, though, acts with its act-as user's grants
+    (``integration_auth.py``), so a key whose act-as user lacks the slug stays refused.
+    """
+
+    def _require(
+        current_user: dict = Depends(get_current_user_or_api_key),
+        db: Session = Depends(get_db),
+    ) -> dict:
+        if current_user.get("auth_method") in {"api_key", "integration_api_key"}:
+            if not UserPermissionService(db).check_user_has_permission(
+                current_user["id"], permission_slug
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Permission required: {permission_slug}",
+                )
+        return current_user
+
+    return _require
+
+
 def require_permission_with_api_key(permission_slug: str):
     """
     Same as require_permission but allows X-API-Key (with act-as user) for automation.

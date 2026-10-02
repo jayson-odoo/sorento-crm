@@ -15,6 +15,7 @@ import { MyDownloadsProvider } from '@/components/my-downloads/MyDownloadsContex
 import { MyDownloadsDrawer } from '@/components/my-downloads/MyDownloadsDrawer';
 import { CompanyProvider } from '@/app/providers/CompanyProvider';
 import PushPrompts from '@/components/pwa/PushPrompts';
+import PermissionsLoadBanner from '@/app/components/common/PermissionsLoadBanner';
 
 export default function ProtectedLayout({
   children,
@@ -67,6 +68,9 @@ export default function ProtectedLayout({
                 routed page arrives with no key of its own: without these, every
                 page logged a missing-key error (the dev "1 Issue" badge, #1286). */}
             <PushPrompts key="push-prompts" />
+            {/* A failed permission check hides menus and buttons (fail closed);
+                this says so, with Retry, instead of leaving a thinner app (L6). */}
+            <PermissionsLoadBanner key="permissions-load-banner" />
             <Fragment key="page">{children}</Fragment>
           </Demo1Layout>
           <UploadActivityDrawer />

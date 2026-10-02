@@ -16,6 +16,7 @@ import re
 from dataclasses import replace
 from typing import Any
 
+from app.services.chatbot.turn import refer
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS, Pending, ask
 from app.services.chatbot.turn.task import MAX_NAMED, MAX_SLOTS, REFER_TO_SALESMAN, numbered
 
@@ -56,7 +57,7 @@ def without_escalation(text: str, question: Pending | None) -> tuple[str, Pendin
     if REFER_TO_SALESMAN in body:
         # ESCALATION-CONTROL: a blocked contact's composer already printed the line.
         return body, question
-    return (f"{body}\n\n{REFER_TO_SALESMAN}" if body else REFER_TO_SALESMAN), question
+    return refer.after(body), question
 
 
 def did_you_mean(

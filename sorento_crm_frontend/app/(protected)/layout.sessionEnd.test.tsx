@@ -37,6 +37,7 @@ vi.mock('@/components/my-downloads/MyDownloadsContext', () => ({ MyDownloadsProv
 vi.mock('@/components/my-downloads/MyDownloadsDrawer', () => ({ MyDownloadsDrawer: () => null }));
 vi.mock('@/app/providers/CompanyProvider', () => ({ CompanyProvider: Pass }));
 vi.mock('@/components/pwa/PushPrompts', () => ({ default: () => null }));
+vi.mock('@/app/components/common/PermissionsLoadBanner', () => ({ default: () => null }));
 
 describe('ProtectedLayout when the NextAuth session is gone', () => {
   beforeEach(() => {

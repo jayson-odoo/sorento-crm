@@ -29,7 +29,7 @@ import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect
 import { useComplaintRootCausesSelect } from '../../complaint-root-causes/hooks/useComplaintRootCauses';
 import { useComplaintResolutionsSelect } from '../../complaint-resolutions/hooks/useComplaintResolutions';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getUsersSelect } from '@/services/userSelectService';
+import { getUserLookup } from '@/services/userSelectService';
 import { useComplaints, useExportComplaintPdf } from '../hooks/useComplaints';
 import { complaintStatusPillClass, complaintStatusLabel } from '@/lib/complaint-status';
 import type { Complaint } from '../types/complaint.types';
@@ -109,8 +109,8 @@ export default function ComplaintsList() {
   });
 
   const { data: respondSyncedUsers = [] } = useQuery({
-    queryKey: ['users-select', 'respond_synced', 'successful'],
-    queryFn: () => getUsersSelect({ respond_synced: 'successful' }),
+    queryKey: ['user-lookup', 'respond-synced', 'with-inactive'],
+    queryFn: () => getUserLookup({ respond_synced: true, include_inactive: true }),
     staleTime: 60_000,
   });
   const assigneeOptions = respondSyncedUsers.filter((u) => u.respond_user_id);
@@ -430,7 +430,7 @@ export default function ComplaintsList() {
                         { value: '__unassigned__', label: 'Unassigned' },
                         ...assigneeOptions.map((u) => ({
                           value: u.respond_user_id!,
-                          label: u.name || u.email || 'Unnamed user',
+                          label: u.name || 'Unnamed user',
                         })),
                       ]}
                       placeholder="All assignees"

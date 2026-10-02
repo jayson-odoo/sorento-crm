@@ -11,6 +11,7 @@ import { toast } from '@/lib/toast';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { registerRevisionStaleHandler } from '@/lib/revision-fence';
 import { pendingEntityStore } from '@/lib/pending-entity-store';
+import { isAccessDenied } from '@/lib/api-client';
 import { isSessionEnding, registerViewAsEndedHandler } from '@/lib/session-end';
 
 const QueryProvider = ({ children }: { children: ReactNode }) => {
@@ -85,9 +86,7 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
           // independently. Without deduplication that produces a stack of red
           // toasts. Sonner dedupes by `id`, so a single fixed id collapses
           // them into one.
-          const isPermissionError =
-            message.startsWith('Permission required:') ||
-            message.startsWith('One of these permissions required:');
+          const isPermissionError = isAccessDenied(error);
 
           if (isPermissionError) {
             toast.custom(
