@@ -267,8 +267,34 @@ Order per turn:
 7. ss failure anywhere: today's graceful "couldn't save" reply, status `error`, pointer untouched.
 8. `is_test`: pointer never persisted (as today); `is_test` sent to ss.
 
-Wording lives in one module (`ideation_capture_replies.py`) so Q5 changes one file. Until Q5 the
-card's proposed wording is used. The CRM link is built only from `settings.frontend_base_url` and
+Wording and language (Q5, mechanism relayed by crew 2 Oct):
+
+- The copy lives in ONE place, `BE/app/services/chatbot_reply_copy.py` `FALLBACK_REPLY_COPY`,
+  as `ideation_capture_*` entries with `en` / `ms` / `zh` texts and declared `{{tokens}}`, the
+  same shape as the fallback copy there (`:247-345`), so CHAT-LANGUAGE can migrate it with the
+  rest. Values (idea number, title, links, the missing-field names) are tokens filled by code;
+  the missing-field names stay in English in every language (owner: "exact").
+- `render_reply(kind, facts, *, user_message, language)` in `ideation_capture_replies.py` is the
+  one function every reply goes through. It picks the `.ms` / `.zh` key the way
+  `chatbot/copy.py:57` `render_in` does and resolves the text through `ai_prompt_registry` (an
+  owner edit wins, the shipped text is the fallback).
+- Why not call `copy.render_in` / `fallback.pick_language` directly: core must never import
+  `app.services.chatbot` (AC-002, `tests/chatbot/test_import_boundary.py`), and this service is
+  core (the external endpoint calls it). So `ideation_capture_replies.py` carries a ~10 line twin
+  of `render_in` over the same core tables (`FALLBACK_LANGUAGES`, `language_suffix`), and the
+  language rule of `pick_language` (first known of en/ms/zh, else en). CHAT-LANGUAGE should lift
+  both into core and delete the twin.
+- Which language: the extractor already reads the message once per turn; its schema gains
+  `language` (`en` / `ms` / `zh` / null). A held similar-list stores the language of the
+  ORIGINAL message, so a bare "2" or "NEW" (no language signal) answers in that language. The
+  contact's saved profile language is not on this path (the engine reads it, the external
+  endpoint does not); trigger to add it: CHAT-LANGUAGE.
+- No-access and unconfigured replies also follow the language, so the extractor runs before
+  those gates (one LLM call, no ss call).
+- No seed migration for the new keys in this lane: the registry falls back to the shipped text
+  when a key has no row (`515_chatbot_offer_declined_copy.py` docstring), so the bot speaks
+  either way. Owner editing in Settings > AI Prompts needs the seed; one-line migration when the
+  owner asks for it. The CRM link is built only from `settings.frontend_base_url` and
 the ss `id` validated as a UUID; no ss-supplied URL is relayed for the CRM link.
 
 C2 (after C1 green): remove the dead draft path (`handle_turn`, media lookback, the composer's
