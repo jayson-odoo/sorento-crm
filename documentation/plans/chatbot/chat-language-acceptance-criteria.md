@@ -525,3 +525,39 @@ whole-sentence template, catalog the whole line its builder prints.
    inline pass. This is accepted: the sentence is the shipped wording.
 3. **Token boundaries:** a `{token}` matches lazily and never spans a newline. A template match
    must end at the template's final punctuation, followed by end of line or a space.
+
+**Slice 4 fix round (review, 2 Oct):**
+
+- **Labels and joiners move to compose, as designed.** `turn/compose.py` passes the localizer to
+  `_join_words` / `_join_words_and` (" or " becomes " atau " / "或", " and " becomes " dan " /
+  "和"). It translates the domain label (`row.label`, the policy word, never a value) before
+  building `"*{label}* for {codes}:"`, `"I could not fetch {label} ..."`,
+  `"*{label}*: this is not enabled ..."` and `"Nothing on {names} either."`. The final pass then
+  only swaps the fixed sentence around tokens it keeps verbatim. Nothing in `reply()` splits a
+  token value: `_word_token` goes.
+- **Messages answered ahead** (`engine.py:~2610`) keep the language their own turn chose. Each
+  is localized with its own item's `reply_language`, or left as composed when that item carries
+  none.
+- **The trace** shows what was sent. `_localize_result` patches the trace's `sent` / `replied`
+  raw records the way `_repersist_media_prefixed_reply` (`engine.py:~6344`) does.
+
+New catalog rows:
+
+| English | ms | zh |
+|---|---|---|
+| Your request is out of the scope of my ability and require human assistance. We are directing your enquiry to the correct person. Please wait for a moment. | Permintaan anda di luar kemampuan saya dan memerlukan bantuan kakitangan. Kami sedang menghubungkan pertanyaan anda kepada orang yang betul. Sila tunggu sebentar. | 您的请求超出了我的能力范围，需要人工协助。我们正在将您的询问转交给相关负责人，请稍候。 |
+| This inquiry has been routed to the respective person-in-charge (PIC) from {team} team. We will get back to you soon. Thanks for your patience. | Pertanyaan ini telah diserahkan kepada pegawai bertanggungjawab (PIC) daripada pasukan {team}. Kami akan menghubungi anda tidak lama lagi. Terima kasih atas kesabaran anda. | 此询问已转交给 {team} 团队的相关负责人（PIC）。我们会尽快回复您，感谢您的耐心等待。 |
+| {header} I found {count}, please type a little more of the name. | {header} Saya menemui {count}, sila taip lebih sedikit daripada nama itu. | {header} 我找到 {count} 个，请多输入一些名称。 |
+| and {n} others, reply with the full code. | dan {n} lagi, balas dengan kod penuh. | 还有 {n} 个，请回复完整代码。 |
+| Couldn't find {names}. | Tidak dapat menemui {names}. | 找不到 {names}。 |
+| I have {names}. | Saya ada {names}. | 我已记下 {names}。 |
+| What would you like me to know? | Apa yang anda mahu saya tahu? | 您想让我了解什么？ |
+| Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container | Maaf, kami belum menyokong penerimaan barang terus & SPO buat masa ini. Anda boleh bertanya tentang stok masuk bagi produk atau kontena tertentu | 抱歉，我们目前暂不支持直接收货和 SPO 查询。您可以询问特定产品或货柜的到货库存 |
+| Do you mean customer {customer} or sales agent {agent}? Reply 1 for the customer, 2 for the sales agent. | Adakah anda maksudkan pelanggan {customer} atau ejen jualan {agent}? Balas 1 untuk pelanggan, 2 untuk ejen jualan. | 您是指客户 {customer} 还是销售代理 {agent}？回复 1 选择客户，回复 2 选择销售代理。 |
+| Do you mean a customer named '{word}' or sales agent {agent}? Reply 1 for the customer, 2 for the sales agent. | Adakah anda maksudkan pelanggan bernama '{word}' atau ejen jualan {agent}? Balas 1 untuk pelanggan, 2 untuk ejen jualan. | 您是指名为 '{word}' 的客户还是销售代理 {agent}？回复 1 选择客户，回复 2 选择销售代理。 |
+
+`"{header} I found ..."`: the coder renders the header through the localizer first, the same
+way as labels. The offer-hold clause `" - reply a number, a name, or the company ({companies})
+and I'll assign automatically."` and its no-companies twin are catalogued as the WHOLE line
+`lanes/canned.py:~170` prints (lead + clause). The coder reads the lead's exact text, and if
+that lead is dynamic, records it as a Known gap.
