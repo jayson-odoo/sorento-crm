@@ -914,7 +914,7 @@ def entities_only_reply(
         lead = (
             f"I read {_join_words_and(placed, localizer)} from that photo."
             if from_photo
-            else f"I have {_join_words_and(placed, localizer)}."
+            else localizer.fill("I have {names}.", names=_join_words_and(placed, localizer))
         )
         parts.append(lead)
     if unplaced:

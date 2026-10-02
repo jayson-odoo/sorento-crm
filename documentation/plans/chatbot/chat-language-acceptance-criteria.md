@@ -547,7 +547,7 @@ New catalog rows:
 |---|---|---|
 | Your request is out of the scope of my ability and require human assistance. We are directing your enquiry to the correct person. Please wait for a moment. | Permintaan anda di luar kemampuan saya dan memerlukan bantuan kakitangan. Kami sedang menghubungkan pertanyaan anda kepada orang yang betul. Sila tunggu sebentar. | 您的请求超出了我的能力范围，需要人工协助。我们正在将您的询问转交给相关负责人，请稍候。 |
 | This inquiry has been routed to the respective person-in-charge (PIC) from {team} team. We will get back to you soon. Thanks for your patience. | Pertanyaan ini telah diserahkan kepada pegawai bertanggungjawab (PIC) daripada pasukan {team}. Kami akan menghubungi anda tidak lama lagi. Terima kasih atas kesabaran anda. | 此询问已转交给 {team} 团队的相关负责人（PIC）。我们会尽快回复您，感谢您的耐心等待。 |
-| {header} I found {count}, please type a little more of the name. | {header} Saya menemui {count}, sila taip lebih sedikit daripada nama itu. | {header} 我找到 {count} 个，请多输入一些名称。 |
+| {header} I found {count}, please type a little more of the name. | {header} Saya menemui {count}, sila taip lebih sedikit daripada nama itu. | {header}我找到 {count} 个，请多输入一些名称。 |
 | and {n} others, reply with the full code. | dan {n} lagi, balas dengan kod penuh. | 还有 {n} 个，请回复完整代码。 |
 | Couldn't find {names}. | Tidak dapat menemui {names}. | 找不到 {names}。 |
 | I have {names}. | Saya ada {names}. | 我已记下 {names}。 |

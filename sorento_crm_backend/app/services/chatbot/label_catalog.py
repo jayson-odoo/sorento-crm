@@ -296,7 +296,7 @@ LABELS: dict[str, dict[str, str]] = {
     # Slice 4 fix round: escalation lane copy, short questions, entities-only copy, top selling who-ask.
     'Your request is out of the scope of my ability and require human assistance. We are directing your enquiry to the correct person. Please wait for a moment.': {"ms": 'Permintaan anda di luar kemampuan saya dan memerlukan bantuan kakitangan. Kami sedang menghubungkan pertanyaan anda kepada orang yang betul. Sila tunggu sebentar.', "zh": '您的请求超出了我的能力范围，需要人工协助。我们正在将您的询问转交给相关负责人，请稍候。'},
     'This inquiry has been routed to the respective person-in-charge (PIC) from {team} team. We will get back to you soon. Thanks for your patience.': {"ms": 'Pertanyaan ini telah diserahkan kepada pegawai bertanggungjawab (PIC) daripada pasukan {team}. Kami akan menghubungi anda tidak lama lagi. Terima kasih atas kesabaran anda.', "zh": '此询问已转交给 {team} 团队的相关负责人（PIC）。我们会尽快回复您，感谢您的耐心等待。'},
-    '{header} I found {count}, please type a little more of the name.': {"ms": '{header} Saya menemui {count}, sila taip lebih sedikit daripada nama itu.', "zh": '{header} 我找到 {count} 个，请多输入一些名称。'},
+    '{header} I found {count}, please type a little more of the name.': {"ms": '{header} Saya menemui {count}, sila taip lebih sedikit daripada nama itu.', "zh": '{header}我找到 {count} 个，请多输入一些名称。'},
     'and {n} others, reply with the full code.': {"ms": 'dan {n} lagi, balas dengan kod penuh.', "zh": '还有 {n} 个，请回复完整代码。'},
     "Couldn't find {names}.": {"ms": 'Tidak dapat menemui {names}.', "zh": '找不到 {names}。'},
     'I have {names}.': {"ms": 'Saya ada {names}.', "zh": '我已记下 {names}。'},
@@ -448,7 +448,6 @@ INLINE = frozenset(
         '{header} I found {count}, please type a little more of the name.',
         'and {n} others, reply with the full code.',
         "Couldn't find {names}.",
-        'I have {names}.',
         'What would you like me to know?',
         "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
         'Do you mean customer {customer} or sales agent {agent}? Reply 1 for the customer, 2 for the sales agent.',
@@ -464,10 +463,18 @@ INLINE = frozenset(
     }
 )
 
+#: Sentences too generic to match inside running text ("I have checked with the warehouse."): the
+#: composer that owns one fills it with `Localizer.fill`.
+DIRECT_ONLY = frozenset({"I have {names}."})
+
 #: Report value words `Localizer.lines` translates after a catalogued label. An explicit set, never
 #: "any catalog key", so data that happens to read like a label (a status named "Status") is safe.
 VALUE_WORDS = frozenset({"all", "Amount", "Quantity", "Ordered", "Delivered (transferred to DO)"})
 RANGE = "{from} to {to}"
+#: A `{token}` matches at most this many characters of one line, and a line longer than
+#: `_INLINE_LINE_MAX` gets `lines()` only (the inline pass is skipped for it).
+_TOKEN_MAX = 200
+_INLINE_LINE_MAX = 1000
 _DATE_RANGE = re.compile(r"(?P<from>\d{2}/\d{2}/\d{4}) to (?P<to>\d{2}/\d{2}/\d{4})")
 _BREAKDOWN_VALUE = re.compile(r"\d[\d,]* \(O/S: ")
 _NUMBERED = re.compile(r"\d+\. ")
@@ -480,7 +487,7 @@ def _inline_pattern(english: str, target: str) -> tuple[re.Pattern[str], str, in
     pattern = ""
     pos = 0
     for m in _TOKEN.finditer(english):
-        pattern += re.escape(english[pos : m.start()]) + f"(?P<{m.group(1)}>[^\\n]+?)"
+        pattern += re.escape(english[pos : m.start()]) + f"(?P<{m.group(1)}>[^\\n]{{1,{_TOKEN_MAX}}}?)"
         pos = m.end()
     pattern += re.escape(english[pos:])
     fixed = len(_TOKEN.sub("", english))
@@ -495,23 +502,25 @@ class Localizer:
         self.language = language
         self.table = table
         # `{token}` entries as (whole-string regex over the English shape, target).
-        self._templates: list[tuple[re.Pattern[str], str, int]] = []  # most fixed text wins
+        self._templates: list[tuple[re.Pattern[str], str, int, bool]] = []  # most fixed text wins
         # The INLINE sentences the table carries: (regex for a start-anchored match, target,
         # fixed characters, token names). Longest fixed text wins where two start together.
         self._inline: list[tuple[re.Pattern[str], str, int, tuple[str, ...]]] = []
         for english, target in table.items():
-            if english in INLINE:
+            if english in INLINE and english not in DIRECT_ONLY:
                 self._inline.append(_inline_pattern(english, target))
         for english, target in table.items():
-            if not tokens(english) or english == RANGE:
+            if not tokens(english) or english == RANGE or english in DIRECT_ONLY:
                 continue  # the date range is a VALUE template, applied by `lines` only
             pattern = ""
             pos = 0
             for m in _TOKEN.finditer(english):
-                pattern += re.escape(english[pos : m.start()]) + f"(?P<{m.group(1)}>.+?)"
+                pattern += re.escape(english[pos : m.start()]) + f"(?P<{m.group(1)}>[^\\n]{{1,{_TOKEN_MAX}}}?)"
                 pos = m.end()
             pattern += re.escape(english[pos:])
-            self._templates.append((re.compile(pattern, re.DOTALL), target, len(_TOKEN.sub("", english))))
+            self._templates.append(
+                (re.compile(pattern), target, len(_TOKEN.sub("", english)), english in INLINE)
+            )
 
     def label(self, field: dict) -> str:
         """The field's label: by its key when it has a catalogued one and still carries that
@@ -526,10 +535,20 @@ class Localizer:
         return self.table.get(label, label)
 
     def text(self, s: str) -> str:
+        return self._text(s, inline=True)
+
+    def fill(self, key: str, **values: str) -> str:
+        """The catalog sentence for `key` with its tokens filled in (English if not catalogued).
+        For the few sentences too generic to be matched in running text (`DIRECT_ONLY`)."""
+        return _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), self.table.get(key, key))
+
+    def _text(self, s: str, *, inline: bool) -> str:
         if s in self.table:
             return self.table[s]
         best = None
-        for regex, target, fixed in self._templates:
+        for regex, target, fixed, is_inline in self._templates:
+            if is_inline and not inline:
+                continue  # INLINE sentences are replaced by `reply()` at their own boundaries
             m = regex.fullmatch(s)
             if m and (best is None or fixed > best[0]):
                 best = (fixed, m.groupdict(), target)
@@ -555,14 +574,19 @@ class Localizer:
     def reply(self, text: str) -> str:
         """The final reply pass: `lines()`, then each INLINE sentence replaced where it starts a
         line or follows ". ", "? " or "! " and runs through its final punctuation. Tokens come back
-        verbatim (the domain label words and joiners only inside `{label}` / `{names}`)."""
+        verbatim and never span a line; a line over `_INLINE_LINE_MAX` is left to `lines()`."""
         if not self.table or not text:
             return text
         text = self.lines(text)
         if not self._inline:
             return text
+        return "\n".join(
+            line if len(line) > _INLINE_LINE_MAX else self._inline_line(line) for line in text.split("\n")
+        )
+
+    def _inline_line(self, text: str) -> str:
         found: list[tuple[int, int, int, str]] = []
-        for regex, target, fixed, names in self._inline:
+        for regex, target, fixed, _names in self._inline:
             for m in regex.finditer(text):
                 values = m.groupdict()
                 found.append((m.start(), m.end(), fixed, _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), target)))
@@ -583,16 +607,16 @@ class Localizer:
         for left, right in _WRAPPERS:
             if len(line) > len(left) + len(right) and line.startswith(left) and line.endswith(right):
                 inner = line[len(left) : len(line) - len(right)]
-                done = self.text(inner)
+                done = self._text(inner, inline=False)
                 if done != inner:
                     return left + done + right
-        done = self.text(line)
+        done = self._text(line, inline=False)
         if done != line:
             return done
         number = _NUMBERED.match(line)
         prefix, rest = (number.group(0), line[number.end() :]) if number else ("", line)
         if prefix:
-            done = self.text(rest)
+            done = self._text(rest, inline=False)
             if done != rest:
                 return prefix + done
         for left, sep in (("*", ":* "), ("", ": ")):

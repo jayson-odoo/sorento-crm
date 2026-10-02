@@ -86,3 +86,55 @@ def test_item7_the_accepted_escalation_confirmation_is_malay(session_factory, mo
     sent = [a["text"] for a in _latest_row(session_factory).response["actions"] if a.get("kind") == "send_message"]
     assert any("Pertanyaan ini telah diserahkan kepada pegawai bertanggungjawab (PIC) daripada pasukan" in t for t in sent), sent
     assert not any("routed" in t for t in sent), sent
+
+
+def test_final_a_message_answered_ahead_keeps_its_own_language_in_the_action_and_the_row(
+    session_factory, monkeypatch, stub_access
+):
+    """The harness runs dry-run turns only (an earlier message is answered for live turns), so
+    `_answer_earlier_messages` itself is driven with the earlier-message lookup and
+    `_answer_claimed` stubbed: an ms result and an English one, answered ahead of this turn."""
+    from app.services.chatbot import send_order
+    from tests.chatbot.test_engine import _envelope
+
+    c = _staff_console(session_factory, monkeypatch, stub_access, "+60000009704")
+    # Turn 1 (ms), with the final pass off so its row and result hold the composed English.
+    real = engine._localize_result
+    monkeypatch.setattr(engine, "_localize_result", lambda *a, **k: None)
+    c.say(MS_ASK, stock(product("ZZNOPE999")))
+    monkeypatch.setattr(engine, "_localize_result", real)
+    earlier_row = _latest_row(session_factory)
+    english = earlier_row.response["reply"]["text"]
+    assert english.endswith("Would you like me to escalate to warehouse team?")
+    c.say("check stock ZZNOPE998", stock(product("ZZNOPE998")))
+    me = _latest_row(session_factory)
+
+    envelope = _envelope(is_test=False)
+    earlier = send_order.Earlier(order_key=1.0, row_id=str(earlier_row.id), envelope=envelope.model_dump(mode="json"))
+    monkeypatch.setattr(send_order, "earlier_unanswered", lambda db, **k: [earlier])
+    monkeypatch.setattr(send_order, "within_bounds", lambda e, **k: (list(e), [], []))
+    monkeypatch.setattr(send_order, "claim", lambda db, row_id: True)
+
+    def fake_claimed(env, **kw):
+        return SimpleNamespace(
+            turn_id=str(earlier_row.id),
+            item={"reply_language": "ms"},
+            duplicate=False,
+            reply={"text": english},
+            actions=[{"kind": "send_message", "text": english}],
+        )
+
+    monkeypatch.setattr(engine, "_answer_claimed", fake_claimed)
+    actions, _facts = engine._answer_earlier_messages(
+        envelope,
+        session_factory=session_factory,
+        turn_id=str(me.id),
+        contact_respond_id=str(CONTACT_ID),
+        contact_scope=frozenset(),
+        switches=engine._read_switches(session_factory()),
+    )
+    assert actions and actions[0]["text"].endswith("Adakah anda mahu saya rujuk kepada pasukan warehouse?")
+    db = session_factory()
+    db.expire_all()
+    row = db.query(ChatbotTurn).filter(ChatbotTurn.id == earlier_row.id).one()
+    assert row.response["reply"]["text"].endswith("Adakah anda mahu saya rujuk kepada pasukan warehouse?")
