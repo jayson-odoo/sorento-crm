@@ -20,6 +20,7 @@ from app.models.project_so import (
     ACK_ACKNOWLEDGED,
     ACK_CHANGED,
     INQUIRY_CANCELLED,
+    INQUIRY_PLACED,
     IV_ORDER,
     OrderInquiryRow,
 )
@@ -55,7 +56,8 @@ DUE = date(2026, 11, 20)
 
 
 def _swap_fixture(
-    api, *, linked: bool = False, acknowledged: bool = False, mirror_stale: bool = False
+    api, *, linked: bool = False, acknowledged: bool = False, mirror_stale: bool = False,
+    row_code: str | None = None, placed_unlinked: bool = False,
 ):
     """One line of product A confirmed as a Buy of 10 (one ORDER row), then AutoCount
     swaps the line to product B on the same DtlKey and the ESB raises one
@@ -83,6 +85,12 @@ def _swap_fixture(
         link = _link(world, row, po_line, qty=10, document="202609-S0776")
     if acknowledged:
         row.ack_state = ACK_ACKNOWLEDGED
+    if row_code is not None:
+        row.item_code = row_code
+    if placed_unlinked:
+        # SO349754 WESERP10B shape: placed on a PO through a path that wrote no link,
+        # so `_settle_row_in_place` declines and the netting path runs instead.
+        row.state = INQUIRY_PLACED
     db.commit()
 
     core.product_id = new_product.id
@@ -141,6 +149,9 @@ def test_apply_restates_the_oi_row_on_the_new_product_and_keeps_the_old_as_was(a
     assert Decimal(str(row.qty)) == Decimal("10")
     assert row.delivery_date == DUE
     assert fx["old"].product_code in (row.note or ""), "the note says what it was"
+    assert row.previous_qty is None and row.previous_delivery_date is None, (
+        "AC-PF-5: a product-only change prints no false 'Was 10 -> Now 10'"
+    )
 
 
 def test_an_acknowledged_row_goes_back_to_to_confirm_on_a_product_swap(api):
@@ -201,6 +212,8 @@ def test_handover_email_says_change_item_code_to_new_was_old(api, monkeypatch):
     )
     assert expected in mine[0]["remark"], mine[0]
     assert (mine[0]["was"] or {}).get("item_code") == fx["old"].product_code
+    headline = matches[-1]["context"]["handover"]["headline"]
+    assert "CHANGE ITEM CODE" in headline, headline
 
 
 def test_handover_remark_joins_product_and_qty_change():
@@ -232,6 +245,52 @@ def test_a_line_swapped_before_the_mirror_followed_still_moves_on_confirm(api):
     row = _live_order_rows(fx)[0]
     assert row.item_code == fx["new"].product_code
     assert row.previous_item_code == fx["old"].product_code
+
+
+def test_a_row_whose_code_is_not_a_catalogue_code_is_never_rewritten(api):
+    """AC-PF-5 (review B2): a sheet's own spelling is not read as a product change."""
+    fx = _swap_fixture(api, row_code="TEXON SHEET SPELLING 7604")
+
+    response = _apply(fx)
+    assert response.status_code == 200, response.text
+    fx["world"].db.commit()
+    fx["world"].db.expire_all()
+
+    rows = [r for r in _rows_of(fx["world"], fx["line"]) if r.item_code == "TEXON SHEET SPELLING 7604"]
+    assert rows, "the sheet-spelled row is still there under its own code"
+    assert all(r.previous_item_code is None for r in rows)
+
+
+def test_a_declined_settle_still_moves_the_product_and_tells_purchasing(api, monkeypatch):
+    """Review S2: a lone PLACED row with no link makes `_settle_row_in_place` decline,
+    and the netting path runs. The product still follows, with "was", the flag, and one
+    handover line saying CHANGE ITEM CODE."""
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    fx = _swap_fixture(api, acknowledged=True, placed_unlinked=True)
+    row_id = str(fx["row"].id)
+    calls.clear()
+
+    response = _apply(fx)
+    assert response.status_code == 200, response.text
+    fx["world"].db.commit()
+    fx["world"].db.expire_all()
+
+    live = [
+        r for r in _rows_of(fx["world"], fx["line"])
+        if r.verb == IV_ORDER and r.state != INQUIRY_CANCELLED
+    ]
+    assert [str(r.id) for r in live] == [row_id], [(r.item_code, r.state) for r in live]
+    row = live[0]
+    assert row.item_code == fx["new"].product_code
+    assert row.previous_item_code == fx["old"].product_code
+    assert row.ack_state == ACK_CHANGED
+
+    lines = _handover_calls(calls)[-1]["context"]["handover"]["lines"]
+    told = [entry for entry in lines if "CHANGE ITEM CODE" in (entry["remark"] or "")]
+    assert len(told) == 1, lines
+    assert told[0]["item_code"] == fx["new"].product_code
 
 
 def test_a_plain_qty_settle_writes_no_previous_item_code(api):

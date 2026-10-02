@@ -301,6 +301,7 @@ _HANDOVER_VERB_ORDER = (
     IV_DELAY,
     IV_CHANGE_SO,
     IV_CANCEL_BALANCE,
+    "CHANGE_ITEM_CODE",
 )
 _HANDOVER_VERB_LABEL = {
     IV_ORDER: "ORDER",
@@ -312,6 +313,9 @@ _HANDOVER_VERB_LABEL = {
     IV_DELAY: "DELAY",
     IV_CHANGE_SO: "CHANGE SO NO",
     IV_CANCEL_BALANCE: "CANCEL BALANCE",
+    # OI-PRODUCT-FOLLOW R4 (review S1): a product-only settle earns no qty/date verb, and
+    # the email's headline would otherwise print blank.
+    "CHANGE_ITEM_CODE": "CHANGE ITEM CODE",
 }
 
 
@@ -360,7 +364,8 @@ def _handover_verb_keys(
         return [IV_CANCEL_BALANCE]
     if kind == "settled":
         date_key, qty_key, _qty_diff = _handover_settle_diff(row, was, qty)
-        return [key for key in (date_key, qty_key) if key]
+        item_key = "CHANGE_ITEM_CODE" if (was or {}).get("item_code") else None
+        return [key for key in (date_key, qty_key, item_key) if key]
     return []
 
 
@@ -936,6 +941,9 @@ class ProjectOrderInquiryService:
         # decides whether to raise a separate DELAY / ADVANCE row on that answer, and
         # `_settle_row_in_place` declines a line whose rows it cannot read as one.
         settled_in_place: List[str] = []
+        #: OI-PRODUCT-FOLLOW (review S2): product moves made on the DECLINED-settle path,
+        #: told to purchasing once the line's own handover lines are queued.
+        product_moves: List[Tuple[List[OrderInquiryRow], str]] = []
         for entry in buy_lines:
             # R9 (owner ruling, S9, `PLAN-oi-worklist-one-header.md`, superseding the old
             # S3 `PLAN-local-supplier-oi-routing.md` rule below): a line decided as a
@@ -1223,6 +1231,12 @@ class ProjectOrderInquiryService:
                     and not r.redirected_to_pool
                 ]
                 live_buy_qty = sum((_dec(r.qty) for r in live_rows), _ZERO)
+                # OI-PRODUCT-FOLLOW (review S2): `_settle_row_in_place` declined, but the
+                # product AutoCount swapped still follows on every live buy row of the
+                # line, the same three writes it would have made.
+                product_move = self._restate_product(inquiry, live_rows, entry)
+                if product_move:
+                    product_moves.append(product_move)
                 # EMAIL-HANDOVER-QTY (owner, 30 Sep; `PLAN-oi-handover-qty-change-
                 # 30sep.md` S1): the line's TOTAL is about to change under the netting
                 # below, and purchasing already holds something for it. No row of this
@@ -1668,6 +1682,7 @@ class ProjectOrderInquiryService:
         # no handover line at all), and appending the amendment rows onto a commit that
         # said nothing of its own would dispatch an email whose only content purchasing
         # already read on the amendment's own publish email.
+        self._tell_product_moves(product_moves, actor_user_id=actor_user_id)
         queued_own_line = any(
             item.get("pso_id") == str(order.id)
             for item in self.db.info.get(_HANDOVER_PENDING_KEY, [])
@@ -1920,8 +1935,11 @@ class ProjectOrderInquiryService:
         row.order_inquiry_id = inquiry.id
         if product_moved:
             row.item_code = new_item_code
-            row.previous_item_code = previous_item_code
         if changed:
+            # One rule for all three "was" columns (review S5): every REAL settle says what
+            # THIS change moved and nothing older, so the Was / Now table on a re-flagged
+            # row never shows an earlier move as if it were this one.
+            row.previous_item_code = previous_item_code if product_moved else None
             was_note = moved if qty_or_date_moved else None
             if product_moved:
                 product_note = f"Was item {previous_item_code or '-'}"
@@ -1935,6 +1953,10 @@ class ProjectOrderInquiryService:
             # product-only change: that would print a false "Was 10 -> Now 10".
             row.previous_qty = previous_qty
             row.previous_delivery_date = previous_date
+        elif changed:
+            # Product-only: no false "Was 10 -> Now 10", and no older qty move left behind.
+            row.previous_qty = None
+            row.previous_delivery_date = None
         if changed:
             # The handshake, if there is one to speak of (`PLAN-scm-oi-handshake.md`
             # section 3, REVERSED again by `PLAN-oi-confirm-per-so.md` S1/R2, owner ruling
@@ -1970,6 +1992,75 @@ class ProjectOrderInquiryService:
                 row, kind="settled", was=handover_was, actor_user_id=actor_user_id
             )
         return True
+
+    def _restate_product(
+        self,
+        inquiry: OrderInquiry,
+        rows: Sequence[OrderInquiryRow],
+        entry: Dict[str, Any],
+    ) -> Optional[Tuple[List[OrderInquiryRow], str]]:
+        """OI-PRODUCT-FOLLOW (review S2): the declined-settle half of R1. Every row given
+        whose code is a catalogue code other than the entry's takes the entry's code, keeps
+        the old one as `previous_item_code`, notes it and is flagged the way
+        `_settle_row_in_place` flags a change (R2: links untouched). Returns the rows moved
+        and the old code, or None when nothing moved."""
+        new_item_code = entry.get("item_code") or None
+        if not new_item_code:
+            return None
+        moved: List[OrderInquiryRow] = []
+        old_code: Optional[str] = None
+        for row in rows:
+            if row.item_code == new_item_code or not self._is_catalogue_code(row.item_code):
+                continue
+            old_code = row.item_code
+            row.previous_item_code = old_code
+            row.item_code = new_item_code
+            product_note = f"Was item {old_code}"
+            row.note = f"{row.note}; {product_note}" if row.note else product_note
+            if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
+                row.changed_at = datetime.utcnow()
+                row.ack_state = ACK_CHANGED
+            moved.append(row)
+        if not moved:
+            return None
+        self.db.flush()
+        for row in moved:
+            self._dispatch_changed_with_links(
+                inquiry, row, had_link=bool(self._links_of(row.id))
+            )
+        return moved, old_code
+
+    def _tell_product_moves(
+        self,
+        moves: Sequence[Tuple[List[OrderInquiryRow], str]],
+        *,
+        actor_user_id: Optional[str] = None,
+    ) -> None:
+        """Puts each declined-path product move into the handover email ONCE: onto the
+        line this confirm already queued for one of the moved rows (a date stamp, a totals
+        line), else as its own settled line off a moved row still live."""
+        pending = self.db.info.get(_HANDOVER_PENDING_KEY, [])
+        for rows, old_code in moves:
+            live = [row for row in rows if row.state != INQUIRY_CANCELLED]
+            live_ids = {str(row.id) for row in live}
+            queued = [item for item in pending if item.get("row_id") in live_ids]
+            if queued:
+                item = queued[0]
+                line = item["line"]
+                was = dict(line.get("was") or {})
+                was["item_code"] = old_code
+                line["was"] = was
+                line["item_code"] = live[0].item_code
+                item["item_code"] = live[0].item_code
+                phrase = f"CHANGE ITEM CODE TO {live[0].item_code} (WAS {old_code})"
+                line["remark"] = f"{line['remark']}, {phrase}" if line.get("remark") else phrase
+                if "CHANGE_ITEM_CODE" not in item["verb_keys"]:
+                    item["verb_keys"] = [*item["verb_keys"], "CHANGE_ITEM_CODE"]
+            elif live:
+                self._record_handover(
+                    live[0], kind="settled", was={"item_code": old_code},
+                    actor_user_id=actor_user_id,
+                )
 
     def _is_catalogue_code(self, item_code: Optional[str]) -> bool:
         """OI-PRODUCT-FOLLOW: whether `item_code` is a real product code. Only then is a
