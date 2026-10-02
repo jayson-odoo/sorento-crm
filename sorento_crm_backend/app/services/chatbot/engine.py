@@ -2292,8 +2292,57 @@ def _top_selling_verdict(
     return out, state, "top_selling_split_token"
 
 
-@_refer_tracked
 def run_turn(
+    envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
+) -> TurnResult:
+    """One turn, then the final reply pass.
+
+    CHAT-LANGUAGE slice 4, the send point: every arm of `_run_turn` has finished its own
+    composers, offer strippers, part markers and company inserts by the time it returns, so this
+    is the one place that sees the turn's final reply text and every `send_message` text. The
+    reply is localized here, once, and the turn row is brought in line so the parser reads the
+    reply the customer was actually sent next turn."""
+    result = _run_turn(envelope, session_factory=session_factory, offload=offload)
+    try:
+        _localize_result(result, session_factory)
+    except Exception:  # noqa: BLE001 - a language pass never fails a turn that already answered
+        logger.warning("chatbot: the final reply pass did not run", exc_info=True)
+    return result
+
+
+def _localize_result(result: TurnResult, session_factory: SessionFactory) -> None:
+    lang = (result.item or {}).get("reply_language") if isinstance(result.item, dict) else None
+    if lang in (None, "en") or result.duplicate or not isinstance(result.reply, dict):
+        return
+    with _session(session_factory) as db:
+        localizer = label_catalog.resolve(db, lang, dry_run=bool(result.is_test))
+        if localizer is label_catalog.IDENTITY:
+            return
+        reply = dict(result.reply)
+        if isinstance(reply.get("text"), str):
+            reply["text"] = localizer.reply(reply["text"])
+        actions = [
+            {**a, "text": localizer.reply(a["text"])}
+            if isinstance(a, dict) and a.get("kind") == "send_message" and isinstance(a.get("text"), str)
+            else a
+            for a in (result.actions or [])
+        ]
+        if reply == result.reply and actions == (result.actions or []):
+            return
+        result.reply, result.actions = reply, actions
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+        if row is not None and isinstance(row.response, dict):
+            stored = row.response
+            row.response = {
+                **stored,
+                **({"reply": {**(stored.get("reply") or {}), **reply}} if "reply" in stored else {}),
+                **({"actions": actions} if "actions" in stored else {}),
+            }
+            db.commit()
+
+
+@_refer_tracked
+def _run_turn(
     envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
 ) -> TurnResult:
     """Run the head of one turn. NEVER raises for a business failure; records it.
