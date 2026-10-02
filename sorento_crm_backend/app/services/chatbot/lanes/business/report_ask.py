@@ -58,6 +58,12 @@ GROUP_BY = {
 WORD_HINTS = {"brand": "brand", "sales_agent": "sales agent", "category": "category"}
 
 TOP_N_MIN, TOP_N_MAX = 1, 100
+#: A month breakdown is a trend, never asked "How many?": every month of the period
+#: (1b code review S2).
+MONTH_TOP_N = TOP_N_MAX
+
+#: The plural each word hint's "matches several" line names (1b code review S3).
+SEVERAL_NOUNS = {"brand": "brands", "category": "categories"}
 
 
 def _dict(value: Any) -> dict[str, Any]:
@@ -82,11 +88,15 @@ def _label(d: date) -> str:
 
 
 def period_from(start: Any, end: Any) -> rf.Resolved | None:
-    """The parser's two dates as the settled period: both, or one widened to that day."""
+    """The parser's two dates as the settled period. A start alone ("since September") runs
+    to today, Malaysia time; an end alone is no period (1b code review N2: it is asked)."""
+    from app.services.reports.registry import today_malaysia
+
     first, last = _day(start), _day(end)
-    first, last = first or last, last or first
-    if first is None or last is None:
+    if first is None:
         return None
+    if last is None:
+        last = max(first, today_malaysia())
     if first > last:
         first, last = last, first
     return rf.Resolved(
@@ -135,6 +145,23 @@ SALES_RANKING_ASK = rf.register(rf.AskType(
 # --------------------------------------------------------------------------- #
 # Engine seam
 # --------------------------------------------------------------------------- #
+
+
+def hold_words(verdict: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Engine seam before grounding, a `sales_ranking` verdict: its brand, sales agent and
+    category entities, held out of the descriptor grounding and handed back after it."""
+    if jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME:
+        return verdict, []
+    entities = verdict.get("entities")
+    if not isinstance(entities, list):
+        return verdict, []
+    held = [
+        e for e in entities
+        if isinstance(e, dict) and jsc.js_string(e.get("hint") or "").strip().lower() in WORD_HINTS
+    ]
+    if not held:
+        return verdict, []
+    return {**verdict, "entities": [e for e in entities if not any(e is h for h in held)]}, held
 
 
 def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
@@ -190,14 +217,17 @@ def dealer_location_words(parse_output: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
-def _resolve_word(db: Any, hint: str, word: str) -> list[str]:
+def _resolve_word(db: Any, hint: str, word: str) -> tuple[list[str], list[str]]:
+    """`(ids, names)` a word names. The resolvers let an exact name or code win alone."""
     if db is None:
-        return []
+        return [], []
     if hint == "brand":
-        return [b[0] for b in business_services.resolve_brand_token(db, word)]
-    if hint == "sales_agent":
-        return [a[0] for a in business_services.resolve_sales_agent_token(db, word)]
-    return [c[0] for c in business_services.resolve_category_token(db, word)]
+        rows = [(b[0], b[1]) for b in business_services.resolve_brand_token(db, word)]
+    elif hint == "sales_agent":
+        rows = [(a[0], a[1]) for a in business_services.resolve_sales_agent_token(db, word)]
+    else:
+        rows = [(c[0], c[2] or c[1]) for c in business_services.resolve_category_token(db, word)]
+    return [i for i, _n in rows], [n for _i, n in rows]
 
 
 def _current_kinds(parse_output: dict[str, Any]) -> set[str]:
@@ -281,9 +311,14 @@ def _fresh_args(
             word = " ".join(jsc.js_string(word).split())
             if not word:
                 continue
-            found = _resolve_word(db, hint, word)
+            found, names = _resolve_word(db, hint, word)
             if not found:
                 return None, f"I don't know '{word}' as a {WORD_HINTS[hint]}."
+            if len(found) > 1 and hint in SEVERAL_NOUNS:
+                # 1b code review S3: never a silent widening (the PR #1273 rule). Several
+                # sales agent rows for one word stay a union: one person's accounts.
+                listed = ", ".join(sorted(set(names)))
+                return None, f"'{word}' matches several {SEVERAL_NOUNS[hint]}: {listed}. Ask again naming one."
             ids.extend(i for i in found if i not in ids)
         if ids:
             args[param] = ids
@@ -291,10 +326,18 @@ def _fresh_args(
     # The gate's resolved rows, of the kinds THIS message named (a carried subject from an
     # earlier question is not this ask's filter).
     kinds = _current_kinds(parse_output)
-    for kind, param in (("product", "product_ids"), ("customer", "customer_ids")):
-        ids = _gate_ids(entities, kind) if kind in kinds else []
-        if ids:
-            args[param] = ids
+    customer_ids = _gate_ids(entities, "customer") if "customer" in kinds else []
+    if customer_ids:
+        args["customer_ids"] = customer_ids
+    if "product" in kinds:
+        # 1b code review S4: the sales report's PREFIX rule (S19), so "SRT5674" covers
+        # "SRT5674-N"; several codes travel as the prefix they share.
+        from app.services.chatbot.lanes.business.fetch import sales_report_product_code
+
+        products = [e for e in jsc.array(entities) if isinstance(e, dict) and e.get("entity_type") == "product"]
+        code = sales_report_product_code(products, {})
+        if code:
+            args["product_code"] = code
 
     codes: list[str] = []
     for e in _current_entities(parse_output, "warehouse"):
@@ -315,9 +358,11 @@ def _given_top_n(args: dict[str, Any], top_n: Any) -> dict[str, Any]:
     asked); a number the first message named is taken, or read as a word (a miss)."""
     if not args.get("group_by"):
         return {"top_n": rf.Resolved("ok", value=None, label="")}
+    got = top_n_from(top_n)
+    if args.get("group_by") == "month" and got.status != "ok":
+        return {"top_n": rf.Resolved("ok", value=MONTH_TOP_N, label=str(MONTH_TOP_N))}
     if top_n is None:
         return {}
-    got = top_n_from(top_n)
     return {"top_n": got if got.status == "ok" else jsc.js_string(top_n)}
 
 

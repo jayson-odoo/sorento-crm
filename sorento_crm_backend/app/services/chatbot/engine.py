@@ -3767,10 +3767,18 @@ def _run_stages(  # noqa: PLR0915
     # before APPLY reads the verdict: the category keeps what the thing IS, a colour or
     # a size becomes a `specification` entity, and nothing is a document type unless it
     # is on the list.
+    # REPORT-ENGINE 1b code review S3: a sales ranking's brand / sales agent / category
+    # words are the lane's own (matched against their tables, an exact name winning alone),
+    # so grounding never splits one ("ZZT SINK" into the class SINK plus a spec word).
+    from app.services.chatbot.lanes.business import report_ask as _report_ask
+
+    verdict, _ranking_words = _report_ask.hold_words(verdict)
     with _session(session_factory) as grounding_db:
         verdict, grounding_notes = grounding.ground(
             grounding_db, verdict, message=latest_user_message.split("\n", 1)[0] if isinstance(latest_user_message, str) else None
         )
+    if _ranking_words:
+        verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_ranking_words]}
     if grounding_notes:
         turn_trace.add("grounding", {"changes": grounding_notes})
     # Fix round 12 on PR #833 (owner ruling 28 Sep 2026): once grounding has read the ask

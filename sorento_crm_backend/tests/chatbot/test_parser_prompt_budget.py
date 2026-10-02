@@ -95,7 +95,10 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # REPORT_ASK_ADDENDUM (the `sales_ranking` vocabulary, 505 est. tokens on its own) sits between
 # ACCOUNT_LEDGER and MEMORY and takes the prompt without MEMORY_ADDENDUM to 44,005 est. tokens
 # and the whole prompt to 44,521; CEILING is 44,521 - 512 = 44,009 so both assertions hold.
-CEILING = 44_009
+# 1b code review S1 (same lane): the addendum's "not a sales ranking" carve-out takes it to 585
+# est. tokens, the prompt without MEMORY_ADDENDUM to 44,086 and the whole prompt to 44,601 (+80);
+# CEILING is 44,601 - 512 = 44,089.
+CEILING = 44_089
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is

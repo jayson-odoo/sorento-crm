@@ -277,9 +277,10 @@ def test_the_other_catalogue_dimensions_pass_through(console, group_by) -> None:
 
 
 def test_a_product_entity_becomes_product_ids(console) -> None:
+    # REPORT-ENGINE 1b code review S4: a named product travels as its code (prefix rule), never product_ids.
     _text, calls = console.say(_rank(_e(PRODUCT_CODE, "product")), f"top 3 salesman for {PRODUCT_CODE}")
     (args,) = calls
-    assert args["product_ids"] == [console.ids["product"]], args
+    assert args["product_code"] == PRODUCT_CODE and "product_ids" not in args, args
 
 
 def test_a_customer_entity_becomes_customer_ids(console) -> None:
