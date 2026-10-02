@@ -72,10 +72,15 @@ READY_ENVELOPE = {
 
 def _qf(**overrides: Any) -> dict[str, Any]:
     """`_parser_output`, defaulted to the low stock ask: inventory domain, the new intent,
-    and a location word the resolver will turn into a warehouse entity."""
+    and a location word the resolver will turn into a warehouse entity.
+
+    LOWSTOCK-FILTER-ASK: the message says "all categories" (stamped by the engine seam
+    `low_stock_ask.take_words` on a real turn), so the product category is settled and
+    these lane tests run the tool; asking the category is `test_low_stock_filter_ask.py`."""
     base = dict(
         domain_hint="inventory",
         intent_hint="low_stock_report",
+        low_stock_text="low stock report all categories",
         entities=[
             {
                 "raw": WAREHOUSE_CODE,

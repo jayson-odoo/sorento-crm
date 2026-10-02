@@ -3829,6 +3829,26 @@ def _run_stages(  # noqa: PLR0915
         s7_mode = _s7_mode(db, settings_row)
         space_id_for_turn = business_services.fetch_space_id(db)
 
+        # LOWSTOCK-FILTER-ASK: an ask that left a required field open (the slot is one
+        # turn long, consumed here) reads this message as the answer unless it is plainly
+        # another ask; a fresh low stock ask takes its category / brand words off the
+        # entity list for the lane. Read before every other seam below.
+        from app.services.chatbot import required_fields
+        from app.services.chatbot.lanes.business import low_stock_ask
+
+        _message_text = jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+        # Security S1: these keys are the ENGINE's own; one the parser emitted (the
+        # Anthropic path does not enforce the schema's additionalProperties) is dropped.
+        verdict = {k: v for k, v in verdict.items() if k not in required_fields.ENGINE_KEYS}
+        open_ask = state_in.focus.required_ask
+        state_in.focus.required_ask = None
+        verdict, required_rule = required_fields.reply_verdict(verdict, open_ask, _message_text)
+        if required_rule:
+            turn_trace.add("required_ask", {"verdict_rule": required_rule, "ask": (open_ask or {}).get("ask")})
+        if required_rule == "required_ask_answer":
+            state_in = dataclasses_replace(state_in, pending=None)
+        verdict = low_stock_ask.take_words(verdict, _message_text)
+
         # Owner retest of top selling round 4 (27 Sep 2026): inside a ranking, the message
         # is read against the question the bot asked before anything routes it.
         # R2 (round 7): read before the verdict below can change the conversation.
@@ -5287,6 +5307,12 @@ def _run_stages(  # noqa: PLR0915
                 answer.files.extend(_stock_ask_packing_list_files(envelopes))
                 stock_ask_entries = _stock_ask_answered_entries(envelopes)
                 record_top_selling_asked(state_out.focus, envelopes)
+                # LOWSTOCK-FILTER-ASK: a lane that asked for a required field hands its
+                # slot back; it stays open for the next message only.
+                state_out.focus.required_ask = next(
+                    (e["required_ask"] for e in envelopes or [] if isinstance(e, dict) and isinstance(e.get("required_ask"), dict)),
+                    None,
+                )
                 if (
                     (state_out.focus.top_selling or {}).get("asked")
                     and state_out.pending is not None

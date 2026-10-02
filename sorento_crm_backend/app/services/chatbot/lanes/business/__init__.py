@@ -28,6 +28,7 @@ from app.services.chatbot import contracts
 from app.services.chatbot import copy as reply_copy
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business import fetch as fetch_mod
+from app.services.chatbot.lanes.business import low_stock_ask
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business import services as business_services
 from app.services.chatbot.turn import policy_rows
@@ -569,7 +570,9 @@ def _top_selling_ask_category(codes: list[str]) -> str:
     return f"Which category do you mean? Reply with one code: {', '.join(codes)}"
 
 
-def _fixed_reply(text: str, *, top_selling_asked: str | None = None) -> dict[str, Any]:
+def _fixed_reply(
+    text: str, *, top_selling_asked: str | None = None, required_ask: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """One fixed line and nothing else, before any fetch: the refusal and the top
     selling questions. `has_result: True` and no `outstanding_ask` keep it OFF the miss
     lane (no escalate offer) and arm nothing; the carried `focus.status` is what makes
@@ -591,6 +594,8 @@ def _fixed_reply(text: str, *, top_selling_asked: str | None = None) -> dict[str
         # The top selling question this line asks, if any (`_top_selling_question`'s
         # axis); `engine.py` records it on the slot for the next turn to read.
         "top_selling_asked": top_selling_asked,
+        # LOWSTOCK-FILTER-ASK: the `required_fields` slot this line leaves open, if any.
+        "required_ask": required_ask,
     }
     item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
     return {
@@ -1522,6 +1527,43 @@ def run_fetch(
         if _LOW_STOCK_GRANT not in granted:
             return _low_stock_not_enabled()
 
+        # LOWSTOCK-FILTER-ASK (owner ruling, 2 Oct 2026): nothing runs until the product
+        # category is settled - taken from the message, else asked (`low_stock_ask`, the
+        # shared `required_fields` helper). A product-code ask names its own scope and
+        # is not asked. The answering turn carries the first message's grouping,
+        # supplier word and location on the slot.
+        answering = isinstance(parse_output.get("required_ask"), dict)
+        named_product = any(
+            isinstance(e, dict)
+            and e.get("current_message") is True
+            and jsc.js_string(e.get("hint") or "") == "product"
+            for e in jsc.array(parse_output.get("entities"))
+        )
+        if answering or not named_product:
+            settled = low_stock_ask.settle(
+                db, parse_output, include_supplier=low_stock_ask.SUPPLIER_GRANT in granted
+            )
+            if trace is not None:
+                trace.add("required_ask", {"ask": "low_stock_report", "done": settled.done,
+                                           "values": settled.values})
+            if not settled.done:
+                if settled.slot is not None and not answering:
+                    settled.slot.setdefault("extras", {})["warehouse_entities"] = [
+                        e for e in jsc.array(parse_output.get("entities"))
+                        if isinstance(e, dict) and e.get("current_message") is True
+                        and jsc.js_string(e.get("hint") or "") == "warehouse"
+                    ]
+                return _fixed_reply(settled.reply or "", required_ask=settled.slot)
+            semantic_input["low_stock_filters"] = low_stock_ask.route_filters(settled)
+            if answering:
+                # The first message's location word rides the slot (a date window
+                # already rides the focus); re-read here as if typed this turn.
+                parse_output = {
+                    **parse_output,
+                    "entities": [*jsc.array(parse_output.get("entities")),
+                                 *jsc.array(settled.extras.get("warehouse_entities"))],
+                }
+
         # ── B (console round 3): a report ask is a FRESH SCOPE ────────────────
         # `entity_op = replace_combine` merges the PREVIOUS turn's session entities into
         # the gate's list, so a bare "low stock report" asked after an unrelated product
@@ -1957,6 +1999,15 @@ def run_fetch(
         return _error_fragment(envelope["error"])
 
     structured = fetch_mod.output_structurer(envelope, trigger)
+    # LOWSTOCK-FILTER-ASK: say which filters the workbook was built with, under the
+    # report's first line ("Low stock report - as of ..."), so a narrowed file never
+    # reads as the whole book.
+    filters = semantic_input.get("low_stock_filters") if tool_name == _LOW_STOCK_TOOL else None
+    if isinstance(filters, dict) and isinstance(structured, dict):
+        response = jsc.js_string(structured.get("response") or "")
+        head, sep, rest = response.partition("\n")
+        if head.startswith("Low stock report - as of"):
+            structured["response"] = f"{head}\n{filters['line']}{sep}{rest}"
     if trace is not None:
         restricted = envelope.get("restricted_fields") if isinstance(envelope, dict) else None
         if isinstance(restricted, dict) and restricted:

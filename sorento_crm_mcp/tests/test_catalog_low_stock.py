@@ -27,6 +27,8 @@ REVEAL_PAIR = ("scm.low_stock_report", "Low stock report over chat (staff: full 
 QUERY_PARAMS = (
     "warehouse_codes", "product_codes", "date_from", "date_to",
     "contact_id", "space_id",
+    # LOWSTOCK-FILTER-ASK: the workbook filters the chat settles before it runs.
+    "categories", "suppliers", "split",
 )
 
 
@@ -42,13 +44,14 @@ def test_catalog_lists_low_stock_report_tool():
 
     `query_params` is asserted as an EXACT tuple rather than a membership check: the
     compiler turns this list into the tool's Python signature, and an extra parameter is
-    a surface the LLM will try to fill. Six is the contract.
+    a surface the LLM will try to fill. Nine is the contract (LOWSTOCK-FILTER-ASK added
+    the three workbook filters).
     """
     spec = _spec()
     assert spec.method == "GET"
     assert spec.path == "/api/v1/scm/low-stock-report"
     assert tuple(spec.query_params) == QUERY_PARAMS, (
-        f"exactly the six query params, in order: {spec.query_params}"
+        f"exactly the nine query params, in order: {spec.query_params}"
     )
     assert spec.body_params == (), (
         "a body param would stop the compiler injecting `view`, and the chatbot lane "
