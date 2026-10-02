@@ -121,7 +121,7 @@ class TestScanDryRun:
         assert f"=> {a}: Excel rows superseded 2" in out
         assert f"=> {b}: Excel rows superseded 2" in out
         assert f"would change (2): {a}, {b}" in out
-        assert f"rows left for review (1): {b}" in out
+        assert f"rows left for review (ORPHAN-BLOCKED / kept) (1): {b}" in out
         assert "aborted (0)" in out
         assert {str(r["id"]) for n in (a, b) for r in _spo_rows(env, n)} == before
         assert _picked_on(env, case_a.excel_95.id) == 95
