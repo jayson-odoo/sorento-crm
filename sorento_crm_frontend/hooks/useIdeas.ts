@@ -81,7 +81,11 @@ export function useIdeaMutations() {
       refresh();
       toast.success('Idea captured');
     },
-    onError,
+    // The idea may exist even when a file did not attach, so the list refreshes either way.
+    onError: (error: Error) => {
+      refresh();
+      onError(error);
+    },
   });
 
   const update = useMutation({

@@ -117,6 +117,24 @@ export function PortalIdeaTrack({ token }: { token: string }) {
       </Card>
 
       <Card className="p-5">
+        <section aria-label="Idea" className="flex flex-col gap-4">
+          {[
+            ['Problem statement', idea.problem],
+            ['Proposed solution', idea.proposedSolution],
+            ['Impact', idea.impact],
+            ['Department', idea.department],
+          ]
+            .filter(([, value]) => !!value)
+            .map(([label, value]) => (
+              <div key={label} className="flex min-w-0 flex-col gap-1">
+                <span className="text-xs text-muted-foreground">{label}</span>
+                <p className="whitespace-pre-wrap break-words text-sm">{value}</p>
+              </div>
+            ))}
+        </section>
+      </Card>
+
+      <Card className="p-5">
         <section aria-label="Comments" className="flex flex-col gap-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold">
             Comments

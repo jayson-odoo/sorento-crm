@@ -6,8 +6,8 @@
 
 export type IdeaSource = 'whatsapp' | 'manual' | 'email' | 'web';
 
-/** ss `statusColor`: a tenant-editable colour key that maps onto a CRM Badge variant. */
-export type IdeaStatusColor = 'grey' | 'info' | 'primary' | 'warning' | 'success' | 'destructive';
+/** ss `statusColor`: a tenant-editable colour key (`gray`, `blue`, `amber`, ...) that maps onto a CRM Badge variant. */
+export type IdeaStatusColor = string;
 
 export interface IdeaTransition {
   id: string;
@@ -23,6 +23,10 @@ export interface IdeaAttachment {
   name: string;
   sizeBytes: number | null;
   durationSec: number | null;
+  /** An uploaded file the gateway streams (`contentPath`), as opposed to a link ss holds. */
+  hasContent: boolean;
+  /** A direct link for a URL-backed WhatsApp capture; empty when the file is uploaded. */
+  url: string;
 }
 
 export interface IdeaMergedInto {
@@ -69,7 +73,7 @@ export interface Idea {
   mergedIntoId: string | null;
   mergedInto: IdeaMergedInto | null;
   mergedCount: number;
-  /** CRM gateway addition: the BRs ss links to the idea (read-only BR tab). */
+  /** The BRs linked to the idea (read-only BR tab). ss does not return them yet, so it reads empty. */
   businessRequirements: IdeaBusinessRequirement[];
 }
 
@@ -101,6 +105,7 @@ export interface IdeaCreateInput {
   proposedSolution?: string;
   impact?: string;
   department?: string;
+  rawText?: string;
   /** Uploaded after create through the attachments route. */
   files?: File[];
 }
@@ -127,13 +132,15 @@ export interface IdeaComment {
   /** Null for a top-level comment; replies attach to the top-level one (one level). */
   parentId: string | null;
   authorName: string;
-  authorIsMe: boolean;
-  /** Empty when `deleted`. */
+  /** Empty when `deleted`. Plain text. */
   body: string;
   createdAt: string;
   editedAt: string | null;
   /** Kept only when it still has replies; the body is then withheld. */
   deleted: boolean;
+  /** ss decides: the browser never guesses ownership or moderation rights. */
+  canEdit: boolean;
+  canDelete: boolean;
 }
 
 /** The public track page (ss `PublicIdeaStatusOut`, widened with the comments' author). */
@@ -145,6 +152,10 @@ export interface PortalIdea {
   submittedAt: string | null;
   submitterFirstName: string | null;
   upvotes: number;
+  problem: string | null;
+  proposedSolution: string | null;
+  impact: string | null;
+  department: string | null;
 }
 
 export interface PortalIdeaComment {

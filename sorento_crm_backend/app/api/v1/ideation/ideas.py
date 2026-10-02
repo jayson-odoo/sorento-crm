@@ -40,7 +40,11 @@ def _non_empty_body(payload: dict) -> dict:
 
 @router.get("/ideas")
 def list_ideas(request: Request, user: dict = _view, db: Session = Depends(get_db)):
-    return _forward(db, user, "GET", "/embed/ideas", params=dict(request.query_params))
+    params = dict(request.query_params)
+    # The CRM names the search box `query`; ss names it `search`.
+    if "query" in params:
+        params["search"] = params.pop("query")
+    return _forward(db, user, "GET", "/embed/ideas", params=params)
 
 
 @router.get("/ideas/board")
@@ -82,6 +86,9 @@ def update_idea(idea_id: str, payload: dict = Body(...), user: dict = _manage, d
 
 @router.post("/ideas/{idea_id}/status")
 def move_status(idea_id: str, payload: dict = Body(...), user: dict = _manage, db: Session = Depends(get_db)):
+    # Restore asks for the "new" status; ss's lifecycle key for it is `captured`.
+    if payload.get("status") == "new":
+        payload = {**payload, "status": "captured"}
     return _forward(db, user, "POST", f"/embed/ideas/{idea_id}/status", json=payload)
 
 

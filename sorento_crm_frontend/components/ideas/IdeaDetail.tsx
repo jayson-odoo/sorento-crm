@@ -36,19 +36,15 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import type { RecordAction } from '@/components/common/recordActions';
-import {
-  HARD_DELETE_WINDOW_SECONDS,
-  REVERSIBLE_WINDOW_SECONDS,
-  useIdeaDeferredAction,
-} from '@/hooks/useIdeaDeferredAction';
-import { useIdeaMutations, useIdeaQuery, useIdeasQuery } from '@/hooks/useIdeas';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { IDEAS_KEY, useIdeaMutations, useIdeaQuery, useIdeasQuery } from '@/hooks/useIdeas';
 import { formatDateTime } from '@/lib/helpers';
-import { archiveIdea, deleteIdea } from '@/services/ideasService';
+import { fetchAttachment } from '@/services/ideasService';
+import { toast } from '@/lib/toast';
 import type { Idea, IdeaAttachment } from '@/types/ideas';
 import { IdeaComments } from './IdeaComments';
 import { IdeaMergeModal } from './IdeaMergeModal';
 import { IdeaMergedList } from './IdeaMergedList';
-import { IdeaPromoteModal } from './IdeaPromoteModal';
 import { IdeaStatusBadge } from './IdeaStatusBadge';
 import { VoteBox } from './VoteBox';
 import { useCanManageIdeas } from './ideasAccess';
@@ -131,11 +127,10 @@ export function IdeaDetail({ id }: { id: string }) {
   const canManage = useCanManageIdeas();
   const { data: idea, isLoading, isError } = useIdeaQuery(id);
   const { data: list } = useIdeasQuery({});
-  const { vote, update, move, restore, unmerge, upload } = useIdeaMutations();
+  const { vote, update, move, restore, unmerge, upload, promote } = useIdeaMutations();
 
   const [tab, setTab] = useState<IdeaTab>('details');
   const [isEditing, setIsEditing] = useState(false);
-  const [promoteOpen, setPromoteOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [problem, setProblem] = useState('');
   const [proposedSolution, setProposedSolution] = useState('');
@@ -144,21 +139,27 @@ export function IdeaDetail({ id }: { id: string }) {
   const [rawText, setRawText] = useState('');
 
   const subject = idea?.title ?? idea?.problem ?? '';
-  const archiving = useIdeaDeferredAction({
+  const archiving = useDeferredAction({
+    actionKey: 'idea.archive',
+    entityType: 'idea',
+    entityId: id,
     verb: 'Archiving',
     subject,
-    windowSeconds: REVERSIBLE_WINDOW_SECONDS,
     surface: 'inline',
+    watchFromMount: true,
     successMessage: 'Idea archived',
-    run: () => archiveIdea(id),
+    invalidateKeys: [IDEAS_KEY],
   });
-  const deletion = useIdeaDeferredAction({
+  const deletion = useDeferredAction({
+    actionKey: 'idea.delete',
+    entityType: 'idea',
+    entityId: id,
     verb: 'Deleting',
     subject,
-    windowSeconds: HARD_DELETE_WINDOW_SECONDS,
     surface: 'inline',
+    watchFromMount: true,
     successMessage: 'Idea deleted',
-    run: () => deleteIdea(id),
+    invalidateKeys: [IDEAS_KEY],
     onCommitted: () => router.push('/ideas'),
   });
 
@@ -223,8 +224,8 @@ export function IdeaDetail({ id }: { id: string }) {
         key: 'idea.promote',
         label: 'Promote to BR',
         icon: Rocket,
-        disabled: busy,
-        run: () => setPromoteOpen(true),
+        disabled: busy || promote.isPending,
+        run: () => promote.mutate({ id: idea.id, title: subject }),
       });
     }
     if (!isMergedChild && idea.mergedCount === 0) {
@@ -241,8 +242,8 @@ export function IdeaDetail({ id }: { id: string }) {
         key: 'idea.archive',
         label: 'Archive',
         icon: Archive,
-        disabled: busy,
-        run: archiving.start,
+        disabled: busy || archiving.isBlocked,
+        run: () => archiving.start(),
       });
     }
     gear.push({
@@ -250,8 +251,8 @@ export function IdeaDetail({ id }: { id: string }) {
       label: 'Delete',
       icon: Trash2,
       kind: 'destructive',
-      disabled: busy,
-      run: deletion.start,
+      disabled: busy || deletion.isBlocked,
+      run: () => deletion.start(),
     });
   }
 
@@ -313,6 +314,21 @@ export function IdeaDetail({ id }: { id: string }) {
       primary = editButton('primary');
     }
   }
+
+  const openAttachment = async (attachment: IdeaAttachment) => {
+    if (!attachment.hasContent) {
+      window.open(attachment.url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    try {
+      const blob = await fetchAttachment(idea.id, attachment.id);
+      const href = URL.createObjectURL(blob);
+      window.open(href, '_blank', 'noopener,noreferrer');
+      setTimeout(() => URL.revokeObjectURL(href), 60_000);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to open the file');
+    }
+  };
 
   const onPickFiles = async (files: File[]) => {
     for (const file of files) {
@@ -483,7 +499,7 @@ export function IdeaDetail({ id }: { id: string }) {
                 </Field>
               </section>
               <IdeaMergedList ideaId={idea.id} count={idea.mergedCount} />
-              <IdeaComments ideaId={idea.id} frozen={isMergedChild} canDeleteAny={canManage} />
+              <IdeaComments ideaId={idea.id} frozen={isMergedChild} />
             </div>
           </Card>
         </TabsContent>
@@ -491,17 +507,15 @@ export function IdeaDetail({ id }: { id: string }) {
         <TabsContent value="attachments">
           <Card>
             <section aria-label="Attachments" className="flex flex-col gap-3 p-5">
-              {canManage ? (
-                <FileDropzone
-                  multiple
-                  disabled={upload.isPending}
-                  files={[]}
-                  onFilesChange={(files) => void onPickFiles(files)}
-                  aria-label="Upload attachments"
-                  title={upload.isPending ? 'Uploading...' : 'Drop files here or click to upload'}
-                  hint=""
-                />
-              ) : null}
+              <FileDropzone
+                multiple
+                disabled={upload.isPending}
+                files={[]}
+                onFilesChange={(files) => void onPickFiles(files)}
+                aria-label="Upload attachments"
+                title={upload.isPending ? 'Uploading...' : 'Drop files here or click to upload'}
+                hint=""
+              />
               {idea.attachments.length === 0 ? (
                 <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed py-8 text-center">
                   <span className="text-sm font-medium">No attachments</span>
@@ -520,9 +534,20 @@ export function IdeaDetail({ id }: { id: string }) {
                     return (
                       <li key={attachment.id} className="flex min-w-0 items-center gap-3 px-3 py-2">
                         <Icon className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1 truncate text-sm" title={attachment.name}>
-                          {attachment.name}
-                        </span>
+                        {attachment.hasContent || attachment.url ? (
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 truncate text-start text-sm text-primary hover:underline"
+                            title={attachment.name}
+                            onClick={() => void openAttachment(attachment)}
+                          >
+                            {attachment.name}
+                          </button>
+                        ) : (
+                          <span className="min-w-0 flex-1 truncate text-sm" title={attachment.name}>
+                            {attachment.name}
+                          </span>
+                        )}
                         <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{detail}</span>
                       </li>
                     );
@@ -559,7 +584,6 @@ export function IdeaDetail({ id }: { id: string }) {
           </Card>
         </TabsContent>
       </Tabs>
-      <IdeaPromoteModal idea={idea} open={promoteOpen} onOpenChange={setPromoteOpen} />
       <IdeaMergeModal idea={idea} open={mergeOpen} onOpenChange={setMergeOpen} />
     </div>
   );

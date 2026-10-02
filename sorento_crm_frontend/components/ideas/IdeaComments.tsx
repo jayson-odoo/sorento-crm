@@ -8,11 +8,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
-import { HARD_DELETE_WINDOW_SECONDS, useIdeaDeferredAction } from '@/hooks/useIdeaDeferredAction';
-import { useIdeaCommentsQuery, useIdeaMutations } from '@/hooks/useIdeas';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { IDEAS_KEY, useIdeaCommentsQuery, useIdeaMutations } from '@/hooks/useIdeas';
 import { formatDateTime } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
-import { deleteComment } from '@/services/ideasService';
 import type { IdeaComment } from '@/types/ideas';
 
 function initials(name: string): string {
@@ -104,20 +103,24 @@ interface ItemProps {
   small?: boolean;
   /** A merged child's comments are frozen. */
   frozen: boolean;
-  canDeleteAny: boolean;
   onReply: () => void;
 }
 
-function CommentItem({ ideaId, comment, small, frozen, canDeleteAny, onReply }: ItemProps) {
+function CommentItem({ ideaId, comment, small, frozen, onReply }: ItemProps) {
   const { editComment } = useIdeaMutations();
   const [editing, setEditing] = useState(false);
-  const removal = useIdeaDeferredAction({
+  const removal = useDeferredAction({
+    actionKey: 'idea_comment.delete',
+    entityType: 'idea_comment',
+    entityId: comment.id,
     verb: 'Deleting',
     subject: 'Comment',
-    windowSeconds: HARD_DELETE_WINDOW_SECONDS,
     surface: 'inline',
+    // Read from mount, like a record page: a countdown survives a reload and the thread is short.
+    watchFromMount: true,
     successMessage: 'Comment deleted',
-    run: () => deleteComment(ideaId, comment.id),
+    payload: { idea_id: ideaId },
+    invalidateKeys: [IDEAS_KEY],
   });
 
   if (comment.deleted) {
@@ -131,7 +134,8 @@ function CommentItem({ ideaId, comment, small, frozen, canDeleteAny, onReply }: 
     );
   }
 
-  const canDelete = !frozen && (comment.authorIsMe || canDeleteAny);
+  const canEdit = !frozen && comment.canEdit;
+  const canDelete = !frozen && comment.canDelete;
 
   if (editing) {
     return (
@@ -176,7 +180,7 @@ function CommentItem({ ideaId, comment, small, frozen, canDeleteAny, onReply }: 
               <CornerDownRight className="size-3.5" />
               Reply
             </Button>
-            {comment.authorIsMe ? (
+            {canEdit ? (
               <Button
                 type="button"
                 variant="dim"
@@ -189,7 +193,7 @@ function CommentItem({ ideaId, comment, small, frozen, canDeleteAny, onReply }: 
               </Button>
             ) : null}
             {canDelete ? (
-              <Button type="button" variant="dim" size="sm" className="h-7 gap-1 px-1.5" onClick={removal.start}>
+              <Button type="button" variant="dim" size="sm" className="h-7 gap-1 px-1.5" onClick={() => removal.start()}>
                 <Trash2 className="size-3.5" />
                 Delete
               </Button>
@@ -206,15 +210,7 @@ function CommentItem({ ideaId, comment, small, frozen, canDeleteAny, onReply }: 
  * deleted" placeholder when a deleted comment still has replies. Delete is the deferred
  * countdown, in place of the row's actions (D7), not a dialog.
  */
-export function IdeaComments({
-  ideaId,
-  frozen,
-  canDeleteAny,
-}: {
-  ideaId: string;
-  frozen: boolean;
-  canDeleteAny: boolean;
-}) {
+export function IdeaComments({ ideaId, frozen }: { ideaId: string; frozen: boolean }) {
   const { data: session } = useSession();
   const me = session?.user?.name ?? 'Demo User';
   const { data: comments, isLoading } = useIdeaCommentsQuery(ideaId);
@@ -225,7 +221,10 @@ export function IdeaComments({
     const all = comments ?? [];
     const top = all.filter((c) => !c.parentId);
     return {
-      threads: top.map((c) => ({ root: c, replies: all.filter((r) => r.parentId === c.id) })),
+      // A deleted comment stays only as the placeholder its replies hang from.
+      threads: top
+        .map((c) => ({ root: c, replies: all.filter((r) => r.parentId === c.id && !r.deleted) }))
+        .filter(({ root, replies }) => !root.deleted || replies.length > 0),
       count: all.filter((c) => !c.deleted).length,
     };
   }, [comments]);
@@ -269,7 +268,6 @@ export function IdeaComments({
                 ideaId={ideaId}
                 comment={root}
                 frozen={frozen}
-                canDeleteAny={canDeleteAny}
                 onReply={() => setReplyTo(root.id)}
               />
               {replies.length > 0 || replyTo === root.id ? (
@@ -281,8 +279,7 @@ export function IdeaComments({
                       comment={reply}
                       small
                       frozen={frozen}
-                      canDeleteAny={canDeleteAny}
-                      onReply={() => setReplyTo(root.id)}
+                            onReply={() => setReplyTo(root.id)}
                     />
                   ))}
                   {replyTo === root.id ? (

@@ -32,6 +32,7 @@ export function IdeaCaptureModal({
   const [proposedSolution, setProposedSolution] = useState('');
   const [impact, setImpact] = useState('');
   const [department, setDepartment] = useState('');
+  const [rawText, setRawText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [touched, setTouched] = useState(false);
 
@@ -41,6 +42,7 @@ export function IdeaCaptureModal({
     setProposedSolution('');
     setImpact('');
     setDepartment('');
+    setRawText('');
     setFiles([]);
     setTouched(false);
   }, [open]);
@@ -52,7 +54,7 @@ export function IdeaCaptureModal({
     setTouched(true);
     if (!problem.trim() || create.isPending) return;
     try {
-      await create.mutateAsync({ problem, proposedSolution, impact, department, files });
+      await create.mutateAsync({ problem, proposedSolution, impact, department, rawText, files });
       onOpenChange(false);
     } catch {
       // The hook toasted the reason; the modal stays open with what was typed.
@@ -106,6 +108,10 @@ export function IdeaCaptureModal({
                 maxLength={120}
                 onChange={(e) => setDepartment(e.target.value)}
               />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="idea-raw">Original message</Label>
+              <Textarea id="idea-raw" value={rawText} onChange={(e) => setRawText(e.target.value)} rows={2} />
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="idea-files">Attachments</Label>

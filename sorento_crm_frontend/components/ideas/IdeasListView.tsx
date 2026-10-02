@@ -13,6 +13,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Container } from '@/components/common/container';
+import LoadErrorState from '@/components/common/LoadErrorState';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -44,11 +45,14 @@ export function IdeasListView() {
     debouncedValue: debouncedSearch,
     isSettling,
   } = useDebouncedSearch();
-  const { data, isLoading, isFetching, isError, error } = useIdeasQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useIdeasQuery({
     query: debouncedSearch,
     status,
   });
   const { vote } = useIdeaMutations();
+  // `mutate` is stable across renders; the mutation object is not, and columns that depend on it
+  // are rebuilt (and every cell remounted) each time a request changes state.
+  const castVote = vote.mutate;
   const rows = useMemo<Idea[]>(() => data ?? [], [data]);
 
   const columns = useMemo<ColumnDef<Idea>[]>(
@@ -62,7 +66,7 @@ export function IdeasListView() {
             count={row.original.upvotes}
             voted={row.original.myVote === 'up'}
             disabled={!!row.original.mergedIntoId}
-            onVote={() => vote.mutate(row.original.id)}
+            onVote={() => castVote(row.original.id)}
           />
         ),
         size: 72,
@@ -171,7 +175,7 @@ export function IdeasListView() {
         meta: { headerTitle: 'Captured', skeleton: <Skeleton className="h-4 w-20" /> },
       },
     ],
-    [vote],
+    [castVote],
   );
 
   const table = useReactTable({
@@ -182,6 +186,8 @@ export function IdeasListView() {
     enableSorting: false,
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
+    // Product is one value for every row today (the workspace's product), so it starts hidden.
+    initialState: { columnVisibility: { product: false } },
   });
 
   const emptyMessage =
@@ -210,9 +216,13 @@ export function IdeasListView() {
       <Container>
         <div className="space-y-3">
           {isError ? (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-              {error instanceof Error ? error.message : 'Failed to load ideas.'}
-            </div>
+            <LoadErrorState
+              className="rounded-lg border"
+              title="Could not load ideas"
+              message={error instanceof Error ? error.message : undefined}
+              onRetry={() => void refetch()}
+              retrying={isFetching}
+            />
           ) : null}
           <DataGrid
             table={table}

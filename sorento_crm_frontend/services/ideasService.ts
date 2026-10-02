@@ -1,42 +1,34 @@
 /**
  * Ideas service: the CRM-native Ideas pages' only door to the backend.
  *
- * PHASE 1: every function delegates to `ideasService.mock.ts` (in-memory, no network). Phase 2
- * replaces each body with `apiFetch` against the gateway below and deletes the mock; hooks and UI
- * do not change.
+ * Layering: components -> hooks (`useIdeas`) -> THIS service -> lib/api -> the gateway
+ * `/api/v1/ideation/*`, which calls the ss embed API as the signed-in user (PLAN-ideation-in-crm
+ * section 10). ss's camelCase shapes pass through unchanged; the few mappings are noted below.
  *
- * EXPECTED CONTRACT (PLAN-ideation-in-crm section 10; bodies and responses are the ss embed API's
- * camelCase shapes, see `types/ideas.ts`; an ss 4xx arrives as the usual `{ detail }` error and is
- * thrown as `Error(message)` through `extractApiError`):
+ *   listIdeas         GET    /ideation/ideas?filter=<active|archived|all>&query=      view
+ *   getBoard          GET    /ideation/ideas/board                                    view
+ *   getIdea           GET    /ideation/ideas/{id}                                     view
+ *   getMergedChildren GET    /ideation/ideas/{id}/merged                              view
+ *   createIdea        POST   /ideation/ideas, then POST .../{id}/attachments per file view
+ *   updateIdea        PATCH  /ideation/ideas/{id}                                     manage
+ *   voteIdea          POST   /ideation/ideas/{id}/vote  {dir: 'up'}                   view
+ *   moveIdeaToStatus  POST   /ideation/ideas/{id}/status  {toStatusId}                manage
+ *   restoreIdea       POST   /ideation/ideas/{id}/status  {status: 'new'}             manage
+ *   reorderIdeas      PUT    /ideation/ideas/reorder  {orderedIds}                    manage
+ *   mergeIdeas        POST   /ideation/ideas/merge  {survivorId, ideaIds}             manage
+ *   unmergeIdea       POST   /ideation/ideas/{id}/unmerge                             manage
+ *   promoteIdea       POST   /ideation/ideas/promote  {ideaIds: [id], title}          manage
+ *   uploadAttachment  POST   /ideation/ideas/{id}/attachments (multipart)             view
+ *   fetchAttachment   GET    /ideation/ideas/{id}/attachments/{aid}/content           view
+ *   listComments      GET    /ideation/ideas/{id}/comments    (ss `isDeleted` -> `deleted`)
+ *   addComment        POST   /ideation/ideas/{id}/comments  {body, parentId?}
+ *   editComment       PATCH  /ideation/ideas/{id}/comments/{cid}  {body}
  *
- *   listIdeas         GET    /api/v1/ideation/ideas?filter=<status key>&query=      ideation.board.view
- *   getBoard          GET    /api/v1/ideation/ideas/board                           ideation.board.view
- *   getIdea           GET    /api/v1/ideation/ideas/{id}                            ideation.board.view
- *   getMergedChildren GET    /api/v1/ideation/ideas/{id}/merged                     ideation.board.view
- *   createIdea        POST   /api/v1/ideation/ideas  {problem, proposedSolution?, impact?, department?}
- *                            then POST .../ideas/{id}/attachments per file (multipart)  ideation.board.view
- *   updateIdea        PATCH  /api/v1/ideation/ideas/{id}  IdeaUpdateIn              ideation.ideas.manage
- *   voteIdea          POST   /api/v1/ideation/ideas/{id}/vote  {dir: 'up'}          ideation.board.view
- *   moveIdeaToStatus  POST   /api/v1/ideation/ideas/{id}/status  {toStatusId}       ideation.ideas.manage
- *   restoreIdea       POST   /api/v1/ideation/ideas/{id}/status  {status: 'new'}    ideation.ideas.manage
- *   archiveIdea       pending action `idea.archive` -> ss status {status: 'archived'}   ideation.ideas.manage
- *   deleteIdea        pending action `idea.delete`  -> ss DELETE /embed/ideas/{id}      ideation.ideas.manage
- *   reorderIdeas      PUT    /api/v1/ideation/ideas/reorder  {orderedIds}           ideation.ideas.manage
- *   mergeIdeas        POST   /api/v1/ideation/ideas/merge  {survivorId, ideaIds}    ideation.ideas.manage
- *   unmergeIdea       POST   /api/v1/ideation/ideas/{id}/unmerge                    ideation.ideas.manage
- *   promoteIdea       POST   /api/v1/ideation/ideas/promote  {title, ideaIds:[id]}  ideation.ideas.manage
- *                            ss answers 403 "This user has no Business Requirements access in the
- *                            Ideas workspace." when the CRM email has no BR-manage ss user.
- *   uploadAttachment  POST   /api/v1/ideation/ideas/{id}/attachments  (multipart)   ideation.ideas.manage
- *   listComments      GET    /api/v1/ideation/ideas/{id}/comments   (oldest first, one reply level)
- *   addComment        POST   /api/v1/ideation/ideas/{id}/comments  {body, parentId?}
- *   editComment       PATCH  /api/v1/ideation/ideas/{id}/comments/{cid}  {body}
- *   deleteComment     pending action `idea_comment.delete` -> DELETE .../comments/{cid}
- *
- * The Idea read carries one field ss does not return today: `businessRequirements` (the linked BRs,
- * read-only on the BR tab). The gateway adds it from ss's BR list filtered by the idea.
+ * Archive, Delete and comment Delete are NOT here: they are server-deferred pending actions
+ * (`idea.archive`, `idea.delete`, `idea_comment.delete`) started through `useDeferredAction`.
  */
-import * as mock from '@/services/ideasService.mock';
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type {
   Idea,
   IdeaAttachment,
@@ -49,30 +41,211 @@ import type {
   IdeaUpdateInput,
 } from '@/types/ideas';
 
-export const IDEA_STATUS_FILTER_OPTIONS = mock.IDEA_STATUS_FILTER_OPTIONS;
+const BASE = '/api/v1/ideation';
 
-export const listIdeas = (params: IdeaListParams): Promise<Idea[]> => mock.listIdeas(params);
-export const getIdea = (id: string): Promise<Idea> => mock.getIdea(id);
-export const getBoard = (): Promise<IdeaBoard> => mock.getBoard();
-export const getMergedChildren = (id: string): Promise<Idea[]> => mock.getMergedChildren(id);
-export const createIdea = (input: IdeaCreateInput): Promise<Idea> => mock.createIdea(input);
-export const updateIdea = (id: string, input: IdeaUpdateInput): Promise<Idea> => mock.updateIdea(id, input);
-export const voteIdea = (id: string): Promise<Idea> => mock.voteIdea(id);
-export const moveIdeaToStatus = (id: string, toStatusId: string): Promise<Idea> =>
-  mock.moveIdeaToStatus(id, toStatusId);
-export const restoreIdea = (id: string): Promise<Idea> => mock.restoreIdea(id);
-export const archiveIdea = (id: string): Promise<Idea> => mock.archiveIdea(id);
-export const deleteIdea = (id: string): Promise<void> => mock.deleteIdea(id);
-export const reorderIdeas = (orderedIds: string[]): Promise<void> => mock.reorderIdeas(orderedIds);
-export const mergeIdeas = (input: IdeaMergeInput): Promise<Idea> => mock.mergeIdeas(input);
-export const unmergeIdea = (id: string): Promise<Idea> => mock.unmergeIdea(id);
-export const promoteIdea = (id: string, input: IdeaPromoteInput): Promise<Idea> => mock.promoteIdea(id, input);
-export const uploadAttachment = (id: string, file: File): Promise<IdeaAttachment> =>
-  mock.uploadAttachment(id, file);
-export const listComments = (ideaId: string): Promise<IdeaComment[]> => mock.listComments(ideaId);
-export const addComment = (ideaId: string, input: { body: string; parentId?: string | null }): Promise<IdeaComment> =>
-  mock.addComment(ideaId, input);
-export const editComment = (ideaId: string, commentId: string, body: string): Promise<IdeaComment> =>
-  mock.editComment(ideaId, commentId, body);
-export const deleteComment = (ideaId: string, commentId: string): Promise<void> =>
-  mock.deleteComment(ideaId, commentId);
+/** Beyond the default (active ideas), which is "no filter". */
+export const IDEA_STATUS_FILTER_OPTIONS = [
+  { value: 'archived', label: 'Archived' },
+  { value: 'all', label: 'All' },
+];
+
+type Raw = Record<string, unknown>;
+
+async function read<T>(response: Response, fallback: string): Promise<T> {
+  if (!response.ok) throw new Error(await extractApiError(response, fallback));
+  return response.json();
+}
+
+function jsonInit(method: string, body?: unknown): RequestInit {
+  return {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  };
+}
+
+function toAttachment(raw: Raw): IdeaAttachment {
+  return {
+    id: String(raw.id),
+    kind: (raw.kind as IdeaAttachment['kind']) ?? 'file',
+    name: String(raw.name ?? ''),
+    sizeBytes: (raw.sizeBytes as number | null | undefined) ?? null,
+    durationSec: (raw.durationSec as number | null | undefined) ?? null,
+    hasContent: !!raw.contentPath,
+    url: typeof raw.url === 'string' ? raw.url : '',
+  };
+}
+
+function toIdea(raw: Raw): Idea {
+  return {
+    ...(raw as unknown as Idea),
+    transitions: (raw.transitions as Idea['transitions'] | undefined) ?? [],
+    attachments: ((raw.attachments as Raw[] | undefined) ?? []).map(toAttachment),
+    businessRequirements: (raw.businessRequirements as Idea['businessRequirements'] | undefined) ?? [],
+  };
+}
+
+function toComment(raw: Raw): IdeaComment {
+  const deleted = !!raw.isDeleted;
+  return {
+    id: String(raw.id),
+    parentId: (raw.parentId as string | null | undefined) ?? null,
+    authorName: String(raw.authorName ?? ''),
+    body: deleted ? '' : String(raw.body ?? ''),
+    createdAt: String(raw.createdAt),
+    editedAt: (raw.editedAt as string | null | undefined) ?? null,
+    deleted,
+    canEdit: !!raw.canEdit,
+    canDelete: !!raw.canDelete,
+  };
+}
+
+export async function listIdeas(params: IdeaListParams): Promise<Idea[]> {
+  const search = new URLSearchParams();
+  if (params.status) search.set('filter', params.status);
+  if (params.query?.trim()) search.set('query', params.query.trim());
+  const qs = search.toString();
+  const rows = await read<Raw[]>(await apiFetch(`${BASE}/ideas${qs ? `?${qs}` : ''}`), 'Failed to load ideas');
+  return rows.map(toIdea);
+}
+
+export async function getIdea(id: string): Promise<Idea> {
+  return toIdea(await read<Raw>(await apiFetch(`${BASE}/ideas/${id}`), 'Failed to load the idea'));
+}
+
+export async function getBoard(): Promise<IdeaBoard> {
+  const board = await read<{ columns: Array<Raw & { ideas?: Raw[] }> }>(
+    await apiFetch(`${BASE}/ideas/board`),
+    'Failed to load the board',
+  );
+  return {
+    columns: (board.columns ?? []).map((c) => ({
+      ...(c as unknown as IdeaBoard['columns'][number]),
+      ideas: (c.ideas ?? []).map(toIdea),
+    })),
+  };
+}
+
+export async function getMergedChildren(id: string): Promise<Idea[]> {
+  const rows = await read<Raw[]>(await apiFetch(`${BASE}/ideas/${id}/merged`), 'Failed to load merged ideas');
+  return rows.map(toIdea);
+}
+
+export async function uploadAttachment(id: string, file: File): Promise<IdeaAttachment> {
+  const form = new FormData();
+  form.append('file', file);
+  const raw = await read<Raw>(
+    await apiFetch(`${BASE}/ideas/${id}/attachments`, { method: 'POST', body: form }),
+    'Failed to upload the file',
+  );
+  return toAttachment(raw);
+}
+
+/** The bytes of an uploaded attachment, streamed through the gateway. */
+export async function fetchAttachment(ideaId: string, attachmentId: string): Promise<Blob> {
+  const response = await apiFetch(`${BASE}/ideas/${ideaId}/attachments/${attachmentId}/content`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to download the file'));
+  return response.blob();
+}
+
+export async function createIdea(input: IdeaCreateInput): Promise<Idea> {
+  const { files, ...fields } = input;
+  const body: Record<string, string> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (typeof value === 'string' && value.trim()) body[key] = value.trim();
+  }
+  const created = toIdea(
+    await read<Raw>(await apiFetch(`${BASE}/ideas`, jsonInit('POST', body)), 'Failed to capture the idea'),
+  );
+  const failed: string[] = [];
+  for (const file of files ?? []) {
+    try {
+      await uploadAttachment(created.id, file);
+    } catch {
+      failed.push(file.name);
+    }
+  }
+  if (failed.length > 0) {
+    throw new Error(`The idea was captured, but these files could not be attached: ${failed.join(', ')}`);
+  }
+  return created;
+}
+
+export async function updateIdea(id: string, input: IdeaUpdateInput): Promise<Idea> {
+  return toIdea(
+    await read<Raw>(await apiFetch(`${BASE}/ideas/${id}`, jsonInit('PATCH', input)), 'Failed to save the idea'),
+  );
+}
+
+export async function voteIdea(id: string): Promise<Idea> {
+  return toIdea(
+    await read<Raw>(await apiFetch(`${BASE}/ideas/${id}/vote`, jsonInit('POST', { dir: 'up' })), 'Failed to vote'),
+  );
+}
+
+export async function moveIdeaToStatus(id: string, toStatusId: string): Promise<Idea> {
+  return toIdea(
+    await read<Raw>(
+      await apiFetch(`${BASE}/ideas/${id}/status`, jsonInit('POST', { toStatusId })),
+      'Failed to move the idea',
+    ),
+  );
+}
+
+export async function restoreIdea(id: string): Promise<Idea> {
+  return toIdea(
+    await read<Raw>(
+      await apiFetch(`${BASE}/ideas/${id}/status`, jsonInit('POST', { status: 'new' })),
+      'Failed to restore the idea',
+    ),
+  );
+}
+
+export async function reorderIdeas(orderedIds: string[]): Promise<void> {
+  await read(await apiFetch(`${BASE}/ideas/reorder`, jsonInit('PUT', { orderedIds })), 'Failed to reorder ideas');
+}
+
+export async function mergeIdeas(input: IdeaMergeInput): Promise<Idea> {
+  return toIdea(
+    await read<Raw>(await apiFetch(`${BASE}/ideas/merge`, jsonInit('POST', input)), 'Failed to merge the ideas'),
+  );
+}
+
+export async function unmergeIdea(id: string): Promise<void> {
+  await read(await apiFetch(`${BASE}/ideas/${id}/unmerge`, jsonInit('POST')), 'Failed to unmerge the idea');
+}
+
+export async function promoteIdea(id: string, input: IdeaPromoteInput): Promise<{ id: string }> {
+  return read(
+    await apiFetch(`${BASE}/ideas/promote`, jsonInit('POST', { ideaIds: [id], title: input.title })),
+    'Failed to promote the idea',
+  );
+}
+
+export async function listComments(ideaId: string): Promise<IdeaComment[]> {
+  const rows = await read<Raw[]>(await apiFetch(`${BASE}/ideas/${ideaId}/comments`), 'Failed to load comments');
+  return rows.map(toComment);
+}
+
+export async function addComment(
+  ideaId: string,
+  input: { body: string; parentId?: string | null },
+): Promise<IdeaComment> {
+  const body: Record<string, string> = { body: input.body };
+  if (input.parentId) body.parentId = input.parentId;
+  return toComment(
+    await read<Raw>(
+      await apiFetch(`${BASE}/ideas/${ideaId}/comments`, jsonInit('POST', body)),
+      'Failed to post the comment',
+    ),
+  );
+}
+
+export async function editComment(ideaId: string, commentId: string, body: string): Promise<IdeaComment> {
+  return toComment(
+    await read<Raw>(
+      await apiFetch(`${BASE}/ideas/${ideaId}/comments/${commentId}`, jsonInit('PATCH', { body })),
+      'Failed to save the comment',
+    ),
+  );
+}

@@ -398,19 +398,10 @@ describe('AC-D-05 attachments and business requirements', () => {
     expect(screen.getByText('Draft')).toBeInTheDocument();
   });
 
-  it('a manage holder gets the upload dropzone, a view-only user does not', async () => {
-    held.add(MANAGE);
-    const { unmount } = renderDetail(makeIdea());
-    await loaded();
-    fireEvent.click(screen.getByRole('tab', { name: /Attachments/ }));
-    expect(await screen.findByLabelText('Upload attachments')).toBeInTheDocument();
-    unmount();
-
-    held.delete(MANAGE);
+  it('every viewer gets the upload dropzone, manage or not (captain decision, UAC AC-A-08 / AC-D-05)', async () => {
     renderDetail(makeIdea());
     await loaded();
     fireEvent.click(screen.getByRole('tab', { name: /Attachments/ }));
-    await screen.findByText('No attachments');
-    expect(screen.queryByLabelText('Upload attachments')).toBeNull();
+    expect(await screen.findByLabelText('Upload attachments')).toBeInTheDocument();
   });
 });
