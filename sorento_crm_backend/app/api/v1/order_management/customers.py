@@ -14,6 +14,7 @@ from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.stock_ask import StockAskResponse, StockAskUpdate
 from app.services import contact_customer_service, stock_ask_service
 from app.schemas.contact_customer import CustomerLinkedContactsResponse
+from app.services.user_service import UserPermissionService
 from app.services.error_handler import handle_internal_error, handle_not_found
 
 router = APIRouter()
@@ -203,6 +204,13 @@ async def create_customer(
 ):
     """Create a new customer."""
     try:
+        if customer_data.account_level is not None and not UserPermissionService(db).check_user_has_permission(
+            current_user["id"], "order_management.customers.edit"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission required: order_management.customers.edit",
+            )
         service = CustomerService(db)
         customer = service.create_customer(customer_data)
         return customer
@@ -223,6 +231,17 @@ async def update_customer(
     try:
         validate_uuid_path(customer_id, resource="Customer")
         service = CustomerService(db)
+        if "account_level" in customer_data.model_fields_set:
+            # The route checks sign-in only; a CHANGE to the Account level (it decides which
+            # ledger the chatbot answers for "account N") needs the edit permission.
+            current = service.get_customer(customer_id).account_level
+            if customer_data.account_level != current and not UserPermissionService(db).check_user_has_permission(
+                current_user["id"], "order_management.customers.edit"
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Permission required: order_management.customers.edit",
+                )
         customer = service.update_customer(customer_id, customer_data)
         return customer
     except HTTPException:
