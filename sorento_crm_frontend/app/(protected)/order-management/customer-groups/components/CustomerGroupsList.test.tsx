@@ -54,8 +54,10 @@ vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => (
   })),
   resetUserListColumnConfig: vi.fn(async () => undefined),
 }));
+const perms = vi.hoisted(() => ({ edit: true }));
 vi.mock('@/hooks/usePermissions', () => ({
-  useHasPermission: () => true,
+  useHasPermission: (slug: string) =>
+    slug === 'order_management.customers.edit' ? perms.edit : true,
   usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
 }));
 vi.mock('@/lib/toast', () => ({
@@ -104,6 +106,7 @@ function renderList() {
 beforeEach(() => {
   Object.values(services).forEach((fn) => fn.mockReset());
   nav.push.mockReset();
+  perms.edit = true;
 });
 afterEach(() => cleanup());
 
@@ -216,5 +219,18 @@ describe('CustomerGroupsList', () => {
     await waitFor(() =>
       expect(nav.push).toHaveBeenCalledWith('/order-management/customer-groups/grp-new'),
     );
+  });
+
+  it('Add group is rendered only with order_management.customers.edit', async () => {
+    services.getCustomerGroups.mockResolvedValue(page(ROWS));
+    perms.edit = false;
+    const denied = renderList();
+    await screen.findByText('HANLIM TRADING SDN BHD');
+    expect(screen.queryByRole('button', { name: /add group/i })).toBeNull();
+    denied.unmount();
+
+    perms.edit = true;
+    renderList();
+    expect(await screen.findByRole('button', { name: /add group/i })).toBeInTheDocument();
   });
 });
