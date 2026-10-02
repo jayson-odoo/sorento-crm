@@ -269,6 +269,26 @@ Order per turn:
    is one adapter, `_missing_required(fields) -> list[str]`, with ideation's required set
    `["problem"]`; when crew relays the helper API, the adapter's body becomes the helper call
    and the ask-back sentence comes from the helper's ask for the missing field.
+   **Helper relayed 2 Oct:** `app/services/chatbot/required_fields.py` on #1445 (head 57af6b3e).
+   It lives in the chatbot package and works through the engine's slot: `collect()` returns the
+   question + a one-turn `slot`; on the next message `reply_verdict()` reroutes a reply back to
+   the ask's lane with `required_ask` / `required_ask_reply`. Core (this service, behind the MCP
+   tool and the external endpoint) may not import the package (AC-002), so the wiring sits in the
+   ideate LANE (`app/services/chatbot/lanes/ideate.py`, inside the package):
+   - the lane registers `AskType("ideation", fields=(FieldSpec("problem", noun="idea",
+     question=<shipped English ask-back>, resolve=<any non-empty text is "ok">, allow_all=False),),
+     reroute={ideate intent}, cancelled=..., give_up=...)`;
+   - the core turn still DECIDES (its `_missing_required` over the extractor's reading, since
+     "want to submit idea" is non-empty text the helper alone would accept) and returns
+     `ask_idea`; on `ask_idea` the lane calls `collect(db, ask, given={})` and puts the returned
+     slot on its envelope (`required_ask`), keeping the core's reply text, which is already in the
+     user's language (Q5), instead of the helper's English `question`;
+   - on the answering turn the lane receives `required_ask_reply` and calls the tool with that
+     text as `message_text`; the core turn runs it as a fresh idea message.
+   - Helper rules that now apply to ideation: a reply containing "?" or an empty message drops
+     the question (an idea phrased as a question is then routed by the parser as usual); "cancel"
+     ends it with the ask's `cancelled` text.
+   Order: #1445 merges first; this lane then brings it in (crew coordinates) and wires the lane.
 5. Similar own ideas (FINAL contract, ss#111 section 2): `POST /ideation/intake/ideas/similar-own`
    `{product_id, text (= the extracted problem), submitter_crm_user_id (the linked user's id),
    submitter_phone (the contact phone), is_test}` -> `{matches: [{idea_id, idea_number, title,
