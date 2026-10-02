@@ -990,6 +990,16 @@ def narrow_by_account(
             customers = _customers(resolution)
             if not customers:
                 continue
+            # A word that IS one trading name ("Soon Heng Trading") speaks for that name
+            # alone (crew ruling, 2 Oct 2026): the names merely carrying its words (SOON
+            # GUAN HENG TRADING) are dropped for this word, so neither their levels nor
+            # their rows answer it. No match of that exact name -> every match counts.
+            exact = [m for m in customers if ledger_family_key(_match_name(m)) == ledger_family_key(typed)]
+            if exact:
+                siblings = [m for m in customers if m not in exact]
+                dropped |= {str(m.get("uuid")) for m in siblings}
+                resolution["matches"] = [m for m in resolution["matches"] if m not in siblings]
+                customers = exact
             kept = [m for m in customers if levels.get(str(m.get("uuid"))) == account]
             if kept:
                 dropped |= {str(m.get("uuid")) for m in customers if m not in kept}
@@ -1016,6 +1026,11 @@ def narrow_by_account(
     return refusal
 
 
+def _match_name(match: dict[str, Any]) -> str:
+    """A customer match's name: the row's `customer_name`, else its code."""
+    return str((match.get("display") or {}).get("customer_name") or match.get("canonical_code") or "")
+
+
 def _asks_an_account(entity: Any) -> bool:
     """A customer word typed THIS message with an `account` N >= 1 ("Soon Heng account 1")."""
     return (
@@ -1040,17 +1055,8 @@ def _is_dropped(match: Any, dropped: set[str]) -> bool:
 def _no_such_account(
     typed: str, account: int, customers: list[dict[str, Any]], levels: dict[str, int | None]
 ) -> str:
-    """Q4: one trading name says which levels it has; several names say the word has none.
-
-    A word that IS one trading name ("Soon Heng Trading") speaks for that name alone: the
-    resolver also returns names merely carrying its words (SOON GUAN HENG TRADING), and
-    those do not turn the typed name's own answer into "None of ..."."""
-    def _name(m: dict[str, Any]) -> str:
-        return str((m.get("display") or {}).get("customer_name") or m.get("canonical_code") or "")
-
-    exact = [m for m in customers if ledger_family_key(_name(m)) == ledger_family_key(typed)]
-    customers = exact or customers
-    names = [_name(m) for m in customers]
+    """Q4: one trading name says which levels it has; several names say the word has none."""
+    names = [_match_name(m) for m in customers]
     if len({ledger_family_key(n) for n in names}) > 1:
         return f'None of the customers matching "{typed}" has Account {account}.'
     have = sorted({lvl for m in customers if (lvl := levels.get(str(m.get("uuid")))) is not None})
