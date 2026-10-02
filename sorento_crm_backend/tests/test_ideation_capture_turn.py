@@ -219,10 +219,14 @@ class Env:
         return self.raw_turn(message, session_vars_in=session_vars_in, is_test=is_test,
                              submitter_name=submitter_name)
 
+    def turn_ask(self, message: str, **kw) -> dict:
+        return self.raw_turn(message, ask_reply=True, **kw)
+
     def raw_turn(self, message: str, *, session_vars_in: dict | None = None, is_test: bool = False,
-                 submitter_name: str | None = None) -> dict:
+                 submitter_name: str | None = None, **extra) -> dict:
         return self.svc.handle_capture_turn(
             self.db,
+            **extra,
             respond_io_id=self.rio,
             message_text=message,
             submitter_name=submitter_name,
@@ -1068,3 +1072,167 @@ def test_q_malformed_held_item_is_a_fresh_message_not_an_error(env, bad):
     out = env.turn("1", session_vars_in=sv)
     assert env.extractor_calls == ["1"]
     assert out["status"] == "ask_idea"
+
+
+# --------------------------------------------------------------------------- #
+# R - a vague reply to the ask-back never loops silently                      #
+# --------------------------------------------------------------------------- #
+def test_r_ask_reply_without_a_problem_gives_up(env):
+    env.ready()
+    env.extraction("hmm not sure", fields={}, language="ms")
+    out = env.turn_ask("hmm not sure")
+    assert out["status"] == "ask_idea_gave_up"
+    assert out["reply_text"]
+    facts = _only_render(env, "ask_idea_gave_up")
+    assert isinstance(facts, dict)
+    assert env.languages == ["ms"]
+    _no_ss(env)
+    assert "ideation" not in out["session_vars"]
+    assert "ideation" not in env.persisted()
+
+
+def test_r_ask_reply_with_a_problem_runs_the_normal_flow_to_create(env):
+    env.ready()
+    env.idea_message()
+    env.created()
+    out = env.turn_ask(MSG)
+    assert out["status"] == "complete"
+    assert len(env.similar_calls) == 1
+    assert len(env.create_calls) == 1
+
+
+def test_r_ask_reply_with_a_problem_runs_the_normal_flow_to_a_list(env):
+    env.ready()
+    env.idea_message()
+    env.sim(2)
+    out = env.turn_ask(MSG)
+    assert out["status"] == "similar_offered"
+    assert env.create_calls == []
+
+
+def test_r_without_ask_reply_no_problem_is_still_ask_idea(env):
+    env.ready()
+    env.extraction("hmm not sure", fields={})
+    out = env.turn("hmm not sure")
+    assert out["status"] == "ask_idea"
+    _only_render(env, "ask_idea")
+    _no_ss(env)
+
+
+def test_r_ask_reply_false_explicit_is_ask_idea(env):
+    env.ready()
+    env.extraction("hmm not sure", fields={})
+    out = env.raw_turn("hmm not sure", ask_reply=False)
+    assert out["status"] == "ask_idea"
+
+
+@pytest.mark.parametrize("lang", ["en", "ms", "zh"])
+def test_r_response_carries_the_language_for_ask_idea(env, lang):
+    env.ready()
+    env.extraction("want to submit idea", fields={}, language=lang)
+    out = env.turn("want to submit idea")
+    assert out["status"] == "ask_idea"
+    assert out["language"] == lang
+
+
+def test_r_response_carries_the_language_for_ask_idea_gave_up(env):
+    env.ready()
+    env.extraction("hmm", fields={}, language="zh")
+    assert env.turn_ask("hmm")["language"] == "zh"
+
+
+def test_r_response_carries_the_language_for_complete(env):
+    env.ready()
+    env.idea_message(language="ms")
+    env.created()
+    out = env.turn(MSG)
+    assert out["status"] == "complete"
+    assert out["language"] == "ms"
+
+
+def test_r_response_carries_the_language_for_no_access(env):
+    env.seed_workspace()
+    env.seed_contact()
+    env.idea_message(language="zh")
+    out = env.turn(MSG)
+    assert out["status"] == "no_access"
+    assert out["language"] == "zh"
+
+
+def test_r_language_falls_back_to_en_in_the_response(env):
+    env.ready()
+    env.idea_message(language="fr")
+    env.created()
+    assert env.turn(MSG)["language"] == "en"
+
+
+@pytest.mark.parametrize("lang", ["en", "ms", "zh"])
+def test_r_real_give_up_copy_is_a_statement_that_differs_from_the_ask(lang):
+    from app.services.ideation_capture_replies import render_reply
+
+    give_up = render_reply("ask_idea_gave_up", {}, user_message="hmm", language=lang)
+    ask = render_reply("ask_idea", {}, user_message="hmm", language=lang)
+    assert give_up.strip()
+    assert "?" not in give_up and "？" not in give_up
+    assert give_up != ask
+
+
+def test_r_give_up_copy_key_is_registered():
+    from app.services.chatbot_reply_copy import CHATBOT_REPLY_COPY
+
+    for key in ("ideation_capture_give_up", "ideation_capture_give_up.ms", "ideation_capture_give_up.zh"):
+        assert key in CHATBOT_REPLY_COPY, key
+
+
+# ---- endpoint: ask_reply in, language out ----------------------------------------------------
+@pytest.fixture
+def turn_endpoint(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.dependencies import get_db, get_external_api_user
+    from tests._external_auth import external_permissions_granted
+
+    seen: dict = {}
+
+    def _fake(db, **kw):  # noqa: ANN001
+        seen.clear()
+        seen.update(kw)
+        return {"status": "ask_idea", "reply_text": "Sure", "session_vars": {},
+                "offered_media": [], "language": "ms"}
+
+    monkeypatch.setattr("app.api.v1.external.ideation.handle_capture_turn", _fake)
+    monkeypatch.setattr(
+        "app.api.v1.external.ideation.IntegrationLogService.create_integration_log",
+        lambda self, log_data, request_payload_dict=None: None,
+    )
+    app.dependency_overrides[get_db] = lambda: None
+    app.dependency_overrides[get_external_api_user] = lambda: {"id": "system"}
+    try:
+        with external_permissions_granted():
+            yield TestClient(app), seen
+    finally:
+        app.dependency_overrides.clear()
+
+
+_TURN = "/api/v1/external/ideation/turn"
+
+
+def test_r_endpoint_forwards_ask_reply_true(turn_endpoint):
+    client, seen = turn_endpoint
+    resp = client.post(_TURN, json={"respond_io_id": "rio-1", "message_text": "hmm", "ask_reply": True})
+    assert resp.status_code == 200, resp.text
+    assert seen["ask_reply"] is True
+
+
+def test_r_endpoint_ask_reply_absent_means_false(turn_endpoint):
+    client, seen = turn_endpoint
+    resp = client.post(_TURN, json={"respond_io_id": "rio-1", "message_text": "hmm"})
+    assert resp.status_code == 200, resp.text
+    assert seen["ask_reply"] is False
+
+
+def test_r_endpoint_response_carries_language(turn_endpoint):
+    client, _ = turn_endpoint
+    resp = client.post(_TURN, json={"respond_io_id": "rio-1", "message_text": "hmm"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["language"] == "ms"
