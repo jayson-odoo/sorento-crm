@@ -117,8 +117,12 @@ owner answered (a); built behind `_unmatched_item`, one place to change.
     first claimed keeps its id, the rest are deleted (their SPO lines' receipt recomputed,
     `legacy_links_released`); the link comes from rules 2-7 (the Excel FIFO link is
     replaced). A single exact-qty claim is the old behaviour.
-11. **Waiting fill**: lines with `from_doc_no`, no `from_dtl_key`, both links null, newest
-    first, bounded by `MAX_WAITING_LINKS`, through the same resolver.
+11. **Waiting fill**: AutoCount lines with no line link and a source (`from_doc_no`, else
+    `our_po_no`, else the SPO an adopted Excel line stated in `spo_number_raw`), no
+    `from_dtl_key`, newest first, bounded by `MAX_WAITING_LINKS`, through the same resolver,
+    with the lines its siblings already hold marked used. A line whose document is still
+    unknown is left exactly as it was; D3 lines are retried, so they link the day the
+    document gains the product.
 12. **Batch order**: the pull feeds the ingest sorted by (DocDate, DocKey), so earlier
     receipts take their lines first; preview and apply identical.
 
@@ -136,10 +140,10 @@ helper both callers import, no copy). Audit actor as DO (job actor scope).
 
 ### 1.5 Rows, download, compare
 
-- **Excel view / download**: one row per GRN line in the GRN lines sheet's shape: `doc_no,
-  doc_date, creditor_code, creditor_name, item_code, description, location, qty, uom,
-  from_doc_no, link` where `link` is the preview's verdict for the line (`PO line` / `SPO line` /
-  `unlinked` / `ambiguous`; read from the stored outcome identity, not recomputed).
+- **Excel view / download**: one row per GRN line in the DETAIL LISTING's shape and order:
+  `doc_no, doc_date, creditor_code, creditor_name, from_doc_no` ("Our PO No."), `item_code,
+  description, location, qty, uom`. The per-line link verdict is not a column: the Changes
+  tab carries it per document (counters and worded warnings).
 - **Compare (Q5 a)**, two dropzones (the DO compare UI unchanged). Real files (crew, read-only;
   never committed, fixtures use made-up values in the same shape):
   - `lines` = "DETAIL LISTING ddmmyyyy.xlsx", sheet `Sheet`, header row 1, 34 columns incl.
@@ -172,6 +176,34 @@ job page ("AutoCount GRN Pull", Back to Goods Receive Notes), the GRN list's Act
 - Splitting an AutoCount line across SPO allocations: the owner choosing Q1 (b).
 - Writing PO `qty_received` from GRNs: the PO feed stops carrying it.
 - Push enable for GRN: the owner, after a clean compare on a real window.
+
+## 1.8 Phase 3 reviews (2 Oct) and what changed
+
+Security review: no blocker, no should-fix. Notes taken: N1 `spo_line_candidates` requires
+a company (raises without one); N2 test that the waiting fill never reaches company B; N3
+the fill's sibling query carries the company predicate. N4 (compare mappings are global,
+not per company) left as the DO design; trigger: Confirm on a GRN pull depending on a clean
+compare.
+
+Correctness review (kill tests 11 of 17 killed), all taken:
+
+- **B1** an adopted Excel line still waiting for its stated SPO could never link (the fill
+  skipped `spo_number_raw`, forward matching skips AutoCount GRNs): the fill now takes it
+  (rule 11). Test `test_gp_b1_...`.
+- **B2** the DtlKey-order test passed with the sort removed: equal quantities now.
+- **B3** neither `source_doc` compare was tested: `test_gp52d` / `test_gp52e`.
+- **S4** a PO to SPO re-push kept both links: a resolved document writes the whole link set
+  (`_FORCE_LINKS`), and an SPO line the GRN no longer points at is released so its receipt
+  is recomputed. **S5** SPO is asked before PO (a CRM-raised SPO is both). **S6/S7** guard
+  tests for the sibling-held fill and the any-remaining rung. **S8** GRN list wiring test.
+  **S9** UAC / plan wording aligned. Nits: one label ("goods receipt notes"), download
+  column order = the Excel view's, `DocKey` given as text still orders by value, the
+  source-document difference shows every Excel spelling, `isDocument` rename.
+
+GRN-PULL-SS (ss#107, crew 2 Oct): a goods-receive-notes build with no scope is 422 at the
+gateway, so `PullStartBody` refuses a GRN start without both days or a `docNo`, the GRN
+dialog requires both days (`requireWindow`), and "Pull again" re-pulls the same scope. DO is
+unchanged in this lane (its start still allows no scope); flagged to crew.
 
 ## 2. Build order (tests first)
 

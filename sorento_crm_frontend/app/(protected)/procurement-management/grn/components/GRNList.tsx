@@ -360,6 +360,7 @@ export default function GRNList() {
           onOpenChange={setPullScopeOpen}
           onPull={(scope) => autocountPull.onSelect(scope)}
           documentLabel="goods receipt notes"
+          requireWindow
         />
       )}
     </DataGrid>

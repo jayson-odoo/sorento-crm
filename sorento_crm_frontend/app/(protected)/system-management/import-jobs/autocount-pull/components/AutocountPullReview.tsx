@@ -63,7 +63,7 @@ const ENTITY_LABEL: Record<AutocountPullEntity, string> = {
   products: 'AutoCount products pull',
   stock_balances: 'AutoCount stock pull',
   delivery_orders: 'AutoCount delivery orders pull',
-  goods_receive_notes: 'AutoCount goods receive notes pull',
+  goods_receive_notes: 'AutoCount goods receipt notes pull',
 };
 
 /** Known `pull.warnings` codes only - an unrecognised code renders nothing rather than a
@@ -218,7 +218,11 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
 
   const handlePullAgain = async () => {
     try {
-      const newPull = await startMutation.mutateAsync(pull.entity);
+      // A document pull asks again for the window it covered: the GRN gateway refuses a
+      // build with no scope (ss#107), and the same days are what "again" means anyway.
+      const newPull = await startMutation.mutateAsync(
+        isDocumentEntity(pull.entity) && pull.scope ? { entity: pull.entity, scope: pull.scope } : pull.entity,
+      );
       router.push(`/system-management/import-jobs/${newPull.job_id}`);
     } catch (error) {
       toast.error(startPullErrorMessage(error));

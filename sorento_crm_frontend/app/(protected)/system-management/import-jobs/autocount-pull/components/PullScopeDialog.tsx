@@ -54,6 +54,9 @@ export interface PullScopeDialogProps {
   companyLabel?: string;
   /** What is pulled, in the title and the sentence under it; delivery orders when absent. */
   documentLabel?: string;
+  /** Both days required, no "leave both empty" default: the GRN gateway refuses a build with
+   *  no scope (ss#107). */
+  requireWindow?: boolean;
 }
 
 /**
@@ -68,6 +71,7 @@ export function PullScopeDialog({
   onPull,
   companyLabel,
   documentLabel = 'delivery orders',
+  requireWindow = false,
 }: PullScopeDialogProps) {
   const [fromDay, setFromDay] = useState<string>('');
   const [toDay, setToDay] = useState<string>('');
@@ -82,7 +86,8 @@ export function PullScopeDialog({
 
   const halfWindow = Boolean(fromDay) !== Boolean(toDay);
   const inverted = Boolean(fromDay && toDay && fromDay > toDay);
-  const canPull = !halfWindow && !inverted;
+  const noWindow = !fromDay && !toDay;
+  const canPull = !halfWindow && !inverted && !(requireWindow && noWindow);
 
   const handlePull = async () => {
     if (!canPull) return;
@@ -121,11 +126,15 @@ export function PullScopeDialog({
             />
           </div>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Leave both empty for the last {DEFAULT_WINDOW_DAYS} days.
-        </p>
-        {halfWindow && (
-          <p className="text-xs text-destructive">Set both days, or clear both.</p>
+        {!requireWindow && (
+          <p className="text-xs text-muted-foreground">
+            Leave both empty for the last {DEFAULT_WINDOW_DAYS} days.
+          </p>
+        )}
+        {(halfWindow || (requireWindow && noWindow)) && (
+          <p className="text-xs text-destructive">
+            {requireWindow ? 'Set both days.' : 'Set both days, or clear both.'}
+          </p>
         )}
         {inverted && <p className="text-xs text-destructive">From day is after To day.</p>}
         <DialogFooter>

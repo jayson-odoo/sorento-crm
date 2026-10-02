@@ -12,7 +12,9 @@ D4 accept (crew); D3 a (owner).
 - **AC-GP-02 [BE]** `POST /autocount/pulls {"entity": "goods_receive_notes"}` is 403 without the
   slug (no FoundryX call, no job); with it, 200, phase `building`, one build call
   `{"companyCode", "entity": "goods_receive_notes"}`; a `scope {fromDay, toDay}` travels flat
-  and is stored.
+  and is stored. A start with no scope, or half a window, is 422 "needs a From day and a To
+  day" and calls nothing (GRN-PULL-SS ss#107: the gateway refuses a scopeless GRN build); one
+  document (`docNo`) is accepted.
 - **AC-GP-03 [BE]** Migration `grn_pull_0001_perm` (<= 32 chars, on the single head) grants
   the slug to roles holding `procurement.grn.import` and to `admin`, never to an
   `integration_*` role; downgrade removes it.
@@ -26,8 +28,8 @@ D4 accept (crew); D3 a (owner).
   `FromDocDtlKey` / `OurPONo` keys at all previews exactly like one carrying them as null.
 - **AC-GP-12 [BE]** A GRN already in the CRM from the Excel import (same number, no
   `doc_key`) previews as `adopted 1` and is unchanged after the preview.
-- **AC-GP-13 [BE]** The preview counts carry `lines_linked`, `lines_unlinked`,
-  `lines_ambiguous`; a record with a linkage warning names it in words on its row.
+- **AC-GP-13 [BE]** The preview counts carry `lines_linked` and `lines_unlinked`; a record
+  with a linkage warning names it in words on its row ("item not on the named PO / SPO").
 
 ## Line linkage (ingest, push and pull alike)
 
@@ -74,15 +76,18 @@ D4 accept (crew); D3 a (owner).
 - **AC-GP-50 [BE]** `GET /rows` answers one row per GRN line with `doc_no, doc_date,
   creditor_code, creditor_name, item_code, description, location, qty, uom, from_doc_no`.
 - **AC-GP-51 [BE]** `GET /download.xlsx` header row matches AC-GP-50 in words.
-- **AC-GP-52 [BE]** `POST /compare source=lines` keys by (Doc No, Item Code, Location), sums
-  Qty, compares the stated source ("Our PO No.") with `FromDocNo` normalised; `source=headers`
-  keys by Doc No (Q5 a; column aliases fixed once crew sends the two real files' headers).
+- **AC-GP-52 [BE]** `POST /compare source=lines` keys by (Doc No, Item Code, Location),
+  compares Qty as a multiset per key (24/106 agrees with 106/24, 2 + 98 differs from 100) and
+  the stated source ("Our PO No.") with `FromDocNo` matched the upload's way; `source=headers`
+  keys by Doc No on Date, Creditor Code, Transfer From (as a set of documents) and Cancelled (Q5 a; column aliases fixed once crew sends the two real files' headers).
 
 ## Frontend
 
-- **AC-GP-60 [FE]** Goods Receive Notes list shows "Pull from AutoCount" only with the slug;
-  it opens the DocDate dialog; the job page renders the review card labelled "AutoCount GRN
-  Pull" with Back to Goods Receive Notes.
+- **AC-GP-60 [FE]** The Goods Receipt Notes list's Actions menu shows "Pull from AutoCount"
+  only with the slug; it opens "Pull goods receipt notes from AutoCount", which requires both
+  days; with an open pull it reads "Review pull" and reviews it. The job page renders the
+  review card labelled "AutoCount GRN Pull" with "Back to Goods Receipt Notes"; "Pull again"
+  re-pulls the same window.
 
 ## Real-data gate
 
