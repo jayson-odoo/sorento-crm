@@ -27,7 +27,7 @@ from app.dependencies import require_permission_with_api_key
 from app.models.base import company_scope
 from app.models.company import RespondContactCompany
 from app.models.order import Customer
-from app.models.product import Brand, ProductCategory
+from app.models.product import Brand, Product, ProductCategory
 from app.models.sales_agent import SalesAgent
 from app.schemas.report_ask import ReportAskResponse
 from app.services.error_handler import AppException, handle_not_found
@@ -49,13 +49,13 @@ _MIN_YEAR, _MAX_YEAR = 1900, 2200
 _PARAMS = frozenset(
     {
         "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort", "product_code",
-        "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
+        "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
         "channel", "contact_id", "space_id",
     }
 )
 #: The filter params: present but resolving to nothing is 422 `empty_filter`, never "no filter".
 _FILTER_PARAMS = (
-    "product_code", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids",
+    "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids",
     "warehouse_codes", "channel",
 )
 
@@ -68,11 +68,11 @@ def _allowed(values: Any) -> str:
     return "allowed: " + ", ".join(values)
 
 
-def _lookup(
+def _lookup_pairs(
     db: Session, model: Any, name_column: Any, ids: list[str], grants: set[str], label: str,
     *, shared: bool = False,
-) -> list[str]:
-    """The names of `ids`, inside the contact's companies. An id naming no row is 404, so a
+) -> list[tuple[str, str]]:
+    """`(id, name)` of `ids`, inside the contact's companies. An id naming no row is 404, so a
     named filter never quietly widens to "no filter"."""
     # No company of its own: every id is outside the contact's companies (fail closed).
     cond = model.company_id.in_(sorted(grants)) if grants else false()
@@ -84,7 +84,15 @@ def _lookup(
     for wanted in ids:
         if wanted not in found:
             raise handle_not_found(label, wanted)
-    return sorted(found.values())
+    return list(found.items())
+
+
+def _lookup(
+    db: Session, model: Any, name_column: Any, ids: list[str], grants: set[str], label: str,
+    *, shared: bool = False,
+) -> list[str]:
+    """The names of `ids` (`_lookup_pairs`), sorted."""
+    return sorted(n for _i, n in _lookup_pairs(db, model, name_column, ids, grants, label, shared=shared))
 
 
 def _echo(
@@ -92,6 +100,7 @@ def _echo(
     grants: set[str],
     *,
     product_code: str,
+    product_names: list[str],
     customers: Optional[list[str]],
     brands: Optional[list[str]],
     categories: Optional[list[str]],
@@ -104,7 +113,9 @@ def _echo(
     out: list[tuple[str, list[str]]] = []
     if customers:
         out.append(("customer", _lookup(db, Customer, Customer.customer_name, customers, grants, "Customer")))
-    if product_code:
+    if product_names:
+        out.append(("product", product_names))
+    elif product_code:
         out.append(("product", [product_code.upper()]))
     if brands:
         out.append(("brand", _lookup(db, Brand, Brand.brand_name, brands, grants, "Brand")))
@@ -141,6 +152,7 @@ def report_ask(
     top_n: Optional[int] = Query(None, description="1 to 100. Required with group_by."),
     sort: str = Query("desc", description="desc (top) | asc (bottom)."),
     product_code: Optional[str] = Query(None, description="Product code prefix, at least 3 characters."),
+    product_ids: Optional[list[str]] = Query(None, description="Product ids; ANDed with product_code."),
     brand_ids: Optional[list[str]] = Query(None),
     category_ids: Optional[list[str]] = Query(None),
     sales_agent_ids: Optional[list[str]] = Query(None),
@@ -204,12 +216,14 @@ def report_ask(
         raise _unprocessable("product_code must be at least 3 characters", "product_code_too_short")
 
     named_customers = parse_uuid_list(customer_ids, param_name="customer_ids")
+    named_products = parse_uuid_list(product_ids, param_name="product_ids")
     brands = parse_uuid_list(brand_ids, param_name="brand_ids")
     categories = parse_uuid_list(category_ids, param_name="category_ids")
     agents = parse_uuid_list(sales_agent_ids, param_name="sales_agent_ids")
     codes = _normalize_entities(warehouse_codes) or []
     resolved_filters = {
         "product_code": code,
+        "product_ids": named_products,
         "brand_ids": brands,
         "category_ids": categories,
         "sales_agent_ids": agents,
@@ -220,7 +234,7 @@ def report_ask(
     for name in _FILTER_PARAMS:
         if name in request.query_params.keys() and not resolved_filters[name]:
             raise _unprocessable(f"'{name}' was given but names nothing", "empty_filter", name)
-    for name in ("brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes"):
+    for name in ("product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes"):
         if len(resolved_filters[name] or []) > _MAX_VALUES:
             raise _unprocessable(f"Too many values for '{name}' (max {_MAX_VALUES})", "too_many_values", name)
 
@@ -286,10 +300,25 @@ def report_ask(
         products = _resolve_products(db, code) if code else []
     if code and not products:
         raise handle_not_found("Product", product_code)
+    product_filter: Optional[list[str]] = [str(p.id) for p in products] if code else None
+    product_names: list[str] = []
+    if named_products:
+        # Ids naming no product inside the contact's companies are 404; ANDed with the
+        # prefix when both are given (an empty AND is zero rows in `run_ask`, never "no filter").
+        by_id = dict(
+            _lookup_pairs(db, Product, Product.product_code, named_products, grants, "Product")
+        )
+        if product_filter is None:
+            product_filter = list(named_products)
+        else:
+            by_prefix = set(product_filter)
+            product_filter = [i for i in named_products if i in by_prefix]
+        product_names = sorted({by_id[i] for i in product_filter} or set(by_id.values()))
     echo = _echo(
         db,
         grants,
         product_code=code,
+        product_names=product_names,
         customers=named_customers,
         brands=brands,
         categories=categories,
@@ -302,8 +331,8 @@ def report_ask(
     customers = scoped if scoped is not None else named_customers
     if customers:
         filters["customer"] = customers
-    if products:
-        filters["product"] = [str(p.id) for p in products]
+    if product_filter is not None:
+        filters["product"] = product_filter
     if brands:
         filters["brand"] = brands
     if categories:

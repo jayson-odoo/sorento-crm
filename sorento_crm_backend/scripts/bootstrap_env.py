@@ -734,6 +734,7 @@ def seed_chatbot_policy() -> None:
     spk = _load("_spk_0001_specification_kind", "spk_0001_specification_kind.py")
     top_selling = _load("_chatbot_top_selling_tool", "chatbot_top_selling_tool.py")
     sales_s1 = _load("_sales_s1_reports_module", "sales_s1_reports_module.py")
+    report_engine = _load("_report_engine_0001_prompt", "report_engine_0001_prompt.py")
 
     with engine.begin() as conn:
         domains_inserted, kinds_inserted = s0.seed_domains_and_kinds(conn)
@@ -754,6 +755,7 @@ def seed_chatbot_policy() -> None:
     with engine.begin() as conn:
         top_selling.apply_tools(conn)
         sales_s1.apply_tools(conn)
+        report_engine.apply_tools(conn)
     with engine.begin() as conn:
         s11.apply_narrowing(conn)
     with engine.begin() as conn:

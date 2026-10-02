@@ -65,7 +65,9 @@ ALL_WORDS = frozenset({"all", "any", "everything", "every", "semua", "全部", "
 #: Verdict keys only the engine sets (`reply_verdict`, and an ask's own pre-lane reading
 #: such as `low_stock_ask.take_words`). The engine strips them off the parser's output
 #: before it reads anything, so a slot can never be forged through the parser.
-ENGINE_KEYS = frozenset({"required_ask", "required_ask_reply", "low_stock_words", "low_stock_text"})
+ENGINE_KEYS = frozenset(
+    {"required_ask", "required_ask_reply", "low_stock_words", "low_stock_text", "report_ask_words"}
+)
 #: An OPTIONAL field also takes these as "no filter" (it was never required).
 NONE_WORDS = frozenset({"none", "no", "no filter", "skip"})
 CANCEL_WORDS = frozenset({"cancel", "stop", "never mind", "nevermind", "forget it", "batal"})

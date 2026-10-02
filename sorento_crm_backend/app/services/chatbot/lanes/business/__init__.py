@@ -29,6 +29,7 @@ from app.services.chatbot import copy as reply_copy
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import low_stock_ask
+from app.services.chatbot.lanes.business import report_ask
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business import services as business_services
 from app.services.chatbot.turn import policy_rows
@@ -1869,6 +1870,29 @@ def run_fetch(
             semantic_input["top_selling_drop"] = ["category_words", "category_code"]
         semantic_input["top_selling_notes"] = notes
         semantic_input["top_selling_category_ids"] = category_ids
+    elif domain == "order" and order_status_raw == report_ask.ASK_NAME:
+        # REPORT-ENGINE slice 1b (PLAN-report-engine.md section 11): sales ranked or
+        # totalled by one dimension, `crm_report_ask`. The grant was checked above for
+        # every sales figure status; every other gate (audience, company, location) is
+        # the route's, from `contact_id`. Nothing runs until the period, and how many for
+        # a ranking, are settled (`required_fields`, asked one per reply).
+        tool_name = report_ask.TOOL
+        tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_ranking_override"}}
+        settled, line = report_ask.settle(db, parse_output, entities)
+        if trace is not None:
+            trace.add(
+                "required_ask",
+                {"ask": report_ask.ASK_NAME, "done": bool(settled and settled.done),
+                 "values": settled.values if settled else None, "line": line},
+            )
+        if settled is None:
+            return _fixed_reply(line or "")
+        if not settled.done:
+            return _fixed_reply(settled.reply or "", required_ask=settled.slot)
+        semantic_input["report_ask_args"] = report_ask.route_args(settled)
+        # The args carry every id the ask settled (an answering turn's came off the slot);
+        # nothing the session carried rides beside them.
+        entities = []
     elif tool_name in fetch_mod.ORDER_TOOLS and order_status_raw == "so_outstanding":
         # S2 (security review, 13 Sep 2026), narrowed by R13: the LEGACY bucket now only
         # catches an `so_outstanding` ask with NO subject at all (no product and no
@@ -1996,6 +2020,13 @@ def run_fetch(
     # The ERROR check comes BEFORE the render: an error envelope has no rows, and rendering
     # it first would build a "No matching results found." message for a turn that failed.
     if isinstance(envelope, dict) and isinstance(envelope.get("error"), str):
+        # REPORT-ENGINE slice 1b: the route's own refusal (the audience check is the
+        # route's) is said as its message, a 404 as one line.
+        refusal = report_ask.error_line(envelope) if tool_name == report_ask.TOOL else None
+        if refusal:
+            if trace is not None:
+                trace.add("report_ask", {"refused": envelope.get("status_code")})
+            return _fixed_reply(refusal)
         return _error_fragment(envelope["error"])
 
     structured = fetch_mod.output_structurer(envelope, trigger)

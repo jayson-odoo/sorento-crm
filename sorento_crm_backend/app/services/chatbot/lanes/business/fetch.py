@@ -1013,6 +1013,20 @@ def entity_ids_transformer(
             space_id if space_id is not None else jsc.get(semantic_input, "space_id")
         )
 
+    # REPORT-ENGINE slice 1b: `crm_report_ask`'s params are settled whole by the lane
+    # (`report_ask.route_args`, put on `semantic_input` by `run_fetch`, which hands no
+    # entities of its own); nothing else the generic steps above built travels with them
+    # but the entity ids. The customer scope tail below and `contact_id` / `space_id`
+    # still apply.
+    if tool_name == "crm_report_ask":
+        args = jsc.get(semantic_input, "report_ask_args")
+        out = {
+            "_diagnostics": out["_diagnostics"],
+            "view": "render",
+            **{k: out[k] for k in ("product_ids", "customer_ids") if out.get(k)},
+            **{k: v for k, v in (args.items() if isinstance(args, dict) else []) if v not in (None, [], "")},
+        }
+
     # S2 (review round, 13 Sep 2026): a warehouse entity on a PLAIN order ask.
     # `TYPE_TO_PARAM` maps it to `warehouse_ids`, which NEITHER order-list tool declares
     # ("any DO for X at BRW" therefore sent a param the MCP dropped, and the answer was
@@ -2605,6 +2619,34 @@ def _top_selling_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: The line for a `crm_report_ask` body the presenter never rendered.
+_REPORT_ASK_ERROR_TEXT = "Could not run the sales report right now."
+
+
+def _report_ask_output(result: Any) -> dict[str, Any]:
+    """REPORT-ENGINE slice 1b: the presenter's text (`presenters._report_ask`) is the reply,
+    verbatim. It names its own scope (basis, filters, period), so the generic search-scope
+    header is skipped (`outstanding_report`), and a ranking with no sales ("No sales found
+    for ...") is an answer, never the miss lane (the top selling ruling, 27 Sep 2026)."""
+    envelope = result if isinstance(result, dict) else {}
+    text = jsc.js_string(envelope.get("response") or "").strip() if "response" in envelope else ""
+    return {
+        "response": text or _REPORT_ASK_ERROR_TEXT,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_report": True,
+    }
+
+
 def _dmy(value: Any) -> str:
     text = jsc.js_string(value or "")[:10]
     parts = text.split("-")
@@ -2627,6 +2669,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         return _low_stock_report_output(result)
     if jsc.js_string(ctx.get("tool") or "") == "crm_top_selling_report":
         return _top_selling_output(result, ctx)
+    if jsc.js_string(ctx.get("tool") or "") == "crm_report_ask":
+        return _report_ask_output(result)
     if jsc.js_string(ctx.get("tool") or "") == "crm_sales_analysis":
         # The same envelope: the presenter's text and, when there is one, the Excel. It
         # states its own scope (company, channel, basis, period), so the order domain's

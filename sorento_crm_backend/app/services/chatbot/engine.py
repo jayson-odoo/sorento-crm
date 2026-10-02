@@ -3834,7 +3834,7 @@ def _run_stages(  # noqa: PLR0915
         # another ask; a fresh low stock ask takes its category / brand words off the
         # entity list for the lane. Read before every other seam below.
         from app.services.chatbot import required_fields
-        from app.services.chatbot.lanes.business import low_stock_ask
+        from app.services.chatbot.lanes.business import low_stock_ask, report_ask
 
         _message_text = jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
         # Security S1: these keys are the ENGINE's own; one the parser emitted (the
@@ -3848,6 +3848,9 @@ def _run_stages(  # noqa: PLR0915
         if required_rule == "required_ask_answer":
             state_in = dataclasses_replace(state_in, pending=None)
         verdict = low_stock_ask.take_words(verdict, _message_text)
+        # REPORT-ENGINE slice 1b: a fresh sales ranking's brand / sales agent / category
+        # words, kept away from the generic resolver for the lane (`report_ask_words`).
+        verdict = report_ask.take_words(verdict, _message_text)
 
         # Owner retest of top selling round 4 (27 Sep 2026): inside a ranking, the message
         # is read against the question the bot asked before anything routes it.

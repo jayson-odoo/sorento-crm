@@ -801,7 +801,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "sorts by). `basis` delivered (default: delivery orders by DO date) | ordered "
             "(sales order lines by SO date); the reply names it.\n\n"
             "FILTERS (all optional, ANDed, RESOLVED ids, never names): `product_code` (PREFIX, "
-            "case-insensitive, at least 3 characters; no match is 404), `brand_ids`, "
+            "case-insensitive, at least 3 characters; no match is 404), `product_ids` (ANDed "
+            "with `product_code` when both are given), `brand_ids`, "
             "`category_ids`, `sales_agent_ids`, `customer_ids` (repeated or csv UUIDs), "
             "`warehouse_codes` (exact codes; a location outside the contact's visibility "
             "answers `status: refused`), `channel` dealer | project. OMIT a filter you do not "
@@ -817,8 +818,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort",
-            "product_code", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids",
-            "warehouse_codes", "channel", "contact_id", "space_id",
+            "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids",
+            "customer_ids", "warehouse_codes", "channel", "contact_id", "space_id",
         ),
         domain="orders",
         related_tools=("crm_sales_report", "crm_top_selling_report"),

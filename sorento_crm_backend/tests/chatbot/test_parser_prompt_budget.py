@@ -91,7 +91,11 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # owner-approved verbatim text) sits between PO_SPO_WAREHOUSE and MEMORY and takes the prompt
 # without MEMORY_ADDENDUM to 43,425 est. tokens and the whole prompt to 44,016; CEILING is
 # 44,016 - 512 = 43,504 so both assertions hold.
-CEILING = 43_504
+# Sixth re-pin, 2 Oct 2026 (REPORT-ENGINE slice 1b, PLAN-report-engine.md section 11):
+# REPORT_ASK_ADDENDUM (the `sales_ranking` vocabulary, 505 est. tokens on its own) sits between
+# ACCOUNT_LEDGER and MEMORY and takes the prompt without MEMORY_ADDENDUM to 44,005 est. tokens
+# and the whole prompt to 44,521; CEILING is 44,521 - 512 = 44,009 so both assertions hold.
+CEILING = 44_009
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is

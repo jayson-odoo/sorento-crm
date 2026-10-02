@@ -66,7 +66,6 @@ UNCALLABLE_READS = {
     # 8 Sep 2026 (turns 87694182 / 0b10a4c0 / 11932963): `metric` is a required query
     # param and the fetch lane never maps one from the parser. Back in when it does.
     "crm_order_analytics": "requires `metric`; the lane never sends it",
-    "crm_report_ask": "needs period and top_n from the lane; wired in REPORT-ENGINE 1b",
 }
 
 

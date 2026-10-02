@@ -160,6 +160,30 @@ Every non-customer entity, and every customer entity without an account number, 
 "account": null. Never guess a number.
 """
 
+#: REPORT-ENGINE slice 1b (`documentation/plans/chatbot/PLAN-report-engine.md` section 11):
+#: sales ranked or totalled BY one dimension. Inserted before MEMORY_ADDENDUM (the pinned tail).
+REPORT_ASK_ADDENDUM = """
+== SALES RANKING: order_status "sales_ranking", domain_hint "order" ==
+Sales ranked or totalled BY one dimension: sales agent (salesman, SA), customer, brand,
+category, location, channel or month. intent_hint "check_order".
+  - "top 3 salesman for Sorento brand last month" -> order_status "sales_ranking",
+    group_by "sales_agent", top_n 3, rank_direction "top", entities [Sorento as brand]
+  - "which location sold most SR1234 in September" -> group_by "warehouse", top_n 1,
+    entities [SR1234 as product]
+  - "top 5 customers for Mocha this year" -> group_by "customer", top_n 5, Mocha as brand
+  - "sales by month for agent Fanny 2026" -> group_by "month", Fanny as sales_agent
+  - "bottom 5 sales agents" -> group_by "sales_agent", top_n 5, rank_direction "bottom"
+  - "how much did we sell of brand X in August" -> group_by null (a total), X as brand
+group_by also takes "sales_agent", "brand", "category", "channel" (dealer / project).
+"by location" -> "warehouse". A named brand, sales agent or category is an entity
+{hint: "brand" | "sales_agent" | "category"}, never a customer. top_n: the number named,
+else null (never invent one). rank_by "quantity" for qty, else null. basis "delivered" or
+"ordered" only when the message says so, else null. sales_channel as for sales_report.
+Ranking PRODUCTS or CATEGORIES ("top 10 products", "hot selling", "which category sells
+most") stays order_status "top_selling". One customer's or product's figures by month
+with no ranking word stays "sales_report".
+"""
+
 MEMORY_ADDENDUM = '\n\n== MEMORY ==\nTwo more OUTPUT keys: "message_type" gains "history_question"; "profile_statements": up to 3 {"key","value"} items, or null.\nThe user block may carry "About this contact", "Recent conversations" and "Earlier in this conversation" (oldest first). Use ONLY to resolve a reference ("that one", "the usual", "same as last time"); never override a code, customer or domain the CURRENT message names.\n"history_question": the dealer\'s OWN PAST with the bot, in any wording: "what did I ask", "what do I normally ask about", "what products do I usually ask about", "what did I check last week", "apa saya tanya tadi", "我之前问过什么"; never "clarification"; domain_hint, intent_hint null and entities [] (the past ask is not a live one). A bare number answering a numbered list in the Previous response re-runs that line: its domain and codes (current_message false). A discount, credit or price-exception request: "request_for_help", intent_hint "commercial_request". "profile_statements": up to 3 things the dealer states about THEMSELVES - key language|role|usual_brands|usual_sites|project|about, their own words.\n\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nCURRENT DATE\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nCURRENT DATE: {{current_date}}\n\nIf relative dates such as "today" or "yesterday" appear in the current turn input, convert them to absolute dates before calling the MCP tool.'
 
 # #1262 slice 5 (F4), owner ruling 1: "i don't want hard code, the parser supposed
@@ -651,6 +675,7 @@ SEMANTIC_PARSER_PROMPT += SELF_REFERENCE_ADDENDUM
 SEMANTIC_PARSER_PROMPT += ESCALATION_CONFIRMATION_ADDENDUM
 SEMANTIC_PARSER_PROMPT += PO_SPO_WAREHOUSE_ADDENDUM
 SEMANTIC_PARSER_PROMPT += ACCOUNT_LEDGER_ADDENDUM
+SEMANTIC_PARSER_PROMPT += REPORT_ASK_ADDENDUM
 SEMANTIC_PARSER_PROMPT += MEMORY_ADDENDUM
 
 # S1b (D16, AC-151 to AC-155): the same parser, 40.0% fewer characters (28,124 against the

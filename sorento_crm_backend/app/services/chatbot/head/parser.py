@@ -234,6 +234,11 @@ def _build_json_schema() -> dict[str, Any]:
                     # PLAN-retail-sales-reports-26sep S1: the sales analysis's axes.
                     "month",
                     "year",
+                    # REPORT-ENGINE slice 1b: the `sales_ranking` ask's other dimensions.
+                    "sales_agent",
+                    "brand",
+                    "category",
+                    "channel",
                     None,
                 ],
             },

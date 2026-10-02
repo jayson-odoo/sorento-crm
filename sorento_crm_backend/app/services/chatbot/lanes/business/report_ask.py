@@ -1,0 +1,327 @@
+"""The `sales_ranking` ask: sales ranked or totalled by one dimension (REPORT-ENGINE slice 1b).
+
+`documentation/plans/chatbot/PLAN-report-engine.md` section 11. The lane half of
+`crm_report_ask` (`GET /api/v1/order-management/report-ask`): every gate (grant, audience,
+company, location policy) is the ROUTE's, from `contact_id`; this module only turns the
+parser's reading into the route's params, and asks for the two fields the route requires
+(the period, and how many for a ranking) through the shared `required_fields` helper.
+
+* `take_words` (engine seam): a FRESH ask's brand, sales agent and category words come off
+  the entity list onto `report_ask_words`, so the generic resolver never reads them as
+  customers (the top selling lesson, `engine._top_selling_narrowing`).
+* `settle` (lane): words to ids, `group_by` to the catalogue's word, the required fields;
+  either a line to send instead of running, or the outcome to build the args from.
+* `route_args`: the settled outcome as the route's query params.
+* `error_line`: a route refusal (403) or a 404, said as one line.
+"""
+from __future__ import annotations
+
+import re
+from datetime import date
+from typing import Any
+
+from app.services.chatbot import jsc
+from app.services.chatbot import required_fields as rf
+from app.services.chatbot.lanes.business import services as business_services
+
+ASK_NAME = "sales_ranking"
+TOOL = "crm_report_ask"
+
+PERIOD_QUESTION = "Which period? For example this month, September, 2026, or 1 to 15 Sep."
+TOP_N_QUESTION = "How many? For example top 5."
+CANCELLED = "Sales ranking cancelled."
+GIVE_UP = (
+    "I still can't read '{word}'. Ask again with the period and how many, "
+    "e.g. top 5 sales agents for Sorento this month."
+)
+CATALOGUE_LINE = (
+    "I can rank sales by customer, product, brand, category, sales agent, location, channel or month."
+)
+
+#: The parser's `group_by` -> the route's (`reports.ask.DIMENSIONS`). Anything else, `date`
+#: included, is outside the catalogue and is said, never guessed.
+GROUP_BY = {
+    "customer": "customer",
+    "product": "product",
+    "brand": "brand",
+    "category": "category",
+    "sales_agent": "sales_agent",
+    "warehouse": "location",
+    "location": "location",
+    "channel": "channel",
+    "month": "month",
+}
+
+#: The entity hints `take_words` moves, and the noun each is said with when it names nothing.
+WORD_HINTS = {"brand": "brand", "sales_agent": "sales agent", "category": "category"}
+
+TOP_N_MIN, TOP_N_MAX = 1, 100
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+# --------------------------------------------------------------------------- #
+# The required fields
+# --------------------------------------------------------------------------- #
+
+
+def _day(value: Any) -> date | None:
+    text = jsc.js_string(value or "").strip()[:10]
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _label(d: date) -> str:
+    return f"{d.day} {d.strftime('%b %Y')}"
+
+
+def period_from(start: Any, end: Any) -> rf.Resolved | None:
+    """The parser's two dates as the settled period: both, or one widened to that day."""
+    first, last = _day(start), _day(end)
+    first, last = first or last, last or first
+    if first is None or last is None:
+        return None
+    if first > last:
+        first, last = last, first
+    return rf.Resolved(
+        "ok", value={"from": first.isoformat(), "to": last.isoformat()}, label=f"{_label(first)} to {_label(last)}"
+    )
+
+
+def _resolve_period(_db: Any, _word: str, extras: dict[str, Any]) -> rf.Resolved:
+    """An answering turn's period: the reply's OWN parsed dates (`settle` hands them in as
+    `reply_dates`); a reply with no date is a miss."""
+    dates = _dict(extras.get("reply_dates"))
+    return period_from(dates.get("start"), dates.get("end")) or rf.Resolved("unknown")
+
+
+def top_n_from(value: Any) -> rf.Resolved:
+    if isinstance(value, bool):
+        return rf.Resolved("unknown")
+    if isinstance(value, (int, float)) and float(value).is_integer() and TOP_N_MIN <= int(value) <= TOP_N_MAX:
+        return rf.Resolved("ok", value=int(value), label=str(int(value)))
+    return rf.Resolved("unknown")
+
+
+def _resolve_top_n(_db: Any, word: str, _extras: dict[str, Any]) -> rf.Resolved:
+    """A reply word with one integer 1..100 ("5", "top 5"); anything else is a miss."""
+    numbers = re.findall(r"\d+", word or "")
+    return top_n_from(int(numbers[0])) if len(numbers) == 1 else rf.Resolved("unknown")
+
+
+PERIOD = rf.FieldSpec(name="period", noun="period", question=PERIOD_QUESTION, resolve=_resolve_period, allow_all=False)
+TOP_N = rf.FieldSpec(name="top_n", noun="number", question=TOP_N_QUESTION, resolve=_resolve_top_n, allow_all=False)
+
+SALES_RANKING_ASK = rf.register(rf.AskType(
+    name=ASK_NAME,
+    fields=(PERIOD, TOP_N),
+    reroute={
+        "message_type": "business_query",
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "order_status": ASK_NAME,
+    },
+    cancelled=CANCELLED,
+    give_up=GIVE_UP,
+))
+
+
+# --------------------------------------------------------------------------- #
+# Engine seam
+# --------------------------------------------------------------------------- #
+
+
+def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
+    """Engine seam, a FRESH `sales_ranking` ask: this message's brand, sales agent and
+    category words move off the entity list onto `report_ask_words` (raw words per hint).
+    A carried row of those hints is dropped too: it is not this ask's filter, and the
+    generic resolver would read it as a customer. `text` is taken for the seam's shape."""
+    _ = text
+    if jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME or verdict.get("required_ask"):
+        return verdict
+    kept: list[Any] = []
+    words: dict[str, list[str]] = {hint: [] for hint in WORD_HINTS}
+    for e in verdict.get("entities") or []:
+        if not isinstance(e, dict):
+            continue
+        hint = jsc.js_string(e.get("hint") or "").strip().lower()
+        if hint not in WORD_HINTS:
+            kept.append(e)
+            continue
+        raw = " ".join(jsc.js_string(e.get("raw") or "").split())
+        if raw and e.get("current_message") is not False and raw not in words[hint]:
+            words[hint].append(raw)
+    return {**verdict, "entities": kept, "report_ask_words": words}
+
+
+# --------------------------------------------------------------------------- #
+# The lane's call
+# --------------------------------------------------------------------------- #
+
+
+def _resolve_word(db: Any, hint: str, word: str) -> list[str]:
+    if db is None:
+        return []
+    if hint == "brand":
+        return [b[0] for b in business_services.resolve_brand_token(db, word)]
+    if hint == "sales_agent":
+        return [a[0] for a in business_services.resolve_sales_agent_token(db, word)]
+    return [c[0] for c in business_services.resolve_category_token(db, word)]
+
+
+def _current_kinds(parse_output: dict[str, Any]) -> set[str]:
+    return {
+        jsc.js_string(e.get("hint") or "").strip().lower()
+        for e in jsc.array(parse_output.get("entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False
+    }
+
+
+def _gate_ids(entities: Any, kind: str) -> list[str]:
+    from app.services.chatbot.lanes.business.fetch import is_uuid
+
+    out: list[str] = []
+    for e in jsc.array(entities):
+        if isinstance(e, dict) and e.get("entity_type") == kind and is_uuid(e.get("uuid")):
+            uuid = jsc.js_string(e["uuid"])
+            if uuid not in out:
+                out.append(uuid)
+    return out
+
+
+def _fresh_args(
+    db: Any, parse_output: dict[str, Any], entities: Any
+) -> tuple[dict[str, Any] | None, str | None]:
+    """The route params a fresh ask names (every one but the period and top_n), or the one
+    line to say instead of running."""
+    raw_group = jsc.js_string(parse_output.get("group_by") or "").strip().lower()
+    group_by = GROUP_BY.get(raw_group) if raw_group else None
+    if raw_group and group_by is None:
+        return None, CATALOGUE_LINE
+
+    args: dict[str, Any] = {
+        "basis": "ordered" if parse_output.get("basis") == "ordered" else "delivered",
+        "measure": "qty" if parse_output.get("rank_by") == "quantity" else "amount",
+        "sort": "asc" if parse_output.get("rank_direction") == "bottom" else "desc",
+    }
+    if group_by:
+        args["group_by"] = group_by
+    channel = parse_output.get("sales_channel")
+    if channel in ("dealer", "project"):
+        args["channel"] = channel
+
+    words = _dict(parse_output.get("report_ask_words"))
+    for hint, param in (("brand", "brand_ids"), ("sales_agent", "sales_agent_ids"), ("category", "category_ids")):
+        ids: list[str] = []
+        for word in jsc.array(words.get(hint)):
+            word = " ".join(jsc.js_string(word).split())
+            if not word:
+                continue
+            found = _resolve_word(db, hint, word)
+            if not found:
+                return None, f"I don't know '{word}' as a {WORD_HINTS[hint]}."
+            ids.extend(i for i in found if i not in ids)
+        if ids:
+            args[param] = ids
+
+    # The gate's resolved rows, of the kinds THIS message named (a carried subject from an
+    # earlier question is not this ask's filter).
+    kinds = _current_kinds(parse_output)
+    for kind, param in (("product", "product_ids"), ("customer", "customer_ids")):
+        ids = _gate_ids(entities, kind) if kind in kinds else []
+        if ids:
+            args[param] = ids
+
+    codes: list[str] = []
+    for e in jsc.array(parse_output.get("entities")):
+        if not isinstance(e, dict) or e.get("current_message") is False:
+            continue
+        if jsc.js_string(e.get("hint") or "").strip().lower() != "warehouse":
+            continue
+        token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
+        if not token:
+            continue
+        found = business_services.resolve_warehouse_token(db, token) if db is not None else []
+        if not found:
+            return None, f"I don't know '{token}' as a location."
+        codes.extend(c for c in found if c not in codes)
+    if codes:
+        args["warehouse_codes"] = codes
+    return args, None
+
+
+def _given_top_n(args: dict[str, Any], top_n: Any) -> dict[str, Any]:
+    """The number as the helper's `given`: a total needs none (settled as None, never
+    asked); a number the first message named is taken, or read as a word (a miss)."""
+    if not args.get("group_by"):
+        return {"top_n": rf.Resolved("ok", value=None, label="")}
+    if top_n is None:
+        return {}
+    got = top_n_from(top_n)
+    return {"top_n": got if got.status == "ok" else jsc.js_string(top_n)}
+
+
+def settle(db: Any, parse_output: dict[str, Any], entities: Any) -> tuple[rf.Outcome | None, str | None]:
+    """Every required field settled, or the line to send instead of running. Returns
+    `(outcome, None)` (send `outcome.reply` with `outcome.slot` unless `outcome.done`), or
+    `(None, line)` for a word or a dimension the ask cannot run with.
+
+    The slot's extras carry the first message's args and its number (`top_n`), so an
+    answering turn runs the first message's ask; the period question is asked first."""
+    slot = parse_output.get("required_ask")
+    if isinstance(slot, dict) and slot.get("ask") == ASK_NAME:
+        extras = _dict(slot.get("extras"))
+        args = _dict(extras.get("args"))
+        reply_dates = {"start": parse_output.get("date_filter_start"), "end": parse_output.get("date_filter_end")}
+        outcome = rf.collect(
+            db,
+            SALES_RANKING_ASK,
+            slot=slot,
+            reply=jsc.js_string(parse_output.get("required_ask_reply") or ""),
+            given=_given_top_n(args, extras.get("top_n")),
+            extras={"reply_dates": reply_dates},
+        )
+        return outcome, None
+
+    args, line = _fresh_args(db, parse_output, entities)
+    if args is None:
+        return None, line
+    top_n = parse_output.get("top_n")
+    given = _given_top_n(args, top_n)
+    period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end"))
+    if period is not None:
+        given["period"] = period
+    return rf.collect(db, SALES_RANKING_ASK, given=given, extras={"args": args, "top_n": top_n}), None
+
+
+def route_args(outcome: rf.Outcome) -> dict[str, Any]:
+    """The settled ask as `crm_report_ask`'s params (the route's names)."""
+    args = dict(_dict(outcome.extras.get("args")))
+    period = _dict(_dict(outcome.values.get("period")).get("value"))
+    args["date_from"] = period.get("from")
+    args["date_to"] = period.get("to")
+    top_n = (outcome.values.get("top_n") or {}).get("value")
+    if args.get("group_by") and isinstance(top_n, int):
+        args["top_n"] = top_n
+    return args
+
+
+def error_line(envelope: Any) -> str | None:
+    """A route refusal said as its own message (403: `report_dimension_not_allowed`,
+    `customer_not_permitted`, `sales_report_not_enabled`), a 404 as `I couldn't find that
+    <thing>.`; None for any other error (the generic error path answers it)."""
+    if not isinstance(envelope, dict):
+        return None
+    status = envelope.get("status_code")
+    detail = _dict(envelope.get("detail"))
+    message = jsc.js_string(detail.get("message") or "").strip()
+    if status == 403 and message:
+        return message
+    if status == 404:
+        thing = message.split(" not found", 1)[0].strip().lower() if " not found" in message else ""
+        return f"I couldn't find that {thing}." if thing else "I couldn't find that."
+    return None
