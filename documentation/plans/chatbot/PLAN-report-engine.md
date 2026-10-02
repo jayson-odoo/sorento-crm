@@ -300,3 +300,84 @@ incoming, SPO last receipt, last cost, PO placed (row lookups; trigger: an aggre
 - A "salesman sees own ranking" audience (agent <-> contact via `sales_agents.contact_id`):
   trigger = card Q1 answer (b).
 - Reports screen exposure of the delivered dataset: trigger = owner wants it there.
+
+## 10. Slice 1a contract (binding for tester and coder)
+
+**Route** `GET /api/v1/order-management/report-ask`, file
+`app/api/v1/order_management/report_ask.py`, router mounted with no prefix in
+`app/api/v1/order_management/__init__.py` (the sales report's mounting, same module guard).
+RBAC on the act-as principal: `require_permission_with_api_key("order_management.orders.view")`
+(the delivered definition's own permission, `delivery_order_lines.py` `DEFINITION`). A request
+without `X-API-Key` -> 403 `api_key_required` (`api/v1/sales/analysis.py:450-453` shape).
+
+Query params (all optional unless marked):
+
+| Param | Values | Notes |
+|---|---|---|
+| `contact_id`, `space_id` | **required** | 422 `contact_identity_required` when either is missing |
+| `date_from`, `date_to` | **required**, ISO dates | either missing -> 422 `period_required`; from > to -> 422 `date_range_inverted` |
+| `basis` | `delivered` (default) / `ordered` | other -> 422 `unknown_basis` |
+| `measure` | `amount` (default) / `qty` | other -> 422 `unknown_measure` |
+| `group_by` | one of `customer, product, brand, category, sales_agent, location, channel, month` | absent = number shape; other -> 422 `unknown_group_by` |
+| `top_n` | 1..100 | required with `group_by` -> 422 `top_n_required`; out of range -> 422 `top_n_out_of_range` |
+| `sort` | `desc` (default) / `asc` | other -> 422 `unknown_sort` |
+| `product_code` | prefix, >= 3 chars | resolved like the sales report (`_resolve_products`); no match -> 404 |
+| `brand_ids`, `category_ids`, `sales_agent_ids`, `customer_ids` | uuid lists (repeated param) | parsed by `parse_uuid_list` |
+| `warehouse_codes` | codes (repeated) | none of them a warehouse -> zero rows |
+| `channel` | `dealer` / `project` | other -> 422 `invalid_channel` |
+
+Order of checks: identity pair, API key, period, enums / ranges, then the grant
+(`sales_orders.sales_report` via `granted_keys` on the resolved contact; missing or unknown
+contact -> 403 `sales_report_not_enabled`), then audience: `enforce_customer_scope` returns a list
+-> DEALER. A DEALER whose `group_by` or any filter is outside {product, brand, category, month}
+(customer filter included; its own customers are forced) -> 403 `report_dimension_not_allowed`,
+message "That breakdown is not available for your account.". Location policy: the contact's
+stock visibility policy caps locations exactly as `delivered_sales_report` does (named location
+outside it -> body `status: "refused"`, `message` = `refusal_message(code)`).
+
+**Response 200** (`ReportAskResponse`, `app/schemas/report_ask.py`):
+
+```json
+{
+  "status": "ok",                      // "ok" | "refused"
+  "message": null,
+  "basis": "delivered",                // or "ordered"
+  "basis_label": "delivered sales",    // or "ordered sales"
+  "measure": "amount",
+  "group_by": "sales_agent",           // null for the number shape
+  "group_label": "Sales agent",
+  "date_from": "2026-09-01", "date_to": "2026-09-30",
+  "filters": [{"key": "brand", "label": "Brand", "values": ["SORENTO"]}],
+  "rows": [{"rank": 1, "name": "SA01", "qty": 30, "amount": 1200.0}],
+  "more": 2,                           // ranked rows not printed
+  "total_count": 3,                    // every ranked row
+  "total": {"qty": 55, "amount": 2100.0}
+}
+```
+
+Rows rank by the measure then the other measure then name (`asc` flips both measures; name
+stays ascending). A group whose qty and amount are both 0 is not ranked. `total` is the whole
+set's. Money as numbers with 2 dp (`_money_edge`), qty as integers (`_qty`).
+
+**Catalogue / datasets.**
+- `app/services/reports/ask.py`: `CATALOGUE = {"delivered": ..., "ordered": ...}` mapping spec
+  words to each definition's column and param keys, `DEALER_KEYS = {product, brand, category,
+  month}`, `run_ask(db, spec, ...) -> dict` using `engine.run_summary` (rows = group column or
+  `all`, cols = `all`, measures = [amount, qty]).
+- `delivery_order_lines.py`: new dimensions `brand` (`Brand.brand_name`), `category`
+  (`ProductCategory.category_name`); new params `brand` (`Product.brand_id`), `category`
+  (`Product.category_id`), `sales_agent` (`SalesOrder.sales_agent_id`); outer joins in `_base`.
+- `app/services/reports/datasets/sales_order_lines_ask.py` (ordered basis, registered nowhere):
+  base = `sales_order_lines._base` + outer joins product brand / category / warehouse; columns
+  customer, product, brand, category, sales_agent (`coalesce(code, '(no agent)')`), location
+  (`Warehouse.warehouse_code` via `SalesOrderLine.warehouse_id`), channel
+  (`channel_label(SalesOrder.demand_class)`), month (`to_char(order_date,'YYYY-MM')`), all;
+  measures amount = `_per_line_exprs()["ordered_value"]`, qty = `["ordered_qty"]`; date basis
+  `SalesOrder.order_date`; the same seven params.
+
+**MCP.** Tool `crm_report_ask` in `sorento_crm_mcp/sorento_crm_mcp/catalog.py` wrapping the route
+(query-param tool, `view=render`), presenter `_report_ask` in `presenters.py`:
+header `Top {n} {group label plural} by {basis_label}, {filters}, {from} to {to}` (sort asc:
+`Bottom {n}`), numbered rows `1. NAME RM 1,200.00, 30 pcs`, `and N more`, `Total RM ..., N pcs`;
+number shape: `Sales by {basis_label}, {filters}, {from} to {to}: RM ..., N pcs`; `refused`
+prints `message`.
