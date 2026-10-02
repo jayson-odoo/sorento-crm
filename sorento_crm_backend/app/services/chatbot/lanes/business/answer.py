@@ -3978,7 +3978,24 @@ def not_found_error_message(
                             ):
                                 attach_names.append(name)
                 attach_words = attach_names if attach_names else attach_raws
-                if use_breakdown:
+                # Owner ruling 2 Oct 2026 (hand test "photo and cert for strwc286"): when the
+                # PRODUCT itself was not found and no did-you-mean candidate exists (a
+                # candidate's offer replaces this text anyway), the reply names only the
+                # missing product - no "Here's what you want" types and no "no <types>
+                # matched these", which read as though the product had been searched - and
+                # keeps the escalate offer.
+                product_keys = {_nf_norm_raw(x) for x in product_raws}
+                unfound_products = [t for t in not_found_raw if _nf_norm_raw(t) in product_keys]
+                product_resolved = any(
+                    jsc.get(c, "entity_type") == "product"
+                    for c in jsc.array(jsc.get(g, "compatible_entities"))
+                )
+                if unfound_products and not product_resolved:
+                    esc = _esc_offer()
+                    escalate_message = (
+                        f"Couldn't find {', '.join(label_token(t) for t in unfound_products)}."
+                    ) + (f" {esc}" if esc else "")
+                elif use_breakdown:
                     # combine the attachment-type qualifiers into ONE searched noun and fold
                     # them OUT of the "couldn't find" list, so they are not double-named
                     # ATTACHMENT-MULTI R4: several asked types are alternatives the miss

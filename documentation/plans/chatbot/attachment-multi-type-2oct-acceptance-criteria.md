@@ -19,6 +19,10 @@ Type names are dev's own: Product Photos, Technical Specifications (no code); th
   A slug type is never named as a gap.
 - AC-5 (R4, owner ruling 2 Oct) The miss sentence names the official types: `But no Product Photos or Technical Specifications matched these.`;
   the found bullet reads `• attachment type: Product Photos, Technical Specifications`.
+- AC-5b (owner ruling 2 Oct, hand test "photo and cert for strwc286") A product that is not
+  found and has no did-you-mean candidate replies only `Couldn't find "strwc286" (product).`
+  plus the escalate offer: no "Here's what you want" types, no "no <types> matched these".
+  A swapped-letter typo below the resolver's did-you-mean floor stays as is (owner, no fix).
 - AC-6 (Q3 a) The require-specific picker (product attachments and incoming) asks
   `Which product do you mean? Please choose:`.
 - AC-7 (Q5 a) None of the 11 swept leaks reaches a customer as snake_case: dropped-filter line,
