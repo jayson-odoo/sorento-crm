@@ -32,7 +32,12 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM, named_count
+from app.services.chatbot.contracts import (
+    DEFAULT_SUGGESTED_AGENT,
+    DEFAULT_SUGGESTED_TEAM,
+    SALES_REPORT_GROUP_BYS,
+    named_count,
+)
 from app.services.chatbot.turn.apply import names_its_own_ask
 from app.services.chatbot.turn.decide import picked_positions
 from app.services.chatbot.turn.pending import (
@@ -2450,6 +2455,9 @@ def outstanding_carry(
     if detail in ("so", "do", "both"):
         # AC-1138: the same tool, one argument more - the MCP layer swaps in the
         # numbered list. Not a different question and not a different report.
+        out["outstanding_detail_pick"] = detail
+    elif answered.get("kind") == "sales_report_detail" and detail in SALES_REPORT_GROUP_BYS:
+        # AC-SR-28: a sales report drill-down, re-run as `group_by` (`fetch.py`).
         out["outstanding_detail_pick"] = detail
 
     # EVERY carried product, not the first: "all" over a ten-variant roster settles ten

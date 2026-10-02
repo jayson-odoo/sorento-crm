@@ -222,6 +222,26 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _without_the_drill_pick_words(parse_output: dict[str, Any], pending: Any, trace: Any) -> dict[str, Any]:
+    """The resolver's input on a turn that ANSWERED the sales report's drill offer.
+
+    PR #1401 fix round 2, R2: "DO", "by product", "delivery orders" typed back at the
+    `sales_report_detail` offer settle the pick (`turn/decide.py`, the label / alias /
+    named-document arms), but the typed word also rode to the resolver as an entity, found
+    nothing, and the reply closed with "I could not find DO." The word that settled the pick
+    is the answer, not a subject, so it is dropped from what the resolver is asked about.
+    Round 4: the focus never holds it either (`turn/apply.py`, the same rule), so no later
+    turn carries it back here.
+    """
+    from app.services.chatbot.turn.apply import without_the_drill_pick_words
+
+    entities = parse_output.get("entities") or []
+    kept = without_the_drill_pick_words(entities, pending, trace)
+    if len(kept) == len(entities):
+        return parse_output
+    return {**parse_output, "entities": kept}
+
+
 def _without_carried_domain_on_a_roster_pick(
     parse_output: dict[str, Any], rules_fired: list[str]
 ) -> dict[str, Any]:
@@ -513,6 +533,21 @@ def _scoped_factory(factory: SessionFactory, scope: frozenset) -> SessionFactory
 # Envelope readers. Each names the n8n node whose read it reproduces, so the
 # by-name hazard the port removes stays traceable.
 # --------------------------------------------------------------------------- #
+
+
+def _refer_tracked(fn: Any) -> Any:
+    """CUSTOMER-ASKS-REFER-ONLY: one refer mark per turn (`turn/refer.py`). A tail called
+    from inside the head shares the head's mark."""
+    import functools
+
+    from app.services.chatbot.turn import refer
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        with refer.tracking():
+            return fn(*args, **kwargs)
+
+    return wrapper
 
 
 def _tf_message(envelope: Envelope) -> dict[str, Any]:
@@ -1403,15 +1438,17 @@ def _screen_resolver_for_scope(
     payload: dict[str, Any] | None,
     compatible: list[dict[str, Any]],
     candidates: dict[str, list[dict[str, Any]]],
-) -> tuple[bool, list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+) -> tuple[bool, list[dict[str, Any]], dict[str, list[dict[str, Any]]], list[str]]:
     """The post-resolver filter behind the gate, for a contact whose scope is enforced and
     whatever the domain or hint (the resolver re-types brand, category, order and product
     tokens as customers under `order`). Every customer row outside the contact's own is
     dropped from the resolver's answer; a token whose ONLY matches were other customers,
     or a picker that listed any, refuses the turn. A DO number still resolves, but never
     carries the owning customer's name (`display`). Returns
-    `(refused, compatible, candidates)`."""
+    `(refused, compatible, candidates, dropped_ids)`; `dropped_ids` (CHATBOT-SELFREF-SCOPE
+    R4) names the customer ids dropped, for the trace."""
     own = {str(i) for i in scope["ids"]}
+    dropped_ids: list[str] = []
 
     def _foreign(row: Any) -> bool:
         return (
@@ -1424,6 +1461,8 @@ def _screen_resolver_for_scope(
         kept = []
         for row in rows or []:
             if _foreign(row):
+                if str(row.get("uuid")) not in dropped_ids:
+                    dropped_ids.append(str(row.get("uuid")))
                 continue
             if isinstance(row, dict) and str(row.get("entity_type") or "").lower() in ("customer_order", "order"):
                 row = {k: v for k, v in row.items() if k not in ("display", "display_name")}
@@ -1468,7 +1507,28 @@ def _screen_resolver_for_scope(
         else rows
         for kind, rows in (candidates or {}).items()
     }
-    return refused, compatible, candidates
+    return refused, compatible, candidates, dropped_ids
+
+
+def _drill_offer_subject(scope_ids: list[str] | None, focus: Any, trace: Any) -> list[str] | None:
+    """The accounts a sales report drill pick re-runs over, for a customer-scoped contact.
+
+    PR #1401 fix round 3, F6/F7: a pick off the `sales_report_detail` offer settles the
+    OFFER's own accounts onto the focus (`apply._settle_question_subject`), which after
+    "sales of <one account>" is that one account. The scope gate then answered every
+    link ("the linked customers are this turn's customers"), so "1" drilled over all of
+    them. On an answering turn the offer's accounts, kept inside the links, are the subject.
+    """
+    answered = getattr(trace, "outstanding", None) or {}
+    if scope_ids is None or answered.get("kind") != "sales_report_detail":
+        return scope_ids
+    links = set(scope_ids)
+    settled = [
+        str(e.get("uuid"))
+        for e in getattr(focus, "customers", None) or []
+        if isinstance(e, dict) and str(e.get("uuid")) in links
+    ]
+    return settled or scope_ids
 
 
 def _scoped_compatible(
@@ -2168,6 +2228,7 @@ def _top_selling_verdict(
     return out, state, "top_selling_split_token"
 
 
+@_refer_tracked
 def run_turn(
     envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
 ) -> TurnResult:
@@ -4007,6 +4068,9 @@ def _run_stages(  # noqa: PLR0915
             resolver_parse_output = _without_carried_domain_on_a_roster_pick(
                 resolver_parse_output, plan.trace.rules_fired
             )
+            resolver_parse_output = _without_the_drill_pick_words(
+                resolver_parse_output, state_in.pending, plan.trace
+            )
             # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4 (AC-1954): under `order`
             # the generic resolver re-types a category token as a customer
             # (`entity_resolver._DOMAIN_HINT_EXPANSIONS["order"]["category"]`), which
@@ -4033,6 +4097,7 @@ def _run_stages(  # noqa: PLR0915
             resolver_parse_output, scope_ids, scope_refused = _customer_scope_gate(
                 customer_scope, verdict, state_out.focus, resolver_parse_output, plan.domains
             )
+            scope_ids = _drill_offer_subject(scope_ids, state_out.focus, plan.trace)
             if (
                 len(plan.domains) > 1
                 and resolver_parse_output.get("entities")
@@ -4097,9 +4162,15 @@ def _run_stages(  # noqa: PLR0915
             unplaced_tokens = resolve_outcome.unplaced_tokens
             spec_tier = resolve_outcome.spec_tier
             resolver_payload = resolve_outcome.payload
+            # CHATBOT-SELFREF-SCOPE R4: every scope decision is on the trace, with its
+            # reason and the ids it dropped, so a refusal explains itself.
+            screened_refused = False
+            screened_dropped: list[str] = []
             if customer_scope and customer_scope.get("enforced"):
-                screened_refused, compatible_entities, resolved_candidates = _screen_resolver_for_scope(
-                    customer_scope, resolver_payload, compatible_entities, resolved_candidates
+                screened_refused, compatible_entities, resolved_candidates, screened_dropped = (
+                    _screen_resolver_for_scope(
+                        customer_scope, resolver_payload, compatible_entities, resolved_candidates
+                    )
                 )
                 scope_refused = scope_refused or screened_refused
             if scope_refused:
@@ -4107,12 +4178,33 @@ def _run_stages(  # noqa: PLR0915
                 # fetches or asks; the fixed line is the answer.
                 customer_scope_refused = True
                 resolved_kinds, resolved_candidates, unplaced_tokens, predicate = {}, {}, {}, None
-                turn_trace.add("customer_scope", {"refused": "customer_not_permitted"})
+                turn_trace.add(
+                    "customer_scope",
+                    {
+                        "refused": "customer_not_permitted",
+                        "reason": (
+                            "resolver_matched_only_other_customers"
+                            if screened_refused
+                            else "typed_customer_word_outside_links"
+                        ),
+                        "dropped": screened_dropped,
+                        "self_reference": verdict.get("self_reference") is True,
+                    },
+                )
                 resolver_payload = _pass_scope_gate(resolver_payload, [], force=True)
             elif scope_ids is not None:
                 # D3: the linked customers are this turn's customers.
                 compatible_entities = _scoped_compatible(customer_scope, scope_ids, compatible_entities)
                 resolver_payload = _pass_scope_gate(resolver_payload, compatible_entities, force=False)
+                turn_trace.add(
+                    "customer_scope",
+                    {
+                        "decision": "scoped_to_links",
+                        "ids": list(scope_ids),
+                        "self_reference": verdict.get("self_reference") is True,
+                        **({"dropped": screened_dropped} if screened_dropped else {}),
+                    },
+                )
             answer_parse_output = turn_runtime.answer_parse_output(
                 resolver_ctx["parse"]["output"],
                 gate=(resolver_payload or {}).get("gate"),
@@ -5181,24 +5273,6 @@ def _run_stages(  # noqa: PLR0915
             # PR #1329 (ETA policy): a dealer's incoming reply is the same, so an
             # incoming miss no longer offers the purchasing team.
             answer = _dealer_refers_to_salesman(answer)
-            # REFER-SALESMAN (owner ruling 30 Sep 2026): every reply that refers the dealer
-            # to their salesman is a Customer asks row. The stock ask's own entries are
-            # already in `stock_ask_entries`; this adds the incoming ETA lines, the misses
-            # and a declined did-you-mean, read off what the turn already knows, and
-            # `_run_answer` writes them through the same `stock_ask_service` road.
-            from app.services.chatbot import refer_asks
-
-            stock_ask_entries = [
-                *stock_ask_entries,
-                *refer_asks.referred_entries(
-                    reply_text=getattr(answer, "text", "") or "",
-                    envelopes=envelopes,
-                    plan=plan,
-                    pending_before=state_in.pending,
-                    message_text=latest_user_message,
-                    answered=stock_ask_entries,
-                ),
-            ]
         elif in_ranking_conversation:
             answer = _without_escalation_offer(answer)
         return _run_answer(
@@ -5218,6 +5292,14 @@ def _run_stages(  # noqa: PLR0915
             verdict=verdict,
             recalled=recalled,
             stock_ask_entries=stock_ask_entries,
+            # REFER-SALESMAN / CUSTOMER-ASKS-REFER-ONLY: what `refer_asks` names a refer
+            # reply's rows by, read once the reply is final (`_run_answer`).
+            refer_context={
+                "envelopes": envelopes,
+                "plan": plan,
+                "pending_before": state_in.pending,
+                "message_text": latest_user_message,
+            },
             chat_console=_chat_console(envelope),
         )
 
@@ -5428,6 +5510,7 @@ def _run_stages(  # noqa: PLR0915
             contact_respond_id=contact_respond_id,
             recalled=recalled,
             fallback=fallback_ctx,
+            chat_console=_chat_console(envelope),
         )
 
     return TurnResult(
@@ -5595,6 +5678,7 @@ def _run_answer(
     recalled: list[dict[str, Any]],
     stock_ask_entries: list[dict[str, Any]] | None = None,
     chat_console: bool = False,
+    refer_context: dict[str, Any] | None = None,
 ) -> TurnResult:
     """G TAIL for a turn the composer answered: persist, record, hand the actions back.
 
@@ -5694,22 +5778,18 @@ def _run_answer(
             response={"ctx": ctx, "item": item, "actions": lane_actions, "reply": reply},
         )
 
-    if stock_ask_entries and (not dry_run or chat_console):
-        # Chatbot stock ask v2 S4 / S5 (AC-SA401, AC-SA402, AC-SA501): AFTER the turn row
-        # is closed, never before. A live turn, and (owner ruling 28 Sep 2026) a CHAT
-        # CONSOLE turn, write the ask rows and enqueue the real salesman job; every other
-        # dry run does neither (D14). The console's own reply stays a dry run: its
-        # actions carry `dry_run: true` and nothing here sends them. The send is a
-        # queued job, so Respond never holds the dealer's reply up.
-        _after_stock_ask_turn(
-            session_factory,
-            turn_id=turn_id,
-            contact_respond_id=contact_respond_id,
-            state=state,
-            entries=stock_ask_entries,
-            reply_text=reply.get("text") or "",
-            source="console" if dry_run else "live",
-        )
+    _record_customer_asks(
+        session_factory,
+        turn_id=turn_id,
+        contact_respond_id=contact_respond_id,
+        state=state,
+        stock_entries=stock_ask_entries or [],
+        reply_text=reply.get("text") or "",
+        refer_context=refer_context,
+        ctx=ctx,
+        dry_run=dry_run,
+        chat_console=chat_console,
+    )
 
     return TurnResult(
         turn_id=turn_id,
@@ -6338,6 +6418,7 @@ def _run_casual_lane(
     contact_respond_id: str | None = None,
     recalled: list[dict[str, Any]] | None = None,
     fallback: Any = None,
+    chat_console: bool = False,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
@@ -6564,6 +6645,7 @@ def _run_casual_lane(
         # The clarifier asks nothing of its own, so whatever question was open before
         # this greeting is still open after it (contract 36 / 56, cluster 4's carry).
         state=state,
+        chat_console=chat_console,
     )
 
     return TurnResult(
@@ -7307,6 +7389,79 @@ def _stock_ask_answered_entries(envelopes: list[dict[str, Any]]) -> list[dict[st
     return entries
 
 
+def _ctx_message_text(ctx: Any) -> str:
+    """What the customer typed this turn (`ctx.text.message.message.text`)."""
+    inner = jsc.get(jsc.get(jsc.get(ctx, "text"), "message"), "message")
+    value = jsc.get(inner, "text")
+    return jsc.js_string(value) if jsc.truthy(value) else ""
+
+
+def _record_customer_asks(
+    session_factory: SessionFactory,
+    *,
+    turn_id: str,
+    contact_respond_id: str,
+    state: Any,
+    stock_entries: list[dict[str, Any]],
+    reply_text: str,
+    refer_context: dict[str, Any] | None,
+    ctx: Any,
+    dry_run: bool,
+    chat_console: bool,
+) -> None:
+    """CUSTOMER-ASKS-REFER-ONLY (owner ruling 1 Oct 2026): Customer asks logs every reply
+    that referred the customer to their salesman, and only those. Run by both tails
+    (`_run_answer`, `complete_turn`) once the turn row is closed.
+
+    Whether the reply referred is never read off its text: a stock ask line carries the
+    presenter's `refers_to_salesman`, and every other refer line was printed through
+    `turn/refer.py`, which marked this turn (`refer.consume`, so a second tail in the same
+    turn cannot log it twice). `refer_asks` names the rows: the incoming ETA lines, the
+    misses, a declined did-you-mean, the plan's products, else what the customer typed.
+
+    Chatbot stock ask v2 S4 / S5 (AC-SA401, AC-SA402, AC-SA501): a live turn, and (owner
+    ruling 28 Sep 2026) a CHAT CONSOLE turn, write the rows and enqueue the real salesman
+    job; every other dry run does neither (D14). The send is a queued job, so Respond never
+    holds the reply up."""
+    from app.services.chatbot import refer_asks
+    from app.services.chatbot.turn import refer
+
+    marked = refer.consume()
+    if dry_run and not chat_console:
+        return
+    try:
+        context = refer_context or {}
+        referred = marked or any(
+            isinstance(e, dict) and e.get("refers_to_salesman") is True for e in stock_entries
+        )
+        entries = [
+            *stock_entries,
+            *refer_asks.referred_entries(
+                referred=referred,
+                reply_text=reply_text,
+                envelopes=context.get("envelopes") or [],
+                plan=context.get("plan"),
+                pending_before=context.get("pending_before"),
+                message_text=context["message_text"] if "message_text" in context else _ctx_message_text(ctx),
+                answered=stock_entries,
+            ),
+        ]
+    except Exception:  # noqa: BLE001 - a post-commit side effect: the reply is already recorded
+        logger.exception("chatbot turn %s: building the Customer asks rows failed", turn_id)
+        return
+    if not entries:
+        return
+    _after_stock_ask_turn(
+        session_factory,
+        turn_id=turn_id,
+        contact_respond_id=contact_respond_id,
+        state=state,
+        entries=entries,
+        reply_text=reply_text,
+        source="console" if dry_run else "live",
+    )
+
+
 def _after_stock_ask_turn(
     session_factory: SessionFactory,
     *,
@@ -8022,6 +8177,7 @@ def _complete_canned_lane(
     return reply, session_patch, actions
 
 
+@_refer_tracked
 def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the contract
     turn_id: str,
     fragments: dict[str, Any],
@@ -8030,6 +8186,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
     compose_send_action: bool = False,
     lane_trace: Any = None,
     state: Any = None,
+    chat_console: bool = False,
 ) -> CompleteResult:
     """Run the tail of one turn: outcome -> member offer -> state -> compose -> persist.
 
@@ -8236,6 +8393,22 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 records=turn_trace.persisted(),
             )
             raise
+
+    # CUSTOMER-ASKS-REFER-ONLY: a reply this tail composed (the casual, canned, escalation
+    # and business lanes) that referred the customer is a Customer asks row, the same rule
+    # `_run_answer` applies. The row is closed first, as there.
+    _record_customer_asks(
+        session_factory,
+        turn_id=turn_id,
+        contact_respond_id=str(contact_respond_id or ""),
+        state=state,
+        stock_entries=[],
+        reply_text=jsc.js_string(reply.get("text") or ""),
+        refer_context=None,
+        ctx=ctx,
+        dry_run=dry_run,
+        chat_console=chat_console,
+    )
 
     return CompleteResult(
         turn_id=turn_id,

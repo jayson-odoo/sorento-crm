@@ -380,6 +380,11 @@ PendingKind = Literal[PENDING_KINDS]  # type: ignore[valid-type]
 # caller inspecting the stored session state, not for this re-run decision.
 DETAIL_OFFER_KINDS: tuple[str, ...] = ("outstanding_detail", "sales_report_detail")
 
+#: The sales report's drill-downs (lane SALES-REPORT, AC-SR-28): the values a
+#: `sales_report_detail` option carries, each the `group_by` its pick re-runs with. Read
+#: ONLY for that kind - the outstanding report's so/do/both picks are untouched.
+SALES_REPORT_GROUP_BYS: tuple[str, ...] = ("customer", "product", "delivery_order", "sales_agent")
+
 # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 5: the `order_status`
 # values that read sales figures under the `sales_orders.sales_report` reveal key (the
 # owner's access ruling, 26 Sep 2026: no new key). The engine's grant-before-roster

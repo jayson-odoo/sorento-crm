@@ -54,7 +54,12 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import UNDOMAINED_CHATBOT_TOOLS, is_timeline, named_count
+from app.services.chatbot.contracts import (
+    SALES_REPORT_GROUP_BYS,
+    UNDOMAINED_CHATBOT_TOOLS,
+    is_timeline,
+    named_count,
+)
 from app.services.chatbot.turn.policy import default_policy
 from app.services.chatbot.turn import policy_rows
 from app.services.product_spec_registry import display_spec_value
@@ -625,6 +630,16 @@ def _rendered_product_count(items: list[Any]) -> int | None:
     return len(codes) if codes else None
 
 
+def _self_reference(semantic_input: Any) -> bool:
+    """CHATBOT-SELFREF-SCOPE (owner rule Q6a, hand test 30 Sep 2026): "my sales" means
+    ALL the asker's linked accounts. An account the conversation carried from an earlier
+    report (`outstanding_carried_customer_ids`, the offer's own subject) is what a "1" or
+    "this month only" narrows, never what "my" means, so on a self-reference turn the
+    carry does not replace this turn's own ids (the links, or the account the message
+    itself named)."""
+    return jsc.get(semantic_input, "self_reference") is True
+
+
 def entity_ids_transformer(
     trigger: dict[str, Any] | None, *, space_id: str | None = None
 ) -> dict[str, Any]:
@@ -767,7 +782,7 @@ def entity_ids_transformer(
         carried_customers = [
             u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
         ]
-        if carried_customers:
+        if carried_customers and not _self_reference(semantic_input):
             out["customer_ids"] = carried_customers
         # AC-1138 (D10 on main): "1"/"2" against an open detail offer re-runs THIS
         # SAME tool with `detail=so|do` - the MCP layer swaps in the numbered list
@@ -799,7 +814,7 @@ def entity_ids_transformer(
         carried_customers = [
             u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
         ]
-        if carried_customers:
+        if carried_customers and not _self_reference(semantic_input):
             out["customer_ids"] = carried_customers
         # R-B3 (reviewer finding, Phase 3 fix round): the turn's OWN sales_channel wins
         # when given; a pick or a refinement of an open sales_report_detail offer names
@@ -810,9 +825,12 @@ def entity_ids_transformer(
             channel = jsc.get(semantic_input, "outstanding_carried_channel")
         if jsc.truthy(channel):
             out["channel"] = jsc.js_string(channel)
+        # AC-SR-28: a drill-down picked off the open `sales_report_detail` offer re-runs
+        # this SAME tool with that `group_by` (the offer's own value, `SALES_REPORT_GROUP_BYS`);
+        # the window, accounts, location and channel ride on the carried keys above.
         detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
-        if detail_pick == "so":
-            out["detail"] = "so"
+        if detail_pick in SALES_REPORT_GROUP_BYS:
+            out["group_by"] = detail_pick
 
         # S18 (owner ruling, mid-lane): a PRODUCT-ONLY ask (a resolved product, no
         # customer) with no date window defaults to the CURRENT CALENDAR YEAR
@@ -1171,8 +1189,11 @@ def entity_ids_transformer(
     if isinstance(scope_ids, list) and scope_ids and tool_name in CUSTOMER_SCOPED_TOOLS:
         requested = out.get("customer_ids")
         requested = requested if isinstance(requested, list) else ([requested] if requested else [])
-        if any(str(c) not in {str(i) for i in scope_ids} for c in requested):
-            raise ScopeViolation(f"{tool_name} asked for a customer outside the contact's scope")
+        outside = [str(c) for c in requested if str(c) not in {str(i) for i in scope_ids}]
+        if outside:
+            raise ScopeViolation(
+                f"{tool_name} asked for a customer outside the contact's scope", dropped=outside
+            )
         out["customer_ids"] = requested or list(scope_ids)
         out.pop("customer_query", None)
 
@@ -1241,7 +1262,12 @@ class ToolNotAllowed(RuntimeError):
 class ScopeViolation(ToolNotAllowed):
     """PLAN-chatbot-customer-scope-29sep.md D4: a customer-scoped contact's fetch asked for
     a customer outside its links. Never a tool call; `run_fetch` answers it with the
-    refusal line, not the generic "not allowed" text."""
+    refusal line, not the generic "not allowed" text. `dropped` names the ids outside the
+    links, for the trace (CHATBOT-SELFREF-SCOPE R4)."""
+
+    def __init__(self, message: str, *, dropped: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.dropped: list[str] = list(dropped or [])
 
 
 #: The MCP tools that return per-customer data: every catalogue tool whose `query_params`
@@ -2309,25 +2335,46 @@ def _sales_report_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
 def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     """S4 wiring point 7 (AC-1654/AC-1655/AC-1658): `crm_sales_report` never goes
     through the generic envelope below - mirrors `_outstanding_report_output` for
-    the sibling tool, the SAME reason: the report's shape (a month block per
-    bucket) has no row list to build items from.
+    the sibling tool, the SAME reason: the report's shape has no row list to build
+    items from.
 
-    `_outstanding_offer_from_text` is REUSED, not copied: this report's own single
-    closing sentence (`Reply 1 for the sales order list.`) is byte-identical to the
-    outstanding report's single-scope offer, so the same regex finds it and returns
-    the SAME one-row shape (`idx` 1, `Sales order list`, `so`) this tool's own
-    detail offer needs.
+    AC-SR-28: the drill-down offer is the presenter's own `options` roster (`{idx, label,
+    value, aliases}`, numbered by the presenter, the one writer of the numbering), never a
+    regex over the reply text. Those rows become the `sales_report_detail` open question.
     """
     envelope = result if isinstance(result, dict) else {}
     if "response" in envelope:
         text = jsc.js_string(envelope.get("response") or "")
         has_result = envelope.get("has_result") is True
+        # CHATBOT-SELFREF-SCOPE (owner hand test, 30 Sep 2026): a rendered report with
+        # no month on the asker's OWN accounts ("my sales this year", or any ask of a
+        # customer-scoped contact) is a final answer - "No sales found." - never the
+        # miss lane's escalate offer: there is nothing to escalate about one's own
+        # account. A miss on a NAMED product or customer keeps AC-1658's offer, since a
+        # wrong code is worth a person's look.
+        semantic_input = ctx.get("semantic_input")
+        if isinstance(semantic_input, str):
+            semantic_input = _safe_json(semantic_input)
+        own_accounts = isinstance(semantic_input, dict) and (
+            semantic_input.get("self_reference") is True or bool(semantic_input.get("scope_customer_ids"))
+        )
+        if not has_result and own_accounts and text.strip().endswith(SALES_REPORT_MISS_MESSAGE):
+            has_result = True
     else:
         # Mirrors `_outstanding_report_output`'s own fix (#1262 slice 1, F2): a bare
         # string here is never a rendered report, so it is never treated as a result.
         text = result if isinstance(result, str) else jsc.js_string(result)
         has_result = False
-    offer = _outstanding_offer_from_text(text)
+    offer = [
+        {
+            "idx": row.get("idx"),
+            "label": row.get("label"),
+            "value": row.get("value"),
+            "aliases": [a for a in jsc.array(row.get("aliases")) if isinstance(a, str)],
+        }
+        for row in jsc.array(envelope.get("options"))
+        if isinstance(row, dict) and row.get("value") in SALES_REPORT_GROUP_BYS and row.get("idx")
+    ]
 
     outstanding_ask = (
         {
@@ -2335,7 +2382,7 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
             "last_result_set": offer,
             "filters": {
                 **_sales_report_filters_from_ctx(ctx),
-                "offer_text": _outstanding_offer_block(text),
+                "offer_text": _sales_report_offer_block(text),
             },
         }
         if offer
@@ -2367,12 +2414,26 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: The heading the presenter prints above the drill-down options (`_sales_report`).
+_SALES_REPORT_DRILL_HEADING = "*Drill down:*"
+
+
+def _sales_report_offer_block(text: str) -> str:
+    """The drill-down block exactly as the customer was shown it (heading plus the numbered
+    options), kept verbatim for the out-of-range re-ask (AC-1102's rule)."""
+    at = (text or "").rfind(_SALES_REPORT_DRILL_HEADING)
+    return text[at:].strip() if at >= 0 else ""
+
+
 #: The miss line for an unrendered low stock payload (N6). The presenter carries the same
 #: wording for its own error envelope; this copy covers only the "render never happened"
 #: fallback, where the presenter's text never reached this function.
 _LOW_STOCK_ERROR_TEXT = "Could not run the low stock report right now."
 #: The presenter's own error line for `crm_sales_analysis`, for a body it never rendered.
 _SALES_ANALYSIS_ERROR_TEXT = "Could not run the sales report right now."
+#: The presenter's own miss line for `crm_sales_report` (`presenters.SALES_REPORT_MISS_MESSAGE`,
+#: AC-1607): the one way a rendered report says it found no month.
+SALES_REPORT_MISS_MESSAGE = "No sales found."
 
 
 def _low_stock_report_output(result: Any, *, fallback: str = _LOW_STOCK_ERROR_TEXT) -> dict[str, Any]:
@@ -3039,7 +3100,12 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     ):
         msg += _item_line(i + 1 + set_row_offset, it, numbered=not plain_lines) + "\n\n"
     if dealer_incoming and jsc.truthy(e.get("closing")):
-        msg += jsc.js_string(e["closing"]).strip() + "\n\n"
+        # The presenter's dealer closing is the refer line (`presenters.py`, `closing`);
+        # printed through `turn/refer.py` so the turn is marked for Customer asks
+        # (CUSTOMER-ASKS-REFER-ONLY).
+        from app.services.chatbot.turn import refer
+
+        msg += refer.sentence() + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
     # (`_project_product_specs`). Byte-inert when the key is absent.
     for miss in e.get("spec_misses") or []:
