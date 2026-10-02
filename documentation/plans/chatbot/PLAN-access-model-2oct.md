@@ -1,6 +1,6 @@
 # PLAN - Chatbot access model: roles -> domains -> fields, one registry
 
-Status: planned, mock approved (v4 = v3 + Reports section), red tests landing; build after #1405 and #1429 merge (2 Oct 2026). Track: L / standard (migration, RBAC,
+Status: planned, mock v4 FINAL (owner ok 2 Oct 2026); red tests S1-S5 + Reports posted on #1434, S6 + S7 red tests in progress; build after #1405 and #1429 merge. Track: L / standard (migration, RBAC,
 prompt). Lane ACCESS-MODEL, branch `crew/access-model`, one PR. Depends on PR #1405 (prompt
 variables, open) and PR #1429 (per-audience trim, docs only, open); slices S1 to S6 do not touch their
 files, S7 rebases onto them once merged.
