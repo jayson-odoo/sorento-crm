@@ -1,9 +1,11 @@
 # PLAN: Ideation inside the Sorento CRM portal (one system, one domain)
 
 Status: Option C chosen (owner, 2 Oct 2026). Size L, full pipeline track (new gateway router on an
-auth boundary + a public token page). Behaviour card done (sections 1, 2, 0); next = Phase 1 mock
-per CRM screen (section 12, slice M) built and browser-verified 2 Oct (M1-M5, commits 142ba323..a5b9af0f), waiting on the owner's hand test before slice U (UAC). Lane
-IDEATION-IN-CRM.
+auth boundary + a public token page). Behaviour card done (sections 1, 2, 0). Slice M = the static
+mock `documentation/mockups/ideation-in-crm/index.html` (one section per CRM screen), filed for owner
+approval 2 Oct; BUILD IS PAUSED until the owner approves it. The in-app Phase 1 screens on this
+branch (commits 142ba323..a5b9af0f) were built ahead of that approval; they are frozen, not
+hand-tested, and will be reworked to the approved mock or reverted. Lane IDEATION-IN-CRM.
 
 ## 0. Owner decisions (2 Oct 2026)
 
@@ -386,6 +388,23 @@ cache the 5-minute embed token per CRM user (in-process or redis, key = user id,
 | Delete / Archive | pending-action handlers in `BE/app/services/record_actions.py` (`entity_type="idea"`) that call ss `DELETE /embed/ideas/{id}` / `POST .../status {status:"archived"}` as the user who started the action | manage |
 | `GET/POST /ideas/{id}/comments`, `PATCH/DELETE /ideas/{id}/comments/{cid}` | ss comment routes from the IDEATION-COMMENTS lane (not on ss main yet) | view (post/edit own); delete-any enforced by ss |
 
+**Commenter identity (IDEATION-COMMENTS security check, 2 Oct).** Every comment write through the
+gateway must reach ss with the commenter's display name, not only the email, so portal readers see a
+real name. Facts: the CRM assertion already carries `name` (`BE/app/services/ideation_embed_service.py:143`)
+and ss copies it into the embed token, but ss's `EmbedTokenPrincipal` keeps only `sub` and `email`
+(`ss:ssBE/modules/ideation/services/embed.py:78-81`), so the name is dropped before a comment is
+written. Contract:
+- CRM: the assertion `name` is always a non-empty display name: `users.name` trimmed, else the
+  literal "Sorento staff". It never falls back to the email address. A gateway test asserts the
+  claim for a user with a blank name.
+- ss (IDEATION-COMMENTS lane): carry `name` onto the principal and store it as the comment's author
+  display name; the email stays server-side (author key only).
+- Public read (`/public/ideas/{token}/comments`) returns author display name and an `isSubmitter`
+  flag only, never an email. The CRM public portal proxy (section 11) additionally whitelists the
+  fields it forwards (id, parentId, authorName, isSubmitter, body, createdAt, edited, deleted), so an
+  email added upstream later can never reach a portal user. A test asserts no `@` email value
+  appears in the proxied payload. Staff pages also show names only (no UUIDs, no emails).
+
 Errors: an ss 4xx passes through as an `AppException` with ss's message; ss down or timeout = 502
 "The Ideas workspace isn't reachable right now." Unconfigured = 404, as the embed route does today.
 
@@ -420,7 +439,7 @@ token-as-credential page with no OTP: `/portal/ticket-draft/[token]`
 | # | Slice | Contents | Depends on | Gate |
 |---|---|---|---|---|
 | S0 | Behaviour card | Sections 0-2, this plan. | - | Done 2 Oct |
-| M | **Phase 1 mock per CRM screen** (next) | In the CRM app against mock data, no backend, no tests: (M1) `/ideas` list with vote box + capture modal; (M2) `/ideas/{id}` detail incl. header action states A-E from the mock, tabs, comments with reply and deleted-with-replies; (M3) `/ideas/board`; (M4) merge modal + merged-from + promote modal; (M5) `/portal/ideas/{token}` track page with public comments. Each at 375px and 1280px, dark and light. | - | Owner hand-test of the mock (built + agent-browser verified 2 Oct, 375/1280, light/dark) |
+| M | **Static mock per CRM screen, owner approval** (`documentation/mockups/ideation-in-crm/index.html`), then the in-app Phase 1 mock | In the CRM app against mock data, no backend, no tests: (M1) `/ideas` list with vote box + capture modal; (M2) `/ideas/{id}` detail incl. header action states A-E from the mock, tabs, comments with reply and deleted-with-replies; (M3) `/ideas/board`; (M4) merge modal + merged-from + promote modal; (M5) `/portal/ideas/{token}` track page with public comments. Each at 375px and 1280px, dark and light. | - | Owner hand-test of the mock (built + agent-browser verified 2 Oct, 375/1280, light/dark) |
 | U | UAC file | `ideation-in-crm-acceptance-criteria.md` from sections 2, 9-11 and the approved mock. | M | Owner sign-off |
 | B1 | Gateway + baseline | Router (section 10), token cache, list / detail / capture / vote / status / edit / archive / delete / attachments wired; `/ideas` and `/ideas/{id}` switch from the iframe to the native pages (no feature flag). Tester-first. | U | pytest + vitest green, reviewer + security-reviewer |
 | B2 | Board, merge/unmerge, promote | M3, M4 wired. | B1 | same |
@@ -444,7 +463,8 @@ only ship after it does.
 - **ss IDEATION-COMMENTS lane:** the CRM needs, on the embed API: list (oldest first, one reply
   level, author name, `edited`, `deleted` with replies kept), create (with optional `parentId`),
   edit own, delete (own, or any with triage); on the public API: list and create by status token,
-  with a stated author identity for public posts (section 15 Q4). Votes: `myVote` only ever `up`.
+  with a stated author identity for public posts (section 15 Q4). Comment authors are carried by
+  display name from the embed `name` claim, never shown by email (section 10, commenter identity). Votes: `myVote` only ever `up`.
   Its components must stay free of a hard-coded domain (the mock already says so).
 
 ## 14. Embed connection product scope (Q3)
