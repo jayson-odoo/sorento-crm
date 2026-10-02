@@ -1547,6 +1547,7 @@ class StockService:
         )
         from app.services.eta_policy import rules_for_contact, visible_eta
         from app.services.stock_ask_branch import branch as compute_branch
+        from app.services.stock_ask_branch import short_of
         from app.services.stock_ask_limits import effective as effective_limits
 
         # SEC-S1 (security review, round 1, kept from #1118): `warehouse_criterion` is only HALF of what
@@ -1684,6 +1685,9 @@ class StockService:
                 "category_name": None,
                 "eta": None,
                 "packing_list": None,
+                # AVAIL-MODE-REPLIES rule 2: set only on an `in_stock` answer short of
+                # the ask (within X); the one figure of ours this mode ever returns.
+                "available_qty": None,
             }
             if ask is not None and product is not None and category is not None:
                 x, y = effective_limits(product, category)
@@ -1713,6 +1717,7 @@ class StockService:
                 )
                 shipment_date = shipment[1] if shipment else None
                 entry["branch"] = compute_branch(ask, x, net_available, shipment_date)
+                entry["available_qty"] = short_of(ask, x, net_available)
                 entry["cap_unset"] = cap_unset
                 entry["category_name"] = category.category_name
                 if entry["branch"] == "incoming" and shipment is not None:
