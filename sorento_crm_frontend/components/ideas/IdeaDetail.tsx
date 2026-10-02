@@ -11,9 +11,11 @@ import {
   Image as ImageIcon,
   LoaderCircleIcon,
   Lightbulb,
+  Merge,
   Mic,
   Paperclip,
   Pencil,
+  Rocket,
   Split,
   Trash2,
   Undo2,
@@ -41,6 +43,9 @@ import { formatDateTime } from '@/lib/helpers';
 import { archiveIdea, deleteIdea } from '@/services/ideasService';
 import type { Idea, IdeaAttachment } from '@/types/ideas';
 import { IdeaComments } from './IdeaComments';
+import { IdeaMergeModal } from './IdeaMergeModal';
+import { IdeaMergedList } from './IdeaMergedList';
+import { IdeaPromoteModal } from './IdeaPromoteModal';
 import { IdeaStatusBadge } from './IdeaStatusBadge';
 import { VoteBox } from './VoteBox';
 import { useCanManageIdeas } from './ideasAccess';
@@ -116,6 +121,8 @@ export function IdeaDetail({ id }: { id: string }) {
 
   const [tab, setTab] = useState<IdeaTab>('details');
   const [isEditing, setIsEditing] = useState(false);
+  const [promoteOpen, setPromoteOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
   const [problem, setProblem] = useState('');
   const [proposedSolution, setProposedSolution] = useState('');
   const [impact, setImpact] = useState('');
@@ -198,6 +205,24 @@ export function IdeaDetail({ id }: { id: string }) {
 
   const gear: RecordAction[] = [];
   if (canManage) {
+    if (!isMergedChild) {
+      gear.push({
+        key: 'idea.promote',
+        label: 'Promote to BR',
+        icon: Rocket,
+        disabled: busy,
+        run: () => setPromoteOpen(true),
+      });
+    }
+    if (!isMergedChild && idea.mergedCount === 0) {
+      gear.push({
+        key: 'idea.merge',
+        label: 'Merge into another idea',
+        icon: Merge,
+        disabled: busy,
+        run: () => setMergeOpen(true),
+      });
+    }
     if (!idea.statusIsArchived && !isMergedChild) {
       gear.push({
         key: 'idea.archive',
@@ -443,6 +468,7 @@ export function IdeaDetail({ id }: { id: string }) {
                   )}
                 </Field>
               </section>
+              <IdeaMergedList ideaId={idea.id} count={idea.mergedCount} />
               <IdeaComments ideaId={idea.id} frozen={isMergedChild} canDeleteAny={canManage} />
             </div>
           </Card>
@@ -530,6 +556,8 @@ export function IdeaDetail({ id }: { id: string }) {
           </Card>
         </TabsContent>
       </Tabs>
+      <IdeaPromoteModal idea={idea} open={promoteOpen} onOpenChange={setPromoteOpen} />
+      <IdeaMergeModal idea={idea} open={mergeOpen} onOpenChange={setMergeOpen} />
     </div>
   );
 }
