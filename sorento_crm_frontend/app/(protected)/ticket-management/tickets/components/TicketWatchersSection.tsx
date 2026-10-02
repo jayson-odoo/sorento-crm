@@ -8,7 +8,7 @@ import {
   SearchableSelect,
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
-import { getUsersSelect, type UserSelectItem } from '@/services/userSelectService';
+import { getUserLookup, type UserLookupItem } from '@/services/userSelectService';
 import {
   addTicketWatchers,
   removeTicketWatcher,
@@ -21,7 +21,7 @@ interface Props {
 }
 
 export default function TicketWatchersSection({ ticket, onChange }: Props) {
-  const [users, setUsers] = useState<UserSelectItem[]>([]);
+  const [users, setUsers] = useState<UserLookupItem[]>([]);
   const [adding, setAdding] = useState(false);
   const [pendingUserId, setPendingUserId] = useState('');
   const [busy, setBusy] = useState(false);
@@ -29,7 +29,7 @@ export default function TicketWatchersSection({ ticket, onChange }: Props) {
   // Lazy-load user list when the picker is first opened.
   useEffect(() => {
     if (!adding || users.length > 0) return;
-    getUsersSelect()
+    getUserLookup()
       .then(setUsers)
       .catch((e: Error) => toast.error(e.message));
   }, [adding, users.length]);
@@ -45,9 +45,8 @@ export default function TicketWatchersSection({ ticket, onChange }: Props) {
         .filter((u) => !watcherIds.has(u.id))
         .map((u) => ({
           value: u.id,
-          label: u.name || u.email || 'Unnamed user',
-          searchText: `${u.name ?? ''} ${u.email ?? ''}`,
-          description: u.email ?? undefined,
+          label: u.name || 'Unnamed user',
+          searchText: u.name ?? '',
         })),
     [users, watcherIds],
   );
