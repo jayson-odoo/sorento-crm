@@ -365,7 +365,11 @@ class TestProductAndWarehouseResolveTogether:
             ),
         )
         assert len(calls) == 1, f"the lane must still make ONE resolve call: {calls!r}"
-        assert calls[0]["match_mode"] == "and"
+        # CHATBOT-QUEUE-FIX (crew browser pass, prod turn f0a2): two product codes are
+        # two products, so they resolve OR. An AND intersection folded "SRTSWT3001"
+        # onto SRTSWT3001-GM and dropped it (tests/test_resolve_two_product_codes_and_mode.py);
+        # for this pair the intersection was empty and the route degraded to OR anyway.
+        assert calls[0]["match_mode"] == "or"
         assert calls[0]["allowed_entity_types"] == ["product", "product"]
         assert calls[0]["tokens"] == ["SRT62GM", "SRTWC286SH"]
         assert entities is not None
