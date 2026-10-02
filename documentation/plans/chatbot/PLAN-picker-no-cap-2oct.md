@@ -24,6 +24,11 @@ interactive list.
    ends with "(+N more)" and protects the parser token budget (contract 6.2); the dealer sees
    every option. Left as is.
 
+4. Found by the crew-tester chat pass at 83754a68 ("incoming AMS", 20 matches, 15 listed): the
+   chatbot's own resolve body sent `limit: 15` (`lanes/business/resolve_gate.py::
+   resolve_entity_body`), and the route cuts every token's matches to it before any roster cap
+   is read. The lookup limit is now 50, the roster ceiling (the account case keeps 200).
+
 ## Decision (crew answer (c), 2 Oct)
 
 No schema change and the setting stays. Every roster_cap still at 10 moves to 50 (the S3
