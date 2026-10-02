@@ -3934,6 +3934,17 @@ def envelope_of(
             )
             if name
         ],
+        # ATTACHMENT-MULTI R3: the document types this fetch asked for, by the name the
+        # rows print, so the composer can name a product that lacks one of them.
+        "attachment_types": [
+            name
+            for name in (
+                _answer_subject(e)
+                for e in entities
+                if jsc.nullish_str(e.get("entity_type")).strip().lower() == "attachment_type"
+            )
+            if name
+        ],
         "figures": figures,
         "files": [f for f in files if isinstance(f, dict)] if isinstance(files, list) else [],
         "miss": [] if has_result else codes,

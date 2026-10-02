@@ -250,7 +250,9 @@ class TestMissWording:
         _resolved, _gate, offer, _calls = _lane(session_factory, monkeypatch, company_id, product_raw=SH)
 
         message = offer.get("escalate_message") or ""
-        assert f"• Attachment type: {PHOTOS}, {SPECS}" in message, message
+        bullet = next((line for line in message.split("\n") if line.startswith("• attachment type: ")), "")
+        names = set(bullet.removeprefix("• attachment type: ").split(", "))
+        assert names == {PHOTOS, SPECS}, message
 
 
 class TestNoSnakeCase:
@@ -269,3 +271,76 @@ class TestNoSnakeCase:
 
         message = offer.get("escalate_message") or ""
         assert not _SNAKE_RE.findall(message), message
+
+
+# --------------------------------------------------------------------------- #
+# R3: a found product missing an asked type says so (owner Q2 (a))
+# --------------------------------------------------------------------------- #
+
+
+def _attachment_envelope(product_codes: list[str], rows: list[tuple[str, str]], asked: list[str]) -> dict:
+    figures = [
+        {
+            "fields": [
+                {"label": "Product Code", "value": code},
+                {"label": "Attachment Type", "value": type_name},
+                {"label": "File Name", "value": f"{code}.pdf"},
+            ]
+        }
+        for code, type_name in rows
+    ]
+    return {
+        "domain": "product_attachment",
+        "denied": False,
+        "entities": [*product_codes, *asked],
+        "product_codes": list(product_codes),
+        "attachment_types": list(asked),
+        "figures": figures,
+        "files": [{"url": f"https://example.test/{c}.pdf", "filename": f"{c}.pdf"} for c, _ in rows],
+        "miss": [] if rows else list(product_codes),
+        "has_result": bool(rows),
+        "tool_has_result": bool(rows),
+        "unresolved": [],
+        "error": None,
+        "lane_text": "I have attached the file(s) below." if rows else "No matching results found.",
+    }
+
+
+def _compose_text(env: dict) -> str:
+    from app.services.chatbot.turn.compose import compose
+    from app.services.chatbot.turn.policy import Policy
+    from app.services.chatbot.turn.state import Focus, Profile, State
+
+    from tests.chatbot._turn_helpers import TIER_ORDER_FIXTURE, _domain_row
+
+    row = {**_domain_row("product_attachment", narrowing={"product": "must_narrow_one"}), "label": "product attachments"}
+    policy = Policy.from_rows(domains=[row], kinds=[], tier_order=TIER_ORDER_FIXTURE)
+    state = State(focus=Focus(), pending=None, profile=Profile(), turn_no=2)
+    return compose([env], state, policy, ctx=None).text
+
+
+class TestFoundAnswerNamesTheGap:
+    def test_a_product_missing_one_asked_type_gets_the_files_it_has_and_one_line(self) -> None:
+        text = _compose_text(_attachment_envelope([SH], [(SH, PHOTOS)], [PHOTOS, SPECS]))
+
+        assert "I have attached the file(s) below." in text, text
+        assert f"{SH} has no {SPECS}." in text, text
+        assert "escalate" not in text.lower(), text
+
+    def test_every_asked_type_on_file_adds_no_line(self) -> None:
+        text = _compose_text(_attachment_envelope([SH], [(SH, PHOTOS), (SH, SPECS)], [PHOTOS, SPECS]))
+
+        assert "has no" not in text, text
+
+    def test_a_product_with_no_file_at_all_names_both_types_on_one_line(self) -> None:
+        text = _compose_text(
+            _attachment_envelope([SH, SH200], [(SH, PHOTOS), (SH, SPECS)], [PHOTOS, SPECS])
+        )
+
+        assert f"{SH200} has no {PHOTOS} or {SPECS}." in text, text
+        assert f"{SH} has no" not in text, text
+
+    def test_a_slug_type_is_never_named_as_a_gap(self) -> None:
+        text = _compose_text(_attachment_envelope([SH], [(SH, PHOTOS)], [PHOTOS, "tech_spec"]))
+
+        assert "tech_spec" not in text, text

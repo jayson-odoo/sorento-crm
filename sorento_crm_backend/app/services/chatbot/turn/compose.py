@@ -89,6 +89,40 @@ def _codes_without_rows(entities: list[Any], figures: list[dict[str, Any]]) -> l
     return absent
 
 
+def _types_without_files(
+    product_codes: list[Any], asked_types: list[Any], figures: list[dict[str, Any]]
+) -> list[tuple[str, list[str]]]:
+    """`[(CODE, [missing type, ...])]` for each requested product lacking an asked type.
+
+    ATTACHMENT-MULTI R3 (owner ruling 2 Oct 2026, Q2 (a)): the files that exist are sent and
+    each gap is named, never silently skipped. Exact match on the rows' "Product Code" and
+    "Attachment Type" fields; silent when no row carries both (nothing to match against).
+    An asked type that is a slug (`packing_list`) is never named: rows print the type's
+    human name, so a slug cannot be matched and would only ever read as a false gap.
+    """
+    present: set[tuple[str, str]] = set()
+    for fig in figures:
+        fields = {
+            f.get("label"): str(f.get("value") or "").strip()
+            for f in fig.get("fields") or []
+            if isinstance(f, dict)
+        }
+        if fields.get("Product Code") and fields.get("Attachment Type"):
+            present.add((fields["Product Code"].casefold(), fields["Attachment Type"].casefold()))
+    names = [str(t).strip() for t in asked_types if str(t).strip() and "_" not in str(t)]
+    if not present or not names:
+        return []
+    out: list[tuple[str, list[str]]] = []
+    for code in product_codes:
+        code_text = str(code).strip()
+        if not code_text or any(c == code_text.upper() for c, _ in out):
+            continue
+        missing = [n for n in names if (code_text.casefold(), n.casefold()) not in present]
+        if missing:
+            out.append((code_text.upper(), missing))
+    return out
+
+
 def _row_key(fig: dict[str, Any]) -> tuple:
     return tuple((f.get("label"), f.get("value")) for f in fig.get("fields") or [])
 
@@ -452,6 +486,19 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                     block = body + "\n" + line + sep + footer
                 else:
                     block = block + "\n" + line
+        if (
+            domain == "product_attachment"
+            and figures
+            and not envelope_missed(env)
+            and isinstance(product_codes, list)
+            and product_codes
+            and len(product_codes) <= HEADER_SUBJECT_MAX
+        ):
+            gaps = _types_without_files(product_codes, env.get("attachment_types") or [], figures)
+            if gaps:
+                lines = "\n".join(f"{code} has no {_join_words(missing)}." for code, missing in gaps)
+                body, sep, footer = block.rpartition("\n_Data last updated")
+                block = (body + "\n" + lines + sep + footer) if sep else (block + "\n" + lines)
         # The window the fetch ran with, stated under the header it belongs to (browser
         # pass 6 item 4). Never on a section that states its own scope - the outstanding
         # report and the refusal both do, and the report's own four-line block already

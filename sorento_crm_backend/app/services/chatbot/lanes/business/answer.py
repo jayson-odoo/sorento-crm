@@ -3533,6 +3533,11 @@ def not_found_error_message(
             typed = [b for b in order if _type_norm(b) in typed_order]
             typed.sort(key=lambda b: typed_order[_type_norm(b)])
             named_codes = typed if typed else [order[0]]
+            if entity_type == "attachment_type":
+                # ATTACHMENT-MULTI R1: every document type in scope is one the customer asked
+                # for ("photo" resolved to Product Photos), never resolver expansion, so each
+                # is named rather than "(+1 more)".
+                named_codes = order
             extra = (
                 f" (+{len(order) - len(named_codes)} more)"
                 if len(order) > len(named_codes)
@@ -3541,7 +3546,8 @@ def not_found_error_message(
             rendered = ", ".join(
                 ", ".join(with_quantity(l) for l in by_code[b]) for b in named_codes
             )
-            found_lines.append(f"• {jsc.js_string(entity_type)}: {rendered}{extra}")
+            # ATTACHMENT-MULTI R5: "• attachment type:", never the raw `attachment_type` key.
+            found_lines.append(f"• {_prettify_type(entity_type)}: {rendered}{extra}")
         found_summary = "\n".join(found_lines)
 
         not_found_raw = [t for t in unresolved if _nf_norm_raw(t) not in resolved_toks]
@@ -3945,8 +3951,10 @@ def not_found_error_message(
                 if use_breakdown:
                     # combine the attachment-type qualifiers into ONE searched noun and fold
                     # them OUT of the "couldn't find" list, so they are not double-named
+                    # ATTACHMENT-MULTI R4: several asked types are alternatives the miss
+                    # sentence lists - "photo or technical specifications" - never one run-on.
                     attach_noun = (
-                        " ".join(jsc.js_string(x) for x in attach_raws)
+                        " or ".join(jsc.js_string(x) for x in attach_raws)
                         if attach_raws
                         else (
                             jsc.get(attach_ent, "raw")
@@ -3966,6 +3974,8 @@ def not_found_error_message(
                         else ""
                     )
                     attach_raw = jsc.get(attach_ent, "raw") if jsc.truthy(attach_ent) else None
+                    if len(attach_raws) > 1:
+                        attach_raw = " or ".join(jsc.js_string(x) for x in attach_raws)
                     if jsc.truthy(attach_raw) and prod_text:
                         subject = f"a {jsc.js_string(attach_raw)} for {prod_text}"
                     elif jsc.truthy(attach_raw):

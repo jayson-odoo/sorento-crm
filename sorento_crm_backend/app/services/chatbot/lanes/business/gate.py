@@ -924,10 +924,10 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 )
             )
             found_line = f"Found: {', '.join(found_codes)}.\n" if found_codes else ""
-            gate_clarification = (
-                f"{found_line}{domain} search needs to be more specific. Multiple matches "
-                f"found. Please choose:\n{numbered}"
-            )
+            # ATTACHMENT-MULTI (owner ruling 2 Oct 2026, Q3 (a)): one plain question, the
+            # customer picker's own wording, never the domain key ("product_attachment
+            # search needs to be more specific" reached customers 41 times on dev).
+            gate_clarification = f"{found_line}Which product do you mean? Please choose:\n{numbered}"
 
         # FIX A: when prompting, the selectable set comes from the token-filtered,
         # exact-deduped `specific_options` - NOT from the unfiltered `entities` union.
