@@ -84,3 +84,27 @@ describe('PackingListDetailsTab - Regions (AC-RPL-4)', () => {
     expect(screen.getByText('East Malaysia')).toBeInTheDocument();
   });
 });
+
+
+describe('PackingListDetailsTab - Regions placement and edit (review round 1)', () => {
+  function labelsInOrder(container: HTMLElement) {
+    return [...container.querySelectorAll('p.text-muted-foreground')].map((n) => n.textContent);
+  }
+
+  it('sits right after Consignee in the Container card', () => {
+    record.mockReturnValue(ctx(['west']));
+    const { container } = render(<PackingListDetailsTab />);
+    const labels = labelsInOrder(container);
+    expect(labels).toContain('Consignee');
+    expect(labels.indexOf('Regions')).toBe(labels.indexOf('Consignee') + 1);
+  });
+
+  it('shows the Regions multi-select with the draft regions while editing', () => {
+    const c = ctx(['west'], true);
+    record.mockReturnValue({ ...c, draft: { regions: 'west,east' } });
+    render(<PackingListDetailsTab />);
+    expect(screen.getByText('Regions')).toBeInTheDocument();
+    expect(screen.getByText(/West Malaysia/)).toBeInTheDocument();
+    expect(screen.getByText(/East Malaysia/)).toBeInTheDocument();
+  });
+});

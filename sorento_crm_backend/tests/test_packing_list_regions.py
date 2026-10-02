@@ -285,7 +285,7 @@ def test_ac_rpl_5_list_items_carry_regions_and_the_region_filter_matches_any(cli
 # ----------------------------------------------------------------- attachment create
 
 
-def _upload_client(db, monkeypatch, client):
+def _upload_client(db, monkeypatch, client, code="packing_list"):
     import app.api.v1.resources.attachments as attachments_module
     import app.services.storage_router as storage_router
     from app.services.contact_access_type_service import ContactAccessTypeService
@@ -312,6 +312,7 @@ def _upload_client(db, monkeypatch, client):
     db.add(
         AttachmentType(
             id=type_id,
+            code=code,
             type_name=unique_code("PLT")[:40],
             allowed_extensions="pdf",
             max_file_size_mb=10,

@@ -88,6 +88,32 @@ function renderDialog() {
   );
 }
 
+function ControlledDialog({ preset }: { preset: boolean }) {
+  const [open, setOpen] = React.useState(true);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        reopen dialog
+      </button>
+      <AttachmentUploadDialog
+        open={open}
+        onOpenChange={setOpen}
+        defaultDirectoryId="dir-1"
+        {...(preset ? { defaultTypeId: 'type-pl', lockType: true } : {})}
+      />
+    </>
+  );
+}
+
+function renderControlled(preset = false) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <ControlledDialog preset={preset} />
+    </QueryClientProvider>,
+  );
+}
+
 function pickType(name: string) {
   fireEvent.click(screen.getByLabelText(/Attachment Type/i));
   fireEvent.click(screen.getByRole('option', { name }));
@@ -109,7 +135,7 @@ describe('AttachmentUploadDialog - Regions control (AC-RPL-2)', () => {
     renderDialog();
     pickType('Packing List');
 
-    const regions = screen.getByLabelText('Regions');
+    const regions = screen.getByLabelText(/Regions/);
     expect(regions).toBeInTheDocument();
     expect(regions).toHaveTextContent('West Malaysia');
     expect(regions).not.toHaveTextContent('East Malaysia');
@@ -117,21 +143,21 @@ describe('AttachmentUploadDialog - Regions control (AC-RPL-2)', () => {
 
   it('shows no Regions control before a type is picked', () => {
     renderDialog();
-    expect(screen.queryByLabelText('Regions')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Regions/)).not.toBeInTheDocument();
   });
 
   it('hides the Regions control for any other type', () => {
     renderDialog();
     pickType('Certificate');
-    expect(screen.queryByLabelText('Regions')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Regions/)).not.toBeInTheDocument();
   });
 
   it('hides the Regions control again when the type switches away from Packing List', () => {
     renderDialog();
     pickType('Packing List');
-    expect(screen.getByLabelText('Regions')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Regions/)).toBeInTheDocument();
     pickType('Certificate');
-    expect(screen.queryByLabelText('Regions')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Regions/)).not.toBeInTheDocument();
   });
 });
 
@@ -156,7 +182,7 @@ describe('AttachmentUploadDialog - regions reach the upload request (AC-RPL-2)',
   it('sends the regions the user ticked (West and East)', async () => {
     renderDialog();
     pickType('Packing List');
-    fireEvent.click(screen.getByLabelText('Regions'));
+    fireEvent.click(screen.getByLabelText(/Regions/));
     fireEvent.click(screen.getByRole('option', { name: 'East Malaysia' }));
     attachFile();
 
@@ -171,5 +197,55 @@ describe('AttachmentUploadDialog - regions reach the upload request (AC-RPL-2)',
 
     const request = await submitAndRunUploader();
     expect(request.regions == null || (request.regions as string[]).length === 0).toBe(true);
+  });
+});
+
+
+describe('AttachmentUploadDialog - Regions is required and does not outlive the dialog (review round 1)', () => {
+  it('marks the Regions label required, like the Attachment Type label', () => {
+    renderDialog();
+    pickType('Packing List');
+    const label = screen.getByText(/^Regions/, { selector: 'label' });
+    expect(label.textContent).toContain('*');
+  });
+
+  async function addEastThenClose(close: () => void, preset = false) {
+    renderControlled(preset);
+    if (!preset) pickType('Packing List');
+    fireEvent.click(screen.getByLabelText(/Regions/));
+    fireEvent.click(screen.getByRole('option', { name: 'East Malaysia' }));
+    expect(screen.getByLabelText(/Regions/)).toHaveTextContent('East Malaysia');
+
+    close();
+    await waitFor(() => expect(screen.queryByLabelText(/Attachment Type/i)).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'reopen dialog' }));
+    await screen.findByLabelText(/Attachment Type/i);
+    if (!preset) pickType('Packing List');
+    const regions = screen.getByLabelText(/Regions/);
+    expect(regions).toHaveTextContent('West Malaysia');
+    expect(regions).not.toHaveTextContent('East Malaysia');
+  }
+
+  it('reopens on West Malaysia only after Cancel', async () => {
+    await addEastThenClose(() => fireEvent.click(screen.getByRole('button', { name: /^Cancel$/ })));
+  });
+
+  it('reopens on West Malaysia only after Escape (the dialog closes without Cancel)', async () => {
+    await addEastThenClose(() => {
+      // The first Escape closes the open Regions list, the second closes the dialog.
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape', code: 'Escape' });
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape', code: 'Escape' });
+    });
+  });
+
+  it('reopens on West Malaysia only when the type is preset and locked (the Packing List Upload CTA)', async () => {
+    await addEastThenClose(
+      () => {
+        fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape', code: 'Escape' });
+        fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape', code: 'Escape' });
+      },
+      true,
+    );
   });
 });
