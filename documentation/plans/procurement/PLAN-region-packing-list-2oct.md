@@ -1,26 +1,26 @@
 # PLAN - Packing list region (West / East Malaysia)
 
-Status: planned, awaiting owner answers on CARD-region-packing-list-2oct.md + mock v1. Track: L / standard
+Status: planned, awaiting owner answers on CARD-region-packing-list-2oct.md (Q1-Q5) + mock v2 (multi-region packing lists, owner note on v1). Track: L / standard
 (migration, contact access). Lane REGION-PACKING-LIST, branch `crew/region-packing-list`, one PR.
 UAC: `region-packing-list-acceptance-criteria.md`. Paths under `sorento_crm_backend/app/` unless shown.
 
 ## Schema (one additive Alembic revision)
-- `inbound_shipments.region` varchar(8) NOT NULL server_default 'west', CHECK in ('west','east'). Backfill = default.
+- `inbound_shipments.regions` text[] NOT NULL server_default '{west}', CHECK non-empty and subset of {west,east}. Backfill = default.
 - `respond_contacts.regions` text[] NOT NULL server_default '{west}', CHECK non-empty and subset of {west,east}.
-- `attachments.region` varchar(8) NULL (set only for a Packing List upload; read by external create).
+- `attachments.regions` text[] NULL (set only for a Packing List upload; read by external create).
 
 ## Backend
-1. Models + schemas: `InboundShipment.region` (`models/procurement.py:128`), `InboundShipmentBase/Update` + responses
-   (`schemas/procurement.py:351-465`), `PackingListHeader.region` optional (`schemas/external/procurement.py:19`),
-   `RespondContact.regions` (`models/access.py:278` area), `Attachment.region`.
-2. Writes: external create (`api/v1/external/packing_lists.py:112`) region = payload or attachment or west;
-   staff list filter `region` (`api/v1/procurement/packing_lists.py:224`); attachment create form field `region`
+1. Models + schemas: `InboundShipment.regions` (`models/procurement.py:128`), `InboundShipmentBase/Update` + responses
+   (`schemas/procurement.py:351-465`), `PackingListHeader.regions` optional (`schemas/external/procurement.py:19`),
+   `RespondContact.regions` (`models/access.py:278` area), `Attachment.regions`.
+2. Writes: external create (`api/v1/external/packing_lists.py:112`) regions = payload or attachment or {west};
+   staff list filter `region` (array overlap) (`api/v1/procurement/packing_lists.py:224`); attachment create form field `regions`
    (`api/v1/resources/attachments.py:730`); proforma convert keeps the default.
 3. Contact: `ContactChatbotUpdate.regions` (`api/v1/user_management/contacts.py:279`), returned by
    `contact_service.py:688` and `RespondContactResponse` (`schemas/user.py:70`).
 4. Read rule: `ContactEtaRules.regions` (`services/eta_policy.py:50`), read in `rules_for_contact`; `UNRESOLVED` = west.
    `visible_regions(rules)` = {west,east} if east held else {west}.
-5. Filter in SQL: `IncomingStockService(db, regions=None)`; `_region_filter(regions)` ANDed beside every
+5. Filter in SQL: `IncomingStockService(db, regions=None)`; `_region_filter(regions)` = `InboundShipment.regions && visible_regions` (Postgres array overlap) ANDed beside every
    `_not_draft_shipment_filter()` (`services/incoming_stock_service.py:204,448,570,625,790,931,1044`);
    `earliest_packing_list_shipment(db, ids, regions=None)`. Routes (`api/v1/incoming_stock.py`) build the
    service with `_Contact.regions` (None when no contact). Stock ask passes `contact_rules` regions
@@ -28,8 +28,8 @@ UAC: `region-packing-list-acceptance-criteria.md`. Paths under `sorento_crm_back
 6. ACCESS-MODEL (agreed with that lane 2 Oct): regions stay out of `effective_access()`; trigger to expose them = a second reader outside incoming. Regions control is its own block in `ContactChatbotSection.tsx` (Tier lines untouched).
 
 ## Frontend
-- `AttachmentUploadDialog.tsx`: Region SearchableSelect when the selected type code is `packing_list`; sends `region`.
-- `PackingListsList.tsx`: Region column (Badge) + filter; `PackingListForm.tsx` + `PackingListDetailsTab.tsx`: Region field;
+- `AttachmentUploadDialog.tsx`: Regions SearchableMultiSelect (at least one) when the selected type code is `packing_list`; sends `regions`.
+- `PackingListsList.tsx`: Regions column (Badge per region) + filter; `PackingListForm.tsx` + `PackingListDetailsTab.tsx`: Regions multi-select;
   `packingList.types.ts` + `packingListService.ts`.
 - `ContactChatbotSection.tsx` + `contactChatbotService.ts`: Regions SearchableMultiSelect, at least one.
 

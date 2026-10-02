@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Packing list region (mockup v1)</title>
+<title>Packing list region (mockup v2)</title>
 <style>
 /* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme) */
 :root{--background:#fff;--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-soft:#eff6ff;--secondary:#f4f4f5;--success:#15803d;--success-soft:#f0fdf4;--warning:#a16207;--warning-soft:#fefce8;--page:#f7f7f8}
@@ -55,6 +55,8 @@ th{font-size:12px;color:var(--muted-fg);font-weight:500}
 .menu{border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 16px rgba(0,0,0,.08);margin-top:4px;background:#fff;font-size:13px}
 .menu div{padding:7px 10px}
 .menu .on{background:var(--muted);font-weight:500}
+.menu .on:before{content:"\2713  ";color:var(--primary)}
+.menu div:not(.on):before{content:"\2003 "}
 .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;min-height:36px;border:1px solid var(--border);border-radius:6px;padding:4px 8px;background:#fff}
 .chips span{background:var(--secondary);border-radius:4px;padding:1px 6px;font-size:12px}
 .foot{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
@@ -81,13 +83,13 @@ th{font-size:12px;color:var(--muted-fg);font-weight:500}
 </head>
 <body>
 <div class="doc">
-<h1>Packing list region - mockup v1</h1>
-<p class="intro">Lane REGION-PACKING-LIST. Real case from the dev copy: packing list PL-2609-038, container FSCU8706420, consignee Sorento, ETA 30 Sep 2026, 4 lines (SRTKS2406 1020, SRTKS8047-BL-NEW 185, SRTKS6547-BL 54, SRTKS8047-NEW 3). It is shown here as uploaded East Malaysia. Contact: Samantha Ng (+60162021178). New elements have an amber outline.</p>
+<h1>Packing list region - mockup v2</h1>
+<p class="intro">Lane REGION-PACKING-LIST. Real case from the dev copy: packing list PL-2609-038, container FSCU8706420, consignee Sorento, ETA 30 Sep 2026, 4 lines (SRTKS2406 1020, SRTKS8047-BL-NEW 185, SRTKS6547-BL 54, SRTKS8047-NEW 3). It is shown here as uploaded East Malaysia only; PL-2609-039 (OOLU9610547) is shown as West + East. Contact: Samantha Ng (+60162021178). New elements have an amber outline.<br><b>v2 (owner notes on v1):</b> a packing list can carry several regions, so the upload Region field is a multi-select; the contact Regions field is a multi-select. Rule: a packing list is visible to a contact when any of its regions is one the contact sees; a contact holding East also sees West.</p>
 <div class="nav"><a href="#upload">1 Upload dialog</a><a href="#list">2 Packing list list</a><a href="#detail">3 Packing list details</a><a href="#contact">4 Contact chatbot settings</a><a href="#chat">5 What the contact is told</a><a href="#reuse">Reused components</a></div>
 
 <section id="upload">
 <h2>1. Upload dialog (Packing Lists - Upload)</h2>
-<p class="why">Same Create Attachment dialog, type locked to Packing List. Region appears only for the Packing List type, West Malaysia preselected, required (no clear).</p>
+<p class="why">Same Create Attachment dialog, type locked to Packing List. Regions appears only for the Packing List type: multi-select, West Malaysia preselected, at least one stays selected.</p>
 <div class="row">
 <div class="desk"><div class="screen">
  <div class="main"><div class="pagehead"><div class="t">Packing Lists</div><span class="btn pri">Upload</span></div></div>
@@ -95,20 +97,20 @@ th{font-size:12px;color:var(--muted-fg);font-weight:500}
  <div class="dlg">
   <h3>Create Attachment</h3>
   <div class="fld"><span class="lbl">Attachment Type <span class="req">*</span></span><div class="sel dis">Packing List</div><div class="hint">Allowed: xlsx,xls,pdf &bull; Max size: 10 MB</div></div>
-  <div class="fld"><span class="lbl">Files <span class="req">*</span></span><div class="drop">Drag and drop files here, or click to browse</div><div class="file"><span>FSCU8706420.xlsx</span><span style="color:var(--muted-fg)">48 KB</span></div></div>
-  <div class="fld new"><span class="lbl">Region <span class="req">*</span></span><div class="sel">East Malaysia</div>
-   <div class="menu"><div>West Malaysia</div><div class="on">East Malaysia</div></div></div>
+  <div class="fld"><span class="lbl">Files <span class="req">*</span></span><div class="drop">Drag and drop files here, or click to browse</div><div class="file"><span>OOLU9610547.xlsx</span><span style="color:var(--muted-fg)">48 KB</span></div></div>
+  <div class="fld new"><span class="lbl">Regions <span class="req">*</span></span><div class="chips"><span>West Malaysia &times;</span><span>East Malaysia &times;</span></div>
+   <div class="menu"><div class="on">West Malaysia</div><div class="on">East Malaysia</div></div></div>
   <div class="fld"><span class="lbl">Access Levels</span><div class="chips"><span>Dealer</span><span>End user</span></div></div>
   <div class="foot"><span class="btn">Cancel</span><span class="btn pri">Upload</span></div>
  </div>
-</div><div class="cap">1280 - Region dropdown open</div></div>
+</div><div class="cap">1280 - Regions open, both selected (PL-2609-039 file)</div></div>
 <div class="phone"><div class="screen">
  <div class="scrim"></div>
  <div class="dlg" style="top:12px">
   <h3>Create Attachment</h3>
   <div class="fld"><span class="lbl">Attachment Type <span class="req">*</span></span><div class="sel dis">Packing List</div></div>
   <div class="fld"><span class="lbl">Files <span class="req">*</span></span><div class="drop">Tap to browse</div><div class="file"><span>FSCU8706420.xlsx</span><span style="color:var(--muted-fg)">48 KB</span></div></div>
-  <div class="fld new"><span class="lbl">Region <span class="req">*</span></span><div class="sel">West Malaysia</div></div>
+  <div class="fld new"><span class="lbl">Regions <span class="req">*</span></span><div class="chips"><span>West Malaysia &times;</span></div></div>
   <div class="fld"><span class="lbl">Access Levels</span><div class="chips"><span>Dealer</span><span>End user</span></div></div>
   <div class="foot"><span class="btn">Cancel</span><span class="btn pri">Upload</span></div>
  </div>
@@ -118,31 +120,31 @@ th{font-size:12px;color:var(--muted-fg);font-weight:500}
 
 <section id="list">
 <h2>2. Packing list list</h2>
-<p class="why">New Region column and Region filter. Staff see every region.</p>
+<p class="why">New Regions column (one pill per region) and Region filter (a row matches when any of its regions matches). Staff see every region.</p>
 <div class="desk short"><div class="screen"><div class="main">
  <div class="pagehead"><div class="t">Packing Lists</div><span class="btn pri">Upload</span></div>
  <div class="toolbar"><div class="search">Search packing lists</div><div class="filter">Status</div><div class="filter new">Region <b>All</b></div></div>
- <table><colgroup><col style="width:130px"><col style="width:140px"><col style="width:150px"><col style="width:130px"><col style="width:110px"><col style="width:120px"><col></colgroup>
- <thead><tr><th>Shipment number</th><th>Container no</th><th>Consignee</th><th class="new">Region</th><th>ETA</th><th>Status</th><th>File</th></tr></thead>
+ <table><colgroup><col style="width:130px"><col style="width:140px"><col style="width:150px"><col style="width:230px"><col style="width:110px"><col style="width:120px"><col></colgroup>
+ <thead><tr><th>Shipment number</th><th>Container no</th><th>Consignee</th><th class="new">Regions</th><th>ETA</th><th>Status</th><th>File</th></tr></thead>
  <tbody>
  <tr><td>PL-2609-038</td><td>FSCU8706420</td><td>Sorento</td><td class="new"><span class="pill blue">East Malaysia</span></td><td>30 Sep 2026</td><td><span class="pill">In transit</span></td><td>FSCU8706420.xlsx</td></tr>
- <tr><td>PL-2609-039</td><td>OOLU9610547</td><td>Sorento</td><td>West Malaysia</td><td>30 Sep 2026</td><td><span class="pill">In transit</span></td><td>OOLU9610547.xlsx</td></tr>
- <tr><td>PL-2609-033</td><td>DFSU7408507</td><td>Sorento (Mocha)</td><td>West Malaysia</td><td>27 Sep 2026</td><td><span class="pill">In transit</span></td><td>DFSU7408507.xlsx</td></tr>
- <tr><td>PL-2609-036</td><td>TRHU6072964</td><td>Sorento</td><td>West Malaysia</td><td>23 Sep 2026</td><td><span class="pill">In transit</span></td><td>TRHU6072964.xlsx</td></tr>
+ <tr><td>PL-2609-039</td><td>OOLU9610547</td><td>Sorento</td><td><span class="pill">West Malaysia</span> <span class="pill blue">East Malaysia</span></td><td>30 Sep 2026</td><td><span class="pill">In transit</span></td><td>OOLU9610547.xlsx</td></tr>
+ <tr><td>PL-2609-033</td><td>DFSU7408507</td><td>Sorento (Mocha)</td><td><span class="pill">West Malaysia</span></td><td>27 Sep 2026</td><td><span class="pill">In transit</span></td><td>DFSU7408507.xlsx</td></tr>
+ <tr><td>PL-2609-036</td><td>TRHU6072964</td><td>Sorento</td><td><span class="pill">West Malaysia</span></td><td>23 Sep 2026</td><td><span class="pill">In transit</span></td><td>TRHU6072964.xlsx</td></tr>
  </tbody></table>
 </div></div><div class="cap">1280</div></div>
 </section>
 
 <section id="detail">
 <h2>3. Packing list details (PL-2609-038)</h2>
-<p class="why">Region sits in the Details card next to Consignee. View shows the value; Edit swaps it for the same select in place.</p>
+<p class="why">Regions sit in the Details card next to Consignee. View shows the pills; Edit swaps them for the same multi-select in place.</p>
 <div class="desk short"><div class="screen"><div class="main">
  <div class="pagehead"><div class="t">PL-2609-038</div><span class="btn">Edit</span></div>
  <div class="card"><h4>Shipment</h4><div class="grid4">
   <div class="kv"><div class="k">ETA</div><div class="v">30 Sep 2026</div></div>
   <div class="kv"><div class="k">Container no</div><div class="v">FSCU8706420</div></div>
   <div class="kv"><div class="k">Consignee</div><div class="v">Sorento</div></div>
-  <div class="kv new"><div class="k">Region</div><div class="v">East Malaysia</div></div>
+  <div class="kv new"><div class="k">Regions</div><div class="v"><span class="pill blue">East Malaysia</span></div></div>
  </div></div>
 </div></div><div class="cap">1280 - view mode</div></div>
 </section>
@@ -175,20 +177,24 @@ th{font-size:12px;color:var(--muted-fg);font-weight:500}
   <div class="sw" style="margin-bottom:8px">Stock checks<span class="tg on"></span></div>
   <div class="sw" style="margin-bottom:8px">Packing list allowed<span class="tg on"></span></div>
  </div>
-</div></div><div class="cap">375 - West only, menu open</div></div>
+</div></div><div class="cap">375 - West only, menu open (multi-select)</div></div>
 </div>
 </section>
 
 <section id="chat">
-<h2>5. What the contact is told (PL-2609-038 = East Malaysia)</h2>
+<h2>5. What the contact is told (PL-2609-038 = East only, PL-2609-039 = West + East)</h2>
 <p class="why">Same ask, two contacts. Bot wording illustrative; only which containers count changes.</p>
 <div class="row">
 <div class="chat card"><div class="who">Contact with West Malaysia only</div>
  <div class="bub out">incoming SRTKS2406</div>
- <div class="bub in">No incoming shipment found for SRTKS2406.</div></div>
+ <div class="bub in">No incoming shipment found for SRTKS2406.</div>
+ <div class="bub out">incoming OOLU9610547</div>
+ <div class="bub in">OOLU9610547, ETA 30 Sep 2026 (West + East, so visible).</div></div>
 <div class="chat card"><div class="who">Samantha Ng (West + East Malaysia)</div>
  <div class="bub out">incoming SRTKS2406</div>
- <div class="bub in">SRTKS2406: 1020 incoming on FSCU8706420, ETA 30 Sep 2026.</div></div>
+ <div class="bub in">SRTKS2406: 1020 incoming on FSCU8706420, ETA 30 Sep 2026.</div>
+ <div class="bub out">incoming OOLU9610547</div>
+ <div class="bub in">OOLU9610547, ETA 30 Sep 2026.</div></div>
 </div>
 </section>
 
@@ -196,9 +202,9 @@ th{font-size:12px;color:var(--muted-fg);font-weight:500}
 <h2>Reused components</h2>
 <table class="map"><colgroup><col style="width:260px"><col></colgroup>
 <tr><th>Element</th><th>Existing component (repo path)</th></tr>
-<tr><td>Upload dialog + Region field</td><td>sorento_crm_frontend/app/(protected)/resource-management/attachments/components/AttachmentUploadDialog.tsx; select = components/common/SearchableSelect</td></tr>
+<tr><td>Upload dialog + Regions field</td><td>sorento_crm_frontend/app/(protected)/resource-management/attachments/components/AttachmentUploadDialog.tsx; multi-select = components/common/SearchableMultiSelect</td></tr>
 <tr><td>Upload button / list page</td><td>sorento_crm_frontend/app/(protected)/procurement-management/packing-lists/components/PackingListsList.tsx (DataGrid, toolbar filters)</td></tr>
-<tr><td>Region column pill</td><td>components/ui/badge (Badge)</td></tr>
+<tr><td>Regions column pills</td><td>components/ui/badge (Badge)</td></tr>
 <tr><td>Details card field (view/edit in place)</td><td>sorento_crm_frontend/app/(protected)/procurement-management/packing-lists/components/PackingListDetailsTab.tsx + PackingListField.tsx</td></tr>
 <tr><td>Create Packing List form</td><td>sorento_crm_frontend/app/(protected)/procurement-management/packing-lists/components/PackingListForm.tsx</td></tr>
 <tr><td>Contact Regions multi-select</td><td>sorento_crm_frontend/app/(protected)/user-management/contacts/[id]/components/ContactChatbotSection.tsx; components/common/SearchableMultiSelect</td></tr>
