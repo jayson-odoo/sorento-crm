@@ -284,3 +284,59 @@ def test_a_level_change_is_in_the_customers_history(db):
 
 def test_account_level_is_an_audited_column():
     assert "account_level" in Customer.__audit_columns__
+
+
+# ------------------------------------------------------------------ fix round 1: S1 (create) and N1 (upper bound)
+
+
+def _post(db, monkeypatch, body: dict, *, granted: frozenset[str] = frozenset({EDIT})):
+    return _client(db, monkeypatch, granted=granted).post(f"{BASE}/", json=body)
+
+
+def _body(**extra) -> dict:
+    return {"customer_code": unique_code("C")[:50], "customer_name": "ZZT Create Gate Trading", **extra}
+
+
+def _count(db, code: str) -> int:
+    return db.execute(text("SELECT count(*) FROM customers WHERE customer_code = :c"), {"c": code}).scalar_one()
+
+
+def test_s1_post_with_a_level_without_the_permission_is_403_and_creates_nothing(db, monkeypatch):
+    body = _body(account_level=2)
+    resp = _post(db, monkeypatch, body, granted=frozenset())
+    assert resp.status_code == 403, resp.text
+    assert EDIT in resp.text
+    assert _count(db, body["customer_code"]) == 0
+
+
+def test_s1_post_without_a_level_or_with_null_is_allowed_without_the_permission(db, monkeypatch):
+    assert _post(db, monkeypatch, _body(), granted=frozenset()).status_code == 201
+    assert _post(db, monkeypatch, _body(account_level=None), granted=frozenset()).status_code == 201
+
+
+def test_s1_post_with_a_level_and_the_permission_is_201_and_stored(db, monkeypatch):
+    resp = _post(db, monkeypatch, _body(account_level=4), granted=frozenset({EDIT}))
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["account_level"] == 4
+    db.expire_all()
+    assert _stored(db, resp.json()["id"]) == 4
+
+
+def test_n1_put_above_smallint_is_422_not_500(db, monkeypatch):
+    cid = _customer(db, 2)
+    resp = _client(db, monkeypatch).put(f"{BASE}/{cid}", json={"account_level": 32768})
+    assert resp.status_code == 422, resp.text
+    db.expire_all()
+    assert _stored(db, cid) == 2
+
+
+def test_n1_post_above_smallint_is_422_not_500(db, monkeypatch):
+    resp = _post(db, monkeypatch, _body(account_level=100000))
+    assert resp.status_code == 422, resp.text
+
+
+def test_n1_the_cap_itself_is_accepted(db, monkeypatch):
+    cid = _customer(db)
+    resp = _client(db, monkeypatch).put(f"{BASE}/{cid}", json={"account_level": 32767})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["account_level"] == 32767
