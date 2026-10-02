@@ -3837,6 +3837,9 @@ def _run_stages(  # noqa: PLR0915
         from app.services.chatbot.lanes.business import low_stock_ask
 
         _message_text = jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+        # Security S1: these keys are the ENGINE's own; one the parser emitted (the
+        # Anthropic path does not enforce the schema's additionalProperties) is dropped.
+        verdict = {k: v for k, v in verdict.items() if k not in required_fields.ENGINE_KEYS}
         open_ask = state_in.focus.required_ask
         state_in.focus.required_ask = None
         verdict, required_rule = required_fields.reply_verdict(verdict, open_ask, _message_text)

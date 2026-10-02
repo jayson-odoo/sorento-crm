@@ -126,32 +126,38 @@ def brand_categories(db: Any, brands: list[str]) -> rf.Resolved | None:
     return _ok(codes) if codes else None
 
 
-def resolve_supplier(db: Any, word: str, _extras: dict[str, Any]) -> rf.Resolved:
-    """A supplier word against the supplier master list (crew ruling Q5 (a)): an exact
-    name or code wins alone; otherwise every active supplier whose name holds the word as
-    a whole-word run, several -> a numbered pick."""
+def _supplier_rows(db: Any) -> list[tuple[str, str, str]]:
     from app.models.procurement import Supplier
 
-    if db is None:
-        return rf.Resolved("unknown")
-    want = " ".join(word.split()).casefold()
-    if not want:
-        return rf.Resolved("unknown")
-    rows = [
-        (name or "", code or "")
+    return [
+        ((name or "").casefold(), name or "", (code or "").casefold())
         for name, code in db.query(Supplier.supplier_name, Supplier.supplier_code)
         .filter(Supplier.is_active.is_(True))
         .order_by(Supplier.supplier_name)
         .all()
     ]
-    exact = [name for name, code in rows if want in (name.casefold(), code.casefold())]
-    found = exact or [name for name, _code in rows if _word_run(want, name.casefold())]
-    found = list(dict.fromkeys(found))
+
+
+def _match_supplier(rows: list[tuple[str, str, str]], word: str) -> rf.Resolved:
+    want = " ".join(word.split()).casefold()
+    if not want:
+        return rf.Resolved("unknown")
+    exact = [name for low, name, code in rows if want in (low, code)]
+    found = list(dict.fromkeys(exact or [name for low, name, _code in rows if _word_run(want, low)]))
     if not found:
         return rf.Resolved("unknown")
     if len(found) == 1:
         return rf.Resolved("ok", value=found, label=found[0])
     return rf.Resolved("ambiguous", options=tuple(([n], n) for n in found))
+
+
+def resolve_supplier(db: Any, word: str, _extras: dict[str, Any]) -> rf.Resolved:
+    """A supplier word against the supplier master list (crew ruling Q5 (a)): an exact
+    name or code wins alone; otherwise every active supplier whose name holds the word as
+    a whole-word run, several -> a numbered pick."""
+    if db is None:
+        return rf.Resolved("unknown")
+    return _match_supplier(_supplier_rows(db), word)
 
 
 def _word_run(needle: str, haystack: str) -> bool:
@@ -221,14 +227,24 @@ def leftover_words(text: str, used: list[str]) -> list[str]:
     return [w for w in re.findall(r"[\w&.'-]+", low) if w not in _ASK_WORDS]
 
 
+#: Security S2: bound the leftover-word search (one supplier read per turn, then at most
+#: MAX_LEFTOVER_WORDS x MAX_SUPPLIER_WORDS in-memory matches).
+MAX_LEFTOVER_WORDS = 12
+MAX_SUPPLIER_WORDS = 6
+
+
 def supplier_word(db: Any, words: list[str]) -> str | None:
     """The LONGEST run of consecutive leftover words that names a supplier (reviewer
     should-fix 5: "hi can you jinbaichuan trading this month" is JINBAICHUAN TRADING, not
     one phrase that matches nothing)."""
-    for size in range(len(words), 0, -1):
+    words = words[:MAX_LEFTOVER_WORDS]
+    if db is None or not words:
+        return None
+    rows = _supplier_rows(db)
+    for size in range(min(len(words), MAX_SUPPLIER_WORDS), 0, -1):
         for start in range(len(words) - size + 1):
             phrase = " ".join(words[start : start + size])
-            if resolve_supplier(db, phrase, {}).status != "unknown":
+            if _match_supplier(rows, phrase).status != "unknown":
                 return phrase
     return None
 
@@ -273,10 +289,23 @@ def settle(db: Any, parse_output: dict[str, Any], *, include_supplier: bool) -> 
     slot = parse_output.get("required_ask")
     slot = slot if isinstance(slot, dict) and slot.get("ask") == ASK_NAME else None
     if slot is not None:
+        # Security S1: the permission is the LIVE one, never the slot's copy (a key
+        # revoked between the question and the answer stops the supplier words too).
         extras = dict(slot.get("extras") or {})
+        given = dict(extras.get("given") or {})
+        split = str(extras.get("split") or "none")
+        if not include_supplier:
+            given.pop("supplier", None)
+            split = {"supplier": "none", "supplier_category": "category"}.get(split, split)
+        values = {k: v for k, v in (slot.get("values") or {}).items() if include_supplier or k != "supplier"}
+        slot = {**slot, "values": values,
+                "extras": {**extras, "given": given, "split": split, "include_supplier": include_supplier}}
+        if not include_supplier and slot.get("asking") == "supplier":
+            slot = {**slot, "asking": None}
+            return rf.collect(db, LOW_STOCK_ASK, slot=slot, given=given)
         return rf.collect(
             db, LOW_STOCK_ASK, slot=slot, reply=str(parse_output.get("required_ask_reply") or ""),
-            given=extras.get("given") or {},
+            given=given,
         )
 
     words = parse_output.get("low_stock_words") if isinstance(parse_output.get("low_stock_words"), dict) else {}
@@ -311,7 +340,7 @@ def route_filters(outcome: rf.Outcome) -> dict[str, Any]:
     counts."""
     category = (outcome.values.get("category") or {}).get("value")
     supplier = (outcome.values.get("supplier") or {}).get("value")
-    include_supplier = bool(outcome.extras.get("include_supplier", True))
+    include_supplier = outcome.extras.get("include_supplier") is True
     split = str(outcome.extras.get("split") or "none")
     out: dict[str, Any] = {"split": split}
     if isinstance(category, list) and category:

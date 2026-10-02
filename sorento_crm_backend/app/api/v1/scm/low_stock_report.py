@@ -85,6 +85,9 @@ _RATE_WINDOW_SECONDS = 600
 #: rather than truncating: silently planning the first 100 of 500 codes answers a question
 #: nobody asked, and the caller has no way to tell it happened.
 _MAX_CODES = 100
+#: `suppliers.supplier_name` is String(255); a longer value names nothing and only bloats
+#: the queued job's arguments (security N2).
+_MAX_NAME_LENGTH = 255
 
 #: Console round 3, defect A: how far INSIDE the lane's MCP client timeout this route must
 #: answer, so `pending` + the delivery claim land before the client hangs up. See
@@ -121,6 +124,12 @@ def _name_list(values: Optional[list[str]]) -> Optional[list[str]]:
     """Supplier NAMES, one per repeated param, never split on commas: a name like
     "Foshan Co., Ltd" is one supplier. Same `_MAX_CODES` cap as `_csv_list`."""
     out = [str(v).strip() for v in values or () if str(v).strip()]
+    if any(len(v) > _MAX_NAME_LENGTH for v in out):
+        raise AppException(
+            status_code=422,
+            message=f"A supplier name is at most {_MAX_NAME_LENGTH} characters.",
+            code="name_too_long",
+        )
     if len(out) > _MAX_CODES:
         raise AppException(
             status_code=422,

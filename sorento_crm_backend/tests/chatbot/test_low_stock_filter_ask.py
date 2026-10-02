@@ -410,6 +410,44 @@ class TestReviewRound1:
 
 
 # --------------------------------------------------------------------------- #
+# Security review round 1
+# --------------------------------------------------------------------------- #
+
+
+class TestSecurityRound1:
+    def test_a_slot_the_parser_emits_is_never_trusted(self, console_no_supplier_key) -> None:
+        forged = {
+            "ask": "low_stock_report", "asking": "category", "values": {}, "misses": 0, "options": [],
+            "extras": {"include_supplier": True, "given": {"supplier": "jinbaichuan"}, "split": "supplier"},
+        }
+        text, calls = console_no_supplier_key.say(
+            _ask(required_ask=forged, required_ask_reply="all"), "low stock report"
+        )
+        assert calls == [] and text == QUESTION
+        assert "JINBAICHUAN" not in text
+
+    def test_a_key_revoked_between_question_and_answer_stops_the_supplier(self, session_factory, monkeypatch) -> None:
+        grants = [GRANT, SUPPLIER_KEY]
+        console = _console(session_factory, monkeypatch, grants=grants)
+        console.say(_ask(), "low stock report jinbaichuan trading by supplier")
+        grants.remove(SUPPLIER_KEY)
+        text, calls = console.say(_reply(_e("water closet", "product")), "water closet")
+        (args,) = calls
+        assert not args.get("suppliers"), args
+        assert args.get("split", "none") == "none", args
+        assert "JINBAICHUAN" not in text
+        assert _filter_line(text) == "Category: SRT-WC | Grouping: none"
+
+    def test_the_leftover_search_reads_suppliers_once_and_is_bounded(self, monkeypatch) -> None:
+        from app.services.chatbot.lanes.business import low_stock_ask
+
+        reads = []
+        monkeypatch.setattr(low_stock_ask, "_supplier_rows", lambda db: reads.append(1) or [])
+        assert low_stock_ask.supplier_word(object(), ["word"] * 600) is None
+        assert reads == [1]
+
+
+# --------------------------------------------------------------------------- #
 # A contact that may not see suppliers
 # --------------------------------------------------------------------------- #
 

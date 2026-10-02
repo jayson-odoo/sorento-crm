@@ -173,3 +173,17 @@ def test_category_split_without_the_supplier_key_is_allowed(scm_app, monkeypatch
     assert kwargs.get("split") == "category"
     assert kwargs.get("categories") == ["SRT-FT"]
     assert kwargs.get("include_supplier") is False
+
+
+def test_a_supplier_name_longer_than_the_column_is_refused(scm_app, monkeypatch):
+    app, db, key, _uid = _api_key_caller(scm_app)
+    contact = _contact(db, granted=(GRANT_KEY, SUPPLIER_KEY))
+    db.flush()
+    calls = _fake_queue(monkeypatch)
+    _patch_wait(monkeypatch, on_wait=_timeout)
+
+    with TestClient(app) as c:
+        resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(contact, suppliers=["X" * 256]))
+
+    assert resp.status_code == 422, resp.text
+    assert calls == []
