@@ -1,7 +1,8 @@
 # PLAN: Ideation capture from one message (IDEATION-CAPTURE)
 
-Status: Plan. Behaviour card posted to the owner (crew-ask on PR #1444), waiting on answers before
-any code. Track: full (L). Base `claude/ideation-crm-scout-k1b2e7` (PR #1438, IDEATION-IN-CRM).
+Status: Review fix round (Phase 3). Q1-Q5 answered, built on the final SS-IDEATION-OWN contract
+(ss#111); reviewer + security-reviewer reported 2 Oct, fixes in progress. Open owner asks: seed
+migration for the new copy + extractor prompt, verified phone for chatbot senders. Track: full (L). Base `claude/ideation-crm-scout-k1b2e7` (PR #1438, IDEATION-IN-CRM).
 Lane branch `claude/ideation-capture-0hctm7` (the sandbox only pushes this name).
 
 ## 0. Owner intent (2 Oct 2026, verbatim summary)
@@ -337,6 +338,8 @@ draft statuses) and the tests that only covered it; the idle sweep stays until o
 
 | # | Slice | Depends on | State |
 |---|---|---|---|
-| P1 | Plumbing: phone claim, `mine` forward, My/All toggle (section 4) | Q1 | red tests in progress |
-| C1 | Chatbot one-message flow (section 2.1-2.5, Q2 access gate, Q4 numbered list); reply wording behind one seam until Q5 | SS-IDEATION-OWN contract (final shapes) | building against the provisional contract |
-| E1 | Own-idea edit: gateway PATCH allows `isMine` or manage; Edit shown on own ideas | Q3 | red tests next |
+| P1 | Plumbing: phone claim (verified only), `ideas_manage` claim, `mine` forward, My/All toggle (section 4) | Q1 | done |
+| C1 | Chatbot one-message flow (section 2.1-2.5, Q2 access gate, Q4 numbered list, Q5 language) | SS-IDEATION-OWN contract | done, review fixes in progress |
+| C2 | Remove the dead multi-turn draft path and media lookback | C1 | done |
+| E1 | Own-idea edit: gateway PATCH allows `isMine` or manage; Edit and upload shown on own ideas | Q3 | done |
+| R1 | Review fixes: sweep ignores held lists, chatbot keeps a held list in the ideate lane, embed-session route claims (security H1), DB-only held list for live turns (L1), no-link replies, URL-derived My/All state, merged-child upload | Phase 3 | in progress |
