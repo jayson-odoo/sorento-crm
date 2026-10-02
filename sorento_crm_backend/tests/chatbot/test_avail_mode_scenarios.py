@@ -459,3 +459,33 @@ def test_S45_eta_ask_for_a_code_with_no_shipment_and_a_code_not_found(console):
     assert c.say("ETA SRTW2000 and FOO99", _eta_ask("SRTW2000", "FOO99")) == (
         f"SRTW2000: ETA not confirmed yet\n\nCouldn't find: FOO99.\n\n{R}"
     )
+
+
+# ================================================================== tester re-run on 2eb2a00ef
+# The live parser intermittently read a plain "CODE x N" stock ask as `check_incoming`
+# (step 3 failed 2 of 3 runs, step 1 once), so the dealer was told "CODE: ETA not
+# confirmed yet". The engine reads the message's own words: codes with quantities and no
+# ETA word are a stock ask, whatever the parser guessed.
+
+
+def _misread_as_eta(*entities, **extra):
+    return reply(entities=list(entities), domain_hint="incoming", intent_hint="check_incoming", **extra)
+
+
+def test_S46_code_x_qty_misread_as_an_eta_ask_is_still_a_stock_ask(console):
+    c = console(CWCX604=Stock(on_hand=30, x=200))
+    assert c.say("CWCX604 x 300", _misread_as_eta(product("CWCX604", 300))) == (
+        f"CWCX604 x 300: {BLOCKED} the quantity is more than what I can confirm here. {R}"
+    )
+
+
+def test_S46b_misread_through_asks_too(console):
+    c = console(SRT5674=Stock(on_hand=30))
+    misread = _misread_as_eta(product("SRT5674", 50), asks=[{"domain": "incoming"}])
+    assert c.say("SRT5674 x 50", misread) == f"SRT5674 x 50: {TICK} 30 available. {R}"
+
+
+@pytest.mark.parametrize("typed", ["SRTW2000 x 10 when arrive?", "ETA SRTW2000 x 10", "SRTW2000 x 10 bila sampai"])
+def test_S46c_a_quantity_ask_with_an_eta_word_stays_an_eta_ask(console, typed):
+    c = console(SRTW2000=Stock(eta=ETA))
+    assert c.say(typed, _misread_as_eta(product("SRTW2000", 10))) == f"SRTW2000: ETA 19/10/2026\n\n{R}"
