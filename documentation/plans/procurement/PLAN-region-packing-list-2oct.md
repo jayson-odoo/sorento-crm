@@ -25,7 +25,7 @@ UAC: `region-packing-list-acceptance-criteria.md`. Paths under `sorento_crm_back
    `earliest_packing_list_shipment(db, ids, regions=None)`. Routes (`api/v1/incoming_stock.py`) build the
    service with `_Contact.regions` (None when no contact). Stock ask passes `contact_rules` regions
    (`services/inventory_service.py:1629`).
-6. ACCESS-MODEL: `effective_access()` can read `respond_contacts.regions` as a contact fact; no tree change.
+6. ACCESS-MODEL (agreed with that lane 2 Oct): regions stay out of `effective_access()`; trigger to expose them = a second reader outside incoming. Regions control is its own block in `ContactChatbotSection.tsx` (Tier lines untouched).
 
 ## Frontend
 - `AttachmentUploadDialog.tsx`: Region SearchableSelect when the selected type code is `packing_list`; sends `region`.
