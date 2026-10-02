@@ -30,7 +30,7 @@ from sqlalchemy import text
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._mc_lookup_seed import customer as seed_customer
 from tests.chatbot.test_account_ledger_staff import _acct, _picker_lines
-from tests.chatbot.test_customer_scope_lane import _ask, _turn
+from tests.chatbot.test_customer_scope_lane import REPORT, _ask, _calls, _turn
 from tests.chatbot.test_outstanding_lane import REPORT_HIT, _seed_contact
 
 T_3 = "SOON HENG TRADING [A/C III]"
@@ -49,10 +49,10 @@ BOOK: list[tuple[str, int | None]] = (
 )
 
 
-def _seed_book(session_factory) -> dict[str, str]:
+def _seed_book(session_factory, extra: list[tuple[str, int | None]] = ()) -> dict[str, str]:
     db = session_factory()
     ids: dict[str, str] = {}
-    for name, level in BOOK:
+    for name, level in [*BOOK, *extra]:
         row = seed_customer(db, company_id=DEFAULT_COMPANY_ID, name=name)
         if level is not None:
             db.execute(text("UPDATE customers SET account_level = :n WHERE id = :i"), {"n": level, "i": str(row.id)})
@@ -92,3 +92,49 @@ def test_real_resolver_account_1_lists_only_level_one_ledgers(session_factory, m
         assert any(wanted in line for line in lines), (wanted, reply)
     for other in ("[A/C II]", "[A/C III]", "[A/C IV]", "OUTLET"):
         assert other not in reply, (other, reply)
+
+
+# ------------------------------------------------------------------ exact trading name rules
+# Crew ruling (2 Oct 2026, Q2): when a match's trading name (`ledger_family_key`) IS the
+# typed word, only that name's rows count for the account; the word-bag siblings the AND
+# resolver also returns are dropped for that word. No exact-name match -> unchanged.
+
+G_2 = "SOON GUAN HENG TRADING SDN BHD [A/C II]"
+
+
+def test_real_resolver_exact_name_with_the_level_is_answered_directly(session_factory, monkeypatch) -> None:
+    """"Soon Heng Trading account 1": SOON GUAN HENG TRADING [A/C I] also matched every
+    word and is level one, but the typed word IS "SOON HENG TRADING": no picker, the report
+    runs on SOON HENG TRADING [A/C I] alone."""
+    _seed_contact(session_factory, variables={})
+    ids = _seed_book(session_factory)
+    reply, captured = _real(
+        session_factory, monkeypatch, _acct("Soon Heng Trading", 1), "soon heng trading account 1 outstanding"
+    )
+    assert "Which customer" not in reply, reply
+    (args,) = _calls(captured, REPORT)
+    assert args["customer_ids"] == [ids[T_1]], args
+
+
+def test_real_resolver_ac9_holds_when_a_sibling_has_the_level(session_factory, monkeypatch) -> None:
+    """AC-9 must not depend on the siblings lacking the level: SOON GUAN HENG TRADING has an
+    Account 2 ledger, SOON HENG TRADING does not, and the typed name is refused."""
+    _seed_contact(session_factory, variables={})
+    _seed_book(session_factory, extra=[(G_2, 2)])
+    reply, captured = _real(
+        session_factory, monkeypatch, _acct("Soon Heng Trading", 2), "soon heng trading account 2 outstanding"
+    )
+    assert reply.strip() == "SOON HENG TRADING has no Account 2. It has Account 1, Account 3 and Account 4.", reply
+    assert captured == [], captured
+
+
+def test_real_resolver_non_exact_word_keeps_every_level_one_sibling(session_factory, monkeypatch) -> None:
+    """"Soon Heng" is no trading name of its own: every level-one ledger the resolver
+    matched stays, the word-bag sibling SOON GUAN HENG TRADING [A/C I] included."""
+    _seed_contact(session_factory, variables={})
+    _seed_book(session_factory)
+    reply, captured = _real(session_factory, monkeypatch, _acct("Soon Heng", 1), "soon heng account 1 outstanding")
+    assert captured == [], captured
+    lines = _picker_lines(reply)
+    for wanted in (T_1, H_1, G_1):
+        assert any(wanted in line for line in lines), (wanted, reply)
