@@ -14,8 +14,10 @@ unidentified contact, which holds `[]`.
 
 ## Single source and UI
 
-- **AC-PA-1 One table.** `prompt_gates.PROMPT_GATES` has exactly one row per gated grant. Each
-  row carries:
+- **AC-PA-1 One table.** `prompt_gates.PROMPT_GATES` is keyed by unique `(domain, part)` pairs.
+  There are five rows: purchase_cost, purchase_order, spo_allocation, sales, and
+  (inventory, low_stock_report). Several rows may share a grant (placed covers purchase_order
+  and spo_allocation). Each row carries:
   - `tag`;
   - `blocks`, the UI titles;
   - `forbidden_terms`;
@@ -26,7 +28,8 @@ unidentified contact, which holds `[]`.
 - **AC-PA-2 API.**
   - Request: `GET /api/v1/system/chatbot/field-reveal-keys`.
   - Response: every key carries `prompt_blocks`. For example, `sales_orders.sales_report` gives
-    `["SALES REPORT", "SALES ANALYSIS", "TOP SELLING"]`. A key with no row gives `[]`.
+    `["SALES REPORT", "SALES ANALYSIS", "TOP SELLING"]`, and `purchase_orders.placed` gives
+    `["PURCHASE ORDERS", "SPO LAST RECEIPT"]`. A key with no row gives `[]`.
 - **AC-PA-3 UI.**
   - Location: the contact Access tab, Field reveals card.
   - A key with blocks shows "Also removes from the chatbot prompt: " followed by its blocks,
@@ -51,7 +54,8 @@ unidentified contact, which holds `[]`.
     - **C:** `purchase_cost`, `check_po_cost`, `purchase cost`, `last purchase cost`,
       `LAST PURCHASE COST`, `buying price`, `cost price`.
     - **P:** `purchase_order`, `check_po`, `purchase order`, `PO`, `PURCHASE ORDERS`,
-      `PO placed`, `supplier order`.
+      `PO placed`, `supplier order`, `spo_allocation`, `check_spo`, `SPO LAST RECEIPT`,
+      `last received`.
     - **S:** `sales_report`, `sales_analysis`, `top_selling`, `SALES REPORT`, `SALES ANALYSIS`,
       `TOP SELLING`, `sales_channel`, `rank_by`, `sales_basis`.
     - **L:** `low_stock_report`, `LOW STOCK REPORT`, `reorder report`.
@@ -83,6 +87,7 @@ unidentified contact, which holds `[]`.
   | order_status sales_analysis | S | same |
   | order_status top_selling | S | same |
   | intent low_stock_report | L | "Low stock report is not enabled for your account." |
+  | domain spo_allocation (last in), product named | P | refused (G2), no `crm_procurement_spo_allocations_last_receipt_list` call |
   | stock ask that climbs to the PO rung | P | rung not probed |
 
   An audience that holds the grant gets the tool called; that is the positive control in the
