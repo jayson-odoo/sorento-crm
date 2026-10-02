@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -529,6 +530,22 @@ def production_services(db: Session, *, space_id: str | None = None) -> ResolveG
     )
 
 
+def account_levels_reader(db: Session) -> Callable[[list[str]], dict[str, int | None]]:
+    """`customers.account_level` by customer uuid, one query (ACCOUNT-LEDGER, staff narrowing)."""
+
+    def read(ids: list[str]) -> dict[str, int | None]:
+        from app.models.order import Customer
+
+        if not ids:
+            return {}
+        return {
+            str(i): lvl
+            for i, lvl in db.query(Customer.id, Customer.account_level).filter(Customer.id.in_(ids)).all()
+        }
+
+    return read
+
+
 def top_selling_dealer_ledgers(
     db: Session, contact_respond_id: Any, space_id: str | None
 ) -> list[tuple[str, str]] | None:
@@ -586,6 +603,7 @@ def customer_scope(db: Session, contact_respond_id: Any, space_id: str | None) -
         "linked": [list(row) for row in scope.linked],
         "staff": scope.staff,
         "enforced": scope.enforced,
+        "levels": dict(scope.levels),
         "refusal": scope_mod.refusal_line(scope),
     }
 

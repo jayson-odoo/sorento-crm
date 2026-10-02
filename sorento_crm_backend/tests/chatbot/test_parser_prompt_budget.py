@@ -87,11 +87,15 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # (SELF_REFERENCE beneath ESCALATION_CONFIRMATION, PO_SPO_WAREHOUSE beneath that, MEMORY the
 # tail) measure 42,906 without the memory addendum and 43,421 with it; CEILING is
 # 43,421 - 512 = 42,909 so both assertions hold on the combined prompt.
-# Fifth re-pin, 30 Sep 2026 (PROMPT-DYNAMIC, PLAN-prompt-dynamic-30sep D9): the owner's new
-# `sales` domain row adds one domain line to the policy blocks (+85). Measured 42,994 without
-# the memory addendum and 43,510 with it; CEILING is 43,510 - 512 = 42,998 so both
-# assertions hold on the combined prompt. Nothing else grew.
-CEILING = 42_998
+# Fifth re-pin, 2 Oct 2026 (ACCOUNT-LEDGER): ACCOUNT_LEDGER_ADDENDUM (the `account` entity key,
+# owner-approved verbatim text) sits between PO_SPO_WAREHOUSE and MEMORY and takes the prompt
+# without MEMORY_ADDENDUM to 43,425 est. tokens and the whole prompt to 44,016; CEILING is
+# 44,016 - 512 = 43,504 so both assertions hold.
+# Sixth re-pin, 2 Oct 2026 (PROMPT-DYNAMIC merged over ACCOUNT-LEDGER, PLAN-prompt-dynamic-30sep
+# D9): main a54d56f9 measures 43,501 without MEMORY_ADDENDUM; the owner's `sales` domain row
+# adds one domain line to the policy blocks (+88): 43,589 without MEMORY_ADDENDUM and 44,105
+# with it; CEILING is 44,105 - 512 = 43,593 so both assertions hold. Nothing else grew.
+CEILING = 43_593
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is

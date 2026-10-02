@@ -115,19 +115,19 @@ const EXPANDED_CONTENT_SITES = new Map<string, string>([
  */
 const IN_GRID_SUBTREE_SITES = new Map<string, string>([
   [
-    'app/(protected)/complaint-management/complaint-resolutions/components/ComplaintResolutionsList.tsx:230',
+    'app/(protected)/complaint-management/complaint-resolutions/components/ComplaintResolutionsList.tsx:232',
     'ComplaintResolutionTable is a bare <DataGridTable /> inside the PARENT provider, not a second grid',
   ],
   [
-    'app/(protected)/complaint-management/complaint-root-causes/components/ComplaintRootCausesList.tsx:232',
+    'app/(protected)/complaint-management/complaint-root-causes/components/ComplaintRootCausesList.tsx:234',
     'ComplaintRootCauseTable, same shape as above',
   ],
   [
-    'app/(protected)/master-data-management/lookup-sets/components/LookupSetsList.tsx:206',
+    'app/(protected)/master-data-management/lookup-sets/components/LookupSetsList.tsx:208',
     'LookupSetTable, same shape as above',
   ],
   [
-    'app/(protected)/marketing-management/promotions/components/PromotionsList.tsx:588',
+    'app/(protected)/marketing-management/promotions/components/PromotionsList.tsx:596',
     'NESTED GRID: AttachmentDetailModal opens inside the promotions grid and holds a PanelDataGrid of linkages. Covered by the context default AND its own scrollerMaxHeight={false} (SF-1)',
   ],
   [
