@@ -598,3 +598,120 @@ def test_f2c_the_request_uses_the_turns_own_contact_not_the_carried_one(console)
     (args,) = calls
     assert args["contact_id"] and args["space_id"], args
     assert args["contact_id"] != "ZZT-FORGED-CONTACT" and args["space_id"] != "ZZT-FORGED-SPACE", args
+
+
+# --------------------------------------------------------------------------- #
+# 1b code-review fix round: S2 to S5, N2, N3
+# --------------------------------------------------------------------------- #
+
+
+def _seed_more(console) -> None:
+    from app.models.product import Brand, ProductCategory
+    from app.models.sales_agent import SalesAgent
+
+    db = console.session_factory()
+    try:
+        for code, name in (("ZZTFC1", "ZZT FAUCET CHROME"), ("ZZTFC2", "ZZT FAUCET BLACK"),
+                           ("ZZTSK1", "ZZT SINK"), ("ZZTSK2", "ZZT SINK DEEP")):
+            db.add(ProductCategory(id=str(uuid.uuid4()), category_code=code, category_name=name,
+                                   company_id=DEFAULT_COMPANY_ID))
+        for code, name in (("ZZTAL", "ZZTALPHA"), ("ZZTBE", "ZZTBETA")):
+            db.add(Brand(id=str(uuid.uuid4()), brand_code=code, brand_name=name, company_id=DEFAULT_COMPANY_ID))
+        pats = [SalesAgent(id=str(uuid.uuid4()), sales_agent=f"ZZTPAT {n}", company_id=DEFAULT_COMPANY_ID)
+                for n in ("I", "II")]
+        db.add_all(pats)
+        db.flush()
+        console.ids["pats"] = sorted(p.id for p in pats)
+        sink = db.query(ProductCategory).filter(ProductCategory.category_code == "ZZTSK1").one()
+        console.ids["sink"] = str(sink.id)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_s2_a_month_breakdown_never_asks_how_many(console) -> None:
+    text, calls = console.say(_rank(group_by="month", top_n=None), "sales by month for Sorento last month")
+    (args,) = calls
+    assert args["group_by"] == "month" and args["top_n"] == 100, args
+    assert TOPN_Q not in text, text
+
+
+def test_s3_several_categories_matching_a_word_run_nothing_and_name_them(console) -> None:
+    _seed_more(console)
+    text, calls = console.say(_rank(_e("faucet", "category"), group_by="product"), "top products for faucet")
+    assert calls == []
+    assert text.strip() == "'faucet' matches several categories: ZZT FAUCET BLACK, ZZT FAUCET CHROME. Ask again naming one.", text
+
+
+def test_s3_several_brands_matching_a_word_run_nothing_and_name_them(console) -> None:
+    _seed_more(console)
+    text, calls = console.say(_rank(_e("ZZTALPHA ZZTBETA", "brand")), "top 3 salesman for ZZTALPHA ZZTBETA")
+    assert calls == []
+    assert text.strip() == "'ZZTALPHA ZZTBETA' matches several brands: ZZTALPHA, ZZTBETA. Ask again naming one.", text
+
+
+def test_s3_an_exact_category_name_wins_alone_among_partial_matches(console) -> None:
+    _seed_more(console)
+    _text, calls = console.say(_rank(_e("ZZT SINK", "category"), group_by="product"), "top products for ZZT SINK")
+    (args,) = calls
+    assert args["category_ids"] == [console.ids["sink"]], args
+
+
+def test_s3_a_sales_agent_word_naming_two_rows_is_one_person_and_runs_with_both(console) -> None:
+    _seed_more(console)
+    _text, calls = console.say(_rank(_e("ZZTPAT", "sales_agent"), group_by="month"), "sales by month for ZZTPAT")
+    (args,) = calls
+    assert sorted(args["sales_agent_ids"]) == console.ids["pats"], args
+
+
+def test_s4_a_named_product_goes_as_product_code_not_ids(console) -> None:
+    _text, calls = console.say(_rank(_e(PRODUCT_CODE, "product")), f"top 3 salesman for {PRODUCT_CODE}")
+    (args,) = calls
+    assert args["product_code"] == PRODUCT_CODE, args
+    assert "product_ids" not in args, args
+
+
+def _order_ask(*entities: dict[str, Any]) -> dict[str, Any]:
+    return _parser_output(domain_hint="order", intent_hint="check_order", order_status=None,
+                          entities=list(entities))
+
+
+def test_s5_a_customer_carried_from_an_earlier_message_is_not_a_filter(console) -> None:
+    console.say(_order_ask(_e(CUSTOMER_NAME, "customer")), f"orders for {CUSTOMER_NAME}")
+    carried = dict(_e(CUSTOMER_NAME, "customer"), current_message=False)
+    _text, calls = console.say(_rank(carried), "top 3 salesman last month")
+    (args,) = calls
+    assert not args.get("customer_ids"), args
+
+
+def test_s5_a_product_carried_from_an_earlier_message_is_not_a_filter(console) -> None:
+    console.say(_order_ask(_e(PRODUCT_CODE, "product")), f"orders for {PRODUCT_CODE}")
+    carried = dict(_e(PRODUCT_CODE, "product"), current_message=False)
+    _text, calls = console.say(_rank(carried), "top 3 salesman last month")
+    (args,) = calls
+    assert "product_code" not in args and not args.get("product_ids"), args
+
+
+def test_n2_a_start_date_alone_runs_to_today_malaysia(console) -> None:
+    from app.services.reports.registry import today_malaysia
+
+    _text, calls = console.say(
+        _rank(date_filter_start="2026-09-01", date_filter_end=None), "top 3 salesman since September"
+    )
+    (args,) = calls
+    assert args["date_from"] == "2026-09-01", args
+    assert args["date_to"] == today_malaysia().isoformat(), args
+
+
+def test_n2_an_end_date_alone_is_a_miss_and_the_period_is_asked(console) -> None:
+    text, calls = console.say(
+        _rank(date_filter_start=None, date_filter_end="2026-09-30"), "top 3 salesman until September"
+    )
+    assert calls == []
+    assert text.strip() == PERIOD_Q, text
+
+
+def test_n3_a_dealers_request_adds_no_customer_ids_the_route_forces_the_links(dealer) -> None:
+    _text, calls = dealer.say(_rank(_e("Sorento", "brand"), group_by="product"), "top products for Sorento")
+    (args,) = calls
+    assert not args.get("customer_ids"), args
