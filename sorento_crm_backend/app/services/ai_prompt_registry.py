@@ -161,6 +161,8 @@ def _ideate_extractor_fallback() -> str:
         "collecting). 'none' otherwise.\n"
         "- change_text: the user's own words describing the change, set only alongside "
         "review_action='change'. Empty string otherwise.\n"
+        "- language: the language the user's message is written in - 'en', 'ms' (Malay) "
+        "or 'zh' (Chinese); null when it is none of these or cannot be told.\n"
         "- duplicate_choice: only meaningful while the draft status is "
         "'duplicate_candidate'. 'vote' on an explicit vote for the existing idea shown to "
         "the user. 'separate' on an explicit 'keep mine separate'. 'none' when the message "

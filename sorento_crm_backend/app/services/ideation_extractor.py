@@ -70,6 +70,7 @@ _SKIPPABLE_KEYS = {"proposed_solution", "impact", "department"}
 
 _REVIEW_ACTIONS = {"submit", "change", "cancel", "none"}
 _DUPLICATE_CHOICES = {"vote", "separate", "none"}
+_LANGUAGES = {"en", "ms", "zh"}
 
 # OpenAI strict-mode json_schema: every property required, additionalProperties
 # false, no open-ended object maps (``fields`` is an array of {key,value} pairs
@@ -154,6 +155,15 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
                 "not address the choice at all (e.g. it just adds a new detail)."
             ),
         },
+        "language": {
+            "type": ["string", "null"],
+            "enum": ["en", "ms", "zh", None],
+            "description": (
+                "The language the user's message is written in: 'en' (English), 'ms' "
+                "(Malay) or 'zh' (Chinese). null when it is none of these or cannot be "
+                "told (a bare number or 'new')."
+            ),
+        },
     },
     "required": [
         "fields",
@@ -163,6 +173,7 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
         "review_action",
         "change_text",
         "duplicate_choice",
+        "language",
     ],
 }
 
@@ -177,6 +188,8 @@ class IdeateExtraction:
     change_text: str = ""
     duplicate_choice: str = "none"
     confirm: bool = False
+    #: The language of the message: en / ms / zh, None when unknown (IDEATION-CAPTURE).
+    language: str | None = None
 
 
 # #1279 round 2 (owner ruling, 26 Sep 2026): "only a yes creates the idea", in the
@@ -399,8 +412,13 @@ def extract_ideate_turn(
         status, raw, fields=fields, remove=remove, review_action=review_action
     )
 
+    language = data.get("language")
+    if language not in _LANGUAGES:
+        language = None
+
     return IdeateExtraction(
         fields=fields,
+        language=language,
         remove=remove,
         skip=skip,
         title=title,

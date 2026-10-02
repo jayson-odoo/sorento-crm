@@ -1261,7 +1261,7 @@ _TURN_BODY = {"respond_io_id": "rio-1", "message_text": "idea: bulk-tag complain
 def test_endpoint_logs_on_success(api_client):
     client, logs, mp = api_client
     mp.setattr(
-        "app.api.v1.external.ideation.handle_turn",
+        "app.api.v1.external.ideation.handle_capture_turn",
         lambda *a, **k: {"status": "collecting", "reply_text": "ok", "session_vars": {}},
     )
     resp = client.post(_TURN_URL, json=_TURN_BODY)
@@ -1282,7 +1282,7 @@ def test_endpoint_logs_on_success(api_client):
     ids=["is_test-true", "absent-defaults-false"],
 )
 def test_endpoint_forwards_is_test_to_the_service(api_client, body, expected):
-    """AC-4 (#1179): the flag the MCP tool posts reaches `handle_turn`."""
+    """AC-4 (#1179): the flag the MCP tool posts reaches `handle_capture_turn`."""
     client, _logs, mp = api_client
     seen: list = []
 
@@ -1290,7 +1290,7 @@ def test_endpoint_forwards_is_test_to_the_service(api_client, body, expected):
         seen.append(k)
         return {"status": "collecting", "reply_text": "ok", "session_vars": {}}
 
-    mp.setattr("app.api.v1.external.ideation.handle_turn", _capture)
+    mp.setattr("app.api.v1.external.ideation.handle_capture_turn", _capture)
     resp = client.post(_TURN_URL, json=body)
     assert resp.status_code == 200
     assert seen[0]["is_test"] is expected
@@ -1302,7 +1302,7 @@ def test_endpoint_logs_on_failure(api_client):
     def _boom(*a, **k):  # noqa: ANN001
         raise RuntimeError("kaboom")
 
-    mp.setattr("app.api.v1.external.ideation.handle_turn", _boom)
+    mp.setattr("app.api.v1.external.ideation.handle_capture_turn", _boom)
     resp = client.post(_TURN_URL, json=_TURN_BODY)
     assert resp.status_code == 500
     assert len(logs) == 1
