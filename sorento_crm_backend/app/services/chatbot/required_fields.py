@@ -41,8 +41,10 @@ API
   before anything routes the message. With a question open, a short reply (or one the
   parser reads as the same ask) is the answer: the verdict is rerouted to the ask, its
   entities cleared, and `required_ask` / `required_ask_reply` carry the slot and the text to
-  the lane. A longer message the parser reads as a different ask, or any message with a
-  "?", drops the question (`required_ask_dropped`).
+  the lane. A message of more than three words that the parser reads as a different ask
+  (another intent, or not a business message at all), an empty message, or any message
+  with a "?" drops the question (`required_ask_dropped`). An optional field's pick also
+  takes "all" / "none", and two misses on it settle it as "no filter" and go on.
 
 The slot is one turn long: the engine consumes it on the next message, and the lane that
 asks again hands a fresh one back (`required_ask` on its envelope).
@@ -53,11 +55,15 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from app.services.chatbot import jsc
+
 ALL = "all"
 
 #: Words that settle a field as "all" (lower-cased, whitespace-folded). "all <noun>" and
 #: "all <noun>s" are accepted too (`_is_all`).
 ALL_WORDS = frozenset({"all", "any", "everything", "every", "semua", "全部", "all of them"})
+#: An OPTIONAL field also takes these as "no filter" (it was never required).
+NONE_WORDS = frozenset({"none", "no", "no filter", "skip"})
 CANCEL_WORDS = frozenset({"cancel", "stop", "never mind", "nevermind", "forget it", "batal"})
 #: A reply longer than this, read by the parser as another ask, leaves the question.
 SHORT_REPLY_WORDS = 3
@@ -114,10 +120,6 @@ class Outcome:
         return self.reply is None and not self.cancelled
 
 
-def jsc_str(value: Any) -> str:
-    return value if isinstance(value, str) else ""
-
-
 def _norm(text: str | None) -> str:
     return " ".join((text or "").split()).strip().lower().rstrip(".!")
 
@@ -136,7 +138,8 @@ def _miss_line(word: str, spec: FieldSpec) -> str:
 
 
 def _pick_line(spec: FieldSpec, options: list[list[Any]]) -> str:
-    head = f"Which {spec.noun} do you mean? Reply with a number" + (' or "all":' if spec.allow_all else ":")
+    takes_all = spec.allow_all or not spec.required
+    head = f"Which {spec.noun} do you mean? Reply with a number" + (' or "all":' if takes_all else ":")
     return "\n".join([head, *[f"{i}. {label}" for i, (_value, label) in enumerate(options, start=1)]])
 
 
@@ -152,8 +155,8 @@ def _slot(ask: AskType, values: dict, extras: dict, *, asking: str, options=None
 
 
 def _settle(db: Any, spec: FieldSpec, word: str, extras: dict[str, Any]) -> Resolved:
-    if _is_all(word, spec):
-        return Resolved("ok", value=ALL, label=ALL) if spec.allow_all else Resolved("unknown")
+    if _is_all(word, spec) or (not spec.required and _norm(word) in NONE_WORDS):
+        return Resolved("ok", value=ALL, label=ALL) if spec.allow_all or not spec.required else Resolved("unknown")
     return spec.resolve(db, word, extras)
 
 
@@ -189,7 +192,7 @@ def collect(
     if slot is not None and reply is not None:
         if _norm(reply) in CANCEL_WORDS:
             return Outcome(values=values, reply=ask.cancelled, slot=None, extras=carried, cancelled=True)
-        spec = specs.get(jsc_str(slot.get("asking")))
+        spec = specs.get(jsc.js_string(slot.get("asking")))
         if spec is not None:
             options = list(slot.get("options") or [])
             got = _from_pick(spec, options, reply) if options else None
@@ -204,6 +207,12 @@ def collect(
             else:
                 word = " ".join(reply.split())
                 misses = int(slot.get("misses") or 0) + 1
+                if misses >= MAX_MISSES and not spec.required:
+                    # An optional field was only ever a pick over a word the message
+                    # gave: two misses settle it as "no filter" and the ask goes on.
+                    values[spec.name] = {"value": ALL, "label": ALL}
+                    return collect(db, ask, given=given, slot={**slot, "values": values, "asking": None},
+                                   extras=carried)
                 if misses >= MAX_MISSES:
                     return Outcome(values=values, reply=ask.give_up.format(word=word), slot=None, extras=carried)
                 return Outcome(values=values, reply=_miss_line(word, spec),
@@ -249,13 +258,21 @@ def reply_verdict(
 ) -> tuple[dict[str, Any], str | None]:
     if not isinstance(slot, dict) or not slot.get("asking"):
         return verdict, None
-    ask = (ASKS if asks is None else asks).get(jsc_str(slot.get("ask")))
+    ask = (ASKS if asks is None else asks).get(jsc.js_string(slot.get("ask")))
     if ask is None:
         return verdict, "required_ask_dropped"
-    same_ask = all(verdict.get(k) == v for k, v in ask.reroute.items() if k == "intent_hint")
-    short = len((text or "").split()) <= SHORT_REPLY_WORDS
-    other_intent = bool(verdict.get("intent_hint")) and not same_ask
-    if "?" in (text or "") or (other_intent and not short):
+    words = (text or "").split()
+    if not words or "?" in text:
+        # Nothing typed (an image, a sticker) or a question: not an answer.
         return verdict, "required_ask_dropped"
-    rerouted = {**verdict, **ask.reroute, "entities": [], "required_ask": slot, "required_ask_reply": text}
+    same_ask = verdict.get("intent_hint") == ask.reroute.get("intent_hint")
+    other_ask = (bool(verdict.get("intent_hint")) and not same_ask) or verdict.get("message_type") not in (
+        "business_query", "clarification", None,
+    )
+    if other_ask and len(words) > SHORT_REPLY_WORDS:
+        return verdict, "required_ask_dropped"
+    rerouted = {
+        **verdict, **ask.reroute, "entities": [], "open_question_answer": None,
+        "required_ask": slot, "required_ask_reply": text,
+    }
     return rerouted, "required_ask_answer"

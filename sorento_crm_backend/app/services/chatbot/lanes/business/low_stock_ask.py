@@ -54,20 +54,20 @@ def _category_rows(db: Any, ids: list[str] | None = None) -> list[tuple[str, str
     return [(str(i), code or "", brand or "") for i, code, brand in q.all()]
 
 
-def _brand_matches(brand: str, hint: str, code: str) -> bool:
+def _brand_matches(brands: list[str], hint: str, code: str) -> bool:
+    """No brand matches everything; otherwise the category's `brand_hint`, its code prefix
+    ("SRT") or that prefix's brand name ("Sorento") equals one of the brand words."""
     from app.services.product_class_signal import BRAND_PREFIXES
 
-    b = brand.strip().casefold()
-    if not b:
-        return True
-    if hint.casefold() == b:
+    wanted = {b.strip().casefold() for b in brands if b and b.strip()}
+    if not wanted:
         return True
     prefix = code.split("-", 1)[0]
-    return prefix.casefold() == b or BRAND_PREFIXES.get(prefix, "").casefold() == b
+    return bool(wanted & {hint.casefold(), prefix.casefold(), BRAND_PREFIXES.get(prefix, "").casefold()})
 
 
-def _codes(rows: list[tuple[str, str, str]], brand: str) -> list[str]:
-    return sorted({code for _i, code, hint in rows if code and _brand_matches(brand, hint, code)})
+def _codes(rows: list[tuple[str, str, str]], brands: list[str]) -> list[str]:
+    return sorted({code for _i, code, hint in rows if code and _brand_matches(brands, hint, code)})
 
 
 def _ok(codes: list[str]) -> rf.Resolved:
@@ -81,7 +81,7 @@ def resolve_category(db: Any, word: str, extras: dict[str, Any]) -> rf.Resolved:
     classes, are a numbered pick."""
     if db is None:
         return rf.Resolved("unknown")
-    brand = str(extras.get("brand") or "")
+    brand = list(extras.get("brands") or [])
     matched = business_services.resolve_category_token(db, word)
     if matched:
         codes = _codes(_category_rows(db, [r[0] for r in matched]), brand)
@@ -108,11 +108,21 @@ def resolve_category(db: Any, word: str, extras: dict[str, Any]) -> rf.Resolved:
     return rf.Resolved("unknown")
 
 
-def brand_categories(db: Any, brand: str) -> rf.Resolved | None:
-    """A brand alone: every category of that brand. None when the word is no brand."""
-    if db is None or not brand.strip():
+def known_brands(db: Any, words: list[str]) -> list[str]:
+    """The brand words some category carries (`brand_hint` / code prefix); a word naming
+    no category's brand ("Moen") is dropped, so it never narrows a later answer to
+    nothing (reviewer should-fix 1)."""
+    if db is None:
+        return []
+    rows = _category_rows(db)
+    return [w for w in words if w.strip() and _codes(rows, [w])]
+
+
+def brand_categories(db: Any, brands: list[str]) -> rf.Resolved | None:
+    """A brand alone: every category of that brand (or brands). None for no brand."""
+    if db is None or not brands:
         return None
-    codes = _codes(_category_rows(db), brand)
+    codes = _codes(_category_rows(db), brands)
     return _ok(codes) if codes else None
 
 
@@ -151,8 +161,7 @@ def _word_run(needle: str, haystack: str) -> bool:
 
 CATEGORY = rf.FieldSpec(name="category", noun="category", question=QUESTION, resolve=resolve_category)
 SUPPLIER = rf.FieldSpec(
-    name="supplier", noun="supplier", question="Which supplier?", resolve=resolve_supplier,
-    allow_all=False, required=False,
+    name="supplier", noun="supplier", question="Which supplier?", resolve=resolve_supplier, required=False,
 )
 
 #: The config (owner ruling Q2): category required, supplier taken when given. Making the
@@ -178,6 +187,8 @@ LOW_STOCK_ASK = rf.register(rf.AskType(
 # --------------------------------------------------------------------------- #
 
 _SPLIT_PATTERNS = (
+    (re.compile(r"\b(per|each)\s+(supplier|suppliers)\b|\bsupplier[\s-]?wise\b"), "supplier"),
+    (re.compile(r"\b(per|each)\s+(category|categories)\b|\bcategory[\s-]?wise\b"), "category"),
     (re.compile(r"\bby\s+(supplier|suppliers)\s*(and|x|&|/|,)\s*(category|categories)\b"), "supplier_category"),
     (re.compile(r"\bby\s+(category|categories)\s*(and|x|&|/|,)\s*(supplier|suppliers)\b"), "supplier_category"),
     (re.compile(r"\bby\s+(supplier|suppliers)\b"), "supplier"),
@@ -198,17 +209,28 @@ def says_all_categories(text: str) -> bool:
     return bool(_ALL_CATEGORIES.search((text or "").casefold()))
 
 
-def supplier_word(text: str, used: list[str]) -> str | None:
+def leftover_words(text: str, used: list[str]) -> list[str]:
     """What is left of the message once the ask's own words, the grouping and every word
-    the parser already placed (category, brand, location, product) are taken out: the
-    supplier, when there is one. Matched against the master list only by the caller."""
+    the parser already placed (category, brand, location, product) are taken out: where
+    a supplier name can be."""
     low = " " + (text or "").casefold() + " "
     for pattern, _split in _SPLIT_PATTERNS:
         low = pattern.sub(" ", low)
     for word in sorted((u for u in used if u), key=len, reverse=True):
         low = re.sub(r"(?<!\w)" + re.escape(word.casefold()) + r"(?!\w)", " ", low)
-    left = [w for w in re.findall(r"[\w&.'-]+", low) if w not in _ASK_WORDS]
-    return " ".join(left) or None
+    return [w for w in re.findall(r"[\w&.'-]+", low) if w not in _ASK_WORDS]
+
+
+def supplier_word(db: Any, words: list[str]) -> str | None:
+    """The LONGEST run of consecutive leftover words that names a supplier (reviewer
+    should-fix 5: "hi can you jinbaichuan trading this month" is JINBAICHUAN TRADING, not
+    one phrase that matches nothing)."""
+    for size in range(len(words), 0, -1):
+        for start in range(len(words) - size + 1):
+            phrase = " ".join(words[start : start + size])
+            if resolve_supplier(db, phrase, {}).status != "unknown":
+                return phrase
+    return None
 
 
 def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
@@ -259,7 +281,7 @@ def settle(db: Any, parse_output: dict[str, Any], *, include_supplier: bool) -> 
 
     words = parse_output.get("low_stock_words") if isinstance(parse_output.get("low_stock_words"), dict) else {}
     text = str(parse_output.get("low_stock_text") or "")
-    brand = " ".join(words.get("brand") or [])
+    brands = known_brands(db, list(words.get("brand") or []))
     category_word = " ".join(words.get("category") or [])
     split = split_from(text)
     given: dict[str, Any] = {}
@@ -267,23 +289,19 @@ def settle(db: Any, parse_output: dict[str, Any], *, include_supplier: bool) -> 
         given["category"] = rf.ALL
     elif category_word:
         given["category"] = category_word
-    elif brand:
-        settled = brand_categories(db, brand)
-        if settled is not None:
-            given["category"] = settled
+    elif brands:
+        given["category"] = brand_categories(db, brands)
     if include_supplier:
-        word = supplier_word(text, list(words.get("used") or []))
+        word = supplier_word(db, leftover_words(text, list(words.get("used") or [])))
         if word:
             given["supplier"] = word
     else:
         split = {"supplier": "none", "supplier_category": "category"}.get(split, split)
     extras = {
-        "brand": brand,
+        "brands": brands,
         "split": split,
         "given": {k: v for k, v in given.items() if isinstance(v, str)},
         "include_supplier": include_supplier,
-        "date_filter_start": parse_output.get("date_filter_start"),
-        "date_filter_end": parse_output.get("date_filter_end"),
     }
     return rf.collect(db, LOW_STOCK_ASK, given=given, extras=extras)
 

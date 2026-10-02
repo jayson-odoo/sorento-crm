@@ -199,9 +199,21 @@ class TestOptionalField:
 
     def test_an_ambiguous_optional_word_is_a_numbered_pick(self):
         out = _start(WITH_OPTIONAL, category="water tap", colour="bl")
-        assert out.reply == "Which colour do you mean? Reply with a number:\n1. Blue\n2. Black"
+        assert out.reply == 'Which colour do you mean? Reply with a number or "all":\n1. Blue\n2. Black'
         picked = _reply(WITH_OPTIONAL, out, "1")
         assert picked.done and picked.values["colour"]["value"] == "BL"
+
+    def test_all_or_none_on_an_optional_pick_means_no_filter(self):
+        for word in ("all", "none", "no"):
+            out = _reply(WITH_OPTIONAL, _start(WITH_OPTIONAL, category="water tap", colour="bl"), word)
+            assert out.done and out.values["colour"]["value"] == rf.ALL, word
+
+    def test_two_misses_on_an_optional_pick_go_on_without_it(self):
+        first = _reply(WITH_OPTIONAL, _start(WITH_OPTIONAL, category="water tap", colour="bl"), "purple")
+        assert first.reply.startswith("I don't know 'purple' as a colour.")
+        out = rf.collect(None, WITH_OPTIONAL, slot=first.slot, reply="green", given={"colour": "bl"})
+        assert out.done and out.values["colour"]["value"] == rf.ALL
+        assert out.values["category"]["value"] == ["SRT-FT", "CB-FT"]
 
     def test_an_optional_word_given_before_the_question_is_still_read_after_it(self):
         first = _start(WITH_OPTIONAL, colour="blue")
@@ -270,6 +282,31 @@ class TestReplyVerdict:
             {"intent_hint": "test_one"}, slot, "the water tap one please", asks={"test_one": ONE}
         )
         assert rule == "required_ask_answer"
+
+    def test_a_longer_message_that_is_not_a_business_message_drops_the_question(self):
+        slot = _start(ONE).slot
+        verdict = {"intent_hint": None, "message_type": "casual"}
+        out, rule = rf.reply_verdict(verdict, slot, "ok thanks I will check later", asks={"test_one": ONE})
+        assert out == verdict and rule == "required_ask_dropped"
+
+    def test_a_short_casual_reply_is_still_the_answer(self):
+        slot = _start(ONE).slot
+        _out, rule = rf.reply_verdict({"intent_hint": None, "message_type": "casual"}, slot, "all",
+                                      asks={"test_one": ONE})
+        assert rule == "required_ask_answer"
+
+    def test_an_empty_message_drops_the_question(self):
+        slot = _start(ONE).slot
+        _out, rule = rf.reply_verdict({"intent_hint": None}, slot, "", asks={"test_one": ONE})
+        assert rule == "required_ask_dropped"
+
+    def test_the_rerouted_verdict_drops_the_parsers_open_question_answer(self):
+        slot = _start(ONE).slot
+        out, _rule = rf.reply_verdict(
+            {"intent_hint": None, "open_question_answer": {"mode": "cancel"}}, slot, "cancel",
+            asks={"test_one": ONE},
+        )
+        assert out["open_question_answer"] is None
 
     def test_an_unknown_ask_type_in_the_slot_is_dropped(self):
         out, rule = rf.reply_verdict({"intent_hint": None}, {"ask": "gone", "asking": "x"}, "1", asks={})

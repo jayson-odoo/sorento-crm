@@ -1531,7 +1531,7 @@ def run_fetch(
         # category is settled - taken from the message, else asked (`low_stock_ask`, the
         # shared `required_fields` helper). A product-code ask names its own scope and
         # is not asked. The answering turn carries the first message's grouping,
-        # supplier word, location and dates on the slot.
+        # supplier word and location on the slot.
         answering = isinstance(parse_output.get("required_ask"), dict)
         named_product = any(
             isinstance(e, dict)
@@ -1556,14 +1556,12 @@ def run_fetch(
                 return _fixed_reply(settled.reply or "", required_ask=settled.slot)
             semantic_input["low_stock_filters"] = low_stock_ask.route_filters(settled)
             if answering:
-                carried = settled.extras
-                for key in ("date_filter_start", "date_filter_end"):
-                    if carried.get(key) and not semantic_input.get(key):
-                        semantic_input[key] = carried[key]
+                # The first message's location word rides the slot (a date window
+                # already rides the focus); re-read here as if typed this turn.
                 parse_output = {
                     **parse_output,
                     "entities": [*jsc.array(parse_output.get("entities")),
-                                 *jsc.array(carried.get("warehouse_entities"))],
+                                 *jsc.array(settled.extras.get("warehouse_entities"))],
                 }
 
         # ── B (console round 3): a report ask is a FRESH SCOPE ────────────────

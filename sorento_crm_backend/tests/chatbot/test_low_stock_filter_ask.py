@@ -125,11 +125,12 @@ def _seed(session_factory) -> None:
     from app.models.procurement import Supplier
     from app.models.product import ProductCategory
     from app.services.product_class_signal import CLASS_SYNONYMS
-    from tests._mc_lookup_seed import product
+    from tests._mc_lookup_seed import product, warehouse
 
     db = session_factory()
     try:
         product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWT7408")
+        warehouse(db, company_id=DEFAULT_COMPANY_ID, code="BRW")
         for code, label, brand in (
             ("SRT-FT", "Tap", "Sorento"),
             ("CB-FT", "Tap", "Cabana"),
@@ -337,12 +338,75 @@ class TestSupplierPick:
         text, calls = console.say(_ask(_e("water tap", "category")), "low stock water tap jinbaichuan")
         assert calls == []
         assert text == (
-            "Which supplier do you mean? Reply with a number:\n1. JINBAICHUAN HARDWARE\n2. JINBAICHUAN TRADING"
+            'Which supplier do you mean? Reply with a number or "all":\n1. JINBAICHUAN HARDWARE\n2. JINBAICHUAN TRADING'
         )
         _text, calls = console.say(_reply(intent_hint=None, message_type="casual"), "2")
         (args,) = calls
         assert args.get("suppliers") == ["JINBAICHUAN TRADING"], args
         assert sorted(args.get("categories")) == ["CB-FT", "SRT-FT"], args
+
+
+    def test_all_on_the_supplier_pick_runs_without_a_supplier(self, console) -> None:
+        console.say(_ask(_e("water tap", "category")), "low stock water tap jinbaichuan")
+        _text, calls = console.say(_reply(intent_hint=None, message_type="casual"), "all")
+        (args,) = calls
+        assert not args.get("suppliers"), args
+
+    def test_a_supplier_among_other_words_is_still_found(self, console) -> None:
+        _text, calls = console.say(
+            _ask(_e("water tap", "category")), "hi can you send low stock water tap jinbaichuan trading this month"
+        )
+        (args,) = calls
+        assert args.get("suppliers") == ["JINBAICHUAN TRADING"], args
+
+
+# --------------------------------------------------------------------------- #
+# Review round 1
+# --------------------------------------------------------------------------- #
+
+
+class TestReviewRound1:
+    def test_a_brand_no_category_carries_never_blocks_the_answer(self, console) -> None:
+        text, calls = console.say(_ask(_e("Moen", "brand")), "Moen low stock")
+        assert calls == [] and text == QUESTION
+        _text, calls = console.say(_reply(_e("water closet", "product")), "water closet")
+        (args,) = calls
+        assert args.get("categories") == ["SRT-WC"], args
+
+    def test_two_brands_take_both(self, console) -> None:
+        _text, calls = console.say(_ask(_e("Sorento", "brand"), _e("Cabana", "brand"),
+                                        _e("water tap", "category")), "Sorento Cabana water tap low stock")
+        (args,) = calls
+        assert sorted(args["categories"]) == ["CB-FT", "SRT-FT"], args
+
+    def test_the_location_from_the_first_message_survives_the_question(self, console) -> None:
+        console.say(_ask(_e("BRW", "warehouse")), "low stock report BRW")
+        _text, calls = console.say(_reply(_e("water closet", "product")), "water closet")
+        (args,) = calls
+        assert args.get("warehouse_codes") == ["BRW"], args
+
+    def test_a_long_casual_message_drops_the_question(self, console) -> None:
+        console.say(_ask(), "low stock report")
+        text, calls = console.say(_reply(intent_hint=None, message_type="casual", entities=[]),
+                                  "ok thanks I will check later")
+        assert calls == [] and "as a category" not in text
+
+    @pytest.mark.parametrize("words", ["per supplier", "supplier wise"])
+    def test_more_grouping_words(self, console, words) -> None:
+        _text, calls = console.say(_ask(_e("water closet", "category")), f"low stock water closet {words}")
+        (args,) = calls
+        assert args.get("split") == "supplier", args
+
+    def test_the_session_schema_declares_the_slot(self) -> None:
+        """`SessionVars.focus` is `extra="forbid"` and `focus_to_wire` writes the key on
+        every turn: without it every `run_tail` turn (the n8n `/complete` path) raises."""
+        from app.services.chatbot import contracts as contracts_mod
+        from app.services.chatbot.turn.state import Focus, focus_from_wire, focus_to_wire
+
+        slot = {"ask": "low_stock_report", "asking": "category", "values": {}}
+        wire = focus_to_wire(Focus(required_ask=slot))
+        contracts_mod.Focus(**wire)
+        assert focus_from_wire(wire).required_ask == slot
 
 
 # --------------------------------------------------------------------------- #
