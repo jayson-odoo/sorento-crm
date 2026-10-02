@@ -193,6 +193,7 @@ def get_incoming_for_product(
         resolve_or_empty,
     )
 
+    contact = _Contact(db, contact_id, space_id)
     resolved_product_filter: list[str] = []
     # Validated UUID list from the canonical param.
     uuid_list = parse_uuid_list(product_ids, param_name="product_ids")
@@ -211,7 +212,7 @@ def get_incoming_for_product(
     entity_echo = None
     norm = normalize_entities_query_param(entities)
     if norm:
-        buckets = resolve_or_empty(db, norm)
+        buckets = resolve_or_empty(db, norm, regions=contact.regions)
         if buckets is not None:
             entity_echo = buckets.as_echo()
             if not buckets.product_codes:
@@ -222,7 +223,6 @@ def get_incoming_for_product(
                 }
             resolved_product_filter.extend(buckets.product_codes)
     try:
-        contact = _Contact(db, contact_id, space_id)
         svc = IncomingStockService(db, regions=contact.regions)
         # A windowed contact answer reads the service's maximum and pages the products
         # that survive the padded window itself (`_fetch_window`); this route has no page.
@@ -289,13 +289,14 @@ def get_incoming_shipments(
         resolve_or_empty,
     )
 
+    contact = _Contact(db, contact_id, space_id)
     entity_echo = None
     extra_query = query
     shipment_uuid_list = parse_uuid_list(shipment_ids, param_name="shipment_ids")
     supplier_uuid_list = parse_uuid_list(supplier_ids, param_name="supplier_ids")
     norm = normalize_entities_query_param(entities)
     if norm:
-        buckets = resolve_or_empty(db, norm)
+        buckets = resolve_or_empty(db, norm, regions=contact.regions)
         if buckets is not None:
             entity_echo = buckets.as_echo()
             if buckets.shipment_numbers:
@@ -311,7 +312,6 @@ def get_incoming_shipments(
                     "resolved_entities": entity_echo,
                 }
     try:
-        contact = _Contact(db, contact_id, space_id)
         svc = IncomingStockService(db, regions=contact.regions)
         result, paged = _fetch_window(
             lambda p, n: svc.incoming_shipments(
@@ -538,7 +538,9 @@ def get_incoming_stock_grn(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """Surface GRN (goods received note) records only when the user explicitly asks."""
+    """Surface GRN (goods received note) records only when the user explicitly asks.
+
+    No contact in play and no region filter here: a future contact wiring must add both."""
     from app.services.entity_filter_helpers import (
         normalize_entities_query_param,
         resolve_or_empty,

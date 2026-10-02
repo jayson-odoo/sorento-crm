@@ -302,6 +302,14 @@ async def get_attachments(
             normalize_list_query_param,
         )
         from app.services.contact_attachment_access import visible_type_ids
+        from app.services.eta_policy import resolve_request_contact, rules_for_contact
+
+        # A contact's list also stops at its packing list regions (unresolved = West).
+        contact_regions = (
+            rules_for_contact(db, resolve_request_contact(db, contact_id, space_id)).regions
+            if contact_id
+            else None
+        )
 
         result = service.list_attachments(
             page=page,
@@ -331,6 +339,7 @@ async def get_attachments(
             direct_access_only=direct_access_only,
             visible_attachment_type_ids=visible_type_ids(db, contact_id, space_id),
             company=company,
+            contact_regions=contact_regions,
         )
         # Enrich each attachment with uploaded_by_user for display.
         # Batch-resolve users in ONE query to avoid N+1 (was a per-row SELECT).
@@ -1003,6 +1012,9 @@ async def create_attachment(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="regions must be a JSON array holding west and/or east.",
                 )
+            # Regions belong to Packing List files only; any other type stores NULL.
+            if getattr(attachment_type, "code", None) != "packing_list":
+                regions_payload = None
 
         # Field-linkage template: target_entity_type + target_field_keys (JSON array).
         target_entity_type_clean = (target_entity_type or "").strip() or None

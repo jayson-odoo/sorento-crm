@@ -114,6 +114,11 @@ export default function AttachmentUploadDialog({
   const selectedType = attachmentTypes.find((type: AttachmentType) => type.id === selectedTypeId);
   // Field linkage is now opt-in per attachment type (admin toggle), not a
   // hardcoded product-photo name check.
+  // Never carry a previous opening's choice over: every opening starts on West only.
+  useEffect(() => {
+    if (open) setRegions([...DEFAULT_PACKING_LIST_REGIONS]);
+  }, [open]);
+
   const showRegions = selectedType?.code === 'packing_list';
   const showFieldLinkageSection = !propEntityType && !!selectedType?.supports_field_linkage;
 
@@ -540,7 +545,9 @@ export default function AttachmentUploadDialog({
 
           {showRegions && (
             <div className="space-y-2">
-              <Label htmlFor="attachment-regions">Regions</Label>
+              <Label htmlFor="attachment-regions">
+                Regions <span className="text-destructive">*</span>
+              </Label>
               <SearchableMultiSelect
                 id="attachment-regions"
                 value={regions}

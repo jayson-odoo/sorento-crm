@@ -84,7 +84,7 @@ def rules_for_contact(db: Session, resolved_contact_id: Optional[str]) -> Contac
         return UNRESOLVED
     from app.models.access import RespondContact
 
-    regions = contact_regions(db, resolved_contact_id)
+    regions = visible_regions(contact_regions(db, resolved_contact_id))
 
     row = (
         db.query(RespondContact.chatbot_eta_offset_applied, RespondContact.packing_list_allowed)

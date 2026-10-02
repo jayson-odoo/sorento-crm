@@ -938,16 +938,16 @@ class IncomingStockService:
                 "bill_of_lading_number",
                 "invoice_number",
             ),
+            extra_filters=(_not_draft_shipment_filter(), _region_filter(self.regions)),
         )
         if resolved is None or not resolved:
             return {"data": None, "empty": True}
-        # If multiple shipments match a business code we want the first (numbers are unique).
-        shipment_uuid = resolved[0]
-
+        # A business code can name several shipments; the region filter picks among them,
+        # so an ambiguous ref resolves to the one this contact may see.
         shipment = (
             self.db.query(InboundShipment)
             .filter(
-                InboundShipment.id == shipment_uuid,
+                InboundShipment.id.in_(resolved),
                 _not_draft_shipment_filter(),
                 _region_filter(self.regions),
             )
@@ -955,6 +955,7 @@ class IncomingStockService:
         )
         if not shipment:
             return {"data": None, "empty": True}
+        shipment_uuid = shipment.id
 
         remaining = _remaining_expr().label("remaining_incoming")
         line_rows = (
@@ -1057,6 +1058,7 @@ class IncomingStockService:
                 "bill_of_lading_number",
                 "invoice_number",
             ),
+            extra_filters=(_not_draft_shipment_filter(), _region_filter(self.regions)),
         )
         if resolved is None or not resolved:
             return None
@@ -1064,7 +1066,7 @@ class IncomingStockService:
             self.db.query(InboundShipment.shipment_number, Attachment)
             .outerjoin(Attachment, Attachment.id == InboundShipment.attachment_id)
             .filter(
-                InboundShipment.id == resolved[0],
+                InboundShipment.id.in_(resolved),
                 _not_draft_shipment_filter(),
                 _region_filter(self.regions),
             )

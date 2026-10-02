@@ -177,6 +177,30 @@ export function PackingListDetailsTab() {
               onChange={setField}
               view={text(record.consignee)}
             />
+            <div className="min-w-0">
+              <p className="text-sm text-muted-foreground">Regions</p>
+              {editing ? (
+                <SearchableMultiSelect
+                  triggerClassName="mt-1"
+                  size="sm"
+                  value={(draft.regions ?? '').split(',').filter(Boolean)}
+                  onChange={(next) => {
+                    if (next.length > 0) setField('regions', next.join(','));
+                  }}
+                  options={PACKING_LIST_REGION_OPTIONS}
+                />
+              ) : (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {(packingList.regions ?? []).length === 0
+                    ? '-'
+                    : (packingList.regions ?? []).map((code) => (
+                        <Badge key={code} variant="outline" size="sm">
+                          {regionLabel(code)}
+                        </Badge>
+                      ))}
+                </div>
+              )}
+            </div>
             <PackingListField
               label="Shipper"
               name="shipper"
@@ -216,28 +240,6 @@ export function PackingListDetailsTab() {
               onChange={setField}
               view={text(record.delivery_warehouse)}
             />
-            <div className="min-w-0">
-              <p className="text-sm text-muted-foreground">Regions</p>
-              {editing ? (
-                <SearchableMultiSelect
-                  triggerClassName="mt-1"
-                  size="sm"
-                  value={(draft.regions ?? '').split(',').filter(Boolean)}
-                  onChange={(next) => {
-                    if (next.length > 0) setField('regions', next.join(','));
-                  }}
-                  options={PACKING_LIST_REGION_OPTIONS}
-                />
-              ) : (
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {(packingList.regions ?? []).map((code) => (
-                    <Badge key={code} variant="outline" size="sm">
-                      {regionLabel(code)}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </div>
             <div className="min-w-0">
               <p className="text-sm text-muted-foreground">Container size</p>
               {/* Without SCM read the sizes cannot be listed, so the field stays a value:

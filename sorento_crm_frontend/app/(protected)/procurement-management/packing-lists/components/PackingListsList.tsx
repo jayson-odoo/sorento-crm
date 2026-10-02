@@ -97,6 +97,7 @@ export default function PackingListsList() {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
     resetSearch(state.searchQuery);
+    setRegionFilter(state.filters.region ?? '');
   });
 
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
@@ -149,7 +150,7 @@ export default function PackingListsList() {
       pageSize: pagination.pageSize,
       sorting,
       searchQuery,
-    });
+    }, { region: regionFilter || undefined });
     const qs = search ? `?${search}` : '';
     return `/procurement-management/packing-lists/${row.id}${qs}`;
   };

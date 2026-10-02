@@ -95,6 +95,7 @@ export function packingListsListParamsFromUrl(
     searchQuery: params.searchQuery,
     supplier_id: params.filters.supplier_id,
     shipment_status: params.filters.shipment_status,
+    region: params.filters.region,
   };
 }
 

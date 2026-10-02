@@ -1636,6 +1636,8 @@ class InboundShipmentService:
                 )
             # Update-in-place path: rewrite header + replace lines.
             shipment_dict = shipment_data.model_dump(exclude={"shipment_lines"})
+            # A matched re-upload never rewrites regions: only a staff update does.
+            shipment_dict.pop("regions", None)
             shipment_dict["shipment_status"] = _normalize_inbound_shipment_status(
                 shipment_dict.get("shipment_status")
             )

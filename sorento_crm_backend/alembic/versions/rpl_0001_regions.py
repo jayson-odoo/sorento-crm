@@ -17,12 +17,19 @@ def upgrade() -> None:
     op.execute("ALTER TABLE inbound_shipments ADD COLUMN IF NOT EXISTS regions text[] NOT NULL DEFAULT '{west}'")
     op.execute("ALTER TABLE attachments ADD COLUMN IF NOT EXISTS regions text[] NULL")
     op.execute(
-        "ALTER TABLE inbound_shipments ADD CONSTRAINT ck_inbound_shipments_regions "
-        "CHECK (cardinality(regions) >= 1 AND regions <@ ARRAY['west','east']::text[])"
-    )
-    op.execute(
-        "ALTER TABLE attachments ADD CONSTRAINT ck_attachments_regions "
-        "CHECK (regions IS NULL OR (cardinality(regions) >= 1 AND regions <@ ARRAY['west','east']::text[]))"
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_inbound_shipments_regions') THEN
+            ALTER TABLE inbound_shipments ADD CONSTRAINT ck_inbound_shipments_regions
+              CHECK (cardinality(regions) >= 1 AND regions <@ ARRAY['west','east']::text[]);
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_attachments_regions') THEN
+            ALTER TABLE attachments ADD CONSTRAINT ck_attachments_regions
+              CHECK (regions IS NULL OR (cardinality(regions) >= 1 AND regions <@ ARRAY['west','east']::text[]));
+          END IF;
+        END $$;
+        """
     )
 
 

@@ -600,6 +600,7 @@ class AttachmentService:
         direct_access_only: Optional[bool] = None,
         visible_attachment_type_ids: Optional[set[str]] = None,
         company: Optional[str] = None,
+        contact_regions: Optional[frozenset] = None,
     ):
         """List attachments. Filter by directory_id when provided. Search by filename when query is provided. is_deleted=True returns trash.
 
@@ -654,6 +655,7 @@ class AttachmentService:
             direct_access_only=direct_access_only,
             visible_attachment_type_ids=visible_attachment_type_ids,
             company=company,
+            contact_regions=contact_regions,
             with_joinedload=True,
         )
         if q is None:
@@ -778,6 +780,7 @@ class AttachmentService:
         visible_attachment_type_ids: Optional[set[str]] = None,
         company: Optional[str] = None,
         with_joinedload: bool = False,
+        contact_regions: Optional[frozenset] = None,
     ):
         """Build the filtered + sorted attachments query shared by ``list_attachments``
         and ``neighbours`` so the two can never drift.
@@ -878,6 +881,18 @@ class AttachmentService:
                 func.trim(func.split_part(Attachment.mime_type, ";", 1))
             )
             q = q.filter(base_mime.in_(sorted(wanted_mimes)))
+        if contact_regions is not None:
+            # A contact never sees the file of a packing list outside its regions. The
+            # shipment's regions decide (not the attachment's own copy); a file linked to
+            # no shipment is untouched. Core table: the company scope must not make a
+            # shipment of another company read as "not linked".
+            from sqlalchemy import exists, select
+            from app.models.procurement import InboundShipment
+
+            ship = InboundShipment.__table__
+            linked = select(ship.c.id).where(ship.c.attachment_id == Attachment.id)
+            visible = linked.where(ship.c.regions.overlap(sorted(contact_regions)))
+            q = q.filter(or_(~exists(linked), exists(visible)))
         if direct_access_only:
             if visible_attachment_type_ids is not None:
                 # A contact was resolved and holds per-contact grants, so the

@@ -30,7 +30,7 @@ from typing import Any, Callable, Iterable, Optional
 from functools import reduce
 from operator import add
 
-from sqlalchemy import and_, case, func, or_, text
+from sqlalchemy import and_, case, func, or_, text, true
 from sqlalchemy.orm import Session
 
 from app.models.base import UNSET, get_company_scope
@@ -1370,8 +1370,19 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
     return result
 
 
-def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
-    """Exact match across shipment_number / container / BOL / SO ref / invoice."""
+def _region_overlap_clause(regions):
+    """Shipment serves one of `regions` (packing list regions); None = no filter."""
+    if regions is None:
+        return true()
+    return InboundShipment.regions.overlap(sorted(regions))
+
+
+def _probe_inbound_shipment(
+    db: Session, tokens: list[str], regions=None
+) -> dict[str, list[ResolvedEntity]]:
+    """Exact match across shipment_number / container / BOL / SO ref / invoice.
+
+    `regions` (a contact's packing list regions) hides shipments outside them; None = all."""
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
@@ -1403,6 +1414,7 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
                 _ws_insensitive_lower(InboundShipment.invoice_number).in_(normalized),
             ),
             InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS,
+            _region_overlap_clause(regions),
         )
         .all()
     )
@@ -1932,7 +1944,9 @@ def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity
     ]
 
 
-def _prefix_probe_inbound_shipment(db: Session, token: str) -> list[ResolvedEntity]:
+def _prefix_probe_inbound_shipment(
+    db: Session, token: str, regions=None
+) -> list[ResolvedEntity]:
     rows = (
         db.query(
             InboundShipment.id,
@@ -1952,6 +1966,7 @@ def _prefix_probe_inbound_shipment(db: Session, token: str) -> list[ResolvedEnti
                 _norm_prefix(InboundShipment.invoice_number, token),
             ),
             InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS,
+            _region_overlap_clause(regions),
         )
         .limit(PREFIX_LIMIT)
         .all()
@@ -2676,6 +2691,7 @@ def _tier2_fuzzy_lookup(
     db: Session,
     token: str,
     allowed_entity_types: Optional[frozenset[str]] = None,
+    regions=None,
 ) -> list[ResolvedEntity]:
     """Run Tier-2 prefix probes for a single token and return combined candidates.
 
@@ -2687,7 +2703,10 @@ def _tier2_fuzzy_lookup(
         if allowed_entity_types is not None and produces.isdisjoint(allowed_entity_types):
             continue
         try:
-            combined.extend(probe(db, token))
+            if probe is _prefix_probe_inbound_shipment:
+                combined.extend(probe(db, token, regions=regions))
+            else:
+                combined.extend(probe(db, token))
         except Exception:
             logger.exception("Tier-2 probe %s failed for token=%s", probe.__name__, token)
     return combined
@@ -4737,8 +4756,12 @@ def resolve_references(
     domain_hint: Optional[str] = None,
     entity_pins: Optional[dict[str, str]] = None,
     raw_tokens: Optional[list[str]] = None,
+    regions=None,
 ) -> ResolutionResult:
     """Main entry point.
+
+    `regions` (a contact's packing list regions) hides inbound shipments outside them from the
+    exact and prefix probes; None = no filter.
 
     Runs three tiers in order, stopping per-token as soon as a tier yields a match:
 
@@ -4854,7 +4877,11 @@ def resolve_references(
             else:
                 probe_tokens = tokens
             try:
-                hits = probe(db, probe_tokens)
+                hits = (
+                    probe(db, probe_tokens, regions=regions)
+                    if probe is _probe_inbound_shipment
+                    else probe(db, probe_tokens)
+                )
             except Exception:
                 logger.exception("Tier-1 probe %s failed", probe.__name__)
                 continue
@@ -4902,7 +4929,9 @@ def resolve_references(
                     ambiguous_tokens.add(tok)
             if per_token[tok]:
                 continue
-            candidates = _tier2_fuzzy_lookup(db, tok, allowed_entity_types=tok_allowed)
+            candidates = _tier2_fuzzy_lookup(
+                db, tok, allowed_entity_types=tok_allowed, regions=regions
+            )
             if _scope_attachment_types and any(
                 c.entity_type == "attachment_type" for c in candidates
             ):
@@ -5006,7 +5035,11 @@ def resolve_references(
                     # fallback path clears `allowed` so this is a no-op there.
                     continue
                 try:
-                    hits = probe(db, [tok]).get(tok, [])
+                    hits = (
+                        probe(db, [tok], regions=regions)
+                        if probe is _probe_inbound_shipment
+                        else probe(db, [tok])
+                    ).get(tok, [])
                 except Exception:
                     logger.exception("Cross-type tier-1 probe %s failed", probe.__name__)
                     continue
@@ -5025,7 +5058,11 @@ def resolve_references(
                     if allowed is not None and produces.isdisjoint(allowed):
                         continue
                     try:
-                        hits = probe(db, tok)
+                        hits = (
+                            probe(db, tok, regions=regions)
+                            if probe is _prefix_probe_inbound_shipment
+                            else probe(db, tok)
+                        )
                     except Exception:
                         logger.exception("Cross-type tier-2 probe %s failed", probe.__name__)
                         continue
@@ -5374,12 +5411,40 @@ def _rag_resolve_phrase(
     return out
 
 
+def _drop_hidden_shipments(db: Session, aggregated: list, regions) -> None:
+    """The trigram and embedding tiers are not region aware: remove any inbound_shipment
+    match whose shipment number has no row serving `regions`."""
+    codes = {
+        m.canonical_code
+        for tr in aggregated
+        for m in tr.matches
+        if m.entity_type == "inbound_shipment" and m.canonical_code
+    }
+    if not codes:
+        return
+    visible = {
+        n
+        for (n,) in db.query(InboundShipment.shipment_number)
+        .filter(InboundShipment.shipment_number.in_(codes), _region_overlap_clause(regions))
+        .all()
+    }
+    for tr in aggregated:
+        tr.matches = [
+            m
+            for m in tr.matches
+            if m.entity_type != "inbound_shipment" or m.canonical_code in visible
+        ]
+        if len(tr.matches) < 2:
+            tr.ambiguous = False
+
+
 def resolve_entities_to_filters(
     db: Session,
     entities: Optional[list[str]],
     *,
     allowed_entity_types: Iterable[str],
     max_candidates: int = 8,
+    regions=None,
 ) -> EntityFilterBuckets:
     """Resolve a free-text `entities` bag via pure-RAG top-k vector search.
 
@@ -5417,7 +5482,7 @@ def resolve_entities_to_filters(
         #      Catches semantic phrasings ("fira ventures" → "FIRA VENTURE
         #      ENTERPRISE SDN BHD") that pure substring would miss.
         substring_hits = _tier2_fuzzy_lookup(
-            db, phrase, allowed_entity_types=allowed_set
+            db, phrase, allowed_entity_types=allowed_set, regions=regions
         )
         if substring_hits:
             ambiguous = len(substring_hits) > 1
@@ -5469,6 +5534,8 @@ def resolve_entities_to_filters(
     # tiers above are raw SQL, so without this a list tool would filter stock /
     # orders by another company's canonical codes.
     _apply_company_scope(db, aggregated)
+    if regions is not None:
+        _drop_hidden_shipments(db, aggregated, regions)
 
     result = ResolutionResult(
         tokens=[tr.token for tr in aggregated],
