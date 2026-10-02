@@ -10,12 +10,14 @@ from the diff between role ticks and legacy keys, never by name.
 
 Registry rows (`chatbot_domains`, `chatbot_domain_fields`) are seeded by `_registry` below
 because the blank schema has no migration seed. Placement used (PLAN "Schema" + CARD section 2):
-  * `inventory`      fields `inventory.sellable`, `purchase_orders.placed` (on order)
+  * `inventory`      fields `inventory.sellable`, `purchase_orders.placed` (on order),
+                     `scm.low_stock_report` (kind ask)
+  * `order`          field `sales_orders.outstanding` (kind ask)
   * `purchase_order` fields `purchase_orders.supplier`, `purchase_orders.po_number`
   * `incoming`       fields `incoming_stock.<gated field>` x23
   * domain reveal_key (granted with the domain): `purchase_cost` -> purchase_orders.cost,
-    `outstanding` -> sales_orders.outstanding, `sales` -> sales_orders.sales_report,
-    `low_stock` -> scm.low_stock_report
+    `sales` -> sales_orders.sales_report, `purchase_order` -> purchase_orders.placed
+  * NO `outstanding` and NO `low_stock` domain rows (PLAN N1): both are `ask` fields.
 """
 from __future__ import annotations
 
@@ -57,22 +59,23 @@ DEALER_DOMAINS = {
 }
 SALES_OFFICE_DOMAINS = DEALER_DOMAINS | {"spo_allocation", "purchase_order"}
 PURCHASING_DOMAINS = SALES_OFFICE_DOMAINS | {"purchase_cost"}
-WAREHOUSE_DOMAINS = {"inventory", "incoming", "spo_allocation", "low_stock", "master_products"}
-SUPPORTED_DOMAINS = PURCHASING_DOMAINS | {"low_stock", "outstanding", "sales", "ideate"}
+WAREHOUSE_DOMAINS = {"inventory", "incoming", "spo_allocation", "master_products"}
+SUPPORTED_DOMAINS = PURCHASING_DOMAINS | {"sales", "ideate"}
 
 
 def _registry(db) -> None:
     for name, key in (
         ("master_products", None), ("product_attachment", None), ("resource_attachment", None),
         ("promotion", None), ("forms", None), ("portal_link", None), ("inventory", None),
-        ("order", None), ("incoming", None), ("spo_allocation", None), ("purchase_order", None),
-        ("ideate", None), ("purchase_cost", K_COST), ("outstanding", K_OUTSTANDING),
-        ("sales", K_SALES), ("low_stock", K_LOW),
+        ("order", None), ("incoming", None), ("spo_allocation", None), ("purchase_order", K_PLACED),
+        ("ideate", None), ("purchase_cost", K_COST), ("sales", K_SALES),
     ):
         make_domain(db, name, reveal_key=key)
     make_domain(db, "goods_receive", supported=False)
     make_field(db, "inventory", K_SELLABLE)
     make_field(db, "inventory", K_PLACED)
+    make_field(db, "inventory", K_LOW, kind="ask")
+    make_field(db, "order", K_OUTSTANDING, kind="ask")
     make_field(db, "purchase_order", K_SUPPLIER)
     make_field(db, "purchase_order", "purchase_orders.po_number")
     for f in INCOMING_FIELDS:
@@ -221,6 +224,8 @@ class TestSeedDefaultRoles:
         assert {f for f in office if f.startswith("incoming_stock.")} == {eta, qty, container}
         assert {K_SELLABLE, K_PLACED} <= office
         assert K_SUPPLIER not in office
+        assert not office & {K_OUTSTANDING, K_LOW}, "the two ask fields are Management and Warehouse only"
+        assert K_LOW in _role_fields(db, "warehouse")
         assert K_SUPPLIER in _role_fields(db, "purchasing")
         assert {f for f in _role_fields(db, "warehouse") if f.startswith("incoming_stock.")} == {
             f"incoming_stock.{f}" for f in INCOMING_FIELDS
@@ -324,6 +329,10 @@ class TestMapLegacyContacts:
         assert _role_codes(db, pk) == ["sales_office"]
         assert _override_count(db, pk) > 0
         assert K_OUTSTANDING in _access(db, pk).attributes
+        from app.models.chatbot_access import ContactAccessOverride
+
+        rows = db.query(ContactAccessOverride).filter(ContactAccessOverride.contact_id == pk).all()
+        assert [(o.domain_name, o.field_key, o.granted) for o in rows] == [("order", K_OUTSTANDING, True)]
 
     def test_cost_and_supplier_keys_make_a_purchasing_contact(self, session_factory):
         from app.services.chatbot.access_seed import map_legacy_contacts
@@ -372,7 +381,8 @@ class TestMapLegacyContacts:
         assert _override_count(db, pk) == 0
         access = _access(db, pk)
         assert set(ALL_SEVEN) <= set(access.attributes)
-        assert {"ideate", "sales", "low_stock", "outstanding", "purchase_cost"} <= access.domains
+        assert {"ideate", "sales", "purchase_cost"} <= access.domains
+        assert not access.domains & {"low_stock", "outstanding"}, "ask fields, never domains"
 
     def test_reveal_keys_but_no_agent_gets_no_role(self, session_factory):
         from app.services.chatbot.access_seed import map_legacy_contacts
