@@ -17,7 +17,7 @@ Type names are dev's own: Product Photos, Technical Specifications (no code); th
   `SRTWC286-SH has no Technical Specifications.`, with no escalate offer. A product with none
   of the asked types: `SRTWC286-SH-200 has no Product Photos or Technical Specifications.`
   A slug type is never named as a gap.
-- AC-5 (R4) The miss sentence reads `But no photo or technical specifications matched these.`;
+- AC-5 (R4, owner ruling 2 Oct) The miss sentence names the official types: `But no Product Photos or Technical Specifications matched these.`;
   the found bullet reads `• attachment type: Product Photos, Technical Specifications`.
 - AC-6 (Q3 a) The require-specific picker (product attachments and incoming) asks
   `Which product do you mean? Please choose:`.
