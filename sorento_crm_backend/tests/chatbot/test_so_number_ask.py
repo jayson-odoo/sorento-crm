@@ -9,10 +9,13 @@ reply was a 20-row DO dump over every linked customer closed by "I could not fin
 SO422056." `turn_runtime._answered_unfiltered` did not catch it because the scope rows
 carry real uuids, so the fetch did not read as unfiltered.
 
-Rule under test: a turn whose only typed subject is a word nobody could place is a miss,
-whatever customer scope the contact carries. The read on the scope alone may still go out
-(it is the contact's own data), but its rows never reach the reply: the reply is the one
-miss line production composes for any unplaced word, with no scope header above it.
+Rules under test (PLAN-so-number-ask.md, UAC so-number-ask-acceptance-criteria.md):
+
+* A word nobody could place is a miss, whatever customer scope the contact carries: the
+  scope rows are not subjects, so the links' DO list never reaches the reply.
+* An SO-shaped word is answered from `sales_orders` (`app/services/chatbot/so_status.py`):
+  one card per SO in scope, the scope refusal for an SO outside the links, one
+  "I could not find" line for the rest, all behind the `sales_orders.outstanding` key.
 
 Same harness as `test_customer_scope_lane.py` (one real `engine.run_turn`, parser,
 access, resolver and MCP faked). Postgres only.
@@ -39,24 +42,24 @@ DO_DUMP = {
 }
 
 
-def _so_ask(hint: str) -> dict[str, Any]:
+def _so_ask(hint: str, raw: str = SO) -> dict[str, Any]:
     return _parser_output(
         domain_hint="order",
         intent_hint="check_order",
         order_status=None,
-        entities=[{"raw": SO, "hint": hint, "canonical_code": None, "current_message": True, "confident": True}],
+        entities=[{"raw": raw, "hint": hint, "canonical_code": None, "current_message": True, "confident": True}],
     )
 
 
-def _turn(session_factory, monkeypatch, qf: dict[str, Any], body: str):
+def _turn(session_factory, monkeypatch, qf: dict[str, Any], body: str, attributes=("sales_orders.outstanding",)):
     result, captured = _run_turn(
         session_factory,
         monkeypatch,
         qf=qf,
         text_body=body,
         msg_id=f"ZZT-so-ask-{uuid.uuid4().hex[:10]}",
-        attributes=[],
-        matches={},  # the resolver places nothing: no SO probe exists
+        attributes=list(attributes),
+        matches={},  # the resolver places nothing: it has no SO probe
         mcp_response=DO_DUMP,
     )
     return ((result.reply or {}).get("text") or ""), captured
@@ -64,16 +67,28 @@ def _turn(session_factory, monkeypatch, qf: dict[str, Any], body: str):
 
 class TestUnresolvedSoNumberIsOneMissLine:
     @pytest.mark.parametrize("hint", ["order", "order_number", "customer_order"])
-    def test_linked_dealer_gets_no_do_dump(self, session_factory, monkeypatch, hint) -> None:
+    def test_linked_dealer_gets_one_miss_line(self, session_factory, monkeypatch, hint) -> None:
+        """AC-SO-01: no such SO -> the one line, no DO rows, no customer names."""
         _seed_contact(session_factory, variables={})
         _link_customers(session_factory, "ZZT OWN A", "ZZT OWN B")
 
         reply, captured = _turn(session_factory, monkeypatch, _so_ask(hint), f"status of {SO}")
 
+        assert reply.strip() == f"I could not find {SO}.", reply
+        assert _calls(captured, ORDERS) == [], captured
+
+    def test_unplaced_non_so_word_is_a_miss_not_the_links_list(self, session_factory, monkeypatch) -> None:
+        """The same hole for any word nothing placed: the scope rows are not subjects, so the
+        DO list the links alone produced never reaches the reply, and no scope header either."""
+        _seed_contact(session_factory, variables={})
+        _link_customers(session_factory, "ZZT OWN A", "ZZT OWN B")
+
+        reply, _captured = _turn(session_factory, monkeypatch, _so_ask("order", "DOZZT999"), "status of DOZZT999")
+
         assert DUMP_DO not in reply, reply
         assert "ZZT OWN" not in reply, reply
         assert "Customer:" not in reply, reply
-        assert reply.startswith(f'Couldn\'t find: "{SO}"'), reply
+        assert reply.startswith('Couldn\'t find: "DOZZT999"'), reply
 
     def test_bare_order_ask_still_runs_on_the_links(self, session_factory, monkeypatch) -> None:
         """Guard: the fix is about a typed number that did not resolve. An order ask naming
@@ -142,11 +157,11 @@ def _seed_so(
         for ordered, delivered, line_status in rows:
             db.execute(
                 text(
-                    "INSERT INTO sales_order_lines (id, sales_order_id, product_id, qty_ordered, qty_delivered, "
-                    "line_status, created_at, updated_at) "
-                    "VALUES (gen_random_uuid(), :so, :prod, :o, :d, :ls, now(), now())"
+                    "INSERT INTO sales_order_lines (id, company_id, sales_order_id, product_id, qty_ordered, "
+                    "qty_delivered, line_status, created_at, updated_at) "
+                    "VALUES (gen_random_uuid(), :co, :so, :prod, :o, :d, :ls, now(), now())"
                 ),
-                {"so": so_id, "prod": str(prod.id), "o": ordered, "d": delivered, "ls": line_status},
+                {"co": company, "so": so_id, "prod": str(prod.id), "o": ordered, "d": delivered, "ls": line_status},
             )
     db.commit()
 

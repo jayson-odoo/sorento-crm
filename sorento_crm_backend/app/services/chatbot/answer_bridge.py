@@ -1597,7 +1597,12 @@ def _miss_triggers(
         maybe_fetch = raw_fragment.get("fetch")
         fetch_item = maybe_fetch if isinstance(maybe_fetch, dict) else None
 
-    via_resolver_exit = payload.get("_exit_kind") == "not_found"
+    # SO-NUMBER-ASK: the lane answered the SO words the resolver could not place, and its
+    # reply already names the ones no SO answered (`lanes/business/run_fetch`'s
+    # `so_numbers` arm), so the resolver's own exit is no miss of its own.
+    via_resolver_exit = payload.get("_exit_kind") == "not_found" and not (
+        isinstance(fetch_item, dict) and fetch_item.get("so_status")
+    )
     via_error_fragment = fragment_outcome == "not_found"
     # R5 (AC-1699, AC-1702): a THIRD trigger - the resolver settled a real subject,
     # the fetch genuinely ran for it, and the tool came back with zero rows. This

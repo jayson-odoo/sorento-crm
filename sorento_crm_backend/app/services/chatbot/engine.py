@@ -4211,7 +4211,11 @@ def _run_stages(  # noqa: PLR0915
                 domains=plan.domains,
                 db=db,
             )
-            if resolved_kinds or resolved_candidates:
+            # SO-NUMBER-ASK: a plan that ASKED before the resolver ran ("Which one do you
+            # mean? 1. SO421624 2. SO999998 3. SO422057") was built without the unplaced
+            # words, so `narrow.decide`'s own "a roster never offers a token the resolver
+            # could not place" rule never saw them. Re-entering with them lets it fire.
+            if resolved_kinds or resolved_candidates or (unplaced_tokens and plan.ask is not None):
                 # The ONE re-entry the plan allows: what the resolver found goes back
                 # into APPLY, so the narrower asks about things that exist and a
                 # reconciled kind lands before anything is fetched.

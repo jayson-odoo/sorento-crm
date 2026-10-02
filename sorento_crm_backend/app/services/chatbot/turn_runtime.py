@@ -2793,6 +2793,14 @@ def make_tool_runner(
         # (line ~906 above), so the miss header can name each ledger rather than
         # falling back to the option's own rollup code.
         fill_customer_names(db, entities)
+        # SO-NUMBER-ASK: SO numbers this message typed that nothing placed are answered
+        # by the lane from `sales_orders` (`lanes/business/run_fetch`'s `so_numbers` arm),
+        # and so are not "could not find" words for compose to name a second time.
+        so_numbers = _so_numbers_asked(domain, verdict, unplaced)
+        envelope_unplaced = unplaced
+        if so_numbers:
+            lane_out = {**lane_out, "so_numbers": so_numbers}
+            envelope_unplaced = {k: v for k, v in unplaced.items() if v not in so_numbers}
         # Ported from PR #1118 (not merged), D13/D20: the dealer's own quantity per
         # product, resolved to uuids here - `lanes/business/fetch.py` reads it
         # straight off the lane input.
@@ -3059,7 +3067,7 @@ def make_tool_runner(
                 else None
             ),
             ran_with=lane_out,
-            unplaced=unplaced,
+            unplaced=envelope_unplaced,
             raw_fragment=fragment,
             brand_names=brand_names,
         )
@@ -3691,6 +3699,25 @@ def _code_of(entity: dict[str, Any]) -> str:
     spec that named an entity (every compatible row answered `"null"`).
     """
     return jsc.js_string(entity.get("code") or entity.get("canonical_code") or entity.get("raw")).strip().lower()
+
+
+def _so_numbers_asked(domain: str, verdict: dict[str, Any], unplaced: dict[str, str]) -> list[str]:
+    """The SO numbers an order ask typed that the resolver could not place - the lane's
+    `so_numbers` (SO-NUMBER-ASK). Only when EVERY word this message typed went unplaced:
+    a message that also placed a subject of its own keeps today's answer for it."""
+    if domain != "order" or not unplaced:
+        return []
+    from app.services.chatbot import so_status
+
+    typed = [
+        jsc.nullish_str(jsc.get(e, "raw")).strip()
+        for e in jsc.array(jsc.get(verdict, "entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False
+    ]
+    typed = [t for t in typed if t]
+    if not typed or any(_token_key(t) not in unplaced for t in typed):
+        return []
+    return [unplaced[_token_key(t)] for t in typed if so_status.is_so_number(t)]
 
 
 def _answered_unfiltered(

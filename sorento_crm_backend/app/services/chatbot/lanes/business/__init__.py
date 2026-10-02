@@ -1339,6 +1339,43 @@ def run_fetch(
     # sales figures for your own account" to the very person whose own accounts exist.
     # Links win: the customer sales report over them. Staff without links keep the analysis.
     has_own_accounts = bool(customer_scope.get("ids"))
+    # SO-NUMBER-ASK (PLAN-so-number-ask.md): SO numbers the resolver could not place
+    # (`turn_runtime` hands them over as `so_numbers`) are answered from `sales_orders`
+    # here, before any tool pick: the orders list reads the DO book and answered an SO ask
+    # with the links' DOs. Gated by the SO reveal key (owner ruling Q5), refused outside
+    # the links (Q2), one card per SO (Q4).
+    so_numbers = [w for w in jsc.array(parse_output.get("so_numbers")) if isinstance(w, str) and w]
+    if so_numbers and parse_output.get("domain_hint") == "order":
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        if _OUTSTANDING_SO_GRANT not in granted:
+            if trace is not None:
+                trace.add("so_status", {"refused": "not_granted", "needs": _OUTSTANDING_SO_GRANT})
+            return _fixed_reply(fetch_mod.SO_NOT_ENABLED_MESSAGE)
+        if db is not None:
+            from app.services.chatbot import so_status
+
+            linked = list(customer_scope.get("linked") or []) if customer_scope.get("enforced") else None
+            looked = so_status.lookup(db, so_numbers, linked=linked)
+            if trace is not None:
+                trace.add(
+                    "so_status",
+                    {
+                        "asked": so_numbers,
+                        "cards": len(looked.cards),
+                        "refused": looked.refused,
+                        "missing": looked.missing,
+                    },
+                )
+            fragment = _fixed_reply(
+                so_status.reply_text(looked, refusal=str(customer_scope.get("refusal") or ""))
+            )
+            # The reply names its own missing numbers, so the resolver's own `not_found`
+            # exit (nothing placed the SO words) is not a second miss to compose
+            # (`answer_bridge._miss_triggers`).
+            fragment["fetch"]["so_status"] = True
+            return fragment
     # #1262 fix lane round 3, B1-r2: an order turn's brand ids are resolved ONCE, by
     # `turn_runtime.order_brand_filter` in the tool runner (typed words first, else the
     # brand the conversation carries), and the header names the same ids. Taken as is,
