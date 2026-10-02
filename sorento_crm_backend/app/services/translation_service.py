@@ -36,6 +36,7 @@ from app.models.user import User
 from app.services import ai_prompt_registry
 from app.services.ai_assistant_service import AIAssistantConfigService
 from app.services.error_handler import AppException, handle_not_found
+from app.services.text_tokens import tokens_match
 from app.services.llm_provider import get_provider, resolve_api_key, resolve_model
 
 logger = logging.getLogger(__name__)
@@ -512,19 +513,6 @@ def get_or_404(db: Session, memory_id: str) -> TranslationMemory:
     if row is None:
         raise handle_not_found("Translation", memory_id)
     return row
-
-
-_TOKEN = re.compile(r"\{(\w+)\}")
-
-
-def tokens(text: str) -> list[str]:
-    """The sorted `{name}` placeholders of `text`."""
-    return sorted(_TOKEN.findall(text))
-
-
-def tokens_match(a: str, b: str) -> bool:
-    """Whether two texts carry the same placeholders (same multiset)."""
-    return tokens(a) == tokens(b)
 
 
 def _check_chatbot_wording(source_text: str, target_text: str) -> None:

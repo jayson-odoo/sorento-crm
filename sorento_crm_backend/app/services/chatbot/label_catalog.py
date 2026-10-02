@@ -15,9 +15,9 @@ from typing import Any
 # are built from it, never spelled out.
 from app.services.chatbot.turn.task import REFER_TO_SALESMAN
 
-# The placeholder helpers live in core (a staff edit is checked there too); the chatbot package
-# may import core, never the reverse (AC-002).
-from app.services.translation_service import _TOKEN, tokens, tokens_match  # noqa: F401
+# The placeholder helpers live in a dependency-free core module (a staff edit is checked there
+# too); the chatbot package may import core, never the reverse (AC-002).
+from app.services.text_tokens import _TOKEN, tokens, tokens_match  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
