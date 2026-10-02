@@ -1,6 +1,6 @@
 # PLAN - Packing list region (West / East Malaysia)
 
-Status: building (packing-list side). Owner answers 2 Oct 2026: Q1 = (b) contact region grant lives in the
+Status: built (packing-list side), review READY (reviewer + security-reviewer, 2 fix rounds), awaiting CI + owner hand test; contact side waits for ACCESS-MODEL. Owner answers 2 Oct 2026: Q1 = (b) contact region grant lives in the
 ACCESS-MODEL access model; Q2-Q5 = (a); mock v2 approved (default West Malaysia only). Track: L / standard
 (migration). Lane REGION-PACKING-LIST, branch `crew/region-packing-list`, one PR.
 UAC: `region-packing-list-acceptance-criteria.md`. Card: `CARD-region-packing-list-2oct.md`.
@@ -59,6 +59,8 @@ from all contacts (fail closed); West and West + East packing lists answer as to
 
 ## Follow-ups
 - Container Status workbook attachment lists every container (Q4: fine as is).
+- Chatbot turn with a blank contact_id calls incoming tools unfiltered (inherited fail-open, lanes/business/fetch.py:1216-1219); fix in the chatbot caller.
+- Re-upload regions rule built as: matched draft takes the upload regions, matched non-draft keeps its own (owner ruling pending).
 
 ## Migration check + hand test
 Idempotent SQL at `crew/state/migrations/REGION-PACKING-LIST.sql` via `crew migrate`; checked on the dev copy before the
