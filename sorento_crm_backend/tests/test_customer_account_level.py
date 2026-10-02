@@ -322,21 +322,21 @@ def test_s1_post_with_a_level_and_the_permission_is_201_and_stored(db, monkeypat
     assert _stored(db, resp.json()["id"]) == 4
 
 
-def test_n1_put_above_smallint_is_422_not_500(db, monkeypatch):
+def test_n1_put_above_nine_is_422(db, monkeypatch):
     cid = _customer(db, 2)
-    resp = _client(db, monkeypatch).put(f"{BASE}/{cid}", json={"account_level": 32768})
+    resp = _client(db, monkeypatch).put(f"{BASE}/{cid}", json={"account_level": 10})
     assert resp.status_code == 422, resp.text
     db.expire_all()
     assert _stored(db, cid) == 2
 
 
-def test_n1_post_above_smallint_is_422_not_500(db, monkeypatch):
-    resp = _post(db, monkeypatch, _body(account_level=100000))
+def test_n1_post_above_nine_is_422(db, monkeypatch):
+    resp = _post(db, monkeypatch, _body(account_level=10))
     assert resp.status_code == 422, resp.text
 
 
-def test_n1_the_cap_itself_is_accepted(db, monkeypatch):
+def test_n1_the_cap_is_nine_to_match_the_form(db, monkeypatch):
     cid = _customer(db)
-    resp = _client(db, monkeypatch).put(f"{BASE}/{cid}", json={"account_level": 32767})
+    resp = _client(db, monkeypatch).put(f"{BASE}/{cid}", json={"account_level": 9})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["account_level"] == 32767
+    assert resp.json()["account_level"] == 9
