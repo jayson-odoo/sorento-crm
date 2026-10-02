@@ -17,15 +17,20 @@ from pathlib import Path
 from app.services.chatbot.lanes.business import fetch
 from app.services.contact_field_reveal_service import FIELD_REVEAL_KEYS
 
-# The MCP package sits next to this checkout's backend and is not installed in the backend
-# image CI runs; put it on the path first, the way
-# `test_field_reveal_keys_pinned_to_catalog.py` and `test_dealer_eta_stock_routing.py` do.
-_MCP_ROOT = Path(__file__).resolve().parents[3] / "sorento_crm_mcp"
-if str(_MCP_ROOT) not in sys.path:
-    sys.path.append(str(_MCP_ROOT))
 
-from sorento_crm_mcp.catalog import CATALOG  # noqa: E402
-from sorento_crm_mcp.presenters import present_response  # noqa: E402
+
+def _mcp():
+    """The MCP catalogue and presenter, imported when a test runs, never at collection: the
+    backend image CI validates imports in holds no `sorento_crm_mcp`, so a module-level
+    import fails collection there (the pattern `test_field_reveal_keys_pinned_to_catalog.py`
+    and `test_dealer_eta_stock_routing.py` use)."""
+    root = Path(__file__).resolve().parents[3] / "sorento_crm_mcp"
+    if str(root) not in sys.path:
+        sys.path.append(str(root))
+    from sorento_crm_mcp.catalog import CATALOG
+    from sorento_crm_mcp.presenters import present_response
+
+    return CATALOG, present_response
 
 DO_KEYS = {
     "delivery_orders.status": "Status",
@@ -51,7 +56,7 @@ _ROW = {
 
 
 def _reply(granted: list[str] | None) -> str:
-    envelope = json.loads(present_response("crm_order_management_orders_list", json.dumps({"data": [_ROW]})))
+    envelope = json.loads(_mcp()[1]("crm_order_management_orders_list", json.dumps({"data": [_ROW]})))
     ctx = {"semantic_input": {}, "access": {"allowed": True, "attributes": granted}}
     return fetch.output_structurer(envelope, ctx)["response"]
 
@@ -91,7 +96,7 @@ def test_the_five_keys_are_on_the_field_reveals_checklist() -> None:
 
 def test_the_orders_list_tool_declares_the_five_keys() -> None:
     """Only the orders list shows the five fields; the by-product list shows none of them."""
-    specs = {spec.name: spec for spec in CATALOG}
+    specs = {spec.name: spec for spec in _mcp()[0]}
     declared = {key for key, _label in specs["crm_order_management_orders_list"].restricted_fields}
     assert set(DO_KEYS) <= declared, declared
 
@@ -155,7 +160,7 @@ def test_an_asterisk_in_a_value_does_not_leave_a_stray_bold_marker() -> None:
     marker, and the reply shows a stray '*'. A value's own '*' prints as the look-alike
     U+2217, which WhatsApp does not read as formatting."""
     row = {**_ROW, "lines": [{"product_code": "*REPLACE", "quantity": 1}]}
-    envelope = json.loads(present_response("crm_order_management_orders_list", json.dumps({"data": [row]})))
+    envelope = json.loads(_mcp()[1]("crm_order_management_orders_list", json.dumps({"data": [row]})))
     said = fetch.output_structurer(envelope, {"semantic_input": {}, "access": {"attributes": list(DO_KEYS)}})["response"]
     assert "∗REPLACE (1)" in said, said
     stars = [line for line in said.split("\n") if line.count("*") % 2]
