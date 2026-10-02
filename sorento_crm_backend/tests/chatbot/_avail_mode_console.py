@@ -19,6 +19,7 @@ from datetime import date
 from typing import Any
 
 from app.services.ai_assistant_service import MCPRuntimeClient
+from app.services.eta_policy import dealer_view
 from app.services.stock_ask_branch import branch, short_of
 
 from tests.chatbot._r9_engine_console import EngineConsole, _present_response
@@ -92,16 +93,19 @@ class AvailConsole(EngineConsole):
             self.tool_calls.append((name, args))
             ids = [pid for pid in args.get("product_ids") or [] if pid in self.codes]
             if name in ("crm_incoming_stock_by_product", "crm_incoming_stock_list"):
+                # The route's real shape (tester-local pass on 7fa5d654, step 15): only a
+                # product WITH a shipment has a row, its date ISO, and the REAL
+                # `eta_policy.dealer_view` builds what the dealer is told from it, with
+                # the codes asked.
                 rows = []
                 for pid in ids:
                     eta = self._facts(self.codes[pid]).eta
-                    rows.append(
-                        {
-                            "product_code": self.codes[pid],
-                            "etas": [eta.strftime("%d/%m/%Y")] if eta else [],
-                        }
-                    )
-                return present(name, json.dumps({"data": rows, "dealer_view": True}))
+                    if eta:
+                        rows.append(
+                            {"product_code": self.codes[pid], "estimated_arrival_date": eta.isoformat()}
+                        )
+                told = dealer_view({"data": rows}, asked=[self.codes[pid] for pid in ids])
+                return present(name, json.dumps(told))
             if name != "crm_inventory_stock_balance_list":
                 return json.dumps({"answers": []})
             wanted = args.get("requested_quantities") or {}

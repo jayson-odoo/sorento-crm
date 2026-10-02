@@ -400,3 +400,62 @@ def test_S42_a_near_miss_inside_a_mix_is_listed_without_a_did_you_mean(console):
     c = console(SRT5674=Stock(on_hand=100), ELP3754=Stock(on_hand=20))
     out = c.say("SRT5674 x 5, ELP3753 x 1", stock(product("SRT5674", 5), product("ELP3753", 1)))
     assert out == f"SRT5674 x 5: {TICK} {R}\n\nCouldn't find: ELP3753."
+
+
+# ================================================================== tester-local pass on 7fa5d654
+# The live parser's own readings, as the crew tester's console trace recorded them.
+
+
+def test_S43_two_of_three_read_by_the_live_parser_as_option_two_is_option_three_qty_two(console):
+    """Step 7: the live parser read "2 of 3" as option 2, quantity 3. The number after
+    "of" is the option (v2 note 2), so the engine reads the bare shape itself."""
+    c = console()
+    c.say("check stock srtwc286", stock(product("srtwc286")))
+    misread = reply(
+        reference_positions=[2], demand_qty=3, open_question_answer=answer("pick", items=[(2, None, 3)])
+    )
+    assert c.say("2 of 3", misread) == f"SRTWC286-SH-200 x 2: {CROSS} No incoming. {R}"
+
+
+@pytest.mark.parametrize("typed", ["2 of the third one", "i want 2 of 3rd product", "2 of no 3", "2 pcs of 3"])
+def test_S43b_quantity_of_a_position_worded_any_way(console, typed):
+    c = console()
+    c.say("check stock srtwc286", stock(product("srtwc286")))
+    misread = reply(
+        reference_positions=[2], demand_qty=3, open_question_answer=answer("pick", items=[(2, None, 3)])
+    )
+    assert c.say(typed, misread) == f"SRTWC286-SH-200 x 2: {CROSS} No incoming. {R}"
+
+
+def test_S43c_several_pairs_read_off_the_message(console):
+    c = console()
+    c.say("check stock srtwc286", stock(product("srtwc286")))
+    misread = reply(
+        reference_positions=[2, 5],
+        open_question_answer=answer("pick", items=[(2, None, 1), (5, None, 3)]),
+    )
+    assert c.say("2 of 1 and 5 of 3", misread) == (
+        f"SRTWC286-SH x 2: {CROSS} No incoming. {R}\n\nSRTWC286-SH-200 x 5: {CROSS} No incoming. {R}"
+    )
+
+
+def test_S44_a_code_named_twice_merged_by_the_live_parser_still_adds_up(console):
+    """Step 12: the live parser merged "SRT5674 x 2, SRT5674 x 3" into ONE entity with
+    the last quantity (`entity_op: replace_combine`), so the S24 sum never ran."""
+    c = console(SRT5674=Stock(on_hand=100))
+    merged = stock(product("SRT5674", 3), entity_op="replace_combine")
+    assert c.say("SRT5674 x 2, SRT5674 x 3", merged) == f"SRT5674 x 5: {TICK} {R}"
+
+
+def test_S44b_a_code_named_once_is_not_summed_with_another_number(console):
+    c = console(SRT5674=Stock(on_hand=100))
+    assert c.say("SRT5674 x 2 for site 3", stock(product("SRT5674", 2))) == f"SRT5674 x 2: {TICK} {R}"
+
+
+def test_S45_eta_ask_for_a_code_with_no_shipment_and_a_code_not_found(console):
+    """Step 15 (as scripted): SRTW2000 has no shipment. The real dealer view lists it
+    with no ETA, so the reply is the catalogue's S15/S16 shape, not "Related products"."""
+    c = console()
+    assert c.say("ETA SRTW2000 and FOO99", _eta_ask("SRTW2000", "FOO99")) == (
+        f"SRTW2000: ETA not confirmed yet\n\nCouldn't find: FOO99.\n\n{R}"
+    )
