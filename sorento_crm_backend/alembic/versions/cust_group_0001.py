@@ -1,7 +1,7 @@
 """CUSTOMER-GROUP: `customer_groups` and `customers.customer_group_id`, seeded once.
 
 Revision ID: cust_group_0001
-Revises: grn_pull_0001_perm
+Revises: picker_no_cap_0001
 Create Date: 2026-10-02
 
 A group is one company's customer made of several ledgers. The chatbot used to join ledgers
@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "cust_group_0001"
-down_revision = "grn_pull_0001_perm"
+down_revision = "picker_no_cap_0001"
 branch_labels = None
 depends_on = None
 

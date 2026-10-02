@@ -67,7 +67,15 @@ def _run(db) -> None:
 def test_revision_chain_and_additive():
     module = _load()
     assert module.revision == "cust_group_0001"
-    assert module.down_revision == "grn_pull_0001_perm"
+    # Survives a re-parent: the parent is any existing revision and this is the one head.
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    cfg = Config(str(VERSIONS.parent.parent / "alembic.ini"))
+    cfg.set_main_option("script_location", str(VERSIONS.parent))
+    script = ScriptDirectory.from_config(cfg)
+    assert script.get_revision(module.down_revision) is not None
+    assert script.get_heads() == ["cust_group_0001"]
     source = (VERSIONS / "cust_group_0001.py").read_text(encoding="utf-8")
     assert "IF NOT EXISTS" in source
 
