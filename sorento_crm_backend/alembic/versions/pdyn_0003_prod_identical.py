@@ -15,8 +15,10 @@ newline or CRLF line ends, means nothing is written and the log names the first
 difference (line, column, both characters). It never guesses (owner, 1 Oct 2026). No
 `production` label: nothing written, logged.
 
-The result is proven before insert: rendering it from the tables gives the file byte for
-byte. If that proof ever fails, nothing is written and the failure is logged.
+The version also carries ACCOUNT_LEDGER_ADDENDUM (#1432, merged first), just before the
+policy blocks (`chatbot_prompt_vars.with_account_block`). The result is proven before
+insert: rendering it from the tables gives the file plus that block, byte for byte. If
+that proof ever fails, nothing is written and the failure is logged.
 
 Inserted as ONE new UNLABELLED version (version = max + 1 at run time). No label moves
 and no existing version is touched; the owner publishes it himself. Idempotent: does
@@ -101,7 +103,10 @@ def apply(bind) -> int | None:
             return None
         chatbot_prompt_vars.clear_cache()
         template, report = chatbot_prompt_vars.identical_wording_layer(source, session)
-        identical = _renders_identical(template, source, session)
+        # #1432 ACCOUNT-LEDGER merged first: the version carries its `account` block, and
+        # the proof is the owner's file plus that block.
+        template = chatbot_prompt_vars.with_account_block(template)
+        identical = _renders_identical(template, chatbot_prompt_vars.with_account_block(source), session)
         if not identical:
             logger.warning("prod snapshot: the swapped text did not render identical to the file; nothing written")
             return None

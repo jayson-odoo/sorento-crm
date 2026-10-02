@@ -19,6 +19,10 @@ same way instead (owner Q-A = (a): the rebuild of his edited plain-text version 
 against that version, so his edits are not differences). Read-only.
 
 Omit --from-version to start from the `production` version.
+
+Every rebuilt version also carries ACCOUNT_LEDGER_ADDENDUM (#1432, the `account` entity
+key) just before the policy blocks, unless the source already has it; "identical" and
+`--verify` compare against the source plus that block.
 """
 from __future__ import annotations
 
@@ -51,8 +55,11 @@ def build(db, *, from_version: int | None = None, save: bool = False) -> dict:
         values = {n: pv.render_value(db, n) for n in extract_tokens(template) & set(pv.VARIABLE_NAMES)}
         return _substitute(template, values)
 
-    before = rendered(source.template)
+    # #1432 ACCOUNT-LEDGER merged first: the version carries its `account` block, so the
+    # output must equal the source plus that block (a no-op once the source has it).
+    before = pv.with_account_block(rendered(source.template))
     template, report = pv.identical_wording_layer(source.template, db)
+    template = pv.with_account_block(template)
     after = rendered(template)
     result = {
         "from_version": source.version,
@@ -102,11 +109,15 @@ def verify(db, version: int, snapshot=None, *, against_version: int | None = Non
         out, _ = ai_prompt_registry.render(db, PROMPT_NAME, current_date="D", override_version_id=row.id)
         return out
 
+    from app.services.chatbot_prompt_vars import with_account_block
+
     out = rendered(version)
+    # The reference plus the account block (#1432), which every rebuilt version carries.
     if against_version is not None:
-        want, against = rendered(against_version), f"v{against_version}"
+        want, against = with_account_block(rendered(against_version)), f"v{against_version}"
     else:
-        want, against = snapshot.read_text(encoding="utf-8").replace("{{current_date}}", "D"), snapshot.name
+        source = snapshot.read_text(encoding="utf-8").replace("{{current_date}}", "D")
+        want, against = with_account_block(source), snapshot.name
     if out == want:
         return {"version": version, "against": against, "equal": True, "first_difference": None,
                 "chars": (len(out), len(want))}

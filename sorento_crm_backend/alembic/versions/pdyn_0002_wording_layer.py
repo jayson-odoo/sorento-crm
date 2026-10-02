@@ -61,6 +61,8 @@ def apply(bind) -> int | None:
             logger.warning("no production %s version; wording layer not published", PROMPT_NAME)
             return None
         template, report = chatbot_prompt_vars.wording_layer(row[1], session)
+        # #1432 ACCOUNT-LEDGER merged first: the version carries its `account` block.
+        template = chatbot_prompt_vars.with_account_block(template)
         top = session.execute(
             sql("SELECT max(version) FROM ai_prompt_versions WHERE name = :n"), {"n": PROMPT_NAME}
         ).scalar()

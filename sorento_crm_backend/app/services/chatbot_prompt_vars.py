@@ -657,6 +657,23 @@ def wording_layer(template: str, db: Session) -> tuple[str, list[str]]:
     return text, report
 
 
+def with_account_block(text: str) -> str:
+    """`text` carrying ACCOUNT_LEDGER_ADDENDUM (#1432, the `account` entity key), so a
+    variable version promoted from the owner's text never drops it. The owner's text of
+    1 Oct 2026 predates the block: it goes in once, just before the policy blocks (at the
+    end when there are none). A text that already has the block, owner-edited or not, is
+    returned as it is."""
+    from app.services.chatbot_parser_prompt import ACCOUNT_LEDGER_ADDENDUM, BLOCKS_BEGIN
+
+    if "\nCUSTOMER ACCOUNT NUMBER\n" in text:
+        return text
+    block = ACCOUNT_LEDGER_ADDENDUM.strip("\n")
+    if BLOCKS_BEGIN in text:
+        head, rest = text.split(BLOCKS_BEGIN, 1)
+        return f"{head.rstrip(chr(10))}\n\n{block}\n\n{BLOCKS_BEGIN}{rest}"
+    return f"{text.rstrip(chr(10))}\n\n{block}\n"
+
+
 # --------------------------------------------------------------------------- #
 # Publishing after the wording layer exists (R1: republishing never overwrites it).
 # --------------------------------------------------------------------------- #
