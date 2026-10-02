@@ -621,3 +621,219 @@ def test_ac_re_20_report_ask_equals_the_sales_report_to_the_sen(client, db, grou
         r["name"]: (r["qty"], money(r["amount"])) for r in old["rows"]}, (ask["rows"], old["rows"])
     assert ask["total"]["qty"] == old["total"]["qty"], (ask["total"], old["total"])
     assert money(ask["total"]["amount"]) == money(old["total"]["amount"]), (ask["total"], old["total"])
+
+
+# ================================================================ fix round 1 (REPORT-ENGINE)
+
+
+def _tie_world(db, specs):
+    """One agent per (code, qty, total), one AutoCount DO each, all on one product."""
+    cust = seed_customer(db, name=unique_code("Cust"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    prod = _prod(db, unique_code("ZZTTIE", alpha=True))
+    for code, qty, total in specs:
+        _sale(db, cust=cust, wh=wh, agent=seed_agent(db, code=code), prod=prod, qty=qty, total=total)
+    db.commit()
+
+
+def _order(body):
+    return [r["name"] for r in body["rows"]]
+
+
+@pytest.mark.parametrize("sort, expected", [("desc", ["ZZT-T2", "ZZT-T1"]), ("asc", ["ZZT-T1", "ZZT-T2"])])
+def test_ac_re_6_amount_tie_breaks_on_qty_in_the_sort_direction(client, db, sort, expected):
+    """AC-RE-6 / reviewer S1: equal amount, qty 5 vs 9: desc puts the higher qty first, asc the lower."""
+    _tie_world(db, [("ZZT-T1", 5, "100.00"), ("ZZT-T2", 9, "100.00")])
+    body = _ok(client, _full(db), group_by="sales_agent", top_n=10, sort=sort)
+    assert _order(body) == expected, body["rows"]
+
+
+@pytest.mark.parametrize("sort", ["desc", "asc"])
+def test_ac_re_6_full_tie_breaks_on_name_ascending_both_ways(client, db, sort):
+    """AC-RE-6 / S1: equal amount AND qty: name ascending whichever way the sort runs."""
+    _tie_world(db, [("ZZT-T4", 2, "50.00"), ("ZZT-T3", 2, "50.00")])
+    body = _ok(client, _full(db), group_by="sales_agent", top_n=10, sort=sort)
+    assert _order(body) == ["ZZT-T3", "ZZT-T4"], body["rows"]
+
+
+@pytest.mark.parametrize("sort, expected", [("desc", ["ZZT-T2", "ZZT-T1"]), ("asc", ["ZZT-T1", "ZZT-T2"])])
+def test_ac_re_6_qty_tie_breaks_on_amount_in_the_sort_direction(client, db, sort, expected):
+    """AC-RE-6 / S1: measure=qty, equal qty: the other measure (amount) breaks the tie."""
+    _tie_world(db, [("ZZT-T1", 5, "100.00"), ("ZZT-T2", 5, "300.00")])
+    body = _ok(client, _full(db), group_by="sales_agent", top_n=10, sort=sort, measure="qty")
+    assert _order(body) == expected, body["rows"]
+
+
+@pytest.mark.parametrize("sort", ["desc", "asc"])
+def test_ac_re_6_qty_full_tie_breaks_on_name_ascending(client, db, sort):
+    _tie_world(db, [("ZZT-T4", 5, "100.00"), ("ZZT-T3", 5, "100.00")])
+    body = _ok(client, _full(db), group_by="sales_agent", top_n=10, sort=sort, measure="qty")
+    assert _order(body) == ["ZZT-T3", "ZZT-T4"], body["rows"]
+
+
+@pytest.mark.parametrize(
+    "param", ["brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes", "product_code"]
+)
+def test_b2_a_blank_filter_is_422_empty_filter_never_no_filter(client, db, param):
+    """B2: a filter param present but blank must not widen to "no filter"."""
+    _ranking_world(db)
+    value = "   " if param == "product_code" else ""
+    resp = _ask(client, _full(db), group_by="sales_agent", top_n=3, **{param: value})
+    assert resp.status_code == 422, resp.text
+    assert _code(resp) == "empty_filter", resp.text
+    assert param in str(resp.json().get("detail")), resp.text
+
+
+@pytest.mark.parametrize("param", ["brand_ids", "category_ids", "sales_agent_ids", "customer_ids"])
+def test_b2_an_id_naming_no_row_is_404_not_found(client, db, param):
+    _ranking_world(db)
+    resp = _ask(client, _full(db), group_by="sales_agent", top_n=3, **{param: [str(uuid.uuid4())]})
+    assert resp.status_code == 404 and _code(resp) == "NOT_FOUND", resp.text
+
+
+def test_an_unknown_query_key_is_422_unknown_param(client, db):
+    resp = _ask(client, _full(db), group_by="sales_agent", top_n=3, brand="SORENTO")
+    assert resp.status_code == 422 and _code(resp) == "unknown_param", resp.text
+    assert "brand" in str(resp.json().get("detail")), resp.text
+
+
+@pytest.mark.parametrize(
+    "params, code",
+    [
+        ({"group_by": "colour", "top_n": 3}, "unknown_group_by"),
+        ({"group_by": "product", "top_n": 3, "basis": "invoiced"}, "unknown_basis"),
+        ({"group_by": "product", "top_n": 3, "measure": "profit"}, "unknown_measure"),
+        ({"group_by": "product", "top_n": 3, "sort": "sideways"}, "unknown_sort"),
+        ({"group_by": "product", "top_n": 3, "channel": "retail"}, "invalid_channel"),
+    ],
+)
+def test_enum_422s_carry_the_allowed_list_in_detail(client, db, params, code):
+    resp = _ask(client, _full(db), **params)
+    assert resp.status_code == 422 and _code(resp) == code, resp.text
+    detail = str(resp.json().get("detail"))
+    assert detail.startswith("allowed: "), resp.text
+    if code == "unknown_group_by":
+        assert "sales_agent" in detail, resp.text
+
+
+def test_a_list_param_over_50_values_is_422_too_many_values(client, db):
+    resp = _ask(client, _full(db), group_by="product", top_n=3, brand_ids=[str(uuid.uuid4()) for _ in range(51)])
+    assert resp.status_code == 422 and _code(resp) == "too_many_values", resp.text
+    assert "brand_ids" in str(resp.json().get("detail")), resp.text
+
+
+def test_exactly_50_values_is_not_too_many(client, db):
+    resp = _ask(client, _full(db), group_by="product", top_n=3, brand_ids=[str(uuid.uuid4()) for _ in range(50)])
+    assert _code(resp) != "too_many_values", resp.text
+
+
+@pytest.mark.parametrize("params", [{"date_to": "9999-12-31"}, {"date_from": "1800-01-01"}])
+def test_a_year_outside_1900_to_2200_is_422(client, db, params):
+    resp = _ask(client, _full(db), group_by="product", top_n=3, **params)
+    assert resp.status_code == 422 and _code(resp) == "date_out_of_range", resp.text
+
+
+def _only_company(db, contact, company_id):
+    """Make `company_id` the contact's ONLY company (replacing the default one `_contact` gave it)."""
+    from app.models.company import RespondContactCompany
+
+    db.query(RespondContactCompany).filter(RespondContactCompany.respond_contact_id == contact.id).delete()
+    db.add(RespondContactCompany(id=str(uuid.uuid4()), respond_contact_id=contact.id, company_id=company_id))
+    db.commit()
+
+
+def test_s1_the_company_grant_comes_from_the_contact_not_the_session_scope(client, db):
+    """Security S1/I3: a contact whose only company is the second one sees that company's DOs and
+    none of the default company's, though the client session scope is the default company."""
+    mocha = seed_mocha(db)
+    cust = seed_customer(db, name=unique_code("Cust"))
+    mocha_cust = seed_customer(db, name=unique_code("MochaCust"), company_id=mocha.id)
+    prod = _prod(db, unique_code("ZZTGR", alpha=True))
+    prod_m = product(db, company_id=mocha.id, code=unique_code("ZZTGM", alpha=True))
+    wh, wh_m = warehouse(db, company_id=DEFAULT_COMPANY_ID), warehouse(db, company_id=mocha.id)
+    seed_do(db, customer_id=cust.id, order_date=SEP, source_book="db1",
+            lines=[line(prod.id, wh.id, 99, price=D("1"), total=D("999.00"))])
+    seed_do(db, customer_id=mocha_cust.id, order_date=SEP, source_book="db1", company_id=mocha.id,
+            lines=[line(prod_m.id, wh_m.id, 10, price=D("1"), total=D("100.00"))])
+    contact = _contact(db)
+    _only_company(db, contact, mocha.id)
+    body = _ok(client, contact)
+    assert body["total"]["qty"] == 10 and money(body["total"]["amount"]) == D("100.00"), body["total"]
+
+
+def _ordered_in(db, *, company_id, cust, prod, qty, total):
+    so = SalesOrder(id=str(uuid.uuid4()), so_number=unique_code("SO"), customer_id=cust.id,
+                    order_date=SEP, status="open", company_id=company_id)
+    db.add(so)
+    db.flush()
+    db.add(SalesOrderLine(id=str(uuid.uuid4()), sales_order_id=so.id, product_id=prod.id,
+                          qty_ordered=qty, qty_delivered=0, line_total=D(total), line_status="open",
+                          company_id=company_id))
+    db.flush()
+
+
+def _ordered_two_companies(db):
+    mocha = seed_mocha(db)
+    cust = seed_customer(db, name=unique_code("Cust"))
+    mocha_cust = seed_customer(db, name=unique_code("MochaCust"), company_id=mocha.id)
+    prod = _prod(db, unique_code("ZZTOR", alpha=True))
+    prod_m = product(db, company_id=mocha.id, code=unique_code("ZZTOM", alpha=True))
+    _ordered_in(db, company_id=DEFAULT_COMPANY_ID, cust=cust, prod=prod, qty=99, total="999.00")
+    _ordered_in(db, company_id=mocha.id, cust=mocha_cust, prod=prod_m, qty=10, total="100.00")
+    return mocha
+
+
+def test_s1_ordered_basis_does_not_count_another_companys_so_lines(client, db):
+    _ordered_two_companies(db)
+    contact = _full(db)  # default company only
+    body = _ok(client, contact, basis="ordered")
+    assert body["total"]["qty"] == 99 and money(body["total"]["amount"]) == D("999.00"), body["total"]
+
+
+def test_s1_ordered_basis_reads_the_contacts_own_company(client, db):
+    mocha = _ordered_two_companies(db)
+    contact = _contact(db)
+    _only_company(db, contact, mocha.id)
+    body = _ok(client, contact, basis="ordered")
+    assert body["total"]["qty"] == 10 and money(body["total"]["amount"]) == D("100.00"), body["total"]
+
+
+def test_s1_a_whitespace_space_id_is_contact_identity_required(client, db):
+    contact = _full(db)
+    resp = client.get(ROUTE, params={**PERIOD, "contact_id": contact.id, "space_id": " "}, headers=KEY)
+    assert resp.status_code == 422 and _code(resp) == "contact_identity_required", resp.text
+
+
+def test_a_rate_limited_ask_answers_busy_through_the_response_model(client, db, monkeypatch):
+    from app.schemas.report_ask import ReportAskResponse
+    from app.services import rate_limit
+
+    monkeypatch.setattr(rate_limit, "hit", lambda *a, **k: SimpleNamespace(allowed=False))
+    body = _ok(client, _full(db), group_by="sales_agent", top_n=3)
+    assert body["status"] == "busy" and body["rows"] == [], body
+    assert body["basis_label"] == "delivered sales", body
+    ReportAskResponse(**body)  # every declared field is present and well typed
+
+
+def test_a_dealer_naming_its_own_customer_is_echoed(client, db):
+    w = _ranking_world(db)
+    body = _ok(client, _dealer(db, w), group_by="product", top_n=3, customer_ids=[w.cust.id])
+    names = [f["values"] for f in body["filters"] if f["key"] == "customer"]
+    assert names == [[w.cust.customer_name]], body["filters"]
+
+
+def test_s2_run_ask_with_an_empty_filter_list_returns_zero_rows(db):
+    """Reviewer S2: a filter that resolved to nothing is zero rows, never "no filter"."""
+    from datetime import date as _date
+
+    from app.services.reports import ask
+
+    _ranking_world(db)
+    out = ask.run_ask(
+        db, basis="delivered", measure="amount", group_by="sales_agent",
+        date_from=_date(2026, 9, 1), date_to=_date(2026, 9, 30),
+        filters={"brand": []}, warehouse_codes=[],
+        policy=SimpleNamespace(warehouse_ids=None, excluded_warehouse_ids=None), top_n=10,
+    )
+    assert out["rows"] == [] and out["total_count"] == 0, out
+    assert out["total"]["qty"] == 0 and money(out["total"]["amount"]) == D("0.00"), out

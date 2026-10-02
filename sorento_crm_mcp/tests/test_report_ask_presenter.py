@@ -124,3 +124,9 @@ def test_filters_join_values_with_commas_and_filters_with_semicolons():
     first = _report_ask(_body(filters=filters)).split("\n")[0]
     assert first == ("Top 3 sales agents by delivered sales, Brand SORENTO, MOCHA; Category Chairs, "
                      "2026-09-01 to 2026-09-30"), first
+
+
+def test_required_query_hints_force_the_contact_pair_and_the_period():
+    from sorento_crm_mcp.server import TOOL_REQUIRED_QUERY_HINTS
+
+    assert TOOL_REQUIRED_QUERY_HINTS["crm_report_ask"] == ("contact_id", "space_id", "date_from", "date_to")
