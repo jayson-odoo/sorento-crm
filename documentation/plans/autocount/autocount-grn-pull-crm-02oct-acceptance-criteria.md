@@ -1,8 +1,8 @@
 # UAC: GRN pull from AutoCount with PO/SPO line linkage (GRN-PULL-CRM)
 
 Plan: `PLAN-autocount-grn-pull-crm-02oct.md`. Owner rulings 2 Oct: Q3 (a), Q4 (a), Q5 (a);
-Q1 / Q2 as proposed rejected ("every GRN line must link"), design held for live evidence.
-Criteria marked **(held)** are rewritten once that lands.
+Q1 / Q2 replaced by line-order matching (live evidence; owner accepted 2 Oct); D1 a, D2 a,
+D4 accept (crew); D3 a (owner).
 
 ## Entity, permission, migration
 
@@ -35,25 +35,26 @@ Criteria marked **(held)** are rewritten once that lands.
 - **AC-GP-21 [BE]** Key 0, `FromDocType "PO"`, `FromDocNo` = a PO holding ONE line of the
   product: `po_line_id` and `purchase_order_id` set, no warning. (Owner sample
   `PO-2026/07-0013`; dev `GR-2026/09-0070` / `PO-2026/09-0018`.)
-- **AC-GP-22 [BE]** Same, the PO holds the product on two lines, one in the GRN's Location:
-  that one links. Both in other warehouses (or both in the same one): **(held)**, the owner
-  wants a link, never "ambiguous".
-- **AC-GP-23 [BE]** Key 0, `FromDocNo` = an SPO whose product has one allocation with enough
-  capacity: `spo_allocation_id` set, `spo_number_raw` = the SPO; after apply the
-  allocation's received quantity includes the line (receipt hook ran).
-- **AC-GP-24 [BE] (held)** Key 0, SPO with the product on several allocations (dev
-  `GR-2026/09-0090`: SRT1000-CR 2640 over 7 SPO lines in 3 warehouses; `GR-2026/09-0075`):
-  every line links to SPO line(s); the shape waits on the live evidence.
-- **AC-GP-25 [BE]** Key 0, SPO with ONE allocation of the product, qty above its remaining
-  capacity: linked to it (the only candidate), warning `spo_over_receipt`.
-- **AC-GP-26 [BE]** Two GRNs against the same SPO allocation (partial receipts): the second
-  sees the first's draw; when the first used it up and the SPO has a second allocation of
-  the product, the second GRN links to that one.
+- **AC-GP-22 [BE]** The PO holds the product on two lines: two GRN lines of it take them in
+  DtlKey order (D4), whatever the GRN's Location.
+- **AC-GP-23 [BE]** Key 0, `FromDocNo` = an SPO (whatever `FromDocType` says) with one line of
+  the product: `spo_allocation_id` set, `spo_number_raw` = the SPO; after apply the SPO line's
+  received quantity includes the line (receipt hook ran). The SPO number matches the upload's
+  way (`spo-2026.09-0005` names `SPO-2026/09-0005`).
+- **AC-GP-24 [BE]** Live GR-2026/09-0090 shape: the k-th GRN line of an item takes the k-th SPO
+  line of that item (`spo_line_number` order), one picking line per AutoCount line, Location
+  never a key; two equal quantities still take two different lines.
+- **AC-GP-25 [BE]** Over receipt (no line has enough left): linked, warning `over_receipt`.
+- **AC-GP-26 [BE]** Partial receipts across GRNs: a GRN takes the first line whose remaining
+  equals its qty, else the first with enough (D1 a); a re-push keeps its own line; a split
+  Excel GRN (2 + 98) adopted by a 100 line merges to one row and takes the AutoCount link
+  (D2 a); forward matching never splits an AutoCount GRN line.
 - **AC-GP-27 [BE]** `FromDocNo` set and `OurPONo` set to a different document: `FromDocNo`
   wins (Q3 a).
 - **AC-GP-28 [BE]** No `FromDocNo`, no `OurPONo`: unlinked, no linkage warning.
-- **AC-GP-29 [BE]** `FromDocType` other than `PO` (e.g. `GR`): unlinked,
-  `from_doc_type_unsupported`.
+- **AC-GP-29 [BE]** The product is not on the named PO / SPO (D3 a): no line link, the
+  document link kept (`purchase_order_id`, or `spo_number_raw` for an SPO), warning
+  `item_not_on_order`, worded "item not on the named PO / SPO" on the review row.
 - **AC-GP-30 [BE]** `FromDocNo` in neither table: `purchase_order_unresolved`; when the PO
   arrives later, the next GRN batch fills the line link.
 - **AC-GP-31 [BE]** A PO / SPO with the same number in company B never links.

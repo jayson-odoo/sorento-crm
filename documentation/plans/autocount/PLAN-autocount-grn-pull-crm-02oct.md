@@ -1,11 +1,12 @@
 # PLAN: GRN pull from AutoCount with PO/SPO line linkage (GRN-PULL-CRM)
 
-Status: **owner answered Q3-Q5 (2 Oct); Q1/Q2 split design held for live evidence; red tests for
-the settled rules in progress; no implementation yet.** Track: full L (new permission slug + grant
+Status: **built (ingest linkage, pull entity, compare, frontend); in Phase 3 review.** All
+card questions answered (Q3 a, Q4 a, Q5 a; Q1/Q2 replaced by line-order matching, owner
+accepted 2 Oct; D1 a, D2 a, D4 accept; D3 a by the owner). PR #1427. Track: full L (new permission slug + grant
 migration, prod data linkage, cross-repo with shared-service lane GRN-PULL-SS). Branch
 `claude/grn-pull-crm-2pnmf9` (the sandbox's designated branch; the brief named
 `crew/grn-pull-crm`), base `main` 066b966e. UAC: `autocount-grn-pull-crm-02oct-acceptance-criteria.md`
-(AC-GP-01 onward). Rules held for the live evidence are marked **(held)**; the rest follow the owner rulings in 0.1.
+(AC-GP-01 onward). The rules follow the owner rulings in 0.1.
 
 Scope: Goods Receive Notes pulled on request by DocDate, same path as the DO pull
 (shared-service snapshot -> CRM preview/compare -> review -> user confirms). Push stays OFF.
@@ -48,8 +49,8 @@ Paths: `be/` = `sorento_crm_backend/`, `fe/` = `sorento_crm_frontend/`.
     `GR-2026/09-0092` (`PO-2026/09-0020`).
   - No source document: `FGR2026/09-0022`, `FGR2026/09-0024`, `GR-2026/07-0001`.
 
-Consequence for 1.3: R2a/R2b outcomes "ambiguous" and "over receipt" are placeholders until
-the held design lands; the single-candidate cases are settled.
+Consequence: the first card's "unlinked / ambiguous" outcomes are gone; section 1.3 is the
+line-order design the live evidence supports (owner accepted, 2 Oct).
 
 ## 1. Design
 
@@ -81,7 +82,7 @@ Live evidence (crew, 2 Oct, db1 + db2, read-only): `FromDocDtlKey` = 0 on every 
 the SPO's Seq order, the same item repeating (GR-2026/09-0090 66 lines = SPO-2026/09-0010 66
 lines; GR-2026/09-0075 38 = SPO-2026/09-0050 38); the GRN Location can differ from the SPO's
 (BRW -> MWH, BRW -> BRW-RSV). Rulings: Q3 a, Q4 a, D1 a, D2 a, D4 accept (crew); D3 with the
-owner, built as (a) behind `_unmatched_item` so it can change.
+owner answered (a); built behind `_unmatched_item`, one place to change.
 
 1. **Source document**: `FromDocNo`, else `OurPONo` (Q3 a). Neither: no source, unlinked,
    no warning (the only silent unlinked case; 11 of 257 live lines).
@@ -103,7 +104,7 @@ owner, built as (a) behind `_unmatched_item` so it can change.
    candidate: first with remaining == qty; else first with remaining >= qty; else first with
    any remaining (`over_receipt`); else the last candidate (`over_receipt`). Remaining is
    decremented as lines take candidates. One GRN line = one PO/SPO line; nothing is split.
-7. **No candidate (D3, owner pending)**: the product is not on the named document:
+7. **No candidate (D3 a, owner 2 Oct)**: the product is not on the named document:
    `item_not_on_order`, line link null, but the header link is kept: `purchase_order_id`
    (PO) or `spo_number_raw` + `from_doc_type='SPO'` (SPO).
 8. **Written columns**: `po_line_id` + `purchase_order_id` (PO) or `spo_allocation_id` +
@@ -175,8 +176,8 @@ job page ("AutoCount GRN Pull", Back to Goods Receive Notes), the GRN list's Act
 ## 2. Build order (tests first)
 
 1. This plan + UAC + red tests (`be/tests/test_autocount_pull_goods_receive_notes.py`,
-   `be/tests/test_ingest_autocount_grn_line_link.py`). **Done before the owner's answer.**
-2. Live evidence (crew) -> write the held split design (Q1/Q2) and its tests.
+   `be/tests/test_ingest_autocount_grn_line_link.py`). Done.
+2. Live evidence (crew) -> the line-order design (1.3) and its tests. Done.
 3. Backend: ingest R2/R4 + pool `cancelled` + waiting fill; maps + slug + migration + gate;
    preview / apply / hook; rows / download / compare.
 4. Frontend switches + vitest.
