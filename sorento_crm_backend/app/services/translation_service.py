@@ -533,6 +533,11 @@ def _check_chatbot_wording(source_text: str, target_text: str) -> None:
         problem = "different {placeholders} from the English wording"
     elif len(target_text) > max(3 * len(source_text), 40):
         problem = "more text than the English wording allows"
+    elif (target_text[:1].isspace(), target_text[-1:].isspace()) != (
+        source_text[:1].isspace(),
+        source_text[-1:].isspace(),
+    ):
+        problem = "different leading or trailing spaces from the English wording"
     if problem:
         raise AppException(422, f"This reply wording cannot contain {problem}.")
 
@@ -545,8 +550,9 @@ def update_target_text(
     row sharing this word (S2, text glossary lane) BEFORE the commit below, same ``zh ->
     en`` only rule (R5) as ``remember()``."""
     row = get_or_404(db, memory_id)
-    new_text = target_text.strip()
     chatbot = row.source_lang == "en"
+    # A chatbot joiner (" or ") carries its spaces on purpose: keep them, and check them below.
+    new_text = target_text if chatbot and row.source_text != row.source_text.strip() else target_text.strip()
     if chatbot:
         _check_chatbot_wording(row.source_text, new_text)
         from app.services import audit_service

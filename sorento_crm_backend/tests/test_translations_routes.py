@@ -306,3 +306,17 @@ def test_item7_zh_to_en_rows_are_not_subject_to_the_chatbot_checks(client):
     text = "Toilet *bowl*\nsee www.x.test 99 " + "very long " * 20
     resp = c.put(f"{BASE}/{row.id}", json={"target_text": text})
     assert resp.status_code == 200, resp.text
+
+
+def test_slice4_a_joiner_edit_must_keep_the_spaces_of_the_source(client):
+    c, db, _actor = client
+    row = _chatbot_row(db, source_text=" or ", target_text=" atau ")
+    db.commit()
+    resp = c.put(f"{BASE}/{row.id}", json={"target_text": "atau"})
+    assert resp.status_code == 422, resp.text
+    db.expire_all()
+    assert db.query(TranslationMemory).filter(TranslationMemory.id == row.id).one().target_text == " atau "
+    ok = c.put(f"{BASE}/{row.id}", json={"target_text": " lalu "})
+    assert ok.status_code == 200, ok.text
+    db.expire_all()
+    assert db.query(TranslationMemory).filter(TranslationMemory.id == row.id).one().target_text == " lalu "

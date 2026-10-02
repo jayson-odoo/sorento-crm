@@ -561,3 +561,11 @@ way as labels. The offer-hold clause `" - reply a number, a name, or the company
 and I'll assign automatically."` and its no-companies twin are catalogued as the WHOLE line
 `lanes/canned.py:~170` prints (lead + clause). The coder reads the lead's exact text, and if
 that lead is dynamic, records it as a Known gap.
+
+## Known gaps (slice 4 fix round)
+
+- The offer-hold clarify line (`lanes/canned.py` ~160-170) stays English: its lead is built from
+  the live team names (`"{joined} teams are listed"`, or `"More than one team is listed"`) and the
+  clause is registry-editable copy (`offer_hold`, `offer_hold_no_companies`), so there is no fixed
+  whole line to catalogue. The sentences inside the final pass that it shares with other builders
+  still translate.
