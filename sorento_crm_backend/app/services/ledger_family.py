@@ -5,8 +5,9 @@ marker: `CHIN CHUN HARDWARE SDN BHD - [A/C I]`, `HANLIM TRADING (JB) SDN BHD (SR
 of one name are one customer. `ledger_family_key` is the comparison key two such rows share;
 `ledger_family_label` is what the family is called.
 
-`family_words` names a list of customer rows that way in one line, group names only (DO-ASK-SIMPLIFY rule 1),
-for the chatbot's DO header and its empty-list (miss) header alike.
+`group_names` / `family_words` name a list of customer rows by group only (DO-ASK-SIMPLIFY
+rule 1, owner rule 2 Oct 2026: no count, no "and N more"), for the chatbot's DO headers and
+its customer-scope refusal line alike.
 
 Core, not the chatbot package: the chatbot's narrower (`app/services/chatbot/turn/narrow.py`)
 groups a customer roster by it, and the stock-ask record (`app/services/stock_ask_service.py`)
@@ -89,30 +90,48 @@ def _shared_label(names: list[str]) -> str:
     return cleaned or ledger_family_label(names[0])
 
 
-def family_words(names: list[str]) -> str | None:
-    """DO-ASK-SIMPLIFY rule 1 (owner, 2 Oct 2026): the customer rows in scope, named once.
+def _without_trailing_marker(name: str) -> str:
+    """One ledger's group name: its name without the bracketed ledger marker at its END
+    ("HANLIM TRADING SDN BHD [A/C I]", "... - [IBORN]", "... (CERAMIC & ELLECI)"); a bracket
+    inside the name ("CHENG HUAT HARDWARE (SENTUL) SDN BHD") is part of it and stays."""
+    text = " ".join(name.split()).strip().rstrip("-").strip()
+    while text.endswith(("]", ")")):
+        runs = _bracket_runs(text)
+        if not runs or not text.endswith(runs[-1]):
+            break
+        stripped = text[: -len(runs[-1])].strip().rstrip("-").strip()
+        if not stripped:
+            break
+        text = stripped
+    return text
 
-    Owner rule (2 Oct 2026, PR #1435): a customer company is named by its GROUP NAME ONLY.
-    The rows of one ledger family (the ledgers of one trading name) print the family label,
-    "HANLIM TRADING SDN BHD", with no "(6 accounts)" count; one row prints its family label
-    too, without its ledger marker, as `turn/compose.py`'s header always has. Several
-    families are each named, "A, B and C", never "A and 2 more". Each DO row still carries
-    its own full ledger name; only the header shortens.
+
+def group_names(names: list[str]) -> list[str]:
+    """The group (trading) names behind customer rows, each once, in first-seen order.
+
+    Owner rule (2 Oct 2026): when the chatbot names a customer company it shows the GROUP
+    NAME ONLY ("HANLIM TRADING SDN BHD"), never a ledger marker, an account count or "and N
+    more". Rows of one family (`ledger_family_key`) are one group; its name keeps the
+    brackets every row shares (the branch in "CHENG HUAT HARDWARE (SENTUL) SDN BHD") and
+    drops the ones that tell the ledgers apart.
     """
-    # One ledger reached twice (a picked option carries its uuid twice) is one account.
-    kept = list(dict.fromkeys(name for name in names if name))
-    if not kept:
-        return None
     families: dict[str, list[str]] = {}
-    for name in kept:
+    for name in dict.fromkeys(n for n in names if n):
         families.setdefault(ledger_family_key(name) or name, []).append(name)
-    labels = [
-        ledger_family_label(rows[0]) if len(rows) == 1 else _shared_label(rows)
-        for rows in families.values()
-    ]
-    if len(labels) == 1:
-        return labels[0]
-    return ", ".join(labels[:-1]) + " and " + labels[-1]
+    return list(
+        dict.fromkeys(
+            _without_trailing_marker(_shared_label(rows) if len(rows) > 1 else rows[0])
+            for rows in families.values()
+        )
+    )
+
+
+def family_words(names: list[str]) -> str | None:
+    """DO-ASK-SIMPLIFY rule 1: the customer rows in scope, named once per group, comma
+    separated ("HANLIM TRADING SDN BHD"; "CHIN CHUN HARDWARE SDN BHD, JIMMY - I"). Each DO
+    row still carries its own full ledger name; only the header shortens."""
+    groups = group_names(names)
+    return ", ".join(groups) if groups else None
 
 
 _ROMAN = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10}

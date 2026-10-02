@@ -125,10 +125,13 @@ def refusal_line_for(scope: ContactCustomerScope, ids: list[str]) -> str:
 
 
 def _refusal_for(names: list[str]) -> str:
-    """The linked customers named the way the DO header names them (owner ruling on
-    PR #1435): one ledger by its own name, several ledgers of one trading name as
-    "HANLIM TRADING SDN BHD (6 accounts)", further families as "and N more"."""
-    from app.services.ledger_family import family_words
+    # Owner rule (2 Oct 2026): a customer company is named by its group name only.
+    from app.services.ledger_family import group_names
 
-    joined = family_words(names) or "your own account"
-    return f"Sorry, that isn't under your account. I can only check on {joined}."
+    names = group_names(names)
+    if len(names) <= 1:
+        joined = names[0] if names else "your own account"
+    else:
+        joined = ", ".join(names[:-1]) + " and " + names[-1]
+    stop = "" if joined.endswith(".") else "."  # "SOON HENG HARDWARE CO.SDN.BHD." ends its own sentence
+    return f"Sorry, that isn't under your account. I can only check on {joined}{stop}"
