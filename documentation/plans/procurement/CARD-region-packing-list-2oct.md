@@ -3,6 +3,8 @@
 Lane REGION-PACKING-LIST, size L. Status: ANSWERED 2 Oct 2026. Q1 = (b) contact region grant lives in the ACCESS-MODEL access model (contact
 side waits for that lane); Q2 (a); Q3 (a); Q4 (a) workbook fine as is; Q5 (a). Mock v2 approved, default West
 Malaysia only. Rule 4 below (contact column + Chatbot settings card) is superseded by Q1 (b): see the PLAN.
+Re-upload ruling (2 Oct): a second packing list uploaded onto an existing container takes the regions the user
+picked in the upload dialog.
 
 ## Rules
 

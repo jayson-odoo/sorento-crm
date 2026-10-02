@@ -60,7 +60,7 @@ from all contacts (fail closed); West and West + East packing lists answer as to
 ## Follow-ups
 - Container Status workbook attachment lists every container (Q4: fine as is).
 - Chatbot turn with a blank contact_id calls incoming tools unfiltered (inherited fail-open, lanes/business/fetch.py:1216-1219); fix in the chatbot caller.
-- Re-upload regions rule built as: matched draft takes the upload regions, matched non-draft keeps its own (owner ruling pending).
+- Re-upload (owner ruling 2 Oct): a packing list uploaded onto an existing container sets the container's regions to the ones the user chose in the upload dialog (no keep-existing, no draft special case); an upload stating no regions leaves them. Prefill from the matched container is not possible: the dialog only has the file, the container is matched later by n8n.
 
 ## Migration check + hand test
 Idempotent SQL at `crew/state/migrations/REGION-PACKING-LIST.sql` via `crew migrate`; checked on the dev copy before the

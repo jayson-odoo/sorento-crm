@@ -6,7 +6,7 @@ Owner answers 2 Oct 2026: Q1 (b) contact grant in ACCESS-MODEL; Q2-Q5 (a). Mock 
 ## Packing list [now]
 - AC-RPL-1 A packing list carries one or more regions (West, East, or both). A new one from any path (upload, Create, proforma convert, external API) is West only unless other regions are chosen.
 - AC-RPL-2 The Upload dialog shows a required Regions multi-select only for the Packing List type, West Malaysia only preselected; the regions picked reach the packing list n8n creates from that file.
-- AC-RPL-3 External create: explicit `regions` in the payload win, else the attachment's regions, else West only.
+- AC-RPL-3 External create: explicit `regions` in the payload win, else the attachment's regions, else West only. A re-upload matched onto an existing container sets its regions to the upload's (owner ruling 2 Oct).
 - AC-RPL-4 Regions are shown and editable on Create Packing List and on the detail page (same layout, edit in place); an empty set or any value other than West / East is refused (422).
 - AC-RPL-5 The packing list list has a Regions column and a Region filter (a row matches when any of its regions matches).
 - AC-RPL-6 Backfill: every existing packing list reads West only after the migration.
