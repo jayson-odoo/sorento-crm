@@ -18,13 +18,14 @@ import pytest
 from app.services.chatbot.lanes.business import fetch
 from app.services.mcp_tool_capability_service import _load_catalog_specs
 
-#: The seven tools of D4, spelled out so a rename in the set shows up as a diff here.
+#: The eight tools of D4, spelled out so a rename in the set shows up as a diff here.
 SCOPED_TOOLS = (
     "crm_order_management_orders_list",
     "crm_order_management_orders_by_product_list",
     "crm_outstanding_report",
     "crm_sales_report",
     "crm_top_selling_report",
+    "crm_report_ask",
     "crm_order_analytics",
     "crm_master_customers_list",
 )

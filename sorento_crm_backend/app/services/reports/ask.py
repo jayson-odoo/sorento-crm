@@ -18,48 +18,28 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app.services.reports.datasets import delivery_order_lines, sales_order_lines_ask
-from app.services.sales_report_delivered import (
-    _CHANNEL_CLASS,
-    _allowed,
-    _policy_location_ids,
-    _warehouse_ids_by_code,
-    refusal_message,
-)
+from app.services.sales_report_delivered import _CHANNEL_CLASS, resolve_locations
 from app.services.sales_report_service import _money_edge, _qty
 
-_DIMENSION_KEYS = {
-    "customer": "customer",
-    "product": "product",
-    "brand": "brand",
-    "category": "category",
-    "sales_agent": "sales_agent",
-    "location": "location",
-    "channel": "channel",
-    "month": "month",
-}
-_FILTER_KEYS = {
-    "customer": "customer",
-    "product": "product",
-    "brand": "brand",
-    "category": "category",
-    "sales_agent": "sales_agent",
-    "location": "location",
-    "channel": "channel",
-}
+#: The words a caller may group by and filter by. Both bases name every word the same as the
+#: column or param key behind it, so one list each serves both (a word that differs from its
+#: key earns a mapping then).
+DIMENSIONS = ("customer", "product", "brand", "category", "sales_agent", "location", "channel", "month")
+FILTERS = ("customer", "product", "brand", "category", "sales_agent", "location", "channel")
 
-#: One entry per basis, over the spec's words. Both bases speak the same words.
+#: One entry per basis.
 CATALOGUE: dict[str, dict[str, Any]] = {
     "delivered": {
         "definition": delivery_order_lines.DEFINITION,
         "label": "delivered sales",
-        "dimensions": dict(_DIMENSION_KEYS),
-        "filters": dict(_FILTER_KEYS),
+        "dimensions": DIMENSIONS,
+        "filters": FILTERS,
     },
     "ordered": {
         "definition": sales_order_lines_ask.DEFINITION,
         "label": "ordered sales",
-        "dimensions": dict(_DIMENSION_KEYS),
-        "filters": dict(_FILTER_KEYS),
+        "dimensions": DIMENSIONS,
+        "filters": FILTERS,
     },
 }
 
@@ -94,26 +74,6 @@ def _empty(status: str = "ok", message: Optional[str] = None) -> dict[str, Any]:
     }
 
 
-def _resolve_locations(
-    db: Session, named_codes: list[str], policy: Any
-) -> tuple[Optional[list[str]], Optional[dict[str, Any]]]:
-    """(location ids or None for no cap, an answer already complete or None). A contact always
-    asks here, so a missing policy fails closed."""
-    if policy is None:
-        return None, _empty()
-    if named_codes:
-        by_code = _warehouse_ids_by_code(db, named_codes)
-        for named in named_codes:
-            if any(not _allowed(policy, wid) for wid in by_code[named]):
-                return None, _empty("refused", refusal_message(named))
-        ids = sorted({wid for found in by_code.values() for wid in found})
-        return ids, (None if ids else _empty())
-    ids = _policy_location_ids(db, policy)
-    if ids is not None and not ids:
-        return None, _empty()
-    return ids, None
-
-
 def run_ask(
     db: Session,
     *,
@@ -125,11 +85,13 @@ def run_ask(
     filters: dict[str, list[str]],
     warehouse_codes: list[str],
     policy: Any,
+    company_grants: Any = None,
     sort: str = "desc",
     top_n: Optional[int] = None,
 ) -> dict[str, Any]:
     """The ranked rows, their cut and the whole set's total. `filters` maps a spec word to
-    RESOLVED ids (channel: `dealer` / `project`); `warehouse_codes` are the raw codes named."""
+    RESOLVED ids (channel: `dealer` / `project`); `warehouse_codes` are the raw codes named.
+    `company_grants` is the contact's own company ids (fail closed: none, no rows)."""
     from app.schemas.report import ReportViewConfig
     from app.services.reports import engine
 
@@ -145,17 +107,19 @@ def run_ask(
             return _empty()
         if word == "channel":
             values = [_CHANNEL_CLASS[v] for v in values]
-        params[entry["filters"][word]] = list(values)
+        params[word] = list(values)
 
-    location_ids, answer = _resolve_locations(db, warehouse_codes, policy)
-    if answer is not None:
-        return answer
+    location_ids, refusal, nothing = resolve_locations(db, warehouse_codes, policy)
+    if refusal is not None:
+        return _empty("refused", refusal)
+    if nothing:
+        return _empty()
     if location_ids is not None:
-        params[entry["filters"]["location"]] = location_ids
+        params["location"] = location_ids
 
     # The engine refuses rows == cols, so the one-total shape groups by month and reads the
     # grand total only.
-    rows_key = entry["dimensions"][group_by or "month"]
+    rows_key = group_by or "month"
     view = ReportViewConfig.model_validate(
         {
             "params": params,
@@ -163,7 +127,9 @@ def run_ask(
             "pivot": {"rows": rows_key, "cols": "all", "measures": list(MEASURES)},
         }
     )
-    pivot = engine.run_summary(db, definition, params, view)
+    pivot = engine.run_summary(
+        db, definition, params, view, company_grants=frozenset(str(c) for c in company_grants or ())
+    )
 
     grand = pivot.grand_total or {}
     body = _empty()

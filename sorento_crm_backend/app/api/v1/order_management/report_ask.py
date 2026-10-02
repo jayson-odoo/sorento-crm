@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.api.v1.order_management._contact_scope import (
@@ -23,6 +24,8 @@ from app.api.v1.order_management._contact_scope import (
 from app.api.v1.order_management.orders import _normalize_entities
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
+from app.models.base import company_scope
+from app.models.company import RespondContactCompany
 from app.models.order import Customer
 from app.models.product import Brand, ProductCategory
 from app.models.sales_agent import SalesAgent
@@ -39,48 +42,88 @@ _RATE_LIMIT = 10
 _RATE_WINDOW_SECONDS = 600
 _DEALER_MESSAGE = "That breakdown is not available for your account."
 _CHANNELS = {"dealer": "Dealer", "project": "Project team"}
+_MAX_VALUES = 50
+_MIN_YEAR, _MAX_YEAR = 1900, 2200
+
+#: Every query key the route declares; any other is 422 `unknown_param`.
+_PARAMS = frozenset(
+    {
+        "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort", "product_code",
+        "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
+        "channel", "contact_id", "space_id",
+    }
+)
+#: The filter params: present but resolving to nothing is 422 `empty_filter`, never "no filter".
+_FILTER_PARAMS = (
+    "product_code", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids",
+    "warehouse_codes", "channel",
+)
 
 
-def _unprocessable(message: str, code: str) -> AppException:
-    return AppException(422, message, code=code)
+def _unprocessable(message: str, code: str, detail: Optional[str] = None) -> AppException:
+    return AppException(422, message, detail=detail, code=code)
 
 
-def _names(db: Session, model: Any, name_column: Any, ids: list[str]) -> list[str]:
-    return sorted(str(r[0]) for r in db.query(name_column).filter(model.id.in_(ids)).all())
+def _allowed(values: Any) -> str:
+    return "allowed: " + ", ".join(values)
+
+
+def _lookup(
+    db: Session, model: Any, name_column: Any, ids: list[str], grants: set[str], label: str,
+    *, shared: bool = False,
+) -> list[str]:
+    """The names of `ids`, inside the contact's companies. An id naming no row is 404, so a
+    named filter never quietly widens to "no filter"."""
+    cond = model.company_id.in_(sorted(grants)) if grants else True
+    if grants and shared:
+        cond = or_(model.company_id.is_(None), cond)
+    with company_scope(db, None):
+        rows = db.query(model.id, name_column).filter(model.id.in_(ids), cond).all()
+    found = {str(i): str(n) for i, n in rows}
+    for wanted in ids:
+        if wanted not in found:
+            raise handle_not_found(label, wanted)
+    return sorted(found.values())
 
 
 def _echo(
     db: Session,
+    grants: set[str],
     *,
     product_code: str,
-    named_customers: Optional[list[str]],
-    brand_ids: Optional[list[str]],
-    category_ids: Optional[list[str]],
-    agent_ids: Optional[list[str]],
+    customers: Optional[list[str]],
+    brands: Optional[list[str]],
+    categories: Optional[list[str]],
+    agents: Optional[list[str]],
     warehouse_codes: list[str],
     channel: Optional[str],
 ) -> list[dict[str, Any]]:
-    """The filters the caller named, by name, in the catalogue's word order."""
+    """The filters the caller named, by name, in the catalogue's word order. Looks every id
+    up, so an id naming no row is 404 here."""
     out: list[tuple[str, list[str]]] = []
-    if named_customers:
-        out.append(("customer", _names(db, Customer, Customer.customer_name, named_customers)))
+    if customers:
+        out.append(("customer", _lookup(db, Customer, Customer.customer_name, customers, grants, "Customer")))
     if product_code:
         out.append(("product", [product_code.upper()]))
-    if brand_ids:
-        out.append(("brand", _names(db, Brand, Brand.brand_name, brand_ids)))
-    if category_ids:
-        out.append(("category", _names(db, ProductCategory, ProductCategory.category_name, category_ids)))
-    if agent_ids:
-        out.append(("sales_agent", _names(db, SalesAgent, SalesAgent.sales_agent, agent_ids)))
+    if brands:
+        out.append(("brand", _lookup(db, Brand, Brand.brand_name, brands, grants, "Brand")))
+    if categories:
+        out.append(
+            ("category", _lookup(db, ProductCategory, ProductCategory.category_name, categories, grants, "Category"))
+        )
+    if agents:
+        out.append(
+            ("sales_agent", _lookup(db, SalesAgent, SalesAgent.sales_agent, agents, grants, "Sales agent", shared=True))
+        )
     if warehouse_codes:
         out.append(("location", list(warehouse_codes)))
     if channel:
         out.append(("channel", [_CHANNELS[channel]]))
-    return [
-        {"key": key, "label": ask.GROUP_LABELS[key], "values": values}
-        for key, values in out
-        if values
-    ]
+    return [{"key": key, "label": ask.GROUP_LABELS[key], "values": values} for key, values in out if values]
+
+
+def _response(data: dict) -> JSONResponse:
+    return JSONResponse(content=ReportAskResponse(**data).model_dump(mode="json"))
 
 
 @router.get("/report-ask")
@@ -108,6 +151,8 @@ def report_ask(
     current_user: dict = Depends(require_permission_with_api_key("order_management.orders.view")),
     db: Session = Depends(get_db),
 ):
+    contact_id = (contact_id or "").strip() or None
+    space_id = (space_id or "").strip() or None
     require_contact_identity_pair(contact_id, space_id)
     if not (contact_id and space_id):
         raise AppException(
@@ -118,37 +163,65 @@ def report_ask(
         )
     if not request.headers.get("X-API-Key"):
         raise AppException(403, "This route is for the chatbot only", code="api_key_required")
+    for key in request.query_params.keys():
+        if key not in _PARAMS:
+            raise _unprocessable(f"Unknown parameter '{key}'", "unknown_param", key)
 
     if date_from is None or date_to is None:
         raise _unprocessable("date_from and date_to are required", "period_required")
+    if not all(_MIN_YEAR <= d.year <= _MAX_YEAR for d in (date_from, date_to)):
+        raise _unprocessable(
+            f"Dates must fall in {_MIN_YEAR} to {_MAX_YEAR}", "date_out_of_range", "date_from, date_to"
+        )
     if date_from > date_to:
         raise _unprocessable("date_from is after date_to", "date_range_inverted")
 
     basis_norm = (basis or "").strip().lower()
     if basis_norm not in ask.CATALOGUE:
-        raise _unprocessable(f"Unknown basis '{basis}'", "unknown_basis")
+        raise _unprocessable(f"Unknown basis '{basis}'", "unknown_basis", _allowed(ask.CATALOGUE))
     measure_norm = (measure or "").strip().lower()
     if measure_norm not in ask.MEASURES:
-        raise _unprocessable(f"Unknown measure '{measure}'", "unknown_measure")
+        raise _unprocessable(f"Unknown measure '{measure}'", "unknown_measure", _allowed(ask.MEASURES))
     sort_norm = (sort or "").strip().lower()
     if sort_norm not in ("desc", "asc"):
-        raise _unprocessable(f"Unknown sort '{sort}'", "unknown_sort")
+        raise _unprocessable(f"Unknown sort '{sort}'", "unknown_sort", _allowed(("desc", "asc")))
     group_norm = (group_by or "").strip().lower() or None
     if group_norm is not None and group_norm not in ask.CATALOGUE[basis_norm]["dimensions"]:
-        raise _unprocessable(f"Unknown group_by value '{group_by}'", "unknown_group_by")
-    if group_norm is not None:
-        if top_n is None:
-            raise _unprocessable("A ranking needs top_n", "top_n_required")
-        if not 1 <= top_n <= 100:
-            raise _unprocessable("top_n must be between 1 and 100", "top_n_out_of_range")
-    elif top_n is not None and not 1 <= top_n <= 100:
+        raise _unprocessable(
+            f"Unknown group_by value '{group_by}'", "unknown_group_by",
+            _allowed(ask.CATALOGUE[basis_norm]["dimensions"]),
+        )
+    if group_norm is not None and top_n is None:
+        raise _unprocessable("A ranking needs top_n", "top_n_required")
+    if top_n is not None and not 1 <= top_n <= 100:
         raise _unprocessable("top_n must be between 1 and 100", "top_n_out_of_range")
     channel_norm = (channel or "").strip().lower() or None
     if channel_norm is not None and channel_norm not in _CHANNELS:
-        raise _unprocessable(f"Unknown channel value '{channel}'", "invalid_channel")
+        raise _unprocessable(f"Unknown channel value '{channel}'", "invalid_channel", _allowed(_CHANNELS))
     code = (product_code or "").strip()
     if code and len(code) < 3:
         raise _unprocessable("product_code must be at least 3 characters", "product_code_too_short")
+
+    named_customers = parse_uuid_list(customer_ids, param_name="customer_ids")
+    brands = parse_uuid_list(brand_ids, param_name="brand_ids")
+    categories = parse_uuid_list(category_ids, param_name="category_ids")
+    agents = parse_uuid_list(sales_agent_ids, param_name="sales_agent_ids")
+    codes = _normalize_entities(warehouse_codes) or []
+    resolved_filters = {
+        "product_code": code,
+        "brand_ids": brands,
+        "category_ids": categories,
+        "sales_agent_ids": agents,
+        "customer_ids": named_customers,
+        "warehouse_codes": codes,
+        "channel": channel_norm,
+    }
+    for name in _FILTER_PARAMS:
+        if name in request.query_params.keys() and not resolved_filters[name]:
+            raise _unprocessable(f"'{name}' was given but names nothing", "empty_filter", name)
+    for name in ("brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes"):
+        if len(resolved_filters[name] or []) > _MAX_VALUES:
+            raise _unprocessable(f"Too many values for '{name}' (max {_MAX_VALUES})", "too_many_values", name)
 
     # The reveal grant, off the resolved contact (the sales report route's own gate).
     from app.services.contact_field_reveal_service import granted_keys
@@ -159,36 +232,25 @@ def report_ask(
     if GRANT not in keys:
         raise AppException(403, "Sales report is not enabled for your account.", code="sales_report_not_enabled")
 
+    common = {
+        "basis": basis_norm,
+        "basis_label": ask.CATALOGUE[basis_norm]["label"],
+        "measure": measure_norm,
+        "sort": sort_norm,
+        "group_by": group_norm,
+        "group_label": ask.GROUP_LABELS[group_norm] if group_norm else None,
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+    }
+
     from app.services import rate_limit
 
     if not rate_limit.hit(
         "report_ask", str(resolved), limit=_RATE_LIMIT, window_seconds=_RATE_WINDOW_SECONDS
     ).allowed:
-        return JSONResponse(
-            content={
-                "status": "busy",
-                "message": "Too many reports in the last 10 minutes.",
-                "basis": basis_norm,
-                "basis_label": ask.CATALOGUE[basis_norm]["label"],
-                "measure": measure_norm,
-                "sort": sort_norm,
-                "group_by": group_norm,
-                "group_label": ask.GROUP_LABELS.get(group_norm) if group_norm else None,
-                "date_from": date_from.isoformat(),
-                "date_to": date_to.isoformat(),
-                "filters": [],
-                "rows": [],
-                "more": 0,
-                "total_count": 0,
-                "total": {"qty": 0, "amount": 0.0},
-            }
+        return _response(
+            {**ask._empty("busy", "Too many reports in the last 10 minutes."), **common, "filters": []}
         )
-
-    named_customers = parse_uuid_list(customer_ids, param_name="customer_ids")
-    brands = parse_uuid_list(brand_ids, param_name="brand_ids")
-    categories = parse_uuid_list(category_ids, param_name="category_ids")
-    agents = parse_uuid_list(sales_agent_ids, param_name="sales_agent_ids")
-    codes = _normalize_entities(warehouse_codes) or []
 
     # Audience: a customer-scoped contact is a DEALER, forced to its own customers (a named
     # customer outside them is the scope helper's own 403).
@@ -209,9 +271,29 @@ def report_ask(
         if outside:
             raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
 
+    # The contact's OWN companies (the sales analysis route's read), never the session scope.
+    grants = {
+        str(c)
+        for (c,) in db.query(RespondContactCompany.company_id)
+        .filter(RespondContactCompany.respond_contact_id == str(resolved))
+        .all()
+        if c
+    }
+
     products = _resolve_products(db, code) if code else []
     if code and not products:
         raise handle_not_found("Product", product_code)
+    echo = _echo(
+        db,
+        grants,
+        product_code=code,
+        customers=named_customers,
+        brands=brands,
+        categories=categories,
+        agents=agents,
+        warehouse_codes=codes,
+        channel=channel_norm,
+    )
 
     filters: dict[str, list[str]] = {}
     customers = scoped if scoped is not None else named_customers
@@ -241,27 +323,8 @@ def report_ask(
         filters=filters,
         warehouse_codes=codes,
         policy=policy,
+        company_grants=grants,
         sort=sort_norm,
         top_n=top_n,
     )
-    data.update(
-        basis=basis_norm,
-        basis_label=ask.CATALOGUE[basis_norm]["label"],
-        measure=measure_norm,
-        sort=sort_norm,
-        group_by=group_norm,
-        group_label=ask.GROUP_LABELS[group_norm] if group_norm else None,
-        date_from=date_from.isoformat(),
-        date_to=date_to.isoformat(),
-        filters=_echo(
-            db,
-            product_code=code,
-            named_customers=named_customers if scoped is None else None,
-            brand_ids=brands,
-            category_ids=categories,
-            agent_ids=agents,
-            warehouse_codes=codes,
-            channel=channel_norm,
-        ),
-    )
-    return JSONResponse(content=ReportAskResponse(**data).model_dump(mode="json"))
+    return _response({**data, **common, "filters": echo})

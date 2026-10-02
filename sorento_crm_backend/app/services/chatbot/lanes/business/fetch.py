@@ -1279,6 +1279,7 @@ CUSTOMER_SCOPED_TOOLS: frozenset[str] = frozenset(
         "crm_outstanding_report",
         "crm_sales_report",
         "crm_top_selling_report",
+        "crm_report_ask",
         "crm_order_analytics",
         "crm_master_customers_list",
     }
