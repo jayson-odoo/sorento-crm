@@ -1245,6 +1245,11 @@ def _answer_earlier_messages(
                 exc_info=True,
             )
             continue
+        try:
+            # An answered-ahead message keeps the language its OWN turn chose.
+            _localize_result(result, session_factory, False)
+        except Exception:  # noqa: BLE001 - best effort, as everything here
+            logger.warning("chatbot: the final reply pass did not run for an earlier message", exc_info=True)
         out.extend(result.actions or [])
     return out, {
         "earlier_answered_ahead": answered,
@@ -2295,27 +2300,24 @@ def _top_selling_verdict(
 def run_turn(
     envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
 ) -> TurnResult:
-    """One turn, then the final reply pass.
-
-    CHAT-LANGUAGE slice 4, the send point: every arm of `_run_turn` has finished its own
-    composers, offer strippers, part markers and company inserts by the time it returns, so this
-    is the one place that sees the turn's final reply text and every `send_message` text. The
-    reply is localized here, once, and the turn row is brought in line so the parser reads the
-    reply the customer was actually sent next turn."""
-    result = _run_turn(envelope, session_factory=session_factory, offload=offload)
-    try:
-        _localize_result(result, session_factory)
-    except Exception:  # noqa: BLE001 - a language pass never fails a turn that already answered
-        logger.warning("chatbot: the final reply pass did not run", exc_info=True)
-    return result
+    """One turn, then the final reply pass (`_localize_result`, called by `_run_turn` at its
+    one exit, just before the messages answered ahead are put in front of the actions)."""
+    return _run_turn(envelope, session_factory=session_factory, offload=offload)
 
 
-def _localize_result(result: TurnResult, session_factory: SessionFactory) -> None:
-    lang = (result.item or {}).get("reply_language") if isinstance(result.item, dict) else None
+def _localize_result(result: TurnResult, session_factory: SessionFactory, dry_run: bool) -> None:
+    """CHAT-LANGUAGE slice 4, the send point. Every arm has finished its own composers, offer
+    strippers, part markers and company inserts by the time it returns, so this is the one
+    place that sees the turn's final reply text and every `send_message` text. The reply is
+    localized once, with the language THIS item chose, and the turn row and its `sent` /
+    `replied` trace records are brought in line (the way `_repersist_media_prefixed_reply`
+    does) so the parser reads next turn the reply the customer was sent. An item with no
+    language, or an English one, is left exactly as composed."""
+    lang = result.item.get("reply_language") if isinstance(result.item, dict) else None
     if lang in (None, "en") or result.duplicate or not isinstance(result.reply, dict):
         return
     with _session(session_factory) as db:
-        localizer = label_catalog.resolve(db, lang, dry_run=bool(result.is_test))
+        localizer = label_catalog.resolve(db, lang, dry_run=dry_run)
         if localizer is label_catalog.IDENTITY:
             return
         reply = dict(result.reply)
@@ -2329,7 +2331,6 @@ def _localize_result(result: TurnResult, session_factory: SessionFactory) -> Non
         ]
         if reply == result.reply and actions == (result.actions or []):
             return
-        result.reply, result.actions = reply, actions
         row = db.query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
         if row is not None and isinstance(row.response, dict):
             stored = row.response
@@ -2338,7 +2339,20 @@ def _localize_result(result: TurnResult, session_factory: SessionFactory) -> Non
                 **({"reply": {**(stored.get("reply") or {}), **reply}} if "reply" in stored else {}),
                 **({"actions": actions} if "actions" in stored else {}),
             }
+            trace = [dict(r) if isinstance(r, dict) else r for r in (row.trace or [])]
+            for record in trace:
+                if not isinstance(record, dict) or record.get("stage") not in ("sent", "replied"):
+                    continue
+                raw = record.get("raw")
+                if not isinstance(raw, dict):
+                    continue
+                if isinstance(raw.get("reply"), dict):
+                    record["raw"] = raw = {**raw, "reply": {**raw["reply"], "text": reply.get("text")}}
+                if isinstance(raw.get("actions"), list):
+                    record["raw"] = {**raw, "actions": actions}
+            row.trace = trace
             db.commit()
+        result.reply, result.actions = reply, actions
 
 
 @_refer_tracked
@@ -2606,6 +2620,10 @@ def _run_turn(
             # offload above rebuilds its result from a job that came through here, so it is
             # stamped too, and a duplicate reads `is_test` off the row it replays.
             result.is_test = dry_run
+            try:
+                _localize_result(result, session_factory, dry_run)
+            except Exception:  # noqa: BLE001 - a language pass never fails a turn that answered
+                logger.warning("chatbot: the final reply pass did not run", exc_info=True)
             if earlier_actions:
                 result.actions = [*earlier_actions, *(result.actions or [])]
             return result

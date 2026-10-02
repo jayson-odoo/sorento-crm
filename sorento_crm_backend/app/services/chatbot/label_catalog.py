@@ -553,6 +553,8 @@ class Localizer:
             out.append(text[pos:start])
             out.append(replacement)
             pos = end
+            if self.language == "zh" and replacement[-1:] in "。？！" and text[end : end + 1] == " ":
+                pos = end + 1  # full-width stops carry no space before the next sentence
         out.append(text[pos:])
         return "".join(out)
 

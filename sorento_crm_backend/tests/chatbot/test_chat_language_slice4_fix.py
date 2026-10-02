@@ -92,3 +92,22 @@ def test_an_or_inside_a_presenter_value_or_a_names_token_is_never_split():
     assert loc.reply("I could not find ZZT tray or stock.") == "Saya tidak dapat menemui ZZT tray or stock."
     assert loc.reply("Nothing on stock or orders either.") == "Tiada juga untuk stock or orders."
     assert loc.reply("*stock* for A:") == "*stock* untuk A:"
+
+
+def test_item4_mid_line_the_company_offer_beats_the_plain_team_template():
+    out = _loc("ms").reply("Got it. Would you like me to escalate to *ACME* warehouse team?")
+    assert out == "Got it. Adakah anda mahu saya rujuk kepada pasukan warehouse *ACME*?"
+
+
+def test_item5_a_token_never_spans_a_newline():
+    text = "I could not find A\nB."
+    assert _loc("ms").reply(text) == text
+    assert _loc("ms").reply("I could not find A.\nB.") == "Saya tidak dapat menemui A.\nB."
+
+
+def test_item8_zh_drops_the_space_after_a_full_width_stop_between_two_sentences():
+    out = _loc("zh").reply("Done. Okay, noted. Which one?")
+    assert out == "Done. 好的，已记录。哪一个？"
+    assert _loc("zh").reply("Which one? Which one?") == "哪一个？哪一个？"
+    # ms keeps its ASCII space.
+    assert _loc("ms").reply("Okay, noted. Which one?") == "Baik, dicatat. Yang mana satu?"
