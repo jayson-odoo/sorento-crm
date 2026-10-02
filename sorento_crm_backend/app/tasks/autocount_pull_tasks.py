@@ -733,7 +733,8 @@ _DOC_LABEL = {DELIVERY_ORDERS_ENTITY: ("DO", "order", "tracking kept"),
 
 
 def _tally_delivery_orders(outcome_writer: ImportOutcome, rows: list[dict], result,
-                           entity: str = DELIVERY_ORDERS_ENTITY) -> dict:
+                           entity: str = DELIVERY_ORDERS_ENTITY, *,
+                           record_unchanged: bool = False) -> dict:
     """One `import_job_rows` row per document the ingest would create, update or adopt,
     and per failed or retryable one; `unchanged` writes no row (the AC-PP-3 rule). Returns
     the neutral tally both the preview counts and the apply summary are built from. Serves
@@ -800,6 +801,15 @@ def _tally_delivery_orders(outcome_writer: ImportOutcome, rows: list[dict], resu
             )
         elif record.outcome == IngestOutcome.UNCHANGED:
             tally["unchanged"] += 1
+            if record_unchanged:
+                # Apply only (GRN-PULL-CRM e2e gap 4): the job's own columns count an
+                # unchanged document as skipped (`_apply_progress_counts`), so the outcome
+                # rows and the envelope say the same. The preview's Changes tab still shows
+                # only what Confirm would change (AC-PP-3).
+                outcome_writer.skip(
+                    code=codes.UNCHANGED, message=f"{label} unchanged: {doc_no}",
+                    value=doc_no, identity=identity,
+                )
         elif record.outcome == IngestOutcome.RETRYABLE:
             tally["retryable"] += 1
             outcome_writer.fail(
@@ -888,7 +898,7 @@ def _apply_delivery_orders(db, job: ImportJob, snapshot_id: str) -> dict:
     job.skipped_rows = final["skipped"]
 
     outcome_writer = ImportOutcome(job.id)
-    tally = _tally_delivery_orders(outcome_writer, records, result)
+    tally = _tally_delivery_orders(outcome_writer, records, result, record_unchanged=True)
     # The job page's Outcome card reads this envelope (GRN-PULL-CRM e2e gap 4: without it a
     # fresh apply read "ran before per-row outcome capture existed").
     job.result = outcome_writer.finalize(
@@ -1159,7 +1169,8 @@ def _apply_goods_receive_notes(db, job: ImportJob, snapshot_id: str) -> dict:
     job.skipped_rows = final["skipped"]
 
     outcome_writer = ImportOutcome(job.id)
-    tally = _tally_delivery_orders(outcome_writer, records, result, GOODS_RECEIVE_NOTES_ENTITY)
+    tally = _tally_delivery_orders(outcome_writer, records, result, GOODS_RECEIVE_NOTES_ENTITY,
+                                   record_unchanged=True)
     job.result = outcome_writer.finalize(
         f"Goods receipt notes applied: {len(records)} document(s).", total_rows=len(records))
     return {

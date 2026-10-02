@@ -732,7 +732,10 @@ class TestConfirmAndApply:
         counts = row["metadata"]["autocount_apply"]["counts"]
         assert counts["unchanged"] == 2 and counts["created"] == 0 and counts["updated"] == 0
         assert {o["order_number"]: o["updated_at"] for o in _orders(db, 900001, 900002)} == stamps
-        assert _job_rows(db, second) == []
+        # GRN-PULL-CRM e2e gap 4 (crew, 2 Oct): an unchanged document is listed as a skipped
+        # "Already up to date" row on the apply, so the Outcome card matches skipped_rows.
+        assert sorted((r["outcome"], r["code"], r["value"]) for r in _job_rows(db, second)) == [
+            ("skipped", "unchanged", "ZZDO-0001"), ("skipped", "unchanged", "ZZDO-0002")]
 
     def test_dp_23_expired_snapshot_fails_and_writes_nothing(self, task_db, monkeypatch):
         db, factory = task_db

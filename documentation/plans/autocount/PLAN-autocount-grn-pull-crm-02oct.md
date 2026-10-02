@@ -227,6 +227,14 @@ fixed (34a67357 + this commit), each fix killed by its test:
 4. **Apply job Outcome card.** The DO and GRN applies write the `result` envelope
    (`ImportOutcome.finalize`); a fresh job no longer reads "ran before per-row outcome
    capture". Tests `test_gp40`, `test_dp_20c`.
+   Round 2 (crew re-test at d54cc02d): an unchanged re-apply wrote no row, so the card read
+   Skipped 0 against `skipped_rows` 7. The apply now writes one skipped row per unchanged
+   document (code `unchanged`, "Already up to date"; the preview's Changes tab still lists
+   only what Confirm changes), and the envelope's counts equal the job's own columns.
+   `test_dp_22` re-pinned to the two skipped rows.
+
+Crew re-test at d54cc02d: gap 1 linked 36 of 36 waiting lines (k-th by item, quantity
+exact, received 3029 = allocated, GR-0002..0005 unchanged); gap 3 compares 71 lines.
 
 ## 2. Build order (tests first)
 
