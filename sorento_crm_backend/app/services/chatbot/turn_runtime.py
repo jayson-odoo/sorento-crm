@@ -3481,6 +3481,50 @@ def _tier_gate(
     }
 
 
+def _with_carried_document_types(parse_output: dict[str, Any], focus: Focus) -> dict[str, Any]:
+    """The carried document types a product-attachment FETCH turn still needs resolving.
+
+    ATTACHMENT-MULTI (tester re-run 2 Oct 2026, crew trace turn 29a88795): "photo and
+    certification for CB11" rostered, the customer replied "3", and the parser echoed the
+    picked product as the turn's own entity (`entity_op: reuse`). A turn that names its own
+    entities is otherwise handed over untouched, so the carried "photo" / "certificate" -
+    stored as the parser's raw words, no uuid, because a roster turn settles nothing - never
+    reached the resolver, the fetch dropped both as `missing_or_bad_uuid` and answered with
+    every file of every type, and the "has no Certification" line had no types to name.
+
+    Only the document types, only those with no uuid, only when this turn named none of its
+    own, and only when the one domain in play is `product_attachment` - any other domain's
+    gate would read a document type as an incompatible entity.
+    """
+    own = [e for e in parse_output.get("entities") or [] if isinstance(e, dict)]
+    if any(str(e.get("hint") or "").strip().lower() == "attachment_type" for e in own):
+        return parse_output
+    domain = parse_output.get("domain_hint")
+    domains = [d for d in (getattr(focus, "domains", []) or []) if d]
+    if domain != "product_attachment" and not (not domain and domains == ["product_attachment"]):
+        return parse_output
+    rows = (getattr(focus, "extra", {}) or {}).get("attachment_type") or []
+    carried: list[dict[str, Any]] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or row.get("uuid"):
+            continue
+        code = row.get("canonical_code") or row.get("raw")
+        if not jsc.truthy(code):
+            continue
+        carried.append(
+            {
+                "raw": row.get("raw") or code,
+                "hint": "attachment_type",
+                "canonical_code": code,
+                "current_message": False,
+                "confident": True,
+            }
+        )
+    if not carried:
+        return parse_output
+    return {**parse_output, "entities": [*own, *carried]}
+
+
 def with_carried_entities(
     parse_output: dict[str, Any], focus: Focus, *, unsettled_only: bool = False
 ) -> dict[str, Any]:
@@ -3515,7 +3559,7 @@ def with_carried_entities(
         for e in own
     )
     if parse_output.get("entities") and not domain_word_only:
-        return parse_output
+        return _with_carried_document_types(parse_output, focus) if unsettled_only else parse_output
     carried: list[dict[str, Any]] = []
     # Every kind the focus holds, `extra` included. `KIND_FIELD_MAP` names four kinds
     # and the rest of them live in the catch-all, so an `attachment_type` carried from

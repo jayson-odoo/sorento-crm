@@ -677,12 +677,15 @@ class TestThePickKeepsBothTypes:
     photo and name the missing specs (R1 + R3 through the whole turn, not just the lane)."""
 
     @pytest.mark.parametrize(
-        ("second", "second_raw"),
-        [(SPECS, "technical specifications"), ("Certification", "certification")],
+        ("second", "second_raw", "second_code"),
+        # The certification case is the dev parser's own shape (crew trace 2 Oct, turn
+        # abfea54d): "certification" came back canonical_code "certificate", which equals no
+        # type name, and the photo's "photo" likewise.
+        [(SPECS, "technical specifications", "technical specifications"), ("Certification", "certification", "certificate")],
         ids=["specs", "certification"],
     )
     def test_a_numbered_pick_fetches_both_types_and_names_the_gap(
-        self, session_factory, monkeypatch, second: str, second_raw: str
+        self, session_factory, monkeypatch, second: str, second_raw: str, second_code: str
     ) -> None:
         """Tester re-run 2 Oct, finding 2: "photo and certification for CB11" then "3"
         (CB110-R) sent the photo WITHOUT "CB110-R has no Certification." - the
@@ -750,7 +753,7 @@ class TestThePickKeepsBothTypes:
             {
                 "raw": second_raw,
                 "hint": "attachment_type",
-                "canonical_code": second_raw,
+                "canonical_code": second_code,
                 "current_message": True,
                 "confident": True,
             },
@@ -784,8 +787,15 @@ class TestThePickKeepsBothTypes:
                 return json.dumps({"data": []})
             return _present_response()(name, json.dumps({"data": _raw_rows([photo_code])}))
 
+        # The dev parser's own read of the bare pick (crew trace 2 Oct, turn 29a88795): the
+        # picked product echoed as the turn's entity, `entity_op: reuse`, no document word.
         qf2 = _parser_output(
-            message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+            message_type="casual", intent_hint=None, domain_hint=None,
+            entities=[
+                {"raw": photo_code, "hint": "product", "canonical_code": photo_code,
+                 "current_message": True, "confident": True},
+            ],
+            entity_op="reuse",
             reference_positions=[position],
         )
         result2 = _run_turn_with_mcp_call(

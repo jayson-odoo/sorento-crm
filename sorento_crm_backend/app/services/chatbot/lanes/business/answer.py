@@ -4719,9 +4719,17 @@ def build_suggest_offer(
             # customer's own word for it. `attachment_noun()` stays the last resort, so a
             # turn whose probe carried no type entity reads exactly as it does today.
             noun_source = jsc.get(dym_ann, "dym_probe_type_name")
-        noun_source = noun_source if jsc.truthy(noun_source) else attachment_noun()
+        # ATTACHMENT-MULTI R5 (tester re-run 2 Oct 2026, finding 3): a RESOLVED type is
+        # stamped by its `type_name` ("Certification"), the word the follow-up "has no"
+        # line and the found rows use too. Only the customer's own raw word ("cert") is
+        # normalised to the family word; a certificate-NUMBER scope already arrives as
+        # "certificate" (`miss_suggest._scoping_type_name`).
+        resolved_noun = jsc.truthy(noun_source)
+        noun_source = noun_source if resolved_noun else attachment_noun()
         text = jsc.nullish_str(noun_source).strip()
-        dym_noun: Any = "certificate" if _CERT_PREFIX_RE.match(text) else (text or "document")
+        dym_noun: Any = (
+            "certificate" if (not resolved_noun and _CERT_PREFIX_RE.match(text)) else (text or "document")
+        )
     else:
         dym_noun = None
 
@@ -4738,8 +4746,7 @@ def build_suggest_offer(
             _probed, type_has = _dym_code_space(
                 {**dym_ann, "dym_available_codes": jsc.array(jsc.get(per_type, "has"))}, dym_meta
             )
-            noun = "certificate" if _CERT_PREFIX_RE.match(name) else name
-            dym_type_stamps.append((noun, type_has))
+            dym_type_stamps.append((name, type_has))
         if len(dym_type_stamps) < 2:
             dym_type_stamps = []
 
