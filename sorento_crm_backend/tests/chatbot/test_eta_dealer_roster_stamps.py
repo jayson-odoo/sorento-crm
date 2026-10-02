@@ -4,7 +4,7 @@ contact 437264483, a dealer, prompt v50).
 Turn 562961e4 "eta srtwc286": the ten-row roster stamped EVERY row "no incoming", while
 turn ca1eb616 "all" fetched ETAs for SRTWC286-SH-NEW, -NEW-200 and -NEW-P. The dealer view
 (`eta_policy.dealer_view`, presented by the MCP's `_incoming_dealer`) prints each product
-as ONE title, "<code>\: ETA <dates>", with no field, and `pickers.annotate_incoming`
+as ONE title, "<code>: ETA <dates>" (one line since AVAIL-MODE-REPLIES), with no field, and `pickers.annotate_incoming`
 read the whole title as the code, so nothing matched.
 
 Turn a3d0d2c7 "5" (SRTWC286-SH-NEW-150, no incoming): the dealer was told "No incoming,
