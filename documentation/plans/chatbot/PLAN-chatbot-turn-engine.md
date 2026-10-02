@@ -224,6 +224,10 @@ Returning the data keeps egress with the caller and keeps the harness's containm
 (`plans/spine-decomposition-plan.md` G1 to G10) intact. n8n already waits the whole turn
 (`call-spine` `waitForSubWorkflow: true`), so nothing gets slower.
 
+**SUPERSEDED 1 Oct 2026 by CHATBOT-QUEUE-FIX** (`PLAN-chatbot-queue-fix-1oct.md`): per-ticket
+heartbeat keys replace `running` and the stall grace, and a queue timeout runs the turn. The
+paragraph below is the original S7 design.
+
 **Per-contact ordering moves to the CRM at S7 (round 4, owner: 50 dealers, 100 questions at
 once).** The n8n dispatcher pops ONE contact per 1 s tick, so a 50-contact burst is served one
 per second regardless of what the CRM does. From S7 the request itself serialises per contact:
