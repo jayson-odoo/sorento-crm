@@ -215,7 +215,7 @@ Consequences:
   or NEW to log this as a new idea." A number replies with that idea's link and drops the held
   message; NEW creates from the held original message.
 
-## 4. CRM side of the SS-IDEATION-OWN contract (final: ss PR #111 head 8bcf160, `documentation/ideation/own-ideas-contract.md`; text relayed by crew)
+## 4. CRM side of the SS-IDEATION-OWN contract (final: ss PR #111 head 8bcf160, `documentation/ideation/own-ideas-contract.md`; text relayed by crew 2 Oct; sections 4a.5-6b hold the exact names)
 
 ss trust assumptions and how the CRM meets them:
 
@@ -237,7 +237,7 @@ ss trust assumptions and how the CRM meets them:
   (`components/ui/toggle-group.tsx`), default All ideas (today's behaviour), state in the URL as
   `?view=mine` so the chatbot's "See all your ideas" link opens the right view.
 
-## 4a. C1 design: the chatbot turn (provisional ss shapes, swapped for the final contract when crew relays it)
+## 4a. C1 design: the chatbot turn (ss shapes per the final SS-IDEATION-OWN contract)
 
 New service `BE/app/services/ideation_capture_service.py`, `handle_capture_turn(db, *, respond_io_id,
 message_text, session_vars_in=None, is_test=False)`; `POST /external/ideation/turn`
@@ -268,17 +268,35 @@ Order per turn:
    is one adapter, `_missing_required(fields) -> list[str]`, with ideation's required set
    `["problem"]`; when crew relays the helper API, the adapter's body becomes the helper call
    and the ask-back sentence comes from the helper's ask for the missing field.
-5. Similar own ideas: ss `POST /ideation/intake/similar-own` `{product_id, submitter_contact_id
-   (contact phone), crm_user_id, title, problem, is_test}` -> `{ideas: [{id, idea_number,
-   title}], total}` (top 3, ss-ranked). Any: status `similar_offered`, pointer
-   `{status, message_text, similar, updated_at, is_test}`, the numbered reply (Q4); `total > 3`
-   adds the "See all your ideas" line with `{FRONTEND_BASE_URL}/ideas?view=mine`.
-6. Create: ss `POST /ideation/intake/create-idea` with `capture_now: true`, `crm_user_id`,
-   `submitter_contact_id`, `submitter_name`, `message_text`, `raw_transcript` (= the one
-   message), `fields`, `title`, `submitter_tier`, `is_test` -> `{status: "complete", id,
-   idea_number, title, captured}`. Reply: created, CRM link `{FRONTEND_BASE_URL}/ideas/{id}`,
-   missing list = Proposed solution, Impact, Department not in `captured`, then Photos or files.
-   Pointer cleared.
+5. Similar own ideas (FINAL contract, ss#111 section 2): `POST /ideation/intake/ideas/similar-own`
+   `{product_id, text (= the extracted problem), submitter_crm_user_id (the linked user's id),
+   submitter_phone (the contact phone), is_test}` -> `{matches: [{idea_id, idea_number, title,
+   problem, status, status_label, similarity, created_at, link}]}`, at most 3, best first, own
+   ideas only, live only, pg_trgm >= 0.3. Any match: status `similar_offered`, pointer
+   `{status, message_text, fields, title, language, similar: [{idea_id, idea_number, title}],
+   updated_at, is_test}`, the numbered reply (Q4). ss returns no total, so the "See all your
+   ideas" line (`{FRONTEND_BASE_URL}/ideas?view=mine`) shows when ss returned the full 3 (there
+   may be more).
+6. Create (FINAL, ss#111 section 1): `POST /ideation/intake/ideas` -> 201, flat fields:
+   `product_id`, `problem`, `submitter_crm_user_id`, `submitter_phone`, `submitter_name`,
+   `title`, `proposed_solution`, `impact`, `department` (each only when extracted),
+   `submitter_tier`, `raw_transcript` (= the one message), `is_test`, `intake_ref` -> `{idea_id,
+   idea_number, status: "captured", title, link}`. `intake_ref` = a uuid minted when the create
+   is first decided and kept on the held pointer, so a NEW retried after an ss timeout returns
+   the same idea instead of a second one (a fresh one-message create gets a fresh uuid; the
+   turn request carries no Respond.io message id to use instead). Reply: created, CRM link
+   `{FRONTEND_BASE_URL}/ideas/{idea_id}`; ss returns no `captured`, so the missing list is
+   computed from the fields the CRM sent: Proposed solution, Impact, Department not sent, then
+   Photos or files. Pointer cleared. The ss public `link` is not used for the reply.
+6a. Errors: ss errors are `{"error": {"code", "message"}}`; any 4xx/5xx or transport failure is
+   the graceful `error` reply (codes are logged, never shown).
+6b. Embed assertion (ss#111 section 4): `ideas_manage` = a JSON boolean, true when the user
+   holds `ideation.ideas.manage` (`UserPermissionService.check_user_has_permission`, which
+   honours superadmin/admin), so ss itself refuses a non-manager's edit / status / delete /
+   reorder / merge / unmerge / attach on someone else's idea (403 `not_owner`). Part of the
+   token cache key, as the phone is. Consequence for #1438's page: upload on someone else's
+   idea is refused by ss for a non-manager, so the detail page hides the attachment upload
+   unless `canManage || isMine`.
 7. ss failure anywhere: today's graceful "couldn't save" reply, status `error`, pointer untouched.
 8. `is_test`: pointer never persisted (as today); `is_test` sent to ss.
 
