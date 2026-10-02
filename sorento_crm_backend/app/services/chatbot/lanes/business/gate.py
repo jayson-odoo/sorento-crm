@@ -392,7 +392,7 @@ def _prefix_products(matches: list[Any], parser: dict[str, Any]) -> list[dict[st
         if jsc.lower_or_empty(jsc.get(e, "hint")) == "product" and jsc.truthy(jsc.get(e, "raw"))
     ]
     # A token that IS some matched product's own code is not a base code, even when the
-    # same token also reached its longer siblings ("…-SC" also pulls in "…-SC-UF").
+    # same token also reached its longer siblings ("SRTWC8608-SC" also pulls in "SRTWC8608-SC-UF").
     matched_codes = {
         _norm_code(jsc.get(m, "canonical_code"))
         for m in matches
