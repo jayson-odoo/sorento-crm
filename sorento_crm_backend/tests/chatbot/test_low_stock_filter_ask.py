@@ -117,7 +117,7 @@ class Console:
         self.session_vars = result.session_vars or {}
         text = result.reply_text or ""
         assert not _SNAKE.search(text), (body, text)
-        assert "—" not in text and "–" not in text, body
+        assert "\u2014" not in text and "\u2013" not in text, body
         return text, [args for name, args in captured if name == TOOL]
 
 
