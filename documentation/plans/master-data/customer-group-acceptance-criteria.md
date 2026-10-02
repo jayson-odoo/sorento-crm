@@ -14,8 +14,10 @@ Examples use the shared dev DB (`sorento_cagent_stack`, 6,358 customers, Sorento
    for KEDAI PAPAN HENG CHOON (UTARA) SDN BHD, then add its ledgers.
 4. On a customer's own edit form they set or clear its Group; the customer detail shows the
    group and its sibling ledgers; the Customers list shows and filters by Group.
-5. Next chatbot message: every place that groups ledgers into one company uses the group, and
-   the name rule only where a ledger has no group.
+5. Next chatbot message: every place that groups ledgers into one company uses the group. A
+   ledger joins a company line ONLY through its explicit group; a ledger with no group is its own
+   customer under its own name (owner ruling (b), 2 Oct 2026: "we shouldn't do automated process
+   like this, very dangerous"). The name rule is used once, by the one-off seed staff can review.
 
 ## Phase 2 - backend
 
@@ -57,6 +59,9 @@ Route paths below are under `/api/v1/order-management`.
   return the group's key / name for a customer name whose rows all sit in one group; for any
   other name they return exactly today's name rule. A name whose rows sit in two different
   groups falls back to the name rule.
+- AC-10b [BE] Owner ruling (b): an ungrouped ledger is never joined to a group by its name
+  (`UNGROUPED_JOINS_NAME_MATCHED_GROUP = False`); every "Customer:" line prints group names
+  only (no "(N accounts)", no "and N more"), an ungrouped ledger under its own full name.
 - AC-11 [BE] HANLIM TRADING SDN BHD (6 ledgers, seeded group of the same name): the which-customer
   roster, header and account refusal read exactly as before this lane (golden: today's output).
 - AC-12 [BE] After CHIN CHUN HOMEMART SDN BHD ledgers are put in the CHIN CHUN HARDWARE SDN BHD
