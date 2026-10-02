@@ -96,4 +96,12 @@ unidentified contact, which holds `[]`.
   answer carries no supplier value.
 - **AC-PA-13 Other customers.** A contact linked to customer A, asking for customer B's orders,
   outstanding or sales figures, is refused: "Sorry, that isn't under your account. ..." and no
-  tool is called with B's id. The unlinked non-office contact case waits on G1 (#1429).
+  tool is called with B's id.
+- **AC-PA-14 G1: unlinked non-office contact fails closed.**
+  - Setup: a contact with no office access type and no linked customer makes a customer-named
+    or all-customer order ask.
+  - Expected: the reply is "Sorry, I can't find an account linked to you yet." and no order tool
+    is called.
+  - An office-type contact with no links is answered as today.
+  - Ships only after the owner data step. Its tests are in
+    `tests/chatbot/test_customer_scope_unlinked_fail_closed.py`, in their own commit.
