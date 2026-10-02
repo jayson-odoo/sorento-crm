@@ -118,6 +118,20 @@ product, attachments, forms, portal and ideate.
 | Sales only (linked dealer holding the sales report grant) | 31,933 | 96.2% |
 | Dealer (none of the four) | 26,666 | 80.3% |
 
+### Real dev contacts (crew, read-only, sorento_cagent_stack, 100 contacts, 2 Oct 2026)
+
+| Gated grants held | Contacts | Example | Tokens | Share |
+| --- | ---: | --- | ---: | ---: |
+| purchase_orders.placed only | 88 | ...6092 "Am", End User | 27,252 | 82.1% |
+| cost + placed | 5 | | 27,662 | 83.3% |
+| none | 5 | | 26,666 | 80.3% |
+| cost + placed + sales_report | 1 | Mr Loo, all 7 types | 32,929 | 99.2% |
+| all four | 1 | Jayson, type dealer | 33,207 | 100% |
+
+All reveal rows are `granted=true`. 95 of 100 contacts hold `purchase_orders.placed`, an end
+user among them. With Q1(a) as asked, nearly every dealer keeps the PO blocks: on dev data the
+grant does not separate dealers from office. See the revised Q2 on #1429.
+
 Prompt cache:
 
 - `{{current_date}}` sits at line 14 (126 tokens in), so the cache already turns over daily.
