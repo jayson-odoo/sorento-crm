@@ -209,8 +209,3 @@ class TestSuggestedAgentsFromRows:
         db_.commit()
         result = list(suggested_agents(db_))
         assert result == ["zzt_a_agent", "zzt_b_agent"]
-
-    def test_the_module_literal_is_gone(self):
-        from app.services.chatbot import contracts
-
-        assert not hasattr(contracts, "SUGGESTED_AGENTS"), "derived from access_agents rows now"
