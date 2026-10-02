@@ -1,23 +1,91 @@
 # PLAN: SO-number ask answers about that SO only (SO-NUMBER-ASK)
 
-Status: in progress (small fix track: no migration, no auth/RBAC change, diff well under 300 lines)
+Status: in progress, size M (owner chose option (b) on PR #1435: fix the miss AND add the SO
+lookup). No migration, no new route, no new MCP tool, no new reveal key.
+UAC: `so-number-ask-acceptance-criteria.md` (alongside).
 
 ## Bug
 
-A dealer asks `status of SO422056` in the chatbot. The bot correctly skips the period question, then
-sends a 20-row DO dump across all of the dealer's linked customers and closes with
-"I could not find SO422056." (tester note on PR #1433, "E3 SO number").
-
-## Goal
-
-- SO exists and is in the contact's scope: show that SO's status (and its DOs when linked).
-- SO not found / out of scope: one "I could not find SO..." line, no DO dump, no other customers' data.
-- Never dump unrelated DOs.
+A linked dealer asks `status of SO422056` (a real HANLIM SO, closed, [A/C III]). The bot
+correctly skips the period question, then sends a 20-row DO dump across all 12 linked
+customers and closes with "I could not find SO422056." (tester note on PR #1433, "E3 SO
+number").
 
 ## Root cause
 
-(filled in once traced, with file:line)
+1. Nothing in the chatbot can place an SO number. The resolver's order probe matches
+   `orders.order_number` only (the DO book, `app/services/entity_resolver.py:976`
+   `_probe_customer_order`), so `SO422056` comes back in `unresolved_tokens`.
+2. For a customer-scoped contact the engine then replaces the resolver's not-found exit with the
+   contact's linked customers: `engine.py:4197` calls `_scoped_compatible` (`engine.py:1534`),
+   which appends one `scope: True` row per link, and `_pass_scope_gate` (`engine.py:1564`)
+   turns `_exit_kind: not_found` into `continue`.
+3. `turn_runtime._answered_unfiltered` (`turn_runtime.py:3696`) is the guard that rewrites "every
+   subject was an unplaced token" into a miss. It saw the uuid'd scope rows as placed subjects,
+   so the orders list (`crm_order_management_orders_list`, hard-capped at 20 rows) ran on the
+   links alone and its rows reached the reply, followed by compose's unplaced line
+   (`turn/compose.py:516`).
+
+## Fix, part 1: the miss (done, `528f41da`)
+
+- `turn_runtime._answered_unfiltered`: scope rows are not typed subjects. A dealer's own customer
+  word never reaches this as unplaced (answered from the links, never sent to the resolver,
+  AC-CS-12), so the rule cannot turn a real own-customer ask into a miss.
+- `answer_bridge.answer_for`: on a miss that has unplaced words, the scope rows leave the miss
+  gate, so no Customer/Product/Dates header or "customer: <link> (+11 more)" bullet is printed
+  above the miss line.
+- Reply on a typo / unknown SO: `Couldn't find: "SO422056" (order). Would you like me to escalate
+  to customer service team?` (production's own miss sentence and offer).
+
+## Fix, part 2: the SO lookup
+
+Owner answers to behaviour card v2 (PR #1435, 2 Oct 2026):
+
+| Q | Ruling |
+|---|--------|
+| 1 | Delivery line is words only: `not delivered yet` / `partly delivered` / `fully delivered`. No unit or line counts. |
+| 2 | An SO that exists but is not under the contact's account gets the scope refusal (`Sorry, that isn't under your account. I can only check on ...`), not the miss line. |
+| 3 | Cancelled: header + `❗ Cancelled`, no delivery line. Closed with less delivered than ordered: `Closed`, delivery `partly delivered` (same words-only rule). |
+| 4 | Several SO numbers: one card per found SO, plus one miss line for the rest. |
+| 5 | Gated by the existing `sales_orders.outstanding` reveal key. |
+
+Data facts (crew, dev DB read-only): the SO->DO link is empty (0 of 37,996 `orders.sales_order_id`,
+0 of 99,335 `order_lines.sales_order_line_id`), so no DO numbers are listed. Delivery comes from
+`sales_order_lines.qty_ordered` / `qty_delivered`. Status mix: closed 147,011 / cancelled 3,401 /
+open 2,372.
+
+Card:
+
+```
+*SO421624* - HANLIM TRADING SDN BHD [A/C I]
+Ordered 15 Sep 2026 - Open
+Delivery: partly delivered
+```
+
+Design (simplest thing that works):
+
+- `turn_runtime` (tool runner, order domain): SO-shaped words (`SO` + digits) that the resolver
+  could not place, on a turn that placed no other typed subject, ride to `run_fetch` as
+  `so_numbers` on the lane input. Those words are answered by the lane, so they leave `unplaced`
+  and compose does not add its own "I could not find" line for them.
+- `lanes/business/run_fetch`: an `so_numbers` arm, ahead of the generic tool pick. It checks the
+  `sales_orders.outstanding` grant first (no key: `Sales order figures are not enabled for your
+  account.`), then reads through `app/services/chatbot/so_status.py` on the engine's own
+  per-contact scoped session (the precedent `resolve_warehouse_token` / `outstanding_customer_echo`
+  set: company scope applies, so another company's SO is simply not found).
+- In scope = the SO's `customer_id` is one of the contact's links, or it has no `customer_id` and
+  its `debtor_code` is a linked customer's code. A contact with no enforced scope (staff, unlinked)
+  sees any SO of its company.
+- Delivery over lines that are not `cancelled`: none delivered -> `not delivered yet`; every line
+  delivered in full -> `fully delivered`; otherwise `partly delivered`. No such lines -> no
+  delivery line.
+- Reply = cards (in the order typed), then the refusal (if any SO was outside the account), then
+  `I could not find X.` for the rest. A fixed reply: no escalate offer over a found card.
+
+Trigger to widen: SO resolution as a real resolver kind (picker, fuzzy did-you-mean, DO list per
+SO) once `orders.sales_order_id` is actually populated by the ingest.
 
 ## Tests
 
-Red-first pytest reproducing the dump, then the fix.
+`sorento_crm_backend/tests/chatbot/test_so_number_ask.py`, red first, through one real
+`engine.run_turn` (harness of `test_customer_scope_lane.py`).
