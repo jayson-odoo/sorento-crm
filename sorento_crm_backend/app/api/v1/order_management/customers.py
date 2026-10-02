@@ -27,6 +27,7 @@ async def get_customers(
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("desc"),
+    customer_group_id: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -39,6 +40,7 @@ async def get_customers(
             query=query,
             sort_field=sort or "created_at",
             sort_dir=dir or "desc",
+            customer_group_id=customer_group_id,
         )
         return result
     except Exception as e:

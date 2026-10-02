@@ -14,6 +14,10 @@ package, which imports it, may not call `re` (AC-1520), and the rule was born th
 """
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 #: Words that name a company's LEGAL FORM, not the business (`gate._LEGAL_FORM` on main,
 #: spelled as words because the turn package may not use regular expressions).
 _LEGAL_FORM_WORDS = frozenset({"SDN", "BHD"})
@@ -40,21 +44,97 @@ def _without_brackets(text: str) -> str:
     return "".join(out)
 
 
+def normalise_customer_name(text: str) -> str:
+    """The key the group map uses: upper-cased, whitespace collapsed."""
+    return " ".join(text.upper().split())
+
+
+class _TurnGroups:
+    """The turn's customer groups (owner ruling 2 Oct 2026: a group is the office's own
+    say-so, the name rule only the fallback), indexed once so a roster of hundreds of names
+    does no scan per name. Pure strings, no DB, no `re`."""
+
+    def __init__(self, mapping: Mapping[str, str]) -> None:
+        #: normalised customer name -> group name
+        self.by_name = {normalise_customer_name(k): v for k, v in mapping.items()}
+        #: normalised group name -> group name (a group is its own customer)
+        self.own = {normalise_customer_name(v): v for v in mapping.values()}
+        #: the comparison keys the groups answer with
+        self.keys = {_words(v) for v in mapping.values()}
+
+
+_GROUPS: ContextVar[_TurnGroups | None] = ContextVar("ledger_family_groups", default=None)
+
+#: Appended to an UNGROUPED row's key when a group of the turn has the same one, so
+#: `JUBIN BMS (NS)` (no group) stays apart from the `JUBIN BMS SDN BHD` group it used to be
+#: merged into. No name rule can produce it.
+_UNGROUPED = " (NO GROUP)"
+
+
+@contextmanager
+def customer_groups(mapping: Mapping[str, str]) -> Iterator[None]:
+    """Hold `mapping` (customer name -> group name) for the block. Empty = name rule only.
+
+    Set once per turn by the engine and by `stock_ask_service`; outside any block the name
+    rule answers alone."""
+    token = _GROUPS.set(_TurnGroups(mapping) if mapping else None)
+    try:
+        yield
+    finally:
+        _GROUPS.reset(token)
+
+
+def _label_without_marker(text: str) -> str:
+    cleaned = " ".join(_without_brackets(text).split()).strip().strip("-").strip()
+    return cleaned or text
+
+
+def customer_group_of(text: str) -> str | None:
+    """The group name the turn holds for this customer name, or None (use the name rule).
+
+    Found by the row's own name, then by its name without the ledger marker (`X [A/C II]`
+    follows a grouped `X`), then as a group's own name (the group is its own customer)."""
+    groups = _GROUPS.get()
+    if groups is None:
+        return None
+    for probe in (normalise_customer_name(text), normalise_customer_name(_label_without_marker(text))):
+        if probe in groups.by_name:
+            return groups.by_name[probe]
+        if probe in groups.own:
+            return groups.own[probe]
+    return None
+
+
+def _words(text: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() else " " for ch in text.upper())
+    return " ".join(w for w in cleaned.split() if w not in _LEGAL_FORM_WORDS)
+
+
 def ledger_family_key(text: str) -> str:
     """The TRADING NAME behind a customer row, as a comparison key.
 
     Main's `gate._cust_base`, rule for rule: upper-cased, bracketed parts dropped, the
-    legal-form words dropped, everything non-alphanumeric collapsed to one space.
+    legal-form words dropped, everything non-alphanumeric collapsed to one space. A name
+    the turn's customer groups cover answers with its GROUP's key instead (the group name
+    whole, so `JUBIN BMS (1990) SDN BHD` is not `JUBIN BMS`).
     """
-    stripped = _without_brackets(text.upper())
-    cleaned = "".join(ch if ch.isalnum() else " " for ch in stripped)
-    return " ".join(w for w in cleaned.split() if w not in _LEGAL_FORM_WORDS)
+    group = customer_group_of(text)
+    if group is not None:
+        return _words(group)
+    key = _words(_without_brackets(text.upper()))
+    groups = _GROUPS.get()
+    if groups is not None and key in groups.keys:
+        return key + _UNGROUPED
+    return key
 
 
 def ledger_family_label(text: str) -> str:
-    """What the family is CALLED: the row's own name without its ledger marker."""
-    cleaned = " ".join(_without_brackets(text).split()).strip().strip("-").strip()
-    return cleaned or text
+    """What the family is CALLED: the group's name when the turn has one for the row,
+    else the row's own name without its ledger marker."""
+    group = customer_group_of(text)
+    if group is not None:
+        return group
+    return _label_without_marker(text)
 
 
 _ROMAN = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10}
