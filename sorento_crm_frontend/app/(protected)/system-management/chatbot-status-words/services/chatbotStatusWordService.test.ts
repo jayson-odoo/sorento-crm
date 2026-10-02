@@ -23,7 +23,7 @@ function fail(detail: string, status = 409) {
   } as unknown as Response;
 }
 
-const INPUT = { domain: 'sales', value: 'sales_report', label: 'sales figures', trigger_words: ['sales'], sort_order: 5 };
+const INPUT = { domain: 'sales', value: 'sales_report', label: 'sales figures', trigger_words: ['sales'], sort_order: 5, prompt_lists: ['status_field_values'] };
 const ROW = { ...INPUT, id: 's-1', updated_at: '2026-09-30T09:00:00' };
 
 beforeEach(() => apiFetch.mockReset());

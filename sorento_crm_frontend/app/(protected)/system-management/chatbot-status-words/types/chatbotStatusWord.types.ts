@@ -12,6 +12,8 @@ export interface ChatbotStatusWord {
   label: string;
   trigger_words: string[];
   sort_order: number;
+  /** The parser prompt lists the row is in (owner answer 4, 2 Oct 2026). */
+  prompt_lists: string[];
   updated_at: string;
 }
 

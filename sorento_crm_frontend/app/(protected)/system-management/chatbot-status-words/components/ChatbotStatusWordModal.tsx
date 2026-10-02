@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import StringChipInput from '@/components/common/StringChipInput';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import {
@@ -22,7 +23,15 @@ const BLANK: ChatbotStatusWordInput = {
   label: '',
   trigger_words: [],
   sort_order: 0,
+  prompt_lists: [],
 };
+
+/** The parser prompt lists a status row can be in (backend `STATUS_PROMPT_LISTS`). */
+const PROMPT_LIST_OPTIONS = [
+  { value: 'statuses', label: 'Status bullets' },
+  { value: 'status_values', label: 'Order status values' },
+  { value: 'status_field_values', label: 'Status field values' },
+];
 
 const VALUE_PATTERN = /^[a-z][a-z0-9_]*$/;
 
@@ -60,6 +69,7 @@ export default function ChatbotStatusWordModal({
             label: current.label,
             trigger_words: current.trigger_words,
             sort_order: current.sort_order,
+            prompt_lists: current.prompt_lists ?? [],
           }
         : { ...BLANK, sort_order: rows.length },
     );
@@ -149,6 +159,16 @@ export default function ChatbotStatusWordModal({
                 value={draft.trigger_words}
                 onChange={(v) => set('trigger_words', v)}
                 placeholder="sales report, laporan jualan"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="status-prompt-lists">Parser prompt lists</Label>
+              <SearchableMultiSelect
+                id="status-prompt-lists"
+                value={draft.prompt_lists}
+                onChange={(v) => set('prompt_lists', v)}
+                options={PROMPT_LIST_OPTIONS}
+                placeholder="Not in any list"
               />
             </div>
             <div className="space-y-1.5">

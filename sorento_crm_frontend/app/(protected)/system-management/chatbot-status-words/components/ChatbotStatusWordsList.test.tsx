@@ -29,6 +29,7 @@ const ROW: ChatbotStatusWord = {
   label: "a customer's sales figures by month",
   trigger_words: ['sales', 'sales report'],
   sort_order: 5,
+  prompt_lists: ['status_field_values'],
   updated_at: '2026-09-30T09:00:00',
 };
 
