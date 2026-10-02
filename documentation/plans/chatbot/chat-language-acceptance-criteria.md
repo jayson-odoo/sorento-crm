@@ -515,3 +515,13 @@ whole-sentence template, catalog the whole line its builder prints.
 - Rule 3 skips a value shaped like a breakdown row (`5 (O/S: 2)`), so a customer named like a
   catalog label stays untouched. A `Qty ...` value is NOT skipped: `Total: Qty 3, RM 5.00` is a real
   totals line and must translate (AC-CL31, AC-CL33).
+
+**Slice 4 rulings on the tester's contract questions (2 Oct):**
+1. **Overlap:** when several INLINE templates match at the same position, the most specific one
+   wins. Most specific means the most fixed (non-token) characters, so the company-form offer
+   beats `{team} team?` and the whole apology sentence beats its offer suffix.
+2. **Edited registry copy:** only copy staff have FULLY edited is guaranteed to stay English. If
+   an edit keeps a standard catalog sentence verbatim, that sentence is still translated by the
+   inline pass. This is accepted: the sentence is the shipped wording.
+3. **Token boundaries:** a `{token}` matches lazily and never spans a newline. A template match
+   must end at the template's final punctuation, followed by end of line or a space.
