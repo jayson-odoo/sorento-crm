@@ -1,6 +1,6 @@
 # PLAN: Customer groups (CUSTOMER-GROUP)
 
-Status: planned, mock v1 awaiting owner approval. Track: size M (crew), migration + new page.
+Status: building (PR #1441); mock v1 approved 2 Oct 2026; review round open. Track: size M (crew), migration + new page.
 UAC: `customer-group-acceptance-criteria.md`. Mock: `documentation/mockups/customer-group/index.html`.
 
 ## Why
@@ -33,7 +33,7 @@ the name rule as fallback.
   (idempotent); the seed UPDATE is held for the owner per the crew contract, or run via
   `alembic upgrade` on the test copy.
 
-## Backend (`/api/v1/customer-groups`, order_management router, mounted like `customers_select`)
+## Backend (`/api/v1/order-management/customer-groups`, order_management router, mounted like `customers_select`)
 
 Template: `app/api/v1/master_data/sales_agents.py:156-210` (agent customers list / assign) and
 `CustomerService.unassign_sales_agent` (`app/services/order_service.py:3760`).
@@ -55,7 +55,7 @@ moved meanwhile), plus the park-time visibility check in `app/api/v1/system/pend
 
 Customer API: `CustomerResponse` + `customer_group_id`, `customer_group_name`; Create/Update
 accept `customer_group_id` (company must match: 422); `list_customers` + `customer_group_id`
-filter and the list-query registry column `customer_group_name`.
+filter (customers are not in the list-query registry, so no registry change); `/customers/select` also returns `customer_group_id` / `customer_group_name` for the Add ledgers picker.
 
 Service: `app/services/customer_group_service.py` (CRUD, assign, remove, counts, and
 `family_overrides(db) -> dict[str, str]` for the chatbot, below).

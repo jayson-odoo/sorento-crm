@@ -19,6 +19,8 @@ Examples use the shared dev DB (`sorento_cagent_stack`, 6,358 customers, Sorento
 
 ## Phase 2 - backend
 
+Route paths below are under `/api/v1/order-management`.
+
 - AC-1 [BE] Migration creates `customer_groups` (id, company_id, name, timestamps) with a
   per-company case-insensitive unique name, and nullable `customers.customer_group_id`
   (FK, ON DELETE SET NULL, indexed). Additive and re-runnable.
