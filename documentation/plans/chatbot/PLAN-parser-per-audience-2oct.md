@@ -142,6 +142,20 @@ Prompt cache:
   day.
 - No `cache_control` is used today, so the Anthropic path is uncached either way.
 
+## Owner decisions
+
+- **Q2 = (a), 2 Oct 2026.** Dealers cannot ask about POs: `purchase_order` joins
+  `DOMAIN_GRANT_REQUIRED` on `purchase_orders.placed`.
+  - The switch is relabelled "Purchase orders (PO asks, and PO on stock answers)".
+  - The revocation list for dealer and end-user holders goes to the owner; it is a data change,
+    not code.
+  - Answers to the owner's follow-ups (i)-(iv) are on #1429:
+    - grant screen: Contact > Access > Field reveals;
+    - switch home: Settings > Chatbot > Switches;
+    - dealer holders: a SQL list, with the recommendation "revoke by list, no auto-deny by type";
+    - unidentified contacts: they already hold zero grants, so there is no special case.
+- Q1, Q3, Q4, Q5 and (iii): pending.
+
 ## Slices (after the owner answers and #1405 merges, rebased on main)
 
 1. Red tests (tester), from the UAC:
