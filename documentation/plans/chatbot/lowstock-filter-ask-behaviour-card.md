@@ -181,8 +181,12 @@ Examples:
 Edge cases:
 
 - A contact without `purchase_orders.supplier`: a supplier word or a supplier grouping in
-  the message is not taken (the column is hidden for them); the filter line says
-  `Supplier: all` and the grouping drops to category / none.
+  the message is not taken (the column is hidden for them); the filter line has no
+  Supplier part (`Category: SRT-FT | Grouping: category`) and the grouping drops to
+  category (from supplier x category) or none (from supplier). The route refuses a
+  supplier filter or split for them before any run as a second line of defence.
+- A product TYPE the parser hints as a product ("water tap", no digits) is read as the
+  category word; a product code (always has digits) is the run's own scope, not asked.
 - While the question is open, a message the parser reads as a different ask with more than
   three words (or a question mark) drops the question and is answered normally. A short
   reply is always read as the answer.
