@@ -219,6 +219,71 @@ LABELS: dict[str, dict[str, str]] = {
     "Top {n} selling category": {"ms": "{n} kategori paling laris", "zh": "最畅销的 {n} 个类别"},
     "Bottom {n} selling item": {"ms": "{n} item paling kurang laris", "zh": "最滞销的 {n} 个项目"},
     "Bottom {n} selling category": {"ms": "{n} kategori paling kurang laris", "zh": "最滞销的 {n} 个类别"},
+    # Slice 4: the final reply pass (composer sentences, escalate offer, canned copy, dealer
+    # questions) and the domain label words. Sentences are listed in INLINE below.
+    REFER_TO_SALESMAN: {"ms": "Sila rujuk jurujual anda.", "zh": "请联系您的销售员。"},
+    " or ": {"ms": " atau ", "zh": "或"},
+    " and ": {"ms": " dan ", "zh": "和"},
+    'stock': {"ms": 'stok', "zh": '库存'},
+    'orders': {"ms": 'pesanan', "zh": '订单'},
+    'incoming stock': {"ms": 'stok masuk', "zh": '到货库存'},
+    'promotions': {"ms": 'promosi', "zh": '促销'},
+    'forms': {"ms": 'borang', "zh": '表格'},
+    'product information': {"ms": 'maklumat produk', "zh": '产品信息'},
+    'product attachments': {"ms": 'lampiran produk', "zh": '产品附件'},
+    'resource attachments': {"ms": 'lampiran sumber', "zh": '资料附件'},
+    'goods receive': {"ms": 'penerimaan barang', "zh": '收货'},
+    'last in': {"ms": 'kemasukan terakhir', "zh": '最近入库'},
+    'outstanding purchase orders': {"ms": 'pesanan belian tertunggak', "zh": '未完成采购订单'},
+    'last purchase cost': {"ms": 'kos belian terakhir', "zh": '最近采购成本'},
+    'this request': {"ms": 'permintaan ini', "zh": '此请求'},
+    '*{label}* for {codes}:': {"ms": '*{label}* untuk {codes}:', "zh": '{codes} 的*{label}*：'},
+    'I could not fetch {label} just now, please try again.': {"ms": 'Saya tidak dapat mendapatkan {label} sekarang, sila cuba lagi.', "zh": '暂时无法获取{label}，请稍后再试。'},
+    '*{label}*: this is not enabled for your account.': {"ms": '*{label}*: ini tidak diaktifkan untuk akaun anda.', "zh": '*{label}*：您的账户未开通此功能。'},
+    'Nothing on {names} either.': {"ms": 'Tiada juga untuk {names}.', "zh": '{names} 也没有。'},
+    'Not checked: {names}.': {"ms": 'Tidak disemak: {names}.', "zh": '未检查：{names}。'},
+    'I could not find {names}.': {"ms": 'Saya tidak dapat menemui {names}.', "zh": '找不到 {names}。'},
+    'I have attached the file(s) below.': {"ms": 'Saya telah melampirkan fail di bawah.', "zh": '我已在下方附上文件。'},
+    'Would you like me to escalate to {team} team?': {"ms": 'Adakah anda mahu saya rujuk kepada pasukan {team}?', "zh": '需要我转交给 {team} 团队吗？'},
+    'Would you like me to escalate?': {"ms": 'Adakah anda mahu saya rujuk kepada pasukan kami?', "zh": '需要我转交给相关团队吗？'},
+    'Would you like me to escalate to *{company}* {team} team?': {"ms": 'Adakah anda mahu saya rujuk kepada pasukan {team} *{company}*?', "zh": '需要我转交给 *{company}* 的 {team} 团队吗？'},
+    'I am sorry the provided answer does not meet your requirements. Would you like me to escalate to {team} team?': {"ms": 'Maaf, jawapan yang diberikan tidak memenuhi keperluan anda. Adakah anda mahu saya rujuk kepada pasukan {team}?', "zh": '抱歉，所提供的答案未能满足您的需求。需要我转交给 {team} 团队吗？'},
+    'I am sorry the provided answer does not meet your requirements. Would you like me to escalate this to our team?': {"ms": 'Maaf, jawapan yang diberikan tidak memenuhi keperluan anda. Adakah anda mahu saya rujuk perkara ini kepada pasukan kami?', "zh": '抱歉，所提供的答案未能满足您的需求。需要我转交给我们的团队吗？'},
+    "No it's okay": {"ms": 'Tidak mengapa', "zh": '不用了'},
+    'Yes, escalate': {"ms": 'Ya, rujuk', "zh": '是，转交'},
+    "No, it's okay": {"ms": 'Tidak, tidak mengapa', "zh": '不，不用了'},
+    'Which team should take this?': {"ms": 'Pasukan mana yang patut uruskan ini?', "zh": '应由哪个团队处理？'},
+    'Which company do you mean?': {"ms": 'Syarikat mana yang anda maksudkan?', "zh": '您指的是哪家公司？'},
+    'Who should take this?': {"ms": 'Siapa yang patut uruskan ini?', "zh": '应由谁处理？'},
+    'Outstanding for which document?': {"ms": 'Tertunggak untuk dokumen mana?', "zh": '查看哪种单据的未完成数量？'},
+    'Which list would you like?': {"ms": 'Senarai mana yang anda mahu?', "zh": '您要哪个列表？'},
+    'Which one do you mean?': {"ms": 'Yang mana satu anda maksudkan?', "zh": '您指的是哪一个？'},
+    'Which kind of file do you need?': {"ms": 'Jenis fail apa yang anda perlukan?', "zh": '您需要哪种文件？'},
+    'Which item do you mean? Reply with a rank number from 1 to {count}.': {"ms": 'Item mana yang anda maksudkan? Balas dengan nombor kedudukan dari 1 hingga {count}.', "zh": '您指的是哪个项目？请回复 1 到 {count} 之间的排名数字。'},
+    'Please reply with a number from {min} to {max}.': {"ms": 'Sila balas dengan nombor dari {min} hingga {max}.', "zh": '请回复 {min} 到 {max} 之间的数字。'},
+    'How many units for each?': {"ms": 'Berapa unit untuk setiap satu?', "zh": '每个需要多少件？'},
+    'How many units of {code}?': {"ms": 'Berapa unit {code}?', "zh": '{code} 需要多少件？'},
+    'Which one do you need {qty} of?': {"ms": 'Yang mana satu anda perlukan sebanyak {qty}?', "zh": '您需要 {qty} 件的是哪一个？'},
+    'Which one?': {"ms": 'Yang mana satu?', "zh": '哪一个？'},
+    '{typed} x {qty}: which one?': {"ms": '{typed} x {qty}: yang mana satu?', "zh": '{typed} x {qty}：哪一个？'},
+    '{typed} matches {total} products. Which one?': {"ms": '{typed} sepadan dengan {total} produk. Yang mana satu?', "zh": '{typed} 匹配到 {total} 个产品。哪一个？'},
+    "Couldn't find {shown}. Did you mean {label}?": {"ms": 'Tidak dapat menemui {shown}. Adakah anda maksudkan {label}?', "zh": '找不到 {shown}。您是指 {label} 吗？'},
+    "Couldn't find {shown}. Did you mean:": {"ms": 'Tidak dapat menemui {shown}. Adakah anda maksudkan:', "zh": '找不到 {shown}。您是指：'},
+    'Sorry, you are not allowed to access {team}': {"ms": 'Maaf, anda tidak dibenarkan mengakses {team}', "zh": '抱歉，您无权访问 {team}'},
+    'Please specify your demand quantity': {"ms": 'Sila nyatakan kuantiti yang anda perlukan', "zh": '请说明您需要的数量'},
+    'Okay, noted.': {"ms": 'Baik, dicatat.', "zh": '好的，已记录。'},
+    'Escalation declined.': {"ms": 'Rujukan dibatalkan.', "zh": '已取消转交。'},
+    'Sorry, I ran into a problem understanding that. Please try again in a moment.': {"ms": 'Maaf, saya menghadapi masalah memahami mesej itu. Sila cuba lagi sebentar lagi.', "zh": '抱歉，我暂时无法理解您的信息，请稍后再试。'},
+    "Sorry, I didn't get that. What would you like to change in the ranking?": {"ms": 'Maaf, saya tidak faham. Apa yang anda mahu ubah dalam senarai kedudukan?', "zh": '抱歉，我没听明白。您想如何调整排名？'},
+    'Low stock report is not enabled for your account.': {"ms": 'Laporan stok rendah tidak diaktifkan untuk akaun anda.', "zh": '您的账户未开通低库存报告。'},
+    'Could not run the low stock report right now.': {"ms": 'Laporan stok rendah tidak dapat dijalankan sekarang.', "zh": '暂时无法生成低库存报告。'},
+    'Both': {"ms": 'Kedua-duanya', "zh": '两者'},
+    'Which customer is this outstanding report for?': {"ms": 'Laporan tertunggak ini untuk pelanggan mana?', "zh": '这份未完成报告是哪个客户的？'},
+    'Which category do you mean? Reply with one code: {codes}': {"ms": 'Kategori mana yang anda maksudkan? Balas dengan satu kod: {codes}', "zh": '您指的是哪个类别？请回复一个代码：{codes}'},
+    'I could not match any product code in that photo.': {"ms": 'Saya tidak dapat memadankan sebarang kod produk dalam gambar itu.', "zh": '我无法在那张照片中匹配到任何产品代码。'},
+    'What would you like me to do with it?': {"ms": 'Apa yang anda mahu saya lakukan dengannya?', "zh": '您希望我怎么处理？'},
+    'Ask again with the correct code.': {"ms": 'Sila tanya semula dengan kod yang betul.', "zh": '请用正确的代码再问一次。'},
+    'I read {codes} from that photo.': {"ms": 'Saya membaca {codes} daripada gambar itu.', "zh": '我从那张照片中读到 {codes}。'},
     "PENDING ALLOCATION": {"ms": "MENUNGGU PERUNTUKAN", "zh": "待分配"},
     "PARTIAL ALLOCATION": {"ms": "PERUNTUKAN SEBAHAGIAN", "zh": "部分分配"},
 }
@@ -308,6 +373,81 @@ def defaults(lang: str) -> dict[str, str]:
     }
 
 
+#: The sentences `Localizer.reply` replaces INLINE: wherever one starts a line or follows ". ",
+#: "? " or "! " and runs through its own final punctuation. Composer sentences, the escalate offer,
+#: dealer questions, canned copy (the slice 4 table). Domain label words and the quick-reply labels
+#: are not here: they are replaced as whole lines or as tokens, never inside a sentence.
+INLINE = frozenset(
+    {
+        "*{label}* for {codes}:",
+        "I could not fetch {label} just now, please try again.",
+        "*{label}*: this is not enabled for your account.",
+        "Nothing on {names} either.",
+        "Not checked: {names}.",
+        "I could not find {names}.",
+        "I have attached the file(s) below.",
+        "Would you like me to escalate to {team} team?",
+        "Would you like me to escalate?",
+        "Would you like me to escalate to *{company}* {team} team?",
+        "I am sorry the provided answer does not meet your requirements. Would you like me to escalate to {team} team?",
+        "I am sorry the provided answer does not meet your requirements. Would you like me to escalate this to our team?",
+        "Which team should take this?",
+        "Which company do you mean?",
+        "Who should take this?",
+        "Outstanding for which document?",
+        "Which list would you like?",
+        "Which one do you mean?",
+        "Which kind of file do you need?",
+        "Which item do you mean? Reply with a rank number from 1 to {count}.",
+        "Please reply with a number from {min} to {max}.",
+        "How many units for each?",
+        "How many units of {code}?",
+        "Which one do you need {qty} of?",
+        "Which one?",
+        "{typed} x {qty}: which one?",
+        "{typed} matches {total} products. Which one?",
+        "Couldn't find {shown}. Did you mean {label}?",
+        "Couldn't find {shown}. Did you mean:",
+        REFER_TO_SALESMAN,
+        "Sorry, you are not allowed to access {team}",
+        "Please specify your demand quantity",
+        "Okay, noted.",
+        "Escalation declined.",
+        "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "Sorry, I didn't get that. What would you like to change in the ranking?",
+        "Low stock report is not enabled for your account.",
+        "Could not run the low stock report right now.",
+        "Which customer is this outstanding report for?",
+        "Which category do you mean? Reply with one code: {codes}",
+        "I could not match any product code in that photo.",
+        "What would you like me to do with it?",
+        "Ask again with the correct code.",
+        "I read {codes} from that photo.",
+    }
+)
+
+#: The domain label words (`turn/policy_rows.py` `label=`): translated where they ride in a
+#: composer sentence's `{label}` / `{names}` token, with the " or " / " and " joiners.
+DOMAIN_LABELS = frozenset(
+    {
+        "stock",
+        "orders",
+        "incoming stock",
+        "promotions",
+        "forms",
+        "product information",
+        "product attachments",
+        "resource attachments",
+        "goods receive",
+        "last in",
+        "outstanding purchase orders",
+        "last purchase cost",
+        "this request",
+    }
+)
+_WORD_TOKENS = ("label", "names")
+_JOINERS = re.compile(r"(, | or | and )")
+
 #: Report value words `Localizer.lines` translates after a catalogued label. An explicit set, never
 #: "any catalog key", so data that happens to read like a label (a status named "Status") is safe.
 VALUE_WORDS = frozenset({"all", "Amount", "Quantity", "Ordered", "Delivered (transferred to DO)"})
@@ -318,6 +458,20 @@ _NUMBERED = re.compile(r"\d+\. ")
 _WRAPPERS = (("*_", "_*"), ("*", "*"), ("_", "_"))
 
 
+def _inline_pattern(english: str, target: str) -> tuple[re.Pattern[str], str, int, tuple[str, ...]]:
+    """A start-anchored, whole-sentence regex for an INLINE key: tokens are lazy and stay on one
+    line, and the match must run to its final punctuation followed by a space or the line end."""
+    pattern = ""
+    pos = 0
+    for m in _TOKEN.finditer(english):
+        pattern += re.escape(english[pos : m.start()]) + f"(?P<{m.group(1)}>[^\\n]+?)"
+        pos = m.end()
+    pattern += re.escape(english[pos:])
+    fixed = len(_TOKEN.sub("", english))
+    regex = re.compile(r"(?:^|(?<=[.?!] ))" + pattern + r"(?= |$)", re.MULTILINE)
+    return regex, target, fixed, tuple(_TOKEN.findall(english))
+
+
 class Localizer:
     """Rewrites catalogued labels and sentences for `language`; everything else is untouched."""
 
@@ -325,7 +479,13 @@ class Localizer:
         self.language = language
         self.table = table
         # `{token}` entries as (whole-string regex over the English shape, target).
-        self._templates: list[tuple[re.Pattern[str], str]] = []
+        self._templates: list[tuple[re.Pattern[str], str, int]] = []  # most fixed text wins
+        # The INLINE sentences the table carries: (regex for a start-anchored match, target,
+        # fixed characters, token names). Longest fixed text wins where two start together.
+        self._inline: list[tuple[re.Pattern[str], str, int, tuple[str, ...]]] = []
+        for english, target in table.items():
+            if english in INLINE:
+                self._inline.append(_inline_pattern(english, target))
         for english, target in table.items():
             if not tokens(english) or english == RANGE:
                 continue  # the date range is a VALUE template, applied by `lines` only
@@ -335,7 +495,7 @@ class Localizer:
                 pattern += re.escape(english[pos : m.start()]) + f"(?P<{m.group(1)}>.+?)"
                 pos = m.end()
             pattern += re.escape(english[pos:])
-            self._templates.append((re.compile(pattern, re.DOTALL), target))
+            self._templates.append((re.compile(pattern, re.DOTALL), target, len(_TOKEN.sub("", english))))
 
     def label(self, field: dict) -> str:
         """The field's label: by its key when it has a catalogued one and still carries that
@@ -352,12 +512,15 @@ class Localizer:
     def text(self, s: str) -> str:
         if s in self.table:
             return self.table[s]
-        for regex, target in self._templates:
+        best = None
+        for regex, target, fixed in self._templates:
             m = regex.fullmatch(s)
-            if m:
-                values = m.groupdict()
-                return _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), target)
-        return s
+            if m and (best is None or fixed > best[0]):
+                best = (fixed, m.groupdict(), target)
+        if best is None:
+            return s
+        values = best[1]
+        return _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), best[2])
 
     def lines(self, text: str) -> str:
         """Finished report text, line by line: the first rule that matches wins.
@@ -372,6 +535,42 @@ class Localizer:
         if not self.table or not text:
             return text
         return "\n".join(self._line(line) for line in text.split("\n"))
+
+    def reply(self, text: str) -> str:
+        """The final reply pass: `lines()`, then each INLINE sentence replaced where it starts a
+        line or follows ". ", "? " or "! " and runs through its final punctuation. Tokens come back
+        verbatim (the domain label words and joiners only inside `{label}` / `{names}`)."""
+        if not self.table or not text:
+            return text
+        text = self.lines(text)
+        if not self._inline:
+            return text
+        found: list[tuple[int, int, int, str]] = []
+        for regex, target, fixed, names in self._inline:
+            for m in regex.finditer(text):
+                values = {k: self._word_token(k, v) for k, v in m.groupdict().items()}
+                found.append((m.start(), m.end(), fixed, _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), target)))
+        found.sort(key=lambda f: (f[0], -f[2]))
+        out, pos = [], 0
+        for start, end, _fixed, replacement in found:
+            if start < pos:
+                continue
+            out.append(text[pos:start])
+            out.append(replacement)
+            pos = end
+        out.append(text[pos:])
+        return "".join(out)
+
+    def _word_token(self, name: str, value: str) -> str:
+        """A `{label}` / `{names}` value: its domain label words and joiners translate."""
+        if name not in _WORD_TOKENS:
+            return value
+        parts = _JOINERS.split(value)
+        translated = [
+            self.table.get(part, part) if (part in DOMAIN_LABELS or part in (" or ", " and ")) else part
+            for part in parts
+        ]
+        return "".join(translated)
 
     def _line(self, line: str) -> str:
         for left, right in _WRAPPERS:
