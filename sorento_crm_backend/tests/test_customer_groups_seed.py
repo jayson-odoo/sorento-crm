@@ -89,8 +89,8 @@ def test_numbered_family_becomes_one_group_with_every_member():
 def test_unnumbered_and_single_row_families_get_no_group():
     with blank_session() as db:
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
-        cash1 = _cust(db, "CASH 1")
-        cash2 = _cust(db, "CASH 2")
+        cash1 = _cust(db, "CASH (PARAGON PREMIUM)")
+        cash2 = _cust(db, "CASH (PERMAS JAYA)")
         solo = _cust(db, "SOLO TRADING SDN BHD [A/C I]", 1)
 
         _run(db)
