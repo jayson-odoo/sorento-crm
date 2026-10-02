@@ -5663,16 +5663,16 @@ def _dealer_names_the_miss(answer: Any, envelopes: list[dict[str, Any]]) -> Any:
     misses = _unplaced_tokens(envelopes)
     if not misses or not _COMPOSE_MISS.search(text):
         return answer
-    body = _COMPOSE_MISS.sub("", text).rstrip()
-    line = f"Couldn't find: {', '.join(misses)}."
+    from app.services.chatbot.turn import refer
     from app.services.chatbot.turn.task import REFER_TO_SALESMAN
 
-    if body.endswith(REFER_TO_SALESMAN):
-        head = body[: -len(REFER_TO_SALESMAN)].rstrip()
-        parts = [head, line, REFER_TO_SALESMAN] if head else [line, REFER_TO_SALESMAN]
-    else:
-        parts = [body, line] if body else [line]
-    return dataclasses_replace(answer, text="\n\n".join(parts))
+    blocks = _COMPOSE_MISS.sub("", text).rstrip().split("\n\n")
+    line = f"Couldn't find: {', '.join(misses)}."
+    if blocks and blocks[-1].strip() == REFER_TO_SALESMAN:
+        # The refer line stays last, printed through its one helper.
+        head = "\n\n".join(b for b in blocks[:-1] if b.strip())
+        return dataclasses_replace(answer, text=refer.after("\n\n".join(p for p in (head, line) if p)))
+    return dataclasses_replace(answer, text="\n\n".join(p for p in (*blocks, line) if p.strip()))
 
 
 def _stock_answer_lines(envelopes: list[dict[str, Any]]) -> list[str]:
