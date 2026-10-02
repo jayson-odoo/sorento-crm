@@ -11,10 +11,12 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const push = vi.fn();
+const replace = vi.hoisted(() => vi.fn());
+const urlState = vi.hoisted(() => ({ search: '' }));
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push, replace: vi.fn(), prefetch: vi.fn(), back: vi.fn() }),
+  useRouter: () => ({ push, replace, prefetch: vi.fn(), back: vi.fn() }),
   usePathname: () => '/ideas',
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(urlState.search),
 }));
 
 const prefsCalls = vi.hoisted(() => [] as Array<{ listingKey?: string | null }>);
@@ -107,6 +109,7 @@ function renderList() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  urlState.search = '';
   prefsCalls.length = 0;
   svc.listIdeas.mockResolvedValue([idea(), idea({ id: 'idea-2', title: 'Merged child', mergedIntoId: 'idea-1', ideaNumber: 'IDEA-0043' })]);
 });
@@ -277,5 +280,42 @@ describe('AC-B-02 the list shows no row actions beyond voting', () => {
       .getAllByRole('button')
       .map((b) => b.getAttribute('aria-label') || b.textContent || '');
     expect(names.every((n) => /vote/i.test(n))).toBe(true);
+  });
+});
+
+describe('IDEATION-CAPTURE My ideas / All ideas toggle', () => {
+  const selected = (el: HTMLElement) =>
+    el.getAttribute('aria-checked') === 'true' || el.getAttribute('data-state') === 'on';
+  const navigated = () =>
+    [...push.mock.calls, ...replace.mock.calls].map((c) => String(c[0]));
+
+  it('shows a two-option toggle, All ideas selected, and queries without mine', async () => {
+    renderList();
+    await screen.findByText('Faster quotes');
+    const mine = screen.getByRole('radio', { name: 'My ideas' });
+    const all = screen.getByRole('radio', { name: 'All ideas' });
+    expect(selected(all)).toBe(true);
+    expect(selected(mine)).toBe(false);
+    expect(svc.listIdeas.mock.calls[0][0].mine).toBeFalsy();
+  });
+
+  it('clicking My ideas re-queries with mine true and puts view=mine in the URL', async () => {
+    renderList();
+    await screen.findByText('Faster quotes');
+    fireEvent.click(screen.getByRole('radio', { name: 'My ideas' }));
+    await waitFor(() =>
+      expect(svc.listIdeas).toHaveBeenLastCalledWith(expect.objectContaining({ mine: true })),
+    );
+    expect(navigated().some((u) => u.includes('view=mine'))).toBe(true);
+    expect(selected(screen.getByRole('radio', { name: 'My ideas' }))).toBe(true);
+  });
+
+  it('with ?view=mine in the URL, My ideas is selected on first render and the first query has mine true', async () => {
+    urlState.search = 'view=mine';
+    renderList();
+    await screen.findByText('Faster quotes');
+    expect(selected(screen.getByRole('radio', { name: 'My ideas' }))).toBe(true);
+    expect(selected(screen.getByRole('radio', { name: 'All ideas' }))).toBe(false);
+    expect(svc.listIdeas.mock.calls[0][0].mine).toBe(true);
   });
 });
