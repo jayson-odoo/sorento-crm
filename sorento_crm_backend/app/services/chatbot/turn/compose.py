@@ -414,7 +414,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             # An ms / zh render of the same fallback is the same miss.
             if block in (NO_RESULT_INTRO, localizer.sentence(NO_RESULT_INTRO)) and codes:
                 subject_label = label.lower() if isinstance(label, str) else str(domain)
-                block = f"No {subject_label} found for {codes}."
+                block = localizer.sentence(f"No {subject_label} found for {codes}.")
         elif rows_text:
             block = header + "\n" + "\n\n".join(rows_text)
         elif env.get("denied"):

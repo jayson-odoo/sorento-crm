@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 LANGUAGES = ("en", "ms", "zh")
 
 #: English source text -> {"ms": ..., "zh": ...}. `{name}` placeholders must survive translation.
+# The presenter's own truncation sentence (`summary_intro`), which carries an em dash; escaped
+# here so this source stays dash-free.
+_NOT_EVERY_BREAKDOWN = "Not every breakdown is shown \u2014 add a customer, a product or a date range."
+
 LABELS: dict[str, dict[str, str]] = {
     "Company": {"ms": "Syarikat", "zh": "公司"},
     "Product Code": {"ms": "Kod Produk", "zh": "产品代码"},
@@ -77,13 +81,13 @@ LABELS: dict[str, dict[str, str]] = {
     "Order Date": {"ms": "Tarikh Pesanan", "zh": "订单日期"},
     "Actual Delivery Date": {"ms": "Tarikh Penghantaran Sebenar", "zh": "实际送货日期"},
     "Status": {"ms": "Status", "zh": "状态"},
-    "Pickup Time": {"ms": "Masa Ambil", "zh": "提货时间"},
+    "Pickup Time": {"ms": "Masa Pengambilan", "zh": "提货时间"},
     "Transporter": {"ms": "Pengangkut", "zh": "运输商"},
     "Driver": {"ms": "Pemandu", "zh": "司机"},
     "Lorry Plate": {"ms": "No. Plat Lori", "zh": "车牌号"},
     "Products": {"ms": "Produk", "zh": "产品"},
     "SO Number": {"ms": "No. SO", "zh": "SO 编号"},
-    "Outstanding Qty": {"ms": "Kuantiti Belum Dihantar", "zh": "未交货数量"},
+    "Outstanding Qty": {"ms": "Kuantiti Tertunggak", "zh": "未交货数量"},
     "Requested Delivery Date": {"ms": "Tarikh Penghantaran Diminta", "zh": "要求送货日期"},
     "PO Number": {"ms": "No. PO", "zh": "PO 编号"},
     "Ordered Qty": {"ms": "Kuantiti Dipesan", "zh": "订购数量"},
@@ -103,8 +107,8 @@ LABELS: dict[str, dict[str, str]] = {
     "Cost after discount / unit": {"ms": "Kos selepas diskaun / unit", "zh": "折后单位成本"},
     "Here are the orders I found.": {"ms": "Berikut ialah pesanan yang saya temui.", "zh": "以下是我找到的订单。"},
     "Here is the PO placed I found.": {"ms": "Berikut ialah PO yang telah dibuat.", "zh": "以下是已下的 PO。"},
-    "Here is the last SPO line per product.": {"ms": "Berikut ialah baris SPO terakhir bagi setiap produk.", "zh": "以下是每个产品的最后一行 SPO。"},
-    "Here is the last purchase cost per product and location.": {"ms": "Berikut ialah kos belian terakhir bagi setiap produk dan lokasi.", "zh": "以下是每个产品和位置的最后采购成本。"},
+    "Here is the last SPO line per product.": {"ms": "Berikut ialah baris SPO terakhir bagi setiap produk.", "zh": "以下是每个产品最近的 SPO 记录。"},
+    "Here is the last purchase cost per product and location.": {"ms": "Berikut ialah kos belian terakhir bagi setiap produk dan lokasi.", "zh": "以下是每个产品和位置最近一次的采购成本。"},
     "Here is the outstanding SO I found.": {"ms": "Berikut ialah SO belum dihantar yang saya temui.", "zh": "以下是我找到的未交货 SO。"},
     "Here are the outstanding orders I found.": {"ms": "Berikut ialah pesanan belum dihantar yang saya temui.", "zh": "以下是我找到的未交货订单。"},
     "Here are the delivered orders I found.": {"ms": "Berikut ialah pesanan yang telah dihantar.", "zh": "以下是我找到的已送货订单。"},
@@ -112,6 +116,42 @@ LABELS: dict[str, dict[str, str]] = {
     "No matching results found for {companies}.": {"ms": "Tiada hasil yang sepadan ditemui untuk {companies}.", "zh": "在 {companies} 中未找到匹配的结果。"},
     "Here are the results I found.": {"ms": "Berikut ialah hasil yang saya temui.", "zh": "以下是我找到的结果。"},
     "EXPIRED": {"ms": "TAMAT TEMPOH", "zh": "已过期"},
+    # The order summary block (presenter `_SUMMARY_FIELDS`) and its truncation notice. SO and DO
+    # stay as printed (owner Q3).
+    "Customers": {"ms": "Pelanggan", "zh": "客户"},
+    "SO": {"ms": "SO", "zh": "SO"},
+    "SO Date": {"ms": "Tarikh SO", "zh": "SO 日期"},
+    "Ordered": {"ms": "Dipesan", "zh": "订购"},
+    "Transferred to DO": {"ms": "Dipindahkan ke DO", "zh": "已转 DO"},
+    "SO Outstanding": {"ms": "SO Tertunggak", "zh": "SO 未交货"},
+    "DO": {"ms": "DO", "zh": "DO"},
+    "DO Date": {"ms": "Tarikh DO", "zh": "DO 日期"},
+    "Delivered": {"ms": "Dihantar", "zh": "已送货"},
+    "Delivery Date": {"ms": "Tarikh Penghantaran", "zh": "送货日期"},
+    "DO Outstanding": {"ms": "DO Tertunggak", "zh": "DO 未送达"},
+    _NOT_EVERY_BREAKDOWN: {
+        "ms": "Tidak semua pecahan dipaparkan. Tambah pelanggan, produk atau julat tarikh.",
+        "zh": "并非所有明细都已显示，请加上客户、产品或日期范围。",
+    },
+    # compose's "No <domain label> found for {codes}." (policy_rows.py labels: orders :155,
+    # last in :269, outstanding purchase orders :293, last purchase cost :307; stock :134 is
+    # the slice 1 entry above).
+    "No orders found for {codes}.": {
+        "ms": "Tiada pesanan ditemui untuk {codes}.",
+        "zh": "未找到 {codes} 的订单。",
+    },
+    "No last in found for {codes}.": {
+        "ms": "Tiada SPO ditemui untuk {codes}.",
+        "zh": "未找到 {codes} 的 SPO。",
+    },
+    "No outstanding purchase orders found for {codes}.": {
+        "ms": "Tiada PO ditemui untuk {codes}.",
+        "zh": "未找到 {codes} 的 PO。",
+    },
+    "No last purchase cost found for {codes}.": {
+        "ms": "Tiada kos belian ditemui untuk {codes}.",
+        "zh": "未找到 {codes} 的采购成本。",
+    },
     "PENDING ALLOCATION": {"ms": "MENUNGGU PERUNTUKAN", "zh": "待分配"},
     "PARTIAL ALLOCATION": {"ms": "PERUNTUKAN SEBAHAGIAN", "zh": "部分分配"},
 }
@@ -126,6 +166,17 @@ FIELD_KEYS: dict[str, str] = {
     "quantity_on_hand": "Quantity On Hand",
     "open_so_qty": "Outstanding",
     "total_on_hand": "Total",
+    # Slice 2 summary block (`order_date` is a DO Date there; by-label lookup covers it).
+    "customers": "Customers",
+    "so_count": "SO",
+    "so_date": "SO Date",
+    "so_ordered_qty": "Ordered",
+    "so_transferred_qty": "Transferred to DO",
+    "so_outstanding_qty": "SO Outstanding",
+    "order_count": "DO",
+    "delivered_quantity": "Delivered",
+    "delivered_between": "Delivery Date",
+    "pending_quantity": "DO Outstanding",
     # Slice 2.
     "so_number": "SO Number",
     "outstanding_qty": "Outstanding Qty",
@@ -143,7 +194,6 @@ FIELD_KEYS: dict[str, str] = {
     "gr_quantity": "GR Quantity",
     "spo_date": "SPO Date",
     "gr_date": "GR Date",
-    "warehouse": "Warehouse",
     "po_quantity": "PO Quantity",
     "unit_cost": "Cost / unit",
     "discount_per_unit": "Discount / unit",

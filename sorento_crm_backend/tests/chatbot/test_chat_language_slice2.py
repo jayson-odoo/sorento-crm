@@ -38,13 +38,13 @@ SLICE2: dict[str, tuple[str, str]] = {
     "Order Date": ("Tarikh Pesanan", "订单日期"),
     "Actual Delivery Date": ("Tarikh Penghantaran Sebenar", "实际送货日期"),
     "Status": ("Status", "状态"),
-    "Pickup Time": ("Masa Ambil", "提货时间"),
+    "Pickup Time": ("Masa Pengambilan", "提货时间"),
     "Transporter": ("Pengangkut", "运输商"),
     "Driver": ("Pemandu", "司机"),
     "Lorry Plate": ("No. Plat Lori", "车牌号"),
     "Products": ("Produk", "产品"),
     "SO Number": ("No. SO", "SO 编号"),
-    "Outstanding Qty": ("Kuantiti Belum Dihantar", "未交货数量"),
+    "Outstanding Qty": ("Kuantiti Tertunggak", "未交货数量"),
     "Requested Delivery Date": ("Tarikh Penghantaran Diminta", "要求送货日期"),
     "PO Number": ("No. PO", "PO 编号"),
     "Ordered Qty": ("Kuantiti Dipesan", "订购数量"),
@@ -72,11 +72,11 @@ SLICE2: dict[str, tuple[str, str]] = {
     ),
     "Here is the last SPO line per product.": (
         "Berikut ialah baris SPO terakhir bagi setiap produk.",
-        "以下是每个产品的最后一行 SPO。",
+        "以下是每个产品最近的 SPO 记录。",
     ),
     "Here is the last purchase cost per product and location.": (
         "Berikut ialah kos belian terakhir bagi setiap produk dan lokasi.",
-        "以下是每个产品和位置的最后采购成本。",
+        "以下是每个产品和位置最近一次的采购成本。",
     ),
     "Here is the outstanding SO I found.": (
         "Berikut ialah SO belum dihantar yang saya temui.",
@@ -267,7 +267,7 @@ def _orders_envelope(*, flags: dict | None = None) -> dict:
                     {"label": "Status", "value": "Partially Delivered"},
                     {"label": "Pickup Time", "value": "09:30"},
                     {"label": "Transporter", "value": "FAST LOGISTICS"},
-                    {"label": "Driver", "value": "AHMAD"},
+                    {"label": "Driver", "value": "Customer"},  # a value equal to a catalog key: never translated
                     {"label": "Lorry Plate", "value": "WXY 1234"},
                     {"label": "Warehouse", "value": "BRW"},
                     {"label": "Products", "value": "BRBC22102W (12), SRTSWT3001 (4)"},
@@ -528,7 +528,7 @@ def test_ac_cl21_po_placed_ms_labels_and_intro_with_the_grant():
     assert "Berikut ialah PO yang telah dibuat." in text
     assert "*No. PO:* PO-2026-0412" in text
     assert "*Kuantiti Dipesan:* 120" in text
-    assert "*Kuantiti Belum Dihantar:* 45" in text
+    assert "*Kuantiti Tertunggak:* 45" in text
     assert "*Tarikh PO:* 2026-09-11" in text or "*Tarikh PO:* 11/09/2026" in text
     assert "*Lokasi:* BRW-BB" in text
     assert "*Pembekal:* ACME CERAMICS SDN BHD" in text
@@ -587,7 +587,7 @@ def test_ac_cl21_po_placed_footer_is_translated_and_state_stays_english():
 def test_ac_cl22_spo_recorded_date_zh():
     env = _spo_envelope(recorded=True)
     text = _assert_values_identical(env, TOOL_SPO, "zh")
-    assert "以下是每个产品的最后一行 SPO。" in text
+    assert "以下是每个产品最近的 SPO 记录。" in text
     assert "*SPO 编号:* SPO-77001" in text
     assert "*货柜号:* MSKU1234567" in text
     assert "*SPO 日期（已记录）:*" in text
@@ -638,9 +638,9 @@ def test_ac_cl23_orders_list_ms_labels_and_value_untouched_status():
     assert "*Status:* Partially Delivered" in text
     assert "*Tarikh Pesanan:*" in text
     assert "*Tarikh Penghantaran Sebenar:*" in text
-    assert "*Masa Ambil:* 09:30" in text
+    assert "*Masa Pengambilan:* 09:30" in text
     assert "*Pengangkut:* FAST LOGISTICS" in text
-    assert "*Pemandu:* AHMAD" in text
+    assert "*Pemandu:* Total" in text
     assert "*No. Plat Lori:* WXY 1234" in text
     assert "*Gudang:* BRW" in text
     assert "*Produk:* BRBC22102W (12), SRTSWT3001 (4)" in text
@@ -715,7 +715,7 @@ def test_ac_cl23_so_outstanding_ms_with_the_grant():
     )
     assert "Berikut ialah SO belum dihantar yang saya temui." in text
     assert "*No. SO:* SO-26-00981" in text
-    assert "*Kuantiti Belum Dihantar:* 8" in text
+    assert "*Kuantiti Tertunggak:* 8" in text
     assert "*Pelanggan:* TAN BROTHERS HARDWARE" in text
     assert "*Tarikh Penghantaran Diminta:*" in text
 
@@ -723,7 +723,7 @@ def test_ac_cl23_so_outstanding_ms_with_the_grant():
 def test_ac_cl23_so_outstanding_qty_dropped_without_the_grant_ms():
     env = _so_outstanding_envelope()
     text = _render(env, TOOL_ORDERS, "ms")
-    assert "Kuantiti Belum Dihantar" not in text
+    assert "Kuantiti Tertunggak" not in text
     assert "Outstanding Qty" not in text
     assert "*No. SO:* SO-26-00981" in text
 
@@ -762,7 +762,7 @@ def test_ac_cl24_po_cost_zh_with_cost_and_supplier_grants():
         "zh",
         access=_grant("purchase_orders.cost", "purchase_orders.supplier"),
     )
-    assert "以下是每个产品和位置的最后采购成本。" in text
+    assert "以下是每个产品和位置最近一次的采购成本。" in text
     assert "*单位成本:* MYR 12.50" in text
     assert "*单位折扣:* MYR 0.00" in text
     assert "*折后单位成本:* MYR 12.50" in text
