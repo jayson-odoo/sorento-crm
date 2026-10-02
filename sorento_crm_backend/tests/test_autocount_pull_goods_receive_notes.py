@@ -367,6 +367,20 @@ class TestPreview:
         assert tuple(row) == (1, 1)
 
 
+def _assert_outcome_agrees(db, job_id, *, skipped: int) -> None:
+    job = db.execute(
+        text("SELECT result, processed_rows, successful_rows, failed_rows, skipped_rows "
+             "FROM import_jobs WHERE id = :id"), {"id": str(job_id)},
+    ).mappings().first()
+    counts = job["result"]["counts"]
+    assert (counts["processed"], counts["successful"], counts["failed"], counts["skipped"]) == (
+        job["processed_rows"], job["successful_rows"], job["failed_rows"], job["skipped_rows"])
+    assert counts["skipped"] == skipped
+    rows = _job_rows(db, job_id)
+    assert [(r["outcome"], r["code"]) for r in rows] == [("skipped", "unchanged")] * skipped
+    assert {e["code"] for e in job["result"]["breakdown"]["skipped"]} == ({"unchanged"} if skipped else set())
+
+
 # ======================================================================= AC-GP-40
 class TestApply:
     def test_gp40_apply_writes_through_the_ingest_and_runs_the_receipt_hook(self, task_db, monkeypatch):
@@ -405,6 +419,10 @@ class TestApply:
         again = _prepare_apply(db, fake, rows=rows)
         _run_apply(monkeypatch, factory, again)
         assert _job_row(db, again)["metadata"]["autocount_apply"]["counts"]["unchanged"] == 1
+        # Crew e2e gap 4, round 2: an unchanged re-apply lists its documents as skipped
+        # rows ("Already up to date") and the Outcome card's counts agree with the job's
+        # own columns (it read Skipped 0 against skipped_rows 7).
+        _assert_outcome_agrees(db, again, skipped=1)
 
     def test_gp41_documents_are_ingested_in_doc_date_order(self, task_db, monkeypatch):
         """Plan 1.3 rule 12: the snapshot serves the later GRN first, but the earlier receipt

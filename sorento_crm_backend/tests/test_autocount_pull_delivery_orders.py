@@ -681,6 +681,13 @@ class TestConfirmAndApply:
                             {"id": str(job_id)}).scalar()
         assert result and set(result["breakdown"]) == {"successful", "skipped", "failed"}
         assert result["counts"]["successful"] == 2
+        # Round 2: the same snapshot again is two unchanged documents, listed as skipped rows,
+        # and the envelope agrees with the job's own columns.
+        from tests.test_autocount_pull_goods_receive_notes import _assert_outcome_agrees
+
+        again = _prepare_do_apply(db, fake, rows=_do_rows())
+        _run_apply(monkeypatch, factory, again)
+        _assert_outcome_agrees(db, again, skipped=2)
 
     def test_dp_21_apply_adopts_and_keeps_tracking_columns(self, task_db, monkeypatch):
         db, factory = task_db
