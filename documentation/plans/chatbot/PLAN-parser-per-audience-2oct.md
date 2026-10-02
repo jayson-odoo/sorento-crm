@@ -65,21 +65,24 @@ Contact access types do NOT gate any domain.
 
 ## Design (final, owner answers 2 Oct 2026)
 
-1. **One code table is the single source: `PROMPT_GATES`.** It lives in
-   `app/services/chatbot/prompt_gates.py`, and each row maps ONE grant to three things:
-   - the prompt tag it strips;
-   - the block titles it removes, which is what the UI shows;
-   - the asks the backend refuses without it (domains, intents, order_status values).
+1. **One code table is the single source: `PROMPT_GATES`, keyed by DOMAIN (+ part).**
+   - It lives in `app/services/chatbot/prompt_gates.py`.
+   - Each row is `(domain, part)`, where `part` is an intent or status inside the domain, or
+     None. The row maps to the grant it needs, the prompt tag it strips, the block titles the UI
+     shows, and the asks refused without it.
+   - It is the first piece of the owner's ACCESS-MODEL lane (contact -> roles -> domains ->
+     fields, deny by default). Keyed by domain, it can later read its grant from the role/domain
+     tree instead of a reveal key, without the renderer or the refusal seams changing.
+   - The refusal seams in `lanes/business/__init__.py` (`run_fetch`) and `engine.py` (sales
+     figures) read the same table, so the trim and the refusal cannot drift.
 
-   The refusal seams in `lanes/business/__init__.py` (`run_fetch`) and `engine.py` (sales
-   figures) read the same table, so the trim and the refusal cannot drift.
-
-   | Grant | Prompt tag | Blocks removed (UI wording) | Refused without it |
-   | --- | --- | --- | --- |
-   | purchase_orders.cost | purchase_cost | LAST PURCHASE COST | domain purchase_cost |
-   | purchase_orders.placed | purchase_order | PURCHASE ORDERS, PO examples and vocabulary | domain purchase_order (Q2, new), plus the PO rung |
-   | sales_orders.sales_report | sales | SALES REPORT, SALES ANALYSIS, TOP SELLING | domain sales; order_status sales_report / sales_analysis / top_selling |
-   | scm.low_stock_report | low_stock_report | LOW STOCK REPORT | intent low_stock_report |
+   | (domain, part) | Grant today | Prompt tag | Blocks removed (UI wording) | Refused without it |
+   | --- | --- | --- | --- | --- |
+   | (purchase_cost, -) | purchase_orders.cost | purchase_cost | LAST PURCHASE COST | domain purchase_cost |
+   | (purchase_order, -) | purchase_orders.placed | purchase_order | PURCHASE ORDERS, PO examples and vocabulary | domain purchase_order (Q2, new), plus the PO rung |
+   | (spo_allocation, -) | purchase_orders.placed | spo_allocation | SPO LAST RECEIPT | domain spo_allocation (G2, new) |
+   | (sales, -) | sales_orders.sales_report | sales | SALES REPORT, SALES ANALYSIS, TOP SELLING | domain sales; order_status sales_report / sales_analysis / top_selling |
+   | (inventory, low_stock_report) | scm.low_stock_report | low_stock_report | LOW STOCK REPORT | intent low_stock_report |
 
 2. **The UI shows the map.** `GET /api/v1/system/chatbot/field-reveal-keys` gains
    `prompt_blocks: [str]` per key, read from `PROMPT_GATES`. The Field reveals switch on the
@@ -133,7 +136,15 @@ allowed `contact_agent_access` row for the routed agent.
 | purchase_order | none | `purchase_orders.supplier` / `.placed` field drop (`fetch.py:2644-2713`) | **G3: closed by Q2 (whole-domain refusal)** |
 | purchase_cost | `DOMAIN_GRANT_REQUIRED` | cost and supplier field drop | none |
 
-G1 and G2 are raised on #1429; the matrix's "other customers" and "SPO" rows wait on them.
+Owner rulings 2 Oct 2026:
+- **G2 = (a):** `spo_allocation` goes under `purchase_orders.placed`. It is refused, and its
+  SPO LAST RECEIPT block is stripped.
+- **G1 = (a):** fail closed. A contact with no office access type and no linked customer is
+  refused customer order data ("Sorry, I can't find an account linked to you yet.", no tool
+  call).
+  - It ships ONLY after the owner-gated data step: crew brings the list of the 55 internal dev
+    contacts without an office type, and they are fixed first.
+  - The G1 commit is kept separate and named in the PR description as blocked on that step.
 
 ### Who on dev is affected on merge (Q3: live, crew data, 100 internal contacts)
 
@@ -169,7 +180,7 @@ product, attachments, forms, portal and ideate.
 | Full (all four grants: buyer, admin console) | 33,207 | 100% |
 | No cost (PO + sales + low stock) | 32,797 | 98.8% |
 | Sales only (linked dealer holding the sales report grant) | 31,933 | 96.2% |
-| Dealer (none of the four) | 26,666 | 80.3% |
+| Dealer (none of the four; PO block now includes SPO LAST RECEIPT) | 26,475 | 79.7% |
 
 ### Real dev contacts (crew, read-only, sorento_cagent_stack, 100 contacts, 2 Oct 2026)
 
@@ -177,7 +188,7 @@ product, attachments, forms, portal and ideate.
 | --- | ---: | --- | ---: | ---: |
 | purchase_orders.placed only | 88 | ...6092 "Am", End User | 27,252 | 82.1% |
 | cost + placed | 5 | | 27,662 | 83.3% |
-| none | 5 | | 26,666 | 80.3% |
+| none | 5 | | 26,475 | 79.7% |
 | cost + placed + sales_report | 1 | Mr Loo, all 7 types | 32,929 | 99.2% |
 | all four | 1 | Jayson, type dealer | 33,207 | 100% |
 
@@ -220,7 +231,7 @@ Prompt cache:
   combinations plus an unidentified contact.
 - **Q5 = (a)**: no special case.
 - **Crew finding**: `chatbot_domains.reveal_key` is not enforced at runtime (`grants=None`). Every
-  domain's real gate is in the table above, and gaps G1 and G2 are raised on #1429.
+  domain's real gate is in the table above. G2 = (a) and G1 = (a) (G1 blocked on the owner data step).
 
 ## Slices (build after #1405 merges; tests prepared before)
 
@@ -240,7 +251,7 @@ Prompt cache:
    `PROMPT_GATES`, and `purchase_order` joins them (Q2).
 3. Migration: the tagged prod text as an unlabelled version (full render proven byte-identical).
 4. API plus UI hint, and the switch relabel.
-5. G1 and G2 fixes, if the owner approves.
+5. G2 fix in this lane. G1 fix as its own commit, merged only after the owner data step (55 internal contacts without an office type).
 6. Kill tests, reviewer, security review, hand-test script, PR ready.
 
 ## Kill list (tests must fail when these are broken)
