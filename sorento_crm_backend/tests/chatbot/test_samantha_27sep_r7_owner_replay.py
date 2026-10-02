@@ -295,7 +295,7 @@ def test_owner_transcript_replayed_in_order(owner_chat) -> None:
             assert _header(reply, "Brand") == f"Brand: {brand}", where
         else:
             assert _header(reply, "Brand") is None, where
-        assert _header(reply, "Customer") == "Customer: cheng huat sentul", where
+        assert _header(reply, "Customer") == "Customer: CHENG HUAT HARDWARE (SENTUL) SDN BHD (2 accounts)", where
         assert _numbers(reply) == docs, where
         listed = _codes(reply)
         if brand == "Sorento":
@@ -387,7 +387,7 @@ def test_the_clear_words_clear_the_brand_and_rerun(owner_chat, message) -> None:
         assert not args.get("brand_ids"), calls
         assert args.get("customer_ids") == [chat.sorento_ledger, chat.mocha_ledger], calls
         assert _header(reply, "Brand") is None, reply
-        assert _header(reply, "Customer") == "Customer: cheng huat sentul", reply
+        assert _header(reply, "Customer") == "Customer: CHENG HUAT HARDWARE (SENTUL) SDN BHD (2 accounts)", reply
         assert _numbers(reply) == ALL_DOCS, reply
 
 

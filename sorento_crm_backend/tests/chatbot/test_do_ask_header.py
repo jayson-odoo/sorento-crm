@@ -116,3 +116,13 @@ def test_an_empty_do_list_names_the_customer_once_too() -> None:
     )
     first_line = (out.get("escalate_message") or "").split("\n", 1)[0]
     assert first_line == "Customer: HANLIM TRADING SDN BHD (6 accounts)", json.dumps(out)
+
+
+def test_a_bracket_every_account_shares_stays_in_the_name() -> None:
+    """Tester pass 1: "(SENTUL)" is the branch, shared by both ledgers, not a ledger marker;
+    dropping it would read as every CHENG HUAT HARDWARE branch."""
+    names = [
+        "CHENG HUAT HARDWARE (SENTUL) SDN BHD - [A/C I]",
+        "CHENG HUAT HARDWARE (SENTUL) SDN BHD - [IBORN]",
+    ]
+    assert _customer_line(_header(names)) == "Customer: CHENG HUAT HARDWARE (SENTUL) SDN BHD (2 accounts)"

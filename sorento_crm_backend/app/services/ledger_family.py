@@ -60,6 +60,35 @@ def ledger_family_label(text: str) -> str:
     return cleaned or text
 
 
+def _bracket_runs(text: str) -> list[str]:
+    """Every top-level bracketed or parenthesised run in `text`, brackets included."""
+    runs: list[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(text):
+        if ch in "[(":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch in "])" and depth:
+            depth -= 1
+            if depth == 0:
+                runs.append(text[start : i + 1])
+    return runs
+
+
+def _shared_label(names: list[str]) -> str:
+    """The family's name: the first row's name without the bracketed parts that tell its
+    ledgers apart ("[A/C I]", "[IBORN]"), keeping any every ledger shares, such as the
+    branch in "CHENG HUAT HARDWARE (SENTUL) SDN BHD"."""
+    first = names[0]
+    for run in _bracket_runs(first):
+        if not all(run in other for other in names[1:]):
+            first = first.replace(run, " ", 1)
+    cleaned = " ".join(first.split()).strip().strip("-").strip()
+    return cleaned or ledger_family_label(names[0])
+
+
 def family_words(names: list[str]) -> str | None:
     """DO-ASK-SIMPLIFY rule 1 (owner, 2 Oct 2026): the customer rows in scope, named once.
 
@@ -79,6 +108,6 @@ def family_words(names: list[str]) -> str | None:
     for name in kept:
         families.setdefault(ledger_family_key(name) or name, []).append(name)
     first = next(iter(families.values()))
-    head = first[0] if len(first) == 1 else f"{ledger_family_label(first[0])} ({len(first)} accounts)"
+    head = first[0] if len(first) == 1 else f"{_shared_label(first)} ({len(first)} accounts)"
     rest = len(families) - 1
     return f"{head} and {rest} more" if rest else head
