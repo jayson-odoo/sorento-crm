@@ -1,6 +1,6 @@
 # PLAN: simplify chatbot DO asks (DO-ASK-SIMPLIFY)
 
-Status: behaviour card posted as crew-ask on PR #1433, waiting on owner answers. Track: FULL
+Status: building. Card posted as crew-ask on PR #1433; Q5 answered by crew data (seed every existing contact); Q1-Q4, Q6 open. Rule 1 header built. Track: FULL
 (a data-seed migration for existing staff grants, and a field-reveal (access) change, so the
 security reviewer joins).
 
@@ -70,15 +70,12 @@ selling (own lanes), `order_status=so_outstanding` (open SO lines, no DO yet).
 - Naming: `delivery_orders.<field>` sits beside `sales_orders.*` / `purchase_orders.*`. For
   the ACCESS-MODEL table (`PROMPT_GATES`, PR #1429) these are field parts of domain `order`;
   they gate no prompt block, so nothing is added to `PROMPT_GATES` (crew-note to that lane).
-- Existing staff keep what they see today: a data migration inserts `granted=true` rows for
-  the five keys for every `respond_contacts` row whose `chatbot_profile->>'tier' = 'office'`
-  (idempotent, `ON CONFLICT DO NOTHING`). Dealers and end users get no rows: they lose these
-  five fields at deploy. The affected list (count per tier) is produced by the SQL below on the
-  dev DB by crew; this sandbox cannot reach it.
-
-```sql
-SELECT chatbot_profile->>'tier' AS tier, count(*) FROM respond_contacts GROUP BY 1 ORDER BY 1;
-```
+- Existing contacts keep what they see today. Crew data (dev, 2 Oct 2026): `chatbot_profile.tier`
+  is NULL for all 100 contacts (the bot no longer writes it, `engine.py:4316-4321`), and the
+  owner states every current respond contact is internal. So the data migration inserts
+  `granted=true` rows for the five keys for EVERY existing `respond_contacts` row (idempotent,
+  `ON CONFLICT DO NOTHING`); a contact created after deploy starts with the five hidden (Q5 (a),
+  crew recommendation). Nobody loses a field at deploy.
 
 ### Rule 3: a DO ask carries a date range, unless it names numbers
 
@@ -118,7 +115,7 @@ SELECT chatbot_profile->>'tier' AS tier, count(*) FROM respond_contacts GROUP BY
 | # | Message | Header today | Header proposed |
 |---|---|---|---|
 | 1 | "Delivery to hanlim" then pick all (handpass3-owner-17sep..., turn 0) | `*orders* for HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD (CERAMIC & ELLECI):` | ask-back "Which period for HANLIM TRADING SDN BHD's delivery orders?"; after "1": `Customer: HANLIM TRADING SDN BHD (6 accounts)` / `Dates: 01/10/2026 to 31/10/2026` |
-| 2 | "All" on the Chin Chun picker (same file, turn 2) | `*orders* for CHIN CHUN HARDWARE SDN BHD - [A/C I]` x6, `CHIN CHUN HOMEMART SDN BHD - [A/C I]` x4, `... AND TIMBER TRADING` x3, `JIMMY - I` x2 | `Customer: CHIN CHUN HARDWARE SDN BHD (6 accounts) and 3 more` |
+| 2 | "All" on the Chin Chun picker (same file, turn 2) | `*orders* for CHIN CHUN HARDWARE SDN BHD - [A/C I]` x6, `CHIN CHUN HOMEMART SDN BHD - [A/C I]` x4, `... AND TIMBER TRADING` x3, `JIMMY - I` x2 | `Customer: CHIN CHUN HARDWARE SDN BHD (N accounts) and 3 more` (identical names count once) |
 | 3 | "delivery status for hanlim" (case-072, turn 1); rows 202609-0916, 202609-0927 | `Customer: hanlim` / `Product: all products` / `Dates: all dates`, rows with Status `Picked Up / In Transit`, Driver `AZHAR`, Lorry Plate `VQP1678` | ask-back for the period; a dealer then sees rows without Status / Pickup Time / Transporter / Driver / Lorry Plate; a staff contact sees them as today |
 | 4 | "delivery for hanlim rpacc" then "only in 2026" (owner-15sep-chain-001, turns 6-7) | `Dates: all dates`, then `Dates: 01/01/2026 to 31/12/2026` | turn 6 asks the period; turn 7 is refused: "That is 12 months ... 1. Dec 2026 2. Jan 2026" |
 | 5 | "where is DO 202609-0916" | (no fixture) | no ask-back, no Dates line: `Order: 202609-0916` and the row |
@@ -131,6 +128,11 @@ SELECT chatbot_profile->>'tier' AS tier, count(*) FROM respond_contacts GROUP BY
 - A brand switch inside an open list (`order_list.py` R3/R5) keeps the window.
 - Year boundary: "20 Dec to 10 Jan" = 22 days, allowed; "December" asked in January means the
   previous December (parser's job, unchanged).
+- Ledgers whose marker is a dash suffix, not brackets (`ZZT BATHIDEA MARKETING - IBORN`,
+  `- CERAMIC`, `- A/C I`) are different families to `ledger_family_key`, so they print
+  `ZZT BATHIDEA MARKETING - IBORN and 2 more`. Widening the family rule would also change the
+  customer picker that shares it, so it stays out of this lane.
+- One ledger reached twice (a picked option carrying its uuid twice) is one account.
 - Empty result with a valid window: `EMPTY_LIST_LINE` as today.
 - A refusal or ask-back never escalates and never offers the team picker.
 
@@ -147,7 +149,9 @@ SELECT chatbot_profile->>'tier' AS tier, count(*) FROM respond_contacts GROUP BY
 4. Reveal keys: (a) five per-field keys as tabled, (b) one key `delivery_orders.logistics`
    for all five. Recommend (a): the owner named fields one by one, and status is likely to be
    granted to some dealers without driver/lorry.
-5. Header with a product: keep `Product: <code>` (yes), and drop `Product: all products`
+5. (revised by crew data) Seed: (a) the five grants for EVERY existing contact (all internal
+   today), new contacts hidden, (b) wait for ACCESS-MODEL roles. Crew recommends (a); taken.
+6. Header with a product: keep `Product: <code>` (yes), and drop `Product: all products`
    (recommend yes, it carries no information).
 
 ## Regression scenarios (DO asks)

@@ -620,11 +620,12 @@ class TestGroupFHitHeaderNamesLedgers:
         assert "here are the" in said.lower() or order_number in said, (
             f"test setup sanity, a real HIT reply: {said!r}"
         )
-        for name in names:
-            assert name in said, (
-                f"the HIT reply's own header must name every ledger the pick "
-                f"covers: {said!r}"
-            )
+        # DO-ASK-SIMPLIFY rule 1 (owner, 2 Oct 2026) replaces "name every ledger": the
+        # header names the first ledger and counts the rest. These three names carry
+        # no bracketed ledger marker, so they are three families, not one.
+        assert "Customer: ZZT BATHIDEA MARKETING - IBORN and 2 more" in said, (
+            f"the HIT reply's header must name the first ledger and count the rest: {said!r}"
+        )
         assert option_code not in said, (
             f"no customer CODE must ever reach the reply text, header included: "
             f"{said!r}"

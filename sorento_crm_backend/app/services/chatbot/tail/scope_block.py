@@ -21,6 +21,7 @@ import re
 from typing import Any, Mapping
 
 from app.services.chatbot.turn.state import focus_row_label
+from app.services.ledger_family import ledger_family_key, ledger_family_label
 
 # NARROWED (main, captain ruling 2026-08-24, ported verbatim): this header describes
 # a DELIVERY ORDER search specifically - it used to gate on "domains the CRM
@@ -100,6 +101,30 @@ def _fold(value: Any) -> str:
     return re.sub(r"[-\s]+", "", str(value or "")).strip().lower()
 
 
+def family_words(names: list[str]) -> str | None:
+    """DO-ASK-SIMPLIFY rule 1 (owner, 2 Oct 2026): the customer rows in scope, named once.
+
+    One row prints its own full name. Several rows of one ledger family (the ledgers of one
+    trading name, `app/services/ledger_family.py`) print the family label with a count:
+    "HANLIM TRADING SDN BHD (6 accounts)". Several families print the first one and a count
+    of the rest: "CHIN CHUN HARDWARE SDN BHD (2 accounts) and 3 more". Each DO row still
+    carries its own full ledger name; only the header shortens.
+    """
+    # One ledger reached twice (a picked option carries its uuid twice) is one account.
+    kept = list(dict.fromkeys(name for name in names if name))
+    if not kept:
+        return None
+    if len(kept) == 1:
+        return kept[0]
+    families: dict[str, list[str]] = {}
+    for name in kept:
+        families.setdefault(ledger_family_key(name) or name, []).append(name)
+    first = next(iter(families.values()))
+    head = first[0] if len(first) == 1 else f"{ledger_family_label(first[0])} ({len(first)} accounts)"
+    rest = len(families) - 1
+    return f"{head} and {rest} more" if rest else head
+
+
 def _raw_of_token(qf: Mapping[str, Any], token: str) -> str:
     """The word the customer actually typed for a resolver token, off the parser's
     own entities - a resolved code is not always what they wrote."""
@@ -154,6 +179,10 @@ def _axis_words(
             if str(e.get("hint") or "") in hints:
                 _add(e.get("raw"))
     if not words:
+        if axis["label"] == "Customer":
+            return family_words(
+                [_printable(row.get("display_name") or row.get("title") or row.get("code")) for row in rows]
+            )
         for row in rows:
             # Hand pass 12 round 3, Group F (owner ruling): a customer row's own
             # `display_name` - `turn_runtime.py::fill_customer_names`'s DB-resolved
@@ -211,7 +240,7 @@ def _one_typed_word(rows: Any) -> str | None:
     return raws.pop() or None
 
 
-def _focus_words(rows: Any) -> str | None:
+def _focus_words(rows: Any, *, customers: bool = False) -> str | None:
     """The SAME axis, off the FOCUS carry - AC-1695's own case, which main has no
     equivalent for because main's header runs in the tail, where the session's
     carried subject is already on `prev`. A bare positional pick ("1") names no
@@ -225,6 +254,10 @@ def _focus_words(rows: Any) -> str | None:
     typed = _one_typed_word(rows)
     if typed:
         return typed
+    if customers:
+        return family_words(
+            [_printable(focus_row_label(row)) for row in rows or [] if isinstance(row, Mapping)]
+        )
     for row in rows or []:
         if not isinstance(row, Mapping):
             continue
@@ -274,7 +307,7 @@ def search_scope_header(
     for axis in _AXES:
         words = _axis_words(gate_json, resolver_json, q, axis=axis)
         if words is None and axis["label"] in focus_by_label:
-            words = _focus_words(focus_by_label[axis["label"]])
+            words = _focus_words(focus_by_label[axis["label"]], customers=axis["label"] == "Customer")
         if axis["always"]:
             lines.append(f"{axis['label']}: {words or axis['all_text']}")
         elif words:

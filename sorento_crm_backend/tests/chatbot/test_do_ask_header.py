@@ -66,6 +66,12 @@ def test_several_families_print_the_first_family_and_a_count_of_the_rest() -> No
     )
 
 
+def test_one_ledger_reached_twice_is_one_account() -> None:
+    assert _customer_line(_header(["ZZT BATH IDEA (KEMAMAN OUTLET)"] * 2)) == (
+        "Customer: ZZT BATH IDEA (KEMAMAN OUTLET)"
+    )
+
+
 def test_the_header_never_lists_a_ledger_marker_for_a_family() -> None:
     line = _customer_line(_header(_HANLIM))
     assert "[A/C" not in line and "CERAMIC" not in line, line
