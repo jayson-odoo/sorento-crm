@@ -24,8 +24,9 @@ Plan: `PLAN-so-number-ask.md`. Every case runs as a chat turn (Chatbot Console, 
 
 - AC-SO-10: an SO that exists on a customer the dealer is not linked to replies with the scope
   refusal `Sorry, that isn't under your account. I can only check on <links>.` and nothing about
-  that SO (no status, no customer name). `<links>` is grouped by ledger family:
-  `HANLIM TRADING SDN BHD (6 accounts)`, further families `and N more`.
+  that SO (no status, no customer name). `<links>` names each group by its group name
+  only: `HANLIM TRADING SDN BHD`, several groups `A, B and C`; never a `(6 accounts)` count,
+  never `and N more` (owner rule, 2 Oct 2026).
 - AC-SO-11: an SO of another company is not found (AC-SO-01's miss line).
 - AC-SO-12: `SO421624 SO999999`: one card for SO421624, then `I could not find SO999999.`
 - AC-SO-13: a contact without `sales_orders.outstanding` gets `Sales order figures are not

@@ -5,7 +5,7 @@ marker: `CHIN CHUN HARDWARE SDN BHD - [A/C I]`, `HANLIM TRADING (JB) SDN BHD (SR
 of one name are one customer. `ledger_family_key` is the comparison key two such rows share;
 `ledger_family_label` is what the family is called.
 
-`family_words` names a list of customer rows that way in one line (DO-ASK-SIMPLIFY rule 1),
+`family_words` names a list of customer rows that way in one line, group names only (DO-ASK-SIMPLIFY rule 1),
 for the chatbot's DO header and its empty-list (miss) header alike.
 
 Core, not the chatbot package: the chatbot's narrower (`app/services/chatbot/turn/narrow.py`)
@@ -92,25 +92,27 @@ def _shared_label(names: list[str]) -> str:
 def family_words(names: list[str]) -> str | None:
     """DO-ASK-SIMPLIFY rule 1 (owner, 2 Oct 2026): the customer rows in scope, named once.
 
-    One row prints its own full name. Several rows of one ledger family (the ledgers of one
-    trading name, `app/services/ledger_family.py`) print the family label with a count:
-    "HANLIM TRADING SDN BHD (6 accounts)". Several families print the first one and a count
-    of the rest: "CHIN CHUN HARDWARE SDN BHD (2 accounts) and 3 more". Each DO row still
-    carries its own full ledger name; only the header shortens.
+    Owner rule (2 Oct 2026, PR #1435): a customer company is named by its GROUP NAME ONLY.
+    The rows of one ledger family (the ledgers of one trading name) print the family label,
+    "HANLIM TRADING SDN BHD", with no "(6 accounts)" count; one row prints its family label
+    too, without its ledger marker, as `turn/compose.py`'s header always has. Several
+    families are each named, "A, B and C", never "A and 2 more". Each DO row still carries
+    its own full ledger name; only the header shortens.
     """
     # One ledger reached twice (a picked option carries its uuid twice) is one account.
     kept = list(dict.fromkeys(name for name in names if name))
     if not kept:
         return None
-    if len(kept) == 1:
-        return kept[0]
     families: dict[str, list[str]] = {}
     for name in kept:
         families.setdefault(ledger_family_key(name) or name, []).append(name)
-    first = next(iter(families.values()))
-    head = first[0] if len(first) == 1 else f"{_shared_label(first)} ({len(first)} accounts)"
-    rest = len(families) - 1
-    return f"{head} and {rest} more" if rest else head
+    labels = [
+        ledger_family_label(rows[0]) if len(rows) == 1 else _shared_label(rows)
+        for rows in families.values()
+    ]
+    if len(labels) == 1:
+        return labels[0]
+    return ", ".join(labels[:-1]) + " and " + labels[-1]
 
 
 _ROMAN = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10}
