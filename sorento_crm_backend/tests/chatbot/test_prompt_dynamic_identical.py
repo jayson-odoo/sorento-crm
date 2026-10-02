@@ -137,3 +137,53 @@ def test_report_lines_are_the_owner_file_lines_even_after_an_earlier_swap():
         _template, report = pv.identical_wording_layer(source, db)
         lines = {r["variable"]: r["line"] for r in report if r["variable"] in ("teams", "agents")}
         assert lines == {"teams": 773, "agents": 774}
+
+
+# --------------------------------------------------------------------------- #
+# Owner Q-A = (a), 2 Oct 2026: he applies his 3 text edits as a new plain-text version and
+# the variable version is rebuilt FROM it, so `--verify` must compare against that version
+# (`against_version`), not the 1 Oct file, or his own edits read as differences.
+# --------------------------------------------------------------------------- #
+
+
+def _put_version(db, template: str, version: int) -> AIPromptVersion:
+    row = AIPromptVersion(id=str(uuid.uuid4()), name=KEY, version=version, template=template,
+                          commit_message="t", config_json={})
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_verify_against_a_version_passes_for_its_rebuild_even_where_it_differs_from_the_file():
+    source = SNAPSHOT.read_text(encoding="utf-8")
+    edited = source.replace("Sorento Semantic Parser", "Sorento Semantic Parser (owner edit)", 1)
+    script = _script()
+    with pg_session() as db:
+        owner = _put_version(db, edited, 90000 + uuid.uuid4().int % 9999)
+        rebuilt = script.build(db, from_version=owner.version, save=True)
+        assert rebuilt["identical"] is True
+        ok = script.verify(db, rebuilt["saved_version"], against_version=owner.version)
+        assert ok["equal"] is True and ok["first_difference"] is None
+        assert ok["against"] == f"v{owner.version}"
+        # The same rebuild checked against the 1 Oct file parts at the owner's edit.
+        assert script.verify(db, rebuilt["saved_version"], SNAPSHOT)["first_difference"]["line"] == 1
+
+
+def test_verify_against_a_version_reports_the_first_line_where_they_part():
+    source = SNAPSHOT.read_text(encoding="utf-8")
+    script = _script()
+    with pg_session() as db:
+        base = 90000 + uuid.uuid4().int % 9999
+        owner = _put_version(db, source, base)
+        lines = source.split("\n")
+        lines[9] = lines[9] + " zzt"
+        other = _put_version(db, "\n".join(lines), base + 1)
+        no = script.verify(db, other.version, against_version=owner.version)
+        assert no["equal"] is False
+        assert no["first_difference"]["line"] == 10
+        assert no["first_difference"]["rendered"].endswith(" zzt")
+
+
+def test_the_cli_takes_an_against_version():
+    args = _script().parse_args(["--verify", "57", "--against", "56"])
+    assert (args.verify, args.against) == (57, 56)
