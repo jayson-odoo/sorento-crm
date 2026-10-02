@@ -1656,6 +1656,14 @@ async def resubmit_attachment_webhook(
         attachment_service = AttachmentService(db)
         attachment = attachment_service.get_attachment(attachment_id)
 
+        # An untyped attachment is never sent to n8n (owner rule, 2 Oct 2026), even
+        # one with a log from before that rule; say so rather than send it.
+        if getattr(attachment, "attachment_type_id", None) is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This file has no attachment type, so it is not sent to n8n.",
+            )
+
         # Find the integration log for this attachment
         integration_service = IntegrationLogService(db)
         logs_result = integration_service.list_integration_logs(
@@ -1671,13 +1679,6 @@ async def resubmit_attachment_webhook(
             # attachment uploaded before webhook URL was configured). Fall back to
             # the same path the upload API uses: create a fresh integration log
             # and POST the webhook payload built from current attachment state.
-            # An untyped attachment is never sent to n8n (owner rule, 2 Oct 2026);
-            # say so rather than report a send the helper will skip.
-            if getattr(attachment, "attachment_type_id", None) is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="This file has no attachment type, so it is not sent to n8n.",
-                )
             current_webhook_url = get_n8n_attachment_webhook_url(db)
             if not current_webhook_url:
                 raise HTTPException(

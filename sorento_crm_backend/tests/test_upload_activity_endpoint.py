@@ -475,3 +475,25 @@ def test_resubmit_refuses_an_untyped_attachment(client, monkeypatch):
         .count()
         == 0
     )
+
+
+def test_resubmit_refuses_an_untyped_attachment_with_a_legacy_log(client, monkeypatch):
+    """An untyped file sent to n8n before the rule still has its log; resubmit
+    must not take the legacy-log branch and force-resend it."""
+    from app.services.integration_service import IntegrationLogService
+
+    sent = []
+    monkeypatch.setattr(
+        IntegrationLogService,
+        "send_webhook_for_log",
+        lambda self, *a, **k: sent.append(a) or (True, None),
+    )
+    c, db = client
+    aid = _add_attachment(db, filename="old untyped.xlsx", untyped=True)
+    _add_log(db, attachment_id=aid, status="pending")
+
+    r = c.post(f"/api/v1/resource-management/attachments/{aid}/resubmit")
+
+    assert r.status_code == 400, r.text
+    assert "no attachment type" in r.text
+    assert sent == []
