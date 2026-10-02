@@ -3096,6 +3096,12 @@ def _spend_stock_pick(
     if _stock_pick(new_state.pending):
         new_state.pending = None
     trace.rules_fired.append("stock_pick_spent")
+    queued = asked.payload.get(task_mod.NEXT_PICKS)
+    if isinstance(queued, list) and queued:
+        # AVAIL-MODE-REPLIES rule 5, owner Q3 (a): the next vague code of the same message
+        # is asked once this one is answered (`engine._stock_ask_reply`).
+        verdict[task_mod.NEXT_PICKS] = queued
+        trace.rules_fired.append("stock_pick_next_queued")
     quantity = _stated_quantity(asked.payload.get("stock_qty"))
     by_code = asked.payload.get(STOCK_QTY_BY_CODE) or {}
     if (quantity is None and not by_code) or _message_states_a_quantity(verdict):

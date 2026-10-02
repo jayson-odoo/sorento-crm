@@ -5615,19 +5615,63 @@ def _stock_ask_reply(
         demand_qty=verdict.get("demand_qty"),
     )
     state_out.focus.tasks = reply.tasks
-    if not reply.text or [spec.domain for spec in fetch_plan.fetch] != ["inventory"]:
+    if [spec.domain for spec in fetch_plan.fetch] != ["inventory"]:
         return answer
-    question = (
-        turn_pending.ask(
-            "product_pick",
-            reply.pick["options"],
-            asked_at_turn=turn_no,
-            payload=reply.pick["payload"],
+    block_seen = any(
+        isinstance(envelope, dict) and envelope.get("stock_availability")
+        for envelope in envelopes or []
+    )
+    if not block_seen:
+        return answer if not reply.text else turn_compose.Answer(text=reply.text)
+    # AVAIL-MODE-REPLIES rule 5 (owner, 2 Oct 2026): ONE combined reply - the answered
+    # lines in the order asked, then the codes found nowhere, then at most one question
+    # (this reply's own, else the next vague code queued on the pick just answered).
+    text, pick = reply.text, reply.pick
+    queued = verdict.get(turn_task.NEXT_PICKS)
+    if not text and isinstance(queued, list) and queued:
+        first = queued[0]
+        text = turn_task.pick_question(
+            first["typed"], [o["label"] for o in first["options"]], first.get("qty"), first.get("count")
         )
-        if reply.pick
+        pick = turn_task.stock_pick(first, queued[1:])
+    misses = _unplaced_tokens(envelopes)
+    if not text and not misses:
+        return answer
+    parts = _stock_answer_lines(envelopes)
+    if misses:
+        parts.append(f"Couldn't find: {', '.join(misses)}.")
+    if text:
+        parts.append(text)
+    question = (
+        turn_pending.ask("product_pick", pick["options"], asked_at_turn=turn_no, payload=pick["payload"])
+        if pick
         else None
     )
-    return turn_compose.Answer(text=reply.text, question=question)
+    return dataclasses_replace(answer, text="\n\n".join(parts), question=question, sections=[])
+
+
+def _stock_answer_lines(envelopes: list[dict[str, Any]]) -> list[str]:
+    """The answered lines the presenter printed ("<code> x <Q>: ..."), in the order asked."""
+    lines: list[str] = []
+    for envelope in envelopes or []:
+        if not isinstance(envelope, dict) or not envelope.get("stock_availability"):
+            continue
+        for item in envelope.get("items") or envelope.get("answers") or []:
+            flags = item.get("flags") if isinstance(item, dict) else None
+            title = item.get("title") if isinstance(item, dict) else None
+            if isinstance(flags, dict) and flags.get("branch") and not flags.get("needs_quantity") and title:
+                lines.append(str(title))
+    return lines
+
+
+def _unplaced_tokens(envelopes: list[dict[str, Any]]) -> list[str]:
+    """The tokens this turn's fetch could place on no product, once each, as typed."""
+    out: list[str] = []
+    for envelope in envelopes or []:
+        for token in (envelope.get("unresolved") if isinstance(envelope, dict) else None) or []:
+            if isinstance(token, str) and token and token not in out:
+                out.append(token)
+    return out
 
 
 def _run_answer(
@@ -7342,9 +7386,9 @@ def _stock_ask_answered_entries(envelopes: list[dict[str, Any]]) -> list[dict[st
     """Chatbot stock ask v2 S4: every `stock_availability` entry of this turn's fetch that
     carries an answer (a branch and the dealer's quantity), in the order asked.
 
-    An envelope where any product still needs a quantity was not answered at all: the
-    presenter prints no answer line then, and the reply is the quantity question. Its
-    entries become asks on the turn that answers them, once (review, PR #1333)."""
+    An entry still owing its quantity is not answered yet and becomes an ask on the turn
+    that answers it, once (review, PR #1333); since AVAIL-MODE-REPLIES the entries beside
+    it that are answered are recorded on this turn, the turn their lines were sent."""
     from app.services import stock_ask_service
 
     entries: list[dict[str, Any]] = []
@@ -7352,8 +7396,10 @@ def _stock_ask_answered_entries(envelopes: list[dict[str, Any]]) -> list[dict[st
         if not isinstance(envelope, dict):
             continue
         block = [e for e in envelope.get("stock_availability") or [] if isinstance(e, dict)]
-        if any(e.get("needs_quantity") is True for e in block):
-            continue
+        # AVAIL-MODE-REPLIES rule 5: an answered line is printed (and so recorded) even
+        # while another product owes its quantity; that product leaves the task answered
+        # by a later turn, so each entry is still recorded once. `answered_entries` keeps
+        # only the entries that carry a branch and the dealer's quantity.
         entries.extend(stock_ask_service.answered_entries(block))
     return entries
 

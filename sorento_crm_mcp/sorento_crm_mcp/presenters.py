@@ -1516,13 +1516,15 @@ def _stamp_refers(entries: Any) -> Any:
     """CUSTOMER-ASKS-REFER-ONLY (owner ruling 1 Oct 2026): each answered entry carries
     `refers_to_salesman`, read off the tail this presenter printed for it, so the backend's
     Customer asks writer logs exactly the lines that referred the dealer (B3 `incoming`
-    does not). Only once every entry is answered, the same rule `_stock_availability`
-    prints the lines by; a reply still owing a quantity printed no tail at all."""
+    does not). Per entry with a branch, the same rule `_stock_availability` prints the
+    lines by; an entry still owing its quantity printed no tail and is not stamped."""
     if not isinstance(entries, list):
         return entries
     rows = [e for e in entries if isinstance(e, dict)]
-    if not rows or any(e.get("needs_quantity") for e in rows):
+    if not rows:
         return entries
+    # AVAIL-MODE-REPLIES rule 5: an answered line is printed even while another product
+    # still owes its quantity, so it is stamped on that turn too.
     return [
         {**e, "refers_to_salesman": _availability_tail(e).endswith(REFER_TO_SALESMAN)}
         if isinstance(e, dict) and e.get("branch")
@@ -1537,19 +1539,19 @@ def _stock_availability(payload: dict, b: _Builder) -> None:
     `fields` stays empty on purpose - this mode exists so a dealer is never told a
     quantity or a location of ours, and an empty field list is the only shape that
     cannot carry one. The item TITLE carries the whole answer (`_availability_line`)
-    once every entry has a branch; while any entry is still missing its quantity, the
-    title stays the bare product code and `_availability_intro` asks instead
-    (unchanged from before S3 - the "how many units" question is #1118's
-    `turn/task.py::StockQtyTask.question()` territory once a task is open, not this
-    slice's scope, R1/AC-SA310).
+    for every entry with a branch; an entry still missing its quantity keeps the bare
+    product code and `_availability_intro` asks (the backend's
+    `turn/task.py::StockQtyTask.question()` names the products once a task is open).
     """
     entries = _availability_entries(payload)
-    show_answer = bool(entries) and not any(e.get("needs_quantity") for e in entries)
     for entry in entries:
         label = _availability_label(entry)
         if not label:
             continue
-        title = _availability_line(entry) if show_answer else label
+        # AVAIL-MODE-REPLIES rule 5 (owner, 2 Oct 2026): a product with its answer
+        # (a branch) prints that answer even while another product still owes its
+        # quantity; one still owed stays its bare code for the question to name.
+        title = _availability_line(entry) if entry.get("branch") and not entry.get("needs_quantity") else label
         b.raw_item(
             title,
             [],

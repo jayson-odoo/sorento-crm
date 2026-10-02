@@ -843,12 +843,14 @@ def after_reply(
     * An exact code wins. A typed token that IS a product's code keeps that product and
       drops the siblings the resolver's family grouping added ("SRTWC286-SH" also placed
       its nine SRTWC286-SH-* variants).
-    * A family is a pick, not a task. When the whole reply is one typed token's family
-      with no exact code among it ("srtwc286" placed ten SRTWC286-SH* products) and every
-      entry still needs a quantity, no task opens: the reply asks which one, the typed
-      quantity rides on the pick, and a bare number cannot be read against ten slots.
-    * Otherwise the task's own question replaces the presenter's bare one, so the
-      dealer reads which products still need a quantity.
+    * A family is a pick, not a task. A typed token whose rows are a family with no exact
+      code among it ("srtwc286" placed ten SRTWC286-SH* products) is asked which one, the
+      typed quantity riding on the pick; a bare number cannot be read against ten slots.
+      AVAIL-MODE-REPLIES rule 5: that holds per token in a message that also names other
+      codes, one pick at a time (the rest queued on the pick, `NEXT_PICKS`).
+    * The other rows are answered now when they carry a quantity (the presenter printed
+      their lines); the ones still owed one stay in the task, whose own question replaces
+      the presenter's bare one, so the dealer reads which products still need it.
     """
     block = _availability_block(envelopes)
     if block is None:
@@ -880,14 +882,22 @@ def after_reply(
         if len(_group(rows, token)) > 1
         and not any((_row_label(row) or "").casefold() == token for row in rows)
     ]
-    if (
-        len(families) == 1
-        and all(row.get("needs_quantity") is True for row in rows)
-        and len(_group(rows, families[0][1])) == len(rows)
-    ):
-        shown, _token, entity = families[0]
+    # AVAIL-MODE-REPLIES rule 5 (owner, 2 Oct 2026): one message may name exact codes,
+    # vague ones (a family, no exact code among it) and codes found nowhere. Each vague
+    # token is its own pick, asked ONE at a time (owner Q3 (a)): the first is this reply's
+    # question and the rest ride on its payload (`NEXT_PICKS`), asked once it is answered.
+    # The rows outside every family are answered now when they carry a quantity, and
+    # only the ones still owed one stay in the task.
+    picks: list[dict[str, Any]] = []
+    in_family: set[int] = set()
+    for shown, token, entity in families:
+        group = [
+            row
+            for row in _group(rows, token)
+            if id(row) not in in_family and row.get("needs_quantity") is True
+        ]
         options = []
-        for row in rows:
+        for row in group:
             key, label = row.get("product_id"), _row_label(row)
             if not key or not label:
                 continue
@@ -901,32 +911,53 @@ def after_reply(
                 }
             )
         options = options[:MAX_SLOTS]
-        if len(options) > 1:
-            quantity = _number(entity.get("quantity"))
-            if quantity is None:
-                quantity = _number(demand_qty)
-            return StockReply(
-                tasks=others,
-                text=pick_question(shown, [o["label"] for o in options], quantity, len(rows)),
-                pick={
-                    "options": options,
-                    "payload": {
-                        "domain": "inventory",
-                        "domains": ["inventory"],
-                        "stock_pick": True,
-                        "typed": shown,
-                        "count": len(rows),
-                        "stock_qty": quantity,
-                    },
-                },
-            )
+        if len(options) < 2:
+            continue
+        in_family.update(id(row) for row in group)
+        quantity = _number(entity.get("quantity"))
+        if quantity is None and len(families) == 1:
+            quantity = _number(demand_qty)
+        picks.append({"typed": shown, "options": options, "count": len(group), "qty": quantity})
 
-    rebuilt = _rebuilt(tasks, rows, turn_no=turn_no, named_products=named_products)
+    rest = [row for row in rows if id(row) not in in_family]
+    owed = [row for row in rest if row.get("needs_quantity") is True]
+    if picks:
+        first, queued = picks[0], picks[1:]
+        kept = _rebuilt(tasks, owed, turn_no=turn_no, named_products=named_products) if owed else others
+        return StockReply(
+            tasks=kept,
+            text=pick_question(first["typed"], [o["label"] for o in first["options"]], first["qty"], first["count"]),
+            pick=stock_pick(first, queued),
+        )
+
+    rebuilt = _rebuilt(tasks, owed, turn_no=turn_no, named_products=named_products)
     stock = next((task for task in rebuilt if task.kind == "stock_qty"), None)
     text = None
     if stock is not None and StockQtyTask().missing(stock):
         text = StockQtyTask().question(stock)
     return StockReply(tasks=rebuilt, text=text)
+
+
+#: AVAIL-MODE-REPLIES rule 5: the vague codes still to be asked after this pick, in the
+#: order named. Each entry is a pick as `after_reply` built it (`typed`, `options`, `count`,
+#: `qty`); `turn/apply.py::_spend_stock_pick` hands them on and the engine asks the next.
+NEXT_PICKS = "next_picks"
+
+
+def stock_pick(pick: dict[str, Any], queued: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """The `product_pick` a family's which-one question is stored as."""
+    return {
+        "options": pick["options"],
+        "payload": {
+            "domain": "inventory",
+            "domains": ["inventory"],
+            "stock_pick": True,
+            "typed": pick["typed"],
+            "count": pick["count"],
+            "stock_qty": pick["qty"],
+            NEXT_PICKS: list(queued or []),
+        },
+    }
 
 
 def tasks_after_reply(
