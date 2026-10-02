@@ -226,6 +226,11 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
         if e.get("current_message") is False:
             kept.append(e)
             continue
+        if hint == "product" and raw and not any(ch.isdigit() for ch in raw):
+            # LOW_STOCK_ADDENDUM tells the parser a bare token here "usually is" a
+            # product, so "water tap" can arrive hinted product. A product code always
+            # carries digits; a word without any is a product TYPE.
+            hint = "category"
         if hint in ("category", "brand") and raw:
             words[hint].append(raw)
             words["used"].append(raw)

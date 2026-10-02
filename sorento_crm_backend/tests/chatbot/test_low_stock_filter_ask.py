@@ -248,6 +248,12 @@ class TestNamedInTheMessage:
         (args,) = calls
         assert args.get("split") == split, args
 
+    def test_a_product_type_the_parser_hinted_as_a_product_is_the_category(self, console) -> None:
+        _text, calls = console.say(_ask(_e("water tap", "product")), "water tap low stock")
+        (args,) = calls
+        assert sorted(args["categories"]) == ["CB-FT", "SRT-FT"], args
+        assert not args.get("product_codes"), args
+
     def test_a_product_code_ask_names_its_own_scope(self, console) -> None:
         _text, calls = console.say(_ask(_e("SRTWT7408", "product")), "low stock for SRTWT7408")
         (args,) = calls
