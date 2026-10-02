@@ -14,6 +14,8 @@ export interface Customer {
   sales_agent_id?: string | null;
   sales_agent_code?: string | null;
   sales_agent_name?: string | null;
+  // Which numbered account this ledger is ("account 1" in a chatbot message); null = none.
+  account_level?: number | null;
   // Extended profile (added by commercial_core)
   registered_name?: string | null;
   trading_name?: string | null;
@@ -40,6 +42,8 @@ export interface CustomerFormData {
   is_active: boolean;
   // `null` clears the assignment; `undefined` leaves it alone (PUT reads `exclude_unset`).
   sales_agent_id?: string | null;
+  // `null` clears the level; `undefined` leaves it alone (PUT reads `exclude_unset`).
+  account_level?: number | null;
   // Extended profile fields
   registered_name?: string;
   trading_name?: string;

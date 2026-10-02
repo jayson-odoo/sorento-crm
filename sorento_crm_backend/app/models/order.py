@@ -11,6 +11,7 @@ from sqlalchemy import (
     Numeric,
     Index,
     Integer,
+    SmallInteger,
     UniqueConstraint,
     event,
     text,
@@ -93,6 +94,7 @@ class Customer(Base, CompanyScopedMixin):
         # Who handles the customer: assigned from the customer form, the contact card's
         # agent column and the sales agent's Customers tab, so a move has to be traceable.
         "sales_agent_id",
+        "account_level",
     ]
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -148,6 +150,10 @@ class Customer(Base, CompanyScopedMixin):
         ForeignKey("sales_agents.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Which numbered account this ledger is ("account 1" in a chatbot message selects the
+    # ledger at level 1). NULL = not a numbered account. A setting the office edits; the
+    # name marker is read once, by migration acct_ledger_0001's seed, never again.
+    account_level = Column(SmallInteger, nullable=True)
 
     orders = relationship("Order", back_populates="customer")
     customer_contacts = relationship(
@@ -187,6 +193,7 @@ class Customer(Base, CompanyScopedMixin):
         Index("ix_customers_is_active", "is_active"),
         Index("ix_customers_customer_code", "customer_code"),
         Index("ix_customers_account_owner_user_id", "account_owner_user_id"),
+        CheckConstraint("account_level >= 1", name="ck_customers_account_level"),
         # Composite uniqueness - see column docstring. Created as a functional
         # UNIQUE INDEX by migration 220 so case + whitespace differences don't
         # produce silent duplicates, then re-created WITH company_id by migration

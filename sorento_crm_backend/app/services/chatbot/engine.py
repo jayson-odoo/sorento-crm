@@ -1383,7 +1383,7 @@ def _customer_scope_gate(
     focus: Any,
     parse_output: dict[str, Any],
     domains: Any,
-) -> tuple[dict[str, Any], list[str] | None, bool]:
+) -> tuple[dict[str, Any], list[str] | None, bool, str | None]:
     """PLAN-chatbot-customer-scope-29sep.md D3: the upstream block, run BEFORE the
     resolver. Returns `(the resolver's input, the linked customer ids the turn is
     scoped to or None, refused)`.
@@ -1400,37 +1400,101 @@ def _customer_scope_gate(
     "our") means the links for staff too. Unlinked contacts, staff without "my" and top
     selling (its own block, `_top_selling_dealer_scope`) are untouched."""
     if not scope or focus.status == "top_selling":
-        return parse_output, None, False
+        return parse_output, None, False, None
     self_reference = verdict.get("self_reference") is True
     enforced = bool(scope.get("enforced"))
     in_order = "order" in (domains or ())
     if not (enforced or (self_reference and in_order)):
-        return parse_output, None, False
+        return parse_output, None, False, None
     entities = [e for e in (parse_output.get("entities") or []) if isinstance(e, dict)]
 
     def _is_customer(e: dict[str, Any]) -> bool:
         return e.get("hint") == "customer" or e.get("entity_type") == "customer"
 
-    words = [
-        jsc.js_string(e.get("raw"))
+    named = [
+        e
         for e in entities
         if _is_customer(e) and e.get("current_message") is True and jsc.truthy(e.get("raw"))
     ]
+    words = [jsc.js_string(e.get("raw")) for e in named]
+    # ACCOUNT-LEDGER: the numbered account a word names, parallel to `words`; "my account 2"
+    # names no customer (raw null) and narrows the links themselves.
+    accounts = [_account_of(e) for e in named]
+    my_account = next(
+        (a for e in entities if _is_customer(e) and not jsc.truthy(e.get("raw")) and (a := _account_of(e))),
+        None,
+    )
+    from app.services import contact_customer_scope as scope_mod
+
+    links = scope_mod.ContactCustomerScope(
+        linked=tuple((c, n, k) for c, n, k in scope["linked"]),
+        staff=False,
+        levels=dict(scope.get("levels") or {}),
+    )
+    without_customers = {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}
     if not enforced:
         # Staff: "my" alone means the links; naming a customer is unscoped as today.
-        return (parse_output, list(scope["ids"]), False) if not words else (parse_output, None, False)
+        if words:
+            return parse_output, None, False, None
+        ids = list(scope["ids"])
+        if my_account is not None:
+            ids = [c for c in ids if links.levels.get(c) == my_account]
+            if not ids:
+                return without_customers, None, True, None
+        return parse_output, ids, False, None
+    narrowed_refusal: str | None = None
     ids: list[str] | None = list(scope["ids"])
     if words:
-        from app.services import contact_customer_scope as scope_mod
-
-        ids = scope_mod.ContactCustomerScope(
-            linked=tuple((c, n, k) for c, n, k in scope["linked"]), staff=False
-        ).match_words(words)
+        ids = links.match_words(words, accounts)
+        if ids is None and any(accounts):
+            # Q3: a refusal over an account names only the contact's ledgers of that name.
+            of_name = links.match_words(words)
+            if of_name is not None:
+                narrowed_refusal = scope_mod.refusal_line_for(links, of_name)
+    elif my_account is not None:
+        ids = [c for c in ids if links.levels.get(c) == my_account] or None
     if ids is None:
-        return {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}, None, True
+        return without_customers, None, True, narrowed_refusal
     if not in_order:
-        return parse_output, None, False
-    return {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}, ids, False
+        return parse_output, None, False, None
+    return without_customers, ids, False, None
+
+
+def _with_account_answer(verdict: dict[str, Any], carried: Any) -> dict[str, Any]:
+    """ACCOUNT-LEDGER S-3: the answer to "Which customer is Account N for?" gets Account N on
+    its customer words that name no account of their own. Read from `focus.set_clarify`, which
+    every other turn clears, so the number lives for that one answer only."""
+    number = carried.get("account") if isinstance(carried, dict) else None
+    if not isinstance(number, int) or isinstance(number, bool):
+        return verdict
+    entities = [
+        {**e, "account": number}
+        if isinstance(e, dict)
+        and (e.get("hint") == "customer" or e.get("entity_type") == "customer")
+        and jsc.truthy(e.get("raw"))
+        and _account_of(e) is None
+        else e
+        for e in verdict.get("entities") or []
+    ]
+    return {**verdict, "entities": entities}
+
+
+def _account_of(entity: dict[str, Any]) -> int | None:
+    """The `account` the parser put on an entity: a whole number of at least 1, else None."""
+    value = entity.get("account")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 1 else None
+
+
+def _unnamed_account(verdict: dict[str, Any], parse_output: dict[str, Any]) -> int | None:
+    """ACCOUNT-LEDGER Q2: an Account number with no customer named THIS message (and no "my":
+    `self_reference` names the links). Nothing is carried from an earlier turn to fill it."""
+    if verdict.get("self_reference") is True:
+        return None
+    entities = [e for e in (parse_output.get("entities") or []) if isinstance(e, dict)]
+    customers = [e for e in entities if e.get("hint") == "customer" or e.get("entity_type") == "customer"]
+    if any(e.get("current_message") is True and jsc.truthy(e.get("raw")) for e in customers):
+        return None
+    return next((a for e in customers if not jsc.truthy(e.get("raw")) and (a := _account_of(e))), None)
 
 
 def _screen_resolver_for_scope(
@@ -3686,6 +3750,7 @@ def _run_stages(  # noqa: PLR0915
     verdict = turn_runtime.with_clarify_answer(
         verdict, latest_user_message, carried=state_in.focus.set_clarify
     )
+    verdict = _with_account_answer(verdict, state_in.focus.set_clarify)
     verdict = turn_runtime.with_set_count_from_text(
         verdict, latest_user_message, carried=state_in.focus.set_page
     )
@@ -4001,6 +4066,7 @@ def _run_stages(  # noqa: PLR0915
 
         top_selling_updates: dict[str, Any] = {}
         customer_scope_refused = False
+        account_question: str | None = None
         resolved_kinds: dict[str, dict[str, int]] = {}
         compatible_entities: list[dict[str, Any]] = []
         predicate: dict[str, Any] | None = None
@@ -4094,9 +4160,25 @@ def _run_stages(  # noqa: PLR0915
                 )
             elif isinstance(state_out.focus.top_selling, dict) and state_out.focus.top_selling.get("hop"):
                 resolver_parse_output = _without_carried_words(resolver_parse_output)
-            resolver_parse_output, scope_ids, scope_refused = _customer_scope_gate(
-                customer_scope, verdict, state_out.focus, resolver_parse_output, plan.domains
-            )
+            gate_refusal: str | None = None
+            staff_level_refused = False
+            unnamed_account = _unnamed_account(verdict, resolver_parse_output)
+            account_unnamed_n = unnamed_account
+            if unnamed_account is not None:
+                resolver_parse_output = {
+                    **resolver_parse_output,
+                    "entities": [
+                        e
+                        for e in resolver_parse_output.get("entities") or []
+                        if not (isinstance(e, dict) and (e.get("hint") == "customer" or e.get("entity_type") == "customer"))
+                    ],
+                }
+                scope_ids, scope_refused, gate_refusal = None, True, None
+                account_question = f"Which customer is Account {unnamed_account} for?"
+            else:
+                resolver_parse_output, scope_ids, scope_refused, gate_refusal = _customer_scope_gate(
+                    customer_scope, verdict, state_out.focus, resolver_parse_output, plan.domains
+                )
             scope_ids = _drill_offer_subject(scope_ids, state_out.focus, plan.trace)
             if (
                 len(plan.domains) > 1
@@ -4153,6 +4235,7 @@ def _run_stages(  # noqa: PLR0915
                         plan.ask is not None and "purchase_order" in plan.domains
                     ),
                     roster_caps=roster_caps,
+                    enforced_scope=bool((customer_scope or {}).get("enforced")),
                 )
             )
             resolved_kinds = resolve_outcome.resolved_kinds
@@ -4162,6 +4245,12 @@ def _run_stages(  # noqa: PLR0915
             unplaced_tokens = resolve_outcome.unplaced_tokens
             spec_tier = resolve_outcome.spec_tier
             resolver_payload = resolve_outcome.payload
+            # ACCOUNT-LEDGER Q4: staff asked a level the typed name lacks.
+            staff_account_refusal = ((resolver_payload or {}).get("resolved") or {}).get("account_refusal")
+            if staff_account_refusal and not (customer_scope or {}).get("enforced"):
+                account_question, scope_refused, staff_level_refused = str(staff_account_refusal), True, True
+            elif gate_refusal:
+                account_question = gate_refusal
             # CHATBOT-SELFREF-SCOPE R4: every scope decision is on the trace, with its
             # reason and the ids it dropped, so a refusal explains itself.
             screened_refused = False
@@ -4183,7 +4272,11 @@ def _run_stages(  # noqa: PLR0915
                     {
                         "refused": "customer_not_permitted",
                         "reason": (
-                            "resolver_matched_only_other_customers"
+                            "account_unnamed"
+                            if account_unnamed_n is not None
+                            else "account_level_absent"
+                            if staff_level_refused
+                            else "resolver_matched_only_other_customers"
                             if screened_refused
                             else "typed_customer_word_outside_links"
                         ),
@@ -4223,6 +4316,33 @@ def _run_stages(  # noqa: PLR0915
                     resolved_candidates,
                     frozenset(unplaced_tokens),
                 )
+            if (
+                scope_ids is not None
+                and plan.ask is not None
+                and plan.ask.kind == "customer_pick"
+                and any(
+                    isinstance(e, dict) and (e.get("hint") == "customer" or e.get("entity_type") == "customer") and _account_of(e)
+                    for e in verdict.get("entities") or []
+                )
+            ):
+                # Two typed customer words armed a pick between the WORDS; the linked
+                # customers they matched are the turn's customers, so nothing is asked:
+                # the plan is made again without the words.
+                state_out, plan = turn_apply(
+                    state_in,
+                    {
+                        **verdict,
+                        "entities": [
+                            e
+                            for e in verdict.get("entities") or []
+                            if not (isinstance(e, dict) and (e.get("hint") == "customer" or e.get("entity_type") == "customer"))
+                        ],
+                    },
+                    policy,
+                    resolved_kinds,
+                    resolved_candidates,
+                    frozenset(unplaced_tokens),
+                )
             # Round 4 R5: a clarify this turn is about to ask keeps the ask, so its answer
             # re-runs it (`turn_runtime.with_clarify_answer`).
             clarify = turn_runtime.set_clarify_carry(
@@ -4235,6 +4355,10 @@ def _run_stages(  # noqa: PLR0915
                 # A refusal must not lock the next turns: nothing the refused message
                 # named (the foreign word, unresolved) stays on the focus or the plan.
                 state_out.focus.customers = []
+                if account_unnamed_n is not None:
+                    # S-3: the answer to the bot's own question keeps this Account number
+                    # for that one turn (apply clears `set_clarify` on every other turn).
+                    state_out.focus.set_clarify = {"account": account_unnamed_n}
                 for spec in plan.fetch:
                     spec.entities = [e for e in spec.entities if e.get("hint") != "customer"]
             elif scope_ids is not None:
@@ -5264,7 +5388,9 @@ def _run_stages(  # noqa: PLR0915
         # no offer, nothing armed (`_customer_scope_gate`).
         if answer is None and customer_scope_refused and completes_here:
             stage[0] = "replied"
-            answer = turn_compose.Answer(text=str((customer_scope or {}).get("refusal") or ""))
+            answer = turn_compose.Answer(
+                text=account_question or str((customer_scope or {}).get("refusal") or "")
+            )
 
     if answer is not None and lane_error_text is None:
         if _dealer_stock_ask(state_out, plan) or _dealer_incoming_ask(state_out, plan):
