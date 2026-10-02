@@ -48,6 +48,11 @@ Mock: `documentation/mockups/ACCESS-MODEL/index.html` (v3). IDs AC-AM-n.
   role; unticking one for a contact makes that contact's rosters print without it (and without the
   "None of these have incoming stock right now." line); the roster rows and order are unchanged.
 
+- AC-AM-25 Region is a per-contact scope (West, East, or both; East also sees West), set on the
+  contact Access tab. `EffectiveAccess.regions` carries the expanded set and is the only thing the
+  incoming / packing-list answers read for region. Duplicate respond.io rows get the intersection;
+  an unresolved contact gets West only. Region never grants or removes a domain or field.
+
 ## Enforcement and prompt read ONE tree
 
 - AC-AM-11 `effective_access(db, contact)` is the only reader of roles/overrides for a chat turn. Both

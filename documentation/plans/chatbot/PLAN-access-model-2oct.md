@@ -44,13 +44,21 @@ end_user / NULL); `chatbot_profile.tier` stops being read (migration copies noth
 100 contacts on the prod copy, query in section 4); `EffectiveAccess.tiers: frozenset[str]` feeds
 `is_staff_profile` (office in tiers), the promotion default (tiers list) and the parser profile line.
 
-**C. Region (REGION-PACKING-LIST lane, agreed 2 Oct).** Region (West / East Malaysia; East sees both)
-is a contact fact owned by that lane: `respond_contacts.regions text[]` (default `{west}`), read by the
-incoming routes themselves (`eta_policy.rules_for_contact`, `incoming_stock_service.py`). This lane does
-not touch it and `EffectiveAccess` does not carry it; trigger to expose `EffectiveAccess.regions`
-read-only = a second reader outside incoming. Agreed with that lane: duplicate respond.io rows resolve to no contact (`field_access.py:258-268,316-328`) and so get West only, never the union (stricter than
-AC-AM-8 intersection, still fail closed); its control sits in its own block of
-`ContactChatbotSection.tsx` because Q2 (a) here removes the Tier picker from the same file.
+**C. Region (owner 2 Oct: IN the access model).** Region (West / East Malaysia, multi; East also sees
+West) is a SCOPE like customer scope, not a domain and not a field: it narrows what the incoming /
+packing-list answers return, it never grants a domain. Shape (final column names follow the
+REGION-PACKING-LIST lane's proposal, which supersedes the earlier "contact fact read outside the
+access model" agreement):
+- source: a contact-level set of regions (that lane's `respond_contacts.regions`, values `west` / `east`,
+  non-empty); East held => West visible too (expansion done once, in `effective_access`);
+- `EffectiveAccess.regions: frozenset[str]` (expanded); the incoming routes read it from
+  `effective_access` instead of the contact row, so enforcement keeps ONE reader;
+- duplicate respond.io rows: intersection of the expanded sets, as AC-AM-8; unresolved contact =
+  `{west}` (that lane's AC-RPL-11 default, fail closed);
+- set on the contact Access tab (Roles card, beside customer scope), not on the Chatbot settings
+  card: mock v6. Not a role property (owner: "like customer scope", which is per contact).
+Order of work: whichever lane merges first owns the column migration; the other rebases. This lane's
+S2 adds `regions` to `EffectiveAccess` and S5 points `eta_policy.rules_for_contact` at it.
 
 ## Key design choice: keep every enforcement seam, change only what fills it
 

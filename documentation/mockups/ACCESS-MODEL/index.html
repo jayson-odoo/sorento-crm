@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chatbot Access mock v5</title>
+<title>Chatbot Access mock v6</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 /* tokens copied from sorento_crm_frontend/css/config.reui.css (light) */
@@ -105,7 +105,7 @@ a{color:var(--primary)}
 </style>
 </head>
 <body>
-<nav class="mocknav"><span>Mock v5:</span>
+<nav class="mocknav"><span>Mock v6:</span>
 <button data-v="contact" class="on" onclick="show('contact')">Contact access</button>
 <button data-v="roles" onclick="show('roles')">Chatbot roles</button>
 <button data-v="role" onclick="show('role')">Role: Purchasing</button>
@@ -138,6 +138,11 @@ a{color:var(--primary)}
         <div class="stat"><b>12 of 13</b><span>domains granted &middot; 0 of 3 reports</span></div>
         <div class="stat"><b>8</b><span>incoming fields added for this contact only</span></div>
         <div class="stat"><b>All customers</b><span>customer scope (from role)</span></div>
+      </div>
+      <div class="row" style="margin-top:14px;gap:12px">
+        <span style="font-size:13px;font-weight:500">Region</span>
+        <span class="badge primary">West Malaysia <span class="x" title="Remove">&times;</span></span>
+        <span class="badge primary">East Malaysia <span class="x" title="Remove">&times;</span></span>
       </div>
     </div>
   </div>
@@ -190,6 +195,7 @@ a{color:var(--primary)}
         <tr><th>Hand-off line per domain</th><td>plain <code>text-xs text-muted-foreground</code>; agent + team set read from the domain row (new <code>chatbot_domains.escalation_agent_code</code> + existing <code>escalation_team_code</code>), tier-1 team from <code>agent_teams</code> (edited on the Access agents admin, <code>AccessAgentDetail.tsx:323-458</code>)</td></tr>
         <tr><th>Escalation card</th><td><code>components/ui/card.tsx</code> + read-only <code>DataGrid</code>-style table; "Can escalate to a person" is the existing ESCALATION-CONTROL switch (<code>components/ui/switch.tsx</code>, PR #1406) moved beside it</td></tr>
         <tr><th>Reports section</th><td>section heading row in the same tree (<code>text-xs uppercase text-muted-foreground</code>, as PageHeader crumb); a report ticked without its parent domain shows "Needs Stock" / "Needs Orders / DO" and does not answer (owner 2 Oct: report-type grants under Reports; parser domain list unchanged)</td></tr>
+        <tr><th>Region</th><td><code>SearchableMultiSelect</code> (clearable, West / East Malaysia) as chips in the Roles card, beside customer scope; per contact, not per role; East also sees West (owner 2 Oct). Data is illustrative: no region column exists on the prod copy yet (REGION-PACKING-LIST adds it)</td></tr>
         <tr><th>Removed from this tab</th><td>Access Agents grid (<code>ContactAccessAgentsTable.tsx</code>) and Field reveals switches (<code>ContactFieldRevealsSection.tsx</code>): both replaced by the tree</td></tr>
       </tbody></table>
     </div>
@@ -338,7 +344,7 @@ a{color:var(--primary)}
     <div class="card-b" style="overflow-x:auto">
       <table class="map"><tbody>
         <tr><th>Removed</th><td>the Tier select (<code>ContactChatbotSection.tsx:90-94,199-206</code>). Tier now comes from the contact's roles (owner Q2, 2 Oct): on the Access tab role chip ("Purchasing &middot; Office"), set per role (Tier column on Chatbot roles, Tier select in the role dialog)</td></tr>
-        <tr><th>Kept</th><td>Memory context level and the five switches, unchanged; the REGION-PACKING-LIST lane adds its region control as its own row here</td></tr>
+        <tr><th>Kept</th><td>Memory context level and the five switches, unchanged; region is NOT set here: it is a scope on the Access tab (Roles card), owner 2 Oct</td></tr>
         <tr><th>Stamps</th><td>"Has / no incoming stamp" (Incoming stock) and "Has / no attachment stamp" (Product attachments) are tree fields on the Access tab, ticked on every role; untick for one contact to hide them (owner Q3, Q4)</td></tr>
       </tbody></table>
     </div>
