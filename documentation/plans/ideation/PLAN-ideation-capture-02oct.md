@@ -199,7 +199,21 @@ Photos or files (always listed, since photos are no longer picked up from the ch
 | Q | Answer |
 |---|---|
 | Q1 | **(a)**, crew 2 Oct: crew spawned ss lane SS-IDEATION-OWN (one-shot create returning id + idea number, own-similar lookup by phone / CRM user id and never by name, embed `mine=true` + `isMine`, assertion `phone` claim). This lane builds the CRM side against that contract; SS-IDEATION-OWN posts the final API contract and crew relays it. |
-| Q2-Q5 | (with the owner) |
+| Q2 | **(b)**, owner 2 Oct: the sender MUST have a CRM login (a user linked by `users.respond_contact_id`, active) AND Ideas permission (`ideation.board.view`). Otherwise nothing is created; the reply says they need a CRM login with Ideas access. A clear message, never a stuck turn (no pointer is written). |
+| Q3 | **Yes**, owner 2 Oct: a submitter may edit the fields of their OWN idea with `ideation.board.view`. They can NOT edit other people's ideas unless they hold the existing manage permission `ideation.ideas.manage` (admin / secretary type; today the gate on `PATCH /ideas/{id}`, `BE/app/api/v1/ideation/ideas.py:162-163`). Ownership comes from ss `isMine`, never from the CRM guessing. Status, merge, archive, delete stay manage-only. |
+| Q4 | **(a) variant**, owner 2 Oct: a numbered list showing each similar idea's TITLE + link; the user replies a number to edit (the bot replies with that idea's link) or NEW to create from the ORIGINAL message. |
+| Q5 | Held: the owner asked whether a WhatsApp template is needed since the reply is inside the customer-service window; crew is clarifying (fixed wording vs composed). Wording is not built until answered. |
+
+Consequences:
+
+- Q2 drops the "no login: portal track link" branch of 2.5; the no-access reply replaces it.
+- Q3 adds slice E1: the gateway `PATCH /ideas/{id}` allows a `board.view` holder when ss reports
+  `isMine` for that idea as that user, else 403; manage holders keep editing any idea. The detail
+  page shows Edit when `isMine` or manage. ss should enforce the same (contract ask to
+  SS-IDEATION-OWN, defence in depth).
+- Q4 replaces 2.1 E2's reply: `1. {title} - {link}` lines, then "Reply a number to edit that one,
+  or NEW to log this as a new idea." A number replies with that idea's link and drops the held
+  message; NEW creates from the held original message.
 
 ## 4. CRM side of the SS-IDEATION-OWN contract (provisional until ss posts the final one)
 
@@ -219,5 +233,5 @@ Photos or files (always listed, since photos are no longer picked up from the ch
 | # | Slice | Depends on | State |
 |---|---|---|---|
 | P1 | Plumbing: phone claim, `mine` forward, My/All toggle (section 4) | Q1 | red tests in progress |
-| C1 | Chatbot one-message flow (section 2.1-2.5) | Q2-Q5 + SS-IDEATION-OWN contract | held |
-| E1 | Own-idea edit with `ideation.board.view` | Q3 | held |
+| C1 | Chatbot one-message flow (section 2.1-2.5, Q2 access gate, Q4 numbered list); reply wording behind one seam until Q5 | SS-IDEATION-OWN contract (final shapes) | building against the provisional contract |
+| E1 | Own-idea edit: gateway PATCH allows `isMine` or manage; Edit shown on own ideas | Q3 | red tests next |
