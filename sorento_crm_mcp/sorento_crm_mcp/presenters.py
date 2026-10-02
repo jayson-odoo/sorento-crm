@@ -427,15 +427,23 @@ def _orders_list(rows: list[dict], b: _Builder) -> None:
                 ("Customer", o.get("debtor_name")),
                 ("Order Date", o.get("order_date")),
                 ("Actual Delivery Date", o.get("actual_delivery_date")),
-                ("Status", o.get("order_status")),
-                ("Pickup Time", o.get("pickup_time")),
-                ("Transporter", o.get("transporter")),
-                ("Driver", o.get("driver_name")),
-                ("Lorry Plate", o.get("lorry_plate")),
+                ("order_status", "Status", o.get("order_status")),
+                ("pickup_time", "Pickup Time", o.get("pickup_time")),
+                ("transporter", "Transporter", o.get("transporter")),
+                ("driver_name", "Driver", o.get("driver_name")),
+                ("lorry_plate", "Lorry Plate", o.get("lorry_plate")),
                 ("Warehouse", wh),
                 ("Products", prods),
             ],
         )
+    # DO-ASK-SIMPLIFY rule 2 (owner, 2 Oct 2026): the logistics fields are per-contact
+    # reveals, hidden from a contact without the grant. The MCP stays unfiltered; the
+    # chatbot's `output_structurer` is the gate.
+    b.restrict("order_status", "delivery_orders.status")
+    b.restrict("pickup_time", "delivery_orders.pickup_time")
+    b.restrict("transporter", "delivery_orders.transporter")
+    b.restrict("driver_name", "delivery_orders.driver")
+    b.restrict("lorry_plate", "delivery_orders.lorry_plate")
 
 
 def _orders_so_outstanding(rows: list[dict], b: _Builder) -> None:

@@ -626,7 +626,16 @@ CATALOG: tuple[ToolSpec, ...] = (
         # here for the Contacts > Access > Field reveals card; the actual gate is the
         # chatbot lane's own redirect (`lanes/business/__init__.py::run_fetch`) plus
         # `_orders_so_outstanding`'s `b.restrict` in the presenter.
-        restricted_fields=(("sales_orders.outstanding", "Sales order outstanding"),),
+        # DO-ASK-SIMPLIFY rule 2 (owner, 2 Oct 2026): the DO list's logistics fields are
+        # per-contact reveals, gated by `output_structurer` off `_orders_list`'s restrict.
+        restricted_fields=(
+            ("sales_orders.outstanding", "Sales order outstanding"),
+            ("delivery_orders.status", "DO status"),
+            ("delivery_orders.pickup_time", "DO pickup time"),
+            ("delivery_orders.transporter", "DO transporter"),
+            ("delivery_orders.driver", "DO driver"),
+            ("delivery_orders.lorry_plate", "DO lorry plate"),
+        ),
     ),
     ToolSpec(
         "crm_order_management_orders_by_product_list",
