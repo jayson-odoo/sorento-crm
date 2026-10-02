@@ -93,6 +93,12 @@ translation module.
    keys still English-only (`chatbot_reply_copy.py:279-340`), and the Translations admin page
    filter by language pair.
 
+5. **Required-field helper (after PR #1445 lands)**: `app/services/chatbot/required_fields.py`
+   carries fixed English in `FieldSpec.question`, `_miss_line` and `_pick_line`. Make them
+   language-aware: `question` becomes a catalog key (English source text) rendered through the
+   turn's `Localizer`, and the two line builders take the localizer like `compose` does. Start
+   this slice only once #1445 is on main; until then nothing in this lane touches that file.
+
 ## REPORT-ENGINE (#1447) coordination
 
 The catalog is the shared contract: key = English source text, field-key index, `{token}`
