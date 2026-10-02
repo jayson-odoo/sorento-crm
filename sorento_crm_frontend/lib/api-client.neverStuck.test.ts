@@ -27,6 +27,7 @@ describe('isAccessDenied', () => {
     'One of these permissions required (module may be disabled): a.b',
     'Module not enabled: scm',
     'Module not enabled for purchase_order',
+    'One of these modules must be enabled: scm, projects',
   ])('recognises the backend 403 "%s"', (m) => {
     expect(isAccessDenied(err(m))).toBe(true);
   });
@@ -64,15 +65,23 @@ describe('isSignedOut', () => {
 });
 
 describe('isNotFound', () => {
-  it.each(['Product not found', 'Price tag request not found', 'Not Found'])(
-    'recognises "%s"',
-    (m) => {
-      expect(isNotFound(err(m))).toBe(true);
-    },
-  );
+  // Main's rule (NS-SAFETY-NETS): only a real 404 status says "not found", because that
+  // decides what a detail page tells the user.
+  const withStatus = (m: string, status: number) => Object.assign(new Error(m), { status });
 
-  it('does not match a 5xx', () => {
-    expect(isNotFound(err('Server error. Try again or contact support.'))).toBe(false);
+  it('is true for a 404 status', () => {
+    expect(isNotFound(withStatus('Product not found', 404))).toBe(true);
+  });
+
+  it('is false for a status-less message, a refusal or a 5xx', () => {
+    expect(isNotFound(err('Product not found'))).toBe(false);
+    expect(isNotFound(withStatus('Permission required: a.b', 403))).toBe(false);
+    expect(isNotFound(withStatus('Server error.', 500))).toBe(false);
+  });
+
+  it('a status-carrying 403 / 401 is classified by status', () => {
+    expect(isAccessDenied(withStatus('Forbidden', 403))).toBe(true);
+    expect(isSignedOut(withStatus('Unauthorized', 401))).toBe(true);
   });
 });
 
@@ -88,6 +97,7 @@ describe('isRefused (never retried)', () => {
     expect(isRefused(err('Permission required: a.b'))).toBe(true);
     expect(isRefused(err('Module not enabled: scm'))).toBe(true);
     expect(isRefused(err('Session expired'))).toBe(true);
+    // A status-less "<thing> not found" is still not worth retrying.
     expect(isRefused(err('Order not found'))).toBe(true);
     expect(isRefused(err(REQUEST_TIMED_OUT_MESSAGE))).toBe(true);
     expect(isRefused(err('Server error. Try again or contact support.'))).toBe(false);
