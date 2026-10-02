@@ -2,7 +2,7 @@
 
 * S1: naming a transporter filtered the DO list by it, so every row returned told the
   contact who carried it, without `delivery_orders.transporter`. Without the grant the
-  transporter is dropped from an order-list ask (no filter, no header line).
+  ask is refused in one line before any fetch (review S5: never silently unfiltered).
 * S2: the dealer range question ran before the customer-scope backstop
   (`fetch.entity_ids_transformer` raising `ScopeViolation`), so a customer outside the
   contact's links could be named in "Which period for X?". The backstop now answers first.
@@ -79,14 +79,12 @@ def _order_args(calls):
     return found[0]
 
 
-def test_a_transporter_is_not_a_filter_without_the_grant():
-    _said, calls, _gate = _run(entities=[_customer(), _transporter()], granted=[])
-    assert "transporter_ids" not in _order_args(calls)
-
-
-def test_the_header_does_not_name_a_dropped_transporter():
-    _said, _calls, gate = _run(entities=[_customer(), _transporter()], granted=[])
-    assert not any(e.get("entity_type") == "transporter" for e in gate["compatible_entities"])
+def test_a_transporter_ask_is_refused_without_the_grant():
+    """Review S5: dropping the filter silently would answer a different question; the ask
+    is refused in one line instead, and nothing is fetched."""
+    said, calls, _gate = _run(entities=[_customer(), _transporter()], granted=[])
+    assert not [name for name, _args in calls if name == _ORDERS], calls
+    assert "transporter" in said.lower() and "GT DELIVERY" not in said, said
 
 
 def test_a_transporter_filters_with_the_grant():
@@ -103,28 +101,3 @@ def test_a_customer_outside_the_links_is_refused_before_the_period_question():
     assert "Which period" not in said, said
 
 
-# The engine's scope header reads the RESOLVER's gate (`engine.py`, `apply_scope_block`),
-# a different dict from the lane's shallow copy, so the header is filtered on its own.
-
-
-def test_the_scope_header_gate_drops_the_transporter_without_the_grant():
-    gate = {"compatible_entities": [_customer(), _transporter()]}
-    out = do_ask.header_gate(gate, {"access": {"attributes": []}})
-    assert [e["entity_type"] for e in out["compatible_entities"]] == ["customer"]
-    assert [e["entity_type"] for e in gate["compatible_entities"]] == ["customer", "transporter"]
-
-
-def test_the_scope_header_gate_keeps_the_transporter_with_the_grant():
-    gate = {"compatible_entities": [_customer(), _transporter()]}
-    out = do_ask.header_gate(gate, {"access": {"attributes": ["delivery_orders.transporter"]}})
-    assert out is gate
-
-
-def test_the_header_names_no_transporter_without_the_grant():
-    from app.services.chatbot.tail import scope_block
-
-    gate = do_ask.header_gate({"compatible_entities": [_customer(), _transporter()]}, {"access": {}})
-    header = scope_block.search_scope_header(
-        domain="order", qf={"entities": []}, gate_json=gate, resolver_json={}
-    )
-    assert "Transporter" not in header and "GT DELIVERY" not in header, header

@@ -10,6 +10,8 @@ Pure function tests: no database, no engine.
 """
 from __future__ import annotations
 
+import json
+
 from app.services.chatbot.tail import scope_block as scope_block_mod
 
 _HANLIM = [
@@ -79,3 +81,38 @@ def test_the_header_never_lists_a_ledger_marker_for_a_family() -> None:
 
 def test_dates_line_is_unchanged() -> None:
     assert "Dates: 01/10/2026 to 31/10/2026" in _header(_HANLIM)
+
+
+# --- review round 1 ---------------------------------------------------------------------- #
+
+
+def test_the_carried_customer_rows_print_one_family_name_with_a_count() -> None:
+    """B1: the answer to the period question ("this month") names no customer of its own,
+    so the header reads the FOCUS carry (`_focus_words`), not the gate."""
+    header = scope_block_mod.search_scope_header(
+        domain="order",
+        qf={"entities": [], "date_filter_start": "2026-10-01", "date_filter_end": "2026-10-31"},
+        gate_json={"compatible_entities": []},
+        resolver_json={},
+        focus_customers=[{"hint": "customer", "display_name": name} for name in _HANLIM],
+    )
+    assert _customer_line(header) == "Customer: HANLIM TRADING SDN BHD (6 accounts)", header
+
+
+def test_an_empty_do_list_names_the_customer_once_too() -> None:
+    """S1: the miss composer's own header (`answer.not_found_error_message`) groups the same
+    way, so an empty DO list does not list every ledger either."""
+    from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+    rows = [
+        {"uuid": f"00000000-0000-4000-8000-00000000000{i}", "entity_type": "customer", "code": "300-H", "display_name": n}
+        for i, n in enumerate(_HANLIM)
+    ]
+    out = not_found_error_message(
+        {},
+        parser={"domain_hint": "order", "entities": [], "routing": {"suggested_team": "customer_service"}},
+        resolved={"tokens": [], "unresolved_tokens": [], "resolutions": [], "intersection": rows, "by_entity_type": {"customer": rows}},
+        gate={"gate_passed": True, "compatible_entities": rows},
+    )
+    first_line = (out.get("escalate_message") or "").split("\n", 1)[0]
+    assert first_line == "Customer: HANLIM TRADING SDN BHD (6 accounts)", json.dumps(out)

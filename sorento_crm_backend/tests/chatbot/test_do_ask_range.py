@@ -188,3 +188,35 @@ def test_is_dealer_reads_the_customer_scope():
     assert do_ask.is_dealer({"customer_scope": {"enforced": True, "ids": [_CID]}}) is True
     assert do_ask.is_dealer({"customer_scope": {"enforced": False}}) is False
     assert do_ask.is_dealer({}) is False
+
+
+# --- review round 1 ---------------------------------------------------------------------- #
+
+
+def test_an_outstanding_bucket_ask_needs_no_range():
+    """S3: the outstanding bucket lists DOs not yet delivered, which have no delivery date
+    to range over."""
+    said, calls = _run(order_status="outstanding", entities=[])
+    assert "crm_order_management_orders_list" in calls, (calls, said)
+
+
+def test_a_range_that_is_not_whole_months_is_said_in_days():
+    said, _calls = _run(start="2026-09-01", end="2026-10-02")
+    assert "That is 32 days (01/09/2026 to 02/10/2026)" in said, said
+
+
+def test_whole_months_are_said_in_months():
+    said, _calls = _run(start="2026-01-01", end="2026-06-30")
+    assert "That is 6 months (01/01/2026 to 30/06/2026)" in said, said
+
+
+def test_a_future_range_suggests_only_the_current_month():
+    said, calls = _run(start="2026-11-01", end="2026-12-31")
+    assert not _fetched(calls), calls
+    assert "- Oct 2026" in said and "Nov 2026\\n" not in said and "- Nov 2026" not in said, said
+
+
+def test_swapped_dates_are_measured_the_right_way_round():
+    said, calls = _run(start="2026-06-30", end="2026-01-01")
+    assert not _fetched(calls), calls
+    assert "6 months (01/01/2026 to 30/06/2026)" in said, said
