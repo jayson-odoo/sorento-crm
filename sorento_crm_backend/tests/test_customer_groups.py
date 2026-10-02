@@ -571,3 +571,44 @@ def test_mock5_customers_select_carries_group_id_and_name_null_when_none(client,
     assert "customer_group_name" in rows[str(loner.id)]
     assert rows[str(loner.id)]["customer_group_name"] is None
     assert rows[str(loner.id)]["customer_group_id"] is None
+
+
+# ============================================================ security-review round
+
+
+def test_ac8_create_with_a_group_needs_customers_edit(client, db, state):
+    g = _group(db, "ZZT CREATE GUARD")
+    db.commit()
+    code = unique_code("ZZTNEW")
+    body = {"customer_code": code, "customer_name": "ZZT Created", "customer_group_id": g}
+    state["granted"] = {VIEW}
+
+    denied = client.post(CUSTOMERS + "/", json=body)
+    assert denied.status_code == 403, denied.text
+    assert "Permission required: order_management.customers.edit" in denied.text
+    assert db.query(Customer).filter(Customer.customer_code == code).count() == 0
+
+    state["granted"] = {VIEW, EDIT}
+    allowed = client.post(CUSTOMERS + "/", json=body)
+    assert allowed.status_code == 201, allowed.text
+    assert allowed.json()["customer_group_id"] == g
+
+
+def test_a_malformed_group_filter_is_422_not_a_leaking_500(client, db):
+    response = client.get(CUSTOMERS + "/", params={"customer_group_id": "not-a-uuid"})
+
+    assert response.status_code == 422, response.text
+    assert "InvalidTextRepresentation" not in response.text
+    assert "SELECT" not in response.text
+
+
+def test_ac5_add_with_more_than_500_ids_is_422_and_writes_nothing(client, db):
+    g = _group(db, "ZZT CAP")
+    real = _customer(db)
+    db.commit()
+    ids = [real.id] + [str(uuid.uuid4()) for _ in range(500)]
+
+    response = client.post(f"{GROUPS}/{g}/customers", json={"customer_ids": ids})
+
+    assert response.status_code == 422, response.text
+    assert _group_of(db, real.id) is None
