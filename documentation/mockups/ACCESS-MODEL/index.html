@@ -3,481 +3,300 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chatbot Access mock v7</title>
+<title>Chatbot Access mock v8</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 /* tokens copied from sorento_crm_frontend/css/config.reui.css (light) */
-  :root{
-    --background:#fff; --foreground:#09090b; --card:#fff; --primary:#3b82f6; --primary-fg:#fff;
-    --muted:#f4f4f5; --muted-fg:#71717a; --border:oklch(94% 0.004 286.32); --input:#e4e4e7;
-    --success:#15803d; --warning:#a16207; --info:#7c3aed; --destructive:#dc2626; --radius:.5rem;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--background);color:var(--foreground);font:14px/1.45 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
-  .container{max-width:1280px;margin:0 auto;padding:20px 16px 48px}
-  .crumb{font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg)}
-  h1{font-size:20px;font-weight:600;margin:4px 0 2px}
-  .meta{font-size:13px;color:var(--muted-fg);margin-bottom:16px}
-  .hero{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
-  .hero .name{font-size:16px;font-weight:600}
-  .btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--radius);border:1px solid var(--input);background:#fff;font:inherit;font-size:13px;font-weight:500;cursor:pointer}
-  .btn.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-fg)}
-  .btn.ghost{border-color:transparent;background:transparent;color:var(--muted-fg)}
-  .tabs{display:flex;gap:32px;border-bottom:1px solid var(--border);margin-bottom:20px;overflow-x:auto}
-  .tab{padding:10px 0;font-size:14px;font-weight:500;color:var(--muted-fg);border-bottom:2px solid transparent;white-space:nowrap}
-  .tab.active{color:var(--primary);border-color:var(--primary)}
-  .card{border:1px solid var(--border);border-radius:12px;background:var(--card);box-shadow:0 1px 2px rgba(0,0,0,.05);margin-bottom:20px}
-  .card-h{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
-  .card-t{font-size:15px;font-weight:600}
-  .card-b{padding:16px 20px}
-  .badge{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:500;background:var(--muted);color:var(--foreground);white-space:nowrap}
-  .badge.primary{background:#eff6ff;color:#1d4ed8}
-  .badge.success{background:#f0fdf4;color:var(--success)}
-  .badge.warning{background:#fefce8;color:var(--warning)}
-  .badge.destructive{background:#fef2f2;color:var(--destructive)}
-  .badge.outline{background:transparent;border:1px solid var(--input);color:var(--muted-fg)}
-  .badge .x{cursor:pointer;opacity:.6}
-  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .select{min-width:220px;height:32px;border:1px solid var(--input);border-radius:var(--radius);padding:0 10px;display:inline-flex;align-items:center;color:var(--muted-fg);font-size:13px}
-  /* domain tree */
-  .tree{list-style:none;margin:0;padding:0}
-  .d{border-bottom:1px solid var(--border)}
-  .d:last-child{border-bottom:0}
-  .d-h{display:grid;grid-template-columns:20px 18px minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 20px;cursor:pointer}
-  .d-h:hover{background:#fafafa}
-  .chev{color:var(--muted-fg);font-size:12px;transition:transform .2s cubic-bezier(.2,0,0,1)}
-  .d.open .chev{transform:rotate(90deg)}
-  .lbl{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .lbl small{display:block;font-weight:400;color:var(--muted-fg);font-size:12px;overflow:hidden;text-overflow:ellipsis}
-  .src{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
-  .fields{display:none;padding:2px 20px 12px 68px}
-  .d.open .fields{display:block}
-  .f{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:10px;align-items:center;padding:5px 0}
-  .f .lbl{font-weight:400}
-  input[type=checkbox]{width:16px;height:16px;accent-color:var(--primary);margin:0}
-  .hint{font-size:12px;color:var(--muted-fg)}
-  .hint.off{color:var(--warning)}
-  .muted-row{color:var(--muted-fg)}
-  .summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-  .stat{border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px}
-  .stat b{display:block;font-size:18px;font-weight:600}
-  .stat span{font-size:12px;color:var(--muted-fg)}
-  .esc{font-size:12px;color:var(--muted-fg);display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}
-  .esc b{font-weight:500;color:var(--foreground)}
-  .switch{width:32px;height:18px;border-radius:999px;background:var(--primary);position:relative;flex:none}
-  .switch:after{content:"";position:absolute;right:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff}
-  .esc-t{width:100%;border-collapse:collapse;font-size:13px}
-  .esc-t td,.esc-t th{padding:7px 8px;border-bottom:1px solid var(--border);text-align:left}
-  .esc-t th{font-weight:500;color:var(--muted-fg);font-size:12px}
-  .map{font-size:13px}
-  .map td,.map th{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
-  .map code{font-size:12px}
-  @media (max-width:640px){
-    .d-h{grid-template-columns:16px 18px minmax(0,1fr);padding:10px 16px}
-    .d-h .src{grid-column:3;justify-content:flex-start}
-    .fields{padding-left:52px;padding-right:16px}
-    .card-h,.card-b{padding-left:16px;padding-right:16px}
-    .summary{grid-template-columns:1fr}
-    .select{min-width:0;width:100%}
-  }
-.grid{width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px}
-.grid th{font-size:12px;font-weight:500;color:var(--muted-fg);text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);background:#fafafa}
-.grid td{padding:10px 12px;border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.grid tr.link:hover td{background:#fafafa;cursor:pointer}
-.toolbar{display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap}
-.search{height:32px;border:1px solid var(--input);border-radius:var(--radius);padding:0 10px;min-width:240px;font:inherit;font-size:13px}
-.overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;padding:16px}
-.overlay.show{display:flex}
-.modal{background:#fff;border-radius:12px;width:100%;max-width:480px;box-shadow:0 10px 30px rgba(0,0,0,.2)}
-.modal .card-b label{display:block;font-size:13px;font-weight:500;margin:10px 0 4px}
-.input{width:100%;height:34px;border:1px solid var(--input);border-radius:var(--radius);padding:0 10px;font:inherit;font-size:13px}
-.foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--border)}
-.countdown{border-color:var(--destructive);color:var(--destructive)}
-a{color:var(--primary)}
-@media (max-width:640px){.search{min-width:0;width:100%}.grid .hide-sm{display:none}}
-
-.mocknav{position:sticky;top:0;z-index:5;background:#18181b;color:#fff;display:flex;gap:4px;padding:8px 16px;overflow-x:auto;font-size:13px}
+:root{--background:#fff;--foreground:#09090b;--card:#fff;--primary:#3b82f6;--primary-fg:#fff;--muted:#f4f4f5;--muted-fg:#71717a;--border:oklch(94% 0.004 286.32);--input:#e4e4e7;--success:#15803d;--warning:#a16207;--destructive:#dc2626;--radius:.5rem;--changed:#fffbeb;--changed-b:#f59e0b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--background);color:var(--foreground);font:14px/1.5 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mocknav{position:sticky;top:0;z-index:20;background:#18181b;display:flex;gap:4px;padding:8px 16px;overflow-x:auto;font-size:13px}
+.mocknav span{color:#71717a;padding:6px 8px 6px 0;white-space:nowrap}
 .mocknav button{background:transparent;border:0;color:#a1a1aa;font:inherit;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}
 .mocknav button.on{background:#3f3f46;color:#fff}
-.mocknav span{color:#71717a;padding:6px 8px 6px 0;white-space:nowrap}
-.sec{padding:14px 20px 6px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg);background:#fafafa;border-bottom:1px solid var(--border)}
-.prev{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:6px 0 10px}
-.prev .pv-h{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg);margin-bottom:4px}
-.bubble{background:#dcf8c6;border-radius:10px;padding:8px 10px;font-size:12.5px;line-height:1.45;white-space:pre-wrap;font-family:Inter,system-ui,sans-serif;color:#111}
-.bubble b{font-weight:600}
-.f .lbl small.help{color:var(--muted-fg)}
-@media (max-width:640px){.prev{grid-template-columns:1fr}}
-.view{display:none} .view.on{display:block}
+.view{display:none}.view.on{display:block}
+.container{max-width:880px;margin:0 auto;padding:20px 16px 120px}
+.crumb{font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg)}
+.crumb a{color:var(--muted-fg)}
+h1{font-size:20px;font-weight:600;margin:4px 0 12px}
+.hero{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.hero .name{font-size:16px;font-weight:600}
+.meta{font-size:13px;color:var(--muted-fg);margin:-6px 0 14px}
+.tabs{display:flex;gap:28px;border-bottom:1px solid var(--border);margin-bottom:20px;overflow-x:auto}
+.tab{padding:10px 0;font-weight:500;color:var(--muted-fg);border-bottom:2px solid transparent;white-space:nowrap}
+.tab.active{color:var(--primary);border-color:var(--primary)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--radius);border:1px solid var(--input);background:#fff;font:inherit;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted-fg)}
+.btn.link{border:0;background:none;padding:0;height:auto;color:var(--primary);font-weight:500}
+.card{border:1px solid var(--border);border-radius:12px;background:var(--card);box-shadow:0 1px 2px rgba(0,0,0,.05);margin-bottom:16px}
+.card-h{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 20px;flex-wrap:wrap}
+.card-h + .card-b{border-top:1px solid var(--border)}
+.card-t{font-size:15px;font-weight:600;display:flex;align-items:center;gap:10px}
+.step{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--muted);font-size:12px;font-weight:600;color:var(--muted-fg)}
+.card-b{padding:14px 20px}
+.badge{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;font-size:12.5px;font-weight:500;background:var(--muted);white-space:nowrap}
+.badge.primary{background:#eff6ff;color:#1d4ed8}
+.badge.warn{background:var(--changed);color:#92400e;border:1px solid #fde68a}
+.badge .x{cursor:pointer;opacity:.6}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.muted{color:var(--muted-fg)}
+.small{font-size:12.5px}
+.summary{background:#f8fafc;border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:16px}
+.summary h3{margin:0 0 8px;font-size:15px}
+.summary ul{margin:0;padding-left:18px}
+.summary li{margin:2px 0}
+.summary .no{color:var(--muted-fg)}
+.grp{padding:10px 20px 4px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg);background:#fafafa;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start;padding:12px 20px;border-bottom:1px solid var(--border)}
+.item:last-child{border-bottom:0}
+.item.changed{background:var(--changed);box-shadow:inset 3px 0 0 var(--changed-b)}
+.item .t{font-weight:500}
+.item .d{font-size:12.5px;color:var(--muted-fg)}
+.item .state{font-size:12px;margin-top:4px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.sw{width:36px;height:20px;border-radius:999px;background:var(--input);position:relative;cursor:pointer;flex:none;border:0;margin-top:2px}
+.sw:after{content:"";position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .2s cubic-bezier(.2,0,0,1)}
+.sw.on{background:var(--primary)}.sw.on:after{left:18px}
+.details{margin-top:8px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);background:#fff;display:none}
+.item.open .details{display:block}
+.chk{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px 14px}
+.chk label{display:flex;gap:8px;align-items:center;font-size:13px}
+.chk label.chg{background:var(--changed);border-radius:4px;padding:0 4px}
+input[type=checkbox]{width:16px;height:16px;accent-color:var(--primary);margin:0}
+.opt{display:flex;gap:10px;align-items:flex-start;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+.prev{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:8px}
+.prev .h{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg);margin-bottom:4px}
+.bubble{background:#dcf8c6;border-radius:10px;padding:8px 10px;font-size:12.5px;line-height:1.45;white-space:pre-wrap;color:#111}
+.radio{display:flex;flex-direction:column;gap:8px}
+.radio label{display:flex;gap:8px;align-items:flex-start}
+.adv summary{cursor:pointer;padding:14px 20px;font-weight:600;list-style:none;display:flex;justify-content:space-between}
+.adv summary::-webkit-details-marker{display:none}
+.adv[open] summary{border-bottom:1px solid var(--border)}
+table.t{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
+table.t th{font-size:12px;font-weight:500;color:var(--muted-fg);text-align:left;padding:8px 12px;background:#fafafa;border-bottom:1px solid var(--border)}
+table.t td{padding:9px 12px;border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.savebar{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--border);box-shadow:0 -4px 12px rgba(0,0,0,.06);z-index:10}
+.savebar .in{max-width:880px;margin:0 auto;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+.notes{font-size:12.5px}
+.notes td,.notes th{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+.notes code{font-size:11.5px}
+.input{width:100%;height:34px;border:1px solid var(--input);border-radius:var(--radius);padding:0 10px;font:inherit;font-size:13px}
+.select{height:34px;border:1px solid var(--input);border-radius:var(--radius);padding:0 10px;display:flex;align-items:center;color:var(--muted-fg);font-size:13px}
+.field{margin-bottom:12px}.field>label{display:block;font-size:13px;font-weight:500;margin-bottom:4px}
+@media (max-width:640px){.prev{grid-template-columns:1fr}.card-h,.card-b,.item,.grp,.adv summary{padding-left:16px;padding-right:16px}}
 </style>
 </head>
 <body>
-<nav class="mocknav"><span>Mock v7:</span>
+<nav class="mocknav"><span>Mock v8:</span>
 <button data-v="contact" class="on" onclick="show('contact')">Contact access</button>
-<button data-v="roles" onclick="show('roles')">Chatbot roles</button>
 <button data-v="role" onclick="show('role')">Role: Purchasing</button>
-<button data-v="chatbot" onclick="show('chatbot')">Contact chatbot settings</button></nav>
+<button data-v="roles" onclick="show('roles')">Chatbot roles</button>
+<button data-v="notes" onclick="show('notes')">What changed in v8</button></nav>
+
 <section class="view on" id="v-contact"><div class="container">
   <div class="crumb">User management / Contacts</div>
   <h1>Contact Details</h1>
-  <div class="meta">Respond.io ID hidden in mock &middot; data: local prod copy 25 Sep, contact "Sorento - Jereen"</div>
+  <div class="hero"><div class="name">Sorento - Jereen</div>
+    <div class="row"><button class="btn ghost" aria-label="Previous contact">&lsaquo;</button><button class="btn ghost" aria-label="Next contact">&rsaquo;</button><button class="btn primary">Portal link</button></div></div>
+  <div class="tabs"><div class="tab">Profile</div><div class="tab active">Access</div><div class="tab">Routing</div><div class="tab">Chat</div><div class="tab">Chatbot</div></div>
 
-  <div class="hero">
-    <div class="name">Sorento - Jereen</div>
-    <div class="row"><button class="btn ghost" aria-label="Previous contact">&lsaquo;</button><button class="btn ghost" aria-label="Next contact">&rsaquo;</button><button class="btn primary">Portal link</button></div>
-  </div>
+  <div class="summary" id="c-summary"></div>
 
-  <div class="tabs">
-    <div class="tab">Profile</div><div class="tab active">Access</div><div class="tab">Routing</div><div class="tab">Chat</div><div class="tab">Chatbot</div>
-  </div>
-
-  <!-- 1. Roles -->
   <div class="card">
-    <div class="card-h">
-      <div class="card-t">Roles</div>
-      <div class="select">Add role&hellip;</div>
-    </div>
-    <div class="card-b">
-      <div class="row">
-        <a href="#" onclick="show('role');return false" class="badge primary" style="text-decoration:none">Purchasing &middot; Office <span class="x" title="Remove role">&times;</span></a>
-      </div>
-      <div class="summary" style="margin-top:14px">
-        <div class="stat"><b>12 of 13</b><span>domains granted &middot; 0 of 3 reports</span></div>
-        <div class="stat"><b>8</b><span>incoming fields added for this contact only</span></div>
-        <div class="stat"><b>All customers</b><span>customer scope (from role)</span></div>
-      </div>
-      <div class="row" style="margin-top:14px;gap:12px">
-        <span style="font-size:13px;font-weight:500">Region</span>
-        <span class="badge primary">West Malaysia <span class="x" title="Remove">&times;</span></span>
-        <span class="badge primary">East Malaysia <span class="x" title="Remove">&times;</span></span>
-      </div>
+    <div class="card-h"><div class="card-t"><span class="step">1</span>Roles</div><div class="select" style="min-width:200px">Add role&hellip;</div></div>
+    <div class="card-b"><div class="row"><span class="badge primary">Purchasing &middot; Office <span class="x" title="Remove role">&times;</span></span></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><div class="card-t"><span class="step">2</span>Customers they can ask about</div></div>
+    <div class="card-b"><b>All customers</b> <span class="muted small">(from Purchasing)</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><div class="card-t"><span class="step">3</span>Region</div></div>
+    <div class="card-b row" style="gap:18px">
+      <label class="row"><input type="checkbox" checked> West Malaysia</label>
+      <label class="row"><input type="checkbox"> East Malaysia</label>
     </div>
   </div>
 
-  <!-- 2. Domain tree -->
   <div class="card">
-    <div class="card-h">
-      <div class="card-t">What the chatbot answers</div>
-      <div class="row"><button class="btn">Expand all</button><button class="btn primary">Save (0)</button></div>
-    </div>
-    <ul class="tree" id="tree"></ul>
+    <div class="card-h"><div class="card-t"><span class="step">4</span>What they can ask</div><span class="muted small">Switches start from the roles. Changes for this contact are highlighted.</span></div>
+    <div id="c-items"></div>
   </div>
 
-  <!-- 3. Escalation (who takes a hand-off for this contact) -->
-  <div class="card">
-    <div class="card-h">
-      <div class="card-t">Escalation</div>
-      <div class="row"><span class="switch" aria-hidden="true"></span><span>Can escalate to a person</span></div>
-    </div>
+  <details class="card adv">
+    <summary>Advanced <span class="muted small">hand-off teams</span></summary>
     <div class="card-b" style="overflow-x:auto">
-      <table class="esc-t">
-        <thead><tr><th>Domain</th><th>Agent</th><th>Team set</th><th>Tier 1 team</th></tr></thead>
-        <tbody id="esc"></tbody>
-      </table>
-      <div class="hint" style="margin-top:10px">Domains this contact is not granted are not listed. CS routing rules: none for this contact.</div>
+      <table class="t"><colgroup><col style="width:34%"><col><col style="width:26%"></colgroup>
+      <thead><tr><th>Topic</th><th>Hand-off team</th><th>Agent</th></tr></thead><tbody id="c-esc"></tbody></table>
     </div>
-  </div>
-
-  <!-- 4. Media access (unchanged) -->
-  <div class="card">
-    <div class="card-h"><div class="card-t">Media Access</div></div>
-    <div class="card-b muted-row">Unchanged (ContactMediaAccessSection).</div>
-  </div>
-
-  <!-- Element map (not part of the screen) -->
-  <div class="card">
-    <div class="card-h"><div class="card-t">Mock notes: element &rarr; existing component (not on the real screen)</div></div>
-    <div class="card-b" style="overflow-x:auto">
-      <table class="map"><tbody>
-        <tr><th>Header, crumbs, back</th><td><code>components/common/PageHeader.tsx</code>, <code>UM/contacts/[id]/layout.tsx:144-178</code> (ContactMeta, ContactHero, DetailActions, RecordNavigation)</td></tr>
-        <tr><th>Line tabs</th><td><code>components/ui/tabs.tsx</code> <code>variant="line"</code>, tabs list <code>layout.tsx:80-116,214-228</code>; Access tab <code>UM/contacts/[id]/access/page.tsx</code></td></tr>
-        <tr><th>Cards</th><td><code>components/ui/card.tsx</code> (CardHeader, CardTitle, CardToolbar)</td></tr>
-        <tr><th>Add role picker</th><td><code>components/common/SearchableMultiSelect.tsx</code> (clearable); role chips <code>components/ui/badge.tsx</code> <code>BadgeButton</code> for remove</td></tr>
-        <tr><th>Domain rows expand</th><td><code>components/ui/collapsible.tsx</code> (same per-row pattern as Team Assignments, <code>UM/access-agents/components/AccessAgentDetail.tsx:323-458</code>)</td></tr>
-        <tr><th>Domain / field ticks</th><td><code>components/ui/checkbox.tsx</code> with <code>indeterminate</code> on a domain when some fields are off (pattern <code>ContactAgentAccessDialog.tsx:241-278</code>)</td></tr>
-        <tr><th>"from role" / "added here" / "removed here"</th><td><code>Badge</code> variants secondary / success / destructive (light)</td></tr>
-        <tr><th>Prompt hint under a row</th><td>plain <code>text-xs text-muted-foreground</code>; names the parser block that leaves the prompt when unticked (block titles from PR #1405 prod text)</td></tr>
-        <tr><th>Save (n)</th><td>same changed-rows-only save as <code>UM/access-agents/components/AgentFieldAccessCard.tsx</code></td></tr>
-        <tr><th>Stock visibility link</th><td>existing <code>components/stock-visibility/StockVisibilitySection.tsx</code> stays on Profile tab (Q5)</td></tr>
-        <tr><th>Hand-off line per domain</th><td>plain <code>text-xs text-muted-foreground</code>; agent + team set read from the domain row (new <code>chatbot_domains.escalation_agent_code</code> + existing <code>escalation_team_code</code>), tier-1 team from <code>agent_teams</code> (edited on the Access agents admin, <code>AccessAgentDetail.tsx:323-458</code>)</td></tr>
-        <tr><th>Escalation card</th><td><code>components/ui/card.tsx</code> + read-only <code>DataGrid</code>-style table; "Can escalate to a person" is the existing ESCALATION-CONTROL switch (<code>components/ui/switch.tsx</code>, PR #1406) moved beside it</td></tr>
-        <tr><th>Reports section</th><td>section heading row in the same tree (<code>text-xs uppercase text-muted-foreground</code>, as PageHeader crumb); a report ticked without its parent domain shows "Needs Stock" / "Needs Orders / DO" and does not answer (owner 2 Oct: report-type grants under Reports; parser domain list unchanged)</td></tr>
-        <tr><th>Stamp rows</th><td>owner v6 note "how are we controlling the stamping?": set per ROLE (Role page, ticked by default) and per CONTACT (this tab: untick = hidden for this contact, badge "removed here"); label, one-line help (<code>text-xs text-muted-foreground</code>) and a before/after preview built from the real picker text (<code>lanes/business/gate.py:928</code>, <code>lanes/business/pickers.py:112</code>, <code>lanes/business/answer.py:4701</code>) and real 25 Sep data (SRT5674 family: only SRT5674-N has incoming; SRT5674, -BL, -NL have Product Photos). Help line and preview are an owner-requested exception to the no-explanation rule</td></tr>
-        <tr><th>Region</th><td><code>SearchableMultiSelect</code> (clearable, West / East Malaysia) as chips in the Roles card, beside customer scope; per contact, not per role; East also sees West (owner 2 Oct). Data is illustrative: no region column exists on the prod copy yet (REGION-PACKING-LIST adds it)</td></tr>
-        <tr><th>Removed from this tab</th><td>Access Agents grid (<code>ContactAccessAgentsTable.tsx</code>) and Field reveals switches (<code>ContactFieldRevealsSection.tsx</code>): both replaced by the tree</td></tr>
-      </tbody></table>
-    </div>
-  </div>
+  </details>
 </div>
-
+<div class="savebar"><div class="in"><span class="small" id="c-dirty">No unsaved changes</span><div class="row"><button class="btn">Discard</button><button class="btn primary" id="c-save">Save</button></div></div></div>
 </section>
-<section class="view" id="v-roles"><div class="container">
-  <div class="crumb">User management / Access</div>
-  <div class="hero" style="margin-top:4px">
-    <h1>Chatbot Roles</h1>
-    <button class="btn primary" onclick="document.getElementById('new').classList.add('show')">Add role</button>
-  </div>
 
-  <div class="card">
-    <div class="card-h toolbar">
-      <input class="search" placeholder="Search roles">
-      <span class="hint">5 roles</span>
-    </div>
-    <div style="overflow-x:auto">
-    <table class="grid">
-      <colgroup><col style="width:180px"><col><col style="width:100px"><col style="width:100px"><col style="width:90px"><col style="width:150px" class="hide-sm"></colgroup>
-      <thead><tr><th>Role</th><th>Domains</th><th>Tier</th><th>Contacts</th><th>Customers</th><th class="hide-sm">Updated</th></tr></thead>
-      <tbody id="rows"></tbody>
-    </table>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-h"><div class="card-t">Mock notes: element &rarr; existing component (not on the real screen)</div></div>
-    <div class="card-b" style="overflow-x:auto">
-      <table class="map"><tbody>
-        <tr><th>Menu entry</th><td>"Chatbot Roles" under User management &gt; Access (<code>config/menu.config.tsx:760-782</code>, next to AI Agents); "Roles" there is staff RBAC, so this one is named apart</td></tr>
-        <tr><th>List</th><td><code>DataGrid</code> with <code>tableLayout: { width: 'fixed', columnsResizable: true }</code>, <code>rowHref</code> to the role page, toolbar search (pattern <code>UM/access-agents/components/AccessAgentsList.tsx</code>)</td></tr>
-        <tr><th>Header + Add</th><td><code>components/common/PageHeader.tsx</code>, one CTA</td></tr>
-        <tr><th>Add role modal</th><td><code>components/ui/dialog.tsx</code> form: name, description, "Sees all customers" <code>Switch</code>; create = modal (CRUD standard); ticks are set on the role page</td></tr>
-        <tr><th>Domain count chips</th><td><code>components/common/PillOverflow.tsx</code> + <code>Badge</code></td></tr>
-        <tr><th>Customers column</th><td><code>Badge</code> "All" / "Linked"</td></tr>
-        <tr><th>Data</th><td>Role presets from card section 2; contact counts = mapping SQL part B on the 25 Sep prod copy</td></tr>
-      </tbody></table>
-    </div>
-  </div>
-</div>
-
-<div class="overlay" id="new" onclick="if(event.target===this)this.classList.remove('show')">
-  <div class="modal">
-    <div class="card-h"><div class="card-t">Add role</div></div>
-    <div class="card-b">
-      <label>Name</label><input class="input" placeholder="e.g. Project sales">
-      <label>Description</label><input class="input">
-      <label>Tier</label><div class="select" style="width:100%">Select tier&hellip; (Dealer / Office / End user)</div>
-      <label style="display:flex;align-items:center;gap:8px;margin-top:14px"><span class="switch" style="background:var(--input)"></span> Sees all customers</label>
-    </div>
-    <div class="foot"><button class="btn" onclick="document.getElementById('new').classList.remove('show')">Cancel</button><button class="btn primary">Create</button></div>
-  </div>
-</div>
-
-</section>
 <section class="view" id="v-role"><div class="container">
   <div class="crumb"><a href="#" onclick="show('roles');return false">Chatbot Roles</a> / Purchasing</div>
-  <div class="hero" style="margin-top:4px">
-    <h1>Purchasing</h1>
-    <div class="row">
-      <button class="btn ghost" aria-label="Previous role">&lsaquo;</button><button class="btn ghost" aria-label="Next role">&rsaquo;</button>
-      <button class="btn" onclick="document.getElementById('edit').classList.add('show')">Rename</button>
-      <button class="btn" id="del" onclick="startDelete()">Delete</button>
-      <button class="btn primary">Save (0)</button>
-    </div>
-  </div>
-  <div class="meta">5 contacts &middot; Tier Office &middot; Sees all customers &middot; Updated 2 Oct 2026</div>
+  <div class="hero" style="margin-top:4px"><h1 style="margin:0">Purchasing</h1>
+    <div class="row"><button class="btn ghost" aria-label="Previous role">&lsaquo;</button><button class="btn ghost" aria-label="Next role">&rsaquo;</button><button class="btn" id="del" onclick="startDelete()">Delete</button></div></div>
+  <div class="meta">5 contacts &middot; Updated 2 Oct 2026</div>
+
+  <div class="summary" id="r-summary"></div>
 
   <div class="card">
-    <div class="card-h"><div class="card-t">Domains and fields</div><button class="btn">Expand all</button></div>
-    <ul class="tree" id="rtree"></ul>
-  </div>
-
-  <div class="card">
-    <div class="card-h"><div class="card-t">Contacts with this role</div><div class="select">Add contacts&hellip;</div></div>
-    <div style="overflow-x:auto">
-    <table class="grid">
-      <colgroup><col><col style="width:200px" class="hide-sm"><col style="width:100px"></colgroup>
-      <thead><tr><th>Contact</th><th class="hide-sm">Other roles</th><th></th></tr></thead>
-      <tbody>
-        <tr class="link"><td><a href="#" onclick="show('contact');return false">Sorento - Jereen</a></td><td class="hide-sm">-</td><td><button class="btn ghost">Unlink</button></td></tr>
-        <tr class="link"><td>Vixx Loo</td><td class="hide-sm">-</td><td><button class="btn ghost">Unlink</button></td></tr>
-        <tr class="link"><td>CK@Sorento</td><td class="hide-sm">-</td><td><button class="btn ghost">Unlink</button></td></tr>
-        <tr class="link"><td>Jayden Loo</td><td class="hide-sm">-</td><td><button class="btn ghost">Unlink</button></td></tr>
-        <tr class="link"><td>CK Lee</td><td class="hide-sm">-</td><td><button class="btn ghost">Unlink</button></td></tr>
-      </tbody>
-    </table>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-h"><div class="card-t">Mock notes: element &rarr; existing component (not on the real screen)</div></div>
-    <div class="card-b" style="overflow-x:auto">
-      <table class="map"><tbody>
-        <tr><th>Page</th><td><code>/user-management/chatbot-roles/[id]</code>; <code>PageHeader</code> + <code>RecordNavigation</code>; read-only metadata line under the header (<code>ContactMeta</code> pattern, <code>UM/contacts/[id]/layout.tsx:154</code>)</td></tr>
-        <tr><th>View = Edit</th><td>ticks are edited in place; one Save (n) sends changed rows only (<code>AgentFieldAccessCard.tsx</code> pattern)</td></tr>
-        <tr><th>Domain tree</th><td>same component as the contact Access tab (<code>collapsible.tsx</code> + <code>checkbox.tsx</code> indeterminate), without "added here" badges; the hand-off line reads the domain row</td></tr>
-        <tr><th>Rename</th><td><code>components/ui/dialog.tsx</code> modal: name, description, "Sees all customers" <code>Switch</code></td></tr>
-        <tr><th>Delete</th><td><code>components/common/DeferredActionButton.tsx</code>: 10 s countdown with Cancel, no confirm dialog; refused while contacts hold the role (server 409 names the count)</td></tr>
-        <tr><th>Contacts</th><td><code>DataGrid</code> + <code>SearchableMultiSelect</code> to add; Unlink = 5 s reversible deferred action (<code>useDeferredRowAction</code>, as <code>ContactCustomersSection.tsx</code>)</td></tr>
-        <tr><th>Holders</th><td>the 5 Purchasing contacts from mapping SQL part A on the 25 Sep prod copy</td></tr>
-      </tbody></table>
-    </div>
-  </div>
-</div>
-
-<div class="overlay" id="edit" onclick="if(event.target===this)this.classList.remove('show')">
-  <div class="modal">
-    <div class="card-h"><div class="card-t">Rename role</div></div>
+    <div class="card-h"><div class="card-t"><span class="step">1</span>Name and tier</div></div>
     <div class="card-b">
-      <label>Name</label><input class="input" value="Purchasing">
-      <label>Description</label><input class="input" value="Buyers: purchase orders, last cost, supplier">
-      <label>Tier</label><div class="select" style="width:100%">Office</div>
-      <label style="display:flex;align-items:center;gap:8px;margin-top:14px"><span class="switch"></span> Sees all customers</label>
+      <div class="field"><label>Name</label><input class="input" value="Purchasing"></div>
+      <div class="field" style="margin:0"><label>Tier</label><div class="select">Office</div></div>
     </div>
-    <div class="foot"><button class="btn" onclick="document.getElementById('edit').classList.remove('show')">Cancel</button><button class="btn primary">Save</button></div>
   </div>
-</div>
 
+  <div class="card">
+    <div class="card-h"><div class="card-t"><span class="step">2</span>Customers they can ask about</div></div>
+    <div class="card-b radio">
+      <label><input type="radio" name="cust" checked> All customers</label>
+      <label><input type="radio" name="cust"> Only the customers linked to the contact</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><div class="card-t"><span class="step">3</span>What they can ask</div></div>
+    <div id="r-items"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><div class="card-t"><span class="step">4</span>Contacts with this role</div><div class="select" style="min-width:200px">Add contacts&hellip;</div></div>
+    <div style="overflow-x:auto"><table class="t"><colgroup><col><col style="width:110px"></colgroup><tbody>
+      <tr><td><a href="#" onclick="show('contact');return false">Sorento - Jereen</a></td><td><button class="btn ghost">Unlink</button></td></tr>
+      <tr><td>Vixx Loo</td><td><button class="btn ghost">Unlink</button></td></tr>
+      <tr><td>CK@Sorento</td><td><button class="btn ghost">Unlink</button></td></tr>
+      <tr><td>Jayden Loo</td><td><button class="btn ghost">Unlink</button></td></tr>
+      <tr><td>CK Lee</td><td><button class="btn ghost">Unlink</button></td></tr>
+    </tbody></table></div>
+  </div>
+
+  <details class="card adv">
+    <summary>Advanced <span class="muted small">hand-off teams</span></summary>
+    <div class="card-b" style="overflow-x:auto">
+      <table class="t"><colgroup><col style="width:34%"><col><col style="width:26%"></colgroup>
+      <thead><tr><th>Topic</th><th>Hand-off team</th><th>Agent</th></tr></thead><tbody id="r-esc"></tbody></table>
+    </div>
+  </details>
+</div>
+<div class="savebar"><div class="in"><span class="small">No unsaved changes</span><div class="row"><button class="btn">Discard</button><button class="btn primary">Save</button></div></div></div>
 </section>
-<section class="view" id="v-chatbot"><div class="container">
-  <div class="crumb">User management / Contacts</div>
-  <h1>Contact Details</h1>
-  <div class="hero"><div class="name">Sorento - Jereen</div></div>
-  <div class="tabs"><div class="tab">Profile</div><div class="tab">Access</div><div class="tab">Routing</div><div class="tab">Chat</div><div class="tab active">Chatbot</div></div>
-  <div class="card">
-    <div class="card-h"><div class="card-t">Chatbot settings</div></div>
-    <div class="card-b">
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">
-        <div><div style="font-size:13px;font-weight:500;margin-bottom:4px">Memory context level</div><div class="select" style="width:100%">(follow the system default)</div></div>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:16px">
-        <label class="row"><span class="switch"></span> Stock checks</label>
-        <label class="row"><span class="switch" style="background:var(--input)"></span> Notify salesman</label>
-        <label class="row"><span class="switch" style="background:var(--input)"></span> Packing list allowed</label>
-        <label class="row"><span class="switch"></span> ETA buffer days</label>
-        <label class="row"><span class="switch"></span> Chatbot hands over to support teams</label>
-      </div>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-h"><div class="card-t">Mock notes: element &rarr; existing component (not on the real screen)</div></div>
-    <div class="card-b" style="overflow-x:auto">
-      <table class="map"><tbody>
-        <tr><th>Removed</th><td>the Tier select (<code>ContactChatbotSection.tsx:90-94,199-206</code>). Tier now comes from the contact's roles (owner Q2, 2 Oct): on the Access tab role chip ("Purchasing &middot; Office"), set per role (Tier column on Chatbot roles, Tier select in the role dialog)</td></tr>
-        <tr><th>Kept</th><td>Memory context level and the five switches, unchanged; region is NOT set here: it is a scope on the Access tab (Roles card), owner 2 Oct</td></tr>
-        <tr><th>Stamps</th><td>"Has / no incoming stamp" (Incoming stock) and "Has / no attachment stamp" (Product attachments) are tree fields on the Access tab, ticked on every role; untick for one contact to hide them (owner Q3, Q4)</td></tr>
-      </tbody></table>
-    </div>
-  </div>
+
+<section class="view" id="v-roles"><div class="container">
+  <div class="crumb">User management / Access</div>
+  <div class="hero" style="margin-top:4px"><h1 style="margin:0">Chatbot Roles</h1><button class="btn primary">Add role</button></div>
+  <div class="card" style="margin-top:12px"><div style="overflow-x:auto"><table class="t">
+    <colgroup><col style="width:34%"><col style="width:18%"><col style="width:20%"><col></colgroup>
+    <thead><tr><th>Role</th><th>Tier</th><th>Customers</th><th>Contacts</th></tr></thead>
+    <tbody>
+      <tr><td><a href="#" onclick="show('role');return false">Dealer</a></td><td>Dealer</td><td>Linked only</td><td>0</td></tr>
+      <tr><td><a href="#" onclick="show('role');return false">Sales office</a></td><td>Office</td><td>All</td><td>87</td></tr>
+      <tr><td><a href="#" onclick="show('role');return false">Purchasing</a></td><td>Office</td><td>All</td><td>5</td></tr>
+      <tr><td><a href="#" onclick="show('role');return false">Warehouse</a></td><td>Office</td><td>All</td><td>0</td></tr>
+      <tr><td><a href="#" onclick="show('role');return false">Management</a></td><td>Office</td><td>All</td><td>2</td></tr>
+    </tbody></table></div></div>
 </div></section>
+
+<section class="view" id="v-notes"><div class="container">
+  <h1>What changed in v8 (mock notes, not a screen)</h1>
+  <div class="card"><div class="card-b" style="overflow-x:auto"><table class="notes"><tbody>
+    <tr><th>Kept (every approved rule)</th><td>several roles per contact (union; a contact change beats the roles), customer scope from the role, region per contact, every topic and detail, the Reports group with its "needs" rule, the two stamp switches (role default, per-contact change, preview), hand-off agent per topic, tier on the role, deny by default, prompt trim (still runs, no longer shown)</td></tr>
+    <tr><th>One page, top-down</th><td>1 Roles, 2 Customers, 3 Region, 4 What they can ask, with a plain summary box at the top ("This contact can / cannot") and one Save bar at the bottom showing the number of unsaved changes</td></tr>
+    <tr><th>Tree to switches</th><td>the two-level tree is now one list of switches grouped by section (Products and marketing, Stock and incoming, Orders, Purchasing, Reports, Other); details open one level under a switch as a checklist, never deeper</td></tr>
+    <tr><th>Role default vs changed</th><td>the "from Purchasing" badge on every row is gone: a row that follows the role shows nothing extra; a row changed for this contact is highlighted (amber) with "Changed for this contact" and one-click "Reset to role"</td></tr>
+    <tr><th>Removed from the screen</th><td>"Unticking removes from prompt: ..." lines (technical; the trim still runs), all keys and codes (domain names, field keys, agent codes, team-set codes), the three stat boxes (the summary replaces them), the hand-off line on every row</td></tr>
+    <tr><th>Moved to Advanced</th><td>hand-off teams per topic (rarely changed; teams are still edited on AI Agents admin)</td></tr>
+    <tr><th>Not here</th><td>stock visibility mode stays on the Profile tab (Q5); the contact Chatbot tab is as approved in v5/v7 (Tier select removed, nothing else changed), so it is not repeated in v8</td></tr>
+    <tr><th>Components</th><td>cards <code>components/ui/card.tsx</code>; switches <code>components/ui/switch.tsx</code>; details checklist <code>components/ui/checkbox.tsx</code> in <code>components/ui/collapsible.tsx</code>; Advanced = <code>collapsible</code>; role and contact pickers <code>components/common/SearchableMultiSelect.tsx</code>; region = two checkboxes (at least one); customers on the role page = <code>components/ui/radio-group.tsx</code>; sticky save bar with changed count (changed-rows rule of <code>AgentFieldAccessCard.tsx</code>); Delete role = <code>components/common/DeferredActionButton.tsx</code> 10 s, refused while held</td></tr>
+    <tr><th>Exception</th><td>the one-line descriptions, the summary box and the stamp previews are an owner-requested exception to the no-on-screen-explanation rule (owner 2 Oct: "simple and straightforward")</td></tr>
+    <tr><th>Data</th><td>Sorento - Jereen = Purchasing + 8 incoming details added (real <code>agent_field_access</code> rows, 25 Sep copy); region West only (column default); SRT5674 family for the previews (only SRT5674-N has incoming; SRT5674, -BL, -NL have Product Photos)</td></tr>
+  </tbody></table></div></div>
+</div></section>
+
 <script>
 const PV = {
-  inc: ['Incoming stock search needs to be more specific. Multiple matches found. Please choose:\n1. SRT5674<b> - no incoming</b>\n2. SRT5674-BL<b> - no incoming</b>\n3. SRT5674-N<b> - has incoming</b>\n4. SRT5674-NL<b> - no incoming</b>', 'Incoming stock search needs to be more specific. Multiple matches found. Please choose:\n1. SRT5674\n2. SRT5674-BL\n3. SRT5674-N\n4. SRT5674-NL'],
-  att: ['Product attachments search needs to be more specific. Multiple matches found. Please choose:\n1. SRT5674<b> - has Product Photos</b>\n2. SRT5674-BL<b> - has Product Photos</b>\n3. SRT5674-N<b> - no Product Photos</b>\n4. SRT5674-NL<b> - has Product Photos</b>', 'Product attachments search needs to be more specific. Multiple matches found. Please choose:\n1. SRT5674\n2. SRT5674-BL\n3. SRT5674-N\n4. SRT5674-NL'],
+  inc:['Incoming stock search needs to be more specific. Multiple matches found. Please choose:\n1. SRT5674<b> - no incoming</b>\n2. SRT5674-BL<b> - no incoming</b>\n3. SRT5674-N<b> - has incoming</b>\n4. SRT5674-NL<b> - no incoming</b>',
+       'Incoming stock search needs to be more specific. Multiple matches found. Please choose:\n1. SRT5674\n2. SRT5674-BL\n3. SRT5674-N\n4. SRT5674-NL'],
+  att:['Product attachments search needs to be more specific. Multiple matches found. Please choose:\n1. SRT5674<b> - has Product Photos</b>\n2. SRT5674-BL<b> - has Product Photos</b>\n3. SRT5674-N<b> - no Product Photos</b>\n4. SRT5674-NL<b> - has Product Photos</b>',
+       'Product attachments search needs to be more specific. Multiple matches found. Please choose:\n1. SRT5674\n2. SRT5674-BL\n3. SRT5674-N\n4. SRT5674-NL'],
 };
-function prevHtml(k){ return `<div class="prev"><div><div class="pv-h">Ticked: the contact sees</div><div class="bubble">${PV[k][0]}</div></div><div><div class="pv-h">Unticked: the contact sees</div><div class="bubble">${PV[k][1]}</div></div></div>`; }
-function fieldExtra(f){ return (f.help?`<small class="help">${f.help}</small>`:'') ; }
-function show(v){document.querySelectorAll('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));document.querySelectorAll('.mocknav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));window.scrollTo(0,0);}
-
-// Purchasing role preset (behaviour card section 2) + this contact's real override:
-// Sorento - Jereen holds 20 incoming field overrides today (agent_field_access contact rows).
-const D = [
-  {section:'Domains'},
-  {n:'Product', s:'master_products', st:'role', e:['General Enquiries','purchasing','Purchasing - Product, Stock Inquiry']},
-  {n:'Product attachments', s:'product_attachment', st:'role', e:['General Enquiries','marketing_product','Marketing - Product'], f:[{n:'Show has/no attachment in pickers', st:'role', help:'Adds &quot;- has Product Photos&quot; / &quot;- no Product Photos&quot; after each product when the bot asks the contact to pick one. Untick to hide it.', pv:'att'}]},
-  {n:'Resource attachments', s:'resource_attachment', st:'role'},
-  {n:'Promotions', s:'promotion', st:'role', e:['General Enquiries','marketing_promotion','Marketing - Promotion Sorento']},
-  {n:'Forms', s:'forms', st:'role', e:['Marketing Form','marketing_form','Marketing - Forms']},
-  {n:'Portal link', s:'portal_link', st:'role'},
-  {n:'Stock', s:'inventory', st:'role', hint:'Visibility: Detailed (Profile tab)', e:['General Enquiries','warehouse','Warehouse Executive'], f:[
-    {n:'Outstanding SO on stock (sellable)', st:'role', p:'removes the sellable lines'},
-    {n:'PO on order qty', st:'role', p:'removes the on-order lines'}]},
-  {n:'Orders / DO', s:'order', st:'role', e:['Order Enquiries','customer_service','DO Customer Service']},
-  {n:'Incoming stock', s:'incoming', st:'role', e:['Incoming Stock Enquiries','purchasing','Purchasing - Incoming'], f:[
-    {n:'Show has/no incoming stock in pickers', st:'role', help:'Adds &quot;- has incoming&quot; / &quot;- no incoming&quot; after each product when the bot asks the contact to pick one. Untick to hide it.', pv:'inc'},{n:'ETA', st:'role'},{n:'Container no.', st:'role'},{n:'Remaining qty', st:'role'},
-    {n:'Consignee', st:'add'},{n:'China forwarder', st:'add'},{n:'Malaysia forwarder', st:'add'},
-    {n:'Liner code', st:'add'},{n:'COA permit no.', st:'add'},{n:'Delivery warehouse', st:'add'},
-    {n:'ETD / ETC / loading / inspection dates', st:'add'},{n:'Free days, LOC, stacked', st:'add'}]},
-  {n:'Last in (SPO)', s:'spo_allocation', st:'role', p:'SPO LAST RECEIPT', f:[{n:'SPO number', st:'role'}]},
-  {n:'Purchase orders', s:'purchase_order', st:'role', p:'PURCHASE ORDERS', e:['General Enquiries','purchasing','Purchasing - Product, Stock Inquiry'], f:[{n:'Supplier', st:'role'},{n:'PO number', st:'role'}]},
-  {n:'Last purchase cost', s:'purchase_cost', st:'role', p:'LAST PURCHASE COST', e:['General Enquiries','purchasing','Purchasing - Product, Stock Inquiry'], f:[{n:'Supplier', st:'role'}]},
-  {n:'Ideas', s:'ideate', st:'off', p:'IDEATION CONTINUATION'},
-  {section:'Reports'},
-  {n:'Outstanding SO report', s:'outstanding', st:'off', hint2:'Needs Orders / DO', p:'ORDER_STATUS so_outstanding', e:['Order Enquiries','customer_service','DO Customer Service']},
-  {n:'Sales report', s:'sales', st:'off', p:'SALES REPORT, SALES ANALYSIS, TOP SELLING', e:['Order Enquiries','customer_service','DO Customer Service']},
-  {n:'Low stock report', s:'low_stock', st:'off', hint2:'Needs Stock', p:'LOW STOCK REPORT', e:['General Enquiries','warehouse','Warehouse Executive']},
+// role = Purchasing preset; field [label, inRole, addedForThisContact]
+const SECTIONS = [
+ ['Products and marketing', [
+  {k:'product', t:'Product details', d:'Size, brand, category of a product', role:1, esc:['Purchasing - Product, Stock Inquiry','General Enquiries']},
+  {k:'patt', t:'Product photos and documents', d:'Photos, spec sheets, certificates', role:1, esc:['Marketing - Product','General Enquiries'],
+    opt:{t:'Show has / no photos in pick lists', d:'Adds "- has Product Photos" after each product when the bot asks them to pick one.', role:1, pv:'att'}},
+  {k:'ratt', t:'Catalogues and other documents', d:'Resource attachments', role:1},
+  {k:'promo', t:'Promotions', d:'Current promotions for their tier', role:1, esc:['Marketing - Promotion Sorento','General Enquiries']},
+  {k:'forms', t:'Forms', d:'Forms they can fill in', role:1, esc:['Marketing - Forms','Marketing Form']},
+  {k:'portal', t:'Their request portal link', d:'Portal link', role:1}]],
+ ['Stock and incoming', [
+  {k:'stock', t:'Stock available', d:'How much is in stock', role:1, esc:['Warehouse Executive','General Enquiries'],
+    fields:[['Outstanding sales orders on stock',1],['Quantity on order from suppliers',1]]},
+  {k:'inc', t:'Incoming stock', d:'When stock arrives', role:1, esc:['Purchasing - Incoming','Incoming Stock Enquiries'],
+    fields:[['ETA',1],['Container no.',1],['Remaining quantity',1],['Consignee',0,1],['China forwarder',0,1],['Malaysia forwarder',0,1],['Liner code',0,1],['COA permit no.',0,1],['Delivery warehouse',0,1],['ETD, ETC, loading, inspection dates',0,1],['Free days, LOC, stacked',0,1]],
+    opt:{t:'Show has / no incoming in pick lists', d:'Adds "- has incoming" after each product when the bot asks them to pick one.', role:1, pv:'inc'}},
+  {k:'spo', t:'When a product last came in', d:'Last in (SPO)', role:1, fields:[['SPO number',1]]}]],
+ ['Orders', [
+  {k:'order', t:'Orders and deliveries', d:'Order status, DO', role:1, esc:['DO Customer Service','Order Enquiries']}]],
+ ['Purchasing', [
+  {k:'po', t:'Open purchase orders', d:'POs placed with suppliers', role:1, esc:['Purchasing - Product, Stock Inquiry','General Enquiries'], fields:[['Supplier',1],['PO number',1]]},
+  {k:'cost', t:'What we last paid', d:'Last purchase cost', role:1, esc:['Purchasing - Product, Stock Inquiry','General Enquiries'], fields:[['Supplier',1]]}]],
+ ['Reports', [
+  {k:'sales', t:'Sales report', d:'Sales report, sales analysis, top selling', role:0, esc:['DO Customer Service','Order Enquiries']},
+  {k:'os', t:'Outstanding sales order report', d:'Needs Orders and deliveries', role:0},
+  {k:'low', t:'Low stock report', d:'Needs Stock available', role:0}]],
+ ['Other', [
+  {k:'idea', t:'Share ideas', d:'Ideas sent to the team', role:0}]],
 ];
-const tag = st => st==='role' ? '<span class="badge">from Purchasing</span>'
-  : st==='add' ? '<span class="badge success">added here</span>'
-  : st==='rm' ? '<span class="badge destructive">removed here</span>' : '';
-const on = st => st==='role' || st==='add';
-const tree = document.getElementById('tree');
-D.forEach((d,i)=>{
-  if (d.section) { tree.insertAdjacentHTML('beforeend', `<li class="sec">${d.section}</li>`); return; }
-  const li = document.createElement('li'); li.className='d';
-  const hasF = d.f && d.f.length;
-  const offHint = !on(d.st) && d.p ? `<small class="hint off">Not in this contact's prompt: ${d.p}</small>`
-    : on(d.st) && d.p ? `<small>Unticking removes from prompt: ${d.p}</small>`
-    : d.hint ? `<small>${d.hint}</small>` : '';
-  const needs = d.hint2 ? `<small>${d.hint2}</small>` : '';
-  li.innerHTML = `<div class="d-h"><span class="chev">${hasF?'&#9654;':''}</span>
-    <input type="checkbox" ${on(d.st)?'checked':''} aria-label="${d.n}">
-    <div class="lbl">${d.n}${needs}${offHint}${d.e?`<div class="esc">Hand-off: <b>${d.e[2]}</b> &middot; ${d.e[0]} / ${d.e[1]}</div>`:'<div class="esc">No hand-off</div>'}</div><div class="src">${tag(d.st)}</div></div>` +
-    (hasF ? `<div class="fields">${d.f.map(f=>`<div class="f"><input type="checkbox" ${on(f.st)?'checked':''} aria-label="${f.n}">
-      <div class="lbl">${f.n}${fieldExtra(f)}${f.p?`<small>Unticking ${f.p} from prompt</small>`:''}</div><div class="src">${tag(f.st)}</div></div>${f.pv?prevHtml(f.pv):''}`).join('')}</div>` : '');
-  if (hasF) li.querySelector('.d-h').addEventListener('click', e=>{ if(e.target.tagName!=='INPUT') li.classList.toggle('open'); });
-  if (d.s==='incoming' || d.s==='product_attachment') li.classList.add('open');
-  tree.appendChild(li);
-  if (on(d.st) && d.e) document.getElementById('esc').insertAdjacentHTML('beforeend',
-    `<tr><td>${d.n}</td><td>${d.e[0]}</td><td>${d.e[1]}</td><td>${d.e[2]}</td></tr>`);
-});
-
-
-const R = [
-  ['Dealer', 'Dealer', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock'], 0, 'Linked'],
-  ['Sales office', 'Office', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock','Last in (SPO)','Purchase orders'], 87, 'All'],
-  ['Purchasing', 'Office', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock','Last in (SPO)','Purchase orders','Last purchase cost'], 5, 'All'],
-  ['Warehouse', 'Office', ['Product','Stock','Incoming stock','Last in (SPO)','Low stock report'], 0, 'All'],
-  ['Management', 'Office', ['all 13 domains','3 reports'], 2, 'All'],
-];
-document.getElementById('rows').innerHTML = R.map(([n,t,d,c,s])=>{
-  const shown = d.slice(0,3).map(x=>`<span class="badge">${x}</span>`).join(' ');
-  const more = d.length>3 ? ` <span class="badge outline">+${d.length-3}</span>` : '';
-  return `<tr class="link" onclick="show('role')"><td><b style="font-weight:500">${n}</b></td>
-    <td title="${d.join(', ')}">${shown}${more}</td><td>${t}</td><td>${c}</td>
-    <td><span class="badge ${s==='All'?'primary':''}">${s}</span></td><td class="hide-sm">2 Oct 2026</td></tr>`;
-}).join('');
-
-
-function startDelete(){
-  const b=document.getElementById('del'); let n=10; b.classList.add('countdown');
-  const t=setInterval(()=>{ b.textContent=`Deleting in ${n}s · Cancel`; if(--n<0){clearInterval(t);b.textContent='Refused: 5 contacts hold this role';} },1000);
-  b.onclick=()=>{clearInterval(t);b.classList.remove('countdown');b.textContent='Delete';b.onclick=startDelete;};
+let dirty = 0;
+function sw(on, label){ return `<button class="sw ${on?'on':''}" role="switch" aria-checked="${on}" aria-label="${label}" onclick="this.classList.toggle('on');bump()"></button>`; }
+function bump(){ dirty++; document.getElementById('c-dirty').textContent = dirty+' unsaved change'+(dirty>1?'s':''); document.getElementById('c-save').textContent='Save ('+dirty+')'; }
+function render(which){
+  const contact = which==='c';
+  let html='', esc='';
+  const can=[], cannot=[];
+  SECTIONS.forEach(([g, items])=>{
+    html += `<div class="grp">${g}</div>`;
+    items.forEach(it=>{
+      const added = contact && it.fields ? it.fields.filter(f=>f[2]).length : 0;
+      const shown = it.fields ? it.fields.filter(f=>f[1]||(contact&&f[2])).length : 0;
+      const state = added ? `<div class="state"><span class="badge warn">Changed for this contact: +${added} details</span><button class="btn link">Reset to role</button></div>` : '';
+      const detLink = it.fields ? `<button class="btn link small" onclick="this.closest('.item').classList.toggle('open')">Details shown: ${shown} of ${it.fields.length}</button>` : '';
+      const optLink = it.opt ? `<button class="btn link small" onclick="this.closest('.item').classList.toggle('open')">${it.opt.t}: ${it.opt.role?'on':'off'}</button>` : '';
+      const fieldsHtml = it.fields ? `<div class="chk">${it.fields.map(f=>`<label class="${contact&&f[2]?'chg':''}"><input type="checkbox" ${(f[1]||(contact&&f[2]))?'checked':''} onchange="bump()"> ${f[0]}</label>`).join('')}</div>` : '';
+      const optHtml = it.opt ? `<div class="opt">${sw(it.opt.role,it.opt.t)}<div><div class="t" style="font-size:13px">${it.opt.t}</div><div class="d">${it.opt.d}</div>
+        <div class="prev"><div><div class="h">On: they see</div><div class="bubble">${PV[it.opt.pv][0]}</div></div><div><div class="h">Off: they see</div><div class="bubble">${PV[it.opt.pv][1]}</div></div></div></div></div>` : '';
+      html += `<div class="item ${added?'changed':''} ${contact && it.k==='inc'?'open':''}"><div>
+        <div class="t">${it.t}</div><div class="d">${it.d}</div>${state}
+        ${(detLink||optLink)?`<div class="state">${detLink}${optLink}</div>`:''}
+        ${(fieldsHtml||optHtml)?`<div class="details">${fieldsHtml}${optHtml}</div>`:''}
+      </div>${sw(it.role, it.t)}</div>`;
+      (it.role?can:cannot).push(it.t.toLowerCase());
+      if (it.role && it.esc) esc += `<tr><td>${it.t}</td><td>${it.esc[0]}</td><td>${it.esc[1]}</td></tr>`;
+    });
+  });
+  document.getElementById(which+'-items').innerHTML = html;
+  document.getElementById(which+'-esc').innerHTML = esc;
+  const who = contact ? 'This contact' : 'Contacts with this role';
+  document.getElementById(which+'-summary').innerHTML = `<h3>${who} can</h3><ul>
+    <li>ask about: ${can.join(', ')}</li>
+    <li>see <b>all customers</b>${contact?' in <b>West Malaysia</b>':''}</li>
+    ${contact?'<li>see <b>8 extra incoming details</b> (consignee, forwarders, permit, dates)</li>':''}
+    <li class="no">cannot ask: ${cannot.join(', ')}</li></ul>`;
 }
-const E2 = {
-  product:['General Enquiries','purchasing','Purchasing - Product, Stock Inquiry'], mprod:['General Enquiries','marketing_product','Marketing - Product'],
-  promo:['General Enquiries','marketing_promotion','Marketing - Promotion Sorento'], forms:['Marketing Form','marketing_form','Marketing - Forms'],
-  wh:['General Enquiries','warehouse','Warehouse Executive'], cs:['Order Enquiries','customer_service','DO Customer Service'],
-  inc:['Incoming Stock Enquiries','purchasing','Purchasing - Incoming'],
-};
-const D2 = [
-  {section:'Domains'},
-  {n:'Product', on:1, e:E2.product}, {n:'Product attachments', on:1, e:E2.mprod, f:[{n:'Show has/no attachment in pickers',on:1, help:'Adds &quot;- has Product Photos&quot; / &quot;- no Product Photos&quot; after each product when the bot asks the contact to pick one. Untick to hide it.', pv:'att'}]}, {n:'Resource attachments', on:1},
-  {n:'Promotions', on:1, e:E2.promo}, {n:'Forms', on:1, e:E2.forms}, {n:'Portal link', on:1},
-  {n:'Stock', on:1, e:E2.wh, hint:'Stock visibility mode stays per contact (Profile tab)', f:[{n:'Outstanding SO on stock (sellable)',on:1},{n:'PO on order qty',on:1}]},
-  {n:'Orders / DO', on:1, e:E2.cs},
-  {n:'Incoming stock', on:1, e:E2.inc, f:[{n:'Show has/no incoming stock in pickers',on:1, help:'Adds &quot;- has incoming&quot; / &quot;- no incoming&quot; after each product when the bot asks the contact to pick one. Untick to hide it.', pv:'inc'},{n:'ETA',on:1},{n:'Container no.',on:1},{n:'Remaining qty',on:1},{n:'Consignee',on:0},{n:'China forwarder',on:0},{n:'Malaysia forwarder',on:0},{n:'Liner code',on:0},{n:'COA permit no.',on:0},{n:'Delivery warehouse',on:0},{n:'ETD / ETC / loading / inspection dates',on:0},{n:'Free days, LOC, stacked',on:0}]},
-  {n:'Last in (SPO)', on:1, p:'SPO LAST RECEIPT', f:[{n:'SPO number',on:1}]},
-  {n:'Purchase orders', on:1, e:E2.product, p:'PURCHASE ORDERS', f:[{n:'Supplier',on:1},{n:'PO number',on:1}]},
-  {n:'Last purchase cost', on:1, e:E2.product, p:'LAST PURCHASE COST', f:[{n:'Supplier',on:1}]},
-  {n:'Ideas', on:0, p:'IDEATION CONTINUATION'},
-  {section:'Reports'},
-  {n:'Outstanding SO report', on:0, hint2:'Needs Orders / DO', e:E2.cs, p:'ORDER_STATUS so_outstanding'},
-  {n:'Sales report', on:0, e:E2.cs, p:'SALES REPORT, SALES ANALYSIS, TOP SELLING'},
-  {n:'Low stock report', on:0, hint2:'Needs Stock', e:E2.wh, p:'LOW STOCK REPORT'},
-];
-const rtree=document.getElementById('rtree');
-D2.forEach(d=>{
-  if (d.section) { rtree.insertAdjacentHTML('beforeend', `<li class="sec">${d.section}</li>`); return; }
-  const li=document.createElement('li'); li.className='d'; const hasF=d.f&&d.f.length;
-  const some=hasF && d.on && d.f.some(f=>!f.on);
-  const sub = d.p ? `<small>${d.on?'Unticking removes from prompt':'Not in prompt'}: ${d.p}</small>` : d.hint ? `<small>${d.hint}</small>` : '';
-  li.innerHTML=`<div class="d-h"><span class="chev">${hasF?'&#9654;':''}</span><input type="checkbox" ${d.on?'checked':''} aria-label="${d.n}">
-    <div class="lbl">${d.n}${d.hint2?`<small>${d.hint2}</small>`:''}${sub}${d.e?`<div class="esc">Hand-off: <b>${d.e[2]}</b> &middot; ${d.e[0]} / ${d.e[1]}</div>`:'<div class="esc">No hand-off</div>'}</div>
-    <div class="src">${hasF?`<span class="badge outline">${d.f.filter(f=>f.on).length} of ${d.f.length} fields</span>`:''}</div></div>`+
-    (hasF?`<div class="fields">${d.f.map(f=>`<div class="f"><input type="checkbox" ${f.on?'checked':''} aria-label="${f.n}"><div class="lbl">${f.n}${fieldExtra(f)}</div><div></div></div>${f.pv?prevHtml(f.pv):''}`).join('')}</div>`:'');
-  if(some) li.querySelector('input').indeterminate=true;
-  if(hasF) li.querySelector('.d-h').addEventListener('click',e=>{ if(e.target.tagName!=='INPUT') li.classList.toggle('open'); });
-  rtree.appendChild(li);
-});
-
+render('c'); render('r');
+function show(v){document.querySelectorAll('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));document.querySelectorAll('.mocknav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));window.scrollTo(0,0);}
+function startDelete(){
+  const b=document.getElementById('del'); let n=10;
+  const t=setInterval(()=>{ b.textContent=`Deleting in ${n}s · Cancel`; if(--n<0){clearInterval(t);b.textContent='Refused: 5 contacts hold this role';} },1000);
+  b.onclick=()=>{clearInterval(t);b.textContent='Delete';b.onclick=startDelete;};
+}
 </script>
 </body>
 </html>
