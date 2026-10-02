@@ -577,6 +577,19 @@ def resolve_entity_body(
 
     match_mode = parse_output.get("match_mode")
     match_mode = match_mode if jsc.truthy(match_mode) else "and"
+    # CHATBOT-QUEUE-FIX (crew browser pass, prod turn f0a2 "Srtswt3001 / Srtswt3001-gm
+    # stock"): two or more PRODUCT codes name that many products, and one product cannot
+    # be two codes, so an AND intersection over them only ever folds one code onto the
+    # other's variant (the prefix probe for `srtswt3001` also matches SRTSWT3001-GM) and
+    # drops the first product with no unresolved token and no miss. AND stays for a
+    # product scoped by another kind ("SRTWT7445 for HANLIM").
+    product_tokens = [
+        x
+        for x in entities
+        if jsc.nullish_str(jsc.get(x, "hint")).strip().lower() == "product"
+    ]
+    if len(product_tokens) >= 2 and len(product_tokens) == len(entities):
+        match_mode = "or"
     tier_gate_dict = tier_gate if isinstance(tier_gate, dict) else None
     recomposed_access_levels = (
         tier_gate_dict.get("access_levels_recomposed") if tier_gate_dict is not None else None

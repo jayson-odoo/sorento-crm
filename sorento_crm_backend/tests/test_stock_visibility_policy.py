@@ -747,6 +747,29 @@ def test_availability_says_no_for_a_product_with_no_stock(db):
     _assert_no_quantity_anywhere(result, {500})
 
 
+def test_availability_names_every_asked_product_even_the_one_with_no_stock(db):
+    """CHATBOT-QUEUE-FIX review C3 (prod turn f0a2, "Srtswt3001 / Srtswt3001-gm stock"):
+    two products asked, only one with stock. The availability block still carries an
+    entry, and so a sentence, for EACH - the one with nothing is a NO, never dropped."""
+    brw, _, _ = _three_warehouses(db)
+    stocked = product(db, company_id=DEFAULT_COMPANY_ID)
+    empty = product(db, company_id=DEFAULT_COMPANY_ID)
+    _category_of(db, stocked).chatbot_max_qty = 100
+    _category_of(db, empty).chatbot_max_qty = 100
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=stocked.id, warehouse_id=brw.id, on_hand=60)
+    contact = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[stocked.id, empty.id], contact_id=contact.id, requested_qty=10
+    )
+
+    branches = {e["product_id"]: e["branch"] for e in result["stock_availability"]}
+    assert branches == {stocked.id: "in_stock", empty.id: "no_incoming"}
+    _assert_no_quantity_anywhere(result, {60})
+
+
 def test_availability_still_asks_for_a_product_with_no_stock(db):
     """B13. With no number given yet it is still the ask, even for a product
     with nothing in the pool: "how many do you need" is the only reply that

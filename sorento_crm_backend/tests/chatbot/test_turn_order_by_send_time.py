@@ -511,7 +511,11 @@ class TestOrderingOnTheWaitingRequest:
         monkeypatch.setattr(engine_mod, "_s7_mode", lambda *args, **kwargs: True)
         monkeypatch.setattr(engine_mod, "_ordering_redis", lambda: None)
         monkeypatch.setattr(engine_mod.dispatch, "contact_ticket", lambda redis, contact: 2)
-        monkeypatch.setattr(engine_mod.dispatch, "mark_running", lambda *args: None)
+        monkeypatch.setattr(
+            engine_mod.dispatch,
+            "start_heartbeat",
+            lambda *args: type("NoBeat", (), {"stop": lambda self: None})(),
+        )
         monkeypatch.setattr(engine_mod.dispatch, "mark_done", lambda *args: None)
         state = {"first": True}
 
