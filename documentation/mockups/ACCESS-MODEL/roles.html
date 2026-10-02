@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chatbot Roles mock v3</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="container">
+  <div class="crumb">User management / Access &middot; <a href="index.html">mock: contact Access tab</a></div>
+  <div class="hero" style="margin-top:4px">
+    <h1>Chatbot Roles</h1>
+    <button class="btn primary" onclick="document.getElementById('new').classList.add('show')">Add role</button>
+  </div>
+
+  <div class="card">
+    <div class="card-h toolbar">
+      <input class="search" placeholder="Search roles">
+      <span class="hint">5 roles</span>
+    </div>
+    <div style="overflow-x:auto">
+    <table class="grid">
+      <colgroup><col style="width:180px"><col><col style="width:110px"><col style="width:90px"><col style="width:150px" class="hide-sm"></colgroup>
+      <thead><tr><th>Role</th><th>Domains</th><th>Contacts</th><th>Customers</th><th class="hide-sm">Updated</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><div class="card-t">Mock notes: element &rarr; existing component (not on the real screen)</div></div>
+    <div class="card-b" style="overflow-x:auto">
+      <table class="map"><tbody>
+        <tr><th>Menu entry</th><td>"Chatbot Roles" under User management &gt; Access (<code>config/menu.config.tsx:760-782</code>, next to AI Agents); "Roles" there is staff RBAC, so this one is named apart</td></tr>
+        <tr><th>List</th><td><code>DataGrid</code> with <code>tableLayout: { width: 'fixed', columnsResizable: true }</code>, <code>rowHref</code> to the role page, toolbar search (pattern <code>UM/access-agents/components/AccessAgentsList.tsx</code>)</td></tr>
+        <tr><th>Header + Add</th><td><code>components/common/PageHeader.tsx</code>, one CTA</td></tr>
+        <tr><th>Add role modal</th><td><code>components/ui/dialog.tsx</code> form: name, description, "Sees all customers" <code>Switch</code>; create = modal (CRUD standard); ticks are set on the role page</td></tr>
+        <tr><th>Domain count chips</th><td><code>components/common/PillOverflow.tsx</code> + <code>Badge</code></td></tr>
+        <tr><th>Customers column</th><td><code>Badge</code> "All" / "Linked"</td></tr>
+        <tr><th>Data</th><td>Role presets from card section 2; contact counts = mapping SQL part B on the 25 Sep prod copy</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="new" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal">
+    <div class="card-h"><div class="card-t">Add role</div></div>
+    <div class="card-b">
+      <label>Name</label><input class="input" placeholder="e.g. Project sales">
+      <label>Description</label><input class="input">
+      <label style="display:flex;align-items:center;gap:8px;margin-top:14px"><span class="switch" style="background:var(--input)"></span> Sees all customers</label>
+    </div>
+    <div class="foot"><button class="btn" onclick="document.getElementById('new').classList.remove('show')">Cancel</button><button class="btn primary">Create</button></div>
+  </div>
+</div>
+
+<script>
+const R = [
+  ['Dealer', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock'], 0, 'Linked'],
+  ['Sales office', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock','Last in (SPO)','Purchase orders'], 87, 'All'],
+  ['Purchasing', ['Product','Product attachments','Resource attachments','Promotions','Forms','Portal link','Stock','Orders / DO','Incoming stock','Last in (SPO)','Purchase orders','Last purchase cost'], 5, 'All'],
+  ['Warehouse', ['Product','Stock','Incoming stock','Last in (SPO)','Low stock report'], 0, 'All'],
+  ['Management', ['all 16'], 2, 'All'],
+];
+document.getElementById('rows').innerHTML = R.map(([n,d,c,s])=>{
+  const shown = d.slice(0,3).map(x=>`<span class="badge">${x}</span>`).join(' ');
+  const more = d.length>3 ? ` <span class="badge outline">+${d.length-3}</span>` : '';
+  return `<tr class="link" onclick="location.href='role.html'"><td><b style="font-weight:500">${n}</b></td>
+    <td title="${d.join(', ')}">${shown}${more}</td><td>${c}</td>
+    <td><span class="badge ${s==='All'?'primary':''}">${s}</span></td><td class="hide-sm">2 Oct 2026</td></tr>`;
+}).join('');
+</script>
+</body>
+</html>

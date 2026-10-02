@@ -1,5 +1,13 @@
 # Behaviour card - chatbot ACCESS MODEL: roles -> domains -> fields, one registry
 
+**Owner answers (2 Oct 2026):** Q1 start with the 5 roles listed, but roles are DYNAMIC: the owner
+creates, renames and deletes roles and ticks domains/fields per role in the UI (Chatbot Roles admin,
+mock v3 `documentation/mockups/ACCESS-MODEL/roles.html` + `role.html`); no role list in code, the 5 are
+seed rows only. Q2 not answered yet: build on rec (a), crew confirms. Q3 (a) "sees all customers" is a
+flag on the role. Q4 (a) agents kept for escalation / routing / SLA / n8n only, not the chat gate.
+Q5 (a) stock visibility mode stays as is, shown inside the Stock domain. Mock v2 escalation linkage
+seen, no change.
+
 Lane ACCESS-MODEL, size L, 2 Oct 2026. Card before any code. Paths under `sorento_crm_backend/app/`
 unless shown otherwise. Data facts are from the local prod copy `sorento_ai_automation_0925`
 (read-only queries; 100 contacts). Crew note: the crew shared dev DB named in the main checkout's
