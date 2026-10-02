@@ -1,64 +1,116 @@
-# ACCOUNT-LEDGER behaviour card (2 Oct 2026)
+# ACCOUNT-LEDGER behaviour card, revision 2 (2 Oct 2026)
 
-"account 1" in a chatbot message selects the `[A/C I]` ledger of the customer it names.
+"account 1" in a chatbot message selects the customer ledger whose **Account level setting**
+is 1. Revision 1 read the `[A/C I]` words in names; the owner ruled that out (Q1).
 
-## Today (main 066b966e6, traced)
+## Owner answers to revision 1
 
-- Parser has no account/ledger field; the words stay inside the entity `raw`
-  (`app/services/chatbot/head/parser.py:139-186` entity schema).
-- Linked (enforced) contacts: `ContactCustomerScope.match_words`
-  (`app/services/contact_customer_scope.py:61-76`) is a substring match on linked names, so
-  "Soon Heng account 1" matches nothing and refuses; called from
-  `engine._customer_scope_gate` (`app/services/chatbot/engine.py:1380-1433`).
-- Staff: `entity_resolver._probe_customer` (`app/services/entity_resolver.py:1069-1151`) then
-  the gate groups every ledger of one trading name into one picker line
-  (`ledger_family.py:44-60`, `turn/narrow.py:84-160`, `lanes/business/gate.py:975-1060`),
-  so a staff "Soon Heng account 1" today gets the whole family (I-IV + bare + PROJECT ...).
+- Q1: NO name markers. A SETTING on each ledger says its account level.
+- Q2: NO carry-over. Account words with no customer named this turn -> the bot asks which customer.
+- Q3: yes, a linked contact asking a ledger it is not linked to is refused naming only its own linked ledgers of that name.
+- Q4: yes, staff asking a ledger the name lacks is refused naming the levels the name has.
+- Q5: addendum text below, verbatim.
 
-## Proposed rules
+## Q1 design: the Account level setting
 
-1. Parser emits a new per-entity key `account` on customer entities: the ledger number the
-   message names, as a roman numeral `"I"`..`"X"`, else null. Triggers: "account 1",
-   "acc 1", "a/c 1", "A/C I", "ac2", "akaun 2", "户口1"; arabic converted to roman. The account
-   words are removed from `raw` ("Soon Heng account 1" -> raw "Soon Heng", account "I").
-   A bare "my account" (no number) is NOT an account signal (stays `self_reference`).
-2. A customer row's ledger = the `A/C <n>` marker inside any bracket of its name
-   (`[A/C I]`, `(A/C I)`, `(A/C 2)`, `[A/C II]-( KL OUTLET)`); arabic and roman compare equal.
-   A row with no A/C marker (bare name, `(PROJECT)`, `[CERAMIC]`, `(SRT)` ...) is no numbered
-   ledger, so it is excluded when an account is asked.
-3. No `account` -> behaviour unchanged (name covers every ledger, as today).
-4. Linked contact: name words match as today, then keep only links whose ledger equals
-   `account`. Nothing left -> refuse, naming the ledgers of THAT name the contact IS linked
-   to (never an unlinked ledger: that would leak other accounts exist).
-5. Staff: resolver rows for that customer word are narrowed to the asked ledger before the
-   family grouping, so the picker / answer carries that ledger only. Name has no such
-   ledger -> refuse naming the ledgers the name has.
+**Where it lives.** The existing customer record (`customers` table, `Customer` model,
+`sorento_crm_backend/app/models/order.py:50`). A "ledger" IS a customer row: SOON HENG HARDWARE
+CO.SDN.BHD. [A/C I] (300-S002) and [A/C II] (300-S082) are two `customers` rows.
 
-## Real examples (dev data: sorento_ai_automation_0925 customers, sorento_cagent_stack links)
+**Data model (additive).** One column, `customers.account_level SMALLINT NULL`,
+`CHECK (account_level >= 1)`. Null = no level set (the row is not a numbered account).
+Added to `__audit_columns__` (`order.py:70-95`) so a change is in the customer's history.
+Migration `acct_ledger_0001`. Nothing else: no new table (one preference = one column).
 
-| # | Who | Message | Today | Proposed |
-|---|-----|---------|-------|----------|
-| 1 | contact 80560c8f (12 links incl. SOON HENG HARDWARE CO.SDN.BHD. [A/C I], HANLIM TRADING SDN BHD bare/[CERAMIC & ELLECI]/[A/C I..IV]) | "Hanlim account 2 outstanding" | all 6 HANLIM links | HANLIM TRADING SDN BHD [A/C II] only |
-| 2 | same contact | "Soon Heng account 1 sales" | refused (no linked name contains "soon heng account 1") | SOON HENG HARDWARE CO.SDN.BHD. [A/C I] |
-| 3 | same contact | "Soon Heng account 2" | refused | refuse: "You're linked to SOON HENG HARDWARE CO.SDN.BHD. [A/C I] only." |
-| 4 | contact 046a9d73 (1 link: HANLIM TRADING SDN BHD [A/C II]) | "my account 1 outstanding" | UNVERIFIED: depends on what raw the LLM emits for "account 1" | refuse naming [A/C II] |
-| 5 | staff | "Soon Heng account 1 outstanding" | UNVERIFIED: raw "Soon Heng account 1" likely matches no name; raw "Soon Heng" gives 3 family lines each folding every ledger | picker of 3: SOON HENG HARDWARE [A/C I] (300-S002), PLUMBING [A/C I] (300-S037), TRADING [A/C I] (300-S254) |
-| 6 | staff | "Soon Heng Trading account 2" | whole TRADING family | refuse: SOON HENG TRADING has accounts I, III and IV (no [A/C II] row exists) |
+**Screen.** One plain field on the existing customer form and detail page, no new screen:
+- Edit: `sorento_crm_frontend/app/(protected)/order-management/customers/components/CustomerForm.tsx:164-247`
+  ("Basic Information"), a clearable `SearchableSelect` "Account level" with options
+  Account 1 .. Account 9, beside "Sales Agent" (same component, `CustomerForm.tsx:228-245`).
+- View: same field, same position, read-only, in `CustomerDetail.tsx` (View = Edit layout).
+- Saved through the existing `PUT /api/v1/order-management/customers/{id}`
+  (`app/api/v1/order_management/customers.py:215`) via `CustomerUpdate` (`app/schemas/order.py:~54`).
+Plain field on an existing form, so no Lavish mock (owner's own threshold).
 
-## Edge cases
+**Who can edit.** Holders of `order_management.customers.edit` (existing permission, already
+used at `customers.py:183`). Note: the PUT route itself today checks only sign-in
+(`customers.py:215-220`, `Depends(get_current_user)`). Recommendation: the route refuses a
+CHANGE to `account_level` without `order_management.customers.edit` (403); the rest of the
+route is left as it is (fixing the whole route is a separate lane). security-reviewer runs.
 
-- "account 3" on a name with only I, II -> refusal listing I, II (rule 4/5).
-- Number above any ledger seen ("account 7"; data max is `[A/C V]`, CHIP BEE TRADING COMPANY) -> same refusal.
-- "my account 1" (linked contact): links filtered to [A/C I]; several left -> answered together, as "my" is today.
-- Staff "my account 1": staff "my" means its links (engine.py:1398-1400) -> same filter on links.
-- Two customers, two accounts ("Hanlim acc 2 and 1 Living acc 1"): per-entity key keeps each right.
-- Account said with no customer and no "my" ("account 2 outstanding" after "Hanlim" last turn): applies to the carried customer.
-- Data quirk (UNVERIFIED cause): the bare SOON HENG HARDWARE row shares code 300-S002 with [A/C I] (6 vs 79 orders); `(CERAMIC & ELLECI)` shares 300-S132 with [A/C III].
+**Default for existing ledgers: one-time seed (recommended).** The migration sets
+`account_level` from the name marker ONCE, only where it is still null: `[A/C I]`/`(A/C I)` -> 1,
+II -> 2, III -> 3, IV -> 4, V -> 5, `(A/C 2)` -> 2. After that the name is never read again;
+the setting is the truth and the office corrects it on the form. Count on the 25 Sep prod copy
+(`sorento_ai_automation_0925`): I 1159, II 84, III 513, IV 526, V 1, "2" 1 = **2,284 rows**;
+every other row (bare, (PROJECT), [CERAMIC], (SRT) ...) stays null. Crew rule: this UPDATE is
+held for the owner on the shared dev DB; on prod it runs inside the migration at deploy.
+Option b: no seed, the office sets levels by hand (the bot then answers nothing for "account N" until they do).
 
-## Questions (recommendation first)
+**How the bot uses it.**
+1. Parser emits `account` (integer or null) on a customer entity (addendum below).
+2. Linked contact: name words match its links as today, then keep links whose
+   `account_level` equals `account`. None left -> refusal naming its linked ledgers of that name (Q3).
+3. Staff: right after the customer lookup and before the "which customer" grouping
+   (`lanes/business/resolve_gate.py` ~1030, before `run_gate`), customer rows whose
+   `account_level` differs are dropped for that word. None left -> refusal naming the levels
+   that name has, e.g. "SOON HENG TRADING has Account 1, Account 3 and Account 4." (Q4).
+4. Account words with no customer named this message (Q2): the bot asks
+   "Which customer is Account 2 for?" and fetches nothing. Nothing is carried from earlier turns.
 
-1. Bare / PROJECT / CERAMIC rows on "account 1": (a) excluded, marker match only [rec: simplest, matches what the user typed]; (b) also include rows sharing the [A/C I] row's customer_code (pulls the bare 300-S002 row in).
-2. "account N" with no customer named this turn: (a) applies to the carried customer / "my" links [rec]; (b) ignored unless a name is in the same message.
-3. Linked contact asks a ledger it is not linked to: (a) refuse naming only its linked ledgers of that name [rec: no leak]; (b) generic refusal line unchanged.
-4. Staff asks a ledger the name lacks: (a) refuse naming the ledgers it has [rec]; (b) fall back to the whole family with a note.
-5. Prompt rollout: (a) new UNLABELLED parser prompt version via migration, owner moves `production` label; kept to one small addendum so PR #1405 (PROMPT-DYNAMIC) rebases cleanly [rec]; (b) wait for #1405 and add it as a variable block.
+## Examples (dev data; levels as the seed would set them)
+
+| # | Who | Message | Proposed |
+|---|-----|---------|----------|
+| 1 | contact 80560c8f (12 links incl. 6 HANLIM TRADING SDN BHD rows) | "Hanlim account 2 outstanding" | HANLIM TRADING SDN BHD [A/C II] only (the one link at level 2) |
+| 2 | same | "Soon Heng account 1 sales" | SOON HENG HARDWARE CO.SDN.BHD. [A/C I] |
+| 3 | same | "Soon Heng account 2" | "Sorry, that isn't under your account. I can only check on SOON HENG HARDWARE CO.SDN.BHD. [A/C I]." |
+| 4 | staff | "Soon Heng account 1 outstanding" | which-customer list of 3: SOON HENG HARDWARE (300-S002), PLUMBING & SANITARY WORKS (300-S037), TRADING (300-S254), each level 1 only |
+| 5 | staff | "Soon Heng Trading account 2" | refused: has Account 1, Account 3 and Account 4 |
+| 6 | anyone | "account 2 outstanding" (no name) | "Which customer is Account 2 for?" |
+
+## One open question
+
+Q6. Linked contact "my account 1" (names no customer, but "my" means its own links):
+(a) "my" counts as naming the customer: answer its level-1 links [rec: "my" already scopes to the links, `engine.py:1398-1400`];
+(b) clarify like any unnamed account ask.
+
+## Q5: the exact parser addendum
+
+Inserted in `sorento_crm_backend/app/services/chatbot_parser_prompt.py` between
+`SEMANTIC_PARSER_PROMPT += PO_SPO_WAREHOUSE_ADDENDUM` (line 621) and
+`SEMANTIC_PARSER_PROMPT += MEMORY_ADDENDUM` (line 622), so MEMORY stays the tail. The entity
+object in the strict schema (`head/parser.py:139-193`) gains `"account": integer or null`
+(required, as every entity key). Published as a new UNLABELLED prompt version; the owner moves
+the `production` label. If PR #1405 lands first, the same block is appended to its text.
+
+```text
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CUSTOMER ACCOUNT NUMBER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Every entity object carries one more key, exactly as if it were listed there:
+
+  "account": an integer, or null
+
+== ACCOUNT: which numbered account of a customer the message names ==
+A customer can have several accounts, numbered 1, 2, 3 ... Set "account" on the CUSTOMER
+entity when the CURRENT message names an account number for it, in any spelling or
+language. Roman numerals become integers.
+  - "account 1", "acc 1", "a/c 1", "A/C I", "ac1", "akaun 1", "户口1", "第一个户口" -> 1
+  - "account 2", "acc2", "A/C II", "a/c ii", "akaun 2" -> 2
+  - "A/C III" -> 3, "A/C IV" -> 4
+The account words are NOT part of the name: leave them out of raw and canonical_code.
+  - "Soon Heng account 1 outstanding" -> entities [{"raw": "Soon Heng", "hint":
+    "customer", "account": 1}]
+  - "hanlim acc 2 sales" -> entities [{"raw": "hanlim", "hint": "customer", "account": 2}]
+  - "Hanlim A/C II and 1 Living A/C I" -> two customer entities, account 2 and account 1
+An account number with NO customer name in the current message ("account 2 outstanding")
+-> emit ONE entity {"raw": null, "hint": "customer", "account": 2, "current_message":
+true}. Never copy a customer name from earlier in the conversation to fill it.
+"my account" with no number names no account: "account" stays null and self_reference
+is true as usual. "my account 2" -> self_reference true AND the entity {"raw": null,
+"hint": "customer", "account": 2}.
+Every non-customer entity, and every customer entity without an account number, has
+"account": null. Never guess a number.
+```
