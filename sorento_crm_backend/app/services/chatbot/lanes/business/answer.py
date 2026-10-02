@@ -4141,6 +4141,8 @@ _DYM_CTRL_KEYS = (
     # and its noun. Stripped here with the rest, so the object this node emits is unchanged.
     "dym_probe_row_keys",
     "dym_probe_type_name",
+    # ATTACHMENT-MULTI R2: the per-type has-sets of a several-type ask, likewise.
+    "dym_has_by_type",
 )
 
 _YES = "Yes, escalate"
@@ -4681,6 +4683,31 @@ def build_suggest_offer(
     else:
         dym_noun = None
 
+    # ATTACHMENT-MULTI R2 (owner ruling 2 Oct 2026, Q1 (a)): a several-type ask stamps every
+    # asked type on every line - "- has Product Photos, no Technical Specifications" - from
+    # the annotator's per-type has-sets, projected into code space the same way as `dym_has`.
+    # A line is stamped only when it was probed at all, exactly as before.
+    dym_type_stamps: list[tuple[str, set[str]]] = []
+    if dym_ok and jsc.get(dym_meta, "key_mode") == "uuid":
+        for per_type in jsc.array(jsc.get(dym_ann, "dym_has_by_type")):
+            name = jsc.nullish_str(jsc.get(per_type, "type")).strip()
+            if not name:
+                continue
+            _probed, type_has = _dym_code_space(
+                {**dym_ann, "dym_available_codes": jsc.array(jsc.get(per_type, "has"))}, dym_meta
+            )
+            noun = "certificate" if _CERT_PREFIX_RE.match(name) else name
+            dym_type_stamps.append((noun, type_has))
+        if len(dym_type_stamps) < 2:
+            dym_type_stamps = []
+
+    def _stamp(key: str) -> str:
+        if dym_type_stamps:
+            return " - " + ", ".join(
+                f"has {noun}" if key in type_has else f"no {noun}" for noun, type_has in dym_type_stamps
+            )
+        return f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"
+
     # 4th surface: the REQUIRE-SPECIFIC PICKER. The gate renders a numbered list into
     # `gate_clarification`, which the miss renderer copies verbatim into `escalate_message`.
     # D1 never fires on these turns, which is why this surface needs its own pass over the
@@ -4698,7 +4725,7 @@ def build_suggest_offer(
             if key is None:
                 lines.append(line)  # unprobed (e.g. multi-uuid) renders BARE
                 continue
-            lines.append(line + (f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"))
+            lines.append(line + _stamp(key))
         out["escalate_message"] = "\n".join(lines)
 
     # THE CUSTOMER'S SPELLING. `d1.token` is the RESOLVER's echo, not what the customer typed,
@@ -4764,7 +4791,7 @@ def build_suggest_offer(
                 key = _dym_lookup(jsc.get(match, "canonical_code"), dym_probed) if dym_ok else None
                 sfx = ""
                 if key is not None:
-                    sfx = f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"
+                    sfx = _stamp(key)
                 cand_lines.append(f"  {idx}. {jsc.js_string(pick['label'])}{sfx}")
                 out["suggest_last_result_set"].append(
                     {
@@ -4900,7 +4927,7 @@ def build_suggest_offer(
                         key = _dym_lookup(code, dym_probed)
                         sfx = ""
                         if key is not None:
-                            sfx = f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"
+                            sfx = _stamp(key)
                         dym_lines.append(f"{i + 1}. {code}{sfx}")
                     out["suggest_response"] = (
                         f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
