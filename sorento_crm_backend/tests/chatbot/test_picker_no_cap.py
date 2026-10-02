@@ -14,6 +14,7 @@ import uuid
 
 from app.services.chatbot.dealer_stock import did_you_mean
 from app.services.chatbot.lanes.business import gate as gate_mod
+from app.services.chatbot.lanes.business.resolve_gate import resolve_entity_body
 from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.policy_rows import DEFAULT_KIND_ROWS
@@ -183,3 +184,80 @@ def test_a_new_kind_row_defaults_to_the_ceiling():
         db.commit()
         db.refresh(row)
         assert row.roster_cap == ROSTER_CEILING
+
+
+# --------------------------------------------------------------------------- #
+# crew-tester chat pass at 83754a68 (PR #1436): "incoming AMS" with 20 matches listed 15.
+# The cut was the resolve body's own `limit: 15` (`resolve_gate.resolve_entity_body`):
+# the route truncates every token's matches to it, before any roster cap is read. The
+# lookup now asks for as many rows as the widest roster may print (the S3 ceiling).
+# --------------------------------------------------------------------------- #
+
+
+def _resolve_ctx(raw: str, hint: str = "product") -> dict:
+    return {
+        "text": {"message": {"message": {"text": f"incoming {raw}"}}},
+        "contact": {"id": "1"},
+        "parse": {
+            "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "match_mode": "and",
+                "access_levels": [],
+                "entities": [
+                    {"raw": raw, "hint": hint, "canonical_code": None, "current_message": True}
+                ],
+            }
+        },
+    }
+
+
+def test_the_lookup_asks_for_as_many_rows_as_a_roster_may_print():
+    assert resolve_entity_body(_resolve_ctx("QAMS"))["limit"] == ROSTER_CEILING
+
+
+def test_incoming_search_over_twenty_real_products_lists_all_twenty():
+    """End to end below the parser: seeded products -> the chatbot's own resolve body ->
+    the resolve route -> the gate with the seeded roster caps -> twenty numbered lines."""
+    import app.main  # noqa: F401 - registers every model before any query
+    from app.api.v1.system.references import ResolveReferenceRequest, resolve_reference_post
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+
+    from tests._pg_fixture import blank_session
+
+    codes = [f"QAMS-CL{i:02d}X" for i in range(20)]
+    with blank_session() as db:
+        cat = ProductCategory(id=str(uuid.uuid4()), category_code="ZZTPNC", category_name="ZZT")
+        uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code="ZZTPNU", uom_name="ZZT")
+        db.add_all([cat, uom])
+        db.flush()
+        for code in codes:
+            db.add(
+                Product(
+                    id=str(uuid.uuid4()),
+                    product_code=code,
+                    product_name="ZZT product",
+                    category_id=cat.id,
+                    base_uom_id=uom.id,
+                    list_price=1,
+                )
+            )
+        db.flush()
+
+        ctx = _resolve_ctx("QAMS")
+        body = resolve_entity_body(ctx)
+        body.pop("contact_id", None)
+        resolver = resolve_reference_post(
+            ResolveReferenceRequest(**body), current_user={"id": None}, db=db
+        )
+        gate = gate_mod.run_gate(
+            {},
+            parser=ctx["parse"]["output"],
+            resolver=resolver,
+            roster_caps=_seed_caps(),
+        )
+
+    assert gate.get("require_specific") is True, gate
+    lines = re.findall(r"^\d+\. (\S+)", gate["gate_clarification"], re.MULTILINE)
+    assert lines == codes
