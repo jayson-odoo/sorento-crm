@@ -102,6 +102,7 @@ Reports is a grouping in the UI and the grant model only; the parser domain list
 | `contact_chatbot_roles` | contact_id FK `respond_contacts.id` CASCADE, role_id FK RESTRICT | PK pair; RESTRICT backs AC-AM-3 |
 | `contact_access_overrides` | id, contact_id FK CASCADE, domain_name, field_key NULL, granted bool, updated_by | partial uniques: (contact, domain) where field NULL; (contact, field) where field NOT NULL (pattern `agent_field_access`, `models/access.py:519-534`) |
 | `chatbot_domains.access_section` | Text NULL (`reports`) | `sales` row seeded `reports` |
+| `chatbot_domains.access_group`, `access_label`, `access_description` | Text NULL | mock v8 plain-English section, switch label and one-line description per domain (the parser's `label` stays untouched); seeded from mock v8; registry falls back to `label` when NULL |
 | `chatbot_domains.escalation_agent_code` | Text NULL FK `access_agents.code` ON UPDATE CASCADE ON DELETE SET NULL | seeded per card 3b |
 
 Data step (same revision): `reveal_key` NULL on `inventory` and `order` rows (they are fields now);
@@ -133,7 +134,8 @@ path) and stop being read by the chat path; dropping them is a later lane.
 - **S4 Admin API.** `app/api/v1/system/chatbot_roles.py` (mounted with the chatbot module guard like
   `chatbot_field_reveals.py`): roles CRUD (`reference_data.manage`; delete 409 when held), role ticks
   GET/PUT (changed rows), contact roles + overrides GET/PUT (`contacts.edit`), registry GET (domains +
-  fields + escalation agent/team + tier-1 team names). Audit via `__audit_track__`. Tests:
+  fields + escalation agent/team + tier-1 team names + `group` / `access_label` / `access_description`), and GET
+  `/roles/{id}/contacts` -> `[{id, name}]` for the role page (mock v8). Audit via `__audit_track__`. Tests:
   `tests/test_chatbot_roles_api.py` incl. RBAC denials and `response_model` field assertions.
 - **S5 Registry derivations.** `FIELD_REVEAL_KEYS` and `GATED_FIELDS` read `chatbot_domain_fields`;
   `field_access.allowed_fields_for` (incoming REST) reads the contact's tree instead of
