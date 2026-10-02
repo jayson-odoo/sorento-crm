@@ -4183,6 +4183,11 @@ def _run_stages(  # noqa: PLR0915
                 )
             elif isinstance(state_out.focus.top_selling, dict) and state_out.focus.top_selling.get("hop"):
                 resolver_parse_output = _without_carried_words(resolver_parse_output)
+            # REPORT-ENGINE 1b fix round F1: a dealer's sales ranking never has a location
+            # word looked up (the resolver's miss line would probe warehouse codes); the
+            # lane refuses the ask off the word itself (`report_ask._dealer_outside`).
+            if (customer_scope or {}).get("enforced"):
+                resolver_parse_output = report_ask.dealer_location_words(resolver_parse_output)
             gate_refusal: str | None = None
             staff_level_refused = False
             unnamed_account = _unnamed_account(verdict, resolver_parse_output)

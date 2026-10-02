@@ -1878,7 +1878,11 @@ def run_fetch(
         # a ranking, are settled (`required_fields`, asked one per reply).
         tool_name = report_ask.TOOL
         tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_ranking_override"}}
-        settled, line = report_ask.settle(db, parse_output, entities)
+        # 1b fix round F1: a customer-scoped (dealer) turn is refused a staff breakdown
+        # before any agent or location word is resolved.
+        settled, line = report_ask.settle(
+            db, parse_output, entities, dealer=bool(customer_scope.get("enforced"))
+        )
         if trace is not None:
             trace.add(
                 "required_ask",

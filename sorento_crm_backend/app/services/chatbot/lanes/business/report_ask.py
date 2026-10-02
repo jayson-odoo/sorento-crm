@@ -34,6 +34,8 @@ GIVE_UP = (
     "I still can't read '{word}'. Ask again with the period and how many, "
     "e.g. top 5 sales agents for Sorento this month."
 )
+#: The route's own refusal for a dealer's staff breakdown (`report_ask._DEALER_MESSAGE`).
+DEALER_REFUSAL = "That breakdown is not available for your account."
 CATALOGUE_LINE = (
     "I can rank sales by customer, product, brand, category, sales agent, location, channel or month."
 )
@@ -158,6 +160,31 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
     return {**verdict, "entities": kept, "report_ask_words": words}
 
 
+def dealer_location_words(parse_output: dict[str, Any]) -> dict[str, Any]:
+    """Engine seam, a DEALER's (customer-scoped) fresh `sales_ranking` ask, 1b fix round F1:
+    this message's location words come off the resolver's entity list onto
+    `report_ask_words["warehouse"]`, so no warehouse code is ever looked up for a dealer;
+    the lane refuses the ask off the word alone."""
+    if jsc.js_string(parse_output.get("order_status") or "").strip() != ASK_NAME or parse_output.get("required_ask"):
+        return parse_output
+    moved = [
+        " ".join(jsc.js_string(e.get("raw") or e.get("canonical_code") or "").split())
+        for e in _current_entities(parse_output, "warehouse")
+    ]
+    if not moved:
+        return parse_output
+    words = dict(_dict(parse_output.get("report_ask_words")))
+    words["warehouse"] = [w for w in moved if w]
+    return {
+        **parse_output,
+        "entities": [
+            e for e in jsc.array(parse_output.get("entities"))
+            if not (isinstance(e, dict) and e in _current_entities(parse_output, "warehouse"))
+        ],
+        "report_ask_words": words,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # The lane's call
 # --------------------------------------------------------------------------- #
@@ -193,15 +220,48 @@ def _gate_ids(entities: Any, kind: str) -> list[str]:
     return out
 
 
+def _current_entities(parse_output: dict[str, Any], hint: str) -> list[dict[str, Any]]:
+    return [
+        e
+        for e in jsc.array(parse_output.get("entities"))
+        if isinstance(e, dict)
+        and e.get("current_message") is not False
+        and jsc.js_string(e.get("hint") or "").strip().lower() == hint
+    ]
+
+
+def _dealer_outside(parse_output: dict[str, Any], group_by: str | None) -> bool:
+    """1b fix round F1: does a dealer's ask reach past `reports.ask.DEALER_KEYS`? A staff
+    dimension, or a sales agent, location or channel filter. Read off the words alone,
+    BEFORE any is resolved, so the unknown-word line can never probe agent or location
+    names for a dealer (the route refuses the same asks, `report_dimension_not_allowed`)."""
+    from app.services.reports.ask import DEALER_KEYS
+
+    words = _dict(parse_output.get("report_ask_words"))
+    named = any(
+        " ".join(jsc.js_string(w).split())
+        for hint in ("sales_agent", "warehouse")
+        for w in jsc.array(words.get(hint))
+    )
+    return (
+        (group_by is not None and group_by not in DEALER_KEYS)
+        or named
+        or bool(_current_entities(parse_output, "warehouse"))
+        or parse_output.get("sales_channel") in ("dealer", "project")
+    )
+
+
 def _fresh_args(
-    db: Any, parse_output: dict[str, Any], entities: Any
+    db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False
 ) -> tuple[dict[str, Any] | None, str | None]:
     """The route params a fresh ask names (every one but the period and top_n), or the one
-    line to say instead of running."""
+    line to say instead of running. `dealer`: the turn's contact is customer-scoped."""
     raw_group = jsc.js_string(parse_output.get("group_by") or "").strip().lower()
     group_by = GROUP_BY.get(raw_group) if raw_group else None
     if raw_group and group_by is None:
         return None, CATALOGUE_LINE
+    if dealer and _dealer_outside(parse_output, group_by):
+        return None, DEALER_REFUSAL
 
     args: dict[str, Any] = {
         "basis": "ordered" if parse_output.get("basis") == "ordered" else "delivered",
@@ -237,11 +297,7 @@ def _fresh_args(
             args[param] = ids
 
     codes: list[str] = []
-    for e in jsc.array(parse_output.get("entities")):
-        if not isinstance(e, dict) or e.get("current_message") is False:
-            continue
-        if jsc.js_string(e.get("hint") or "").strip().lower() != "warehouse":
-            continue
+    for e in _current_entities(parse_output, "warehouse"):
         token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
         if not token:
             continue
@@ -265,7 +321,9 @@ def _given_top_n(args: dict[str, Any], top_n: Any) -> dict[str, Any]:
     return {"top_n": got if got.status == "ok" else jsc.js_string(top_n)}
 
 
-def settle(db: Any, parse_output: dict[str, Any], entities: Any) -> tuple[rf.Outcome | None, str | None]:
+def settle(
+    db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False
+) -> tuple[rf.Outcome | None, str | None]:
     """Every required field settled, or the line to send instead of running. Returns
     `(outcome, None)` (send `outcome.reply` with `outcome.slot` unless `outcome.done`), or
     `(None, line)` for a word or a dimension the ask cannot run with.
@@ -287,7 +345,7 @@ def settle(db: Any, parse_output: dict[str, Any], entities: Any) -> tuple[rf.Out
         )
         return outcome, None
 
-    args, line = _fresh_args(db, parse_output, entities)
+    args, line = _fresh_args(db, parse_output, entities, dealer=dealer)
     if args is None:
         return None, line
     top_n = parse_output.get("top_n")
