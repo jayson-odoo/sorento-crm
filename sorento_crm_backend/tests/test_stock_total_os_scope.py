@@ -51,7 +51,9 @@ def _contact(db) -> RespondContact:
     return row
 
 
-def _policy(db, contact, *, mode, warehouse_ids=None, excluded_warehouse_ids=None):
+def _policy(
+    db, contact, *, mode, warehouse_ids=None, excluded_warehouse_ids=None, hide_zero_locations=False
+):
     db.add(
         StockVisibilityPolicy(
             id=str(uuid.uuid4()),
@@ -59,6 +61,7 @@ def _policy(db, contact, *, mode, warehouse_ids=None, excluded_warehouse_ids=Non
             mode=mode,
             warehouse_ids=warehouse_ids,
             excluded_warehouse_ids=excluded_warehouse_ids,
+            hide_zero_locations=hide_zero_locations,
         )
     )
     db.flush()
@@ -271,3 +274,34 @@ def test_detailed_summary_follows_a_warehouse_named_in_the_question(db):
 
     assert entry["total_on_hand"] == 54
     assert entry["open_so_qty"] == 10
+
+
+# ------------------------------------------- the Total agrees with the lines it sits over
+
+
+@pytest.mark.parametrize("hide_zero", [False, True])
+def test_compact_total_os_equals_the_sum_of_the_printed_lines(db, hide_zero):
+    """Hand test of #1431 (dev data, SO414050): MWC7624-RL-S10 read `Total: 372 (O/S: 531)`
+    over lines adding to 530. The extra 1 was an open SO line on BRW-IB, a VISIBLE active
+    warehouse holding no stock row for the product, so it fed the Total and printed no line.
+    The same gap opens when `hide_zero_locations` drops a 0-on-hand line that has open SO.
+    Owner rule: the Total and the lines must agree, whichever way the gap is closed."""
+    w1, _w2, p = _seed(db, unassigned=0)
+    no_stock_row = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("NOSTK"))
+    _so_line(db, p.id, no_stock_row.id, open_qty=1)
+    zero_line = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("ZERO"))
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=zero_line.id, on_hand=0)
+    _so_line(db, p.id, zero_line.id, open_qty=2)
+    contact = _contact(db)
+    _policy(
+        db,
+        contact,
+        mode="compact",
+        warehouse_ids=[w1.id, no_stock_row.id, zero_line.id],
+        hide_zero_locations=hide_zero,
+    )
+
+    entry = _sellable_body(db, product_ids=[p.id], contact_id=contact.id)["stock_summary"][0]
+
+    printed = sum(loc["open_so_qty"] for loc in entry["locations"])
+    assert entry["open_so_qty"] == printed, (entry["open_so_qty"], entry["locations"])
