@@ -427,3 +427,87 @@ Captain rulings on the tester's open points (2 Oct 2026):
   Ordered basis under a location policy: an SO line with no warehouse is outside every capped
   location (fail closed); the share is unmeasured (no dev data in the sandbox), golden-asks
   item.
+
+## 11. Slice 1b contract: parser vocabulary + lane wiring (built on #1445 `required_fields`)
+
+Base: #1445 head `57af6b3e` merged into this branch (`required_fields.py` API as posted on #1445;
+crew relays when it lands on main, then main is merged here). FULL track: adds a data-only
+migration (a parser prompt version, label unmoved).
+
+**Parser** (`app/services/chatbot/head/parser.py` strict schema + `chatbot_parser_prompt.py`
+addendum `REPORT_ASK_ADDENDUM`, appended after `MEMORY_ADDENDUM`):
+- `order_status` gains `"sales_ranking"`: sales ranked or totalled BY one dimension, for a
+  sales agent / salesman, customer, brand, category, location, channel or month: "top 3
+  salesman for Sorento brand last month", "which location sold most SR1234 in September",
+  "top 5 customers for Mocha this year", "sales by month for agent Fanny 2026", "bottom 5
+  sales agents", "how much did we sell of brand X in August" (no `group_by`: a total).
+  Ranking PRODUCTS or CATEGORIES ("top 10 products", "hot selling") stays `top_selling`
+  (slice 2 folds it). `domain_hint` = `order`.
+- `group_by` enum gains `sales_agent`, `brand`, `category`, `channel`.
+- Reused keys: `top_n`; `rank_direction` (top / bottom -> `sort` desc / asc); `rank_by`
+  (quantity -> `measure=qty`, amount or null -> `amount`); `basis` (delivered / ordered;
+  null or unclear -> delivered, owner Q4); `date_filter_start` / `date_filter_end`;
+  `sales_channel`. Entities: `brand`, `sales_agent`, `category`, `product`, `customer`,
+  `warehouse` hints as today.
+- Migration `report_engine_0001_prompt` publishes the full `SEMANTIC_PARSER_PROMPT` as a new
+  `chatbot_semantic_parser` version, label unmoved (`acct_ledger_0002_vocab` pattern). The owner
+  moves `production` onto it after deploy. `test_parser_prompt_budget.py` ceiling raised by the
+  addendum's size.
+
+**Contracts.** `contracts.SALES_FIGURE_STATUSES` gains `sales_ranking` (the grant check before
+anything is fetched covers it with no new key).
+
+**Engine seam** (`engine.py`, beside `low_stock_ask.take_words`): `report_ask.take_words(verdict,
+text)` on a FRESH `sales_ranking` verdict moves this message's `brand`, `sales_agent` and
+`category` entities off the entity list onto `report_ask_words` (`{"brand": [...],
+"sales_agent": [...], "category": [...]}`), so the generic resolver never reads them as
+customers (the top selling lesson, `engine._top_selling_narrowing`). `report_ask_words` joins
+`required_fields.ENGINE_KEYS` (the parser can never forge it).
+
+**Lane** (new `app/services/chatbot/lanes/business/report_ask.py`, branch in `run_fetch` for
+`domain == "order" and order_status == "sales_ranking"`):
+1. Grant: no `sales_orders.sales_report` -> `_sales_report_not_enabled()` (existing line).
+2. Words -> ids: brand `business_services.resolve_brand_token`, sales agent
+   `resolve_sales_agent_token`, category `resolve_category_token`. A word naming nothing ->
+   one line `I don't know '<word>' as a <brand|sales agent|category>.` and no run.
+   Resolved `product` entities -> `product_ids`; `customer` -> `customer_ids`; `warehouse` ->
+   `warehouse_codes` (their codes).
+3. `group_by` mapped (`warehouse` -> `location`; `date` and anything outside the catalogue ->
+   the line `I can rank sales by customer, product, brand, category, sales agent, location,
+   channel or month.` and no run).
+4. Required fields through `required_fields` (`AskType("sales_ranking")`, registered once):
+   - `period` (required, `allow_all=False`), question `Which period? For example this month,
+     September, 2026, or 1 to 15 Sep.`. A fresh ask gives it from the parser's
+     `date_filter_start` / `date_filter_end` (both, or one widened to that day) as a settled
+     `Resolved("ok", {"from", "to"}, "<d Mon yyyy> to <d Mon yyyy>")`. An ANSWERING turn takes
+     it the same way from the reply's own parsed dates; a reply with no date is a miss
+     (the helper re-asks, gives up after two).
+   - `top_n` (required only with a `group_by`; without one it is given as settled `None`),
+     question `How many? For example top 5.`; a reply word with an integer 1..100 settles it,
+     anything else is a miss.
+   - `reroute = {"message_type": "business_query", "domain_hint": "order", "intent_hint":
+     "check_order", "order_status": "sales_ranking"}`, `cancelled = "Sales ranking
+     cancelled."`, `give_up = "I still can't read '{word}'. Ask again with the period and how
+     many, e.g. top 5 sales agents for Sorento this month."`.
+   - Extras carry every other settled arg (ids, group_by, sort, measure, basis, channel) so the
+     answering turn runs the first message's ask.
+   - Not done -> `_fixed_reply(outcome.reply, required_ask=outcome.slot)`.
+5. Done -> `semantic_input["report_ask_args"]` = the route params; tool `crm_report_ask`
+   (`fetch.entity_ids_transformer` sends them plus `contact_id` / `space_id`). The reply is
+   the presenter's text. Route refusals are said as their `message` (403
+   `report_dimension_not_allowed`, `customer_not_permitted`, `sales_report_not_enabled`,
+   `busy`, `refused`); a 404 says `I couldn't find that <thing>.`.
+6. Tool pool: `crm_report_ask` leaves `UNCALLABLE_READS`, joins `CHATBOT_READ_ONLY_TOOLS` and
+   the order domain's tools wherever the pin tests require.
+
+**Route addition:** `product_ids` (uuid list, same rules as the other id lists: `empty_filter`,
+404, 50 cap), ANDed with `product_code` when both are given.
+
+**UAC for 1b** (AC-RE-18, AC-RE-19 refined): AC-RE-18a ranking ask with no period -> the
+period question; the reply "last month" runs the ask with the first message's filters.
+AC-RE-18b ranking ask with no number -> "How many? For example top 5."; reply "5" runs it.
+AC-RE-18c both missing -> period asked first, then how many. AC-RE-18d "cancel" -> "Sales
+ranking cancelled."; two misses -> the give-up line. AC-RE-19a parser maps "salesman / sales
+agent / SA", "brand", "category", "by location", "by month" onto `group_by` with
+`order_status=sales_ranking`; AC-RE-19b "by colour" -> the catalogue line; AC-RE-19c a brand
+word naming no brand -> "I don't know 'X' as a brand."; AC-RE-19d the header names the basis.
