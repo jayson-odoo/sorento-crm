@@ -51,9 +51,10 @@ from app.services.chatbot import jsc
 # default would be a port-fidelity regression `test_replay.py` has no signed
 # divergence for). A caller that DOES supply a mapping - `resolve_gate.run`, reached
 # from the real turn engine, which always builds one from every seeded
-# `chatbot_entity_kinds` row - gets that mapping honoured for real, `10` (the
-# column's own server default) for any kind missing from it.
-_DEFAULT_ROSTER_CAP = 10
+# `chatbot_entity_kinds` row - gets that mapping honoured for real, `50` (the
+# column's own server default since PICKER-NO-CAP, owner 2 Oct 2026, and the S3
+# ceiling) for any kind missing from it.
+_DEFAULT_ROSTER_CAP = 50
 
 
 def _roster_cap(
