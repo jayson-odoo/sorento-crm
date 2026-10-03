@@ -255,7 +255,15 @@ def _mcp_call(db: Session | None = None) -> McpCallFn:
         # `CHATBOT_MCP_TIMEOUT_SECONDS` overrides it per environment.
         timeout = int(getattr(settings, "chatbot_mcp_timeout_seconds", 0) or 10)
         client = MCPRuntimeClient(settings.ai_assistant_mcp_url, timeout_seconds=timeout)
-        return parse_mcp_content(client.call_tool(name, args))
+        result = parse_mcp_content(client.call_tool(name, args))
+        # CONTACT-BRAND-SCOPE: the probes (cross-domain, did-you-mean, siblings) read through
+        # this seam too, so a brand-scoped session's result is guarded here as well.
+        if db is not None:
+            from app.models.base import get_brand_scope
+            from app.services.chatbot.lanes.business.brand_guard import guard_result
+
+            result = guard_result(name, result, get_brand_scope(db), db)
+        return result
 
     return call
 

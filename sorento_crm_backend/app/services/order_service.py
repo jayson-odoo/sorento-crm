@@ -238,6 +238,38 @@ def keep_brand_lines(db: Session, orders: list, brand_product_filter) -> list:
     return out
 
 
+def scope_product_filter(db: Session, value):
+    """CONTACT-BRAND-SCOPE: confine a product filter to the session's accessible brands.
+
+    Unscoped session -> `value` untouched (byte-identical). Scoped -> a `Product.id`
+    subquery of the in-scope products, intersected with `value` when one is given. The brand
+    predicate is explicit (a NULL brand fails the IN, Q1), not left to the ORM criterion.
+    """
+    from app.models.base import get_brand_scope
+
+    scope = get_brand_scope(db)
+    if not scope:
+        return value
+    stmt = select(Product.id).where(Product.brand_id.in_(sorted(scope)))
+    if has_product_filter(value):
+        stmt = stmt.where(Product.id.in_(value))
+    return stmt
+
+
+def scope_order_rows(db: Session, orders: list, scoped_filter) -> list:
+    """CONTACT-BRAND-SCOPE (Q3): a scoped contact's orders list only the in-scope lines, and
+    `total_amount` is the sum of the lines returned. `scoped_filter` is `scope_product_filter`'s
+    subquery; an unscoped session gets `orders` back as is."""
+    from app.models.base import get_brand_scope
+
+    if not get_brand_scope(db) or not isinstance(scoped_filter, Select) or not orders:
+        return orders
+    rows = keep_brand_lines(db, orders, scoped_filter)
+    for row in rows:
+        row.total_amount = sum((line.total or 0 for line in row.lines or []), Decimal("0"))
+    return rows
+
+
 def has_product_filter(value) -> bool:
     """A product filter is present: a brand subquery always is, a list when non-empty."""
     return isinstance(value, Select) or bool(value)
@@ -841,7 +873,7 @@ class OrderService:
         # cannot shadow them.
         _order_uuid_filter = list(order_ids) if order_ids else None
         _customer_uuid_filter = list(customer_ids) if customer_ids else None
-        _product_uuid_filter = product_filter(product_ids)
+        _product_uuid_filter = scope_product_filter(self.db, product_filter(product_ids))
         _transporter_uuid_filter = list(transporter_ids) if transporter_ids else None
 
         # Date-axis relaxation (§3.4) bookkeeping. `_customer_scoped` gates the
@@ -1215,7 +1247,7 @@ class OrderService:
         )
 
         payload = {
-            "data": orders,
+            "data": scope_order_rows(self.db, orders, _product_uuid_filter),
             "pagination": {
                 "total": total,
                 "page": page,
