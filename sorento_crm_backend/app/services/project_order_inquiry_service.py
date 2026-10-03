@@ -359,7 +359,10 @@ def _handover_verb_keys(
     """Which entries of `_HANDOVER_VERB_ORDER` this one handover line earns. `qty` as
     `_handover_settle_diff` reads it."""
     if kind == "raised":
-        return [row.verb] if row.verb else []
+        keys = [row.verb] if row.verb else []
+        if (was or {}).get("item_code"):
+            keys.append("CHANGE_ITEM_CODE")
+        return keys
     if kind == "cancelled":
         return [IV_CANCEL_BALANCE]
     if kind == "settled":
@@ -402,6 +405,13 @@ def handover_remark(
         skip_note = bool(was) and ("qty" in was or "delivery_date" in was)
         if note and not skip_note:
             label = f"{label} - {note}"
+        old_code = (was or {}).get("item_code")
+        if old_code:
+            # OI-PRODUCT-FOLLOW R4: a fresh row raised on the line's new product.
+            label = (
+                f"{label}, CHANGE ITEM CODE TO "
+                f"{getattr(row, 'item_code', None) or '-'} (WAS {old_code})"
+            )
         return label
     if kind == "settled":
         date_key, qty_key, qty_diff = _handover_settle_diff(row, was, qty)
@@ -1541,6 +1551,23 @@ class ProjectOrderInquiryService:
                         )
                         if fragment
                     ]
+                    # OI-PRODUCT-FOLLOW R1 (tester FAIL on 3db1012a): the rows set aside
+                    # keep the product they received for (history, R2); when that is not
+                    # the line's product any more, this fresh row is where the switch
+                    # shows, so it carries the old code as its "was".
+                    replaced_code = next(
+                        (
+                            r.item_code
+                            for r in redirected_this_call
+                            if r.item_code
+                            and r.item_code != raised_row.item_code
+                            and self._is_catalogue_code(r.item_code)
+                        ),
+                        None,
+                    )
+                    if replaced_code:
+                        raised_row.previous_item_code = replaced_code
+                        fragments.append(f"Was item {replaced_code}")
                     raised_row.note = "; ".join(
                         [f"Replaces {_qty_str(raised_row.previous_qty)} used"]
                         + fragments
@@ -1572,8 +1599,26 @@ class ProjectOrderInquiryService:
                     # nothing for purchasing to read, print nothing. Either differs: it
                     # reads exactly like an in-place settle, never a second bare ORDER.
                     carry_reference = prior_ack or cancelled_owned_row
+                    if (
+                        carry_reference is not None
+                        and not raised_row.previous_item_code
+                        and carry_reference.item_code
+                        and carry_reference.item_code != raised_row.item_code
+                        and self._is_catalogue_code(carry_reference.item_code)
+                    ):
+                        # OI-PRODUCT-FOLLOW R1: the carry re-raised the line on its live
+                        # product, so the switch shows here.
+                        raised_row.previous_item_code = carry_reference.item_code
+                        product_note = f"Was item {carry_reference.item_code}"
+                        raised_row.note = (
+                            f"{raised_row.note}; {product_note}"
+                            if raised_row.note
+                            else product_note
+                        )
                     if carry_reference is not None:
                         carry_was: Dict[str, Any] = {}
+                        if raised_row.previous_item_code:
+                            carry_was["item_code"] = raised_row.previous_item_code
                         if raised_row.qty != carry_reference.qty:
                             carry_was["qty"] = carry_reference.qty
                         if raised_row.delivery_date != carry_reference.delivery_date:
@@ -1595,8 +1640,18 @@ class ProjectOrderInquiryService:
                 elif not line_total_told:
                     # EMAIL-HANDOVER-QTY: a line already told as one settled line
                     # (`ORDER n` in its remark IS this row's quantity) prints no bare
-                    # ORDER line beside it.
-                    self._record_handover(raised_row, kind="raised", actor_user_id=actor_user_id)
+                    # ORDER line beside it. OI-PRODUCT-FOLLOW: a fresh row that replaces
+                    # supply of the OLD product says so (`previous_item_code` above).
+                    self._record_handover(
+                        raised_row,
+                        kind="raised",
+                        was=(
+                            {"item_code": raised_row.previous_item_code}
+                            if raised_row.previous_item_code
+                            else None
+                        ),
+                        actor_user_id=actor_user_id,
+                    )
                 raised += 1
                 if not carried:
                     created += 1

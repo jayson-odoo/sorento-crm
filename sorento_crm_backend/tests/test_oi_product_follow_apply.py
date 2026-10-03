@@ -377,3 +377,50 @@ def test_worklist_payload_carries_previous_item_code(api):
 
 def test_oi_row_model_has_previous_item_code():
     assert hasattr(OrderInquiryRow, "previous_item_code")
+
+
+def test_a_carried_line_re_raised_on_the_new_product_carries_was(api):
+    """Same gap one branch over: CS confirms ANOTHER line of the order, the swapped line
+    rides along as a carry and is re-raised on its live product. That re-raise is where
+    the switch shows, so it carries "was OLD" too."""
+    client, world = api
+    db = world.db
+    old_product = world.product
+    new_product = _product(db)
+    core_so = _core_so(db, world.company_id)
+    core_1 = _core_line(db, core_so, old_product, world.own_wh, qty_ordered="10",
+                        required_date=DUE)
+    core_2 = _core_line(db, core_so, old_product, world.own_wh, qty_ordered="5",
+                        required_date=DUE)
+    order = _project_so(db, world.project, so_id=core_so.id,
+                        autocount_doc_no=core_so.so_number)
+    line_1 = _project_line(db, order, line_no=1, product=old_product, core_line=core_1)
+    line_2 = _project_line(db, order, line_no=2, product=old_product, core_line=core_2)
+    db.commit()
+    response = _confirm(client, order.id, [
+        _line_payload(line_1.id, buy_qty="10"), _line_payload(line_2.id, buy_qty="5"),
+    ])
+    assert response.status_code == 200, response.text
+
+    core_1.product_id = new_product.id
+    line_1.product_id = new_product.id
+    from decimal import Decimal as _D
+    core_2.qty_ordered = _D("4")
+    line_2.qty = _D("4")
+    db.commit()
+
+    response = _confirm(client, order.id, [_line_payload(line_2.id, buy_qty="4")])
+    assert response.status_code == 200, response.text
+    db.commit()
+    db.expire_all()
+
+    live = [
+        r for r in _rows_of(world, line_1)
+        if r.verb == IV_ORDER and r.state != INQUIRY_CANCELLED
+    ]
+    assert len(live) == 1, [(r.item_code, r.state) for r in _rows_of(world, line_1)]
+    assert live[0].item_code == new_product.product_code
+    assert live[0].previous_item_code == old_product.product_code, (
+        "a carry that moved the row onto the new product must say what it was"
+    )
+    assert f"Was item {old_product.product_code}" in (live[0].note or "")
