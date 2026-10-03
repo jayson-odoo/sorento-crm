@@ -293,7 +293,7 @@ export function IdeasListView({
             </div>
           );
         },
-        240,
+        204,
       ),
       col(
         'submitter',
@@ -311,14 +311,14 @@ export function IdeasListView({
             {IDEA_SOURCE_LABEL[row.original.source] ?? row.original.source}
           </Badge>
         ),
-        100,
+        120,
       ),
       col(
         'product',
         'Product',
         (i) => i.productName,
         ({ row }) => text(row.original.productName),
-        100,
+        116,
       ),
       col(
         'status',
@@ -548,7 +548,7 @@ export function IdeasListView({
   return (
     <>
       <Container>
-        <PageHeader title="Ideas" />
+        <PageHeader title="Ideas" actions={<IdeasViewToggle active="list" />} />
       </Container>
       <Container>
         <div className="space-y-3">
@@ -579,8 +579,8 @@ export function IdeasListView({
                     keepSearchWhileSelected
                     // The right cluster is built here, not by the toolbar's own buttons: it has to sit
                     // right-aligned in ONE row at 1280 (Columns and Export are icon buttons for that),
-                    // and while rows are selected the strip carries Export, so only the switch and
-                    // Capture idea stay.
+                    // and while rows are selected the strip carries Export, so the right cluster is empty.
+                    alignActionsEnd
                     showColumns={false}
                     showExport={false}
                     exportConfig={{ filename: 'ideas.xlsx' }}
@@ -638,17 +638,16 @@ export function IdeasListView({
                             >
                               <Download className="size-4" />
                             </Button>
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              onClick={() => setCaptureOpen(true)}
+                            >
+                              <Plus className="size-4" />
+                              Capture idea
+                            </Button>
                           </>
                         ) : null}
-                        <IdeasViewToggle active="list" />
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          onClick={() => setCaptureOpen(true)}
-                        >
-                          <Plus className="size-4" />
-                          Capture idea
-                        </Button>
                       </>
                     }
                     bulkActionsSlot={({ openExport }) => (
