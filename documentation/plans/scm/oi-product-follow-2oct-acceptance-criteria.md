@@ -26,6 +26,11 @@ back to To confirm. A PO/SPO already linked to the line stays linked.
 - **AC-PF-5** A Confirm where the product did not move writes no `previous_item_code`, and
   a product-only change writes no `previous_qty` / `previous_delivery_date` (no false
   "Was 10 -> Now 10"). A row whose code is not a catalogue code is never rewritten.
+- **AC-PF-5b (R1, tester round)** A line whose old row is set aside because its
+  document is already received, or a line carried along by a Confirm of another line,
+  gets a fresh row on the new code with "was <old>", "Was item <old>" in its note, and a
+  handover line with "CHANGE ITEM CODE TO <new> (WAS <old>)". The set-aside row keeps
+  its old code and its link.
 - **AC-PF-6 (S3)** The worklist and the OI detail Lines tab show the new code with
   "was <old>" muted under it; no "was" when the product never moved.
   Test: `orderInquiryWorklistColumns.productFollow.test.tsx`.

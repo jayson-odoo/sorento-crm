@@ -107,6 +107,14 @@ removed line, GAP for a zeroed line.**
   they are (R2). When the settle DECLINES (two live rows, a lone placed row with no link,
   every row actioned), `_restate_product` makes the same writes on every live buy row of
   the line and `_tell_product_moves` puts it in the email once (review round 1, S2).
+- **Re-raised rows (tester FAIL on 3db1012a, 3 Oct).** Two shapes re-raise the line
+  instead of restating a row: a row whose PO/SPO is already RECEIVED is set aside as
+  "used" (history keeps its old code and its link, R2) and a fresh "Replaces N used" row
+  is raised; and a line carried along by a Confirm of another line is cancelled and
+  re-raised. In both the fresh row is where R1's switch shows: it carries
+  `previous_item_code` + "Was item X", and its handover line adds
+  "CHANGE ITEM CODE TO <new> (WAS <old>)" with the headline. No ruling exempts either
+  shape (R1 is not limited by link state; R2 only forbids unlinking).
 - **"Was" rule (review S5).** Every real settle says what THIS change moved:
   `previous_item_code` = old code only when the product moved, else NULL; a product-only
   change clears `previous_qty` / `previous_delivery_date` (no false "Was 10 -> Now 10").
