@@ -9,7 +9,10 @@ mode and is never touched.
 
 Pure data, no schema change on the policy table. The ids it flipped are kept in
 ``stock_visibility_wa_trim_backup`` so the downgrade restores exactly those rows, and not
-a row an admin set to ``compact`` on purpose. Idempotent: a second run finds no
+a row an admin set to ``compact`` on purpose (a flipped row an admin later re-saves as
+``compact`` still goes back, the backup cannot tell the two apart). The backup table has
+no model; ``alembic/env.py`` ``MIGRATION_ONLY_TABLES`` keeps autogenerate from proposing
+to drop it. Idempotent: a second run finds no
 ``detailed`` row and the backup insert skips ids it already holds.
 
 Plan: ``documentation/plans/chatbot/PLAN-wa-msg-trim.md``.

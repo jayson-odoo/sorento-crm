@@ -135,7 +135,7 @@
     },
     {
       "kind": "add_comment",
-      "text": "Team: customer_service\n⏰ SLA Alert: This contact is routed to you at 2026-09-05 12:00:00.\nYou have until 2026-09-05 16:00:00 to respond.\nYou have until 2026-09-06 12:00:00 to resolve.\nReference message: https://app.respond.io/space/364817/inbox/437264483#chat-turn-out_of_scope-assigned",
+      "text": "Team: customer_service\n\u23f0 SLA Alert: This contact is routed to you at 2026-09-05 12:00:00.\nYou have until 2026-09-05 16:00:00 to respond.\nYou have until 2026-09-06 12:00:00 to resolve.\nReference message: https://app.respond.io/space/364817/inbox/437264483#chat-turn-out_of_scope-assigned",
       "dry_run": false,
       "mention_user_ids": [
         "100000001"

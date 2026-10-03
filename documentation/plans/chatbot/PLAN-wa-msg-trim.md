@@ -12,12 +12,18 @@ fewer of them. All three changes below are owner decisions; no behaviour card is
 ## Changes
 
 1. Compact stock view for every contact.
-   - Global default stock visibility mode: detailed -> compact (code floor + seeded row).
-   - Contact policy rows with mode=detailed -> compact. mode=availability rows untouched.
+   - Global default stock visibility row (seeded detailed by migration 416): detailed -> compact.
+     The code floor `DEFAULT_MODE` stays detailed: it is reached only when no default row
+     exists (create_all test databases); the default row has no delete route, so a migrated
+     database never falls back to it.
+   - Access-type and contact policy rows with mode=detailed -> compact (access types too, or
+     a contact on a detailed access type keeps the detailed view). mode=availability rows
+     untouched.
    - Additive, idempotent alembic data migration with a working downgrade.
 2. n8n `sub-sendmsg` chunk limit 1800 -> 3900 chars (text), buttons body 1000 -> 1024
    (WhatsApp interactive body text limit). Split at line/paragraph boundaries only, as today.
-   Lives in the separate `sorento-crm-n8n` repo; prod n8n is not deployed by this lane.
+   Lives in prod n8n (workflow aoydkG1dbItXR5jXFEQsP), not in this repo: applied by crew on
+   3 Oct 2026 17:01 with the owner's go; this lane ships no n8n change.
 3. Out-of-scope escalation sends ONE message instead of two ("please wait" + "routed to PIC"):
    "Routed to your PIC, they will reply shortly."
 

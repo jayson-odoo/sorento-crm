@@ -137,7 +137,7 @@
     },
     {
       "kind": "add_comment",
-      "text": "Team: customer_service\n⏰ SLA Alert: This contact is routed to you at <preview>.\nYou have until <preview> to respond.\nYou have until <preview> to resolve.\nReference message: https://app.respond.io/space/364817/inbox/437264483#chat-turn-out_of_scope-dry-run",
+      "text": "Team: customer_service\n\u23f0 SLA Alert: This contact is routed to you at <preview>.\nYou have until <preview> to respond.\nYou have until <preview> to resolve.\nReference message: https://app.respond.io/space/364817/inbox/437264483#chat-turn-out_of_scope-dry-run",
       "dry_run": true,
       "preview": true,
       "mention_user_ids": []
