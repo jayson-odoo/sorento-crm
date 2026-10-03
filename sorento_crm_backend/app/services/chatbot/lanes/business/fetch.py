@@ -1776,12 +1776,16 @@ def _normalize_spec_word(v: Any) -> str:
 #: `base_property_words`' KEYS now, read through `Policy` (AC-1535) - which is a superset
 #: of the old literal (also "discontinued" and "brand", the S0 migration's own seed), a
 #: deliberate widening: a "discontinued" ask no longer needs its own miss line either.
-def _names_a_base_property(norm: str) -> bool:
+def _base_property_column(norm: str) -> str | None:
     words = default_policy().kind("product")
-    for w in (words.base_property_words if words is not None else {}):
+    for w, column in (words.base_property_words if words is not None else {}).items():
         if norm == w or (" " in w and w in norm):
-            return True
-    return False
+            return column
+    return None
+
+
+def _names_a_base_property(norm: str) -> bool:
+    return _base_property_column(norm) is not None
 
 
 _MISS_CODES_CAP = 5
@@ -1926,10 +1930,17 @@ def _project_product_specs(
             if isinstance(f, dict) and f.get("label") == "Product Code":
                 code = f.get("value")
                 break
+        # WA-CONCISE AC-19: List Price / Dimensions print only when the ask names them.
+        on_demand = {
+            label: column
+            for label, column in (("List Price", "list_price"), ("Dimensions", "dimensions"))
+            if not any(_base_property_column(norm) == column for norm, _w in asked)
+        }
         base = [
             f
             for f in fields
             if not (isinstance(f, dict) and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX))
+            and not (isinstance(f, dict) and f.get("label") in on_demand)
         ]
         # Hidden keys are dropped HERE, before either branch below runs - the
         # "Specs:" summary and the asked-word matching both read `spec_fields`.

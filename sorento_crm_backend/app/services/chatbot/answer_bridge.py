@@ -154,6 +154,10 @@ def apply_scope_block(
         )
         if scope is None or not answer.text:
             return answer
+        # WA-CONCISE AC-18: one named order whose number prints in the reply needs no header.
+        named = [line[len("Order: "):] for line in scope.split("\n") if line.startswith("Order: ")]
+        if len(named) == 1 and ", " not in named[0] and named[0] in answer.text:
+            return answer
         from dataclasses import replace
 
         lines = [line for line in answer.text.split("\n") if not _ORDER_DATE_LINE_RE.match(line)]
