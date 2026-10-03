@@ -51,7 +51,7 @@ code { font-size: 12px; }
 <body>
 <main>
   <h1>WhatsApp concise replies</h1>
-  <p class="muted">Lane WA-CONCISE, behaviour card v3, 3 Oct 2026 (v3: product code as a bold heading, then one fact per line as label: value; no separators). Person names, drivers and lorry plates are replaced with placeholders. Data: dev copy <code>sorento_cagent_stack</code>, outgoing replies 1 Aug to 18 Sep 2026 (12,607 replies). Person names, drivers and plates masked; codes, quantities, dates and company names are real.</p>
+  <p class="muted">Lane WA-CONCISE, behaviour card v4, 3 Oct 2026 (v4: today's field order and labels, every label bold, one fact per line; only repeated or empty facts go). Person names, drivers and lorry plates are replaced with placeholders. Data: dev copy <code>sorento_cagent_stack</code>, outgoing replies 1 Aug to 18 Sep 2026 (12,607 replies). Person names, drivers and plates masked; codes, quantities, dates and company names are real.</p>
 
   <div class="panel callout">
     <h3>Cost reality first</h3>
@@ -65,13 +65,13 @@ code { font-size: 12px; }
   <div class="panel table-wrap">
     <table>
       <thead><tr><th>#</th><th>Rule</th><th>When / sample size</th></tr></thead>
-            <tbody>
-        <tr><td>L1</td><td><b>Product code as heading, then one fact per line</b>, label: value, no blank line inside a product, one blank line between products. Order of lines: Incoming (Incoming: 49 / ETA / Container / Allocation, or "Incoming: none"); stock ("Total: N" only when more than one location, then one line per location "BRW: 24"); O/S in brackets "(O/S 10)"; "PO: none" when nothing is on order.</td><td>Stock and incoming replies</td></tr>
-        <tr><td>L2</td><td>Each fact once. The "Here's what you want: &bull; product: X / But no incoming matched these." echo, the "No incoming for X." sentence, the "But here are the stock details..." lead and the "stock is 0 at every location and nothing on order" sentence all become lines under the product.</td><td>Incoming ask, stock shown instead (478 + 737 replies)</td></tr>
-        <tr><td>L3</td><td>Zero locations print as today ("BRW: 0"); hiding them stays the per-contact setting.</td><td>Owner Q2</td></tr>
-        <tr><td>L4</td><td>Two companies: the company name leads each location line ("Sorento BRW: 0 (O/S 233)"). One company: no company name.</td><td>Sorento + Mocha lookups</td></tr>
-        <tr><td>R5</td><td>No opener when rows follow ("Stock details found for the requested products." and 4 others).</td><td>5,285 replies</td></tr>
-        <tr><td>R6</td><td>One named order: the "Customer: all customers / Product: all products / Order: X / Dates: all dates" header goes; the order number becomes the heading.</td><td>133 replies</td></tr>
+                  <tbody>
+        <tr><td>L1</td><td><b>Today's fields, today's order, every label bold</b> (<code>*Label:* value</code>), one fact per line, no blank line inside a block, one blank line between blocks. Orders: presenters.py:424-436 (Company, Order Number, Customer, Order Date, Actual Delivery Date, Status, Pickup Time, Transporter, Driver, Lorry Plate, Warehouse, Products). Incoming: presenters.py:849-873 (Company, Product Code, Product Name, Container, ETA and every other date, Incoming Quantity, Warehouse Allocations, Unallocated Quantity). Stock: presenters.py:1348-1352 and 1403-1447 (Company, Product Code, then locations). Values unchanged.</td><td>Stock, incoming and order replies</td></tr>
+        <tr><td>L2</td><td><b>Stock rows merge per company and product.</b> Today one product prints one block per location, each repeating Company, Product Code and Warehouse. Now: <code>*Company:*</code> (only when the reply spans two companies), <code>*Product Code:*</code>, then one <code>*BRW:* 28 (O/S: 0)</code> line per location. <code>*Total:*</code> only when more than one location.</td><td>Detailed and compact stock</td></tr>
+        <tr><td>L3</td><td><b>"No incoming" once.</b> The "Here's what you want: &bull; product: X / But no incoming matched these." echo, "No incoming for X.", the "But here are the stock details..." lead and the "stock is 0 at every location and nothing on order" sentence become lines in the product's block: <code>*Incoming:* none</code>, <code>*Stock:* 0</code>, <code>*PO:* none</code>.</td><td>Incoming ask, stock shown instead (478 + 737 replies)</td></tr>
+        <tr><td>L4</td><td>Zero locations print as today ("*BRW:* 0"); hiding them stays the per-contact setting.</td><td>Owner Q2</td></tr>
+        <tr><td>R5</td><td>No opener when rows follow ("Stock details found for the requested products." and 4 others). A single block has no "1.".</td><td>5,285 replies</td></tr>
+        <tr><td>R6</td><td>One named order: the "Customer: all customers / Product: all products / Order: X / Dates: all dates" header goes.</td><td>133 replies</td></tr>
         <tr><td>R7</td><td>Footer "_Updated 18/09/2026 17:32_" (was "_Data last updated: 18/09/2026 17:32:08_").</td><td>5,683 replies</td></tr>
         <tr><td>R8</td><td>Product list: List Price and Dimensions only when the customer asks for price or dimensions.</td><td>Owner Q5</td></tr>
       </tbody>
@@ -91,9 +91,9 @@ code { font-size: 12px; }
   <h2>Edge cases</h2>
   <div class="panel">
     <ul>
-      <li><b>No stock:</b> "Incoming: none", "Stock: 0", "PO: none" on three lines under the code. "PO: none" stands for today's "nothing on order" (PO lines and unshipped SPO allocations, answer.py:1406).</li><li><b>PO placed:</b> "PO: placed" followed by the PO lines as today.</li>
-      <li><b>No ETA:</b> "Incoming: none" appears once, under the product. An incoming row without an ETA keeps today's wording for it. Dealer availability lines unchanged.</li>
-      <li><b>Sorento + Mocha:</b> company name before each location (L4, example 5). A company that returned nothing keeps its "*Mocha:* no stock records for X." line.</li><li><b>Many locations:</b> one line per location (SRT382-6-DIY had 13), no blank lines between them.</li><li><b>Files:</b> "I have attached the file(s) below." stays whenever a file really goes out. In example 3 no file is recorded with the reply (UNVERIFIED whether one was sent), so the after drops it.</li><li><b>Picks:</b> lists of several products keep their numbers ("1. *CODE*") because number picks depend on them; a single product has no number.</li>
+      <li><b>No stock:</b> "*Incoming:* none", "*Stock:* 0", "*PO:* none" on three lines in the product block. "PO: none" stands for today's "nothing on order" (PO lines and unshipped SPO allocations, answer.py:1406).</li><li><b>PO placed:</b> "*PO:* placed" followed by the PO lines as today.</li>
+      <li><b>No ETA:</b> "*Incoming:* none" appears once, in the product block. An incoming row without an ETA keeps today's wording for it. Dealer availability lines unchanged.</li>
+      <li><b>Sorento + Mocha:</b> one block per company and product, "*Company:*" first as today (example 5). A company that returned nothing keeps its "*Mocha:* no stock records for X." line.</li><li><b>Many locations:</b> one line per location (SRT382-6-DIY had 13), no blank lines between them.</li><li><b>Files:</b> "I have attached the file(s) below." stays whenever a file really goes out. In example 3 no file is recorded with the reply (UNVERIFIED whether one was sent), so the after drops it.</li><li><b>Picks:</b> lists of several blocks keep their numbers ("1. *Product Code:* X") because number picks depend on them; a single product has no number.</li>
       <li><b>en / ms / zh:</b> reply templates are English (10 of 14,640 outgoing contain Chinese, all are "Here is what I heard" echoes). Rules are language-independent.</li>
       <li><b>Staff vs dealer:</b> the escalation offer is still gated exactly as today.</li>
     </ul>
@@ -103,7 +103,7 @@ code { font-size: 12px; }
 const EXAMPLES = [
   {
     title: "1. Incoming ask, nothing incoming, some stock (reply #72137, 18 Sep)",
-    rules: ["L1", "L2"],
+    rules: ["L1", "L2", "L3"],
     before: `Here's what you want:
 • product: SRTWT5844-GM
 
@@ -117,15 +117,15 @@ But here are the stock details for the requested products:
 *BRW:* 24 (O/S: 10)
 
 Would you like me to escalate to purchasing team?`,
-    after: `*SRTWT5844-GM*
-Incoming: none
-BRW: 24 (O/S 10)
+    after: `*Product Code:* SRTWT5844-GM
+*Incoming:* none
+*BRW:* 24 (O/S: 10)
 
 Would you like me to escalate to purchasing team?`
   },
   {
     title: "2. Nothing at all (reply #72139, 18 Sep)",
-    rules: ["L1", "L2"],
+    rules: ["L1", "L3"],
     before: `Here's what you want:
 • product: SRTWT5844-BL
 
@@ -138,16 +138,16 @@ But here are the stock details for the requested products:
 No incoming, stock is 0 at every location and nothing on order for SRTWT5844-BL.
 
 Would you like me to escalate to purchasing team?`,
-    after: `*SRTWT5844-BL*
-Incoming: none
-Stock: 0
-PO: none
+    after: `*Product Code:* SRTWT5844-BL
+*Incoming:* none
+*Stock:* 0
+*PO:* none
 
 Would you like me to escalate to purchasing team?`
   },
   {
     title: "3. Two products, one incoming and one not (reply #71023, 17 Sep)",
-    rules: ["L1", "L2"],
+    rules: ["L1", "L2", "L3"],
     before: `I have attached the file(s) below.
 
 1. *Product Code:* SRTWB1543
@@ -166,21 +166,21 @@ But here are the stock details for the requested products:
 *Outstanding:* 0
 
 Would you like me to escalate to purchasing team?`,
-    after: `1. *SRTWB1543*
-Incoming: 49
-ETA: 2026-09-09
-Container: IAAU1907074
-Allocation: BRW 35, BRW-BB 4, BRW-SMC 10
+    after: `1. *Product Code:* SRTWB1543
+*Container:* IAAU1907074
+*ETA:* 2026-09-09
+*Incoming Quantity:* 49
+*Warehouse Allocations:* BRW (35), BRW-BB (4), BRW-SMC (10)
 
-2. *SRTWB1543-BL*
-Incoming: none
-BRW: 20
+2. *Product Code:* SRTWB1543-BL
+*Incoming:* none
+*BRW:* 20 (O/S: 0)
 
 Would you like me to escalate to purchasing team?`
   },
   {
     title: "4. Stock for four products, several locations (reply #68348, 12 Sep, shown in today's compact view)",
-    rules: ["L1", "R5", "R7"],
+    rules: ["L1", "L2", "R5", "R7"],
     before: `Stock details found for the requested products.
 
 1. *Product Code:* IBWT3001-BL-DIY
@@ -201,25 +201,25 @@ Would you like me to escalate to purchasing team?`
 *BRW:* 0
 
 _Data last updated: 11/09/2026 17:26:05_`,
-    after: `1. *IBWT3001-BL-DIY*
-MOCHA-WH: 14
+    after: `1. *Product Code:* IBWT3001-BL-DIY
+*MOCHA-WH:* 14
 
-2. *IBWT3001-DIY*
-MOCHA-WH: 207
+2. *Product Code:* IBWT3001-DIY
+*MOCHA-WH:* 207
 
-3. *SRTSWT3001*
-Total: 136
-BRW: 28
-MWH: 108
+3. *Product Code:* SRTSWT3001
+*Total:* 136
+*BRW:* 28
+*MWH:* 108
 
-4. *SRTSWT3001-GM*
-BRW: 0
+4. *Product Code:* SRTSWT3001-GM
+*BRW:* 0
 
 _Updated 11/09/2026 17:26_`
   },
   {
     title: "5. One product in Sorento and Mocha (reply #70737, 17 Sep)",
-    rules: ["L1", "L4", "R5", "R7"],
+    rules: ["L1", "L2", "R5", "R7"],
     before: `Stock details found for the requested products.
 
 1. *Company:* Sorento
@@ -236,9 +236,13 @@ _Updated 11/09/2026 17:26_`
 *Quantity On Hand:* 1
 
 _Data last updated: 15/09/2026 17:15:58_`,
-    after: `*SRT6542-DIY*
-Sorento BRW: 0 (O/S 233)
-Mocha MOCHA-WH: 1
+    after: `1. *Company:* Sorento
+*Product Code:* SRT6542-DIY
+*BRW:* 0 (O/S: 233)
+
+2. *Company:* Mocha
+*Product Code:* SRT6542-DIY
+*MOCHA-WH:* 1
 
 _Updated 15/09/2026 17:15_`
   },
@@ -265,17 +269,17 @@ Here are the orders I found.
 *Products:* SRTKS7547-NEW (1), TPE-9201 (1), SRTKT71SS (1), TRANSPORT (1)
 
 _Data last updated: 10/09/2026 17:36:17_`,
-    after: `*SMC202609-0055*
-Status: Picked Up / In Transit
-Customer: CUSTOMER A (PROJECT-CASH)
-Order Date: 08/09/2026
-Delivery Date: 09/09/2026
-Pickup: 19:46:00
-Transporter: GLORY MOTION
-Driver: DRIVER B
-Lorry: PLATE-1
-Warehouse: BRW
-Products: SRTKS7547-NEW (1), TPE-9201 (1), SRTKT71SS (1), TRANSPORT (1)
+    after: `*Order Number:* SMC202609-0055
+*Customer:* CUSTOMER A (PROJECT-CASH)
+*Order Date:* 08/09/2026
+*Actual Delivery Date:* 09/09/2026
+*Status:* Picked Up / In Transit
+*Pickup Time:* 19:46:00
+*Transporter:* GLORY MOTION
+*Driver:* DRIVER B
+*Lorry Plate:* PLATE-1
+*Warehouse:* BRW
+*Products:* SRTKS7547-NEW (1), TPE-9201 (1), SRTKT71SS (1), TRANSPORT (1)
 
 _Updated 10/09/2026 17:36_`
   }
