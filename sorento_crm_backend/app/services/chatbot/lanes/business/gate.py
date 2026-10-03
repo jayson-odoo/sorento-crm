@@ -37,13 +37,14 @@ from functools import cmp_to_key
 from typing import Any
 
 from app.services.chatbot import jsc
+from app.services.ledger_family import apart_from_group, customer_group_of, group_key, ledger_family_key
 
 # PLAN-chatbot-answer-half-reattach.md "Roster cap" (owner ruling 20 Sep 2026):
 # `roster_caps=None` (the parameter never supplied at all) means the CALLER predates
 # `chatbot_entity_kinds.roster_cap` entirely - a raw `disallowed-entity-gate` port-
 # replay fixture (`tests/chatbot/test_replay.py`) or a hand-built low-level test with
 # no opinion on the feature - and gets `legacy_default` back: 10 for the customer
-# picker (`test_rearch_r3_roster_cap.py::test_a_missing_customer_key_or_none_means_10`
+# picker (`test_rearch_r3_roster_cap.py::test_a_missing_customer_key_means_50_and_none_means_10`
 # - a widening from the old literal 8, never a narrowing, so no recorded capture with
 # 8 or fewer real matches moves), uncapped for the product/attachment one (that arm
 # had NO ceiling at all before this column existed, and one port-replay capture in
@@ -51,9 +52,10 @@ from app.services.chatbot import jsc
 # default would be a port-fidelity regression `test_replay.py` has no signed
 # divergence for). A caller that DOES supply a mapping - `resolve_gate.run`, reached
 # from the real turn engine, which always builds one from every seeded
-# `chatbot_entity_kinds` row - gets that mapping honoured for real, `10` (the
-# column's own server default) for any kind missing from it.
-_DEFAULT_ROSTER_CAP = 10
+# `chatbot_entity_kinds` row - gets that mapping honoured for real, `50` (the
+# column's own server default since PICKER-NO-CAP, owner 2 Oct 2026, and the S3
+# ceiling) for any kind missing from it.
+_DEFAULT_ROSTER_CAP = 50
 
 
 def _roster_cap(
@@ -344,11 +346,16 @@ def _display_name(match: Any) -> str | None:
 def _cust_base(match: Any) -> str:
     """`_custBase` - the family GROUPING KEY, never customer copy."""
     name = _cust_name(match) or jsc.js_string(jsc.get(match, "canonical_code") or "")
+    # A customer group the turn holds for this name wins over the name rule.
+    group = customer_group_of(name)
+    if group is not None:
+        return group_key(group)
     base = name.upper()
     base = _BRACKET_OR_PAREN.sub(" ", base)
     base = _LEGAL_FORM.sub(" ", base)
     base = _NON_ALNUM_UPPER.sub(" ", base)
-    return base.strip()
+    # An ungrouped row beside a group of the same key: apart or joined, by the ONE switch.
+    return apart_from_group(base.strip())
 
 
 def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting it hides the order
@@ -1006,7 +1013,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             cust_pin_kept = True
         if not pick_applied and not cust_pinned and len(bases) > 1:
             # `legacy_default=10`: a widening from the old hard-coded eight-item slice,
-            # per `test_a_missing_customer_key_or_none_means_10`.
+            # per `test_a_missing_customer_key_means_50_and_none_means_10`.
             reps = list(bases.values())[: _roster_cap(roster_caps, "customer", legacy_default=10)]
             # FORWARD PROBE INPUT: keep a merged list - the candidates PLUS everything
             # else that resolved - so the probe can ask "does this customer have a
