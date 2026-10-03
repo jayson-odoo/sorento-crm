@@ -1,9 +1,9 @@
 # PLAN: Chatbot report engine (one catalogue, one spec, one executor)
 
-Status: slice 1 built, reviewed and live-parser verified (owner hand-test FAIL round, 3 Oct 2026:
-salesman ranking reroute, top N ceiling 1000, category over agent alias; full tests/chatbot 5508
-passed; live parser gpt-5.4-mini 21/21). Waiting on CI, the owner's re-test on the copy (crew SQL
-`report-engine-crew-publish-prompt.sql`, then the `production` label move) and #1445 on main.
+Status: slice 1 built, reviewed and live-parser verified; semantic-only round done (4 Oct 2026:
+parser `ranking_refine` / `measure` decide, every text-reading guard removed, held ranking frame).
+Live gpt-5.4-mini on prompt md5 0c997c10: 46/48. Waiting on CI, the browser pass on the final head
+and the owner's hand test (`laneboard/scripts/1447.md`). #1445 is on main.
 FULL track (new API-key route, per-audience access rule, data-only migration
 `report_engine_0001_prompt`: owner moves the parser `production` label after deploy). Card answered 2 Oct 2026 (`report-engine-behaviour-card.md`
 revision 2); section 0 below records how the answers change this plan, and wins over the
@@ -583,3 +583,30 @@ top selling. Rulings, each with red tests first and a kill test:
   the parser on gpt-5.4-mini (gpt-4o-mini misses the addendum).
 - **Open for the owner.** With `measure=qty` the header still reads "by delivered sales"; an
   agent coded literally "SA" or "REP" cannot be named as a filter on a ranking.
+
+### Semantic-only round (owner rule, 4 Oct 2026)
+
+Owner: the PARSER decides meaning; code never reads the message text with a regex or a word list
+("hard-coded rules are a blocker"). Crew: no regex even for value extraction. Rulings:
+
+- **Removed text rules.** The salesman reroute (`_ranked_who`, `_RANKED_NOUN_RE`,
+  `_sales_ranking_verdict`), the quantity-word measure guard, the person-noun entity drop and the
+  digit read of the reply to "How many?" are gone; kill tests pin their absence. The published
+  prompt parses "who's the top 3 salesman ..." as `sales_ranking` itself (live 46/48 overall).
+- **Parser keys.** `measure` ("qty" / "amount" / null, null = amount) and `ranking_refine`. The
+  ranked noun is never an entity; a count, period, basis or measure word after a sales ranking is
+  a refine; a message naming its own axis or subject is a new ask whose count and period come
+  only from that message.
+- **Held frame.** `Focus.sales_ranking_frame` holds the route args of the last ranking that ran.
+  It is merged only on a `sales_ranking` verdict with `ranking_refine` true, is an engine key (a
+  parser-emitted frame is stripped), is dealer-checked on refine, and is cleared by any other ask.
+  Compatible with STUCK-QTY-LOOP's central held-state rule: a held frame applies only when the
+  turn refines it; a new intent always wins.
+- **"How many?"** is answered from the parser's `top_n` for that turn; one re-ask, then the
+  default top 10 with "I couldn't read how many, so here is the top 10."
+- **Bare number after a ranking** = top N of that ranking (crew-ask, recommendation a; the owner
+  confirms in the morning).
+- **Follow-up for #1470 (LOWSTOCK-SEMANTIC).** The shared `required_fields` helper still reads
+  reply text itself (`collect`'s cancel words, `reply_verdict`'s "more than three words" / "?"
+  checks); #1470 replaces that capture with `reply_verdict`.
+- **Rate limit.** The route keeps 10 rankings per contact per 10 minutes.

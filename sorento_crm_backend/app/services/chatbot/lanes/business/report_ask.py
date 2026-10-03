@@ -389,17 +389,6 @@ def settle(
         extras = _dict(slot.get("extras"))
         args = _dict(extras.get("args"))
         reply_dates = {"start": parse_output.get("date_filter_start"), "end": parse_output.get("date_filter_end")}
-        reply_text = jsc.js_string(parse_output.get("required_ask_reply") or "")
-        if (
-            slot.get("asking") == "top_n"
-            and int(slot.get("misses") or 0) + 1 >= rf.MAX_MISSES
-            and rf._norm(reply_text) not in rf.CANCEL_WORDS
-            and top_n_from(parse_output.get("top_n")).status != "ok"
-        ):
-            # The second unreadable count runs the default top 10 and says so (crew ruling);
-            # the period field keeps the helper's own give-up.
-            values = {**_dict(slot.get("values")), "top_n": {"value": DEFAULT_TOP_N, "label": str(DEFAULT_TOP_N)}}
-            return rf.Outcome(values=values, extras={**_dict(slot.get("extras")), "note": DEFAULT_TOP_N_NOTE}), None
         outcome = rf.collect(
             db,
             SALES_RANKING_ASK,
@@ -408,6 +397,11 @@ def settle(
             given=_given_top_n(args, extras.get("top_n")),
             extras={"reply_dates": reply_dates, "reply_top_n": parse_output.get("top_n")},
         )
+        if slot.get("asking") == "top_n" and outcome.slot is None and not outcome.done and not outcome.cancelled:
+            # The helper gave up on the count (a second miss): run the default top 10 and say
+            # so (crew ruling). The period field keeps the helper's own give-up.
+            values = {**outcome.values, "top_n": {"value": DEFAULT_TOP_N, "label": str(DEFAULT_TOP_N)}}
+            return rf.Outcome(values=values, extras={**outcome.extras, "note": DEFAULT_TOP_N_NOTE}), None
         return outcome, None
 
     frame = parse_output.get("sales_ranking_frame")

@@ -1,4 +1,4 @@
--- crew-migration: publish report_engine_0001_prompt's chatbot parser prompt (REPORT-ENGINE, head 7085f0b4).
+-- crew-migration: publish report_engine_0001_prompt's chatbot parser prompt (REPORT-ENGINE, PR #1447; body md5 in the check below).
 -- Idempotent: inserts the next version only when no version carries this exact body; the
 -- tool append is guarded the same way. The production label is NOT moved here: the owner moves it in the admin
 -- Prompts screen (or crew runs the label step posted on PR #1447). Em-dashes in the body are
@@ -9,7 +9,7 @@ UPDATE chatbot_domains SET tools = array_append(tools, 'crm_report_ask')
 INSERT INTO ai_prompt_versions (id, name, version, type, template, variables, commit_message, created_at)
 SELECT gen_random_uuid(), 'chatbot_semantic_parser',
        COALESCE((SELECT max(version) FROM ai_prompt_versions WHERE name = 'chatbot_semantic_parser'), 0) + 1,
-       'text', replace($tpl_02b85a7c1e$You are the Sorento Semantic Parser. You are given:
+       'text', replace($tpl_55731c793b$You are the Sorento Semantic Parser. You are given:
 - Previous response: the assistant's last message to the user (may be "(none)").
 - current_user_message: the latest user message.
 
@@ -1769,11 +1769,12 @@ Every non-customer entity, and every customer entity without an account number, 
 
 == SALES RANKING: order_status "sales_ranking", domain_hint "order" ==
 Sales ranked or totalled BY one dimension (salesman, SA = sales agent, customer, brand,
-category, location, channel, month). intent_hint "check_order".
+category, location, channel, month). intent_hint "check_order". Two more keys on every
+object: "ranking_refine": true|false|null, "measure": "qty|amount|null".
   - "top 3 salesman for Sorento brand last month" -> order_status "sales_ranking",
     group_by "sales_agent", top_n 3, entities [Sorento as brand]
   - "who's the top 3 salesman for sorento water closet this year" -> sales_ranking,
-    group_by "sales_agent", top_n 3, [sorento as brand, water closet as category]
+    group_by "sales_agent", top_n 3, measure null, [sorento as brand, water closet as category]
   - "which location sold most SR1234 in September" -> group_by "warehouse", top_n 1,
     entities [SR1234 as product]
   - "top 5 customers for Cabana this year" -> group_by "customer", top_n 5, Cabana as brand
@@ -1782,15 +1783,37 @@ category, location, channel, month). intent_hint "check_order".
   - "how much did we sell of Cabana in August" -> group_by null (a total), Cabana as brand
 group_by also takes "sales_agent", "brand", "category", "channel" (dealer / project);
 location -> "warehouse". A named brand, sales agent or category is an entity
-{hint: "brand" | "sales_agent" | "category"}, never a customer. top_n: the number named,
-else null. rank_by "quantity" for qty, else null. basis "delivered" or "ordered" only
-when said, else null. sales_channel as for sales_report.
+{hint: "brand" | "sales_agent" | "category"}, never a customer. The ranked noun
+(salesman, sales agent, SA, rep, customers) is never an entity. basis "delivered" or
+"ordered" only when said, else null. sales_channel as for sales_report.
+measure "qty" only when the message names quantity, qty, units or pcs; "amount" when it
+names amount, RM or value; else measure null.
+Follow-up to a SALES RANKING: "Previous response" starts "Top N sales agents|customers|brands|
+categories|locations|channels|months by delivered sales" (or "by ordered sales", or "Bottom N").
+That is NOT a top selling list ("Top N selling items"): a number never picks a row
+(reference_positions []) and the ask stays "sales_ranking". A message that ONLY changes:
+  - the count: "5", "top 10", "show 20" -> ranking_refine true, top_n 5 / 10 / 20 (the number IS
+    top_n; a count refine never leaves top_n null)
+  - the period: "this year", "2025", "last month" -> ranking_refine true, those dates
+  - the basis: "ordered" -> ranking_refine true, basis "ordered"
+  - the measure: "by quantity" -> ranking_refine true, measure "qty"
+each with order_status "sales_ranking", group_by null, entities [], every other key null.
+A message naming its own axis or subject is a NEW ask: ranking_refine false; top_n and dates
+come ONLY from the current message, NEVER from "Previous response" or "Current subject"; the
+period of the previous ranking is never this ask's period.
+  - after that ranking, "top 3 salesman for sorento" -> ranking_refine false, top_n 3,
+    date_filter_start null, date_filter_end null
+  - "top salesman for sorento" -> ranking_refine false, top_n null
+  - answering "How many? For example top 5." with "5", "top 5" or "five" -> order_status
+    "sales_ranking", top_n 5
 NOT a sales ranking:
   - company totals by month, year or channel with nothing named and no ranking word
     ("sales by month this year", "dealer sales this year") stay "sales_analysis";
   - "sales report of X" stays "sales_report";
   - ranking PRODUCTS or CATEGORIES ("top 10 products", "hot selling", "which category
-    sells most") stays "top_selling".
+    sells most") stays "top_selling";
+  - "top 10 sales items for sorento" -> top_selling (items, not people);
+  - "top SA01 items this year" -> top_selling, SA01 as sales_agent.
 
 
 == MEMORY ==
@@ -1805,10 +1828,10 @@ CURRENT DATE
 
 CURRENT DATE: {{current_date}}
 
-If relative dates such as "today" or "yesterday" appear in the current turn input, convert them to absolute dates before calling the MCP tool.$tpl_02b85a7c1e$, '@@EMDASH@@', chr(8212)), '["current_date"]'::jsonb,
-       'report_engine_0001_prompt (REPORT-ENGINE 7085f0b4): sales_ranking vocabulary', now()
+If relative dates such as "today" or "yesterday" appear in the current turn input, convert them to absolute dates before calling the MCP tool.$tpl_55731c793b$, '@@EMDASH@@', chr(8212)), '["current_date"]'::jsonb,
+       'report_engine_0001_prompt (REPORT-ENGINE PR #1447): sales_ranking vocabulary', now()
  WHERE NOT EXISTS (SELECT 1 FROM ai_prompt_versions
-                    WHERE name = 'chatbot_semantic_parser' AND md5(template) = 'ff6bb49471f85e38ee395ec43b6f7465');
+                    WHERE name = 'chatbot_semantic_parser' AND md5(template) = '0c997c10fb46dd2995e53c6ad96cb7b6');
 COMMIT;
 -- check: SELECT version, length(template) FROM ai_prompt_versions WHERE name='chatbot_semantic_parser'
---         AND md5(template) = 'ff6bb49471f85e38ee395ec43b6f7465';   -- expect one row, length 127262
+--         AND md5(template) = '0c997c10fb46dd2995e53c6ad96cb7b6';   -- expect one row, length 129040
