@@ -390,7 +390,7 @@ def test_c_no_similar_creates_one_shot(env):
 
     sp = env.similar_calls[0]
     assert sp["product_id"] == "prod-1"
-    assert sp["text"] == PROBLEM
+    assert sp["text"] == MSG  # C4a: the raw message, not the extracted problem
     assert sp["submitter_crm_user_id"] == env.user.id
     assert sp["submitter_phone"] == env.phone
     assert sp["is_test"] is False
@@ -580,6 +580,31 @@ def test_f_new_creates_from_held_message(env, reply):
     assert "ideation" not in out["session_vars"]
 
 
+def test_c4a_similar_text_is_stripped_raw_message_not_extracted_problem(env):
+    env.ready()
+    raw = "  i have an idea, the price tag should show promo price in red  "
+    # the extractor is keyed by the text it is called with; script both forms
+    env.idea_message(raw)
+    env.idea_message(raw.strip())
+    assert PROBLEM != raw.strip()
+    env.created()
+    env.turn(raw)
+
+    assert len(env.similar_calls) == 1
+    assert env.similar_calls[0]["text"] == raw.strip()
+    assert env.similar_calls[0]["text"] != PROBLEM
+
+
+def test_c4a_new_after_held_list_makes_no_similar_call(env):
+    env.ready()
+    held = env.idea_message("chatbot should remember what the dealer asked before")
+    sv = env.pointer([{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held"}],
+                     message=held)
+    env.created()
+    env.turn("NEW", session_vars_in=sv)
+    assert env.similar_calls == []
+
+
 # --------------------------------------------------------------------------- #
 # G - another reply while held                                                #
 # --------------------------------------------------------------------------- #
@@ -593,7 +618,7 @@ def test_g_other_reply_drops_hold_and_runs_fresh(env):
 
     assert env.extractor_calls == [other]
     assert len(env.similar_calls) == 1
-    assert env.similar_calls[0]["text"] == PROBLEM
+    assert env.similar_calls[0]["text"] == other
     assert out["status"] == "complete"
     # The create is built from THIS message, never the dropped held one.
     assert all(c.get("raw_transcript") == other for c in env.create_calls)
