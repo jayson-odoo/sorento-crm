@@ -569,3 +569,32 @@ that lead is dynamic, records it as a Known gap.
   clause is registry-editable copy (`offer_hold`, `offer_hold_no_companies`), so there is no fixed
   whole line to catalogue. The sentences inside the final pass that it shares with other builders
   still translate.
+
+# Crew-tester round 1 fix (3 Oct): incoming answer and the cross-domain block
+
+Finding 1 of the crew-tester pass on 1168333a. An ms / zh stock ask whose code had no stock
+printed the cross-domain block under it in English. That block holds the "But there is INCOMING
+stock (ETA)" lead, the `- *Company:*` rows with `*Container:*` and the clearance labels, the flag
+lines, "No stock for X.", "No stock and no incoming for X." and the zero and PO-rung sentences.
+The "Couldn't find: X." line stayed English too. A direct incoming answer also stayed English.
+
+- **AC-CLI1:** every incoming label the presenter prints (`_incoming_list`, `_incoming_by_product`,
+  `_incoming_shipments`, `_CLEARANCE_PAIRS`) is catalogued, except ETA, ETC and ETD (Q3).
+- **AC-CLI2:** the three incoming tools are localized tools, so a direct incoming answer renders
+  its labels and intro in the reply language.
+- **AC-CLI3:** the final pass reads a `- ` led line the way it reads a `<n>. ` led one: a
+  catalogued label translates and the value never does. An uncatalogued label, a bare code or a
+  line with no label stays as it is.
+- **AC-CLI4:** a flag line (`<mark>  *(<flag>)*`) translates its flag when it is catalogued; the
+  mark and anything uncatalogued stay as they are.
+- **AC-CLI5:** the cross-domain lead and absence sentences, the four zero and plain pairs, the
+  eight PO-rung "found" headers, the four "nothing on order" sentences and "Couldn't find: {names}."
+  are catalogued. Two of them can share a line (INLINE). Values stay verbatim.
+
+Tests: `tests/chatbot/test_chat_language_incoming.py`. They render the block with the real
+`crossdomain_render` and pin the rung f-strings and the presenter literals.
+
+Finding 2 ("ya" after the Malay offer) is the parser model's verdict (#1323, no deterministic
+matcher). It waits on the crew's English control run. Finding 3 (ranking) needs a contact with
+the sales report grant and sales in the period. Finding 4 was a wrong Expected in the hand-test
+script, corrected on the PR.

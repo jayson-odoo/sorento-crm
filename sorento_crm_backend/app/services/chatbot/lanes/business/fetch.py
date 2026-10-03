@@ -2614,6 +2614,9 @@ _LOCALIZED_TOOLS = frozenset(
         "crm_procurement_po_placed_list",
         "crm_procurement_spo_allocations_last_receipt_list",
         "crm_procurement_po_last_cost_list",
+        "crm_incoming_stock_list",
+        "crm_incoming_stock_by_product",
+        "crm_incoming_stock_shipments",
     }
 )
 
@@ -2651,7 +2654,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     e = _extract_envelope(result)
     # CHAT-LANGUAGE: render-only. The envelope, the items and `answers` stay English; the
     # localizer only rewrites the strings printed below (absent = identity, byte-identical).
-    # Slices 1 and 2 cover the stock and the PO / SO / SPO / orders tools; the rest keep English.
+    # The stock, incoming and PO / SO / SPO / orders tools; the rest keep English.
     loc = (ctx.get("localizer") or IDENTITY) if ctx.get("tool") in _LOCALIZED_TOOLS else IDENTITY
     # Read once, for both the restricted-field drop below and the spec-visibility
     # drop (PLAN-spec-visibility-policy.md "Chatbot seam") - one contact, one

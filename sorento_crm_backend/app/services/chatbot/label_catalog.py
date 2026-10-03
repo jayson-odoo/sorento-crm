@@ -306,6 +306,61 @@ LABELS: dict[str, dict[str, str]] = {
     "Do you mean a customer named '{word}' or sales agent {agent}? Reply 1 for the customer, 2 for the sales agent.": {"ms": "Adakah anda maksudkan pelanggan bernama '{word}' atau ejen jualan {agent}? Balas 1 untuk pelanggan, 2 untuk ejen jualan.", "zh": "您是指名为 '{word}' 的客户还是销售代理 {agent}？回复 1 选择客户，回复 2 选择销售代理。"},
     "PENDING ALLOCATION": {"ms": "MENUNGGU PERUNTUKAN", "zh": "待分配"},
     "PARTIAL ALLOCATION": {"ms": "PERUNTUKAN SEBAHAGIAN", "zh": "部分分配"},
+    # Crew-tester finding 1 (3 Oct): the incoming answer and the cross-domain block under a stock
+    # miss. ETA, ETC and ETD are printed as they are (Q3) and have no entry.
+    "Container": {"ms": "Kontena", "zh": "货柜"},
+    "Shipment Container": {"ms": "Kontena Penghantaran", "zh": "货运货柜"},
+    "Estimated Arrival Date": {"ms": "Tarikh Anggaran Tiba", "zh": "预计到达日期"},
+    "Batch": {"ms": "Kelompok", "zh": "批次"},
+    "Incoming Quantity": {"ms": "Kuantiti Masuk", "zh": "到货数量"},
+    "Warehouse Allocations": {"ms": "Peruntukan Gudang", "zh": "仓库分配"},
+    "Unallocated Quantity": {"ms": "Kuantiti Belum Diperuntukkan", "zh": "未分配数量"},
+    "Shipment": {"ms": "Penghantaran", "zh": "货运"},
+    "Total Incoming Quantity": {"ms": "Jumlah Kuantiti Masuk", "zh": "到货总数量"},
+    "Distinct Products": {"ms": "Produk Berbeza", "zh": "产品种类"},
+    "ETA Delay": {"ms": "Kelewatan ETA", "zh": "ETA 延误"},
+    "CIDB Inspection": {"ms": "Pemeriksaan CIDB", "zh": "CIDB 检验"},
+    "CIDB Approval": {"ms": "Kelulusan CIDB", "zh": "CIDB 批准"},
+    "Gatepass": {"ms": "Pas Keluar", "zh": "出闸许可"},
+    "Warehouse Arrival": {"ms": "Tiba di Gudang", "zh": "到达仓库"},
+    "Collection Informed": {"ms": "Pengambilan Dimaklumkan", "zh": "已通知提货"},
+    "Collection": {"ms": "Pengambilan", "zh": "提货"},
+    "Loading": {"ms": "Pemuatan", "zh": "装货"},
+    "Liner": {"ms": "Syarikat Perkapalan", "zh": "船公司"},
+    "China Forwarder": {"ms": "Ejen Penghantaran China", "zh": "中国货代"},
+    "Malaysia Forwarder": {"ms": "Ejen Penghantaran Malaysia", "zh": "马来西亚货代"},
+    "Consignee": {"ms": "Penerima", "zh": "收货人"},
+    "Delivery Warehouse": {"ms": "Gudang Penghantaran", "zh": "送货仓库"},
+    "Free Days Available": {"ms": "Hari Percuma Berbaki", "zh": "剩余免费天数"},
+    "Stacked": {"ms": "Disusun", "zh": "已堆放"},
+    "COA Permit No.": {"ms": "No. Permit COA", "zh": "COA 许可证号"},
+    "PO date": {"ms": "Tarikh PO", "zh": "PO 日期"},
+    "Here is the incoming stock I found.": {"ms": "Berikut ialah stok masuk yang ditemui.", "zh": "以下是找到的到货库存。"},
+    "Here are the incoming shipments I found.": {"ms": "Berikut ialah penghantaran masuk yang ditemui.", "zh": "以下是找到的到货货运。"},
+    "ETA: not confirmed yet": {"ms": "ETA: belum disahkan", "zh": "ETA: 尚未确认"},
+    "But there is INCOMING stock (ETA) for the requested products:": {"ms": "Tetapi ada stok MASUK (ETA) untuk produk yang diminta:", "zh": "但所请求的产品有到货库存（ETA）："},
+    "But here are the stock details for the requested products:": {"ms": "Tetapi berikut ialah butiran stok untuk produk yang diminta:", "zh": "但以下是所请求产品的库存详情："},
+    "No stock for {codes}.": {"ms": "Tiada stok untuk {codes}.", "zh": "{codes} 没有库存。"},
+    "No incoming for {codes}.": {"ms": "Tiada stok masuk untuk {codes}.", "zh": "{codes} 没有到货。"},
+    "No stock and no incoming for {codes}.": {"ms": "Tiada stok dan tiada stok masuk untuk {codes}.", "zh": "{codes} 没有库存，也没有到货。"},
+    "No incoming and no stock for {codes}.": {"ms": "Tiada stok masuk dan tiada stok untuk {codes}.", "zh": "{codes} 没有到货，也没有库存。"},
+    "Stock is 0 at every location and no incoming for {codes}.": {"ms": "Stok 0 di setiap lokasi dan tiada stok masuk untuk {codes}.", "zh": "{codes} 在所有位置的库存均为 0，且没有到货。"},
+    "No incoming and stock is 0 at every location for {codes}.": {"ms": "Tiada stok masuk dan stok 0 di setiap lokasi untuk {codes}.", "zh": "{codes} 没有到货，且所有位置的库存均为 0。"},
+    # The PO rung (`answer._apply_crossdomain_rung`): four lead/trail pairs, two headers.
+    "No stock and no incoming for {codes}, but PO is placed:": {"ms": "Tiada stok dan tiada stok masuk untuk {codes}, tetapi PO telah dibuat:", "zh": "{codes} 没有库存，也没有到货，但已下 PO："},
+    "No incoming and no stock for {codes}, but PO is placed:": {"ms": "Tiada stok masuk dan tiada stok untuk {codes}, tetapi PO telah dibuat:", "zh": "{codes} 没有到货，也没有库存，但已下 PO："},
+    "Stock is 0 at every location and no incoming for {codes}, but PO is placed:": {"ms": "Stok 0 di setiap lokasi dan tiada stok masuk untuk {codes}, tetapi PO telah dibuat:", "zh": "{codes} 在所有位置的库存均为 0，且没有到货，但已下 PO："},
+    "No incoming and stock is 0 at every location for {codes}, but PO is placed:": {"ms": "Tiada stok masuk dan stok 0 di setiap lokasi untuk {codes}, tetapi PO telah dibuat:", "zh": "{codes} 没有到货，且所有位置的库存均为 0，但已下 PO："},
+    "No stock and no incoming for {codes}, but stock is on order from the supplier:": {"ms": "Tiada stok dan tiada stok masuk untuk {codes}, tetapi stok sedang dipesan daripada pembekal:", "zh": "{codes} 没有库存，也没有到货，但已向供应商订货："},
+    "No incoming and no stock for {codes}, but stock is on order from the supplier:": {"ms": "Tiada stok masuk dan tiada stok untuk {codes}, tetapi stok sedang dipesan daripada pembekal:", "zh": "{codes} 没有到货，也没有库存，但已向供应商订货："},
+    "Stock is 0 at every location and no incoming for {codes}, but stock is on order from the supplier:": {"ms": "Stok 0 di setiap lokasi dan tiada stok masuk untuk {codes}, tetapi stok sedang dipesan daripada pembekal:", "zh": "{codes} 在所有位置的库存均为 0，且没有到货，但已向供应商订货："},
+    "No incoming and stock is 0 at every location for {codes}, but stock is on order from the supplier:": {"ms": "Tiada stok masuk dan stok 0 di setiap lokasi untuk {codes}, tetapi stok sedang dipesan daripada pembekal:", "zh": "{codes} 没有到货，且所有位置的库存均为 0，但已向供应商订货："},
+    "No stock, no incoming and nothing on order for {codes}.": {"ms": "Tiada stok, tiada stok masuk dan tiada pesanan untuk {codes}.", "zh": "{codes} 没有库存、没有到货，也没有在订货。"},
+    "No incoming, no stock and nothing on order for {codes}.": {"ms": "Tiada stok masuk, tiada stok dan tiada pesanan untuk {codes}.", "zh": "{codes} 没有到货、没有库存，也没有在订货。"},
+    "Stock is 0 at every location, no incoming and nothing on order for {codes}.": {"ms": "Stok 0 di setiap lokasi, tiada stok masuk dan tiada pesanan untuk {codes}.", "zh": "{codes} 在所有位置的库存均为 0、没有到货，也没有在订货。"},
+    "No incoming, stock is 0 at every location and nothing on order for {codes}.": {"ms": "Tiada stok masuk, stok 0 di setiap lokasi dan tiada pesanan untuk {codes}.", "zh": "{codes} 没有到货、所有位置的库存均为 0，也没有在订货。"},
+    "Couldn't find: {names}.": {"ms": "Tidak dapat menemui: {names}.", "zh": "找不到：{names}。"},
+    "Couldn't find some items:": {"ms": "Tidak dapat menemui beberapa item:", "zh": "找不到部分项目："},
 }
 
 #: Presenter field key -> English label (slices 1 and 2).
@@ -350,6 +405,12 @@ FIELD_KEYS: dict[str, str] = {
     "unit_cost": "Cost / unit",
     "discount_per_unit": "Discount / unit",
     "unit_cost_after_discount": "Cost after discount / unit",
+    # Incoming (crew-tester finding 1).
+    "shipping_container_number": "Container",
+    "batch_number": "Batch",
+    "remaining_incoming_quantity": "Incoming Quantity",
+    "warehouse_allocations": "Warehouse Allocations",
+    "unallocated_quantity": "Unallocated Quantity",
 }
 
 FOOTER = "Data last updated: {ts}"
@@ -460,6 +521,18 @@ INLINE = frozenset(
         "Reply a number to pick, or 'yes' to escalate to {team}.",
         "Reply 'all dates' to search without the date filter.",
         "Reply 'all dates' to search without the date filter, or would you like me to escalate to {team} team?",
+        # The cross-domain absence sentences: two can share a line.
+        "No stock for {codes}.",
+        "No incoming for {codes}.",
+        "No stock and no incoming for {codes}.",
+        "No incoming and no stock for {codes}.",
+        "Stock is 0 at every location and no incoming for {codes}.",
+        "No incoming and stock is 0 at every location for {codes}.",
+        "No stock, no incoming and nothing on order for {codes}.",
+        "No incoming, no stock and nothing on order for {codes}.",
+        "Stock is 0 at every location, no incoming and nothing on order for {codes}.",
+        "No incoming, stock is 0 at every location and nothing on order for {codes}.",
+        "Couldn't find: {names}.",
     }
 )
 
@@ -477,7 +550,10 @@ _TOKEN_MAX = 200
 _INLINE_LINE_MAX = 1000
 _DATE_RANGE = re.compile(r"(?P<from>\d{2}/\d{2}/\d{4}) to (?P<to>\d{2}/\d{2}/\d{4})")
 _BREAKDOWN_VALUE = re.compile(r"\d[\d,]* \(O/S: ")
-_NUMBERED = re.compile(r"\d+\. ")
+#: A numbered row's `"<n>. "` or a cross-domain row's `"- "`; only the rest of the line is read.
+_NUMBERED = re.compile(r"\d+\. |- ")
+#: A flag line (`"⚠️  *(PRODUCT DISCONTINUED)*"`): the flag inside translates, the mark stays.
+_FLAG = re.compile(r"(\S+ +\*\()(.+)(\)\*)")
 _WRAPPERS = (("*_", "_*"), ("*", "*"), ("_", "_"))
 
 
@@ -561,9 +637,10 @@ class Localizer:
         """Finished report text, line by line: the first rule that matches wins.
 
         1. a catalogued sentence, bare or inside one wrapper (`*x*`, `*_x_*`, `_x_`);
-        2. `"<n>. <sentence>"`;
+        2. a flag line (`"⚠️  *(<flag>)*"`) whose flag is catalogued, then `"<n>. <sentence>"`
+           (or `"- <sentence>"`);
         3. a label line (`"<label>: <value>"`, bold `"*<label>:* <value>"`, optionally led by
-           `"<n>. "`) whose label is catalogued: the label translates, and the value only when
+           `"<n>. "` or `"- "`) whose label is catalogued: the label translates, and the value only when
            it is exactly a `VALUE_WORDS` entry or a `dd/mm/yyyy to dd/mm/yyyy` range;
         4. anything else, unchanged (rank lines, months, codes, `Unassigned`).
         The join is byte-exact."""
@@ -613,6 +690,9 @@ class Localizer:
         done = self._text(line, inline=False)
         if done != line:
             return done
+        flag = _FLAG.fullmatch(line)
+        if flag and flag.group(2) in self.table and not tokens(flag.group(2)):
+            return flag.group(1) + self.table[flag.group(2)] + flag.group(3)
         number = _NUMBERED.match(line)
         prefix, rest = (number.group(0), line[number.end() :]) if number else ("", line)
         if prefix:
