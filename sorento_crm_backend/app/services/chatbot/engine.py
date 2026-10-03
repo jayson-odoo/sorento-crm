@@ -5345,6 +5345,15 @@ def _run_stages_body(  # noqa: PLR0915
                     # ranking still on screen, so the "2" that answers it must not
                     # pick row 2 of the old list. The question closes the list.
                     state_out = dataclasses_replace(state_out, pending=None)
+                if (
+                    state_out.pending is not None
+                    and state_out.pending.kind in ("outstanding_detail", "outstanding_scope")
+                    and _answered_by_so_list(envelopes)
+                ):
+                    # crew-tester re-run on PR #1435 (3 Oct 2026): "1" under the summary got
+                    # the SO list's period question, and the sticky detail offer then read
+                    # "september" as narrowing the summary. The SO list answered: it closes.
+                    state_out = dataclasses_replace(state_out, pending=None)
                 turn_trace.record(
                     "looked_up",
                     summary="Looked the answer up.",
@@ -7542,6 +7551,16 @@ def _stock_ask_packing_list_files(envelopes: list[dict[str, Any]]) -> list[dict[
                 }
             )
     return files
+
+
+def _answered_by_so_list(envelopes: list[dict[str, Any]]) -> bool:
+    """Did the SO list (`lanes/business._so_list_reply`) answer this turn?"""
+    for env in envelopes:
+        raw = env.get("raw_fragment") if isinstance(env, dict) else None
+        fetched = raw.get("fetch") if isinstance(raw, dict) else None
+        if isinstance(fetched, dict) and fetched.get("so_list") is True:
+            return True
+    return False
 
 
 def _stock_ask_answered_entries(envelopes: list[dict[str, Any]]) -> list[dict[str, Any]]:

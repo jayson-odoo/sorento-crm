@@ -602,6 +602,15 @@ def _fixed_reply(text: str, *, top_selling_asked: str | None = None) -> dict[str
     }
 
 
+def _so_list_reply(text: str) -> dict[str, Any]:
+    """`_fixed_reply`, marked as the SO list's answer (`fetch.so_list`): the engine closes an
+    open outstanding offer on it, so the period the customer types next answers the list
+    rather than narrowing that report (crew-tester re-run on PR #1435, 3 Oct 2026)."""
+    fragment = _fixed_reply(text)
+    fragment["fetch"]["so_list"] = True
+    return fragment
+
+
 def _sales_report_not_enabled() -> dict[str, Any]:
     """S4 wiring point 4 (AC-1651): refuse a sales-report ask BEFORE any fetch, with
     ONE line and nothing else.
@@ -1412,12 +1421,12 @@ def run_fetch(
         if asked is not None:
             if trace is not None:
                 trace.add("so_list", {"period_asked": True, "customers": len(names_by_id)})
-            return _fixed_reply(asked)
+            return _so_list_reply(asked)
         end = end or do_ask.today_myt()
         start, end = (start, end) if start <= end else (end, start)
         if trace is not None:
             trace.add("so_list", {"from": start.isoformat(), "to": end.isoformat(), "customers": len(names_by_id)})
-        return _fixed_reply(so_status.list_text(db, names_by_id, start, end))
+        return _so_list_reply(so_status.list_text(db, names_by_id, start, end))
     # #1262 fix lane round 3, B1-r2: an order turn's brand ids are resolved ONCE, by
     # `turn_runtime.order_brand_filter` in the tool runner (typed words first, else the
     # brand the conversation carries), and the header names the same ids. Taken as is,

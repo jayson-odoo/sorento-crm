@@ -2754,6 +2754,10 @@ def make_tool_runner(
                 # customers and window, not the same report again. A product-subject
                 # report keeps its own SO detail rows (AC-1138): the SO list has no product.
                 lane_out = {**lane_out, "so_list": True, "outstanding_detail_pick": None}
+                # The conversation is on the SO list now: a period typed next continues
+                # it (`_asks_for_so_list` reads the carried document), not the summary.
+                focus.status = None
+                focus.document = ["SO"]
         brand_names: list[str] = []
         ranking = jsc.js_string(lane_out.get("order_status") or "").strip() == "top_selling"
         if domain == "order" and not ranking:
