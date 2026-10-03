@@ -18,7 +18,7 @@ from typing import Any
 
 from app.services.chatbot.turn import refer
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS, Pending, ask
-from app.services.chatbot.turn.task import MAX_NAMED, MAX_SLOTS, REFER_TO_SALESMAN, numbered
+from app.services.chatbot.turn.task import MAX_SLOTS, REFER_TO_SALESMAN, numbered
 
 #: Every escalation sentence the stock ask's composers print
 #: (`lanes/business/answer.py`, `turn/compose.py`), whole: the "reply with a code"
@@ -97,13 +97,8 @@ def did_you_mean(
     if len(labels) == 1:
         text = f"Couldn't find {shown}. Did you mean {labels[0]}?"
     else:
-        lines = labels[:MAX_NAMED]
-        more = (
-            [f"and {len(labels) - len(lines)} others, reply with the full code."]
-            if len(labels) > len(lines)
-            else []
-        )
-        text = "\n".join([f"Couldn't find {shown}. Did you mean:", *numbered(lines), *more])
+        # PICKER-NO-CAP (owner, 2 Oct 2026): every option the pick carries is printed.
+        text = "\n".join([f"Couldn't find {shown}. Did you mean:", *numbered(labels)])
     pick = ask(
         "product_pick",
         options,

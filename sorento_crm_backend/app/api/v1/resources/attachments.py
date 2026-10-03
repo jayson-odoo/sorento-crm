@@ -1684,6 +1684,14 @@ async def resubmit_attachment_webhook(
         attachment_service = AttachmentService(db)
         attachment = attachment_service.get_attachment(attachment_id)
 
+        # An untyped attachment is never sent to n8n (owner rule, 2 Oct 2026), even
+        # one with a log from before that rule; say so rather than send it.
+        if getattr(attachment, "attachment_type_id", None) is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This file has no attachment type, so it is not sent to n8n.",
+            )
+
         # Find the integration log for this attachment
         integration_service = IntegrationLogService(db)
         logs_result = integration_service.list_integration_logs(
