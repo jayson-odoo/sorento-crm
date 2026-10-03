@@ -29,6 +29,10 @@ the name rule as fallback.
   that company, reuse the existing group); set members' `customer_group_id` where null.
   Measured on dev: 796 groups, 2,804 rows, none of CASH / SHOPEE / LAZADA (they hold no
   numbered account, so no skip list is needed).
+  **Superseded 3 Oct 2026 (owner ruling, option b: no automatic name-matching joins, explicit
+  links only).** `cust_group_0001` is DDL only and assigns no customer on upgrade (lane
+  CUST-GROUP-SEED-REVIEW, PR #1451). Groups are seeded from an owner-reviewed list instead:
+  `documentation/plans/master-data/PLAN-customer-group-seed-review-3oct.md`.
 - Crew SQL for the shared dev DB: `crew/state/migrations/CUSTOMER-GROUP.sql`, the DDL only
   (idempotent); the seed UPDATE is held for the owner per the crew contract, or run via
   `alembic upgrade` on the test copy.
