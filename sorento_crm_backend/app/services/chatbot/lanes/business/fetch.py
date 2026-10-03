@@ -2633,7 +2633,7 @@ _DROPPED_OPENERS = (
 )
 
 
-def _compact_stock_block(it: Any) -> Any:
+def compact_stock_block(it: Any) -> Any:
     """A compact entry with exactly one location line drops its Total (it repeats the
     location); none or several keep it."""
     if not isinstance(it, dict) or not isinstance(it.get("fields"), list):
@@ -2644,7 +2644,7 @@ def _compact_stock_block(it: Any) -> Any:
     return {**it, "fields": [f for f in it["fields"] if jsc.get(f, "label") != "Total"]}
 
 
-def _merge_stock_rows(items: list[Any]) -> list[Any]:
+def merge_stock_rows(items: list[Any]) -> list[Any]:
     """Detailed stock rows merged to one block per (company, product code), first-seen order:
     Company (only when the rows span more than one), Product Code, Product Name, then one
     `System Location: quantity` line per row (Warehouse dropped), with a Total ahead of them
@@ -3201,9 +3201,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     block_form = rtype in _BLOCK_RESULT_TYPES
     if block_form and flat_items:
         if rtype == "stock":
-            flat_items = _merge_stock_rows(flat_items)
+            flat_items = merge_stock_rows(flat_items)
         elif rtype == "stock_compact":
-            flat_items = [_compact_stock_block(it) for it in flat_items]
+            flat_items = [compact_stock_block(it) for it in flat_items]
         if opener.strip() in _DROPPED_OPENERS and msg.startswith(opener):
             msg = msg[len(opener):]
     # One block is unnumbered, but only on the first page of a counted set.

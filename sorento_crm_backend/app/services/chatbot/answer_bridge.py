@@ -268,7 +268,6 @@ def apply_crossdomain_hit(
             dry_run=dry_run,
             item=item,
         )
-        result = _prefix_zero_note(result)
         from dataclasses import replace
 
         # ESCALATION-CONTROL: staff and a barred contact alike get no offer.
@@ -1495,60 +1494,65 @@ def _block_product_codes(block_text: Any) -> set[str]:
     return {m.group(1) for m in _RUNG_ROW_CODE_RE.finditer(block_text) if m.group(1)}
 
 
-def _prefix_zero_note(result: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Hand pass 11, defect 1: `"No {primary_word} for {codes}."`, the SAME string
-    template `answer.py::crossdomain_render`'s own `only_other_note` already uses
-    (`f"No {primary_word} for {', '.join(only_other)}."`) - built here rather than
-    inside that shared function, because its OWN gate deliberately never fires for a
-    `zero: True` code (owner ruling 11 Sep 2026, second ruling, R2(b): "a zero code
-    never earns AC-820's own 'no {primary} for X' only-other line either way - the
-    zero sentence two paragraphs later already says the same thing" - true for a
-    MISS, where `not_found_error_message` already named the code up front, but a HIT
-    has no miss sentence of its own naming it at all). `crossdomain_render` itself
-    stays byte-identical (`test_crossdomain_ladder.py`'s own
-    `test_stock_origin_zero_but_incoming_answers_no_po_probe` pins "no zero sentence"
-    for the SAME shape on the miss path).
+_BLOCK_START_RE = re.compile(r"^(?:\d+\. )?\*(?:Company|Product Code):\*")
+_BLOCK_CODE_RE = re.compile(r"^\*Product Code:\*[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+_INCOMING_OPENER = "Here is the incoming stock I found."
 
-    Only for a code whose OWN rung genuinely rendered something (not in the block's
-    own `nothing_codes` - that shape already gets its own sentence from
-    `_apply_crossdomain_rung`/`nothing_note`, unchanged): the mixed set's non-zero
-    code never reaches `zeroset.missing` at all, so it is never named here either.
-    """
+
+def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
+    """WA-CONCISE card v4: the cross-domain blocks join the primary reply as more blocks of
+    one list. A primary block for a code the cross-domain block repeats (a stock row that
+    reads 0, now `*Stock:* 0`) gives way to it, the incoming opener goes, and when more than
+    one block remains they number on from 1 across both. A primary with no block left is
+    dropped whole, footer included. Returns `(primary, cross-domain text)`."""
+    xd_paras = xd_text.split("\n\n")
+    xd_codes = {c.upper() for p in xd_paras for c in _BLOCK_CODE_RE.findall(p)}
+    paras = [
+        p
+        for p in primary.split("\n\n")
+        if p != _INCOMING_OPENER
+        and not (
+            _BLOCK_START_RE.match(p) and {c.upper() for c in _BLOCK_CODE_RE.findall(p)} & xd_codes
+        )
+    ]
+    if not any(_BLOCK_START_RE.match(p) for p in paras):
+        paras = []
+    total = sum(1 for p in paras + xd_paras if _BLOCK_START_RE.match(p))
+    if total < 2:
+        return "\n\n".join(paras), xd_text
+    n = 0
+
+    def number(p: str) -> str:
+        nonlocal n
+        if not _BLOCK_START_RE.match(p):
+            return p
+        n += 1
+        return f"{n}. " + re.sub(r"^\d+\. ", "", p)
+
+    return "\n\n".join(number(p) for p in paras), "\n\n".join(number(p) for p in xd_paras)
+
+
+def _block_covers_asked(result: Mapping[str, Any], resolved: Mapping[str, Any]) -> bool:
+    """WA-CONCISE card v4: the cross-domain blocks name every asked code (and no word went
+    unplaced), so the miss sentence that would repeat them can go."""
     zeroset = result.get("zeroset") if isinstance(result, Mapping) else None
     xd = zeroset.get("_xd") if isinstance(zeroset, Mapping) else None
     render = result.get("render") if isinstance(result, Mapping) else None
     block = render.get("_xdBlock") if isinstance(render, Mapping) else None
-    if not isinstance(xd, Mapping) or not isinstance(block, Mapping):
-        return result
-    nothing_codes = {c for c in (block.get("nothing_codes") or []) if isinstance(c, str)}
-    rendered_codes = _block_product_codes(block.get("block"))
-    codes: list[str] = []
-    for m in xd.get("missing") or []:
-        if not (isinstance(m, Mapping) and m.get("zero") is True):
-            continue
-        code = m.get("code") or m.get("_n")
-        if not (isinstance(code, str) and code) or code in nothing_codes or code in codes:
-            continue
-        if rendered_codes and code not in rendered_codes:
-            continue
-        codes.append(code)
-    if not codes:
-        return result
-    # Nit N-2 (reviewer, hand pass 11): always "stock", never "incoming" - `zero: True`
-    # (the only way a `missing` entry survives the loop above) is stamped ONLY on the
-    # `dh == "inventory"` arm (`lanes/business/answer.py:683-692`), so `origin_domain`
-    # (== `dh`) is always "inventory" here; the incoming half of the old ternary was
-    # unreachable dead code.
-    note = f"No stock for {', '.join(codes)}."
-    old_block_text = block.get("block") or ""
-    new_block = dict(block)
-    new_block["block"] = f"{note}\n\n{old_block_text}" if old_block_text else note
-    new_render = {**render, "_xdBlock": new_block}
-    return {**result, "render": new_render}
+    if not isinstance(xd, Mapping) or not isinstance(block, Mapping) or resolved.get("unresolved_tokens"):
+        return False
+    asked = [str(m.get("code") or m.get("_n") or "") for m in xd.get("missing") or [] if isinstance(m, Mapping)]
+    named = [c.upper() for c in _block_product_codes(block.get("block"))]
+    return bool(asked) and all(any(n.startswith(a.upper()) for n in named) for a in asked)
 
 
 def _apply_crossdomain_render(
-    text: str, result: Mapping[str, Any], *, answered: bool = False, include_offer: bool = True
+    text: str,
+    result: Mapping[str, Any],
+    *,
+    answered: bool = False,
+    include_offer: bool = True,
+    covers: bool = False,
 ) -> str:
     """The rung's own rendered block, folded above the escalate marker, from the
     ALREADY-COMPUTED `result` `_run_crossdomain_ladder` (above) returned - this
@@ -1576,12 +1580,17 @@ def _apply_crossdomain_render(
     if not isinstance(block, Mapping) or block.get("any") is not True or not block.get("block"):
         return text
     variables: dict[str, Any] = {"last_result_set": [True]} if answered else {}
+    if answered:
+        text, xd_text = _fold_blocks(text, str(block["block"]))
+        block = {**block, "block": xd_text}
+        covers = covers or not text
     sealed = {"reply": {"text": text, "session_patch": {"user_response": text, "variables": variables}}}
     merged = tail_compose.crossdomain_compose(
         sealed,
         result={"result": {"xd": {"block": dict(block)}}},
         answered=answered,
         include_offer=include_offer,
+        covers=covers,
     )
     merged_text = (merged.get("reply") or {}).get("session_patch", {}).get("user_response")
     return merged_text if isinstance(merged_text, str) and merged_text else text
@@ -1959,7 +1968,10 @@ def answer_for(
         )
     # #1262 slice 11 (F8): same audience gate as the HIT-side ladder rung above.
     text = _apply_crossdomain_render(
-        text, crossdomain_result, include_offer=offers_escalation(profile)
+        text,
+        crossdomain_result,
+        include_offer=offers_escalation(profile),
+        covers=_block_covers_asked(crossdomain_result, resolved),
     )
     if dealer_stock_ask:
         # Owner ruling 26 Sep 2026 (hand test F1): a dealer's stock ask never offers
