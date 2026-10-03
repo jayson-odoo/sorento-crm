@@ -1,6 +1,6 @@
 # PLAN: WA-MSG-TRIM - fewer outgoing WhatsApp messages
 
-Status: in progress (small fix track: data migration only, no auth/RBAC, no new ingest surface)
+Status: in review, PR #1454 (small fix track: data migration only, no auth/RBAC, no new ingest surface)
 
 ## Why
 
