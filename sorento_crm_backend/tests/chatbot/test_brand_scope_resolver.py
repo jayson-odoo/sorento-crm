@@ -36,7 +36,9 @@ def _resolve(db, tokens, *, types=("product",)):
 
 
 def _text(payload) -> str:
-    return json.dumps(payload, default=str)
+    import re
+
+    return re.sub(r'"elapsed_ms": [0-9.eE+-]+', '"elapsed_ms": 0', json.dumps(payload, default=str))
 
 
 def _near_miss(code: str) -> str:
@@ -52,10 +54,13 @@ def test_exact_code_of_an_in_scope_product_resolves(db, world) -> None:
 @pytest.mark.parametrize("which", ["sorento", "null"])
 def test_exact_code_of_an_out_of_scope_product_resolves_to_nothing(db, world, which) -> None:
     """AC-8: no match, and the product's id and code are nowhere in the reply."""
-    out = _text(_resolve(_scoped(db, world), [world.codes[which]]))
+    scoped = _scoped(db, world)
+    ghost = "ZZT-GHOST-" + uuid.uuid4().hex[:6].upper()
+    out = _text(_resolve(scoped, [world.codes[which]]))
+    miss = _text(_resolve(scoped, [ghost]))
     product = {"sorento": world.p_sorento, "null": world.p_null}[which]
     assert str(product.id) not in out
-    assert out.count(world.codes[which]) <= 1, "only the typed token may echo back"
+    assert out.count(world.codes[which]) == miss.count(ghost), "only the typed token echoes, as for a ghost"
 
 
 @pytest.mark.parametrize("which", ["sorento", "null"])

@@ -14,6 +14,7 @@ Example 4 (top selling for a CABANA + SORENTO contact) is covered per path in
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -91,8 +92,8 @@ def test_example_2_and_3_reply_equals_the_reply_for_a_nonexistent_code(
     text, matched = _ask(session_factory, system_settings_row, monkeypatch, stub_parser, stub_access, seed, code)
     miss, _ = _ask(session_factory, system_settings_row, monkeypatch, stub_parser, stub_access, seed, ghost)
     assert product.id not in matched, "the resolver matched an out-of-scope product"
-    assert text.startswith("Couldn't find"), text
-    assert text.replace(code, "<X>").replace(code.upper(), "<X>") == miss.replace(ghost, "<X>").replace(ghost.upper(), "<X>")
+    assert "Couldn't find" in text, text
+    assert re.sub(re.escape(code), "<X>", text, flags=re.I) == re.sub(re.escape(ghost), "<X>", miss, flags=re.I)
 
 
 def test_unscoped_contact_still_resolves_every_product(

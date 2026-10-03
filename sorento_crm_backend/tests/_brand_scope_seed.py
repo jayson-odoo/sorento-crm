@@ -144,11 +144,13 @@ class BrandWorld:
     def _do(self, db, lines) -> Order:
         row = order(db, company_id=DEFAULT_COMPANY_ID, customer_id=self.cust.id, number=unique_code("DO"))
         row.debtor_name = "ZZT BRAND CUSTOMER"
+        row.source_book = "db1"  # AutoCount DO: each line carries its own total
+        row.order_date = date(2026, 6, 1)  # inside the reports' 2026 window
         for seq, (prod, qty, total) in enumerate(lines, start=1):
             db.add(
                 OrderLine(
                     id=str(uuid.uuid4()), order_id=row.id, product_id=prod.id,
-                    warehouse_id=self.wh.id, quantity=qty, total=total, line_sequence=seq,
+                    warehouse_id=self.wh.id, quantity=qty, total=total, total_excluding_tax=total, line_sequence=seq,
                     company_id=DEFAULT_COMPANY_ID,
                 )
             )
