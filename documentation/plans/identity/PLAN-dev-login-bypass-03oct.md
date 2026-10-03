@@ -1,6 +1,6 @@
 # PLAN: Dev auto-login for local test copies (DEV-LOGIN-BYPASS)
 
-Status: Built, security fix round 1 in review (PR #1449). Track: full (auth change, migration,
+Status: Built; reviewer and security review passed after two fix rounds (PR #1449), awaiting CI and hand test. Track: full (auth change, migration,
 security review mandatory).
 
 Owner ask (3 Oct 2026): "a dev mode to bypass all these logins for hand testing, to boost our
@@ -62,7 +62,10 @@ Frontend:
    `__NEXT_PRIVATE_ORIGIN`. This closes security review B2: the Host header is caller-controlled,
    so a LAN / Tailscale peer could otherwise send `Host: localhost` through NextAuth's own
    callback. Next reports `localhost` when bound to every interface, so only `127.0.0.1` counts.
-   Consequence: a copy with dev login on cannot also be reached over Tailscale / LAN.
+   Consequence: a copy with dev login on cannot also be reached over Tailscale / LAN. Start it
+   with exactly `-H 127.0.0.1`: `-H localhost` reads the same as an all-interfaces bind and is
+   refused. The bind check assumes no tunnel in front of the dev server (`tailscale serve`,
+   `ssh -L`, a local reverse proxy); never put one in front of a dev-login copy.
 4. The browser Host is `localhost`, `*.localhost` or `127.0.0.1` (stops DNS rebinding).
 A loud console warning is logged when the provider is registered.
 

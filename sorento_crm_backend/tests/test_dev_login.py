@@ -383,6 +383,70 @@ def test_kill_app_import_crashes_with_flag_and_defaulted_environment(tmp_path):
     assert "ENVIRONMENT is not set explicitly" in (proc.stderr + proc.stdout)
 
 
+def test_running_under_gunicorn_reads_sys_modules(monkeypatch):
+    monkeypatch.delitem(sys.modules, "gunicorn", raising=False)
+    assert dev_login.running_under_gunicorn() is False
+    monkeypatch.setitem(sys.modules, "gunicorn", object())
+    assert dev_login.running_under_gunicorn() is True
+
+
+@pytest.mark.parametrize("marker", ["/.dockerenv", "/run/.containerenv"])
+def test_running_in_container_reads_the_marker_files(monkeypatch, marker):
+    monkeypatch.setattr(dev_login.os.path, "exists", lambda p: p == marker)
+    assert dev_login.running_in_container() is True
+    monkeypatch.setattr(dev_login.os.path, "exists", lambda p: False)
+    assert dev_login.running_in_container() is False
+
+
+def test_kill_app_import_crashes_under_gunicorn(tmp_path):
+    """Reviewer R1: app.main must actually hand the gunicorn detection to the assertion.
+    Otherwise-safe dev settings, but gunicorn already imported, as under start.sh's preload."""
+    proc = subprocess.run(
+        [sys.executable, "-c", "import gunicorn, app.main"],
+        cwd=BACKEND_ROOT,
+        env=_hermetic_env(tmp_path, ENVIRONMENT="development"),
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert proc.returncode != 0
+    assert "runs under gunicorn" in (proc.stderr + proc.stdout)
+
+
+def test_kill_app_import_crashes_in_a_container(tmp_path):
+    """Reviewer R1: same for the container check, with the marker file faked in the child."""
+    code = (
+        "import os; _real = os.path.exists; "
+        "os.path.exists = lambda p: p == '/.dockerenv' or _real(p); "
+        "import app.main"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=BACKEND_ROOT,
+        env=_hermetic_env(tmp_path, ENVIRONMENT="development"),
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert proc.returncode != 0
+    assert "runs inside a container" in (proc.stderr + proc.stdout)
+
+
+def test_app_import_succeeds_for_a_safe_local_dev_run(tmp_path):
+    """The control: the same hermetic child with nothing unsafe starts fine, so the two kill
+    tests above fail for the reason they name."""
+    proc = subprocess.run(
+        [sys.executable, "-c", "import app.main"],
+        cwd=BACKEND_ROOT,
+        env=_hermetic_env(tmp_path, ENVIRONMENT="development"),
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "DEV_AUTO_LOGIN is ACTIVE" in (proc.stderr + proc.stdout)
+
+
 # --------------------------------------------------------------------------- deploy guard
 
 
@@ -402,7 +466,7 @@ def _deploy_files() -> list[Path]:
     ]
     # Every committed env file: none of them is a crew test copy's (crew sets the flag only
     # through its own env_overrides, outside the repo).
-    tracked = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT, capture_output=True, text=True).stdout.split()
+    tracked = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT, capture_output=True, text=True).stdout.splitlines()
     files += [REPO_ROOT / t for t in tracked if Path(t).name.startswith(".env")]
     skip = ("node_modules", "/venv/", "/.next/")
     return [f for f in dict.fromkeys(files) if f.is_file() and not any(s in str(f) for s in skip)]

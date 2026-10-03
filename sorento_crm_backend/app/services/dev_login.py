@@ -23,6 +23,8 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import logging
+import os
+import sys
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,16 @@ logger = logging.getLogger(__name__)
 ALLOWED_ENVIRONMENTS = frozenset({"development", "dev", "local", "test"})
 MIN_SECRET_LENGTH = 16
 SECRET_HEADER = "x-dev-login-secret"
+
+
+def running_under_gunicorn() -> bool:
+    """Production runs ``python -m gunicorn`` with preload_app (start.sh), so gunicorn is
+    already imported when app.main is."""
+    return "gunicorn" in sys.modules
+
+
+def running_in_container() -> bool:
+    return os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
 
 
 def environment_allowed(environment: Optional[str]) -> bool:
