@@ -20,6 +20,9 @@ fewer of them. All three changes below are owner decisions; no behaviour card is
      a contact on a detailed access type keeps the detailed view). mode=availability rows
      untouched.
    - Additive, idempotent alembic data migration with a working downgrade.
+   - Compact keeps the zero-stock "try these instead" suggestions (owner, 3 Oct 2026):
+     `inventory_service.py` suppresses them for `availability` only; AC-B14 amended in
+     `documentation/plans/_archive/inventory/stock-visibility-policy-acceptance-criteria.md`.
 2. n8n `sub-sendmsg` chunk limit 1800 -> 3900 chars (text), buttons body 1000 -> 1024
    (WhatsApp interactive body text limit). Split at line/paragraph boundaries only, as today.
    Lives in prod n8n (workflow aoydkG1dbItXR5jXFEQsP), not in this repo: applied by crew on
