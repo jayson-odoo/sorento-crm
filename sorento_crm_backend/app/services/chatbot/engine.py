@@ -3871,6 +3871,18 @@ def _run_stages(  # noqa: PLR0915
         )
         if so_list_rule:
             turn_trace.add("so_list", {"verdict_rule": so_list_rule})
+            # Owner hand test, 3 Oct 2026: over an open outstanding summary, "find all my
+            # sales order" was read as re-scoping THAT report (its detail offer and the
+            # carried `focus.status` both survived) and printed it again. An SO list ask
+            # starts its own question: the outstanding offer and status go.
+            import dataclasses as _dc
+
+            open_kind = getattr(state_in.pending, "kind", None)
+            state_in = _dc.replace(
+                state_in,
+                focus=_dc.replace(state_in.focus, status=None),
+                pending=None if open_kind in ("outstanding_detail", "outstanding_scope") else state_in.pending,
+            )
 
         # PR #1353 fix round 3: a bare position over an open roster is read by the
         # engine, and its positions win over the parser's (turn 3f56a40d: "2" read as 1).

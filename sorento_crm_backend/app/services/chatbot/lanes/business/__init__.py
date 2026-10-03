@@ -1384,6 +1384,16 @@ def run_fetch(
         for e in jsc.array(entities)
         if isinstance(e, dict) and e.get("entity_type") == "customer" and fetch_mod.is_uuid(e.get("uuid"))
     ]
+    if parse_output.get("so_list") is True and not customer_ids:
+        # The "Sales order list" pick off an outstanding summary: its customers ride on the
+        # answered offer's carry (`turn_runtime.outstanding_carry`), never re-typed. A
+        # scoped contact's carry is held to its links all the same.
+        customer_ids = [
+            u for u in jsc.array(parse_output.get("outstanding_carried_customer_ids")) if fetch_mod.is_uuid(u)
+        ]
+        if scoped_to_links:
+            own = {str(i) for i in customer_scope["ids"]}
+            customer_ids = [u for u in customer_ids if str(u) in own] or list(customer_scope["ids"])
     if parse_output.get("so_list") is True and parse_output.get("domain_hint") == "order" and customer_ids and db is not None:
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")

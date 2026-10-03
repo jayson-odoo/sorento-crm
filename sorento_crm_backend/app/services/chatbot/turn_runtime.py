@@ -2748,6 +2748,12 @@ def make_tool_runner(
         answered = spec.filters.get("outstanding")
         if isinstance(answered, dict):
             lane_out = outstanding_carry(lane_out, focus, answered)
+            if _offer_picks_the_so_list(answered, lane_out):
+                # Owner hand test, 3 Oct 2026: "1" / the "Sales order list" button under a
+                # customer-subject outstanding summary is the SO list over that summary's
+                # customers and window, not the same report again. A product-subject
+                # report keeps its own SO detail rows (AC-1138): the SO list has no product.
+                lane_out = {**lane_out, "so_list": True, "outstanding_detail_pick": None}
         brand_names: list[str] = []
         ranking = jsc.js_string(lane_out.get("order_status") or "").strip() == "top_selling"
         if domain == "order" and not ranking:
@@ -3732,6 +3738,17 @@ def _so_numbers_asked(domain: str, verdict: dict[str, Any], unplaced: dict[str, 
     if not typed or any(_token_key(t) not in unplaced for t in typed):
         return []
     return [unplaced[_token_key(t)] for t in typed if so_status.is_so_number(t)]
+
+
+def _offer_picks_the_so_list(answered: dict[str, Any], lane_out: dict[str, Any]) -> bool:
+    """Did this turn pick the outstanding detail offer's "Sales order list" on a report
+    about customers only (no product carried)?"""
+    if answered.get("kind") != "outstanding_detail" or answered.get("detail") != "so":
+        return False
+    return not (
+        jsc.truthy(lane_out.get("outstanding_carried_product_code"))
+        or jsc.array(lane_out.get("outstanding_carried_product_codes"))
+    )
 
 
 def _asks_for_so_list(domain: str, verdict: dict[str, Any], focus: Focus, lane_out: dict[str, Any]) -> bool:
