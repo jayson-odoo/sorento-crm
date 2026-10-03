@@ -1,9 +1,10 @@
 # PLAN: Ideation capture from one message (IDEATION-CAPTURE)
 
 Status: Hand test (Phase 3 done: review + security review fixed and re-reviewed, kill tests
-killed). Q1-Q5 answered, built on the final SS-IDEATION-OWN contract (ss#111). Remaining: wire the
-#1445 helper into the ideate lane after #1445 merges (do not merge before). Open owner asks: seed
-migration for the new copy + extractor prompt, verified phone for chatbot senders. Track: full (L). Base `claude/ideation-crm-scout-k1b2e7` (PR #1438, IDEATION-IN-CRM).
+killed). Q1-Q5 answered, built on the final SS-IDEATION-OWN contract (ss#111). H1 (#1445 helper
+wired into the ideate lane) done and reviewed, kill test killed. Hand-test script:
+`laneboard/scripts/1444.md`. Open owner asks: verified phone for chatbot senders; ss to also match
+the raw message for similar ideas. Track: full (L). Base `main` (PR #1438 merged).
 Lane branch `claude/ideation-capture-0hctm7` (the sandbox only pushes this name).
 
 ## 0. Owner intent (2 Oct 2026, verbatim summary)
@@ -414,8 +415,8 @@ before the rule is not redone. Remaining slice under it: H1 (#1445 `required_fie
 | # | Slice | Depends on | State |
 |---|---|---|---|
 | P1 | Plumbing: phone claim (verified only), `ideas_manage` claim, `mine` forward, My/All toggle (section 4) | Q1 | done |
-| C1 | Chatbot one-message flow (section 2.1-2.5, Q2 access gate, Q4 numbered list, Q5 language) | SS-IDEATION-OWN contract | done, review fixes in progress |
+| C1 | Chatbot one-message flow (section 2.1-2.5, Q2 access gate, Q4 numbered list, Q5 language) | SS-IDEATION-OWN contract | done |
 | C2 | Remove the dead multi-turn draft path and media lookback | C1 | done |
 | E1 | Own-idea edit: gateway PATCH allows `isMine` or manage; Edit and upload shown on own ideas | Q3 | done |
 | R1 | Review fixes: sweep ignores held lists, chatbot keeps a held list in the ideate lane, embed-session route claims (security H1), DB-only held list for live turns (L1), no-link replies, URL-derived My/All state, merged-child upload, vague-reply end (core), re-read before write | Phase 3 | done |
-| H1 | Wire #1445 `required_fields` into the ideate lane (AskType, slot, `ask_reply: true` on the answer) | #1445 merged | waiting |
+| H1 | Wire #1445 `required_fields` into the ideate lane (AskType, slot, `ask_reply: true` on the answer) | #1445 merged | done |
