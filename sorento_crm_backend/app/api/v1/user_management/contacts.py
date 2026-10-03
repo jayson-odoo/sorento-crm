@@ -94,6 +94,8 @@ async def get_contacts(
     # AC-MEM028 (reviewer pass at d89110c0, S13): `own` lists the contacts that set
     # their own chatbot memory level, the Memory card's count link.
     chatbot_memory_level: Optional[Literal["own"]] = Query(None),
+    # `none` lists the contacts with no linked customer (bulk Link customers worklist).
+    customers: Optional[Literal["none"]] = Query(None),
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db)
 ):
@@ -111,6 +113,7 @@ async def get_contacts(
             sort_dir=dir or "asc",
             own_memory_level_only=chatbot_memory_level == "own",
             include_linked_users=can_view_users,
+            no_customers_only=customers == "none",
         )
         return result
     except HTTPException:

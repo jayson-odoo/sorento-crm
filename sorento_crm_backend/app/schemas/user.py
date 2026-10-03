@@ -50,6 +50,8 @@ class RespondContactResponse(RespondContactBase):
     respond_io_id: Optional[str] = None
     access_type_codes: List[str] = []
     access_types: List[RespondContactAccessTypeRef] = []
+    # Linked customer codes, sorted; filled by the list endpoint (one query per page).
+    customer_codes: List[str] = []
     workspace_name: Optional[str] = None
     workspace_space_id: Optional[str] = None
     # Read-only mirror of respond_contacts.outbound_enabled so the contacts grid

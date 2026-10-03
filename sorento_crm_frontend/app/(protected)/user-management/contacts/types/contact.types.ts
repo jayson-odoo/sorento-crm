@@ -40,6 +40,8 @@ export interface RespondContact {
   chatbot_stock_allowed?: boolean;
   /** Identity S3: the user this contact is linked to, if any (list rows). Null
    *  without `user_management.users.view`. */
+  /** Linked customer codes, sorted (list rows). */
+  customer_codes?: string[];
   linked_user_id?: string | null;
   linked_user_name?: string | null;
   /** Identity S3: which role the Add user form should suggest for this contact

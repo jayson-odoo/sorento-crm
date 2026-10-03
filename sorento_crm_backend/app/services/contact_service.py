@@ -1,6 +1,6 @@
 """Contact service for business logic."""
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import exists, func, or_
 from typing import Optional
 import logging
 import json
@@ -108,6 +108,7 @@ class ContactService:
         sort_dir: str = "asc",
         own_memory_level_only: bool = False,
         include_linked_users: bool = False,
+        no_customers_only: bool = False,
     ):
         """List contacts with pagination and filtering.
 
@@ -118,7 +119,13 @@ class ContactService:
         q = self.db.query(RespondContact)
         if own_memory_level_only:
             q = q.filter(RespondContact.chatbot_memory_level.isnot(None))
-        
+        if no_customers_only:
+            from app.models.access import RespondContactCustomer
+
+            q = q.filter(
+                ~exists().where(RespondContactCustomer.contact_id == RespondContact.id)
+            )
+
         if query:
             like = f"%{query}%"
             q = q.filter(
@@ -155,6 +162,10 @@ class ContactService:
 
             linked_map = linked_user_map(self.db, [str(c.id) for c in contacts])
 
+        from app.services.contact_customer_service import customer_codes_by_contact
+
+        codes_map = customer_codes_by_contact(self.db, [str(c.id) for c in contacts])
+
         # Validate and convert contacts to response models
         # Explicitly convert UUID to string to ensure Pydantic validation works
         contact_responses = []
@@ -164,6 +175,7 @@ class ContactService:
                 linked = linked_map.get(str(contact.id))
                 data["linked_user_id"] = linked["id"] if linked else None
                 data["linked_user_name"] = linked["name"] if linked else None
+                data["customer_codes"] = codes_map.get(str(contact.id), [])
                 contact_responses.append(RespondContactResponse.model_validate(data))
             except Exception as e:
                 logger.error(f"Error validating contact {contact.id}: {str(e)}", exc_info=True)
