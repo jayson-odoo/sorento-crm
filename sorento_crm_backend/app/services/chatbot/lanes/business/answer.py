@@ -26,6 +26,8 @@ so a new fuzzy match cannot slip in beside a parity one.
 """
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
+
 import logging
 import re
 from functools import cmp_to_key
@@ -1312,18 +1314,27 @@ def _crossdomain_rung_row(it: Any, field_by_key: Any) -> dict[str, Any]:
     }
 
 
-def _sum_xd_qty(a: Any, b: Any) -> Any:
-    """The sum of two rung quantities; a missing side counts as nothing, a non-number keeps
-    the first side as it was."""
-    if a in (None, ""):
-        return b
-    if b in (None, ""):
-        return a
+def _xd_decimal(v: Any) -> Decimal | None:
+    """A rung quantity as a Decimal; None when it is not a number (an empty side is 0)."""
+    if v in (None, ""):
+        return Decimal(0)
     try:
-        total = float(a) + float(b)
-    except (TypeError, ValueError):
-        return a
-    return int(total) if total == int(total) else total
+        d = Decimal(str(v).strip())
+    except InvalidOperation:
+        return None
+    return d if d.is_finite() else None
+
+
+def _sum_xd_qty(a: Any, b: Any) -> Any:
+    """Exact sum of two rung quantities, printed without trailing zeros (36 + 36 is 72);
+    None when either side is not a number, so the caller keeps the rows apart. Two empty
+    sides stay empty (the line is omitted)."""
+    if a in (None, "") and b in (None, ""):
+        return ""
+    x, y = _xd_decimal(a), _xd_decimal(b)
+    if x is None or y is None:
+        return None
+    return format((x + y).normalize(), "f")
 
 
 def _crossdomain_rung_text(rows: list[dict[str, Any]]) -> str:
@@ -1345,11 +1356,15 @@ def _crossdomain_rung_text(rows: list[dict[str, Any]]) -> str:
             if row.get("number") not in (None, "")
             else (id(row),)
         )
-        if key in merged:
-            merged[key]["ordered_qty"] = _sum_xd_qty(merged[key].get("ordered_qty"), row.get("ordered_qty"))
-            merged[key]["qty"] = _sum_xd_qty(merged[key].get("qty"), row.get("qty"))
-        else:
-            merged[key] = dict(row)
+        into = merged.get(key)
+        if into is not None:
+            ordered = _sum_xd_qty(into.get("ordered_qty"), row.get("ordered_qty"))
+            outstanding = _sum_xd_qty(into.get("qty"), row.get("qty"))
+            if ordered is not None and outstanding is not None:
+                into["ordered_qty"], into["qty"] = ordered, outstanding
+                continue
+            key = (*key, id(row))  # not summable: its own block
+        merged[key] = dict(row)
     blocks: list[str] = []
     for row in merged.values():
         label = "SPO" if row.get("kind") == "spo" else "PO"

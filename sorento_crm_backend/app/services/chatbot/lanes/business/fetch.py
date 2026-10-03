@@ -2595,7 +2595,6 @@ def _dmy(value: Any) -> str:
 
 # WA-CONCISE card v4: list replies of these result types print one fact per line, one block per
 # row, and a single block carries no number. Every other tool's rows are unchanged.
-_BLOCK_RESULT_TYPES = ("stock", "stock_compact", "incoming_stock", "orders", "products")
 _DROPPED_OPENERS = (
     "Stock details found for the requested products.",
     "Stock summary for the requested products.",
@@ -3186,7 +3185,6 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     flat_items: list[Any] = (
         [] if (qs_render or groups_render or stock_ask_render) else (e.get("items") or [])
     )
-    block_form = rtype in _BLOCK_RESULT_TYPES
     if flat_items:
         if rtype == "stock":
             flat_items = merge_stock_rows(flat_items)
