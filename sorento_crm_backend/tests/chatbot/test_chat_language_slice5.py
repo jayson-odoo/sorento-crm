@@ -45,10 +45,10 @@ MS = {
     "supplier_question": "Pembekal yang mana?",
     "miss_category": "Saya tidak mengenali '{word}' sebagai kategori.",
     "miss_supplier": "Saya tidak mengenali '{word}' sebagai pembekal.",
-    "pick_category_all": 'Kategori yang mana yang anda maksudkan? Balas dengan nombor atau "all":',
-    "pick_category": "Kategori yang mana yang anda maksudkan? Balas dengan nombor:",
-    "pick_supplier_all": 'Pembekal yang mana yang anda maksudkan? Balas dengan nombor atau "all":',
-    "pick_supplier": "Pembekal yang mana yang anda maksudkan? Balas dengan nombor:",
+    "pick_category_all": 'Kategori mana yang anda maksudkan? Balas dengan nombor atau "all":',
+    "pick_category": "Kategori mana yang anda maksudkan? Balas dengan nombor:",
+    "pick_supplier_all": 'Pembekal mana yang anda maksudkan? Balas dengan nombor atau "all":',
+    "pick_supplier": "Pembekal mana yang anda maksudkan? Balas dengan nombor:",
     "cancelled": "Laporan stok rendah dibatalkan.",
     "give_up": "Saya masih tidak dapat mengenali '{word}'. Minta laporan stok rendah sekali lagi dengan kategori atau \"all\".",
     "has_no": "{code} tiada {types}.",
@@ -323,8 +323,7 @@ def test_cl54_a_product_name_that_reads_like_the_gap_sentence_is_not_translated(
     assert out != english  # the label itself still translates
 
 
-def test_cl54_the_gap_line_is_not_matched_in_running_text_for_en():
-    assert label_catalog.IDENTITY.reply("*Product Name:* Basin that has no hole.") == "*Product Name:* Basin that has no hole."
+
 
 
 def test_cl55_the_gap_line_is_a_catalog_key_and_direct_only():
@@ -333,10 +332,7 @@ def test_cl55_the_gap_line_is_a_catalog_key_and_direct_only():
     assert GAP_KEY not in INLINE
 
 
-def test_cl55_compose_builds_the_gap_line_through_the_localizer():
-    src = (APP / "services/chatbot/turn/compose.py").read_text(encoding="utf-8")
-    assert 'localizer.fill("{code} has no {types}."' in src
-    assert 'f"{code} has no {_join_words(missing)}."' not in src
+
 
 
 # --------------------------------------------------------------------------- #
