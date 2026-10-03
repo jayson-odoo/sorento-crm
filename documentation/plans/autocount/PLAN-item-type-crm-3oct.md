@@ -22,7 +22,10 @@ table, back-created when an incoming value does not exist yet, and the product l
 | Product push maps `brand_code` via `product_rules.ensure_reference` and warns `brand_created` | `app/services/master_ingest_service.py:590-596` |
 | `ensure_reference`: match by normalised code, then name; else create `code = name = raw value`, description = auto-created note | `app/services/rules/product_rules.py:152-214` |
 | Code / name column maps the matcher reads | `app/services/rules/master_rules.py:32-47` |
-| AutoCount pull commits through the same `MasterIngestService` | `app/tasks/autocount_pull_tasks.py:294` |
+| AutoCount item pull: `FoundryxAutocountClient.build` / `all_rows` fetch rows ALREADY mapped to `category_code` / `brand_code` by the FoundryX gateway (the fake's stages `lookup:category`, `lookup:brand`); the CRM never reads AutoCount's `ItemGroup` / `ItemBrand` keys itself | `app/services/foundryx_autocount_client.py:166-220`; `tests/fixtures/autocount_pull/products-rows-page1.json`; `tests/support/fake_foundryx.py:60` |
+| Pull commit = `_apply_products` -> `MasterIngestService.ingest("products", rows)` -> `_product_columns`, the same mapping the ESB push uses | `app/tasks/autocount_pull_tasks.py:287-295`; `app/services/master_ingest_service.py:590-605` |
+| Pull review view / compare read `category_code` / `brand_code` for display only | `app/services/autocount_pull_service.py:486-487`; `app/services/autocount_pull_compare.py:114-119` |
+| `products.item_type` already exists: a CRM-only enum (product / bundle / service / other) on the product form, unrelated to AutoCount ItemType, left untouched | `app/models/product.py:257`; FE `products/forms/product-schema.ts:25` |
 | Contract diff `fields_added` + warnings vocabulary | `app/api/v1/external/contract.py:81-82, :238-257` |
 
 ## 3. Decisions
@@ -40,8 +43,14 @@ table, back-created when an incoming value does not exist yet, and the product l
 - **D4 Contract.** `item_type_code` added to `fields_added.products`, `item_type_created` to the
   warnings vocabulary. No version bump: unknown keys are already dropped, so an older Sorento
   never refuses a push that carries it (crew-ask on the PR).
-- **D5 UI.** Read-only on the product detail only if it is a trivial reuse of how brand is
-  shown; otherwise storage only, stated in the PR.
+- **D5 UI.** Storage only. Brand reaches the product detail through an ORM relationship, the
+  `BrandSimple` response schema and an editable `ProductForm` field (View = Edit layout), so item
+  type there is not a trivial reuse of one component. The pull review grid / compare are not
+  extended either.
+- **D6 Pull.** The pull reads `item_type_code` off the snapshot row at the same point it reads
+  `brand_code` (`_product_columns`). The FoundryX gateway must put `item_type_code` on product
+  snapshot rows, as it does `brand_code`; until it does, the pull stores nothing (no row carries
+  the key) and nothing breaks.
 
 ## 4. Tests (red first)
 
