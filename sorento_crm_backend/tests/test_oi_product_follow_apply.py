@@ -293,6 +293,54 @@ def test_a_declined_settle_still_moves_the_product_and_tells_purchasing(api, mon
     assert told[0]["item_code"] == fx["new"].product_code
 
 
+def test_a_received_link_line_raises_its_replacement_on_the_new_product_with_was(
+    api, monkeypatch
+):
+    """Tester FAIL on 3db1012a (SO381067 / SO396348): the row's document is already
+    RECEIVED, so the replan sets the old row aside as "used" (history, keeps its link and
+    its old code, R2) and raises a fresh "Replaces N used" row. That fresh row is the
+    line's live instruction now, so R1 applies to it: new code, "was OLD", and the email
+    says CHANGE ITEM CODE."""
+    from app.models.procurement import PurchaseOrderLine
+
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    fx = _swap_fixture(api, linked=True, acknowledged=True)
+    po_line = world.db.get(PurchaseOrderLine, fx["link"].po_line_id)
+    po_line.qty_received = po_line.qty_ordered
+    world.db.commit()
+    calls.clear()
+
+    response = _apply(fx)
+    assert response.status_code == 200, response.text
+    world.db.commit()
+    world.db.expire_all()
+
+    rows = _rows_of(world, fx["line"])
+    used = [r for r in rows if r.redirected_to_pool]
+    assert [str(r.id) for r in used] == [str(fx["row"].id)], "the received row is set aside"
+    assert used[0].item_code == fx["old"].product_code, "history keeps the old code"
+
+    fresh = [
+        r for r in rows
+        if r.verb == IV_ORDER and r.state != INQUIRY_CANCELLED and not r.redirected_to_pool
+    ]
+    assert len(fresh) == 1, [(r.item_code, r.state, r.note) for r in rows]
+    assert fresh[0].item_code == fx["new"].product_code
+    assert fresh[0].previous_item_code == fx["old"].product_code
+    assert f"Was item {fx['old'].product_code}" in (fresh[0].note or "")
+
+    handover = _handover_calls(calls)[-1]["context"]["handover"]
+    told = [e for e in handover["lines"] if e["item_code"] == fx["new"].product_code]
+    assert len(told) == 1, handover["lines"]
+    assert (
+        f"CHANGE ITEM CODE TO {fx['new'].product_code} (WAS {fx['old'].product_code})"
+        in told[0]["remark"]
+    ), told[0]
+    assert "CHANGE ITEM CODE" in handover["headline"], handover["headline"]
+
+
 def test_a_plain_qty_settle_writes_no_previous_item_code(api):
     """Kill guard: `previous_item_code` is written only when the product moved."""
     fx = _swap_fixture(api)
