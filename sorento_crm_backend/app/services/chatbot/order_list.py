@@ -231,6 +231,9 @@ _OFFER_SENTENCE = re.compile(r"\s*Would you like me to escalate to .+? team\?\s*
 #: shape: a field whose value is empty renders as `*Label:*` too (`lanes/business/fetch.py`).
 _NO_MEMBERS_NOTE = re.compile(r"^\[ .+ omitted\.? \]$")
 _COMPANIES_TAIL = re.compile(r"\s*\([^()]*\)$")
+#: A multi-company picker's `*Company:*` group header (`build_cs_member_offer`), read
+#: only inside a picker block, where no business field can stand.
+_GROUP_HEADER = re.compile(r"^\*[^*]+:\*$")
 
 
 def _without_companies(row_text: str) -> str:
@@ -251,6 +254,13 @@ def _picker_frame_lines() -> tuple[frozenset[str], tuple[str, ...]]:
     )
 
 
+def _picker_headers() -> frozenset[str]:
+    """The lines a picker's member rows sit directly under (`tail/member_offer.py`)."""
+    from app.services.chatbot.tail import member_offer as member_mod
+
+    return frozenset({member_mod.PICKER_HEADER, member_mod.ROSTER_HEADER})
+
+
 def _without_picker(text: str, options: list[dict[str, Any]], *, companies: list[str] = ()) -> str:
     """`text` without the routing picker whose question was taken out: its numbered rows,
     its header and close, and the escalate offer sentence the picker hangs off.
@@ -267,17 +277,29 @@ def _without_picker(text: str, options: list[dict[str, Any]], *, companies: list
         if jsc.js_string(o.get("label") or "").strip()
     }
     whole, prefixes = _picker_frame_lines()
+    headers = _picker_headers()
     group_headers = {f"*{name}:*" for name in companies} | ({"*Other:*"} if companies else set())
     kept: list[str] = []
     removed = False  # was the line before this one taken out (a blank next to it goes too)
+    # REFER-ONLY-FIXES (owner console, 3 Oct 2026): every line under a picker header up to
+    # the next blank is the picker's own (a member row, a `*Company:*` group header, a
+    # no-members note), whatever question is still attached. Matching rows by the
+    # question's labels alone left the staff names under the refer line when an upstream
+    # site had already dropped that question (`answer_bridge.answer_for`'s barred arm).
+    in_picker = False
     for line in (text or "").splitlines():
         bare = line.strip()
+        if bare in headers:
+            in_picker = True
+        elif not bare:
+            in_picker = False
         m = re.match(r"^\s*(\d+)[.)]\s*(.+?)\s*$", line)
         if (
             bare in whole
             or bare.startswith(prefixes)
             or bare in group_headers
             or (options and _NO_MEMBERS_NOTE.match(bare))
+            or (in_picker and bare and (m or _GROUP_HEADER.match(bare) or _NO_MEMBERS_NOTE.match(bare)))
             or (m and ((m.group(1), m.group(2)) in labels or (m.group(1), _without_companies(m.group(2))) in labels))
         ):
             removed = True
