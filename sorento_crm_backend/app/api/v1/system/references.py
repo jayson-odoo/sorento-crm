@@ -2072,6 +2072,7 @@ def _resolve_input(
     entity_pins: dict[str, str] | None = None,
     limit: int | None = None,
     raw_tokens: list[str] | None = None,
+    regions: frozenset[str] | None = None,
 ):
     mode = (match_mode or "or").strip().lower()
     if mode not in _ALLOWED_MATCH_MODES:
@@ -2235,6 +2236,7 @@ def _resolve_input(
                 # unresolved-only token list) so raw_tokens no longer aligns
                 # positionally with it - see PLAN-resolver-head-code-retry.
                 raw_tokens=raw_tokens if tokens_override is None else None,
+                regions=regions,
             ).as_dict()
         raw = _apply_promotion_access_levels_filter(db, raw, access_levels)
         # Promotion-domain hint: run the expander. It owns the dispatch:
@@ -2333,6 +2335,7 @@ def _resolve_input(
         unresolved,
         allowed_entity_types=fb_allowed,
         cross_type_expand=True,
+        regions=regions,
     ).as_dict()
     fb = _apply_promotion_access_levels_filter(db, fb_raw, access_levels)
     # Per-token fallback bypasses `_run`, so the promotion-domain product
@@ -2785,6 +2788,15 @@ def resolve_reference_post(
     )
     if narrowed is not None:
         payload = payload.model_copy(update={"tokens": narrowed, "raw_tokens": None})
+    # A contact's packing list regions (unresolved = West) bound the shipments it can be
+    # shown; no contact_id = no filter.
+    regions = None
+    if payload.contact_id:
+        from app.services.eta_policy import resolve_request_contact, rules_for_contact
+
+        regions = rules_for_contact(
+            db, resolve_request_contact(db, payload.contact_id, payload.space_id)
+        ).regions
     try:
         result = _resolve_input(
             db,
@@ -2798,6 +2810,7 @@ def resolve_reference_post(
             entity_pins=payload.entity_pins,
             limit=payload.limit,
             raw_tokens=payload.raw_tokens,
+            regions=regions,
         )
     except EntityPinMismatch as exc:
         raise AppException(
