@@ -293,14 +293,14 @@ export function IdeasListView({
             </div>
           );
         },
-        204,
+        180,
       ),
       col(
         'submitter',
         'Submitter',
         (i) => i.submitterName,
         ({ row }) => text(row.original.submitterName),
-        100,
+        112,
       ),
       col(
         'channel',
@@ -318,7 +318,7 @@ export function IdeasListView({
         'Product',
         (i) => i.productName,
         ({ row }) => text(row.original.productName),
-        116,
+        124,
       ),
       col(
         'status',
@@ -330,7 +330,7 @@ export function IdeasListView({
             color={row.original.statusColor}
           />
         ),
-        116,
+        124,
       ),
       col(
         'submitted',
@@ -425,41 +425,47 @@ export function IdeasListView({
         placeholder="Search ideas..."
         className="min-w-0 grow basis-40 sm:w-48 sm:grow-0 sm:basis-auto"
       />
-      <HoverCard openDelay={0} closeDelay={0}>
-        <HoverCardTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            mode="icon"
-            className="shrink-0"
-            aria-label="What can I search?"
-          >
-            <Info className="size-4" />
-          </Button>
-        </HoverCardTrigger>
-        <HoverCardContent className="w-56 text-sm">
-          <div className="flex flex-col gap-1">
-            <p className="font-medium">You can search by</p>
-            <ul className="flex flex-col gap-0.5 text-muted-foreground">
-              <li>Idea</li>
-              <li>Submitter</li>
-              <li>Product</li>
-            </ul>
+      {/* While rows are selected the strip needs the room (one row at 1280): the info card and
+          Status picker step aside, search and Active | Archived stay. */}
+      {selected.length === 0 && (
+        <>
+          <HoverCard openDelay={0} closeDelay={0}>
+            <HoverCardTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                mode="icon"
+                className="shrink-0"
+                aria-label="What can I search?"
+              >
+                <Info className="size-4" />
+              </Button>
+            </HoverCardTrigger>
+            <HoverCardContent className="w-56 text-sm">
+              <div className="flex flex-col gap-1">
+                <p className="font-medium">You can search by</p>
+                <ul className="flex flex-col gap-0.5 text-muted-foreground">
+                  <li>Idea</li>
+                  <li>Submitter</li>
+                  <li>Product</li>
+                </ul>
+              </div>
+            </HoverCardContent>
+          </HoverCard>
+          <div className="w-full sm:w-36">
+            <SearchableSelect
+              aria-label="Status"
+              value={status}
+              onChange={setStatus}
+              options={statusOptions}
+              placeholder="All statuses"
+              emptyMessage="No statuses."
+              clearable
+            />
           </div>
-        </HoverCardContent>
-      </HoverCard>
-      <div className="w-full sm:w-36">
-        <SearchableSelect
-          aria-label="Status"
-          value={status}
-          onChange={setStatus}
-          options={statusOptions}
-          placeholder="All statuses"
-          emptyMessage="No statuses."
-          clearable
-        />
-      </div>
+        </>
+      )}
       <ToggleGroup
         type="single"
         variant="outline"
