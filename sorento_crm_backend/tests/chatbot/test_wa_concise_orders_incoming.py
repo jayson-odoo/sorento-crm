@@ -71,7 +71,7 @@ _INC_A_LINES = (
 def test_ac16_single_incoming_block_is_unnumbered():
     text = render(INCOMING_TOOL, incoming_payload([_INC_A]), UNGRANTED)
 
-    assert text == f"Here is the incoming stock I found.\n\n{_INC_A_LINES}", text
+    assert text == _INC_A_LINES, text
 
 
 def test_ac16_guard_two_incoming_blocks_are_numbered_with_one_blank_line_between():
@@ -79,7 +79,7 @@ def test_ac16_guard_two_incoming_blocks_are_numbered_with_one_blank_line_between
     text = render(INCOMING_TOOL, incoming_payload([_INC_A, _INC_B]), UNGRANTED)
 
     assert text == (
-        f"Here is the incoming stock I found.\n\n1. {_INC_A_LINES}\n\n"
+        f"1. {_INC_A_LINES}\n\n"
         "2. *Product Code:* SRTWB1543\n*Container:* IAAU1907075\n*ETA:* 2026-09-20\n"
         "*Incoming Quantity:* 12\n*Warehouse Allocations:* BRW (12)"
     ), text
