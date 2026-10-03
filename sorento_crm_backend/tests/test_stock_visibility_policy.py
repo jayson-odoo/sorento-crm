@@ -2553,13 +2553,13 @@ def test_excluded_warehouse_ids_round_trip_on_every_tier(client, db):
         assert saved.status_code == 200, saved.json()
         override = saved.json()["override"]
         assert override["excluded_warehouses"] == [
-            {"id": brw.id, "code": "ZZTBRW", "name": "Warehouse"}
+            {"id": brw.id, "code": "ZZTBRW", "name": "Warehouse", "company_name": "Sorento"}
         ]
         assert override["warehouses"] is None
 
         read_back = client.get(path).json()["override"]
         assert read_back["excluded_warehouses"] == [
-            {"id": brw.id, "code": "ZZTBRW", "name": "Warehouse"}
+            {"id": brw.id, "code": "ZZTBRW", "name": "Warehouse", "company_name": "Sorento"}
         ]
         assert read_back["warehouses"] is None
 
@@ -2600,7 +2600,7 @@ def test_the_response_model_declares_excluded_warehouses(client, db):
     ).json()
 
     assert body["override"]["excluded_warehouses"] == [
-        {"id": brw.id, "code": "ZZTBRW", "name": "Warehouse"}
+        {"id": brw.id, "code": "ZZTBRW", "name": "Warehouse", "company_name": "Sorento"}
     ]
 
 
