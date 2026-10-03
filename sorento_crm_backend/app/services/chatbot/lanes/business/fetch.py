@@ -2593,8 +2593,9 @@ def _dmy(value: Any) -> str:
     return f"{parts[2]}/{parts[1]}/{parts[0]}" if len(parts) == 3 else text
 
 
-# WA-CONCISE card v4: list replies of these result types print one fact per line, one block per
-# row, and a single block carries no number. Every other tool's rows are unchanged.
+# WA-CONCISE card v4: a tool's default opener is dropped whenever at least one row prints, for
+# every result type, and a single row prints unnumbered. The portal link opener (no rows) and
+# zero-row replies keep theirs.
 _DROPPED_OPENERS = (
     "Stock details found for the requested products.",
     "Stock summary for the requested products.",
