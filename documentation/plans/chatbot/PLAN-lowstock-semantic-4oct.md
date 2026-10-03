@@ -2,7 +2,7 @@
 
 Status: planning (4 Oct 2026). Track: M (LEAD pattern), no migration of schema; one new
 unlabelled parser prompt version.
-Card: `lowstock-semantic-behaviour-card.md` (to follow).
+Card: `lowstock-semantic-behaviour-card.md` (proposed, crew-ask Q1-Q4 on PR #1470).
 
 ## Owner report (4 Oct 2026, 03:00, gist)
 
