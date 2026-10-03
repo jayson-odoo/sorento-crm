@@ -53,3 +53,16 @@ Round 4 (owner, 3 Oct: no secrets in compose files, and stop it happening again)
   rules and allowlists only the fake placeholders (`ci-dummy-secret`, `cloud-lane-test-key`,
   `<set me>`-style placeholders, example.com/example.invalid). The job fails on a new secret.
   The prod compose file lives on the server outside git and is out of scope.
+
+Round 5 (security re-review, 3 Oct):
+
+- **AC-21** The gitleaks job runs on a `ci`-labelled `pull_request` and on `push`, and is skipped on
+  `merge_group` (the action rejects it) and `workflow_dispatch` (a release would scan all history,
+  red until the rewrite lands). The action is pinned to a 40-char commit SHA (with the version in a
+  comment), `GITLEAKS_VERSION` is set to an exact version, and every `.gitleaks.toml` allowlist
+  regex is anchored (`^...$`) so a secret that merely contains a placeholder is still reported.
+- **AC-22** `scripts/chatbot_record_turn.py` writes no real contact id anywhere in a recording:
+  every contact-id position (`contact.id`, `contactId` at any depth, `contact_id` in tool-call
+  args and tool results, the `--contact` default output file name) carries the SAME fake id for
+  the same real id, so a recording stays self-consistent. The fake-id space is at least 100,000
+  values (no merging of contacts in a 40-contact sample), and every derived phone passes the guard.
