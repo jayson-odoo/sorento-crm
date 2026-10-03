@@ -260,7 +260,8 @@ class TestAbsentAndBlank:
         assert [str(r["sales_agent_id"]) for r in rows] == [env.agent_id]
 
     @pytest.mark.parametrize("blank", ["", "  "])
-    def test_blank_clears_the_agent_on_the_linked_and_same_code_rows(self, env, blank):
+    def test_blank_leaves_the_agent_on_the_linked_and_same_code_rows(self, env, blank):
+        """Owner ruling: blank behaves like an absent key, it never clears."""
         code = _code()
         ref = _ref("BLANK")
         env.post_customer(code=code, source_ref=ref, sales_agent_code=AGENT_CODE)
@@ -272,14 +273,23 @@ class TestAbsentAndBlank:
         _, entry = env.post_customer(code=code, source_ref=ref, sales_agent_code=blank)
 
         assert entry["outcome"] != "failed", entry
-        assert env.agent_of(sibling) is None
+        assert "agent_unresolved" not in entry.get("warnings", [])
+        assert env.agent_of(sibling) == env.agent_id
         rows = env.rows_by_code(code, env.company_a)
-        assert rows and all(r["sales_agent_id"] is None for r in rows)
+        assert rows and all(str(r["sales_agent_id"]) == env.agent_id for r in rows)
 
 
 # ===================================================================== AC-5
 class TestDryRun:
     def test_dry_run_writes_no_agent_anywhere(self, env):
+        # Control: the same push for real sets the agent, so a dry run that writes
+        # nothing is distinguishable from a feature that does not exist yet.
+        control = _code()
+        env.post_customer(code=control, sales_agent_code=AGENT_CODE)
+        assert [str(r["sales_agent_id"]) for r in env.rows_by_code(control, env.company_a)] == [
+            env.agent_id
+        ]
+
         code = _code()
         ref = _ref("DRY")
         env.post_customer(code=code, source_ref=ref)
