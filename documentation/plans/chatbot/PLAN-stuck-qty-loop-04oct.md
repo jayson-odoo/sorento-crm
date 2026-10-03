@@ -47,6 +47,20 @@ and is classified exempt (it closes on the draft's own terminal status).
 3. Tail (`stamp`, both payload writers): `held_turn` + `held_access` on the focus when the held
    state changed. Rows written before this read as unstamped and are stamped on their next turn.
 
+Narrowings forced by the existing suite (owner-tested behaviour, #833 / #1323):
+
+- Only a change between two intents the routing table knows (`policy_rows` intents) counts; a
+  free-phrase synonym is not a new question.
+- Escalation offers survive a new intent (they accept only an explicit yes, position or company
+  pick, and keep their own 3-turn clock); reset, TTL and access change still drop them.
+- Crew report 2's carried-entity rule drops only ask-owned `focus.extra` kinds
+  (`apply.INTENT_OWNED_EXTRA = {"sales_agent"}`): products and grounded specifications still
+  carry across intents ("cert?" after "any gunmetal basin has incoming?").
+- The engine's own answer readers (clarify pick, set count, required-ask reply, top selling) tell
+  `consume` they answered, so their answers are never dropped.
+- R22 ("outstanding_scope / outstanding_detail are sticky, no TTL") is superseded by the owner's
+  4 Oct rule: they now lapse after `HELD_TTL_TURNS` untouched turns like every other question.
+
 Plus: `task.run`'s resume needs an explicit signal (a `check_stock` intent, or a task product
 named under no other intent); `answer_bridge` never turns a lane's own `required_ask` into a
 not_found miss.
