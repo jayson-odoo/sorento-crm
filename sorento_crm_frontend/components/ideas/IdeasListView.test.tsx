@@ -844,13 +844,15 @@ describe('IDEATION-CAPTURE My ideas / All ideas toggle', () => {
   });
 
   it('clicking My ideas puts view=mine in the URL, selects My ideas and re-queries with mine true', async () => {
-    replace.mockImplementation((url: string) => {
+    push.mockImplementation((url: string) => {
       urlState.search = String(url).split('?')[1] ?? '';
     });
     const { navigate } = renderScoped();
     await screen.findByText('Faster quotes');
     fireEvent.click(screen.getByRole('radio', { name: 'My ideas' }));
-    expect(replace).toHaveBeenLastCalledWith(expect.stringContaining('view=mine'));
+    // push, not replace: browser Back returns to All ideas.
+    expect(push).toHaveBeenLastCalledWith(expect.stringContaining('view=mine'));
+    expect(replace).not.toHaveBeenCalled();
     navigate();
     await waitFor(() => expect(selected(screen.getByRole('radio', { name: 'My ideas' }))).toBe(true));
     await waitFor(() =>
@@ -863,7 +865,7 @@ describe('IDEATION-CAPTURE My ideas / All ideas toggle', () => {
     renderScoped();
     await screen.findByText('Faster quotes');
     fireEvent.click(screen.getByRole('radio', { name: 'All ideas' }));
-    expect(replace).toHaveBeenLastCalledWith(expect.not.stringContaining('view='));
+    expect(push).toHaveBeenLastCalledWith(expect.not.stringContaining('view='));
   });
 
   it('with ?view=mine in the URL, My ideas is selected on first render and the first query has mine true', async () => {

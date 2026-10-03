@@ -20,7 +20,8 @@ export function IdeasScopeToggle() {
     if (next === 'mine') params.set('view', 'mine');
     else params.delete('view');
     const qs = params.toString();
-    router.replace(qs ? `${pathname}?${qs}` : pathname);
+    // push, not replace: Back returns to the other view (hand test step 11).
+    router.push(qs ? `${pathname}?${qs}` : pathname);
   };
   return (
     <ToggleGroup
