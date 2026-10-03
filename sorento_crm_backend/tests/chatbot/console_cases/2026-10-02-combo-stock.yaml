@@ -15,7 +15,7 @@
 # rows, no zero rows, no "part of set(s)" lines.
 #
 # NOT collected by pytest. Full-access contact, stock visibility COMPACT (the owner is moving
-# every staff contact to compact; Jayden Loo 404285551 on dev). The DEALER half (set code ->
+# every staff contact to compact; CONTACT A, 404285551 on dev). The DEALER half (set code ->
 # "How many units of SET?" -> one line; base code -> a pick of the sets) needs an
 # availability-mode contact and is in the crew-handtest script on the PR instead.
 #
