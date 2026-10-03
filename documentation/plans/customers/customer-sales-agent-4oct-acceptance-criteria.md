@@ -8,7 +8,7 @@ Plan: `PLAN-customer-sales-agent-4oct.md`. Card: `CARD-customer-sales-agent-4oct
   code (DO back-created rows), and on no row with another code or of another company.
 - **AC-3** An unknown code leaves the agent untouched, the record still ingests, and the record
   carries warning `agent_unresolved`.
-- **AC-4** A push without the key leaves the agent untouched; a blank value clears it on those rows.
+- **AC-4** A push without the key leaves the agent untouched; a blank value leaves it unchanged too.
 - **AC-5** A dry run writes no agent anywhere.
 - **AC-6** `GET /external/contract` lists `sales_agent_code` under customers.
 - **AC-7** `person_label` empty gets the code minus its roman-numeral level (`AGENT-A III` -> `AGENT-A`,

@@ -39,8 +39,8 @@ adoption or create) AND on every other `customers` row of the SAME company whose
 debtor code (`lower(btrim())`), which covers DO back-created rows. Never a row with another code,
 never another company.
 
-R5. **Blank code** (AutoCount debtor with no agent): clears the agent on those same rows (AutoCount
-wins). See Q1.
+R5. **Blank code** (AutoCount debtor with no agent): no-op, the CRM agent is left unchanged on
+every row. Only a non-blank code that resolves overwrites (owner, Q1 (b)).
 
 R6. **Person.** `person_label` default = code minus a trailing roman-numeral level
 (`I..X`, separated by space and/or `-`), trimmed: `AGENT-A III` -> `AGENT-A`, `AGENT-C - I` -> `AGENT-C`,
@@ -86,17 +86,10 @@ ledgers, by person 356 agree, 59 conflict.
 
 ## Questions (max 5, each with a recommendation)
 
-- Q1 Blank `SalesAgent` in AutoCount: (a) clear the CRM agent on that code's rows (b) leave it.
-  Rec (a): "AutoCount wins for the ledger it feeds"; the 7 hand-set dev rows that AutoCount leaves
-  blank would be cleared, and the office fixes it in AutoCount.
-- Q2 Filling `person_label` also changes: sales achievement siblings (`sales/achievement_service.py:113-126`
-  groups by it), and the agent text on demand breakdown, PO/SO/stock-transfer/container lists and
-  the order-inquiry header (they show `person_label` before the code). (a) fill it anyway
-  (b) derive on the fly only for the group view. Rec (a): it is the grouping those screens were
-  built to read, and the owner asked for it populated.
-- Q3 Group with some ledgers unassigned: (a) ignore them (agree = all ASSIGNED ledgers agree)
-  (b) unassigned + assigned = mixed. Rec (a): "mixed" is for the office to fix a conflict, and an
-  unassigned ledger is not a conflict.
+- Q1 Blank `SalesAgent`: DECIDED (b) leave the CRM agent unchanged (owner, 4 Oct).
+- Q2 Fill `person_label`: DECIDED (a) backfill where empty, accepting that sales achievement
+  siblings and the agent text on lists regroup by person (owner, 4 Oct).
+- Q3 Unassigned ledgers: DECIDED (a) ignored for Mixed (owner, 4 Oct).
 - Q4 Unknown agent code: DECIDED (a) skip + `agent_unresolved` (owner's written decision).
 - Q5 Real debtor API / shared service: DECIDED (b) crew runs the ss copy feed -> CRM copy E2E on the
   Mac; this lane does the CRM side and tests in the sandbox with masked fixtures.

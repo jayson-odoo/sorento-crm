@@ -1,6 +1,6 @@
 # PLAN - Customer sales agent from AutoCount Debtor (CUSTOMER-SALES-AGENT)
 
-**Status:** Build (behaviour card asked, building on the recommendations). Track: L (LEAD
+**Status:** Build (card answered by the owner 4 Oct: Q1 b, Q2-Q5 a/a/a/b). Track: L (LEAD
 pattern; additive data migration). Pair lane: SS-DEBTOR-AGENT (shared service maps AutoCount
 `Debtor.SalesAgent` onto `sales_agent_code`).
 
@@ -17,7 +17,7 @@ ledgers disagree so they fix them in AutoCount.
 
 - **D1 Ingest field.** `CanonicalCustomer.sales_agent_code` Optional max 100. Absent = untouched.
   Resolved by normalised code over shared + company agents (`_lookup_id(... normalized=True)` on
-  `sales_agents`). Unknown = warning `agent_unresolved`, untouched. Blank = clear (card Q1).
+  `sales_agents`). Unknown = warning `agent_unresolved`, untouched. Blank = untouched too (owner Q1 (b)).
 - **D2 Fan-out.** After the record's row is resolved (ref / adopt / create), one UPDATE sets
   `sales_agent_id` on every `customers` row of the anchor company whose `lower(btrim(customer_code))`
   equals the debtor code's. Inside the record's savepoint, so dry run and failures roll it back.
@@ -40,7 +40,7 @@ ledgers disagree so they fix them in AutoCount.
 
 Backend `tests/test_customer_sales_agent_ingest.py`: set on linked row; fan-out to same-code
 back-created row; other code and other company untouched; unknown code warns and leaves agent;
-absent key untouched; blank clears; dry run writes nothing; case/space-insensitive match; contract
+absent key and blank both untouched; dry run writes nothing; case/space-insensitive match; contract
 lists the field. `tests/test_sales_agent_person_label.py`: derive cases; create fills; staff label
 kept. `tests/test_customer_groups_agent.py`: agree by person, mixed, unassigned ignored, filter.
 Frontend vitest: groups list shows Agent / Mixed and sends the filter; detail shows the agent.
