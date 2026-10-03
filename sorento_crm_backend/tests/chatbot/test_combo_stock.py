@@ -974,6 +974,37 @@ class TestReviewRound2Dealer(_DealerHelpers):
         assert stock, tasks
         assert [(s.get("label"), s.get("value")) for s in stock[0]["slots"]] == [(set_code, 3)], stock
 
+    def test_b2_how_about_10_revises_the_set_in_one_line(self, session_factory, monkeypatch) -> None:
+        self._dealer(monkeypatch)
+        _r, _c, set_code, codes, ids = self._ask_set(
+            session_factory, monkeypatch, _dealer_rows({}, 3), "zzt-r2-b2b-a", set_code_qty=3
+        )
+        by_id, by_code = dict(zip(ids, codes)), dict(zip(codes, ids))
+
+        def _call(name: str, args: dict[str, Any]) -> str:
+            if name == STOCK_TOOL:
+                asked = args.get("requested_quantities")
+                asked = json.loads(asked) if isinstance(asked, str) else (asked or {})
+                per_code = {by_id[k]: v for k, v in asked.items() if k in by_id}
+                return json.dumps(
+                    _dealer_rows({}, 10)([by_id[p] for p in sorted(_product_ids(args)) if p in by_id], by_code, per_code)
+                )
+            return _unknown_envelope()
+
+        mcp_call, calls = _mcp_double(other=_call)
+        result = _run_turn_engine(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                message_type="business_query", intent_hint=None, domain_hint=None,
+                entities=[], demand_qty=10, order_status=None,
+            ),
+            text_body="how about 10?", msg_id="zzt-r2-b2b-b", mcp_call=mcp_call,
+        )
+        assert _said(result) == f"{set_code} x 10: yes, we have stock. Please refer to your salesman.", _said(result)
+        asked = [a for n, a in calls if n == STOCK_TOOL][-1].get("requested_quantities")
+        asked = json.loads(asked) if isinstance(asked, str) else asked
+        assert asked == {ids[0]: 10, ids[1]: 10, ids[2]: 20}, asked
+
     def test_b3_customer_asks_logs_the_set_line_the_dealer_was_sent(self, session_factory, monkeypatch) -> None:
         self._dealer(monkeypatch)
         rows = {"0": ("in_stock", None), "1": ("incoming", "20/11/2026"), "2": ("in_stock", None)}
