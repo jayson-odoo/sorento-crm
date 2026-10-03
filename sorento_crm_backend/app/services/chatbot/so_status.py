@@ -293,17 +293,22 @@ _UPPER_SO_RE = re.compile(r"(?<![0-9A-Za-z])SOs?(?![0-9A-Za-z])")
 _TYPED_SO_NUMBER_RE = re.compile(r"(?<![0-9A-Za-z])SO[\s-]*\d{4,}", re.IGNORECASE)
 
 
+def says_outstanding(text: str) -> bool:
+    """Does the message type "outstanding" (typo-tolerant)?"""
+    from app.services.chatbot.turn_runtime import _osa_distance
+
+    return any(len(w) >= 8 and _osa_distance(w, "outstanding") <= 2 for w in _WORDS_RE.findall((text or "").casefold()))
+
+
 def names_sales_orders(text: str) -> bool:
     """Does the message ask about sales orders as a list: "sales order(s)", "SOs", or "SO"
     in capitals (a lower-case "so" is the English word), with no SO number typed and no
     "outstanding" (that word, typo-tolerant, keeps the outstanding report)?"""
-    from app.services.chatbot.turn_runtime import _osa_distance
-
     raw = text or ""
     if _TYPED_SO_NUMBER_RE.search(raw):
         return False
     words = _WORDS_RE.findall(raw.casefold())
-    if any(len(w) >= 8 and _osa_distance(w, "outstanding") <= 2 for w in words):
+    if says_outstanding(raw):
         return False
     pairs = zip(words, words[1:])
     return (
@@ -341,6 +346,66 @@ def typed_so_numbers_verdict(verdict: dict[str, Any], text: str) -> tuple[dict[s
         {**template, "raw": key, "current_message": True, "confident": True} for key in typed
     ]
     return {**verdict, "entities": typed_entities + kept}, "typed_so_numbers"
+
+
+#: The report statuses the parser carries off the conversation onto a message that typed
+#: none of them (cloud pass on PR #1435, live parser).
+_CARRIED_REPORT_STATUSES = frozenset(
+    {"outstanding", "so_outstanding", "do_outstanding", "outstanding_both", "sales_report"}
+)
+_UPPER_DOC_RE = re.compile(r"(?<![0-9A-Za-z])(?:SO|DO)s?(?![0-9A-Za-z])")
+
+
+def _names_a_document_or_report(text: str) -> bool:
+    raw = text or ""
+    words = _WORDS_RE.findall(raw.casefold())
+    pairs = list(zip(words, words[1:]))
+    return (
+        says_outstanding(raw)
+        or "report" in words
+        or bool(_UPPER_DOC_RE.search(raw))
+        or any(a in ("sales", "delivery") and b in ("order", "orders") for a, b in pairs)
+    )
+
+
+def carried_status_verdict(
+    verdict: dict[str, Any], text: str, *, focus_document: Any, focus_status: Any, pending_kind: str | None
+) -> tuple[dict[str, Any], str | None]:
+    """The verdict without the report status and document the parser carried off the
+    conversation, and the rule that fired. Cloud pass on PR #1435, live parser, 3 of 3:
+
+    * "1" under the outstanding summary came back `document: ["SO"]`, `so_outstanding`,
+      position 1. The document read as a NAMED one (`turn/decide`'s named-document arm, a
+      new ask for the report) and the summary printed again. A pick whose words name no
+      document and no report is the offer's own answer (`pick_under_offer`).
+    * "september" after the SO list's "Which period?" came back `so_outstanding`, and the
+      list never ran (`turn_runtime._asks_for_so_list` reads an empty status). On the SO
+      list (SO document, no status, no outstanding offer open) a report status the words do
+      not hold is not this message's (`period_on_so_list`).
+
+    "outstanding", "report", or a document typed in the message keeps the parser's reading."""
+    if _names_a_document_or_report(text):
+        return verdict, None
+    status = verdict.get("status")
+    order_status = verdict.get("order_status")
+    carried = status in _CARRIED_REPORT_STATUSES or order_status in _CARRIED_REPORT_STATUSES
+    cleared = {
+        "status": None if status in _CARRIED_REPORT_STATUSES else status,
+        "order_status": None if order_status in _CARRIED_REPORT_STATUSES else order_status,
+    }
+    if pending_kind == "outstanding_detail":
+        raw_positions = verdict.get("reference_positions")
+        oqa = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+        picks = (isinstance(raw_positions, list) and bool(raw_positions)) or bool(oqa.get("picked"))
+        if picks and (carried or verdict.get("document")):
+            return {**verdict, **cleared, "document": []}, "pick_under_offer"
+        return verdict, None
+    if pending_kind in ("outstanding_scope", "sales_report_detail"):
+        return verdict, None
+    on_so_list = [str(d).upper() for d in (focus_document or [])] == ["SO"] and not focus_status
+    if on_so_list and carried:
+        return {**verdict, **cleared}, "period_on_so_list"
+    return verdict, None
 
 
 def so_list_verdict(verdict: dict[str, Any], text: str) -> tuple[dict[str, Any], str | None]:

@@ -3888,6 +3888,18 @@ def _run_stages_body(  # noqa: PLR0915
         )
         if typed_so_rule:
             turn_trace.add("so_status", {"verdict_rule": typed_so_rule})
+        # Same pass: the report status and document the parser carried onto "1" under the
+        # outstanding offer, or onto a period answering the SO list, are not the message's.
+        if not (in_ranking_conversation or top_selling_rule or state_in.focus.status == "top_selling"):
+            verdict, carried_rule = so_status_mod.carried_status_verdict(
+                verdict,
+                jsc.js_string(jsc.get(_inner_message(envelope), "text") or ""),
+                focus_document=state_in.focus.document,
+                focus_status=state_in.focus.status,
+                pending_kind=getattr(state_in.pending, "kind", None),
+            )
+            if carried_rule:
+                turn_trace.add("so_list", {"verdict_rule": carried_rule})
         # Never inside a top selling ranking: there "by sales order" / "SO basis" switch the
         # ranking's basis (`_top_selling_verdict` above, round 7 R3), and the list must not
         # take the ranking's question or its status away.
