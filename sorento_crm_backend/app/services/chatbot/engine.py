@@ -697,7 +697,7 @@ def _option_words(option: dict[str, Any]) -> set[str]:
 
 
 def _with_the_picked_axis(
-    verdict: dict[str, Any], pending: Any, positions: list[int]
+    verdict: dict[str, Any], pending: Any, positions: list[int], message: str = ""
 ) -> dict[str, Any]:
     """The roster's own axis, off the option(s) the customer picked.
 
@@ -717,6 +717,9 @@ def _with_the_picked_axis(
     * any other roster (product, customer): an entity of the roster's kind naming no
       picked option is dropped - the parser's echo of the previous pick is not a second
       subject. The picked option itself reaches the focus through `_answer_pending`.
+      MULTI-CODE-DYM Q3 (owner, 4 Oct 2026): an entity whose own word is in THIS
+      message ("2 and SRTWC286-SH-150") is the customer's second subject, not an echo,
+      and stays.
     """
     matched = [o for o in pending.options if o.get("position") in positions]
     if not matched:
@@ -759,9 +762,25 @@ def _with_the_picked_axis(
             for v in (e.get("uuid"), e.get("canonical_code"), e.get("raw"), e.get("name"))
         )
 
+    from app.services.chatbot.turn.state import token_key
+
+    said = [w for w in re.split(r"[\s,;/&+]+", message or "") if w]
+
+    def typed_here(e: dict[str, Any]) -> bool:
+        """The entity's word, whole, among this message's own words (a span of as many
+        words as it has): an echo of an earlier pick is not, even when a typed code
+        starts with it."""
+        raw = str(e.get("raw") or "").strip()
+        want, size = token_key(raw), len(raw.split()) or 1
+        return bool(want) and any(
+            token_key(" ".join(said[i : i + size])) == want for i in range(len(said) - size + 1)
+        )
+
     entities = verdict.get("entities") or []
     kept_entities = [
-        e for e in entities if not (isinstance(e, dict) and e.get("hint") == kind and not names_a_pick(e))
+        e
+        for e in entities
+        if not (isinstance(e, dict) and e.get("hint") == kind and not names_a_pick(e) and not typed_here(e))
     ]
     if len(kept_entities) == len(entities):
         return verdict
@@ -4249,7 +4268,12 @@ def _run_stages_body(  # noqa: PLR0915
         # roster's axis from the option picked, never from a value the parser carried.
         roster_picks = _picks_in_the_roster_domain(state_in.pending, verdict)
         if roster_picks:
-            picked_verdict = _with_the_picked_axis(verdict, state_in.pending, roster_picks)
+            picked_verdict = _with_the_picked_axis(
+                verdict,
+                state_in.pending,
+                roster_picks,
+                jsc.js_string(jsc.get(_inner_message(envelope), "text") or ""),
+            )
             if picked_verdict is not verdict:
                 turn_trace.add(
                     "picked_axis",
