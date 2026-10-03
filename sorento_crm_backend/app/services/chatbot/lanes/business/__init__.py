@@ -2192,15 +2192,16 @@ def run_fetch(
 def _brand_scope_ids(ctx: dict[str, Any], db: Any, contact_id: Any, space_id: Any) -> list[str]:
     """The contact's accessible brand ids for the output guard; [] = unscoped.
 
-    The turn ctx (`ctx["brand_scope"]["ids"]`) wins, then the brand scope the engine stamped on
-    the session, then the contact's own row. A contact whose scope cannot be read fails
+    The brand scope the engine stamped on the session, then the contact's own row. The turn ctx
+    is read only when there is no session at all, so it can never widen what the session and
+    the contact carry. A contact whose scope cannot be read fails
     closed to a brand nothing carries, so every product row is dropped rather than shown."""
-    carried = ctx.get("brand_scope") if isinstance(ctx.get("brand_scope"), dict) else {}
-    ids = carried.get("ids")
-    if isinstance(ids, (list, tuple, set, frozenset)) and ids:
-        return sorted(str(i) for i in ids)
     if db is None:
-        return []
+        # No session to read a scope from, so a ctx claim can only NARROW (the guard then fails
+        # closed for lack of a session to look products up with); it never replaces a real scope.
+        carried = ctx.get("brand_scope") if isinstance(ctx.get("brand_scope"), dict) else {}
+        ids = carried.get("ids")
+        return sorted(str(i) for i in ids) if isinstance(ids, (list, tuple, set, frozenset)) and ids else []
     from app.models.base import get_brand_scope
 
     stamped = get_brand_scope(db)

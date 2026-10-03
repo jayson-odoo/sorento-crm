@@ -24,15 +24,15 @@ _CODE_KEYS = ("product_code", "item_code")
 _ID_KEYS = ("product_id",)
 
 
-def _names(item: dict[str, Any], codes: set[str], ids: set[str]) -> bool:
+def _names(item: dict[str, Any], codes: set[str], ids: set[str], extra: tuple[str, ...] = ()) -> bool:
     """Collect the product codes / ids `item` names (nested dicts too, nested lists not);
-    True when it names at least one."""
+    True when it names at least one. `extra` are the tool's own product keys."""
     found = False
     for key, value in item.items():
         if isinstance(value, dict):
-            found = _names(value, codes, ids) or found
+            found = _names(value, codes, ids, extra) or found
         elif isinstance(value, str) and value:
-            if key in _CODE_KEYS:
+            if key in _CODE_KEYS or key in extra:
                 codes.add(value)
                 found = True
             elif key in _ID_KEYS:
@@ -41,30 +41,30 @@ def _names(item: dict[str, Any], codes: set[str], ids: set[str]) -> bool:
     return found
 
 
-def _walk(node: Any, codes: set[str], ids: set[str]) -> None:
+def _walk(node: Any, codes: set[str], ids: set[str], extra: tuple[str, ...]) -> None:
     if isinstance(node, list):
         for item in node:
             if isinstance(item, dict):
-                _names(item, codes, ids)
-            _walk(item, codes, ids)
+                _names(item, codes, ids, extra)
+            _walk(item, codes, ids, extra)
     elif isinstance(node, dict):
         for value in node.values():
-            _walk(value, codes, ids)
+            _walk(value, codes, ids, extra)
 
 
-def _prune(node: Any, bad_codes: set[str], bad_ids: set[str]) -> Any:
+def _prune(node: Any, bad_codes: set[str], bad_ids: set[str], extra: tuple[str, ...]) -> Any:
     if isinstance(node, list):
         kept = []
         for item in node:
             if isinstance(item, dict):
                 codes: set[str] = set()
                 ids: set[str] = set()
-                if _names(item, codes, ids) and (codes & bad_codes or ids & bad_ids):
+                if _names(item, codes, ids, extra) and (codes & bad_codes or ids & bad_ids):
                     continue
-            kept.append(_prune(item, bad_codes, bad_ids))
+            kept.append(_prune(item, bad_codes, bad_ids, extra))
         return kept
     if isinstance(node, dict):
-        return {k: _prune(v, bad_codes, bad_ids) for k, v in node.items()}
+        return {k: _prune(v, bad_codes, bad_ids, extra) for k, v in node.items()}
     return node
 
 
@@ -76,9 +76,10 @@ def guard_result(tool_name: str, result: Any, scope_brand_ids: Any, db: Any) -> 
     if contracts.BRAND_SCOPE_TREATMENT.get(tool_name, "filtered") != "filtered":
         return result
     scope = frozenset(str(b) for b in scope_brand_ids)
+    extra = contracts.BRAND_SCOPE_PRODUCT_KEYS.get(tool_name, ())
     codes: set[str] = set()
     ids: set[str] = set()
-    _walk(result, codes, ids)
+    _walk(result, codes, ids, extra)
     if not codes and not ids:
         return result
     try:
@@ -91,4 +92,4 @@ def guard_result(tool_name: str, result: Any, scope_brand_ids: Any, db: Any) -> 
     except Exception:  # noqa: BLE001 - fail closed: what cannot be checked is not shown
         logger.warning("chatbot: brand scope guard could not look products up, dropping them", exc_info=True)
         bad_codes, bad_ids = set(codes), set(ids)
-    return _prune(result, bad_codes, bad_ids)
+    return _prune(result, bad_codes, bad_ids, extra)

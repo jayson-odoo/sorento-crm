@@ -24,12 +24,14 @@ export default function ContactBrandScopeSection({ contactId }: { contactId: str
   // null = untouched: the picker shows what the server holds until the first edit.
   const [draft, setDraft] = useState<string[] | null>(null);
   const saved = useMemo(() => data?.brand_ids ?? [], [data]);
-  const value = draft ?? saved;
-
   const options = useMemo(
     () => (brandsQuery.data ?? []).map((b) => ({ value: b.id, label: b.brand_name })),
     [brandsQuery.data],
   );
+  // A brand that no longer exists must not show as a raw id chip. Until the brand list loads
+  // the saved ids are kept as they are, so Save never silently drops one.
+  const known = useMemo(() => new Set(options.map((o) => o.value)), [options]);
+  const value = (draft ?? saved).filter((id) => !brandsQuery.data || known.has(id));
 
   const isDirty =
     draft !== null && (draft.length !== saved.length || draft.some((id) => !saved.includes(id)));

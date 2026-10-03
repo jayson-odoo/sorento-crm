@@ -89,6 +89,16 @@ UNDOMAINED_CHATBOT_TOOLS: tuple[str, ...] = (
 
 BrandScopeTreatment = Literal["filtered", "no_products"]
 
+# Keys, beyond `product_code` / `item_code` / `product_id`, that NAME a product in a `filtered`
+# tool's rows. Per tool, never global: `code` is a customer code on the customer tools, and
+# the analytics tools put the product in `group_key` (complaint analytics lower-cases it).
+# A key not named here is not looked up as a product.
+BRAND_SCOPE_PRODUCT_KEYS: dict[str, tuple[str, ...]] = {
+    "crm_top_selling_report": ("code",),
+    "crm_order_analytics": ("group_key",),
+    "crm_complaint_analytics": ("group_key",),
+}
+
 BRAND_SCOPE_TREATMENT: dict[str, BrandScopeTreatment] = {
     "crm_certificates_list": "filtered",
     "crm_complaint_analytics": "filtered",

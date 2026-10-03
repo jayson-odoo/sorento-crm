@@ -163,6 +163,9 @@ def admin_listing_company_filter(db, column) -> Optional[ColumnElement]:
 # pre-multi-company test baseline. The DB schema (NOT NULL + DEFAULT Sorento from
 # migrations 305/306) is unaffected, so disabling this just reverts read/write
 # behaviour to "all companies / DB-default company". Never set in production.
+# NOTE (CONTACT-BRAND-SCOPE): the per-contact brand criterion lives in the same
+# `do_orm_execute` listener, so COMPANY_SCOPE_ENFORCE=0 switches it off too. That flag is a
+# measurement-only escape hatch and must never be set on a stack serving real contacts.
 _ENFORCE = os.getenv("COMPANY_SCOPE_ENFORCE", "1") != "0"
 
 

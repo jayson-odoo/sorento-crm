@@ -52,6 +52,20 @@ def brand_predicate(scope: frozenset[str], brand_col):
     return brand_col.in_(sorted(scope))
 
 
+#: Tools that return money with no product dimension (project and quotation figures), so a
+#: brand-scoped contact cannot be given a figure limited to its brands: they do not run for it.
+_TOOLS_DENIED_WHEN_SCOPED = frozenset({"crm_project_forecast"})
+
+
+def brand_scope_allows_tool(tool_name: str, scope: Optional[frozenset[str]]) -> bool:
+    """False when `tool_name` must not run for a contact with this brand scope.
+
+    CONTACT-BRAND-SCOPE crew ruling (b): a scoped contact gets no project forecast. This is the
+    one seam; the follow-up, option (c), is per-brand project scoping (projects carrying a
+    brand), after which this tool can be allowed again with a filtered figure."""
+    return not (scope and tool_name in _TOOLS_DENIED_WHEN_SCOPED)
+
+
 @contextmanager
 def _brand_scope_off(db: Session):
     """Run a lookup that must SEE out-of-scope products (the output guard asks which ones are)."""
@@ -71,9 +85,18 @@ def out_of_scope_product_codes(db: Session, scope: frozenset[str], codes: Iterab
     wanted = {str(c) for c in codes if c}
     if not wanted:
         return set()
+    # Case-insensitive: complaint analytics lower-cases its group keys.
+    from sqlalchemy import func
+
+    lowered = {c.lower() for c in wanted}
     with _brand_scope_off(db):
-        rows = db.query(Product.product_code, Product.brand_id).filter(Product.product_code.in_(wanted)).all()
-    return {code for code, brand_id in rows if brand_id is None or str(brand_id) not in scope}
+        rows = (
+            db.query(Product.product_code, Product.brand_id)
+            .filter(func.lower(Product.product_code).in_(lowered))
+            .all()
+        )
+    bad = {code.lower() for code, brand_id in rows if brand_id is None or str(brand_id) not in scope}
+    return {c for c in wanted if c.lower() in bad}
 
 
 def out_of_scope_product_ids(db: Session, scope: frozenset[str], ids: Iterable[str]) -> set[str]:
@@ -120,8 +143,9 @@ def product_in_scope_clauses(db: Session, product_id_col) -> list:
 def brand_refs_by_contact(db: Session, contact_ids: Iterable[str]) -> dict[str, list[dict[str, str]]]:
     """`[{id, brand_name}]` per contact (brand name asc), ONE pair of queries for a page.
 
-    A stale id (a deleted brand) names nothing and is left out. Read with company scope off:
-    the settings are the contact's, whichever company the staff session is switched to."""
+    A stale id (a deleted brand) names nothing and is left out, and so does a brand of a
+    company outside the caller's scope: the contact row is read with company scope off (it is
+    not company-owned) but the brand names are read under the caller's own scope."""
     from app.models.access import RespondContact
     from app.models.base import company_scope
     from app.models.product import Brand
@@ -136,11 +160,11 @@ def brand_refs_by_contact(db: Session, contact_ids: Iterable[str]) -> dict[str, 
             .all()
         )
         wanted = {str(b) for _cid, brand_ids in rows for b in (brand_ids or [])}
-        names = (
-            {str(i): n for i, n in db.query(Brand.id, Brand.brand_name).filter(Brand.id.in_(wanted)).all()}
-            if wanted
-            else {}
-        )
+    names = (
+        {str(i): n for i, n in db.query(Brand.id, Brand.brand_name).filter(Brand.id.in_(wanted)).all()}
+        if wanted
+        else {}
+    )
     out: dict[str, list[dict[str, str]]] = {}
     for cid, brand_ids in rows:
         refs = [{"id": str(b), "brand_name": names[str(b)]} for b in (brand_ids or []) if str(b) in names]
@@ -174,6 +198,9 @@ def set_contact_brands(db: Session, contact_id: str, brand_ids: Iterable[str]) -
     from app.services.error_handler import AppException, handle_not_found
 
     wanted = list(dict.fromkeys(str(b) for b in brand_ids if b))
+    from app.models.base import get_company_scope
+
+    prev_scope = get_company_scope(db)
     with company_scope(db, None):
         contact = db.query(RespondContact).filter(RespondContact.id == str(contact_id)).first()
         if contact is None:
@@ -184,10 +211,51 @@ def set_contact_brands(db: Session, contact_id: str, brand_ids: Iterable[str]) -
                     uuid.UUID(b)
             except ValueError:
                 raise AppException(422, "Unknown brand", code="UNKNOWN_BRAND") from None
-            known = {str(i) for (i,) in db.query(Brand.id).filter(Brand.id.in_(wanted)).all()}
+            # Under the caller's own company scope: a brand it cannot see is unknown to it.
+            with company_scope(db, prev_scope):
+                known = {str(i) for (i,) in db.query(Brand.id).filter(Brand.id.in_(wanted)).all()}
             missing = [b for b in wanted if b not in known]
             if missing:
                 raise AppException(422, "Unknown brand", detail=", ".join(missing), code="UNKNOWN_BRAND")
         contact.brand_ids = wanted or None
         db.commit()
     return get_contact_brands(db, contact_id)
+
+
+def in_scope_product_codes(db: Session, codes: Iterable[str]) -> Optional[set[str]]:
+    """The subset of `codes` whose product the session's brand scope allows; None when the
+    session is unscoped. Codes that name no product are NOT in scope (a scoped contact is
+    shown only what it may see)."""
+    from app.models.base import get_brand_scope
+    from app.models.product import Product
+
+    if not get_brand_scope(db):
+        return None
+    wanted = {str(c).strip() for c in codes if c and str(c).strip()}
+    if not wanted:
+        return set()
+    # The session criterion (brand IN scope) is active, so this ORM read returns only
+    # in-scope products.
+    return {str(c) for (c,) in db.query(Product.product_code).filter(Product.product_code.in_(wanted)).all()}
+
+
+def complaint_in_scope_clauses(db: Session) -> list:
+    """Filters keeping complaints with at least one product line in the session's brand scope
+    (none when unscoped). Lines carry the product CODE, so the match is on the code."""
+    from sqlalchemy import exists, select
+
+    from app.models.base import get_brand_scope
+    from app.models.complaints import Complaint, ComplaintProductLine
+    from app.models.product import Product
+
+    scope = get_brand_scope(db)
+    if not scope:
+        return []
+    products = Product.__table__
+    in_scope_codes = select(products.c.product_code).where(products.c.brand_id.in_(sorted(scope)))
+    return [
+        exists().where(
+            ComplaintProductLine.complaint_id == Complaint.id,
+            ComplaintProductLine.product_code.in_(in_scope_codes),
+        )
+    ]
