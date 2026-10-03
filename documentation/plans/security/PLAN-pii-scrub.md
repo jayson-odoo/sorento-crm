@@ -34,7 +34,7 @@ phone numbers, Respond.io contact ids, lorry plates, driver and contact names. A
    plus vetted full names and names written next to a phone. Spreadsheet fixtures are edited
    cell by cell (driver and plate columns, phone strings).
 3. **Delete raw captures**: `.playwright-mcp/`, `*.har`, `*.rdb`, root page snapshots,
-   `.cursor/debug.log`; `.gitignore` covers them, and `.env.browse` is untracked.
+   `.cursor/debug.log`; `.gitignore` covers them. (`sorento_crm_backend/.env.browse` stays tracked: dummy values only, and `tests/test_dev_login.py` reads it.)
 4. **Guard**: `scripts/pii_guard.py` (stdlib) in CI (`pii-guard` fast gate) and in the pre-push
    hook. It reads every tracked text file and the XML inside Office files, and fails on a real
    looking MY mobile (several prefix and separator shapes), a value under a phone-like key, a
