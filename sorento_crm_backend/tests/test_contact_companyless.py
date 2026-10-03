@@ -297,7 +297,7 @@ def _park_unlink(client, link_id, headers):
 def _lapse_and_commit(client, db, headers, link_id):
     from app.models.sla import SlaFormAction
 
-    db.query(SlaFormAction).filter(SlaFormAction.entity_id == str(link_id)).update(
+    db.query(SlaFormAction).filter(SlaFormAction.source_entity_id == str(link_id)).update(
         {"commit_at": datetime.utcnow() - timedelta(seconds=1)}, synchronize_session=False
     )
     db.commit()
