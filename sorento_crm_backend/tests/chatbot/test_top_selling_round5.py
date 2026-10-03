@@ -826,7 +826,7 @@ class TestR5Continuity:
         assert args["customer_ids"] == [cat.customers["SAMPLE - FANNY NG"]]
         assert "Filters from the ranking" not in text
 
-    def test_a_named_year_carries(self, session_factory, monkeypatch, cat) -> None:
+    def test_a_named_month_in_a_ranking_carries_to_the_next_report(self, session_factory, monkeypatch, cat) -> None:
         # Dated: a dateless DO list ask asks which period first (DO-ASK-SIMPLIFY, owner 4 Oct 2026).
         # January 2025, not the whole year: a range over the 31-day cap is refused, not carried.
         _turn(session_factory, monkeypatch, _ask(top_n=10, rank_by="amount", date_filter_start="2025-01-01", date_filter_end="2025-01-31"), "top 10 hot selling in 2025 by amount")

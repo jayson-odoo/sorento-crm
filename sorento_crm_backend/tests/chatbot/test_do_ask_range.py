@@ -185,15 +185,6 @@ def test_a_non_dealer_january_to_june_is_refused_too():
     assert "6 months" in said and "01/01/2026 to 30/06/2026" in said, said
 
 
-# --- the helper ACCESS-MODEL replaces ------------------------------------------------- #
-
-
-def test_is_dealer_reads_the_customer_scope():
-    assert do_ask.is_dealer({"customer_scope": {"enforced": True, "ids": [_CID]}}) is True
-    assert do_ask.is_dealer({"customer_scope": {"enforced": False}}) is False
-    assert do_ask.is_dealer({}) is False
-
-
 # --- review round 1 ---------------------------------------------------------------------- #
 
 

@@ -425,7 +425,7 @@ class TestR3BothMissClarifiesTheCompany:
         said = _said(conv.say(f"{PRODUCT_CODE} kim seng jaya send yet", _order_ask()))
         # A dated miss words the offer "..., or would you like me to escalate to customer service
         # team?" after the 'another month or dates' hint (a dateless DO ask can no longer miss: it asks which period).
-        assert "escalate to customer service team?" in said, said
+        assert "or would you like me to escalate to customer service team?" in said, said
         assert (
             f"{PICKER_HEAD}\n*Mocha:*\n1. Kia Yee\n*Sorento:*\n2. Jereen Tee\n3. Tay Zhi Yang\n\n{COMPANY_SENTENCE}"
         ) in said, said

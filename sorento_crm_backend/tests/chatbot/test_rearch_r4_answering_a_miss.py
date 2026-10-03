@@ -340,6 +340,8 @@ class TestAC1700AnsweringAMemberOfferMiss:
             "the re-run must stay scoped to the SAME carried customer, not swallowed "
             f"by the unrelated open member_offer: {args!r}"
         )
+        assert args.get("actual_delivery_date_from") == "2026-08-01", args
+        assert args.get("actual_delivery_date_to") == "2026-08-31", args
 
     def _run_position(self, session_factory, monkeypatch, position_text: str, msg_id: str):
         qf = _parser_output(
