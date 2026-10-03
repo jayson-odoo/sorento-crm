@@ -68,6 +68,7 @@ from app.services.chatbot.turn import state as turn_state
 from app.services.chatbot.turn import compose as turn_compose
 from app.services.chatbot.turn import context as context_mod
 from app.services.chatbot.turn import episode_digest as episode_digest_mod
+from app.services.chatbot.turn import held as turn_held
 from app.services.chatbot.turn import fetch as run_fetch_mod
 from app.services.chatbot.turn import memory as memory_mod
 from app.services.chatbot.turn import profile_facts as profile_facts_mod
@@ -3653,9 +3654,13 @@ def _run_stages_body(  # noqa: PLR0915
         # `chatbot_recall_enabled` is no longer read (contract section 2: the recall
         # re-parse is deleted; the column stays, untouched, per Q1 - no data change).
         profile, _recall_enabled = turn_runtime.load_profile(db, contact_respond_id)
+        profile.access_fp = _access_fingerprint(db, contact_respond_id, profile)
         known_phone = turn_runtime.contact_phone(db, contact_respond_id)
         turn_no = turn_runtime.turn_number(db, contact_respond_id)
         state_in = turn_runtime.load_state(session_block, profile=profile, turn_no=turn_no)
+        # STUCK-QTY-LOOP: a held question built under other access, or past its TTL, is
+        # gone before the parser is shown it (`turn/held.py`).
+        state_in, held_expired = turn_held.expire(state_in)
         remembered_before = session_state.five_keys(session_block)
         # The parser's `Previous response:` line. Read here, at `received`, with the
         # other contact facts and off the SAME session: it is what the bot last said to
@@ -4046,6 +4051,15 @@ def _run_stages_body(  # noqa: PLR0915
     # itself become the trace's last entry instead of the failed `understood`
     # stage (AC-105/R5/H44's own "no routing" shape).
     turn_trace.add("context", context_report)
+    if held_expired:
+        turn_trace.add("held_dropped", {"why": held_expired})
+    # STUCK-QTY-LOOP (owner, 4 Oct 2026): the ONE rule for every held question, before
+    # any reader of one runs. A reset clears them all; a message of a different intent
+    # that answers none of them is a new question, and they all go (`turn/held.py`).
+    held_before = turn_held.held_slots(state_in)
+    state_in, held_why = turn_held.consume(state_in, verdict)
+    if held_why:
+        turn_trace.add("held_dropped", {"why": held_why, "slots": held_before})
 
     # The routing default lands ONCE, here, after the last parse and before the access
     # read (finding 2b): every reader downstream - access, the lanes, the trace - sees
@@ -6180,6 +6194,31 @@ def _dealer_refers_to_salesman(answer: Any) -> Any:
     return dataclasses_replace(answer, text=text, question=question)
 
 
+def _access_fingerprint(db: Any, contact_respond_id: str, profile: Any) -> str:
+    """STUCK-QTY-LOOP: everything that decides what this contact is told, as one string
+    (`Profile.access_fp`). A held question stamped under another one was built for access
+    the contact no longer has (owner, 4 Oct 2026: availability switched to compact), so
+    `turn/held.py::expire` drops it. The field-reveal grants are read the same way
+    `head/access.check_access` reads them; a failed read fails closed to none."""
+    import hashlib
+
+    from app.services.chatbot.head.access import _granted_field_reveal_keys
+
+    reveals = _granted_field_reveal_keys(
+        db, contact_id=contact_respond_id, space_id=default_space_id(db)
+    )
+    facts = [
+        getattr(profile, "tier", None),
+        getattr(profile, "stock_allowed", None),
+        getattr(profile, "stock_availability_only", None),
+        getattr(profile, "escalation_allowed", None),
+        getattr(profile, "notify_salesman", None),
+        getattr(profile, "packing_list_allowed", None),
+        sorted(str(key) for key in reveals or []),
+    ]
+    return hashlib.sha256(json.dumps(facts, default=str).encode()).hexdigest()[:16]
+
+
 def _stock_ask_reply(
     answer: Any,
     state_out: Any,
@@ -6381,6 +6420,9 @@ def _run_answer(
         # back as `session_patch` and writes nothing (D14). Same rule `run_tail` applies
         # for the older lanes, so every asking lane carries its question to the next
         # console or replay turn the same way (finding 2a).
+        # STUCK-QTY-LOOP: the held questions carry the turn and the access they were
+        # (re)asked under, read back by `turn/held.py::expire` on the next turn.
+        state = turn_held.stamp(state, remembered_before, question=getattr(answer, "question", None))
         session_payload = turn_tail.session_payload(state, answer, tail_ctx)
         if not dry_run:
             turn_tail.persist(
@@ -8456,6 +8498,9 @@ def run_tail(
             turn_no=0,
         )
     before = dict(remembered_before or session_state.five_keys(jsc.get(ctx, "session")))
+    if applied is not None:
+        # STUCK-QTY-LOOP: the same stamp the composed arms write (`turn/held.py`).
+        state = turn_held.stamp(state, before, question=question)
     payload = {
         "focus": turn_state.focus_to_wire(state.focus),
         # The lane's OWN question, else the one APPLY carried - the same rule the

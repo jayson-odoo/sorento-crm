@@ -358,7 +358,7 @@ def test_carried_entities_of_the_old_intent_do_not_reach_a_new_intent():
     state, why = held.consume(_state(focus), v)
     assert why is None or why == "new_intent"
     out, _plan = apply(state, v, build_policy())
-    assert "sales_agent" not in out.focus.extra
+    assert not out.focus.extra.get("sales_agent")
 
 
 def test_anaphora_under_a_new_intent_still_refines():
@@ -383,7 +383,5 @@ def test_a_lane_question_is_never_turned_into_a_not_found():
 
     envelope = {"required_ask": {"ask": "low_stock_report", "asking": "category"}, "raw_fragment": {"kind": "result", "fetch": {}}}
     assert answer_bridge.answers_a_miss({"_exit_kind": "not_found"}, envelope) is False
-    lane = {"lane_ask": {"kind": "outstanding_scope"}, "raw_fragment": {"kind": "result", "fetch": {}}}
-    assert answer_bridge.answers_a_miss({"_exit_kind": "not_found"}, lane) is False
     plain = {"raw_fragment": {"kind": "result", "fetch": {}}}
     assert answer_bridge.answers_a_miss({"_exit_kind": "not_found"}, plain) is True

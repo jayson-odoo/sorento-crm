@@ -66,10 +66,17 @@ def test_clear_as_a_reset_ends_the_question(console):
     assert ASK not in again, again
 
 
-def test_clear_the_parser_did_not_flag_never_replays_the_question(console):
+def test_clear_the_parser_did_not_flag_never_replays_the_stored_question(console):
+    """"clear" with no `topic_reset` and no intent reads, by the parser's own fields, as
+    "stock?" over the carried products. The engine no longer replays the STORED question
+    (the resume needs a stock intent); it re-reads stock under the contact's current
+    access, which is the ordinary carry. Ending the conversation on "clear" is the
+    parser's `topic_reset` (`test_clear_as_a_reset_ends_the_question`)."""
     _open_the_question(console)
-    text = console.say("clear", verdict(domain_hint="inventory"))
-    assert ASK not in text, text
+    calls = len(console.tool_calls)
+    console.say("clear", verdict(domain_hint="inventory"))
+    assert "task_resumed_stock_qty" not in console.last_trace.rules_fired
+    assert [name for name, _args in console.tool_calls[calls:]] == ["crm_inventory_stock_balance_list"]
 
 
 def test_a_genuine_quantity_still_answers_the_question(console):

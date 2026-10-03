@@ -61,6 +61,13 @@ SCOPE_BY_DOCUMENT: dict[tuple[str, ...], str] = {
     ("DO", "SO"): "both",
 }
 
+#: STUCK-QTY-LOOP (crew report 2, 4 Oct 2026): the verdict marker `turn/held.py::consume`
+#: sets when this message names an intent other than the one the conversation was in. A
+#: would-be refinement under it is a fresh ask that starts from its own defaults: "taiyang
+#: only" asked for stock after a ranking by sales agent William is not "the ranking, for
+#: taiyang", and William must not ride into the stock lookup as a miss.
+NEW_INTENT = "_new_intent"
+
 #: A position no roster ever prints (they count from 1): a pick of nothing on offer, which
 #: the generic re-print rule answers by asking the same question again.
 NOT_OFFERED = 0
@@ -127,6 +134,7 @@ class Decision:
         return self.kind == NEW_ASK and self.why in (
             "entity_op_replace",
             "domain_in_message",
+            "new_intent",
         )
 
     def as_trace(self) -> dict[str, Any]:
@@ -554,6 +562,8 @@ def _subject_reading(
             return Decision(
                 NEW_ASK, "names_its_own_entity", entities=named, window=window, **facts
             )
+        if verdict.get(NEW_INTENT) is True:
+            return Decision(NEW_ASK, "new_intent", entities=named, window=window, **facts)
         return Decision(
             REFINE,
             "refines_standing_subject",
@@ -580,7 +590,8 @@ def _subject_reading(
             **facts,
         )
     if entities:
-        return Decision(NEW_ASK, "names_its_own_entity", entities=named, window=window, **facts)
+        why = "new_intent" if verdict.get(NEW_INTENT) is True else "names_its_own_entity"
+        return Decision(NEW_ASK, why, entities=named, window=window, **facts)
     return Decision(CARRY, "nothing_answered", window=window, **facts)
 
 

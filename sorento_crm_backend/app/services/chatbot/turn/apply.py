@@ -632,7 +632,7 @@ def _answer_outstanding(
         focus.sales_channel = None
         return focus, None, None, False
 
-    if decision.kind == NEW_ASK and decision.why == "names_its_own_entity":
+    if decision.kind == NEW_ASK and decision.why in ("names_its_own_entity", "new_intent"):
         trace.rules_fired.append("outstanding_pending_dropped")
         _drop_question_subject(focus, pending)
         return focus, None, None, False
