@@ -160,6 +160,14 @@ path) and stop being read by the chat path; dropping them is a later lane.
   `tests/test_chatbot_access_leak_matrix.py` (role preset x domain x field: prompt absent AND refused,
   AC-AM-12/14).
 
+## Execution (LEAD pattern, owner 3 Oct)
+
+The lane lead writes no product code or tests. Red tests: TESTER subagents (done for S1 to S7 + owner
+additions + v8; proofs on #1434). Build: one CODER subagent per slice in order S1..S7, told it may not
+weaken or edit a tester assertion without the lead's sign-off; each run capped at 60 min with a progress
+note every 20; then a separate REVIEWER subagent and a SECURITY-REVIEWER subagent (RBAC/permission
+boundary) in parallel; conclusions at most 15 lines each. Kill-proof after green per slice group.
+
 ## Migration on a dev copy + hand test
 
 Idempotent SQL for crew at `crew/state/migrations/ACCESS-MODEL.sql` (CREATE ... IF NOT EXISTS, INSERT
