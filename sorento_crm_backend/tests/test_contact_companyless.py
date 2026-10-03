@@ -99,9 +99,11 @@ def _user(db, *, admin: bool, grants: tuple[str, ...], active: str | None) -> di
     db.add(row)
     db.flush()
     if admin:
-        role = UserRole(id=str(uuid.uuid4()), slug="admin", name="Admin", is_protected=False, is_default=False)
-        db.add(role)
-        db.flush()
+        role = db.query(UserRole).filter(UserRole.slug == "admin").first()
+        if role is None:
+            role = UserRole(id=str(uuid.uuid4()), slug="admin", name="Admin", is_protected=False, is_default=False)
+            db.add(role)
+            db.flush()
         db.add(UserRoleAssignment(user_id=row.id, role_id=role.id))
     for company_id in grants:
         db.add(UserCompany(user_id=row.id, company_id=company_id))
@@ -200,10 +202,8 @@ def test_ac1_warehouses_grants_lists_every_granted_company_with_company_fields(c
         client.get(WAREHOUSES, params={**GRANTS, "query": SHARED_WH}, headers=admin_on_sorento["headers"])
     )
 
-    assert {r["company_id"] for r in rows} == {SORENTO, MOCHA_ID}
     assert len(rows) == 2
-    assert all(r["company_name"] for r in rows)
-    assert {r["company_name"] for r in rows if r["company_id"] == MOCHA_ID} == {"Mocha"}
+    assert {r["company_id"]: r["company_name"] for r in rows} == {SORENTO: "Sorento", MOCHA_ID: "Mocha"}
 
 
 # ============================================================ AC2 dealer pool
@@ -224,8 +224,7 @@ def test_ac2_dealer_segment_with_grants_adds_other_companys_dealer_locations(cli
     )
 
     assert sorted(r["warehouse_code"] for r in rows) == ["ZZTDLR", "ZZTDLR"]
-    assert {r["company_id"] for r in rows} == {SORENTO, MOCHA_ID}
-    assert all(r["company_name"] for r in rows)
+    assert {r["company_id"]: r["company_name"] for r in rows} == {SORENTO: "Sorento", MOCHA_ID: "Mocha"}
 
 
 # ============================================================ AC3 customer picker + link
@@ -241,8 +240,7 @@ def test_ac3_customers_select_grants_finds_every_granted_company_with_company_fi
     )
 
     assert len(rows) == 2
-    assert {r["company_id"] for r in rows} == {SORENTO, MOCHA_ID}
-    assert all(r["company_name"] for r in rows)
+    assert {r["company_id"]: r["company_name"] for r in rows} == {SORENTO: "Sorento", MOCHA_ID: "Mocha"}
 
 
 def test_ac3_adding_a_customer_of_a_non_active_granted_company_links_its_own_company(client, db, admin_on_sorento):
@@ -537,3 +535,62 @@ def test_ac8_api_key_caller_ignores_the_flag(client, db, admin_on_sorento, monke
 
     assert len(rows) == 1
     assert rows[0]["company_id"] == SORENTO
+
+
+# ============================================================ memory: crm_view ignores the switcher
+
+
+def _primary_link(db, contact, customer, minutes=1) -> RespondContactCustomer:
+    row = RespondContactCustomer(
+        contact_id=contact.id,
+        customer_id=customer.id,
+        company_id=customer.company_id,
+        source="manual",
+        is_primary=True,
+        created_at=datetime(2026, 1, 1) + timedelta(minutes=minutes),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _crm_facts(client, contact_id, headers) -> dict:
+    response = client.get(f"{CONTACTS}/{contact_id}/chatbot/memory", headers=headers)
+    assert response.status_code == 200, response.text
+    facts = response.json().get("facts") or []
+    return {f["key"]: f["value"] for f in facts if f.get("source") == "crm"}
+
+
+def test_memory_crm_facts_of_a_sorento_primary_show_with_the_switcher_on_mocha(client, db):
+    contact = _contact(db)
+    customer = _customer(db, SORENTO, "ZZT Memory Cust")
+    customer.market_segment_code = None
+    _primary_link(db, contact, customer)
+    on_sorento = _user(db, admin=True, grants=(), active=SORENTO)
+    db.commit()
+    expected = _crm_facts(client, contact.id, on_sorento["headers"])
+    assert expected.get("customer", "").startswith("ZZT Memory Cust")  # control: works on Sorento
+
+    on_mocha = _user(db, admin=True, grants=(), active=MOCHA_ID)
+    db.commit()
+
+    assert _crm_facts(client, contact.id, on_mocha["headers"]) == expected
+
+
+def test_memory_primary_is_deterministic_across_the_switcher_when_both_companies_have_one(client, db):
+    contact = _contact(db)
+    earliest = _customer(db, MOCHA_ID, "ZZT Earliest Primary")
+    later = _customer(db, SORENTO, "ZZT Later Primary")
+    _primary_link(db, contact, earliest, minutes=1)
+    _primary_link(db, contact, later, minutes=5)
+    on_sorento = _user(db, admin=True, grants=(), active=SORENTO)
+    on_mocha = _user(db, admin=True, grants=(), active=MOCHA_ID)
+    db.commit()
+
+    seen = [
+        _crm_facts(client, contact.id, who["headers"])
+        for who in (on_sorento, on_mocha, on_sorento, on_mocha)
+    ]
+
+    assert all(f == seen[0] for f in seen)
+    assert seen[0]["customer"].startswith("ZZT Earliest Primary")
