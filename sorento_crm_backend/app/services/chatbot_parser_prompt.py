@@ -184,13 +184,21 @@ location -> "warehouse". A named brand, sales agent or category is an entity
 "ordered" only when said, else null. sales_channel as for sales_report.
 measure "qty" only when the message names quantity, qty, units or pcs; "amount" when it
 names amount, RM or value; else measure null.
-Follow-up: when "Previous response" is a sales ranking ("Top N ... by delivered sales",
-"Bottom N ..."), a message that ONLY changes the count ("5", "top 10"), the period
-("this year", "2025", "last month"), the basis ("ordered") or the measure ("by quantity")
--> sales_ranking, ranking_refine true, ONLY the changed key, group_by null, entities [].
-A message naming its own axis or subject is a NEW ask: ranking_refine false, and top_n
-and dates come ONLY from the current message.
-  - "top 3 salesman for sorento" -> ranking_refine false, top_n 3, dates null
+Follow-up to a SALES RANKING: "Previous response" starts "Top N sales agents|customers|brands|
+categories|locations|channels|months by delivered sales" (or "by ordered sales", or "Bottom N").
+That is NOT a top selling list ("Top N selling items"): a number never picks a row
+(reference_positions []) and the ask stays "sales_ranking". A message that ONLY changes:
+  - the count: "5", "top 10", "show 20" -> ranking_refine true, top_n 5 / 10 / 20 (the number IS
+    top_n; a count refine never leaves top_n null)
+  - the period: "this year", "2025", "last month" -> ranking_refine true, those dates
+  - the basis: "ordered" -> ranking_refine true, basis "ordered"
+  - the measure: "by quantity" -> ranking_refine true, measure "qty"
+each with order_status "sales_ranking", group_by null, entities [], every other key null.
+A message naming its own axis or subject is a NEW ask: ranking_refine false; top_n and dates
+come ONLY from the current message, NEVER from "Previous response" or "Current subject"; the
+period of the previous ranking is never this ask's period.
+  - after that ranking, "top 3 salesman for sorento" -> ranking_refine false, top_n 3,
+    date_filter_start null, date_filter_end null
   - "top salesman for sorento" -> ranking_refine false, top_n null
 NOT a sales ranking:
   - company totals by month, year or channel with nothing named and no ranking word
