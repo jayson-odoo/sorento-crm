@@ -1,8 +1,10 @@
 """Print the customer-group seed as idempotent SQL (CUSTOMER-GROUP).
 
-The same plan `alembic/versions/cust_group_0001.py::seed` applies on a test copy, emitted as
-text for a database that must not run the seed in-process. Reads `customers` with ONE
-SELECT from DATABASE_URL and writes nothing; the output is what gets reviewed and run.
+The name-rule plan (`alembic/versions/cust_group_0001.py::plan_groups`), emitted as text.
+The migration no longer applies it (owner ruling 3 Oct 2026: no automatic name-matching
+joins); this output is a proposal for review, never something an upgrade runs. Reads
+`customers` with ONE SELECT from DATABASE_URL and writes nothing; the output is what gets
+reviewed and run.
 
     venv/bin/python scripts/customer_groups_seed_sql.py > customer-groups-seed.sql
 
