@@ -945,10 +945,13 @@ def _incoming_dealer(rows: list[dict], b: _Builder) -> None:
         if not isinstance(row, dict):
             continue
         etas = [e for e in row.get("etas") or [] if _filled(e)]
-        when = f"ETA: {', '.join(etas)}" if etas else "ETA: not confirmed yet"
+        # Owner hand test, 3 Oct 2026: an ETA is a tick and its dates, none is "No ETA".
+        when = f"{STOCK_YES} ETA {', '.join(etas)}" if etas else "No ETA"
         code = row.get("product_code")
+        # AVAIL-MODE-REPLIES rule 3 (owner, 2 Oct 2026): one compact line per product,
+        # "<code>: ETA <dates>", never the code with the ETA on a line of its own.
         # `dealer_view` tells the engine's zero-stock ladder this line is a whole answer.
-        b.raw_item(f"{code}\n{when}" if _filled(code) else when, [], {"dealer_view": True})
+        b.raw_item(f"{code}: {when}" if _filled(code) else when, [], {"dealer_view": True})
 
 
 def _without_repeats(b: _Builder, start: int) -> None:
@@ -1463,10 +1466,17 @@ def _availability_label(entry: dict) -> Optional[str]:
 #: `incoming` is handled separately in `_availability_line` - it is the only branch
 #: whose sentence carries a date. REFER-SALESMAN (30 Sep 2026): the verdict is its own
 #: sentence and the refer is exactly `REFER_TO_SALESMAN`, on the same line.
+#
+#: AVAIL-MODE-REPLIES (owner, 2 Oct 2026): got stock / no stock read as a tick and a cross,
+#: never as words. `too_big` keeps its words behind a blocked mark (owner v2 note 1): it
+#: says nothing about our stock either way, so it is never a tick or a cross.
+STOCK_YES = "\u2705"
+STOCK_NO = "\u274c"
+STOCK_BLOCKED = "\U0001F6AB"
 _AVAILABILITY_TAILS = {
-    "too_big": f"the quantity is more than what I can confirm here. {REFER_TO_SALESMAN}",
-    "in_stock": f"yes, we have stock. {REFER_TO_SALESMAN}",
-    "no_incoming": f"no stock and no incoming at the moment. {REFER_TO_SALESMAN}",
+    "too_big": f"{STOCK_BLOCKED} the quantity is more than what I can confirm here. {REFER_TO_SALESMAN}",
+    "in_stock": f"{STOCK_YES} {REFER_TO_SALESMAN}",
+    "no_incoming": f"{STOCK_NO} No incoming. {REFER_TO_SALESMAN}",
 }
 
 
@@ -1485,7 +1495,19 @@ def _availability_tail(entry: dict) -> str:
     """The sentence after "<code> x <Q>:" for one answered entry."""
     branch = entry.get("branch")
     if branch == "incoming":
-        return f"no stock at the moment, ETA {entry.get('eta')}."
+        return f"{STOCK_NO} ETA {entry.get('eta')}."
+    available = entry.get("available_qty")
+    if (
+        branch == "in_stock"
+        and isinstance(available, int)
+        and not isinstance(available, bool)
+        and available >= 1
+    ):
+        # AVAIL-MODE-REPLIES rule 2: some stock, short of the asked quantity, the ask
+        # within the category max. The backend sets `available_qty` in that case only
+        # (`inventory_service._apply_stock_visibility`), so it is the one figure of ours
+        # this mode ever prints.
+        return f"{STOCK_YES} {available} available. {REFER_TO_SALESMAN}"
     # Nit, review round 1: an unknown or missing branch is unreachable today
     # (`products.category_id` is NOT NULL, so `inventory_service.py` never
     # leaves `branch` unset) - but if a fallback is kept, `too_big` is the one
@@ -1497,13 +1519,15 @@ def _stamp_refers(entries: Any) -> Any:
     """CUSTOMER-ASKS-REFER-ONLY (owner ruling 1 Oct 2026): each answered entry carries
     `refers_to_salesman`, read off the tail this presenter printed for it, so the backend's
     Customer asks writer logs exactly the lines that referred the dealer (B3 `incoming`
-    does not). Only once every entry is answered, the same rule `_stock_availability`
-    prints the lines by; a reply still owing a quantity printed no tail at all."""
+    does not). Per entry with a branch, the same rule `_stock_availability` prints the
+    lines by; an entry still owing its quantity printed no tail and is not stamped."""
     if not isinstance(entries, list):
         return entries
     rows = [e for e in entries if isinstance(e, dict)]
-    if not rows or any(e.get("needs_quantity") for e in rows):
+    if not rows:
         return entries
+    # AVAIL-MODE-REPLIES rule 5: an answered line is printed even while another product
+    # still owes its quantity, so it is stamped on that turn too.
     return [
         {**e, "refers_to_salesman": _availability_tail(e).endswith(REFER_TO_SALESMAN)}
         if isinstance(e, dict) and e.get("branch")
@@ -1518,19 +1542,19 @@ def _stock_availability(payload: dict, b: _Builder) -> None:
     `fields` stays empty on purpose - this mode exists so a dealer is never told a
     quantity or a location of ours, and an empty field list is the only shape that
     cannot carry one. The item TITLE carries the whole answer (`_availability_line`)
-    once every entry has a branch; while any entry is still missing its quantity, the
-    title stays the bare product code and `_availability_intro` asks instead
-    (unchanged from before S3 - the "how many units" question is #1118's
-    `turn/task.py::StockQtyTask.question()` territory once a task is open, not this
-    slice's scope, R1/AC-SA310).
+    for every entry with a branch; an entry still missing its quantity keeps the bare
+    product code and `_availability_intro` asks (the backend's
+    `turn/task.py::StockQtyTask.question()` names the products once a task is open).
     """
     entries = _availability_entries(payload)
-    show_answer = bool(entries) and not any(e.get("needs_quantity") for e in entries)
     for entry in entries:
         label = _availability_label(entry)
         if not label:
             continue
-        title = _availability_line(entry) if show_answer else label
+        # AVAIL-MODE-REPLIES rule 5 (owner, 2 Oct 2026): a product with its answer
+        # (a branch) prints that answer even while another product still owes its
+        # quantity; one still owed stays its bare code for the question to name.
+        title = _availability_line(entry) if entry.get("branch") and not entry.get("needs_quantity") else label
         b.raw_item(
             title,
             [],
