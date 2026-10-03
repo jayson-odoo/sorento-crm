@@ -212,3 +212,17 @@ cancel. See the module docstring for the full contract (the PR body repeats it).
    (code) entities; every other word stays in the message text the lane reads; and a low
    stock reply is marked so `answer_bridge` never answers a miss over it.
 3. The applied filters were said only on a ready reply. Now every reply opens with them.
+
+## Cloud browser pass with the LIVE parser (3 Oct 2026, gpt-5.4-mini, prompt v3)
+
+4. Carried word: for a bare "low stock report" asked right after a turn that named "water
+   closet", the live parser emitted `{raw: "water closet", hint: "category",
+   current_message: true}` although the word is not in the message, and the report ran
+   scoped. Fixed (989dc44a): a category or brand word is taken only when the message text
+   contains it (whole words, case-insensitive). Known limit, fail-safe: a plural or hyphen
+   form ("water closets", "water-closet"), a translated word ("tandas" read as "water
+   closet") or unspaced Chinese drops the word, and the bot asks the category once instead
+   of running.
+5. "cancel" as an answer: the live parser emitted `is_affirmative: false`; the reroute kept
+   it and the turn fell into the generic low-signal reply. Fixed (c5ba6734): a rerouted answer
+   clears the parser's yes/no reading.
