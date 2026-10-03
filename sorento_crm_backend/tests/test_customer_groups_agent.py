@@ -185,3 +185,25 @@ def test_agent_mixed_filter_lists_only_mixed_groups_and_counts_them(client, db):
     full = client.get(GROUPS + "/", params={"agent_mixed": "true"}).json()
     assert sorted(r["name"] for r in full["data"]) == ["GRP-M1", "GRP-M2"]
     assert all(r["sales_agent_mixed"] is True for r in full["data"])
+
+
+def test_agent_mixed_filter_ignores_one_derived_person_and_one_typed_label(client, db):
+    f1 = _agent(db, "ZZCSA AGENT-F I")
+    f3 = _agent(db, "ZZCSA AGENT-F III")
+    t1 = _agent(db, "ZZCSA T1 I", "Same Typed")
+    t2 = _agent(db, "ZZCSA T2 I", " same typed ")
+    one_person = _group(db, "GRP-P1")
+    _ledger(db, one_person, f1)
+    _ledger(db, one_person, f3)
+    typed = _group(db, "GRP-P2")
+    _ledger(db, typed, t1)
+    _ledger(db, typed, t2)
+    mixed = _group(db, "GRP-P3")
+    _ledger(db, mixed, f1)
+    _ledger(db, mixed, t1)
+    db.commit()
+
+    full = client.get(GROUPS + "/", params={"agent_mixed": "true"}).json()
+
+    assert [r["name"] for r in full["data"]] == ["GRP-P3"]
+    assert full["pagination"]["total"] == 1

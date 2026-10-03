@@ -95,19 +95,69 @@ def test_resolve_or_create_keeps_a_label_staff_typed(db):
     assert _label(db, "ZZCSA KEEP II") == "Person X"
 
 
-def test_backfill_fills_only_null_or_blank_labels_and_returns_the_count(db):
-    from app.services.scm.sales_agent_service import backfill_person_labels
+def _run_migration(db):
+    """Run the label migration's own `upgrade()` over the test connection."""
+    import importlib.util
+    from pathlib import Path
 
+    from alembic.operations import Operations
+    from alembic.runtime.migration import MigrationContext
+
+    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "sa_person_label_0001.py"
+    spec = importlib.util.spec_from_file_location("sa_person_label_0001", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    ctx = MigrationContext.configure(db.connection())
+    with Operations.context(ctx):
+        module.upgrade()
+    return module
+
+
+def test_migration_fills_only_null_or_blank_labels(db):
     _insert_agent(db, "ZZCSA FILL I", None)
     _insert_agent(db, "ZZCSA BLANK III", "  ")
     _insert_agent(db, "ZZCSA TYPED II", "Person X")
 
-    count = backfill_person_labels(db)
+    _run_migration(db)
 
-    assert count == 2
     assert _label(db, "ZZCSA FILL I") == "ZZCSA FILL"
     assert _label(db, "ZZCSA BLANK III") == "ZZCSA BLANK"
     assert _label(db, "ZZCSA TYPED II") == "Person X"
+
+
+_PARITY_CODES = [
+    "AGENT-A III", "AGENT-A I", "AGENT-B X IV", "AGENT-C - I", "AGENT-D II", "ABC", "QI",
+    "  agent-e i ", "", "-", " - I", "I", "AGENT-F  -  VI", "A-IX",
+]
+
+
+def test_migration_regex_matches_derive_person_label():
+    import importlib.util
+    from pathlib import Path
+
+    from app.services.scm.sales_agent_service import derive_person_label, normalize_code
+
+    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "sa_person_label_0001.py"
+    spec = importlib.util.spec_from_file_location("sa_person_label_0001", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for code in _PARITY_CODES:
+        migrated = module._LEVEL_SUFFIX.sub("", normalize_code(code)).rstrip(" -") or None
+        assert migrated == derive_person_label(code), code
+
+
+def test_sql_person_key_matches_python_derivation(db):
+    """The group list's SQL key and `derive_person_label` agree on every case."""
+    from app.models.sales_agent import SalesAgent
+    from app.services.customer_group_service import CustomerGroupService
+    from app.services.scm.sales_agent_service import derive_person_label
+
+    key = CustomerGroupService._person_key_sql()
+    for code in _PARITY_CODES:
+        agent_id = _insert_agent(db, f"{code}", None)
+        got = db.query(key).filter(SalesAgent.id == agent_id).scalar()
+        derived = derive_person_label(code)
+        assert got == (derived.lower() if derived else None), repr(code)
 
 
 # --------------------------------------------------------------- ingest

@@ -536,12 +536,15 @@ def _lookup_id(
         scope = "company_id = :cid"
     else:
         scope = "(company_id IS NULL OR company_id = :cid)"
+    # A shared table can hold both a shared and a company-owned row for one code: the
+    # company's own wins, deterministically.
+    order = "" if _is_company_scoped(table) else " ORDER BY company_id NULLS LAST"
     if normalized:
         match = f"upper(btrim({column})) = upper(btrim(:v))"
     else:
         match = f"{column} = :v"
     row = db.execute(
-        text(f"SELECT id FROM {table} WHERE {match} AND {scope} LIMIT 1"),
+        text(f"SELECT id FROM {table} WHERE {match} AND {scope}{order} LIMIT 1"),
         {"v": value, "cid": company_id},
     ).first()
     return str(row[0]) if row else None
@@ -1239,7 +1242,7 @@ class MasterIngestService:
                 self._update(spec, existing_id, columns)
             self._link(entity_type, existing_id, payload)
             self._post_write_product_hooks(entity_type, existing_id)
-            self._fan_out_customer_agent(entity_type, existing_id, columns)
+            self._fan_out_customer_agent(entity_type, spec, existing_id, columns)
             return IngestOutcome.UPDATED, existing_id, diff, warnings
 
         # First sync: adopt a local record with the same business identity
@@ -1315,7 +1318,7 @@ class MasterIngestService:
             # it, whether or not it changes a single column.
             self._link(entity_type, adopted, payload)
             self._post_write_product_hooks(entity_type, adopted)
-            self._fan_out_customer_agent(entity_type, adopted, columns)
+            self._fan_out_customer_agent(entity_type, spec, adopted, columns)
             return IngestOutcome.UPDATED, adopted, diff, warnings
 
         if entity_type == "products":
@@ -1324,27 +1327,37 @@ class MasterIngestService:
         new_id = self._insert(entity_type, spec, columns)
         self._link(entity_type, new_id, payload)
         self._post_write_product_hooks(entity_type, new_id)
-        self._fan_out_customer_agent(entity_type, new_id, columns)
+        self._fan_out_customer_agent(entity_type, spec, new_id, columns)
         # Nothing existed to overwrite, so there is no diff to report. Distinct
         # from {} -- see RecordResult.diff.
         return IngestOutcome.CREATED, new_id, None, warnings
 
-    def _fan_out_customer_agent(self, entity_type: str, customer_id: str, columns: dict[str, Any]) -> None:
+    def _fan_out_customer_agent(
+        self, entity_type: str, spec: EntitySpec, customer_id: str, columns: dict[str, Any]
+    ) -> None:
         """Set the resolved agent on every other ledger of this company with the same debtor
-        code (back-created rows an order import made under the same code). Runs inside the
+        code (back-created rows an order import made under the same code). Each sibling goes
+        through `_update`, so the audit listener and `updated_at` fire. Runs inside the
         record's savepoint, so a dry run or a failed record rolls it back."""
         agent_id = columns.get("sales_agent_id")
         if entity_type != "customers" or agent_id is None:
             return
-        self.db.execute(
-            text(
-                "UPDATE customers SET sales_agent_id = :aid "
-                "WHERE company_id = :cid AND id <> :id "
-                "AND lower(btrim(customer_code)) = lower(btrim(:code)) "
-                "AND sales_agent_id IS DISTINCT FROM :aid"
-            ),
-            {"aid": agent_id, "cid": self.company_id, "id": customer_id, "code": columns["customer_code"]},
-        )
+        with company_scope(self.db, frozenset({self.company_id})):
+            sibling_ids = [
+                str(r[0])
+                for r in self.db.execute(
+                    text(
+                        "SELECT id FROM customers "
+                        "WHERE company_id = :cid AND id <> :id "
+                        "AND lower(btrim(customer_code)) = lower(btrim(:code)) "
+                        "AND sales_agent_id IS DISTINCT FROM :aid ORDER BY id"
+                    ),
+                    {"aid": agent_id, "cid": self.company_id, "id": customer_id,
+                     "code": columns["customer_code"]},
+                )
+            ]
+        for sibling_id in sibling_ids:
+            self._update(spec, sibling_id, {"sales_agent_id": agent_id})
 
     def _fill_create_only_product_gaps(self, columns: dict[str, Any]) -> None:
         """Live fix, 2026-09-06: `category_id`/`base_uom_id` are NOT NULL FKs

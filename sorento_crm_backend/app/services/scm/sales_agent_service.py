@@ -59,24 +59,6 @@ def derive_person_label(code: Optional[str]) -> Optional[str]:
     return label or None
 
 
-def backfill_person_labels(db: Session) -> int:
-    """Fill the derived label on agents whose label is NULL or blank. Never overwrites."""
-    rows = (
-        db.query(SalesAgent)
-        .filter(or_(SalesAgent.person_label.is_(None), func.btrim(SalesAgent.person_label) == ""))
-        .all()
-    )
-    count = 0
-    for agent in rows:
-        derived = derive_person_label(agent.sales_agent)
-        if derived is None:
-            continue
-        agent.person_label = derived
-        count += 1
-    db.flush()
-    return count
-
-
 def _lookup(db: Session, normalized: str) -> Optional[SalesAgent]:
     """The master row for an already-normalised code, matched however it was stored.
 

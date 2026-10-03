@@ -223,6 +223,101 @@ class TestFanOut:
         assert env.agent_of(other_company) is None
 
 
+# ===================================================================== fan-out paths
+class TestFanOutPaths:
+    def test_ref_path_updates_the_linked_row_and_the_sibling(self, env):
+        code = _code()
+        ref = _ref("REF")
+        env.post_customer(code=code, source_ref=ref)
+        sibling = env.seed_customer(
+            code=f" {code.lower()} ", company_id=env.company_a, agent_id=env.other_agent_id
+        )
+        env.db.commit()
+
+        _, entry = env.post_customer(code=code, source_ref=ref, sales_agent_code=AGENT_CODE)
+
+        assert entry["outcome"] == "updated", entry
+        assert env.agent_of(sibling) == env.agent_id
+        rows = env.rows_by_code(code, env.company_a)
+        assert len(rows) == 2
+        assert all(str(r["sales_agent_id"]) == env.agent_id for r in rows)
+
+    def test_adopt_path_updates_the_adopted_row_and_the_sibling(self, env):
+        code = _code()
+        name = f"{MARKER} adopted {code}"
+        adopted = env.seed_customer(code=code, company_id=env.company_a, name=name)
+        sibling = env.seed_customer(
+            code=f" {code.lower()}", company_id=env.company_a, name=f"{MARKER} other name"
+        )
+        env.db.commit()
+
+        record = {
+            "source_ref": _ref("ADOPT"), "code": code, "name": name,
+            "sales_agent_code": AGENT_CODE,
+        }
+        res = env.client.post(
+            INGEST_CUSTOMERS, json={"companyCode": env.company_a_code, "records": [record]}
+        )
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+
+        assert entry["outcome"] == "updated", entry
+        assert env.agent_of(adopted) == env.agent_id
+        assert env.agent_of(sibling) == env.agent_id
+
+    def test_a_pushed_agent_overwrites_the_stored_one(self, env):
+        code = _code()
+        ref = _ref("OVR")
+        env.post_customer(code=code, source_ref=ref, sales_agent_code=OTHER_AGENT_CODE)
+        assert [str(r["sales_agent_id"]) for r in env.rows_by_code(code, env.company_a)] == [
+            env.other_agent_id
+        ]
+
+        env.post_customer(code=code, source_ref=ref, sales_agent_code=AGENT_CODE)
+
+        assert [str(r["sales_agent_id"]) for r in env.rows_by_code(code, env.company_a)] == [
+            env.agent_id
+        ]
+
+    def test_another_companys_agent_is_unresolved(self, env):
+        foreign = str(uuid.uuid4())
+        env.db.execute(
+            text(
+                "INSERT INTO sales_agents (id, sales_agent, source, is_active, company_id) "
+                "VALUES (:i, :c, 'manual', true, :co)"
+            ),
+            {"i": foreign, "c": f"{MARKER} FOREIGN I", "co": env.company_b},
+        )
+        env.db.commit()
+        code = _code()
+
+        _, entry = env.post_customer(code=code, sales_agent_code=f"{MARKER} FOREIGN I")
+
+        assert "agent_unresolved" in entry.get("warnings", [])
+        rows = env.rows_by_code(code, env.company_a)
+        assert rows and all(r["sales_agent_id"] is None for r in rows)
+
+    def test_the_sibling_change_is_audited_and_stamped(self, env):
+        code = _code()
+        sibling = env.seed_customer(code=f" {code.lower()} ", company_id=env.company_a)
+        env.db.commit()
+
+        env.post_customer(code=code, sales_agent_code=AGENT_CODE)
+
+        env.db.expire_all()
+        audited = env.db.execute(
+            text(
+                "SELECT count(*) FROM audit_logs WHERE entity_id = :i AND action = 'UPDATE'"
+            ),
+            {"i": sibling},
+        ).scalar()
+        assert audited >= 1
+        stamped = env.db.execute(
+            text("SELECT updated_at > created_at FROM customers WHERE id = :i"), {"i": sibling}
+        ).scalar()
+        assert stamped is True
+
+
 # ===================================================================== AC-3
 class TestUnknownCode:
     def test_unknown_code_warns_and_leaves_the_agent_untouched(self, env):

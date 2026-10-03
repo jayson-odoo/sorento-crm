@@ -47,17 +47,20 @@ class CustomerGroupService:
     @staticmethod
     def _person_key_sql():
         """SQL twin of `derive_person_label` + the label-first rule, one key per agent row."""
-        derived = func.rtrim(
-            func.regexp_replace(
-                func.upper(func.btrim(SalesAgent.sales_agent)),
-                "[[:space:]-]+(I|II|III|IV|V|VI|VII|VIII|IX|X)$",
-                "",
+        code = func.regexp_replace(
+            func.upper(SalesAgent.sales_agent), "^[[:space:]]+|[[:space:]]+$", "", "g"
+        )
+        derived = func.nullif(
+            func.rtrim(
+                func.regexp_replace(code, "[[:space:]-]+(I|II|III|IV|V|VI|VII|VIII|IX|X)$", ""),
+                " -",
             ),
-            " -",
+            "",
         )
-        return func.lower(
-            func.btrim(func.coalesce(func.nullif(func.btrim(SalesAgent.person_label), ""), derived))
+        typed = func.nullif(
+            func.regexp_replace(SalesAgent.person_label, "^[[:space:]]+|[[:space:]]+$", "", "g"), ""
         )
+        return func.nullif(func.lower(func.coalesce(typed, derived)), "")
 
     def _agents(self, group_ids: list[str]) -> dict[str, tuple[Optional[str], bool]]:
         """`{group id: (agent label, mixed)}`: one person over the ledgers that carry an agent
@@ -68,6 +71,7 @@ class CustomerGroupService:
             self.db.query(Customer.customer_group_id, SalesAgent.person_label, SalesAgent.sales_agent)
             .join(SalesAgent, SalesAgent.id == Customer.sales_agent_id)
             .filter(Customer.customer_group_id.in_(group_ids))
+            .order_by(SalesAgent.sales_agent, SalesAgent.id)
             .all()
         )
         people: dict[str, dict[str, str]] = {}
@@ -127,7 +131,8 @@ class CustomerGroupService:
             mixed = (
                 self.db.query(Customer.customer_group_id)
                 .join(SalesAgent, SalesAgent.id == Customer.sales_agent_id)
-                .filter(Customer.customer_group_id.isnot(None))
+                .join(CustomerGroup, CustomerGroup.id == Customer.customer_group_id)
+                .filter(Customer.company_id == CustomerGroup.company_id)
                 .group_by(Customer.customer_group_id)
                 .having(func.count(func.distinct(self._person_key_sql())) > 1)
             )
