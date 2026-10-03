@@ -15,6 +15,10 @@ ROOT = Path(__file__).resolve().parents[2]
 FULL_COMPOSE = ROOT / "sorento_crm" / "docker-compose.yml"
 BACKEND_COMPOSE = ROOT / "sorento_crm_backend" / "docker-compose.yml"
 SECRET_NAME = re.compile(r"PASSWORD|SECRET|TOKEN|ACCESS_KEY", re.I)
+pytestmark = pytest.mark.skipif(
+    not (ROOT / "sorento_crm" / "docker-compose.yml").is_file(),
+    reason="repo-root files not present (backend-only checkout)",
+)
 REF = r"\$\{%s(?P<op>:?[-?+][^}]*)?\}"
 
 

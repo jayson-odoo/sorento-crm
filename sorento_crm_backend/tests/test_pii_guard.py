@@ -19,6 +19,8 @@ import importlib.util
 import random
 import re
 import sys
+
+import pytest
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +29,8 @@ _MOD_NAME = "pii_guard_test"
 
 
 def _load_module():
+    if not _SCRIPT.is_file():
+        pytest.skip("repo-root scripts/pii_guard.py not present (backend-only checkout)")
     spec = importlib.util.spec_from_file_location(_MOD_NAME, _SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

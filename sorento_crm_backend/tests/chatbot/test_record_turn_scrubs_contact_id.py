@@ -9,6 +9,8 @@ import random
 import sys
 from pathlib import Path
 
+import pytest
+
 _BACKEND = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location(
     "chatbot_record_turn_ac14", _BACKEND / "scripts" / "chatbot_record_turn.py"
@@ -18,13 +20,29 @@ recorder = importlib.util.module_from_spec(_spec)
 sys.modules.setdefault("chatbot_record_turn_ac14", recorder)
 _spec.loader.exec_module(recorder)
 
-_GUARD_SPEC = importlib.util.spec_from_file_location(
-    "pii_guard_ac14", _BACKEND.parent / "scripts" / "pii_guard.py"
-)
-assert _GUARD_SPEC is not None and _GUARD_SPEC.loader is not None
-guard = importlib.util.module_from_spec(_GUARD_SPEC)
-sys.modules.setdefault("pii_guard_ac14", guard)
-_GUARD_SPEC.loader.exec_module(guard)
+
+
+class _LazyGuard:
+    """`scripts/pii_guard.py` lives at the repo root, which the backend Docker image
+    does not carry: load it on first use and skip the test when it is absent."""
+
+    _mod = None
+
+    def __getattr__(self, name):
+        if _LazyGuard._mod is None:
+            path = _BACKEND.parent / "scripts" / "pii_guard.py"
+            if not path.is_file():
+                pytest.skip("repo-root scripts/pii_guard.py not present (backend-only checkout)")
+            spec = importlib.util.spec_from_file_location("pii_guard_ac14", path)
+            assert spec is not None and spec.loader is not None
+            module = importlib.util.module_from_spec(spec)
+            sys.modules.setdefault("pii_guard_ac14", module)
+            spec.loader.exec_module(module)
+            _LazyGuard._mod = module
+        return getattr(_LazyGuard._mod, name)
+
+
+guard = _LazyGuard()
 
 
 def _real_id(rng: random.Random) -> str:
