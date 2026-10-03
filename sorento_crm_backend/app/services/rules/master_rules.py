@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
 from app.models.procurement import Supplier
-from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+from app.models.product import Brand, ItemType, Product, ProductCategory, UnitOfMeasure
 
 #: The exact-match code column per master this module resolves through.
 #: Customers are absent on purpose - identity there is the (code, name) pair,
@@ -36,15 +36,17 @@ _CODE_COLUMNS: dict[type, str] = {
     UnitOfMeasure: "uom_code",
     Product: "product_code",
     Brand: "brand_code",
+    ItemType: "item_type_code",
 }
 
 #: The matching name column, for `ensure_reference`'s "code = name = raw
-#: value" auto-create (D3) - only ever used for the three references a
-#: product push may auto-create.
+#: value" auto-create (D3) - only ever used for the references a product
+#: push may auto-create.
 _NAME_COLUMNS: dict[type, str] = {
     ProductCategory: "category_name",
     UnitOfMeasure: "uom_name",
     Brand: "brand_name",
+    ItemType: "item_type_name",
 }
 
 
@@ -185,6 +187,6 @@ def count_supplier_name_matches(db: Session, name: str, company_id: str) -> int:
 def code_name_columns(model: type) -> tuple[str, str]:
     """The (code_column, name_column) pair for a model `ensure_reference`
     auto-creates. Raises `KeyError` for a model that has no name column here -
-    deliberately, since only the three product-reference masters ever get
+    deliberately, since only the product-reference masters ever get
     auto-created (D3); a caller reaching this for anything else is a bug."""
     return _CODE_COLUMNS[model], _NAME_COLUMNS[model]
