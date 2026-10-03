@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends
 from app.api.v1 import (
     auth,
+    dev_login,
     audit,
     master_data,
     order_management,
@@ -50,6 +51,8 @@ api_router = APIRouter()
 
 # Include all module routers
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+# DEV-LOGIN-BYPASS: 404 unless every guard in app/services/dev_login.py holds.
+api_router.include_router(dev_login.router, prefix="/auth", tags=["auth"])
 # Auth endpoints: /login, /signup, /reset-password, /change-password, /verify-email
 # App Store / module lifecycle (not behind base system router guard; uses its own permissions)
 api_router.include_router(modules_runtime.router, prefix="/system/modules", tags=["system-modules"])
