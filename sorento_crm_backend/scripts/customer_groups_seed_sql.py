@@ -3,8 +3,9 @@
 The name-rule plan (`alembic/versions/cust_group_0001.py::plan_groups`), emitted as text.
 The migration no longer applies it (owner ruling 3 Oct 2026: no automatic name-matching
 joins); this output is a proposal for review, never something an upgrade runs. Reads
-`customers` with ONE SELECT from DATABASE_URL and writes nothing; the output is what gets
-reviewed and run.
+`customers` with ONE SELECT from DATABASE_URL and writes nothing. Do not run its output as
+is: it links by name. Lane CUST-GROUP-SEED-REVIEW PR 2 replaces it with an owner-approved
+list applied by customer id.
 
     venv/bin/python scripts/customer_groups_seed_sql.py > customer-groups-seed.sql
 

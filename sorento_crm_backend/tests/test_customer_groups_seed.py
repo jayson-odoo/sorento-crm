@@ -107,7 +107,10 @@ def test_upgrade_creates_the_table_and_column_and_groups_no_customer():
         ).scalar_one() == 1
         assert conn.execute(text("SELECT count(*) FROM customer_groups")).scalar_one() == 0
         assert conn.execute(
-            text("SELECT count(*) FROM customers WHERE id = ANY(CAST(:ids AS uuid[])) AND customer_group_id IS NOT NULL"),
+            text(
+                "SELECT count(*) FROM customers "
+                "WHERE id = ANY(CAST(:ids AS uuid[])) AND customer_group_id IS NOT NULL"
+            ),
             {"ids": ids},
         ).scalar_one() == 0
         assert conn.execute(

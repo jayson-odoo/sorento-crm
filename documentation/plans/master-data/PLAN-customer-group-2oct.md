@@ -9,7 +9,8 @@ Ledgers are grouped into one company only by the name rule `ledger_family_key`
 (`app/services/ledger_family.py:42`). It merges different legal entities (KEDAI PAPAN HENG
 CHOON (M) / (UTARA); JUBIN BMS (NS) / (KLANG) / (1990)) and cannot join one owner's two names
 (CHIN CHUN HARDWARE / HOMEMART share code 300-C043). Owner rulings 2 Oct 2026: a group table
-per company, seeded from numbered families, no auto-assign on import, a Customer Groups page,
+per company, seeded from numbered families (superseded 3 Oct 2026: seeded only from an
+owner-reviewed list, see below), no auto-assign on import, a Customer Groups page,
 the name rule as fallback.
 
 ## Data
