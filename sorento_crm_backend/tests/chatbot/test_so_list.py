@@ -503,3 +503,70 @@ class TestCloudPassParserDropsTheTypedWords:
             mcp_response=CUSTOMER_SUBJECT_HIT,
         )
         assert [n for n, _ in captured] == ["crm_outstanding_report"], captured
+
+
+class TestReviewRoundCarriedStatusGuards:
+    """Reviewer on the cloud-pass round: `period_on_so_list` must answer a PERIOD only, a
+    lower-case "so" next to a quantity is no SO number, and a pick the parser marked by
+    mode alone still answers the offer."""
+
+    def _on_the_list(self, session_factory, monkeypatch) -> None:
+        _seed_hanlim(session_factory)
+        reply, _ = _turn(session_factory, monkeypatch, _live(order_status=None, date_filter_start="2026-09-01",
+                                                          date_filter_end="2026-09-30"), "all my sales orders")
+        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026"), reply
+
+    def test_pending_delivery_after_the_list_is_not_the_list(self, session_factory, monkeypatch) -> None:
+        self._on_the_list(session_factory, monkeypatch)
+        reply, _ = _turn(session_factory, monkeypatch, _live(order_status="do_outstanding", document=["SO"]),
+                         "which ones are still pending delivery?")
+        assert not reply.startswith("Sales orders for"), reply
+
+    def test_how_much_did_i_buy_after_the_list_is_not_the_list(self, session_factory, monkeypatch) -> None:
+        self._on_the_list(session_factory, monkeypatch)
+        reply, _ = _turn(session_factory, monkeypatch,
+                         _live(order_status="sales_report", status="sales_report", date_filter_start="2026-09-01",
+                               date_filter_end="2026-09-30"),
+                         "how much did I buy in september")
+        assert not reply.startswith("Sales orders for"), reply
+
+    def test_pick_marked_by_mode_only_is_the_so_list(self, session_factory, monkeypatch) -> None:
+        from tests.chatbot.test_outstanding_lane import CUSTOMER_SUBJECT_HIT
+
+        _seed_hanlim(session_factory)
+        _run_turn(session_factory, monkeypatch, qf=_live(date_filter_start="2026-09-01", date_filter_end="2026-09-30"),
+                  text_body="my outstanding sales orders in september",
+                  msg_id=f"ZZT-so-live-{uuid.uuid4().hex[:10]}", attributes=[OUTSTANDING_KEY], matches={},
+                  mcp_response=CUSTOMER_SUBJECT_HIT)
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _live(open_question_answer={"mode": "pick", "items": [], "picked": [], "qty_for_all": None}), "1",
+        )
+        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026 to 30 Sep 2026:"), reply
+        assert "crm_outstanding_report" not in [n for n, _ in captured], captured
+
+    @pytest.mark.parametrize("text", ["price 1500 so 1500 pcs ok", "ok so 2026 how much did I buy"])
+    def test_lower_case_so_next_to_a_number_is_no_so_number(self, text) -> None:
+        from app.services.chatbot.so_status import typed_so_numbers_verdict
+
+        verdict = {"entities": [{"raw": "SRTWC8517", "hint": "product", "current_message": True}]}
+        assert typed_so_numbers_verdict(verdict, text) == (verdict, None)
+
+    def test_typed_number_keeps_no_identity_of_the_copied_one(self) -> None:
+        from app.services.chatbot.so_status import typed_so_numbers_verdict
+
+        verdict = {"entities": [{"raw": "SO422056", "hint": "order", "canonical_code": "SO422056", "uuid": "abc",
+                                 "current_message": True}]}
+        fixed, rule = typed_so_numbers_verdict(verdict, "status of SO421624")
+        assert rule == "typed_so_numbers"
+        assert fixed["entities"] == [{"raw": "SO421624", "hint": "order", "canonical_code": None,
+                                      "current_message": True, "confident": True}]
+
+    @pytest.mark.parametrize("text", ["order 5000 pcs in march", "SO 4216 september"])
+    def test_a_quantity_is_not_a_year(self, text) -> None:
+        from datetime import date
+
+        from app.services.chatbot.so_status import typed_month
+
+        got = typed_month(text, date(2026, 10, 3))
+        assert got is not None and got[0].year in (2025, 2026), got
