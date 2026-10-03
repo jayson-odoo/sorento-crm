@@ -125,11 +125,10 @@ def refusal_line_for(scope: ContactCustomerScope, ids: list[str]) -> str:
 
 
 def _refusal_for(names: list[str]) -> str:
-    # Owner rule (2 Oct 2026): a customer company is named by its customer GROUP's name, once;
-    # an ungrouped ledger by its own full name (ruling (b), `ledger_family.customer_header_words`).
-    from app.services.ledger_family import customer_group_of
+    # Owner rule (2 Oct 2026): a customer company is named by its group name only.
+    from app.services.ledger_family import group_names
 
-    names = list(dict.fromkeys(customer_group_of(n) or n for n in names))
+    names = group_names(names)
     if len(names) <= 1:
         joined = names[0] if names else "your own account"
     else:
