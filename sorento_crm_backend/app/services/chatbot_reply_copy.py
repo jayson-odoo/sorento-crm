@@ -343,6 +343,12 @@ IDEATION_CAPTURE_ERROR = {
     "zh": "抱歉，我暂时无法保存这个创意，请稍后再试。",
 }
 
+IDEATION_CAPTURE_CONFIG_ERROR = {
+    "en": "Idea capture isn't set up correctly here, so I couldn't save that. Please let your Sorento contact know.",
+    "ms": "Penangkapan idea tidak disediakan dengan betul di sini, jadi saya tidak dapat menyimpannya. Sila maklumkan kepada wakil Sorento anda.",
+    "zh": "此处的创意收集设置不正确，所以我无法保存。请告知您的 Sorento 联系人。",
+}
+
 #: `short name -> (per-language text, declared {{tokens}})`, expanded below into one
 #: registry key per language: `chatbot_reply_<name>` (English) and
 #: `chatbot_reply_<name>.ms` / `.zh`.
@@ -382,6 +388,7 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
     ),
     "ideation_capture_complete_no_link": (IDEATION_CAPTURE_COMPLETE_NO_LINK, ("idea_number", "title")),
     "ideation_capture_error": (IDEATION_CAPTURE_ERROR, ()),
+    "ideation_capture_config_error": (IDEATION_CAPTURE_CONFIG_ERROR, ()),
 }
 
 #: The languages the new templates carry (plan 7.2). English is the bare key.

@@ -123,6 +123,24 @@ def _missing_required(fields: dict[str, str]) -> list[str]:
     return [key for key in _REQUIRED_FIELDS if not (fields.get(key) or "").strip()]
 
 
+def _ss_failure(exc: IdeationServiceError, step: str, respond_io_id: Any) -> str:
+    """Log an ss failure and return its reply kind. A 4xx other than 408/429 will not heal on
+    a retry (a scope, key or payload fault), so it is `config_error` at ERROR; everything else
+    stays `error` at WARNING."""
+    status = exc.status_code
+    if isinstance(status, int) and 400 <= status < 500 and status not in (408, 429):
+        detail = exc.response_detail if isinstance(exc.response_detail, dict) else {}
+        err = detail.get("error")
+        code = err.get("code") if isinstance(err, dict) else None
+        logger.error(
+            "ideation %s rejected by ss (permanent) status=%s code=%s respond_io_id=%s",
+            step, status, code, respond_io_id, exc_info=True,
+        )
+        return "config_error"
+    logger.warning("ideation %s failed for respond_io_id=%s", step, respond_io_id, exc_info=True)
+    return "error"
+
+
 def _valid_uuid(value: Any) -> str | None:
     try:
         return str(uuid.UUID(str(value)))
@@ -329,9 +347,9 @@ def handle_capture_turn(
                     "is_test": bool(is_test),
                 },
             )
-        except IdeationServiceError:
-            logger.warning("ideation similar-own failed for respond_io_id=%s", respond_io_id, exc_info=True)
-            return finish("error", "error", {}, language, persist=False)
+        except IdeationServiceError as exc:
+            kind = _ss_failure(exc, "similar-own", respond_io_id)
+            return finish(kind, kind, {}, language, persist=False)
 
         raw = [m for m in (found.get("matches") or []) if isinstance(m, dict)]
         shown = [
@@ -385,9 +403,9 @@ def handle_capture_turn(
 
     try:
         result = call_create_idea(config.base_url, config.api_key, payload)
-    except IdeationServiceError:
-        logger.warning("ideation capture create failed for respond_io_id=%s", respond_io_id, exc_info=True)
-        return finish("error", "error", {}, language, pointer=held, persist=False)
+    except IdeationServiceError as exc:
+        kind = _ss_failure(exc, "capture create", respond_io_id)
+        return finish(kind, kind, {}, language, pointer=held, persist=False)
 
     # The CRM link is built here from the id; ss's public `link` is never relayed.
     link = _idea_link(result.get("idea_id"))
