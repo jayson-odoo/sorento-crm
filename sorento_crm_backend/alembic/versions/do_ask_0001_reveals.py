@@ -1,7 +1,7 @@
 """DO-ASK-SIMPLIFY rule 2: every contact that exists today keeps every DO field.
 
 Revision ID: do_ask_0001_reveals
-Revises: item_type_0001
+Revises: merge_03oct_join6
 Create Date: 2026-10-02
 
 Every field the DO list prints (owner hand test 3 Oct 2026: Order Number, Customer, Order
@@ -25,7 +25,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "do_ask_0001_reveals"
-down_revision = "item_type_0001"
+down_revision = "merge_03oct_join6"
 branch_labels = None
 depends_on = None
 
