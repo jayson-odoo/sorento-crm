@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Upload, UserCog } from 'lucide-react';
+import { FolderMinus, FolderPlus, Plus, Upload, UserCog } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -31,7 +31,9 @@ import { searchCustomerGroupsSelect } from '../../customer-groups/services/custo
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import type { Customer } from '../types/customer.types';
 import { CustomerRowActions } from '../actions';
+import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { BulkSetCustomerGroupDialog } from './BulkSetCustomerGroupDialog';
 import { BulkSetSalesAgentDialog } from './BulkSetSalesAgentDialog';
 import { CustomerImportDialog } from './CustomerImportDialog';
 import {
@@ -76,6 +78,19 @@ export default function CustomersList() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const canSetSalesAgent = useHasPermission('master_data.sales_agents.edit');
   const [agentDialogOpen, setAgentDialogOpen] = useState(false);
+  const canEditCustomers = useHasPermission('order_management.customers.edit');
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  // Remove from group asks nothing (D7): a countdown with Cancel, the selection clears
+  // once the removals have settled.
+  const removeFromGroup = useDeferredBulkAction({
+    actionKey: 'customer.remove_from_group',
+    entityType: 'customer',
+    verb: 'Removing',
+    pastVerb: 'removed from their group',
+    describe: (count) => `${count} customer${count === 1 ? '' : 's'}`,
+    invalidateKeys: [['customers'], ['customer-groups']],
+    onFinished: () => setRowSelection({}),
+  });
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } = useCustomers({
     pageIndex: pagination.pageIndex,
@@ -343,8 +358,8 @@ export default function CustomersList() {
               },
             ]}
             primaryAction={listPrimaryAction}
-            bulkActions={
-              canSetSalesAgent
+            bulkActions={[
+              ...(canSetSalesAgent
                 ? [
                     {
                       key: 'set-sales-agent',
@@ -353,13 +368,45 @@ export default function CustomersList() {
                       onClick: () => setAgentDialogOpen(true),
                     },
                   ]
-                : []
-            }
+                : []),
+              ...(canEditCustomers
+                ? [
+                    {
+                      key: 'set-customer-group',
+                      label: `Set customer group (${selectedRowIds(table).length})`,
+                      icon: FolderPlus,
+                      onClick: () => setGroupDialogOpen(true),
+                    },
+                    {
+                      key: 'remove-from-group',
+                      label: `Remove from group (${selectedRowIds(table).length})`,
+                      icon: FolderMinus,
+                      disabled: removeFromGroup.isStarting,
+                      onClick: () =>
+                        removeFromGroup.run(
+                          table
+                            .getSelectedRowModel()
+                            .rows.filter((r) => r.original.customer_group_id)
+                            .map((r) => ({
+                              id: r.id,
+                              payload: { customer_group_id: r.original.customer_group_id },
+                            })),
+                        ),
+                    },
+                  ]
+                : []),
+            ]}
           />
         </CardHeader>
         <BulkSetSalesAgentDialog
           open={agentDialogOpen}
           onOpenChange={setAgentDialogOpen}
+          customerIds={selectedRowIds(table)}
+          onDone={() => setRowSelection({})}
+        />
+        <BulkSetCustomerGroupDialog
+          open={groupDialogOpen}
+          onOpenChange={setGroupDialogOpen}
           customerIds={selectedRowIds(table)}
           onDone={() => setRowSelection({})}
         />
