@@ -46,6 +46,7 @@ class CustomerCreate(CustomerBase):
     # rows have never had one set. `None` on create is the same as omitting it.
     sales_agent_id: Optional[str] = None
     account_level: Optional[int] = Field(default=None, ge=1, le=9)
+    customer_group_id: Optional[str] = None
 
 
 class CustomerUpdate(BaseModel):
@@ -58,6 +59,8 @@ class CustomerUpdate(BaseModel):
     sales_agent_id: Optional[str] = None
     # `null` clears the level; omitted leaves it alone.
     account_level: Optional[int] = Field(default=None, ge=1, le=9)
+    # `null` clears the group; omitted leaves it alone.
+    customer_group_id: Optional[str] = None
 
 
 class CustomerSimple(BaseModel):
@@ -80,6 +83,8 @@ class CustomerResponse(CustomerBase):
     sales_agent_code: Optional[str] = None
     sales_agent_name: Optional[str] = None
     account_level: Optional[int] = None
+    customer_group_id: Optional[str] = None
+    customer_group_name: Optional[str] = None
     # Shown as columns on a sales agent's Customers tab.
     region: Optional[str] = None
     market_segment_code: Optional[str] = None

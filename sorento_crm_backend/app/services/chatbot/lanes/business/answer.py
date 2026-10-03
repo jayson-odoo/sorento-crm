@@ -33,6 +33,7 @@ from typing import Any, Literal
 
 from app.services.chatbot import jsc, label_catalog
 from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
+from app.services.ledger_family import customer_group_of, customer_header_words
 from app.services.product_spec_registry import SPEC_ACRONYMS
 from app.services.chatbot.tail.scope_block import live_brand_words
 from app.services.chatbot.turn import refer
@@ -3624,6 +3625,20 @@ def not_found_error_message(
                     value = jsc.nullish_str(jsc.get(entity, "raw")).strip()
                     if value and value not in words:
                         words.append(value)
+            if not words and axis["label"] == "Customer":  # 3. group names, once per company
+                names = [
+                    jsc.nullish_str(
+                        jsc.get(row, "display_name")
+                        if jsc.truthy(jsc.get(row, "display_name"))
+                        else (
+                            jsc.get(row, "title")
+                            if jsc.get(row, "title") is not None
+                            else jsc.get(row, "code")
+                        )
+                    ).strip()
+                    for row in rows
+                ]
+                return customer_header_words([(n, customer_group_of(n)) for n in names if n])
             if not words:  # 3. last resort: the gate's own label
                 for row in rows:
                     # Hand pass 12, Group F: a multi-ledger customer pick's own rows
