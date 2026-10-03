@@ -3742,12 +3742,16 @@ def _so_numbers_asked(domain: str, verdict: dict[str, Any], unplaced: dict[str, 
 
 def _offer_picks_the_so_list(answered: dict[str, Any], lane_out: dict[str, Any]) -> bool:
     """Did this turn pick the outstanding detail offer's "Sales order list" on a report
-    about customers only (no product carried)?"""
+    about customers only? A product, brand or location narrows the report in a way the SO
+    list cannot, so those keep the report's own SO detail rows (AC-1138)."""
     if answered.get("kind") != "outstanding_detail" or answered.get("detail") != "so":
         return False
     return not (
         jsc.truthy(lane_out.get("outstanding_carried_product_code"))
         or jsc.array(lane_out.get("outstanding_carried_product_codes"))
+        or jsc.array(lane_out.get("outstanding_carried_brand_ids"))
+        or jsc.array(lane_out.get("outstanding_carried_warehouse_codes"))
+        or jsc.truthy(lane_out.get("outstanding_carried_location_token"))
     )
 
 
