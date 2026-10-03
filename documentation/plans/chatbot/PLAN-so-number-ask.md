@@ -108,6 +108,27 @@ in a sales order list's words), and renders `so_status.list_text`. No row cap be
 31-day window (not ruled). Hand-test bug fixed on the way (`99f7edb3`): an SO the card answered
 is dropped from the focus, so "okay how about all my sales order?" no longer names it as a miss.
 
+## Fix, part 4: the live parser's readings (cloud pass, 3 Oct 2026)
+
+The a4 cloud pass ran the hand test with the live parser (`gpt-5.4-mini`) and found readings the
+stubbed tests did not model. The words decide in each case, at the engine's verdict seam beside
+`so_list_verdict` (all in `app/services/chatbot/so_status.py`):
+
+- `typed_so_numbers_verdict`: "status of SO421624" after the SO422056 card was parsed as
+  `{raw: SO422056, current_message: true}` (copied off "Previous response") in 2 of 4 runs. The
+  SO numbers the message types are its SO entities, in typed order.
+- `carried_status_verdict`: "1" under the outstanding summary came back `document: ["SO"]` +
+  `so_outstanding` and `turn/decide` read the document as a named one (the summary again, 3 of 3);
+  "september" after the SO list's "Which period?" came back `so_outstanding` and the list never
+  ran. A pick under the offer, or a period on the SO list, drops a report status and document
+  its words do not hold ("outstanding", "report" or a document typed keeps them).
+- `typed_words_verdict`: an SO-document ask keeps the one month ("september", "Sep 2026", this /
+  last month; "may" is left to the parser) and the "outstanding" it types when the parser drops
+  them (2 of 3 and 2 of 9 runs).
+
+Open for the owner: "find all my sales order" after a September summary asked "Which period?"
+in 1 of 3 runs, because the parser's `broaden_axis: all` clears the carried window.
+
 ## Tests
 
 `sorento_crm_backend/tests/chatbot/test_so_number_ask.py`, red first, through one real
