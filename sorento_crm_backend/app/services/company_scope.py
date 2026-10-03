@@ -268,6 +268,17 @@ def register_company_scope_listeners() -> None:
         if not state.is_select or state.is_column_load or state.is_relationship_load:
             return
 
+        # CONTACT-BRAND-SCOPE: a brand-scoped contact sees only products of its brands
+        # (a NULL brand fails the IN, Q1). Concrete clause for the same cache reason as
+        # the company predicate below; absent scope adds nothing (unscoped is unchanged).
+        brand_scope = state.session.info.get("brand_scope")
+        if brand_scope:
+            from app.models.product import Product
+
+            state.statement = state.statement.options(
+                with_loader_criteria(Product, Product.brand_id.in_(sorted(brand_scope)), include_aliases=True)
+            )
+
         scope = state.session.info.get("company_scope", UNSET)
         if scope is None:
             return  # all companies - add nothing
