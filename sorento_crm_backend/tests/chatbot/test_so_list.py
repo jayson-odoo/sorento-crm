@@ -266,3 +266,64 @@ class TestOwnersTwoTurnTranscriptIsDeterministic:
             "my outstsnding sales orders",
         )
         assert [name for name, _ in captured] == ["crm_outstanding_report"], captured
+
+
+class TestOwnerHandTest3OctListAfterTheOutstandingSummary:
+    """Owner hand test, 3 Oct 2026 (contact Jayson): after the SO outstanding summary
+    ending "Reply 1 for the sales order list." (with its "Sales order list" button),
+    "1" / the button / "give me the sales order list" re-ran the outstanding report and
+    printed another summary, and "find all my sales order" printed the outstanding
+    summary too. A customer-subject offer's sales order list IS the SO list, and an SO
+    list ask over an open outstanding offer is the SO list."""
+
+    REPORT = "crm_outstanding_report"
+
+    def _summary_first(self, session_factory, monkeypatch) -> list[tuple[str, dict[str, Any]]]:
+        from tests.chatbot.test_outstanding_lane import CUSTOMER_SUBJECT_HIT, _session_of
+
+        _seed_hanlim(session_factory)
+        result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                domain_hint="order", intent_hint="check_order", order_status="so_outstanding", entities=[],
+                self_reference=True, date_filter_start="2026-09-01", date_filter_end="2026-09-30",
+            ),
+            text_body="my outstanding sales orders in september",
+            msg_id=f"ZZT-so-os-{uuid.uuid4().hex[:10]}", attributes=[OUTSTANDING_KEY], matches={},
+            mcp_response=CUSTOMER_SUBJECT_HIT,
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert [n for n, _ in captured] == [self.REPORT], captured
+        assert "sales order list" in reply.casefold(), reply
+        assert (_session_of(session_factory).get("open_question") or {}).get("kind") == "outstanding_detail"
+        return captured
+
+    @pytest.mark.parametrize(
+        "body,parsed",
+        [
+            ("1", {"message_type": "casual", "intent_hint": None, "domain_hint": None, "reference_positions": [1]}),
+            ("Sales order list", {"message_type": "casual", "intent_hint": None, "domain_hint": None, "reference_positions": [1]}),
+            ("give me the sales order list", {"domain_hint": "order", "intent_hint": "check_order", "reference_positions": [1]}),
+            ("give me the sales order list", {"domain_hint": "order", "intent_hint": "check_order", "document": ["SO"]}),
+        ],
+        ids=["reply_1", "button", "words_as_pick", "words_as_so_ask"],
+    )
+    def test_the_list_follow_up_is_the_so_list_for_the_reports_window(self, session_factory, monkeypatch, body, parsed) -> None:
+        self._summary_first(session_factory, monkeypatch)
+        verdict = dict(order_status=None, entities=[])
+        verdict.update(parsed)
+        reply, captured = _turn(session_factory, monkeypatch, _parser_output(**verdict), body)
+        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026 to 30 Sep 2026:\nSO422095"), reply
+        assert self.REPORT not in [n for n, _ in captured], captured
+
+    @pytest.mark.parametrize("status", [None, "outstanding"])
+    def test_find_all_my_sales_order_over_the_open_summary_is_the_so_list(self, session_factory, monkeypatch, status) -> None:
+        self._summary_first(session_factory, monkeypatch)
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _parser_output(domain_hint="order", intent_hint="check_order", order_status=None, entities=[],
+                           document=["SO"], status=status, self_reference=True),
+            "find all my sales order",
+        )
+        assert reply.startswith(("Sales orders for HANLIM TRADING SDN BHD", "Which period for HANLIM TRADING SDN BHD?")), reply
+        assert self.REPORT not in [n for n, _ in captured], captured
