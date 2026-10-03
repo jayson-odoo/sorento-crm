@@ -156,7 +156,9 @@ def test_ac_cl02_pinned_stock_list_is_catalogued():
 def test_ac_cl02_presenter_tails_and_intros_are_catalogued():
     p = _presenters()
     for branch, sentence in p._AVAILABILITY_TAILS.items():
-        assert sentence in label_catalog.LABELS, branch
+        # #1430: each verdict opens with a status mark, which is not text.
+        bare = label_catalog._STATUS_MARK.sub("", sentence, count=1)
+        assert bare in label_catalog.LABELS, branch
     assert p.REFER_TO_SALESMAN == "Please refer to your salesman."
     assert p._STOCK_COMPACT_INTRO in label_catalog.LABELS
     assert p._AVAILABILITY_ASK in label_catalog.LABELS
@@ -164,7 +166,7 @@ def test_ac_cl02_presenter_tails_and_intros_are_catalogued():
     assert "Stock details found for the requested products." in label_catalog.LABELS
     assert "Here are the results." in label_catalog.LABELS
     # The incoming tail is a template; the presenter prints it with the ETA filled in.
-    assert p._availability_tail({"branch": "incoming", "eta": "{eta}"}) in label_catalog.LABELS
+    assert label_catalog._STATUS_MARK.sub("", p._availability_tail({"branch": "incoming", "eta": "{eta}"}), count=1) in label_catalog.LABELS
 
 
 def test_ac_cl02_presenter_stock_labels_are_catalogued():

@@ -19,6 +19,7 @@ from app.services.chatbot import label_catalog
 from app.services.chatbot.label_catalog import LABELS, Localizer
 from app.services.chatbot.lanes.business.answer import crossdomain_render
 from app.services.chatbot.lanes.business.fetch import output_structurer
+from tests.chatbot.test_engine import stub_access  # noqa: F401 - a pytest fixture
 
 
 def _loc(lang: str) -> Localizer:
@@ -170,12 +171,28 @@ def test_no_stock_and_no_incoming_reads_in_the_reply_language(lang, expected):
             'Tidak dapat menemui: "ZZNOPE999" (product).',
             '找不到："ZZNOPE999" (product)。',
         ),
-        ("ETA: not confirmed yet", "ETA: belum disahkan", "ETA: 尚未确认"),
     ],
 )
 def test_absence_sentences_read_in_the_reply_language(english, ms, zh):
     assert _loc("ms").reply(english) == ms
     assert _loc("zh").reply(english) == zh
+
+
+def test_a_dealer_eta_line_translates_its_verdict_and_keeps_the_mark():
+    """#1430's dealer incoming lines: `<code>: No ETA` and `<code>: <tick> ETA <date>`."""
+    assert _loc("ms").tail("SRTW2000: No ETA") == "SRTW2000: Tiada ETA"
+    assert _loc("zh").tail("SRTW2000: No ETA") == "SRTW2000: 暂无 ETA"
+    assert _loc("ms").tail("SRTW2000: \u2705 ETA 19/10/2026") == "SRTW2000: \u2705 ETA 19/10/2026"
+    assert _loc("ms").tail("SRT5674 x 5: \u274c No incoming. Please refer to your salesman.") == (
+        "SRT5674 x 5: \u274c Tiada stok masuk. Sila rujuk jurujual anda."
+    )
+    assert _loc("zh").tail("SRT5674 x 50: \u2705 30 available. Please refer to your salesman.") == (
+        "SRT5674 x 50: \u2705 有 30 件。请联系您的销售员。"
+    )
+    assert _loc("ms").tail("SRT5674 x 50: \u2705 Please refer to your salesman.") == (
+        "SRT5674 x 50: \u2705 Sila rujuk jurujual anda."
+    )
+    assert _loc("ms").tail("SRTW2000 x 150: \u274c ETA 19/10/2026.") == "SRTW2000 x 150: \u274c ETA 19/10/2026."
 
 
 def test_couldnt_find_then_the_offer_both_translate_on_one_line():
@@ -293,7 +310,7 @@ def test_presenter_incoming_literals_are_the_ones_pinned_here():
         '"Unallocated Quantity"',
         '"Total Incoming Quantity"',
         '"Distinct Products"',
-        '"ETA: not confirmed yet"',
+        '"No ETA"',
     ):
         assert literal in src, literal
 
@@ -352,3 +369,40 @@ def test_a_flag_line_with_an_uncatalogued_flag_is_unchanged():
 def test_english_is_untouched():
     english = _block(items=[_INCOMING_ITEM], missing=[{"code": "SRTWC286", "_n": "SRTWC286", "uuid": "u1"}])
     assert label_catalog.IDENTITY.reply(english) == english
+
+
+# --------------------------------------------------------------------------- #
+# AVAIL-MODE-REPLIES (#1430) rule 5 in ms: the miss line sits before the refer line
+# --------------------------------------------------------------------------- #
+
+
+def test_a_malay_dealer_eta_ask_names_the_miss_before_the_refer_line(session_factory, monkeypatch, stub_access):
+    """#1430 slots "Couldn't find: X." between the ETA lines and the refer line by matching
+    the English refer line; an ms turn's reply already ends in the translated one."""
+    from datetime import date
+
+    from tests.chatbot._avail_mode_console import AvailConsole, Stock
+    from tests.chatbot._r9_engine_console import product, reply
+
+    c = AvailConsole(
+        session_factory, monkeypatch, stub_access, phone="+60000009801", SRTW2000=Stock(eta=date(2026, 10, 19))
+    )
+    out = c.say(
+        "bila sampai SRTW2000 dan FOO99?",
+        reply(entities=[product("SRTW2000"), product("FOO99")], domain_hint="incoming", intent_hint="check_incoming"),
+    )
+    blocks = out.split("\n\n")
+    assert blocks[-1] == "Sila rujuk jurujual anda.", out
+    assert blocks[-2] == "Tidak dapat menemui: FOO99.", out
+    assert out.count("Sila rujuk jurujual anda.") == 1, out
+    assert "SRTW2000" in blocks[0] and "19/10/2026" in blocks[0], out
+
+
+def test_a_leading_number_token_never_swallows_the_code_prefix():
+    """`{available} available. ...` opens with a token: it matches a number only, so neither
+    `tail` nor the final pass reads "SRT5674 x 50: ✅ 30" as the count."""
+    line = "SRT5674 x 50: ✅ 30 available. Please refer to your salesman."
+    for lang in ("ms", "zh"):
+        assert _loc(lang).tail(line).startswith("SRT5674 x 50: ✅ ")
+        assert _loc(lang).reply(line).startswith("SRT5674 x 50: ✅ ")
+    assert _loc("ms").text("30 available. Please refer to your salesman.") == "30 ada. Sila rujuk jurujual anda."

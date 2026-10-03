@@ -65,6 +65,18 @@ LABELS: dict[str, dict[str, str]] = {
         "ms": "tiada stok buat masa ini, ETA {eta}.",
         "zh": "目前没有库存，ETA {eta}。",
     },
+    # AVAIL-MODE-REPLIES (#1430) verdict wording; the leading status mark is not text and
+    # stays as printed (`Localizer.tail`).
+    f"No incoming. {REFER_TO_SALESMAN}": {
+        "ms": "Tiada stok masuk. Sila rujuk jurujual anda.",
+        "zh": "没有到货。请联系您的销售员。",
+    },
+    f"{{available}} available. {REFER_TO_SALESMAN}": {
+        "ms": "{available} ada. Sila rujuk jurujual anda.",
+        "zh": "有 {available} 件。请联系您的销售员。",
+    },
+    "ETA {eta}.": {"ms": "ETA {eta}.", "zh": "ETA {eta}。"},
+    "No ETA": {"ms": "Tiada ETA", "zh": "暂无 ETA"},
     "Data last updated: {ts}": {
         "ms": "Data dikemas kini: {ts}",
         "zh": "数据更新时间: {ts}",
@@ -337,7 +349,6 @@ LABELS: dict[str, dict[str, str]] = {
     "PO date": {"ms": "Tarikh PO", "zh": "PO 日期"},
     "Here is the incoming stock I found.": {"ms": "Berikut ialah stok masuk yang ditemui.", "zh": "以下是找到的到货库存。"},
     "Here are the incoming shipments I found.": {"ms": "Berikut ialah penghantaran masuk yang ditemui.", "zh": "以下是找到的到货货运。"},
-    "ETA: not confirmed yet": {"ms": "ETA: belum disahkan", "zh": "ETA: 尚未确认"},
     "But there is INCOMING stock (ETA) for the requested products:": {"ms": "Tetapi ada stok MASUK (ETA) untuk produk yang diminta:", "zh": "但所请求的产品有到货库存（ETA）："},
     "But here are the stock details for the requested products:": {"ms": "Tetapi berikut ialah butiran stok untuk produk yang diminta:", "zh": "但以下是所请求产品的库存详情："},
     "No stock for {codes}.": {"ms": "Tiada stok untuk {codes}.", "zh": "{codes} 没有库存。"},
@@ -555,6 +566,18 @@ _NUMBERED = re.compile(r"\d+\. |- ")
 #: A flag line (`"⚠️  *(PRODUCT DISCONTINUED)*"`): the flag inside translates, the mark stays.
 _FLAG = re.compile(r"(\S+ +\*\()(.+)(\)\*)")
 _WRAPPERS = (("*_", "_*"), ("*", "*"), ("_", "_"))
+#: Tokens that are always a number: a template opening with one must not swallow the
+#: "<code> x <qty>: " prefix of the line it is matched against.
+_NUMERIC_TOKENS = frozenset({"available"})
+
+
+def _token_pattern(name: str) -> str:
+    body = r"\d[\d,]*" if name in _NUMERIC_TOKENS else f"[^\\n]{{1,{_TOKEN_MAX}}}?"
+    return f"(?P<{name}>{body})"
+
+
+#: The availability verdict's status mark (#1430: tick, cross, no-entry sign) and its space.
+_STATUS_MARK = re.compile("[\u2705\u274c\U0001F6AB]\ufe0f? +")
 
 
 def _inline_pattern(english: str, target: str) -> tuple[re.Pattern[str], str, int, tuple[str, ...]]:
@@ -563,7 +586,7 @@ def _inline_pattern(english: str, target: str) -> tuple[re.Pattern[str], str, in
     pattern = ""
     pos = 0
     for m in _TOKEN.finditer(english):
-        pattern += re.escape(english[pos : m.start()]) + f"(?P<{m.group(1)}>[^\\n]{{1,{_TOKEN_MAX}}}?)"
+        pattern += re.escape(english[pos : m.start()]) + _token_pattern(m.group(1))
         pos = m.end()
     pattern += re.escape(english[pos:])
     fixed = len(_TOKEN.sub("", english))
@@ -591,7 +614,7 @@ class Localizer:
             pattern = ""
             pos = 0
             for m in _TOKEN.finditer(english):
-                pattern += re.escape(english[pos : m.start()]) + f"(?P<{m.group(1)}>[^\\n]{{1,{_TOKEN_MAX}}}?)"
+                pattern += re.escape(english[pos : m.start()]) + _token_pattern(m.group(1))
                 pos = m.end()
             pattern += re.escape(english[pos:])
             self._templates.append(
@@ -722,12 +745,16 @@ class Localizer:
         return self.text(s)
 
     def tail(self, title: str) -> str:
-        """`"<code> x <qty>: <sentence>"`: only the sentence is translated."""
-        whole = self.text(title)
-        if whole != title:
-            return whole
+        """`"<code> x <qty>: <sentence>"`: only the sentence is translated, after any leading
+        status mark (the #1430 verdicts open with one), which stays as printed."""
         prefix, sep, sentence = title.partition(": ")
-        return prefix + sep + self.text(sentence) if sep else title
+        if sep:
+            mark = _STATUS_MARK.match(sentence)
+            lead, rest = (mark.group(0), sentence[mark.end() :]) if mark else ("", sentence)
+            done = self.text(rest)
+            if done != rest:
+                return prefix + sep + lead + done
+        return self.text(title)
 
 
 IDENTITY = Localizer("en", {})

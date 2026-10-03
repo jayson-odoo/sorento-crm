@@ -484,8 +484,8 @@ def _point_form(codes: list[str], values: dict[int, int] | None = None) -> str:
 
 def _answered(*pairs: tuple[str, int], lang: str = "en") -> str:
     """CHAT-LANGUAGE: the verdict sentence follows the dealer's language (`lang`)."""
-    verdict = label_catalog.Localizer(lang, label_catalog.defaults(lang)).text(TOO_BIG)
-    return "\n\n".join(f"{code} x {qty}: {verdict}" for code, qty in pairs)
+    loc = label_catalog.Localizer(lang, label_catalog.defaults(lang))
+    return "\n\n".join(loc.tail(f"{code} x {qty}: {TOO_BIG}") for code, qty in pairs)
 
 
 #: The reply language each H message must get, spelled out per message so a detection bug fails
@@ -502,6 +502,7 @@ _LANG: dict[str, str] = {
     "一和三": "zh",
     "di er ge he di san ge": "en",
     "all": "en",
+    "1,2,3,4,5,6,7,8,9,10": "en",
     "both": "en",
     "both, 2 each": "en",
     "dua-dua": "ms",

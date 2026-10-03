@@ -19,7 +19,7 @@ def test_item2_an_ms_message_then_a_decision_free_turn_stays_ms(
 
     # "SRTWC286-SH 2" has no marker word: nothing decides, the conversation's ms carries.
     second = c.say("SRTWC286-SH 2", stock(product("SRTWC286-SH", 2)))
-    assert second.startswith("SRTWC286-SH x 2: kuantiti ini melebihi")
+    assert second.startswith("SRTWC286-SH x 2: \U0001F6AB kuantiti ini melebihi")
     assert "Sila rujuk jurujual anda." in second
     assert c.state["reply_language"] == "ms"
 
