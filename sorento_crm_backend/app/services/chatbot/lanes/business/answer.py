@@ -4361,6 +4361,90 @@ def _quick_reply(values: list) -> str:
     return ",".join(jsc.js_string(v).replace(",", "") for v in values)
 
 
+def miss_token_candidates(res: Any, allowed_types: list | None) -> list:
+    """D1's own candidate set: PER TOKEN, GENUINE-MISS ONLY.
+
+    Never aggregate across tokens - a dead code once borrowed a sibling token's candidate
+    in a multi-item order. Customer rows arrive multiply coded (the same account as debtor
+    NAME, debtor CODE and a hash canonical code), so code-keyed dedup rendered one
+    customer as three "codes"; they key on the display name instead, and the resolver's
+    similarity order keeps the name-coded row first.
+    """
+    acc: list = []
+    matches = jsc.get(res, "matches")
+    if isinstance(matches, list):
+        acc.extend(matches)
+    alternatives = jsc.get(res, "alternatives")
+    if isinstance(alternatives, list):
+        acc.extend(alternatives)
+
+    def cust_key(match: Any) -> str:
+        display = jsc.get(match, "display")
+        display = display if jsc.truthy(display) else {}
+        name = (
+            jsc.get(display, "debtor_name")
+            or jsc.get(display, "customer_name")
+            or jsc.get(match, "canonical_code")
+            or ""
+        )
+        return "cust:" + jsc.js_string(name).strip().lower()
+
+    seen: list = []
+    keep: list = []
+    for match in acc:
+        code = jsc.get(match, "canonical_code")
+        if not jsc.truthy(code):
+            continue
+        if _ms_is_exact(match):
+            continue  # exact would have resolved
+        entity_type = jsc.get(match, "entity_type")
+        if allowed_types is not None and jsc.truthy(entity_type) and entity_type not in allowed_types:
+            continue
+        key = (
+            cust_key(match)
+            if jsc.js_string(entity_type or "").lower() == "customer"
+            else code
+        )
+        if key in seen:
+            continue
+        seen.append(key)
+        keep.append(match)
+    return keep
+
+
+def did_you_mean_by_token(resolved: Any, gate: Any) -> dict[str, list[dict[str, Any]]]:
+    """MULTI-CODE-DYM: each missed product token's did-you-mean, keyed by the token as the
+    resolver echoed it (`turn.state.token_key` folds it for a join).
+
+    The SAME candidates `build_suggest_offer`'s D1 arm offers when that token is asked on
+    its own (owner, 4 Oct 2026: "treat each product code individually"): the genuine-miss
+    resolutions (`miss_resolutions`), each token's own non-exact matches plus the
+    resolver's trigram `alternatives` (`miss_token_candidates`), the first three
+    (`_cap3`), a row with no human label dropped. Product rows only: a partial answer
+    offers a code to fetch in place of the one that missed, and only a product is that.
+    """
+    g = gate if isinstance(gate, dict) else {}
+    allowed_lookup = jsc.get(jsc.get(g, "gate_debug"), "allowed_lookup")
+    allowed_types = allowed_lookup if isinstance(allowed_lookup, list) else None
+    out: dict[str, list[dict[str, Any]]] = {}
+    for res in _ms_miss_resolutions(resolved, gate=g):
+        token = jsc.nullish_str(jsc.get(res, "token")).strip()
+        if not token or token in out:
+            continue
+        rows: list[dict[str, Any]] = []
+        for match in _cap3(miss_token_candidates(res, allowed_types)):
+            if jsc.js_string(jsc.get(match, "entity_type") or "").lower() != "product":
+                continue
+            label = _ms_human_label(match)
+            uuid = jsc.get(match, "uuid")
+            if not jsc.truthy(label) or not jsc.truthy(uuid):
+                continue
+            rows.append({"code": jsc.js_string(label), "uuid": jsc.js_string(uuid), "entity_type": "product"})
+        if rows:
+            out[token] = rows
+    return out
+
+
 def build_suggest_offer(
     item: dict[str, Any] | None,
     *,
@@ -4560,56 +4644,6 @@ def build_suggest_offer(
         raw = jsc.get(at, "raw") if jsc.truthy(at) else None
         return raw if jsc.truthy(raw) else "document"
 
-    def token_candidates(res: Any) -> list:
-        """D1's own candidate set: PER TOKEN, GENUINE-MISS ONLY.
-
-        Never aggregate across tokens - a dead code once borrowed a sibling token's candidate
-        in a multi-item order. Customer rows arrive multiply coded (the same account as debtor
-        NAME, debtor CODE and a hash canonical code), so code-keyed dedup rendered one
-        customer as three "codes"; they key on the display name instead, and the resolver's
-        similarity order keeps the name-coded row first.
-        """
-        acc: list = []
-        matches = jsc.get(res, "matches")
-        if isinstance(matches, list):
-            acc.extend(matches)
-        alternatives = jsc.get(res, "alternatives")
-        if isinstance(alternatives, list):
-            acc.extend(alternatives)
-
-        def cust_key(match: Any) -> str:
-            display = jsc.get(match, "display")
-            display = display if jsc.truthy(display) else {}
-            name = (
-                jsc.get(display, "debtor_name")
-                or jsc.get(display, "customer_name")
-                or jsc.get(match, "canonical_code")
-                or ""
-            )
-            return "cust:" + jsc.js_string(name).strip().lower()
-
-        seen: list = []
-        keep: list = []
-        for match in acc:
-            code = jsc.get(match, "canonical_code")
-            if not jsc.truthy(code):
-                continue
-            if _ms_is_exact(match):
-                continue  # exact would have resolved
-            entity_type = jsc.get(match, "entity_type")
-            if allowed_types is not None and jsc.truthy(entity_type) and entity_type not in allowed_types:
-                continue
-            key = (
-                cust_key(match)
-                if jsc.js_string(entity_type or "").lower() == "customer"
-                else code
-            )
-            if key in seen:
-                continue
-            seen.append(key)
-            keep.append(match)
-        return keep
-
     misses = _ms_miss_resolutions(r, gate=g)
     # Reviewer B2 on PR #833: a described set that qualifies nothing names its own miss
     # (`not_found_error_message`'s set branches: the honest zero of AC-1319 with the
@@ -4629,7 +4663,7 @@ def build_suggest_offer(
         for res in misses:
             if zero_set and not _CODE_RE.fullmatch(jsc.nullish_str(jsc.get(res, "token")).strip()):
                 continue
-            cands = token_candidates(res)
+            cands = miss_token_candidates(res, allowed_types)
             if cands:
                 token = jsc.get(res, "token")
                 if not jsc.truthy(token):
