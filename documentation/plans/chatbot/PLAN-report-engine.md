@@ -138,7 +138,7 @@ class ReportSpec(BaseModel):          # extra="forbid"
     filters: dict[str, list[str]] = {}  # spec word -> RESOLVED ids (never names)
     period: PeriodSpec | None = None  # {from, to} dates; None = catalogue default
     sort: Literal["desc", "asc"] = "desc"
-    top_n: int | None = None          # 1..100; None = default (card Q5)
+    top_n: int | None = None          # 1..TOP_SELLING_N_CEILING (1000, #1407); required with group_by (card Q5)
 ```
 
 Validation (all before SQL; each failure a 422 with a code the presenter words):
@@ -322,7 +322,7 @@ Query params (all optional unless marked):
 | `basis` | `delivered` (default) / `ordered` | other -> 422 `unknown_basis` |
 | `measure` | `amount` (default) / `qty` | other -> 422 `unknown_measure` |
 | `group_by` | one of `customer, product, brand, category, sales_agent, location, channel, month` | absent = number shape; other -> 422 `unknown_group_by` |
-| `top_n` | 1..100 | required with `group_by` -> 422 `top_n_required`; out of range -> 422 `top_n_out_of_range` |
+| `top_n` | 1..`TOP_SELLING_N_CEILING` (1000, owner 3 Oct: one ceiling, #1407) | required with `group_by` -> 422 `top_n_required`; out of range -> 422 `top_n_out_of_range` |
 | `sort` | `desc` (default) / `asc` | other -> 422 `unknown_sort` |
 | `product_code` | prefix, >= 3 chars | resolved like the sales report (`_resolve_products`); no match -> 404 |
 | `brand_ids`, `category_ids`, `sales_agent_ids`, `customer_ids` | uuid lists (repeated param) | parsed by `parse_uuid_list` |
