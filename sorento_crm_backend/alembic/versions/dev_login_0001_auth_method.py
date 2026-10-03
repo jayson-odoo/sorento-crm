@@ -5,14 +5,14 @@ test copy records its own auth_method so a dev session stays distinguishable in 
 session list. Additive: the CHECK constraint is widened, no row changes.
 
 Revision ID: dev_login_0001
-Revises: merge_03oct_join5
+Revises: merge_03oct_join6
 """
 from __future__ import annotations
 
 from alembic import op
 
 revision = "dev_login_0001"
-down_revision = "merge_03oct_join5"
+down_revision = "merge_03oct_join6"
 branch_labels = None
 depends_on = None
 
