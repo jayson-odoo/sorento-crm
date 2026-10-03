@@ -1,6 +1,6 @@
 # PLAN: product ref collision (ItemKey vs ItemCode refs)
 
-Status: BUILDING (card approved by crew 3 Oct: Q1a, Q2 yes, Q3 keep, Q4 warn, Q5 L steps minus migration). Track: L pipeline (external ingest), no migration expected.
+Status: BUILDING, code-first redesign per owner ruling 3 Oct (L steps minus migration). Track: L pipeline (external ingest), no migration expected.
 
 ## Problem
 Document lines link products under `BOOK:<ItemAutoKey>` (shared-service `presets.py:250/410/480`);
@@ -14,21 +14,29 @@ the same path renames the wrong product silently.
 Line side: `MasterRefResolver._resolve_master` returns a ref hit without checking the sent code
 (`master_ref_resolver.py:168-169`).
 
-## Design (pending owner answers, recommended options)
-1. Products feed: a ref hit counts only when the hit row's normalized `product_code` equals the
-   payload code. Otherwise behave as a ref miss: code adopt (code-wins branch, `:1255-1288`) or
-   create; never write the feed ref onto a row when another row already holds it; warning
-   `ref_mismatch`.
-2. Line resolver, Product model only: ref hit whose code differs from the sent code, and another
-   product owns the sent code, resolves to the code owner with `ref_mismatch`. Ref hit with an
-   unowned sent code keeps the ref (AutoCount item rename) and warns.
-3. No data backfill: existing ItemKey refs stay (they are correct for lines).
-4. No name matching.
+## Design (owner ruling 3 Oct: code-first everywhere)
+"When we match product, it is by product code, we don't really care about the source ref."
+1. Product feed (`master_ingest_service._apply_scoped`): products skip the ref lookup; match by
+   company + normalised code first (existing adopt / code-wins / create paths). Link the pushed ref
+   only when it is free; when another product holds it, warn `ref_mismatch` and leave it.
+2. Line ladder (`master_ref_resolver._resolve_master`, Product only): when a code is sent, the code
+   decides; no code owner -> existing unknown-product verdict, never the ref. Ref used only when no
+   code is sent. Never link a ref already held by another product.
+3. Billing (`finance/billing_document_ingest_service._product`) and the document snapshot preload
+   (`document_ingest_service` ~:713): code first, same rule.
+4. DO/GRN (`autocount_doc_ingest_service` :773) already code-only, unchanged.
+5. No migration, no backfill, no name matching.
+
+Open (one owner question): AutoCount item renamed (same ItemKey, new ItemCode) -> code-first creates
+a new product; old one kept or flagged? Recommendation: keep it untouched, the line `ref_mismatch`
+warning is the flag.
 
 ## Files
-- `sorento_crm_backend/app/services/master_ingest_service.py` (`_apply_scoped`, `_link` on create/adopt)
-- `sorento_crm_backend/app/services/master_ref_resolver.py` (`_resolve_master`)
-- tests: new `tests/test_product_ref_collision.py`
+- `sorento_crm_backend/app/services/master_ingest_service.py`
+- `sorento_crm_backend/app/services/master_ref_resolver.py`
+- `sorento_crm_backend/app/services/finance/billing_document_ingest_service.py`
+- `sorento_crm_backend/app/services/document_ingest_service.py`
+- tests: `tests/test_product_ref_collision.py`
 
 ## Pipeline
 tester (red, from UAC) -> `test(red):` commit + red-proof -> coder -> kill-proof -> reviewer +
