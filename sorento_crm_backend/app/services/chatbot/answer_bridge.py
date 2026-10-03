@@ -1551,6 +1551,8 @@ def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
     paras = [p for p in primary.split("\n\n") if p != _INCOMING_OPENER]
     xd_paras = xd_text.split("\n\n")
     merged = False
+    first = next((p for p in paras if run_fetch.BLOCK_START_RE.match(p)), "")
+    start = int(m.group(1)) if (m := re.match(r"^(\d+)\. ", first)) else 1
     for i, x in enumerate(xd_paras):
         x_company, x_code = _block_key(x)
         if x_code is None:
@@ -1572,7 +1574,7 @@ def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
     paras = [p for p in paras if p not in footers]
     if merged or any(run_fetch.BLOCK_START_RE.match(p) for p in paras):
         xd_paras += footers  # the footer closes the whole body, after the last block
-    paras, xd_paras = run_fetch.renumber([paras, xd_paras])
+    paras, xd_paras = run_fetch.renumber([paras, xd_paras], start)
     return "\n\n".join(paras), "\n\n".join(xd_paras)
 
 

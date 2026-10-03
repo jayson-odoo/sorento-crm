@@ -225,15 +225,17 @@ def _climb(
 BLOCK_START_RE = re.compile(r"^(?:\d+\. )?\*(?:Company|Product Code|Order Number):\*")
 
 
-def renumber(groups: list[list[str]]) -> list[list[str]]:
-    """Number the block paragraphs across all `groups` when there is more than one, on
-    from the first block's own number (a counted set's continuation page keeps its offset,
-    else 1); a lone block, and every non-block paragraph, is left as it is."""
-    first = next((p for g in groups for p in g if BLOCK_START_RE.match(p)), None)
+def renumber(groups: list[list[str]], start: int | None = None) -> list[list[str]]:
+    """Number the block paragraphs across all `groups` when there is more than one, on from
+    `start` (else the first block's own number, else 1, so a counted set's continuation page
+    keeps its offset); a lone block, and every non-block paragraph, is left as it is."""
     if sum(1 for g in groups for p in g if BLOCK_START_RE.match(p)) < 2:
         return groups
-    start = re.match(r"^(\d+)\. ", first)
-    n = int(start.group(1)) - 1 if start else 0
+    if start is None:
+        first = next(p for g in groups for p in g if BLOCK_START_RE.match(p))
+        found = re.match(r"^(\d+)\. ", first)
+        start = int(found.group(1)) if found else 1
+    n = start - 1
     out: list[list[str]] = []
     for g in groups:
         done: list[str] = []
