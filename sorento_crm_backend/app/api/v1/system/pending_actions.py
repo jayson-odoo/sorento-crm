@@ -27,6 +27,7 @@ commit, same partial unique index that allows one pending action per record.
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from datetime import datetime
 from typing import Optional
 
@@ -36,6 +37,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.models.base import company_scope
+from app.services.company_scope_resolver import grants_scope_value
 from app.models.sla import (
     FORM_ACTION_CANCELLED,
     FORM_ACTION_CHANNEL_UI,
@@ -432,60 +435,68 @@ def create_pending_action(
     actor_id = (current_user or {}).get("id")
     _assert_permission(db, actor_id, action.key, action.permission)
     _assert_required_payload(body.action_key, body.payload, body.entity_id)
-    _assert_entity_visible(db, body.action_key, body.entity_id)
-    _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
+    # A contact belongs to no one company: park (and later commit, under the stored scope)
+    # across every company the requester is granted, never more. Restored on exit.
+    scope = (
+        company_scope(db, grants_scope_value(db, actor_id))
+        if body.action_key == "contact_customer_link.unlink"
+        else nullcontext()
+    )
+    with scope:
+        _assert_entity_visible(db, body.action_key, body.entity_id)
+        _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
 
-    try:
-        service = FormActionService(db)
-        existing = service.pending_for(body.entity_type, body.entity_id)
-        # An overdue row is not really pending; commit it first so a click that lands a
-        # moment after the previous window closed starts a fresh action rather than a 409.
-        _commit_if_due(service, existing)
-        existing = service.pending_for(body.entity_type, body.entity_id)
-        if existing is not None:
-            if existing.action_key == body.action_key:
-                # A double click parks one action, not two, and answers with the
-                # countdown already running (S6-01).
-                return {
-                    "id": str(existing.id),
-                    "commit_at": (
-                        existing.commit_at.isoformat() if existing.commit_at else None
-                    ),
-                    "window_seconds": _window_seconds(existing),
-                }
-            # One record holds ONE pending action: `current` answers per record, so a
-            # second key would leave both countdowns draining the other one's window.
-            raise AppException(
-                status_code=status.HTTP_409_CONFLICT,
-                message="Another action on this record is still counting down.",
-                code="CONFLICT",
+        try:
+            service = FormActionService(db)
+            existing = service.pending_for(body.entity_type, body.entity_id)
+            # An overdue row is not really pending; commit it first so a click that lands a
+            # moment after the previous window closed starts a fresh action rather than a 409.
+            _commit_if_due(service, existing)
+            existing = service.pending_for(body.entity_type, body.entity_id)
+            if existing is not None:
+                if existing.action_key == body.action_key:
+                    # A double click parks one action, not two, and answers with the
+                    # countdown already running (S6-01).
+                    return {
+                        "id": str(existing.id),
+                        "commit_at": (
+                            existing.commit_at.isoformat() if existing.commit_at else None
+                        ),
+                        "window_seconds": _window_seconds(existing),
+                    }
+                # One record holds ONE pending action: `current` answers per record, so a
+                # second key would leave both countdowns draining the other one's window.
+                raise AppException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    message="Another action on this record is still counting down.",
+                    code="CONFLICT",
+                )
+
+            window_seconds = record_action_window_seconds(db, action)
+            outcome = service.dispatch(
+                action_key=body.action_key,
+                entity_type=body.entity_type,
+                entity_id=str(body.entity_id),
+                # The handler is handed the record it runs on and who asked for it, so it
+                # never has to read the action row back.
+                payload={
+                    **(body.payload or {}),
+                    "entity_id": str(body.entity_id),
+                    "requested_by_id": actor_id,
+                },
+                actor_id=actor_id,
+                channel=FORM_ACTION_CHANNEL_UI,
+                grace_seconds=window_seconds,
             )
-
-        window_seconds = record_action_window_seconds(db, action)
-        outcome = service.dispatch(
-            action_key=body.action_key,
-            entity_type=body.entity_type,
-            entity_id=str(body.entity_id),
-            # The handler is handed the record it runs on and who asked for it, so it
-            # never has to read the action row back.
-            payload={
-                **(body.payload or {}),
-                "entity_id": str(body.entity_id),
-                "requested_by_id": actor_id,
-            },
-            actor_id=actor_id,
-            channel=FORM_ACTION_CHANNEL_UI,
-            grace_seconds=window_seconds,
-        )
-        return {
-            "id": outcome.action_id,
-            "commit_at": outcome.commit_at.isoformat() if outcome.commit_at else None,
-            "window_seconds": outcome.window_seconds,
-        }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise handle_internal_error(str(exc))
+            return {
+                "id": outcome.action_id,
+                "commit_at": outcome.commit_at.isoformat() if outcome.commit_at else None,
+                "window_seconds": outcome.window_seconds,
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise handle_internal_error(str(exc))
 
 
 @router.post("/{action_id}/cancel", status_code=status.HTTP_200_OK)

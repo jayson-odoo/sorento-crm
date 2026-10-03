@@ -524,8 +524,16 @@ def policy_warehouses(db: Session, warehouse_ids: Optional[frozenset[str]]):
             .order_by(Warehouse.warehouse_code.asc())
             .all()
         )
+    from app.services.company_scope_resolver import company_name_map
+
+    names = company_name_map(db)
     return [
-        {"id": str(row.id), "code": row.warehouse_code, "name": row.warehouse_name}
+        {
+            "id": str(row.id),
+            "code": row.warehouse_code,
+            "name": row.warehouse_name,
+            "company_name": names.get(str(row.company_id)),
+        }
         for row in rows
     ]
 
