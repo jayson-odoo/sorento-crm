@@ -154,14 +154,15 @@ Owner/Director. **Recommend (a)**: the cost reveal is the reason the sheet split
 
 ## 7. Follow-ups
 
-- **Brand scope (lane CONTACT-BRAND-SCOPE, not built here).** That lane adds a per-contact
-  "accessible brands" setting (null = all brands). It joins the copy as one more facet in
+- **Brands (owner decision 4 Oct 2026: brands ARE a copy-access facet; built by whichever lane lands
+  second).** CONTACT-BRAND-SCOPE adds `respond_contacts.brand_ids` (uuid[], NULL = all brands). Seam in
   `app/services/contact_access_copy_service.py`: one field on `AccessSnapshot` read in `snapshots`
-  (null vs a sorted list, so "all brands" and "no brands" stay distinct), one block in `diff`
-  (label "Brands", added/removed = brand names, before/after null shown as "All brands"), one block
-  in `_write`. The dialog, preview, result table, audit row and the "access differs from" filter
-  pick it up with no other change. Owner decides then whether the copy carries it (Q1 set the
-  access set; brand scope is closer to customer scope, which is never copied).
+  (keep NULL distinct from `[]`, sort the ids), one block in `diff` (facet `brands`, label "Brands",
+  added/removed = brand names, NULL shown as "All brands"; place it after `tier`), one assignment in
+  `_write` (the column is on the contact row, like the switches), and one line in `summary`. The list
+  gets a "Brands" filter in `ContactService._apply_access_filters` + `ContactAccessFilters.tsx` (pick a
+  brand; "all brands" = NULL). The dialog, preview, result table, audit row and "access differs from"
+  need no change. If #1463 merges first, crew opens the follow-up against this seam.
 - **Agent access writes are open to any signed-in user** (security review of this lane, pre-existing):
   `app/api/v1/user_management/access_agents.py` create/update/delete contact access use only
   `get_current_user`. Out of this lane's scope; worth its own issue.
