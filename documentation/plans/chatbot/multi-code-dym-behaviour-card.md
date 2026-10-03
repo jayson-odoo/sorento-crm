@@ -1,6 +1,9 @@
 # Behaviour card: did-you-mean per missing code in multi-code replies (MULTI-CODE-DYM)
 
-Status: ASKED (4 Oct 2026). Track: M (LEAD pattern). Awaiting crew/owner answers to Q1-Q5.
+Status: RULED (4 Oct 2026), BUILT on the lane branch. Track: M (LEAD pattern).
+Owner: Q1 (a), Q2 (a), Q3 (a) plus "a reply may pick several, or pick and type other codes,
+each handled individually", Q4 (a), Q5 (a). See "Ruled behaviour" at the end; it supersedes
+R2 and R6 above where they differ.
 
 ## The owner's rule (4 Oct ~01:50, gist)
 
@@ -138,3 +141,29 @@ paragraphs as R1 (drop `Couldn't find some items:` and the indented sub-lists, n
 codes with no suggestion); (b) leave all-miss as it is and fix only the partial case.
 **Recommend (a)**: one shape for one fact; a customer should not see two different
 did-you-mean layouts depending on whether one of their other codes happened to exist.
+
+## Ruled behaviour (owner, 4 Oct 2026)
+
+- **Q1 (a)** Suggestion numbers run on after the reply's own numbered blocks. Measured on
+  main: the stock presenter already numbers a found block `1. *Product Code:* ...`, so the
+  first suggestion reads `2.` (`turn/compose.py::_did_you_mean_per_code`, `_NUMBERED_BLOCK`).
+- **Q2 (a)** One closing line after the last miss paragraph:
+  `Reply with a code to continue, or would you like me to escalate to <team> team?`;
+  staff `Reply with a code to continue.`; barred contact `Reply with a code to continue. Please refer to your salesman.`.
+- **Q3 (a)+** A pick answers that product alone, for the original ask. The parser decides
+  what was picked: `2 and 3` answers both (the roster pick already takes several
+  positions), and `2 and SRTWC286-SH-150` answers the picked code AND the typed one
+  (`engine._with_the_picked_axis` keeps an entity whose word is in this message;
+  `turn/apply.py::_focus_rules` adds it beside the pick; `engine._with_settled_picks`
+  keeps the picked row in the fetch).
+- **Q4 (a)** A partial miss with no suggestion anywhere: `I could not find X.` then
+  `Would you like me to escalate to <team> team?`, stored as the domain's team offer
+  (none for staff, salesman line for a barred contact, nothing when the domain has no team).
+- **Q5 (a)** All miss: the same per-code paragraphs (`Couldn't find "X" (product). Did you
+  mean:` + numbers running on), no `Couldn't find some items:` header, no indented
+  sub-lists; a missed product code with no suggestion is named `I could not find X.` above
+  the closing line (`answer.py::build_suggest_offer` D1 arms). One code with suggestions
+  plus others without keeps the single-code sentence for that one.
+- **R2 as built**: a code with no suggestion keeps today's `I could not find X.` wording
+  (not `Couldn't find "X" (product).`), so the reply has one sentence per kind of miss and
+  existing transcripts of that line do not move.
