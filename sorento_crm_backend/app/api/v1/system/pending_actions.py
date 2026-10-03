@@ -432,6 +432,13 @@ def create_pending_action(
     actor_id = (current_user or {}).get("id")
     _assert_permission(db, actor_id, action.key, action.permission)
     _assert_required_payload(body.action_key, body.payload, body.entity_id)
+    if body.action_key == "contact_customer_link.unlink":
+        # A contact belongs to no one company: park (and later commit, under the stored
+        # scope) across every company the requester is granted, never more.
+        from app.models.base import set_company_scope
+        from app.services.company_scope_resolver import grants_scope_value
+
+        set_company_scope(db, grants_scope_value(db, actor_id))
     _assert_entity_visible(db, body.action_key, body.entity_id)
     _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
 

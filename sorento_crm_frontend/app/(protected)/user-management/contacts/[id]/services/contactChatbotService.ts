@@ -256,6 +256,11 @@ export async function saveContactFact(
   return response.json();
 }
 
+/** `<Company> · <label>`: the contact belongs to no one company, so every option says which. */
+function withCompany(companyName: string | null | undefined, label: string): string {
+  return companyName ? `${companyName} · ${label}` : label;
+}
+
 /**
  * Server-searched product options for the "Usual products" fact (Add fact modal).
  *
@@ -264,30 +269,46 @@ export async function saveContactFact(
  * the human-readable value the fact stores, so no id/label split is needed.
  */
 export async function searchUsualProductOptions(query: string): Promise<SearchableMultiSelectOption[]> {
-  const products = await getProductsForLineSelect(query);
+  const products = await getProductsForLineSelect(query, { companyScope: 'grants' });
   return products.map((product) => ({
     value: product.product_code,
-    label: product.product_name
-      ? `${product.product_code} - ${product.product_name}`
-      : product.product_code,
+    label: withCompany(
+      product.company_name,
+      product.product_name ? `${product.product_code} - ${product.product_name}` : product.product_code,
+    ),
   }));
 }
 
 /** Server-searched brand names for "Usual brands" - stored as the brand NAME, not an id
  * (contract section 4: "list of brand names"). */
 export async function searchUsualBrandOptions(query: string): Promise<SearchableMultiSelectOption[]> {
-  const result = await getBrands({ pageIndex: 0, pageSize: 20, sorting: [], searchQuery: query });
-  return result.data.map((brand) => ({ value: brand.brand_name, label: brand.brand_name }));
+  const result = await getBrands({
+    pageIndex: 0,
+    pageSize: 20,
+    sorting: [],
+    searchQuery: query,
+    companyScope: 'grants',
+  });
+  return result.data.map((brand) => ({
+    value: brand.brand_name,
+    label: withCompany(brand.company_name, brand.brand_name),
+  }));
 }
 
 /** Server-searched warehouse names for "Usual sites" - stored as the warehouse NAME
  * (contract section 4: "list of warehouse names"). */
 export async function searchUsualSiteOptions(query: string): Promise<SearchableMultiSelectOption[]> {
-  const result = await getWarehouses({ pageIndex: 0, pageSize: 20, sorting: [], searchQuery: query });
+  const result = await getWarehouses({
+    pageIndex: 0,
+    pageSize: 20,
+    sorting: [],
+    searchQuery: query,
+    companyScope: 'grants',
+  });
   return result.data
     .filter((warehouse) => warehouse.warehouse_name)
     .map((warehouse) => ({
       value: warehouse.warehouse_name as string,
-      label: warehouse.warehouse_name as string,
+      label: withCompany(warehouse.company_name, warehouse.warehouse_name as string),
     }));
 }

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 from typing import Optional, Tuple
 
@@ -45,7 +46,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.models.base import UNSET, CompanyScope, set_company_scope
+from app.models.base import UNSET, CompanyScope, company_scope, get_company_scope, set_company_scope
 from app.models.company import Company, UserCompany
 from app.models.user import User
 from app.models.user_session import UserSession
@@ -350,3 +351,58 @@ async def apply_company_scope(
         return scope
     set_company_scope(db, scope)
     return scope
+
+
+# --------------------------------------------------------------------------- #
+# Grants widening (CONTACT-COMPANYLESS)                                         #
+# --------------------------------------------------------------------------- #
+def grants_scope_value(db: Session, user_id: str) -> CompanyScope:
+    """The active scope plus every company ``user_id`` is granted (never less than today)."""
+    current = get_company_scope(db)
+    if current is None:
+        return None
+    base = current if isinstance(current, frozenset) else frozenset()
+    return base | frozenset(resolve_user_grant_ids(db, str(user_id)))
+
+
+@contextmanager
+def grants_scope(db: Session, user_id: str):
+    """Run a read under the active scope widened to every company ``user_id`` is granted.
+
+    For pages that are not about one company (the contact detail page). Restores the
+    prior scope on exit. The active scope came from the same grants, so this never
+    reaches beyond them.
+    """
+    with company_scope(db, grants_scope_value(db, user_id)):
+        yield db
+
+
+def grants_requested(request: Request, flag: Optional[str]) -> bool:
+    """True for a staff session that sent ``?company_scope=grants``.
+
+    An X-API-Key caller ignores the flag and keeps the scope it was resolved with.
+    """
+    return flag == "grants" and not request.headers.get("X-API-Key")
+
+
+def widen_if_requested(db: Session, request: Request, current_user: dict, flag: Optional[str]):
+    """``grants_scope`` when ``grants_requested``, else a no-op context."""
+    if grants_requested(request, flag):
+        return grants_scope(db, current_user["id"])
+    return nullcontext(db)
+
+
+def company_name_map(db: Session) -> dict[str, str]:
+    """``company id -> name`` for tagging rows read under ``grants_scope``."""
+    return {str(r[0]): r[1] for r in db.query(Company.id, Company.name).all()}
+
+
+def tag_company(rows, names: dict[str, str]) -> None:
+    """Give each ORM row or dict a ``company_name`` next to its ``company_id``."""
+    for row in rows:
+        cid = row.get("company_id") if isinstance(row, dict) else getattr(row, "company_id", None)
+        name = names.get(str(cid)) if cid else None
+        if isinstance(row, dict):
+            row["company_name"] = name
+        else:
+            setattr(row, "company_name", name)
