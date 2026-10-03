@@ -102,6 +102,14 @@ brackets every ledger shares, such as `(SENTUL)`; a single ledger drops its trai
 
 ### Rule 2: per-contact DO field reveals
 
+**Owner hand test, 3 Oct 2026 (supersedes the five-field table below):** EVERY field the DO
+list prints is its own switch: `delivery_orders.order_number`, `.customer`, `.order_date`,
+`.delivery_date`, `.status`, `.pickup_time`, `.transporter`, `.driver`, `.lorry_plate`,
+`.warehouse`, `.products`. The by-product DO list prints the warehouse as its own field (it
+used to sit inside Products as "X (1) @ BRW"). The Company line (which of our companies, on
+multi-company installs) is not a DO field and is not switched. Existing contacts: all on
+(seed); new contacts: all hidden.
+
 | Field | Key | Default for a new contact |
 |---|---|---|
 | Order Number, Customer, Order Date, Actual Delivery Date, Products, Company | none (always shown) | shown |
