@@ -207,7 +207,7 @@ class TestMissNounIsTheResolvedAttachmentLabel:
             msg_id="zzt-r7-f6-roster-1", mcp_response={"data": []}, answer_mcp_probe=answer_probe,
         )
         reply1 = (result1.reply or {}).get("text") or ""
-        assert "product_attachment search needs to be more specific" in reply1, (
+        assert "Which product do you mean? Please choose:" in reply1, (
             f"test setup sanity: an ambiguous 2-member family must raise gate.py's own "
             f"require-specific roster: {reply1!r}"
         )

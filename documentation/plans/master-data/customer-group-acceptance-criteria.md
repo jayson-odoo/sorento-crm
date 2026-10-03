@@ -17,7 +17,8 @@ Examples use the shared dev DB (`sorento_cagent_stack`, 6,358 customers, Sorento
 5. Next chatbot message: every place that groups ledgers into one company uses the group. A
    ledger joins a company line ONLY through its explicit group; a ledger with no group is its own
    customer under its own name (owner ruling (b), 2 Oct 2026: "we shouldn't do automated process
-   like this, very dangerous"). The name rule is used once, by the one-off seed staff can review.
+   like this, very dangerous"). Groups are set by hand only (3 Oct 2026: explicit links only,
+   see `PLAN-customer-group-seed-review-3oct.md`).
 
 ## Phase 2 - backend
 
@@ -26,7 +27,8 @@ Route paths below are under `/api/v1/order-management`.
 - AC-1 [BE] Migration creates `customer_groups` (id, company_id, name, timestamps) with a
   per-company case-insensitive unique name, and nullable `customers.customer_group_id`
   (FK, ON DELETE SET NULL, indexed). Additive and re-runnable.
-- AC-2 [BE] The migration seed creates one group per (company, `ledger_family_key`) family that
+- AC-2 [BE] SUPERSEDED 3 Oct 2026 (owner ruling: explicit links only; the migration is DDL only,
+  see `PLAN-customer-group-seed-review-3oct.md`). Was: the migration seed creates one group per (company, `ledger_family_key`) family that
   has 2+ rows and at least one row with `account_level` set, and points every family row at it:
   796 groups / 2,804 rows on dev (Sorento 527). Group name = `ledger_family_label` of the member
   with the lowest account level (tie: lowest code). No CASH, SHOPEE or LAZADA family is seeded.
@@ -62,7 +64,7 @@ Route paths below are under `/api/v1/order-management`.
 - AC-10b [BE] Owner ruling (b): an ungrouped ledger is never joined to a group by its name
   (`UNGROUPED_JOINS_NAME_MATCHED_GROUP = False`); every "Customer:" line prints group names
   only (no "(N accounts)", no "and N more"), an ungrouped ledger under its own full name.
-- AC-11 [BE] HANLIM TRADING SDN BHD (6 ledgers, seeded group of the same name): the which-customer
+- AC-11 [BE] HANLIM TRADING SDN BHD (6 ledgers, in a group of the same name once the office sets it by hand): the which-customer
   roster, header and account refusal read exactly as before this lane (golden: today's output).
 - AC-12 [BE] After CHIN CHUN HOMEMART SDN BHD ledgers are put in the CHIN CHUN HARDWARE SDN BHD
   group, a roster of both families shows ONE line "CHIN CHUN HARDWARE SDN BHD" whose pick

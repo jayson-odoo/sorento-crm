@@ -38,6 +38,8 @@ export interface RespondContact {
   chatbot_memory_level?: 'off' | 'conversation' | 'episodes' | 'full' | null;
   /** S6: may this contact ask the chatbot for stock. A CRM fact, default on. */
   chatbot_stock_allowed?: boolean;
+  /** Linked customer codes, sorted (list rows). */
+  customer_codes?: string[];
   /** Identity S3: the user this contact is linked to, if any (list rows). Null
    *  without `user_management.users.view`. */
   linked_user_id?: string | null;
