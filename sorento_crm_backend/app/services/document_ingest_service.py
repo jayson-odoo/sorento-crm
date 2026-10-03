@@ -710,15 +710,8 @@ class DocumentIngestService(MasterRefResolver):
             for line in raw.get("lines") or []:
                 if not isinstance(line, dict):
                     continue
-                ref = line.get("product_ref")
-                if ref:
-                    try:
-                        resolved = self._resolve_ref("product_ref", ref, Product)
-                    except (MissingReference, ReferenceConflict):
-                        resolved = None
-                    if resolved:
-                        product_ids.add(resolved)
-                    continue
+                # PRODUCT-REF-COLLISION (owner ruling 3 Oct): code only, a
+                # ref-only line has no product to snapshot.
                 code = (line.get("product_code") or "").strip()
                 if code:
                     codes.add(code)

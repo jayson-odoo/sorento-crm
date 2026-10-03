@@ -165,6 +165,16 @@ class MasterRefResolver:
         code = (code or "").strip() or None
         name = (name or "").strip() or None
 
+        if model is Product:
+            # PRODUCT-REF-COLLISION (owner ruling 3 Oct): product identity is
+            # the code only. The ref is never read or written for products
+            # (ItemAutoKey vs ItemCode refs collide); no code, or an unknown
+            # one, is a missing product.
+            by_code = self._resolve_by_code(model, code) if code else None
+            if by_code is None:
+                raise MissingReference(code_field if code else ref_field, code or ref)
+            return by_code
+
         if ref:
             try:
                 return self._resolve_ref(ref_field, ref, model)

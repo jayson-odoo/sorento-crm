@@ -81,7 +81,6 @@ from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
     _is_company_scoped,
-    is_unclaimed_or_same_source,
 )
 from app.services.rules import product_rules
 from app.services.rules import customer_rules
@@ -1210,17 +1209,35 @@ class MasterIngestService:
         # same answer as one that was never linked at all. The cross-company
         # refusal this used to need (`_require_same_company`) is unreachable
         # through refs now and has been removed.
+        existing_id: Optional[str] = None
+        code_hit: Optional[str] = None
+        if entity_type == "products":
+            # PRODUCT-REF-COLLISION (owner ruling 3 Oct): the product CODE is
+            # identity. Product refs are never read for matching (a
+            # line-minted `BOOK:<ItemAutoKey>` can equal a feed
+            # `BOOK:<ItemCode>`) and never written here.
+            if self._preload is not None:
+                code_hit = self._preload.code_to_id.get(normalize_code(payload.code))
+            if code_hit is None:
+                code_hit = resolve_master_by_code(self.db, spec.model, payload.code, self.company_id)
+            if code_hit is not None:
+                product_row = self._read_product_row(code_hit, columns)
+                self._finalize_product_derived(payload, columns, code_hit, row=product_row)
+                diff = self._diff(spec, code_hit, columns, row=product_row)
+                if diff != {}:  # C1
+                    self._update(spec, code_hit, columns)
+                self._post_write_product_hooks(entity_type, code_hit)
+                return IngestOutcome.UPDATED, code_hit, diff, warnings
+            self._finalize_product_derived(payload, columns, None)
+            self._fill_create_only_product_gaps(columns)
+            new_id = self._insert(entity_type, spec, columns)
+            self._post_write_product_hooks(entity_type, new_id)
+            return IngestOutcome.CREATED, new_id, None, warnings
         existing_id = self._resolve_ref(entity_type, payload.source_ref)
         if existing_id is not None:
-            product_row = None
-            if entity_type == "products":
-                # C3: one shared SELECT for `_finalize_product_derived` and
-                # `_diff`, instead of one each.
-                product_row = self._read_product_row(existing_id, columns)
-                self._finalize_product_derived(payload, columns, existing_id, row=product_row)
             if entity_type == "customers":
                 self._finalize_customer_segment_fill_only(columns, existing_id)
-            diff = self._diff(spec, existing_id, columns, row=product_row)
+            diff = self._diff(spec, existing_id, columns)
             if diff != {}:
                 # C1: `{}` is a real answer ("nothing to write"), not "diff
                 # unavailable" - skipping `_update` here is the whole point,
@@ -1244,58 +1261,22 @@ class MasterIngestService:
             adopted = _lookup_id(
                 self.db, spec.table, spec.code_column, payload.code, self.company_id, normalized=True
             )
-        elif entity_type == "products" and self._preload is not None:
-            # Round 2: the batch preload's own code_to_id map first - a miss
-            # (this code is genuinely new, or the preload failed/didn't run)
-            # falls back to the exact query the `else` branch below runs.
-            adopted = self._preload.code_to_id.get(normalize_code(payload.code))
-            if adopted is None:
-                adopted = resolve_master_by_code(self.db, spec.model, payload.code, self.company_id)
         else:
             adopted = resolve_master_by_code(self.db, spec.model, payload.code, self.company_id)
         if adopted is not None:
             origin = self._origin_of(entity_type, adopted)
             if origin is not None:
-                if entity_type == "products" and is_unclaimed_or_same_source(origin):
-                    # Code-wins (ingest-products-code-wins, SR0): the same
-                    # rule `MasterRefResolver` already applies to a document
-                    # line's product rung (`WARN_REF_MISMATCH`) - the
-                    # FoundryX AutoCount HTTP source exposes no numeric item
-                    # key, so a product push always arrives keyed by item
-                    # code even though the row is already claimed by an
-                    # `AED_SORENTO:<numeric key>` reference SO/PO line ingest
-                    # minted. The item code decides identity and the STORED
-                    # reference is kept -- `_link` is deliberately never
-                    # called here, so the incoming ref is never written.
-                    from app.services.master_ref_resolver import WARN_REF_MISMATCH
-
-                    # C3: this is the DOMINANT products path (FoundryX product
-                    # rows carry no numeric key, so a push always arrives
-                    # keyed by item code even for an already-linked row) - the
-                    # one shared SELECT matters most here.
-                    product_row = self._read_product_row(adopted, columns)
-                    self._finalize_product_derived(payload, columns, adopted, row=product_row)
-                    diff = self._diff(spec, adopted, columns, row=product_row)
-                    if diff != {}:  # C1
-                        self._update(spec, adopted, columns)
-                    self._post_write_product_hooks(entity_type, adopted)
-                    warnings.append(WARN_REF_MISMATCH)
-                    return IngestOutcome.UPDATED, adopted, diff, warnings
                 # Already claimed by a different source document -- surfacing
                 # beats silently retargeting someone else's record.
                 raise ReferenceConflict(
                     f"{spec.code_column}={payload.code!r} is already linked to another source"
                 )
-            product_row = None
-            if entity_type == "products":
-                product_row = self._read_product_row(adopted, columns)  # C3
-                self._finalize_product_derived(payload, columns, adopted, row=product_row)
             if entity_type == "customers":
                 self._finalize_customer_segment_fill_only(columns, adopted)
             # Captured before the UPDATE (dry run) or the skip (C1, real run):
             # an adoption overwrites a row somebody typed in by hand, and the
             # operator/audit trail gets no other chance to see what it replaces.
-            diff = self._diff(spec, adopted, columns, row=product_row)
+            diff = self._diff(spec, adopted, columns)
             if diff != {}:  # C1
                 self._update(spec, adopted, columns)
             # T7: adoption still links the reference even on an empty diff -
@@ -1305,9 +1286,6 @@ class MasterIngestService:
             self._post_write_product_hooks(entity_type, adopted)
             return IngestOutcome.UPDATED, adopted, diff, warnings
 
-        if entity_type == "products":
-            self._finalize_product_derived(payload, columns, None)
-            self._fill_create_only_product_gaps(columns)
         new_id = self._insert(entity_type, spec, columns)
         self._link(entity_type, new_id, payload)
         self._post_write_product_hooks(entity_type, new_id)

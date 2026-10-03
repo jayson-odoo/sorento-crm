@@ -57,7 +57,6 @@ from app.services.master_ingest_service import (
     UnsupportedIngestEntity,
     _is_company_scoped,
 )
-from app.services.master_ref_resolver import WARN_REF_MISMATCH
 from app.services.rules.master_rules import resolve_master_by_code
 from app.services.shipping_order_ingest_service import (
     LINE_CLOSED,
@@ -378,12 +377,14 @@ class DeletionService:
         # fails too, turning "one row we could not remove" into "nothing removed".
         savepoint = self.db.begin_nested()
         try:
-            entity_id = self.refs.resolve(entity_type=entity_type, source_ref=ref)
-            if entity_id is None and entity_type == "products" and code:
-                entity_id = self._resolve_product_by_code(code)
-                if entity_id is not None:
-                    warnings = [WARN_REF_MISMATCH]
-                    via_code_rung = True
+            if entity_type == "products":
+                # PRODUCT-REF-COLLISION (owner ruling 3 Oct): product identity
+                # is the code; the ref is never read, so no code is not found.
+                if code:
+                    entity_id = self._resolve_product_by_code(code)
+                    via_code_rung = entity_id is not None
+            else:
+                entity_id = self.refs.resolve(entity_type=entity_type, source_ref=ref)
             if entity_id is None or not self._in_anchor_company(entity_type, entity_id):
                 # Another company's row reads exactly like a row that is not
                 # there. It is not this caller's to delete, and telling it the
