@@ -383,6 +383,18 @@ draft statuses) and the tests that only covered it; the idle sweep stays until o
   of the problem as `text` (0.432 vs 0.280 against 0.3). Fix: send the user's raw message as `text`
   (stable input). Follow-up ask to ss: also match against the stored `raw_text`.
 
+Review of that fix (7db57216), lead decisions:
+- **B1** the new rule competed with the older "every draft has one from its very first message ...
+  ALWAYS emit problem" line, and the capture turn always sends status 'new'. The problem field's own
+  description is rewritten: a stated idea still gets the need behind it as its problem; an
+  intent-only message gets none. One instruction for `problem`, not two.
+- **S1** the migration no longer overwrites an owner edit: it freezes the previous stock text
+  (`OLD_IDEATE_EXTRACTOR`) and publishes the new fallback only when production still equals it
+  (precedent `393_po_schedule_extractor_page_text.py`); an owner-edited production version is left
+  alone with a warning, and the owner adds the rule by hand in Settings > AI Prompts.
+- **S2/S3** migration tests find the revision by id (survives the pre-merge re-parent) and cover an
+  existing old version being upgraded once.
+
 ## 4b. Lane process (owner rule 3 Oct, LEAD PATTERN)
 
 From 3 Oct the lane runs on the lead pattern: the lead (this session) edits plans, docs and merge
