@@ -5228,6 +5228,13 @@ def _run_stages_body(  # noqa: PLR0915
                 fetch=[_FetchSpec(domain=plan.domains[0], entities=[], filters={}, date_window=None)],
             )
 
+        # MULTI-CODE-DYM Q3 (owner, 4 Oct 2026): "2 and SRTWC286-SH-150" settled option 2
+        # from the roster and typed a code the resolver answered. The fetch keeps the
+        # resolver's rows for every kind it answered (`turn_runtime._entities_for`), so
+        # the settled pick rides beside them as a row of its own, or it is never fetched.
+        if "pick_plus_typed_subject" in plan.trace.rules_fired:
+            compatible_entities = _with_settled_picks(compatible_entities, state_out.focus.products)
+
         # -- E FETCH + F COMPOSE, for the turn that has something to look up --- #
         if (
             answer is None
@@ -6326,6 +6333,20 @@ def _stock_answer_lines(envelopes: list[dict[str, Any]]) -> list[str]:
             if isinstance(flags, dict) and flags.get("branch") and not flags.get("needs_quantity") and title:
                 lines.append(str(title))
     return lines
+
+
+def _with_settled_picks(
+    compatible: list[dict[str, Any]], products: list[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
+    """`compatible` plus each focus product a roster pick settled (it carries its uuid)
+    that the resolver's rows do not already hold."""
+    held = {str(e.get("uuid")) for e in compatible if isinstance(e, dict) and e.get("uuid")}
+    extra = [
+        turn_runtime._spec_row(p)
+        for p in products or []
+        if isinstance(p, dict) and p.get("uuid") and str(p.get("uuid")) not in held
+    ]
+    return [*compatible, *extra] if extra else compatible
 
 
 def _unplaced_suggestions(
