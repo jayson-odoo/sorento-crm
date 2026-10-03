@@ -1502,12 +1502,14 @@ class StockService:
                     "product_id": pid,
                     "product_code": getattr(products_by_id.get(pid), "product_code", None),
                     "product_name": getattr(products_by_id.get(pid), "product_name", None),
-                    "company_name": (
-                        company_names.get(
-                            str(getattr(products_by_id.get(pid), "company_id", None))
-                        )
+                    **(
+                        {
+                            "company_name": company_names.get(
+                                str(getattr(products_by_id.get(pid), "company_id", None))
+                            )
+                        }
                         if name_company
-                        else None
+                        else {}
                     ),
                     # Summed over EVERY allowed location, including the ones the
                     # flag withholds. A withheld line held none of the product, so

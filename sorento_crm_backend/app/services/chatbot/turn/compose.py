@@ -11,7 +11,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
-from app.services.chatbot.turn.fetch import BLOCK_START_RE, envelope_missed, renumber
+from app.services.chatbot.block_numbering import BLOCK_START_RE, renumber
+from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
 from app.services.ledger_family import customer_group_of, customer_header_words
 from app.services.chatbot.turn.pending import (
