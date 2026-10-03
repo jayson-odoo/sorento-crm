@@ -119,3 +119,10 @@ def test_a_mixed_block_stamps_each_answered_entry_and_leaves_the_owed_one():
     )
     assert stamped[0]["refers_to_salesman"] is True
     assert "refers_to_salesman" not in stamped[1]
+
+
+def test_no_stock_and_no_incoming_says_both():
+    """REFER-ONLY-FIXES (owner, 3 Oct 2026): `no_incoming` is reached only with no stock
+    (`stock_ask_branch.branch`), so a bare "No incoming" read as if stock were there."""
+    line = _availability_line(_entry(product_code="SRTWC286-SH", requested_qty=5, branch="no_incoming"))
+    assert line == "SRTWC286-SH x 5: ❌ No stock and no incoming. Please refer to your salesman."
