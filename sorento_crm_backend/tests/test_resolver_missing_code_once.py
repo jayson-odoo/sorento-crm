@@ -143,3 +143,33 @@ def test_a_missing_code_costs_one_embedding_round_trip_not_two(db, counted):
 
     # Before: two round trips, so never under 3.0s. After: one, plus the SQL.
     assert elapsed < 2.9, f"{elapsed:.2f}s"
+
+
+def test_two_spellings_of_one_code_both_resolve(db, monkeypatch):
+    """Tier-1 probes map a batch by normalised code (`dict(zip(normalized, tokens))`),
+    so of two tokens that normalise alike only the last gets the row from the BATCHED
+    call. The cross-type pass re-asks each alone and finds it; a remembered empty
+    answer for the other spelling must not stand in for that. Product sets, projects
+    and users have no Tier-2 probe to rescue them, so this is the probe in the raw."""
+
+    def probe(db, tokens):
+        norm = {t.replace("-", "").lower(): t for t in tokens}
+        out = {t: [] for t in tokens}
+        if "ab1" in norm:
+            out[norm["ab1"]] = [
+                er.ResolvedEntity(
+                    entity_type="product_set", canonical_code="AB-1",
+                    uuid=str(uuid.uuid4()), match_field="code",
+                )
+            ]
+        return out
+
+    monkeypatch.setattr(er, "_TIER1_PROBES", ((probe, frozenset({"product_set"})),))
+    monkeypatch.setattr(er, "_TIER2_PROBES", ())
+
+    rows = er.resolve_references(
+        db, ["AB-1", "ab1"], cross_type_expand=True, enable_embedding_fallback=False
+    )
+
+    found = {r.token: [m.canonical_code for m in r.matches] for r in rows.resolutions}
+    assert found == {"AB-1": ["AB-1"], "ab1": ["AB-1"]}, found

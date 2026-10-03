@@ -169,3 +169,39 @@ def test_a_genuine_error_is_raised_not_retried(monkeypatch):
     with pytest.raises(_Boom):
         provider.chat([{"role": "user", "content": "x"}], max_tokens=8)
     assert client.calls == 1
+
+
+def test_an_unrelated_400_naming_a_parameter_is_not_remembered(monkeypatch):
+    """A context-length 400 carries `param: 'messages'`. It fails that one call, as it
+    always did, and never strips `messages` from the model's later calls."""
+
+    class _Client:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+            outer = self
+
+            class _C:
+                def create(inner, **kwargs):
+                    outer.calls.append(dict(kwargs))
+                    if "messages" not in kwargs:
+                        raise _BadRequest("Missing required parameter: 'messages'.", param="messages")
+                    if len(kwargs["messages"]) > 1:
+                        exc = _BadRequest(
+                            "This model's maximum context length is 128000 tokens.",
+                            param="messages",
+                        )
+                        exc.code = "context_length_exceeded"
+                        raise exc
+                    return _completion()
+
+            self.chat = types.SimpleNamespace(completions=_C())
+
+    client = _Client()
+    provider = _provider(monkeypatch, client, "gpt-5.4-mini")
+
+    with pytest.raises(_BadRequest):
+        provider.chat([{"role": "user", "content": "a"}, {"role": "user", "content": "b"}])
+    result = provider.chat([{"role": "user", "content": "short"}])
+
+    assert result.content == "ok"
+    assert "messages" in client.calls[-1]
