@@ -1312,19 +1312,50 @@ def _crossdomain_rung_row(it: Any, field_by_key: Any) -> dict[str, Any]:
     }
 
 
+def _sum_xd_qty(a: Any, b: Any) -> Any:
+    """The sum of two rung quantities; a missing side counts as nothing, a non-number keeps
+    the first side as it was."""
+    if a in (None, ""):
+        return b
+    if b in (None, ""):
+        return a
+    try:
+        total = float(a) + float(b)
+    except (TypeError, ValueError):
+        return a
+    return int(total) if total == int(total) else total
+
+
 def _crossdomain_rung_text(rows: list[dict[str, Any]]) -> str:
-    """D3 (12 Sep 2026 owner finding): one field per line per row - `*Ordered:*`,
-    `*Outstanding:*`, `*PO date:*`, `*Location:*`, bold labels like every other field line
-    in the reply. A null/empty `ordered_qty`, `po_date` or `location` OMITS that line
-    entirely (never a placeholder, never `_fmt_xd_value`'s own "-"); `Outstanding` always
-    prints. No per-document heading naming the PO/SPO number, and no "pcs". Card v4: these
-    are the lines under a code's own `*PO:* placed`, so the code's `*Product Code:*` line
-    is the block's header and not repeated here, and rows follow one another without a
-    blank line.
+    """One block per document, owner ruling 4 Oct 2026 (it supersedes the 12 Sep "no
+    per-document heading" ruling): `*PO:* <number>` (`*SPO:* <number>` for an SPO row), then
+    one field per line - `*Ordered:*`, `*Outstanding:*`, `*PO date:*`, `*Location:*`, bold
+    labels like every other field line in the reply. Rows with the same kind, number, date
+    and location are one block, Ordered and Outstanding summed. A null/empty `number`, `ordered_qty`,
+    `po_date` or `location` OMITS that line entirely (never a placeholder, never
+    `_fmt_xd_value`'s own "-"); `Outstanding` always prints. No "pcs". These are the lines
+    at the end of a code's own block, whose `*Product Code:*` line is the header and is not
+    repeated here; blocks follow one another without a blank line.
     """
-    blocks: list[str] = []
+    merged: dict[tuple[Any, ...], dict[str, Any]] = {}
     for row in rows:
-        lines = []
+        # A row with no number has no identity to merge on.
+        key = (
+            (row.get("kind"), row.get("number"), row.get("po_date"), row.get("location"))
+            if row.get("number") not in (None, "")
+            else (id(row),)
+        )
+        if key in merged:
+            merged[key]["ordered_qty"] = _sum_xd_qty(merged[key].get("ordered_qty"), row.get("ordered_qty"))
+            merged[key]["qty"] = _sum_xd_qty(merged[key].get("qty"), row.get("qty"))
+        else:
+            merged[key] = dict(row)
+    blocks: list[str] = []
+    for row in merged.values():
+        label = "SPO" if row.get("kind") == "spo" else "PO"
+        number = row.get("number")
+        # No number, no heading line (never a placeholder).
+        lines = [f"*{label}:* {_fmt_xd_value(number)}"] if number not in (None, "") else []
         ordered_qty = row.get("ordered_qty")
         if ordered_qty not in (None, ""):
             lines.append(f"*Ordered:* {_fmt_xd_value(ordered_qty)}")
@@ -1353,7 +1384,7 @@ def _apply_crossdomain_rung(
 ) -> None:
     """Mutates `render["_xdBlock"]` in place: tries the ladder's next rung for the codes
     the first probe found NOTHING for, and ends each such code's block with `*PO:* none` or
-    `*PO:* placed` plus the PO lines when it answers (AC-921/AC-922, card v4).
+    one block per PO when it answers (AC-921/AC-922, card v4).
 
     A no-op (H62/AC-924 kept byte-identical) when: the origin has no further rung
     (AC-923), or the first probe found something for every requested code
@@ -1394,7 +1425,7 @@ def _apply_crossdomain_rung(
         probe_result if isinstance(probe_result, dict) else {}, missing=missing
     )
     # Card v4: the rung answers INSIDE each code's own block, as its last lines - `*PO:* none`
-    # when it found nothing on order, else `*PO:* placed` then the PO/SPO lines.
+    # when it found nothing on order, else one block per PO/SPO.
     paragraphs = (block.get("block") or "").split("\n\n")
     for code in nothing_codes:
         # The code's FIRST block (a company's block starts with its Company line, a numbered
@@ -1413,9 +1444,7 @@ def _apply_crossdomain_rung(
         if at is None:
             continue
         found = lines_by_code.get(code)
-        paragraphs[at] += (
-            "\n*PO:* placed\n" + _crossdomain_rung_text(found) if found else "\n*PO:* none"
-        )
+        paragraphs[at] += "\n" + _crossdomain_rung_text(found) if found else "\n*PO:* none"
     new_block_text = "\n\n".join(paragraphs)
     block["block"] = new_block_text
     block["any"] = True
