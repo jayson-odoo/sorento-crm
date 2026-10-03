@@ -587,6 +587,13 @@ class TestLiveParserAnswerShape:
         assert text == "Low stock report cancelled."
         assert calls == []
 
+    def test_cancel_with_topic_reset_still_cancels(self, console) -> None:
+        console.say(_ask(), "low stock report")
+        reply = {**_live_reply(), "topic_reset": True}
+        text, calls = console.say(reply, "cancel")
+        assert text == "Low stock report cancelled."
+        assert calls == []
+
     def test_all_with_is_affirmative_false_still_runs_the_whole_book(self, console) -> None:
         console.say(_ask(), "low stock report")
         _text, calls = console.say(_live_reply(), "all")

@@ -252,6 +252,14 @@ class TestReplyVerdict:
         verdict = {"intent_hint": "check_stock"}
         assert rf.reply_verdict(verdict, None, "hello", asks={"test_one": ONE}) == (verdict, None)
 
+    def test_the_rerouted_verdict_never_resets_the_topic(self):
+        slot = _start(ONE).slot
+        verdict = {"intent_hint": None, "message_type": "business_query", "topic_reset": True,
+                   "is_affirmative": False}
+        out, rule = rf.reply_verdict(verdict, slot, "cancel", asks={"test_one": ONE})
+        assert rule == "required_ask_answer"
+        assert out["topic_reset"] is False
+
     def test_a_short_reply_is_rerouted_to_the_ask_with_the_slot(self):
         slot = _start(ONE).slot
         verdict, rule = rf.reply_verdict(
