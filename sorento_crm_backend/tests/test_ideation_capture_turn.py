@@ -95,7 +95,7 @@ class Env:
         self.contact = RespondContact(
             id=_uid(),
             phone_number=self.phone,
-            name="Aisha Rahman",
+            name="CONTACT A",
             respond_io_id=self.rio,
             session_vars=session_vars or {},
         )
@@ -107,7 +107,7 @@ class Env:
         user = User(
             id=_uid(),
             email=f"zzt-{uuid.uuid4().hex[:8]}@test.com",
-            name="Aisha CRM",
+            name="USER A",
             status=status,
             respond_contact_id=self.contact.id if link else None,
         )
@@ -367,7 +367,7 @@ def test_c_no_similar_creates_one_shot(env):
     env.ready()
     env.idea_message()
     idea_id = env.created()
-    out = env.turn(MSG, submitter_name="WA Name")
+    out = env.turn(MSG, submitter_name="WHATSAPP NAME A")
 
     assert len(env.similar_calls) == 1
     assert len(env.create_calls) == 1
