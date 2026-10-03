@@ -11,7 +11,7 @@ re-run is a no-op because production then equals the fallback. The seed runs fir
 `ideation_capture_*` copy keys exist; it also gives a fresh database a row to compare against.
 
 Revision ID: ideation_capture_0001
-Revises: merge_03oct_join5
+Revises: dev_login_0001
 """
 import logging
 
@@ -28,7 +28,7 @@ from app.services.ai_prompt_seed import (
 )
 
 revision = "ideation_capture_0001"
-down_revision = "merge_03oct_join5"
+down_revision = "dev_login_0001"
 branch_labels = None
 depends_on = None
 
