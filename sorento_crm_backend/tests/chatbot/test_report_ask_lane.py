@@ -1105,3 +1105,134 @@ def test_c3_a_real_agent_word_is_still_a_sales_agent(console) -> None:
         assert engine_mod_._classify_word_group(db, "zzthandle") == "sales_agent"
     finally:
         db.close()
+
+
+# --------------------------------------------------------------------------- #
+# REPORT-ENGINE: four multi-turn defects seen with the LIVE parser (browser pass, 3 Oct 2026).
+# Every `qf` below is the live parser's recorded verdict for that turn.
+# T2/T3 (Q5), D2 (bare number or "top N" after a ranking), D3 (Q3), D4 (period-only follow-up).
+# --------------------------------------------------------------------------- #
+
+CABANA_MSG = "top 3 salesman for Cabana brand last month"
+SEP_RANGE = {"date_filter_start": "2026-09-01", "date_filter_end": "2026-09-30"}
+
+
+def _seed_cabana(console) -> str:
+    from app.models.product import Brand
+
+    db = console.session_factory()
+    try:
+        brand = Brand(id=str(uuid.uuid4()), brand_code="ZZTCAB", brand_name="Cabana", company_id=DEFAULT_COMPANY_ID)
+        db.add(brand)
+        db.commit()
+        return str(brand.id)
+    finally:
+        db.close()
+
+
+def _t1(console) -> tuple[str, list[dict[str, Any]]]:
+    console.cabana = _seed_cabana(console)
+    return console.say(_rank(_e("Cabana", "brand"), top_n=3, **SEP_RANGE), CABANA_MSG)
+
+
+def _bare_ranking(**overrides: Any) -> dict[str, Any]:
+    """The live verdict for a bare "5" / "top 10": sales_ranking, nothing else."""
+    base: dict[str, Any] = dict(
+        domain_hint="order", intent_hint="check_order", order_status="sales_ranking", entities=[],
+        group_by=None, top_n=None, date_filter_start=None, date_filter_end=None,
+    )
+    base.update(overrides)
+    return _parser_output(**base)
+
+
+def _period_only(start: str, end: str) -> dict[str, Any]:
+    """The live verdict for "this year": no status, no group_by, no top_n, only dates."""
+    return _parser_output(
+        domain_hint="order", intent_hint="check_order", order_status=None, entities=[],
+        group_by=None, top_n=None, date_filter_start=start, date_filter_end=end,
+    )
+
+
+def test_t1_the_cabana_ranking_runs(console) -> None:
+    _text, calls = _t1(console)
+    (args,) = calls
+    assert args["group_by"] == "sales_agent" and args["top_n"] == 3, args
+    assert args["brand_ids"] == [console.cabana], args
+    assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
+
+
+def test_t2_a_carried_top_n_with_no_number_in_the_message_asks_how_many(console) -> None:
+    """Q5: the live model carried top_n 3 over; "top salesman for cabana last month" names no
+    count, so nothing runs and the lane asks."""
+    _t1(console)
+    text, calls = console.say(
+        _rank(_e("Cabana", "brand"), top_n=3, **SEP_RANGE), "top salesman for cabana last month"
+    )
+    assert calls == [], calls
+    assert text.strip() == TOPN_Q, text
+
+
+def test_t3_the_number_reply_after_the_how_many_question_runs_top_5(console) -> None:
+    _t1(console)
+    console.say(_rank(_e("Cabana", "brand"), top_n=3, **SEP_RANGE), "top salesman for cabana last month")
+    _text, calls = console.say(_reply(), "5")
+    (args,) = calls
+    assert args["top_n"] == 5, args
+    assert args["group_by"] == "sales_agent" and args["brand_ids"] == [console.cabana], args
+    assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
+
+
+@pytest.mark.parametrize(
+    "body", ["top 3 salesman for cabana last month", "top three salesman for cabana last month",
+             "top 10 salesman for cabana last month"],
+)
+def test_t2_a_message_that_names_a_count_still_takes_the_parsers_number(console, body) -> None:
+    n = 10 if "10" in body else 3
+    _t1(console)
+    _text, calls = console.say(_rank(_e("Cabana", "brand"), top_n=n, **SEP_RANGE), body)
+    (args,) = calls
+    assert args["top_n"] == n, args
+
+
+@pytest.mark.parametrize("reply, n", [("5", 5), ("top 10", 10)])
+def test_d2_a_bare_number_after_a_ranking_reruns_that_ranking_with_the_new_top_n(console, reply, n) -> None:
+    """Ruling (pending owner ask): with no question open, a bare number or "top N" right after a
+    sales ranking reply means top N of that ranking."""
+    _t1(console)
+    text, calls = console.say(_bare_ranking(top_n=n if reply.startswith("top") else None), reply)
+    (args,) = calls
+    assert args["group_by"] == "sales_agent", f"ranking lost, ran a total: {args}"
+    assert args["brand_ids"] == [console.cabana], args
+    assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
+    assert args["top_n"] == n, args
+    assert args["measure"] == "amount" and args["basis"] == "delivered", args
+
+
+def test_d3_a_fresh_ranking_that_names_its_own_subject_never_borrows_the_previous_period(console) -> None:
+    """Q3: "top 3 salesman for sorento" with no period asks the period, September carried or not."""
+    _t1(console)
+    text, calls = console.say(
+        _rank(_e("Sorento", "brand"), top_n=3, date_filter_start=None, date_filter_end=None),
+        "top 3 salesman for sorento",
+    )
+    assert calls == [], calls
+    assert text.strip() == PERIOD_Q, text
+
+
+@pytest.mark.parametrize(
+    "start, end", [("2026-01-01", "2026-12-31"), ("2025-01-01", "2025-12-31"), ("2026-09-01", "2026-09-30")],
+    ids=["this_year", "2025", "last_month"],
+)
+def test_d4_a_period_only_follow_up_reruns_the_same_ranking_for_that_period(console, start, end) -> None:
+    _t1(console)
+    text, calls = console.say(_period_only(start, end), "this year")
+    (args,) = calls
+    assert args["group_by"] == "sales_agent" and args["top_n"] == 3, args
+    assert args["brand_ids"] == [console.cabana], args
+    assert args["date_from"] == start and args["date_to"] == end, args
+    assert "Could not find order" not in text, text
+
+
+def test_guard_a_period_only_message_with_no_ranking_on_screen_runs_no_report(console) -> None:
+    text, calls = console.say(_period_only("2026-01-01", "2026-12-31"), "this year")
+    assert calls == [], (text, calls)
