@@ -21,7 +21,6 @@ from app.services.chatbot.lanes.business import low_stock_ask
 from app.services.chatbot.turn import held
 from app.services.chatbot.turn import pending as pending_mod
 from app.services.chatbot.turn.apply import apply
-from app.services.chatbot.turn.decide import NEW_ASK, REFINE, decide
 from app.services.chatbot.turn.state import Focus, Profile, State, focus_from_wire, focus_to_wire
 
 from tests.chatbot import _ht26_fixtures as ht
@@ -117,7 +116,21 @@ def test_every_minted_pending_kind_is_registered():
 KINDS = [*pending_mod.PENDING_KINDS, "brand_pick", "attachment_type_ask", "form_pick"]
 
 
-@pytest.mark.parametrize("kind", KINDS)
+QUESTION_KINDS = [k for k in KINDS if k not in pending_mod.ESCALATION_OFFER_KINDS]
+
+
+@pytest.mark.parametrize("kind", sorted(pending_mod.ESCALATION_OFFER_KINDS))
+def test_a_new_intent_keeps_an_escalation_offer_but_drops_the_rest(kind):
+    """An escalation offer accepts only an explicit yes / position / company pick, so a
+    reply of another intent cannot be captured by it; it ends on its own 3-turn clock."""
+    state = _state(_all_held_focus(intent="check_order"), pending=_pending(kind))
+    out, why = held.consume(state, verdict(intent_hint="check_promotion", entities=[entity("X1")]))
+    assert why == "new_intent"
+    assert out.pending is not None
+    assert held.held_slots(out) == ["state.pending"]
+
+
+@pytest.mark.parametrize("kind", QUESTION_KINDS)
 def test_a_new_intent_drops_the_open_question(kind):
     state = _state(Focus(intent="check_order", domains=["order"]), pending=_pending(kind))
     v = verdict(
@@ -335,23 +348,28 @@ def test_the_owner_sequence_through_the_central_rule():
 # --------------------------------------------------------------------------- #
 
 
-def test_a_refine_under_a_new_intent_is_a_new_ask_that_starts_fresh():
+def test_consume_marks_a_new_intent_on_the_verdict():
     v = verdict(intent_hint="check_stock", domain_in_message=False, entities=[entity("taiyang", hint="brand")])
-    assert decide(v, Focus(intent="top_selling")).kind == REFINE  # no marker: the old reading
-    marked = dict(v)
-    held.consume(_state(Focus(intent="top_selling")), marked)
-    assert marked.get(held.NEW_INTENT) is True  # consume marks the verdict it read
-    d = decide({**v, held.NEW_INTENT: True}, Focus(intent="check_stock"))
-    assert d.kind == NEW_ASK
-    assert d.starts_fresh
+    held.consume(_state(Focus(intent="check_order")), v)
+    assert v.get(held.NEW_INTENT) is True
+
+
+def test_a_refine_under_a_new_intent_still_carries_the_subject():
+    """"cert?" after "any gunmetal basin has incoming?" is about those basins (#833): a new
+    intent drops only the old ask's own extra words, never the products."""
+    focus = Focus(intent="check_incoming", products=[entity("CBWB9GM0")], domains=["incoming"])
+    v = verdict(intent_hint="check_product_attachment", domain_hint="product_attachment", entities=[entity("cert", hint="attachment_type")])
+    held.consume(_state(focus), v)
+    out, _plan = apply(_state(focus), v, build_policy())
+    assert [p["raw"] for p in out.focus.products] == ["CBWB9GM0"]
 
 
 def test_carried_entities_of_the_old_intent_do_not_reach_a_new_intent():
     """'taiyang only' after a ranking by sales agent William: William is the old ask's
     and must not be resolved (and missed) as part of the stock ask."""
     focus = Focus(
-        intent="top_selling",
-        domains=["sales"],
+        intent="check_order",
+        domains=["order"],
         extra={"sales_agent": [entity("William", hint="sales_agent")]},
     )
     v = verdict(intent_hint="check_stock", domain_hint="inventory", domain_in_message=False, entities=[entity("taiyang", hint="brand")])
@@ -359,18 +377,6 @@ def test_carried_entities_of_the_old_intent_do_not_reach_a_new_intent():
     assert why is None or why == "new_intent"
     out, _plan = apply(state, v, build_policy())
     assert not out.focus.extra.get("sales_agent")
-
-
-def test_anaphora_under_a_new_intent_still_refines():
-    """"did golden win deliver these?" points at the carried products on purpose."""
-    v = verdict(
-        intent_hint="check_order",
-        domain_in_message=True,
-        entities=[entity("golden win", hint="customer")],
-        anaphora={"backward_reference": True},
-    )
-    d = decide({**v, held.NEW_INTENT: True}, Focus(intent="check_stock"))
-    assert d.kind == REFINE
 
 
 # --------------------------------------------------------------------------- #
@@ -412,7 +418,7 @@ def test_an_answer_an_engine_reader_took_is_kept_under_another_intent(reader):
 )
 def test_an_escalation_offer_answered_by_the_parser_is_kept(kind, escalation):
     state = _state(Focus(intent="check_stock"), pending=_pending(kind))
-    out, why = held.consume(state, verdict(intent_hint="escalate", escalation=escalation))
+    out, why = held.consume(state, verdict(intent_hint="check_order", escalation=escalation))
     assert why is None
     assert out.pending is not None
 
@@ -422,3 +428,16 @@ def test_the_parsers_declared_answer_is_kept():
     v = verdict(intent_hint="check_stock", answers_open_question={"resolved": True, "picks": [1], "answer": None})
     out, why = held.consume(state, v)
     assert why is None and out.pending is not None
+
+
+def test_an_intent_outside_the_routing_table_is_not_a_new_question():
+    """`intent_hint` is a free phrase; a synonym the parser drifts to is not a change."""
+    v = verdict(intent_hint="stock_check_please", entities=[entity("X1")])
+    out, why = held.consume(_state(Focus(intent="check_stock"), pending=_pending("product_pick")), v)
+    assert why is None and out.pending is not None
+    assert held.NEW_INTENT not in v
+
+
+def test_a_reset_keeps_the_conversations_intent():
+    state, _plan = apply(_state(Focus(intent="check_stock")), verdict(topic_reset=True), build_policy())
+    assert state.focus.intent == "check_stock"

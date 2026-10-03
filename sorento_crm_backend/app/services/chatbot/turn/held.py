@@ -30,6 +30,7 @@ from typing import Any, Callable, Mapping
 
 from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.decide import NEW_INTENT, decide
+from app.services.chatbot.turn.policy_rows import DEFAULT_DOMAIN_ROWS
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS, from_wire, to_wire
 from app.services.chatbot.turn.state import Focus, State, focus_from_wire
 
@@ -39,6 +40,12 @@ __all__ = ["NEW_INTENT", "HELD_TTL_TURNS", "SLOTS", "consume", "expire", "held_s
 #: own shorter clock (`pending.OFFER_TTL`, 3). Six: a roster picked row by row changes on
 #: every pick, so only a question nobody has touched for six turns lapses.
 HELD_TTL_TURNS = 6
+
+#: The intents the routing table knows (`policy_rows.DEFAULT_DOMAIN_ROWS`, every row's
+#: `intents`). An intent outside it never counts as a change of question.
+KNOWN_INTENTS: frozenset[str] = frozenset(
+    intent for row in DEFAULT_DOMAIN_ROWS for intent in (row.get("intents") or [])
+)
 
 #: The `Focus` fields that hold a question the next message can answer.
 FOCUS_HELD: tuple[str, ...] = ("tasks", "required_ask", "set_page", "set_clarify", "top_selling")
@@ -83,14 +90,16 @@ def held_slots(state: State) -> list[str]:
     return [name for name, (is_held, _clear) in SLOTS.items() if is_held(state)]
 
 
-def _cleared(state: State) -> State:
+def _cleared(state: State, *, keep_pending: bool = False) -> State:
     focus = replace(state.focus)
     for _name, (_is_held, clear) in SLOTS.items():
         if clear is not None:
             clear(focus)
-    focus.held_turn = None
-    focus.held_access = None
-    return replace(state, focus=focus, pending=None)
+    pending = state.pending if keep_pending else None
+    if pending is None:
+        focus.held_turn = None
+        focus.held_access = None
+    return replace(state, focus=focus, pending=pending)
 
 
 def expire(state: State) -> tuple[State, str | None]:
@@ -157,7 +166,9 @@ def consume(
     intent = verdict.get("intent_hint")
     intent = intent if isinstance(intent, str) and intent else None
     prior = state.focus.intent
-    changed = bool(intent and prior and intent != prior)
+    # Only a change between two KNOWN intents counts: `intent_hint` is the parser's own
+    # snake_case phrase, and a synonym it drifts to between turns is not a new question.
+    changed = bool(intent and prior and intent != prior and {intent, prior} <= KNOWN_INTENTS)
     if changed:
         verdict[NEW_INTENT] = True
     if intent and intent != prior:
@@ -167,7 +178,12 @@ def consume(
     if verdict.get("topic_reset") is True:
         return _cleared(state), "topic_reset"
     if changed and not answered and not _answers(state, verdict):
-        return _cleared(state), "new_intent"
+        # An escalation offer is kept: it accepts nothing weaker than an explicit yes, a
+        # position or a company pick (`decide`, #1323), so no reply of another intent is
+        # ever captured by it, and its own clock (`pending.OFFER_TTL`) already ends it. The
+        # subject a miss offered it over is what "cert?" next is about (#833).
+        offer = state.pending is not None and state.pending.kind in ESCALATION_OFFER_KINDS
+        return _cleared(state, keep_pending=offer), "new_intent"
     return state, None
 
 

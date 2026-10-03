@@ -87,3 +87,32 @@ def test_a_genuine_quantity_still_answers_the_question(console):
     sent = calls[-1].get("requested_quantities")
     sent = json.loads(sent) if isinstance(sent, str) else sent
     assert sorted(sent.values()) == [10, 10]
+
+
+def test_a_canned_turn_after_a_business_turn_writes_its_session(console):
+    """Reviewer B1: the focus keys this lane adds must pass the tail's `SessionVars`
+    check, or every casual / escalation / clarify turn after a business turn fails."""
+    _open_the_question(console)
+    console.say("thanks", verdict(message_type="casual", intent_hint=None))
+    assert (console.state or {}).get("focus", {}).get("intent") == "check_stock"
+
+
+def test_the_engine_tells_the_held_rule_which_reader_answered(console, monkeypatch, stub_access):
+    """AC-6 at the engine seam: the turn that answers the low stock category question
+    hands `turn_held.consume` that answer, so it can never be dropped as a new question
+    whatever intent the parser put on the reply."""
+    from app.services.chatbot import engine as engine_mod
+
+    stub_access(attributes=["scm.low_stock_report"])
+    asked = console.say("low stock report", verdict(intent_hint="low_stock_report", domain_hint="inventory"))
+    assert "Which product category?" in asked, asked
+    seen: list = []
+    real = engine_mod.turn_held.consume
+
+    def spy(state, verdict_in, **kw):
+        seen.append(list(kw.get("answered") or []))
+        return real(state, verdict_in, **kw)
+
+    monkeypatch.setattr(engine_mod.turn_held, "consume", spy)
+    console.say("water tap", verdict(intent_hint="check_stock", domain_hint="inventory", entities=[entity("water tap", hint="category")]))
+    assert seen and "required_ask" in seen[-1], seen

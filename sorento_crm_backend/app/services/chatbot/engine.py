@@ -6212,23 +6212,38 @@ def _access_fingerprint(db: Any, contact_respond_id: str, profile: Any) -> str:
     """STUCK-QTY-LOOP: everything that decides what this contact is told, as one string
     (`Profile.access_fp`). A held question stamped under another one was built for access
     the contact no longer has (owner, 4 Oct 2026: availability switched to compact), so
-    `turn/held.py::expire` drops it. The field-reveal grants are read the same way
-    `head/access.check_access` reads them; a failed read fails closed to none."""
+    `turn/held.py::expire` drops it. The stock mode and the field-reveal grants are read
+    the way the stock tool and `head/access.check_access` read them, inside a savepoint so
+    a failed read cannot leave the turn's session aborted; a read that fails reads as
+    "unknown" and is not part of the string."""
     import hashlib
 
     from app.services.chatbot.head.access import _granted_field_reveal_keys
+    from app.services.stock_visibility import resolve_policy
 
-    reveals = _granted_field_reveal_keys(
-        db, contact_id=contact_respond_id, space_id=default_space_id(db)
-    )
+    mode = None
+    reveals: list[str] = []
+    try:
+        with db.begin_nested():
+            space_id = default_space_id(db)
+            policy = resolve_policy(db, contact_respond_id, space_id)
+            mode = getattr(policy, "mode", None)
+            reveals = sorted(
+                str(key)
+                for key in _granted_field_reveal_keys(db, contact_id=contact_respond_id, space_id=space_id) or []
+            )
+    except Exception:  # noqa: BLE001 - a fingerprint is a profile fact, never the turn
+        logger.warning("chatbot: access fingerprint unreadable for %s", contact_respond_id)
     facts = [
         getattr(profile, "tier", None),
+        sorted(getattr(profile, "grants", None) or []) if getattr(profile, "grants", None) is not None else None,
         getattr(profile, "stock_allowed", None),
         getattr(profile, "stock_availability_only", None),
+        mode,
         getattr(profile, "escalation_allowed", None),
         getattr(profile, "notify_salesman", None),
         getattr(profile, "packing_list_allowed", None),
-        sorted(str(key) for key in reveals or []),
+        reveals,
     ]
     return hashlib.sha256(json.dumps(facts, default=str).encode()).hexdigest()[:16]
 

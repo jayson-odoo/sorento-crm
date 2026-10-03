@@ -62,10 +62,11 @@ SCOPE_BY_DOCUMENT: dict[tuple[str, ...], str] = {
 }
 
 #: STUCK-QTY-LOOP (crew report 2, 4 Oct 2026): the verdict marker `turn/held.py::consume`
-#: sets when this message names an intent other than the one the conversation was in. A
-#: would-be refinement under it is a fresh ask that starts from its own defaults: "taiyang
-#: only" asked for stock after a ranking by sales agent William is not "the ranking, for
-#: taiyang", and William must not ride into the stock lookup as a miss.
+#: sets when this message names an intent other than the one the conversation was in.
+#: `apply._focus_rules` then drops the carried ask-owned `focus.extra` kinds the message
+#: did not name (`apply.INTENT_OWNED_EXTRA`): "taiyang only" asked for stock after a ranking by sales agent William must not
+#: carry William into the stock lookup as a miss. The SUBJECT (products, customers) still
+#: carries: "cert?" after "any gunmetal basin has incoming?" is about those basins (#833).
 NEW_INTENT = "_new_intent"
 
 #: A position no roster ever prints (they count from 1): a pick of nothing on offer, which
@@ -134,7 +135,6 @@ class Decision:
         return self.kind == NEW_ASK and self.why in (
             "entity_op_replace",
             "domain_in_message",
-            "new_intent",
         )
 
     def as_trace(self) -> dict[str, Any]:
@@ -562,8 +562,6 @@ def _subject_reading(
             return Decision(
                 NEW_ASK, "names_its_own_entity", entities=named, window=window, **facts
             )
-        if verdict.get(NEW_INTENT) is True:
-            return Decision(NEW_ASK, "new_intent", entities=named, window=window, **facts)
         return Decision(
             REFINE,
             "refines_standing_subject",
@@ -590,8 +588,7 @@ def _subject_reading(
             **facts,
         )
     if entities:
-        why = "new_intent" if verdict.get(NEW_INTENT) is True else "names_its_own_entity"
-        return Decision(NEW_ASK, why, entities=named, window=window, **facts)
+        return Decision(NEW_ASK, "names_its_own_entity", entities=named, window=window, **facts)
     return Decision(CARRY, "nothing_answered", window=window, **facts)
 
 
