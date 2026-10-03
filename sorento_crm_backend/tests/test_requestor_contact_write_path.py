@@ -81,13 +81,13 @@ def test_ineligible_id_rejected_422(db):
 
 def test_submitting_contact_always_eligible_even_without_segment(db):
     """D3: the row's own submitter is always accepted, even unsegmented."""
-    darren = _contact(db, name="CONTACT X Submitter")  # no segments
-    row = _inquiry(db, contact_id=darren)
+    contact_x = _contact(db, name="CONTACT X Submitter")  # no segments
+    row = _inquiry(db, contact_id=contact_x)
 
     svc = PortalService(db)
-    svc._apply_requestor_contact("stock_inquiry", row, darren)
+    svc._apply_requestor_contact("stock_inquiry", row, contact_x)
 
-    assert row.salesperson_contact_id == darren
+    assert row.salesperson_contact_id == contact_x
     assert row.salesperson == "CONTACT X Submitter"
 
 

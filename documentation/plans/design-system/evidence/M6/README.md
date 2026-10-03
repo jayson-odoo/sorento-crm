@@ -137,7 +137,7 @@ source-confirmed at 2 images, not 3.
   products" toast, top-center, but no close button (the M6-04 fail).
 - `M6-05-dialog-close-focus-ring.png` - Export dialog, close X focused via real Tab keypresses,
   focus ring visible.
-- `M6-07-jennifer-thread-2-images.png` - CONTACT O thread with both real images loaded, thread
+- `M6-07-contact-o-thread-2-images.png` - CONTACT O thread with both real images loaded, thread
   scrolled to the bottom.
 
 ## Cleanup

@@ -107,3 +107,12 @@ sorento_crm_mcp/*.egg-info/
 
 # per-lane private test DB env, never committed
 .env.ci-tests
+
+# Local compose overrides, key files and env variants may carry secrets; only the
+# .env.example templates are tracked.
+docker-compose.override*
+compose.override*
+*.key
+.env.*
+!.env.example
+!**/.env.example

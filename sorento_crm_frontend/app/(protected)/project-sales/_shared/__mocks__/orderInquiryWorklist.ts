@@ -349,7 +349,7 @@ export const MOCK_WORKLIST_SUMMARY: OrderInquiryWorklistSummary = {
   // whole list, and the reason it is not a picker over every user in the company.
   raised_by: [
     { id: 'user-cindy', label: 'CONTACT W', rows: 2 },
-    { id: 'user-johnson', label: 'CONTACT AA Tan', rows: 1 },
+    { id: 'user-contact-aa', label: 'CONTACT AA Tan', rows: 1 },
   ],
   // The three cards (AC-I11), over these same rows: row 5's SPO link 10; row 1's
   // 35 and row 3's 40 + 20 on purchase orders; row 2's whole 85 and row 3's remaining

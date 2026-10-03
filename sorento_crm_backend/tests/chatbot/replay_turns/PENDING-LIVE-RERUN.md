@@ -146,7 +146,7 @@ below, with its own more specific reason) are enumerated here so the R-A skip ru
 (tester 20, 17 Sep 2026 - generalized to read every heading, not one hardcoded
 section) can find them:
 
-`console/handpass2-justin-incoming-picker`,
+`console/handpass2-contact-n-incoming-picker`,
 `console/handpass2-owner-17sep-golden-win`,
 `console/handpass2-owner-17sep-hanlim-delivery-miss-picks`,
 `console/handpass2-owner-17sep-hanlim-rpacc-sticky-pick`,
@@ -156,7 +156,7 @@ section) can find them:
 `console/handpass2-owner-17sep-purchase-cost-all`,
 `console/handpass2-owner-17sep-stock-incoming`,
 `console/handpass2-owner-17sep-two-domain-asks`,
-`console/handpass3-justin-escalation-offer`,
+`console/handpass3-contact-n-escalation-offer`,
 `console/handpass3-owner-17sep-outstanding-hanlim-detail-sales-order-switch`,
 `console/handpass3-owner-17sep-promo-tier`,
 `console/handpass3-owner-17sep-purchase-cost-po`,

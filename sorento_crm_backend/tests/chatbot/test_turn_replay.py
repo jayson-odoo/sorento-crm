@@ -498,7 +498,7 @@ HAND_PASS_2_GOLDEN_WIN: tuple[tuple[str, str, str], ...] = (
 )
 
 _CASE_CUSTOMERS: dict[str, tuple[tuple[str, str, str], ...]] = {
-    "console/handpass3-justin-escalation-offer.json": (
+    "console/handpass3-contact-n-escalation-offer.json": (
         (HANLIM_CUSTOMER_1_ID, "ZZT-" + HANLIM_CUSTOMER_1_ID[-4:], "HANLIM TRADING SDN BHD [A/C II]"),
         (HANLIM_CUSTOMER_2_ID, "ZZT-" + HANLIM_CUSTOMER_2_ID[-4:], "HANLIM TRADING SDN BHD [A/C I]"),
         (CHIN_CHUN_CUSTOMER_ID, "ZZT-" + CHIN_CHUN_CUSTOMER_ID[-4:], "CHIN CHUN HARDWARE SDN BHD - [A/C I]"),

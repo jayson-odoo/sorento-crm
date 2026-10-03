@@ -45,7 +45,7 @@ class TestLabelFromInquiryCell:
         )
 
     def test_r4_no_slash_or_an_empty_remainder_is_no_label(self):
-        assert label_from_inquiry_cell("OTM GROUP SDN BHD (SMC-JENNIFER)") is None
+        assert label_from_inquiry_cell("OTM GROUP SDN BHD (SMC-contact-o)") is None
         assert label_from_inquiry_cell("") is None
         assert label_from_inquiry_cell("A / ") is None
 

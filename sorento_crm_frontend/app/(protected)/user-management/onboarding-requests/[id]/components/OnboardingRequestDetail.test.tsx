@@ -136,7 +136,7 @@ function detail(overrides: Partial<Detail> = {}): Detail {
         full_name: 'Nurul Aisyah',
         nick_name: 'Aisyah',
         role_label: 'Sales admin',
-        phone_raw: '012-3456781',
+        phone_raw: '010-0000002',
         email_raw: 'person4@example.com',
         template_id: 'tpl-sales',
         requester_note: null,

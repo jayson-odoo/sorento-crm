@@ -180,7 +180,7 @@ class TestReplay24SepSpecHitThenEscalate:
         _seed_product_with_brand(session_factory, code="SRTKS8650A", brand_code="SORENTO")
         _seed_marketing_product_team(session_factory)
         _run_spec_hit(
-            session_factory, monkeypatch, stub_parser, stub_access, phone="+60000865001", code="SRTKS8650A"
+            session_factory, monkeypatch, stub_parser, stub_access, phone="+60900000036", code="SRTKS8650A"
         )
         # Turn 1 minted nothing (a clean HIT asks nothing), exactly as recorded.
         assert _session_vars(session_factory).get("open_question") is None
@@ -213,7 +213,7 @@ class TestReplay24SepSpecHitThenEscalate:
         _seed_product_with_brand(session_factory, code="SRTKS8650A", brand_code="SORENTO")
         _seed_marketing_product_team(session_factory)
         _run_spec_hit(
-            session_factory, monkeypatch, stub_parser, stub_access, phone="+60000865002", code="SRTKS8650A"
+            session_factory, monkeypatch, stub_parser, stub_access, phone="+60900000039", code="SRTKS8650A"
         )
 
         stub_parser(_escalate_to_marketing_verdict())
@@ -250,7 +250,7 @@ class TestProvenPathOfferAcceptedWithStampedBrand:
         from tests.chatbot.test_escalation_agent_carry import _stub_incoming_probe_empty
         from tests.chatbot.test_product_attachment_picker_stamp import _seed_attachment_type
 
-        _seed_contact(session_factory, phone="+60000865003")
+        _seed_contact(session_factory, phone="+60900000035")
         _seed_product_with_brand(session_factory, code="SRTUB6503", brand_code="sorento")
         _seed_attachment_type(session_factory, "Product Photos")
         _seed_marketing_product_team(session_factory)
@@ -364,7 +364,7 @@ class TestSiblingEtaAfterAProductTurn:
         `uuid`) is never re-resolved (`with_carried_entities(unsettled_only=True)`). "Yes"
         then drew the mocha-only Packing List member. The focus is seeded as the product
         turn left it, the pattern `test_escalation_agent_carry.py` uses for turn 1."""
-        _seed_settled_focus(session_factory, monkeypatch, stub_access, phone="+60000865004")
+        _seed_settled_focus(session_factory, monkeypatch, stub_access, phone="+60900000037")
 
         offer, calls = self._eta_then_yes(session_factory, stub_parser, monkeypatch)
 
@@ -384,7 +384,7 @@ class TestSiblingEtaAfterAProductTurn:
         the same settled product fans out to two domains, both miss, and the multi-team
         pick is minted by compose rather than the bridge. No resolver runs on this turn,
         so its brand comes from the focus product (`TurnContext.routing_brand`)."""
-        _seed_settled_focus(session_factory, monkeypatch, stub_access, phone="+60000865009")
+        _seed_settled_focus(session_factory, monkeypatch, stub_access, phone="+60900000025")
         stub_parser(
             verdict(
                 asks=[{"domain": "inventory"}, {"domain": "incoming"}],
@@ -423,7 +423,7 @@ class TestSiblingEtaAfterAProductTurn:
         _seed_product_with_brand(session_factory, code="SRTKS7646", brand_code="SORENTO")
         _seed_packing_list_team(session_factory)
         _run_spec_hit(
-            session_factory, monkeypatch, stub_parser, stub_access, phone="+60000865008", code="SRTKS7646"
+            session_factory, monkeypatch, stub_parser, stub_access, phone="+60900000031", code="SRTKS7646"
         )
         _stub_incoming_probe_empty(monkeypatch)
 
@@ -446,7 +446,7 @@ class TestTheCarryEndsOnATopicResetOrANewerProduct:
         _seed_product_with_brand(session_factory, code="SRTKS8650A", brand_code="SORENTO")
         _seed_marketing_product_team(session_factory)
         _run_spec_hit(
-            session_factory, monkeypatch, stub_parser, stub_access, phone="+60000865005", code="SRTKS8650A"
+            session_factory, monkeypatch, stub_parser, stub_access, phone="+60900000026", code="SRTKS8650A"
         )
 
         stub_parser(_escalate_to_marketing_verdict(topic_reset=True))
@@ -477,7 +477,7 @@ class TestTheCarryEndsOnATopicResetOrANewerProduct:
         _seed_product_with_brand(session_factory, code="MWC7625", brand_code="MOCHA")
         _seed_marketing_product_team(session_factory)
         _run_spec_hit(
-            session_factory, monkeypatch, stub_parser, stub_access, phone="+60000865006", code="SRTKS8650A"
+            session_factory, monkeypatch, stub_parser, stub_access, phone="+60900000029", code="SRTKS8650A"
         )
         stub_parser(_spec_verdict("MWC7625"))
         newer = engine_mod.run_turn(
@@ -510,7 +510,7 @@ class TestAStatedBrandOutranksTheFocusProduct:
         _seed_product_with_brand(session_factory, code="SRTKS8650A", brand_code="SORENTO")
         _seed_marketing_product_team(session_factory)
         _run_spec_hit(
-            session_factory, monkeypatch, stub_parser, stub_access, phone="+60000865010", code="SRTKS8650A"
+            session_factory, monkeypatch, stub_parser, stub_access, phone="+60900000030", code="SRTKS8650A"
         )
 
         stub_parser(_escalate_to_marketing_verdict(query_brands=["mocha"]))
@@ -542,7 +542,7 @@ class TestTheDryRunPreviewsTheSameBrand:
         _seed_product_with_brand(session_factory, code="SRTKS8650A", brand_code="SORENTO")
         _seed_marketing_product_team(session_factory)
         _run_spec_hit(
-            session_factory, monkeypatch, stub_parser, stub_access, phone="+60000865011", code="SRTKS8650A"
+            session_factory, monkeypatch, stub_parser, stub_access, phone="+60900000028", code="SRTKS8650A"
         )
 
         stub_parser(_escalate_to_marketing_verdict())
@@ -572,7 +572,7 @@ class TestTheFocusBrandIsReadOnlyWhenAnOfferIsMinted:
         """Round 2, N2: the products x brands read feeds only a minted `team_pick`. A turn
         over a settled focus product that is answered (a HIT) mints nothing, so the read
         must not run at all."""
-        _seed_settled_focus(session_factory, monkeypatch, stub_access, phone="+60000865012")
+        _seed_settled_focus(session_factory, monkeypatch, stub_access, phone="+60900000024")
         _stub_product_card(monkeypatch)
         reads: list[Any] = []
         real = engine_mod._focus_brand
@@ -602,7 +602,7 @@ class TestTheFocusBrandIsReadOnlyWhenAnOfferIsMinted:
     def test_the_fanned_out_miss_reads_it_once_when_it_mints(
         self, session_factory, stub_parser, stub_access, monkeypatch
     ) -> None:
-        _seed_settled_focus(session_factory, monkeypatch, stub_access, phone="+60000865013")
+        _seed_settled_focus(session_factory, monkeypatch, stub_access, phone="+60900000040")
         reads: list[Any] = []
         real = engine_mod._focus_brand
 
@@ -638,7 +638,7 @@ class TestContract129FiveKeySessionUnchanged:
         _seed_product_with_brand(session_factory, code="SRTKS8650A", brand_code="SORENTO")
         _seed_marketing_product_team(session_factory)
         _run_spec_hit(
-            session_factory, monkeypatch, stub_parser, stub_access, phone="+60000865007", code="SRTKS8650A"
+            session_factory, monkeypatch, stub_parser, stub_access, phone="+60900000027", code="SRTKS8650A"
         )
         five = {"focus", "open_question", "ideation", "access_levels", "contains_flyer"}
         assert set(SessionVars.model_fields) == five
@@ -901,7 +901,7 @@ def _console_two_turns(
 ):
     from app.services.chatbot import console_service
 
-    _seed_contact(session_factory, phone="+60000865300")
+    _seed_contact(session_factory, phone="+60900000032")
     _seed_borrowable_envelope(session_factory)
     _seed_marketing_product_team(session_factory)
     monkeypatch.setattr(console_service, "SessionLocal", session_factory)
@@ -1036,7 +1036,7 @@ class TestTheConsoleCarriesWhatTheLivePathWrites:
         from app.services.chatbot import console_service
 
         _seed_branded(session_factory, code="SRTWC286-SH", brand_code="SORENTO")
-        _seed_contact(session_factory, phone="+60000865310")
+        _seed_contact(session_factory, phone="+60900000033")
         _seed_borrowable_envelope(session_factory)
         monkeypatch.setattr(console_service, "SessionLocal", session_factory)
         stub_access()
@@ -1270,7 +1270,7 @@ def _console_replay(session_factory, monkeypatch, stub_parser, stub_access, mess
     previous one returned. Returns `(turn, next-assignee calls of that turn)` per message."""
     from app.services.chatbot import console_service
 
-    _seed_contact(session_factory, phone="+60000865400")
+    _seed_contact(session_factory, phone="+60900000038")
     _seed_borrowable_envelope(session_factory)
     _seed_marketing_product_team(session_factory)
     monkeypatch.setattr(console_service, "SessionLocal", session_factory)
@@ -1515,7 +1515,7 @@ class TestTheLiveTurnDrawsFromTheNamedTeam:
         """R1 + R2 on the LIVE path (not the console preview): the next-assignee body is
         made from the named team, and the SLA row describes the same draw."""
         _seed_owners_catalogue(session_factory)
-        _seed_contact(session_factory, phone="+60000865410")
+        _seed_contact(session_factory, phone="+60900000034")
         _seed_marketing_product_team(session_factory)
         stub_access()
         _stub_any_product_tool(monkeypatch)

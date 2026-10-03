@@ -48,7 +48,7 @@ function person(overrides: Partial<OnboardingPerson> = {}): OnboardingPerson {
     full_name: 'Nurul Aisyah',
     nick_name: 'Aisyah',
     role_label: 'Sales admin',
-    phone_raw: '012-3456781',
+    phone_raw: '010-0000002',
     email_raw: 'person4@example.com',
     template_id: 'tpl-sales',
     requester_note: null,
@@ -110,7 +110,7 @@ describe('PeopleGrid', () => {
     expect(cells.getByLabelText('Name, row 1')).toHaveValue('Nurul Aisyah');
     // The dash and the spacing are hers. Normalising what she sees reads as the
     // system losing her input.
-    expect(cells.getByLabelText('Phone, row 1')).toHaveValue('012-3456781');
+    expect(cells.getByLabelText('Phone, row 1')).toHaveValue('010-0000002');
   });
 
   it('raises a patch when a field is edited, once the field is left', () => {
@@ -598,7 +598,7 @@ describe('PeopleGrid', () => {
     const cells = within(grid());
     expect(cells.queryByLabelText('Name, row 1')).not.toBeInTheDocument();
     expect(cells.getAllByText('Nurul Aisyah').length).toBeGreaterThan(0);
-    expect(cells.getAllByText('012-3456781').length).toBeGreaterThan(0);
+    expect(cells.getAllByText('010-0000002').length).toBeGreaterThan(0);
   });
 
   it('titles the card it is, so it needs no outer section around it', () => {

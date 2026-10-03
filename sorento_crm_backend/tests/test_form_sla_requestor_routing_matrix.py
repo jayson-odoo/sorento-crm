@@ -27,7 +27,7 @@ from app.services import form_sla_service as svc_mod
 from app.services.form_sla_service import FormSLAOrchestrator
 from app.services.user_service import AccessAgentService
 
-SUBMITTER_ID = "submitter-darren"
+SUBMITTER_ID = "submitter-contact-x"
 REQUESTOR_ID = "requestor-eric"
 RR_ASSIGNEE = {"id": "rr-user", "email": "rr@x.com", "name": "RR User", "respond_user_id": "ru-rr"}
 PIN_ASSIGNEE = {"id": "pinned-user", "email": "pin@x.com", "name": "Pinned User", "respond_user_id": "ru-pin"}

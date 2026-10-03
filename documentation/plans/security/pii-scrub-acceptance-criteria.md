@@ -25,7 +25,7 @@ Round 3 (review findings, 3 Oct):
 
 - **AC-11** `is_fake_phone` passes only these shapes: `0000` straight after the 60xx prefix, the
   exact classic `012-345 6789` / `+60123456789`, and one digit repeated through the whole subscriber
-  number. A `0000` run in the middle of the subscriber number is NOT fake; `012-3456 1234` is NOT fake.
+  number. A `0000` run in the middle of the subscriber number is NOT fake; `010-0000 0001` is NOT fake.
 - **AC-12** The phone-keyed rule also reads `phoneNumber`, `phone_no`, `whatsapp`, `msisdn` keys, and
   YAML-style values (`phone: '...'`, `phone: ...` unquoted).
 - **AC-13** A UTF-16 text file (with a BOM) is decoded and scanned, not skipped.

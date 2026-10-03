@@ -46,7 +46,7 @@ const ME = {
   name: 'CONTACT X Lee',
   phone_number: '60123456789',
   expires_at: '2026-09-01T00:00:00Z',
-  portal_slug: 'darren',
+  portal_slug: 'contact-x',
   // Every kind is gated now (PLAN-portal-forms-market-segment D2) - this
   // suite is about search, not visibility, so it grants the base four the
   // same way `fetchSubmissions` already answered them before that change.
@@ -82,7 +82,7 @@ describe('PortalLanding - search with zero rows (AC-L8, review round 2)', () => 
       },
     );
 
-    render(<PortalLanding slug="darren" />);
+    render(<PortalLanding slug="contact-x" />);
     await screen.findByText('SI-26-0184');
 
     fireEvent.change(screen.getByLabelText('Search submissions'), {

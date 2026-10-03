@@ -29,25 +29,25 @@ describe('RequestorContactSelect', () => {
 
     render(
       <RequestorContactSelect
-        value="contact-darren"
+        value="contact-contact-x"
         onChange={vi.fn()}
         submitterContactId="contact-submitter"
-        savedContactId="contact-darren"
+        savedContactId="contact-contact-x"
         savedContactName="CONTACT X Lee"
       />,
     );
 
     // Trigger label resolves to the saved contact's name, never a UUID.
     expect(screen.getByText('CONTACT X Lee')).toBeInTheDocument();
-    expect(screen.queryByText('contact-darren')).toBeNull();
+    expect(screen.queryByText('contact-contact-x')).toBeNull();
   });
 
   it('falls back to a generic label when the saved contact has no name yet', () => {
     render(
       <RequestorContactSelect
-        value="contact-darren"
+        value="contact-contact-x"
         onChange={vi.fn()}
-        savedContactId="contact-darren"
+        savedContactId="contact-contact-x"
         savedContactName={null}
       />,
     );
@@ -61,7 +61,7 @@ describe('RequestorContactSelect', () => {
         value=""
         onChange={vi.fn()}
         submitterContactId="contact-submitter"
-        savedContactId="contact-darren"
+        savedContactId="contact-contact-x"
         savedContactName="CONTACT X Lee"
       />,
     );
@@ -69,7 +69,7 @@ describe('RequestorContactSelect', () => {
 
     await waitFor(() => expect(getRequestorSelectOptionsMock).toHaveBeenCalled());
     const [params] = getRequestorSelectOptionsMock.mock.calls[0];
-    expect(params.includeIds).toEqual(['contact-submitter', 'contact-darren']);
+    expect(params.includeIds).toEqual(['contact-submitter', 'contact-contact-x']);
   });
 
   it('shows a loading state while fetching options', async () => {

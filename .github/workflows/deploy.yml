@@ -183,6 +183,23 @@ jobs:
       - name: No personal data in tracked files
         run: python3 scripts/pii_guard.py
 
+  # Secret scan over the PR's commits (the action's default on pull_request),
+  # rules in .gitleaks.toml. Same `if` as the pii-guard job.
+  gitleaks:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ci'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan commits for secrets
+        uses: gitleaks/gitleaks-action@v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
   # Which areas a change touches, so the multi-minute jobs below only run
   # when the code they test can have changed. Before this, every job ran on
   # every PR regardless of what it changed, which is the main reason CI

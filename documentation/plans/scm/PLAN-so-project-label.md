@@ -32,7 +32,7 @@ One module holds every rule: `app/services/project_label_rules.py`.
 
 `label_from_inquiry_cell(cell)`: split on the FIRST `/`; label = remainder with whitespace collapsed and each ` / ` normalised to one space either side. No slash = no label (the cell is a customer only). Applied by the importer to EVERY order the sheet names, including orders owned by AutoCount (same place `demand_origin` is stamped) and provisional orders it creates. The existing `Order Inquiry project:` note behaviour and the customer match on the whole cell are left unchanged in this lane.
 
-Examples: `URC ENGINEERING / BAMBOO RESIDENCE / KUALA LUMPUR` -> `BAMBOO RESIDENCE / KUALA LUMPUR`; `KNUSFORD/EKOTITIWANGSA/KL` -> `EKOTITIWANGSA / KL`; `GLOBAL INGRESS/ 252U RMMJ TAMAN IMPIAN EMAS` -> `252U RMMJ TAMAN IMPIAN EMAS`; `OTM GROUP SDN BHD (SMC-JENNIFER)` -> none.
+Examples: `URC ENGINEERING / BAMBOO RESIDENCE / KUALA LUMPUR` -> `BAMBOO RESIDENCE / KUALA LUMPUR`; `KNUSFORD/EKOTITIWANGSA/KL` -> `EKOTITIWANGSA / KL`; `GLOBAL INGRESS/ 252U RMMJ TAMAN IMPIAN EMAS` -> `252U RMMJ TAMAN IMPIAN EMAS`; `OTM GROUP SDN BHD (SMC-contact-o)` -> none.
 
 ### Rule 2: note label line (`note`)
 

@@ -308,7 +308,7 @@ def test_c_the_stock_quantity_asked_after_a_roster_takes_the_bare_number(
     """AC-PK014: the dealer's flow. "check stock" asks "How many units of SRTWC286-SH-NEW?"
     AFTER the roster was asked, so that is the current question: "5" is the quantity, never
     variant 5 off the roster underneath (the scout's T4). The roster stays stored."""
-    c = EngineConsole(session_factory, monkeypatch, stub_access, phone="+60000013527")
+    c = EngineConsole(session_factory, monkeypatch, stub_access, phone="+60900000058")
     monkeypatch.setattr(turn_runtime, "_stock_availability_only", lambda *a, **k: True)
     _say(c, "incoming srtwc286", _incoming_ask())
     _say(c, "4", _bare_pick(4))

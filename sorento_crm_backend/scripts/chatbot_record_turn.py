@@ -61,6 +61,7 @@ and `resolutions`):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -341,6 +342,17 @@ def _scrub_assignee(assignee: dict[str, Any] | None) -> None:
         assignee["email"] = f"zzt-agent-{assignee_id}@example.invalid" if assignee_id else "zzt-agent@example.invalid"
 
 
+def _fake_contact_id(real_id: Any) -> str:
+    """The one stable fake id every field of a scrubbed contact derives from: nine
+    digits, `900000` then three digits taken from a hash of the real id, so the same
+    real id always maps to the same fake one across runs and `+60` plus it is a fake
+    phone the PII guard accepts. A contact with no id keeps the old `None` label."""
+    if real_id is None:
+        return "None"
+    digest = hashlib.sha256(str(real_id).encode()).hexdigest()
+    return "900000" + f"{int(digest, 16) % 1000:03d}"
+
+
 def _scrub_contact(contact: dict[str, Any] | None) -> None:
     """One contact-shaped dict, in place - the shared body `_scrub_pii` and
     `_scrub_nested_pii` both call, so a contact found nested three levels deep inside
@@ -354,7 +366,9 @@ def _scrub_contact(contact: dict[str, Any] | None) -> None:
     (measured); `_scrub_assignee` above is the assignee's own rule."""
     if not isinstance(contact, dict):
         return
-    contact_id = contact.get("id")
+    contact_id = _fake_contact_id(contact.get("id"))
+    if "id" in contact and contact["id"] is not None:
+        contact["id"] = int(contact_id)
     if "firstName" in contact:
         contact["firstName"] = f"ZZT-{contact_id}"
     if "lastName" in contact:

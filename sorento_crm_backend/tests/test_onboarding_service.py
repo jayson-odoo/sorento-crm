@@ -189,7 +189,7 @@ def test_replace_people_is_a_whole_list_replace(db):
         db,
         request,
         [
-            {"full_name": "Aisyah", "email_raw": " person4@example.com ", "phone_raw": "012-3456781"},
+            {"full_name": "Aisyah", "email_raw": " person4@example.com ", "phone_raw": "010-0000002"},
             {"full_name": "Wei Ming", "email_raw": "person40@example.com"},
         ],
     )
@@ -198,7 +198,7 @@ def test_replace_people_is_a_whole_list_replace(db):
     aisyah = request.people[0]
     assert aisyah.email == "person4@example.com"
     assert aisyah.email_raw == " person4@example.com "
-    assert aisyah.phone == "60123456781"
+    assert aisyah.phone == "60100000002"
 
     onboarding_service.replace_people(db, request, [{"full_name": "Only one left"}])
     assert [p.full_name for p in request.people] == ["Only one left"]
@@ -391,7 +391,7 @@ def test_collisions_are_found_on_every_unique_key(db):
     from app.models.access import RespondContact
 
     email = f"{unique_code('taken')}@mocha.com.my".lower()
-    phone = "60123456799"
+    phone = "60100000071"
     existing = User(
         id=unique_code("user"),
         email=email,
@@ -400,7 +400,7 @@ def test_collisions_are_found_on_every_unique_key(db):
         status="ACTIVE",
     )
     db.add(existing)
-    contact_phone = "60123456798"
+    contact_phone = "60100000076"
     db.add(RespondContact(phone_number=contact_phone, name="Known Contact"))
     db.commit()
 

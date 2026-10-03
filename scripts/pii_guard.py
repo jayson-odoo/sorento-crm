@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 """Fail when a tracked file holds personal data. The repo is PUBLIC.
 
-Flags, in every tracked text file:
+Flags, in every tracked text file (UTF-8, or UTF-16 with a byte-order mark;
+office files are scanned member by member):
   - a Malaysian mobile number (+60 1x / 60 1x / 01x, spaces or dashes allowed)
     that is not an agreed fake value (see `is_fake_phone`);
+  - any value under a phone-like key (phone, phoneNumber, phone_no, wa_id,
+    whatsapp, msisdn, mobile, contact_phone...), in JSON, YAML or key=value
+    form and whatever its shape, unless it is an agreed fake value;
   - a lorry plate written next to a plate label ("Lorry Plate", lorry_plate,
-    vehicle no) that is not a fake `PLATE-<n>`;
+    vehicle no, no kenderaan) that is not a fake `PLATE-<n>`;
   - a tracked raw capture path (`.playwright-mcp/`, `*.har`, `*.rdb`), which
     carries prod-copy pages, auth headers or queue payloads.
 
-Use fake values in fixtures, tests and docs: phones `+60100000001`-style (a
-`0000` run after the 601x prefix) or the classic `012-345 6789`; plates
-`PLATE-1`; names `CUSTOMER A`, `DRIVER B`, `CONTACT C`; emails
-`*@example.com`. Findings print the path, line and kind only, never the value.
+The agreed fake phones are exactly three shapes: a run of four zeros straight
+after the 60 1x prefix (`+60100000001`, `+60 17-000 0501`, which also covers
+ids turned into phones as `+60` plus `90000nnnn`), the classic
+`012-345 6789` and nothing else of that family, and one digit repeated through
+the whole subscriber number (`+60 11-111 1111`). Plates `PLATE-1`; names
+`CUSTOMER A`, `DRIVER B`, `CONTACT C`; emails `*@example.com`. Findings print
+the path, line and kind only, never the value.
 
 Stdlib only, so the CI fast gate runs it without installing anything:
     python3 scripts/pii_guard.py
@@ -40,6 +47,7 @@ _PLATE_LABEL = (
     # a bare "plate" only as a key or label ("plate": / Plate No:), not prose
     r"|\bplate(?:[\s_]?(?:no|number))?(?=\\?\"?\s*[:=])|no\.?\s?(?:kenderaan|plat))"
 )
+_PLATE_HINT = re.compile(r"plat|lorry|vehicle|truck|car[\s_]?no|car[\s_]?number", re.IGNORECASE)
 _PLATE = re.compile(
     _PLATE_LABEL
     # The gap may span a line break: pretty-printed JSON puts "label" and
@@ -51,9 +59,11 @@ _PLATE = re.compile(
 
 # A value under a phone-like key, in any shape (a recorder may build a "phone"
 # that does not look like a mobile, e.g. from a contact id).
+_KEY_HINT = re.compile(r"phone|wa_id|whatsapp|msisdn|mobile", re.IGNORECASE)
 _KEYED_PHONE = re.compile(
-    r'\\?"(?:phone(?:_number)?|wa_id|contact_phone\w*|mobile(?:_number)?)\\?"\s*:\s*\\?"'
-    r'(\+?(?:60|0)\d[\d\s-]{6,14}\d)\\?"',
+    r"(?:phone|wa_id|whatsapp|msisdn|mobile)\w*"
+    r"""\\?["']?\s*[:=]\s*\\?["']?"""
+    r"(\+?(?:60|0)\d[\d\s-]{6,14}\d)(?![\d-])",
     re.IGNORECASE,
 )
 
@@ -78,13 +88,13 @@ class Finding:
 
 def is_fake_phone(digits: str) -> bool:
     """True only for the agreed fake shapes: a zero run of four straight after the
-    60xx prefix (+60 17-000 0501), the classic 012-345 6789 family, or one digit
+    60xx prefix (+60 17-000 0501), exactly the classic 012-345 6789, or one digit
     repeated through the whole subscriber number (+60 11-111 1111)."""
     sub = re.sub(r"\D", "", digits)
     if sub.startswith("0"):
         sub = "6" + sub
     tail = sub[4:]
-    return tail.startswith("0000") or sub.startswith("60123456") or len(set(tail)) == 1
+    return tail.startswith("0000") or sub == "60123456789" or len(set(tail)) == 1
 
 
 def scan_text(text: str) -> list[Finding]:
@@ -93,9 +103,13 @@ def scan_text(text: str) -> list[Finding]:
         for m in _PHONE.finditer(line):
             if not is_fake_phone("601" + m.group(1)[1] + m.group(2) + m.group(3)):
                 found.append(Finding("phone", lineno))
+        if not _KEY_HINT.search(line):
+            continue
         for m in _KEYED_PHONE.finditer(line):
             if not _PHONE.search(m.group(1)) and not is_fake_phone(m.group(1)):
                 found.append(Finding("phone", lineno))
+    if not _PLATE_HINT.search(text):
+        return found
     for m in _PLATE.finditer(text):
         found.append(Finding("plate", text.count("\n", 0, m.start(1)) + 1))
     return found
@@ -115,6 +129,8 @@ def scan_bytes(path: str, data: bytes) -> list[Finding]:
                 ]
         except zipfile.BadZipFile:
             return []
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return scan_text(data.decode("utf-16", "replace"))
     if b"\0" in data[:8000]:
         return []
     return scan_text(data.decode("utf-8", "replace"))
