@@ -100,6 +100,21 @@ Paths under `sorento_crm_backend/app/services/` unless marked `mcp:` (`sorento_c
 - One question at a time (reviewer round 1): pickers first; a code owed a quantity (an
   exact code typed without one, or the code just picked) is asked once no list is open.
 
+## Owner hand test, 3 Oct 2026 (copy :3109 at 186f4f9ff)
+
+1. Never dump the catalogue: an unknown code goes to the did-you-mean.
+2. A number picked off a did-you-mean resolves to that option (SRT5713 x 10), through the
+   same position reading every picker uses. Why it diverged: the 26 Sep rounds 4-5 rulings
+   made a bare number under a STOCK pick its quantity (`apply._stock_pick_requantified`,
+   and `engine._bare_roster_positions` skipping stock picks), so a "2" the parser read as a
+   quantity re-asked the pick, and a "2" it read as a product was resolved against the
+   catalogue. Now a bare number on the list is that option for every picker; a number past
+   the list is still the quantity.
+3. ETA: `CODE: ✅ ETA dd/mm/yyyy`, or `CODE: No ETA`.
+4. Exact codes only for availability access, stock and ETA: an exact code never brings its
+   family, so a bare "eta" follow-up asks only the previous turn's exact product(s)
+   (`engine._exact_codes_only`, right after the resolver). Other access levels unchanged.
+
 ## Slices
 1. Presenter wording (emoji + partial line + ETA one-liner) and its consumers (`refer_asks`, `pickers.annotate_incoming`).
 2. Partial in-stock: `available_qty` on the entry, `stock_ask_branch` truth table, notification phrase.

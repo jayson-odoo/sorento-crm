@@ -73,7 +73,8 @@ col.id{width:62px}col.facts{width:190px}col.rule{width:200px}
   <ol class="rules">
     <li>Got stock / no stock is a tick / cross: <b>✅</b> and <b>❌</b>, never the words. Every line starts with "CODE x Q:".</li>
     <li>Has stock but less than Q, with Q within the category max: <b>✅ N available</b>, nothing else (Q1 a). Above the category max: <b>🚫</b> "the quantity is more than what I can confirm here", no count (Q5 a; 🚫 added in v2).</li>
-    <li>ETA ask: one compact line per product, <b>CODE: ETA dd/mm/yyyy</b>.</li>
+    <li>ETA ask: one compact line per product, <b>CODE: ✅ ETA dd/mm/yyyy</b>, or <b>CODE: No ETA</b> (owner hand test, 3 Oct 2026).</li>
+    <li>Exact codes only: an exact code never brings its family; an unknown code gets the did-you-mean; a number on a list is that option (owner hand test, 3 Oct 2026).</li>
     <li>Pickers never offer "all", and refuse a bare "all" / "semua". The list stays open. Typing every number is a pick and is answered (Q4 b).</li>
     <li>Several codes in one message get one reply, in this order: answered lines in the order asked, then <b>Couldn't find: X, Y.</b>, then at most one question. Every vague code gets its picker in the SAME message (Q3 changed to b in v2), numbered on from the previous list so no two options share a number. A code named twice is one line with the quantities added up (Q2 a).</li>
     <li>Full mode (staff) is unchanged. There is one parser prompt; every difference lives in the reply code.</li>
@@ -157,9 +158,9 @@ single: [
  ["S12", [["in","FOO99 x 1"],["out",`Couldn't find: "FOO99" (product).\n\n${R}`]], "no such product", ["same"], "Not found, nothing near: shared miss sentence (open point 1)."],
 ],
 eta: [
- ["S14", [["in","ETA SRTW2000?"],["out",`SRTW2000: ETA 19/10/2026\n\n${R}`]], "shipment due 19/10/2026", ["new"], "One line per product (rule 3)."],
- ["S15", [["in","ETA SRTW2000 and MWT5727SS-CR"],["out",`SRTW2000: ETA 19/10/2026\n\nMWT5727SS-CR: ETA not confirmed yet\n\n${R}`]], "MWT5727SS-CR has no shipment", ["new"], "Several codes, one line each (rule 3)."],
- ["S16", [["in","ETA SRTW2000 and FOO99"],["out",`SRTW2000: ETA 19/10/2026\n\nCouldn't find: FOO99.\n\n${R}`]], "FOO99 does not exist", ["new"], "Not-found code listed (open point 2)."],
+ ["S14", [["in","ETA SRTW2000?"],["out",`SRTW2000: ✅ ETA 19/10/2026\n\n${R}`]], "shipment due 19/10/2026", ["new"], "One line per product (rule 3)."],
+ ["S15", [["in","ETA SRTW2000 and MWT5727SS-CR"],["out",`SRTW2000: ✅ ETA 19/10/2026\n\nMWT5727SS-CR: No ETA\n\n${R}`]], "MWT5727SS-CR has no shipment", ["new"], "Several codes, one line each (rule 3)."],
+ ["S16", [["in","ETA SRTW2000 and FOO99"],["out",`SRTW2000: ✅ ETA 19/10/2026\n\nCouldn't find: FOO99.\n\n${R}`]], "FOO99 does not exist", ["new"], "Not-found code listed (open point 2)."],
 ],
 multi: [
  ["S17", [["in","SRT5674 x 50, CWCX604 x 40, SRTW2000 x 10"],["out",`SRT5674 x 50: ✅ ${R}\n\nCWCX604 x 40: ✅ 30 available. ${R}\n\nSRTW2000 x 10: ❌ ETA 19/10/2026.`]], "SRT5674 100; CWCX604 30 (X 200); SRTW2000 0 + shipment", ["new"], "All exact: one line each, in the order asked."],

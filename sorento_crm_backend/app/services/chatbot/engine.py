@@ -442,6 +442,79 @@ def _as_a_stock_ask_by_its_own_words(verdict: dict[str, Any], message: str) -> d
     }
 
 
+def _code_like(token: str) -> bool:
+    """A typed token that can be a product code: letters AND digits ("srtwc286"). A word
+    ("xx", "basin") or a bare number ("2", "10") is not one."""
+    return any(ch.isdigit() for ch in token) and any(ch.isalpha() for ch in token)
+
+
+def _exact_codes_only(
+    parse_output: dict[str, Any],
+    resolved_kinds: dict[str, dict[str, int]],
+    resolved_candidates: dict[str, list[dict[str, Any]]],
+    compatible_entities: list[dict[str, Any]],
+    unplaced: dict[str, str],
+):
+    """AVAIL-MODE-REPLIES (owner hand test, 3 Oct 2026): an availability-access stock or
+    ETA turn answers EXACT codes only, and steers the dealer to one when they typed less.
+
+    Per product token this message (or the carried focus) names:
+    * a code matching it exactly is the product, and its family is not (the bare "eta"
+      after "srtw2000 20" listed SRTW2000-SS-CR, -A and -NL as well);
+    * else a code-like token keeps the codes it is the prefix of, the family the
+      which-one picker steers from ("srtwc286");
+    * else a code-like token is not found, and goes to the did-you-mean ("srt5764");
+    * a word or a bare number with no exact code is not a product at all: the describe /
+      semantic matches the resolver found for "xx", "10" or a "2" typed over a
+      did-you-mean listed a page of the catalogue.
+    Returns the four resolver answers, or None when nothing changes."""
+    def code_of(row: dict[str, Any]) -> str:
+        return str(row.get("canonical_code") or row.get("code") or row.get("raw") or "").strip().casefold()
+
+    tokens: list[tuple[str, str]] = []
+    for e in parse_output.get("entities") or []:
+        if not isinstance(e, dict) or e.get("hint") not in (None, "product"):
+            continue
+        typed = str(e.get("raw") or e.get("canonical_code") or "").strip()
+        if typed and typed.casefold() not in {t for t, _ in tokens}:
+            tokens.append((typed.casefold(), typed))
+    candidates = [c for c in resolved_candidates.get("product") or [] if isinstance(c, dict)]
+    if not tokens or not candidates:
+        return None
+    keep: set[str] = set()
+    per_token: dict[str, int] = {}
+    misses: dict[str, str] = {}
+    ignored: set[str] = set()
+    for fold, typed in tokens:
+        exact = [c for c in candidates if code_of(c) == fold]
+        family = [c for c in candidates if code_of(c).startswith(fold)] if _code_like(fold) else []
+        chosen = exact or family
+        if chosen:
+            keep.update(str(c.get("uuid")) for c in chosen)
+            per_token[fold] = len(chosen)
+        elif _code_like(fold):
+            misses[fold] = typed
+        else:
+            ignored.add(fold)
+    kept = [c for c in candidates if str(c.get("uuid")) in keep]
+    if len(kept) == len(candidates) and not misses and not ignored:
+        return None
+    kinds = dict(resolved_kinds)
+    for fold, _typed in tokens:
+        if fold in kinds and isinstance(kinds[fold], dict):
+            row = {k: v for k, v in kinds[fold].items() if k != "product"}
+            if per_token.get(fold):
+                row["product"] = per_token[fold]
+            kinds[fold] = row
+    compatible = [
+        e
+        for e in compatible_entities
+        if not isinstance(e, dict) or e.get("entity_type") != "product" or str(e.get("uuid")) in keep
+    ]
+    placed = {**{k: v for k, v in unplaced.items() if k not in ignored}, **misses}
+    return kinds, {**resolved_candidates, "product": kept}, compatible, placed
+
+
 def _is_bare_all(message: str) -> bool:
     text = re.sub(r"\s+", " ", str(message or "").strip().lower()).rstrip(".!? ")
     return bool(_BARE_ALL.fullmatch(text))
@@ -485,7 +558,27 @@ def _with_the_engine_pick(verdict: dict[str, Any], pending: Any, message: str) -
     all (a quantity, a top-N count - the readers before this one already settled
     those), and a reading that already agrees.
     """
-    pairs = _quantity_of_option(message) if pending is not None and (pending.payload or {}).get("stock_pick") else None
+    stock_pick = pending is not None and bool((pending.payload or {}).get("stock_pick"))
+    bare = str(message or "").strip().lower().rstrip(".!")
+    if stock_pick and _BARE_POSITIONS.fullmatch(bare):
+        # Owner hand test, 3 Oct 2026 ("I thought our picker mechanism is the same and
+        # unified?"): a bare number on the list is THAT option, for a stock pick and a
+        # did-you-mean exactly as for every other picker (`_bare_roster_positions`),
+        # whatever the parser made of it (a product "2", a quantity 2). A number past the
+        # list stays the pick's quantity (`apply._stock_pick_requantified`).
+        offered_positions = {o.get("position") for o in pending.options}
+        positions = sorted({int(n) for n in re.findall(r"\d+", bare)})
+        if positions and all(p in offered_positions for p in positions):
+            return {
+                **verdict,
+                "entities": [],
+                "demand_qty": None,
+                "reference_positions": positions,
+                "open_question_answer": {"mode": "pick", "picked": positions, "items": [], "qty_for_all": None},
+                "domain_in_message": False,
+                "asks": [],
+            }
+    pairs = _quantity_of_option(message) if stock_pick else None
     offered = {o.get("position") for o in (getattr(pending, "options", None) or [])}
     if pairs and all(position in offered for position, _qty in pairs):
         positions = [position for position, _qty in pairs]
@@ -4429,6 +4522,15 @@ def _run_stages_body(  # noqa: PLR0915
             unplaced_tokens = resolve_outcome.unplaced_tokens
             spec_tier = resolve_outcome.spec_tier
             resolver_payload = resolve_outcome.payload
+            if getattr(getattr(state_out, "profile", None), "stock_availability_only", False) and set(
+                plan.domains or []
+            ) <= {"inventory", "incoming"}:
+                exact = _exact_codes_only(
+                    resolver_parse_output, resolved_kinds, resolved_candidates, compatible_entities, unplaced_tokens
+                )
+                if exact is not None:
+                    resolved_kinds, resolved_candidates, compatible_entities, unplaced_tokens = exact
+                    turn_trace.add("exact_codes_only", {"kept": [e.get("code") for e in compatible_entities]})
             # ACCOUNT-LEDGER Q4: staff asked a level the typed name lacks.
             staff_account_refusal = ((resolver_payload or {}).get("resolved") or {}).get("account_refusal")
             if staff_account_refusal and not (customer_scope or {}).get("enforced"):

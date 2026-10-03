@@ -175,8 +175,9 @@ def _figures(envelope: dict[str, Any]) -> list[Any]:
     return []
 
 
-#: AVAIL-MODE-REPLIES rule 3 (2 Oct 2026): the dealer's ETA line is "<code>: ETA <dates>".
-_ONE_LINE_ETA = re.compile(r"^(?P<code>.+?):\s+(?P<when>ETA\b.*)$")
+#: AVAIL-MODE-REPLIES: the dealer's ETA line is "<code>: ✅ ETA <dates>" or "<code>: No ETA"
+#: (owner hand test, 3 Oct 2026); "<code>: ETA <dates>" is the form before it.
+_ONE_LINE_ETA = re.compile(r"^(?P<code>.+?):\s+(?P<when>(?:\u2705\s*)?ETA\b.*|No ETA)$")
 
 
 def _dealer_line(title: Any) -> tuple[str, str]:

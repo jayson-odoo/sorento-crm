@@ -140,7 +140,7 @@ def _for_contact(
         # after the reveals, so a date the contact may not see is not told. Who to ask
         # is the presenter's one refer sentence (REFER-SALESMAN).
         # AVAIL-MODE-REPLIES: every product the dealer asked about is told, one with no
-        # shipment as "ETA not confirmed yet" - unless a date window was asked, where no
+        # shipment as "No ETA" - unless a date window was asked, where no
         # row only means none in that window.
         windowed = eta_from is not None or eta_to is not None
         result = dealer_view(result, asked=None if windowed else _asked_codes(db, asked))

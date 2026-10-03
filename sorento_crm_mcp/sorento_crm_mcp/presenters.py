@@ -944,7 +944,8 @@ def _incoming_dealer(rows: list[dict], b: _Builder) -> None:
         if not isinstance(row, dict):
             continue
         etas = [e for e in row.get("etas") or [] if _filled(e)]
-        when = f"ETA {', '.join(etas)}" if etas else "ETA not confirmed yet"
+        # Owner hand test, 3 Oct 2026: an ETA is a tick and its dates, none is "No ETA".
+        when = f"{STOCK_YES} ETA {', '.join(etas)}" if etas else "No ETA"
         code = row.get("product_code")
         # AVAIL-MODE-REPLIES rule 3 (owner, 2 Oct 2026): one compact line per product,
         # "<code>: ETA <dates>", never the code with the ETA on a line of its own.

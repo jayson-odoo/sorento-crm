@@ -97,7 +97,7 @@ def annotate_incoming(gate: dict[str, Any] | None, *, probe: Any) -> dict[str, A
             # the title, with no field (the MCP presenter's `_incoming_dealer`;
             # AVAIL-MODE-REPLIES made it one line, the older form was "<code>\nETA: ...").
             # The whole title matched no code, so every roster line read "no incoming".
-            code = re.split(r"\n|:\s+ETA\b", code, maxsplit=1)[0]
+            code = re.split(r"\n|:\s+(?:\u2705\s*)?ETA\b|:\s+No ETA", code, maxsplit=1)[0]
         if not jsc.truthy(code) and jsc.truthy(a) and isinstance(jsc.get(a, "fields"), list):
             field = jsc.find(
                 jsc.get(a, "fields"),

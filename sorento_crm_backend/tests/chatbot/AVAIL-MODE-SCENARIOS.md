@@ -15,9 +15,10 @@ category's, else 0. Available = on hand in the contact's allowed locations minus
 
 1. One line per product, "CODE x Q:", then ✅ (got stock) or ❌ (no stock). Never the words.
 2. 1 <= available < Q and Q <= X: `✅ N available.` Q > X: `🚫 the quantity is more than what I can confirm here.` with no count.
-3. ETA ask: `CODE: ETA dd/mm/yyyy` (or `ETA not confirmed yet`), one line per product.
+3. ETA ask: `CODE: ✅ ETA dd/mm/yyyy`, or `CODE: No ETA`, one line per product (owner hand test, 3 Oct 2026).
 4. A picker never offers "all" and refuses a bare "all" / "all of them" / "semua" (the list stays open). Typing every number is a pick.
 5. Several codes: answered lines (asked order), then `Couldn't find: X, Y.`, then at most one question. Every vague code's list is in that one question, numbered on from the list before it. A code named twice adds up.
+6. Exact codes only (owner hand test, 3 Oct 2026): an exact code is the product and never its family; a code-like token with no exact code gets the which-one picker of its prefix family, else the did-you-mean; a word or a bare number is never a product; a bare number on a list (did-you-mean included) is that option.
 
 ## One code
 
@@ -40,8 +41,8 @@ category's, else 0. Available = on hand in the contact's allowed locations minus
 
 | Id | Dealer | Bot | Full mode |
 | --- | --- | --- | --- |
-| S14 | ETA SRTW2000? | `SRTW2000: ETA 19/10/2026` + R | shipments with container and quantity |
-| S15 | ETA SRTW2000 and MWT5727SS-CR | one line each, `MWT5727SS-CR: ETA not confirmed yet`, + R | same |
+| S14 | ETA SRTW2000? | `SRTW2000: ✅ ETA 19/10/2026` + R | shipments with container and quantity |
+| S15 | ETA SRTW2000 and MWT5727SS-CR | one line each, `MWT5727SS-CR: No ETA`, + R | same |
 | S16 | ETA SRTW2000 and FOO99 | ETA line, `Couldn't find: FOO99.`, R | "I could not find FOO99." |
 
 ## Several codes
@@ -87,9 +88,22 @@ for a family (every match is listed), and the shared miss sentence for codes not
 | S43c | 2 of 1 and 5 of 3 | options 2 and 5 | `SRTWC286-SH x 2` and `SRTWC286-SH-200 x 5` lines |
 | S44 | SRT5674 x 2, SRT5674 x 3 | one entity, qty 3 (`replace_combine`) | `SRT5674 x 5: ✅ R` |
 | S44b | SRT5674 x 2 for site 3 | qty 2 | `SRT5674 x 2: ✅ R` (a code named once is not summed) |
-| S45 | ETA SRTW2000 and FOO99 (no shipment) | both codes | `SRTW2000: ETA not confirmed yet`, `Couldn't find: FOO99.`, R |
+| S45 | ETA SRTW2000 and FOO99 (no shipment) | both codes | `SRTW2000: No ETA`, `Couldn't find: FOO99.`, R |
 
-The dealer ETA view lists every product asked (no shipment: "ETA not confirmed yet") and
+The dealer ETA view lists every product asked (no shipment: "No ETA") and
 tells dates as dd/mm/yyyy (`eta_policy.dealer_view`, `tests/test_avail_mode_dealer_eta.py`).
 | S46, S46b | CWCX604 x 300 / SRT5674 x 50, read by the parser as `check_incoming` (intermittent, tester re-run on 2eb2a00ef) | stock ask by the message's own words: the 🚫 / ✅ line, never "ETA not confirmed yet" |
-| S46c | SRTW2000 x 10 when arrive? / ETA SRTW2000 x 10 / ... bila sampai | an ETA word keeps the ETA route: `SRTW2000: ETA 19/10/2026` + R |
+| S46c | SRTW2000 x 10 when arrive? / ETA SRTW2000 x 10 / ... bila sampai | an ETA word keeps the ETA route: `SRTW2000: ✅ ETA 19/10/2026` + R |
+
+## Owner hand test, 3 Oct 2026 (availability access)
+
+| Id | Dealer | Bot |
+| --- | --- | --- |
+| S47 | srt5764 xx 10 (the resolver also matched catalogue rows for "xx" / "10") | `Couldn't find SRT5764. Did you mean:` 1. SRT57-CR 2. SRT5713 3. SRT5732; never a quantity list of the catalogue |
+| S48 | srt5764 10 / 2 (parsed as a product "2", a pick, or a quantity) | did-you-mean / `SRT5713 x 10: ✅ R` |
+| S48b | srtwc286 / 88 | `SRTWC286 x 88: which one?` (a number past the list is the quantity) |
+| S49 | ETA SRTW2000 and MWT5727SS-CR | `SRTW2000: ✅ ETA 19/10/2026`, `MWT5727SS-CR: No ETA`, R |
+| S50, S50c | srtw2000 20 / eta | the stock line / `SRTW2000: ✅ ETA 19/10/2026` + R: SRTW2000 only, never -SS-CR / -A / -NL |
+| S50b | eta SRTWC286-SH / eta | `SRTWC286-SH: No ETA` + R, both turns, never the SRTWC286-SH-* variants |
+
+Full mode keeps its own resolution (prefix families, described products) and its own ETA rows.

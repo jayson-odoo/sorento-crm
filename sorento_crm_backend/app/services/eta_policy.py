@@ -397,7 +397,7 @@ def dealer_view(payload: Any, asked: Optional[list[str]] = None) -> Any:
     (`/shipments/{id}/...`) is not a chat answer and passes through.
 
     `asked`: the product codes the dealer asked about. One with no shipment is still a
-    row, with no ETA ("CODE: ETA not confirmed yet", catalogue S15), never a miss."""
+    row, with no ETA ("CODE: No ETA", owner hand test 3 Oct 2026), never a miss."""
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
         return payload
     etas: dict[Optional[str], set[str]] = {}
