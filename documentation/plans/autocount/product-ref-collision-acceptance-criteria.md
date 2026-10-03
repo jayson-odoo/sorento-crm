@@ -16,8 +16,9 @@ AC-4 (line, normal) An SO line with product_ref `AED_V2_MOCHA:2001` and ItemCode
 binds `MKT4524SS-DIY`, no warning.
 
 AC-5 (line, collision) An SO line whose product_ref hits product A but whose ItemCode is owned by
-product B binds B and carries `ref_mismatch`. If no product owns the ItemCode, it binds A and
-carries `ref_mismatch`.
+product B binds B and carries `ref_mismatch`. If no product owns the ItemCode, the line is not
+written: retryable missing product, same verdict as an unknown ref (owner decision pending, 3 Oct;
+recommended over binding A, since prod holds feed-minted numeric refs).
 
 AC-6 Code comparison uses the same normalisation as the code-adopt path (case/whitespace).
 
