@@ -2444,7 +2444,7 @@ def _noisy_split(db: Session, raw: str, hint: str) -> tuple[list[dict[str, Any]]
 #: "top 3 salesman", "best sales agents", "top 5 customers": the noun right after a ranking
 #: word and an optional count. Who is ranked, not what is sold (REPORT-ENGINE, owner hand test).
 _RANKED_NOUN_RE = re.compile(
-    r"\b(?:top|best|worst|worse|bottom|least|most|highest|lowest)\s+(?:(\d[\d,]*)\s+)?([a-z]+)(?:\s+([a-z]+))?"
+    r"\b(?:top|best|worst|worse|bottom|least|most|highest|lowest)\s+(?:\d[\d,]*\s+)?([a-z]+)\b(?:\s+([a-z]+)\b)?"
 )
 #: The nouns that name a person ranked. A bare "sales" is never one ("top 10 sales items").
 _RANKED_AGENT_NOUNS = frozenset({
@@ -2459,7 +2459,7 @@ def _ranked_who(text: str) -> int | None:
     match = _RANKED_NOUN_RE.search((text or "").lower())
     if not match:
         return None
-    noun, second = match.group(2), match.group(3)
+    noun, second = match.group(1), match.group(2)
     if noun in _RANKED_AGENT_NOUNS or (noun == "sales" and second in _RANKED_AGENT_SECOND):
         return 2
     return 1 if noun in _RANKED_CUSTOMER_NOUNS else None
@@ -2491,9 +2491,6 @@ def _sales_ranking_verdict(db: Session, verdict: dict[str, Any], text: str) -> d
         entities = [e for e in entities if e.get("hint") != "sales_agent"]
     out = {**verdict, "order_status": "sales_ranking", "group_by": "sales_agent" if who == 2 else "customer",
            "entities": entities}
-    count = _RANKED_NOUN_RE.search((text or "").lower()).group(1)  # who is not None, so it matched
-    if out.get("top_n") is None and count and int(count.replace(",", "")) >= 1:
-        out["top_n"] = int(count.replace(",", ""))
     return out
 
 

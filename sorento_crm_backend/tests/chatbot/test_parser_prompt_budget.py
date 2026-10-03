@@ -98,9 +98,8 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # 1b code review S1 (same lane): the addendum's "not a sales ranking" carve-out takes it to 585
 # est. tokens, the prompt without MEMORY_ADDENDUM to 44,086 and the whole prompt to 44,601 (+80);
 # CEILING is 44,601 - 512 = 44,089.
-# Seventh re-pin, 3 Oct 2026: the owner's hand-test message ("who's the top 3 salesman for sorento
-# water closet this year") is a worked example in REPORT_ASK_ADDENDUM; whole prompt 44,603 (+2),
-# CEILING is 44,603 - 512 = 44,091.
+# Seventh re-pin, 3 Oct 2026: restoring "SA" and "(dealer / project)" in REPORT_ASK_ADDENDUM
+# (review round 2) takes the whole prompt to 44,603 (+2); CEILING is 44,603 - 512 = 44,091.
 CEILING = 44_091
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
