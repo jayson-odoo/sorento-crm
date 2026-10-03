@@ -316,7 +316,7 @@ def handle_capture_turn(
                 config.api_key,
                 {
                     "product_id": config.product_id,
-                    "text": fields.get("problem", ""),
+                    "text": text_in,
                     "submitter_crm_user_id": user.id,
                     "submitter_phone": contact.phone_number,
                     "is_test": bool(is_test),

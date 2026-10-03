@@ -170,6 +170,7 @@ def _ideate_extractor_fallback() -> str:
         "idea) - the caller defaults an unaddressed choice to keeping the ideas separate, "
         "so do not guess 'separate' yourself unless the user actually said so; 'none' is "
         "correct for a message that ignores the choice.\n\n"
+        "NO-PROBLEM RULE: a message that only says the user wants to submit or share an idea (for example 'want to submit idea', 'I have an idea', 'boleh saya hantar idea') states NO problem - leave problem empty. Never write a problem the user did not state.\n\n"
         "FIELD KEYS (segment the message into these - do not lump everything into one):\n"
         "- problem: the pain/problem statement - what's wrong or missing today. The one "
         "REQUIRED field; every draft has one from its very first message. On the FIRST "
