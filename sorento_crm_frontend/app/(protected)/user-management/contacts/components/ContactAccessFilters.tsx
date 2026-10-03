@@ -85,12 +85,13 @@ export default function ContactAccessFilters({ value, onChange }: Props) {
   const selected = (
     id: string | null | undefined,
     option: SearchableSelectOption | undefined,
-    read: { data?: string; isError: boolean },
-    unreadable: string,
+    read: { data?: string },
+    fallback: string,
   ): SearchableSelectOption | undefined => {
     if (!id) return undefined;
     if (option?.value === id) return option;
-    return { value: id, label: read.data ?? (read.isError ? unreadable : 'Loading...') };
+    // Until the read-back answers (or if it cannot), a neutral name stands in: never the id.
+    return { value: id, label: read.data ?? fallback };
   };
 
   const active = Object.values(value).some(Boolean);
