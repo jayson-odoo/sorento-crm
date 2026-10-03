@@ -586,6 +586,9 @@ class Focus(BaseModel):
     # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: the top selling
     # ask's own axes while `status == "top_selling"` (`turn/state.py::Focus.top_selling`).
     top_selling: dict[str, Any] | None = None
+    # LOWSTOCK-FILTER-ASK: the question `required_fields` left open, one turn long
+    # (`turn/state.py::Focus.required_ask`).
+    required_ask: dict[str, Any] | None = None
     # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner ruling
     # 24 Sep 2026) for chatbot-stock-ask-v2 S3: the open tasks, carried INSIDE the
     # focus rather than on a session key of their own. Declared here because this
