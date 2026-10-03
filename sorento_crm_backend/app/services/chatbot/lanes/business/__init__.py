@@ -1958,60 +1958,15 @@ def run_fetch(
         return _error_fragment(envelope["error"])
 
     structured = fetch_mod.output_structurer(envelope, trigger)
-    # COMBO-STOCK slice 2 (owner Q1/Q2/Q4, 2 Oct 2026): a set code answered over its
-    # members (`gate._expand_product_set`) opens with how many complete sets that stock
-    # makes. Counted off THIS envelope, the rows the member lines below print, and
-    # `set_header` answers None for a dealer's availability envelope (no numbers of ours).
-    set_headers = [
-        header
-        for header in (
-            set_stock_mod.set_header(product_set, envelope)
-            for product_set in jsc.array(gate.get("product_sets"))
-        )
-        if header
-    ]
-    if set_headers and isinstance(structured.get("response"), str):
-        structured["response"] = "\n\n".join([*set_headers, structured["response"]])
-    # COMBO-STOCK slice 3 (owner Q3): a BASE code that reached set members by prefix.
-    # Full access keeps its lines and adds which sets each is part of; a dealer's
-    # availability answer is replaced by a pick of those sets, and its own rows are
-    # dropped so no product pick or quantity ask is armed beside it.
-    prefix_products = [p for p in jsc.array(gate.get("prefix_products")) if isinstance(p, dict)]
-    result_type = jsc.js_string((envelope or {}).get("result_type") or "") if isinstance(envelope, dict) else ""
-    if prefix_products and isinstance(structured.get("response"), str):
-        containing = set_stock_mod.sets_containing(db, [str(p.get("uuid")) for p in prefix_products])
-        # Review B1: the pick REPLACES the dealer's answer, so it is offered only when the
-        # whole answer is one base code's products. A message that also named another
-        # product (or a second base code) keeps its availability lines untouched.
-        prefix_ids = {str(p.get("uuid")) for p in prefix_products}
-        answer_ids = {
-            str(e.get("uuid"))
-            for e in jsc.array(gate.get("compatible_entities"))
-            if isinstance(e, dict) and e.get("uuid")
-        }
-        one_base_code = (
-            len({jsc.js_string(p.get("token") or "") for p in prefix_products}) == 1
-            and answer_ids <= prefix_ids
-        )
-        if result_type == "stock_availability" and one_base_code:
-            picked = set_stock_mod.set_pick(jsc.js_string(prefix_products[0].get("token") or ""), containing)
-            if picked is not None:
-                structured["response"], structured["set_ask"] = picked
-                # ONE marker row, never an empty list (crew-tester pass on dev, step 5/6):
-                # a non-empty `stock_availability` block is the dealer's own off switch for
-                # the zero-stock ladder (`answer.crossdomain_zeroset`). Emptied, the ladder
-                # read the pick's empty answer as "no stock", appended "No stock and no
-                # incoming ..., but PO is placed" with PO detail, and its own question
-                # replaced the set pick. The row names no product, branch or quantity, so
-                # the stock task, family pick and Customer asks readers all skip it.
-                structured["stock_availability"] = [{"set_pick": True}]
-                structured["answers"] = []
-        elif result_type in ("stock", "stock_compact"):
-            lines = set_stock_mod.part_of_set_lines(prefix_products, containing)
-            if lines:
-                structured["response"] = set_stock_mod.above_footer(
-                    structured["response"], "\n".join(lines)
-                )
+    structured = _set_level_answer(
+        structured,
+        envelope,
+        gate=gate,
+        tool_name=tool_name,
+        args=args,
+        services=services,
+        db=db,
+    )
     if trace is not None:
         restricted = envelope.get("restricted_fields") if isinstance(envelope, dict) else None
         if isinstance(restricted, dict) and restricted:
@@ -2076,6 +2031,99 @@ def run_fetch(
         "delegate": DELEGATE,
         "delegate_payload": {**payload, "fetch": item},
         "fetch": item,
+    }
+
+
+def _set_level_answer(
+    structured: dict[str, Any],
+    envelope: Any,
+    *,
+    gate: dict[str, Any],
+    tool_name: str,
+    args: dict[str, Any],
+    services: FetchServices,
+    db: Any,
+) -> dict[str, Any]:
+    """COMBO-STOCK (owner hand test + answers, 3 Oct 2026): a stock ask about a SET is
+    answered at set level only (`set_stock`'s module docstring has the four shapes).
+
+    The reply is REPLACED, never appended to, so no component row, zero row or
+    per-company miss line survives - and only when every product this fetch was about
+    belongs to the set(s) asked for; a message that also named an ordinary product keeps
+    today's answer. The replaced reply keeps ONE `stock_availability` row: for a dealer
+    it is the set's own row (one quantity slot), for staff a marker; either way that
+    non-empty block is the zero-stock ladder's off switch (`answer.crossdomain_zeroset`),
+    which would otherwise read the empty rows as "no stock" and append PO detail."""
+    if not isinstance(envelope, dict) or not isinstance(structured.get("response"), str):
+        return structured
+    result_type = jsc.js_string(envelope.get("result_type") or "")
+    staff = result_type in ("stock", "stock_compact")
+    dealer = result_type == "stock_availability"
+    if not (staff or dealer):
+        return structured
+    answer_ids = {
+        str(e.get("uuid"))
+        for e in jsc.array(gate.get("compatible_entities"))
+        if isinstance(e, dict) and e.get("uuid")
+    }
+    product_sets = [p for p in jsc.array(gate.get("product_sets")) if isinstance(p, dict)]
+    member_ids = {
+        str(m.get("uuid")) for p in product_sets for m in jsc.array(p.get("members")) if isinstance(m, dict)
+    }
+    if product_sets and answer_ids and answer_ids <= member_ids:
+        if staff:
+            lines = [set_stock_mod.staff_set_answer(p, envelope) for p in product_sets]
+            rows = [{"set_answer": True}]
+        else:
+            replies = [set_stock_mod.dealer_set_reply(p, envelope) for p in product_sets]
+            lines = [r[0] for r in replies if r]
+            # Still owing a quantity: ONE row per set, so the open task asks one
+            # question for the set. Answered: the PARTS' own rows, because Customer asks
+            # (`stock_asks.product_id` -> products) logs answered rows and a set is not
+            # a product.
+            rows = [r[1] for r in replies if r and r[1].get("needs_quantity")]
+            if len(rows) < len(lines):
+                rows = [r for r in jsc.array(structured.get("stock_availability")) if isinstance(r, dict)]
+        if lines and all(lines):
+            return {**structured, "response": "\n\n".join(lines), "answers": [], "stock_availability": rows}
+        return structured
+
+    # A BASE code ("SRTWC8608") whose whole answer is products it reached by prefix
+    # (`gate._prefix_products`) is answered with the sets those products belong to.
+    prefix_products = [p for p in jsc.array(gate.get("prefix_products")) if isinstance(p, dict)]
+    prefix_ids = {str(p.get("uuid")) for p in prefix_products}
+    tokens = {jsc.js_string(p.get("token") or "") for p in prefix_products}
+    if not prefix_products or len(tokens) != 1 or not answer_ids or not answer_ids <= prefix_ids:
+        return structured
+    sets = set_stock_mod.sets_containing(db, sorted(prefix_ids))
+    if not sets:
+        return structured
+    typed = next(iter(tokens)).upper()
+    if dealer:
+        picked = set_stock_mod.dealer_set_pick(typed, sets)
+    else:
+        # The counts need EVERY member of those sets, and the first call fetched only the
+        # products the base code matched: one more read of the SAME tool, so the
+        # visibility policy that shaped the first shapes this one too.
+        all_members = sorted({str(m["uuid"]) for s in sets for m in s["members"]})
+        try:
+            raw = fetch_mod.call_tool(
+                tool_name, {**args, "product_ids": all_members}, mcp=_McpSeam(services.mcp_call)
+            )
+            members_envelope = fetch_mod.parse_mcp_content(raw)
+        except Exception:  # noqa: BLE001 - the first answer still stands
+            logger.warning("chatbot: set member stock read failed", exc_info=True)
+            return structured
+        picked = set_stock_mod.staff_set_list(typed, sets, members_envelope)
+    if picked is None:
+        return structured
+    text, ask = picked
+    return {
+        **structured,
+        "response": text,
+        "set_ask": ask,
+        "answers": [],
+        "stock_availability": [{"set_pick": True}],
     }
 
 

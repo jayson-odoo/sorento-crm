@@ -1,23 +1,20 @@
-"""The full-access header over a product set's stock answer (COMBO-STOCK slice 2).
+"""Set-level stock answers (COMBO-STOCK; owner hand test + answers, 3 Oct 2026).
 
-Plan: `documentation/plans/chatbot/PLAN-combo-stock-2oct.md` (owner answers Q1, Q2, Q4,
-2 Oct 2026). A set is never stocked: "chck stock SRTWC8608-RL" is answered over its
-members (`gate._expand_product_set`), and this module writes the one thing the member
-lines cannot say on their own - how many COMPLETE sets that stock makes, per warehouse
-and in total, and which member runs out first.
+Plan: `documentation/plans/chatbot/PLAN-combo-stock-2oct.md`. A set is never stocked:
+"chck stock SRTWC8608-RL" is fetched over its members (`gate._expand_product_set`) and
+answered as ONE set-level reply - no component rows, no zero rows:
 
-The numbers come from the SAME stock tool envelope the member lines print, never from
-the resolver's own `display.available` (a raw sum over every warehouse with no
-visibility filter): the header and the lines under it must never disagree.
+* staff (detailed / compact): "SET: N sets available (limited by M)" plus one line of
+  the NON-ZERO locations, sorted by sets (`staff_set_answer`);
+* staff, base code ("SRTWC8608"): the sets those products belong to, one line each with
+  its sets available, armed as a pick (`staff_set_list`);
+* dealer (availability): ONE quantity per set - "SET: how many sets do you need?", then
+  "SET x N: <the existing dealer sentence>", the weakest part deciding and the ETA the
+  latest part's (`dealer_set_reply`); a base code is a pick of the sets.
 
-Full access only. An `availability` envelope (a dealer) has no numbers by design
-(`sorento_crm_mcp.presenters._stock_availability`) and gets no header at all - a set
-count is a quantity of ours, which that mode exists never to reveal.
-
-Slice 3 (owner Q3): a BASE code ("SRTWC8608") that reached member products by prefix.
-Full access keeps today's lines and adds which sets each product is part of; a dealer
-is offered those sets as a pick instead. Membership is read off `product_set_members`
-(`sets_containing`, the one ORM read here), never guessed from the code.
+Numbers are read off the SAME stock tool envelope (`_stock_by_code`), so the visibility
+policy that shaped it shaped the set count too. Membership is `product_set_members`
+only (`sets_containing`, `expand_task_sets`: the ORM reads here), never the code's shape.
 """
 from __future__ import annotations
 
@@ -116,55 +113,61 @@ def _sets(have: Decimal, per_set: Decimal) -> int:
     return int(have // per_set)
 
 
-def set_header(product_set: dict[str, Any], envelope: Any) -> str | None:
-    """The header lines for one set, or `None` when this envelope carries no numbers
-    (a dealer's availability answer, an error, an empty page) or the set has no
-    members. A member with no row in the answer counts 0 and limits the set (Q4)."""
+def _members(product_set: dict[str, Any]) -> list[tuple[str, Decimal]]:
+    out: list[tuple[str, Decimal]] = []
+    for member in product_set.get("members") or []:
+        if isinstance(member, dict) and member.get("product_code"):
+            out.append((str(member["product_code"]).strip(), _number(member.get("quantity")) or Decimal(1)))
+    return out
+
+
+def set_counts(product_set: dict[str, Any], envelope: Any) -> tuple[int, str, list[tuple[str, int]]] | None:
+    """`(complete sets, limiting member, [(location, sets)])` for one set, the locations
+    NON-ZERO only and sorted by sets (most first, then name), or None when the envelope
+    carries no numbers (a dealer's, an error) or the set has no members. A member with no
+    row counts 0 and limits the set; a tie names the first member in set order."""
     if not isinstance(envelope, dict) or not isinstance(product_set, dict):
         return None
     stock = _stock_by_code(envelope)
-    if stock is None:
+    members = _members(product_set)
+    if stock is None or not members:
         return None
-    members: list[tuple[str, Decimal]] = []
-    for member in product_set.get("members") or []:
-        if not isinstance(member, dict) or not member.get("product_code"):
-            continue
-        quantity = _number(member.get("quantity")) or Decimal(1)
-        members.append((str(member["product_code"]).strip(), quantity))
-    if not members:
-        return None
-
+    empty: tuple[Decimal, dict[str, Decimal]] = (Decimal(0), {})
     complete: int | None = None
     limiting = ""
     for code, quantity in members:
-        total = stock.get(code.upper(), (Decimal(0), {}))[0]
-        supplies = _sets(total, quantity)
+        supplies = _sets(stock.get(code.upper(), empty)[0], quantity)
         if complete is None or supplies < complete:
             complete, limiting = supplies, code
-
     locations: list[str] = []
     for code, _quantity in members:
-        for loc in stock.get(code.upper(), (Decimal(0), {}))[1]:
+        for loc in stock.get(code.upper(), empty)[1]:
             if loc not in locations:
                 locations.append(loc)
     by_location = [
-        f"{loc} {min(_sets(stock.get(code.upper(), (Decimal(0), {}))[1].get(loc, Decimal(0)), quantity) for code, quantity in members)}"
+        (loc, min(_sets(stock.get(code.upper(), empty)[1].get(loc, Decimal(0)), q) for code, q in members))
         for loc in locations
     ]
+    by_location = sorted(((loc, n) for loc, n in by_location if n > 0), key=lambda r: (-r[1], r[0]))
+    return int(complete or 0), limiting, by_location
 
-    parts = ", ".join(f"{code} x{_qty_text(quantity)}" for code, quantity in members)
-    lines = [
-        f"*{product_set.get('set_code')}* is a set of {parts}.",
-        f"Complete sets: {complete} (limited by {limiting})",
-    ]
+
+def staff_set_answer(product_set: dict[str, Any], envelope: Any) -> str | None:
+    """Q1 (a): "SET: N sets available (limited by M)" + "By location: L n, ..." (non-zero
+    locations only; the line is left out when there are none)."""
+    counts = set_counts(product_set, envelope)
+    if counts is None:
+        return None
+    complete, limiting, by_location = counts
+    lines = [f"{product_set.get('set_code')}: {complete} sets available (limited by {limiting})"]
     if by_location:
-        lines.append(f"By location: {', '.join(by_location)}")
+        lines.append("By location: " + ", ".join(f"{loc} {n}" for loc, n in by_location))
     return "\n".join(lines)
 
 
 def sets_containing(db: Any, product_ids: list[str]) -> list[dict[str, Any]]:
     """Every active set carrying any of `product_ids`, ordered by set code:
-    `{set_code, product_ids (the asked ones it carries), member_ids (all of its)}`.
+    `{set_id, set_code, members: [{uuid, product_code, quantity}]}`.
 
     ORM only: `ProductSet` carries `CompanyScopedMixin`, so the `do_orm_execute`
     listener scopes this to the caller's company, and its members are read only
@@ -173,78 +176,212 @@ def sets_containing(db: Any, product_ids: list[str]) -> list[dict[str, Any]]:
         return []
     from app.models.product_set import ProductSet, ProductSetMember
 
-    asked = {str(p) for p in product_ids}
-    hits = (
-        db.query(ProductSet.id, ProductSet.set_code, ProductSetMember.product_id)
+    set_rows = (
+        db.query(ProductSet.id, ProductSet.set_code)
         .join(ProductSetMember, ProductSetMember.product_set_id == ProductSet.id)
-        .filter(ProductSetMember.product_id.in_(list(asked)), ProductSet.is_active.is_(True))
+        .filter(
+            ProductSetMember.product_id.in_([str(p) for p in product_ids]),
+            ProductSet.is_active.is_(True),
+        )
+        .distinct()
         .all()
     )
-    by_set: dict[str, dict[str, Any]] = {}
-    for set_id, set_code, product_id in hits:
-        row = by_set.setdefault(
-            str(set_id), {"set_id": str(set_id), "set_code": set_code, "product_ids": []}
-        )
-        row["product_ids"].append(str(product_id))
-    for set_id, row in by_set.items():
-        row["member_ids"] = [
-            str(member_id)
-            for (member_id,) in db.query(ProductSetMember.product_id)
-            .filter(ProductSetMember.product_set_id == set_id)
-            .order_by(ProductSetMember.sort_order)
-            .all()
-        ]
-    return sorted(by_set.values(), key=lambda r: str(r["set_code"]))
+    return sorted(
+        (_with_members(db, str(set_id), set_code) for set_id, set_code in set_rows),
+        key=lambda r: str(r["set_code"]),
+    )
 
 
-def part_of_set_lines(prefix_products: list[dict[str, Any]], sets: list[dict[str, Any]]) -> list[str]:
-    """Full access (Q3a): one line per prefix-matched product that is in at least one
-    set, in the order the products were matched."""
-    lines: list[str] = []
-    seen: set[str] = set()
-    for product in prefix_products:
-        uuid = str(product.get("uuid") or "")
-        if not uuid or uuid in seen:
-            continue
-        seen.add(uuid)
-        codes = [str(s["set_code"]) for s in sets if uuid in s.get("product_ids", [])]
-        if codes:
-            lines.append(
-                f"{product.get('code')} is part of set(s) {', '.join(codes)} - "
-                "ask for the set code to see full-set stock."
-            )
-    return lines
+def _with_members(db: Any, set_id: str, set_code: str) -> dict[str, Any]:
+    from app.models.product import Product
+    from app.models.product_set import ProductSetMember
+
+    rows = (
+        db.query(ProductSetMember.product_id, ProductSetMember.quantity, Product.product_code)
+        .join(Product, Product.id == ProductSetMember.product_id)
+        .filter(ProductSetMember.product_set_id == set_id)
+        .order_by(ProductSetMember.sort_order)
+        .all()
+    )
+    return {
+        "set_id": set_id,
+        "set_code": set_code,
+        "members": [
+            {"uuid": str(pid), "product_code": code, "quantity": float(qty or 1)}
+            for pid, qty, code in rows
+        ],
+    }
 
 
-#: `fetch.output_structurer`'s closing line ("_Data last updated: <ts>_"): it stays last.
-_FOOTER_PREFIX = "_Data last updated:"
-
-
-def above_footer(response: str, block: str) -> str:
-    """`block` appended to `response`, kept above the data-freshness footer when the
-    reply ends with one - the same placement the counted-set lines use."""
-    body = response.rstrip()
-    head, sep, last = body.rpartition("\n")
-    if last.strip().startswith(_FOOTER_PREFIX):
-        return f"{head.rstrip()}\n\n{block}\n\n{last.strip()}" if sep else f"{block}\n\n{last.strip()}"
-    return f"{body}\n\n{block}"
-
-
-def set_pick(typed: str, sets: list[dict[str, Any]]) -> tuple[str, dict[str, Any]] | None:
-    """Dealer (Q3, availability access): the sets as a numbered pick, and the
-    `lane_ask` that arms it (`turn/compose.py::_lane_question`, kind `set_pick`). Each
-    row carries the set's members, which a pick answers over exactly like a set code."""
-    rows = [s for s in sets if s.get("member_ids")]
-    if not rows:
-        return None
-    labels = [str(s["set_code"]) for s in rows]
-    head = f"{typed} is part of {len(labels)} sets. Which one?" if len(labels) > 1 else f"{typed} is part of set {labels[0]}. Check it?"
-    ask = {
+def _pick(sets: list[dict[str, Any]]) -> dict[str, Any]:
+    """The `lane_ask` arming a pick of sets (`turn/compose.py::_lane_question`, kind
+    `set_pick`). An option carries the set's code and its own id; the answering turn's
+    runner turns that id into the set's members (`turn_runtime._set_entities`), the same
+    set-level answer a typed set code gets."""
+    return {
         "kind": "set_pick",
         "last_result_set": [
-            {"idx": i, "label": s["set_code"], "value": s["set_code"], "uuids": list(s["member_ids"])}
-            for i, s in enumerate(rows, start=1)
+            {"idx": i, "label": s["set_code"], "value": s["set_code"], "uuid": s["set_id"]}
+            for i, s in enumerate(sets, start=1)
         ],
         "filters": {},
     }
-    return "\n".join([head, *numbered(labels)]), ask
+
+
+def staff_set_list(typed: str, sets: list[dict[str, Any]], envelope: Any) -> tuple[str, dict[str, Any]] | None:
+    """Q2 (a): "BASE sets:" then "n. SET: N sets" per set, counted off `envelope` (the
+    stock tool over every member of those sets), and the pick a number answers."""
+    rows = [s for s in sets if s.get("members")]
+    lines = []
+    for i, s in enumerate(rows, start=1):
+        counts = set_counts(s, envelope)
+        if counts is None:
+            return None
+        lines.append(f"{i}. {s['set_code']}: {counts[0]} sets")
+    if not lines:
+        return None
+    text = "\n".join([f"{typed} sets:", *lines, "Reply a number for one set's locations."])
+    return text, _pick(rows)
+
+
+def dealer_set_pick(typed: str, sets: list[dict[str, Any]]) -> tuple[str, dict[str, Any]] | None:
+    """A dealer's base code: the sets as a numbered pick; no number of ours."""
+    rows = [s for s in sets if s.get("members")]
+    if not rows:
+        return None
+    labels = [str(s["set_code"]) for s in rows]
+    head = (
+        f"{typed} is part of {len(labels)} sets. Which one?"
+        if len(labels) > 1
+        else f"{typed} is part of set {labels[0]}. Check it?"
+    )
+    return "\n".join([head, *numbered(labels)]), _pick(rows)
+
+
+#: Weakest first (owner Q3, 3 Oct 2026): the part that answers worst answers for the set.
+_BRANCH_ORDER = ("no_incoming", "incoming", "too_big", "in_stock")
+
+
+def _eta_key(eta: Any) -> tuple[int, int, int]:
+    try:
+        day, month, year = (int(x) for x in str(eta).split("/"))
+        return year, month, day
+    except (TypeError, ValueError):
+        return 0, 0, 0
+
+
+def dealer_set_reply(product_set: dict[str, Any], envelope: Any) -> tuple[str, dict[str, Any]] | None:
+    """The dealer's ONE line for a set, and the ONE `stock_availability` row standing for
+    it (keyed by the set, so the open quantity task holds one slot for the set).
+
+    Every member still owing a quantity: "SET: how many sets do you need?". Otherwise
+    the weakest member's own presenter sentence (the item title "<code> x <q>: ...",
+    `sorento_crm_mcp.presenters._availability_line`) is re-said for the set, so the four
+    fixed sentences stay the only wording and no number of ours appears; among
+    `incoming` members the latest ETA answers."""
+    if not isinstance(envelope, dict) or envelope.get("result_type") != "stock_availability":
+        return None
+    codes = {str(m.get("product_code") or "").upper() for m in product_set.get("members") or []}
+    rows = [
+        r for r in envelope.get("stock_availability") or []
+        if isinstance(r, dict) and str(r.get("product_code") or "").upper() in codes
+    ]
+    set_code = str(product_set.get("set_code") or "")
+    row: dict[str, Any] = {
+        "product_id": product_set.get("set_id"),
+        "product_code": set_code,
+        "needs_quantity": True,
+        "requested_qty": None,
+        "branch": None,
+    }
+    if not rows or any(r.get("needs_quantity") for r in rows) or not all(r.get("branch") for r in rows):
+        return f"How many units of {set_code}?", row
+    worst = min(rows, key=lambda r: (_BRANCH_ORDER.index(r["branch"]) if r["branch"] in _BRANCH_ORDER else 0,
+                                      tuple(-x for x in _eta_key(r.get("eta")))))
+    title = next(
+        (
+            str(it.get("title") or "")
+            for it in envelope.get("items") or []
+            if isinstance(it, dict)
+            and str(it.get("title") or "").upper().startswith(f"{str(worst.get('product_code')).upper()} X ")
+        ),
+        "",
+    )
+    tail = title.split(": ", 1)[1] if ": " in title else ""
+    quantity = _set_quantity(product_set, worst)
+    if not tail or quantity is None:
+        return f"How many units of {set_code}?", row
+    row.update(
+        {
+            "needs_quantity": False,
+            "requested_qty": quantity,
+            "branch": worst["branch"],
+            "eta": worst.get("eta"),
+        }
+    )
+    return f"{set_code} x {quantity}: {tail}", row
+
+
+def _set_quantity(product_set: dict[str, Any], member_row: dict[str, Any]) -> int | None:
+    """How many SETS the member's own asked quantity stands for (asked / qty per set)."""
+    asked = member_row.get("requested_qty")
+    if not isinstance(asked, int) or isinstance(asked, bool):
+        return None
+    code = str(member_row.get("product_code") or "").upper()
+    per_set = next(
+        (_number(m.get("quantity")) or Decimal(1)
+         for m in product_set.get("members") or [] if str(m.get("product_code") or "").upper() == code),
+        Decimal(1),
+    )
+    return int(Decimal(asked) / per_set) if per_set > 0 else None
+
+
+def member_quantities(product_set: dict[str, Any], sets: int) -> dict[str, int]:
+    """`{member uuid: sets x qty per set}` (rounded up), the per-product quantities the
+    stock tool's availability read takes."""
+    out: dict[str, int] = {}
+    for m in product_set.get("members") or []:
+        if isinstance(m, dict) and m.get("uuid"):
+            per_set = _number(m.get("quantity")) or Decimal(1)
+            out[str(m["uuid"])] = int((Decimal(sets) * per_set).to_integral_value(rounding="ROUND_CEILING"))
+    return out
+
+
+def expand_task_sets(
+    db: Any, entities: list[dict[str, Any]], quantities: dict[str, Any] | None
+) -> tuple[list[dict[str, Any]], dict[str, int] | None, list[dict[str, Any]]]:
+    """The dealer's open quantity task holds ONE slot per SET (`dealer_set_reply`'s row,
+    keyed by the set id). Its fetch names the set id as a product; here it becomes the
+    set's members and the set quantity becomes theirs. Returns (entities, quantities,
+    the sets expanded). Anything that is not a visible, active set passes through."""
+    if db is None or not entities:
+        return entities, quantities, []
+    from app.models.product_set import ProductSet
+
+    ids = [str(e.get("uuid")) for e in entities if isinstance(e, dict) and e.get("uuid")]
+    if not ids:
+        return entities, quantities, []
+    found = {
+        str(set_id): set_code
+        for set_id, set_code in db.query(ProductSet.id, ProductSet.set_code)
+        .filter(ProductSet.id.in_(ids), ProductSet.is_active.is_(True))
+        .all()
+    }
+    if not found:
+        return entities, quantities, []
+    out_entities: list[dict[str, Any]] = []
+    out_quantities = dict(quantities or {})
+    expanded: list[dict[str, Any]] = []
+    for e in entities:
+        set_id = str(e.get("uuid")) if isinstance(e, dict) else ""
+        if set_id not in found:
+            out_entities.append(e)
+            continue
+        product_set = _with_members(db, set_id, found[set_id])
+        expanded.append(product_set)
+        for m in product_set["members"]:
+            out_entities.append({**e, "uuid": m["uuid"], "canonical_code": m["product_code"], "raw": m["product_code"]})
+        sets = out_quantities.pop(set_id, None)
+        if isinstance(sets, int) and not isinstance(sets, bool):
+            out_quantities.update(member_quantities(product_set, sets))
+    return out_entities, (out_quantities or None), expanded

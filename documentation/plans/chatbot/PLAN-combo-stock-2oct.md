@@ -1,6 +1,6 @@
 # PLAN: combo (product set) stock in the chatbot stock answer (COMBO-STOCK)
 
-Status: Review (slices 1-3 built, reviewer round 1 fixed; awaiting owner hand test). Track: standard
+Status: Build (simplified rebuild after owner hand test FAIL, 3 Oct 2026). Track: standard
 (app diff ~430 lines, over the ~300 small fix line; no migration, no RBAC, no new ingest surface).
 UAC: `combo-stock-2oct-acceptance-criteria.md`.
 
@@ -124,3 +124,28 @@ Accepted, not fixed (owner may overrule):
   `is_active`); the base-code line and pick list active sets only.
 - N5: the detailed-mode header counts the page the tool returned (default 50 rows); a set has
   2-3 members, so only a many-product ask could be cut.
+
+## Owner hand test FAIL and simplification (3 Oct 2026)
+
+Hand test: staff base-code reply too complicated (50 per-location rows incl. zero rows, a
+"Mocha: no stock records ..." line, 9 "part of set(s)" lines); the dealer's set pick asked a
+quantity PER COMPONENT. Owner rule: one set-level answer, simple pattern. Shapes proposed as a
+crew-ask, answered: Q1 (a), Q2 (a), Q3 (a). All staff contacts move to COMPACT mode.
+
+| Ask | Staff (detailed / compact) | Dealer (availability) |
+|---|---|---|
+| Set code | `SET: N sets available (limited by M)` + `By location: L n, ...` (non-zero locations only, most sets first) and nothing else | `How many units of SET?` (one question for the set: the open quantity task's own one-slot wording), then `SET x N: <the existing dealer sentence>`, the weakest part deciding (no stock and no incoming > incoming > more than I can confirm > yes) and the ETA the latest part's |
+| Base code | `BASE sets:` + `n. SET: N sets` per set it belongs to + `Reply a number for one set's locations.`; the number answers that set as above | `BASE is part of N sets. Which one?` + the numbered sets; the number asks the one set quantity |
+
+How:
+- The reply is REPLACED (`lanes/business/__init__.py::_set_level_answer`), only when every
+  product of the fetch belongs to the asked set(s) (or, for a base code, to that one base
+  code); a message that also names an ordinary product keeps today's answer.
+- Counts are read off the stock tool's own envelope (`set_stock.set_counts`), compact or
+  detailed alike; the staff base-code list reads the SAME tool once more over every member.
+- A pick option carries the set's own id; the runner turns a set id (pick or the dealer's
+  one-slot quantity task) into its members and the set quantity into theirs
+  (`turn_runtime._set_entities`, `set_stock.expand_task_sets` / `member_quantities`).
+- The replaced reply keeps a non-empty `stock_availability` block (the zero-stock ladder's
+  off switch); an answered dealer set keeps the PARTS' rows so Customer asks logs products.
+- Removed: the per-member header lines, the "part of set(s)" lines, the uuid-carrying pick.

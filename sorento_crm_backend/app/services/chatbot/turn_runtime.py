@@ -2377,6 +2377,49 @@ def _int(value: Any) -> int | None:
     return None
 
 
+def _set_entities(
+    db: Session,
+    domain: str,
+    entities: list[dict[str, Any]],
+    lane_out: dict[str, Any],
+    resolver_gate: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    """COMBO-STOCK (owner, 3 Oct 2026): a dealer gives ONE quantity per set.
+
+    Two places a SET arrives here as one row rather than as its members: a pick of a set
+    (`set_stock._pick`, the option's uuid is the set's own id) and the dealer's open
+    quantity task (one slot per set, keyed by the set id). Both become the set's members,
+    and the set quantity becomes theirs (`set_stock.member_quantities`). A set the
+    resolver already expanded (`gate._expand_product_set`) arrives as members; a quantity
+    typed with its code ("SRTWC8608-RL x5") is spread over those members here too.
+    Returns the sets expanded here, for the set-level reply (`lanes/business.
+    _set_level_answer`). Inventory only (crew ruling Q5)."""
+    if domain != "inventory":
+        return entities, lane_out, []
+    from app.services.chatbot.lanes.business import set_stock
+
+    raw_quantities = lane_out.get("requested_quantities")
+    quantities = dict(raw_quantities) if isinstance(raw_quantities, dict) else {}
+    entities, expanded_quantities, expanded = set_stock.expand_task_sets(db, entities, quantities)
+    quantities = dict(expanded_quantities or {})
+    typed = {
+        jsc.js_string(e.get(name) or "").strip().casefold(): _int(e.get("quantity"))
+        for e in jsc.array(lane_out.get("entities"))
+        if isinstance(e, dict)
+        for name in ("canonical_code", "raw")
+        if e.get(name)
+    }
+    for product_set in jsc.array(jsc.get(resolver_gate, "product_sets")):
+        sets = typed.get(jsc.js_string(jsc.get(product_set, "set_code") or "").strip().casefold())
+        if isinstance(product_set, dict) and sets:
+            quantities.update(set_stock.member_quantities(product_set, sets))
+    if quantities:
+        lane_out = {**lane_out, "requested_quantities": quantities}
+    elif "requested_quantities" in lane_out:
+        lane_out = {k: v for k, v in lane_out.items() if k != "requested_quantities"}
+    return entities, lane_out, expanded
+
+
 def _spec_quantities(
     out: dict[str, Any], spec: FetchSpec, entities: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -2801,6 +2844,7 @@ def make_tool_runner(
         # product, resolved to uuids here - `lanes/business/fetch.py` reads it
         # straight off the lane input.
         lane_out = _spec_quantities(lane_out, spec, entities)
+        entities, lane_out, expanded_sets = _set_entities(db, domain, entities, lane_out, resolver_gate)
         lane_ctx = {**lane_ctx, "parse": {**(lane_ctx.get("parse") or {}), "output": lane_out}}
         # R2: start from the resolver's own gate (gate_reason, require_specific,
         # customer_probe_entities, company_team, gate_debug, ...) - `compatible_entities`
@@ -2808,6 +2852,8 @@ def make_tool_runner(
         # `resolver_gate` itself carried under those two keys.
         gate: dict[str, Any] = dict(resolver_gate) if isinstance(resolver_gate, dict) else {}
         gate["compatible_entities"] = entities
+        if expanded_sets:
+            gate["product_sets"] = [*jsc.array(gate.get("product_sets")), *expanded_sets]
         block = page_predicate if page_predicate is not None else predicate
         if block is not None:
             gate["predicate"] = block

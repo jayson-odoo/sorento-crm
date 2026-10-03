@@ -190,8 +190,7 @@ class TestSetCodeStockAskEngine:
             f"'chck stock {set_code}' named a code; it must never be refused as "
             f"filterless: {said!r}"
         )
-        for code in member_codes:
-            assert code in said, f"every member's stock line must reach the reply: {said!r}"
+        assert said.startswith(f"{set_code}: "), f"a set code is answered at set level: {said!r}"
 
 
 # --------------------------------------------------------------------------- #
@@ -385,106 +384,6 @@ DETAILED_ROWS = {
 }
 
 
-class TestFullAccessSetHeader:
-    def test_compact_reply_opens_with_complete_sets_and_the_limiting_member(
-        self, session_factory, monkeypatch
-    ) -> None:
-        result, _calls, set_code, codes, _ids = _run_set_ask(
-            session_factory,
-            monkeypatch,
-            msg_id="zzt-combo-header-compact",
-            quantities=(1, 1, 2),
-            envelope=_compact(COMPACT_ROWS),
-        )
-        said = _said(result)
-        assert said.startswith(f"*{set_code}* is a set of {codes[0]} x1, {codes[1]} x1, {codes[2]} x2."), said
-        assert f"Complete sets: 7 (limited by {codes[1]})" in said, said
-        assert "By location: BRW 5, KL 0" in said, said
-        # Q1: the header sits ABOVE today's member lines, which stay.
-        for code in codes:
-            assert said.index(code) < len(said)
-        assert said.index("Complete sets") < said.index("Total"), said
-
-    def test_detailed_reply_counts_from_the_per_location_rows(
-        self, session_factory, monkeypatch
-    ) -> None:
-        result, _calls, set_code, codes, _ids = _run_set_ask(
-            session_factory,
-            monkeypatch,
-            msg_id="zzt-combo-header-detailed",
-            quantities=(1, 1, 2),
-            envelope=_detailed(DETAILED_ROWS),
-        )
-        said = _said(result)
-        assert f"Complete sets: 7 (limited by {codes[1]})" in said, said
-        # Member 1 has no KL row at all: it counts 0 there (Q4).
-        assert "By location: BRW 5, KL 0" in said, said
-
-    def test_a_member_missing_from_the_reply_counts_zero_and_is_named(
-        self, session_factory, monkeypatch
-    ) -> None:
-        result, _calls, _set_code, codes, _ids = _run_set_ask(
-            session_factory,
-            monkeypatch,
-            msg_id="zzt-combo-header-missing",
-            envelope=_compact(COMPACT_ROWS, missing=("2",)),
-        )
-        said = _said(result)
-        assert f"Complete sets: 0 (limited by {codes[2]})" in said, said
-
-    def test_a_dealer_availability_reply_gets_no_header_and_no_number(
-        self, session_factory, monkeypatch
-    ) -> None:
-        result, _calls, set_code, codes, _ids = _run_set_ask(
-            session_factory,
-            monkeypatch,
-            msg_id="zzt-combo-header-dealer",
-            envelope=_availability,
-        )
-        said = _said(result)
-        assert "Complete sets" not in said, said
-        assert "is a set of" not in said, said
-        for code in codes:
-            assert f"{code} x 2: yes, we have stock." in said, said
-
-
-class TestSetHeaderUnit:
-    def test_header_is_none_without_a_stock_envelope(self) -> None:
-        from app.services.chatbot.lanes.business import set_stock
-
-        product_set = {
-            "set_code": "S-RL",
-            "members": [{"product_code": "A", "quantity": 1}],
-        }
-        assert set_stock.set_header(product_set, _availability(["A"])) is None
-
-    def test_part_of_lines_sit_above_the_freshness_footer(self) -> None:
-        from app.services.chatbot.lanes.business import set_stock
-
-        out = set_stock.above_footer("Stock summary.\n\n1. A\n\n_Data last updated: 02/10/2026_", "A is part of set(s) S")
-        assert out == "Stock summary.\n\n1. A\n\nA is part of set(s) S\n\n_Data last updated: 02/10/2026_", out
-        assert set_stock.above_footer("Stock summary.", "X") == "Stock summary.\n\nX"
-
-    def test_fractional_quantity_floors(self) -> None:
-        from app.services.chatbot.lanes.business import set_stock
-
-        product_set = {
-            "set_code": "S-RL",
-            "members": [
-                {"product_code": "A", "quantity": 1},
-                {"product_code": "B", "quantity": 1.5},
-            ],
-        }
-        envelope = _compact({"0": (9, {"BRW": 9}), "1": (10, {"BRW": 10})})(["A", "B"])
-        header = set_stock.set_header(product_set, envelope)
-        assert "B x1.5" in header, header
-        assert "Complete sets: 6 (limited by B)" in header, header
-
-
-# --------------------------------------------------------------------------- #
-# Slice 3: a BASE code ("SRTWC8608", no set carries it) that prefix-matched member
-# products (owner Q3, 2 Oct 2026).
-# --------------------------------------------------------------------------- #
 
 
 def _session_vars(session_factory) -> dict[str, Any]:
@@ -597,34 +496,162 @@ def _ask_base(
     return result, calls
 
 
-class TestBaseCodeFullAccess:
-    def test_each_member_line_says_which_sets_it_is_part_of(
-        self, session_factory, monkeypatch
-    ) -> None:
+
+# --------------------------------------------------------------------------- #
+# Simplified set answers (owner hand test FAIL + answers, 3 Oct 2026): ONE set-level
+# answer, no component rows, no zero rows, no "part of set(s)" lines; a dealer gives
+# ONE quantity per set. Staff run in COMPACT mode (owner) and detailed alike.
+# --------------------------------------------------------------------------- #
+
+
+def _dealer_rows(rows: dict[str, tuple[str, str | None]], qty: int | None):
+    """A dealer's `availability` envelope with real `stock_availability` rows:
+    `{member index: (branch, eta)}`. `qty` None = every member still needs a quantity
+    (the presenter's own "How many units ..." case)."""
+
+    tails = {
+        "in_stock": "yes, we have stock. Please refer to your salesman.",
+        "too_big": "the quantity is more than what I can confirm here. Please refer to your salesman.",
+        "no_incoming": "no stock and no incoming at the moment. Please refer to your salesman.",
+    }
+
+    def build(
+        codes: list[str], ids: dict[str, str] | None = None, asked_by_code: dict[str, int] | None = None
+    ) -> dict[str, Any]:
+        """`asked_by_code`: the quantities the call itself sent, which the real tool
+        echoes per product; they win over `qty` once a quantity was asked at all."""
+        entries, items = [], []
+        for index, code in enumerate(codes):
+            branch, eta = rows.get(str(index), ("in_stock", None))
+            asked = qty.get(code) if isinstance(qty, dict) else qty
+            if asked is not None and asked_by_code and code in asked_by_code:
+                asked = asked_by_code[code]
+            needs = asked is None
+            entry = {
+                "product_id": (ids or {}).get(code, code),
+                "product_code": code,
+                "needs_quantity": needs,
+                "requested_qty": None if needs else asked,
+                "branch": None if needs else branch,
+                "eta": None if needs else eta,
+            }
+            tail = f"no stock at the moment, ETA {eta}." if branch == "incoming" else tails[branch]
+            if not needs:
+                # `sorento_crm_mcp.presenters._stamp_refers`: read off the printed tail.
+                entry["refers_to_salesman"] = tail.endswith("Please refer to your salesman.")
+            entries.append(entry)
+            items.append(
+                {
+                    "title": code if needs else f"{code} x {entry['requested_qty']}: {tail}",
+                    "fields": [],
+                    "flags": {"needs_quantity": needs, "branch": entry["branch"]},
+                }
+            )
+        return {
+            "intro": "How many units do you need?" if qty is None else "",
+            "items": items,
+            "stock_availability": entries,
+            "has_result": True,
+            "attachments": [],
+            "result_type": "stock_availability",
+            "action_links": [],
+        }
+
+    return build
+
+
+class TestStaffSetCode:
+    """Q1 (a): `SET: N sets available (limited by M)` + one line of NON-ZERO locations,
+    sorted by sets; nothing else."""
+
+    def _said(self, session_factory, monkeypatch, envelope, msg_id):
+        result, _calls, set_code, codes, _ids = _run_set_ask(
+            session_factory, monkeypatch, msg_id=msg_id, quantities=(1, 1, 2), envelope=envelope
+        )
+        return _said(result), set_code, codes
+
+    def test_compact(self, session_factory, monkeypatch) -> None:
+        said, set_code, codes = self._said(session_factory, monkeypatch, _compact(COMPACT_ROWS), "zzt-s1-c")
+        assert said == (
+            f"{set_code}: 7 sets available (limited by {codes[1]})\nBy location: BRW 5"
+        ), said
+
+    def test_detailed(self, session_factory, monkeypatch) -> None:
+        said, set_code, codes = self._said(session_factory, monkeypatch, _detailed(DETAILED_ROWS), "zzt-s1-d")
+        assert said == (
+            f"{set_code}: 7 sets available (limited by {codes[1]})\nBy location: BRW 5"
+        ), said
+
+    def test_locations_sorted_by_sets_and_zero_left_out(self, session_factory, monkeypatch) -> None:
+        rows = {
+            "0": (30, {"A1": 3, "B2": 20, "C3": 0, "D4": 7}),
+            "1": (30, {"A1": 3, "B2": 20, "C3": 9, "D4": 7}),
+            "2": (60, {"A1": 6, "B2": 40, "C3": 0, "D4": 14}),
+        }
+        said, set_code, _codes = self._said(session_factory, monkeypatch, _compact(rows), "zzt-s1-sort")
+        assert said.endswith("By location: B2 20, D4 7, A1 3"), said
+
+    def test_nothing_anywhere_has_no_location_line(self, session_factory, monkeypatch) -> None:
+        rows = {"0": (0, {"BRW": 0}), "1": (5, {"BRW": 5}), "2": (6, {"BRW": 6})}
+        said, set_code, codes = self._said(session_factory, monkeypatch, _compact(rows), "zzt-s1-zero")
+        assert said == f"{set_code}: 0 sets available (limited by {codes[0]})", said
+
+
+class TestStaffBaseCode:
+    """Q2 (a): the list of sets with sets available; a number gives that set's answer."""
+
+    def test_the_list_of_sets_and_nothing_else(self, session_factory, monkeypatch) -> None:
         _seed_contact_and_get(session_factory)
         family = _seed_family(session_factory)
-        result, _calls = _ask_base(
-            session_factory, monkeypatch, family, envelope=_compact_codes, msg_id="zzt-combo-base-full"
+        result, calls = _ask_base(
+            session_factory, monkeypatch, family, envelope=_compact_codes, msg_id="zzt-s2-list"
         )
-        said = _said(result)
         sets = family["sets"]
-        codes = family["codes"]
-        assert (
-            f"{codes['sc']} is part of set(s) {sets['prl']}, {sets['rl']} - "
-            "ask for the set code to see full-set stock."
-        ) in said, said
-        assert (
-            f"{codes['sc_uf']} is part of set(s) {sets['uf']} - "
-            "ask for the set code to see full-set stock."
-        ) in said, said
-        # A product in no set gets no line; the pedestal was never in the answer.
-        assert f"{codes['lonely']} is part of" not in said, said
-        assert codes["ped"] not in said, said
+        # Every member has Total 5 / BRW 5 (`_compact_codes`), qty 1 each: 5 sets each.
+        assert _said(result) == (
+            f"{family['base']} sets:\n"
+            f"1. {sets['prl']}: 5 sets\n"
+            f"2. {sets['rl']}: 5 sets\n"
+            f"3. {sets['uf']}: 5 sets\n"
+            "Reply a number for one set's locations."
+        ), _said(result)
+        # The counts come from the stock tool over EVERY member of those sets.
+        ids = family["ids"]
+        asked = set().union(*(_product_ids(a) for n, a in calls if n == STOCK_TOOL))
+        assert {ids["ped"], ids["cis"], ids["sc"], ids["sc_uf"]} <= asked, asked
+        question = _session_vars(session_factory).get("open_question") or {}
+        assert [o.get("code") for o in question.get("options") or []] == sorted(sets.values()), question
 
-    def test_an_exact_code_gets_no_part_of_set_line(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """Q3 is the BASE code. A code typed in full is answered as today."""
+    def test_a_number_gives_that_sets_answer(self, session_factory, monkeypatch) -> None:
+        _seed_contact_and_get(session_factory)
+        family = _seed_family(session_factory)
+        _ask_base(session_factory, monkeypatch, family, envelope=_compact_codes, msg_id="zzt-s2-a")
+        position = sorted(family["sets"].values()).index(family["sets"]["rl"]) + 1
+        by_id = {v: family["codes"][k] for k, v in family["ids"].items()}
+
+        def _call(name: str, args: dict[str, Any]) -> str:
+            if name == STOCK_TOOL:
+                return json.dumps(_compact_codes([by_id[p] for p in sorted(_product_ids(args)) if p in by_id]))
+            return _unknown_envelope()
+
+        mcp_call, calls = _mcp_double(other=_call)
+        result = _run_turn_engine(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[position], order_status=None,
+            ),
+            text_body=str(position),
+            msg_id="zzt-s2-b",
+            mcp_call=mcp_call,
+        )
+        ids = family["ids"]
+        stock_calls = [a for n, a in calls if n == STOCK_TOOL]
+        assert stock_calls and _product_ids(stock_calls[-1]) == {ids["ped"], ids["cis"], ids["sc"]}, (stock_calls, _said(result))
+        assert _said(result).startswith(f"{family['sets']['rl']}: 5 sets available"), _said(result)
+
+    def test_a_code_typed_in_full_is_answered_as_before(self, session_factory, monkeypatch) -> None:
         _seed_contact_and_get(session_factory)
         family = _seed_family(session_factory)
 
@@ -635,125 +662,15 @@ class TestBaseCodeFullAccess:
 
         mcp_call, _calls = _mcp_double(other=_call)
         result = _run_turn_engine(
-            session_factory,
-            monkeypatch,
-            qf=_stock_ask(family["codes"]["sc"]),
-            text_body=f"chck stock {family['codes']['sc']}",
-            msg_id="zzt-combo-exact",
-            mcp_call=mcp_call,
-        )
-        assert "is part of set(s)" not in _said(result), _said(result)
-
-
-class TestBaseCodeDealer:
-    def test_a_dealer_is_offered_the_sets_as_a_pick(
-        self, session_factory, monkeypatch
-    ) -> None:
-        _seed_contact_and_get(session_factory)
-        family = _seed_family(session_factory)
-        result, _calls = _ask_base(
-            session_factory, monkeypatch, family, envelope=_availability, msg_id="zzt-combo-base-dealer"
+            session_factory, monkeypatch, qf=_stock_ask(family["codes"]["sc"]),
+            text_body=f"chck stock {family['codes']['sc']}", msg_id="zzt-s2-exact", mcp_call=mcp_call,
         )
         said = _said(result)
-        sets = family["sets"]
-        expected = sorted(sets.values())
-        for position, code in enumerate(expected, start=1):
-            assert f"{position}. {code}" in said, said
-        # No member stock line and no number of ours beside the pick.
-        assert "yes, we have stock" not in said, said
+        assert " sets:" not in said and "sets available" not in said, said
 
-        question = _session_vars(session_factory).get("open_question") or {}
-        assert question.get("kind") == "product_pick", question
-        options = question.get("options") or []
-        assert [o.get("code") for o in options] == expected, options
-        rl = next(o for o in options if o.get("code") == sets["rl"])
-        ids = family["ids"]
-        assert sorted(rl.get("uuids") or []) == sorted([ids["ped"], ids["cis"], ids["sc"]]), rl
-
-    def test_picking_a_set_answers_over_that_sets_members(
+    def test_another_companys_set_and_an_inactive_set_are_never_listed(
         self, session_factory, monkeypatch
     ) -> None:
-        _seed_contact_and_get(session_factory)
-        family = _seed_family(session_factory)
-        _ask_base(
-            session_factory, monkeypatch, family, envelope=_availability, msg_id="zzt-combo-pick-1"
-        )
-        expected = sorted(family["sets"].values())
-        position = expected.index(family["sets"]["rl"]) + 1
-
-        def _call(name: str, args: dict[str, Any]) -> str:
-            if name == STOCK_TOOL:
-                return json.dumps(_availability(["X"]))
-            return _unknown_envelope()
-
-        mcp_call, calls = _mcp_double(other=_call)
-        result = _run_turn_engine(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual",
-                intent_hint=None,
-                domain_hint=None,
-                entities=[],
-                reference_positions=[position],
-                order_status=None,
-            ),
-            text_body=str(position),
-            msg_id="zzt-combo-pick-2",
-            mcp_call=mcp_call,
-        )
-        assert result.status == "done", result.error
-        stock_calls = [args for name, args in calls if name == STOCK_TOOL]
-        assert stock_calls, f"the pick must run the stock ask: {calls!r}"
-        ids = family["ids"]
-        assert _product_ids(stock_calls[-1]) == {ids["ped"], ids["cis"], ids["sc"]}, stock_calls
-
-
-
-class TestReviewRound1:
-    """Reviewer findings on PR #1443 (B1, B2, M2, M6, M8, S4, N2)."""
-
-    def test_dealer_pick_survives_a_quantity_ask_answer(self, session_factory, monkeypatch) -> None:
-        """M6: with real `stock_availability` rows (needs_quantity), the open question is
-        still the SET pick, never the family pick of the prefix products."""
-        _seed_contact_and_get(session_factory)
-        family = _seed_family(session_factory)
-        result, _calls = _ask_base(
-            session_factory, monkeypatch, family, envelope=_availability_asking, msg_id="zzt-combo-r1-m6"
-        )
-        question = _session_vars(session_factory).get("open_question") or {}
-        assert [o.get("code") for o in question.get("options") or []] == sorted(family["sets"].values()), question
-        assert "How many units" not in _said(result), _said(result)
-        assert not (question.get("payload") or {}).get("stock_pick"), question
-
-    def test_dealer_with_another_product_keeps_its_answer(self, session_factory, monkeypatch) -> None:
-        """B1: a base code plus an ordinary product - no pick replaces the answer."""
-        _seed_contact_and_get(session_factory)
-        family = _seed_family(session_factory)
-        other = family["codes"]["ped"]
-        result, calls = _ask_base(
-            session_factory, monkeypatch, family, envelope=_availability, msg_id="zzt-combo-r1-b1", also=(other,)
-        )
-        said = _said(result)
-        assert f"{other} x 2: yes, we have stock." in said, said
-        assert "Which one?" not in said, said
-
-    def test_a_fully_typed_code_beside_its_base_code_gets_no_line(self, session_factory, monkeypatch) -> None:
-        """B2: "BASE BASE-SC" - SC was typed in full, so only SC-UF gets a line."""
-        _seed_contact_and_get(session_factory)
-        family = _seed_family(session_factory)
-        codes = family["codes"]
-        result, _calls = _ask_base(
-            session_factory, monkeypatch, family, envelope=_compact_codes, msg_id="zzt-combo-r1-b2", also=(codes["sc"],)
-        )
-        said = _said(result)
-        assert f"{codes['sc']} is part of" not in said, said
-        assert f"{codes['sc_uf']} is part of set(s)" in said, said
-
-    def test_another_companys_set_and_an_inactive_set_are_never_named(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """S4/M8: `sets_containing` reads through the scoped ProductSet, active only."""
         from tests.chatbot.test_engine_company_scope import _seed_company
 
         _seed_contact_and_get(session_factory)
@@ -764,98 +681,116 @@ class TestReviewRound1:
         _add_set(session_factory, foreign, [family["ids"]["sc"]], company_id=other_company)
         _add_set(session_factory, retired, [family["ids"]["sc"]], is_active=False)
         result, _calls = _ask_base(
-            session_factory, monkeypatch, family, envelope=_compact_codes, msg_id="zzt-combo-r1-s4"
+            session_factory, monkeypatch, family, envelope=_compact_codes, msg_id="zzt-s2-scope"
         )
         said = _said(result)
-        assert f"{family['codes']['sc']} is part of set(s)" in said, said
-        assert foreign not in said, said
-        assert retired not in said, said
+        assert family["sets"]["rl"] in said, said
+        assert foreign not in said and retired not in said, said
 
 
-class TestSetHeaderEdges:
-    def _header(self, members, rows, *, flags=None):
-        from app.services.chatbot.lanes.business import set_stock
+class TestDealer:
+    """Dealer: ONE quantity per set; the weakest part decides, ETA = the latest part's (Q3)."""
 
-        codes = [m[0] for m in members]
-        envelope = _compact(rows)(codes)
-        for item in envelope["items"]:
-            item["flags"] = (flags or {}).get(item["title"], {})
-        return set_stock.set_header(
-            {"set_code": "S-RL", "members": [{"product_code": c, "quantity": q} for c, q in members]},
-            envelope,
-        )
-
-    def test_a_tie_names_the_first_member(self) -> None:
-        """M2: two members tie at the minimum - the first in set order is named."""
-        header = self._header(
-            [("A", 1), ("B", 1), ("C", 1)],
-            {"0": (9, {"BRW": 9}), "1": (3, {"BRW": 3}), "2": (3, {"BRW": 3})},
-        )
-        assert "Complete sets: 3 (limited by B)" in header, header
-
-    def test_a_discontinued_member_supplies_nothing(self) -> None:
-        """N2: the resolver's own rule (`entity_resolver._probe_product_set`)."""
-        header = self._header(
-            [("A", 1), ("B", 1)],
-            {"0": (9, {"BRW": 9}), "1": (8, {"BRW": 8})},
-            flags={"B": {"discontinued": True}},
-        )
-        assert "Complete sets: 0 (limited by B)" in header, header
-        assert "By location: BRW 0" in header, header
-
-
-
-class TestTesterPassDealerPick:
-    """crew-tester pass on dev (PR #1443 comment 5952540166), steps 5 and 6: with real PO
-    rows behind the base code's products, the zero-stock ladder appended "No stock and
-    no incoming for ..., but PO is placed:" plus PO detail to the DEALER's set pick, and
-    its own question replaced the pick, so "3" answered the prefix products instead of
-    the set. The ladder is off for any reply carrying a `stock_availability` block; the
-    set pick had emptied that block."""
-
-    def _po_envelope(self, code: str) -> dict[str, Any]:
-        from tests.chatbot.test_rearch_r11_zero_stock_ladder import _po_rows
-
-        return _po_rows(code)
-
-    def _ask(self, session_factory, monkeypatch, family, msg_id):
+    def _dealer(self, monkeypatch) -> None:
         from app.services.chatbot import turn_runtime
-        from tests.chatbot.test_rearch_r11_zero_stock_ladder import INCOMING_TOOL, PO_TOOL, _incoming_rows
 
-        # The tester's contact is a real availability-only dealer (`profile.
-        # stock_availability_only`), which is what routes the dealer's own engine arms.
         monkeypatch.setattr(turn_runtime, "_stock_availability_only", lambda *a, **k: True)
-        # Dev's own settings row: the cross-domain ladder is ON for inventory.
-        from app.models.user import SystemSetting
 
-        db = session_factory()
-        try:
-            for row in db.query(SystemSetting).all():
-                row.chatbot_crossdomain_ladder = {
-                    "inventory": ["incoming", "purchase_order"],
-                    "incoming": ["inventory", "purchase_order"],
-                }
-            db.commit()
-        finally:
-            db.close()
+    def _ask_set(self, session_factory, monkeypatch, envelope, msg_id, *, set_code_qty=None):
+        """A set code ask, returning (result, calls, set_code, member codes, member ids)."""
+        _seed_contact_and_get(session_factory)
+        set_code, codes, ids = _seed_set(session_factory, quantities=(1, 1, 2))
+        by_code = dict(zip(codes, ids))
+        by_id = dict(zip(ids, codes))
 
-        return _ask_base(
-            session_factory,
-            monkeypatch,
-            family,
-            envelope=_availability_asking,
-            msg_id=msg_id,
-            others={
-                PO_TOOL: self._po_envelope(family["codes"]["sc"]),
-                INCOMING_TOOL: _incoming_rows(family["codes"]["sc"]),
-            },
+        def _call(name: str, args: dict[str, Any]) -> str:
+            if name == STOCK_TOOL:
+                asked = args.get("requested_quantities")
+                asked = json.loads(asked) if isinstance(asked, str) else (asked or {})
+                per_code = {by_id[k]: v for k, v in asked.items() if k in by_id}
+                return json.dumps(
+                    envelope([by_id[p] for p in sorted(_product_ids(args)) if p in by_id], by_code, per_code)
+                )
+            return _unknown_envelope()
+
+        mcp_call, calls = _mcp_double(other=_call)
+        qf = _stock_ask(set_code)
+        if set_code_qty is not None:
+            qf["entities"][0]["quantity"] = set_code_qty
+        result = _run_turn_engine(
+            session_factory, monkeypatch, qf=qf, text_body=f"{set_code} stock", msg_id=msg_id, mcp_call=mcp_call,
         )
+        assert result.status == "done", result.error
+        return result, calls, set_code, codes, ids
 
-    def test_the_ladder_sees_the_dealer_availability_block(self, session_factory, monkeypatch) -> None:
-        """The ladder's own off switch for a dealer (`answer.crossdomain_zeroset`: a
-        non-empty `stock_availability` block). This harness's resolve-side probes answer
-        nothing, so the PO block itself cannot render here; what the ladder is HANDED is
-        exactly what decided it on dev."""
+    def test_a_set_code_asks_one_quantity(self, session_factory, monkeypatch) -> None:
+        self._dealer(monkeypatch)
+        result, _calls, set_code, codes, _ids = self._ask_set(
+            session_factory, monkeypatch, _dealer_rows({}, None), "zzt-d1"
+        )
+        said = _said(result)
+        # One question for the whole set, in the open quantity task's own one-slot
+        # wording (`turn/task.py::StockQtyTask.question`).
+        assert said == f"How many units of {set_code}?", said
+        for code in codes:
+            assert code not in said, said
+
+    def test_the_quantity_reply_answers_the_set_in_one_line(self, session_factory, monkeypatch) -> None:
+        self._dealer(monkeypatch)
+        _r, _c, set_code, codes, ids = self._ask_set(
+            session_factory, monkeypatch, _dealer_rows({}, None), "zzt-d2-a"
+        )
+        by_id = dict(zip(ids, codes))
+        by_code = dict(zip(codes, ids))
+
+        def _call(name: str, args: dict[str, Any]) -> str:
+            if name == STOCK_TOOL:
+                # The real tool echoes each part's OWN asked quantity (`requested_quantities`).
+                asked = args.get("requested_quantities")
+                asked = json.loads(asked) if isinstance(asked, str) else (asked or {})
+                per_code = {by_id[k]: v for k, v in asked.items() if k in by_id}
+                return json.dumps(
+                    _dealer_rows({}, 5)([by_id[p] for p in sorted(_product_ids(args)) if p in by_id], by_code, per_code)
+                )
+            return _unknown_envelope()
+
+        mcp_call, calls = _mcp_double(other=_call)
+        result = _run_turn_engine(
+            session_factory, monkeypatch,
+            # A bare number, as the parser reads one (`test_dsv_apply_tasks.py`'s own shape).
+            qf=_parser_output(
+                message_type="business_query", intent_hint=None, domain_hint=None,
+                entities=[], demand_qty=5, order_status=None,
+            ),
+            text_body="5", msg_id="zzt-d2-b", mcp_call=mcp_call,
+        )
+        assert result.status == "done", result.error
+        stock_calls = [a for n, a in calls if n == STOCK_TOOL]
+        assert stock_calls, calls
+        asked = stock_calls[-1].get("requested_quantities")
+        asked = json.loads(asked) if isinstance(asked, str) else asked
+        # 5 sets: x1, x1 and x2 per set.
+        assert asked == {ids[0]: 5, ids[1]: 5, ids[2]: 10}, stock_calls[-1]
+        assert _said(result) == f"{set_code} x 5: yes, we have stock. Please refer to your salesman.", _said(result)
+
+    def test_a_quantity_typed_with_the_set_code_answers_at_once(self, session_factory, monkeypatch) -> None:
+        self._dealer(monkeypatch)
+        result, calls, set_code, _codes, ids = self._ask_set(
+            session_factory, monkeypatch, _dealer_rows({}, 3), "zzt-d3", set_code_qty=3
+        )
+        asked = [a for n, a in calls if n == STOCK_TOOL][-1].get("requested_quantities")
+        asked = json.loads(asked) if isinstance(asked, str) else asked
+        assert asked == {ids[0]: 3, ids[1]: 3, ids[2]: 6}, asked
+        assert _said(result) == f"{set_code} x 3: yes, we have stock. Please refer to your salesman.", _said(result)
+
+    def test_an_answered_set_is_logged_as_its_parts(self, session_factory, monkeypatch, caplog) -> None:
+        """Customer asks (`stock_asks.product_id` -> products) is written from the
+        answered rows: a set is not a product, so the answered reply keeps the PARTS'
+        own rows, never one row keyed by the set id (FK violation, swallowed)."""
+        import logging
+
+        from sqlalchemy import text
+
         from app.services.chatbot import answer_bridge
 
         seen: list[dict[str, Any]] = []
@@ -866,56 +801,126 @@ class TestTesterPassDealerPick:
             return real(**kwargs)
 
         monkeypatch.setattr(answer_bridge, "_run_crossdomain_ladder", _spy)
-        _seed_contact_and_get(session_factory)
-        family = _seed_family(session_factory)
-        self._ask(session_factory, monkeypatch, family, "zzt-combo-t6-spy")
-        assert seen, "the hit ladder must have been consulted on this stock turn"
-        assert all(item.get("stock_availability") for item in seen), seen
+        self._dealer(monkeypatch)
+        caplog.set_level(logging.ERROR, logger="app.services.chatbot.engine")
+        _r, _c, _set_code, _codes, ids = self._ask_set(
+            session_factory, monkeypatch, _dealer_rows({}, 3), "zzt-d-log", set_code_qty=3
+        )
+        assert "stock ask follow-up failed" not in caplog.text, caplog.text
+        # The ladder still sees a non-empty availability block on the ANSWERED turn.
+        assert seen and all(item.get("stock_availability") for item in seen), seen
+        db = session_factory()
+        try:
+            logged = {
+                str(r[0])
+                for r in db.execute(
+                    text("SELECT product_id FROM stock_asks WHERE product_id::text = ANY(:ids)"),
+                    {"ids": list(ids)},
+                ).fetchall()
+            }
+        finally:
+            db.close()
+        assert logged == set(ids), (logged, ids)
 
-    def test_the_set_pick_is_armed_and_no_ladder_block_reaches_the_dealer(
-        self, session_factory, monkeypatch
-    ) -> None:
+    def test_the_weakest_part_decides_and_the_eta_is_the_latest(self, session_factory, monkeypatch) -> None:
+        self._dealer(monkeypatch)
+        rows = {"0": ("incoming", "05/11/2026"), "1": ("in_stock", None), "2": ("incoming", "20/11/2026")}
+        result, _calls, set_code, _codes, _ids = self._ask_set(
+            session_factory, monkeypatch, _dealer_rows(rows, 3), "zzt-d4", set_code_qty=3
+        )
+        assert _said(result) == f"{set_code} x 3: no stock at the moment, ETA 20/11/2026.", _said(result)
+
+    def test_no_incoming_beats_incoming(self, session_factory, monkeypatch) -> None:
+        self._dealer(monkeypatch)
+        rows = {"0": ("incoming", "05/11/2026"), "1": ("no_incoming", None)}
+        result, *_ = self._ask_set(session_factory, monkeypatch, _dealer_rows(rows, 3), "zzt-d5", set_code_qty=3)
+        assert _said(result).endswith(": no stock and no incoming at the moment. Please refer to your salesman."), _said(result)
+
+    def test_base_code_pick_then_one_quantity(self, session_factory, monkeypatch) -> None:
+        self._dealer(monkeypatch)
         _seed_contact_and_get(session_factory)
         family = _seed_family(session_factory)
-        result, _calls = self._ask(session_factory, monkeypatch, family, "zzt-combo-t6-a")
+        ids = family["ids"]
+        by_id = {v: family["codes"][k] for k, v in ids.items()}
+        by_code = {family["codes"][k]: v for k, v in ids.items()}
+
+        def asking(codes: list[str]) -> dict[str, Any]:
+            return _dealer_rows({}, None)(codes, by_code)
+
+        result, _calls = _ask_base(session_factory, monkeypatch, family, envelope=asking, msg_id="zzt-d6-a")
         said = _said(result)
-        assert "Which one?" in said, said
-        for needle in ("PO is placed", "Ordered", "Outstanding", "No stock", "incoming"):
-            assert needle not in said, (needle, said)
-        question = _session_vars(session_factory).get("open_question") or {}
-        assert [o.get("code") for o in question.get("options") or []] == sorted(
-            family["sets"].values()
-        ), question
-
-    def test_answering_the_pick_runs_that_sets_members(self, session_factory, monkeypatch) -> None:
-        _seed_contact_and_get(session_factory)
-        family = _seed_family(session_factory)
-        self._ask(session_factory, monkeypatch, family, "zzt-combo-t6-b")
-        # Still a dealer on the answering turn (monkeypatch persists for the test).
+        assert said.startswith(f"{family['base']} is part of 3 sets. Which one?"), said
         position = sorted(family["sets"].values()).index(family["sets"]["rl"]) + 1
 
         def _call(name: str, args: dict[str, Any]) -> str:
             if name == STOCK_TOOL:
-                return json.dumps(_availability(["X"]))
+                return json.dumps(asking([by_id[p] for p in sorted(_product_ids(args)) if p in by_id]))
             return _unknown_envelope()
 
         mcp_call, calls = _mcp_double(other=_call)
         result = _run_turn_engine(
-            session_factory,
-            monkeypatch,
+            session_factory, monkeypatch,
             qf=_parser_output(
-                message_type="casual",
-                intent_hint=None,
-                domain_hint=None,
-                entities=[],
-                reference_positions=[position],
-                order_status=None,
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[position], order_status=None,
             ),
-            text_body=str(position),
-            msg_id="zzt-combo-t6-c",
-            mcp_call=mcp_call,
+            text_body=str(position), msg_id="zzt-d6-b", mcp_call=mcp_call,
         )
-        assert result.status == "done", result.error
-        stock_calls = [args for name, args in calls if name == STOCK_TOOL]
-        ids = family["ids"]
+        assert _said(result) == f"How many units of {family['sets']['rl']}?", _said(result)
+        stock_calls = [a for n, a in calls if n == STOCK_TOOL]
         assert stock_calls and _product_ids(stock_calls[-1]) == {ids["ped"], ids["cis"], ids["sc"]}, stock_calls
+
+    def test_no_number_of_ours_and_no_ladder_block(self, session_factory, monkeypatch) -> None:
+        from app.services.chatbot import answer_bridge
+
+        seen: list[dict[str, Any]] = []
+        real = answer_bridge._run_crossdomain_ladder
+
+        def _spy(**kwargs):
+            seen.append(dict(kwargs.get("item") or {}))
+            return real(**kwargs)
+
+        monkeypatch.setattr(answer_bridge, "_run_crossdomain_ladder", _spy)
+        self._dealer(monkeypatch)
+        result, *_ = self._ask_set(session_factory, monkeypatch, _dealer_rows({}, None), "zzt-d7")
+        assert all(item.get("stock_availability") for item in seen), seen
+        set_code = _said(result).removeprefix("How many units of ").removesuffix("?")
+        assert not any(ch.isdigit() for ch in _said(result).replace(set_code, "")), _said(result)
+
+
+class TestSetAnswerUnit:
+    def test_a_tie_names_the_first_member(self) -> None:
+        from app.services.chatbot.lanes.business import set_stock
+
+        envelope = _compact({"0": (9, {"BRW": 9}), "1": (3, {"BRW": 3}), "2": (3, {"BRW": 3})})(["A", "B", "C"])
+        text = set_stock.staff_set_answer(
+            {"set_code": "S-RL", "members": [{"product_code": c, "quantity": 1} for c in "ABC"]}, envelope
+        )
+        assert text == "S-RL: 3 sets available (limited by B)\nBy location: BRW 3", text
+
+    def test_a_discontinued_member_supplies_nothing(self) -> None:
+        from app.services.chatbot.lanes.business import set_stock
+
+        envelope = _compact({"0": (9, {"BRW": 9}), "1": (8, {"BRW": 8})})(["A", "B"])
+        envelope["items"][1]["flags"] = {"discontinued": True}
+        text = set_stock.staff_set_answer(
+            {"set_code": "S-RL", "members": [{"product_code": c, "quantity": 1} for c in "AB"]}, envelope
+        )
+        assert text == "S-RL: 0 sets available (limited by B)", text
+
+    def test_fractional_quantity_floors(self) -> None:
+        from app.services.chatbot.lanes.business import set_stock
+
+        envelope = _compact({"0": (9, {"BRW": 9}), "1": (10, {"BRW": 10})})(["A", "B"])
+        text = set_stock.staff_set_answer(
+            {"set_code": "S-RL", "members": [{"product_code": "A", "quantity": 1}, {"product_code": "B", "quantity": 1.5}]},
+            envelope,
+        )
+        assert text.startswith("S-RL: 6 sets available (limited by B)"), text
+
+    def test_no_answer_from_a_dealer_envelope(self) -> None:
+        from app.services.chatbot.lanes.business import set_stock
+
+        assert set_stock.staff_set_answer(
+            {"set_code": "S", "members": [{"product_code": "A", "quantity": 1}]}, _availability(["A"])
+        ) is None

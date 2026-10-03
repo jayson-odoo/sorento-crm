@@ -352,7 +352,7 @@ def _expand_product_set(match: Any) -> list[Any]:
 
 def _expanded_sets(matches: list[Any]) -> list[dict[str, Any]]:
     """The sets `_expand_product_set` is about to replace, one row per set code, in
-    match order: what `set_stock.set_header` writes the complete-sets line from."""
+    match order: what `set_stock` writes the set-level answer from."""
     out: dict[str, dict[str, Any]] = {}
     for m in matches:
         if jsc.get(m, "entity_type") != "product_set":
@@ -360,6 +360,7 @@ def _expanded_sets(matches: list[Any]) -> list[dict[str, Any]]:
         code = jsc.js_string(jsc.get(m, "canonical_code") or "")
         members = [
             {
+                "uuid": jsc.get(member, "uuid"),
                 "product_code": jsc.get(member, "product_code"),
                 "quantity": jsc.get(member, "quantity"),
             }
@@ -367,7 +368,7 @@ def _expanded_sets(matches: list[Any]) -> list[dict[str, Any]]:
             if jsc.truthy(jsc.get(member, "uuid"))
         ]
         if code and members and code not in out:
-            out[code] = {"set_code": code, "members": members}
+            out[code] = {"set_id": jsc.get(m, "uuid"), "set_code": code, "members": members}
     return list(out.values())
 
 

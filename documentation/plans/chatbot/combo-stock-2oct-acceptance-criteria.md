@@ -23,3 +23,20 @@ Full access = stock visibility `detailed` or `compact`; dealer = `availability`.
   over that set's members. A message that also names another product keeps its availability
   answer.
 - AC-CS6 Membership only ever comes from `product_set_members`; inventory stock asks only.
+
+## Superseded 3 Oct 2026 (owner hand test FAIL): AC-CS2, AC-CS4, AC-CS5 are replaced by
+
+- AC-CS7 Staff (detailed or compact), set code: the whole reply is
+  `SET: N sets available (limited by M)` plus, when any location has a set, one line
+  `By location: L n, ...` of non-zero locations, most sets first. No component row, zero row,
+  per-company miss line or freshness footer.
+- AC-CS8 Staff, base code whose answer is only that code's products: `BASE sets:`, one line
+  `n. SET: N sets` per active set of the caller's company carrying those products (counted by
+  the stock tool over every member), `Reply a number for one set's locations.`; the number
+  answers that set as AC-CS7.
+- AC-CS9 Dealer, set code (typed or picked): `How many units of SET?`; the quantity answers
+  `SET x N: <sentence>` from the existing four dealer sentences, each member asked N x its
+  qty per set, the weakest member deciding, the latest ETA among `incoming` members. No
+  number of ours. Customer asks logs the members.
+- AC-CS10 Dealer, base code: `BASE is part of N sets. Which one?` + numbered sets; the number
+  is AC-CS9.

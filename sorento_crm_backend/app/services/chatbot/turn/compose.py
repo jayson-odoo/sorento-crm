@@ -198,24 +198,21 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
         rows = [r for r in (ask.get("last_result_set") or []) if isinstance(r, dict)]
         kind = str(ask.get("kind"))
         if kind == "set_pick":
-            # COMBO-STOCK slice 3 (owner Q3, dealer): a product pick whose option carries
-            # the set's MEMBERS (`uuids`), so answering it runs the stock ask over them -
-            # the same entities a typed set code reaches (`gate._expand_product_set`).
-            # NOT a `stock_pick` (review S1/S2): that payload reads a bare number as a
-            # quantity and stamps it onto every picked member 1:1, which is wrong for a
-            # set (a member taken twice per set needs twice the stock). A bare number
-            # picks the set; the member answer that follows asks its own quantity, as
-            # the existing availability pattern does.
+            # COMBO-STOCK (owner, 3 Oct 2026): a pick of SETS. An option carries the set
+            # code and the set's OWN id as its uuid; the answering turn's runner turns
+            # that id into the set's members (`turn_runtime._set_entities`). A plain
+            # `product_pick`, never a `stock_pick`: that one reads a bare number as a
+            # quantity.
             options = [
                 {
                     "position": int(row.get("idx") or i + 1),
                     "label": row.get("label"),
                     "code": row.get("value"),
-                    "uuids": [str(u) for u in (row.get("uuids") or []) if u],
+                    "uuid": row.get("uuid"),
                     "entity_type": "product",
                 }
                 for i, row in enumerate(rows)
-                if row.get("uuids")
+                if row.get("value") and row.get("uuid")
             ]
             if options:
                 return pending_ask(
