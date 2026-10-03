@@ -69,10 +69,64 @@ def test_a_contact_with_no_grant_reads_no_logistics_field() -> None:
         assert value not in said, said
 
 
-def test_a_contact_with_no_grant_still_reads_the_always_shown_fields() -> None:
+# --- owner hand test 3 Oct 2026: EVERY printed DO field is a toggle, Warehouse included ----- #
+
+#: Every field the DO list prints, by reveal key, with the value `_ROW` prints for it.
+ALL_DO_FIELDS = {
+    "delivery_orders.order_number": ("Order Number", "202609-0916"),
+    "delivery_orders.customer": ("Customer", "HANLIM TRADING SDN BHD [A/C I]"),
+    "delivery_orders.order_date": ("Order Date", "07/09/2026"),
+    "delivery_orders.delivery_date": ("Actual Delivery Date", "07/09/2026"),
+    "delivery_orders.status": ("Status", "Picked Up / In Transit"),
+    "delivery_orders.pickup_time": ("Pickup Time", "09:18:00"),
+    "delivery_orders.transporter": ("Transporter", "SORENTO"),
+    "delivery_orders.driver": ("Driver", "AZHAR"),
+    "delivery_orders.lorry_plate": ("Lorry Plate", "VQP1678"),
+    "delivery_orders.warehouse": ("Warehouse", "BRW"),
+    "delivery_orders.products": ("Products", "SRT320-CR (200)"),
+}
+
+
+def test_a_contact_with_no_grant_reads_no_do_field_at_all() -> None:
     said = _reply(None)
-    for value in ("202609-0916", "HANLIM TRADING SDN BHD [A/C I]", "BRW", "SRT320-CR (200)"):
-        assert value in said, said
+    for label, _value in ALL_DO_FIELDS.values():
+        assert f"*{label}:*" not in said, f"{label} must be hidden without its grant: {said!r}"
+    assert "BRW" not in said and "SRT320-CR" not in said, said
+
+
+def test_each_do_field_has_its_own_switch() -> None:
+    for key, (label, value) in ALL_DO_FIELDS.items():
+        said = _reply([key])
+        assert f"*{label}:* {value}" in said, (key, said)
+        others = [lbl for k, (lbl, _v) in ALL_DO_FIELDS.items() if k != key]
+        assert not [lbl for lbl in others if f"*{lbl}:*" in said], (key, said)
+
+
+def test_with_every_switch_on_the_reply_is_as_before() -> None:
+    said = _reply(list(ALL_DO_FIELDS))
+    for label, value in ALL_DO_FIELDS.values():
+        assert f"*{label}:* {value}" in said, (label, said)
+
+
+def test_every_do_switch_is_on_the_field_reveals_checklist() -> None:
+    listed = dict(FIELD_REVEAL_KEYS)
+    assert set(ALL_DO_FIELDS) <= set(listed), sorted(set(ALL_DO_FIELDS) - set(listed))
+
+
+def test_the_by_product_do_list_hides_warehouse_too() -> None:
+    """The by-product DO list used to print the warehouse inside Products ("X (1) @ BRW"),
+    which would get round the Warehouse switch; it is its own switched field now."""
+    body = {"data": [{
+        "order_number": "202609-0916", "debtor_name": "HANLIM TRADING SDN BHD [A/C I]",
+        "order_date": "2026-09-07", "actual_delivery_date": "2026-09-07",
+        "matched_products": [{"product_code": "SRT320-CR", "quantity": 200, "warehouse_code": "BRW"}],
+    }]}
+    envelope = json.loads(_mcp()[1]("crm_order_management_orders_by_product_list", json.dumps(body)))
+    keys = [k for k in ALL_DO_FIELDS if k != "delivery_orders.warehouse"]
+    said = fetch.output_structurer(envelope, {"semantic_input": {}, "access": {"attributes": keys}})["response"]
+    assert "SRT320-CR (200)" in said and "BRW" not in said, said
+    said = fetch.output_structurer(envelope, {"semantic_input": {}, "access": {"attributes": list(ALL_DO_FIELDS)}})["response"]
+    assert "*Warehouse:* BRW" in said, said
 
 
 def test_a_contact_with_every_grant_reads_today_s_reply() -> None:

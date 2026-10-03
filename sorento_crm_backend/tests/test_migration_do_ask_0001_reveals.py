@@ -25,11 +25,17 @@ _MIGRATION_PATH = (
     Path(__file__).resolve().parent.parent / "alembic" / "versions" / "do_ask_0001_reveals.py"
 )
 KEYS = {
+    "delivery_orders.order_number",
+    "delivery_orders.customer",
+    "delivery_orders.order_date",
+    "delivery_orders.delivery_date",
     "delivery_orders.status",
     "delivery_orders.pickup_time",
     "delivery_orders.transporter",
     "delivery_orders.driver",
     "delivery_orders.lorry_plate",
+    "delivery_orders.warehouse",
+    "delivery_orders.products",
 }
 
 
@@ -128,7 +134,7 @@ def test_running_it_twice_changes_nothing(db):
     count = db.execute(
         text("SELECT count(*) FROM contact_field_reveals WHERE respond_contact_id = :c"), {"c": contact}
     ).scalar()
-    assert count == 5
+    assert count == len(KEYS)
 
 
 def test_downgrade_removes_only_the_five_keys(db):
