@@ -309,6 +309,21 @@ class TestReadByTheParser:
 
 
 class TestTheRulesAreGone:
+    def test_grouping_and_supplier_words_beside_a_parsed_category_are_never_read(self, console) -> None:
+        """Reviewer kill test: the category IS settled (parser), so a re-added grouping
+        regex or leftover-word supplier search would change this run."""
+        _text, calls = console.say(_ask(low_stock=_ls(categories=["water closet"])),
+                                   "low stock water closet jinbaichuan trading by supplier per category")
+        (args,) = calls
+        assert not args.get("suppliers"), args
+        assert args.get("split", "none") == "none", args
+
+    def test_a_product_type_the_parser_left_a_product_is_never_relabelled(self, console) -> None:
+        """Reviewer kill test for the digit-shape rule: "water tap" resolves to seeded
+        categories, so a relabel would run a category-scoped report."""
+        _text, calls = console.say(_ask(_e("water tap", "product")), "low stock water tap")
+        assert not any(c.get("categories") for c in calls), calls
+
     def test_grouping_and_supplier_words_in_the_text_alone_are_never_read(self, console) -> None:
         """The message names a category, a supplier and a grouping, but the parser placed
         nothing: no regex and no leftover-word search reads them, the category is asked."""
@@ -421,6 +436,19 @@ class TestAsked:
         _text, calls = console.say(_answer("all"), "all")
         assert calls == [], "the question was dropped; 'all' must not start a run"
 
+    def test_a_new_low_stock_ask_over_the_supplier_question_runs_its_own_words(self, console) -> None:
+        """Reviewer must-fix 2 (reproduced): it ran the OLD category and quoted the whole
+        message as a supplier."""
+        console.say(_ask(low_stock=_ls(categories=["water tap"], suppliers=["acme"])), "low stock water tap from acme")
+        text, calls = console.say(
+            _ask(low_stock=_ls(categories=["water closet"], group_by="category"),
+                 open_question_answer={"mode": None, "picked": [], "items": [], "qty_for_all": None}),
+            "low stock report water closet by category",
+        )
+        (args,) = calls
+        assert args.get("categories") == ["SRT-WC"] and args.get("split") == "category", args
+        assert _filter_line(text) == "water closet, all suppliers, by category"
+
     def test_clear_resets(self, console) -> None:
         console.say(_ask(), "low stock report")
         reset = _parser_output(message_type="casual", intent_hint=None, domain_hint=None, entities=[],
@@ -526,6 +554,16 @@ class TestUnsupportedGrouping:
         (args,) = calls
         assert args.get("split") == "supplier", args
 
+    def test_a_supplier_pick_after_the_key_was_revoked_runs_downgraded(self, session_factory, monkeypatch) -> None:
+        """Reviewer should-fix 3: the pick was offered with the key held."""
+        grants = [GRANT, SUPPLIER_KEY]
+        console = _console(session_factory, monkeypatch, grants=grants)
+        console.say(_ask(low_stock=_ls(categories=["water tap"], group_by="brand")), "split by brand")
+        grants.remove(SUPPLIER_KEY)
+        _text, calls = console.say(_answer("pick", 1), "1")
+        (args,) = calls
+        assert args.get("split", "none") == "none", args
+
     def test_without_the_supplier_key_only_category_and_none_are_offered(self, console_no_supplier_key) -> None:
         text, _calls = console_no_supplier_key.say(
             _ask(low_stock=_ls(categories=["water tap"], group_by="brand")), "split by brand"
@@ -571,6 +609,15 @@ class TestRefinement:
         _text, calls = console.say(_refine(group_by="category"), "per category")
         (args,) = calls
         assert args.get("suppliers") == [TAIYANG] and args.get("split") == "category", args
+
+    def test_the_frame_dies_with_a_turn_that_ran_no_report(self, console) -> None:
+        """Reviewer should-fix 2: a turn that is not the filtered report clears it."""
+        self._report(console)
+        console.say(_stock_ask(), "CB100 BRW")
+        text, calls = console.say(_refine(suppliers=["taiyang"]), "taiyang only")
+        # (A carried "Couldn't find CB100." may trail the question: STUCK-QTY-LOOP's
+        # stale-entity fix, not this lane's.)
+        assert calls == [] and text.startswith(QUESTION)
 
     def test_a_new_ask_never_inherits(self, console) -> None:
         self._report(console)
@@ -707,6 +754,16 @@ class TestTheOpenQuestion:
         stale = [{"kind": "stock", "status": "asking", "slots": [{"code": "X", "qty": None}]}]
         obj = question.open_question(None, stale, slot)
         assert obj == {"kind": "free", "about": "low_stock_report", "question": QUESTION, "owed": ["category"]}
+
+    def test_it_outranks_a_carried_roster_pick(self) -> None:
+        """Reviewer should-fix 1: the slot lives one turn, so it is the newest question."""
+        from app.services.chatbot.turn import question
+        from app.services.chatbot.turn.pending import Pending
+
+        slot = {"ask": "low_stock_report", "asking": "category", "values": {}, "options": []}
+        roster = Pending(kind="customer_pick", expects="position", options=[{"position": 1, "code": "A", "label": "A"}],
+                         team=None, payload={}, asked_at_turn=None)
+        assert question.open_question(roster, [], slot)["about"] == "low_stock_report"
 
     def test_a_pick_is_stated_with_its_options(self) -> None:
         from app.services.chatbot.turn import question

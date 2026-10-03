@@ -41,8 +41,7 @@ API
   before anything routes the message. The open question is stated to the parser as the turn's
   `Open question:` object (`turn/question.of_required_ask`), so the PARSER says whether the
   message answers it (LOWSTOCK-SEMANTIC, crew ruling Q4, 4 Oct 2026): a declared
-  `open_question_answer` (fill / pick / all / done / cancel) or the same ask read again is the
-  answer, and the verdict is rerouted to the ask, its entities cleared, `is_affirmative` and
+  `open_question_answer` (fill / pick / all / done / cancel) is the answer, and the verdict is rerouted to the ask, its entities cleared, `is_affirmative` and
   `topic_reset` cleared, and `required_ask` / `required_ask_reply` / `required_ask_answer`
   carry the slot, the text and the parser's answer to the lane. Anything else (a new question,
   "clear", an empty message) drops the question (`required_ask_dropped`): a new question
@@ -223,10 +222,14 @@ def collect(
                     got = _settle(db, spec, reply, carried)
             if got.status == "ok":
                 values[spec.name] = {"value": got.value, "label": got.label}
-            elif got.status == "ambiguous":
+            elif got.status == "ambiguous" and not (options and int(slot.get("misses") or 0) + 1 >= MAX_MISSES):
+                # A pick answered with a word that needs another pick is counted as a miss,
+                # so it never loops (never-stuck rule); a free question's first pick is not.
                 opts = [list(o) for o in got.options]
+                misses = int(slot.get("misses") or 0) + (1 if options else 0)
                 return Outcome(values=values, reply=_pick_line(spec, opts),
-                               slot=_slot(ask, values, carried, asking=spec.name, options=opts), extras=carried)
+                               slot=_slot(ask, values, carried, asking=spec.name, options=opts,
+                                          misses=misses), extras=carried)
             else:
                 word = " ".join(str(said_reply or "").split())
                 misses = int(slot.get("misses") or 0) + 1
@@ -291,14 +294,13 @@ def reply_verdict(
     # The parser was shown this question as the turn's `Open question:` object
     # (`turn/question.of_required_ask`), so whether the message answers it is ITS reading,
     # never the message's length or punctuation (LOWSTOCK-SEMANTIC, crew ruling Q4 and the
-    # STUCK-QTY-LOOP pending-question rule): a declared answer, or the same ask read again
-    # ("water tap by supplier"), is the answer; anything else is a new question, which
-    # always wins, and "clear" is the parser's `topic_reset` with no answer.
+    # STUCK-QTY-LOOP pending-question rule): only a declared answer is the answer. Anything
+    # else is a new question, which always wins (a whole new low stock ask included: it
+    # settles from its own words), and "clear" is the parser's `topic_reset` with no answer.
     answer = verdict.get("open_question_answer")
     mode = answer.get("mode") if isinstance(answer, dict) else None
     answers = mode in ANSWER_MODES
-    same_ask = bool(verdict.get("intent_hint")) and verdict.get("intent_hint") == ask.reroute.get("intent_hint")
-    if not (text or "").strip() or not (answers or same_ask):
+    if not (text or "").strip() or not answers:
         return verdict, "required_ask_dropped"
     rerouted = {
         **verdict, **ask.reroute, "entities": [], "open_question_answer": None,

@@ -4152,10 +4152,10 @@ def _run_stages_body(  # noqa: PLR0915
         s7_mode = _s7_mode(db, settings_row)
         space_id_for_turn = business_services.fetch_space_id(db)
 
-        # LOWSTOCK-FILTER-ASK: an ask that left a required field open (the slot is one
-        # turn long, consumed here) reads this message as the answer unless it is plainly
-        # another ask; a fresh low stock ask takes its category / brand words off the
-        # entity list for the lane. Read before every other seam below.
+        # LOWSTOCK-FILTER-ASK / LOWSTOCK-SEMANTIC: an ask that left a required field open
+        # (the slot is one turn long, consumed here) reads this message as its answer only
+        # when the parser declared one; a fresh low stock ask keeps only the entities that
+        # scope the run. Read before every other seam below.
         from app.services.chatbot import required_fields
         from app.services.chatbot.lanes.business import low_stock_ask
 
@@ -4174,6 +4174,9 @@ def _run_stages_body(  # noqa: PLR0915
         # key; only the entities that scope the RUN stay, and the last settled report's
         # frame rides along for a refinement.
         verdict = low_stock_ask.take_entities(verdict, state_in.focus.low_stock)
+        # The frame lives one report: only a turn that runs the low stock report writes it
+        # back (below), so it never outlives the reply it describes.
+        state_in.focus.low_stock = None
 
         # Owner retest of top selling round 4 (27 Sep 2026): inside a ranking, the message
         # is read against the question the bot asked before anything routes it.
@@ -5735,8 +5738,7 @@ def _run_stages_body(  # noqa: PLR0915
                     (e["low_stock_frame"] for e in envelopes or [] if isinstance(e, dict) and isinstance(e.get("low_stock_frame"), dict)),
                     None,
                 )
-                if low_stock_frame is not None:
-                    state_out.focus.low_stock = low_stock_frame
+                state_out.focus.low_stock = low_stock_frame
                 if (
                     (state_out.focus.top_selling or {}).get("asked")
                     and state_out.pending is not None

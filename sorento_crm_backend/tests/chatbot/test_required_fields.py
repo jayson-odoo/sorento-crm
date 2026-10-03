@@ -265,6 +265,14 @@ class TestOptionalFieldAskedWhenUnknown:
         assert out.reply == "I don't know 'spaceship' as a colour.\n\nWhich colour?"
         assert out.slot["asking"] == "colour"
 
+    def test_a_pick_answered_with_another_ambiguous_word_gives_up(self):
+        """Never-stuck: an ambiguous answer to a pick is counted like a miss."""
+        first = _start(WITH_ASKED_OPTIONAL, category="water tap", colour="bl")
+        again = _reply(WITH_ASKED_OPTIONAL, first, "bl")
+        assert again.slot["misses"] == 1
+        last = _reply(WITH_ASKED_OPTIONAL, again, "bl")
+        assert last.done and last.values["colour"]["value"] == rf.ALL
+
     def test_a_good_reply_takes_it(self):
         out = _reply(WITH_ASKED_OPTIONAL, _start(WITH_ASKED_OPTIONAL, category="water tap", colour="x"), "blue")
         assert out.done and out.values["colour"]["value"] == "BL"
@@ -314,11 +322,14 @@ class TestReplyVerdict:
         assert verdict["required_ask_answer"] == answer
         assert verdict["open_question_answer"] is None
 
-    def test_the_same_ask_read_again_is_the_answer(self):
+    def test_the_same_ask_with_no_declared_answer_is_a_new_ask(self):
+        """Reviewer must-fix 2: a whole new low stock ask while the supplier question is
+        open was read as the supplier answer. A new question always wins."""
         slot = _start(ONE).slot
-        _out, rule = rf.reply_verdict({"intent_hint": "test_one"}, slot, "the water tap one please",
-                                      asks={"test_one": ONE})
-        assert rule == "required_ask_answer"
+        verdict = {"intent_hint": "test_one", "open_question_answer": _answer(None)}
+        out, rule = rf.reply_verdict(verdict, slot, "low stock report water closet by category",
+                                     asks={"test_one": ONE})
+        assert out == verdict and rule == "required_ask_dropped"
 
     def test_a_short_reply_the_parser_does_not_read_as_an_answer_drops_the_question(self):
         """Kill test: the old three-word rule captured ANY short reply as the answer."""

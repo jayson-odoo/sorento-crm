@@ -466,6 +466,9 @@ def route_filters(outcome: rf.Outcome) -> dict[str, Any]:
     supplier = supplier_value.get("value")
     include_supplier = outcome.extras.get("include_supplier") is True
     grouping = (outcome.values.get("grouping") or {}).get("value")
+    # The LIVE permission, again: a pick offered while the supplier key was held and
+    # answered after it was revoked runs downgraded, as #1445 did, never a refused split.
+    grouping = _group_word(grouping if isinstance(grouping, str) else None, include_supplier)
     split = grouping if grouping in SPLIT_LABELS else "none"
     out: dict[str, Any] = {"split": split}
     if isinstance(category, list) and category:

@@ -124,14 +124,14 @@ def of_required_ask(slot: Any) -> dict[str, Any] | None:
 
 
 def open_question(pending: Pending | None, tasks: Any, required_ask: Any = None) -> dict[str, Any] | None:
-    """The ONE question on the table: the open pick or offer, which is what the next
-    message answers, else a required field the last reply asked for (it is newer than any
-    stock task still in the focus), else the stock question (`task.open_question`), else
-    None."""
-    obj = of_pending(pending)
+    """The ONE question on the table: a required field the LAST reply asked for (the slot
+    lives one turn, so it is always the newest question, newer than a carried roster pick
+    or a stock task still in the focus), else the open pick or offer, else the stock
+    question (`task.open_question`), else None."""
+    obj = of_required_ask(required_ask)
     if obj is not None:
         return obj
-    obj = of_required_ask(required_ask)
+    obj = of_pending(pending)
     if obj is not None:
         return obj
     return task_mod.open_question(tasks)
