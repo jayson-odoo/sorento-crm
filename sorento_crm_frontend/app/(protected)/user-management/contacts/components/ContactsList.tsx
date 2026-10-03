@@ -571,7 +571,7 @@ export default function ContactsList() {
             isRefreshing={isFetching && !isLoading}
             primaryAction={listPrimaryAction}
             leftActions={
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
                 <Checkbox
                   id="contacts-no-customers"
                   checked={customersNone}

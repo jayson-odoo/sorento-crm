@@ -98,7 +98,12 @@ export default function ContactAccessFilters({ value, onChange }: Props) {
   const cls = 'w-full sm:w-44';
 
   return (
-    <div className="flex w-full flex-wrap items-center gap-2" data-testid="contact-access-filters">
+    // Phones: a one-column grid (`minmax(0,1fr)`), so a long chosen label truncates instead of
+    // widening the toolbar past the screen; from `sm` up the fixed-width triggers wrap in a row.
+    <div
+      className="grid w-full min-w-0 grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center"
+      data-testid="contact-access-filters"
+    >
       <SearchableSelect
         triggerClassName={cls}
         truncateTriggerLabel
