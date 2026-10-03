@@ -1276,3 +1276,40 @@ def test_kill_report_ask_reads_no_regex_for_the_reply() -> None:
     assert "re.findall" not in inspect.getsource(report_ask)
     resolve = inspect.getsource(report_ask._resolve_top_n)
     assert "re." not in resolve and "findall" not in resolve, resolve
+
+
+# --------------------------------------------------------------------------- #
+# Held-state rule (owner): a new intent always wins. A parser-declared sales_ranking verdict is a
+# new ask and is never taken by the open top selling question ("By quantity or by amount?").
+# --------------------------------------------------------------------------- #
+
+ASK_METRIC = "By quantity or by amount?"
+
+
+def _ask_top_selling_metric(console) -> None:
+    text, _calls = console.say(
+        _old(_hit("sorento", "brand"), rank_by=None, top_n=10), "top 10 sales items for sorento"
+    )
+    assert ASK_METRIC in text, f"setup: the top selling question was not asked: {text!r}"
+
+
+def test_a_sales_ranking_verdict_is_never_taken_by_the_open_top_selling_question(console) -> None:
+    _ask_top_selling_metric(console)
+    text, calls = console.say(
+        _rank(_hit("sorento", "brand"), group_by="customer", top_n=1000, **THIS_YEAR),
+        "top 1000 customers for sorento this year",
+    )
+    assert ASK_METRIC not in text, text
+    (args,) = calls
+    assert args["group_by"] == "customer" and args["top_n"] == 1000, args
+    assert args["brand_ids"] == [console.ids["brand"]], args
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+
+
+def test_guard_a_genuine_answer_still_answers_the_open_top_selling_question(console, monkeypatch) -> None:
+    _ask_top_selling_metric(console)
+    text, log = _say_all(
+        console, monkeypatch, _old(rank_by="amount", entities=[], top_n=None), "amount"
+    )
+    assert "crm_top_selling_report" in _names(log), (_names(log), text)
+    assert TOOL not in _names(log), (_names(log), text)
