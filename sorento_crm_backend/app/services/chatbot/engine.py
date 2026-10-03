@@ -4082,6 +4082,26 @@ def _run_stages_body(  # noqa: PLR0915
         s7_mode = _s7_mode(db, settings_row)
         space_id_for_turn = business_services.fetch_space_id(db)
 
+        # LOWSTOCK-FILTER-ASK: an ask that left a required field open (the slot is one
+        # turn long, consumed here) reads this message as the answer unless it is plainly
+        # another ask; a fresh low stock ask takes its category / brand words off the
+        # entity list for the lane. Read before every other seam below.
+        from app.services.chatbot import required_fields
+        from app.services.chatbot.lanes.business import low_stock_ask
+
+        _message_text = jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+        # Security S1: these keys are the ENGINE's own; one the parser emitted (the
+        # Anthropic path does not enforce the schema's additionalProperties) is dropped.
+        verdict = {k: v for k, v in verdict.items() if k not in required_fields.ENGINE_KEYS}
+        open_ask = state_in.focus.required_ask
+        state_in.focus.required_ask = None
+        verdict, required_rule = required_fields.reply_verdict(verdict, open_ask, _message_text)
+        if required_rule:
+            turn_trace.add("required_ask", {"verdict_rule": required_rule, "ask": (open_ask or {}).get("ask")})
+        if required_rule == "required_ask_answer":
+            state_in = dataclasses_replace(state_in, pending=None)
+        verdict = low_stock_ask.take_words(verdict, _message_text)
+
         # Owner retest of top selling round 4 (27 Sep 2026): inside a ranking, the message
         # is read against the question the bot asked before anything routes it.
         # R2 (round 7): read before the verdict below can change the conversation.
@@ -4114,6 +4134,61 @@ def _run_stages_body(  # noqa: PLR0915
         )
         if order_list_rule:
             turn_trace.add("order_list", {"verdict_rule": order_list_rule})
+        # SO-NUMBER-ASK: "all my sales orders" is the SO list whatever the parser read (the
+        # tester measured "okay how about all my sales order?" as an SO answer in 1 of 3
+        # runs): the words decide the document, as they decide the order list's brand above.
+        from app.services.chatbot import so_status as so_status_mod
+
+        # Cloud pass on #1435 (live parser): the SO numbers the message typed are its SO
+        # entities, never one copied off the previous card.
+        verdict, typed_so_rule = so_status_mod.typed_so_numbers_verdict(
+            verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+        )
+        if typed_so_rule:
+            turn_trace.add("so_status", {"verdict_rule": typed_so_rule})
+        # Same pass: the report status and document the parser carried onto "1" under the
+        # outstanding offer, or onto a period answering the SO list, are not the message's.
+        if not (in_ranking_conversation or top_selling_rule or state_in.focus.status == "top_selling"):
+            verdict, carried_rule = so_status_mod.carried_status_verdict(
+                verdict,
+                jsc.js_string(jsc.get(_inner_message(envelope), "text") or ""),
+                focus_document=state_in.focus.document,
+                focus_status=state_in.focus.status,
+                pending_kind=getattr(state_in.pending, "kind", None),
+            )
+            if carried_rule:
+                turn_trace.add("so_list", {"verdict_rule": carried_rule})
+        # Never inside a top selling ranking: there "by sales order" / "SO basis" switch the
+        # ranking's basis (`_top_selling_verdict` above, round 7 R3), and the list must not
+        # take the ranking's question or its status away.
+        so_list_rule = None
+        if not (in_ranking_conversation or top_selling_rule or state_in.focus.status == "top_selling"):
+            verdict, so_list_rule = so_status_mod.so_list_verdict(
+                verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+            )
+        if so_list_rule:
+            turn_trace.add("so_list", {"verdict_rule": so_list_rule})
+            # Owner hand test, 3 Oct 2026: over an open outstanding summary, "find all my
+            # sales order" was read as re-scoping THAT report (its detail offer and the
+            # carried `focus.status` both survived) and printed it again. An SO list ask
+            # starts its own question: the outstanding offer and status go.
+            import dataclasses as _dc
+
+            open_kind = getattr(state_in.pending, "kind", None)
+            state_in = _dc.replace(
+                state_in,
+                focus=_dc.replace(state_in.focus, status=None),
+                pending=None if open_kind in ("outstanding_detail", "outstanding_scope") else state_in.pending,
+            )
+        if not (in_ranking_conversation or top_selling_rule or state_in.focus.status == "top_selling"):
+            # The month and the "outstanding" an SO ask types, when the parser dropped them.
+            from app.services.chatbot import do_ask as _do_ask
+
+            verdict, typed_rule = so_status_mod.typed_words_verdict(
+                verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or ""), _do_ask.today_myt()
+            )
+            if typed_rule:
+                turn_trace.add("so_list", {"verdict_rule": typed_rule})
 
         # PR #1353 fix round 3: a bare position over an open roster is read by the
         # engine, and its positions win over the parser's (turn 3f56a40d: "2" read as 1).
@@ -4585,7 +4660,14 @@ def _run_stages_body(  # noqa: PLR0915
                 domains=plan.domains,
                 db=db,
             )
-            if resolved_kinds or resolved_candidates:
+            # SO-NUMBER-ASK: a plan that ASKED before the resolver ran ("Which one do you
+            # mean? 1. SO421624 2. SO999998 3. SO422057") was built without the unplaced
+            # words, so `narrow.decide`'s own "a roster never offers a token the resolver
+            # could not place" rule never saw them. Re-entering with them lets it fire.
+            # Order plans only, the lane this was measured on.
+            if resolved_kinds or resolved_candidates or (
+                unplaced_tokens and plan.ask is not None and "order" in plan.domains
+            ):
                 # The ONE re-entry the plan allows: what the resolver found goes back
                 # into APPLY, so the narrower asks about things that exist and a
                 # reconciled kind lands before anything is fetched.
@@ -5556,6 +5638,12 @@ def _run_stages_body(  # noqa: PLR0915
                 answer.files.extend(_stock_ask_packing_list_files(envelopes))
                 stock_ask_entries = _stock_ask_answered_entries(envelopes)
                 record_top_selling_asked(state_out.focus, envelopes)
+                # LOWSTOCK-FILTER-ASK: a lane that asked for a required field hands its
+                # slot back; it stays open for the next message only.
+                state_out.focus.required_ask = next(
+                    (e["required_ask"] for e in envelopes or [] if isinstance(e, dict) and isinstance(e.get("required_ask"), dict)),
+                    None,
+                )
                 if (
                     (state_out.focus.top_selling or {}).get("asked")
                     and state_out.pending is not None
@@ -5564,6 +5652,15 @@ def _run_stages_body(  # noqa: PLR0915
                     # Owner retest (27 Sep 2026): the lane asked a question over a
                     # ranking still on screen, so the "2" that answers it must not
                     # pick row 2 of the old list. The question closes the list.
+                    state_out = dataclasses_replace(state_out, pending=None)
+                if (
+                    state_out.pending is not None
+                    and state_out.pending.kind in ("outstanding_detail", "outstanding_scope")
+                    and _answered_by_so_list(envelopes)
+                ):
+                    # crew-tester re-run on PR #1435 (3 Oct 2026): "1" under the summary got
+                    # the SO list's period question, and the sticky detail offer then read
+                    # "september" as narrowing the summary. The SO list answered: it closes.
                     state_out = dataclasses_replace(state_out, pending=None)
                 turn_trace.record(
                     "looked_up",
@@ -7837,6 +7934,16 @@ def _stock_ask_packing_list_files(envelopes: list[dict[str, Any]]) -> list[dict[
                 }
             )
     return files
+
+
+def _answered_by_so_list(envelopes: list[dict[str, Any]]) -> bool:
+    """Did the SO list (`lanes/business._so_list_reply`) answer this turn?"""
+    for env in envelopes:
+        raw = env.get("raw_fragment") if isinstance(env, dict) else None
+        fetched = raw.get("fetch") if isinstance(raw, dict) else None
+        if isinstance(fetched, dict) and fetched.get("so_list") is True:
+            return True
+    return False
 
 
 def _stock_ask_answered_entries(envelopes: list[dict[str, Any]]) -> list[dict[str, Any]]:

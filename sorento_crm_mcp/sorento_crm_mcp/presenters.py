@@ -1479,7 +1479,9 @@ STOCK_BLOCKED = "\U0001F6AB"
 _AVAILABILITY_TAILS = {
     "too_big": f"{STOCK_BLOCKED} the quantity is more than what I can confirm here. {REFER_TO_SALESMAN}",
     "in_stock": f"{STOCK_YES} {REFER_TO_SALESMAN}",
-    "no_incoming": f"{STOCK_NO} No incoming. {REFER_TO_SALESMAN}",
+    # REFER-ONLY-FIXES (owner, 3 Oct 2026): `no_incoming` is reached only with no stock
+    # (`stock_ask_branch.branch`: some stock is `in_stock`), so the line says both.
+    "no_incoming": f"{STOCK_NO} No stock and no incoming. {REFER_TO_SALESMAN}",
 }
 
 
@@ -2281,6 +2283,12 @@ def _outstanding_envelope(report: dict) -> dict:
 #: The three lines the low stock report can answer with (AC-61). Written here, once, and
 #: handed to the lane verbatim: one writer, one wording.
 _LOW_STOCK_PENDING = "Preparing the low stock report - it will be sent here when ready."
+#: A test turn's pending (the console, `dry_run`): the route never hands it to the worker,
+#: so nothing is pushed; the file still lands in My Downloads.
+_LOW_STOCK_PENDING_DRY_RUN = (
+    "Preparing the low stock report - test turn: it will be in My Downloads, "
+    "nothing is sent to WhatsApp."
+)
 #: Both busy lines NAME the report (console round 3, defect C): "a plan is already running"
 #: alone left the reader - and the console assertion - guessing which plan, and the two
 #: busies have different fixes (wait a minute vs wait ten).
@@ -2382,7 +2390,8 @@ def _low_stock_envelope(payload: dict) -> dict:
         return {"result_type": "low_stock_report", "response": busy_line,
                 "attachments": [], "has_result": True}
     if status == "pending":
-        return {"result_type": "low_stock_report", "response": _LOW_STOCK_PENDING,
+        line = _LOW_STOCK_PENDING_DRY_RUN if payload.get("dry_run") is True else _LOW_STOCK_PENDING
+        return {"result_type": "low_stock_report", "response": line,
                 "attachments": [], "has_result": True}
     # Unknown / error / a raw error body: the error line verbatim, never pending and never
     # the generic inventory miss.
