@@ -102,7 +102,7 @@ def test_a_dealer_ask_with_no_range_fetches_nothing_and_asks_which_period():
 
 def test_the_period_question_names_the_customer_once():
     said, _calls = _run()
-    assert "Which period for HANLIM TRADING SDN BHD?" in said, said
+    assert "Which period for HANLIM TRADING SDN BHD [A/C I]?" in said, said
 
 
 def test_naming_an_order_number_needs_no_range():

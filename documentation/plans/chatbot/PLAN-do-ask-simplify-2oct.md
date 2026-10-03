@@ -78,6 +78,12 @@ selling (own lanes), `order_status=so_outstanding` (open SO lines, no DO yet).
 
 ### Rule 1: compact header
 
+**Reconciled with CUSTOMER-GROUP (#1441, merged 3 Oct 2026):** the company a line names is
+its explicit customer GROUP (`ledger_family.customer_header_words` over the turn's
+`customer_groups`); a ledger in no group prints its own full name (owner ruling (b)). This
+lane's name-rule `group_names` / `family_words` are removed; every place below uses main's
+formatter. The paragraph that follows is the earlier statement of the same rule.
+
 **Owner rule, 2 Oct 2026 (supersedes the counts below):** wherever the chatbot names a customer
 company (DO headers hit and miss, the period question, the customer-scope "not under your
 account" line) it prints the GROUP NAME ONLY, e.g. `HANLIM TRADING SDN BHD`: no

@@ -21,7 +21,7 @@ import re
 from typing import Any, Mapping
 
 from app.services.chatbot.turn.state import focus_row_label
-from app.services.ledger_family import family_words
+from app.services.ledger_family import customer_group_of, customer_header_words
 
 # NARROWED (main, captain ruling 2026-08-24, ported verbatim): this header describes
 # a DELIVERY ORDER search specifically - it used to gate on "domains the CRM
@@ -143,7 +143,7 @@ def _axis_words(
             words.append(printable)
 
     if axis["label"] == "Customer":
-        # DO-ASK-SIMPLIFY tester pass 1: the grouped customer name, not the word typed,
+        # DO-ASK-SIMPLIFY tester pass 1: the customer company's name, not the word typed,
         # whenever the DB has named every row (a code never prints, so a row it has not
         # named falls back to the ladder below). The forced links of a contact asking
         # about an order NUMBER are not a subject of their own: no Customer line.
@@ -152,9 +152,9 @@ def _axis_words(
             for e in gate_entities or []
         ):
             return _SKIP
-        names = [_printable(row.get("display_name")) for row in rows]
-        if all(names):
-            return family_words(names)
+        named = [_printable(row.get("display_name")) for row in rows]
+        if all(named):
+            return customer_header_words([(n, customer_group_of(n)) for n in named]) or None
     resolutions = resolver_json.get("resolutions") if isinstance(resolver_json, Mapping) else None
     for res in resolutions or []:
         if not isinstance(res, dict):
@@ -171,11 +171,11 @@ def _axis_words(
                 continue
             if str(e.get("hint") or "") in hints:
                 _add(e.get("raw"))
+    if not words and axis["label"] == "Customer":
+        # The group's name once per customer company, never ledger by ledger.
+        names = [_printable(row.get("display_name") or row.get("title") or row.get("code")) for row in rows]
+        return customer_header_words([(n, customer_group_of(n)) for n in names if n]) or None
     if not words:
-        if axis["label"] == "Customer":
-            return family_words(
-                [_printable(row.get("display_name") or row.get("title") or row.get("code")) for row in rows]
-            )
         for row in rows:
             # Hand pass 12 round 3, Group F (owner ruling): a customer row's own
             # `display_name` - `turn_runtime.py::fill_customer_names`'s DB-resolved
@@ -233,7 +233,7 @@ def _one_typed_word(rows: Any) -> str | None:
     return raws.pop() or None
 
 
-def _focus_words(rows: Any, *, customers: bool = False) -> str | None:
+def _focus_words(rows: Any, *, customer: bool = False) -> str | None:
     """The SAME axis, off the FOCUS carry - AC-1695's own case, which main has no
     equivalent for because main's header runs in the tail, where the session's
     carried subject is already on `prev`. A bare positional pick ("1") names no
@@ -244,20 +244,21 @@ def _focus_words(rows: Any, *, customers: bool = False) -> str | None:
     after a pick to name it. Customer and Product only: those are the two axes a
     `Focus` carries."""
     words: list[str] = []
-    if customers:
+    if customer:
         # DO-ASK-SIMPLIFY tester pass 1: rows that each carry their resolved name print the
-        # grouped name, not the one word typed for them (`_one_typed_word`).
+        # customer company's name, not the one word typed for them (`_one_typed_word`).
         kept = [row for row in rows or [] if isinstance(row, Mapping)]
         named = [_printable(row.get("display_name") or row.get("name")) for row in kept]
         if kept and all(named):
-            return family_words(named)
+            return customer_header_words([(n, customer_group_of(n)) for n in named]) or None
     typed = _one_typed_word(rows)
     if typed:
         return typed
-    if customers:
-        return family_words(
-            [_printable(focus_row_label(row)) for row in rows or [] if isinstance(row, Mapping)]
-        )
+    if customer:
+        names = [
+            _printable(focus_row_label(row)) for row in rows or [] if isinstance(row, Mapping)
+        ]
+        return customer_header_words([(n, customer_group_of(n)) for n in names if n]) or None
     for row in rows or []:
         if not isinstance(row, Mapping):
             continue
@@ -309,7 +310,7 @@ def search_scope_header(
         if words is _SKIP:
             continue
         if words is None and axis["label"] in focus_by_label:
-            words = _focus_words(focus_by_label[axis["label"]], customers=axis["label"] == "Customer")
+            words = _focus_words(focus_by_label[axis["label"]], customer=axis["label"] == "Customer")
         if axis["always"]:
             lines.append(f"{axis['label']}: {words or axis['all_text']}")
         elif words:

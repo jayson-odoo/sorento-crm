@@ -728,10 +728,9 @@ class TestGroupFHitHeaderNamesLedgers:
         assert result.status == "done", result.error
         said = _said(result)
 
-        # Owner rule (2 Oct 2026, DO-ASK-SIMPLIFY): the header names the customer by its
-        # GROUP name only, so the picked ledger's trailing "(KEMAMAN OUTLET)" marker goes.
-        assert "Customer: ZZT BATH IDEA\n" in said, (
-            f"the HIT reply's own header must name the pick's group: {said!r}"
+        # CUSTOMER-GROUP ruling (b): an ungrouped ledger prints its own full name.
+        assert "Customer: ZZT BATH IDEA (KEMAMAN OUTLET)\n" in said, (
+            f"the HIT reply's own header must name the single ledger the pick covers: {said!r}"
         )
         assert option_code not in said, (
             f"no customer CODE must ever reach the reply text, header included: "
