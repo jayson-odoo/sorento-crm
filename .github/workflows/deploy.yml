@@ -168,6 +168,21 @@ jobs:
               )
           PY
 
+  # The repo is public: fail on a real Malaysian mobile number or lorry plate,
+  # or a tracked raw capture (.playwright-mcp/, *.har, *.rdb), in any tracked
+  # file. Stdlib only, a few seconds. Fake values to use instead are listed in
+  # scripts/pii_guard.py. Same `if` as the alembic gate, so it runs on docs-only
+  # changes too (docs are where evidence captures land).
+  pii-guard:
+    name: PII guard (fast gate)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ci'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: No personal data in tracked files
+        run: python3 scripts/pii_guard.py
+
   # Which areas a change touches, so the multi-minute jobs below only run
   # when the code they test can have changed. Before this, every job ran on
   # every PR regardless of what it changed, which is the main reason CI
