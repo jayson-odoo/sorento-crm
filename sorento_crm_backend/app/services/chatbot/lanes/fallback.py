@@ -209,8 +209,6 @@ def memory_line_and_offer(fb: FallbackContext, copy: Any, lang: str) -> tuple[st
             offer = copy.render_in("fallback_offer_usual_site", lang, site=fb.usual_site, products=products)
         else:
             offer = copy.render_in("fallback_offer_usual", lang, products=products)
-    elif fb.last_time:
-        offer = copy.render_in("fallback_offer_rerun", lang)
     else:
         offer = copy.render_in("fallback_offer", lang)
     return "", offer

@@ -141,12 +141,6 @@ CHATBOT_REPLY_FALLBACK_OFFER = {
     "ms": "Apa yang saya boleh semak untuk anda? Stok, barang masuk, pesanan penghantaran, promosi atau butiran produk.",
     "zh": "需要我帮您查什么？库存、到货、送货单、促销或产品资料。",
 }
-#: The re-run offer.
-CHATBOT_REPLY_FALLBACK_OFFER_RERUN = {
-    "en": "Want me to check any of that again, or something new?",
-    "ms": "Mahu saya semak semula, atau perkara lain?",
-    "zh": "要我再查一次，还是查别的？",
-}
 #: The offer from the contact's usual products (and usual site), Full memory only.
 CHATBOT_REPLY_FALLBACK_OFFER_USUAL = {
     "en": "Want me to check stock for {{products}}, or something new?",
@@ -230,7 +224,6 @@ CHATBOT_REPLY_HANDOVER_SALESPERSON = {
 FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
     "fallback_ack": (CHATBOT_REPLY_FALLBACK_ACK, ()),
     "fallback_offer": (CHATBOT_REPLY_FALLBACK_OFFER, ()),
-    "fallback_offer_rerun": (CHATBOT_REPLY_FALLBACK_OFFER_RERUN, ()),
     "fallback_offer_usual": (CHATBOT_REPLY_FALLBACK_OFFER_USUAL, ("products",)),
     "fallback_offer_usual_site": (CHATBOT_REPLY_FALLBACK_OFFER_USUAL_SITE, ("site", "products")),
     "fallback_offer_customer": (CHATBOT_REPLY_FALLBACK_OFFER_CUSTOMER, ("customer", "team")),
