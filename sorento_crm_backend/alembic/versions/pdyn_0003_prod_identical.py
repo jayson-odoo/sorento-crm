@@ -50,7 +50,7 @@ PROMPT_NAME = "chatbot_semantic_parser"
 SNAPSHOT = pathlib.Path(__file__).resolve().parents[1] / "data" / "chatbot_semantic_parser.prod-20261001.txt"
 MESSAGE = (
     "Production text of 1 Oct 2026 (owner-supplied), registry variables wherever the "
-    "registry reproduces it exactly. Renders identical to that text. Unlabelled: publish "
+    "registry reproduces it exactly. Renders identical to that text plus the ACCOUNT-LEDGER block before the policy blocks. Unlabelled: publish "
     "from the Prompts page."
 )
 

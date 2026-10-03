@@ -344,7 +344,7 @@ INSERT INTO ai_prompt_versions (id, name, version, type, template, variables, co
 VALUES (gen_random_uuid(), 'chatbot_semantic_parser', v, 'text', tpl, COALESCE(vars_json, '["current_date"]'::jsonb),
 jsonb_build_object('prod_snapshot', 'chatbot_semantic_parser.prod-20261001.txt', 'prod_snapshot_sha256', 'fdbf2ea1ba0cc019b2a171f323e0c8160b4cc445b8804ab89d255b135a910129',
 'rendered_identical', true, 'identical_report', rep, 'source', 'crew-migration SQL'),
-'Production text of 1 Oct 2026 (owner-supplied), registry variables wherever the registry reproduces it exactly. Renders identical to that text. Unlabelled: publish from the Prompts page.', now());
+'Production text of 1 Oct 2026 (owner-supplied), registry variables wherever the registry reproduces it exactly. Renders identical to that text plus the ACCOUNT-LEDGER block before the policy blocks. Unlabelled: publish from the Prompts page.', now());
 RAISE NOTICE 'prod snapshot v%: published unlabelled', v;
 FOR i IN 1..jsonb_array_length(rep) LOOP
 RAISE NOTICE 'prod snapshot v%: {{%}} line % %', v, rep->(i-1)->>'variable', rep->(i-1)->>'line', rep->(i-1)->>'action';

@@ -670,7 +670,7 @@ def with_account_block(text: str) -> str:
     block = ACCOUNT_LEDGER_ADDENDUM.strip("\n")
     if BLOCKS_BEGIN in text:
         head, rest = text.split(BLOCKS_BEGIN, 1)
-        return f"{head.rstrip(chr(10))}\n\n{block}\n\n{BLOCKS_BEGIN}{rest}"
+        return f"{head}{block}\n\n{BLOCKS_BEGIN}{rest}"
     return f"{text.rstrip(chr(10))}\n\n{block}\n"
 
 

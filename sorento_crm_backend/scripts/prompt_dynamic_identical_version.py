@@ -16,7 +16,9 @@ byte-identical to the source; it never labels, publishes or stages.
 production file (`alembic/data/chatbot_semantic_parser.prod-20261001.txt`), printing the
 first differing line when they part. `--against M` compares with version M rendered the
 same way instead (owner Q-A = (a): the rebuild of his edited plain-text version is checked
-against that version, so his edits are not differences). Read-only.
+against that version, so his edits are not differences). Read-only. The account block is
+added to the reference side only, so the version under test must carry it itself; swapping the
+two numbers therefore reports a difference at the block.
 
     venv/bin/python -m scripts.prompt_dynamic_identical_version --owner-edits-from 54 --save
 
@@ -95,7 +97,8 @@ def build(db, *, from_version: int | None = None, save: bool = False) -> dict:
         variables=list(source.variables or []),
         config_json={"identical_to_version": source.version, "identical_report": report},
         commit_message=(
-            f"Same rendered prompt as v{source.version}, with registry variables where its "
+            f"Same rendered prompt as v{source.version}, plus the ACCOUNT-LEDGER block before the "
+            f"policy blocks, with registry variables where its "
             f"lists match the registries exactly ({', '.join(replaced) or 'none'}). "
             "Unlabelled: promote only after review."
         ),
@@ -131,12 +134,23 @@ OWNER_EDITS: tuple[tuple[str, str, str], ...] = (
     ("policy block sales line", f"\n{_PURCHASE_COST_LINE}\n", f"\n{_PURCHASE_COST_LINE}\n{_SALES_LINE}\n"),
 )
 
+#: The text each edit ADDS, by label: a source that already has it is refused, not doubled.
+OWNER_EDIT_MARKERS: dict[str, str] = {
+    "line 82 domain_hint": "| purchase_order | purchase_cost | sales | null",
+    "line 401 entity hint": "|attachment_type|specification",
+    "policy block sales line": _SALES_LINE,
+}
+
 
 def apply_owner_edits(source: str) -> tuple[str, list[dict]]:
     """`source` with the owner's 3 approved edits, and what changed. Raises ValueError when an
     edit's text is not found exactly once, or when the result differs from the source in
     anything but those 3 lines (never a guess)."""
     text, changes = source, []
+    for label, old, new in OWNER_EDITS:
+        marker = OWNER_EDIT_MARKERS.get(label)
+        if marker is not None and marker in source:
+            raise ValueError(f"{label}: the source already carries this edit; nothing written")
     for label, old, new in OWNER_EDITS:
         if text.count(old) != 1:
             raise ValueError(f"{label}: the text to edit was not found exactly once ({text.count(old)} times)")
