@@ -9,7 +9,7 @@ UPDATE chatbot_domains SET tools = array_append(tools, 'crm_report_ask')
 INSERT INTO ai_prompt_versions (id, name, version, type, template, variables, commit_message, created_at)
 SELECT gen_random_uuid(), 'chatbot_semantic_parser',
        COALESCE((SELECT max(version) FROM ai_prompt_versions WHERE name = 'chatbot_semantic_parser'), 0) + 1,
-       'text', replace($tpl_55731c793b$You are the Sorento Semantic Parser. You are given:
+       'text', replace($tpl_a0876fb4e8$You are the Sorento Semantic Parser. You are given:
 - Previous response: the assistant's last message to the user (may be "(none)").
 - current_user_message: the latest user message.
 
@@ -1484,7 +1484,7 @@ the key it changes.
 An answer that ALSO carries more of the ask is read whole: "amount, top 100, water
 closet" -> rank_by "amount", top_n 100 and the entity {raw: "water closet", hint:
 "category", hint_confident: true}. Never drop the extra keys because the message answers
-a question.
+a question, unless it ranks people or accounts (a sales_ranking ask).
 A bare number after a ranked list ("2") picks that row: reference_positions [2], exactly
 as for any other numbered list. ONLY a whole number from 1 to the length of the list is a
 pick. A year ("2025", "2025?", "in 2025", "what about 2025", "i mean in year 2025") after a
@@ -1804,6 +1804,9 @@ period of the previous ranking is never this ask's period.
   - after that ranking, "top 3 salesman for sorento" -> ranking_refine false, top_n 3,
     date_filter_start null, date_filter_end null
   - "top salesman for sorento" -> ranking_refine false, top_n null
+A ranking of PEOPLE or ACCOUNTS ("top N customers", "top N salesman", "bottom 5 sales agents")
+is ALWAYS order_status "sales_ranking" with its own group_by, even while a top selling
+question ("By quantity or by amount?") is open: a new ask, never an answer to it.
   - answering "How many? For example top 5." with "5", "top 5" or "five" -> order_status
     "sales_ranking", top_n 5
 NOT a sales ranking:
@@ -1828,10 +1831,10 @@ CURRENT DATE
 
 CURRENT DATE: {{current_date}}
 
-If relative dates such as "today" or "yesterday" appear in the current turn input, convert them to absolute dates before calling the MCP tool.$tpl_55731c793b$, '@@EMDASH@@', chr(8212)), '["current_date"]'::jsonb,
+If relative dates such as "today" or "yesterday" appear in the current turn input, convert them to absolute dates before calling the MCP tool.$tpl_a0876fb4e8$, '@@EMDASH@@', chr(8212)), '["current_date"]'::jsonb,
        'report_engine_0001_prompt (REPORT-ENGINE PR #1447): sales_ranking vocabulary', now()
  WHERE NOT EXISTS (SELECT 1 FROM ai_prompt_versions
-                    WHERE name = 'chatbot_semantic_parser' AND md5(template) = '0c997c10fb46dd2995e53c6ad96cb7b6');
+                    WHERE name = 'chatbot_semantic_parser' AND md5(template) = 'ea4fb28ee5629c0fd66fb92c0a3d3407');
 COMMIT;
 -- check: SELECT version, length(template) FROM ai_prompt_versions WHERE name='chatbot_semantic_parser'
---         AND md5(template) = '0c997c10fb46dd2995e53c6ad96cb7b6';   -- expect one row, length 129040
+--         AND md5(template) = 'ea4fb28ee5629c0fd66fb92c0a3d3407';   -- expect one row, length 129362
