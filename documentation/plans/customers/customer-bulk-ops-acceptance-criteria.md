@@ -39,7 +39,7 @@
   Link the linked contacts drop out of the filtered list on refetch.
 
 ## U6 Customers list bulk Set customer group / Remove from group (owner 3 Oct; replaces CUST-GROUP-SEED-REVIEW PR 2 name seeding)
-- U6.1 Select 1+ customers: bulk strip shows "Set customer group (n)" and "Remove from group (n)" (only with `order_management.customers.edit`).
+- U6.1 Select 1+ customers: bulk strip shows "Set customer group (n)" and "Remove from group (m)" (only with `order_management.customers.edit`); n = selected customers, m = selected customers that have a group, Remove disabled at m = 0.
 - U6.2 Set opens a dialog with a searchable group select (server search `searchCustomerGroupsSelect`, caller's company)
   offering "Create group <typed name>" (SearchableSelect `createOption`); Apply disabled until a group is chosen or typed.
 - U6.3 Apply with an existing group: one `addCustomerGroupCustomers(groupId, customerIds)` (`POST /customer-groups/{id}/customers`, all or nothing).

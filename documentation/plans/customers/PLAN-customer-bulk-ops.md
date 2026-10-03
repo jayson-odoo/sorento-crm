@@ -1,6 +1,6 @@
 # PLAN customer-bulk-ops (CUSTOMER-BULK-OPS)
 
-Status: Build (M track, no migration). Slices 1-3 red at 3732790a7, coder next; slices 5-6 (bulk Link customers, Customers column + filter) approved 3 Oct; item 4 CSV import DROPPED.
+Status: Review READY (reviewer + security-reviewer, round 1 fixed at aac7c4373); browser pass + owner hand test pending; alembic gate waits ALEMBIC-JOIN5. M track, no migration.
 
 Behaviour card: `CARD-customer-bulk-ops.md`. UAC: `customer-bulk-ops-acceptance-criteria.md`.
 
