@@ -364,26 +364,35 @@ def test_ac_re_18b_no_number_asks_how_many_then_the_reply_runs(console) -> None:
     text, calls = console.say(_rank(_e("Sorento", "brand"), top_n=None), "top salesman for Sorento last month")
     assert text.strip() == TOPN_Q, text
     assert calls == []
-    _text, calls = console.say(_reply(), "5")
+    _text, calls = console.say(_reply(top_n=5), "5")
     (args,) = calls
     assert args["top_n"] == 5, args
     assert args["brand_ids"] == [console.ids["brand"]], args
     assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
 
 
-def test_ac_re_18b_a_non_number_reply_is_a_miss_and_a_second_miss_gives_up(console) -> None:
-    console.say(_rank(top_n=None), "top salesman last month")
-    text, calls = console.say(_reply(), "lots")
+DEFAULT_NOTE = "I couldn't read how many, so here is the top 10."
+
+
+def test_ac_re_18b_a_non_number_reply_is_a_miss_and_a_second_miss_runs_the_default_top_10(console) -> None:
+    """Crew ruling: the parser's top_n for the reply turn is the only reader. First miss asks again;
+    the second runs top 10 and says so on one line above the ranking."""
+    console.say(_rank(_e("Sorento", "brand"), top_n=None), "top salesman for Sorento last month")
+    text, calls = console.say(_reply(top_n=None), "lots")
     assert calls == []
     assert TOPN_Q in text, text
-    text, calls = console.say(_reply(), "plenty")
-    assert calls == []
-    assert text.strip() == GIVE_UP.format(word="plenty"), text
+    text, calls = console.say(_reply(top_n=None), "plenty")
+    (args,) = calls
+    assert args["top_n"] == 10, args
+    assert args["brand_ids"] == [console.ids["brand"]], args
+    assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
+    assert DEFAULT_NOTE in text, text
+    assert text.index(DEFAULT_NOTE) < text.index("AGENT A"), "the note sits above the ranking"
 
 
 def test_ac_re_18b_a_number_outside_1_to_the_ceiling_is_a_miss(console) -> None:
     console.say(_rank(top_n=None), "top salesman last month")
-    text, calls = console.say(_reply(), "1001")
+    text, calls = console.say(_reply(top_n=1001), "1001")
     assert calls == []
     assert "I can list at most the top 1,000 in one reply." in text, text
     assert TOPN_Q in text, text
@@ -396,7 +405,7 @@ def test_ac_re_18c_neither_asks_the_period_first_then_how_many_then_runs(console
     assert text.strip() == PERIOD_Q and calls == [], text
     text, calls = console.say(_reply(**SEP), "last month")
     assert text.strip() == TOPN_Q and calls == [], text
-    _text, calls = console.say(_reply(), "5")
+    _text, calls = console.say(_reply(top_n=5), "5")
     (args,) = calls
     assert args["top_n"] == 5 and args["date_from"] == "2026-09-01", args
     assert args["brand_ids"] == [console.ids["brand"]], args
@@ -749,7 +758,7 @@ def test_a_top_n_at_the_ceiling_is_accepted(console) -> None:
 def test_the_how_many_answer_200_is_accepted(console, reply_text) -> None:
     text, calls = console.say(_rank(_e("Sorento", "brand"), top_n=None), "top salesman for Sorento last month")
     assert text.strip() == TOPN_Q and calls == [], text
-    text, calls = console.say(_reply(), reply_text)
+    text, calls = console.say(_reply(top_n=200), reply_text)
     assert calls, f"the reply was read as a miss: {text!r}"
     (args,) = calls
     assert args["top_n"] == 200, args
@@ -1101,7 +1110,7 @@ def test_t2_a_fresh_ask_with_no_count_asks_how_many(console) -> None:
 def test_t3_the_number_reply_after_the_how_many_question_runs_top_5(console) -> None:
     _t1(console)
     console.say(_rank(_e("Cabana", "brand"), top_n=None, **SEP_RANGE), "top salesman for cabana last month")
-    _text, calls = console.say(_reply(), "5")
+    _text, calls = console.say(_reply(top_n=5), "5")
     (args,) = calls
     assert args["top_n"] == 5, args
     assert args["group_by"] == "sales_agent" and args["brand_ids"] == [console.cabana], args
@@ -1213,3 +1222,57 @@ def test_a_new_intent_wins_a_stock_ask_after_a_ranking_is_not_a_ranking(console)
     _t1(console)
     text, calls = console.say(_parser_output(), "stock for SRTWC8517")
     assert calls == [], (text, calls)
+
+
+# --------------------------------------------------------------------------- #
+# Crew ruling: no regex in code, even for value extraction. The answer to "How many?" is the
+# PARSER's top_n on the reply turn (as the period answer is its parsed dates).
+# --------------------------------------------------------------------------- #
+
+
+def _ask_how_many(console) -> None:
+    console.say(_rank(_e("Sorento", "brand"), top_n=None), "top salesman for Sorento last month")
+
+
+def test_kill_the_how_many_reply_text_is_not_read_for_digits(console) -> None:
+    """Reply text "5" but the parser's top_n is None: not a top 5 run, the question is asked again."""
+    _ask_how_many(console)
+    text, calls = console.say(_reply(top_n=None), "5")
+    assert calls == [], calls
+    assert TOPN_Q in text, text
+
+
+def test_the_parsers_top_n_wins_over_the_reply_text(console) -> None:
+    _ask_how_many(console)
+    _text, calls = console.say(_reply(top_n=7), "the usual amount")
+    (args,) = calls
+    assert args["top_n"] == 7, args
+    assert args["brand_ids"] == [console.ids["brand"]], args
+
+
+def test_a_reply_verdict_top_n_5_with_text_5_runs_top_5(console) -> None:
+    _ask_how_many(console)
+    _text, calls = console.say(_reply(top_n=5), "5")
+    (args,) = calls
+    assert args["top_n"] == 5, args
+
+
+def test_two_misses_run_the_default_top_10_and_say_so(console) -> None:
+    _ask_how_many(console)
+    text, calls = console.say(_reply(top_n=None), "hmm")
+    assert calls == [] and TOPN_Q in text, text
+    text, calls = console.say(_reply(top_n=None), "dunno")
+    (args,) = calls
+    assert args["top_n"] == 10, args
+    assert DEFAULT_NOTE in text, text
+    assert chr(0x2014) not in text and chr(0x2013) not in text
+
+
+def test_kill_report_ask_reads_no_regex_for_the_reply() -> None:
+    import inspect
+
+    from app.services.chatbot.lanes.business import report_ask
+
+    assert "re.findall" not in inspect.getsource(report_ask)
+    resolve = inspect.getsource(report_ask._resolve_top_n)
+    assert "re." not in resolve and "findall" not in resolve, resolve

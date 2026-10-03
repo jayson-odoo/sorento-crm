@@ -215,3 +215,14 @@ def test_the_addendum_keeps_product_rankings_top_selling() -> None:
 def test_the_addendum_keeps_an_sa_coded_agent_a_filter_under_top_selling() -> None:
     bullet = _bullet(_addendum(), '"top SA01 items')
     assert "top_selling" in bullet and "sales_agent" in bullet, bullet
+
+
+def test_the_addendum_teaches_the_how_many_answer_as_the_parsers_top_n() -> None:
+    """The reply to "How many? For example top 5." is read by the parser, not by code."""
+    a = _addendum()
+    assert "How many? For example top 5." in a
+    at = a.find("How many? For example top 5.")
+    bullet = a[at:].split("\n  - ", 1)[0]
+    for reply in ('"5"', '"top 5"', '"five"'):
+        assert reply in bullet, (reply, bullet)
+    assert "sales_ranking" in bullet and "top_n 5" in bullet, bullet
