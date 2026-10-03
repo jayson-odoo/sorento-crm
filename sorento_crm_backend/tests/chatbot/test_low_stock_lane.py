@@ -529,7 +529,11 @@ class TestTransportFailureSaysThisToolsLine:
         )
 
         reply = (result or {}).get("response") or ""
-        assert reply == "Could not run the low stock report right now.", repr(reply)
+        # LOWSTOCK-FILTER-ASK (owner hand test, 3 Oct 2026): every low stock reply opens
+        # with the filters it was asked with, the failure line included.
+        assert reply == (
+            "Low stock report (all categories, no grouping)\nCould not run the low stock report right now."
+        ), repr(reply)
         assert "problem understanding" not in reply.lower(), reply
         assert (result or {}).get("escalate"), (
             f"the picker still rides on the fragment: {result!r}"

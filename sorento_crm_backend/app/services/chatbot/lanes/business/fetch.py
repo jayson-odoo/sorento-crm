@@ -2492,6 +2492,9 @@ def _low_stock_report_output(result: Any, *, fallback: str = _LOW_STOCK_ERROR_TE
         "field_access": None,
         "requested_attributes": [],
         "keys_served": False,
+        # The report's own terminal answer on every branch: the miss handler never
+        # answers over it (`answer_bridge._miss_triggers`, owner hand test 3 Oct 2026).
+        "low_stock_report": True,
     }
 
 

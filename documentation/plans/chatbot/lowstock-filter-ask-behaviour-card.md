@@ -166,7 +166,8 @@ Wording (exact):
 - The second miss in a row: `I still can't place 'xyz'. Ask for the low stock report again with a category or "all".` (ends the ask; never-stuck).
 - "cancel" / "stop": `Low stock report cancelled.`
 - Settled: the existing ready / pending / busy / error lines, with one filter line under the first:
-  `Low stock report - as of 02/10/2026` / `Category: SRT-FT | Supplier: all | Grouping: none` / `Low: 12 of 40 planned products`.
+  `Low stock report (Sorento water tap, all suppliers, no grouping) - as of 02/10/2026` / `Low: 12 of 40 planned products`.
+  Owner hand test (3 Oct 2026): EVERY low stock reply opens with `Low stock report (<category as typed>, supplier <name> | all suppliers, by <grouping> | no grouping)`, pending / busy / error / empty included.
 
 Examples:
 
@@ -182,7 +183,7 @@ Edge cases:
 
 - A contact without `purchase_orders.supplier`: a supplier word or a supplier grouping in
   the message is not taken (the column is hidden for them); the filter line has no
-  Supplier part (`Category: SRT-FT | Grouping: category`) and the grouping drops to
+  Supplier part (`Low stock report (water tap, by category)`) and the grouping drops to
   category (from supplier x category) or none (from supplier). The route refuses a
   supplier filter or split for them before any run as a second line of defence.
 - A product TYPE the parser hints as a product ("water tap", no digits) is read as the
@@ -198,3 +199,16 @@ Edge cases:
 Neutral module, no low stock knowledge. An ask type registers a `FieldSpec` list; the
 helper owns the slot, the question, the answer reading, "all", numbered picks, misses and
 cancel. See the module docstring for the full contract (the PR body repeats it).
+
+## Owner hand test (3 Oct 2026, head 53a5d27c9): FAIL, fixed
+
+1. "low stock report water closet taiyang" (turn 3dec9b68): the parser hinted "taiyang" as
+   a brand; no category carries it, so it was dropped as a brand AND hidden from the
+   supplier search. Now a brand word no category carries stays a plain word, and the
+   supplier search only skips the category words and the KNOWN brands.
+2. "low stock report by supplier, water closet only" (turn 4a90dd1d): the parser's
+   `{raw: "supplier", hint: "supplier"}` reached the resolver, missed, and the miss handler
+   replaced the report's reply. Now a fresh low stock ask keeps only warehouse and product
+   (code) entities; every other word stays in the message text the lane reads; and a low
+   stock reply is marked so `answer_bridge` never answers a miss over it.
+3. The applied filters were said only on a ready reply. Now every reply opens with them.

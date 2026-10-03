@@ -214,7 +214,7 @@ def _low_stock_not_enabled() -> dict[str, Any]:
     }
 
 
-def _low_stock_unavailable() -> dict[str, Any]:
+def _low_stock_unavailable(header: str | None = None) -> dict[str, Any]:
     """Console round 3, defect A: the low stock CALL failed - say so in this tool's own
     words, never the lane's generic "I ran into a problem understanding that".
 
@@ -226,8 +226,12 @@ def _low_stock_unavailable() -> dict[str, Any]:
     inventory" line, which says the wrong thing about a report that failed to build.
     `escalate` still rides on the fragment for any consumer that offers the team picker.
     """
+    # LOWSTOCK-FILTER-ASK (owner hand test, 3 Oct 2026): every low stock reply names the
+    # filters it was asked with, the failure line included.
+    text = f"{header}\n{LOW_STOCK_UNAVAILABLE_MESSAGE}" if header else LOW_STOCK_UNAVAILABLE_MESSAGE
     structured: dict[str, Any] = {
-        "response": LOW_STOCK_UNAVAILABLE_MESSAGE,
+        "response": text,
+        "low_stock_report": True,
         "response_intro": None,
         "answers": [],
         "attachments": [],
@@ -248,7 +252,7 @@ def _low_stock_unavailable() -> dict[str, Any]:
         "delegate_payload": {"fetch": item},
         "fetch": item,
         "escalate": True,
-        "response": LOW_STOCK_UNAVAILABLE_MESSAGE,
+        "response": text,
     }
 
 
@@ -1978,7 +1982,8 @@ def run_fetch(
             # `httpx.ReadTimeout` here and the customer read "I ran into a problem
             # understanding that" - about a report the worker was still building and would
             # push. This tool says its own line instead.
-            return _low_stock_unavailable()
+            filters = semantic_input.get("low_stock_filters")
+            return _low_stock_unavailable(filters.get("header") if isinstance(filters, dict) else None)
         return _error_fragment(
             f"MCP tool {tool_name} failed: {exc}", outcome=_fetch_failure_outcome(tool_name, exc)
         )
@@ -2003,15 +2008,18 @@ def run_fetch(
         return _error_fragment(envelope["error"])
 
     structured = fetch_mod.output_structurer(envelope, trigger)
-    # LOWSTOCK-FILTER-ASK: say which filters the workbook was built with, under the
-    # report's first line ("Low stock report - as of ..."), so a narrowed file never
-    # reads as the whole book.
+    # LOWSTOCK-FILTER-ASK (owner hand test, 3 Oct 2026): EVERY low stock reply - ready,
+    # pending, busy, empty, error - opens with the filters it was built with, "Low stock
+    # report (water closet, supplier X, by supplier)", so a narrowed file never reads as
+    # the whole book. The ready line's own "Low stock report - as of" takes the header in
+    # place; any other line gets it above.
     filters = semantic_input.get("low_stock_filters") if tool_name == _LOW_STOCK_TOOL else None
-    if isinstance(filters, dict) and isinstance(structured, dict):
+    if isinstance(filters, dict) and filters.get("header") and isinstance(structured, dict):
         response = jsc.js_string(structured.get("response") or "")
-        head, sep, rest = response.partition("\n")
-        if head.startswith("Low stock report - as of"):
-            structured["response"] = f"{head}\n{filters['line']}{sep}{rest}"
+        if response.startswith("Low stock report - as of"):
+            structured["response"] = filters["header"] + response[len("Low stock report"):]
+        else:
+            structured["response"] = f"{filters['header']}\n{response}" if response else filters["header"]
     if trace is not None:
         restricted = envelope.get("restricted_fields") if isinstance(envelope, dict) else None
         if isinstance(restricted, dict) and restricted:
