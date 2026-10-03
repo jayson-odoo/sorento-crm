@@ -196,6 +196,28 @@ class TestTheDealerStockStripTakesThePicker:
         assert question is None
         assert text == f"SRTWC8605-FT: No ETA\n\n{REFER_TO_SALESMAN}", text
 
+    def test_a_roster_keeps_its_products_and_loses_the_members_it_no_longer_shows(self) -> None:
+        """Review SF2: a staff row a dealer can no longer see is never left pickable."""
+        from app.services.chatbot import dealer_stock
+
+        roster = pending_ask(
+            "product_pick",
+            [
+                {"position": 1, "label": "SRT57-CR", "entity_type": "product", "uuid": "p1"},
+                {"position": 2, "label": "SRT5713", "entity_type": "product", "uuid": "p2"},
+                {"position": 3, "label": "Staff One", "entity_type": "member", "uuid": "u1"},
+            ],
+            team="customer_service",
+            payload={"escalate_offered": True},
+        )
+        reply = (
+            "Couldn't find SRT5764. Did you mean:\n1. SRT57-CR\n2. SRT5713\n\n"
+            f"{member_mod.ROSTER_HEADER}\n3. Staff One\n\n{member_mod.ROSTER_CLOSE}"
+        )
+        text, question = dealer_stock.without_escalation(reply, roster)
+        assert "Staff One" not in text and "1. SRT57-CR" in text, text
+        assert [o["label"] for o in question.options] == ["SRT57-CR", "SRT5713"], question.options
+
 
 # --------------------------------------------------------------------------- #
 # Bug 2: an availability line says what is actually true

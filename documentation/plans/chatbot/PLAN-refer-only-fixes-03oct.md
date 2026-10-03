@@ -21,7 +21,7 @@ Paths under `sorento_crm_backend/app/services/chatbot/`.
   `PICKER_HEADER`, numbered rows, close) and, for a did-you-mean + roster, by
   `answer_bridge.py::_cs_roster_text_block` / `tail/reply_ladder.py` (`ROSTER_HEADER`).
 - Every reply for a contact who may not escalate goes through one strip, `order_list._without_picker`,
-  reached from: `answer_bridge.py:1900` (the miss bridge's barred arm), `engine.py:6249`
+  reached from: `engine.py:6249`
   (`_run_answer` backstop), `engine.py:7064` (casual lane), `engine.py:8308` (`run_tail`: canned
   and escalation lanes), `engine.py:5622` (`order_list.list_reply`, inside an open order list)
   and `engine.py:5750` (`dealer_stock.without_escalation`, an availability-only dealer's stock or
@@ -33,8 +33,10 @@ Paths under `sorento_crm_backend/app/services/chatbot/`.
   under the refer line. `dealer_stock.without_escalation` never touched the picker at all.
 - Fix: a picker block is structural. Every line under `PICKER_HEADER` / `ROSTER_HEADER` up to the
   next blank (member row, `*Company:*` group header, no-members note) goes with the frame,
-  whatever question is attached (`order_list.py:264`). `answer_bridge.py:1900` strips the text
-  with the question it drops, and `dealer_stock.py:39` strips the picker too.
+  whatever question is attached (`order_list.py:264-310`, the block rule at `:283-302`), so the
+  `_run_answer` backstop takes the rows even after `answer_bridge.py:1893-1899` dropped the
+  question. `dealer_stock.py:39` strips the picker too and drops the member options from the
+  question (review SF2). The bridge itself is unchanged (review SF1: the backstop covers it).
 - Scope header: `lanes/business/answer.py:3689` prints it on an order-scope miss. Owner ruling
   (3 Oct 2026, crew-ask answer (b)): it stays for everyone, refer-to-salesman misses included;
   only the staff list goes.
