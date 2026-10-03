@@ -201,3 +201,84 @@ def test_a_refinement_of_the_report_just_shown(message, key, word) -> None:
         assert ls.get("group_by") == word, ls
     else:
         assert _has(ls.get(key), word), ls
+
+
+# --------------------------------------------------------------------------- #
+# End to end with the live parser: the REAL engine, lane and MCP presenter, the parser
+# called for real with this branch's prompt; only the MCP transport is a double
+# (`test_low_stock_filter_ask.Console`). This is the console pass the crew asks for.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def live_console(session_factory, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+    from tests.chatbot import test_low_stock_filter_ask as harness
+
+    console = harness._console(session_factory, monkeypatch, grants=[harness.GRANT, harness.SUPPLIER_KEY])
+    monkeypatch.setattr(parser_mod, "resolve_config",
+                        lambda db, *, current_date, override_version_id=None: _config())
+    real_parse = parser_mod.parse
+
+    def say(body: str) -> tuple[str, list[dict[str, Any]]]:
+        # `Console.say` installs its double; put the real parser back over it.
+        original = monkeypatch.setattr
+
+        def _setattr(target, name, value, *args, **kwargs):
+            if target is parser_mod and name == "parse":
+                value = real_parse
+            return original(target, name, value, *args, **kwargs)
+
+        monkeypatch.setattr = _setattr
+        try:
+            text, calls = harness.Console.say(console, {}, body)
+        finally:
+            monkeypatch.setattr = original
+        print(json.dumps({"say": body, "reply": text, "calls": calls}, ensure_ascii=False))
+        return text, calls
+
+    console.live_say = say
+    return console
+
+
+def _line(text: str) -> str:
+    return text.splitlines()[0] if text else ""
+
+
+class TestLiveConsole:
+    def test_the_owner_case(self, live_console) -> None:
+        text, calls = live_console.live_say("low stock report for sorento water tap")
+        (args,) = calls
+        assert args.get("categories") == ["SRT-FT"], args
+        assert _line(text).startswith("Low stock report (sorento water tap, all suppliers, no grouping)"), text
+
+    def test_per_vendor_with_a_chinese_category(self, live_console) -> None:
+        _text, calls = live_console.live_say("低库存 马桶 per vendor")
+        (args,) = calls
+        assert args.get("categories") == ["SRT-WC"] and args.get("split") == "supplier", args
+
+    def test_the_question_then_a_malay_answer(self, live_console) -> None:
+        text, calls = live_console.live_say("low stock report")
+        assert calls == [] and text == QUESTION
+        _text, calls = live_console.live_say("paip air")
+        (args,) = calls
+        assert sorted(args.get("categories") or []) == ["CB-FT", "SRT-FT"], args
+
+    def test_a_new_question_wins_over_the_open_question(self, live_console) -> None:
+        live_console.live_say("low stock report")
+        text, calls = live_console.live_say("how many CB100 in BRW")
+        assert calls == [] and "as a category" not in text, text
+
+    def test_split_by_brand_is_asked_and_the_pick_runs(self, live_console) -> None:
+        text, calls = live_console.live_say("low stock water tap, split by brand")
+        assert calls == [] and text.startswith("I can group the low stock report"), text
+        _text, calls = live_console.live_say("2")
+        (args,) = calls
+        assert args.get("split") == "category", args
+
+    def test_a_refinement_narrows_the_report(self, live_console) -> None:
+        live_console.live_say("low stock report sorento water closet")
+        text, calls = live_console.live_say("taiyang only")
+        (args,) = calls
+        assert args.get("categories") == ["SRT-WC"], args
+        assert args.get("suppliers") == ["XIAMEN TAIYANG TECHNOLOGY CO.,LTD"], args
