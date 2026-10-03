@@ -1503,8 +1503,7 @@ def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
     """WA-CONCISE card v4: the cross-domain blocks join the primary reply as more blocks of
     one list. A primary block for a code the cross-domain block repeats (a stock row that
     reads 0, now `*Stock:* 0`) gives way to it, the incoming opener goes, and when more than
-    one block remains they number on from 1 across both. A primary with no block left is
-    dropped whole, footer included. Returns `(primary, cross-domain text)`."""
+    one block remains they number on from 1 across both. A primary with no block left loses its footer. Returns `(primary, cross-domain text)`."""
     xd_paras = xd_text.split("\n\n")
     xd_codes = {c.upper() for p in xd_paras for c in _BLOCK_CODE_RE.findall(p)}
     paras = [
@@ -1516,7 +1515,8 @@ def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
         )
     ]
     if not any(_BLOCK_START_RE.match(p) for p in paras):
-        paras = []
+        # No stock block left to date: the freshness footer goes, a set header stays.
+        paras = [p for p in paras if not p.startswith("_Updated ")]
     total = sum(1 for p in paras + xd_paras if _BLOCK_START_RE.match(p))
     if total < 2:
         return "\n\n".join(paras), xd_text
