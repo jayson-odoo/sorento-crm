@@ -163,13 +163,13 @@ def test_f2_incoming_reply_has_no_opener():
     assert text == f"*Product Code:* SRTX\n{_INC_LINES}", text
 
 
-def test_f2_guard_incoming_shipments_opener_is_untouched():
+def test_f2_guard_incoming_shipments_opener_is_dropped_too():
     text = render(
         "crm_incoming_stock_shipments",
         {"data": [{"shipment_number": "S1", "shipping_container_number": "IAAU1907074"}]},
     )
 
-    assert text.startswith("Here are the incoming shipments I found."), text
+    assert text.startswith("*Shipment:* S1"), text  # round 8: no row opener
 
 
 # =============================== F3 ======================================= #
