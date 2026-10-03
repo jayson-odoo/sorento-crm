@@ -22,6 +22,7 @@ from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.company_scope_resolver import apply_company_scope
 from app.services.user_service import UserPermissionService
 
+from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
 from tests._pg_fixture import blank_session, unique_code
 
 SORENTO = DEFAULT_COMPANY_ID
@@ -32,26 +33,32 @@ CONTACT_VIEW = "user_management.contacts.view"
 @pytest.fixture
 def db():
     with blank_session() as session:
-        set_company_scope(session, frozenset({SORENTO}))
+        seed_mocha(session)
+        set_company_scope(session, frozenset({SORENTO, MOCHA_ID}))
         yield session
 
 
 @pytest.fixture
-def client(db, monkeypatch):
+def state():
+    """Mutable scope the request override reads on every call."""
+    return {"scope": frozenset({SORENTO})}
+
+
+@pytest.fixture
+def client(db, state, monkeypatch):
     from app.models.user import User
 
     actor = User(id=str(uuid.uuid4()), email=f"zzt-{uuid.uuid4().hex[:8]}@test.com", name="ZZT Actor")
     db.add(actor)
     db.flush()
     principal = {"id": actor.id, "email": actor.email}
-    scope = frozenset({SORENTO})
 
     def _override_db():
         yield db
 
     async def _override_scope():
-        set_company_scope(db, scope)
-        return scope
+        set_company_scope(db, state["scope"])
+        return state["scope"]
 
     app.dependency_overrides[get_db] = _override_db
     app.dependency_overrides[get_current_user] = lambda: principal
@@ -79,8 +86,8 @@ def _contact(db, tag: str) -> RespondContact:
     return row
 
 
-def _customer(db, code: str) -> Customer:
-    row = Customer(customer_code=code, customer_name=f"ZZT customer {code}", company_id=SORENTO)
+def _customer(db, code: str, company_id=SORENTO) -> Customer:
+    row = Customer(customer_code=code, customer_name=f"ZZT customer {code}", company_id=company_id)
     db.add(row)
     db.flush()
     return row
@@ -153,3 +160,22 @@ def test_u5_1_rows_carry_sorted_customer_codes_and_empty_list_when_none(client, 
 def test_u5_2_invalid_customers_value_is_422(client, seeded):
     resp = _list(client, customers="foo")
     assert resp.status_code == 422
+
+
+def test_u5_2_customers_none_is_company_scoped(client, db, state):
+    """A contact linked only to another company's customer has no customer in the caller's company."""
+    tag = unique_code("S")
+    contact_x = _contact(db, f"{tag}-x")
+    other_company_customer = _customer(db, f"ZZT-M-{unique_code('m')}", company_id=MOCHA_ID)
+    _link(db, contact_x, other_company_customer)
+
+    state["scope"] = frozenset({SORENTO})
+    body = _list(client, customers="none", query=tag).json()
+    by_id = {row["id"]: row for row in body["data"]}
+    assert contact_x.id in by_id
+    assert by_id[contact_x.id]["customer_codes"] == []
+    assert body["pagination"]["total"] == 1
+
+    state["scope"] = frozenset({SORENTO, MOCHA_ID})
+    body = _list(client, customers="none", query=tag).json()
+    assert contact_x.id not in {row["id"] for row in body["data"]}
