@@ -62,7 +62,7 @@ from app.models.base import company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer
 from app.models.procurement import ProductSupplier, Supplier
-from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+from app.models.product import Brand, ItemType, Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
 from app.models.user import SystemSetting
 from app.schemas.canonical_masters import (
@@ -594,6 +594,15 @@ def _product_columns(
         if created:
             warnings.append("brand_created")
         columns["brand_id"] = brand_id
+
+    # ITEM-TYPE-CRM: AutoCount ItemType, the brand rule above exactly.
+    if "item_type_code" in payload.model_fields_set and payload.item_type_code:
+        item_type_id, created = product_rules.ensure_reference(
+            db, ItemType, payload.item_type_code, company_id, cache=ref_cache
+        )
+        if created:
+            warnings.append("item_type_created")
+        columns["item_type_id"] = item_type_id
 
     if "list_price" in payload.model_fields_set:
         columns["list_price"] = payload.list_price
