@@ -1,6 +1,6 @@
 # PLAN: product ref collision (ItemKey vs ItemCode refs)
 
-Status: BUILDING, code-first redesign per owner ruling 3 Oct (L steps minus migration). Track: L pipeline (external ingest), no migration expected.
+Status: PR #1459 READY, review + security clean after round 1, awaiting CI + owner merge (L steps minus migration; prod cleanup SQL runs after deploy). Track: L pipeline (external ingest), no migration expected.
 
 ## Problem
 Document lines link products under `BOOK:<ItemAutoKey>` (shared-service `presets.py:250/410/480`);
