@@ -600,7 +600,7 @@ export function IdeasListView({
                                   {filtersActive > 0 ? (
                                     <Badge
                                       variant="secondary"
-                                      className="ms-0.5 px-1 py-0 text-[10px]"
+                                      className="ms-0.5 px-1 py-0 text-2xs"
                                     >
                                       {filtersActive}
                                     </Badge>
