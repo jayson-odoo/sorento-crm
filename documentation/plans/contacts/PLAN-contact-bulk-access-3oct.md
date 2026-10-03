@@ -68,7 +68,8 @@ Unknown source -> 404. Empty list or more than 500 -> 422.
 Response 200:
 ```
 { "dry_run": bool,
-  "source": {"id", "label"},                       # label = name or phone
+  "source": {"id", "label", "summary": [{"label", "value"}]},   # label = name or phone; summary = one display
+                                                     # line per facet in facet order (values joined ", ")
   "results": [ { "contact_id", "label" (null when not found),
                  "status": "changed" | "unchanged" | "skipped" | "failed",
                  "changes": [Change], "error": str | null } ],
