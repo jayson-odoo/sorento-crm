@@ -321,6 +321,117 @@ def _cust_name(match: Any) -> str:
     return raw.strip()
 
 
+#: COMBO-STOCK (PLAN-combo-stock-2oct.md, 2 Oct 2026): domains where a placed product SET
+#: answers as its members. `inventory` only (crew ruling Q5): a set is never stocked, so
+#: its stock IS its members' stock. Trigger to widen: a measured set-code miss in another
+#: domain (incoming, order inquiry).
+SET_EXPANDING_DOMAINS: frozenset[str] = frozenset({"inventory"})
+
+
+def _expand_product_set(match: Any) -> list[Any]:
+    """A `product_set` match becomes one `product` match per member; anything else is
+    returned as is. Membership is `entity_resolver._probe_product_set`'s own
+    `display.members`, read off `product_set_members` - the explicit link, never the
+    code's shape. A set with no members expands to nothing, which leaves the token
+    unscoped exactly as before rather than inventing a subject."""
+    if jsc.get(match, "entity_type") != "product_set":
+        return [match]
+    set_code = jsc.get(match, "canonical_code")
+    return [
+        {
+            "entity_type": "product",
+            "canonical_code": jsc.get(member, "product_code"),
+            "uuid": jsc.get(member, "uuid"),
+            "match_field": "product_set",
+            "match_tier": "product_set",
+            "display": {"product_set": set_code},
+        }
+        for member in jsc.array(jsc.get(jsc.get(match, "display"), "members"))
+        if jsc.truthy(jsc.get(member, "uuid"))
+    ]
+
+
+def _expanded_sets(matches: list[Any]) -> list[dict[str, Any]]:
+    """The sets `_expand_product_set` is about to replace, one row per set, in match
+    order: what `set_stock` writes the set-level answer from."""
+    out: dict[str, dict[str, Any]] = {}
+    for m in matches:
+        if jsc.get(m, "entity_type") != "product_set":
+            continue
+        code = jsc.js_string(jsc.get(m, "canonical_code") or "")
+        members = [
+            {
+                "uuid": jsc.get(member, "uuid"),
+                "product_code": jsc.get(member, "product_code"),
+                "quantity": jsc.get(member, "quantity"),
+            }
+            for member in jsc.array(jsc.get(jsc.get(m, "display"), "members"))
+            if jsc.truthy(jsc.get(member, "uuid"))
+        ]
+        # Keyed by the SET, never its code: Sorento and Mocha carry the same codes, and a
+        # contact scoped to both expands both sets (review S3).
+        set_id = jsc.js_string(jsc.get(m, "uuid") or "")
+        if code and members and set_id and set_id not in out:
+            out[set_id] = {
+                "set_id": set_id,
+                "set_code": code,
+                "company_name": jsc.get(m, "company_name"),
+                "members": members,
+            }
+    return list(out.values())
+
+
+def _norm_code(value: Any) -> str:
+    return "".join(jsc.js_string(value or "").split()).lower()
+
+
+def _prefix_products(matches: list[Any], parser: dict[str, Any]) -> list[dict[str, Any]]:
+    """Products a typed code reached WITHOUT being that product's own code ("SRTWC8608"
+    -> SRTWC8608-SC), each with the code the customer typed: owner Q3 (2 Oct 2026)
+    answers a base code with the sets those products belong to. A code typed in full is
+    never listed here.
+
+    Read off the codes, not `match_tier`: an AND-mode resolve (a single-token stock ask)
+    rewrites every tier to "and", so the tier no longer says prefix. Whatever reached
+    the product, it only decides whether the line or pick is OFFERED - which sets come
+    back is `product_set_members`, never this comparison. `matches` is the gate's own
+    flattened list (OR `resolutions` + AND `intersection` / `by_entity_type`)."""
+    typed = [
+        jsc.js_string(jsc.get(e, "raw") or "").strip()
+        for e in jsc.array(parser.get("entities"))
+        if jsc.lower_or_empty(jsc.get(e, "hint")) == "product" and jsc.truthy(jsc.get(e, "raw"))
+    ]
+    # A token that IS some matched product's own code is not a base code, even when the
+    # same token also reached its longer siblings ("SRTWC8608-SC" also pulls in "SRTWC8608-SC-UF").
+    matched_codes = {
+        _norm_code(jsc.get(m, "canonical_code"))
+        for m in matches
+        if jsc.get(m, "entity_type") == "product"
+    }
+    # Built BEFORE the base-code filter (review B2): a code typed in full is never a
+    # prefix product, even when a base code in the same message also reached it.
+    exact = {_norm_code(t) for t in typed}
+    typed = [t for t in typed if _norm_code(t) not in matched_codes]
+    out: dict[str, dict[str, Any]] = {}
+    for m in matches:
+        uuid = jsc.get(m, "uuid")
+        code = jsc.get(m, "canonical_code")
+        norm = _norm_code(code)
+        if (
+            jsc.get(m, "entity_type") != "product"
+            or not jsc.truthy(uuid)
+            or uuid in out
+            or not norm
+            or norm in exact
+        ):
+            continue
+        token = next((t for t in typed if _norm_code(t) and _norm_code(t) in norm), None)
+        if token is None:
+            continue
+        out[uuid] = {"token": token, "uuid": uuid, "code": code}
+    return list(out.values())
+
+
 def _display_name(match: Any) -> str | None:
     """The resolver's own human label for this record, or `None` when it gave none.
 
@@ -402,6 +513,13 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     flat.extend(jsc.array(resolver.get("intersection")))
     flat.extend(_flatten_by_entity_type(resolver.get("by_entity_type")))
 
+    product_sets: list[dict[str, Any]] = []
+    prefix_products: list[dict[str, Any]] = []
+    if domain in SET_EXPANDING_DOMAINS:
+        product_sets = _expanded_sets(flat)
+        prefix_products = _prefix_products(flat, parser)
+        flat = [x for m in flat for x in _expand_product_set(m)]
+
     by_uuid: dict[Any, dict[str, Any]] = {}
     for m in flat:
         if jsc.truthy(m) and jsc.truthy(jsc.get(m, "uuid")):
@@ -450,6 +568,8 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             matches = jsc.array(jsc.get(resolution, "matches"))
             if not matches:
                 continue
+            if domain in SET_EXPANDING_DOMAINS:
+                matches = [x for m in matches for x in _expand_product_set(m)]
             types = [jsc.get(m, "entity_type") for m in matches if jsc.truthy(m)]
             if types and not any(t in allowed for t in types):
                 token = jsc.get(resolution, "token")
@@ -1755,6 +1875,12 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     out["gate_reason"] = gate_reason
     out["gate_clarification"] = gate_clarification  # '' when nothing to ask
     out["compatible_entities"] = compatible_entities
+    # COMBO-STOCK: written only when a set was expanded, so every other turn's gate keeps
+    # exactly the keys it has today. Read by `run_fetch` for the full-access set header.
+    if product_sets:
+        out["product_sets"] = product_sets
+    if prefix_products:
+        out["prefix_products"] = prefix_products
     if cust_probe_entities and len(cust_probe_entities) > 0:
         out["customer_probe_entities"] = cust_probe_entities
     if cust_families and len(cust_families) > 0:

@@ -977,7 +977,9 @@ def _rebuilt(
         return others
     slots: list[Slot] = []
     for row in block:
-        key = row.get("product_id")
+        # COMBO-STOCK: a SET's row names no product (it is not one) and keys its one slot
+        # by the set itself (`lanes/business/set_stock.dealer_set_reply`).
+        key = row.get("slot_key") or row.get("product_id")
         # R-S4 / SEC-N3 (#1118): a row with no `product_code` must never put the UUID
         # in front of a person - not in the reply, not in the hint line the parser
         # reads next turn (the frontend's own "no UUIDs in the UI" rule, here at the

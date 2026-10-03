@@ -198,6 +198,31 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
             continue
         rows = [r for r in (ask.get("last_result_set") or []) if isinstance(r, dict)]
         kind = str(ask.get("kind"))
+        if kind == "set_pick":
+            # COMBO-STOCK (owner, 3 Oct 2026): a pick of SETS. An option carries the set
+            # code and its MEMBERS' product ids, so the focus a pick leaves holds real
+            # products; the answering turn's runner recognises the group as the set
+            # (`turn_runtime._set_entities`). A plain `product_pick`, never a
+            # `stock_pick`: that one reads a bare number as a quantity.
+            options = [
+                {
+                    "position": int(row.get("idx") or i + 1),
+                    "label": row.get("label"),
+                    "code": row.get("value"),
+                    "uuids": [str(u) for u in row.get("uuids") or [] if u],
+                    "entity_type": "product",
+                }
+                for i, row in enumerate(rows)
+                if row.get("value") and row.get("uuids")
+            ]
+            if options:
+                return pending_ask(
+                    "product_pick",
+                    options,
+                    asked_at_turn=turn_no,
+                    payload={"domain": "inventory", "domains": ["inventory"]},
+                )
+            continue
         if kind == "top_selling_pick":
             # PLAN-chatbot-top-x-hot-selling-24sep.md S4: the ranked list's own roster
             # builder (`turn/pending.top_selling_pick`, S1): options carry the printed

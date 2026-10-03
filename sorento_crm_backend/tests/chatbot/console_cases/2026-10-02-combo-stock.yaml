@@ -1,0 +1,77 @@
+# Console cases for COMBO-STOCK (PR #1443, owner chatbot test on dev 2 Oct 2026).
+#
+# Plan: `documentation/plans/chatbot/PLAN-combo-stock-2oct.md`. Red tests:
+# `tests/chatbot/test_combo_stock.py`. Owner transcript (business_query v43):
+#   "chck stock SRTWC8608"    -> listed only SRTWC8608-SC and SRTWC8608-SC-UF, no set.
+#   "chck stock SRTWC8608-RL" -> "That would search every stock we have - I need at least
+#                                one filter ..." although it IS a code (a product_sets row).
+#
+# Data (dev, crew read-only 2 Oct): SRTWC8608-RL = SRTWCX8608-RL + SRTWCY8608 + SRTWC8608-SC,
+# qty 1 each; SRTWC8608-SC is also in SRTWC8608-P-RL, SRTWC8608-RL-200, SRTWC8608-RL-WEPLS
+# and SRTWC8606-RL; SRTWC8608-SC-UF is in SRTWC8608-S-RL-UF. Expectations are structural,
+# never a stock figure, so the file holds on any copy carrying those sets.
+#
+# Simplified 3 Oct 2026 (owner hand test FAIL + answers): ONE set-level answer, no component
+# rows, no zero rows, no "part of set(s)" lines.
+#
+# NOT collected by pytest. Full-access contact, stock visibility COMPACT (the owner is moving
+# every staff contact to compact; CONTACT A, 404285551 on dev). The DEALER half (set code ->
+# "How many units of SET?" -> one line; base code -> a pick of the sets) needs an
+# availability-mode contact and is in the crew-handtest script on the PR instead.
+#
+#   cd sorento_crm_backend
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-10-02-combo-stock.yaml \
+#       --base-url http://127.0.0.1:<lane backend port> --sleep-seconds 8
+
+contact: "404285551"
+
+cases:
+  - name: "a set code is one set-level answer"
+    cold: true
+    turns:
+      - text: "chck stock SRTWC8608-RL"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "SRTWC8608-RL: "
+            - " sets available (limited by "
+            - "By location: "
+          reply_not_contains:
+            - "That would search every stock we have"
+            - "Total"
+            - "Quantity On Hand"
+            - "no stock records"
+            - "is part of set(s)"
+          no_uuid: true
+
+  - name: "a base code lists its sets, and a number gives one set's answer"
+    cold: true
+    turns:
+      - text: "chck stock SRTWC8608"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "SRTWC8608 sets:"
+            - "SRTWC8608-RL: "
+            - "Reply a number for one set's locations."
+          reply_not_contains:
+            - "Total"
+            - "Quantity On Hand"
+            - "no stock records"
+            - "is part of set(s)"
+          pending_kind: product_pick
+          no_uuid: true
+
+  - name: "a member code typed in full is answered as before"
+    cold: true
+    turns:
+      - text: "chck stock SRTWCY8608"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "SRTWCY8608"
+          reply_not_contains:
+            - "sets available"
+            - " sets:"
+          no_uuid: true

@@ -2377,6 +2377,68 @@ def _int(value: Any) -> int | None:
     return None
 
 
+def _set_entities(
+    db: Session,
+    domain: str,
+    entities: list[dict[str, Any]],
+    lane_out: dict[str, Any],
+    resolver_gate: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    """COMBO-STOCK (owner, 3 Oct 2026): a stock ask about a SET is answered at set level,
+    and a dealer gives ONE quantity per set.
+
+    A set reaches the runner three ways besides a typed code (which the resolver already
+    expanded, `gate._expand_product_set`): the dealer's open quantity task (one slot per
+    set, keyed by the set id, `set_stock.expand_task_sets` makes it its members), and a
+    pick of a set (its members labelled with the set code, `set_stock.
+    sets_named_by_members` recognises the group). A set quantity - the task's, or one
+    typed with the code ("SRTWC8608-RL x5") - is spread over the members
+    (`set_stock.member_quantities`) and kept on the set as `sets`, so the reply echoes
+    what was asked. Returns the sets found here; `_merged_sets` joins them with the
+    resolver's. Inventory only (crew ruling Q5)."""
+    if domain != "inventory":
+        return entities, lane_out, []
+    from app.services.chatbot.lanes.business import set_stock
+
+    raw_quantities = lane_out.get("requested_quantities")
+    quantities = dict(raw_quantities) if isinstance(raw_quantities, dict) else {}
+    entities, expanded_quantities, found = set_stock.expand_task_sets(db, entities, quantities)
+    quantities = dict(expanded_quantities or {})
+    found = [*found, *set_stock.sets_named_by_members(db, entities)]
+    typed = {
+        jsc.js_string(e.get(name) or "").strip().casefold(): _int(e.get("quantity"))
+        for e in jsc.array(lane_out.get("entities"))
+        if isinstance(e, dict)
+        for name in ("canonical_code", "raw")
+        if e.get(name)
+    }
+    resolver_sets = [dict(p) for p in jsc.array(jsc.get(resolver_gate, "product_sets")) if isinstance(p, dict)]
+    for product_set in [*resolver_sets, *found]:
+        if product_set.get("sets"):
+            continue
+        sets = typed.get(jsc.js_string(product_set.get("set_code") or "").strip().casefold())
+        if sets:
+            product_set["sets"] = sets
+            quantities.update(set_stock.member_quantities(product_set, sets))
+    if quantities:
+        lane_out = {**lane_out, "requested_quantities": quantities}
+    elif "requested_quantities" in lane_out:
+        lane_out = {k: v for k, v in lane_out.items() if k != "requested_quantities"}
+    return entities, lane_out, [*resolver_sets, *found]
+
+
+def _merged_sets(resolver_sets: Any, found: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The resolver's sets and the runner's, ONE row per set id (review B1: a set answered
+    with its code AND held by the open task was expanded twice and said twice); a row
+    the runner found wins, since it carries the set quantity."""
+    out: dict[str, dict[str, Any]] = {}
+    for product_set in [*jsc.array(resolver_sets), *found]:
+        if isinstance(product_set, dict):
+            key = jsc.js_string(product_set.get("set_id") or product_set.get("set_code") or "")
+            out[key] = {**out.get(key, {}), **product_set}
+    return list(out.values())
+
+
 def _spec_quantities(
     out: dict[str, Any], spec: FetchSpec, entities: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -2801,6 +2863,7 @@ def make_tool_runner(
         # product, resolved to uuids here - `lanes/business/fetch.py` reads it
         # straight off the lane input.
         lane_out = _spec_quantities(lane_out, spec, entities)
+        entities, lane_out, expanded_sets = _set_entities(db, domain, entities, lane_out, resolver_gate)
         lane_ctx = {**lane_ctx, "parse": {**(lane_ctx.get("parse") or {}), "output": lane_out}}
         # R2: start from the resolver's own gate (gate_reason, require_specific,
         # customer_probe_entities, company_team, gate_debug, ...) - `compatible_entities`
@@ -2808,6 +2871,8 @@ def make_tool_runner(
         # `resolver_gate` itself carried under those two keys.
         gate: dict[str, Any] = dict(resolver_gate) if isinstance(resolver_gate, dict) else {}
         gate["compatible_entities"] = entities
+        if expanded_sets or gate.get("product_sets"):
+            gate["product_sets"] = _merged_sets(gate.get("product_sets"), expanded_sets)
         block = page_predicate if page_predicate is not None else predicate
         if block is not None:
             gate["predicate"] = block
@@ -4011,6 +4076,8 @@ def envelope_of(
             fetched.get("outstanding_ask")
             or fetched.get("forms_ask")
             or fetched.get("alternatives_ask")
+            # COMBO-STOCK slice 3: a dealer's base-code ask offers the sets it is part of.
+            or fetched.get("set_ask")
         ),
         # AC-1139: this reply already states the scope it searched, in its own words
         # and its own order (the report's four header lines, and the same four above
