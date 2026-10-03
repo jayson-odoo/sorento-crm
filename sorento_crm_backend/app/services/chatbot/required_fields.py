@@ -38,14 +38,17 @@ API
   `Outcome.values` (`{name: {"value", "label"}}`). Otherwise send `Outcome.reply` and keep
   `Outcome.slot` (None when nothing stays open: cancelled or given up).
 * `reply_verdict(verdict, slot, text, *, asks=ASKS) -> (verdict, rule)` - the engine seam, read
-  before anything routes the message. With a question open, a short reply (or one the
-  parser reads as the same ask) is the answer: the verdict is rerouted to the ask, its
-  entities cleared, `is_affirmative` cleared and `topic_reset` cleared (a reply to the bot's own question is its
-  answer, never a yes/no, never a new topic), and `required_ask` / `required_ask_reply` carry the slot and the text to
-  the lane. A message of more than three words that the parser reads as a different ask
-  (another intent, or not a business message at all), an empty message, or any message
-  with a "?" drops the question (`required_ask_dropped`). An optional field's pick also
-  takes "all" / "none", and two misses on it settle it as "no filter" and go on.
+  before anything routes the message. The open question is stated to the parser as the turn's
+  `Open question:` object (`turn/question.of_required_ask`), so the PARSER says whether the
+  message answers it (LOWSTOCK-SEMANTIC, crew ruling Q4, 4 Oct 2026): a declared
+  `open_question_answer` (fill / pick / all / done / cancel) or the same ask read again is the
+  answer, and the verdict is rerouted to the ask, its entities cleared, `is_affirmative` and
+  `topic_reset` cleared, and `required_ask` / `required_ask_reply` / `required_ask_answer`
+  carry the slot, the text and the parser's answer to the lane. Anything else (a new question,
+  "clear", an empty message) drops the question (`required_ask_dropped`): a new question
+  always wins. Never the message's length or punctuation. `collect(..., cancel=True)` is the
+  parser's declared cancel. An optional field's pick also takes "all" / "none", and two misses
+  on it settle it as "no filter" and go on.
 
 The slot is one turn long: the engine consumes it on the next message, and the lane that
 asks again hands a fresh one back (`required_ask` on its envelope).
