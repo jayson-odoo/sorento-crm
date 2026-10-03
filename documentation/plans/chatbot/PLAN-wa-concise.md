@@ -1,6 +1,6 @@
 # PLAN - WhatsApp replies, one fact per line (WA-CONCISE)
 
-Status: building (card v4 approved by owner 3 Oct 2026, "ok can"; feature track M: wording on
+Status: in review on PR #1455, reviewer READY, hand test filed (card v4 approved by owner 3 Oct 2026, "ok can"; feature track M: wording on
 an existing surface, no migration, no auth/RBAC, no new ingest).
 
 Owner, 3 Oct 2026: "our messages often contain duplicate info and can be more concise". Card v4
