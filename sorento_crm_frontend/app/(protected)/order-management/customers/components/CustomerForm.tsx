@@ -18,7 +18,11 @@ import {
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import {
+  SearchableSelect,
+  type SearchableSelectOption,
+} from '@/components/common/SearchableSelect';
+import { searchCustomerGroupsSelect } from '../../customer-groups/services/customerGroupService';
 import { useCreateCustomer, useUpdateCustomer, useCustomer } from '../hooks/useCustomers';
 import { useCustomerSalesAgentOptions } from '../hooks/useCustomerSalesAgentOptions';
 import { CustomerSchema, type CustomerSchemaType } from '../forms/customer-schema';
@@ -43,6 +47,8 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
   const createMutation = useCreateCustomer();
   const updateMutation = useUpdateCustomer();
   const agentOptions = useCustomerSalesAgentOptions();
+  // The group just picked, so the trigger names it before anything is saved.
+  const [pickedGroup, setPickedGroup] = useState<SearchableSelectOption | null>(null);
 
   // The select only offers ACTIVE agents (the backend rejects a fresh pick of an inactive
   // one), but a customer already carrying one - assigned before it was deactivated - must
@@ -77,6 +83,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
       is_active: true,
       sales_agent_id: null,
       account_level: null,
+      customer_group_id: null,
     },
     mode: 'onTouched',
   });
@@ -95,6 +102,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
         is_active: customer.is_active,
         sales_agent_id: customer.sales_agent_id || null,
         account_level: customer.account_level ?? null,
+        customer_group_id: customer.customer_group_id ?? null,
       });
       setFormInitialized(true);
     }
@@ -119,6 +127,8 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
         sales_agent_id: data.sales_agent_id ?? null,
         // Explicit null clears the level: an omitted key would keep the old one.
         account_level: data.account_level ?? null,
+        // Explicit null clears the group, same as the level.
+        customer_group_id: data.customer_group_id ?? null,
       };
 
       if (isEditMode && customerId) {
@@ -274,6 +284,48 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
                           onChange={(v) => field.onChange(v ? Number(v) : null)}
                           options={ACCOUNT_LEVEL_OPTIONS}
                           placeholder="No account level"
+                          clearable
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="customer_group_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Group</FormLabel>
+                      <FormControl>
+                        <SearchableSelect
+                          aria-label="Group"
+                          value={field.value || ''}
+                          onChange={(v) => field.onChange(v || null)}
+                          onOptionChange={setPickedGroup}
+                          fetchOptions={async (query) =>
+                            (await searchCustomerGroupsSelect(query)).map((g) => ({
+                              value: g.id,
+                              label: g.name,
+                              description: `${g.ledger_count} ${g.ledger_count === 1 ? 'ledger' : 'ledgers'}`,
+                            }))
+                          }
+                          selectedOption={
+                            pickedGroup && pickedGroup.value === field.value
+                              ? pickedGroup
+                              : customer?.customer_group_id &&
+                                  customer.customer_group_id === field.value
+                                ? {
+                                    value: customer.customer_group_id,
+                                    label: customer.customer_group_name ?? 'Group',
+                                  }
+                                : undefined
+                          }
+                          placeholder="No group"
+                          emptyMessage="No groups match."
                           clearable
                         />
                       </FormControl>
