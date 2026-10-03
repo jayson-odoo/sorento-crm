@@ -4,19 +4,15 @@ DEV-LOGIN-BYPASS (owner, 3 Oct 2026; crew answer Q1 (a)): a passwordless sign-in
 test copy records its own auth_method so a dev session stays distinguishable in audit and the
 session list. Additive: the CHECK constraint is widened, no row changes.
 
-Also the join revision for main's fork: CUSTOMER-GROUP (#1441, cust_group_0001) and
-REGION-PACKING-LIST (#1439, rpl_0001_regions) both branched from picker_no_cap_0001 and merged
-back to back, leaving main with two heads. Neither touches user_sessions.
-
 Revision ID: dev_login_0001
-Revises: cust_group_0001, rpl_0001_regions
+Revises: merge_03oct_join5
 """
 from __future__ import annotations
 
 from alembic import op
 
 revision = "dev_login_0001"
-down_revision = ("cust_group_0001", "rpl_0001_regions")
+down_revision = "merge_03oct_join5"
 branch_labels = None
 depends_on = None
 
