@@ -1894,7 +1894,7 @@ def run_fetch(
                 },
             )
         return _fixed_reply(str(customer_scope.get("refusal") or ""))
-    # DO-ASK-SIMPLIFY rules 3-4 (owner, 2 Oct 2026): a dealer's DO list ask with no
+    # DO-ASK-SIMPLIFY rules 3-4 (owner, 2 Oct 2026; every contact, owner 4 Oct): a DO list ask with no
     # range, or a range over 31 days, is answered with one line and fetches nothing.
     # After the customer-scope backstop above (security S2), so the question never
     # names a customer outside the contact's links.

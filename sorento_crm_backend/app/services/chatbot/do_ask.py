@@ -1,9 +1,9 @@
-"""A dealer's delivery order list ask carries a date range of at most 31 days.
+"""A delivery order list ask carries a date range of at most 31 days.
 
 DO-ASK-SIMPLIFY rules 3 and 4 (`documentation/plans/chatbot/PLAN-do-ask-simplify-2oct.md`,
-owner answers 2 Oct 2026). A DO list ask is a fetch of one of `fetch.ORDER_TOOLS` that is
+owner answers 2 Oct 2026; applies to every contact, owner 4 Oct). A DO list ask is a fetch of one of `fetch.ORDER_TOOLS` that is
 not a quantity ask and not one of the order-status buckets (outstanding, SO outstanding),
-which have no delivery date to range over. For a dealer:
+which have no delivery date to range over:
 
 * no range: nothing is fetched and the bot asks which period, suggesting this month and
   last month (rule 3);
@@ -114,7 +114,7 @@ def range_reply(
     *, ctx: dict[str, Any], tool_name: str, order_tools: Any, entities: list[Any], semantic_input: dict[str, Any]
 ) -> str | None:
     """The line that answers this DO list ask instead of a fetch, or None to fetch."""
-    if tool_name not in order_tools or not is_dealer(ctx):
+    if tool_name not in order_tools:
         return None
     if jsc.js_string(semantic_input.get("order_status") or "").strip() in _EXEMPT_STATUSES:
         return None
