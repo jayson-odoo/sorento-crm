@@ -223,6 +223,11 @@ def test_kill_browser_request_relayed_by_the_next_dev_rewrite(enabled):
     with _client() as c:
         assert c.post("/api/v1/auth/dev-login", json={"email": enabled["admin"]}, headers=relayed).status_code == 404
         assert c.get("/api/v1/auth/dev-login/users", headers=relayed).status_code == 404
+        # An HTTP/1.0 browser request with no Host reaches the backend with an EMPTY
+        # X-Forwarded-Host (Next sends `req.headers.host || ''`); presence alone refuses.
+        empty = {"X-Forwarded-Host": ""}
+        assert c.post("/api/v1/auth/dev-login", json={"email": enabled["admin"]}, headers=empty).status_code == 404
+        assert c.get("/api/v1/auth/dev-login/users", headers=empty).status_code == 404
 
 
 def test_kill_email_not_allowlisted(enabled):

@@ -134,7 +134,7 @@ def request_allowed(
         bool(enabled)
         and environment_allowed(environment)
         and secret_matches(secret, presented_secret)
-        and not forwarded_host
+        and forwarded_host is None
         and is_local_host(host_header)
         and is_loopback_peer(peer_ip)
     )
