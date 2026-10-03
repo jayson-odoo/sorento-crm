@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -251,3 +252,54 @@ def test_utf16_text_with_bom_is_scanned():
         bom = b"\xff\xfe" if enc.endswith("le") else b"\xfe\xff"
         data = bom + text.encode(enc)
         assert _kinds(mod.scan_bytes("notes.txt", data)) == ["phone"], enc
+
+
+_DRIVER_PROSE_FILES = {
+    "documentation/plans/security/PLAN-pii-scrub.md",
+    "documentation/plans/security/pii-scrub-acceptance-criteria.md",
+    "sorento_crm_backend/tests/test_pii_guard.py",
+}
+_DRIVER_OK = re.compile(r"DRIVER [A-Z]{1,2}|FROM AUTOCOUNT|Documentation|-|")
+_Q = r'\\*"'  # a quote, possibly backslash-escaped one or more levels
+_VAL = r'(null|' + _Q + r'([^"\\]*)\\*")'
+_DRIVER_FIELDS = (
+    # *Driver:* <value> up to a newline or a literal backslash-n
+    re.compile(r"\*Driver:\*[ \t]*(.*?)(?=\\+n|\n|$)"),
+    # {"label": "Driver", "value": <value>} (also pretty-printed)
+    re.compile(_Q + r"label" + _Q + r"\s*:\s*" + _Q + r"Driver" + _Q + r"\s*,\s*" + _Q + r"value" + _Q + r"\s*:\s*" + _VAL),
+    # "driver_name": <value>
+    re.compile(_Q + r"driver_name" + _Q + r"\s*:\s*" + _VAL),
+)
+
+
+def test_driver_fields_in_tracked_text_hold_only_placeholders():
+    # AC-24: failures list path:line only, never the value.
+    import subprocess
+
+    mod = _load_module()
+    files = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=_REPO_ROOT, capture_output=True, check=True
+    ).stdout.decode().split("\0")
+    bad: list[str] = []
+    for rel in files:
+        # These describe the field names in prose or in this test's own patterns.
+        if not rel or rel in _DRIVER_PROSE_FILES:
+            continue
+        path = _REPO_ROOT / rel
+        if not path.is_file() or mod.forbidden_path(rel):
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if b"\0" in data[:8000]:
+            continue
+        text = data.decode("utf-8", "replace")
+        for rx in _DRIVER_FIELDS:
+            for m in rx.finditer(text):
+                value = m.group(1) if rx is _DRIVER_FIELDS[0] else (m.group(2) or "")
+                value = value.strip().rstrip("*").strip()
+                if value == "null" or _DRIVER_OK.fullmatch(value):
+                    continue
+                bad.append(f"{rel}:{text.count(chr(10), 0, m.start()) + 1}")
+    assert not bad, f"{len(bad)} driver values are not placeholders:\n" + "\n".join(sorted(set(bad))[:60])
