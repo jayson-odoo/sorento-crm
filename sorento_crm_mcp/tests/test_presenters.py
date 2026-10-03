@@ -6,6 +6,8 @@ last_updated_at, has_result}.
 """
 import json
 
+import pytest
+
 from sorento_crm_mcp.presenters import present_response
 
 
@@ -1860,3 +1862,26 @@ def test_incoming_rows_that_differ_still_print_apart():
     ]
     out = env("crm_incoming_stock_list", {"data": rows})
     assert len(out["items"]) == 2
+
+
+def test_stock_compact_never_prints_an_unassigned_line():
+    """STOCK-TOTAL-OS-SCOPE, owner option (b) 2 Oct 2026: open SO with no warehouse is not
+    shown anywhere in the stock reply. Even a payload that carried such a key renders only
+    Product Code, Total and the locations."""
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [],
+        "stock_visibility": {"mode": "compact", "source": "access_type"},
+        "stock_summary": [{
+            "product_id": "p1", "product_code": "MWC7624-RL-S10", "product_name": "MWC7624-RL-S10",
+            "total_on_hand": 54, "open_so_qty": 0, "sellable": 54, "unassigned_open_so_qty": 12,
+            "locations": [
+                {"warehouse_code": "BRW", "quantity_on_hand": 0, "open_so_qty": 0},
+                {"warehouse_code": "MWH", "quantity_on_hand": 54, "open_so_qty": 0},
+            ],
+            "flags": {},
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    assert [f["label"] for f in fields] == ["Product Code", "Total", "BRW", "MWH"]
+    assert fields[1]["granted_value"] == "54 (O/S: 0)"
+    assert "12" not in json.dumps(out)

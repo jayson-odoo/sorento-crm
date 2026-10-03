@@ -1412,8 +1412,9 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
             fields.append({"key": "product_code", "label": "Product Code", "value": code_field})
         total = _stock_int(entry.get("total_on_hand"))
         # D1 (owner console pass, 8 Sep 2026): with `include_sellable` the Total and every
-        # warehouse line carry an "(O/S: n)" suffix - the product's open SO on the Total
-        # (the unlocated remainder lives there only), the warehouse's own on its line. The
+        # warehouse line carry an "(O/S: n)" suffix - the open SO on the warehouses the
+        # contact may see on the Total (STOCK-TOTAL-OS-SCOPE: never a hidden warehouse's,
+        # never a line with no warehouse), the warehouse's own on its line. The
         # suffix is a `granted_value` on a keyed, RESTRICTED field: the CRM's field drop
         # swaps it in under `inventory.sellable` and strips it otherwise, so the plain
         # number is what an ungranted contact reads and nothing is dropped. Without
