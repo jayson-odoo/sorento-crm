@@ -164,7 +164,7 @@ Every non-customer entity, and every customer entity without an account number, 
 #: sales ranked or totalled BY one dimension. Inserted before MEMORY_ADDENDUM (the pinned tail).
 REPORT_ASK_ADDENDUM = """
 == SALES RANKING: order_status "sales_ranking", domain_hint "order" ==
-Sales ranked or totalled BY one dimension (salesman = sales agent, customer, brand,
+Sales ranked or totalled BY one dimension (salesman, SA = sales agent, customer, brand,
 category, location, channel, month). intent_hint "check_order".
   - "top 3 salesman for Sorento brand last month" -> order_status "sales_ranking",
     group_by "sales_agent", top_n 3, entities [Sorento as brand]
@@ -176,7 +176,7 @@ category, location, channel, month). intent_hint "check_order".
   - "sales by month for agent SA01 2026" -> group_by "month", SA01 as sales_agent
   - "bottom 5 sales agents" -> group_by "sales_agent", top_n 5, rank_direction "bottom"
   - "how much did we sell of Cabana in August" -> group_by null (a total), Cabana as brand
-group_by also takes "sales_agent", "brand", "category", "channel";
+group_by also takes "sales_agent", "brand", "category", "channel" (dealer / project);
 location -> "warehouse". A named brand, sales agent or category is an entity
 {hint: "brand" | "sales_agent" | "category"}, never a customer. top_n: the number named,
 else null. rank_by "quantity" for qty, else null. basis "delivered" or "ordered" only

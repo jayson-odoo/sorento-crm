@@ -62,6 +62,7 @@ WORD_HINTS = {"brand": "brand", "sales_agent": "sales agent", "category": "categ
 TOP_N_MIN, TOP_N_MAX = 1, TOP_SELLING_N_CEILING
 #: A month breakdown is a trend, never asked "How many?": every month of the period
 #: (1b code review S2).
+#: The month breakdown's own row count (every month of any period), not a second top-N limit.
 MONTH_TOP_N = 100
 
 #: The plural each word hint's "matches several" line names (1b code review S3).

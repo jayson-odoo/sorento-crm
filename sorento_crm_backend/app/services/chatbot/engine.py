@@ -2398,14 +2398,12 @@ def _classify_word_group(db: Session, group: str) -> str | None:
     if group.lower() in TOP_SELLING_WHO_WORDS:
         return None
     # A category or an exact brand beats a sales agent alias ("water closet", "sorento" are
-    # aliases of an agent on dev): customers stay last. The agent read comes first only
-    # because it is the cheapest; it decides nothing until the other two have spoken.
-    agent = business_services.resolve_sales_agent_token(db, group)
+    # aliases of an agent on dev): customers stay last.
     if business_services.resolve_category_token(db, group) or resolve_classes_for_term(db, group.lower()):
         return "category"
     if business_services.resolve_brand_token(db, group, exact_only=True):
         return "brand"
-    if agent:
+    if business_services.resolve_sales_agent_token(db, group):
         return "sales_agent"
     if business_services.customers_named(db, group):
         return "customer"
@@ -2446,17 +2444,25 @@ def _noisy_split(db: Session, raw: str, hint: str) -> tuple[list[dict[str, Any]]
 #: "top 3 salesman", "best sales agents", "top 5 customers": the noun right after a ranking
 #: word and an optional count. Who is ranked, not what is sold (REPORT-ENGINE, owner hand test).
 _RANKED_NOUN_RE = re.compile(
-    r"\b(?:top|best|worst|worse|bottom|least|most|highest|lowest)\s+(?:\d{1,3}\s+)?([a-z]+)"
+    r"\b(?:top|best|worst|worse|bottom|least|most|highest|lowest)\s+(?:(\d[\d,]*)\s+)?([a-z]+)(?:\s+([a-z]+))?"
 )
+#: The nouns that name a person ranked. A bare "sales" is never one ("top 10 sales items").
+_RANKED_AGENT_NOUNS = frozenset({
+    "salesman", "salesmen", "salesperson", "salespeople", "agent", "agents", "rep", "reps", "sa",
+})
+_RANKED_AGENT_SECOND = frozenset({"agent", "agents", "rep", "reps", "person", "people"})
+_RANKED_CUSTOMER_NOUNS = frozenset({"customer", "customers", "client", "clients"})
 
 
 def _ranked_who(text: str) -> int | None:
-    """2 (sales agent) or 1 (customer) when the ranked noun of the message is a who-word."""
+    """2 (sales agent) or 1 (customer) when the ranked noun of the message is a person."""
     match = _RANKED_NOUN_RE.search((text or "").lower())
     if not match:
         return None
-    noun = match.group(1)
-    return TOP_SELLING_WHO_WORDS.get(noun) or TOP_SELLING_WHO_WORDS.get(noun.rstrip("s"))
+    noun, second = match.group(2), match.group(3)
+    if noun in _RANKED_AGENT_NOUNS or (noun == "sales" and second in _RANKED_AGENT_SECOND):
+        return 2
+    return 1 if noun in _RANKED_CUSTOMER_NOUNS else None
 
 
 def _sales_ranking_verdict(db: Session, verdict: dict[str, Any], text: str) -> dict[str, Any] | None:
@@ -2483,8 +2489,12 @@ def _sales_ranking_verdict(db: Session, verdict: dict[str, Any], text: str) -> d
         )
     if who == 2:
         entities = [e for e in entities if e.get("hint") != "sales_agent"]
-    return {**verdict, "order_status": "sales_ranking", "group_by": "sales_agent" if who == 2 else "customer",
-            "entities": entities}
+    out = {**verdict, "order_status": "sales_ranking", "group_by": "sales_agent" if who == 2 else "customer",
+           "entities": entities}
+    count = _RANKED_NOUN_RE.search((text or "").lower()).group(1)  # who is not None, so it matched
+    if out.get("top_n") is None and count and int(count.replace(",", "")) >= 1:
+        out["top_n"] = int(count.replace(",", ""))
+    return out
 
 
 def _top_selling_verdict(
