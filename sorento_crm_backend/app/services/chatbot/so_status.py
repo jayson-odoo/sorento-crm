@@ -326,8 +326,14 @@ def typed_so_numbers_verdict(verdict: dict[str, Any], text: str) -> tuple[dict[s
     is dropped, and a typed one the parser left out is added, in the order typed. Leaves the
     verdict alone when the message types no SO number."""
     typed: list[str] = []
-    for m in _TYPED_SO_NUMBER_RE.findall(text or ""):
-        key = so_key(m)
+    for m in _TYPED_SO_NUMBER_RE.finditer(text or ""):
+        word = m.group(0)
+        digits = word.lstrip("SOso -")
+        # A lower-case "so" set apart from a short number is the English word next to a
+        # quantity ("price 1500 so 1500 pcs ok"), not an SO number (reviewer, S1).
+        if not word.startswith("SO") and word[2:3] in (" ", "-") and len(digits) < 6:
+            continue
+        key = so_key(word)
         if key not in typed:
             typed.append(key)
     if not typed:
@@ -341,9 +347,10 @@ def typed_so_numbers_verdict(verdict: dict[str, Any], text: str) -> tuple[dict[s
     if parsed == typed:
         return verdict, None
     kept = [e for e in entities if not _is_current_so(e)]
-    template = next((e for e in entities if _is_current_so(e)), {"hint": "order", "canonical_code": None})
+    hint = next((e.get("hint") for e in entities if _is_current_so(e) and e.get("hint")), "order")
     typed_entities = [
-        {**template, "raw": key, "current_message": True, "confident": True} for key in typed
+        {"raw": key, "hint": hint, "canonical_code": None, "current_message": True, "confident": True}
+        for key in typed
     ]
     return {**verdict, "entities": typed_entities + kept}, "typed_so_numbers"
 
@@ -396,16 +403,39 @@ def carried_status_verdict(
     if pending_kind == "outstanding_detail":
         raw_positions = verdict.get("reference_positions")
         oqa = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
-        picks = (isinstance(raw_positions, list) and bool(raw_positions)) or bool(oqa.get("picked"))
+        picks = (
+            (isinstance(raw_positions, list) and bool(raw_positions))
+            or bool(oqa.get("picked"))
+            or oqa.get("mode") == "pick"
+        )
         if picks and (carried or verdict.get("document")):
             return {**verdict, **cleared, "document": []}, "pick_under_offer"
         return verdict, None
     if pending_kind in ("outstanding_scope", "sales_report_detail"):
         return verdict, None
     on_so_list = [str(d).upper() for d in (focus_document or [])] == ["SO"] and not focus_status
-    if on_so_list and carried:
+    if on_so_list and carried and _is_a_bare_period(text):
         return {**verdict, **cleared}, "period_on_so_list"
     return verdict, None
+
+
+#: What a period answer is made of, besides its month and day numbers.
+_PERIOD_WORDS = frozenset(
+    {"this", "last", "month", "to", "from", "until", "till", "for", "in", "of", "the", "and",
+     "ok", "okay", "please", "pls", "how", "about", "then", "st", "nd", "rd", "th", "may"}
+)
+
+
+def _is_a_bare_period(text: str) -> bool:
+    """Is the message a period and nothing else ("september", "last month", "15 Sep to 10
+    Oct")? Reviewer, B1: on the SO list, "which ones are still pending delivery?" or "how
+    much did I buy in september" are asks of their own, not the list's period."""
+    words = _WORDS_RE.findall((text or "").casefold())
+    names_a_period = any(w in _MONTH_WORDS or w == "month" for w in words)
+    return names_a_period and all(
+        w in _MONTH_WORDS or w in _PERIOD_WORDS or w.isdigit() or re.fullmatch(r"\d+(st|nd|rd|th)", w)
+        for w in words
+    )
 
 
 _MONTH_WORDS = {
@@ -434,7 +464,7 @@ def typed_month(text: str, today: Any) -> tuple[Any, Any] | None:
         months = [_MONTH_WORDS[w] for w in words if w in _MONTH_WORDS]
         if len(months) != 1 or any(w.isdigit() and len(w) <= 2 for w in words):
             return None
-        years = [int(w) for w in words if w.isdigit() and len(w) == 4]
+        years = [int(w) for w in words if w.isdigit() and len(w) == 4 and 2000 <= int(w) <= 2099]
         year = years[0] if years else (today.year if months[0] <= today.month else today.year - 1)
         start = date(year, months[0], 1)
     end = (start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
