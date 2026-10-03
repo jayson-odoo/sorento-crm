@@ -1,6 +1,6 @@
 # PLAN: PII scrub of the public repo (PII-SCRUB)
 
-**Status:** implemented in PR #1457 (track: L, security; no migration, no UI change). History
+**Status:** in review, PR #1457 (track: L, security; no migration, no UI change). History
 rewrite is a separate owner decision, planned outside the repo.
 
 UAC: [pii-scrub-acceptance-criteria.md](pii-scrub-acceptance-criteria.md)

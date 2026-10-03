@@ -276,7 +276,7 @@ def _stem_matches_case(case_stem: str, stem: str) -> bool:
     """`case_stem` (a real case id, minus `.json`) matches `stem` (one PENDING-
     LIVE-RERUN.md entry) when `stem` is a prefix AND the next character (if any)
     is not a digit - so `..-900000008` does not also swallow a hypothetical
-    `..-4372644830-...` case that merely shares the same leading digits."""
+    `..-9000000080-...` case that merely shares the same leading digits."""
     if not case_stem.startswith(stem):
         return False
     if len(case_stem) == len(stem):
@@ -1088,9 +1088,9 @@ class TestPendingLiveRerunParsing:
         assert _stem_matches_case("console/case-008-console-abcd1234", "console/case-008") is True
 
     def test_stem_does_not_match_a_case_sharing_only_a_leading_digit_run(self) -> None:
-        # A hypothetical case id "..-4372644830-.." must NOT be swallowed by the
+        # A hypothetical case id "..-9000000080-.." must NOT be swallowed by the
         # stem "..-900000008" merely because it starts with the same digits.
-        assert _stem_matches_case("prod_sample/business-query-4372644830-chain", "prod_sample/business-query-900000008") is False
+        assert _stem_matches_case("prod_sample/business-query-9000000080-chain", "prod_sample/business-query-900000008") is False
 
     def test_stem_matches_an_exact_case_id_with_no_suffix(self) -> None:
         assert _stem_matches_case("console/handbuilt-rp-001", "console/handbuilt-rp-001") is True

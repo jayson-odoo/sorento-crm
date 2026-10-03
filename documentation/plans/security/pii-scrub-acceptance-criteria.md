@@ -20,3 +20,17 @@ Plan: [PLAN-pii-scrub.md](PLAN-pii-scrub.md)
   owner), which now name a fake email and so fall back.
 - **AC-10** The `pii-guard` job runs on every `ci`-labelled PR and on pushes to `main`, beside the
   alembic gate; the pre-push hook runs the same script.
+
+Round 3 (review findings, 3 Oct):
+
+- **AC-11** `is_fake_phone` passes only these shapes: `0000` straight after the 60xx prefix, the
+  exact classic `012-345 6789` / `+60123456789`, and one digit repeated through the whole subscriber
+  number. A `0000` run in the middle of the subscriber number is NOT fake; `012-3456 1234` is NOT fake.
+- **AC-12** The phone-keyed rule also reads `phoneNumber`, `phone_no`, `whatsapp`, `msisdn` keys, and
+  YAML-style values (`phone: '...'`, `phone: ...` unquoted).
+- **AC-13** A UTF-16 text file (with a BOM) is decoded and scanned, not skipped.
+- **AC-14** `scripts/chatbot_record_turn.py` never writes a real Respond.io contact id into a
+  recorded contact: `id` and every field derived from it (`firstName ZZT-<id>`, `email`, `phone`)
+  use one stable fake id per real id (a fake 9-digit id with a `0000` run, so the derived phone is
+  a guard-approved fake).
+- **AC-15** The module docstring of `scripts/pii_guard.py` describes the rules as they are.
