@@ -345,9 +345,9 @@ class TestMissWording:
         _resolved, _gate, offer, _calls = _lane(session_factory, monkeypatch, company_id, product_raw=SH)
 
         message = offer.get("escalate_message") or ""
-        bullet = next((line for line in message.split("\n") if line.startswith("• attachment type: ")), "")
-        names = set(bullet.removeprefix("• attachment type: ").split(", "))
-        assert names == {PHOTOS, SPECS}, message
+        # Cloud browser pass 3 Oct: in the order the customer named them ("photo and
+        # technical specifications"), not the resolver's.
+        assert f"• attachment type: {PHOTOS}, {SPECS}" in message, message
 
 
 class TestNoSnakeCase:
@@ -436,6 +436,14 @@ class TestFoundAnswerNamesTheGap:
 
         assert f"{SH200} has no {PHOTOS} or {SPECS}." in text, text
         assert f"{SH} has no" not in text, text
+
+    def test_the_gap_line_keeps_the_footer_on_its_own_paragraph(self) -> None:
+        """Cloud browser pass 3 Oct: the line landed flush against "_Data last updated"."""
+        env = _attachment_envelope([SH], [(SH, PHOTOS)], [PHOTOS, SPECS])
+        env["lane_text"] += "\n\n_Data last updated: 03/10/2026 16:24:40_"
+        text = _compose_text(env)
+
+        assert f"\n\n{SH} has no {SPECS}.\n\n_Data last updated" in text, repr(text)
 
     def test_a_type_without_a_label_names_no_gap_at_all(self) -> None:
         """`turn_runtime.attachment_type_labels` could not read a type: no line, never a
@@ -859,6 +867,41 @@ class TestUnfoundProductWithNoCandidates:
         message = offer.get("escalate_message") or ""
         assert gate.get("gate_passed") is False, gate.get("gate_reason")
         assert offer.get("suggest_offer") is not True, offer.get("suggest_response")
+        assert message == (
+            'Couldn\'t find "strwc286" (product). '
+            "Would you like me to escalate to marketing product team?"
+        ), message
+
+    def test_an_unplaced_product_row_on_the_gate_still_counts_as_unfound(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Cloud browser pass 3 Oct on d193f450: through the real engine the gate's
+        `compatible_entities` also carries the unplaced token as a uuid-less product row
+        (`{"raw": "strwc286", "uuid": null, "entity_type": "product"}`), and the guard read
+        that as a resolved product, so the full breakdown still printed. A product with no
+        uuid is not resolved."""
+        from app.services.chatbot.lanes.business import answer as answer_mod
+
+        gate, _offer = self._lane_with_no_candidates(session_factory, monkeypatch, two_types=True)
+        engine_gate = {
+            **gate,
+            "compatible_entities": [
+                *(gate.get("compatible_entities") or []),
+                {"raw": "strwc286", "code": None, "uuid": None, "entity_type": "product"},
+            ],
+        }
+        parser = base._parser(product_raw="strwc286")
+        parser["entities"].append(
+            {"raw": "cert", "hint": "attachment_type", "canonical_code": "certificate",
+             "confident": True, "current_message": True}
+        )
+        resolved = {"unresolved_tokens": ["strwc286"], "resolutions": [
+            {"token": "strwc286", "resolved": False, "matches": [], "alternatives": []},
+        ]}
+        message = answer_mod.not_found_error_message(
+            {}, parser=parser, resolved=resolved, gate=engine_gate
+        ).get("escalate_message") or ""
+
         assert message == (
             'Couldn\'t find "strwc286" (product). '
             "Would you like me to escalate to marketing product team?"
