@@ -1546,6 +1546,22 @@ def _block_covers_asked(result: Mapping[str, Any], resolved: Mapping[str, Any]) 
     return bool(asked) and all(any(n.startswith(a.upper()) for n in named) for a in asked)
 
 
+def _quantity_labels(parser: Mapping[str, Any] | None) -> dict[str, str]:
+    """`{dash-free upper code: "M210-GM (x5)"}` for each product the customer gave a quantity
+    for, through the ONE label rule (`focus_row_label`). The miss head used to carry it;
+    when the cross-domain blocks replace that head they keep it on their `*Product Code:*`."""
+    from app.services.chatbot.turn.state import focus_row_label
+
+    out: dict[str, str] = {}
+    for e in (parser or {}).get("entities") or []:
+        if isinstance(e, Mapping) and e.get("quantity") and e.get("hint") in (None, "product"):
+            label = str(focus_row_label(e))
+            for key in (e.get("raw"), e.get("canonical_code")):
+                if key:
+                    out.setdefault(str(key).replace("-", "").upper(), label)
+    return out
+
+
 def _apply_crossdomain_render(
     text: str,
     result: Mapping[str, Any],
@@ -1553,6 +1569,7 @@ def _apply_crossdomain_render(
     answered: bool = False,
     include_offer: bool = True,
     covers: bool = False,
+    quantities: Mapping[str, str] | None = None,
 ) -> str:
     """The rung's own rendered block, folded above the escalate marker, from the
     ALREADY-COMPUTED `result` `_run_crossdomain_ladder` (above) returned - this
@@ -1579,6 +1596,14 @@ def _apply_crossdomain_render(
     block = render.get("_xdBlock")
     if not isinstance(block, Mapping) or block.get("any") is not True or not block.get("block"):
         return text
+    if covers and quantities:
+        block = {
+            **block,
+            "block": _BLOCK_CODE_RE.sub(
+                lambda m: f"*Product Code:* {quantities.get(m.group(1).replace('-', '').upper(), m.group(1))}",
+                str(block["block"]),
+            ),
+        }
     variables: dict[str, Any] = {"last_result_set": [True]} if answered else {}
     if answered:
         text, xd_text = _fold_blocks(text, str(block["block"]))
@@ -1972,6 +1997,7 @@ def answer_for(
         crossdomain_result,
         include_offer=offers_escalation(profile),
         covers=_block_covers_asked(crossdomain_result, resolved),
+        quantities=_quantity_labels(parser),
     )
     if dealer_stock_ask:
         # Owner ruling 26 Sep 2026 (hand test F1): a dealer's stock ask never offers

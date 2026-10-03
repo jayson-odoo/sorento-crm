@@ -2678,7 +2678,12 @@ def merge_stock_rows(items: list[Any]) -> list[Any]:
             qty, os_qty = fv(r, "quantity_on_hand"), fv(r, "open_so_qty")
             lines.append(
                 {
-                    "label": jsc.js_string(fv(r, "system_location")),
+                    # A row with no location keeps today's label for its quantity.
+                    "label": (
+                        "Quantity On Hand"
+                        if fv(r, "system_location") == "-"
+                        else jsc.js_string(fv(r, "system_location"))
+                    ),
                     "value": f"{_fmt_value(qty)} (O/S: {_fmt_value(os_qty)})"
                     if os_qty is not None
                     else _fmt_value(qty),
