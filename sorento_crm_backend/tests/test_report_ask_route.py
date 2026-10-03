@@ -413,7 +413,7 @@ def test_ac_re_11_no_group_by_and_no_top_n_is_the_number_shape(client, db):
         ({"group_by": "product", "top_n": 3, "measure": "profit"}, "unknown_measure"),
         ({"group_by": "product", "top_n": 3, "sort": "sideways"}, "unknown_sort"),
         ({"group_by": "product", "top_n": 0}, "top_n_out_of_range"),
-        ({"group_by": "product", "top_n": 101}, "top_n_out_of_range"),
+        ({"group_by": "product", "top_n": 1001}, "top_n_out_of_range"),
         ({"group_by": "product", "top_n": 3, "channel": "retail"}, "invalid_channel"),
         ({"group_by": "product", "top_n": 3, "date_from": "2026-10-01", "date_to": "2026-09-01"},
          "date_range_inverted"),

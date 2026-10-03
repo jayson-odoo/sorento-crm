@@ -381,10 +381,11 @@ def test_ac_re_18b_a_non_number_reply_is_a_miss_and_a_second_miss_gives_up(conso
     assert text.strip() == GIVE_UP.format(word="plenty"), text
 
 
-def test_ac_re_18b_a_number_outside_1_to_100_is_a_miss(console) -> None:
+def test_ac_re_18b_a_number_outside_1_to_the_ceiling_is_a_miss(console) -> None:
     console.say(_rank(top_n=None), "top salesman last month")
-    text, calls = console.say(_reply(), "500")
+    text, calls = console.say(_reply(), "1001")
     assert calls == []
+    assert "I can list at most the top 1,000 in one reply." in text, text
     assert TOPN_Q in text, text
 
 

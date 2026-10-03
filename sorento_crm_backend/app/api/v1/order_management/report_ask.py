@@ -32,7 +32,7 @@ from app.models.sales_agent import SalesAgent
 from app.schemas.report_ask import ReportAskResponse
 from app.services.error_handler import AppException, handle_not_found
 from app.services.reports import ask
-from app.services.sales_report_service import _resolve_products
+from app.services.sales_report_service import TOP_SELLING_N_CEILING, _resolve_products
 from app.services.uuid_list_param import parse_uuid_list
 
 router = APIRouter()
@@ -149,7 +149,7 @@ def report_ask(
         None,
         description="customer | product | brand | category | sales_agent | location | channel | month. Absent = one total.",
     ),
-    top_n: Optional[int] = Query(None, description="1 to 100. Required with group_by."),
+    top_n: Optional[int] = Query(None, description=f"1 to {TOP_SELLING_N_CEILING}. Required with group_by."),
     sort: str = Query("desc", description="desc (top) | asc (bottom)."),
     product_code: Optional[str] = Query(None, description="Product code prefix, at least 3 characters."),
     product_ids: Optional[list[str]] = Query(None, description="Product ids; ANDed with product_code."),
@@ -206,8 +206,8 @@ def report_ask(
         )
     if group_norm is not None and top_n is None:
         raise _unprocessable("A ranking needs top_n", "top_n_required")
-    if top_n is not None and not 1 <= top_n <= 100:
-        raise _unprocessable("top_n must be between 1 and 100", "top_n_out_of_range")
+    if top_n is not None and not 1 <= top_n <= TOP_SELLING_N_CEILING:
+        raise _unprocessable(f"top_n must be between 1 and {TOP_SELLING_N_CEILING}", "top_n_out_of_range")
     channel_norm = (channel or "").strip().lower() or None
     if channel_norm is not None and channel_norm not in _CHANNELS:
         raise _unprocessable(f"Unknown channel value '{channel}'", "invalid_channel", _allowed(_CHANNELS))

@@ -2397,12 +2397,16 @@ def _classify_word_group(db: Session, group: str) -> str | None:
 
     if group.lower() in TOP_SELLING_WHO_WORDS:
         return None
-    if business_services.resolve_sales_agent_token(db, group):
-        return "sales_agent"
+    # A category or an exact brand beats a sales agent alias ("water closet", "sorento" are
+    # aliases of an agent on dev): customers stay last. The agent read comes first only
+    # because it is the cheapest; it decides nothing until the other two have spoken.
+    agent = business_services.resolve_sales_agent_token(db, group)
     if business_services.resolve_category_token(db, group) or resolve_classes_for_term(db, group.lower()):
         return "category"
     if business_services.resolve_brand_token(db, group, exact_only=True):
         return "brand"
+    if agent:
+        return "sales_agent"
     if business_services.customers_named(db, group):
         return "customer"
     return None
@@ -2439,6 +2443,50 @@ def _noisy_split(db: Session, raw: str, hint: str) -> tuple[list[dict[str, Any]]
     return split
 
 
+#: "top 3 salesman", "best sales agents", "top 5 customers": the noun right after a ranking
+#: word and an optional count. Who is ranked, not what is sold (REPORT-ENGINE, owner hand test).
+_RANKED_NOUN_RE = re.compile(
+    r"\b(?:top|best|worst|worse|bottom|least|most|highest|lowest)\s+(?:\d{1,3}\s+)?([a-z]+)"
+)
+
+
+def _ranked_who(text: str) -> int | None:
+    """2 (sales agent) or 1 (customer) when the ranked noun of the message is a who-word."""
+    match = _RANKED_NOUN_RE.search((text or "").lower())
+    if not match:
+        return None
+    noun = match.group(1)
+    return TOP_SELLING_WHO_WORDS.get(noun) or TOP_SELLING_WHO_WORDS.get(noun.rstrip("s"))
+
+
+def _sales_ranking_verdict(db: Session, verdict: dict[str, Any], text: str) -> dict[str, Any] | None:
+    """A fresh top selling verdict whose ranked noun is a person ("top 3 salesman for
+    sorento water closet") re-read as the sales ranking: group_by sales_agent or customer,
+    the parser's top_n, dates, direction, basis and brand / category / product words kept.
+    The ranked axis is never also a filter, so a sales agent word is dropped from an agent
+    ranking, and one entity naming several things is split. None when it is not one."""
+    who = _ranked_who(text)
+    if who is None or jsc.js_string(verdict.get("order_status") or "").strip() != "top_selling":
+        return None
+    entities: list[dict[str, Any]] = []
+    for e in verdict.get("entities") or []:
+        if not isinstance(e, dict):
+            continue
+        raw = " ".join(jsc.js_string(e.get("raw") or "").split())
+        split = _noisy_split(db, raw, jsc.js_string(e.get("hint") or "")) if raw and e.get("current_message") is not False else None
+        if split is None:
+            entities.append(e)
+            continue
+        entities.extend(
+            {**e, "raw": part["raw"], "hint": part["hint"], "canonical_code": None, "hint_confident": True}
+            for part in split[0]
+        )
+    if who == 2:
+        entities = [e for e in entities if e.get("hint") != "sales_agent"]
+    return {**verdict, "order_status": "sales_ranking", "group_by": "sales_agent" if who == 2 else "customer",
+            "entities": entities}
+
+
 def _top_selling_verdict(
     db: Session, verdict: dict[str, Any], state: Any, text: str
 ) -> tuple[dict[str, Any], Any, str | None]:
@@ -2468,6 +2516,10 @@ def _top_selling_verdict(
     claimed = None if ranking and verdict.get("message_type") == "out_of_scope" else _ranking_words_claim(verdict, text)
     if claimed is not None:
         verdict = claimed
+    if not ranking:
+        reranked = _sales_ranking_verdict(db, verdict, text)
+        if reranked is not None:
+            return reranked, state, "sales_ranking_reroute"
     if slot is not None:
         # R1 (round 7): a word the parser echoes from an earlier turn (`current_message:
         # false`, no id) is never read again: the ranking already resolved it, and the
@@ -4188,6 +4240,9 @@ def _run_stages_body(  # noqa: PLR0915
         verdict, state_in, top_selling_rule = _top_selling_verdict(
             db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
         )
+        if top_selling_rule == "sales_ranking_reroute":
+            # Became a sales ranking only now, after the seam above ran: take its words.
+            verdict = report_ask.take_words(verdict, _message_text)
         if in_ranking_conversation and _asks_for_a_person(verdict):
             in_ranking_conversation = False
         if top_selling_rule:

@@ -164,26 +164,27 @@ Every non-customer entity, and every customer entity without an account number, 
 #: sales ranked or totalled BY one dimension. Inserted before MEMORY_ADDENDUM (the pinned tail).
 REPORT_ASK_ADDENDUM = """
 == SALES RANKING: order_status "sales_ranking", domain_hint "order" ==
-Sales ranked or totalled BY one dimension: sales agent (salesman, SA), customer, brand,
-category, location, channel or month. intent_hint "check_order".
+Sales ranked or totalled BY one dimension (salesman = sales agent, customer, brand,
+category, location, channel, month). intent_hint "check_order".
   - "top 3 salesman for Sorento brand last month" -> order_status "sales_ranking",
-    group_by "sales_agent", top_n 3, rank_direction "top", entities [Sorento as brand]
+    group_by "sales_agent", top_n 3, entities [Sorento as brand]
+  - "who's the top 3 salesman for sorento water closet this year" -> sales_ranking,
+    group_by "sales_agent", top_n 3, [sorento as brand, water closet as category]
   - "which location sold most SR1234 in September" -> group_by "warehouse", top_n 1,
     entities [SR1234 as product]
   - "top 5 customers for Cabana this year" -> group_by "customer", top_n 5, Cabana as brand
   - "sales by month for agent SA01 2026" -> group_by "month", SA01 as sales_agent
   - "bottom 5 sales agents" -> group_by "sales_agent", top_n 5, rank_direction "bottom"
   - "how much did we sell of Cabana in August" -> group_by null (a total), Cabana as brand
-group_by also takes "sales_agent", "brand", "category", "channel" (dealer / project).
-"by location" -> "warehouse". A named brand, sales agent or category is an entity
+group_by also takes "sales_agent", "brand", "category", "channel";
+location -> "warehouse". A named brand, sales agent or category is an entity
 {hint: "brand" | "sales_agent" | "category"}, never a customer. top_n: the number named,
-else null (never invent one). rank_by "quantity" for qty, else null. basis "delivered" or
-"ordered" only when the message says so, else null. sales_channel as for sales_report.
+else null. rank_by "quantity" for qty, else null. basis "delivered" or "ordered" only
+when said, else null. sales_channel as for sales_report.
 NOT a sales ranking:
-  - a company's own totals by month, year or channel with no brand, sales agent,
-    category, location or product named and no ranking word ("sales by month this
-    year", "dealer sales this year") stays "sales_analysis";
-  - "sales report of X" (one customer's or product's figures) stays "sales_report";
+  - company totals by month, year or channel with nothing named and no ranking word
+    ("sales by month this year", "dealer sales this year") stay "sales_analysis";
+  - "sales report of X" stays "sales_report";
   - ranking PRODUCTS or CATEGORIES ("top 10 products", "hot selling", "which category
     sells most") stays "top_selling".
 """

@@ -22,6 +22,7 @@ from typing import Any
 
 from app.services.chatbot import jsc
 from app.services.chatbot import required_fields as rf
+from app.services.sales_report_service import TOP_SELLING_N_CEILING
 from app.services.chatbot.lanes.business import services as business_services
 
 ASK_NAME = "sales_ranking"
@@ -57,10 +58,11 @@ GROUP_BY = {
 #: The entity hints `take_words` moves, and the noun each is said with when it names nothing.
 WORD_HINTS = {"brand": "brand", "sales_agent": "sales agent", "category": "category"}
 
-TOP_N_MIN, TOP_N_MAX = 1, 100
+#: One ceiling, shared with the route and the top-selling lane (owner, 30 Sep 2026).
+TOP_N_MIN, TOP_N_MAX = 1, TOP_SELLING_N_CEILING
 #: A month breakdown is a trend, never asked "How many?": every month of the period
 #: (1b code review S2).
-MONTH_TOP_N = TOP_N_MAX
+MONTH_TOP_N = 100
 
 #: The plural each word hint's "matches several" line names (1b code review S3).
 SEVERAL_NOUNS = {"brand": "brands", "category": "categories"}
@@ -116,11 +118,15 @@ def top_n_from(value: Any) -> rf.Resolved:
         return rf.Resolved("unknown")
     if isinstance(value, (int, float)) and float(value).is_integer() and TOP_N_MIN <= int(value) <= TOP_N_MAX:
         return rf.Resolved("ok", value=int(value), label=str(int(value)))
+    if isinstance(value, (int, float)) and float(value).is_integer() and value > TOP_N_MAX:
+        from app.services.chatbot.lanes.business import top_selling_ceiling_note  # the one wording; lazy, the package imports this module
+
+        return rf.Resolved("unknown", note=top_selling_ceiling_note({"top_n": value}) or "")
     return rf.Resolved("unknown")
 
 
 def _resolve_top_n(_db: Any, word: str, _extras: dict[str, Any]) -> rf.Resolved:
-    """A reply word with one integer 1..100 ("5", "top 5"); anything else is a miss."""
+    """A reply word with one integer 1 to the ceiling ("5", "top 5"); anything else is a miss."""
     numbers = re.findall(r"\d+", word or "")
     return top_n_from(int(numbers[0])) if len(numbers) == 1 else rf.Resolved("unknown")
 

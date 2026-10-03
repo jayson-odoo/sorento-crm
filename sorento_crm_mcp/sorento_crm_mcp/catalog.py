@@ -795,7 +795,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "REQUIRED: `date_from` and `date_to` (ISO dates; 422 `period_required` otherwise - "
             "ask the person which period, never guess one) and `contact_id` + `space_id`. "
             "`group_by` = customer | product | brand | category | sales_agent | location | "
-            "channel | month; absent = ONE total. With `group_by`, `top_n` (1 to 100) is REQUIRED "
+            "channel | month; absent = ONE total. With `group_by`, `top_n` (1 to 1,000) is REQUIRED "
             "(422 `top_n_required`): the number the person named, or ask. `sort` desc (top, "
             "default) | asc (bottom). `measure` amount (default, RM) | qty (what the ranking "
             "sorts by). `basis` delivered (default: delivery orders by DO date) | ordered "

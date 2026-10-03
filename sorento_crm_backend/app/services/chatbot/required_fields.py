@@ -82,6 +82,8 @@ class Resolved:
     value: Any = None
     label: str = ""
     options: tuple[tuple[Any, str], ...] = ()
+    #: A miss that says why in its own words (a number past the ceiling); empty = the generic line.
+    note: str = ""
 
 
 @dataclass(frozen=True)
@@ -139,7 +141,9 @@ def _is_all(text: str, spec: FieldSpec) -> bool:
     return word in ALL_WORDS or word in {f"all {spec.noun}", f"all {_plural(spec.noun)}"}
 
 
-def _miss_line(word: str, spec: FieldSpec) -> str:
+def _miss_line(word: str, spec: FieldSpec, note: str = "") -> str:
+    if note:
+        return f"{note}\n\n{spec.question}"
     return f"I don't know '{word}' as a {spec.noun}.\n\n{spec.question}"
 
 
@@ -221,7 +225,7 @@ def collect(
                                    extras=carried)
                 if misses >= MAX_MISSES:
                     return Outcome(values=values, reply=ask.give_up.format(word=word), slot=None, extras=carried)
-                return Outcome(values=values, reply=_miss_line(word, spec),
+                return Outcome(values=values, reply=_miss_line(word, spec, got.note),
                                slot=_slot(ask, values, carried, asking=spec.name, options=options, misses=misses),
                                extras=carried)
 
@@ -246,7 +250,7 @@ def collect(
             if not spec.required:
                 continue
             said = " ".join(word.split()) if isinstance(word, str) else ""
-            return Outcome(values=values, reply=_miss_line(said, spec),
+            return Outcome(values=values, reply=_miss_line(said, spec, got.note),
                            slot=_slot(ask, values, carried, asking=spec.name), extras=carried)
         if not spec.required:
             continue
