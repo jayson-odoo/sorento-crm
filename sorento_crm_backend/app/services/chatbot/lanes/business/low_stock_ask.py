@@ -41,7 +41,7 @@ _ASK_WORDS = frozenset(
     """low stock stok list report reorder reordering laporan rendah needs need what is are
     below level levels for the a an of by group grouped grouping and x please pls show me give
     send all item items product products category categories supplier suppliers in at
-    on from with""".split()
+    on from with only just""".split()
 )
 
 
@@ -70,8 +70,14 @@ def _codes(rows: list[tuple[str, str, str]], brands: list[str]) -> list[str]:
     return sorted({code for _i, code, hint in rows if code and _brand_matches(brands, hint, code)})
 
 
-def _ok(codes: list[str]) -> rf.Resolved:
-    return rf.Resolved("ok", value=codes, label=", ".join(codes))
+def _ok(codes: list[str], said: str | None = None) -> rf.Resolved:
+    """`said` is how the reply names it back: the user's own words ("Sorento water tap"),
+    never the code list (owner, 3 Oct 2026: "Low stock report (water closet, ...)")."""
+    return rf.Resolved("ok", value=codes, label=said or ", ".join(codes))
+
+
+def _said(word: str, brands: list[str]) -> str:
+    return " ".join([*brands, " ".join(word.split())]).strip()
 
 
 def resolve_category(db: Any, word: str, extras: dict[str, Any]) -> rf.Resolved:
@@ -82,6 +88,7 @@ def resolve_category(db: Any, word: str, extras: dict[str, Any]) -> rf.Resolved:
     if db is None:
         return rf.Resolved("unknown")
     brand = list(extras.get("brands") or [])
+    said = _said(word, brand)
     matched = business_services.resolve_category_token(db, word)
     if matched:
         codes = _codes(_category_rows(db, [r[0] for r in matched]), brand)
@@ -89,11 +96,11 @@ def resolve_category(db: Any, word: str, extras: dict[str, Any]) -> rf.Resolved:
             return rf.Resolved("unknown")
         if len(codes) > 1:
             return rf.Resolved("ambiguous", options=tuple(([c], c) for c in codes))
-        return _ok(codes)
+        return _ok(codes, said)
     ids, labels = business_services.resolve_category_class(db, word)
     if ids:
         codes = _codes(_category_rows(db, ids), brand)
-        return _ok(codes) if codes else rf.Resolved("unknown")
+        return _ok(codes, said) if codes else rf.Resolved("unknown")
     if len(labels) > 1:
         options = []
         for label in labels:
@@ -102,7 +109,7 @@ def resolve_category(db: Any, word: str, extras: dict[str, Any]) -> rf.Resolved:
             if codes:
                 options.append((codes, label))
         if len(options) == 1:
-            return _ok(options[0][0])
+            return _ok(options[0][0], said)
         if options:
             return rf.Resolved("ambiguous", options=tuple(options))
     return rf.Resolved("unknown")
@@ -123,7 +130,7 @@ def brand_categories(db: Any, brands: list[str]) -> rf.Resolved | None:
     if db is None or not brands:
         return None
     codes = _codes(_category_rows(db), brands)
-    return _ok(codes) if codes else None
+    return _ok(codes, " ".join(brands)) if codes else None
 
 
 def _supplier_rows(db: Any) -> list[tuple[str, str, str]]:
@@ -249,6 +256,15 @@ def supplier_word(db: Any, words: list[str]) -> str | None:
     return None
 
 
+def _fold(s: str) -> str:
+    return " ".join(str(s or "").split()).casefold()
+
+
+def _in_text(raw: str, text: str) -> bool:
+    """The word, whole, in the message: case and whitespace folded."""
+    return bool(raw) and re.search(rf"(?<!\w){re.escape(_fold(raw))}(?!\w)", _fold(text)) is not None
+
+
 def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
     """Engine seam, a FRESH low stock ask: the category and brand words come off the
     entity list (the shared resolver would read them as promotions and end the turn in a
@@ -257,7 +273,7 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
     if verdict.get("intent_hint") != ASK_NAME or verdict.get("required_ask"):
         return verdict
     entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
-    kept, words = [], {"category": [], "brand": [], "used": []}
+    kept, words = [], {"category": [], "brand": []}
     for e in entities:
         hint = str(e.get("hint") or "").strip().lower()
         raw = " ".join(str(e.get("raw") or "").split())
@@ -270,12 +286,16 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
             # carries digits; a word without any is a product TYPE.
             hint = "category"
         if hint in ("category", "brand") and raw:
-            words[hint].append(raw)
-            words["used"].append(raw)
-            continue
-        if raw:
-            words["used"].append(raw)
-        kept.append(e)
+            # Live parser finding (3 Oct 2026): it carries an earlier turn's word as
+            # current_message; only what THIS message names is taken, else dropped.
+            if _in_text(raw, text):
+                words[hint].append(raw)
+        elif hint in ("warehouse", "product"):
+            # The only entities the run is scoped by. Every other word (a supplier name,
+            # "supplier" itself) stays in the message text, where `settle` reads it; as an
+            # entity it reached the resolver, missed, and the miss handler answered over
+            # the report (owner hand test, 3 Oct 2026, turn 4a90dd1d).
+            kept.append(e)
     return {**verdict, "entities": kept, "low_stock_words": words, "low_stock_text": text}
 
 
@@ -310,6 +330,8 @@ def settle(db: Any, parse_output: dict[str, Any], *, include_supplier: bool) -> 
 
     words = parse_output.get("low_stock_words") if isinstance(parse_output.get("low_stock_words"), dict) else {}
     text = str(parse_output.get("low_stock_text") or "")
+    # A "brand" no category carries stays a plain word, free to be the supplier (owner
+    # hand test, 3 Oct 2026, turn 3dec9b68: "taiyang" came hinted brand).
     brands = known_brands(db, list(words.get("brand") or []))
     category_word = " ".join(words.get("category") or [])
     split = split_from(text)
@@ -321,7 +343,7 @@ def settle(db: Any, parse_output: dict[str, Any], *, include_supplier: bool) -> 
     elif brands:
         given["category"] = brand_categories(db, brands)
     if include_supplier:
-        word = supplier_word(db, leftover_words(text, list(words.get("used") or [])))
+        word = supplier_word(db, leftover_words(text, [*(words.get("category") or []), *brands]))
         if word:
             given["supplier"] = word
     else:
@@ -347,9 +369,10 @@ def route_filters(outcome: rf.Outcome) -> dict[str, Any]:
         out["categories"] = category
     if include_supplier and isinstance(supplier, list) and supplier:
         out["suppliers"] = supplier
-    parts = [f"Category: {', '.join(out['categories']) if out.get('categories') else 'all'}"]
+    category_label = str((outcome.values.get("category") or {}).get("label") or "")
+    parts = [category_label if out.get("categories") and category_label else "all categories"]
     if include_supplier:
-        parts.append(f"Supplier: {', '.join(out['suppliers']) if out.get('suppliers') else 'all'}")
-    parts.append(f"Grouping: {SPLIT_LABELS.get(split, split)}")
-    out["line"] = " | ".join(parts)
+        parts.append(f"supplier {', '.join(out['suppliers'])}" if out.get("suppliers") else "all suppliers")
+    parts.append(f"by {SPLIT_LABELS[split]}" if split in SPLIT_LABELS and split != "none" else "no grouping")
+    out["header"] = f"Low stock report ({', '.join(parts)})"
     return out

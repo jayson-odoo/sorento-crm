@@ -28,6 +28,7 @@ from tests.scm.test_low_stock_report_chat import (  # noqa: F401
     _no_cloud_credentials_needed,
     _params,
     _patch_wait,
+    _download_row,
     _timeout,
 )
 
@@ -187,3 +188,39 @@ def test_a_supplier_name_longer_than_the_column_is_refused(scm_app, monkeypatch)
 
     assert resp.status_code == 422, resp.text
     assert calls == []
+
+
+def test_a_dry_run_never_hands_delivery_to_the_worker(scm_app, monkeypatch):
+    """Tester finding (console / dry run): the route claimed delivery unconditionally, so
+    the worker pushed the workbook to the contact's WhatsApp for a TEST turn. A dry run
+    still builds the file (My Downloads) but never claims the push."""
+    app, db, key, _uid = _api_key_caller(scm_app)
+    contact = _contact(db, granted=(GRANT_KEY, SUPPLIER_KEY))
+    db.flush()
+    _fake_queue(monkeypatch)
+    _patch_wait(monkeypatch, on_wait=_timeout)
+
+    with TestClient(app) as c:
+        resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(contact, dry_run="true"))
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "pending", body
+    assert body.get("dry_run") is True, body
+    row = _download_row(db, body["download_id"])
+    assert row["deliver_to"] is None, "a dry run must never be pushed to WhatsApp"
+
+
+def test_a_live_turn_still_hands_delivery_to_the_worker(scm_app, monkeypatch):
+    app, db, key, _uid = _api_key_caller(scm_app)
+    contact = _contact(db, granted=(GRANT_KEY, SUPPLIER_KEY))
+    db.flush()
+    _fake_queue(monkeypatch)
+    _patch_wait(monkeypatch, on_wait=_timeout)
+
+    with TestClient(app) as c:
+        resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(contact, dry_run="false"))
+
+    body = resp.json()
+    assert body["status"] == "pending" and not body.get("dry_run"), body
+    assert _download_row(db, body["download_id"])["deliver_to"] == contact.id

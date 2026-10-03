@@ -529,7 +529,11 @@ class TestTransportFailureSaysThisToolsLine:
         )
 
         reply = (result or {}).get("response") or ""
-        assert reply == "Could not run the low stock report right now.", repr(reply)
+        # LOWSTOCK-FILTER-ASK (owner hand test, 3 Oct 2026): every low stock reply opens
+        # with the filters it was asked with, the failure line included.
+        assert reply == (
+            "Low stock report (all categories, no grouping)\nCould not run the low stock report right now."
+        ), repr(reply)
         assert "problem understanding" not in reply.lower(), reply
         assert (result or {}).get("escalate"), (
             f"the picker still rides on the fragment: {result!r}"
@@ -657,3 +661,25 @@ class TestCarriedEntitiesAreDropped:
         assert args.get("product_codes") == ["CB100-BL-DIY"], (
             f"a product named by its prefix must still scope the run: {args}"
         )
+
+
+class TestDryRunReachesTheTool:
+    """Tester finding: `run_fetch` discarded `dry_run`, so a console turn's low stock ask
+    was a real one and its workbook was pushed to WhatsApp. The lane now tells the tool."""
+
+    def test_a_dry_run_turn_sends_dry_run(self) -> None:
+        from app.services.chatbot.lanes.business import run_fetch
+
+        call, captured = _capturing_mcp(READY_ENVELOPE)
+        run_fetch(_payload(attributes=[GRANT_KEY], entities=[]), services=FetchServices(mcp_call=call),
+                  dry_run=True)
+        (_name, args), = captured
+        assert args.get("dry_run") is True, args
+
+    def test_a_live_turn_sends_none(self) -> None:
+        from app.services.chatbot.lanes.business import run_fetch
+
+        call, captured = _capturing_mcp(READY_ENVELOPE)
+        run_fetch(_payload(attributes=[GRANT_KEY], entities=[]), services=FetchServices(mcp_call=call))
+        (_name, args), = captured
+        assert "dry_run" not in args, args

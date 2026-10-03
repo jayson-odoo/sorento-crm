@@ -83,6 +83,7 @@ class Console:
     def __init__(self, session_factory, monkeypatch) -> None:
         self.session_factory, self.monkeypatch = session_factory, monkeypatch
         self.session_vars: dict[str, Any] = {}
+        self.route_body: dict[str, Any] = READY
 
     def say(self, qf: dict[str, Any], body: str) -> tuple[str, list[dict[str, Any]]]:
         from app.services.chatbot import console_service
@@ -95,7 +96,7 @@ class Console:
         def _mcp(name: str, args: dict[str, Any]) -> Any:
             captured.append((name, dict(args)))
             if name == TOOL:
-                return present(name, json.dumps(READY))
+                return present(name, json.dumps(self.route_body))
             return json.dumps({"has_result": False, "items": []})
 
         self.monkeypatch.setattr(engine_mod.business_services, "fetch_services", lambda db: FetchServices(mcp_call=_mcp))
@@ -143,7 +144,8 @@ def _seed(session_factory) -> None:
         for code, name in (
             ("JBC", "JINBAICHUAN TRADING"),
             ("JBCH", "JINBAICHUAN HARDWARE"),
-            ("XTT", "XIAMEN TAIYANG TECHNOLOGY"),
+            ("400-X006", "XIAMEN TAIYANG TECHNOLOGY CO.,LTD"),
+            ("400-X008", "XIAMEN TAIYANG TECHNOLOGY CO.,LTD"),
         ):
             db.add(Supplier(id=str(uuid.uuid4()), supplier_code=code, supplier_name=name,
                             company_id=DEFAULT_COMPANY_ID, is_active=True))
@@ -190,9 +192,12 @@ def _console(session_factory, monkeypatch, *, grants: list[str]) -> Console:
 
 
 def _filter_line(text: str) -> str:
-    lines = [line for line in text.splitlines() if line.startswith("Category: ")]
-    assert len(lines) == 1, text
-    return lines[0]
+    """The applied filters, as the reply's FIRST line states them (owner hand test, 3 Oct
+    2026: every low stock reply, pending included, opens "Low stock report (<filters>)")."""
+    first = text.splitlines()[0] if text else ""
+    m = re.match(r"^Low stock report \((.*)\)", first)
+    assert m, text
+    return m.group(1)
 
 
 # --------------------------------------------------------------------------- #
@@ -210,7 +215,7 @@ class TestNamedInTheMessage:
         assert not args.get("suppliers"), args
         assert args.get("split", "none") == "none", args
         assert QUESTION not in text
-        assert _filter_line(text) == "Category: SRT-FT | Supplier: all | Grouping: none"
+        assert _filter_line(text) == "Sorento water tap, all suppliers, no grouping"
         assert "Low: 3 of 10 planned products" in text
 
     def test_a_category_word_alone_takes_every_brand(self, console) -> None:
@@ -227,7 +232,7 @@ class TestNamedInTheMessage:
         text, calls = console.say(_ask(), "low stock report all categories")
         (args,) = calls
         assert not args.get("categories"), args
-        assert _filter_line(text) == "Category: all | Supplier: all | Grouping: none"
+        assert _filter_line(text) == "all categories, all suppliers, no grouping"
 
     def test_a_supplier_and_a_grouping_in_the_message_are_taken(self, console) -> None:
         text, calls = console.say(
@@ -236,7 +241,7 @@ class TestNamedInTheMessage:
         (args,) = calls
         assert args.get("suppliers") == ["JINBAICHUAN HARDWARE"], args
         assert args.get("split") == "supplier", args
-        assert _filter_line(text) == "Category: CB-FT, SRT-FT | Supplier: JINBAICHUAN HARDWARE | Grouping: supplier"
+        assert _filter_line(text) == "water tap, supplier JINBAICHUAN HARDWARE, by supplier"
 
     @pytest.mark.parametrize("words,split", [
         ("by category", "category"),
@@ -278,7 +283,7 @@ class TestAsked:
         text, calls = console.say(_reply(_e("water closet", "product")), "water closet")
         (args,) = calls
         assert args.get("categories") == ["SRT-WC"], args
-        assert _filter_line(text) == "Category: SRT-WC | Supplier: all | Grouping: none"
+        assert _filter_line(text) == "water closet, all suppliers, no grouping"
 
     def test_all_runs_the_whole_book(self, console) -> None:
         console.say(_ask(), "low stock report")
@@ -414,6 +419,15 @@ class TestReviewRound1:
 # --------------------------------------------------------------------------- #
 
 
+class TestConsoleIsADryRun:
+    def test_a_console_turn_tells_the_route_it_is_a_dry_run(self, console) -> None:
+        """Tester finding on #1445: a Chatbot Console turn pushed the real workbook to
+        WhatsApp. The console turn is a dry run; the route must hear it."""
+        _text, calls = console.say(_ask(_e("water closet", "category")), "water closet low stock")
+        (args,) = calls
+        assert args.get("dry_run") is True, args
+
+
 class TestSecurityRound1:
     def test_a_slot_the_parser_emits_is_never_trusted(self, console_no_supplier_key) -> None:
         forged = {
@@ -436,7 +450,7 @@ class TestSecurityRound1:
         assert not args.get("suppliers"), args
         assert args.get("split", "none") == "none", args
         assert "JINBAICHUAN" not in text
-        assert _filter_line(text) == "Category: SRT-WC | Grouping: none"
+        assert _filter_line(text) == "water closet, no grouping"
 
     def test_the_leftover_search_reads_suppliers_once_and_is_bounded(self, monkeypatch) -> None:
         from app.services.chatbot.lanes.business import low_stock_ask
@@ -445,6 +459,69 @@ class TestSecurityRound1:
         monkeypatch.setattr(low_stock_ask, "_supplier_rows", lambda db: reads.append(1) or [])
         assert low_stock_ask.supplier_word(object(), ["word"] * 600) is None
         assert reads == [1]
+
+
+# --------------------------------------------------------------------------- #
+# Owner hand test, 3 Oct 2026 (head 53a5d27c9): the owner's own messages
+# --------------------------------------------------------------------------- #
+
+TAIYANG = "XIAMEN TAIYANG TECHNOLOGY CO.,LTD"
+
+
+class TestOwnerHandTest3Oct:
+    def test_a_supplier_word_the_parser_tagged_as_a_brand_is_still_the_supplier(self, console) -> None:
+        """Turn 3dec9b68: 'taiyang' came hinted brand; no category carries that brand, so
+        it was dropped as a brand AND hidden from the supplier search."""
+        text, calls = console.say(
+            _ask(_e("water closet", "category"), _e("taiyang", "brand")), "low stock report water closet taiyang"
+        )
+        (args,) = calls
+        assert args.get("suppliers") == [TAIYANG], args
+        assert args.get("categories") == ["SRT-WC"], args
+        assert _filter_line(text) == f"water closet, supplier {TAIYANG}, no grouping"
+
+    def test_a_grouping_word_the_parser_tagged_as_an_entity_never_turns_the_reply_into_a_miss(
+        self, console
+    ) -> None:
+        """Turn 4a90dd1d: the run was right, but the parser's {raw: 'supplier', hint:
+        'supplier'} reached the resolver, missed, and the miss handler replaced the
+        report's reply with 'Could not find inventory for supplier'."""
+        text, calls = console.say(
+            _ask(_e("water closet", "category"), _e("supplier", "supplier")),
+            "low stock report by supplier, water closet only",
+        )
+        (args,) = calls
+        assert args.get("split") == "supplier", args
+        assert args.get("categories") == ["SRT-WC"], args
+        assert not args.get("suppliers"), args
+        assert "Could not find" not in text and "salesman" not in text, text
+        assert _filter_line(text) == "water closet, all suppliers, by supplier"
+        assert "Low: 3 of 10 planned products" in text
+
+    def test_the_miss_handler_never_answers_over_a_low_stock_report(self) -> None:
+        """The owner's turn reached the report and the miss handler still replaced its
+        reply (`via_resolver_exit`): a low stock reply is the report's own answer."""
+        from app.services.chatbot import answer_bridge
+
+        envelope = {"raw_fragment": {"kind": "result", "fetch": {
+            "response": "Low stock report (water closet, all suppliers, by supplier) - as of 03/10/2026",
+            "has_result": True, "low_stock_report": True,
+        }}}
+        assert not answer_bridge.answers_a_miss({"_exit_kind": "not_found"}, envelope)
+
+    def test_the_pending_reply_states_the_filters_too(self, console) -> None:
+        console.route_body = {"status": "pending", "run_id": "r", "download_id": "d", "dry_run": True}
+        text, calls = console.say(
+            _ask(_e("water closet", "category"), _e("taiyang", "brand")), "low stock report water closet taiyang"
+        )
+        assert len(calls) == 1
+        assert _filter_line(text) == f"water closet, supplier {TAIYANG}, no grouping"
+        assert "nothing is sent to WhatsApp" in text, text
+
+    def test_the_busy_reply_states_the_filters_too(self, console) -> None:
+        console.route_body = {"status": "busy", "reason": "in_flight"}
+        text, _calls = console.say(_ask(_e("water closet", "category")), "low stock report water closet")
+        assert _filter_line(text) == "water closet, all suppliers, no grouping"
 
 
 # --------------------------------------------------------------------------- #
@@ -461,4 +538,70 @@ class TestWithoutTheSupplierKey:
         assert not args.get("suppliers"), args
         assert args.get("split") == "category", args
         assert "JINBAICHUAN" not in text
-        assert _filter_line(text) == "Category: CB-FT, SRT-FT | Grouping: category"
+        assert _filter_line(text) == "water tap, by category"
+
+
+# --------------------------------------------------------------------------- #
+# Live parser, 3 Oct 2026: a word carried from recent exchanges
+# --------------------------------------------------------------------------- #
+
+
+class TestLiveParserCarriedWord:
+    """Behaviour card "Ruled behaviour": a category or brand word counts only when the
+    CURRENT MESSAGE TEXT contains it (case-insensitive, whole words). The live parser, on a
+    bare "low stock report" after a "water closet" turn, emitted the carried word with
+    current_message: true even though the text does not contain it."""
+
+    def test_a_carried_category_word_not_in_the_text_is_asked_not_run(self, console) -> None:
+        text, calls = console.say(_ask(_e("water closet", "category")), "low stock report")
+        assert text == QUESTION
+        assert calls == [], "the word is not in the message; no run before the category is settled"
+
+    def test_a_carried_brand_word_not_in_the_text_is_asked_not_run(self, console) -> None:
+        text, calls = console.say(_ask(_e("Sorento", "brand")), "low stock report")
+        assert text == QUESTION
+        assert calls == [], "the brand is not in the message; no run before the category is settled"
+
+    def test_a_word_in_the_text_with_other_case_and_spacing_still_counts(self, console) -> None:
+        _text, calls = console.say(_ask(_e("Water Closet", "category")), "low stock report water  closet")
+        (args,) = calls
+        assert args.get("categories") == ["SRT-WC"], args
+
+
+# --------------------------------------------------------------------------- #
+# Live parser, 3 Oct 2026 (gpt-5.4-mini): the answer shape with is_affirmative false
+# --------------------------------------------------------------------------- #
+
+
+def _live_reply(*entities: dict[str, Any]) -> dict[str, Any]:
+    """The live parser's reading of a bare answer to the category question: a business_query
+    with no hints, is_affirmative FALSE (not null), no continuation, no document."""
+    return _reply(*entities, intent_hint=None, domain_hint=None, message_type="business_query",
+                  is_affirmative=False, continuation=False, document=[])
+
+
+class TestLiveParserAnswerShape:
+    def test_cancel_with_is_affirmative_false_still_cancels(self, console) -> None:
+        console.say(_ask(), "low stock report")
+        text, calls = console.say(_live_reply(), "cancel")
+        assert text == "Low stock report cancelled."
+        assert calls == []
+
+    def test_cancel_with_topic_reset_still_cancels(self, console) -> None:
+        console.say(_ask(), "low stock report")
+        reply = {**_live_reply(), "topic_reset": True}
+        text, calls = console.say(reply, "cancel")
+        assert text == "Low stock report cancelled."
+        assert calls == []
+
+    def test_all_with_is_affirmative_false_still_runs_the_whole_book(self, console) -> None:
+        console.say(_ask(), "low stock report")
+        _text, calls = console.say(_live_reply(), "all")
+        (args,) = calls
+        assert not args.get("categories"), args
+
+    def test_a_category_with_is_affirmative_false_still_runs_it(self, console) -> None:
+        console.say(_ask(), "low stock report")
+        _text, calls = console.say(_live_reply(_e("water closet", "product")), "water closet")
+        (args,) = calls
+        assert args.get("categories") == ["SRT-WC"], args

@@ -252,6 +252,14 @@ class TestReplyVerdict:
         verdict = {"intent_hint": "check_stock"}
         assert rf.reply_verdict(verdict, None, "hello", asks={"test_one": ONE}) == (verdict, None)
 
+    def test_the_rerouted_verdict_never_resets_the_topic(self):
+        slot = _start(ONE).slot
+        verdict = {"intent_hint": None, "message_type": "business_query", "topic_reset": True,
+                   "is_affirmative": False}
+        out, rule = rf.reply_verdict(verdict, slot, "cancel", asks={"test_one": ONE})
+        assert rule == "required_ask_answer"
+        assert out["topic_reset"] is False
+
     def test_a_short_reply_is_rerouted_to_the_ask_with_the_slot(self):
         slot = _start(ONE).slot
         verdict, rule = rf.reply_verdict(
@@ -307,6 +315,17 @@ class TestReplyVerdict:
             asks={"test_one": ONE},
         )
         assert out["open_question_answer"] is None
+
+    def test_the_rerouted_verdict_carries_no_affirmation_even_when_the_parser_said_false(self):
+        """Live parser shape for "cancel": is_affirmative false. The reroute makes the turn
+        an answer, not a decline, so the parser's is_affirmative must not survive it."""
+        slot = _start(ONE).slot
+        out, rule = rf.reply_verdict(
+            {"intent_hint": None, "message_type": "business_query", "is_affirmative": False}, slot, "cancel",
+            asks={"test_one": ONE},
+        )
+        assert rule == "required_ask_answer"
+        assert out["is_affirmative"] is None
 
     def test_an_unknown_ask_type_in_the_slot_is_dropped(self):
         out, rule = rf.reply_verdict({"intent_hint": None}, {"ask": "gone", "asking": "x"}, "1", asks={})

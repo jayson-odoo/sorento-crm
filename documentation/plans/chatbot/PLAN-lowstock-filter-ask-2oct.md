@@ -29,6 +29,16 @@ message (never-stuck rule).
 5. **Lane** `lanes/business/__init__.py` low stock override: `settle` before any fetch;
    `fetch.py` sends the filters; the filter line is said under the report's first line.
 
+## Tester finding (3 Oct 2026): a console ask pushed the real workbook
+
+Pre-existing on main (`lanes/business/__init__.py` discarded `dry_run`; the route claimed
+delivery unconditionally; `export_tasks._push_low_stock_to_chat` has no test check). Fixed
+here: `run_fetch` passes `dry_run` to `crm_low_stock_report`; on a dry run the route never
+claims delivery (the run and the file are still built and land in My Downloads), and the
+presenter's pending line says `test turn: it will be in My Downloads, nothing is sent to
+WhatsApp.` Tests: route (claim never set / live still set), lane (arg sent / not sent),
+presenter, console full turn.
+
 ## Not done (named triggers)
 
 - The parser addendum still says a bare token under inventory "usually is" a product;
