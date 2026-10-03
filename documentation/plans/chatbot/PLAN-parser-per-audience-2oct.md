@@ -153,8 +153,8 @@ Owner rulings 2 Oct 2026:
 | 88 | placed only | cost, sales (report / analysis / top selling), low stock |
 | 5 | cost + placed | sales, low stock |
 | 5 | none | cost, PO, sales, low stock, and PO asks are now refused (Q2) |
-| 1 (Mr Loo) | cost + placed + sales_report | low stock |
-| 1 (Jayson) | all four | nothing |
+| 1 (CONTACT B) | cost + placed + sales_report | low stock |
+| 1 (CONTACT C) | all four | nothing |
 
 Every one of the 99 already gets a refusal for each block it loses, so only the prompt changes.
 The exception is PO for the 5 with no grant: their PO asks change from a field-stripped answer to
@@ -186,11 +186,11 @@ product, attachments, forms, portal and ideate.
 
 | Gated grants held | Contacts | Example | Tokens | Share |
 | --- | ---: | --- | ---: | ---: |
-| purchase_orders.placed only | 88 | ...6092 "Am", End User | 27,252 | 82.1% |
+| purchase_orders.placed only | 88 | CONTACT A, End User | 27,252 | 82.1% |
 | cost + placed | 5 | | 27,662 | 83.3% |
 | none | 5 | | 26,475 | 79.7% |
-| cost + placed + sales_report | 1 | Mr Loo, all 7 types | 32,929 | 99.2% |
-| all four | 1 | Jayson, type dealer | 33,207 | 100% |
+| cost + placed + sales_report | 1 | CONTACT B, all 7 types | 32,929 | 99.2% |
+| all four | 1 | CONTACT C, type dealer | 33,207 | 100% |
 
 All reveal rows are `granted=true`. 95 of 100 contacts hold `purchase_orders.placed`, an end
 user among them. With Q1(a) as asked, nearly every dealer keeps the PO blocks: on dev data the
