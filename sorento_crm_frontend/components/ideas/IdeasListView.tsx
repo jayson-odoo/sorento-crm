@@ -293,14 +293,14 @@ export function IdeasListView({
             </div>
           );
         },
-        180,
+        164,
       ),
       col(
         'submitter',
         'Submitter',
         (i) => i.submitterName,
         ({ row }) => text(row.original.submitterName),
-        112,
+        128,
       ),
       col(
         'channel',
