@@ -7,10 +7,10 @@ useDefault = true
 [allowlist]
 description = "agreed placeholders"
 regexes = [
-  '''ci-dummy-secret''',
-  '''cloud-lane-test-key''',
-  '''<set me>''',
-  '''REDACTED''',
-  '''example\.com''',
-  '''example\.invalid''',
+  '''^ci-dummy-secret$''',
+  '''^cloud-lane-test-key$''',
+  '''^<set me>$''',
+  '''^REDACTED$''',
+  '''^example\.com$''',
+  '''^example\.invalid$''',
 ]

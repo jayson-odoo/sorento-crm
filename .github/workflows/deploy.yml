@@ -184,21 +184,23 @@ jobs:
         run: python3 scripts/pii_guard.py
 
   # Secret scan over the PR's commits (the action's default on pull_request),
-  # rules in .gitleaks.toml. Same `if` as the pii-guard job.
+  # rules in .gitleaks.toml. Runs on push and on a ci-labelled PR; never on
+  # merge_group or workflow_dispatch (the release).
   gitleaks:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.label.name == 'ci'
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.label.name == 'ci')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Scan commits for secrets
-        uses: gitleaks/gitleaks-action@v2.3.9
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_VERSION: 8.30.1
 
   # Which areas a change touches, so the multi-minute jobs below only run
   # when the code they test can have changed. Before this, every job ran on

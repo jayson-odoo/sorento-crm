@@ -342,15 +342,23 @@ def _scrub_assignee(assignee: dict[str, Any] | None) -> None:
         assignee["email"] = f"zzt-agent-{assignee_id}@example.invalid" if assignee_id else "zzt-agent@example.invalid"
 
 
+_FAKE_ID_PREFIX = "900000"
+_CONTACT_ID_KEYS = ("contactId", "contact_id")
+
+
 def _fake_contact_id(real_id: Any) -> str:
-    """The one stable fake id every field of a scrubbed contact derives from: nine
-    digits, `900000` then three digits taken from a hash of the real id, so the same
-    real id always maps to the same fake one across runs and `+60` plus it is a fake
-    phone the PII guard accepts. A contact with no id keeps the old `None` label."""
+    """The one stable fake id every contact-id position of a recording derives from:
+    twelve digits, `900000` then six digits taken from a hash of the real id. The same
+    real id always maps to the same fake one across runs, a fake id maps to itself
+    (so scrubbing twice changes nothing), and `+60` plus it is a fake phone the PII
+    guard accepts (a zero run straight after the prefix). No id keeps the `None` label."""
     if real_id is None:
         return "None"
-    digest = hashlib.sha256(str(real_id).encode()).hexdigest()
-    return "900000" + f"{int(digest, 16) % 1000:03d}"
+    text = str(real_id)
+    if len(text) == 12 and text.startswith(_FAKE_ID_PREFIX):
+        return text
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    return _FAKE_ID_PREFIX + f"{int(digest, 16) % 1000000:06d}"
 
 
 def _scrub_contact(contact: dict[str, Any] | None) -> None:
@@ -374,7 +382,7 @@ def _scrub_contact(contact: dict[str, Any] | None) -> None:
     if "lastName" in contact:
         contact["lastName"] = ""
     if "phone" in contact and contact["phone"]:
-        contact["phone"] = f"+60{str(contact_id)[-9:].rjust(9, '0')}"
+        contact["phone"] = f"+60{contact_id}"
     if "email" in contact and contact["email"]:
         contact["email"] = f"zzt-{contact_id}@example.invalid"
     custom_fields = contact.get("custom_fields")
@@ -427,6 +435,10 @@ def _scrub_nested_pii(node: Any, *, key: str | None = None) -> Any:
                 _scrub_contact(node)
         if node.get("source") == "whatsapp_business" and node.get("name"):
             node["name"] = "Internal (scrubbed)"
+        for id_key in _CONTACT_ID_KEYS:
+            if node.get(id_key) is not None and not isinstance(node[id_key], (dict, list)):
+                fake = _fake_contact_id(node[id_key])
+                node[id_key] = int(fake) if isinstance(node[id_key], int) else fake
         for child_key, value in node.items():
             _scrub_nested_pii(value, key=child_key)
     elif isinstance(node, list):
@@ -664,7 +676,7 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 {**params, "limit": args.limit},
             ).fetchall()
-            prefix = args.slug_prefix or _slugify(f"contact-{args.contact}")
+            prefix = args.slug_prefix or _slugify(f"contact-{_fake_contact_id(args.contact)}")
             if args.chain_by == "none":
                 for i, row in enumerate(rows, start=1):
                     turn = _record_row(_row_to_dict(row), db_label=db_label, switches=switches)
