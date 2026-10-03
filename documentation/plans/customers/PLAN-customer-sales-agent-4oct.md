@@ -1,6 +1,6 @@
 # PLAN - Customer sales agent from AutoCount Debtor (CUSTOMER-SALES-AGENT)
 
-**Status:** Build (card answered by the owner 4 Oct: Q1 b, Q2-Q5 a/a/a/b). Track: L (LEAD
+**Status:** Review done (reviewer + security fix round 1 green; card answered by the owner 4 Oct: Q1 b, Q2-Q5 a/a/a/b). Awaiting CI + owner hand test. Track: L (LEAD
 pattern; additive data migration). Pair lane: SS-DEBTOR-AGENT (shared service maps AutoCount
 `Debtor.SalesAgent` onto `sales_agent_code`).
 
