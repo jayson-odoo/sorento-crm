@@ -21,6 +21,7 @@ import re
 from typing import Any, Mapping
 
 from app.services.chatbot.turn.state import focus_row_label
+from app.services.ledger_family import customer_group_of, customer_header_words
 
 # NARROWED (main, captain ruling 2026-08-24, ported verbatim): this header describes
 # a DELIVERY ORDER search specifically - it used to gate on "domains the CRM
@@ -153,6 +154,10 @@ def _axis_words(
                 continue
             if str(e.get("hint") or "") in hints:
                 _add(e.get("raw"))
+    if not words and axis["label"] == "Customer":
+        # The group's name once per customer company, never ledger by ledger.
+        names = [_printable(row.get("display_name") or row.get("title") or row.get("code")) for row in rows]
+        return customer_header_words([(n, customer_group_of(n)) for n in names if n]) or None
     if not words:
         for row in rows:
             # Hand pass 12 round 3, Group F (owner ruling): a customer row's own
@@ -211,7 +216,7 @@ def _one_typed_word(rows: Any) -> str | None:
     return raws.pop() or None
 
 
-def _focus_words(rows: Any) -> str | None:
+def _focus_words(rows: Any, *, customer: bool = False) -> str | None:
     """The SAME axis, off the FOCUS carry - AC-1695's own case, which main has no
     equivalent for because main's header runs in the tail, where the session's
     carried subject is already on `prev`. A bare positional pick ("1") names no
@@ -225,6 +230,11 @@ def _focus_words(rows: Any) -> str | None:
     typed = _one_typed_word(rows)
     if typed:
         return typed
+    if customer:
+        names = [
+            _printable(focus_row_label(row)) for row in rows or [] if isinstance(row, Mapping)
+        ]
+        return customer_header_words([(n, customer_group_of(n)) for n in names if n]) or None
     for row in rows or []:
         if not isinstance(row, Mapping):
             continue
@@ -274,7 +284,7 @@ def search_scope_header(
     for axis in _AXES:
         words = _axis_words(gate_json, resolver_json, q, axis=axis)
         if words is None and axis["label"] in focus_by_label:
-            words = _focus_words(focus_by_label[axis["label"]])
+            words = _focus_words(focus_by_label[axis["label"]], customer=axis["label"] == "Customer")
         if axis["always"]:
             lines.append(f"{axis['label']}: {words or axis['all_text']}")
         elif words:
