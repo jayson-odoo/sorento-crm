@@ -921,3 +921,99 @@ def test_f2d_product_ids_of_another_companys_real_product_is_404(client, db):
     foreign = product(db, company_id=mocha.id, code=unique_code("ZZTFOR", alpha=True))
     resp = _ask(client, _full(db), group_by="sales_agent", top_n=3, product_ids=[foreign.id])
     assert resp.status_code == 404 and _code(resp) == "NOT_FOUND", resp.text
+
+
+# ================================================================ REPORT-ENGINE: "remove the cap"
+# Owner, 30 Sep 2026: ONE ceiling, `sales_report_service.TOP_SELLING_N_CEILING` (#1407). The route no
+# longer stops at 100. The constant is imported, never copied, so a second limit cannot creep back.
+
+
+def _ceiling_forms() -> tuple[str, str]:
+    from app.services.sales_report_service import TOP_SELLING_N_CEILING
+
+    return str(TOP_SELLING_N_CEILING), f"{TOP_SELLING_N_CEILING:,}"
+
+
+def test_top_n_200_is_accepted_and_returns_every_row_that_exists(client, db):
+    """Above the old 100 cap: 200 is a valid top_n; the 3 agents of the world come back, nothing more."""
+    _ranking_world(db)
+    resp = _ask(client, _full(db), group_by="sales_agent", top_n=200)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "ok", body
+    assert [r["name"] for r in body["rows"]] == ["ZZT-AG-3", "ZZT-AG-1", "ZZT-AG-2"], body["rows"]
+    assert body["more"] == 0 and body["total_count"] == 3, body
+
+
+def test_top_n_at_the_ceiling_is_accepted(client, db):
+    from app.services.sales_report_service import TOP_SELLING_N_CEILING
+
+    _ranking_world(db)
+    resp = _ask(client, _full(db), group_by="sales_agent", top_n=TOP_SELLING_N_CEILING)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total_count"] == 3, resp.text
+
+
+def test_top_n_past_the_ceiling_is_422_and_the_message_names_the_ceiling(client, db):
+    from app.services.sales_report_service import TOP_SELLING_N_CEILING
+
+    resp = _ask(client, _full(db), group_by="sales_agent", top_n=TOP_SELLING_N_CEILING + 1)
+    assert resp.status_code == 422 and _code(resp) == "top_n_out_of_range", resp.text
+    plain, grouped = _ceiling_forms()
+    message = str(resp.json().get("message") or "")
+    assert plain in message or grouped in message, message
+    assert "100 " not in message.replace(plain, "").replace(grouped, ""), f"the old cap is still named: {message}"
+
+
+# ================================================================ REPORT-ENGINE: the cell cap cannot truncate a ranking
+# Guard test: `run_summary` runs `_pivot(cap=False)`, the SQL has no LIMIT and ranking + the top_n cut
+# happen in Python over every group, so 5001+ products must still rank correctly. It is EXPECTED to pass
+# on the current code; it pins the property so a later LIMIT or a pivot cap cannot slip in unseen.
+
+BULK_PRODUCTS = 5001  # one more than the 5000-cell cap
+
+
+def _bulk_world(db):
+    """5001 products with one 1.00 DO line each (codes `ZZT-BULK-00000`...), plus `ZZZ-TOP` at 500.00
+    whose code sorts LAST under any natural ordering. Core inserts, so it stays fast."""
+    from app.models.order import Order, OrderLine
+    from app.models.product import Product
+
+    cust = seed_customer(db, name=unique_code("Cust"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
+    seed = _prod(db, "ZZT-BULK-SEED")  # a real category + uom to hang the bulk rows on
+    products = [
+        {"id": str(uuid.uuid4()), "product_code": f"ZZT-BULK-{n:05d}", "product_name": f"ZZT-BULK-{n:05d}",
+         "category_id": seed.category_id, "base_uom_id": seed.base_uom_id, "list_price": 0, "is_active": True,
+         "company_id": DEFAULT_COMPANY_ID}
+        for n in range(BULK_PRODUCTS)
+    ]
+    top = {"id": str(uuid.uuid4()), "product_code": "ZZZ-TOP", "product_name": "ZZZ-TOP",
+           "category_id": seed.category_id, "base_uom_id": seed.base_uom_id, "list_price": 0, "is_active": True,
+           "company_id": DEFAULT_COMPANY_ID}
+    db.execute(Product.__table__.insert(), [*products, top])
+    do = seed_do(db, customer_id=cust.id, order_date=SEP, source_book="db1",
+                 lines=[line(top["id"], wh.id, 5, price=D("1"), total=D("500.00"))])
+    db.execute(
+        OrderLine.__table__.insert(),
+        [{"id": str(uuid.uuid4()), "order_id": do.id, "line_sequence": 2 + n, "product_id": p["id"],
+          "warehouse_id": wh.id, "quantity": 1, "unit_price": D("1"), "discount": 0, "total": D("1.00"),
+          "company_id": DEFAULT_COMPANY_ID} for n, p in enumerate(products)],
+    )
+    db.commit()
+    return top
+
+
+def test_a_ranking_over_more_than_5000_groups_is_not_truncated(client, db):
+    top = _bulk_world(db)
+    body = _ok(client, _full(db), group_by="product", top_n=3)
+    assert body["status"] == "ok", body
+    groups = BULK_PRODUCTS + 1
+    assert body["rows"][0]["name"] == "ZZZ-TOP" and money(body["rows"][0]["amount"]) == D("500.00"), body["rows"]
+    assert body["rows"][0]["qty"] == 5, body["rows"]
+    assert [r["name"] for r in body["rows"][1:]] == ["ZZT-BULK-00000", "ZZT-BULK-00001"], body["rows"]
+    assert body["total_count"] == groups, (body["total_count"], groups)
+    assert body["more"] == groups - 3, body["more"]
+    assert money(body["total"]["amount"]) == D("500.00") + D(BULK_PRODUCTS), body["total"]
+    assert body["total"]["qty"] == 5 + BULK_PRODUCTS, body["total"]
+    assert top["product_code"] == "ZZZ-TOP"

@@ -120,3 +120,31 @@ def test_migration_publishes_a_new_version_label_unmoved_and_idempotent() -> Non
         session.expire_all()
         after = _production_label(session)
         assert after is not None and after.version_id == version_before
+
+
+# ------------------------------------------------------------------ owner hand-test message
+
+OWNER_MESSAGE = "who's the top 3 salesman for sorento water closet this year"
+
+
+def test_the_addendum_teaches_the_owner_hand_test_message_as_a_sales_agent_ranking() -> None:
+    """The message that fell onto the old top selling path on dev is a worked example of the
+    addendum, mapped to group_by "sales_agent" and the brand + category split."""
+    from app.services import chatbot_parser_prompt
+
+    addendum = getattr(chatbot_parser_prompt, "REPORT_ASK_ADDENDUM", "")
+    at = addendum.find(OWNER_MESSAGE)
+    assert at >= 0, "the owner's message is not an example in REPORT_ASK_ADDENDUM"
+    # The example's own bullet: from its quote to the next bullet or the end of the block.
+    rest = addendum[at + len(OWNER_MESSAGE):]
+    bullet = rest.split("\n  - ", 1)[0]
+    assert 'order_status "sales_ranking"' in bullet or "sales_ranking" in bullet, bullet
+    assert 'group_by "sales_agent"' in bullet, bullet
+    assert "top_n 3" in bullet, bullet
+    assert "brand" in bullet and "category" in bullet, bullet
+
+
+def test_the_prompt_stays_inside_its_budget_ceiling() -> None:
+    """The existing budget test is the gate (`test_parser_prompt_budget.py`); this pins that the
+    addendum's new example is counted by it, not skipped: the rendered prompt carries it."""
+    assert OWNER_MESSAGE in SEMANTIC_PARSER_PROMPT

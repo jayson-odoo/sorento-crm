@@ -716,3 +716,249 @@ def test_n3_a_dealers_request_adds_no_customer_ids_the_route_forces_the_links(de
     _text, calls = dealer.say(_rank(_e("Sorento", "brand"), group_by="product"), "top products for Sorento")
     (args,) = calls
     assert not args.get("customer_ids"), args
+
+
+# --------------------------------------------------------------------------- #
+# REPORT-ENGINE: "remove the cap" (owner, 30 Sep 2026). One ceiling,
+# `sales_report_service.TOP_SELLING_N_CEILING`, shared with the route; the lane no longer
+# stops at 100. The constant is imported so a second limit cannot creep back.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_top_n_of_200_is_accepted_not_a_miss(console) -> None:
+    text, calls = console.say(_rank(_e("Sorento", "brand"), top_n=200), "top 200 salesman for Sorento last month")
+    assert calls, f"treated as a miss, no run: {text!r}"
+    (args,) = calls
+    assert args["top_n"] == 200, args
+    assert TOPN_Q not in text, text
+
+
+def test_a_top_n_at_the_ceiling_is_accepted(console) -> None:
+    from app.services.sales_report_service import TOP_SELLING_N_CEILING
+
+    text, calls = console.say(
+        _rank(_e("Sorento", "brand"), top_n=TOP_SELLING_N_CEILING), "top salesman for Sorento last month"
+    )
+    assert calls, f"treated as a miss, no run: {text!r}"
+    (args,) = calls
+    assert args["top_n"] == TOP_SELLING_N_CEILING, args
+
+
+@pytest.mark.parametrize("reply_text", ["200", "top 200"])
+def test_the_how_many_answer_200_is_accepted(console, reply_text) -> None:
+    text, calls = console.say(_rank(_e("Sorento", "brand"), top_n=None), "top salesman for Sorento last month")
+    assert text.strip() == TOPN_Q and calls == [], text
+    text, calls = console.say(_reply(), reply_text)
+    assert calls, f"the reply was read as a miss: {text!r}"
+    (args,) = calls
+    assert args["top_n"] == 200, args
+    assert args["brand_ids"] == [console.ids["brand"]], args
+
+
+# --------------------------------------------------------------------------- #
+# REPORT-ENGINE: owner hand-test fail, "who's the top 3 salesman for sorento water closet
+# this year". Expected: the top 3 SALES AGENTS for brand Sorento + category Water Closet this
+# year, no sales agent filter. Dev answered the old top selling list ("Top 3 selling items",
+# "Sales agent: WT I, WT III, WT IV") because the dev parser prompt is the older version without
+# REPORT_ASK_ADDENDUM, so the parser said order_status "top_selling".
+# --------------------------------------------------------------------------- #
+
+OWNER_MESSAGE = "who's the top 3 salesman for sorento water closet this year"
+THIS_YEAR = {"date_filter_start": "2026-01-01", "date_filter_end": "2026-12-31"}
+_REAL_FETCH_SERVICES = FetchServices  # the class, before any test wraps it
+
+
+def _seed_wt(console) -> dict[str, Any]:
+    """The dev shape: a category WATER CLOSET and three accounts of one person (WT I, WT III, WT IV),
+    one of which carries the alias "water closet" (fake, but it reproduces the resolver hit that
+    expands to every account sharing the code stem)."""
+    from app.models.product import ProductCategory
+    from app.models.sales_agent import SalesAgent
+
+    db = console.session_factory()
+    try:
+        category = ProductCategory(
+            id=str(uuid.uuid4()), category_code="ZZTWCL", category_name="WATER CLOSET", company_id=DEFAULT_COMPANY_ID
+        )
+        agents = [
+            SalesAgent(
+                id=str(uuid.uuid4()), sales_agent=code, person_label="WT", company_id=DEFAULT_COMPANY_ID,
+                aliases="water closet" if code == "WT I" else None,
+            )
+            for code in ("WT I", "WT III", "WT IV")
+        ]
+        db.add(category)
+        db.add_all(agents)
+        db.commit()
+        return {"category": str(category.id), "agents": sorted(str(a.id) for a in agents)}
+    finally:
+        db.close()
+
+
+def _say_all(console, monkeypatch, qf: dict[str, Any], body: str) -> tuple[str, list[tuple[str, dict[str, Any]]]]:
+    """`console.say`, plus EVERY MCP tool call of the turn (not only `crm_report_ask`)."""
+    import sys
+
+    log: list[tuple[str, dict[str, Any]]] = []
+    module = sys.modules[__name__]
+
+    def _factory(*, mcp_call):
+        def _spy(name: str, args: dict[str, Any]) -> Any:
+            log.append((name, dict(args)))
+            return mcp_call(name, args)
+
+        return _REAL_FETCH_SERVICES(mcp_call=_spy)
+
+    monkeypatch.setattr(module, "FetchServices", _factory)
+    text, _calls = console.say(qf, body)
+    return text, log
+
+
+def _hit(raw: str, hint: str) -> dict[str, Any]:
+    return {**_e(raw, hint), "hint_confident": True}
+
+
+def _old(*entities: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    """What the dev (production-labelled, no REPORT_ASK_ADDENDUM) parser emits for a ranking."""
+    base: dict[str, Any] = dict(
+        domain_hint="order", intent_hint="check_order", order_status="top_selling", entities=list(entities),
+        domain_in_message=True, rank_by="amount", basis="delivered", rank_group="item", rank_direction="top",
+        top_n=3, group_by=None, **THIS_YEAR,
+    )
+    base.update(overrides)
+    return _parser_output(**base)
+
+
+def _names(log: list[tuple[str, dict[str, Any]]]) -> list[str]:
+    return [name for name, _args in log]
+
+
+# C1: the new prompt's reading of the owner's message ---------------------- #
+
+
+def test_c1_the_owner_message_new_reading_ranks_sales_agents_for_the_brand_and_category(console) -> None:
+    wt = _seed_wt(console)
+    verdict = _rank(_hit("sorento", "brand"), _hit("water closet", "category"), **THIS_YEAR)
+    text, calls = console.say(verdict, OWNER_MESSAGE)
+    (args,) = calls
+    assert args["group_by"] == "sales_agent" and args["top_n"] == 3, args
+    assert args["brand_ids"] == [console.ids["brand"]], args
+    assert args["category_ids"] == [wt["category"]], args
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+    assert not args.get("sales_agent_ids"), f"a sales agent filter crept in: {args}"
+    assert "Top 3 selling items" not in text, text
+
+
+# C2: the OLD prompt's reading (the dev failure) --------------------------- #
+
+_OLD_READINGS = {
+    "brand_and_category": lambda: (_hit("sorento", "brand"), _hit("water closet", "category")),
+    "one_combined_entity": lambda: (_hit("sorento water closet", "customer"),),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_OLD_READINGS))
+def test_c2_an_old_prompt_top_selling_reading_of_a_salesman_ranking_reaches_the_sales_ranking_lane(
+    console, monkeypatch, shape
+) -> None:
+    wt = _seed_wt(console)
+    text, log = _say_all(console, monkeypatch, _old(*_OLD_READINGS[shape]()), OWNER_MESSAGE)
+    assert "crm_top_selling_report" not in _names(log), (shape, _names(log), text)
+    ask = [args for name, args in log if name == TOOL]
+    assert len(ask) == 1, (shape, _names(log), text)
+    args = ask[0]
+    assert args["group_by"] == "sales_agent" and args["top_n"] == 3, args
+    assert not args.get("sales_agent_ids"), f"a sales agent filter crept in: {args}"
+    assert args["brand_ids"] == [console.ids["brand"]], f"the brand was dropped (a silent widening): {args}"
+    assert args["category_ids"] == [wt["category"]], f"the category was dropped (a silent widening): {args}"
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+    assert "Top 3 selling items" not in text, text
+
+
+def test_c2_an_old_prompt_top_customers_reading_is_ranked_by_customer(console, monkeypatch) -> None:
+    text, log = _say_all(
+        console, monkeypatch, _old(_hit("sorento", "brand"), top_n=5), "top 5 customers for sorento this year"
+    )
+    assert "crm_top_selling_report" not in _names(log), (_names(log), text)
+    (args,) = [a for n, a in log if n == TOOL]
+    assert args["group_by"] == "customer" and args["top_n"] == 5, args
+    assert args["brand_ids"] == [console.ids["brand"]], args
+    assert not args.get("sales_agent_ids"), args
+
+
+def test_c2_top_selling_items_stays_top_selling(console, monkeypatch) -> None:
+    """No regression: a ranking of ITEMS is the old top selling path, never the new lane."""
+    text, log = _say_all(
+        console, monkeypatch, _old(_hit("sorento", "brand")), "top 3 selling items for sorento"
+    )
+    assert "crm_top_selling_report" in _names(log), (_names(log), text)
+    assert TOOL not in _names(log), (_names(log), text)
+
+
+def test_c2_top_selling_items_by_an_agent_stays_top_selling_with_the_agent_filter(console, monkeypatch) -> None:
+    wt = _seed_wt(console)
+    text, log = _say_all(
+        console, monkeypatch, _old(_hit("WT", "sales_agent"), top_n=10), "top selling items sold by agent WT"
+    )
+    assert TOOL not in _names(log), (_names(log), text)
+    (args,) = [a for n, a in log if n == "crm_top_selling_report"]
+    assert sorted(args.get("sales_agent_ids") or []) == wt["agents"], args
+
+
+# C3: resolver hardening --------------------------------------------------- #
+
+
+def test_c3_a_category_wins_over_a_sales_agent_alias(console) -> None:
+    from app.services.chatbot import engine as engine_mod_
+
+    _seed_wt(console)
+    db = console.session_factory()
+    try:
+        assert engine_mod_._classify_word_group(db, "water closet") == "category"
+    finally:
+        db.close()
+
+
+def test_c3_an_exact_brand_wins_over_a_sales_agent_alias(console) -> None:
+    from app.models.sales_agent import SalesAgent
+    from app.services.chatbot import engine as engine_mod_
+
+    db = console.session_factory()
+    try:
+        db.add(SalesAgent(id=str(uuid.uuid4()), sales_agent="ZZT AGENT B", person_label="ZZT AGENT B",
+                          company_id=DEFAULT_COMPANY_ID, aliases="sorento"))
+        db.commit()
+        assert engine_mod_._classify_word_group(db, "sorento") == "brand"
+    finally:
+        db.close()
+
+
+def test_c3_a_noisy_token_splits_into_brand_and_category_with_no_sales_agent(console) -> None:
+    from app.services.chatbot import engine as engine_mod_
+
+    wt = _seed_wt(console)
+    db = console.session_factory()
+    try:
+        split = engine_mod_._split_noisy_token(db, "sorento water closet")
+    finally:
+        db.close()
+    assert split is not None
+    parts, _leftover = split
+    assert {(p["raw"].lower(), p["hint"]) for p in parts} == {("sorento", "brand"), ("water closet", "category")}, parts
+    assert "sales_agent" not in {p["hint"] for p in parts}, parts
+    assert wt["category"]
+
+
+def test_c3_a_real_agent_word_is_still_a_sales_agent(console) -> None:
+    """No regression: a word that names only an agent (the alias nobody else claims) stays sales_agent."""
+    from app.models.sales_agent import SalesAgent
+    from app.services.chatbot import engine as engine_mod_
+
+    db = console.session_factory()
+    try:
+        db.add(SalesAgent(id=str(uuid.uuid4()), sales_agent="ZZT AGENT C", person_label="ZZT AGENT C",
+                          company_id=DEFAULT_COMPANY_ID, aliases="zzthandle"))
+        db.commit()
+        assert engine_mod_._classify_word_group(db, "zzthandle") == "sales_agent"
+    finally:
+        db.close()
