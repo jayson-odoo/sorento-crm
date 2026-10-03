@@ -1,73 +1,87 @@
 # PLAN: Dev auto-login for local test copies (DEV-LOGIN-BYPASS)
 
-Status: Plan (behaviour card asked, awaiting owner answers). Track: full (auth change, security review mandatory).
+Status: Built, security fix round 1 in review (PR #1449). Track: full (auth change, migration,
+security review mandatory).
 
 Owner ask (3 Oct 2026): "a dev mode to bypass all these logins for hand testing, to boost our
 productivity". Crew runs local test copies (FE `http://<lane>.localhost:31xx`, BE `:81xx`,
 NextAuth v4, per-lane cookie suffix). Signing in on every copy is slow, and the automated tester
 refuses to type credentials into sign-in forms.
 
-## Behaviour card (proposed)
+## Crew answers (3 Oct 2026, all recommendations)
 
-Visiting a test copy with the flag on lands you signed in as the default dev user (an admin).
-The sign-in page grows a "Sign in as" picker listing only the allowlisted dev users (name + role,
-never an id) so a tester can switch to a view-only user. After an explicit sign-out the picker
-shows instead of auto-signing you straight back in.
+1. Session `auth_method` = `dev_login`, one additive migration widening
+   `ck_user_sessions_auth_method` (`dev_login_0001`).
+2. Frontend guard `NODE_ENV !== 'production'`: copies run `next dev`.
+3. Users = env allowlist `DEV_AUTO_LOGIN_USERS` of existing emails (first = default; e.g.
+   an admin, then `test.ideas.viewer@example.com` as the view-only user).
+4. Auto sign-in once per browser tab; after sign-out the picker shows.
 
-## Design (recommended: BE dev endpoint + FE NextAuth provider, both guarded)
+## Behaviour
+
+Visiting a test copy with the flag on lands you signed in as the default dev user. The sign-in
+page shows a "Dev sign-in" section: a `SearchableSelect` of the allowlisted users (name + role,
+never an id) and "Sign in as user". After a sign-out in the same tab the picker shows instead of
+auto-signing you straight back in.
+
+## Design (as built)
 
 - **Backend** `POST /api/v1/auth/dev-login {email}` mints the SAME `user_sessions` row as
-  `/auth/login` (`mint_session`, `build_login_response`) for an allowlisted ACTIVE user, and
-  `GET /api/v1/auth/dev-login/users` lists the allowlist (name, email, role name). Both answer a
-  plain 404 unless every guard holds, so the route is indistinguishable from absent in prod.
-- **Frontend** a third NextAuth `CredentialsProvider` (`id: 'dev-login'`) whose `authorize()`
-  takes only an email, re-checks the FE-side guards, and posts to the backend endpoint. No
-  password or secret reaches the browser; the browser holds the normal NextAuth cookie only.
-- **Sign-in page** a server-side check decides whether to render the picker; auto-submit of the
-  default user fires once per tab (sessionStorage) so sign-out still lets you switch.
+  `/auth/login` (`mint_session`, `build_login_response`) with `auth_method = dev_login`;
+  `GET /api/v1/auth/dev-login/users` lists the signable allowlist. Both answer a plain 404
+  unless every guard holds. Guards: `app/services/dev_login.py`; routes: `app/api/v1/dev_login.py`.
+- **Frontend** a `dev-login` NextAuth `CredentialsProvider` (registered only when configured)
+  whose `authorize()` takes only an email, re-checks the frontend guards and calls the backend
+  server-side with the shared secret. `GET /api/auth/dev-login/users` (Next route) relays the
+  picker list. The picker is `app/(auth)/signin/components/dev-login-picker.tsx`, fetched
+  client-side through `services/devLoginService.ts` and `useDevLoginUsers`.
 
 ## Guards (all must hold; fail closed)
 
-Backend (`app/services/dev_login_guard.py`):
-1. `DEV_AUTO_LOGIN=true` (exact, case-insensitive true/1/yes). Default off.
-2. `ENVIRONMENT` in an allowlist (`development`, `dev`, `local`, `test`); anything else,
-   including unset-to-production, refuses.
-3. Request `Host` header hostname is `localhost`, `*.localhost`, or `127.0.0.1`.
-4. Request client IP is loopback (the FE server calls the BE on localhost; a deployed BE behind
-   Docker/Nginx sees a non-loopback peer).
-5. Startup: `DEV_AUTO_LOGIN` on while `ENVIRONMENT` is production/prod/staging raises at startup
-   (crash), and an active flag logs a loud WARNING banner.
+Backend, per request:
+1. `DEV_AUTO_LOGIN=true`.
+2. `ENVIRONMENT` in {development, dev, local, test}.
+3. `X-Dev-Login-Secret` equals `DEV_AUTO_LOGIN_SECRET` (16+ chars, constant-time compare).
+   Only the frontend SERVER has it. This closes security review B1: the `next dev` rewrite of
+   `/api/v1` relays a browser call with Host rewritten to the backend's localhost address from a
+   127.0.0.1 peer, so Host and peer checks alone pass for it.
+4. No `X-Forwarded-Host` (the rewrite always adds one; the server-side fetch never does).
+5. `Host` hostname is `localhost`, `*.localhost` or `127.0.0.1`.
+6. TCP peer is loopback.
+7. Email allowlisted, user ACTIVE and not trashed.
 
-Frontend (`lib/dev-login.ts`):
-1. `DEV_AUTO_LOGIN=true` (server-only env, never `NEXT_PUBLIC_*`).
-2. `NODE_ENV !== 'production'` (a prod build cannot carry it).
-3. Browser request `Host` is localhost / *.localhost / 127.0.0.1.
+Backend, at import (crash, `app/main.py`) when the flag is on and any of: `ENVIRONMENT` not set
+explicitly (the settings default `development` does not count), not in the list above, secret
+missing or short, running under gunicorn (the production entrypoint), running in a container.
+A loud WARNING is logged when it is legitimately active.
 
-CI/deploy guard: a pytest scans `sorento_crm/docker-compose.yml`, `.github/workflows/*.yml`,
-and every committed `.env.production*` / `.env.staging*` for `DEV_AUTO_LOGIN`; any hit fails.
+Frontend:
+1. `DEV_AUTO_LOGIN=true` and `DEV_AUTO_LOGIN_SECRET` set (server-only, never `NEXT_PUBLIC_*`).
+2. `NODE_ENV !== 'production'`.
+3. The dev server is bound to 127.0.0.1 only (`next dev -H 127.0.0.1`), read from Next's
+   `__NEXT_PRIVATE_ORIGIN`. This closes security review B2: the Host header is caller-controlled,
+   so a LAN / Tailscale peer could otherwise send `Host: localhost` through NextAuth's own
+   callback. Next reports `localhost` when bound to every interface, so only `127.0.0.1` counts.
+   Consequence: a copy with dev login on cannot also be reached over Tailscale / LAN.
+4. The browser Host is `localhost`, `*.localhost` or `127.0.0.1` (stops DNS rebinding).
+A loud console warning is logged when the provider is registered.
 
-## Users selectable
+Deploy guard: `tests/test_dev_login.py::test_deploy_files_never_mention_the_flag` scans
+workflows, compose files, Dockerfiles, deploy scripts, `start.sh`, `run.sh`, `gunicorn.conf.py`
+and every committed `.env*` file. The server-only production compose is outside the repo; the
+gunicorn / container startup refusal covers it.
 
-`DEV_AUTO_LOGIN_USERS` = comma list of emails (first = default). Only ACTIVE, non-trashed users
-in that list can be signed in; any other email answers 404. No list = feature inert.
+## How crew enables it (test copies only)
 
-## How crew enables it
+Backend env_overrides: `DEV_AUTO_LOGIN=true`, `ENVIRONMENT=development`,
+`DEV_AUTO_LOGIN_USERS=<admin email>,test.ideas.viewer@example.com`,
+`DEV_AUTO_LOGIN_SECRET=<random 32+ chars per copy>`. Run with uvicorn (not gunicorn).
+Frontend env_overrides: `DEV_AUTO_LOGIN=true`, the SAME `DEV_AUTO_LOGIN_SECRET`; start with
+`next dev ... -H 127.0.0.1`. Shared dev DB needs the `crew-migration` SQL from the PR.
 
-`crew.toml` env_overrides for sorento copies set, for BE: `DEV_AUTO_LOGIN=true`,
-`DEV_AUTO_LOGIN_USERS=<admin email>,<view-only email>` (ENVIRONMENT stays `development`);
-for FE: `DEV_AUTO_LOGIN=true`.
+## Tests
 
-## Open questions (see the crew-ask on the PR)
-
-1. Session `auth_method`: add `dev_login` to `ck_user_sessions_auth_method` (one migration) vs
-   reuse `password`. Rec: add it, so dev sessions are visible in audit.
-2. FE guard `NODE_ENV !== 'production'`: do crew copies run `npm run dev`? Rec: yes, require it.
-3. User allowlist by env emails vs a dedicated seeded set of dev users. Rec: env emails.
-4. Auto-login once per tab vs every visit to /signin. Rec: once per tab.
-
-## Tests (red first)
-
-BE pytest: each guard off → 404 (flag, env, host, client ip, email not allowlisted, inactive
-user); all on → 200 with a session row that `get_current_user` resolves; startup assertion raises
-for production; compose/workflow scan. FE vitest: guard helper truth table; provider refuses when
-any FE guard fails; sign-in page renders picker only when enabled.
+BE `tests/test_dev_login.py` (pytest, every guard has a kill test, including the relayed-proxy
+request shape and the startup refusals in a hermetic child process). FE `lib/dev-login.test.ts`,
+`app/api/auth/[...nextauth]/auth-options.dev-login.test.ts`,
+`app/api/auth/dev-login/users/route.test.ts`, `app/(auth)/signin/components/dev-login-picker.test.tsx`.
