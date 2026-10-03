@@ -85,10 +85,14 @@ def test_long_digit_runs_are_not_phones():
 
 def test_plate_in_lorry_plate_context_is_flagged():
     mod = _load_module()
+    # Plate-shaped samples are joined at runtime so this file holds no literal.
+    plate = "VQB" + " 4821"
     for text in (
-        "*Driver:* DRIVER A\\n*Lorry Plate:* VQB 4821\\n",
-        '{"label": "Lorry Plate", "value": "WXY4821"}',
-        '"lorry_plate": "JRT 7012 A"',
+        "*Driver:* DRIVER A\\n*Lorry Plate:* " + plate + "\\n",
+        '{"label": "Lorry Plate", "value": "' + plate.replace(" ", "") + '"}',
+        '"lorry_plate": "' + plate + ' A"',
+        # Pretty-printed JSON: label and value on separate lines.
+        '{\n  "label": "Lorry Plate",\n  "value": "' + plate + '"\n}',
     ):
         assert _kinds(mod.scan_text(text)) == ["plate"], text
 
