@@ -75,8 +75,8 @@ def test_a_contact_with_no_grant_reads_no_logistics_field() -> None:
 ALL_DO_FIELDS = {
     "delivery_orders.order_number": ("Order Number", "202609-0916"),
     "delivery_orders.customer": ("Customer", "HANLIM TRADING SDN BHD [A/C I]"),
-    "delivery_orders.order_date": ("Order Date", "07/09/2026"),
-    "delivery_orders.delivery_date": ("Actual Delivery Date", "07/09/2026"),
+    "delivery_orders.order_date": ("Order Date", "2026-09-07"),
+    "delivery_orders.delivery_date": ("Actual Delivery Date", "2026-09-07"),
     "delivery_orders.status": ("Status", "Picked Up / In Transit"),
     "delivery_orders.pickup_time": ("Pickup Time", "09:18:00"),
     "delivery_orders.transporter": ("Transporter", "SORENTO"),
@@ -121,11 +121,14 @@ def test_the_by_product_do_list_hides_warehouse_too() -> None:
         "order_date": "2026-09-07", "actual_delivery_date": "2026-09-07",
         "matched_products": [{"product_code": "SRT320-CR", "quantity": 200, "warehouse_code": "BRW"}],
     }]}
-    envelope = json.loads(_mcp()[1]("crm_order_management_orders_by_product_list", json.dumps(body)))
-    keys = [k for k in ALL_DO_FIELDS if k != "delivery_orders.warehouse"]
-    said = fetch.output_structurer(envelope, {"semantic_input": {}, "access": {"attributes": keys}})["response"]
+    def said_with(keys: list[str]) -> str:
+        # A fresh envelope per call: `output_structurer` drops withheld fields in place.
+        envelope = json.loads(_mcp()[1]("crm_order_management_orders_by_product_list", json.dumps(body)))
+        return fetch.output_structurer(envelope, {"semantic_input": {}, "access": {"attributes": keys}})["response"]
+
+    said = said_with([k for k in ALL_DO_FIELDS if k != "delivery_orders.warehouse"])
     assert "SRT320-CR (200)" in said and "BRW" not in said, said
-    said = fetch.output_structurer(envelope, {"semantic_input": {}, "access": {"attributes": list(ALL_DO_FIELDS)}})["response"]
+    said = said_with(list(ALL_DO_FIELDS))
     assert "*Warehouse:* BRW" in said, said
 
 
@@ -215,7 +218,7 @@ def test_an_asterisk_in_a_value_does_not_leave_a_stray_bold_marker() -> None:
     U+2217, which WhatsApp does not read as formatting."""
     row = {**_ROW, "lines": [{"product_code": "*REPLACE", "quantity": 1}]}
     envelope = json.loads(_mcp()[1]("crm_order_management_orders_list", json.dumps({"data": [row]})))
-    said = fetch.output_structurer(envelope, {"semantic_input": {}, "access": {"attributes": list(DO_KEYS)}})["response"]
+    said = fetch.output_structurer(envelope, {"semantic_input": {}, "access": {"attributes": list(ALL_DO_FIELDS)}})["response"]
     assert "∗REPLACE (1)" in said, said
     stars = [line for line in said.split("\n") if line.count("*") % 2]
     assert not stars, f"a line with an unpaired '*': {stars!r}"

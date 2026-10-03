@@ -635,6 +635,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             ("delivery_orders.transporter", "DO transporter"),
             ("delivery_orders.driver", "DO driver"),
             ("delivery_orders.lorry_plate", "DO lorry plate"),
+            ("delivery_orders.order_number", "DO order number"),
+            ("delivery_orders.customer", "DO customer"),
+            ("delivery_orders.order_date", "DO order date"),
+            ("delivery_orders.delivery_date", "DO delivery date"),
+            ("delivery_orders.warehouse", "DO warehouse"),
+            ("delivery_orders.products", "DO products"),
         ),
     ),
     ToolSpec(
@@ -677,8 +683,17 @@ CATALOG: tuple[ToolSpec, ...] = (
         related_tools=("crm_order_management_orders_list", "crm_incoming_stock_by_product", "crm_outstanding_report"),
         escalation_team="sales",
         # S2 (security review, 13 Sep 2026): same gate as the sibling
-        # `crm_order_management_orders_list` above - see its own comment.
-        restricted_fields=(("sales_orders.outstanding", "Sales order outstanding"),),
+        # `crm_order_management_orders_list` above - see its own comment. DO-ASK-SIMPLIFY
+        # (owner hand test 3 Oct 2026): the DO fields this list prints are reveals too.
+        restricted_fields=(
+            ("sales_orders.outstanding", "Sales order outstanding"),
+            ("delivery_orders.order_number", "DO order number"),
+            ("delivery_orders.customer", "DO customer"),
+            ("delivery_orders.order_date", "DO order date"),
+            ("delivery_orders.delivery_date", "DO delivery date"),
+            ("delivery_orders.warehouse", "DO warehouse"),
+            ("delivery_orders.products", "DO products"),
+        ),
     ),
     ToolSpec(
         "crm_outstanding_report",

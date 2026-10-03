@@ -39,14 +39,20 @@ from app.models.access import ContactFieldReveal
 #: (see the module docstring above), so a new `restricted=` field on a presenter fails
 #: here until this tuple is updated to match, rather than silently missing the checklist.
 FIELD_REVEAL_KEYS: tuple[tuple[str, str], ...] = (
-    # DO-ASK-SIMPLIFY rule 2 (owner, 2 Oct 2026): the DO list's logistics fields, hidden from
-    # a new contact; migration `do_ask_0001_reveals` granted them to every contact that
-    # existed at deploy (all internal then).
+    # DO-ASK-SIMPLIFY rule 2 (owner, 2 Oct 2026; every printed DO field since the 3 Oct hand
+    # test): one switch per DO field, hidden from a new contact; migration
+    # `do_ask_0001_reveals` switched them all on for every contact that existed at deploy.
     ("delivery_orders.driver", "DO driver"),
     ("delivery_orders.lorry_plate", "DO lorry plate"),
     ("delivery_orders.pickup_time", "DO pickup time"),
     ("delivery_orders.status", "DO status"),
     ("delivery_orders.transporter", "DO transporter"),
+    ("delivery_orders.order_number", "DO order number"),
+    ("delivery_orders.customer", "DO customer"),
+    ("delivery_orders.order_date", "DO order date"),
+    ("delivery_orders.delivery_date", "DO delivery date"),
+    ("delivery_orders.warehouse", "DO warehouse"),
+    ("delivery_orders.products", "DO products"),
     ("inventory.sellable", "Outstanding SO on stock answers"),
     ("purchase_orders.placed", "PO placed (on order) on stock answers"),
     ("purchase_orders.supplier", "PO supplier"),

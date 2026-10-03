@@ -35,6 +35,7 @@ _PRESENTER_FUNCTIONS_BY_TOOL = {
     # DO-ASK-SIMPLIFY rule 2: the DO list's logistics fields, plus the SO-outstanding
     # bucket's own row shape the same tool renders.
     "crm_order_management_orders_list": ("_orders_list", "_orders_so_outstanding"),
+    "crm_order_management_orders_by_product_list": ("_orders_by_product",),
 }
 
 _RESTRICT_CALL_RE = re.compile(r'b\.restrict\([^,]+,\s*"([^"]+)"\)')

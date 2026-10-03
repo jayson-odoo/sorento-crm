@@ -1,11 +1,12 @@
-"""DO-ASK-SIMPLIFY rule 2: every contact that exists today keeps the five DO fields.
+"""DO-ASK-SIMPLIFY rule 2: every contact that exists today keeps every DO field.
 
 Revision ID: do_ask_0001_reveals
 Revises: picker_no_cap_0001
 Create Date: 2026-10-02
 
-The DO list's Status, Pickup Time, Transporter, Driver and Lorry Plate became per-contact
-reveals (`contact_field_reveals`, keys `delivery_orders.*`), hidden by default. Owner, 2 Oct
+Every field the DO list prints (owner hand test 3 Oct 2026: Order Number, Customer, Order
+Date, Actual Delivery Date, Status, Pickup Time, Transporter, Driver, Lorry Plate, Warehouse,
+Products) became a per-contact reveal (`contact_field_reveals`, keys `delivery_orders.*`), hidden by default. Owner, 2 Oct
 2026: every current respond contact is internal and keeps seeing them, so each one is granted
 the five here; a contact created after this migration starts with them hidden, and the owner
 adjusts per contact on Contacts > Access > Field reveals.
@@ -16,7 +17,7 @@ on (`ON CONFLICT ... DO UPDATE SET granted = true`), and the owner adjusts per c
 Dealer contacts are not in yet, so none is left out. Data only and idempotent. A create_all
 database has no contacts to seed, so `scripts.bootstrap_env` needs nothing.
 
-The downgrade deletes EVERY row for the five keys, including grants and revocations an
+The downgrade deletes EVERY row for every DO key, including grants and revocations an
 admin made after the upgrade; that is safe because the code before this lane never reads
 these keys.
 """
@@ -34,11 +35,17 @@ KEYS = (
     "delivery_orders.transporter",
     "delivery_orders.driver",
     "delivery_orders.lorry_plate",
+    "delivery_orders.order_number",
+    "delivery_orders.customer",
+    "delivery_orders.order_date",
+    "delivery_orders.delivery_date",
+    "delivery_orders.warehouse",
+    "delivery_orders.products",
 )
 
 
 def seed_do_reveals(bind) -> None:
-    """Switch the five keys ON for every existing respond contact."""
+    """Switch every DO key ON for every existing respond contact."""
     for key in KEYS:
         bind.execute(
             sa.text(

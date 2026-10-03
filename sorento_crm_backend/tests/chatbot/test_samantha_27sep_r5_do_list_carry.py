@@ -138,14 +138,20 @@ OWNER_TURNS: list[tuple[str, dict[str, Any], str]] = [
 ]
 
 
-#: DO-ASK-SIMPLIFY rule 2: the five DO fields are per-contact reveals; this contact is an
-#: existing one, which the seed migration granted all five.
+#: DO-ASK-SIMPLIFY rule 2: every DO field is a per-contact reveal; this contact is an
+#: existing one, which the seed migration granted every DO field.
 _DO_REVEALS = (
     "delivery_orders.status",
     "delivery_orders.pickup_time",
     "delivery_orders.transporter",
     "delivery_orders.driver",
     "delivery_orders.lorry_plate",
+    "delivery_orders.order_number",
+    "delivery_orders.customer",
+    "delivery_orders.order_date",
+    "delivery_orders.delivery_date",
+    "delivery_orders.warehouse",
+    "delivery_orders.products",
 )
 
 
