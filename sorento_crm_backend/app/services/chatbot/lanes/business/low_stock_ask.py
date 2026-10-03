@@ -446,7 +446,12 @@ def settle(db: Any, parse_output: dict[str, Any], *, include_supplier: bool) -> 
     }
     given = _given(db, read, brands, extras, include_supplier)
     if frame and parse_output.get("domain_in_message") is False:
-        for key, value in _from_frame(db, frame, read, brands, include_supplier).items():
+        framed = _from_frame(db, frame, read, brands, include_supplier)
+        if "category" in framed:
+            # The message named no category of its own: the frame's, narrowed by any brand
+            # it named, wins over "every category of that brand".
+            given["category"] = framed.pop("category")
+        for key, value in framed.items():
             given.setdefault(key, value)
         if "category_words" in frame and not read["categories"]:
             extras["category_words"] = str(frame.get("category_words") or "")
