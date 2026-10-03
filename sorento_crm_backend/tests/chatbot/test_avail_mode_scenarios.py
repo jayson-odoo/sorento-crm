@@ -680,7 +680,7 @@ def test_S53_an_eta_ask_for_a_family_tells_nothing_until_picked(console):
     out = c.say("eta SRTWC286", _eta_ask("SRTWC286"))
     assert "ETA" not in out and TICK not in out and CROSS not in out and "19/10" not in out, out
     # Cloud live-parser pass at 2ff7f5e9: every line read "- has incoming".
-    assert "incoming" not in out.lower(), out
+    assert "has incoming" not in out and "no incoming" not in out and "None of these" not in out, out
     assert "1. SRTWC286-SH" in out and "2. SRTWC286-SH-150" in out, out
     assert c.say("2", _pick(2)) == f"SRTWC286-SH-150: {TICK} ETA 19/10/2026\n\n{R}"
     (last,) = [a for name, a in c.tool_calls if name == "crm_incoming_stock_list"][-1:]

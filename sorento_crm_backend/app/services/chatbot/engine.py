@@ -408,11 +408,16 @@ def _as_a_stock_ask_by_its_own_words(verdict: dict[str, Any], message: str) -> d
     a plain "CWCX611 x 300" as `check_incoming` and the dealer was told "ETA not confirmed
     yet". A message whose own words name a product WITH a quantity and no ETA word is a
     stock ask, so the incoming reading is put back to stock. One prompt, read the same
-    way every time by the engine (owner: no second prompt)."""
+    way every time by the engine (owner: no second prompt).
+
+    The cloud live-parser pass at 2ff7f5e9 saw the same misread the other way: "srt5764 xx
+    10" read as a product-info ask (`check_product` / `master_products`), which answered
+    with the staff did-you-mean and an escalation offer. That reading is put back too."""
+    misread = {"incoming", "master_products"}
     incoming = (
-        verdict.get("intent_hint") == "check_incoming"
-        or verdict.get("domain_hint") == "incoming"
-        or any(isinstance(a, dict) and a.get("domain") == "incoming" for a in verdict.get("asks") or [])
+        verdict.get("intent_hint") in ("check_incoming", "check_product")
+        or verdict.get("domain_hint") in misread
+        or any(isinstance(a, dict) and a.get("domain") in misread for a in verdict.get("asks") or [])
     )
     text = str(message or "")
     if not incoming or _ETA_WORDS.search(text):
@@ -424,14 +429,20 @@ def _as_a_stock_ask_by_its_own_words(verdict: dict[str, Any], message: str) -> d
         for k in ("raw", "canonical_code")
         if isinstance(e.get(k), str) and e.get(k).strip()
     }
-    with_qty = any(
-        re.search(rf"(?<![\w-]){re.escape(code)}(?![\w-])\s*(?:x|\*|qty|:|-|=)?\s*\d+", text, re.IGNORECASE)
-        for code in codes
+    # Any standalone number is the quantity, wherever it sits: the live parser's second
+    # pass read "srt5764 xx 10" as the entity "srt5764" with the 10 after "xx".
+    with_qty = bool(codes) and (
+        verdict.get("demand_qty") is not None
+        or any(
+            isinstance(e, dict) and isinstance(e.get("quantity"), (int, float)) and not isinstance(e.get("quantity"), bool)
+            for e in verdict.get("entities") or []
+        )
+        or re.search(r"(?<![\w./-])\d+(?![\w./-])", text) is not None
     )
     if not with_qty:
         return verdict
     asks = [
-        {**a, "domain": "inventory"} if isinstance(a, dict) and a.get("domain") == "incoming" else a
+        {**a, "domain": "inventory"} if isinstance(a, dict) and a.get("domain") in misread else a
         for a in verdict.get("asks") or []
     ]
     return {
