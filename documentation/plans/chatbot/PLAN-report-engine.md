@@ -1,8 +1,9 @@
 # PLAN: Chatbot report engine (one catalogue, one spec, one executor)
 
-Status: slice 1 built and reviewed (1a route + catalogue, 1b parser + lane on the #1445
-required-field helper; reviewer + security-reviewer clean after their fix rounds; full
-tests/chatbot 5305 passed). Waiting on the owner's hand-test and on #1445 landing on main.
+Status: slice 1 built, reviewed and live-parser verified (owner hand-test FAIL round, 3 Oct 2026:
+salesman ranking reroute, top N ceiling 1000, category over agent alias; full tests/chatbot 5508
+passed; live parser gpt-5.4-mini 21/21). Waiting on CI, the owner's re-test on the copy (crew SQL
+`report-engine-crew-publish-prompt.sql`, then the `production` label move) and #1445 on main.
 FULL track (new API-key route, per-audience access rule, data-only migration
 `report_engine_0001_prompt`: owner moves the parser `production` label after deploy). Card answered 2 Oct 2026 (`report-engine-behaviour-card.md`
 revision 2); section 0 below records how the answers change this plan, and wins over the
@@ -553,3 +554,32 @@ forged `report_ask_words` from the parser is stripped and the ask runs without t
   linked customers (the route forces them itself, `enforce_customer_scope`); the out-of-scope
   check stays. So a dealer with more than 50 links still gets an answer, and the header does not
   list every account.
+
+### Owner hand-test FAIL round (3 Oct 2026)
+
+Owner on :3104: "who's the top 3 salesman for sorento water closet this year" answered as top
+selling items with agents WT I / WT III / WT IV as a filter. Dev ran the production-labelled
+older parser prompt (this lane's prompt is published unlabelled by design), so the ask reached
+top selling. Rulings, each with red tests first and a kill test:
+
+- **Reroute.** A fresh top selling reading whose ranked noun is a PERSON ("top 3 salesman",
+  "top 5 customers", "top 3 SA", "top 1,000 customers") becomes `sales_ranking` with that
+  `group_by`, keeping brand / category / product, never the axis as a filter. Its own noun
+  set: a bare "sales" is never a person ("top 10 sales items" stays top selling), and the noun
+  ends at a word boundary ("top SA01 items" keeps SA01 as the agent filter).
+- **Word groups.** Category, then exact brand, then sales agent, then customer: a word that is
+  a category or brand never resolves to an agent alias (the WT shape).
+- **Ceiling.** `top_n` runs to `TOP_SELLING_N_CEILING` (1000, #1407) on the route, the lane and
+  the MCP text; past it the lane says "I can list at most the top 1,000 in one reply." and asks
+  again. A month breakdown keeps its own 100 rows.
+- **Cell cap.** Cannot truncate a ranking: `run_summary` runs `_pivot(cap=False)`, the grouped
+  SQL has no LIMIT and the rank is cut after sorting (guard test over 5002 products).
+- **Live parser findings (gpt-5.4-mini).** The model emits `rank_by` quantity for "top 3
+  salesman" with no quantity word: the lane takes quantity only when the message names it
+  (quantity, qty, units, pcs, pieces), else amount (AC-RE-6). It sometimes emits the ranked noun
+  ("salesman") as an entity: such a noun is the axis, never a filter word.
+- **Prompt.** The owner message is an addendum example; the budget ceiling rose by 2 to keep
+  "SA" and "(dealer / project)". Dev's copy needs the crew SQL above, then the label move, and
+  the parser on gpt-5.4-mini (gpt-4o-mini misses the addendum).
+- **Open for the owner.** With `measure=qty` the header still reads "by delivered sales"; an
+  agent coded literally "SA" or "REP" cannot be named as a filter on a ranking.
