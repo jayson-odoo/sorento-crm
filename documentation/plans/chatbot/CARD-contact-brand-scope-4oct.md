@@ -1,6 +1,6 @@
 # CARD - Per-contact accessible brands (CONTACT-BRAND-SCOPE)
 
-Status: behaviour card, awaiting owner answers (4 Oct 2026). Size L, LEAD pattern. No code yet.
+Status: ANSWERED by owner 4 Oct 2026, all five as recommended; building (track: standard, L, migration + scoping). Plan: `PLAN-contact-brand-scope-4oct.md`, UAC: `contact-brand-scope-4oct-acceptance-criteria.md`.
 
 Owner (4 Oct, gist): assign accessible brands to each contact; null = all brands; a scoped
 contact is bound to products of those brands in ALL kinds of asking; guard very strongly;
@@ -99,3 +99,12 @@ Q4. Wording for an out-of-scope code: (a) identical to the existing unknown-code
 Q5. Contacts list + copy access: (a) add the hideable Brands column now and ask #1463 to add
     brands to its copy set, (b) settings card only. **Rec (a)**: cheap, and brands are an
     access facet like access types.
+
+## Owner answers (4 Oct 2026)
+
+- Q1 (a): products with NO brand are HIDDEN for a brand-scoped contact.
+- Q2 (a): brand scope applies to office staff too (owner sets it per contact).
+- Q3 (a): mixed-brand orders show only in-scope lines; amounts from those lines.
+- Q4 (a): out-of-scope code gets the identical unknown-code reply.
+- Q5 (a): hideable Brands column on the contacts list now; crew asks #1463 to add brands to its copy set.
+- No mock: pure reuse of the locations pattern.
