@@ -89,6 +89,7 @@ def set_granted_keys(
     keys: list[str],
     *,
     actor_id: str | None,
+    commit: bool = True,
 ) -> list[str]:
     """Full-list replace over the keys this build knows: exactly `keys` end up granted,
     every other KNOWN key revoked. A row for a key outside `FIELD_REVEAL_KEYS` (seeded by
@@ -129,5 +130,10 @@ def set_granted_keys(
         if key in known and key not in wanted and row.granted:
             row.granted = False
 
-    db.commit()
+    # `commit=False`: the caller owns the transaction (bulk copy access writes each target
+    # inside its own savepoint, which a commit here would close).
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return granted_keys(db, respond_contact_id)
