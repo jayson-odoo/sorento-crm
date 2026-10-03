@@ -683,3 +683,26 @@ def test_S53_an_eta_ask_for_a_family_tells_nothing_until_picked(console):
     assert c.say("2", _pick(2)) == f"SRTWC286-SH-150: {TICK} ETA 19/10/2026\n\n{R}"
     (last,) = [a for name, a in c.tool_calls if name == "crm_incoming_stock_list"][-1:]
     assert [c.codes[p] for p in last["product_ids"]] == ["SRTWC286-SH-150"]
+
+
+# ================================================================== cloud live-parser pass at 2ff7f5e9 (3 Oct)
+
+
+def _misread_as_product_info(*entities):
+    return reply(entities=list(entities), domain_hint="master_products", intent_hint="check_product")
+
+
+def test_S54_a_code_with_a_quantity_read_as_a_product_info_ask_is_still_a_stock_ask(console):
+    """Live parser (gpt-5.4-mini), 1 of 3 runs: 'srt5764 xx 10' read as check_product /
+    master_products, and the dealer got the staff did-you-mean with an escalation offer
+    ('Reply with a code to continue, or would you like me to escalate to purchasing
+    team?'). A code with a quantity and no ETA word is a stock ask, whatever domain the
+    parser named."""
+    c = console()
+    _dym5764_positions(c.say("srt5764 xx 10", _misread_as_product_info(product("srt5764 xx", 10))))
+
+
+def test_S54b_an_exact_code_with_a_quantity_read_as_product_info_answers_stock(console):
+    c = console(SRT5674=Stock(on_hand=30))
+    out = c.say("SRT5674 x 50", _misread_as_product_info(product("SRT5674", 50)))
+    assert out == f"SRT5674 x 50: {TICK} 30 available. {R}"
