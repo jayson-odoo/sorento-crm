@@ -256,9 +256,24 @@ export async function saveContactFact(
   return response.json();
 }
 
-/** `<Company> · <label>`: the contact belongs to no one company, so every option says which. */
-function withCompany(companyName: string | null | undefined, label: string): string {
-  return companyName ? `${companyName} · ${label}` : label;
+/**
+ * One option per stored value. A value that exists in several companies lists every company,
+ * sorted and joined with ", ", before ` · ` and the label: `Mocha, Sorento · CABANA`. The
+ * contact belongs to no one company, so every option says which.
+ */
+function optionsByValue(
+  rows: { value: string; label: string; company?: string | null }[],
+): SearchableMultiSelectOption[] {
+  const merged = new Map<string, { label: string; companies: Set<string> }>();
+  for (const row of rows) {
+    const entry = merged.get(row.value) ?? { label: row.label, companies: new Set<string>() };
+    if (row.company) entry.companies.add(row.company);
+    merged.set(row.value, entry);
+  }
+  return Array.from(merged, ([value, { label, companies }]) => ({
+    value,
+    label: companies.size ? `${Array.from(companies).sort().join(', ')} · ${label}` : label,
+  }));
 }
 
 /**
@@ -270,13 +285,15 @@ function withCompany(companyName: string | null | undefined, label: string): str
  */
 export async function searchUsualProductOptions(query: string): Promise<SearchableMultiSelectOption[]> {
   const products = await getProductsForLineSelect(query, { companyScope: 'grants' });
-  return products.map((product) => ({
-    value: product.product_code,
-    label: withCompany(
-      product.company_name,
-      product.product_name ? `${product.product_code} - ${product.product_name}` : product.product_code,
-    ),
-  }));
+  return optionsByValue(
+    products.map((product) => ({
+      value: product.product_code,
+      label: product.product_name
+        ? `${product.product_code} - ${product.product_name}`
+        : product.product_code,
+      company: product.company_name,
+    })),
+  );
 }
 
 /** Server-searched brand names for "Usual brands" - stored as the brand NAME, not an id
@@ -289,10 +306,13 @@ export async function searchUsualBrandOptions(query: string): Promise<Searchable
     searchQuery: query,
     companyScope: 'grants',
   });
-  return result.data.map((brand) => ({
-    value: brand.brand_name,
-    label: withCompany(brand.company_name, brand.brand_name),
-  }));
+  return optionsByValue(
+    result.data.map((brand) => ({
+      value: brand.brand_name,
+      label: brand.brand_name,
+      company: brand.company_name,
+    })),
+  );
 }
 
 /** Server-searched warehouse names for "Usual sites" - stored as the warehouse NAME
@@ -305,10 +325,13 @@ export async function searchUsualSiteOptions(query: string): Promise<SearchableM
     searchQuery: query,
     companyScope: 'grants',
   });
-  return result.data
-    .filter((warehouse) => warehouse.warehouse_name)
-    .map((warehouse) => ({
-      value: warehouse.warehouse_name as string,
-      label: withCompany(warehouse.company_name, warehouse.warehouse_name as string),
-    }));
+  return optionsByValue(
+    result.data
+      .filter((warehouse) => warehouse.warehouse_name)
+      .map((warehouse) => ({
+        value: warehouse.warehouse_name as string,
+        label: warehouse.warehouse_name as string,
+        company: warehouse.company_name,
+      })),
+  );
 }
