@@ -1,7 +1,6 @@
 # PLAN: Contact bulk access copy + access list filters (CONTACT-BULK-ACCESS)
 
-Status: Plan - card + mock v1 filed, waiting on owner answers Q1-Q5 and crew's masked dev rows; UAC drafted on
-the recommended answers. Track: M (LEAD pattern), no migration, no new permission slug.
+Status: Build - owner answered Q1-Q5 (a) and approved mock v1 (4 Oct); real masked examples pending from crew. Track: M (LEAD pattern), no migration, no new permission slug.
 
 Card: `CARD-contact-bulk-access-3oct.md`. UAC: `contact-bulk-access-3oct-acceptance-criteria.md`.
 Mock: `documentation/mockups/CONTACT-BULK-ACCESS/index.html` (v1, on hold).

@@ -1,6 +1,6 @@
 # UAC contact-bulk-access-3oct
 
-Status: DRAFT on the card's recommended answers (Q1-Q5 all (a)); pending owner answers. Card:
+Status: approved basis - owner answered Q1-Q5 (a) on 4 Oct 2026. Card:
 `CARD-contact-bulk-access-3oct.md`.
 
 "Access set" below = access types, chatbot tier (`chatbot_profile.tier`), the five chatbot switches

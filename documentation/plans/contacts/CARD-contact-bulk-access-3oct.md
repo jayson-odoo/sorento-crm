@@ -1,5 +1,9 @@
 # Behaviour card - CONTACT-BULK-ACCESS: copy one contact's access to many, then check them in the list
 
+**Owner answers (4 Oct 2026):** Q1 (a) the access set only. Q2 (a) replace. Q3 (a) no bulk-set switches now.
+Q4 (a) include "access differs from contact X". Q5 the owner sets up the Employee reference contact himself (no code).
+Mock v1 approved ("ok").
+
 Lane CONTACT-BULK-ACCESS, size M, 3 Oct 2026. Card before any code. Paths under
 `sorento_crm_backend/app/` or `sorento_crm_frontend/` as shown. Researched on main `964f4a3c`.
 
