@@ -65,7 +65,7 @@ def _rank(*entities: dict[str, Any], **overrides: Any) -> dict[str, Any]:
     base: dict[str, Any] = dict(
         domain_hint="order", intent_hint="check_order", order_status="sales_ranking",
         entities=list(entities), group_by="sales_agent", top_n=3,
-        rank_direction="top", rank_by=None, basis=None, **SEP,
+        rank_direction="top", rank_by=None, basis=None, measure=None, ranking_refine=False, **SEP,
     )
     base.update(overrides)
     return _parser_output(**base)
@@ -246,7 +246,7 @@ def test_bottom_is_sort_asc(console) -> None:
 
 
 def test_rank_by_quantity_is_measure_qty(console) -> None:
-    _text, calls = console.say(_rank(_e("Sorento", "brand"), rank_by="quantity"), "top 3 salesman by qty for Sorento")
+    _text, calls = console.say(_rank(_e("Sorento", "brand"), measure="qty"), "top 3 salesman by qty for Sorento")
     (args,) = calls
     assert args["measure"] == "qty", args
 
@@ -850,41 +850,7 @@ def test_c1_the_owner_message_new_reading_ranks_sales_agents_for_the_brand_and_c
     assert "Top 3 selling items" not in text, text
 
 
-# C2: the OLD prompt's reading (the dev failure) --------------------------- #
-
-_OLD_READINGS = {
-    "brand_and_category": lambda: (_hit("sorento", "brand"), _hit("water closet", "category")),
-    "one_combined_entity": lambda: (_hit("sorento water closet", "customer"),),
-}
-
-
-@pytest.mark.parametrize("shape", sorted(_OLD_READINGS))
-def test_c2_an_old_prompt_top_selling_reading_of_a_salesman_ranking_reaches_the_sales_ranking_lane(
-    console, monkeypatch, shape
-) -> None:
-    wt = _seed_wt(console)
-    text, log = _say_all(console, monkeypatch, _old(*_OLD_READINGS[shape]()), OWNER_MESSAGE)
-    assert "crm_top_selling_report" not in _names(log), (shape, _names(log), text)
-    ask = [args for name, args in log if name == TOOL]
-    assert len(ask) == 1, (shape, _names(log), text)
-    args = ask[0]
-    assert args["group_by"] == "sales_agent" and args["top_n"] == 3, args
-    assert not args.get("sales_agent_ids"), f"a sales agent filter crept in: {args}"
-    assert args["brand_ids"] == [console.ids["brand"]], f"the brand was dropped (a silent widening): {args}"
-    assert args["category_ids"] == [wt["category"]], f"the category was dropped (a silent widening): {args}"
-    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
-    assert "Top 3 selling items" not in text, text
-
-
-def test_c2_an_old_prompt_top_customers_reading_is_ranked_by_customer(console, monkeypatch) -> None:
-    text, log = _say_all(
-        console, monkeypatch, _old(_hit("sorento", "brand"), top_n=5), "top 5 customers for sorento this year"
-    )
-    assert "crm_top_selling_report" not in _names(log), (_names(log), text)
-    (args,) = [a for n, a in log if n == TOOL]
-    assert args["group_by"] == "customer" and args["top_n"] == 5, args
-    assert args["brand_ids"] == [console.ids["brand"]], args
-    assert not args.get("sales_agent_ids"), args
+# C2: top_selling stays top_selling (the sales ranking vocabulary is the parser's, see test_report_ask_parser.py)
 
 
 def test_c2_top_selling_items_stays_top_selling(console, monkeypatch) -> None:
@@ -906,117 +872,52 @@ def test_c2_top_selling_items_by_an_agent_stays_top_selling_with_the_agent_filte
     assert sorted(args.get("sales_agent_ids") or []) == wt["agents"], args
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        "which item has the most sales this month",
-        "top 10 sales items for sorento",
-        "best sales product for sorento this year",
-    ],
-)
-def test_c2_a_bare_sales_word_does_not_hijack_a_product_ranking(console, monkeypatch, body) -> None:
-    """B1: "sales" alone is not a sales agent word, so a product ranking stays top_selling."""
-    text, log = _say_all(console, monkeypatch, _old(_hit("sorento", "brand"), top_n=10), body)
-    assert "crm_top_selling_report" in _names(log), (body, _names(log), text)
-    assert TOOL not in _names(log), (body, _names(log), text)
+
+# Measure: the lane takes `measure` from the parser's own key and reads no message text.
 
 
-@pytest.mark.parametrize(
-    ("body", "raw", "extra"),
-    [
-        ("top SA01 items this year", "SA01", ()),
-        ("best sa01 products for sorento", "sa01", (("sorento", "brand"),)),
-    ],
-)
-def test_c2_an_agent_code_that_looks_like_sa_keeps_the_item_ranking_and_the_agent_filter(
-    console, monkeypatch, body, raw, extra
-) -> None:
-    """A seeded agent coded "SA01" is a filter on an item ranking, never a person ranking."""
-    from app.models.sales_agent import SalesAgent
-
-    agent_id = str(uuid.uuid4())
-    db = console.session_factory()
-    try:
-        db.add(SalesAgent(id=agent_id, sales_agent="SA01", person_label="SA01", company_id=DEFAULT_COMPANY_ID))
-        db.commit()
-    finally:
-        db.close()
-    entities = [_hit(raw, "sales_agent"), *[_hit(r, h) for r, h in extra]]
-    text, log = _say_all(console, monkeypatch, _old(*entities, top_n=10), body)
-    assert TOOL not in _names(log), (body, _names(log), text)
-    (args,) = [a for n, a in log if n == "crm_top_selling_report"]
-    assert agent_id in (args.get("sales_agent_ids") or []), (body, args)
-
-
-# F1: the measure defaults to amount unless the message names a quantity word ---------- #
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        "top 3 salesman for sorento this year",
-        "top 3 salesman for sorento this year by sales",
-        "top 3 salesman for sorento this year by amount",
-        "who's the top 3 salesman for sorento this year",
-    ],
-)
-def test_f1_a_quantity_reading_with_no_quantity_word_ranks_by_amount(console, body) -> None:
-    """AC-RE-6: the live model emits rank_by quantity unprompted; the header says delivered sales."""
-    text, calls = console.say(_rank(_e("sorento", "brand"), rank_by="quantity", **THIS_YEAR), body)
-    (args,) = calls
-    assert args.get("measure", "amount") == "amount", (body, args)
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        "top 3 salesman for sorento this year by quantity",
-        "top 3 salesman for sorento this year by qty",
-        "top 3 salesman for sorento this year qty",
-        "top 3 salesman for sorento this year quantity",
-        "top 3 salesman for sorento this year with most units",
-    ],
-)
-def test_f1_a_named_quantity_word_ranks_by_qty(console, body) -> None:
-    text, calls = console.say(_rank(_e("sorento", "brand"), rank_by="quantity", **THIS_YEAR), body)
+@pytest.mark.parametrize("body", ["top 3 salesman for sorento this year by quantity", "top 3 salesman for sorento this year"])
+def test_the_lane_takes_measure_qty_from_the_parsers_measure_key(console, body) -> None:
+    _text, calls = console.say(_rank(_e("sorento", "brand"), measure="qty", **THIS_YEAR), body)
     (args,) = calls
     assert args["measure"] == "qty", (body, args)
 
 
-@pytest.mark.parametrize("body", ["top 3 salesman for sorento this year by amount", "top 3 salesman for sorento this year by sales"])
-def test_f1_an_amount_reading_stays_amount(console, body) -> None:
-    text, calls = console.say(_rank(_e("sorento", "brand"), rank_by="amount", **THIS_YEAR), body)
+@pytest.mark.parametrize("body", ["top 3 salesman for sorento this year by quantity", "top 3 salesman for sorento this year"])
+def test_a_null_measure_is_amount_even_when_rank_by_says_quantity(console, body) -> None:
+    """Owner rule 4 Oct: no regex over the text. measure null + rank_by quantity -> amount, whatever the words."""
+    _text, calls = console.say(_rank(_e("sorento", "brand"), measure=None, rank_by="quantity", **THIS_YEAR), body)
     (args,) = calls
-    assert args.get("measure", "amount") == "amount", (body, args)
+    assert args["measure"] == "amount", (body, args)
 
 
-# F2: the ranking noun the model also emits as an entity is dropped ------------------- #
-
-
-@pytest.mark.parametrize("noun", ["salesman", "sales agent", "salesmen", "SA", "rep"])
-def test_f2_a_ranking_noun_entity_next_to_brand_and_category_is_dropped(console, noun) -> None:
-    wt = _seed_wt(console)
-    verdict = _rank(
-        _e(noun, "sales_agent"), _e("Sorento", "brand"), _e("water closet", "category"),
-        group_by="sales_agent", **THIS_YEAR,
-    )
-    text, calls = console.say(verdict, OWNER_MESSAGE)
-    assert f"I don't know '{noun}'" not in text, (noun, text)
+def test_the_lane_takes_measure_amount_from_the_parsers_measure_key(console) -> None:
+    _text, calls = console.say(_rank(_e("sorento", "brand"), measure="amount", **THIS_YEAR), "top 3 salesman by amount")
     (args,) = calls
-    assert args["group_by"] == "sales_agent", args
-    assert args["brand_ids"] == [console.ids["brand"]], (noun, args)
-    assert args["category_ids"] == [wt["category"]], (noun, args)
-    assert not args.get("sales_agent_ids"), (noun, args)
+    assert args["measure"] == "amount", args
 
 
-def test_f2_a_customers_noun_entity_is_dropped_for_a_customer_ranking(console) -> None:
-    verdict = _rank(_e("customers", "customer"), _e("Sorento", "brand"), group_by="customer", **THIS_YEAR)
-    text, calls = console.say(verdict, "top 3 customers for sorento this year")
-    assert "I don't know 'customers'" not in text, text
-    (args,) = calls
-    assert args["group_by"] == "customer", args
-    assert args["brand_ids"] == [console.ids["brand"]], args
-    assert not [k for k in args if "customer" in k and k != "group_by"], args
+def test_a_ranking_noun_entity_is_not_filtered_by_the_lane_it_is_the_parsers_to_omit(console) -> None:
+    """Counterpart of the removed noun-drop: the lane does not special-case "salesman"; an
+    unknown sales_agent word is the plain unknown-word line (the new prompt never emits it)."""
+    text, calls = console.say(_rank(_e("salesman", "sales_agent"), _e("Sorento", "brand")), "top 3 salesman for sorento")
+    assert calls == []
+    assert text.strip() == "I don't know 'salesman' as a sales agent.", text
+
+
+@pytest.mark.parametrize("body", ["top 3 salesman for sorento this year", "top 3 sales agents for sorento this year", OWNER_MESSAGE])
+def test_no_reroute_from_top_selling(console, monkeypatch, body) -> None:
+    """The published prompt parses sales rankings itself (the parser emits sales_ranking for these
+    messages: pinned by test_report_ask_parser.py and the live console case): a top_selling verdict stays top selling."""
+    text, log = _say_all(console, monkeypatch, _old(_hit("sorento", "brand"), top_n=3), body)
+    assert TOOL not in _names(log), (body, _names(log), text)
+    assert "crm_top_selling_report" in _names(log), (body, _names(log), text)
+
+
+
+
+# F2 (kept): a real agent name next to a customer ranking is still a filter. The ranked noun is the
+# parser's to drop now (see test_report_ask_parser.py), not a code word list.
 
 
 def test_f2_a_real_agent_name_next_to_a_customer_ranking_is_still_a_filter(console) -> None:
@@ -1025,25 +926,6 @@ def test_f2_a_real_agent_name_next_to_a_customer_ranking_is_still_a_filter(conso
     (args,) = calls
     assert args["group_by"] == "customer", args
     assert args["sales_agent_ids"] == [console.ids["agent"]], args
-
-
-@pytest.mark.parametrize(
-    ("body", "group_by", "top_n"),
-    [
-        ("top 1000 customers for sorento this year", "customer", 1000),
-        ("top 1,000 customers for sorento this year", "customer", 1000),
-        ("top 3 sales agents for sorento this year", "sales_agent", 3),
-        ("top 3 sales reps for sorento this year", "sales_agent", 3),
-        ("top 3 SA for sorento this year", "sales_agent", 3),
-    ],
-)
-def test_c2_a_person_ranking_reroutes_with_the_full_count(console, monkeypatch, body, group_by, top_n) -> None:
-    """S3: the count may be 4+ digits or comma grouped; the person noun still reroutes."""
-    text, log = _say_all(console, monkeypatch, _old(_hit("sorento", "brand"), top_n=top_n), body)
-    assert "crm_top_selling_report" not in _names(log), (body, _names(log), text)
-    (args,) = [a for n, a in log if n == TOOL]
-    assert args["group_by"] == group_by and args["top_n"] == top_n, (body, args)
-    assert args["brand_ids"] == [console.ids["brand"]], (body, args)
 
 
 # C3: resolver hardening --------------------------------------------------- #
@@ -1107,10 +989,61 @@ def test_c3_a_real_agent_word_is_still_a_sales_agent(console) -> None:
         db.close()
 
 
+
 # --------------------------------------------------------------------------- #
-# REPORT-ENGINE: four multi-turn defects seen with the LIVE parser (browser pass, 3 Oct 2026).
-# Every `qf` below is the live parser's recorded verdict for that turn.
-# T2/T3 (Q5), D2 (bare number or "top N" after a ranking), D3 (Q3), D4 (period-only follow-up).
+# Kill tests (owner rule 4 Oct, SEMANTIC ONLY): the code no longer reads the message text.
+# --------------------------------------------------------------------------- #
+
+
+def test_kill_the_message_words_do_not_set_the_measure(console) -> None:
+    """measure null + rank_by quantity + "by quantity" in the text -> amount: the lane follows the parser."""
+    _text, calls = console.say(
+        _rank(_e("sorento", "brand"), measure=None, rank_by="quantity", **THIS_YEAR),
+        "top 3 salesman for sorento this year by quantity",
+    )
+    (args,) = calls
+    assert args["measure"] == "amount", args
+
+
+def test_kill_a_top_selling_verdict_for_the_owner_message_is_not_rerouted(console, monkeypatch) -> None:
+    # The published prompt makes the parser emit sales_ranking for this message (pinned by the
+    # parser test + live console case); the code never reroutes on the text.
+    text, log = _say_all(console, monkeypatch, _old(_hit("sorento", "brand"), _hit("water closet", "category")), OWNER_MESSAGE)
+    assert "crm_top_selling_report" in _names(log), (_names(log), text)
+    assert TOOL not in _names(log), (_names(log), text)
+
+
+def test_kill_a_person_noun_looking_sales_agent_entity_is_trusted_as_a_filter(console) -> None:
+    from app.models.sales_agent import SalesAgent
+
+    agent_id = str(uuid.uuid4())
+    db = console.session_factory()
+    try:
+        db.add(SalesAgent(id=agent_id, sales_agent="SA", person_label="SA", company_id=DEFAULT_COMPANY_ID))
+        db.commit()
+    finally:
+        db.close()
+    _text, calls = console.say(
+        _rank(_e("SA", "sales_agent"), _e("Sorento", "brand"), group_by="customer", **THIS_YEAR),
+        "top 3 customers of SA for sorento this year",
+    )
+    (args,) = calls
+    assert args["sales_agent_ids"] == [agent_id], args
+
+
+def test_kill_the_text_rule_code_is_gone() -> None:
+    from app.services.chatbot import engine
+    from app.services.chatbot.lanes.business import report_ask
+
+    for name in ("_ranked_who", "_RANKED_NOUN_RE", "_sales_ranking_verdict"):
+        assert not hasattr(engine, name), name
+    assert not hasattr(report_ask, "_QUANTITY_WORD_RE")
+
+
+# --------------------------------------------------------------------------- #
+# REPORT-ENGINE: the multi-turn defects seen with the LIVE parser (browser pass, 3 Oct 2026),
+# restubbed with the verdicts the NEW prompt teaches (`ranking_refine`, `measure`).
+# T2/T3 (Q5), D2 (bare number after a ranking), D3 (Q3), D4 (period-only follow-up).
 # --------------------------------------------------------------------------- #
 
 CABANA_MSG = "top 3 salesman for Cabana brand last month"
@@ -1135,22 +1068,16 @@ def _t1(console) -> tuple[str, list[dict[str, Any]]]:
     return console.say(_rank(_e("Cabana", "brand"), top_n=3, **SEP_RANGE), CABANA_MSG)
 
 
-def _bare_ranking(**overrides: Any) -> dict[str, Any]:
-    """The live verdict for a bare "5" / "top 10": sales_ranking, nothing else."""
+def _refine(**overrides: Any) -> dict[str, Any]:
+    """The new prompt's verdict for a message that ONLY changes one key of the ranking on screen:
+    only the changed key is filled, group_by null, entities []."""
     base: dict[str, Any] = dict(
-        domain_hint="order", intent_hint="check_order", order_status="sales_ranking", entities=[],
-        group_by=None, top_n=None, date_filter_start=None, date_filter_end=None,
+        domain_hint="order", intent_hint="check_order", order_status="sales_ranking", ranking_refine=True,
+        entities=[], group_by=None, top_n=None, measure=None, basis=None,
+        date_filter_start=None, date_filter_end=None,
     )
     base.update(overrides)
     return _parser_output(**base)
-
-
-def _period_only(start: str, end: str) -> dict[str, Any]:
-    """The live verdict for "this year": no status, no group_by, no top_n, only dates."""
-    return _parser_output(
-        domain_hint="order", intent_hint="check_order", order_status=None, entities=[],
-        group_by=None, top_n=None, date_filter_start=start, date_filter_end=end,
-    )
 
 
 def test_t1_the_cabana_ranking_runs(console) -> None:
@@ -1161,12 +1088,11 @@ def test_t1_the_cabana_ranking_runs(console) -> None:
     assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
 
 
-def test_t2_a_carried_top_n_with_no_number_in_the_message_asks_how_many(console) -> None:
-    """Q5: the live model carried top_n 3 over; "top salesman for cabana last month" names no
-    count, so nothing runs and the lane asks."""
+def test_t2_a_fresh_ask_with_no_count_asks_how_many(console) -> None:
+    """Q5: the new prompt emits top_n null for "top salesman" (ranking_refine false)."""
     _t1(console)
     text, calls = console.say(
-        _rank(_e("Cabana", "brand"), top_n=3, **SEP_RANGE), "top salesman for cabana last month"
+        _rank(_e("Cabana", "brand"), top_n=None, **SEP_RANGE), "top salesman for cabana last month"
     )
     assert calls == [], calls
     assert text.strip() == TOPN_Q, text
@@ -1174,7 +1100,7 @@ def test_t2_a_carried_top_n_with_no_number_in_the_message_asks_how_many(console)
 
 def test_t3_the_number_reply_after_the_how_many_question_runs_top_5(console) -> None:
     _t1(console)
-    console.say(_rank(_e("Cabana", "brand"), top_n=3, **SEP_RANGE), "top salesman for cabana last month")
+    console.say(_rank(_e("Cabana", "brand"), top_n=None, **SEP_RANGE), "top salesman for cabana last month")
     _text, calls = console.say(_reply(), "5")
     (args,) = calls
     assert args["top_n"] == 5, args
@@ -1182,24 +1108,10 @@ def test_t3_the_number_reply_after_the_how_many_question_runs_top_5(console) -> 
     assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
 
 
-@pytest.mark.parametrize(
-    "body", ["top 3 salesman for cabana last month", "top three salesman for cabana last month",
-             "top 10 salesman for cabana last month"],
-)
-def test_t2_a_message_that_names_a_count_still_takes_the_parsers_number(console, body) -> None:
-    n = 10 if "10" in body else 3
-    _t1(console)
-    _text, calls = console.say(_rank(_e("Cabana", "brand"), top_n=n, **SEP_RANGE), body)
-    (args,) = calls
-    assert args["top_n"] == n, args
-
-
 @pytest.mark.parametrize("reply, n", [("5", 5), ("top 10", 10)])
-def test_d2_a_bare_number_after_a_ranking_reruns_that_ranking_with_the_new_top_n(console, reply, n) -> None:
-    """Ruling (pending owner ask): with no question open, a bare number or "top N" right after a
-    sales ranking reply means top N of that ranking."""
+def test_d2_a_count_refine_reruns_the_held_ranking_with_the_new_top_n(console, reply, n) -> None:
     _t1(console)
-    text, calls = console.say(_bare_ranking(top_n=n if reply.startswith("top") else None), reply)
+    _text, calls = console.say(_refine(top_n=n), reply)
     (args,) = calls
     assert args["group_by"] == "sales_agent", f"ranking lost, ran a total: {args}"
     assert args["brand_ids"] == [console.cabana], args
@@ -1208,8 +1120,23 @@ def test_d2_a_bare_number_after_a_ranking_reruns_that_ranking_with_the_new_top_n
     assert args["measure"] == "amount" and args["basis"] == "delivered", args
 
 
+def test_d2_a_measure_refine_reruns_the_held_ranking_by_qty(console) -> None:
+    _t1(console)
+    _text, calls = console.say(_refine(measure="qty"), "by quantity")
+    (args,) = calls
+    assert args["measure"] == "qty" and args["group_by"] == "sales_agent" and args["top_n"] == 3, args
+    assert args["brand_ids"] == [console.cabana], args
+
+
+def test_d2_a_basis_refine_reruns_the_held_ranking_ordered(console) -> None:
+    _t1(console)
+    _text, calls = console.say(_refine(basis="ordered"), "ordered")
+    (args,) = calls
+    assert args["basis"] == "ordered" and args["group_by"] == "sales_agent" and args["top_n"] == 3, args
+
+
 def test_d3_a_fresh_ranking_that_names_its_own_subject_never_borrows_the_previous_period(console) -> None:
-    """Q3: "top 3 salesman for sorento" with no period asks the period, September carried or not."""
+    """Q3: ranking_refine false, no dates -> asks the period, September held or not."""
     _t1(console)
     text, calls = console.say(
         _rank(_e("Sorento", "brand"), top_n=3, date_filter_start=None, date_filter_end=None),
@@ -1220,12 +1147,12 @@ def test_d3_a_fresh_ranking_that_names_its_own_subject_never_borrows_the_previou
 
 
 @pytest.mark.parametrize(
-    "start, end", [("2026-01-01", "2026-12-31"), ("2025-01-01", "2025-12-31"), ("2026-09-01", "2026-09-30")],
+    "start, end", [("2026-01-01", "2026-12-31"), ("2025-01-01", "2025-12-31"), ("2026-08-01", "2026-08-31")],
     ids=["this_year", "2025", "last_month"],
 )
-def test_d4_a_period_only_follow_up_reruns_the_same_ranking_for_that_period(console, start, end) -> None:
+def test_d4_a_period_refine_reruns_the_held_ranking_for_that_period(console, start, end) -> None:
     _t1(console)
-    text, calls = console.say(_period_only(start, end), "this year")
+    text, calls = console.say(_refine(date_filter_start=start, date_filter_end=end), "this year")
     (args,) = calls
     assert args["group_by"] == "sales_agent" and args["top_n"] == 3, args
     assert args["brand_ids"] == [console.cabana], args
@@ -1233,6 +1160,28 @@ def test_d4_a_period_only_follow_up_reruns_the_same_ranking_for_that_period(cons
     assert "Could not find order" not in text, text
 
 
-def test_guard_a_period_only_message_with_no_ranking_on_screen_runs_no_report(console) -> None:
-    text, calls = console.say(_period_only("2026-01-01", "2026-12-31"), "this year")
+def test_a_refine_with_no_held_ranking_is_a_fresh_ask_and_never_a_total(console) -> None:
+    """ranking_refine true in a fresh conversation: nothing to refine, so ask what is missing."""
+    text, calls = console.say(_refine(top_n=5), "5")
+    assert calls == [], (text, calls)
+    assert text.strip() == PERIOD_Q, text
+
+
+def test_a_period_refine_with_no_held_ranking_asks_and_runs_no_report(console) -> None:
+    text, calls = console.say(
+        _refine(date_filter_start="2026-01-01", date_filter_end="2026-12-31"), "this year"
+    )
+    assert calls == [], (text, calls)
+
+
+def test_a_new_intent_wins_over_the_held_ranking(console) -> None:
+    """After a ranking, an order ask is not merged with the held frame."""
+    _t1(console)
+    text, calls = console.say(_order_ask(_e(CUSTOMER_NAME, "customer")), f"orders for {CUSTOMER_NAME}")
+    assert calls == [], (text, calls)
+
+
+def test_a_new_intent_wins_a_stock_ask_after_a_ranking_is_not_a_ranking(console) -> None:
+    _t1(console)
+    text, calls = console.say(_parser_output(), "stock for SRTWC8517")
     assert calls == [], (text, calls)

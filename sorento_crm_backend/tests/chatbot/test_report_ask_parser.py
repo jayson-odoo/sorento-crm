@@ -148,3 +148,70 @@ def test_the_prompt_stays_inside_its_budget_ceiling() -> None:
     """The existing budget test is the gate (`test_parser_prompt_budget.py`); this pins that the
     addendum's new example is counted by it, not skipped: the rendered prompt carries it."""
     assert OWNER_MESSAGE in SEMANTIC_PARSER_PROMPT
+
+
+# ------------------------------------------------------------------ semantic only (owner rule, 4 Oct 2026)
+# The parser decides meaning; the code reads no message text. What the removed regexes did is now
+# taught by the addendum, pinned here.
+
+
+def _addendum() -> str:
+    from app.services import chatbot_parser_prompt
+
+    return getattr(chatbot_parser_prompt, "REPORT_ASK_ADDENDUM", "")
+
+
+def _bullet(addendum: str, quote: str) -> str:
+    at = addendum.find(quote)
+    assert at >= 0, f"REPORT_ASK_ADDENDUM has no example {quote!r}"
+    return addendum[at + len(quote):].split("\n  - ", 1)[0]
+
+
+def test_the_schema_declares_ranking_refine_and_measure() -> None:
+    props = PARSE_OUTPUT_JSON_SCHEMA["properties"]
+    assert "ranking_refine" in props and "measure" in props, sorted(props)
+    assert "ranking_refine" in PARSE_OUTPUT_JSON_SCHEMA["required"]
+    assert "measure" in PARSE_OUTPUT_JSON_SCHEMA["required"]
+    measure = props["measure"]
+    if "enum" in measure:
+        assert {"qty", "amount"} <= set(measure["enum"]), measure
+
+
+def test_the_addendum_teaches_ranking_refine_after_a_sales_ranking() -> None:
+    a = _addendum()
+    assert "ranking_refine" in a and "Previous response" in a
+    for example in ('"5"', '"top 10"', '"this year"', '"2025"', '"last month"', '"ordered"', "by quantity"):
+        assert example in a, example
+    assert "ranking_refine true" in a and "ranking_refine false" in a
+
+
+def test_the_addendum_says_a_new_axis_or_subject_is_a_new_ask_with_its_own_count_and_dates() -> None:
+    a = _addendum()
+    bullet = _bullet(a, '"top 3 salesman for sorento"')
+    assert "ranking_refine false" in bullet, bullet
+    assert "top salesman" in a and "top_n null" in a, "a message with no count leaves top_n null"
+
+
+def test_the_addendum_teaches_measure() -> None:
+    a = _addendum()
+    assert 'measure "qty"' in a and "measure null" in a
+    owner = _bullet(a, OWNER_MESSAGE)
+    assert "measure null" in owner, owner
+    assert '"qty"' in _bullet(a, "by quantity") or 'measure "qty"' in a
+
+
+def test_the_addendum_says_the_ranked_noun_is_never_an_entity() -> None:
+    a = _addendum().lower()
+    assert "never an entity" in a
+    for noun in ("salesman", "customers", "sa"):
+        assert noun in a
+
+
+def test_the_addendum_keeps_product_rankings_top_selling() -> None:
+    assert '"top 10 sales items for sorento"' in _addendum()
+    assert "top_selling" in _bullet(_addendum(), '"top 10 sales items for sorento"')
+
+
+def test_the_addendum_keeps_an_sa_coded_agent_a_filter_under_top_selling() -> None:
+    bullet = _bullet(_addendum(), '"top SA01 items')
+    assert "top_selling" in bullet and "sales_agent" in bullet, bullet

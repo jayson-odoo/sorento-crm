@@ -65,3 +65,70 @@ cases:
           parser:
             order_status: sales_report
           no_uuid: true
+
+  # REPORT-ENGINE semantic-only round (owner rule 4 Oct 2026): the parser fields the lane reads.
+  - name: no count named leaves top_n null
+    cold: true
+    turns:
+      - text: "top salesman for cabana last month"
+        expect:
+          parser:
+            order_status: sales_ranking
+            ranking_refine: false
+            top_n: null
+
+  - name: ranking sales items stays top selling
+    cold: true
+    turns:
+      - text: "top 10 sales items for sorento"
+        expect:
+          parser:
+            order_status: top_selling
+
+  - name: a ranking is refined by a count, a period, then replaced by a new ask
+    cold: true
+    turns:
+      - text: "top 3 salesman for Cabana brand last month"
+        expect:
+          parser:
+            order_status: sales_ranking
+            ranking_refine: false
+            top_n: 3
+      - text: "5"
+        expect:
+          parser:
+            order_status: sales_ranking
+            ranking_refine: true
+            top_n: 5
+      - text: "this year"
+        expect:
+          parser:
+            order_status: sales_ranking
+            ranking_refine: true
+            date_filter_start: "2026-01-01"
+            date_filter_end: "2026-12-31"
+      - text: "top 3 salesman for sorento"
+        expect:
+          parser:
+            order_status: sales_ranking
+            ranking_refine: false
+            date_filter_start: null
+            date_filter_end: null
+
+  - name: a salesman ranking with no quantity word has a null measure
+    cold: true
+    turns:
+      - text: "top 3 salesman for sorento water closet this year"
+        expect:
+          parser:
+            order_status: sales_ranking
+            measure: null
+
+  - name: a salesman ranking by quantity has measure qty
+    cold: true
+    turns:
+      - text: "top 3 salesman for sorento water closet this year by quantity"
+        expect:
+          parser:
+            order_status: sales_ranking
+            measure: qty
