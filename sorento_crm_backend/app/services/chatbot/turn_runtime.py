@@ -3088,6 +3088,9 @@ def make_tool_runner(
             unplaced=unplaced,
             raw_fragment=fragment,
             brand_names=brand_names,
+            attachment_types=(
+                attachment_type_labels(db, entities) if spec.domain == "product_attachment" else None
+            ),
         )
         if page_predicate is not None:
             # W4: what an "another N" after this page continues from; after the last page
@@ -3500,6 +3503,50 @@ def _tier_gate(
     }
 
 
+def _with_carried_document_types(parse_output: dict[str, Any], focus: Focus) -> dict[str, Any]:
+    """The carried document types a product-attachment FETCH turn still needs resolving.
+
+    ATTACHMENT-MULTI (tester re-run 2 Oct 2026, crew trace turn 29a88795): "photo and
+    certification for CB11" rostered, the customer replied "3", and the parser echoed the
+    picked product as the turn's own entity (`entity_op: reuse`). A turn that names its own
+    entities is otherwise handed over untouched, so the carried "photo" / "certificate" -
+    stored as the parser's raw words, no uuid, because a roster turn settles nothing - never
+    reached the resolver, the fetch dropped both as `missing_or_bad_uuid` and answered with
+    every file of every type, and the "has no Certification" line had no types to name.
+
+    Only the document types, only those with no uuid, only when this turn named none of its
+    own, and only when the one domain in play is `product_attachment` - any other domain's
+    gate would read a document type as an incompatible entity.
+    """
+    own = [e for e in parse_output.get("entities") or [] if isinstance(e, dict)]
+    if any(str(e.get("hint") or "").strip().lower() == "attachment_type" for e in own):
+        return parse_output
+    domain = parse_output.get("domain_hint")
+    domains = [d for d in (getattr(focus, "domains", []) or []) if d]
+    if domain != "product_attachment" and not (not domain and domains == ["product_attachment"]):
+        return parse_output
+    rows = (getattr(focus, "extra", {}) or {}).get("attachment_type") or []
+    carried: list[dict[str, Any]] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or row.get("uuid"):
+            continue
+        code = row.get("canonical_code") or row.get("raw")
+        if not jsc.truthy(code):
+            continue
+        carried.append(
+            {
+                "raw": row.get("raw") or code,
+                "hint": "attachment_type",
+                "canonical_code": code,
+                "current_message": False,
+                "confident": True,
+            }
+        )
+    if not carried:
+        return parse_output
+    return {**parse_output, "entities": [*own, *carried]}
+
+
 def with_carried_entities(
     parse_output: dict[str, Any], focus: Focus, *, unsettled_only: bool = False
 ) -> dict[str, Any]:
@@ -3534,7 +3581,7 @@ def with_carried_entities(
         for e in own
     )
     if parse_output.get("entities") and not domain_word_only:
-        return parse_output
+        return _with_carried_document_types(parse_output, focus) if unsettled_only else parse_output
     carried: list[dict[str, Any]] = []
     # Every kind the focus holds, `extra` included. `KIND_FIELD_MAP` names four kinds
     # and the rest of them live in the catch-all, so an `attachment_type` carried from
@@ -3581,6 +3628,41 @@ def with_carried_entities(
     if not carried:
         return parse_output
     return {**parse_output, "entities": [*carried, *own]}
+
+
+def attachment_type_labels(db: Session, entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`[{name, keys}]` per attachment-type entity of a fetch, read by uuid (ATTACHMENT-MULTI R3).
+
+    `name` is `attachment_types.type_name`, what the customer reads (R5). `keys` are the
+    spellings an answer row's "Attachment Type" field can carry: the MCP presenter prints the
+    description when the type has one, else the name. An entity with no uuid, or a failed
+    read, yields `[]` - the composer then names no gap rather than a false one.
+    """
+    ids = [
+        jsc.js_string(e.get("uuid"))
+        for e in entities
+        if isinstance(e, dict)
+        and jsc.nullish_str(e.get("entity_type")).strip().lower() == "attachment_type"
+    ]
+    if not ids or not all(_UUID_TEXT.match(i) for i in ids):
+        return []
+    from app.models.resources import AttachmentType
+
+    try:
+        with db.begin_nested():
+            rows = db.query(AttachmentType).filter(AttachmentType.id.in_(ids)).all()
+    except Exception:  # noqa: BLE001 - fail closed: no gap line, never a wrong one
+        logger.warning("chatbot: attachment_type label lookup failed", exc_info=True)
+        return []
+    by_id = {str(row.id): row for row in rows}
+    out: list[dict[str, Any]] = []
+    for type_id in ids:
+        row = by_id.get(type_id)
+        if row is None or not row.type_name:
+            return []
+        keys = [k for k in (row.type_name, row.description) if k]
+        out.append({"name": row.type_name, "keys": keys})
+    return out
 
 
 def _is_certificate_type(db: Session, attachment_type_id: Any) -> bool:
@@ -3917,6 +3999,7 @@ def envelope_of(
     counted_set: bool = True,
     raw_fragment: dict[str, Any] | None = None,
     brand_names: list[str] | None = None,
+    attachment_types: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The kept lane's fetch fragment as the composer's envelope (AC-1530, AC-1531).
 
@@ -3956,6 +4039,9 @@ def envelope_of(
             )
             if name
         ],
+        # ATTACHMENT-MULTI R3: the document types this fetch asked for, `{name, keys}`
+        # (`attachment_type_labels`), so the composer can name a product lacking one.
+        "attachment_types": list(attachment_types or []),
         "figures": figures,
         "files": [f for f in files if isinstance(f, dict)] if isinstance(files, list) else [],
         "miss": [] if has_result else codes,
