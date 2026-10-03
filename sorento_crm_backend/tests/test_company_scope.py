@@ -593,7 +593,8 @@ def test_every_company_id_table_is_registered():
     # + 1 (#1354 S2): `branches`, the AutoCount branch table = 153.
     # CUSTOMER-GROUP adds 1: `customer_groups` is one company's own grouping of its ledgers,
     # unique per (company, name) = 154.
-    expected_owned = 154
+    # + 1 (ITEM-TYPE-CRM): `item_types`, AutoCount ItemType reference data = 155.
+    expected_owned = 155
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
