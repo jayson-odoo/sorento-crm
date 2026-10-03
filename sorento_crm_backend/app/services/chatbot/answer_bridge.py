@@ -1893,10 +1893,11 @@ def answer_for(
     if escalation_barred(profile) and question is not None:
         # ESCALATION-CONTROL: a barred contact's roster is still ASKED (a clarifying
         # question, not an offer); its escalation half goes, and an escalation offer
-        # goes whole.
-        from app.services.chatbot.escalation_control import strip_pending
+        # goes whole. REFER-ONLY-FIXES (owner console, 3 Oct 2026): the text loses the
+        # picker the dropped question printed, with it, never only the question.
+        from app.services.chatbot.escalation_control import strip_text
 
-        question, _dropped = strip_pending(question)
+        text, question, _offered = strip_text(text, question, profile)
     if combined_member_rows and question is not None:
         member_options = [o for o in question.options if o.get("entity_type") == "member"]
         if member_options and any(o.get("entity_type") != "member" for o in question.options):

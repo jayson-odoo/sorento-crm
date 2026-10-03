@@ -48,7 +48,7 @@ def test_incoming_is_a_cross_with_the_eta():
 
 def test_no_incoming_is_a_cross():
     line = _availability_line(_entry(product_code="SRT5674", requested_qty=150, branch="no_incoming"))
-    assert line == "SRT5674 x 150: ❌ No incoming. Please refer to your salesman."
+    assert line == "SRT5674 x 150: ❌ No stock and no incoming. Please refer to your salesman."
 
 
 def test_too_big_is_blocked_and_claims_nothing():
@@ -75,11 +75,12 @@ def test_available_count_is_the_only_new_digit_and_only_on_a_short_in_stock():
 
 
 def test_no_word_got_stock_or_no_stock_left():
+    """REFER-ONLY-FIXES (owner, 3 Oct 2026): the one exception is `no_incoming`, whose
+    bare "No incoming" read as if stock were there; it says "No stock and no incoming"."""
     for branch, extra in (
         ("in_stock", {}),
         ("in_stock", {"available_qty": 3}),
         ("incoming", {"eta": "19/10/2026"}),
-        ("no_incoming", {}),
     ):
         line = _availability_line(_entry(branch=branch, **extra)).lower()
         assert "we have stock" not in line and "no stock" not in line, line
