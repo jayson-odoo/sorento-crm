@@ -2414,10 +2414,15 @@ def _spec_quantities(
         quantity = _int(e.get("quantity"))
         if quantity is None:
             continue
-        for name in ("canonical_code", "raw"):
-            code = e.get(name)
-            if isinstance(code, str) and code.strip():
-                by_code[code.strip().casefold()] = quantity
+        # AVAIL-MODE-REPLIES (owner Q2 (a), 2 Oct 2026): a code named twice in one message
+        # is one line whose quantities add up ("SRT5674 x 2 ... SRT5674 x 3" asks for 5).
+        # Each entity counts once, however many of its names carry the code.
+        for code in {
+            value.strip().casefold()
+            for value in (e.get("canonical_code"), e.get("raw"))
+            if isinstance(value, str) and value.strip()
+        }:
+            by_code[code] = by_code.get(code, 0) + quantity
     if not by_code:
         # D13 lives in ONE place (review round 9, finding 5): `turn/apply.py::
         # _normalise_demand_qty` writes a single named code's top-level `demand_qty`
@@ -2438,6 +2443,23 @@ def _spec_quantities(
             if quantity is not None:
                 quantities[uuid] = quantity
                 break
+    # AVAIL-MODE-REPLIES rule 5: a typed token that is the prefix of exactly ONE resolved
+    # code ("SRTWC287-S" placed SRTWC287-S-150 alone) is that code, so its quantity goes
+    # with it. A prefix of several codes is a family, asked as a pick, and carries none.
+    resolved_codes = {
+        str(e["uuid"]): e.get("code") or e.get("canonical_code")
+        for e in entities
+        if isinstance(e, dict) and isinstance(e.get("uuid"), str) and e.get("uuid")
+        and isinstance(e.get("code") or e.get("canonical_code"), str)
+    }
+    for token, quantity in by_code.items():
+        if any((code or "").casefold() == token for code in resolved_codes.values()):
+            continue
+        prefixed = [
+            uuid for uuid, code in resolved_codes.items() if (code or "").casefold().startswith(token)
+        ]
+        if len(prefixed) == 1 and prefixed[0] not in quantities:
+            quantities[prefixed[0]] = quantity
     return {**out, "requested_quantities": quantities} if quantities else out
 
 

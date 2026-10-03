@@ -253,6 +253,9 @@ class StockAvailabilityEntry(BaseModel):
     category_name: Optional[str] = None
     eta: Optional[str] = None
     packing_list: Optional[StockAvailabilityPackingList] = None
+    # AVAIL-MODE-REPLIES rule 2 (owner, 2 Oct 2026): how many are available, set ONLY on
+    # an `in_stock` answer short of `requested_qty` within the category max.
+    available_qty: Optional[int] = None
 
 
 class StockBalanceListResponse(ListResponse[StockResponse]):
