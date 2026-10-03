@@ -63,11 +63,13 @@ const RESULT_BADGE: Record<AccessCopyStatus, { label: string; variant: 'primary'
   changed: { label: 'Updated', variant: 'success' },
 };
 
+const TIER_LABEL: Record<string, string> = { dealer: 'Dealer', office: 'Office', end_user: 'End user' };
+
 function scalarText(value: unknown): string {
   if (value === true) return 'on';
   if (value === false) return 'off';
   if (value == null || value === '') return '(none)';
-  return String(value);
+  return TIER_LABEL[String(value)] ?? String(value);
 }
 
 function ChangeLine({ change }: { change: AccessCopyChange }) {

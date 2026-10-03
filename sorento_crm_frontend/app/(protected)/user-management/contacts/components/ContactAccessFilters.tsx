@@ -97,74 +97,90 @@ export default function ContactAccessFilters({ value, onChange }: Props) {
   const cls = 'w-full sm:w-44';
 
   return (
-    <div className="flex flex-wrap items-center gap-2" data-testid="contact-access-filters">
+    <div className="flex w-full flex-wrap items-center gap-2" data-testid="contact-access-filters">
       <SearchableSelect
-        className={cls}
+        triggerClassName={cls}
+        truncateTriggerLabel
         value={value.accessType ?? ''}
         onChange={set('accessType')}
         options={accessTypes.map((t) => ({ value: t.code, label: t.name }))}
         placeholder="Access type: any"
+        renderTriggerLabel={(opt) => `Access type: ${opt.label}`}
         clearable
       />
       <SearchableSelect
-        className={cls}
+        triggerClassName={cls}
+        truncateTriggerLabel
         value={value.tier ?? ''}
         onChange={set('tier')}
         options={TIER_OPTIONS}
         placeholder="Tier: any"
+        renderTriggerLabel={(opt) => `Tier: ${opt.label}`}
         clearable
       />
       <SearchableSelect
-        className={cls}
+        triggerClassName={cls}
+        truncateTriggerLabel
         value={value.cost ?? ''}
         onChange={set('cost')}
         options={YES_NO('Cost visible', 'Cost hidden')}
         placeholder="Cost: any"
+        renderTriggerLabel={(opt) => `Cost: ${opt.label}`}
         clearable
       />
       <SearchableSelect
-        className={cls}
+        triggerClassName={cls}
+        truncateTriggerLabel
         value={value.escalation ?? ''}
         onChange={set('escalation')}
         options={YES_NO('Escalation allowed', 'Escalation blocked')}
         placeholder="Escalation: any"
+        renderTriggerLabel={(opt) => `Escalation: ${opt.label}`}
         clearable
       />
       <SearchableSelect
-        className={cls}
+        triggerClassName={cls}
+        truncateTriggerLabel
         value={value.packingList ?? ''}
         onChange={set('packingList')}
         options={YES_NO('Packing list allowed', 'Packing list not allowed')}
         placeholder="Packing list: any"
+        renderTriggerLabel={(opt) => `Packing list: ${opt.label}`}
         clearable
       />
       <SearchableSelect
-        className={cls}
+        triggerClassName={cls}
+        truncateTriggerLabel
         value={value.stock ?? ''}
         onChange={set('stock')}
         options={YES_NO('Stock checks allowed', 'Stock checks blocked')}
         placeholder="Stock checks: any"
+        renderTriggerLabel={(opt) => `Stock checks: ${opt.label}`}
         clearable
       />
       <SearchableSelect
-        className="w-full sm:w-56"
+        triggerClassName="w-full sm:w-56"
+        truncateTriggerLabel
         value={value.customerId ?? ''}
         onChange={set('customerId')}
         onOptionChange={(opt) => setCustomerOption(opt ?? undefined)}
         selectedOption={selected(value.customerId, customerOption, customerLabel, 'Selected customer')}
         fetchOptions={fetchCustomers}
         placeholder="Customer: any"
+        renderTriggerLabel={(opt) => `Customer: ${opt.label}`}
         emptyMessage="No customers match."
         clearable
       />
       <SearchableSelect
-        className="w-full sm:w-64"
+        triggerClassName="w-full sm:w-64"
+        truncateTriggerLabel
         value={value.accessDiffersFrom ?? ''}
         onChange={set('accessDiffersFrom')}
         onOptionChange={(opt) => setDiffersOption(opt ?? undefined)}
         selectedOption={selected(value.accessDiffersFrom, differsOption, differsLabel, 'Selected contact')}
         fetchOptions={fetchContacts}
         placeholder="Access differs from: any"
+        renderTriggerLabel={(opt) => `Access differs from: ${opt.label}`}
         emptyMessage="No contacts match."
         clearable
       />
