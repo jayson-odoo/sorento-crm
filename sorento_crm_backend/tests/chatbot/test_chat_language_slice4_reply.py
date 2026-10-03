@@ -201,8 +201,9 @@ def test_cl40_a_sentence_after_a_newline_is_replaced():
 
 
 def test_cl40_the_miss_sentence_with_an_uncatalogued_lead_still_translates_the_offer():
-    out = _loc("ms").reply('Couldn\'t find: "ZZNOPE999" (product). Would you like me to escalate to warehouse team?')
-    assert out == 'Couldn\'t find: "ZZNOPE999" (product). ' + OFFER_MS.format(team="warehouse")
+    # "Couldn't find: X." is catalogued since the crew-tester round; this lead never is.
+    out = _loc("ms").reply('ZZNOPE999 matched nothing (product). Would you like me to escalate to warehouse team?')
+    assert out == "ZZNOPE999 matched nothing (product). " + OFFER_MS.format(team="warehouse")
 
 
 @pytest.mark.parametrize(

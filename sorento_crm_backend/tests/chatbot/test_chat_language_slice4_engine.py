@@ -18,9 +18,12 @@ from tests.chatbot.test_engine import stub_access  # noqa: F401 - a pytest fixtu
 from tests.chatbot.test_escalation_agent_carry import _capture_next_assignee, _capture_sla
 
 MISS_LEAD = 'Couldn\'t find: "ZZNOPE999" (product). '
+# The miss lead reads in the reply language too (crew-tester round 1, 3 Oct); zh drops the space.
+MS_LEAD = 'Tidak dapat menemui: "ZZNOPE999" (product). '
+ZH_LEAD = '找不到："ZZNOPE999" (product)。'
 EN_OFFER = MISS_LEAD + "Would you like me to escalate to warehouse team?"
-MS_OFFER = MISS_LEAD + "Adakah anda mahu saya rujuk kepada pasukan warehouse?"
-ZH_OFFER = MISS_LEAD + "需要我转交给 warehouse 团队吗？"
+MS_OFFER = MS_LEAD + "Adakah anda mahu saya rujuk kepada pasukan warehouse?"
+ZH_OFFER = ZH_LEAD + "需要我转交给 warehouse 团队吗？"
 DYM_TAIL = "\n1. SRTWC286-SH\n2. SRTWC286-SH-P"
 
 MS_ASK = "ada stok ZZNOPE999?"
@@ -130,7 +133,7 @@ def test_cl42_a_barred_ms_miss_prints_the_refer_line_once_translated_and_no_offe
 
     reply = c.say(MS_ASK, stock(product("ZZNOPE999")))
 
-    assert reply == MISS_LEAD + "Sila rujuk jurujual anda."
+    assert reply == MS_LEAD + "Sila rujuk jurujual anda."
     assert reply.count("Sila rujuk jurujual anda.") == 1
     assert "Please refer" not in reply and "escalate" not in reply and "rujuk kepada pasukan" not in reply
     assert c.stored_question is None
@@ -141,7 +144,7 @@ def test_cl42_the_same_in_zh(session_factory, monkeypatch, stub_access):
     c = _staff_console(session_factory, monkeypatch, stub_access, phone)
     _bar_escalation(session_factory, phone)
     reply = c.say(ZH_ASK, stock(product("ZZNOPE999")))
-    assert reply == MISS_LEAD + "请联系您的销售员。"
+    assert reply == ZH_LEAD + "请联系您的销售员。"
     assert c.stored_question is None
 
 
@@ -149,7 +152,7 @@ def test_cl42_a_dealer_ms_miss_is_referred_once_translated(session_factory, monk
     c = _dealer_console(session_factory, monkeypatch, stub_access, "+60000009613")
     reply = c.say(MS_ASK, stock(product("ZZNOPE999")))
     # The dealer's miss prints the lead and the refer line as two paragraphs.
-    assert reply == MISS_LEAD.rstrip() + "\n\nSila rujuk jurujual anda."
+    assert reply == MS_LEAD.rstrip() + "\n\nSila rujuk jurujual anda."
     assert c.stored_question is None
 
 

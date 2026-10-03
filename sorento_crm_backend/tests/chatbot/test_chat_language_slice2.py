@@ -431,7 +431,6 @@ def test_ac_cl20_tools_outside_slices_1_and_2_are_not_localized():
         "crm_top_selling_report",
         "crm_marketing_promotions_list",
         "crm_resource_attachments_list",
-        "crm_incoming_stock_list",
     ):
         assert tool not in fetch._LOCALIZED_TOOLS, tool
 
@@ -942,7 +941,8 @@ def test_ac_cl26_sales_analysis_with_an_ms_localizer_renders_as_with_none():
     assert "Top selling products" in ms["response"]
 
 
-def test_ac_cl26_incoming_stock_with_an_ms_localizer_renders_as_with_none():
+def test_ac_cl26_incoming_stock_with_an_ms_localizer_renders_in_malay():
+    """Incoming joined the localized tools in the crew-tester round (3 Oct, AC-CLI2)."""
     env = {
         "result_type": "incoming_stock",
         "intro": "Here is the incoming stock I found.",
@@ -958,8 +958,10 @@ def test_ac_cl26_incoming_stock_with_an_ms_localizer_renders_as_with_none():
     tool = "crm_incoming_stock_list"
     bare = fetch.output_structurer(copy.deepcopy(env), _ctx(tool))["response"]
     ms = fetch.output_structurer(copy.deepcopy(env), _ctx(tool, "ms"))["response"]
-    assert ms == bare
-    assert "Kod Produk" not in ms
+    assert ms == bare.replace("Here is the incoming stock I found.", "Berikut ialah stok masuk yang ditemui.").replace(
+        "*Product Code:*", "*Kod Produk:*"
+    )
+    assert "Kod Produk" in ms and "A1" in ms
 
 
 # --------------------------------------------------------------------------- #
