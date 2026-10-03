@@ -25,12 +25,18 @@ import {
   type RowSelectionState,
   type SortingState,
 } from '@tanstack/react-table';
-import { Download, Info, Plus } from 'lucide-react';
+import { Columns3, Download, Filter, Info, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
@@ -240,7 +246,7 @@ export function IdeasListView({
       </span>
     );
     return [
-      buildSelectColumn<Idea>({ size: 48 }),
+      buildSelectColumn<Idea>({ size: 44 }),
       {
         ...col(
           'votes',
@@ -254,7 +260,7 @@ export function IdeasListView({
               onVote={() => castVote(row.original.id)}
             />
           ),
-          80,
+          64,
         ),
         enableResizing: false,
       },
@@ -265,7 +271,7 @@ export function IdeasListView({
         ({ row }) => {
           const label = row.original.title ?? row.original.problem;
           return (
-            <div className="flex min-w-0 items-start gap-1.5">
+            <div className="flex min-w-0 items-start gap-1.5 whitespace-normal">
               <Link
                 href={`/ideas/${row.original.id}`}
                 onClick={(e) => e.stopPropagation()}
@@ -287,14 +293,14 @@ export function IdeasListView({
             </div>
           );
         },
-        200,
+        240,
       ),
       col(
         'submitter',
         'Submitter',
         (i) => i.submitterName,
         ({ row }) => text(row.original.submitterName),
-        120,
+        100,
       ),
       col(
         'channel',
@@ -305,14 +311,14 @@ export function IdeasListView({
             {IDEA_SOURCE_LABEL[row.original.source] ?? row.original.source}
           </Badge>
         ),
-        90,
+        100,
       ),
       col(
         'product',
         'Product',
         (i) => i.productName,
         ({ row }) => text(row.original.productName),
-        120,
+        100,
       ),
       col(
         'status',
@@ -324,7 +330,7 @@ export function IdeasListView({
             color={row.original.statusColor}
           />
         ),
-        120,
+        116,
       ),
       col(
         'submitted',
@@ -335,7 +341,7 @@ export function IdeasListView({
             {formatDate(row.original.createdAt)}
           </span>
         ),
-        100,
+        116,
       ),
       ...(canManage
         ? [
@@ -348,7 +354,7 @@ export function IdeasListView({
                   ariaLabel="Row"
                 />
               ),
-              size: 56,
+              size: 48,
               enableSorting: false,
               enableResizing: false,
               meta: { headerTitle: 'Actions' },
@@ -417,7 +423,7 @@ export function IdeasListView({
         onChange={setSearchQuery}
         isSettling={isSearchInFlight(isSettling, isFetching, debouncedSearch)}
         placeholder="Search ideas..."
-        className="w-full sm:w-64"
+        className="min-w-0 grow basis-40 sm:w-48 sm:grow-0 sm:basis-auto"
       />
       <HoverCard openDelay={0} closeDelay={0}>
         <HoverCardTrigger asChild>
@@ -426,6 +432,7 @@ export function IdeasListView({
             variant="ghost"
             size="sm"
             mode="icon"
+            className="shrink-0"
             aria-label="What can I search?"
           >
             <Info className="size-4" />
@@ -442,7 +449,7 @@ export function IdeasListView({
           </div>
         </HoverCardContent>
       </HoverCard>
-      <div className="w-full sm:w-44">
+      <div className="w-full sm:w-36">
         <SearchableSelect
           aria-label="Status"
           value={status}
@@ -570,24 +577,79 @@ export function IdeasListView({
                     table={table}
                     searchSlot={searchSlot}
                     keepSearchWhileSelected
-                    filters={{
-                      kind: 'custom',
-                      active: filtersActive > 0,
-                      activeCount: filtersActive,
-                      modal: false,
-                      content: filterContent,
-                    }}
+                    // The right cluster is built here, not by the toolbar's own buttons: it has to sit
+                    // right-aligned in ONE row at 1280 (Columns and Export are icon buttons for that),
+                    // and while rows are selected the strip carries Export, so only the switch and
+                    // Capture idea stay.
+                    showColumns={false}
+                    showExport={false}
                     exportConfig={{ filename: 'ideas.xlsx' }}
-                    leftActions={<IdeasViewToggle active="list" />}
                     primaryAction={
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => setCaptureOpen(true)}
-                      >
-                        <Plus className="size-4" />
-                        Capture idea
-                      </Button>
+                      <>
+                        {selected.length === 0 ? (
+                          <>
+                            <DropdownMenu modal={false}>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="gap-1.5"
+                                >
+                                  <Filter className="size-4" />
+                                  Filters
+                                  {filtersActive > 0 ? (
+                                    <Badge
+                                      variant="secondary"
+                                      className="ms-0.5 px-1 py-0 text-[10px]"
+                                    >
+                                      {filtersActive}
+                                    </Badge>
+                                  ) : null}
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent
+                                align="end"
+                                className="w-72 p-3"
+                              >
+                                {filterContent}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                            <DataGridColumnVisibility
+                              table={table}
+                              trigger={
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  mode="icon"
+                                  aria-label="Columns"
+                                  title="Columns"
+                                >
+                                  <Columns3 className="size-4" />
+                                </Button>
+                              }
+                            />
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              mode="icon"
+                              aria-label="Export"
+                              title="Select one or more rows to export"
+                              disabled
+                            >
+                              <Download className="size-4" />
+                            </Button>
+                          </>
+                        ) : null}
+                        <IdeasViewToggle active="list" />
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => setCaptureOpen(true)}
+                        >
+                          <Plus className="size-4" />
+                          Capture idea
+                        </Button>
+                      </>
                     }
                     bulkActionsSlot={({ openExport }) => (
                       <>

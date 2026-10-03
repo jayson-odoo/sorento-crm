@@ -545,7 +545,7 @@ export function DataGridListToolbar<TData extends object>({
           )}
 
           {/* RIGHT cluster - secondary overflow + primary CTA (always present). */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:ms-auto">
             {secondaryActions.length === 1 ? (
               <ActionButton action={secondaryActions[0]} />
             ) : secondaryActions.length >= 2 ? (
