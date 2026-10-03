@@ -27,6 +27,7 @@ from app.schemas.contact_customer import (
     ContactCustomersResponse,
 )
 from app.services import contact_customer_service
+from app.services.company_scope_resolver import company_name_map, grants_scope
 from app.services.error_handler import handle_internal_error, handle_not_found
 
 logger = logging.getLogger(__name__)
@@ -439,7 +440,9 @@ async def get_contact_chatbot_memory(
         current_user["id"], _CHATBOT_EPISODES_VIEW
     )
     try:
-        return ContactService(db).get_chatbot_memory(contact_id, include_episodes=can_view_episodes)
+        # Same grants as the facts PUT, so a CRM fact reads the same on every company.
+        with grants_scope(db, current_user["id"]):
+            return ContactService(db).get_chatbot_memory(contact_id, include_episodes=can_view_episodes)
     except HTTPException:
         raise
     except Exception as e:
@@ -472,9 +475,12 @@ async def put_contact_chatbot_fact(
         current_user["id"], _CHATBOT_EPISODES_VIEW
     )
     try:
-        return ContactService(db).set_contact_fact(
-            contact_id, key, body.value, user_id=current_user["id"], include_episodes=can_view_episodes
-        )
+        # Usual brands / sites are validated against the master lists of every company the
+        # editor is granted, not only the active one: a contact belongs to no one company.
+        with grants_scope(db, current_user["id"]):
+            return ContactService(db).set_contact_fact(
+                contact_id, key, body.value, user_id=current_user["id"], include_episodes=can_view_episodes
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -855,8 +861,10 @@ async def get_contact_customers(
 ):
     """The customer accounts this contact belongs to."""
     try:
-        _require_contact(db, contact_id)
-        return contact_customer_service.contact_customers_payload(db, contact_id)
+        # A contact belongs to no one company: read every company the caller is granted.
+        with grants_scope(db, current_user["id"]):
+            _require_contact(db, contact_id)
+            return contact_customer_service.contact_customers_payload(db, contact_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -880,27 +888,30 @@ async def link_contact_customers(
     unknown or hidden id answers 404 and links none. An already-linked customer is a no-op
     that answers its existing row. Rows come back in request order."""
     try:
-        _require_contact(db, contact_id)
-        customers = []
-        for customer_id in dict.fromkeys(payload.customer_ids):
-            customer = contact_customer_service.get_customer_in_scope(db, customer_id)
-            if customer is None:
-                # Unknown and out-of-scope are the same answer: scope hides the row.
-                raise handle_not_found("Customer", customer_id)
-            customers.append(customer)
-        linked_by = str(current_user.get("id") or current_user.get("sub") or "") or None
-        links = [
-            contact_customer_service.link_customer(
-                db, contact_id, customer.id, customer=customer, linked_by=linked_by
-            )
-            for customer in customers
-        ]
-        db.commit()
-        rows = []
-        for link, customer in zip(links, customers):
-            db.refresh(link)
-            rows.append(contact_customer_service.link_row(link, customer))
-        return {"data": rows}
+        # Every id resolves under the caller's grants; the link keeps the customer's own company.
+        with grants_scope(db, current_user["id"]):
+            _require_contact(db, contact_id)
+            customers = []
+            for customer_id in dict.fromkeys(payload.customer_ids):
+                customer = contact_customer_service.get_customer_in_scope(db, customer_id)
+                if customer is None:
+                    # Unknown and out-of-scope are the same answer: scope hides the row.
+                    raise handle_not_found("Customer", customer_id)
+                customers.append(customer)
+            linked_by = str(current_user.get("id") or current_user.get("sub") or "") or None
+            links = [
+                contact_customer_service.link_customer(
+                    db, contact_id, customer.id, customer=customer, linked_by=linked_by
+                )
+                for customer in customers
+            ]
+            db.commit()
+            rows = []
+            names = company_name_map(db)
+            for link, customer in zip(links, customers):
+                db.refresh(link)
+                rows.append(contact_customer_service.link_row(link, customer, names))
+            return {"data": rows}
     except HTTPException:
         db.rollback()
         raise
