@@ -268,7 +268,7 @@ def _orders_envelope(*, flags: dict | None = None) -> dict:
                     {"label": "Pickup Time", "value": "09:30"},
                     {"label": "Transporter", "value": "FAST LOGISTICS"},
                     {"label": "Driver", "value": "Total"},  # a value equal to a catalog key: never translated
-                    {"label": "Lorry Plate", "value": "WXY 1234"},
+                    {"label": "Lorry Plate", "value": "PLATE-1"},
                     {"label": "Warehouse", "value": "BRW"},
                     {"label": "Products", "value": "BRBC22102W (12), SRTSWT3001 (4)"},
                 ],
@@ -640,7 +640,7 @@ def test_ac_cl23_orders_list_ms_labels_and_value_untouched_status():
     assert "*Masa Pengambilan:* 09:30" in text
     assert "*Pengangkut:* FAST LOGISTICS" in text
     assert "*Pemandu:* Total" in text
-    assert "*No. Plat Lori:* WXY 1234" in text
+    assert "*No. Plat Lori:* PLATE-1" in text
     assert "*Gudang:* BRW" in text
     assert "*Produk:* BRBC22102W (12), SRTSWT3001 (4)" in text
     for english in ("Order Number", "Customer", "Transporter", "Lorry Plate", "Products"):
