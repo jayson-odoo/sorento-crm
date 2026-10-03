@@ -91,6 +91,7 @@ import logging
 import re
 from typing import Any, Mapping
 
+from app.services.chatbot.block_numbering import is_block, renumber
 from app.services.chatbot.lanes.business import answer as answer_mod
 from app.services.chatbot.lanes.business import miss_suggest as miss_mod
 from app.services.chatbot.lanes.business import services as business_services
@@ -153,6 +154,14 @@ def apply_scope_block(
             focus_products=focus_products,
         )
         if scope is None or not answer.text:
+            return answer
+        # WA-CONCISE AC-18: one named order whose number prints in the reply needs no header.
+        named = [line[len("Order: "):] for line in scope.split("\n") if line.startswith("Order: ")]
+        if (
+            len(named) == 1
+            and ", " not in named[0]
+            and re.search(rf"(?<![\w-]){re.escape(named[0])}(?![\w-])", answer.text)
+        ):
             return answer
         from dataclasses import replace
 
@@ -264,7 +273,6 @@ def apply_crossdomain_hit(
             dry_run=dry_run,
             item=item,
         )
-        result = _prefix_zero_note(result)
         from dataclasses import replace
 
         # ESCALATION-CONTROL: staff and a barred contact alike get no offer.
@@ -1491,60 +1499,124 @@ def _block_product_codes(block_text: Any) -> set[str]:
     return {m.group(1) for m in _RUNG_ROW_CODE_RE.finditer(block_text) if m.group(1)}
 
 
-def _prefix_zero_note(result: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Hand pass 11, defect 1: `"No {primary_word} for {codes}."`, the SAME string
-    template `answer.py::crossdomain_render`'s own `only_other_note` already uses
-    (`f"No {primary_word} for {', '.join(only_other)}."`) - built here rather than
-    inside that shared function, because its OWN gate deliberately never fires for a
-    `zero: True` code (owner ruling 11 Sep 2026, second ruling, R2(b): "a zero code
-    never earns AC-820's own 'no {primary} for X' only-other line either way - the
-    zero sentence two paragraphs later already says the same thing" - true for a
-    MISS, where `not_found_error_message` already named the code up front, but a HIT
-    has no miss sentence of its own naming it at all). `crossdomain_render` itself
-    stays byte-identical (`test_crossdomain_ladder.py`'s own
-    `test_stock_origin_zero_but_incoming_answers_no_po_probe` pins "no zero sentence"
-    for the SAME shape on the miss path).
+_BLOCK_CODE_RE = re.compile(r"^\*Product Code:\*[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+_BLOCK_LINE_RE = re.compile(r"^(?:\d+\. )?\*(Company|Product Code):\*[ \t]*(.+?)[ \t]*$")
+_FLAG_LINE_RE = re.compile("^(?:\u26a0\ufe0f|\U0001f6a9)")
+_IDENTITY_LINE_RE = re.compile(r"^(?:\d+\. )?\*(?:Company|Product Code|Product Name):\*")
+_INCOMING_OPENER = "Here is the incoming stock I found."
 
-    Only for a code whose OWN rung genuinely rendered something (not in the block's
-    own `nothing_codes` - that shape already gets its own sentence from
-    `_apply_crossdomain_rung`/`nothing_note`, unchanged): the mixed set's non-zero
-    code never reaches `zeroset.missing` at all, so it is never named here either.
-    """
+
+def _block_key(para: str) -> tuple[str | None, str | None]:
+    """`(company, product code)` of a block paragraph, upper-cased; `(None, None)` for a
+    paragraph that is not a block. A block may open with its Company line or its number."""
+    found = {
+        m.group(1): m.group(2).upper() for m in map(_BLOCK_LINE_RE.match, para.split("\n")) if m
+    }
+    return found.get("Company"), found.get("Product Code")
+
+
+def _merge_block(primary: str, extra: str) -> str:
+    """One block for a code that has a primary stock block and a cross-domain one: the
+    primary's identity and stock lines (name, `*BRW:* 0 (O/S: 233)`), then the cross-domain
+    block's own lines (its incoming facts, in today's order), flags last and once. When the
+    primary's stock lines carry no outstanding, the cross-domain `*Stock:*` line stands for
+    them."""
+    p_lines = [ln for ln in primary.split("\n") if not _FLAG_LINE_RE.match(ln)]
+    x_lines = [ln for ln in extra.split("\n") if not _FLAG_LINE_RE.match(ln)]
+    both = primary.split("\n") + extra.split("\n")
+    flags = list(dict.fromkeys(ln for ln in both if _FLAG_LINE_RE.match(ln)))
+    p_id = [re.sub(r"^\d+\. ", "", ln) for ln in p_lines if _IDENTITY_LINE_RE.match(ln)]
+    p_stock = [ln for ln in p_lines if not _IDENTITY_LINE_RE.match(ln)]
+    x_rest = [ln for ln in x_lines if not _IDENTITY_LINE_RE.match(ln)]
+    stock_line = next((ln for ln in x_rest if ln.startswith("*Stock:*")), None)
+    tail = [ln for ln in x_rest if ln is not stock_line]
+    has_outstanding = any(
+        int(n) > 0 for ln in p_stock for n in re.findall(r"\(O/S: (\d+)\)", ln)
+    )
+    # An incoming primary keeps its Container/ETA/quantity lines; the cross-domain
+    # `*Stock:*` line only stands in for stock location lines.
+    if any(ln.startswith("*Container:*") for ln in p_stock):
+        stock = [*p_stock, *([stock_line] if stock_line else [])]
+    else:
+        stock = p_stock if has_outstanding or stock_line is None else [stock_line]
+    return "\n".join([*p_id, *stock, *tail, *flags])
+
+
+def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
+    """WA-CONCISE card v4: the cross-domain blocks join the primary reply as more blocks of
+    one list. A code that has a primary block AND a cross-domain block prints once, merged
+    (`_merge_block`) in the cross-domain position; the incoming opener goes; when more than
+    one block remains they number on from 1 across both. A primary with no block left loses
+    its footer, a set header stays; a kept footer moves to the end of the cross-domain
+    text. Returns `(primary, cross-domain text)`."""
+    paras = [p for p in primary.split("\n\n") if p != _INCOMING_OPENER]
+    xd_paras = xd_text.split("\n\n")
+    merged = False
+    first = next((p for p in paras if is_block(p)), "")
+    start = int(m.group(1)) if (m := re.match(r"^(\d+)\. ", first)) else 1
+    for i, x in enumerate(xd_paras):
+        x_company, x_code = _block_key(x)
+        if x_code is None:
+            continue
+        hit = next(
+            (
+                j
+                for j, p in enumerate(paras)
+                if is_block(p)
+                and _block_key(p)[1] == x_code
+                and (x_company is None or _block_key(p)[0] in (None, x_company))
+            ),
+            None,
+        )
+        if hit is not None:
+            merged = merged or "*Container:*" in paras[hit]
+            xd_paras[i] = _merge_block(paras.pop(hit), x)
+    footers = [p for p in paras if p.startswith("_Updated ")]
+    paras = [p for p in paras if p not in footers]
+    if merged or any(is_block(p) for p in paras):
+        xd_paras += footers  # the footer closes the whole body, after the last block
+    paras, xd_paras = renumber([paras, xd_paras], start)
+    return "\n\n".join(paras), "\n\n".join(xd_paras)
+
+
+def _block_covers_asked(result: Mapping[str, Any], resolved: Mapping[str, Any]) -> bool:
+    """WA-CONCISE card v4: the cross-domain blocks name every asked code (and no word went
+    unplaced), so the miss sentence that would repeat them can go."""
     zeroset = result.get("zeroset") if isinstance(result, Mapping) else None
     xd = zeroset.get("_xd") if isinstance(zeroset, Mapping) else None
     render = result.get("render") if isinstance(result, Mapping) else None
     block = render.get("_xdBlock") if isinstance(render, Mapping) else None
-    if not isinstance(xd, Mapping) or not isinstance(block, Mapping):
-        return result
-    nothing_codes = {c for c in (block.get("nothing_codes") or []) if isinstance(c, str)}
-    rendered_codes = _block_product_codes(block.get("block"))
-    codes: list[str] = []
-    for m in xd.get("missing") or []:
-        if not (isinstance(m, Mapping) and m.get("zero") is True):
-            continue
-        code = m.get("code") or m.get("_n")
-        if not (isinstance(code, str) and code) or code in nothing_codes or code in codes:
-            continue
-        if rendered_codes and code not in rendered_codes:
-            continue
-        codes.append(code)
-    if not codes:
-        return result
-    # Nit N-2 (reviewer, hand pass 11): always "stock", never "incoming" - `zero: True`
-    # (the only way a `missing` entry survives the loop above) is stamped ONLY on the
-    # `dh == "inventory"` arm (`lanes/business/answer.py:683-692`), so `origin_domain`
-    # (== `dh`) is always "inventory" here; the incoming half of the old ternary was
-    # unreachable dead code.
-    note = f"No stock for {', '.join(codes)}."
-    old_block_text = block.get("block") or ""
-    new_block = dict(block)
-    new_block["block"] = f"{note}\n\n{old_block_text}" if old_block_text else note
-    new_render = {**render, "_xdBlock": new_block}
-    return {**result, "render": new_render}
+    if not isinstance(xd, Mapping) or not isinstance(block, Mapping) or resolved.get("unresolved_tokens"):
+        return False
+    asked = [str(m.get("code") or m.get("_n") or "") for m in xd.get("missing") or [] if isinstance(m, Mapping)]
+    named = [c.upper() for c in _block_product_codes(block.get("block"))]
+    return bool(asked) and all(any(n.startswith(a.upper()) for n in named) for a in asked)
+
+
+def _quantity_labels(parser: Mapping[str, Any] | None) -> dict[str, str]:
+    """`{dash-free upper code: "M210-GM (x5)"}` for each product the customer gave a quantity
+    for, through the ONE label rule (`focus_row_label`). The miss head used to carry it;
+    when the cross-domain blocks replace that head they keep it on their `*Product Code:*`."""
+    from app.services.chatbot.turn.state import focus_row_label
+
+    out: dict[str, str] = {}
+    for e in (parser or {}).get("entities") or []:
+        if isinstance(e, Mapping) and e.get("quantity") and e.get("hint") in (None, "product"):
+            label = str(focus_row_label(e))
+            for key in (e.get("raw"), e.get("canonical_code")):
+                if key:
+                    out.setdefault(str(key).replace("-", "").upper(), label)
+    return out
 
 
 def _apply_crossdomain_render(
-    text: str, result: Mapping[str, Any], *, answered: bool = False, include_offer: bool = True
+    text: str,
+    result: Mapping[str, Any],
+    *,
+    answered: bool = False,
+    include_offer: bool = True,
+    covers: bool = False,
+    quantities: Mapping[str, str] | None = None,
 ) -> str:
     """The rung's own rendered block, folded above the escalate marker, from the
     ALREADY-COMPUTED `result` `_run_crossdomain_ladder` (above) returned - this
@@ -1571,13 +1643,30 @@ def _apply_crossdomain_render(
     block = render.get("_xdBlock")
     if not isinstance(block, Mapping) or block.get("any") is not True or not block.get("block"):
         return text
+    if covers and quantities:
+        block = {
+            **block,
+            "block": _BLOCK_CODE_RE.sub(
+                lambda m: "*Product Code:* "
+                + quantities.get(m.group(1).replace("-", "").upper(), m.group(1)),
+                str(block["block"]),
+            ),
+        }
+    if covers and not answered:
+        [paras] = renumber([str(block["block"]).split("\n\n")])
+        block = {**block, "block": "\n\n".join(paras)}
     variables: dict[str, Any] = {"last_result_set": [True]} if answered else {}
+    if answered:
+        text, xd_text = _fold_blocks(text, str(block["block"]))
+        block = {**block, "block": xd_text}
+        covers = covers or not text
     sealed = {"reply": {"text": text, "session_patch": {"user_response": text, "variables": variables}}}
     merged = tail_compose.crossdomain_compose(
         sealed,
         result={"result": {"xd": {"block": dict(block)}}},
         answered=answered,
         include_offer=include_offer,
+        covers=covers,
     )
     merged_text = (merged.get("reply") or {}).get("session_patch", {}).get("user_response")
     return merged_text if isinstance(merged_text, str) and merged_text else text
@@ -1974,7 +2063,11 @@ def answer_for(
         )
     # #1262 slice 11 (F8): same audience gate as the HIT-side ladder rung above.
     text = _apply_crossdomain_render(
-        text, crossdomain_result, include_offer=offers_escalation(profile)
+        text,
+        crossdomain_result,
+        include_offer=offers_escalation(profile),
+        covers=_block_covers_asked(crossdomain_result, resolved),
+        quantities=_quantity_labels(parser),
     )
     if dealer_stock_ask:
         # Owner ruling 26 Sep 2026 (hand test F1): a dealer's stock ask never offers

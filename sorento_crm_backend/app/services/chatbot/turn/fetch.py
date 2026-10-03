@@ -219,3 +219,4 @@ def _climb(
         if skipped:
             event["skipped"] = list(skipped)
         trace.add("crossdomain", event)
+

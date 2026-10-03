@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
+from app.services.chatbot.block_numbering import is_block, renumber
 from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
 from app.services.ledger_family import customer_group_of, customer_header_words
@@ -416,7 +417,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         # grammar WITH its flags (PRODUCT DISCONTINUED, PENDING ALLOCATION) and its
         # date/bool formatting (`_fmt_value`, which this module's own `_render_row`
         # below never applied - measured as the "2026-09-14T00:00:00" defect), and
-        # the "_Data last updated: ..._" footer, into ONE string - reusing it
+        # the "_Updated ..._" footer, into ONE string - reusing it
         # verbatim is the one change that keeps every domain's copy production-
         # identical without a second, parallel string table here. A fan-out over
         # several domains still says one thing per section (contract 122) because
@@ -485,10 +486,10 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         ):
             absent = _codes_without_rows(product_codes, figures)
             if absent:
-                # Above the lane's "_Data last updated: ..._" footer, which closes the
+                # Above the lane's "_Updated ..._" footer, which closes the
                 # section, rather than under it.
                 line = f"No stock found for {_join_words(absent)}."
-                body, sep, footer = block.rpartition("\n_Data last updated")
+                body, sep, footer = block.rpartition("\n_Updated ")
                 if sep:
                     block = body + "\n" + line + sep + footer
                 else:
@@ -506,7 +507,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             if gaps:
                 lines = "\n".join(f"{code} has no {_join_words(missing)}." for code, missing in gaps)
                 # Its own paragraph, and the lane's footer keeps the blank line above it.
-                body, sep, footer = block.rpartition("\n_Data last updated")
+                body, sep, footer = block.rpartition("\n_Updated ")
                 block = (
                     body.rstrip("\n") + "\n\n" + lines + "\n" + sep + footer
                     if sep
@@ -555,6 +556,8 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             seen_file_keys.add(key)
             files.append(f)
 
+    # One numbering over the whole reply, whichever section a block sits in.
+    text_parts = ["\n\n".join(g) for g in renumber([part.split("\n\n") for part in text_parts])]
     text = "\n\n".join(text_parts)
 
     # A token nobody could place is named, never dropped in silence (hand pass 2 item 6,
@@ -719,11 +722,13 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         ]
         # R-d: a domain with attachments (incoming, product photos, ...) already
         # opens its OWN `lane_text` with this exact sentence (`sorento_crm_mcp.
-        # presenters`'s universal "has attachments" intro) now that `lane_text` is
-        # reused verbatim above - appending a second copy read as the sentence
-        # twice in one reply.
+        # presenters`'s universal "has attachments" intro), so it is never repeated.
+        # A card reply (blocks) closes with it, after every block and the footer.
+        paras = text.split("\n\n")
         if _ATTACHED_SENTENCE not in text:
             text += "\n\n" + _ATTACHED_SENTENCE
+        elif any(is_block(p) for p in paras):
+            text = "\n\n".join([p for p in paras if p != _ATTACHED_SENTENCE] + [_ATTACHED_SENTENCE])
 
     return Answer(
         sections=sections, question=question, offer=offer, canned=[], files=files, actions=actions, text=text
