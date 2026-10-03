@@ -1597,7 +1597,11 @@ def _miss_triggers(
         maybe_fetch = raw_fragment.get("fetch")
         fetch_item = maybe_fetch if isinstance(maybe_fetch, dict) else None
 
-    via_resolver_exit = payload.get("_exit_kind") == "not_found"
+    # LOWSTOCK-FILTER-ASK (owner hand test, 3 Oct 2026, turn 4a90dd1d): a low stock
+    # report ran and said its own line; a word the resolver missed on the same turn
+    # never turns that reply into "Could not find inventory".
+    low_stock_answered = isinstance(fetch_item, Mapping) and fetch_item.get("low_stock_report") is True
+    via_resolver_exit = payload.get("_exit_kind") == "not_found" and not low_stock_answered
     via_error_fragment = fragment_outcome == "not_found"
     # R5 (AC-1699, AC-1702): a THIRD trigger - the resolver settled a real subject,
     # the fetch genuinely ran for it, and the tool came back with zero rows. This

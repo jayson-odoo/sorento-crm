@@ -4167,6 +4167,9 @@ def envelope_of(
         # Slot keys the reply asks to forget (a category word it said it does not
         # know), applied by the same `record_top_selling_asked`.
         "top_selling_drop": fetched.get("top_selling_drop"),
+        # LOWSTOCK-FILTER-ASK: the `required_fields` slot a lane left open, recorded on
+        # `focus.required_ask` by `engine.py` for the next message only.
+        "required_ask": fetched.get("required_ask"),
     }
     if raw_fragment is not None:
         # R4 (PLAN-chatbot-answer-half-reattach.md): the UNTOUCHED `business.run_fetch`
