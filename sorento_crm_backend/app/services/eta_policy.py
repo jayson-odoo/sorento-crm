@@ -54,10 +54,28 @@ class ContactEtaRules:
     offset_applied: bool
     #: Attach the shipment's packing list.
     packing_list_allowed: bool
+    #: The packing list regions this contact may be told about (already expanded).
+    regions: frozenset[str] = frozenset({"west"})
 
 
 #: An unresolved contact: the switch's own default for the ETA, and no file.
-UNRESOLVED = ContactEtaRules(offset_applied=True, packing_list_allowed=False)
+UNRESOLVED = ContactEtaRules(
+    offset_applied=True, packing_list_allowed=False, regions=frozenset({"west"})
+)
+
+
+def visible_regions(held: Iterable[str]) -> frozenset[str]:
+    """Expand a contact's held regions: `east` held means {east, west}, else {west}."""
+    return frozenset({"east", "west"}) if "east" in set(held or ()) else frozenset({"west"})
+
+
+def contact_regions(db: Session, resolved_contact_id: Optional[str]) -> frozenset[str]:
+    """The packing list regions this contact may be told about: West only for every contact.
+
+    Another lane (ACCESS-MODEL) repoints this body at `effective_access(...).regions`;
+    the signature must stay.
+    """
+    return frozenset({"west"})
 
 
 def rules_for_contact(db: Session, resolved_contact_id: Optional[str]) -> ContactEtaRules:
@@ -65,6 +83,8 @@ def rules_for_contact(db: Session, resolved_contact_id: Optional[str]) -> Contac
     if not resolved_contact_id:
         return UNRESOLVED
     from app.models.access import RespondContact
+
+    regions = visible_regions(contact_regions(db, resolved_contact_id))
 
     row = (
         db.query(RespondContact.chatbot_eta_offset_applied, RespondContact.packing_list_allowed)
@@ -78,6 +98,7 @@ def rules_for_contact(db: Session, resolved_contact_id: Optional[str]) -> Contac
         offset_applied=row[0] is not False,
         # NOT NULL default false; `is True` keeps the fail-closed reading.
         packing_list_allowed=row[1] is True,
+        regions=regions,
     )
 
 

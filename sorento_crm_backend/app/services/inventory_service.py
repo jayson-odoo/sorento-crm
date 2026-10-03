@@ -1627,7 +1627,10 @@ class StockService:
 
         # R5: the earliest still-incoming shipment with a packing list, any
         # location, per product on this page.
-        eta_by_product = earliest_packing_list_shipment(self.db, page_ids)
+        contact_rules = rules_for_contact(self.db, resolved_contact_id)
+        eta_by_product = earliest_packing_list_shipment(
+            self.db, page_ids, regions=contact_rules.regions
+        )
 
         # R7: the asking contact's own "Packing list allowed" toggle, resolved once
         # off `resolved_contact_id` - the SAME internal id this whole call's policy
@@ -1637,7 +1640,7 @@ class StockService:
         #
         # Issue #1328: read through `eta_policy.rules_for_contact`, the one place the
         # incoming routes read it too, together with the contact's ETA offset switch.
-        contact_rules = rules_for_contact(self.db, resolved_contact_id)
+        # (`contact_rules` is read above: its regions also bound the read in R5.)
 
         # Review round 5 (kept from #1118): ONE entry per product CODE. A dealer
         # contact whose companies both carry the same code resolves it to two
