@@ -1,7 +1,7 @@
 """ITEM-TYPE-CRM: `item_types` reference table + `products.item_type_id`.
 
 Revision ID: item_type_0001
-Revises: picker_no_cap_0001
+Revises: cust_group_0001
 Create Date: 2026-10-03
 
 AutoCount `Item.ItemType` (MISC, PROJECT, WASTE, KITCHEN SINK, OMEX, ...) kept on products as
@@ -12,7 +12,7 @@ by the products ingest (`product_rules.ensure_reference`), and a nullable SET NU
 from alembic import op
 
 revision = "item_type_0001"
-down_revision = "picker_no_cap_0001"
+down_revision = "cust_group_0001"
 branch_labels = None
 depends_on = None
 
