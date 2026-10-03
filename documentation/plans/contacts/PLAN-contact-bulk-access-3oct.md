@@ -58,3 +58,35 @@ Frontend vitest:
 
 Kill tests (reviewer): mutate replace -> add-only, drop the per-target savepoint, drop the scope predicate; each
 must turn a test red.
+
+## Contract (Phase 2, binding for tests and code)
+
+`POST /api/v1/user-management/contacts/bulk-copy-access`, permission `user_management.contacts.edit`.
+
+Request: `{"source_contact_id": str, "target_contact_ids": [str] (1..500, duplicates collapsed, order kept), "dry_run": bool}`.
+Unknown source -> 404. Empty list or more than 500 -> 422.
+
+Response 200:
+```
+{ "dry_run": bool,
+  "source": {"id", "label"},                       # label = name or phone
+  "results": [ { "contact_id", "label" (null when not found),
+                 "status": "changed" | "unchanged" | "skipped" | "failed",
+                 "changes": [Change], "error": str | null } ],
+  "counts": {"changed", "unchanged", "skipped", "failed"} }
+Change = { "facet": str, "label": str, "before": any, "after": any, "added": [str], "removed": [str] }
+```
+Facets and labels, in this order:
+`access_types` "Access types" (before/after = sorted codes; added/removed = access type NAMES),
+`tier` "Tier" (string or null), `chatbot_stock_allowed` "Stock checks", `notify_salesman` "Notify salesman",
+`packing_list_allowed` "Packing list", `chatbot_eta_offset_applied` "ETA buffer days",
+`escalation_allowed` "Escalation" (booleans), `field_reveals` "Field reveals" (before/after = sorted granted keys;
+added/removed = reveal LABELS), `agent_access` "Agent access" (before/after = sorted
+`{agent_code, is_allowed, valid_from, valid_to}` (ISO or null); added/removed = agent NAMES, an agent whose
+is_allowed or dates differ appears in both added and removed). Scalars carry `added: []`, `removed: []`. A facet
+appears only when it differs. `status` = `changed` iff `changes` non-empty, for dry run and apply alike.
+Skipped error text: "This is the source contact." Not found: "Contact not found."
+
+List `GET /api/v1/user-management/contacts/` new query params: `access_type` (code), `tier`
+(`dealer|office|end_user|none`), `cost`, `escalation`, `packing_list`, `stock` (each `yes|no`), `customer_id`,
+`access_differs_from` (contact id). Each row gains `chatbot_tier: str|null` and `cost_visible: bool`.
