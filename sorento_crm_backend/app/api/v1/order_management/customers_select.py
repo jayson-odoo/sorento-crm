@@ -74,6 +74,10 @@ async def get_customers_select(
                     "sales_agent_id": c.sales_agent_id,
                     "sales_agent_code": c.sales_agent_code,
                     "sales_agent_name": c.sales_agent_name,
+                    # The group the customer sits in (`selectin`, no per-row query), so the
+                    # group page's Add ledgers picker can say where a pick would move it from.
+                    "customer_group_id": c.customer_group_id,
+                    "customer_group_name": c.customer_group_name,
                 }
                 for c in customers
             ],
