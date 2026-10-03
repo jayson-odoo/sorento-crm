@@ -202,7 +202,7 @@ period of the previous ranking is never this ask's period.
   - "top salesman for sorento" -> ranking_refine false, top_n null
 A ranking of PEOPLE or ACCOUNTS ("top N customers", "top N salesman", "bottom 5 sales agents")
 is ALWAYS order_status "sales_ranking" with its own group_by, even while a top selling
-question ("By quantity or by amount?") is open: a new ask, never an answer to it.
+question ("By quantity or by amount?") is open: a new ask, not a reply to that question.
   - answering "How many? For example top 5." with "5", "top 5" or "five" -> order_status
     "sales_ranking", top_n 5
 NOT a sales ranking:
