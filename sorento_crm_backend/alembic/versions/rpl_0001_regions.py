@@ -3,12 +3,12 @@
 Additive. Existing shipments take the column default (West only) as the column is added.
 
 Revision ID: rpl_0001_regions
-Revises: grn_pull_0001_perm
+Revises: picker_no_cap_0001
 """
 from alembic import op
 
 revision = "rpl_0001_regions"
-down_revision = "grn_pull_0001_perm"
+down_revision = "picker_no_cap_0001"
 branch_labels = None
 depends_on = None
 
