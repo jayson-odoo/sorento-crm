@@ -110,10 +110,12 @@ def test_naming_an_order_number_needs_no_range():
     assert _fetched(calls), said
 
 
-def test_staff_need_no_range():
+def test_a_non_dealer_ask_with_no_range_fetches_nothing_and_asks_which_period():
+    """Owner ruling 4 Oct 2026: the range rules apply to ALL contacts, not just dealers."""
     said, calls = _run(dealer=False)
-    assert _fetched(calls), said
-    assert "Which period" not in said
+    assert not _fetched(calls), calls
+    assert "Which period" in said, said
+    assert "This month (Oct 2026)" in said, said
 
 
 def test_a_quantity_ask_needs_no_range():
@@ -176,9 +178,11 @@ def test_a_start_with_no_end_inside_31_days_is_fetched():
     assert _fetched(calls), said
 
 
-def test_staff_are_never_capped():
+def test_a_non_dealer_january_to_june_is_refused_too():
+    """Owner ruling 4 Oct 2026: the 31-day cap applies to ALL contacts."""
     said, calls = _run(start="2026-01-01", end="2026-06-30", dealer=False)
-    assert _fetched(calls), said
+    assert not _fetched(calls), calls
+    assert "6 months" in said and "01/01/2026 to 30/06/2026" in said, said
 
 
 # --- the helper ACCESS-MODEL replaces ------------------------------------------------- #
