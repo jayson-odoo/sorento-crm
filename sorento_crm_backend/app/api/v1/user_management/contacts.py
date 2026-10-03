@@ -1,9 +1,10 @@
 """Respond contacts API routes."""
 from fastapi import APIRouter, Depends, Query, status, HTTPException, Body, Request
 from sqlalchemy.orm import Session
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 import logging
+import uuid
 import httpx
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
@@ -103,7 +104,7 @@ async def get_contacts(
     escalation: Optional[Literal["yes", "no"]] = Query(None),
     packing_list: Optional[Literal["yes", "no"]] = Query(None),
     stock: Optional[Literal["yes", "no"]] = Query(None),
-    customer_id: Optional[str] = Query(None),
+    customer_id: Optional[uuid.UUID] = Query(None),
     access_differs_from: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db)
@@ -130,7 +131,7 @@ async def get_contacts(
                 "escalation": escalation,
                 "packing_list": packing_list,
                 "stock": stock,
-                "customer_id": customer_id,
+                "customer_id": str(customer_id) if customer_id else None,
                 "access_differs_from": access_differs_from,
             },
         )
@@ -176,7 +177,8 @@ class BulkCopyAccessRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_contact_id: str
-    target_contact_ids: list[str] = Field(..., min_length=1)
+    # Duplicates are collapsed (the 500 cap counts unique ids); the list itself is bounded too.
+    target_contact_ids: list[Annotated[str, Field(max_length=64)]] = Field(..., min_length=1, max_length=1000)
     dry_run: bool = True
 
     @field_validator("target_contact_ids")

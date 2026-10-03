@@ -29,6 +29,7 @@ from app.models.access import (
     respond_contact_access_types,
 )
 from app.services import contact_field_reveal_service
+from app.services import audit_service
 from app.services.audit_service import audit_event
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,11 @@ SWITCHES: tuple[tuple[str, str], ...] = (
 
 SKIPPED_SOURCE = "This is the source contact."
 NOT_FOUND = "Contact not found."
+SAVE_FAILED = "Could not save this contact. Nothing was changed for it."
+
+#: `access_differs_from` compares in Python; above this many candidates the list asks for a
+#: narrower filter first (security review S2). The whole contacts table is ~250 rows today.
+MAX_DIFF_CANDIDATES = 5000
 
 
 @dataclass
@@ -401,11 +407,23 @@ def copy_access(
             savepoint = db.begin_nested()
             try:
                 _write(db, src, contact, snap, actor_id)
+                # One row per copied contact naming the source: access types (Core pivot
+                # writes) and tier (raw UPDATE) are invisible to the ORM audit listeners.
+                audit_service.record(
+                    db,
+                    event="contact.access_copied",
+                    entity_type="respond_contacts",
+                    entity_id=target_id,
+                    old_values={c["facet"]: c["before"] for c in changes},
+                    new_values={c["facet"]: c["after"] for c in changes},
+                    description=f"Access copied from contact {src.contact_id} ({src.label})",
+                )
                 savepoint.commit()
             except Exception as exc:  # noqa: BLE001 - every failure becomes that contact's row
                 savepoint.rollback()
+                # The reason stays in the log: a DB error string carries SQL and other rows' values.
                 logger.warning("copy access to contact %s failed: %s", target_id, exc, exc_info=True)
-                results.append(_result(target_id, snap.label, "failed", changes, f"Could not save: {exc}"))
+                results.append(_result(target_id, snap.label, "failed", changes, SAVE_FAILED))
                 continue
         results.append(_result(target_id, snap.label, "changed", changes, None))
 

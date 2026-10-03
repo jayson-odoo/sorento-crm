@@ -278,7 +278,15 @@ class ContactService:
         if f.get("access_differs_from"):
             from app.services.contact_access_copy_service import contacts_differing_from
 
+            from app.services.contact_access_copy_service import MAX_DIFF_CANDIDATES
+            from app.services.error_handler import handle_unprocessable
+
             source = self.get_contact(f["access_differs_from"])
+            if q.count() > MAX_DIFF_CANDIDATES:
+                raise handle_unprocessable(
+                    f"'Access differs from' compares at most {MAX_DIFF_CANDIDATES} contacts; "
+                    "narrow the list with another filter or a search first."
+                )
             ids = contacts_differing_from(self.db, source, q.all())
             q = q.filter(RespondContact.id.in_(ids))
         return q

@@ -581,3 +581,43 @@ def test_a1_1_results_in_request_order_with_counts_and_duplicates_collapsed(clie
     assert [r["contact_id"] for r in body["results"]] == [ghost, target.id, source.id, same.id]
     assert [r["status"] for r in body["results"]] == ["failed", "changed", "skipped", "unchanged"]
     assert body["counts"] == {"changed": 1, "unchanged": 1, "skipped": 1, "failed": 1}
+
+
+# ---------------------------------------------------------------- security review S1 / N1
+
+
+def _copy_audit_rows(db, contact_id: str):
+    from app.models.audit import AuditLog
+
+    db.expire_all()
+    return (
+        db.query(AuditLog)
+        .filter(AuditLog.entity_id == contact_id, AuditLog.event == "contact.access_copied", AuditLog.action == "EVENT")
+        .all()
+    )
+
+
+def test_s1_one_audit_row_per_copied_contact_naming_the_source_none_on_dry_run(client, db, world):
+    source, target = world["source"], world["target"]
+    assert _post(client, source, [target], dry_run=True).status_code == 200
+    assert _copy_audit_rows(db, target.id) == []
+
+    assert _post(client, source, [target], dry_run=False).status_code == 200
+    (row,) = _copy_audit_rows(db, target.id)
+    assert source.id in (row.description or "")
+    assert row.old_values["tier"] == "office" and row.new_values["tier"] == "dealer"
+    assert row.new_values["access_types"] == sorted([world["ta"].code, world["tb"].code])
+    assert _copy_audit_rows(db, source.id) == []
+
+
+def test_n1_failed_target_reason_carries_no_internal_error_text(client, db, world, monkeypatch):
+    source, target = world["source"], world["target"]
+
+    def boom(*a, **kw):
+        raise RuntimeError("SECRET-SQL-TEXT")
+
+    monkeypatch.setattr(contact_field_reveal_service, "set_granted_keys", boom)
+    (row,) = _post(client, source, [target], dry_run=False).json()["results"]
+    assert row["status"] == "failed"
+    assert "SECRET-SQL-TEXT" not in row["error"]
+    assert _copy_audit_rows(db, target.id) == []

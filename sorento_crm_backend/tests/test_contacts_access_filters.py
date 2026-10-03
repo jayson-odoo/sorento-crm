@@ -329,3 +329,7 @@ def test_a2_6_customer_id_matches_only_links_inside_the_callers_company_scope(cl
 
     state["scope"] = frozenset({SORENTO, MOCHA_ID})
     assert _ids(_list(client, query=tag, customer_id=other_company_customer.id)) == {contact.id}
+
+
+def test_n1_malformed_customer_id_is_422_not_500(client):
+    assert _list(client, customer_id="not-a-uuid").status_code == 422
