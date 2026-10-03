@@ -130,3 +130,11 @@ def test_required_query_hints_force_the_contact_pair_and_the_period():
     from sorento_crm_mcp.server import TOOL_REQUIRED_QUERY_HINTS
 
     assert TOOL_REQUIRED_QUERY_HINTS["crm_report_ask"] == ("contact_id", "space_id", "date_from", "date_to")
+
+
+def test_one_printed_row_reads_singular():
+    """REPORT-ENGINE cloud pass: a dealer with one product read "Top 1 products"."""
+    body = _body(group_by="product", group_label="Product",
+                 rows=[{"rank": 1, "name": "CBN-200", "qty": 10, "amount": 1000.0}],
+                 more=0, total_count=1, total={"qty": 10, "amount": 1000.0})
+    assert _report_ask(body).splitlines()[0].startswith("Top 1 product by delivered sales")

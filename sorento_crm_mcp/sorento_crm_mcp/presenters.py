@@ -3102,6 +3102,9 @@ def _report_ask(body: dict) -> str:
     if not rows:
         return f"No sales found for {scope}."
     plural = _REPORT_ASK_PLURALS.get(group_by, str(body.get("group_label") or group_by).lower())
+    if len(rows) == 1:
+        # One row printed reads singular: "Top 1 product", never "Top 1 products".
+        plural = str(body.get("group_label") or group_by).lower()
     lead = "Bottom" if body.get("sort") == "asc" else "Top"
     # "by" sits between the plural and the basis; `scope` starts with the basis label.
     lines = [f"{lead} {len(rows)} {plural} by {scope}"]
