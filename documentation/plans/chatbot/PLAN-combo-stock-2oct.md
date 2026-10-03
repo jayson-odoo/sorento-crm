@@ -149,3 +149,23 @@ How:
 - The replaced reply keeps a non-empty `stock_availability` block (the zero-stock ladder's
   off switch); an answered dealer set keeps the PARTS' rows so Customer asks logs products.
 - Removed: the per-member header lines, the "part of set(s)" lines, the uuid-carrying pick.
+
+## Review round 2 on the rebuild (reviewer, Opus, 3 Oct 2026)
+
+Fixed, each with a test red first:
+- B1 a set answered with its code AND held by the open task was said twice: sets merged by
+  set id (`turn_runtime._merged_sets`).
+- B2 an answered set re-asked per component on "how about 10?": the answered set keeps ONE
+  row whose task slot is keyed by the set (`slot_key`, read first by `turn/task.py`).
+- B3 Customer asks logged referred rows the dealer never got: the set row carries the
+  weakest part's own refer stamp and the set line as `answer_summary`, no `product_id`
+  (a set is not a product); `refer_asks` skips the parts it `covers`.
+- S1 a matched code in no set was silently dropped: named on a `Not in a set:` line.
+- S2 a picked set left a set id on the focus as a product: the pick carries the members'
+  product ids, and the runner recognises the group (`set_stock.sets_named_by_members`).
+- S3 Sorento and Mocha carry the same set codes: sets keyed by id; with more than one set
+  each is counted from its own stock read, and named with its company when codes repeat.
+- S4 a fractional qty per set misreported the set quantity: the set quantity rides on the
+  set (`sets`).
+- S5 the extra stock read now sends the row limit and writes a trace event.
+- S6 a set with no stock rows anywhere is "0 sets available", not the miss reply.

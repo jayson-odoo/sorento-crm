@@ -64,6 +64,14 @@ def referred_entries(
         for e in answered or []
         if isinstance(e, dict)
     }
+    # COMBO-STOCK: an answered SET's row stands for its parts too (`covers`, the members'
+    # codes), so they are not logged again as separate referred rows.
+    covered |= {
+        _key(code)
+        for e in answered or []
+        if isinstance(e, dict)
+        for code in e.get("covers") or []
+    }
     envelopes = [e for e in (envelopes or []) if isinstance(e, dict)]
     uuids = _plan_uuids(plan)
     out: list[dict[str, Any]] = []

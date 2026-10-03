@@ -1966,6 +1966,7 @@ def run_fetch(
         args=args,
         services=services,
         db=db,
+        trace=trace,
     )
     if trace is not None:
         restricted = envelope.get("restricted_fields") if isinstance(envelope, dict) else None
@@ -2043,17 +2044,19 @@ def _set_level_answer(
     args: dict[str, Any],
     services: FetchServices,
     db: Any,
+    trace: Any = None,
 ) -> dict[str, Any]:
     """COMBO-STOCK (owner hand test + answers, 3 Oct 2026): a stock ask about a SET is
     answered at set level only (`set_stock`'s module docstring has the four shapes).
 
     The reply is REPLACED, never appended to, so no component row, zero row or
     per-company miss line survives - and only when every product this fetch was about
-    belongs to the set(s) asked for; a message that also named an ordinary product keeps
-    today's answer. The replaced reply keeps ONE `stock_availability` row: for a dealer
-    it is the set's own row (one quantity slot), for staff a marker; either way that
-    non-empty block is the zero-stock ladder's off switch (`answer.crossdomain_zeroset`),
-    which would otherwise read the empty rows as "no stock" and append PO detail."""
+    belongs to the set(s) asked for, or for a base code to that one code; a message that
+    also named an ordinary product keeps today's answer. Each set is counted from its OWN
+    stock read when there is more than one (Sorento and Mocha carry the same codes, and
+    the envelope keys rows by code). The replaced reply keeps a non-empty
+    `stock_availability` block - the dealer's set rows, or a marker - which is the
+    zero-stock ladder's off switch (`answer.crossdomain_zeroset`)."""
     if not isinstance(envelope, dict) or not isinstance(structured.get("response"), str):
         return structured
     result_type = jsc.js_string(envelope.get("result_type") or "")
@@ -2066,26 +2069,58 @@ def _set_level_answer(
         for e in jsc.array(gate.get("compatible_entities"))
         if isinstance(e, dict) and e.get("uuid")
     }
-    product_sets = [p for p in jsc.array(gate.get("product_sets")) if isinstance(p, dict)]
+
+    def read(members: list[str]) -> Any:
+        """The SAME tool over `members` only, so the visibility policy that shaped the
+        first read shapes this one too."""
+        set_args = {**args, "product_ids": members}
+        if tool_name in fetch_mod.SET_ROW_LIMIT:
+            set_args["limit"] = fetch_mod.SET_ROW_LIMIT[tool_name]
+        started = time.perf_counter()
+        raw = fetch_mod.call_tool(tool_name, set_args, mcp=_McpSeam(services.mcp_call))
+        out = fetch_mod.parse_mcp_content(raw)
+        if trace is not None:
+            trace.add(
+                "tool",
+                {"name": tool_name, "args": set_args, "envelope": out, "ms": int((time.perf_counter() - started) * 1000)},
+            )
+        return out
+
+    def envelopes_for(sets: list[dict[str, Any]]) -> list[Any] | None:
+        try:
+            return [read(sorted({str(m["uuid"]) for m in s["members"]})) for s in sets]
+        except Exception:  # noqa: BLE001 - the first answer still stands
+            logger.warning("chatbot: set member stock read failed", exc_info=True)
+            return None
+
+    product_sets = _labelled([p for p in jsc.array(gate.get("product_sets")) if isinstance(p, dict)])
     member_ids = {
         str(m.get("uuid")) for p in product_sets for m in jsc.array(p.get("members")) if isinstance(m, dict)
     }
     if product_sets and answer_ids and answer_ids <= member_ids:
+        envelopes = [envelope] if len(product_sets) == 1 else envelopes_for(product_sets)
+        if envelopes is None:
+            return structured
         if staff:
-            lines = [set_stock_mod.staff_set_answer(p, envelope) for p in product_sets]
-            rows = [{"set_answer": True}]
+            lines = [set_stock_mod.staff_set_answer(p, e) for p, e in zip(product_sets, envelopes)]
+            rows: list[dict[str, Any]] = [{"set_answer": True}]
         else:
-            replies = [set_stock_mod.dealer_set_reply(p, envelope) for p in product_sets]
-            lines = [r[0] for r in replies if r]
-            # Still owing a quantity: ONE row per set, so the open task asks one
-            # question for the set. Answered: the PARTS' own rows, because Customer asks
-            # (`stock_asks.product_id` -> products) logs answered rows and a set is not
-            # a product.
-            rows = [r[1] for r in replies if r and r[1].get("needs_quantity")]
-            if len(rows) < len(lines):
-                rows = [r for r in jsc.array(structured.get("stock_availability")) if isinstance(r, dict)]
+            replies = [set_stock_mod.dealer_set_reply(p, e) for p, e in zip(product_sets, envelopes)]
+            lines = [r[0] if r else None for r in replies]
+            # ONE row per set: its quantity slot (`slot_key`), and once answered the line
+            # the dealer was sent, with the weakest part's own refer stamp, so Customer
+            # asks logs the set exactly as it was answered (review B2/B3).
+            rows = [r[1] for r in replies if r]
         if lines and all(lines):
-            return {**structured, "response": "\n\n".join(lines), "answers": [], "stock_availability": rows}
+            # `has_result`: a set with no stock rows anywhere is still an ANSWER
+            # ("0 sets available"), never the miss composer's "no inventory matched".
+            return {
+                **structured,
+                "response": "\n\n".join(lines),
+                "answers": [],
+                "stock_availability": rows,
+                "has_result": True,
+            }
         return structured
 
     # A BASE code ("SRTWC8608") whose whole answer is products it reached by prefix
@@ -2095,26 +2130,18 @@ def _set_level_answer(
     tokens = {jsc.js_string(p.get("token") or "") for p in prefix_products}
     if not prefix_products or len(tokens) != 1 or not answer_ids or not answer_ids <= prefix_ids:
         return structured
-    sets = set_stock_mod.sets_containing(db, sorted(prefix_ids))
+    sets = _labelled(set_stock_mod.sets_containing(db, sorted(prefix_ids)))
     if not sets:
         return structured
     typed = next(iter(tokens)).upper()
+    matched = [jsc.js_string(p.get("code") or "") for p in prefix_products]
     if dealer:
-        picked = set_stock_mod.dealer_set_pick(typed, sets)
+        picked = set_stock_mod.dealer_set_pick(typed, sets, matched)
     else:
-        # The counts need EVERY member of those sets, and the first call fetched only the
-        # products the base code matched: one more read of the SAME tool, so the
-        # visibility policy that shaped the first shapes this one too.
-        all_members = sorted({str(m["uuid"]) for s in sets for m in s["members"]})
-        try:
-            raw = fetch_mod.call_tool(
-                tool_name, {**args, "product_ids": all_members}, mcp=_McpSeam(services.mcp_call)
-            )
-            members_envelope = fetch_mod.parse_mcp_content(raw)
-        except Exception:  # noqa: BLE001 - the first answer still stands
-            logger.warning("chatbot: set member stock read failed", exc_info=True)
+        envelopes = envelopes_for(sets)
+        if envelopes is None:
             return structured
-        picked = set_stock_mod.staff_set_list(typed, sets, members_envelope)
+        picked = set_stock_mod.staff_set_list(typed, sets, envelopes, matched)
     if picked is None:
         return structured
     text, ask = picked
@@ -2124,7 +2151,15 @@ def _set_level_answer(
         "set_ask": ask,
         "answers": [],
         "stock_availability": [{"set_pick": True}],
+        "has_result": True,
     }
+
+
+def _labelled(sets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each set marked to be named with its company when another set in the same answer
+    carries the same code (Sorento and Mocha do), so two lines never read alike."""
+    codes = [jsc.js_string(s.get("set_code") or "").upper() for s in sets]
+    return [{**s, "label_company": codes.count(code) > 1} for s, code in zip(sets, codes)]
 
 
 class _McpSeam:

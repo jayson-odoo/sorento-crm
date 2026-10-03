@@ -351,8 +351,8 @@ def _expand_product_set(match: Any) -> list[Any]:
 
 
 def _expanded_sets(matches: list[Any]) -> list[dict[str, Any]]:
-    """The sets `_expand_product_set` is about to replace, one row per set code, in
-    match order: what `set_stock` writes the set-level answer from."""
+    """The sets `_expand_product_set` is about to replace, one row per set, in match
+    order: what `set_stock` writes the set-level answer from."""
     out: dict[str, dict[str, Any]] = {}
     for m in matches:
         if jsc.get(m, "entity_type") != "product_set":
@@ -367,8 +367,16 @@ def _expanded_sets(matches: list[Any]) -> list[dict[str, Any]]:
             for member in jsc.array(jsc.get(jsc.get(m, "display"), "members"))
             if jsc.truthy(jsc.get(member, "uuid"))
         ]
-        if code and members and code not in out:
-            out[code] = {"set_id": jsc.get(m, "uuid"), "set_code": code, "members": members}
+        # Keyed by the SET, never its code: Sorento and Mocha carry the same codes, and a
+        # contact scoped to both expands both sets (review S3).
+        set_id = jsc.js_string(jsc.get(m, "uuid") or "")
+        if code and members and set_id and set_id not in out:
+            out[set_id] = {
+                "set_id": set_id,
+                "set_code": code,
+                "company_name": jsc.get(m, "company_name"),
+                "members": members,
+            }
     return list(out.values())
 
 
