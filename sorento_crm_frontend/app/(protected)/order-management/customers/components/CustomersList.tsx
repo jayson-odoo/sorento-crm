@@ -12,14 +12,14 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Upload } from 'lucide-react';
+import { Plus, Upload, UserCog } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
-import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
+import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
@@ -31,6 +31,8 @@ import { searchCustomerGroupsSelect } from '../../customer-groups/services/custo
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import type { Customer } from '../types/customer.types';
 import { CustomerRowActions } from '../actions';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { BulkSetSalesAgentDialog } from './BulkSetSalesAgentDialog';
 import { CustomerImportDialog } from './CustomerImportDialog';
 import {
   importCustomers,
@@ -72,6 +74,8 @@ export default function CustomersList() {
     );
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const canSetSalesAgent = useHasPermission('master_data.sales_agents.edit');
+  const [agentDialogOpen, setAgentDialogOpen] = useState(false);
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } = useCustomers({
     pageIndex: pagination.pageIndex,
@@ -339,8 +343,26 @@ export default function CustomersList() {
               },
             ]}
             primaryAction={listPrimaryAction}
+            bulkActions={
+              canSetSalesAgent
+                ? [
+                    {
+                      key: 'set-sales-agent',
+                      label: `Set sales agent (${selectedRowIds(table).length})`,
+                      icon: UserCog,
+                      onClick: () => setAgentDialogOpen(true),
+                    },
+                  ]
+                : []
+            }
           />
         </CardHeader>
+        <BulkSetSalesAgentDialog
+          open={agentDialogOpen}
+          onOpenChange={setAgentDialogOpen}
+          customerIds={selectedRowIds(table)}
+          onDone={() => setRowSelection({})}
+        />
         <CustomerImportDialog
           open={importDialogOpen}
           onOpenChange={setImportDialogOpen}
