@@ -369,6 +369,20 @@ the ss `id` validated as a UUID; no ss-supplied URL is relayed for the CRM link.
 C2 (after C1 green): remove the dead draft path (`handle_turn`, media lookback, the composer's
 draft statuses) and the tests that only covered it; the idle sweep stays until old pointers drain.
 
+## 4a-bis. Live-LLM findings (cloud pass at 15042c21) and fixes (lead decision 3 Oct, owner wants hand tests now)
+
+- **C5** "want to submit idea" was created as an idea: the live extractor invents `problem: "We need
+  a way to submit ideas."`, so `_missing_required` never sees a missing problem. Fix: an extractor
+  prompt rule (an intent-only message such as "want to submit idea" / "I have an idea" with no idea in
+  it has NO problem; never write a problem the user did not state), shipped as the fallback text of
+  `ideate_extractor` in `ai_prompt_registry.py`, plus ONE migration that runs
+  `bump_prompt_to_fallback(op.get_bind(), "ideate_extractor")` (production reads the registry row)
+  and `seed_prompt_registry(op.get_bind())` (seeds the `ideation_capture_*` copy keys, so the owner
+  can edit them). This answers the earlier open migration ask.
+- **C4a** the same message matched once and not the next time: similar-own got the model's rewrite
+  of the problem as `text` (0.432 vs 0.280 against 0.3). Fix: send the user's raw message as `text`
+  (stable input). Follow-up ask to ss: also match against the stored `raw_text`.
+
 ## 4b. Lane process (owner rule 3 Oct, LEAD PATTERN)
 
 From 3 Oct the lane runs on the lead pattern: the lead (this session) edits plans, docs and merge
