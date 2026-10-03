@@ -43,8 +43,9 @@ from app.models.access import ContactFieldReveal
 FIELD_REVEAL_KEYS: tuple[tuple[str, str], ...] = (
     # DO-ASK-SIMPLIFY rule 2 (owner, 2 Oct 2026; every printed DO field since the 3 Oct hand
     # test): one switch per DO field, ON by default for every contact, new ones
-    # included (owner, 4 Oct 2026); the owner turns one off per contact. Migration
-    # `do_ask_0001_reveals` switched them all on for every contact that existed at deploy.
+    # included (owner, 4 Oct 2026); the owner turns one off per contact. Default ON
+    # comes from `DEFAULT_ON_KEYS`, with no seeding migration (crew review, 4 Oct 2026: a seed
+    # would reset owner-OFF switches).
     ("delivery_orders.driver", "DO driver"),
     ("delivery_orders.lorry_plate", "DO lorry plate"),
     ("delivery_orders.pickup_time", "DO pickup time"),
