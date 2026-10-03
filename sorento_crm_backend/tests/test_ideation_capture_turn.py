@@ -1293,3 +1293,52 @@ def test_r_endpoint_response_carries_language(turn_endpoint):
     resp = client.post(_TURN, json={"respond_io_id": "rio-1", "message_text": "hmm"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["language"] == "ms"
+
+
+# --------------------------------------------------------------------------- #
+# S - has_idea: an intent-only message never reaches ss, even with a problem   #
+# --------------------------------------------------------------------------- #
+def _with_has_idea(env, has_idea):
+    env.idea_message()
+    # set after construction so a missing dataclass field fails in the service, not here
+    env.extractions[MSG].has_idea = has_idea
+
+
+def test_s_has_idea_false_with_a_problem_asks_back_and_calls_no_ss(env):
+    env.ready()
+    _with_has_idea(env, False)
+    out = env.turn(MSG)
+    assert out["status"] == "ask_idea"
+    assert out["reply_text"]
+    _no_ss(env)
+    assert "ideation" not in out["session_vars"]
+    assert "ideation" not in env.persisted()
+
+
+def test_s_has_idea_true_with_a_problem_runs_the_normal_flow(env):
+    env.ready()
+    _with_has_idea(env, True)
+    env.created()
+    out = env.turn(MSG)
+    assert out["status"] == "complete"
+    assert len(env.similar_calls) == 1
+    assert len(env.create_calls) == 1
+
+
+def test_s_has_idea_none_with_a_problem_runs_the_normal_flow(env):
+    env.ready()
+    _with_has_idea(env, None)
+    env.created()
+    out = env.turn(MSG)
+    assert out["status"] == "complete"
+    assert len(env.similar_calls) == 1
+    assert len(env.create_calls) == 1
+
+
+def test_s_has_idea_false_on_an_ask_reply_gives_up_and_calls_no_ss(env):
+    env.ready()
+    _with_has_idea(env, False)
+    out = env.turn_ask(MSG)
+    assert out["status"] == "ask_idea_gave_up"
+    _no_ss(env)
+    assert "ideation" not in out["session_vars"]

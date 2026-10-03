@@ -592,3 +592,32 @@ def test_ideation_confirm_migration_bumps_both_prompts_on_top_of_round_1():
     assert 'down_revision = "ideation_reply_fmt_prompts"' in content
     assert 'bump_prompt_to_fallback(op.get_bind(), "ideate_extractor")' in content
     assert 'bump_prompt_to_fallback(op.get_bind(), "ideate_reply")' in content
+
+
+# --------------------------------------------------------------------------- #
+# has_idea - intent-only messages ("I have an idea") carry no idea            #
+# --------------------------------------------------------------------------- #
+def test_has_idea_is_a_required_boolean_in_the_schema():
+    from app.services.ideation_extractor import IDEATE_EXTRACTION_JSON_SCHEMA as schema
+
+    assert "has_idea" in schema["properties"]
+    assert "has_idea" in schema["required"]
+    prop = schema["properties"]["has_idea"]
+    assert prop["type"] == "boolean"
+    assert "I have an idea" in prop["description"]
+
+
+@pytest.mark.parametrize("value, expected", [(True, True), (False, False)])
+def test_has_idea_parser_maps_booleans(configured, value, expected):
+    out = _extraction(configured, {"has_idea": value})
+    assert out.has_idea is expected
+
+
+@pytest.mark.parametrize("payload", [{}, {"has_idea": None}, {"has_idea": "false"}, {"has_idea": 0}, {"has_idea": "yes"}])
+def test_has_idea_parser_gives_none_for_missing_or_non_bool(configured, payload):
+    out = _extraction(configured, payload)
+    assert out.has_idea is None
+
+
+def test_has_idea_defaults_to_none_on_a_failed_parse():
+    assert IdeateExtraction().has_idea is None
