@@ -946,6 +946,7 @@ def crossdomain_render(
 
     # One block per code (card v4), in `missing` order.
     blocks: list[str] = []
+    rendered_rows = 0  # the other domain's rows shown, before they merge into blocks
     # Hand pass 11 defect 1 (owner retest, live turn 27f60a71): a probe row is printed
     # ONCE per block, however many `missing` entries claim it. The zero-entry lookup
     # below deliberately matches a prefixed sibling's rows (finding 7, so a typed family
@@ -1025,6 +1026,7 @@ def crossdomain_render(
             rows.sort(key=eta)
         rows = [it for it in rows if id(it) not in seen_rows]
         seen_rows.update(id(it) for it in rows)
+        rendered_rows += len(rows)
         if origin_incoming:
             # Stock rows: detailed ones merge per (company, product), a compact one-location
             # entry drops its Total, the same as the primary reply (fetch.py).
@@ -1123,7 +1125,7 @@ def crossdomain_render(
         "team": zs.get("team") or None,
         "origin": zs.get("origin_domain") or None,
         "probed_rows": len(items),
-        "rendered_rows": len(blocks),
+        "rendered_rows": rendered_rows,
         # A7: the codes with NOTHING on either side, and the sentence built for them - so
         # `run_crossdomain` can try a NEXT ladder rung (e.g. purchase_order) for exactly
         # these codes and, if that rung answers, swap this sentence for its own without
