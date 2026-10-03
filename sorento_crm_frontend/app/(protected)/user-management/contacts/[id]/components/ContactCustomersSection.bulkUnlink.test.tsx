@@ -120,4 +120,19 @@ describe('ContactCustomersSection - bulk Unlink', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
+
+  it('R6: while the bulk countdown shows, the ticked rows per-row Unlink buttons are disabled', async () => {
+    renderSection();
+    await screen.findByText('C-100 - Hanlim A');
+    fireEvent.click(rowCheckboxes()[0]);
+    fireEvent.click(rowCheckboxes()[1]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Unlink (2)' }));
+    await waitFor(() => expect(pending.createPendingAction).toHaveBeenCalledTimes(2));
+
+    const rowButtons = screen.getAllByRole('button', { name: /^Unlink$/ });
+    expect(rowButtons.length).toBeGreaterThanOrEqual(2);
+    // The ticked rows (A and B) are first in document order; their buttons must be disabled.
+    expect(rowButtons[0]).toBeDisabled();
+    expect(rowButtons[1]).toBeDisabled();
+  });
 });

@@ -313,3 +313,36 @@ describe('CustomersList - bulk Remove from group (U6.6)', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 });
+
+describe('CustomersList - Remove from group counts only grouped customers (review R4)', () => {
+  it('two customers with no group: no Remove from group button, or it is disabled', async () => {
+    renderList();
+    tickRow('C-002');
+    tickRow('C-003');
+    await screen.findByRole('button', { name: /Set customer group \(2\)/ });
+    const remove = screen.queryByRole('button', { name: /Remove from group/ });
+    if (remove) expect(remove).toBeDisabled();
+    else expect(remove).toBeNull();
+  });
+
+  it('one grouped and one not: label counts the grouped one only', async () => {
+    renderList();
+    tickRow('C-001');
+    tickRow('C-002');
+    expect(await screen.findByRole('button', { name: 'Remove from group (1)' })).toBeInTheDocument();
+  });
+});
+
+describe('CustomersList - new group created then assign fails (review R3)', () => {
+  it('the error toast says the group was created and carries the server message', async () => {
+    svc.addCustomerGroupCustomers.mockRejectedValue(new Error('Customer not in your company'));
+    const dialog = await openSetDialog();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'stub create group' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalled());
+    const msg = String(toastMock.error.mock.calls[0][0]);
+    expect(msg).toContain('Group New Dealer Group created');
+    expect(msg).toContain('Customer not in your company');
+  });
+});

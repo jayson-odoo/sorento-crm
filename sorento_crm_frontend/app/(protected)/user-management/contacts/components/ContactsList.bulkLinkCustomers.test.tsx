@@ -321,3 +321,55 @@ describe('ContactsList - "No customers linked" filter (U5.2/U5.3)', () => {
     expect(contactsListFilters({ chatbotMemoryLevel: null, customersNone: false })).toEqual({});
   });
 });
+
+describe('ContactsList - selection resets on page change (review R2)', () => {
+  const PAGE2 = [
+    {
+      ...base,
+      id: 'contact-gita',
+      phone_number: '+60123456703',
+      name: 'Gita Lim',
+      first_name: 'Gita',
+      last_name: 'Lim',
+      respond_io_id: '10025903',
+      customer_codes: [],
+    },
+  ];
+
+  function mockTwoPages() {
+    apiFetch.mockImplementation(async (url: string) => {
+      const page2 = /[?&]page=2(&|$)/.test(String(url));
+      return {
+        ok: true,
+        json: async () => ({
+          data: page2 ? PAGE2 : CONTACTS,
+          pagination: { total: 100, page: page2 ? 2 : 1, limit: 50 },
+          empty: false,
+        }),
+      };
+    });
+  }
+
+  it('a page change drops the ticked rows and the bulk strip; page 2 ticks link exactly that contact', async () => {
+    mockTwoPages();
+    services.linkContactCustomers.mockResolvedValue([]);
+    renderList();
+    await screen.findByText('+60123456701');
+    fireEvent.click(screen.getAllByRole('checkbox', { name: 'Select row' })[0]);
+    expect(await screen.findByRole('button', { name: 'Link customers (1)' })).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Go to next page/ }));
+    await screen.findByText('+60123456703');
+    expect(screen.queryByRole('button', { name: /Link customers/ })).not.toBeInTheDocument();
+    const boxes = screen.getAllByRole('checkbox', { name: 'Select row' }) as HTMLInputElement[];
+    expect(boxes.some((b) => b.checked || b.getAttribute('aria-checked') === 'true')).toBe(false);
+
+    fireEvent.click(boxes[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Link customers (1)' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByLabelText('Option C-100'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(services.linkContactCustomers).toHaveBeenCalledTimes(1));
+    expect(services.linkContactCustomers.mock.calls[0][0]).toBe('contact-gita');
+  });
+});
