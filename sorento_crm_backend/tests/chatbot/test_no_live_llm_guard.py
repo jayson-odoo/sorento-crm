@@ -127,6 +127,14 @@ def test_urllib_request_to_a_provider_is_blocked(tripwire):
     _forget_blocked_calls()
 
 
+def test_direct_dns_for_a_provider_is_blocked_as_a_backstop():
+    """A client none of the transport wrappers know still cannot resolve a provider host."""
+    with pytest.raises(Exception) as info:
+        socket.getaddrinfo("api.respond.io", 443)
+    _assert_guard_fired(info.value, "api.respond.io")
+    _forget_blocked_calls()
+
+
 def test_a_swallowed_blocked_call_is_still_recorded_for_teardown(tripwire):
     """App code that catches the exception must not let the test pass silently."""
     from tests import _live_call_guard
