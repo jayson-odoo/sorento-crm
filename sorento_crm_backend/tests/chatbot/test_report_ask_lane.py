@@ -948,6 +948,85 @@ def test_c2_an_agent_code_that_looks_like_sa_keeps_the_item_ranking_and_the_agen
     assert agent_id in (args.get("sales_agent_ids") or []), (body, args)
 
 
+# F1: the measure defaults to amount unless the message names a quantity word ---------- #
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "top 3 salesman for sorento this year",
+        "top 3 salesman for sorento this year by sales",
+        "top 3 salesman for sorento this year by amount",
+        "who's the top 3 salesman for sorento this year",
+    ],
+)
+def test_f1_a_quantity_reading_with_no_quantity_word_ranks_by_amount(console, body) -> None:
+    """AC-RE-6: the live model emits rank_by quantity unprompted; the header says delivered sales."""
+    text, calls = console.say(_rank(_e("sorento", "brand"), rank_by="quantity", **THIS_YEAR), body)
+    (args,) = calls
+    assert args.get("measure", "amount") == "amount", (body, args)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "top 3 salesman for sorento this year by quantity",
+        "top 3 salesman for sorento this year by qty",
+        "top 3 salesman for sorento this year qty",
+        "top 3 salesman for sorento this year quantity",
+        "top 3 salesman for sorento this year with most units",
+    ],
+)
+def test_f1_a_named_quantity_word_ranks_by_qty(console, body) -> None:
+    text, calls = console.say(_rank(_e("sorento", "brand"), rank_by="quantity", **THIS_YEAR), body)
+    (args,) = calls
+    assert args["measure"] == "qty", (body, args)
+
+
+@pytest.mark.parametrize("body", ["top 3 salesman for sorento this year by amount", "top 3 salesman for sorento this year by sales"])
+def test_f1_an_amount_reading_stays_amount(console, body) -> None:
+    text, calls = console.say(_rank(_e("sorento", "brand"), rank_by="amount", **THIS_YEAR), body)
+    (args,) = calls
+    assert args.get("measure", "amount") == "amount", (body, args)
+
+
+# F2: the ranking noun the model also emits as an entity is dropped ------------------- #
+
+
+@pytest.mark.parametrize("noun", ["salesman", "sales agent", "salesmen", "SA", "rep"])
+def test_f2_a_ranking_noun_entity_next_to_brand_and_category_is_dropped(console, noun) -> None:
+    wt = _seed_wt(console)
+    verdict = _rank(
+        _e(noun, "sales_agent"), _e("Sorento", "brand"), _e("water closet", "category"),
+        group_by="sales_agent", **THIS_YEAR,
+    )
+    text, calls = console.say(verdict, OWNER_MESSAGE)
+    assert f"I don't know '{noun}'" not in text, (noun, text)
+    (args,) = calls
+    assert args["group_by"] == "sales_agent", args
+    assert args["brand_ids"] == [console.ids["brand"]], (noun, args)
+    assert args["category_ids"] == [wt["category"]], (noun, args)
+    assert not args.get("sales_agent_ids"), (noun, args)
+
+
+def test_f2_a_customers_noun_entity_is_dropped_for_a_customer_ranking(console) -> None:
+    verdict = _rank(_e("customers", "customer"), _e("Sorento", "brand"), group_by="customer", **THIS_YEAR)
+    text, calls = console.say(verdict, "top 3 customers for sorento this year")
+    assert "I don't know 'customers'" not in text, text
+    (args,) = calls
+    assert args["group_by"] == "customer", args
+    assert args["brand_ids"] == [console.ids["brand"]], args
+    assert not [k for k in args if "customer" in k and k != "group_by"], args
+
+
+def test_f2_a_real_agent_name_next_to_a_customer_ranking_is_still_a_filter(console) -> None:
+    verdict = _rank(_e("AGENT A", "sales_agent"), _e("Sorento", "brand"), group_by="customer", **THIS_YEAR)
+    text, calls = console.say(verdict, "top 3 customers of AGENT A for sorento this year")
+    (args,) = calls
+    assert args["group_by"] == "customer", args
+    assert args["sales_agent_ids"] == [console.ids["agent"]], args
+
+
 @pytest.mark.parametrize(
     ("body", "group_by", "top_n"),
     [
