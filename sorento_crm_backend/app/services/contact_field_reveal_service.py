@@ -90,7 +90,9 @@ def set_granted_keys(
     *,
     actor_id: str | None,
 ) -> list[str]:
-    """Full-list replace: exactly `keys` end up granted, every other row revoked.
+    """Full-list replace over the keys this build knows: exactly `keys` end up granted,
+    every other KNOWN key revoked. A row for a key outside `FIELD_REVEAL_KEYS` (seeded by
+    a lane this build predates) is never touched, so a save here cannot revoke it.
 
     Upserts rather than delete-then-insert, so a key toggled off and back on
     keeps its original `created_at` / `created_by` rather than looking newly
@@ -122,8 +124,9 @@ def set_granted_keys(
             # so one is `now()` in local time and the other was UTC).
             row.granted = True
 
+    known = {key for key, _label in FIELD_REVEAL_KEYS}
     for key, row in existing.items():
-        if key not in wanted and row.granted:
+        if key in known and key not in wanted and row.granted:
             row.granted = False
 
     db.commit()
