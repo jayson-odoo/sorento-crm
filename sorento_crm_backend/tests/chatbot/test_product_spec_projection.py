@@ -190,7 +190,7 @@ _ITEM_BASE_LABELS = ["Company", "Product Code", "Product Name"]
 _ITEM_BASE_LABELS_WITH_DESC = ["Company", "Product Code", "Product Name", "Description"]
 #: Card v4 (AC-19): the base word asked decides which of the two on-demand lines prints.
 _ASKED_LINE = {
-    "price": ["List Price"], "list price": ["List Price"], "harga": ["List Price"], "cost": [],
+    "price": ["List Price"], "list price": ["List Price"], "harga": ["List Price"], "cost": ["List Price"],
     "dimension": ["Dimensions"], "size": ["Dimensions"], "ukuran": ["Dimensions"],
     "saiz": ["Dimensions"],
 }
