@@ -34,7 +34,9 @@ _PHONE = re.compile(
 _PLATE_LABEL = r"(?:lorry[\s_]?plate|vehicle[\s_]?(?:no|number)|no\.?\s?kenderaan)"
 _PLATE = re.compile(
     _PLATE_LABEL
-    + r"[^A-Za-z0-9\n]{0,25}(?:value[^A-Za-z0-9\n]{0,8})?"
+    # The gap may span a line break: pretty-printed JSON puts "label" and
+    # "value" on separate lines.
+    + r"[^A-Za-z0-9]{0,40}(?:value[^A-Za-z0-9]{0,8})?"
     + r"([A-Z]{1,3}\s?\d{1,4}(?:\s?[A-Z]{1,2})?)(?![A-Za-z0-9-])",
     re.IGNORECASE,
 )
@@ -77,8 +79,8 @@ def scan_text(text: str) -> list[Finding]:
         for m in _PHONE.finditer(line):
             if not is_fake_phone("601" + m.group(1)[1] + m.group(2) + m.group(3)):
                 found.append(Finding("phone", lineno))
-        for _ in _PLATE.finditer(line):
-            found.append(Finding("plate", lineno))
+    for m in _PLATE.finditer(text):
+        found.append(Finding("plate", text.count("\n", 0, m.start(1)) + 1))
     return found
 
 
