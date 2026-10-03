@@ -47,7 +47,9 @@ from app.services.chatbot.contracts import (
     named_count,
 )
 from app.services.chatbot.delegate import enabled_lanes_from
+from app.services.customer_group_service import family_overrides
 from app.services.error_handler import AppException
+from app.services.ledger_family import customer_groups
 from app.services.chatbot.head import grounding, parser
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
@@ -3258,7 +3260,20 @@ def _profile_snapshot(contact_row: Any) -> dict[str, Any] | None:
     }
 
 
-def _run_stages(  # noqa: PLR0915
+def _run_stages(envelope: Envelope, *, session_factory: SessionFactory, **kwargs: Any) -> TurnResult:
+    """`_run_stages_body` with the office's customer groups held for the whole turn.
+
+    Every place that joins ledgers into one company (`ledger_family_key` / `_label`, the
+    gate's `_cust_base`) reads the groups from a ContextVar, so the ONE load happens here, on
+    the turn's scoped session, before any stage runs. Read fresh each turn: a rename or a
+    regroup shows on the next message (CUSTOMER-GROUP AC-15)."""
+    with _session(session_factory) as db:
+        groups = family_overrides(db)
+    with customer_groups(groups):
+        return _run_stages_body(envelope, session_factory=session_factory, **kwargs)
+
+
+def _run_stages_body(  # noqa: PLR0915
     envelope: Envelope,
     *,
     session_factory: SessionFactory,
