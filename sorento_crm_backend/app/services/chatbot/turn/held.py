@@ -219,5 +219,7 @@ def stamp(state: State, before: Mapping[str, Any] | None, *, question: Any = Non
     was = _view(focus_from_wire(before.get("focus")), from_wire(before.get("open_question")))
     if was != _view(state.focus, written) or focus.held_turn is None:
         focus.held_turn = state.turn_no
-        focus.held_access = getattr(state.profile, "access_fp", None)
+        # An unknown access (a failed read) keeps the stamp it had rather than writing one
+        # the next turn would read as a change.
+        focus.held_access = getattr(state.profile, "access_fp", None) or focus.held_access
     return replace(state, focus=focus)

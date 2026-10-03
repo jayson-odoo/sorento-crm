@@ -3654,7 +3654,7 @@ def _run_stages_body(  # noqa: PLR0915
         # `chatbot_recall_enabled` is no longer read (contract section 2: the recall
         # re-parse is deleted; the column stays, untouched, per Q1 - no data change).
         profile, _recall_enabled = turn_runtime.load_profile(db, contact_respond_id)
-        profile.access_fp = _access_fingerprint(db, contact_respond_id, profile)
+        profile.access_fp = _access_fingerprint(session_factory, contact_respond_id, profile)
         known_phone = turn_runtime.contact_phone(db, contact_respond_id)
         turn_no = turn_runtime.turn_number(db, contact_respond_id)
         state_in = turn_runtime.load_state(session_block, profile=profile, turn_no=turn_no)
@@ -6208,35 +6208,35 @@ def _dealer_refers_to_salesman(answer: Any) -> Any:
     return dataclasses_replace(answer, text=text, question=question)
 
 
-def _access_fingerprint(db: Any, contact_respond_id: str, profile: Any) -> str:
+def _access_fingerprint(session_factory: SessionFactory, contact_respond_id: str, profile: Any) -> str | None:
     """STUCK-QTY-LOOP: everything that decides what this contact is told, as one string
     (`Profile.access_fp`). A held question stamped under another one was built for access
     the contact no longer has (owner, 4 Oct 2026: availability switched to compact), so
     `turn/held.py::expire` drops it. The stock mode and the field-reveal grants are read
-    the way the stock tool and `head/access.check_access` read them, inside a savepoint so
-    a failed read cannot leave the turn's session aborted; a read that fails reads as
-    "unknown" and is not part of the string."""
+    the way the stock tool and `head/access.check_access` read them, on a session of their
+    own so a failed read can never abort the turn's. A read that fails gives None: the
+    access is unknown, and `expire` neither drops nor restamps on an unknown access."""
     import hashlib
 
-    from app.services.chatbot.head.access import _granted_field_reveal_keys
+    from app.services.chatbot.head.access import _resolve_contact_with_null_workspace_fallback
+    from app.services.contact_field_reveal_service import granted_keys
     from app.services.stock_visibility import resolve_policy
 
-    mode = None
-    reveals: list[str] = []
     try:
-        with db.begin_nested():
+        with _session(session_factory) as db:
             space_id = default_space_id(db)
-            policy = resolve_policy(db, contact_respond_id, space_id)
-            mode = getattr(policy, "mode", None)
-            reveals = sorted(
-                str(key)
-                for key in _granted_field_reveal_keys(db, contact_id=contact_respond_id, space_id=space_id) or []
+            mode = getattr(resolve_policy(db, contact_respond_id, space_id), "mode", None)
+            resolved = _resolve_contact_with_null_workspace_fallback(
+                db, contact_id=contact_respond_id, space_id=space_id
             )
+            reveals = sorted(str(key) for key in (granted_keys(db, resolved) if resolved else []) or [])
     except Exception:  # noqa: BLE001 - a fingerprint is a profile fact, never the turn
         logger.warning("chatbot: access fingerprint unreadable for %s", contact_respond_id)
+        return None
+    grants = getattr(profile, "grants", None)
     facts = [
         getattr(profile, "tier", None),
-        sorted(getattr(profile, "grants", None) or []) if getattr(profile, "grants", None) is not None else None,
+        sorted(grants) if grants is not None else None,
         getattr(profile, "stock_allowed", None),
         getattr(profile, "stock_availability_only", None),
         mode,

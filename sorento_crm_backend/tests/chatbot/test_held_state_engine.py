@@ -116,3 +116,33 @@ def test_the_engine_tells_the_held_rule_which_reader_answered(console, monkeypat
     monkeypatch.setattr(engine_mod.turn_held, "consume", spy)
     console.say("water tap", verdict(intent_hint="check_stock", domain_hint="inventory", entities=[entity("water tap", hint="category")]))
     assert seen and "required_ask" in seen[-1], seen
+
+
+def test_a_stock_mode_change_alone_drops_the_held_question(console, monkeypatch):
+    """AC-2, the mode itself (reviewer round 2, N2): detailed and compact are both "not
+    availability", so the switch is read off the resolved stock mode, not the bool."""
+    from types import SimpleNamespace
+
+    from app.services import stock_visibility
+
+    monkeypatch.setattr(stock_visibility, "resolve_policy", lambda *a, **k: SimpleNamespace(mode="availability"))
+    _open_the_question(console)
+    monkeypatch.setattr(stock_visibility, "resolve_policy", lambda *a, **k: SimpleNamespace(mode="detailed"))
+    calls = len(console.tool_calls)
+    text = console.say("stock?", reply())
+    assert ASK not in text or len(console.tool_calls) > calls, text
+    assert "task_resumed_stock_qty" not in console.last_trace.rules_fired
+
+
+def test_a_failed_access_read_neither_drops_nor_restamps(console, monkeypatch):
+    from app.services import stock_visibility
+
+    _open_the_question(console)
+    stamp = console.state["focus"]["held_access"]
+
+    def broken(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(stock_visibility, "resolve_policy", broken)
+    console.say("10", reply(demand_qty=10))
+    assert console.state["focus"].get("held_access") in (None, stamp)
