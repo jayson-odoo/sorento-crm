@@ -130,13 +130,6 @@
   },
   "actions": [
     {
-      "kind": "send_message",
-      "text": "Your request is out of the scope of my ability and require human assistance. We are directing your enquiry to the correct person. Please wait for a moment.",
-      "dry_run": true,
-      "result_set": [],
-      "quick_replies": null
-    },
-    {
       "kind": "assign_conversation",
       "dry_run": true,
       "preview": true,
@@ -144,14 +137,14 @@
     },
     {
       "kind": "add_comment",
-      "text": "Team: customer_service\n\u23f0 SLA Alert: This contact is routed to you at <preview>.\nYou have until <preview> to respond.\nYou have until <preview> to resolve.\nReference message: https://app.respond.io/space/364817/inbox/437264483#chat-turn-out_of_scope-dry-run",
+      "text": "Team: customer_service\n⏰ SLA Alert: This contact is routed to you at <preview>.\nYou have until <preview> to respond.\nYou have until <preview> to resolve.\nReference message: https://app.respond.io/space/364817/inbox/437264483#chat-turn-out_of_scope-dry-run",
       "dry_run": true,
       "preview": true,
       "mention_user_ids": []
     },
     {
       "kind": "send_message",
-      "text": "This inquiry has been routed to the respective person-in-charge (PIC) from customer service team. We will get back to you soon. Thanks for your patience.",
+      "text": "Routed to your PIC, they will reply shortly.",
       "dry_run": true,
       "result_set": [],
       "quick_replies": null
