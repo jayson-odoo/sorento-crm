@@ -121,8 +121,15 @@ export function IdeasListView({
     debouncedValue: debouncedSearch,
     isSettling,
   } = useDebouncedSearch();
-  const { data, isLoading, isFetching, isError, error, refetch } =
-    useIdeasQuery({ status: 'all' });
+  const {
+    data,
+    isLoading,
+    isFetching,
+    isPlaceholderData,
+    isError,
+    error,
+    refetch,
+  } = useIdeasQuery({ status: 'all' });
   const { vote } = useIdeaMutations();
   // `mutate` is stable across renders; the mutation object is not, and columns that depend on it
   // are rebuilt (and every cell remounted) each time a request changes state.
@@ -571,6 +578,7 @@ export function IdeasListView({
               table={table}
               recordCount={rows.length}
               isLoading={isLoading}
+              isPlaceholderData={isPlaceholderData}
               listingKey={IDEAS_VIEW_PERMISSION}
               tableLayout={{ width: 'fixed', columnsResizable: true }}
               emptyMessage={emptyMessage}

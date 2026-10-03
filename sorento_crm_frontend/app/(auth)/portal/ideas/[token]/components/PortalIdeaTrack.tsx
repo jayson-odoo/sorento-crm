@@ -12,7 +12,7 @@ import { usePortalIdea } from '@/hooks/usePortalIdea';
 import { formatDate, formatDateTime } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import type { PortalIdeaComment } from '@/types/ideas';
-import { IdeaStatusBadge } from './IdeaStatusBadge';
+import { IdeaStatusBadge } from '@/components/ideas/IdeaStatusBadge';
 
 function initials(name: string): string {
   return (

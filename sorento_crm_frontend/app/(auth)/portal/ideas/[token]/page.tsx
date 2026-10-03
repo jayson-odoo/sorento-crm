@@ -1,7 +1,7 @@
 'use client';
 
 import { use } from 'react';
-import { PortalIdeaTrack } from '@/components/ideas/PortalIdeaTrack';
+import { PortalIdeaTrack } from './components/PortalIdeaTrack';
 
 interface PageProps {
   params: Promise<{ token: string }>;
