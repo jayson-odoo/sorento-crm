@@ -371,7 +371,7 @@ def _did_you_mean_per_code(
     ctx: Any,
     *,
     lane_asked: bool,
-) -> tuple[str, Any]:
+) -> tuple[str, Any, bool]:
     """MULTI-CODE-DYM: the reply's unplaced tokens, each as it would be answered alone.
 
     A token with suggestions (`envelope["unresolved_suggestions"]`, the single-code
@@ -382,9 +382,10 @@ def _did_you_mean_per_code(
     printed twice, and a code the reply already answered or already offered is not
     offered again. A token with no suggestion keeps "I could not find X.".
 
-    Returns the text and the question to store: one `product_pick` over every offered
-    code (AC-1691: two or more), a team offer when one code was offered with the
-    escalation, None when a lane already asked this turn's question.
+    Returns the text, the question to store - one `product_pick` over every offered code
+    (AC-1691: two or more), a team offer when one code was offered with the escalation,
+    None when a lane already asked this turn's question - and whether any did-you-mean
+    was listed (when none was, the miss offer arm offers the escalation instead).
     """
     suggestions: dict[str, list[Any]] = {}
     for env in envelopes:
@@ -431,7 +432,7 @@ def _did_you_mean_per_code(
     if plain:
         text += "\n" + f"I could not find {_join_words(plain)}."
     if not paragraphs:
-        return text, None
+        return text, None, False
 
     domain, team = None, None
     for env in envelopes:
@@ -453,7 +454,7 @@ def _did_you_mean_per_code(
     text += "\n\n" + "\n\n".join(paragraphs) + "\n" + closing
 
     if lane_asked:
-        return text, None
+        return text, None, True
     agent = getattr(ctx, "suggested_agent", None) if offered else None
     brand = _routing_brand(ctx) if offered else None
     if len(options) >= 2:
@@ -463,10 +464,10 @@ def _did_you_mean_per_code(
             team=team if offered else None,
             asked_at_turn=getattr(state, "turn_no", None),
             payload={"domain": domain, "escalate_offered": offered, "agent": agent, "brand_code": brand},
-        )
+        ), True
     if offered:
-        return text, _team_pick_question([domain], policy, agent=agent, brand=brand)
-    return text, None
+        return text, _team_pick_question([domain], policy, agent=agent, brand=brand), True
+    return text, None, True
 
 
 def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: Any) -> Answer:
@@ -686,11 +687,12 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                 unplaced.append(token)
     lane_question = _lane_question(envelopes, getattr(state, "turn_no", None))
     dym_question = None
+    dym_listed = False
     if unplaced and text.strip():
         # MULTI-CODE-DYM (owner, 4 Oct 2026, "treat each product code individually"): a
         # token with a did-you-mean gets the one it gets when asked alone; the rest keep
         # this sentence.
-        text, dym_question = _did_you_mean_per_code(
+        text, dym_question, dym_listed = _did_you_mean_per_code(
             text, unplaced, envelopes, state, policy, ctx, lane_asked=lane_question is not None
         )
 
@@ -703,9 +705,23 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
     # The per-code did-you-mean is this turn's question when no lane asked one, and its
     # closing line already offers the escalation, so the arm below adds no second one.
     question = lane_question or dym_question
-    if question is None and envelopes and missed_domains and len(missed_domains) == len(envelopes):
+    # Which domains' teams a miss offers. Every section missed: theirs (unchanged). Some
+    # section answered but a code the customer typed matched nothing and no did-you-mean
+    # was listed for it: the offer that code gets when asked alone (MULTI-CODE-DYM Q4,
+    # owner 4 Oct 2026), the first answering domain that has a team.
+    if missed_domains and len(missed_domains) == len(envelopes):
+        offer_domains = missed_domains
+    elif unplaced and text.strip() and not dym_listed:
+        offer_domains = [
+            env.get("domain")
+            for env in envelopes
+            if policy and policy.domain(env.get("domain")) and policy.domain(env.get("domain")).escalation_team_code
+        ][:1]
+    else:
+        offer_domains = []
+    if question is None and envelopes and offer_domains:
         teams: list[str] = []
-        for domain in missed_domains:
+        for domain in offer_domains:
             row = policy.domain(domain) if policy else None
             team = row.escalation_team_code if row else None
             if team and team not in teams:
@@ -827,7 +843,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                 # turn actually meant. `ctx.routing_brand` (round 4) is the SAME idiom
                 # for the brand axis.
                 question = _team_pick_question(
-                    missed_domains,
+                    offer_domains,
                     policy,
                     agent=getattr(ctx, "suggested_agent", None),
                     brand=_routing_brand(ctx),

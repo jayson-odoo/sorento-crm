@@ -4335,6 +4335,15 @@ _D2_NOUN = {
 }
 
 
+def _unsuggested_line(tokens: list[str]) -> str:
+    """MULTI-CODE-DYM: "\n\nI could not find X." for the missed codes a did-you-mean reply
+    has no suggestion for, "" when there are none (the compose miss line's own words)."""
+    if not tokens:
+        return ""
+    names = tokens[0] if len(tokens) == 1 else ", ".join(tokens[:-1]) + " or " + tokens[-1]
+    return f"\n\nI could not find {names}."
+
+
 def _bso_human_list(codes: list) -> str:
     """`build-suggest-offer`'s own `humanList` - no filter and no empty case, unlike the
     miss renderer's copy. Kept separate because the two really do differ."""
@@ -4891,6 +4900,20 @@ def build_suggest_offer(
     # single-token block; more than 1 takes the numbered multi-block.
     d1 = survivors[0]["block"] if len(survivors) == 1 else None
 
+    # MULTI-CODE-DYM Q5 (owner, 4 Oct 2026): beside a did-you-mean, a missed PRODUCT code
+    # with nothing to suggest is still named, never dropped.
+    survived = {_type_norm(s["block"]["token"]) for s in survivors}
+    unsuggested: list[str] = []
+    for res in misses if survivors else []:
+        tok = jsc.get(res, "token")
+        if not jsc.truthy(tok) or _type_norm(tok) in survived:
+            continue
+        if jsc.js_string(jsc.get(ent_of_tok(tok), "hint") or "").lower() != "product":
+            continue
+        raw = jsc.js_string(raw_of_tok(tok))
+        if raw not in unsuggested:
+            unsuggested.append(raw)
+
     if len(survivors) > 1:
         # D1 (multi-token): one labelled sub-list per surviving token, global CONTIGUOUS idx.
         # Numbered mode subsumes the code / uuid split, so there is no uuid branching here.
@@ -4921,7 +4944,7 @@ def build_suggest_offer(
                 sfx = ""
                 if key is not None:
                     sfx = _stamp(key)
-                cand_lines.append(f"  {idx}. {jsc.js_string(pick['label'])}{sfx}")
+                cand_lines.append(f"{idx}. {jsc.js_string(pick['label'])}{sfx}")
                 out["suggest_last_result_set"].append(
                     {
                         "idx": idx,
@@ -4952,17 +4975,19 @@ def build_suggest_offer(
                 )
             # QUOTE THE CUSTOMER'S SPELLING. `for_raw` above stays the RESOLVER token, because
             # the pick round trip matches on it; only the rendered text changes.
+            # MULTI-CODE-DYM Q5 (owner, 4 Oct 2026): each token reads as it would asked
+            # alone (the single-token arm's own sentence), numbers running on across them.
             blocks.append(
-                f'"{jsc.js_string(raw_of_tok(token))}"{type_sfx} - did you mean:\n'
+                f'Couldn\'t find "{jsc.js_string(raw_of_tok(token))}"{type_sfx}. Did you mean:\n'
                 + "\n".join(cand_lines)
             )
         out["suggest_offer"] = True
         out["suggest_selection_context"] = "suggest_offer"
         out["suggest_response"] = (
-            "Couldn't find some items:\n\n"
-            + "\n".join(blocks)
-            + "\n\n"
-            + _cont("Reply a number to pick", f", or 'yes' to escalate to {team}.")
+            "\n\n".join(blocks)
+            + _unsuggested_line(unsuggested)
+            + "\n"
+            + _cont("Reply with a code to continue", f", or would you like me to escalate to {team} team?")
         )
         out["suggest_quick_reply"] = _quick_reply([_YES, _NO])
         out["dym_offer"] = mk_offer(out["dym_candidates"])
@@ -5107,6 +5132,14 @@ def build_suggest_offer(
                     for p in picks
                 ]
                 out["dym_offer"] = mk_offer(out["dym_candidates"])
+            if unsuggested:
+                # MULTI-CODE-DYM Q5: the codes with no suggestion go above the closing line.
+                resp = jsc.js_string(out.get("suggest_response") or "")
+                at = resp.find("Reply with a")
+                if at > 0:
+                    out["suggest_response"] = (
+                        resp[:at].rstrip() + _unsuggested_line(unsuggested) + "\n" + resp[at:]
+                    )
             return out
         # All candidates dropped (a bare uuid with no display name): `suggest_offer` stays
         # false and we fall through to D2 / escalate-only. Never emit an invented label.

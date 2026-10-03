@@ -156,11 +156,32 @@ def test_a_missing_code_with_no_suggestion_keeps_its_own_sentence():
     assert "srt5764." not in text.split("I could not find", 1)[1].split("\n", 1)[0], text
 
 
-def test_no_suggestion_anywhere_is_unchanged():
+def test_no_suggestion_anywhere_names_the_code_and_offers_the_escalation():
+    """Q4 (owner, 4 Oct 2026): the code gets what it gets asked alone - named, and the
+    escalation offered (a yes/no over the domain's team)."""
     answer = _answer(_envelope({"SRTWC286": 12}, ["zzq123"], {}))
 
     assert "I could not find zzq123." in answer.text, answer.text
     assert "Did you mean" not in answer.text
+    assert answer.text.rstrip().endswith("Would you like me to escalate to warehouse team?"), answer.text
+    assert answer.question is not None and answer.question.kind == "team_pick", answer.question
+    assert answer.question.team == "warehouse"
+
+
+def test_no_suggestion_anywhere_offers_staff_nothing():
+    answer = _answer(_envelope({"SRTWC286": 12}, ["zzq123"], {}), Profile(tier="office"))
+
+    assert "I could not find zzq123." in answer.text, answer.text
+    assert "escalate" not in answer.text
+    assert answer.question is None
+
+
+def test_no_suggestion_and_no_team_offers_nothing():
+    policy_row = {**_domain_row("inventory", narrowing={"product": "list_all"}), "label": "stock"}
+    policy = Policy.from_rows(domains=[policy_row], kinds=[], tier_order=TIER_ORDER_FIXTURE)
+    answer = compose([_envelope({"SRTWC286": 12}, ["zzq123"], {})], _state(), policy, ctx=None)
+
+    assert answer.text.rstrip().endswith("I could not find zzq123."), answer.text
     assert answer.question is None
 
 
@@ -224,6 +245,69 @@ def test_a_lane_question_keeps_the_turn_and_the_misses_are_still_named():
 
     assert answer.question is not None and answer.question.kind == "outstanding_scope"
     assert 'Couldn\'t find "srt5764" (product).' in answer.text, answer.text
+
+
+# --------------------------------------------------------------------------- #
+# All miss (Q5): the single-code paragraphs, one per code
+# --------------------------------------------------------------------------- #
+
+
+def _two_token_resolved(*, second_alts: bool = True) -> dict[str, Any]:
+    return {
+        "resolutions": [
+            {"token": "srt5764", "resolved": False, "matches": [], "alternatives": [_match(r["code"], r["uuid"], "trgm") for r in SUGGEST]},
+            {
+                "token": "srtwc99x",
+                "resolved": False,
+                "matches": [],
+                "alternatives": [_match(r["code"], r["uuid"], "trgm") for r in OTHER] if second_alts else [],
+            },
+        ],
+        "unresolved_tokens": ["srt5764", "srtwc99x"],
+    }
+
+
+_PARSER = {
+    "domain_hint": "inventory",
+    "entities": [{"raw": "srt5764", "hint": "product"}, {"raw": "srtwc99x", "hint": "product"}],
+}
+
+
+def test_all_miss_reads_as_one_single_code_paragraph_per_code():
+    from app.services.chatbot.lanes.business.answer import build_suggest_offer
+
+    out = build_suggest_offer({}, parser=_PARSER, resolved=_two_token_resolved(), gate={"company_team": "warehouse"})
+    text = out["suggest_response"]
+
+    assert text == (
+        'Couldn\'t find "srt5764" (product). Did you mean:\n1. SRT57-CR\n2. SRT5713\n3. SRT5732\n\n'
+        'Couldn\'t find "srtwc99x" (product). Did you mean:\n4. SRTWC991\n5. SRTWC992\n'
+        "Reply with a code to continue, or would you like me to escalate to warehouse team?"
+    ), text
+    assert [r["idx"] for r in out["suggest_last_result_set"]] == [1, 2, 3, 4, 5]
+
+
+def test_all_miss_names_a_code_with_no_suggestion():
+    from app.services.chatbot.lanes.business.answer import build_suggest_offer
+
+    out = build_suggest_offer(
+        {}, parser=_PARSER, resolved=_two_token_resolved(second_alts=False), gate={"company_team": "warehouse"}
+    )
+    text = out["suggest_response"]
+
+    # The one code with suggestions reads exactly as it does asked alone.
+    assert text.startswith('Couldn\'t find "srt5764" (product). Did you mean SRT57-CR, SRT5713, or SRT5732?'), text
+    assert "\n\nI could not find srtwc99x.\nReply with a code to continue" in text, text
+
+
+def test_all_miss_staff_get_no_escalation_clause():
+    from app.services.chatbot.lanes.business.answer import build_suggest_offer
+
+    out = build_suggest_offer(
+        {}, parser=_PARSER, resolved=_two_token_resolved(), gate={"company_team": "warehouse"}, profile=Profile(tier="office")
+    )
+
+    assert out["suggest_response"].endswith("\nReply with a code to continue."), out["suggest_response"]
 
 
 # --------------------------------------------------------------------------- #
