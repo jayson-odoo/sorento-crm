@@ -91,7 +91,7 @@ import logging
 import re
 from typing import Any, Mapping
 
-from app.services.chatbot.block_numbering import BLOCK_START_RE, renumber
+from app.services.chatbot.block_numbering import is_block, renumber
 from app.services.chatbot.lanes.business import answer as answer_mod
 from app.services.chatbot.lanes.business import miss_suggest as miss_mod
 from app.services.chatbot.lanes.business import services as business_services
@@ -1552,7 +1552,7 @@ def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
     paras = [p for p in primary.split("\n\n") if p != _INCOMING_OPENER]
     xd_paras = xd_text.split("\n\n")
     merged = False
-    first = next((p for p in paras if BLOCK_START_RE.match(p)), "")
+    first = next((p for p in paras if is_block(p)), "")
     start = int(m.group(1)) if (m := re.match(r"^(\d+)\. ", first)) else 1
     for i, x in enumerate(xd_paras):
         x_company, x_code = _block_key(x)
@@ -1562,7 +1562,7 @@ def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
             (
                 j
                 for j, p in enumerate(paras)
-                if BLOCK_START_RE.match(p)
+                if is_block(p)
                 and _block_key(p)[1] == x_code
                 and (x_company is None or _block_key(p)[0] in (None, x_company))
             ),
@@ -1573,7 +1573,7 @@ def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
             xd_paras[i] = _merge_block(paras.pop(hit), x)
     footers = [p for p in paras if p.startswith("_Updated ")]
     paras = [p for p in paras if p not in footers]
-    if merged or any(BLOCK_START_RE.match(p) for p in paras):
+    if merged or any(is_block(p) for p in paras):
         xd_paras += footers  # the footer closes the whole body, after the last block
     paras, xd_paras = renumber([paras, xd_paras], start)
     return "\n\n".join(paras), "\n\n".join(xd_paras)

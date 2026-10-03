@@ -2603,6 +2603,16 @@ _DROPPED_OPENERS = (
     "Here are the delivered orders I found.",
     "Here are the matching products.",
     "Here is the incoming stock I found.",
+    "Here is the last SPO line per product.",
+    "Here is the PO placed I found.",
+    "Here is the last purchase cost per product and location.",
+    "Here are the incoming shipments I found.",
+    "Here are the matching promotions.",
+    "Here are the certificates I found.",
+    "Here are the matching promotion products.",
+    "Here are the product files I found.",
+    "Here are the documents I found.",
+    "Here are the forms I found.",
 )
 
 
@@ -3177,7 +3187,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         [] if (qs_render or groups_render or stock_ask_render) else (e.get("items") or [])
     )
     block_form = rtype in _BLOCK_RESULT_TYPES
-    if block_form and flat_items:
+    if flat_items:
         if rtype == "stock":
             flat_items = merge_stock_rows(flat_items)
         elif rtype == "stock_compact":
@@ -3185,7 +3195,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         if opener.strip() in _DROPPED_OPENERS and msg.startswith(opener):
             msg = msg[len(opener):]
     # One block is unnumbered, but only on the first page of a counted set.
-    single_block = block_form and len(flat_items) == 1 and not set_row_offset
+    single_block = len(flat_items) == 1 and not set_row_offset
     for i, it in enumerate(flat_items):
         msg += (
             _item_line(i + 1 + set_row_offset, it, numbered=not (plain_lines or single_block))

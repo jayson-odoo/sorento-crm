@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
-from app.services.chatbot.block_numbering import BLOCK_START_RE, renumber
+from app.services.chatbot.block_numbering import is_block, renumber
 from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
 from app.services.ledger_family import customer_group_of, customer_header_words
@@ -727,7 +727,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         paras = text.split("\n\n")
         if _ATTACHED_SENTENCE not in text:
             text += "\n\n" + _ATTACHED_SENTENCE
-        elif any(BLOCK_START_RE.match(p) for p in paras):
+        elif any(is_block(p) for p in paras):
             text = "\n\n".join([p for p in paras if p != _ATTACHED_SENTENCE] + [_ATTACHED_SENTENCE])
 
     return Answer(
