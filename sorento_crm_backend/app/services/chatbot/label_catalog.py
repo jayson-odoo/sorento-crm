@@ -372,6 +372,18 @@ LABELS: dict[str, dict[str, str]] = {
     "No incoming, stock is 0 at every location and nothing on order for {codes}.": {"ms": "Tiada stok masuk, stok 0 di setiap lokasi dan tiada pesanan untuk {codes}.", "zh": "{codes} 没有到货、所有位置的库存均为 0，也没有在订货。"},
     "Couldn't find: {names}.": {"ms": "Tidak dapat menemui: {names}.", "zh": "找不到：{names}。"},
     "Couldn't find some items:": {"ms": "Tidak dapat menemui beberapa item:", "zh": "找不到部分项目："},
+    # Slice 5 (3 Oct): required fields (#1445) and the attachment gap line (#1437).
+    'Which product category? Reply with a category (e.g. water tap) or "all".': {"ms": 'Kategori produk yang mana? Balas dengan kategori (cth. water tap) atau "all".', "zh": '请问是哪个产品类别？请回复类别（例如 water tap）或 "all"。'},
+    "Which supplier?": {"ms": "Pembekal yang mana?", "zh": "请问是哪个供应商？"},
+    "I don't know '{word}' as a category.": {"ms": "Saya tidak mengenali '{word}' sebagai kategori.", "zh": "我不认识 '{word}' 这个类别。"},
+    "I don't know '{word}' as a supplier.": {"ms": "Saya tidak mengenali '{word}' sebagai pembekal.", "zh": "我不认识 '{word}' 这个供应商。"},
+    'Which category do you mean? Reply with a number or "all":': {"ms": 'Kategori yang mana yang anda maksudkan? Balas dengan nombor atau "all":', "zh": '您指的是哪个类别？请回复编号或 "all"：'},
+    "Which category do you mean? Reply with a number:": {"ms": "Kategori yang mana yang anda maksudkan? Balas dengan nombor:", "zh": "您指的是哪个类别？请回复编号："},
+    'Which supplier do you mean? Reply with a number or "all":': {"ms": 'Pembekal yang mana yang anda maksudkan? Balas dengan nombor atau "all":', "zh": '您指的是哪个供应商？请回复编号或 "all"：'},
+    "Which supplier do you mean? Reply with a number:": {"ms": "Pembekal yang mana yang anda maksudkan? Balas dengan nombor:", "zh": "您指的是哪个供应商？请回复编号："},
+    "Low stock report cancelled.": {"ms": "Laporan stok rendah dibatalkan.", "zh": "低库存报告已取消。"},
+    "I still can't place '{word}'. Ask for the low stock report again with a category or \"all\".": {"ms": "Saya masih tidak dapat mengenali '{word}'. Minta laporan stok rendah sekali lagi dengan kategori atau \"all\".", "zh": "我仍然无法识别 '{word}'。请再次索取低库存报告，并提供类别或 \"all\"。"},
+    "{code} has no {types}.": {"ms": "{code} tiada {types}.", "zh": "{code} 没有{types}。"},
 }
 
 #: Presenter field key -> English label (slices 1 and 2).
@@ -544,12 +556,23 @@ INLINE = frozenset(
         "Stock is 0 at every location, no incoming and nothing on order for {codes}.",
         "No incoming, stock is 0 at every location and nothing on order for {codes}.",
         "Couldn't find: {names}.",
+        # Slice 5 (3 Oct): required fields (#1445) and the attachment gap line (#1437).
+        'Which product category? Reply with a category (e.g. water tap) or "all".',
+        "Which supplier?",
+        "I don't know '{word}' as a category.",
+        "I don't know '{word}' as a supplier.",
+        'Which category do you mean? Reply with a number or "all":',
+        "Which category do you mean? Reply with a number:",
+        'Which supplier do you mean? Reply with a number or "all":',
+        "Which supplier do you mean? Reply with a number:",
+        "Low stock report cancelled.",
+        "I still can't place '{word}'. Ask for the low stock report again with a category or \"all\".",
     }
 )
 
 #: Sentences too generic to match inside running text ("I have checked with the warehouse."): the
 #: composer that owns one fills it with `Localizer.fill`.
-DIRECT_ONLY = frozenset({"I have {names}."})
+DIRECT_ONLY = frozenset({"I have {names}.", "{code} has no {types}."})
 
 #: Report value words `Localizer.lines` translates after a catalogued label. An explicit set, never
 #: "any catalog key", so data that happens to read like a label (a status named "Status") is safe.

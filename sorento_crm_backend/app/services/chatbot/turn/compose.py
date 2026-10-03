@@ -517,7 +517,10 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         ):
             gaps = _types_without_files(product_codes, env.get("attachment_types") or [], figures)
             if gaps:
-                lines = "\n".join(f"{code} has no {_join_words(missing)}." for code, missing in gaps)
+                lines = "\n".join(
+                    localizer.fill("{code} has no {types}.", code=code, types=_join_words(missing, localizer))
+                    for code, missing in gaps
+                )
                 # Its own paragraph, and the lane's footer keeps the blank line above it.
                 body, sep, footer = block.rpartition("\n_Data last updated")
                 block = (
