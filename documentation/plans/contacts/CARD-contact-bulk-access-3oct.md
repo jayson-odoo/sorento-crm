@@ -122,7 +122,10 @@ the hand-test copy to attach real rows.
 5. Concurrent edit between preview and apply: apply recomputes per target and returns what it
    actually wrote; the result table is the truth, not the preview.
 6. Caller without `contacts.edit`: the bulk action is hidden and the endpoint answers 403.
-7. Company scope: targets the caller cannot see are "Failed: not found" (never written).
+7. Company scope: `respond_contacts` has no company column (contacts are global), so the copy reaches
+   exactly the contacts the per-contact Chatbot / Access cards already let a `contacts.edit` holder edit.
+   The linked-customer filter counts only links inside the caller's company scope (same rule as
+   `customers=none`).
 
 ## 6. Questions (owner)
 
