@@ -17,7 +17,7 @@ Examples use the shared dev DB (`sorento_cagent_stack`, 6,358 customers, Sorento
 5. Next chatbot message: every place that groups ledgers into one company uses the group. A
    ledger joins a company line ONLY through its explicit group; a ledger with no group is its own
    customer under its own name (owner ruling (b), 2 Oct 2026: "we shouldn't do automated process
-   like this, very dangerous"). The name rule only PROPOSES groups for the owner to review (3 Oct 2026: explicit links only,
+   like this, very dangerous"). Groups are set by hand only (3 Oct 2026: explicit links only,
    see `PLAN-customer-group-seed-review-3oct.md`).
 
 ## Phase 2 - backend
@@ -64,8 +64,7 @@ Route paths below are under `/api/v1/order-management`.
 - AC-10b [BE] Owner ruling (b): an ungrouped ledger is never joined to a group by its name
   (`UNGROUPED_JOINS_NAME_MATCHED_GROUP = False`); every "Customer:" line prints group names
   only (no "(N accounts)", no "and N more"), an ungrouped ledger under its own full name.
-- AC-11 [BE] HANLIM TRADING SDN BHD (6 ledgers, in a group of the same name once the owner-approved
-  list is applied): the which-customer
+- AC-11 [BE] HANLIM TRADING SDN BHD (6 ledgers, in a group of the same name once the office sets it by hand): the which-customer
   roster, header and account refusal read exactly as before this lane (golden: today's output).
 - AC-12 [BE] After CHIN CHUN HOMEMART SDN BHD ledgers are put in the CHIN CHUN HARDWARE SDN BHD
   group, a roster of both families shows ONE line "CHIN CHUN HARDWARE SDN BHD" whose pick

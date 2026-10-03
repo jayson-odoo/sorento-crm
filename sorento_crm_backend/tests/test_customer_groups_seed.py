@@ -5,9 +5,6 @@ creates `customer_groups` and `customers.customer_group_id` and assigns NO custo
 group, however alike their names are. ``upgrade()`` runs here under a real alembic
 ``Operations`` context on the blank Postgres schema, with the table and column dropped first
 so it has something to create.
-
-`plan_groups` is still the pure name-rule helper behind ``scripts/customer_groups_seed_sql.py``
-(a proposal printer); its naming tests stay below.
 """
 from __future__ import annotations
 
@@ -58,6 +55,7 @@ def test_revision_chain_and_additive():
 def test_upgrade_does_not_name_match_or_seed():
     module = _load()
     assert not hasattr(module, "seed")
+    assert not hasattr(module, "plan_groups")
     source = (VERSIONS / "cust_group_0001.py").read_text(encoding="utf-8")
     upgrade_body = source[source.index("def upgrade()") : source.index("def downgrade()")]
     assert "plan_groups" not in upgrade_body
@@ -116,43 +114,3 @@ def test_upgrade_creates_the_table_and_column_and_groups_no_customer():
         assert conn.execute(
             text("SELECT count(*) FROM customers WHERE customer_group_id IS NOT NULL")
         ).scalar_one() == 0
-
-
-# ============================================================ seed naming: shared bracketed runs
-
-
-def _plan(names_levels, company=DEFAULT_COMPANY_ID):
-    """`plan_groups` rows are (id, company_id, code, name, level, group_id); pure, no DB."""
-    rows = [
-        (str(uuid.uuid4()), company, f"ZZT-{i:02d}", name, level, None)
-        for i, (name, level) in enumerate(names_levels)
-    ]
-    return [group_name for _c, group_name, _ids in _load().plan_groups(rows)]
-
-
-def test_group_name_keeps_a_bracketed_run_every_member_shares():
-    assert _plan([("SCR MARKETING (M) SDN BHD [A/C IV]", 4), ("SCR MARKETING (M) SDN BHD [A/C I]", 1)]) == [
-        "SCR MARKETING (M) SDN BHD"
-    ]
-    assert _plan(
-        [("CHENG HUAT HARDWARE (SENTUL) SDN BHD [A/C I]", 1), ("CHENG HUAT HARDWARE (SENTUL) SDN BHD [A/C II]", 2)]
-    ) == ["CHENG HUAT HARDWARE (SENTUL) SDN BHD"]
-
-
-def test_group_name_drops_a_bracketed_run_only_some_members_carry():
-    hanlim = [
-        ("HANLIM TRADING SDN BHD [A/C I]", 1),
-        ("HANLIM TRADING SDN BHD [A/C II]", 2),
-        ("HANLIM TRADING SDN BHD [A/C III]", 3),
-        ("HANLIM TRADING SDN BHD [A/C IV]", 4),
-        ("HANLIM TRADING SDN BHD", None),
-        ("HANLIM TRADING SDN BHD (CERAMIC & ELLECI)", None),
-    ]
-    assert _plan(hanlim) == ["HANLIM TRADING SDN BHD"]
-    jubin = [
-        ("JUBIN BMS (NS) SDN BHD [A/C I]", 1),
-        ("JUBIN BMS (KLANG) SDN BHD [A/C I]", 1),
-        ("JUBIN BMS (1990) SDN BHD [A/C III]", 3),
-        ("JUBIN BMS SDN BHD", None),
-    ]
-    assert _plan(jubin) == ["JUBIN BMS SDN BHD"]

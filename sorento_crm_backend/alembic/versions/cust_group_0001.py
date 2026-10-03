@@ -11,8 +11,7 @@ This revision used to seed groups on upgrade by joining ledgers whose names look
 (`ledger_family_key`). It no longer does: upgrade creates the table and the column and
 assigns NO customer to any group. The revision id and chain are unchanged, so a database
 that already ran the old body (dev) stays at the same head; its seeded rows are left as they
-are. `plan_groups` stays as a pure helper for `scripts/customer_groups_seed_sql.py`, which
-prints a proposal for the owner to review; nothing here calls it.
+are. Groups are set by hand (bulk "Set customer group", CUSTOMER-BULK-OPS).
 Additive: `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, the FK only when absent.
 """
 from alembic import op
@@ -21,32 +20,6 @@ revision = "cust_group_0001"
 down_revision = "picker_no_cap_0001"
 branch_labels = None
 depends_on = None
-
-
-def plan_groups(rows) -> list[tuple[str, str, list[str]]]:
-    """The groups the seed creates: `[(company_id, group name, [customer ids])]`.
-
-    `rows` are `(id, company_id, customer_code, customer_name, account_level,
-    customer_group_id)`. Pure (no DB), so `scripts/customer_groups_seed_sql.py` can print
-    the same plan as SQL."""
-    from app.services.ledger_family import ledger_family_key, shared_bracket_label
-
-    families: dict[tuple[str, str], list] = {}
-    for row in rows:
-        _id, company_id, _code, name, _level, _group = row
-        key = ledger_family_key(name) if name else ""
-        if key:
-            families.setdefault((str(company_id), key), []).append(row)
-
-    plan: list[tuple[str, str, list[str]]] = []
-    for (company_id, _key), members in families.items():
-        if len(members) < 2 or all(m[4] is None for m in members):
-            continue
-        if any(m[5] is not None for m in members):
-            continue
-        lead = min(members, key=lambda m: (m[4] if m[4] is not None else 1 << 30, m[2]))
-        plan.append((company_id, shared_bracket_label([lead[3]] + [m[3] for m in members]), [str(m[0]) for m in members]))
-    return plan
 
 
 def upgrade() -> None:
