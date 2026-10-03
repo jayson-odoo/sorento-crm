@@ -40,8 +40,8 @@ API
 * `reply_verdict(verdict, slot, text, *, asks=ASKS) -> (verdict, rule)` - the engine seam, read
   before anything routes the message. With a question open, a short reply (or one the
   parser reads as the same ask) is the answer: the verdict is rerouted to the ask, its
-  entities cleared, `is_affirmative` cleared (a reply to the bot's own question is its
-  answer, never a yes/no), and `required_ask` / `required_ask_reply` carry the slot and the text to
+  entities cleared, `is_affirmative` cleared and `topic_reset` cleared (a reply to the bot's own question is its
+  answer, never a yes/no, never a new topic), and `required_ask` / `required_ask_reply` carry the slot and the text to
   the lane. A message of more than three words that the parser reads as a different ask
   (another intent, or not a business message at all), an empty message, or any message
   with a "?" drops the question (`required_ask_dropped`). An optional field's pick also
@@ -276,10 +276,10 @@ def reply_verdict(
     )
     if other_ask and len(words) > SHORT_REPLY_WORDS:
         return verdict, "required_ask_dropped"
-    # A reply to the bot's own question is its answer, never a yes/no (live parser, 3 Oct 2026).
+    # A reply to the bot's own question is its answer, never a yes/no and never a new topic (live parser, 3 Oct 2026).
     rerouted = {
         **verdict, **ask.reroute, "entities": [], "open_question_answer": None,
-        "is_affirmative": None,
+        "is_affirmative": None, "topic_reset": False,
         "required_ask": slot, "required_ask_reply": text,
     }
     return rerouted, "required_ask_answer"
