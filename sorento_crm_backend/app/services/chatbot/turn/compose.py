@@ -7,7 +7,6 @@
 # composer (kept, unchanged per the plan) has somewhere familiar to write into.
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -359,7 +358,16 @@ def _routing_brand(ctx: Any) -> Any:
     return thunk() if callable(thunk) else None
 
 
-_NUMBERED_BLOCK = re.compile(r"^(\d+)\. \*")
+def _code_shaped(token: str) -> bool:
+    """A product code is letters AND digits ("srt5764"); a name ("chin chun") or a bare
+    number ("1") is not, and gets no escalation offer of its own."""
+    return any(c.isdigit() for c in token) and any(c.isalpha() for c in token)
+
+
+def _block_number(paragraph: str) -> int | None:
+    """N for a numbered card block ("N. *Label:* ..."), else None."""
+    head, dot, rest = paragraph.partition(". *")
+    return int(head) if dot and head.isdigit() else None
 
 
 def _did_you_mean_per_code(
@@ -375,8 +383,8 @@ def _did_you_mean_per_code(
     """MULTI-CODE-DYM: the reply's unplaced tokens, each as it would be answered alone.
 
     A token with suggestions (`envelope["unresolved_suggestions"]`, the single-code
-    did-you-mean's own candidates) gets 'Couldn't find "X" (product). Did you mean:' and
-    its numbered codes; one closing line follows the last of them, with the escalation
+    did-you-mean's own candidates and opening sentence, `answer.did_you_mean_head`) gets
+    that sentence and its numbered codes; one closing line follows the last of them, with the escalation
     offer the single-code reply makes (none for staff, the salesman line for a barred
     contact). Numbers run on from the reply's own numbered blocks, so no number is
     printed twice, and a code the reply already answered or already offered is not
@@ -387,26 +395,27 @@ def _did_you_mean_per_code(
     None when a lane already asked this turn's question - and whether any did-you-mean
     was listed (when none was, the miss offer arm offers the escalation instead).
     """
-    suggestions: dict[str, list[Any]] = {}
+    suggestions: dict[str, dict[str, Any]] = {}
     for env in envelopes:
         carried = env.get("unresolved_suggestions")
-        for raw, rows in (carried.items() if isinstance(carried, dict) else []):
-            if isinstance(rows, list):
-                suggestions.setdefault(raw, rows)
+        for raw, entry in (carried.items() if isinstance(carried, dict) else []):
+            if isinstance(entry, dict) and isinstance(entry.get("rows"), list) and entry.get("head"):
+                suggestions.setdefault(raw, entry)
     used = {
         token_key(code)
         for env in envelopes
         for code in (env.get("product_codes") or [])
         if isinstance(code, str)
     }
-    numbers = [int(m.group(1)) for m in (_NUMBERED_BLOCK.match(p) for p in text.split("\n\n")) if m]
+    numbers = [b for b in (_block_number(p) for p in text.split("\n\n")) if b is not None]
     n = max(numbers, default=0)
     options: list[dict[str, Any]] = []
     paragraphs: list[str] = []
     plain: list[str] = []
     for token in unplaced:
         lines: list[str] = []
-        for row in suggestions.get(token) or []:
+        entry = suggestions.get(token) or {}
+        for row in entry.get("rows") or []:
             code = row.get("code") if isinstance(row, dict) else None
             uuid = row.get("uuid") if isinstance(row, dict) else None
             if not code or not uuid or token_key(code) in used:
@@ -426,7 +435,7 @@ def _did_you_mean_per_code(
                 }
             )
         if lines:
-            paragraphs.append(f'Couldn\'t find "{token}" (product). Did you mean:\n' + "\n".join(lines))
+            paragraphs.append(str(entry["head"]) + "\n" + "\n".join(lines))
         else:
             plain.append(token)
     if plain:
@@ -706,12 +715,12 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
     # closing line already offers the escalation, so the arm below adds no second one.
     question = lane_question or dym_question
     # Which domains' teams a miss offers. Every section missed: theirs (unchanged). Some
-    # section answered but a code the customer typed matched nothing and no did-you-mean
-    # was listed for it: the offer that code gets when asked alone (MULTI-CODE-DYM Q4,
+    # section answered but a product CODE the customer typed (letters and digits: a name
+    # or a bare number is not one) matched nothing and no did-you-mean was listed for it: the offer that code gets when asked alone (MULTI-CODE-DYM Q4,
     # owner 4 Oct 2026), the first answering domain that has a team.
     if missed_domains and len(missed_domains) == len(envelopes):
         offer_domains = missed_domains
-    elif unplaced and text.strip() and not dym_listed:
+    elif not dym_listed and text.strip() and any(_code_shaped(t) for t in unplaced):
         offer_domains = [
             env.get("domain")
             for env in envelopes

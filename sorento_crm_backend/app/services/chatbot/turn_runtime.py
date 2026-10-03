@@ -4078,13 +4078,20 @@ def _lane_text_without_withheld_header(
 
 def _suggestions_by_typed_word(
     unplaced: dict[str, str] | None, suggestions: dict[str, list[dict[str, Any]]] | None
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, dict[str, Any]]:
     """`suggestions` (keyed by the resolver's token) under the unplaced word the customer
-    typed for the same token key; a token with none is left out."""
+    typed for the same token key, with the sentence that opens its list; a token with
+    none is left out."""
     if not unplaced or not suggestions:
         return {}
+    from app.services.chatbot.lanes.business.answer import did_you_mean_head
+
     by_key = {_token_key(token): rows for token, rows in suggestions.items() if rows}
-    return {raw: list(by_key[key]) for key, raw in unplaced.items() if key in by_key}
+    return {
+        raw: {"head": did_you_mean_head(raw), "rows": list(by_key[key])}
+        for key, raw in unplaced.items()
+        if key in by_key
+    }
 
 
 def envelope_of(

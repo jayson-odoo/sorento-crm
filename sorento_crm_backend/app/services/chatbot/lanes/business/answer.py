@@ -4421,6 +4421,13 @@ def miss_token_candidates(res: Any, allowed_types: list | None) -> list:
     return keep
 
 
+def did_you_mean_head(typed: str) -> str:
+    """MULTI-CODE-DYM: the single-code numbered did-you-mean's own opening sentence, for
+    one missed product code beside others (`turn/compose.py` prints it; the `turn`
+    package owns no did-you-mean wording of its own, AC-1680)."""
+    return f'Couldn\'t find "{typed}" (product). Did you mean:'
+
+
 def did_you_mean_by_token(resolved: Any, gate: Any) -> dict[str, list[dict[str, Any]]]:
     """MULTI-CODE-DYM: each missed product token's did-you-mean, keyed by the token as the
     resolver echoed it (`turn.state.token_key` folds it for a join).

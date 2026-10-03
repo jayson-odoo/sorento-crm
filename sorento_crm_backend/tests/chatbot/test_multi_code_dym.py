@@ -72,7 +72,10 @@ def _envelope(
         "has_result": True,
         "tool_has_result": True,
         "unresolved": unresolved,
-        "unresolved_suggestions": suggestions or {},
+        "unresolved_suggestions": {
+            raw: {"head": f'Couldn\'t find "{raw}" (product). Did you mean:', "rows": rows}
+            for raw, rows in (suggestions or {}).items()
+        },
         "error": None,
         "lane_text": "Stock availability:\n\n" + "\n\n".join(blocks),
     }
@@ -390,7 +393,9 @@ def test_envelope_carries_each_unplaced_tokens_suggestions_under_the_typed_word(
     )
 
     assert env["unresolved"] == ["srt5764", "zzq123"]
-    assert env["unresolved_suggestions"] == {"srt5764": SUGGEST}
+    assert env["unresolved_suggestions"] == {
+        "srt5764": {"head": 'Couldn\'t find "srt5764" (product). Did you mean:', "rows": SUGGEST}
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -435,3 +440,13 @@ class TestRealResolverPartialMiss:
         assert f'Couldn\'t find "{typo}" (product). Did you mean:' in reply, reply
         assert near_a in reply and near_b in reply, reply
         assert f"I could not find {typo}" not in reply, reply
+
+
+def test_a_name_or_bare_number_left_unplaced_gets_no_escalation_offer():
+    """Q4 is for a product CODE: "chin chun" or a bare "1" the resolver could not place
+    is named, and offers nothing."""
+    for token in ("chin chun", "1"):
+        answer = _answer(_envelope({"SRTWC286": 12}, [token], {}))
+        assert f"I could not find {token}." in answer.text, answer.text
+        assert "escalate" not in answer.text
+        assert answer.question is None
