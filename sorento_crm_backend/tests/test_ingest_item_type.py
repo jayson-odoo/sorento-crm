@@ -187,9 +187,10 @@ class TestReuse:
         assert "item_type_created" not in entry.get("warnings", [])
         rows = env.item_types(env.company_a)
         assert len(rows) == 1
-        assert env.product_item_type_id(second["code"], env.company_a) == env.product_item_type_id(
-            first["code"], env.company_a
-        )
+        for pushed in (first, second):
+            linked = env.product_item_type_id(pushed["code"], env.company_a)
+            assert linked is not None
+            assert str(linked) == str(rows[0]["id"])
 
 
 # ===================================================================== AC-3

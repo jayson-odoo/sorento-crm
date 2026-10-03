@@ -238,6 +238,7 @@ class Product(Base, CompanyScopedMixin):
     category_id = Column(UUID(as_uuid=False), ForeignKey("product_categories.id"), nullable=False)
     brand_id = Column(UUID(as_uuid=False), ForeignKey("brands.id", ondelete="SET NULL"), nullable=True)
     # AutoCount ItemType (migration item_type_0001). Set only by the products ingest.
+    # Unrelated to `item_type` below, the CRM's own product/bundle/service/other enum.
     item_type_id = Column(
         UUID(as_uuid=False), ForeignKey("item_types.id", ondelete="SET NULL"), nullable=True,
         index=True,

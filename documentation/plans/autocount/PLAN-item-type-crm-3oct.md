@@ -1,6 +1,6 @@
 # PLAN - AutoCount ItemType on CRM products (ITEM-TYPE-CRM)
 
-**Status:** Build (small fix track: additive migration only, no auth/RBAC change, no new ingest
+**Status:** PR #1450, review clean after fix round, awaiting CI (small fix track: additive migration only, no auth/RBAC change, no new ingest
 surface; one new optional field on the existing products push). Pair lane: ITEM-TYPE-SS.
 
 **UAC:** `item-type-crm-acceptance-criteria.md` (alongside).

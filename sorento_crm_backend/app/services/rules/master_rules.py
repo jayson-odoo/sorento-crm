@@ -65,9 +65,9 @@ def resolve_master_by_name(
 ) -> Optional[str]:
     """A row matched by its NAME column, case/whitespace-insensitive, within
     the company - the second rung `ensure_reference`'s code-or-name match
-    (D3, review S2) uses, for the three references a product push may
+    (D3, review S2) uses, for the references a product push may
     auto-create. `None` when `model` has no name column here (only
-    `_NAME_COLUMNS`'s three do) or nothing matches.
+    `_NAME_COLUMNS`'s do) or nothing matches.
     """
     normalized = normalize_code(name)
     if not normalized:
@@ -100,7 +100,7 @@ def resolve_master_by_code(
 
     Fix round (Group 3, `PLAN-autocount-pull-preview-perf.md`): `ORDER BY
     created_at, id` before `.first()` - every model here (`Warehouse`,
-    `Supplier`, `ProductCategory`, `UnitOfMeasure`, `Product`, `Brand`) has
+    `Supplier`, `ProductCategory`, `UnitOfMeasure`, `Product`, `Brand`, `ItemType`) has
     `created_at`, so this is safe for every caller; it picks the OLDEST row
     deterministically for the rare case two rows normalize to the same code
     (the unique constraint is on the exact stored string, not the
