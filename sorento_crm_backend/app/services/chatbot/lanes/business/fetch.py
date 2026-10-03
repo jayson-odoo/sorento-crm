@@ -1711,38 +1711,6 @@ def _date_window_phrase(semantic_input: Any) -> str:
     return ""
 
 
-def _names_a_shipment(ctx: dict[str, Any]) -> bool:
-    """A bare container ask ("incoming TIIU6323920") is a timeline ask, not an ETA-only one.
-
-    Evidence: live turn f07632b6-d56d-4036-944c-8200462caac3 - "incoming TIIU6323920" parses
-    to `requested_attributes: []` with entity `{"raw": "TIIU6323920", "hint":
-    "inbound_shipment", "confident": true}`. A question that names a specific container and
-    asks for no particular attribute is a timeline ask: every recorded checkpoint comes out,
-    chronologically, exactly as the `__all__` sentinel does today.
-
-    Checked against the RESOLVED entity list first - `entity_type` is the field
-    `gate.run_gate` stamps and `entity_ids_transformer`'s `TYPE_TO_PARAM` keys on - and only
-    falls back to the parser's own `hint` when the resolved list carries no type at all (the
-    gate ran empty, so there is nothing else to check).
-    """
-    entities = ctx.get("entities") if isinstance(ctx.get("entities"), list) else []
-    typed = [e for e in entities if jsc.truthy(e) and jsc.truthy(jsc.get(e, "entity_type"))]
-    if typed:
-        return any(
-            jsc.js_string(jsc.get(e, "entity_type")).strip() == "inbound_shipment" for e in typed
-        )
-    semantic_input = ctx.get("semantic_input")
-    if isinstance(semantic_input, str):
-        semantic_input = _safe_json(semantic_input)
-    parsed_entities = (
-        jsc.get(semantic_input, "entities") if isinstance(semantic_input, dict) else None
-    )
-    return any(
-        jsc.truthy(e) and jsc.js_string(jsc.get(e, "hint")).strip() == "inbound_shipment"
-        for e in jsc.array(parsed_entities)
-    )
-
-
 #: D12 (owner ruling, 8 Sep 2026, turn 8f4a8526 "SRTJC802A-1500 product details"): the
 #: BASE fields a product answer ALWAYS carries, whatever `requested_attributes` says -
 #: item 8's `_PRODUCT_IDENTITY_LABELS` (Product Code, Company only) meant an asked word
@@ -2634,6 +2602,7 @@ _DROPPED_OPENERS = (
     "Here are the orders I found.",
     "Here are the delivered orders I found.",
     "Here are the matching products.",
+    "Here is the incoming stock I found.",
 )
 
 
@@ -2642,7 +2611,7 @@ def compact_stock_block(it: Any) -> Any:
     location); none or several keep it."""
     if not isinstance(it, dict) or not isinstance(it.get("fields"), list):
         return it
-    locs = [f for f in it["fields"] if jsc.get(f, "label") not in ("Product Code", "Total")]
+    locs = [f for f in it["fields"] if jsc.get(f, "label") not in ("Company", "Product Code", "Total")]
     if len(locs) != 1:
         return it
     return {**it, "fields": [f for f in it["fields"] if jsc.get(f, "label") != "Total"]}
@@ -2847,7 +2816,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # H46: CONTAINS the sentinel, not IS it. `contracts.is_timeline` is the one declaration
     # (S6a put it there for exactly this consumer); re-deriving it here is what let a
     # mutation test "prove" the `not timeline` guard below was redundant.
-    timeline = is_timeline(req_attrs) or (not req_attrs and _names_a_shipment(ctx))
+    timeline = is_timeline(req_attrs) or not req_attrs
     keep_keys = set(ALWAYS_KEPT_KEYS)
     for k in req_attrs:
         kk = jsc.nullish_str(k).strip()

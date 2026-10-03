@@ -11,6 +11,7 @@
 # domain").
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from typing import Any
 
@@ -219,3 +220,24 @@ def _climb(
         if skipped:
             event["skipped"] = list(skipped)
         trace.add("crossdomain", event)
+
+
+BLOCK_START_RE = re.compile(r"^(?:\d+\. )?\*(?:Company|Product Code):\*")
+
+
+def renumber(groups: list[list[str]]) -> list[list[str]]:
+    """Number the block paragraphs `1. `, `2. ` ... across all `groups` when there is more
+    than one; a lone block, and every non-block paragraph, is left as it is."""
+    if sum(1 for g in groups for p in g if BLOCK_START_RE.match(p)) < 2:
+        return groups
+    n = 0
+    out: list[list[str]] = []
+    for g in groups:
+        done: list[str] = []
+        for p in g:
+            if BLOCK_START_RE.match(p):
+                n += 1
+                p = f"{n}. " + re.sub(r"^\d+\. ", "", p)
+            done.append(p)
+        out.append(done)
+    return out

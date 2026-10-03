@@ -1498,7 +1498,6 @@ def _block_product_codes(block_text: Any) -> set[str]:
     return {m.group(1) for m in _RUNG_ROW_CODE_RE.finditer(block_text) if m.group(1)}
 
 
-_BLOCK_START_RE = re.compile(r"^(?:\d+\. )?\*(?:Company|Product Code):\*")
 _BLOCK_CODE_RE = re.compile(r"^\*Product Code:\*[ \t]*(.+?)[ \t]*$", re.MULTILINE)
 _BLOCK_LINE_RE = re.compile(r"^(?:\d+\. )?\*(Company|Product Code):\*[ \t]*(.+?)[ \t]*$")
 _FLAG_LINE_RE = re.compile("^(?:\u26a0\ufe0f|\U0001f6a9)")
@@ -1533,26 +1532,13 @@ def _merge_block(primary: str, extra: str) -> str:
     has_outstanding = any(
         int(n) > 0 for ln in p_stock for n in re.findall(r"\(O/S: (\d+)\)", ln)
     )
-    stock = p_stock if has_outstanding or stock_line is None else [stock_line]
+    # An incoming primary keeps its Container/ETA/quantity lines; the cross-domain
+    # `*Stock:*` line only stands in for stock location lines.
+    if any(ln.startswith("*Container:*") for ln in p_stock):
+        stock = [*p_stock, *([stock_line] if stock_line else [])]
+    else:
+        stock = p_stock if has_outstanding or stock_line is None else [stock_line]
     return "\n".join([*p_id, *stock, *tail, *flags])
-
-
-def _renumber(groups: list[list[str]]) -> list[list[str]]:
-    """Number the block paragraphs `1. `, `2. ` ... across all `groups` when there is more
-    than one; a lone block, and every non-block paragraph, is left as it is."""
-    if sum(1 for g in groups for p in g if _BLOCK_START_RE.match(p)) < 2:
-        return groups
-    n = 0
-    out: list[list[str]] = []
-    for g in groups:
-        done: list[str] = []
-        for p in g:
-            if _BLOCK_START_RE.match(p):
-                n += 1
-                p = f"{n}. " + re.sub(r"^\d+\. ", "", p)
-            done.append(p)
-        out.append(done)
-    return out
 
 
 def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
@@ -1564,6 +1550,7 @@ def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
     text. Returns `(primary, cross-domain text)`."""
     paras = [p for p in primary.split("\n\n") if p != _INCOMING_OPENER]
     xd_paras = xd_text.split("\n\n")
+    merged = False
     for i, x in enumerate(xd_paras):
         x_company, x_code = _block_key(x)
         if x_code is None:
@@ -1572,19 +1559,20 @@ def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
             (
                 j
                 for j, p in enumerate(paras)
-                if _BLOCK_START_RE.match(p)
+                if run_fetch.BLOCK_START_RE.match(p)
                 and _block_key(p)[1] == x_code
                 and (x_company is None or _block_key(p)[0] in (None, x_company))
             ),
             None,
         )
         if hit is not None:
+            merged = merged or "*Container:*" in paras[hit]
             xd_paras[i] = _merge_block(paras.pop(hit), x)
     footers = [p for p in paras if p.startswith("_Updated ")]
     paras = [p for p in paras if p not in footers]
-    if any(_BLOCK_START_RE.match(p) for p in paras):
+    if merged or any(run_fetch.BLOCK_START_RE.match(p) for p in paras):
         xd_paras += footers  # the footer closes the whole body, after the last block
-    paras, xd_paras = _renumber([paras, xd_paras])
+    paras, xd_paras = run_fetch.renumber([paras, xd_paras])
     return "\n\n".join(paras), "\n\n".join(xd_paras)
 
 
@@ -1662,7 +1650,7 @@ def _apply_crossdomain_render(
             ),
         }
     if covers and not answered:
-        [paras] = _renumber([str(block["block"]).split("\n\n")])
+        [paras] = run_fetch.renumber([str(block["block"]).split("\n\n")])
         block = {**block, "block": "\n\n".join(paras)}
     variables: dict[str, Any] = {"last_result_set": [True]} if answered else {}
     if answered:

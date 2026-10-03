@@ -203,18 +203,17 @@ def memory_line_and_offer(fb: FallbackContext, copy: Any, lang: str) -> tuple[st
     if fb.kind == "unknown" and fb.customer and fb.team:
         return "", copy.render_in("fallback_offer_customer", lang, customer=fb.customer, team=fb.team)
 
-    memory_line = copy.render_in("fallback_last_time", lang, summary=fb.last_time) if fb.last_time else ""
     if fb.usual_products:
         products = " or ".join(fb.usual_products[:2]) if lang == "en" else ", ".join(fb.usual_products[:2])
         if fb.usual_site:
             offer = copy.render_in("fallback_offer_usual_site", lang, site=fb.usual_site, products=products)
         else:
             offer = copy.render_in("fallback_offer_usual", lang, products=products)
-    elif memory_line:
+    elif fb.last_time:
         offer = copy.render_in("fallback_offer_rerun", lang)
     else:
         offer = copy.render_in("fallback_offer", lang)
-    return memory_line, offer
+    return "", offer
 
 
 def compose(ack: str, fb: FallbackContext, copy: Any, lang: str) -> str:

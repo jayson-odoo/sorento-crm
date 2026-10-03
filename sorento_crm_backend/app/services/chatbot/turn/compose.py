@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
-from app.services.chatbot.turn.fetch import envelope_missed
+from app.services.chatbot.turn.fetch import BLOCK_START_RE, envelope_missed, renumber
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
 from app.services.ledger_family import customer_group_of, customer_header_words
 from app.services.chatbot.turn.pending import (
@@ -506,7 +506,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             if gaps:
                 lines = "\n".join(f"{code} has no {_join_words(missing)}." for code, missing in gaps)
                 # Its own paragraph, and the lane's footer keeps the blank line above it.
-                body, sep, footer = block.rpartition("\n_Data last updated")
+                body, sep, footer = block.rpartition("\n_Updated ")
                 block = (
                     body.rstrip("\n") + "\n\n" + lines + "\n" + sep + footer
                     if sep
@@ -555,6 +555,8 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             seen_file_keys.add(key)
             files.append(f)
 
+    # One numbering over the whole reply, whichever section a block sits in.
+    text_parts = ["\n\n".join(g) for g in renumber([part.split("\n\n") for part in text_parts])]
     text = "\n\n".join(text_parts)
 
     # A token nobody could place is named, never dropped in silence (hand pass 2 item 6,
@@ -719,11 +721,13 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         ]
         # R-d: a domain with attachments (incoming, product photos, ...) already
         # opens its OWN `lane_text` with this exact sentence (`sorento_crm_mcp.
-        # presenters`'s universal "has attachments" intro) now that `lane_text` is
-        # reused verbatim above - appending a second copy read as the sentence
-        # twice in one reply.
+        # presenters`'s universal "has attachments" intro), so it is never repeated.
+        # A card reply (blocks) closes with it, after every block and the footer.
+        paras = text.split("\n\n")
         if _ATTACHED_SENTENCE not in text:
             text += "\n\n" + _ATTACHED_SENTENCE
+        elif any(BLOCK_START_RE.match(p) for p in paras):
+            text = "\n\n".join([p for p in paras if p != _ATTACHED_SENTENCE] + [_ATTACHED_SENTENCE])
 
     return Answer(
         sections=sections, question=question, offer=offer, canned=[], files=files, actions=actions, text=text
