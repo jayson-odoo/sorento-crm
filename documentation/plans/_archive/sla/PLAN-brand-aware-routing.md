@@ -664,8 +664,8 @@ separate rows on the page, unrelated to this evidence run's scope).
 
   ```
   Team Members (in round-robin order):
-  1. Tay Zhi Yang (zhiyang.sorento@gmail.com) [icon]   Serves all   All brands   [Next in line]
-  2. NOOR HASNI HUSIN (hasni@sorento.com.my) [icon]     Serves all   All brands   [Last assigned]
+  1. Tay Zhi Yang (person41@example.com) [icon]   Serves all   All brands   [Next in line]
+  2. NOOR HASNI HUSIN (person15@example.com) [icon]     Serves all   All brands   [Last assigned]
   ```
 
   Each member row carries an **"Edit market segments"** control ("Serves all" chip) immediately

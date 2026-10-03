@@ -3,7 +3,7 @@
 Owner ruling 27 Sep 2026 ("yeah go for escalation"), fix option 1 of the root-cause report
 on #865 ("Root cause: null brand on escalation after a spec answer (backup of 25 Sep)").
 
-The defect, measured on the 25 Sep backup: contact 503641482, 24 Sep 2026 09:16 MYT.
+The defect, measured on the 25 Sep backup: contact 900000107, 24 Sep 2026 09:16 MYT.
 Turn 1 asked for the stainless steel grade of SRTKS8650A (a SORENTO product) and was
 answered with the product card; turn 2 said "Please esculate to Marketing". The
 escalation reached `/external/next-assignee` with `brand_code: null`, drew from the
@@ -243,7 +243,7 @@ class TestProvenPathOfferAcceptedWithStampedBrand:
     def test_photo_miss_offer_accepted_with_a_stamped_brand_still_draws_the_brand_member(
         self, session_factory, stub_parser, stub_access, monkeypatch
     ) -> None:
-        """Contact 445239384, 24 Sep 16:25 MYT: a spec/photo MISS minted "escalate to
+        """Contact 900000061, 24 Sep 16:25 MYT: a spec/photo MISS minted "escalate to
         marketing product?", its `team_pick` stamped `brand_code: sorento`, and "Yes"
         drew Tay Zhi Yang. It must keep doing so, and the payload still carries the brand
         the offer turn resolved."""
@@ -357,7 +357,7 @@ class TestSiblingEtaAfterAProductTurn:
     def test_eta_after_a_settled_product_mints_the_offer_with_the_focus_products_brand(
         self, session_factory, stub_parser, stub_access, monkeypatch
     ) -> None:
-        """Contact 477071889, 23 Sep 13:03 MYT: "SRTKS7646" answered (SORENTO), then "eta"
+        """Contact 900000059, 23 Sep 13:03 MYT: "SRTKS7646" answered (SORENTO), then "eta"
         named no product; the incoming lane used the focus product, missed, and offered
         purchasing with `payload.brand_code: null`, because the gate's brand comes only
         from rows resolved on THAT turn and a SETTLED focus product (one carrying its row

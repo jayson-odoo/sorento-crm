@@ -1219,7 +1219,7 @@ customers and cannot be checked until Mocha's customers and SOs are in the CRM.
   (`PLAN-company-so-feed-flag.md:10-12`), and `companies.so_feed_live` is false for Mocha
   (`app/models/company.py:31`, migration flips `code = 'MOCHA'`, plan :39).
 - Report C's agents (CHONG, CHUA, JASMINE, JIMMY, KENT, SHIRLEY, SMT, TEO JM) overlap report B's
-  (CHONG TECK HIN, TEO JIAN MING, KENT TEH), which fits the shared agent master ("the captain's own
+  (CHONG TECK HIN, CONTACT E, KENT TEH), which fits the shared agent master ("the captain's own
   files show the same agents selling for both companies", `sales_agent.py:66-67`). So report C is
   **Mocha the company** (AutoCount db2), not the M brand inside Sorento. G2 confirms.
 

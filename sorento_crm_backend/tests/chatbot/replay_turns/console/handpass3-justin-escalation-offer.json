@@ -45,7 +45,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://internal.example.invalid/contacts/440987225"
+              "value": "https://internal.example.invalid/contacts/900000010"
             },
             {
               "name": "is_allowed_ai",
@@ -57,8 +57,8 @@
             }
           ],
           "email": null,
-          "firstName": "ZZT-440987225",
-          "id": "440987225",
+          "firstName": "ZZT-900000010",
+          "id": "900000010",
           "isBlocked": false,
           "language": null,
           "lastName": "",
@@ -84,14 +84,14 @@
             "source": "whatsapp_business"
           },
           "contact": {
-            "id": "440987225"
+            "id": "900000010"
           },
           "event_id": "9911f47f-53d4-4226-9f9f-04f7d36a7c5e",
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
             "channelMessageId": "wamid.HBgLNjAxMjI0NjUyMTMVAgASGBYzRUIwQjBEOTUwRTgzRENBRTZBRjZEAA==",
-            "contactId": "440987225",
+            "contactId": "900000010",
             "message": {
               "text": "delivery to hanlim",
               "type": "text"
@@ -300,7 +300,7 @@
         "corrected_per_ruling": "coordinator ruling 16 Sep 2026: this case's own recorded `resolutions` for the 'hanlim' token were empty (no matches), the documented gap handpass1-003-delivery-to-hanlim-customer-roster.json's own known_gap_not_corrected_here note names for the identical token - a customer roster needs real seeded `customers` rows, which this harness (test_turn_replay.py::_seed_case_customers) now provides for this case_id, two real HANLIM rows. resolutions corrected to reference them directly (not invented - these are the EXACT rows the harness seeds), so this step's own roster is a genuine 2-way narrow rather than the old recording's 6-way one; expected.pending narrowed to match the 2 seeded rows."
       },
       "received_session_vars": {
-        "respond_io_id": "440987225",
+        "respond_io_id": "900000010",
         "session_vars": {
           "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 25\n*Outstanding:* 2\n\n2. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n3. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 1\n\n4. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 216\n*Outstanding:* 0\n\n5. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n6. *Product Code:* SRTKS7061\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n7. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 21\n*Outstanding:* 0\n\n8. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 1\n*Outstanding:* 1\n\n9. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n10. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 4\n*Outstanding:* 4\n\n11. *Product Code:* SRTKS7061-BL\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 9\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
           "variables": {
@@ -648,7 +648,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://internal.example.invalid/contacts/440987225"
+              "value": "https://internal.example.invalid/contacts/900000010"
             },
             {
               "name": "is_allowed_ai",
@@ -660,8 +660,8 @@
             }
           ],
           "email": null,
-          "firstName": "ZZT-440987225",
-          "id": "440987225",
+          "firstName": "ZZT-900000010",
+          "id": "900000010",
           "isBlocked": false,
           "language": null,
           "lastName": "",
@@ -687,14 +687,14 @@
             "source": "whatsapp_business"
           },
           "contact": {
-            "id": "440987225"
+            "id": "900000010"
           },
           "event_id": "9911f47f-53d4-4226-9f9f-04f7d36a7c5e",
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
             "channelMessageId": "wamid.HBgLNjAxMjI0NjUyMTMVAgASGBYzRUIwQjBEOTUwRTgzRENBRTZBRjZEAA==",
-            "contactId": "440987225",
+            "contactId": "900000010",
             "message": {
               "text": "1",
               "type": "text"
@@ -890,7 +890,7 @@
         "corrected_per_ruling": "coordinator ruling 16 Sep 2026 (AC-1593 item 0 addendum) + measured this session: with real customer rows seeded (test_turn_replay.py::_seed_case_customers) instead of empty resolutions, 'delivery to hanlim' (step 1) and 'outstanding for chin chun' (step 5) resolve for real - a 2-way narrow and a UNIQUE single match respectively, shifting the shape of every step after them (no roster survives to step 6 to pick from, since chin chun resolved uniquely at step 5 itself). expected corrected to the MEASURED current-engine outcome at every step, not the old recording's shape - the case still exercises the same real properties (a narrowing customer ask, a direct-fetch business_query, a not-understood re-ask, and the escalation ACCEPT path AC-1593 exists to pin) with real, honest data instead of an empty resolver stub."
       },
       "received_session_vars": {
-        "respond_io_id": "440987225",
+        "respond_io_id": "900000010",
         "session_vars": {
           "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 25\n*Outstanding:* 2\n\n2. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n3. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 1\n\n4. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 216\n*Outstanding:* 0\n\n5. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n6. *Product Code:* SRTKS7061\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n7. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 21\n*Outstanding:* 0\n\n8. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 1\n*Outstanding:* 1\n\n9. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n10. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 4\n*Outstanding:* 4\n\n11. *Product Code:* SRTKS7061-BL\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 9\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
           "variables": {
@@ -1089,7 +1089,7 @@
               "unmapped_types": []
             },
             "access_levels": [],
-            "contact_id": "440987225",
+            "contact_id": "900000010",
             "customer_ids": [
               "6f5a419b-840a-4e4d-8107-291971dd3bb8"
             ],
@@ -1208,7 +1208,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://internal.example.invalid/contacts/440987225"
+              "value": "https://internal.example.invalid/contacts/900000010"
             },
             {
               "name": "is_allowed_ai",
@@ -1220,8 +1220,8 @@
             }
           ],
           "email": null,
-          "firstName": "ZZT-440987225",
-          "id": "440987225",
+          "firstName": "ZZT-900000010",
+          "id": "900000010",
           "isBlocked": false,
           "language": null,
           "lastName": "",
@@ -1247,14 +1247,14 @@
             "source": "whatsapp_business"
           },
           "contact": {
-            "id": "440987225"
+            "id": "900000010"
           },
           "event_id": "9911f47f-53d4-4226-9f9f-04f7d36a7c5e",
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
             "channelMessageId": "wamid.HBgLNjAxMjI0NjUyMTMVAgASGBYzRUIwQjBEOTUwRTgzRENBRTZBRjZEAA==",
-            "contactId": "440987225",
+            "contactId": "900000010",
             "message": {
               "text": "hello",
               "type": "text"
@@ -1365,7 +1365,7 @@
         "corrected_per_ruling": "measured this session: the casual-tail pending-carry fix (AC-1593, coder 10, bd835dbc0) now correctly carries the open team_pick/yes_no offer through a casual aside instead of losing it - this step's pending is the SAME offer step 2 raised, unchanged, not None."
       },
       "received_session_vars": {
-        "respond_io_id": "440987225",
+        "respond_io_id": "900000010",
         "session_vars": {
           "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 25\n*Outstanding:* 2\n\n2. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n3. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 1\n\n4. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 216\n*Outstanding:* 0\n\n5. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n6. *Product Code:* SRTKS7061\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n7. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 21\n*Outstanding:* 0\n\n8. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 1\n*Outstanding:* 1\n\n9. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n10. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 4\n*Outstanding:* 4\n\n11. *Product Code:* SRTKS7061-BL\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 9\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
           "variables": {
@@ -1582,7 +1582,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://internal.example.invalid/contacts/440987225"
+              "value": "https://internal.example.invalid/contacts/900000010"
             },
             {
               "name": "is_allowed_ai",
@@ -1594,8 +1594,8 @@
             }
           ],
           "email": null,
-          "firstName": "ZZT-440987225",
-          "id": "440987225",
+          "firstName": "ZZT-900000010",
+          "id": "900000010",
           "isBlocked": false,
           "language": null,
           "lastName": "",
@@ -1621,14 +1621,14 @@
             "source": "whatsapp_business"
           },
           "contact": {
-            "id": "440987225"
+            "id": "900000010"
           },
           "event_id": "9911f47f-53d4-4226-9f9f-04f7d36a7c5e",
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
             "channelMessageId": "wamid.HBgLNjAxMjI0NjUyMTMVAgASGBYzRUIwQjBEOTUwRTgzRENBRTZBRjZEAA==",
-            "contactId": "440987225",
+            "contactId": "900000010",
             "message": {
               "text": "1",
               "type": "text"
@@ -1743,7 +1743,7 @@
         "corrected_per_ruling": "coordinator ruling 16 Sep 2026 (AC-1593 item 0 addendum) + measured this session: with real customer rows seeded (test_turn_replay.py::_seed_case_customers) instead of empty resolutions, 'delivery to hanlim' (step 1) and 'outstanding for chin chun' (step 5) resolve for real - a 2-way narrow and a UNIQUE single match respectively, shifting the shape of every step after them (no roster survives to step 6 to pick from, since chin chun resolved uniquely at step 5 itself). expected corrected to the MEASURED current-engine outcome at every step, not the old recording's shape - the case still exercises the same real properties (a narrowing customer ask, a direct-fetch business_query, a not-understood re-ask, and the escalation ACCEPT path AC-1593 exists to pin) with real, honest data instead of an empty resolver stub."
       },
       "received_session_vars": {
-        "respond_io_id": "440987225",
+        "respond_io_id": "900000010",
         "session_vars": {
           "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 25\n*Outstanding:* 2\n\n2. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n3. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 1\n\n4. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 216\n*Outstanding:* 0\n\n5. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n6. *Product Code:* SRTKS7061\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n7. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 21\n*Outstanding:* 0\n\n8. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 1\n*Outstanding:* 1\n\n9. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n10. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 4\n*Outstanding:* 4\n\n11. *Product Code:* SRTKS7061-BL\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 9\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
           "variables": {
@@ -1861,7 +1861,7 @@
               "unmapped_types": []
             },
             "access_levels": [],
-            "contact_id": "440987225",
+            "contact_id": "900000010",
             "customer_ids": [
               "6f5a419b-840a-4e4d-8107-291971dd3bb8"
             ],
@@ -1978,7 +1978,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://internal.example.invalid/contacts/440987225"
+              "value": "https://internal.example.invalid/contacts/900000010"
             },
             {
               "name": "is_allowed_ai",
@@ -1990,8 +1990,8 @@
             }
           ],
           "email": null,
-          "firstName": "ZZT-440987225",
-          "id": "440987225",
+          "firstName": "ZZT-900000010",
+          "id": "900000010",
           "isBlocked": false,
           "language": null,
           "lastName": "",
@@ -2017,14 +2017,14 @@
             "source": "whatsapp_business"
           },
           "contact": {
-            "id": "440987225"
+            "id": "900000010"
           },
           "event_id": "9911f47f-53d4-4226-9f9f-04f7d36a7c5e",
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
             "channelMessageId": "wamid.HBgLNjAxMjI0NjUyMTMVAgASGBYzRUIwQjBEOTUwRTgzRENBRTZBRjZEAA==",
-            "contactId": "440987225",
+            "contactId": "900000010",
             "message": {
               "text": "outstanding for chin chun",
               "type": "text"
@@ -2138,7 +2138,7 @@
         "_pin_text": true
       },
       "received_session_vars": {
-        "respond_io_id": "440987225",
+        "respond_io_id": "900000010",
         "session_vars": {
           "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 25\n*Outstanding:* 2\n\n2. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n3. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 1\n\n4. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 216\n*Outstanding:* 0\n\n5. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n6. *Product Code:* SRTKS7061\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n7. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 21\n*Outstanding:* 0\n\n8. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 1\n*Outstanding:* 1\n\n9. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n10. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 4\n*Outstanding:* 4\n\n11. *Product Code:* SRTKS7061-BL\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 9\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
           "variables": {
@@ -2290,7 +2290,7 @@
               "unmapped_types": []
             },
             "access_levels": [],
-            "contact_id": "440987225",
+            "contact_id": "900000010",
             "customer_ids": [
               "00000000-0000-0000-0000-0000000000a3"
             ],
@@ -2409,7 +2409,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://internal.example.invalid/contacts/440987225"
+              "value": "https://internal.example.invalid/contacts/900000010"
             },
             {
               "name": "is_allowed_ai",
@@ -2421,8 +2421,8 @@
             }
           ],
           "email": null,
-          "firstName": "ZZT-440987225",
-          "id": "440987225",
+          "firstName": "ZZT-900000010",
+          "id": "900000010",
           "isBlocked": false,
           "language": null,
           "lastName": "",
@@ -2448,14 +2448,14 @@
             "source": "whatsapp_business"
           },
           "contact": {
-            "id": "440987225"
+            "id": "900000010"
           },
           "event_id": "9911f47f-53d4-4226-9f9f-04f7d36a7c5e",
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
             "channelMessageId": "wamid.HBgLNjAxMjI0NjUyMTMVAgASGBYzRUIwQjBEOTUwRTgzRENBRTZBRjZEAA==",
-            "contactId": "440987225",
+            "contactId": "900000010",
             "message": {
               "text": "4",
               "type": "text"
@@ -2604,7 +2604,7 @@
         "corrected_per_ruling": "coordinator ruling 16 Sep 2026 (AC-1593 item 0 addendum) + measured this session: with real customer rows seeded (test_turn_replay.py::_seed_case_customers) instead of empty resolutions, 'delivery to hanlim' (step 1) and 'outstanding for chin chun' (step 5) resolve for real - a 2-way narrow and a UNIQUE single match respectively, shifting the shape of every step after them (no roster survives to step 6 to pick from, since chin chun resolved uniquely at step 5 itself). expected corrected to the MEASURED current-engine outcome at every step, not the old recording's shape - the case still exercises the same real properties (a narrowing customer ask, a direct-fetch business_query, a not-understood re-ask, and the escalation ACCEPT path AC-1593 exists to pin) with real, honest data instead of an empty resolver stub. Specifically: with chin chun resolved uniquely at step 5, there is no roster left for '4' to pick from - it fails to parse as an answer to the open yes_no escalate offer and the engine re-offers it, which is what this step now measures (no fetch, no entities, a re-ask)."
       },
       "received_session_vars": {
-        "respond_io_id": "440987225",
+        "respond_io_id": "900000010",
         "session_vars": {
           "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 25\n*Outstanding:* 2\n\n2. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n3. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 1\n\n4. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 216\n*Outstanding:* 0\n\n5. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n6. *Product Code:* SRTKS7061\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n7. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 21\n*Outstanding:* 0\n\n8. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 1\n*Outstanding:* 1\n\n9. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n10. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 4\n*Outstanding:* 4\n\n11. *Product Code:* SRTKS7061-BL\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 9\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
           "variables": {
@@ -2862,7 +2862,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://internal.example.invalid/contacts/440987225"
+              "value": "https://internal.example.invalid/contacts/900000010"
             },
             {
               "name": "is_allowed_ai",
@@ -2874,8 +2874,8 @@
             }
           ],
           "email": null,
-          "firstName": "ZZT-440987225",
-          "id": "440987225",
+          "firstName": "ZZT-900000010",
+          "id": "900000010",
           "isBlocked": false,
           "language": null,
           "lastName": "",
@@ -2901,14 +2901,14 @@
             "source": "whatsapp_business"
           },
           "contact": {
-            "id": "440987225"
+            "id": "900000010"
           },
           "event_id": "9911f47f-53d4-4226-9f9f-04f7d36a7c5e",
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
             "channelMessageId": "wamid.HBgLNjAxMjI0NjUyMTMVAgASGBYzRUIwQjBEOTUwRTgzRENBRTZBRjZEAA==",
-            "contactId": "440987225",
+            "contactId": "900000010",
             "message": {
               "text": "yes",
               "type": "text"
@@ -3016,7 +3016,7 @@
         "corrected_per_ruling": "coordinator ruling 16 Sep 2026 (AC-1593 item 0 addendum): a yes to an open escalate offer now genuinely escalates (apply.py::_answer_pending's accept short-circuit, coder 10, bd835dbc0) - branch_kind out_of_scope, routing.team from the offer, no fetch. The recorded turn (captured under the pre-fix, buggy engine) re-ran the prior business_query answer instead; this was the AC-1593 red this exact fix exists to turn green, now measured green directly. action_kinds is the real escalation-lane sequence (assign_conversation + add_comment beside the two send_message calls)."
       },
       "received_session_vars": {
-        "respond_io_id": "440987225",
+        "respond_io_id": "900000010",
         "session_vars": {
           "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 25\n*Outstanding:* 2\n\n2. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n3. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 1\n\n4. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 216\n*Outstanding:* 0\n\n5. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n6. *Product Code:* SRTKS7061\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n7. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 21\n*Outstanding:* 0\n\n8. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 1\n*Outstanding:* 1\n\n9. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n10. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 4\n*Outstanding:* 4\n\n11. *Product Code:* SRTKS7061-BL\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 9\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
           "variables": {

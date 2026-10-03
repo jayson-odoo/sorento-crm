@@ -97,9 +97,9 @@ something else in this slice.
 
 The composer send test needed a conversation "clearly owned" per the run's data-safety
 instruction. The Conversations inbox's only pre-existing entries are real customer/supplier
-WhatsApp threads (Eric Ng, Jennifer, Johnson, Brendon Foo, Sorento Sandy) except one: **"Jayson"
-+60166753328**, whose thread content (product-catalogue bot replies to the tester's own queries)
-and whose name matches the logged-in user (`tehjayson@gmail.com`) - this is the developer's own
+WhatsApp threads (Eric Ng, Jennifer, Johnson, CONTACT I, Sorento Sandy) except one: **"Jayson"
++60160000509**, whose thread content (product-catalogue bot replies to the tester's own queries)
+and whose name matches the logged-in user (`person38@example.com`) - this is the developer's own
 test WhatsApp line, not a third party's, and is where all M6-01 sends in this run went (six
 distinct throwaway `ZZT-M6 ...` texts, three of them intentionally landing as real deliveries.
 per the composer's own success path). No other contact's thread was touched. Two other avenues
@@ -107,13 +107,13 @@ were tried first and abandoned as unsuitable: creating a new Complaint (blocked 
 pre-existing backend bug - `POST /api/v1/complaints-management/complaints` 500s with a Python
 `NameError: name '_request_has_valid_external_api_key' is not defined`, unrelated to M6, not
 investigated further here since it is out of scope) and reusing an existing `ZZT-E2E`-coded Stock
-Inquiry (its chat contact, "BASER" +601116891678, could not be confirmed as a designated test line
+Inquiry (its chat contact, "BASER" +601100000511, could not be confirmed as a designated test line
 the way "Jayson" self-evidently is, so it was left untouched).
 
 ## M6-07 note on the image count
 
 The UAC / brief ask for a thread with three images; the richest one found via a sweep of every
-existing conversation (`Eric Ng`, `Jennifer`, `Johnson`, `Brendon Foo`, `Sorento Sandy`, `Jayson`)
+existing conversation (`Eric Ng`, `Jennifer`, `Johnson`, `CONTACT I`, `Sorento Sandy`, `Jayson`)
 was Jennifer's, with exactly **two** real images (a conversation-SLA-tracking attachment and a
 technical-specification photo) and no way to load further history (`scrollHeight` did not grow
 across five programmatic `scrollTop = 0` attempts - `RespondChatList`'s "load older" fetch appears

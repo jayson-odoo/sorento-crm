@@ -12,7 +12,7 @@ the source database, and it never writes anywhere except under
         line-001-stock-by-location
 
     venv/bin/python scripts/chatbot_record_turn.py --db-url "$SOURCE_URL" \\
-        --contact 437264483 --since 2026-09-15 --until 2026-09-16 --group console \\
+        --contact 900000008 --since 2026-09-15 --until 2026-09-16 --group console \\
         --slug-prefix owner-15sep
 
     venv/bin/python scripts/chatbot_record_turn.py --db-url "$SOURCE_URL" \\
@@ -425,7 +425,7 @@ def _scrub_pii(envelope: dict[str, Any] | None) -> dict[str, Any] | None:
     """Real names, phone numbers and emails out of a recorded envelope before it is
     ever written to disk (this corpus is committed to git).
 
-    Contact 437264483 (`test_engine.py::CONTACT_ID`, "Jayson"/"ZZT") is the team's
+    Contact 900000008 (`test_engine.py::CONTACT_ID`, "Jayson"/"ZZT") is the team's
     OWN standing console-test contact, already hardcoded across dozens of committed
     test files - scrubbing it too keeps ONE rule ("every envelope is scrubbed") over
     a carve-out, and costs nothing since no test reads a name/phone value. Every
@@ -447,7 +447,7 @@ def _scrub_pii(envelope: dict[str, Any] | None) -> dict[str, Any] | None:
     channel = message.get("channel") or {}
     if channel.get("name"):
         # The COMPANY's own WhatsApp Business channel name/number (measured:
-        # "Internal (+60 11-1673 1179)") - not a customer's, but still the
+        # "Internal (+60 11-0000 0524)") - not a customer's, but still the
         # company's real number, publicly readable in a committed corpus.
         channel["name"] = "Internal (scrubbed)"
     if isinstance(channel.get("meta"), str):

@@ -6,7 +6,7 @@ first one I need two'. It's quite weird that it replies in that way. So maybe ou
 can be better. And I'm also curious in your methodology ... not too much hard coding,
 hard routing."
 
-The exchange (14:07Z to 14:08Z, :3087, contact 437264483):
+The exchange (14:07Z to 14:08Z, :3087, contact 900000008):
   "check stock STWC2867"      -> "Couldn't find STWC2867. Did you mean: 1. SRTWC286-SH
                                   2. SRTWC286-SH-P"
   "the first one, I need 2"   -> "STWC2867 x 2: which one? 1. ... 2. ..."   (wrong)

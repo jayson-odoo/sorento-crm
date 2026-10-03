@@ -18,9 +18,9 @@ real `contact.custom_fields` array and does not hit the known
 `KeyError: 'custom_fields'` at `route.py:220`):
 
 - **Sean**, `respond_contacts.id=04ddf73e-3a0e-4914-8b24-18ed8aac06b8`,
-  `respond_io_id=477071886`, `respond_contact_market_segments.segment_code=retail`.
+  `respond_io_id=900000053`, `respond_contact_market_segments.segment_code=retail`.
 - **CK@Sorento**, `respond_contacts.id=6ea667f4-0a66-4607-93ec-366e4d96dfc9`,
-  `respond_io_id=469779580`, `segment_code=project`.
+  `respond_io_id=900000110`, `segment_code=project`.
 
 Neither contact carries a contact-tier override, so both resolve via `default_policy` /
 `project` segment respectively - confirmed via

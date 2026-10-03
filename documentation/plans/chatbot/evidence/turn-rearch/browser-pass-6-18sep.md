@@ -4,7 +4,7 @@ Stack: frontend http://localhost:3081 (dev/HMR), backend :8081, clone DB
 `sorento_ai_automation_rearch`, lane head 4427bb6bb. Parser version confirmed in the console UI:
 `v27 · full · production`. Session: agent-browser `--session rearch-browser-6` (via
 `AGENT_BROWSER_SESSION=rearch-browser-6`), headless, logged in via `E2E_EMAIL`/`E2E_PASSWORD`
-from `sorento_crm_frontend/.env.local`. Contact used throughout: Justin (`+60122465213`).
+from `sorento_crm_frontend/.env.local`. Contact used throughout: CONTACT N (`+60120000510`).
 
 Navigation: sidebar clicks from `/` on first entry (System > Messaging > Chatbot Console), no
 deep URL for the first navigation. `get url` checked repeatedly through the run; every read

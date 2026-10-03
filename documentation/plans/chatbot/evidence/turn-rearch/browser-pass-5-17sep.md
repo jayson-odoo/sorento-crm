@@ -7,7 +7,7 @@ feat/chatbot-turn-rearch") - confirmed `99b97c8fb` is an ancestor of HEAD
 (`git merge-base --is-ancestor 99b97c8fb HEAD` = true). Parser version confirmed in the console
 UI: `v24 · full · production`. Session: agent-browser `--session rearch-browser-5`, headless,
 logged in via `E2E_EMAIL`/`E2E_PASSWORD` from `sorento_crm_frontend/.env.local`. Contact used:
-Justin (`+60122465213`), never the owner's own ZZT contact. 8 seconds between every turn; no 429
+CONTACT N (`+60120000510`), never the owner's own ZZT contact. 8 seconds between every turn; no 429
 encountered anywhere in the chain, so no run was cut short.
 
 Navigation: sidebar clicks from `/` throughout (System > Messaging > Chatbot Console; System group

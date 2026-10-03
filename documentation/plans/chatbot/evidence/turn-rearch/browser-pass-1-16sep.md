@@ -21,7 +21,7 @@ structure the pass list describes.
 substring "ZZ") exists in this DB clone - confirmed empty results from four different search
 surfaces: Respond.io Contacts list (`query=ZZT` and `query=ZZ`), Internal Users list (same),
 Delivery Orders > Customers (`ZZT` no data), and the Chatbot Console's own contact picker
-(`No results found.`). Substituted contact **Justin (+60122465213)**, the real contact behind
+(`No results found.`). Substituted contact **CONTACT N (+60120000510)**, the real contact behind
 the bulk of the `chat-history` corpus's `check stock` traffic (36182 rows total, visible once the
 date filter is widened past its default same-day window). Recommend the captain confirm with the
 owner whether "ZZT" was meant to exist on this clone or was carried over from a different one.

@@ -37,8 +37,8 @@
               "value": "true"
             }
           ],
-          "firstName": "ZZT-437264483",
-          "id": 437264483,
+          "firstName": "ZZT-900000008",
+          "id": 900000008,
           "lastName": "",
           "phone": "+60437264483"
         },
@@ -47,12 +47,12 @@
         "media": null,
         "message": {
           "contact": {
-            "id": 437264483
+            "id": 900000008
           },
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
-            "contactId": 437264483,
+            "contactId": 900000008,
             "message": {
               "text": "promotion 7445",
               "type": "text"
@@ -195,8 +195,8 @@
               "value": "true"
             }
           ],
-          "firstName": "ZZT-437264483",
-          "id": 437264483,
+          "firstName": "ZZT-900000008",
+          "id": 900000008,
           "lastName": "",
           "phone": "+60437264483"
         },
@@ -205,12 +205,12 @@
         "media": null,
         "message": {
           "contact": {
-            "id": 437264483
+            "id": 900000008
           },
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
-            "contactId": 437264483,
+            "contactId": 900000008,
             "message": {
               "text": "9",
               "type": "text"
@@ -396,8 +396,8 @@
               "value": "true"
             }
           ],
-          "firstName": "ZZT-437264483",
-          "id": 437264483,
+          "firstName": "ZZT-900000008",
+          "id": 900000008,
           "lastName": "",
           "phone": "+60437264483"
         },
@@ -406,12 +406,12 @@
         "media": null,
         "message": {
           "contact": {
-            "id": 437264483
+            "id": 900000008
           },
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
-            "contactId": 437264483,
+            "contactId": 900000008,
             "message": {
               "text": "all",
               "type": "text"

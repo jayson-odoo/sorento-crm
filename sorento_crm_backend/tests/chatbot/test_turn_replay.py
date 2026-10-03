@@ -275,7 +275,7 @@ def _parse_pending_stems(text: str) -> dict[str, str]:
 def _stem_matches_case(case_stem: str, stem: str) -> bool:
     """`case_stem` (a real case id, minus `.json`) matches `stem` (one PENDING-
     LIVE-RERUN.md entry) when `stem` is a prefix AND the next character (if any)
-    is not a digit - so `..-437264483` does not also swallow a hypothetical
+    is not a digit - so `..-900000008` does not also swallow a hypothetical
     `..-4372644830-...` case that merely shares the same leading digits."""
     if not case_stem.startswith(stem):
         return False
@@ -1053,7 +1053,7 @@ class TestPendingLiveRerunParsing:
     SAMPLE = (
         "## Composite / cascading chains (2 files)\n\n"
         "Every file below fails on 3+ of the 5 comparison fields across many steps.\n\n"
-        "`console/case-{008,010}`, `prod_sample/demand-qty-423729473`.\n\n"
+        "`console/case-{008,010}`, `prod_sample/demand-qty-900000017`.\n\n"
         "Not exhaustively broken down per file this session.\n\n"
         "## Some other heading, checked live (tester 20)\n\n"
         "This prose sentence mentions `console/case-099-not-a-list-item` inline as an "
@@ -1069,7 +1069,7 @@ class TestPendingLiveRerunParsing:
 
     def test_a_stem_with_no_braces_is_kept_as_is(self) -> None:
         stems = _parse_pending_stems(self.SAMPLE)
-        assert "prod_sample/demand-qty-423729473" in stems
+        assert "prod_sample/demand-qty-900000017" in stems
 
     def test_missing_section_yields_no_stems(self) -> None:
         assert _parse_pending_stems("# Some other doc\n\nno matching section here.\n") == {}
@@ -1089,8 +1089,8 @@ class TestPendingLiveRerunParsing:
 
     def test_stem_does_not_match_a_case_sharing_only_a_leading_digit_run(self) -> None:
         # A hypothetical case id "..-4372644830-.." must NOT be swallowed by the
-        # stem "..-437264483" merely because it starts with the same digits.
-        assert _stem_matches_case("prod_sample/business-query-4372644830-chain", "prod_sample/business-query-437264483") is False
+        # stem "..-900000008" merely because it starts with the same digits.
+        assert _stem_matches_case("prod_sample/business-query-4372644830-chain", "prod_sample/business-query-900000008") is False
 
     def test_stem_matches_an_exact_case_id_with_no_suffix(self) -> None:
         assert _stem_matches_case("console/handbuilt-rp-001", "console/handbuilt-rp-001") is True

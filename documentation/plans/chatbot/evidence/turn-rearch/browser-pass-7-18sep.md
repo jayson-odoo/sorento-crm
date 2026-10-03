@@ -5,8 +5,8 @@ Stack: frontend http://localhost:3081 (dev/HMR), backend :8081, clone DB
 confirmed in the console UI: `v28 · full · production`. Worktree:
 `/Users/tehjayson/Documents/foundryx/sorento_crm/.claude/worktrees/agent-aa7b10e854453193b`. Session:
 agent-browser `--session rearch-browser-7`, headless, logged in via `E2E_EMAIL`/`E2E_PASSWORD` from
-this worktree's `sorento_crm_frontend/.env.local`. Contact used throughout: Justin
-(`+60122465213`). Read first `browser-pass-6-18sep.md` and the "Coder 15 addendum" (head
+this worktree's `sorento_crm_frontend/.env.local`. Contact used throughout: CONTACT N
+(`+60120000510`). Read first `browser-pass-6-18sep.md` and the "Coder 15 addendum" (head
 `6dc96c237`) in `.claude/handoffs/20260915T171114Z-rearch-coder-s0-s2.md` before driving this pass.
 
 Navigation: sidebar clicks from `/` (System > Messaging > Chatbot Console) on first entry, no deep

@@ -49,7 +49,7 @@ function person(overrides: Partial<OnboardingPerson> = {}): OnboardingPerson {
     nick_name: 'Aisyah',
     role_label: 'Sales admin',
     phone_raw: '012-3456781',
-    email_raw: 'aisyah@mocha.com.my',
+    email_raw: 'person4@example.com',
     template_id: 'tpl-sales',
     requester_note: null,
     reviewer_note: null,
@@ -124,11 +124,11 @@ describe('PeopleGrid', () => {
       />,
     );
     const email = within(grid()).getByLabelText('Email, row 1');
-    fireEvent.change(email, { target: { value: 'new@mocha.com.my' } });
+    fireEvent.change(email, { target: { value: 'person29@example.com' } });
     // An edit is one event, not one per character: the parent hears about it
     // when she moves off the field.
     fireEvent.blur(email);
-    expect(onPatch).toHaveBeenCalledWith('p1', { email_raw: 'new@mocha.com.my' });
+    expect(onPatch).toHaveBeenCalledWith('p1', { email_raw: 'person29@example.com' });
   });
 
   it('keeps the caret in the cell while a name is typed, and patches once', () => {

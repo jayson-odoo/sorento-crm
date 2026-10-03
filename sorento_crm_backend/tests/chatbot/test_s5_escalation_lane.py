@@ -129,7 +129,7 @@ def _ctx(
     query_brands: list | None = None,
     entities: list | None = None,
     prev_variables: dict | None = None,
-    contact_phone: str = "+60123450099",
+    contact_phone: str = "+60120000527",
     contact_id: str = "ZZT-esc-1",
     current_assignee: str | None = None,
     person_mention: str | None = None,

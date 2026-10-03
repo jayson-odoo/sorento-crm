@@ -150,7 +150,7 @@ describe('PartyDetailClient', () => {
         party({
           registration_no: '199801012345',
           phone: '03-1234 5678',
-          email: 'hello@veritas.my',
+          email: 'person16@example.com',
           address: 'Level 8, Menara X, Kuala Lumpur',
           notes: 'Specifies our basins on hotel work.',
           customer_name: 'Veritas Sdn Bhd',
@@ -169,7 +169,7 @@ describe('PartyDetailClient', () => {
 
     expect(screen.getByText('199801012345')).toBeInTheDocument();
     expect(screen.getByText('03-1234 5678')).toBeInTheDocument();
-    expect(screen.getByText('hello@veritas.my')).toBeInTheDocument();
+    expect(screen.getByText('person16@example.com')).toBeInTheDocument();
     expect(screen.getByText('Level 8, Menara X, Kuala Lumpur')).toBeInTheDocument();
     expect(screen.getByText('Veritas Sdn Bhd')).toBeInTheDocument();
     expect(screen.getByText('4 projects')).toBeInTheDocument();

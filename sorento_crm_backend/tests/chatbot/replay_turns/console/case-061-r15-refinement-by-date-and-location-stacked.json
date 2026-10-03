@@ -37,8 +37,8 @@
               "value": "true"
             }
           ],
-          "firstName": "ZZT-437264483",
-          "id": 437264483,
+          "firstName": "ZZT-900000008",
+          "id": 900000008,
           "lastName": "",
           "phone": "+60437264483"
         },
@@ -47,12 +47,12 @@
         "media": null,
         "message": {
           "contact": {
-            "id": 437264483
+            "id": 900000008
           },
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
-            "contactId": 437264483,
+            "contactId": 900000008,
             "message": {
               "text": "outstanding dealer quantity for CNK HARDWARE",
               "type": "text"
@@ -196,8 +196,8 @@
               "value": "true"
             }
           ],
-          "firstName": "ZZT-437264483",
-          "id": 437264483,
+          "firstName": "ZZT-900000008",
+          "id": 900000008,
           "lastName": "",
           "phone": "+60437264483"
         },
@@ -206,12 +206,12 @@
         "media": null,
         "message": {
           "contact": {
-            "id": 437264483
+            "id": 900000008
           },
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
-            "contactId": 437264483,
+            "contactId": 900000008,
             "message": {
               "text": "3",
               "type": "text"
@@ -382,7 +382,7 @@
             "access_levels": [
               "dealer"
             ],
-            "contact_id": "437264483",
+            "contact_id": "900000008",
             "customer_ids": [
               "bf722285-60ab-41f0-815c-dc2ebf6f6c80",
               "53a671ae-67d7-41da-a46a-30d18da4fcc1"
@@ -477,8 +477,8 @@
               "value": "true"
             }
           ],
-          "firstName": "ZZT-437264483",
-          "id": 437264483,
+          "firstName": "ZZT-900000008",
+          "id": 900000008,
           "lastName": "",
           "phone": "+60437264483"
         },
@@ -487,12 +487,12 @@
         "media": null,
         "message": {
           "contact": {
-            "id": 437264483
+            "id": 900000008
           },
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
-            "contactId": 437264483,
+            "contactId": 900000008,
             "message": {
               "text": "i want to see this month only",
               "type": "text"
@@ -667,7 +667,7 @@
             "access_levels": [
               "dealer"
             ],
-            "contact_id": "437264483",
+            "contact_id": "900000008",
             "customer_ids": [
               "bf722285-60ab-41f0-815c-dc2ebf6f6c80",
               "53a671ae-67d7-41da-a46a-30d18da4fcc1"
@@ -762,8 +762,8 @@
               "value": "true"
             }
           ],
-          "firstName": "ZZT-437264483",
-          "id": 437264483,
+          "firstName": "ZZT-900000008",
+          "id": 900000008,
           "lastName": "",
           "phone": "+60437264483"
         },
@@ -772,12 +772,12 @@
         "media": null,
         "message": {
           "contact": {
-            "id": 437264483
+            "id": 900000008
           },
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
-            "contactId": 437264483,
+            "contactId": 900000008,
             "message": {
               "text": "1",
               "type": "text"
@@ -963,7 +963,7 @@
             "access_levels": [
               "dealer"
             ],
-            "contact_id": "437264483",
+            "contact_id": "900000008",
             "customer_ids": [
               "bf722285-60ab-41f0-815c-dc2ebf6f6c80",
               "53a671ae-67d7-41da-a46a-30d18da4fcc1"
@@ -1061,8 +1061,8 @@
               "value": "true"
             }
           ],
-          "firstName": "ZZT-437264483",
-          "id": 437264483,
+          "firstName": "ZZT-900000008",
+          "id": 900000008,
           "lastName": "",
           "phone": "+60437264483"
         },
@@ -1071,12 +1071,12 @@
         "media": null,
         "message": {
           "contact": {
-            "id": 437264483
+            "id": 900000008
           },
           "event_type": "message.received",
           "message": {
             "channelId": 453209,
-            "contactId": 437264483,
+            "contactId": 900000008,
             "message": {
               "text": "only BRW",
               "type": "text"

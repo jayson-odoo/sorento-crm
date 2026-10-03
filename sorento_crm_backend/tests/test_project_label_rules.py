@@ -124,7 +124,7 @@ class TestLabelFromNoteNoMatch:
             None,
         )
         assert label_from_note("***DELIVERY 27/08/2026") == (None, None)
-        assert label_from_note("CONTACT : 016-771 1912") == (None, None)
+        assert label_from_note("CONTACT : 016-000 0522") == (None, None)
         assert label_from_note("") == (None, None)
         assert label_from_note(None) == (None, None)
 
