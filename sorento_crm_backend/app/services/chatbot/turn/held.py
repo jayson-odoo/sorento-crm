@@ -31,7 +31,7 @@ from typing import Any, Callable, Mapping
 from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.decide import NEW_INTENT, decide
 from app.services.chatbot.turn.policy_rows import DEFAULT_DOMAIN_ROWS
-from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS, from_wire, to_wire
+from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS, from_wire, is_roster, to_wire
 from app.services.chatbot.turn.state import Focus, State, focus_from_wire
 
 __all__ = ["NEW_INTENT", "HELD_TTL_TURNS", "SLOTS", "consume", "expire", "held_slots", "stamp"]
@@ -151,6 +151,11 @@ def _answers(state: State, verdict: dict[str, Any]) -> bool:
     return False
 
 
+def _answers_only_by_pick(pending: Any) -> bool:
+    """Does this open question accept nothing but a pick off its own options?"""
+    return pending is not None and (pending.kind in ESCALATION_OFFER_KINDS or is_roster(pending.kind))
+
+
 def consume(
     state: State, verdict: dict[str, Any], *, answered: list[str] | tuple[str, ...] = ()
 ) -> tuple[State, str | None]:
@@ -178,12 +183,13 @@ def consume(
     if verdict.get("topic_reset") is True:
         return _cleared(state), "topic_reset"
     if changed and not answered and not _answers(state, verdict):
-        # An escalation offer is kept: it accepts nothing weaker than an explicit yes, a
-        # position or a company pick (`decide`, #1323), so no reply of another intent is
-        # ever captured by it, and its own clock (`pending.OFFER_TTL`) already ends it. The
-        # subject a miss offered it over is what "cert?" next is about (#833).
-        offer = state.pending is not None and state.pending.kind in ESCALATION_OFFER_KINDS
-        return _cleared(state, keep_pending=offer), "new_intent"
+        # A question that accepts ONLY a position or one of its own offered labels is kept
+        # (the new question is still answered as itself; it cannot be captured): an
+        # escalation offer (`decide`, #1323, with its own `pending.OFFER_TTL` clock; the
+        # subject a miss offered it over is what "cert?" next is about, #833) and a roster
+        # (`pending.is_roster`; "incoming srtwc286" -> "4" -> "check stock" -> "7" still
+        # picks, #1352). Reset, TTL and access change still drop both.
+        return _cleared(state, keep_pending=_answers_only_by_pick(state.pending)), "new_intent"
     return state, None
 
 
@@ -203,7 +209,7 @@ def _view(focus: Focus, pending: Any) -> tuple[Any, ...]:
     )
 
 
-def stamp(state: State, before: Mapping[str, Any] | None, *, question: Any = None) -> State:
+def stamp(state: State, stored: Mapping[str, Any] | None, *, question: Any = None) -> State:
     """Where the five keys are written: stamp the turn and the access the held questions
     were (re)asked under. `question` is the open question being written when it is not
     `state.pending` (the composer's own). Nothing held clears the stamp; an unchanged held
@@ -215,8 +221,8 @@ def stamp(state: State, before: Mapping[str, Any] | None, *, question: Any = Non
         focus.held_turn = None
         focus.held_access = None
         return replace(state, focus=focus)
-    before = before or {}
-    was = _view(focus_from_wire(before.get("focus")), from_wire(before.get("open_question")))
+    stored = stored or {}
+    was = _view(focus_from_wire(stored.get("focus")), from_wire(stored.get("open_question")))
     if was != _view(state.focus, written) or focus.held_turn is None:
         focus.held_turn = state.turn_no
         # An unknown access (a failed read) keeps the stamp it had rather than writing one

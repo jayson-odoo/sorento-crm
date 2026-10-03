@@ -116,13 +116,20 @@ def test_every_minted_pending_kind_is_registered():
 KINDS = [*pending_mod.PENDING_KINDS, "brand_pick", "attachment_type_ask", "form_pick"]
 
 
-QUESTION_KINDS = [k for k in KINDS if k not in pending_mod.ESCALATION_OFFER_KINDS]
+#: Questions that accept only a pick off their own options (escalation offers, rosters).
+PICK_ONLY = [k for k in KINDS if k in pending_mod.ESCALATION_OFFER_KINDS or pending_mod.is_roster(k)]
+QUESTION_KINDS = [k for k in KINDS if k not in PICK_ONLY]
 
 
-@pytest.mark.parametrize("kind", sorted(pending_mod.ESCALATION_OFFER_KINDS))
-def test_a_new_intent_keeps_an_escalation_offer_but_drops_the_rest(kind):
-    """An escalation offer accepts only an explicit yes / position / company pick, so a
-    reply of another intent cannot be captured by it; it ends on its own 3-turn clock."""
+def test_both_sides_of_the_matrix_are_populated():
+    assert QUESTION_KINDS and PICK_ONLY
+
+
+@pytest.mark.parametrize("kind", PICK_ONLY)
+def test_a_new_intent_keeps_a_pick_only_question_but_drops_the_rest(kind):
+    """An escalation offer or a roster accepts only a position or an offered label, so a
+    reply of another intent cannot be captured by it (#1323, #1352); the new question is
+    answered as itself, and reset / TTL / access still drop it."""
     state = _state(_all_held_focus(intent="check_order"), pending=_pending(kind))
     out, why = held.consume(state, verdict(intent_hint="check_promotion", entities=[entity("X1")]))
     assert why == "new_intent"
