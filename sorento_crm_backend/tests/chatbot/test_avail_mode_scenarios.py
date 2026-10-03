@@ -679,6 +679,8 @@ def test_S53_an_eta_ask_for_a_family_tells_nothing_until_picked(console):
     c = console(**{"SRTWC286-SH-150": Stock(eta=ETA)})
     out = c.say("eta SRTWC286", _eta_ask("SRTWC286"))
     assert "ETA" not in out and TICK not in out and CROSS not in out and "19/10" not in out, out
+    # Cloud live-parser pass at 2ff7f5e9: every line read "- has incoming".
+    assert "incoming" not in out.lower(), out
     assert "1. SRTWC286-SH" in out and "2. SRTWC286-SH-150" in out, out
     assert c.say("2", _pick(2)) == f"SRTWC286-SH-150: {TICK} ETA 19/10/2026\n\n{R}"
     (last,) = [a for name, a in c.tool_calls if name == "crm_incoming_stock_list"][-1:]
@@ -706,3 +708,20 @@ def test_S54b_an_exact_code_with_a_quantity_read_as_product_info_answers_stock(c
     c = console(SRT5674=Stock(on_hand=30))
     out = c.say("SRT5674 x 50", _misread_as_product_info(product("SRT5674", 50)))
     assert out == f"SRT5674 x 50: {TICK} 30 available. {R}"
+
+
+@pytest.mark.parametrize(
+    "parsed",
+    [
+        _misread_as_product_info(product("srt5764", 10)),
+        reply(entities=[product("srt5764")], domain_hint="incoming", intent_hint="check_incoming"),
+    ],
+    ids=["product_info_code_only", "incoming_no_quantity"],
+)
+def test_S54c_the_quantity_need_not_follow_the_code(console, parsed):
+    """Live parser, step 23 runs 1-2 on the second pass: the entity was 'srt5764' and
+    the '10' came after 'xx', so 'code then number' never matched and the dealer got the
+    incoming / staff did-you-mean. Any standalone number in a message with no ETA word
+    makes it a stock ask."""
+    c = console()
+    _dym5764_positions(c.say("srt5764 xx 10", parsed))
