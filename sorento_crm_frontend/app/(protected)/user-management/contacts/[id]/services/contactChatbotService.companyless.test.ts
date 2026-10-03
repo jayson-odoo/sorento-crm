@@ -109,3 +109,51 @@ describe('usual sites', () => {
     expect(options).toEqual([{ value: 'Mocha Site', label: 'Mocha · Mocha Site' }]);
   });
 });
+
+describe('same value in several companies (one option per value)', () => {
+  const row = (id: string, company: string) => ({
+    id,
+    company_id: `co-${company}`,
+    company_name: company,
+  });
+
+  it('brands: one option per brand name, label names every company sorted', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        data: [
+          { ...row('b-1', 'Sorento'), brand_code: 'CAB', brand_name: 'CABANA' },
+          { ...row('b-2', 'Mocha'), brand_code: 'CAB', brand_name: 'CABANA' },
+          { ...row('b-3', 'Mocha'), brand_code: 'X', brand_name: 'X' },
+        ],
+        pagination: { total: 3, page: 1, limit: 20 },
+      }),
+    );
+
+    const options = await searchUsualBrandOptions('c');
+
+    expect(options).toEqual([
+      { value: 'CABANA', label: 'Mocha, Sorento · CABANA' },
+      { value: 'X', label: 'Mocha · X' },
+    ]);
+  });
+
+  it('sites: one option per warehouse name, label names every company sorted', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        data: [
+          { ...row('w-1', 'Sorento'), warehouse_code: 'A', warehouse_name: 'Rawang' },
+          { ...row('w-2', 'Mocha'), warehouse_code: 'B', warehouse_name: 'Rawang' },
+          { ...row('w-3', 'Sorento'), warehouse_code: 'C', warehouse_name: 'Meru' },
+        ],
+        pagination: { total: 3, page: 1, limit: 20 },
+      }),
+    );
+
+    const options = await searchUsualSiteOptions('r');
+
+    expect(options).toEqual([
+      { value: 'Rawang', label: 'Mocha, Sorento · Rawang' },
+      { value: 'Meru', label: 'Sorento · Meru' },
+    ]);
+  });
+});
