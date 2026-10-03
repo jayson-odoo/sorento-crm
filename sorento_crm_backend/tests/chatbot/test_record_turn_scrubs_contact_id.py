@@ -68,3 +68,98 @@ def test_fields_derive_from_one_fake_id_and_pass_the_guard():
     assert fake_id in contact["email"]
     assert guard.is_fake_phone(contact["phone"])
     assert guard.scan_text(json.dumps(contact)) == []
+
+
+# AC-22 ---------------------------------------------------------------------
+
+def _recording(real: str) -> tuple[dict, list]:
+    envelope = {
+        "contact": {"id": int(real), "firstName": "Real", "lastName": "P", "phone": "+60" + real},
+        "message": {
+            "contact": {"id": int(real), "firstName": "Real", "lastName": "P"},
+            "message": {"contactId": int(real), "text": "hi"},
+        },
+    }
+    tool_results = [
+        {
+            "tool": "lookup",
+            "args": {"contact_id": real, "q": "x"},
+            "envelope": {"data": {"contact_id": real, "nested": [{"contactId": int(real)}]}},
+        }
+    ]
+    return envelope, tool_results
+
+
+def test_every_contact_id_position_carries_the_same_fake_id():
+    rng = random.Random(31)
+    real = _real_id(rng)
+    envelope, tool_results = _recording(real)
+    scrubbed_env = recorder._scrub_pii(envelope)
+    scrubbed_tools = recorder._scrub_nested_pii(json.loads(json.dumps(tool_results)))
+    blob = json.dumps([scrubbed_env, scrubbed_tools])
+    assert real not in blob
+    fake = str(scrubbed_env["contact"]["id"])
+    assert str(scrubbed_env["message"]["message"]["contactId"]) == fake
+    assert str(scrubbed_tools[0]["args"]["contact_id"]) == fake
+    assert str(scrubbed_tools[0]["envelope"]["data"]["contact_id"]) == fake
+    assert str(scrubbed_tools[0]["envelope"]["data"]["nested"][0]["contactId"]) == fake
+
+
+def test_default_contact_output_name_does_not_hold_the_real_id(monkeypatch):
+    rng = random.Random(32)
+    real = _real_id(rng)
+    slugs: list[str] = []
+
+    class _Result:
+        def fetchall(self):
+            return [object()]
+
+        def first(self):
+            return None
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, *a, **k):
+            return _Result()
+
+    class _Url:
+        database = "ac22"
+
+    class _Engine:
+        url = _Url()
+
+        def connect(self):
+            return _Conn()
+
+    monkeypatch.setattr(recorder, "create_engine", lambda *a, **k: _Engine())
+    monkeypatch.setattr(recorder, "_source_switches", lambda conn: {})
+    monkeypatch.setattr(recorder, "_row_to_dict", lambda row: {})
+    monkeypatch.setattr(recorder, "_record_row", lambda row, **k: {})
+
+    def _fake_write(group, slug, turns):
+        slugs.append(slug)
+        return recorder.REPLAY_ROOT / group / f"{slug}.json"
+
+    monkeypatch.setattr(recorder, "_write", _fake_write)
+    argv = ["--db-url", "postgresql://x/y", "--group", "console", "--contact", real, "--chain-by", "none"]
+    assert recorder.main(argv) == 0
+    assert slugs and all(real not in s for s in slugs)
+
+
+def test_fake_id_space_has_no_collisions_and_phones_pass_the_guard():
+    for count, seed in ((40, 41), (200, 42)):
+        rng = random.Random(seed)
+        reals: set[str] = set()
+        while len(reals) < count:
+            reals.add(_real_id(rng))
+        fakes = set()
+        for real in reals:
+            contact = _scrubbed(real)
+            fakes.add(str(contact["id"]))
+            assert guard.is_fake_phone(contact["phone"])
+        assert len(fakes) == count, f"{count - len(fakes)} merged contacts in {count}"

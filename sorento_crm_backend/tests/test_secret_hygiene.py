@@ -194,14 +194,50 @@ def test_gitleaks_action_is_pinned_to_full_version_or_sha():
         assert re.fullmatch(r"v\d+\.\d+\.\d+|[0-9a-f]{40}", ref), f"unpinned ref {ref!r}"
 
 
-def test_gitleaks_runs_under_same_if_as_pii_guard():
+def test_gitleaks_skips_merge_group_and_dispatch_but_runs_on_labelled_pr_and_push():
+    # AC-21 supersedes the old "same `if` as pii-guard" test: gitleaks must NOT
+    # run on merge_group or workflow_dispatch.
     name, job, step = _gitleaks_job()
     assert name, "no gitleaks job or step"
-    guard_if = _workflow()["jobs"]["pii-guard"].get("if")
-    effective = step.get("if") or job.get("if")
-    if name == "pii-guard":
-        effective = effective or guard_if
-    assert effective == guard_if, "gitleaks gating differs from pii-guard"
+    effective = str(step.get("if") or job.get("if") or "")
+    assert effective, "gitleaks has no if"
+
+    def run(event: str, label: str = "") -> bool:
+        expr = effective.replace("${{", "").replace("}}", "").strip()
+        expr = re.sub(r"github\.event\.label\.name", repr(label), expr)
+        expr = re.sub(r"github\.event_name", repr(event), expr)
+        expr = expr.replace("&&", " and ").replace("||", " or ").replace("!=", " != ")
+        expr = re.sub(r"(?<![=!<>])!(?!=)", " not ", expr)
+        return bool(eval(expr, {"__builtins__": {}}, {}))
+
+    assert not run("merge_group")
+    assert not run("workflow_dispatch")
+    assert run("pull_request", "ci")
+    assert not run("pull_request", "other")
+    assert run("push")
+
+
+def test_gitleaks_action_is_pinned_to_a_commit_sha():
+    # AC-21 supersedes the older "full version or sha" pin test.
+    _, _, step = _gitleaks_job()
+    uses = str(step.get("uses", ""))
+    assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", uses), f"not a 40-hex SHA pin: {uses!r}"
+
+
+def test_gitleaks_version_env_is_exact():
+    _, _, step = _gitleaks_job()
+    ver = str((step.get("env") or {}).get("GITLEAKS_VERSION", ""))
+    assert re.fullmatch(r"v?\d+\.\d+\.\d+", ver), f"GITLEAKS_VERSION={ver!r}"
+
+
+def test_gitleaks_allowlist_regexes_are_anchored():
+    text = _text(ROOT / ".gitleaks.toml")
+    block = re.search(r"^\[allowlist\].*?^regexes\s*=\s*\[(.*?)^\]", text, re.M | re.S)
+    assert block, "no [allowlist] regexes"
+    regexes = re.findall(r"'''(.*?)'''", block.group(1))
+    assert regexes
+    bad = [r for r in regexes if not (r.startswith("^") and r.endswith("$"))]
+    assert not bad, f"unanchored allowlist regexes: {bad}"
 
 
 def test_gitleaks_toml_extends_default_rules():
