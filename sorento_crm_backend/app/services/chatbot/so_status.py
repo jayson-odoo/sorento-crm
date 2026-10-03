@@ -313,6 +313,36 @@ def names_sales_orders(text: str) -> bool:
     )
 
 
+def typed_so_numbers_verdict(verdict: dict[str, Any], text: str) -> tuple[dict[str, Any], str | None]:
+    """The verdict with the SO numbers the message TYPED as its SO entities, and the rule
+    that fired. Cloud pass on PR #1435 (live parser): after the SO422056 card, "status of
+    SO421624" came back as `{"raw": "SO422056", "current_message": true}` in 2 of 4 runs, the
+    number copied off "Previous response". A current-message SO number the words do not hold
+    is dropped, and a typed one the parser left out is added, in the order typed. Leaves the
+    verdict alone when the message types no SO number."""
+    typed: list[str] = []
+    for m in _TYPED_SO_NUMBER_RE.findall(text or ""):
+        key = so_key(m)
+        if key not in typed:
+            typed.append(key)
+    if not typed:
+        return verdict, None
+    entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
+
+    def _is_current_so(e: dict[str, Any]) -> bool:
+        return e.get("current_message") is not False and is_so_number(e.get("raw"))
+
+    parsed = [so_key(str(e.get("raw"))) for e in entities if _is_current_so(e)]
+    if parsed == typed:
+        return verdict, None
+    kept = [e for e in entities if not _is_current_so(e)]
+    template = next((e for e in entities if _is_current_so(e)), {"hint": "order", "canonical_code": None})
+    typed_entities = [
+        {**template, "raw": key, "current_message": True, "confident": True} for key in typed
+    ]
+    return {**verdict, "entities": typed_entities + kept}, "typed_so_numbers"
+
+
 def so_list_verdict(verdict: dict[str, Any], text: str) -> tuple[dict[str, Any], str | None]:
     """The verdict an SO list ask is applied with, and the rule that fired: the SO document,
     the order domain, no status, whatever the parser read. Leaves a verdict the parser put

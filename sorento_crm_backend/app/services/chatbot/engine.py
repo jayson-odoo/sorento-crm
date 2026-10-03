@@ -3881,6 +3881,13 @@ def _run_stages_body(  # noqa: PLR0915
         # runs): the words decide the document, as they decide the order list's brand above.
         from app.services.chatbot import so_status as so_status_mod
 
+        # Cloud pass on #1435 (live parser): the SO numbers the message typed are its SO
+        # entities, never one copied off the previous card.
+        verdict, typed_so_rule = so_status_mod.typed_so_numbers_verdict(
+            verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+        )
+        if typed_so_rule:
+            turn_trace.add("so_status", {"verdict_rule": typed_so_rule})
         # Never inside a top selling ranking: there "by sales order" / "SO basis" switch the
         # ranking's basis (`_top_selling_verdict` above, round 7 R3), and the list must not
         # take the ranking's question or its status away.
