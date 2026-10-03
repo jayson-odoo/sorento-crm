@@ -327,3 +327,44 @@ class TestOwnerHandTest3OctListAfterTheOutstandingSummary:
         )
         assert reply.startswith(("Sales orders for HANLIM TRADING SDN BHD", "Which period for HANLIM TRADING SDN BHD?")), reply
         assert self.REPORT not in [n for n, _ in captured], captured
+
+
+class TestTesterRerun3OctPeriodAfterThePick:
+    """crew-tester re-run on e8d0536c, 3 of 3: "my outstanding SOs" (no window) -> "1" ->
+    the SO list's period question (right) -> "september" -> the outstanding REPORT again.
+    The detail offer is sticky and the carried status was still "outstanding", so the
+    period was read as narrowing that report. Once the SO list has answered the pick, the
+    offer closes and the period answers the SO list."""
+
+    def test_my_outstanding_sos_then_1_then_september_is_the_so_list(self, session_factory, monkeypatch) -> None:
+        from tests.chatbot.test_outstanding_lane import CUSTOMER_SUBJECT_HIT, _session_of
+
+        _seed_hanlim(session_factory)
+        result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(domain_hint="order", intent_hint="check_order", order_status="so_outstanding",
+                              entities=[], self_reference=True),
+            text_body="my outstanding SOs",
+            msg_id=f"ZZT-so-os-{uuid.uuid4().hex[:10]}", attributes=[OUTSTANDING_KEY], matches={},
+            mcp_response=CUSTOMER_SUBJECT_HIT,
+        )
+        assert [n for n, _ in captured] == ["crm_outstanding_report"], captured
+
+        picked, captured = _turn(
+            session_factory, monkeypatch,
+            _parser_output(message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                           order_status=None, reference_positions=[1]),
+            "1",
+        )
+        assert picked.startswith("Which period for HANLIM TRADING SDN BHD?"), picked
+        assert captured == [], captured
+
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _parser_output(message_type="business_query", intent_hint=None, domain_hint=None, entities=[],
+                           order_status=None, date_filter_start="2026-09-01", date_filter_end="2026-09-30"),
+            "september",
+        )
+        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026 to 30 Sep 2026:\nSO422095"), reply
+        assert "crm_outstanding_report" not in [n for n, _ in captured], captured
+        assert (_session_of(session_factory).get("open_question") or {}).get("kind") != "outstanding_detail"
