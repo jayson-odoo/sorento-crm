@@ -95,17 +95,34 @@ def field_reveal_keys() -> list[dict[str, str]]:
     return [{"key": key, "label": label} for key, label in sorted(FIELD_REVEAL_KEYS)]
 
 
+def granted_keys_for(db: Session, respond_contact_ids: list[str]) -> dict[str, list[str]]:
+    """`granted_keys` for many contacts in one query: the ONE definition of the effective set.
+
+    Keyed by the ids as given (every id present, `[]` when nothing is held).
+    """
+    ids = [str(i) for i in respond_contact_ids]
+    held: dict[str, set[str]] = {i: set() for i in ids}
+    have_row: dict[str, set[str]] = {i: set() for i in ids}
+    if ids:
+        for contact_id, key, granted in (
+            db.query(
+                ContactFieldReveal.respond_contact_id,
+                ContactFieldReveal.field_key,
+                ContactFieldReveal.granted,
+            )
+            .filter(ContactFieldReveal.respond_contact_id.in_(ids))
+            .all()
+        ):
+            have_row[str(contact_id)].add(key)
+            if granted:
+                held[str(contact_id)].add(key)
+    return {i: sorted(held[i] | (DEFAULT_ON_KEYS - have_row[i])) for i in ids}
+
+
 def granted_keys(db: Session, respond_contact_id: str) -> list[str]:
     """The keys this contact currently holds: every granted row, plus each default-on key
     with no row at all (a `granted=False` row hides it)."""
-    rows = (
-        db.query(ContactFieldReveal.field_key, ContactFieldReveal.granted)
-        .filter(ContactFieldReveal.respond_contact_id == respond_contact_id)
-        .all()
-    )
-    have_row = {key for key, _granted in rows}
-    held = {key for key, granted in rows if granted}
-    return sorted(held | (DEFAULT_ON_KEYS - have_row))
+    return granted_keys_for(db, [respond_contact_id])[str(respond_contact_id)]
 
 
 def set_granted_keys(
