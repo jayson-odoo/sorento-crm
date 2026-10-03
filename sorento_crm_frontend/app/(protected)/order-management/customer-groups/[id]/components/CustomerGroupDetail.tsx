@@ -132,7 +132,9 @@ export default function CustomerGroupDetail({ groupId }: { groupId: string }) {
                 <span>{ledgerCountLabel(group.ledger_count)}</span>
                 {accounts ? <span>{accounts}</span> : null}
                 {group.sales_agent_mixed ? (
-                  <span>Agent: Mixed</span>
+                  <Badge variant="warning" appearance="light" size="sm">
+                    Agent: Mixed
+                  </Badge>
                 ) : group.sales_agent_label ? (
                   <span>Agent: {group.sales_agent_label}</span>
                 ) : null}

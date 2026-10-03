@@ -261,22 +261,22 @@ describe('CustomerGroupsList', () => {
 
 describe('CustomerGroupsList agent column and filter (CUSTOMER-SALES-AGENT, AC-8, AC-9)', () => {
   const AGENT_ROWS = [
-    { ...ROWS[0], sales_agent_label: 'AGENT-A', sales_agent_mixed: false },
-    { ...ROWS[1], sales_agent_label: null, sales_agent_mixed: true },
-    { ...ROWS[2], sales_agent_label: null, sales_agent_mixed: false },
+    { ...ROWS[0], name: 'GRP-1 TRADING', sales_agent_label: 'AGENT-A', sales_agent_mixed: false },
+    { ...ROWS[1], name: 'GRP-2 TRADING', sales_agent_label: null, sales_agent_mixed: true },
+    { ...ROWS[2], name: 'GRP-3 TRADING', sales_agent_label: null, sales_agent_mixed: false },
   ];
 
   it('AC-8: shows the person label, a Mixed pill, or a dash', async () => {
     services.getCustomerGroups.mockResolvedValue(page(AGENT_ROWS));
     renderList();
 
-    await screen.findByText('HANLIM TRADING SDN BHD');
+    await screen.findByText('GRP-1 TRADING');
     expect(screen.getAllByText('Agent').length).toBeGreaterThan(0);
-    const labelRow = screen.getByText('HANLIM TRADING SDN BHD').closest('tr') as HTMLElement;
+    const labelRow = screen.getByText('GRP-1 TRADING').closest('tr') as HTMLElement;
     expect(labelRow.textContent).toContain('AGENT-A');
-    const mixedRow = screen.getByText('CHIN CHUN HOMEMART SDN BHD').closest('tr') as HTMLElement;
+    const mixedRow = screen.getByText('GRP-2 TRADING').closest('tr') as HTMLElement;
     expect(mixedRow.textContent).toContain('Mixed');
-    const noneRow = screen.getByText('JUBIN KEMUNING SDN BHD').closest('tr') as HTMLElement;
+    const noneRow = screen.getByText('GRP-3 TRADING').closest('tr') as HTMLElement;
     expect(noneRow.textContent).not.toContain('Mixed');
     expect(noneRow.textContent).not.toContain('AGENT-A');
   });
@@ -284,7 +284,7 @@ describe('CustomerGroupsList agent column and filter (CUSTOMER-SALES-AGENT, AC-8
   it('AC-9: choosing Mixed agents only calls the service with agent_mixed true', async () => {
     services.getCustomerGroups.mockResolvedValue(page(AGENT_ROWS));
     renderList();
-    await screen.findByText('HANLIM TRADING SDN BHD');
+    await screen.findByText('GRP-1 TRADING');
     expect(services.getCustomerGroups.mock.calls[0][0].agent_mixed).toBe(false);
 
     fireEvent.keyDown(screen.getByRole('button', { name: /filters/i }), { key: 'Enter' });

@@ -312,7 +312,7 @@ describe('CustomerGroupDetail', () => {
 describe('CustomerGroupDetail agent (CUSTOMER-SALES-AGENT, AC-8)', () => {
   it('header shows "Agent: <label>" and the Ledgers tab shows the code and name', async () => {
     services.getCustomerGroup.mockResolvedValue({
-      ...GROUP,
+      ...GROUP, name: 'GRP-1 TRADING',
       sales_agent_label: 'AGENT-A',
       sales_agent_mixed: false,
     });
@@ -330,14 +330,14 @@ describe('CustomerGroupDetail agent (CUSTOMER-SALES-AGENT, AC-8)', () => {
   });
 
   it('header shows "Agent: Mixed" when the ledgers disagree and nothing when none is set', async () => {
-    services.getCustomerGroup.mockResolvedValue({ ...GROUP, sales_agent_mixed: true });
+    services.getCustomerGroup.mockResolvedValue({ ...GROUP, name: 'GRP-1 TRADING', sales_agent_mixed: true });
     const mixed = renderDetail();
     expect(await screen.findByText('Agent: Mixed')).toBeInTheDocument();
     mixed.unmount();
 
-    services.getCustomerGroup.mockResolvedValue({ ...GROUP, sales_agent_label: null });
+    services.getCustomerGroup.mockResolvedValue({ ...GROUP, name: 'GRP-1 TRADING', sales_agent_label: null });
     renderDetail();
-    await screen.findByText('HANLIM TRADING SDN BHD');
+    await screen.findByText('GRP-1 TRADING');
     expect(screen.queryByText(/^Agent:/)).toBeNull();
   });
 });
