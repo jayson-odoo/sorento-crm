@@ -309,6 +309,12 @@ Planned split for this lane:
   owner recognises) and the G1 data step on the 55 internal contacts. These stay in the
   owner's hand test.
 
+Real dev data (owner rule, 3 Oct 2026): when the cloud pass needs real rows, post a PR
+comment starting `crew-data-request:` naming the tables, the filters (codes, ids, date range)
+and why. Crew sends masked rows by crew message. They load into the sandbox DB only, from a
+file kept outside the repo (scratchpad). Real data is never committed and never pasted in a PR
+or gist.
+
 ## Kill list (tests must fail when these are broken)
 
 - The strip keeps a tagged block for a contact without the grant.
