@@ -55,8 +55,10 @@ person label; two or more = "Mixed". No ledger with an agent = blank. Ledgers wi
 not make a group mixed (Q3).
 
 R8. **Office list.** Customer Groups list gets an Agent column (person / "Mixed" / blank) and a
-filter "Mixed agents only". Group detail shows the same value under the header; its ledger table
-already lists each ledger's agent (`CustomerResponse`).
+filter "Mixed agents only". Group detail shows the same value under the header, and its Ledgers tab
+gains an Agent column (the API already returns `sales_agent_code` / `sales_agent_name` on each
+ledger via `CustomerResponse`; the tab does not draw it today), so the office sees which ledger
+disagrees.
 
 ## Examples (masked)
 
