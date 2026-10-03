@@ -90,6 +90,7 @@ from app.services.rules.master_rules import clean_supplier_name, normalize_code,
 # The agent code's one normalisation, imported rather than restated: the master
 # screen, the outstanding-SO import and this ingest all have to agree on what
 # `sean i` is, or the captain's demand class lands on one of three rows.
+from app.services.scm.sales_agent_service import derive_person_label
 from app.services.scm.sales_agent_service import normalize_code as _normalize_agent_code
 
 logger = logging.getLogger(__name__)
@@ -493,6 +494,16 @@ def _customer_columns(payload: Any, db: Session, company_id: str, warnings: list
             warnings.append("segment_unknown")
         else:
             columns["market_segment_code"] = canonical
+    # AutoCount `Debtor.SalesAgent`: blank is untouched like an absent key; an unknown code
+    # warns and leaves the stored agent. (`agent_unresolved` is billing_document_ingest_service's
+    # WARN_AGENT_UNRESOLVED; imported there, so the literal here avoids a circular import.)
+    agent_code = payload.sales_agent_code if "sales_agent_code" in payload.model_fields_set else None
+    if agent_code and agent_code.strip():
+        agent_id = _lookup_id(db, "sales_agents", "sales_agent", agent_code, company_id, normalized=True)
+        if agent_id is None:
+            warnings.append("agent_unresolved")
+        else:
+            columns["sales_agent_id"] = agent_id
     return columns
 
 
@@ -1228,6 +1239,7 @@ class MasterIngestService:
                 self._update(spec, existing_id, columns)
             self._link(entity_type, existing_id, payload)
             self._post_write_product_hooks(entity_type, existing_id)
+            self._fan_out_customer_agent(entity_type, existing_id, columns)
             return IngestOutcome.UPDATED, existing_id, diff, warnings
 
         # First sync: adopt a local record with the same business identity
@@ -1303,6 +1315,7 @@ class MasterIngestService:
             # it, whether or not it changes a single column.
             self._link(entity_type, adopted, payload)
             self._post_write_product_hooks(entity_type, adopted)
+            self._fan_out_customer_agent(entity_type, adopted, columns)
             return IngestOutcome.UPDATED, adopted, diff, warnings
 
         if entity_type == "products":
@@ -1311,9 +1324,27 @@ class MasterIngestService:
         new_id = self._insert(entity_type, spec, columns)
         self._link(entity_type, new_id, payload)
         self._post_write_product_hooks(entity_type, new_id)
+        self._fan_out_customer_agent(entity_type, new_id, columns)
         # Nothing existed to overwrite, so there is no diff to report. Distinct
         # from {} -- see RecordResult.diff.
         return IngestOutcome.CREATED, new_id, None, warnings
+
+    def _fan_out_customer_agent(self, entity_type: str, customer_id: str, columns: dict[str, Any]) -> None:
+        """Set the resolved agent on every other ledger of this company with the same debtor
+        code (back-created rows an order import made under the same code). Runs inside the
+        record's savepoint, so a dry run or a failed record rolls it back."""
+        agent_id = columns.get("sales_agent_id")
+        if entity_type != "customers" or agent_id is None:
+            return
+        self.db.execute(
+            text(
+                "UPDATE customers SET sales_agent_id = :aid "
+                "WHERE company_id = :cid AND id <> :id "
+                "AND lower(btrim(customer_code)) = lower(btrim(:code)) "
+                "AND sales_agent_id IS DISTINCT FROM :aid"
+            ),
+            {"aid": agent_id, "cid": self.company_id, "id": customer_id, "code": columns["customer_code"]},
+        )
 
     def _fill_create_only_product_gaps(self, columns: dict[str, Any]) -> None:
         """Live fix, 2026-09-06: `category_id`/`base_uom_id` are NOT NULL FKs
@@ -1561,6 +1592,8 @@ class MasterIngestService:
                 # D18: only on create - an existing agent's provenance (manual,
                 # import) is never overwritten by a later AutoCount confirmation.
                 row.source = "autocount"
+                if not (insert_columns.get("person_label") or "").strip():
+                    row.person_label = derive_person_label(insert_columns.get("sales_agent"))
             if self.stamp_user_id:
                 # AC-PC-4: only a pull Confirm sets `stamp_user_id` at all - the
                 # ordinary FoundryX push leaves both columns untouched, same as today.

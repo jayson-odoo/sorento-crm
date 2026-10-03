@@ -20,6 +20,7 @@ inventing master data nobody knows to look at.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Iterable, Optional
 
 from sqlalchemy import func, or_, text
@@ -40,6 +41,40 @@ MANUAL_SOURCE = "manual"
 def normalize_code(code: Optional[str]) -> str:
     """The stored and compared form of an agent code: trimmed and upper-cased."""
     return (code or "").strip().upper()
+
+
+#: A trailing roman-numeral level (`AGENT-A III`) after a space or dash separator. The same
+#: pattern is copied into the person-label migration, which may not import app services.
+_LEVEL_SUFFIX = re.compile(r"[\s-]+(?:I|II|III|IV|V|VI|VII|VIII|IX|X)$")
+
+
+def derive_person_label(code: Optional[str]) -> Optional[str]:
+    """The person behind an agent code: the code without its trailing level, or None if blank.
+
+    `AGENT-A I` and `AGENT-A III` are one person at two levels. A code with no separator before
+    a numeral-looking tail (`QI`) is left whole.
+    """
+    key = normalize_code(code)
+    label = _LEVEL_SUFFIX.sub("", key).rstrip(" -")
+    return label or None
+
+
+def backfill_person_labels(db: Session) -> int:
+    """Fill the derived label on agents whose label is NULL or blank. Never overwrites."""
+    rows = (
+        db.query(SalesAgent)
+        .filter(or_(SalesAgent.person_label.is_(None), func.btrim(SalesAgent.person_label) == ""))
+        .all()
+    )
+    count = 0
+    for agent in rows:
+        derived = derive_person_label(agent.sales_agent)
+        if derived is None:
+            continue
+        agent.person_label = derived
+        count += 1
+    db.flush()
+    return count
 
 
 def _lookup(db: Session, normalized: str) -> Optional[SalesAgent]:
@@ -99,7 +134,9 @@ def resolve_or_create(db: Session, code: Optional[str], *,
     existing = _lookup(db, key)
     if existing is not None:
         return existing
-    agent = SalesAgent(sales_agent=key, source=source, is_active=True)
+    agent = SalesAgent(
+        sales_agent=key, source=source, is_active=True, person_label=derive_person_label(key)
+    )
     db.add(agent)
     db.flush()
     return agent
