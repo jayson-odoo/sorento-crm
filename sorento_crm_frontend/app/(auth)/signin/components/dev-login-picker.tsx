@@ -90,6 +90,7 @@ export function DevLoginPicker({ onSignedIn, onError, disabled }: DevLoginPicker
       <div className="flex flex-col gap-2.5 sm:flex-row">
         <SearchableSelect
           id="dev-login-user"
+          aria-label="Sign in as"
           className="min-w-0 flex-1"
           value={selected}
           onChange={setSelected}

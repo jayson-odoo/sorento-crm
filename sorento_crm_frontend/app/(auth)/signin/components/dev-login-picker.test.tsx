@@ -70,7 +70,7 @@ describe('DevLoginPicker', () => {
     const { onSignedIn } = renderPicker();
     await screen.findByTestId('dev-login-picker');
     // The default is preselected; the picker exposes the allowlisted users by name + role only.
-    expect(screen.getByText('Dev Admin (Admin)')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Sign in as' })).toHaveTextContent('Dev Admin (Admin)');
     screen.getByRole('button', { name: 'Sign in as user' }).click();
     await waitFor(() => expect(onSignedIn).toHaveBeenCalled());
     expect(mockSignIn).toHaveBeenCalledWith('dev-login', { redirect: false, email: 'admin@example.com' });
