@@ -3922,6 +3922,15 @@ def _run_stages_body(  # noqa: PLR0915
                 focus=_dc.replace(state_in.focus, status=None),
                 pending=None if open_kind in ("outstanding_detail", "outstanding_scope") else state_in.pending,
             )
+        if not (in_ranking_conversation or top_selling_rule or state_in.focus.status == "top_selling"):
+            # The month and the "outstanding" an SO ask types, when the parser dropped them.
+            from app.services.chatbot import do_ask as _do_ask
+
+            verdict, typed_rule = so_status_mod.typed_words_verdict(
+                verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or ""), _do_ask.today_myt()
+            )
+            if typed_rule:
+                turn_trace.add("so_list", {"verdict_rule": typed_rule})
 
         # PR #1353 fix round 3: a bare position over an open roster is read by the
         # engine, and its positions win over the parser's (turn 3f56a40d: "2" read as 1).

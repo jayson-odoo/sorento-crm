@@ -408,6 +408,64 @@ def carried_status_verdict(
     return verdict, None
 
 
+_MONTH_WORDS = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3, "april": 4, "apr": 4,
+    "june": 6, "jun": 6, "july": 7, "jul": 7, "august": 8, "aug": 8,
+    "september": 9, "sept": 9, "sep": 9, "october": 10, "oct": 10, "november": 11, "nov": 11,
+    "december": 12, "dec": 12,
+}
+
+
+def typed_month(text: str, today: Any) -> tuple[Any, Any] | None:
+    """The one calendar month the message types ("september", "Sep 2026", "this month",
+    "last month"), as (first day, last day); None for anything else (two months, a date
+    range, no month). A month after `today`'s is last year's: the SO list looks back. "may"
+    is left to the parser: it is an English word ("may I see my SOs")."""
+    from datetime import date, timedelta
+
+    words = _WORDS_RE.findall((text or "").casefold())
+    pairs = list(zip(words, words[1:]))
+    this_month = date(today.year, today.month, 1)
+    if ("this", "month") in pairs:
+        start = this_month
+    elif ("last", "month") in pairs:
+        start = (this_month - timedelta(days=1)).replace(day=1)
+    else:
+        months = [_MONTH_WORDS[w] for w in words if w in _MONTH_WORDS]
+        if len(months) != 1 or any(w.isdigit() and len(w) <= 2 for w in words):
+            return None
+        years = [int(w) for w in words if w.isdigit() and len(w) == 4]
+        year = years[0] if years else (today.year if months[0] <= today.month else today.year - 1)
+        start = date(year, months[0], 1)
+    end = (start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    return start, end
+
+
+def typed_words_verdict(verdict: dict[str, Any], text: str, today: Any) -> tuple[dict[str, Any], str | None]:
+    """An SO-document order ask with the month and the "outstanding" its words type, when
+    the parser dropped them. Cloud pass on PR #1435, live parser: "september" answering the
+    SO list's "Which period?" came back with no dates in 2 of 3 runs (the question was asked
+    again), and "my outstanding sales orders in september" came back with no status (the SO
+    list's question) or no dates (a summary over every date) in 2 of 9."""
+    domain = str(verdict.get("domain_hint") or "").strip()
+    document = [str(d).upper() for d in (verdict.get("document") or [])]
+    if domain not in ("", "order") or document != ["SO"]:
+        return verdict, None
+    fixed = dict(verdict)
+    rules: list[str] = []
+    if not verdict.get("date_filter_start") and not verdict.get("date_filter_end"):
+        month = typed_month(text, today)
+        if month is not None:
+            fixed["date_filter_start"], fixed["date_filter_end"] = month[0].isoformat(), month[1].isoformat()
+            rules.append("typed_month")
+    if says_outstanding(text) and not (verdict.get("status") or verdict.get("order_status")):
+        fixed["order_status"] = "so_outstanding"
+        rules.append("typed_outstanding")
+    if not rules:
+        return verdict, None
+    return {**fixed, "domain_hint": "order"}, "+".join(rules)
+
+
 def so_list_verdict(verdict: dict[str, Any], text: str) -> tuple[dict[str, Any], str | None]:
     """The verdict an SO list ask is applied with, and the rule that fired: the SO document,
     the order domain, no status, whatever the parser read. Leaves a verdict the parser put

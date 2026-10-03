@@ -450,3 +450,56 @@ class TestCloudPassLiveParserReadings:
               "all my sales orders")
         self._summary(session_factory, monkeypatch, "my outstanding sales orders in september",
                       date_filter_start="2026-09-01", date_filter_end="2026-09-30")
+
+
+class TestCloudPassParserDropsTheTypedWords:
+    """Cloud pass on PR #1435, live parser: "september" answering the SO list's "Which
+    period?" came back with no dates in 2 of 3 runs, and "my outstanding sales orders in
+    september" with no status or no dates in 2 of 9. The words decide."""
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("september", ("2026-09-01", "2026-09-30")),
+            ("Sep", ("2026-09-01", "2026-09-30")),
+            ("november", ("2025-11-01", "2025-11-30")),
+            ("feb 2026", ("2026-02-01", "2026-02-28")),
+            ("last month", ("2026-09-01", "2026-09-30")),
+            ("this month", ("2026-10-01", "2026-10-31")),
+            ("may I see my SOs", None),
+            ("15 Sep to 10 Oct", None),
+            ("august and september", None),
+            ("all my sales orders", None),
+        ],
+    )
+    def test_typed_month(self, text, expected) -> None:
+        from datetime import date
+
+        from app.services.chatbot.so_status import typed_month
+
+        got = typed_month(text, date(2026, 10, 3))
+        assert (None if got is None else (got[0].isoformat(), got[1].isoformat())) == expected
+
+    def test_all_my_sales_orders_then_september_without_dates(self, session_factory, monkeypatch) -> None:
+        _seed_hanlim(session_factory)
+        asked, _ = _turn(session_factory, monkeypatch, _live(order_status=None), "all my sales orders")
+        assert asked.startswith("Which period for HANLIM TRADING SDN BHD?"), asked
+        monkeypatch.setattr("app.services.chatbot.do_ask.today_myt", lambda: __import__("datetime").date(2026, 10, 3))
+        reply, captured = _turn(
+            session_factory, monkeypatch, _live(order_status="sales_report", status="sales_report"), "september"
+        )
+        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026 to 30 Sep 2026:\nSO422095"), reply
+        assert captured == [], captured
+
+    def test_outstanding_in_september_without_a_status_is_the_report(self, session_factory, monkeypatch) -> None:
+        from tests.chatbot.test_outstanding_lane import CUSTOMER_SUBJECT_HIT
+
+        _seed_hanlim(session_factory)
+        result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_live(order_status=None, self_reference=False),
+            text_body="my outstanding sales orders in september",
+            msg_id=f"ZZT-so-live-{uuid.uuid4().hex[:10]}", attributes=[OUTSTANDING_KEY], matches={},
+            mcp_response=CUSTOMER_SUBJECT_HIT,
+        )
+        assert [n for n, _ in captured] == ["crm_outstanding_report"], captured
