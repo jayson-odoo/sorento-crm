@@ -237,6 +237,25 @@ def links_with_customers(
     )
 
 
+def customer_codes_by_contact(db: Session, contact_ids: Sequence[str]) -> dict[str, list[str]]:
+    """Linked customer codes (sorted asc) per contact, ONE query for the whole page.
+
+    Customer is company-scoped, so the join sees only the caller's customers, the same
+    as the contact card's payload."""
+    if not contact_ids:
+        return {}
+    rows = (
+        db.query(RespondContactCustomer.contact_id, Customer.customer_code)
+        .join(Customer, Customer.id == RespondContactCustomer.customer_id)
+        .filter(RespondContactCustomer.contact_id.in_(list(contact_ids)))
+        .all()
+    )
+    out: dict[str, list[str]] = {}
+    for contact_id, code in rows:
+        out.setdefault(str(contact_id), []).append(code)
+    return {k: sorted(v) for k, v in out.items()}
+
+
 def get_link(db: Session, contact_id: str, customer_id: str) -> RespondContactCustomer | None:
     return (
         db.query(RespondContactCustomer)
