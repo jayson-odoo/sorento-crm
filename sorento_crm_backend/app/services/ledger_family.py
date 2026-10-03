@@ -233,6 +233,9 @@ def customer_header_words(entries: Iterable[tuple[str, str | None]]) -> str:
     return ", ".join(words)
 
 
+_ROMAN = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10}
+
+
 def account_level_from_name(name: str | None) -> int | None:
     """The `A/C <n>` marker inside a `[..]` or `(..)` of a customer name, as a number.
 
