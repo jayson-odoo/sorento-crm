@@ -226,3 +226,13 @@ def test_the_addendum_teaches_the_how_many_answer_as_the_parsers_top_n() -> None
     for reply in ('"5"', '"top 5"', '"five"'):
         assert reply in bullet, (reply, bullet)
     assert "sales_ranking" in bullet and "top_n 5" in bullet, bullet
+
+
+def test_the_addendum_says_a_people_ranking_is_a_new_ask_even_over_an_open_top_selling_question() -> None:
+    a = _addendum()
+    at = a.find("A ranking of PEOPLE or ACCOUNTS")
+    assert at >= 0, "the people-ranking rule is missing"
+    rule = a[at:].split("\n  - ", 1)[0].split("\nNOT a sales ranking", 1)[0]
+    assert 'order_status "sales_ranking"' in rule and "own group_by" in rule, rule
+    assert "By quantity or by amount?" in rule and "never an answer" in rule, rule
+    assert "unless it ranks people or accounts" in SEMANTIC_PARSER_PROMPT
