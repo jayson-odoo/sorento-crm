@@ -448,6 +448,52 @@ def _code_like(token: str) -> bool:
     return any(ch.isdigit() for ch in token) and any(ch.isalpha() for ch in token)
 
 
+def _unsure_capture_as_codes(verdict: dict[str, Any]) -> dict[str, Any]:
+    """AVAIL-MODE-REPLIES (tester re-run on a5ba9dc9f, fix 1 runs 2-3): the live parser
+    intermittently read "srt5764 xx 10" as ONE unsure capture (`confident: false`, or no
+    hint), and the dealer was told 'I captured "srt5764 xx 10" but couldn't tell which
+    part is which.' instead of the did-you-mean. An availability stock / ETA turn reads
+    such a capture by its own words: each code-like word is a product, a bare number is
+    its quantity, any other word is dropped (never a product)."""
+    if verdict.get("domain_hint") not in ("inventory", "incoming") and verdict.get("intent_hint") not in (
+        "check_stock",
+        "check_incoming",
+    ):
+        return verdict
+    entities = verdict.get("entities") or []
+    out: list[Any] = []
+    changed = False
+    for e in entities:
+        unsure = (
+            isinstance(e, dict)
+            and e.get("hint") in (None, "product")
+            and (e.get("hint") is None or e.get("confident") is False or e.get("hint_confident") is False)
+        )
+        if not unsure:
+            out.append(e)
+            continue
+        words = [w for w in re.split(r"[\s,]+", str(e.get("raw") or "")) if w]
+        codes = [w for w in words if _code_like(w)]
+        numbers = [int(w) for w in words if w.isdigit()]
+        changed = True
+        qty = e.get("quantity")
+        if qty is None and len(numbers) == 1 and verdict.get("demand_qty") is None:
+            qty = numbers[0]
+        for code in codes:
+            out.append(
+                {
+                    **e,
+                    "raw": code,
+                    "canonical_code": code,
+                    "hint": "product",
+                    "confident": True,
+                    "hint_confident": True,
+                    "quantity": qty,
+                }
+            )
+    return {**verdict, "entities": out} if changed else verdict
+
+
 def _exact_codes_only(
     parse_output: dict[str, Any],
     resolved_kinds: dict[str, dict[str, int]],
@@ -4141,6 +4187,10 @@ def _run_stages_body(  # noqa: PLR0915
             if stock_ask is not verdict:
                 turn_trace.add("stock_ask_by_its_own_words", {"parser_intent": verdict.get("intent_hint")})
                 verdict = stock_ask
+            as_codes = _unsure_capture_as_codes(verdict)
+            if as_codes is not verdict:
+                turn_trace.add("unsure_capture_as_codes", {"entities": [e.get("raw") for e in as_codes["entities"] if isinstance(e, dict)]})
+                verdict = as_codes
             summed = _with_repeated_codes_summed(
                 verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
             )
@@ -4522,9 +4572,11 @@ def _run_stages_body(  # noqa: PLR0915
             unplaced_tokens = resolve_outcome.unplaced_tokens
             spec_tier = resolve_outcome.spec_tier
             resolver_payload = resolve_outcome.payload
-            if getattr(getattr(state_out, "profile", None), "stock_availability_only", False) and set(
-                plan.domains or []
-            ) <= {"inventory", "incoming"}:
+            # Every turn of availability access, not only a stock / ETA one: a code the
+            # dealer names on an order or outstanding turn is carried into the next one, and
+            # a bare "eta" after "srtw2000" asked its whole prefix family (tester re-run on
+            # a5ba9dc9f, fix 4).
+            if getattr(getattr(state_out, "profile", None), "stock_availability_only", False):
                 exact = _exact_codes_only(
                     resolver_parse_output, resolved_kinds, resolved_candidates, compatible_entities, unplaced_tokens
                 )

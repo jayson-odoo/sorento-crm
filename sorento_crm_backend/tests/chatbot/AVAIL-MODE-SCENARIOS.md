@@ -18,7 +18,7 @@ category's, else 0. Available = on hand in the contact's allowed locations minus
 3. ETA ask: `CODE: ✅ ETA dd/mm/yyyy`, or `CODE: No ETA`, one line per product (owner hand test, 3 Oct 2026).
 4. A picker never offers "all" and refuses a bare "all" / "all of them" / "semua" (the list stays open). Typing every number is a pick.
 5. Several codes: answered lines (asked order), then `Couldn't find: X, Y.`, then at most one question. Every vague code's list is in that one question, numbered on from the list before it. A code named twice adds up.
-6. Exact codes only (owner hand test, 3 Oct 2026): an exact code is the product and never its family; a code-like token with no exact code gets the which-one picker of its prefix family, else the did-you-mean; a word or a bare number is never a product; a bare number on a list (did-you-mean included) is that option.
+6. Exact codes only (owner hand test, 3 Oct 2026), on every turn of availability access: an exact code is the product and never its family; a code-like token with no exact code gets the which-one picker of its prefix family, else the did-you-mean; a word or a bare number is never a product; a bare number on a list (did-you-mean included) is that option.
 
 ## One code
 
@@ -105,5 +105,9 @@ tells dates as dd/mm/yyyy (`eta_policy.dealer_view`, `tests/test_avail_mode_deal
 | S49 | ETA SRTW2000 and MWT5727SS-CR | `SRTW2000: ✅ ETA 19/10/2026`, `MWT5727SS-CR: No ETA`, R |
 | S50, S50c | srtw2000 20 / eta | the stock line / `SRTW2000: ✅ ETA 19/10/2026` + R: SRTW2000 only, never -SS-CR / -A / -NL |
 | S50b | eta SRTWC286-SH / eta | `SRTWC286-SH: No ETA` + R, both turns, never the SRTWC286-SH-* variants |
+| S51 | srt5764 xx 10, read by the parser as one unsure capture (tester re-run on a5ba9dc9f) | the S47 did-you-mean, every run; never `I captured ... couldn't tell which part is which` |
+| S52 | srtw2000 (parser routed it to orders / outstanding) / eta | `SRTW2000: ✅ ETA 19/10/2026` + R: the exact code on EVERY availability turn, so nothing of its family is carried |
+| S52b | SRTWC286-SH (routed to orders / outstanding) / eta | `SRTWC286-SH: No ETA` + R |
+| S53 | eta SRTWC286 / 2 | which-one picker with no ETA or stock of any variant / `SRTWC286-SH-150: ✅ ETA 19/10/2026` + R |
 
 Full mode keeps its own resolution (prefix families, described products) and its own ETA rows.
