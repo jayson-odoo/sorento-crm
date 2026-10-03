@@ -395,6 +395,13 @@ Review of that fix (7db57216), lead decisions:
 - **S2/S3** migration tests find the revision by id (survives the pre-merge re-parent) and cover an
   existing old version being upgraded once.
 
+Owner hand test at 9b242232 (3 Oct): "I have an idea" got "couldn't save". The dev DB serves an
+owner-edited `ideate_extractor` (v56) that the migration rightly leaves alone, so the prompt rule
+never reached it; the model invented a problem and the similar-own call hit a down ss. Decision: the
+"is there an idea?" signal moves into the extractor's structured-output SCHEMA (code, applies under
+any prompt version): required boolean `has_idea`; `has_idea == false` means the idea is missing,
+whatever `problem` says. The prompt rule stays as guidance.
+
 ## 4b. Lane process (owner rule 3 Oct, LEAD PATTERN)
 
 From 3 Oct the lane runs on the lead pattern: the lead (this session) edits plans, docs and merge
