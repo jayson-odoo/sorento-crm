@@ -2004,7 +2004,7 @@ class TestUuidNeverPrintedInReplyText:
         assert not self._UUID_RE.search(rendered), (
             f"no uuid must appear anywhere in the reply: {rendered!r}"
         )
-        assert "inbound_shipment: DFSU6642819 (Sorento)" in rendered, (
+        assert "inbound shipment: DFSU6642819 (Sorento)" in rendered, (
             "the carried inbound_shipment entity must be named by its container "
             f"number, qualified by company (multi-company turn): {rendered!r}"
         )

@@ -248,6 +248,12 @@ DOMAIN_LABELS = {
     "incoming": "incoming stock",
     "forms": "forms",
     "portal_link": "this request",
+    # ATTACHMENT-MULTI: the four ALLOWED domains this map lacked, in `turn/policy_rows.py`'s
+    # own words, so the fallback below never prints a domain key.
+    "spo_allocation": "last in",
+    "purchase_cost": "last purchase cost",
+    "resource_attachment": "resource attachments",
+    "purchase_order": "outstanding purchase orders",
 }
 
 
@@ -268,7 +274,7 @@ def access_level_choice_message(
     names = out.get("name") if isinstance(out.get("name"), list) else []
     q = parser if isinstance(parser, dict) else {}
     domain = q.get("domain_hint") or "this enquiry"
-    domain_label = DOMAIN_LABELS.get(q.get("domain_hint")) or domain
+    domain_label = DOMAIN_LABELS.get(q.get("domain_hint")) or _plain_words(domain)
 
     entitled = out.get("entitled_tiers") if isinstance(out.get("entitled_tiers"), list) else []
     held = [t for t in ASK_ORDER if t in entitled]
@@ -3123,7 +3129,7 @@ def not_found_error_message(
         # filter is enough to continue.
         scope_word = _SCOPE_WORD.get(
             jsc.js_string(domain_hint if jsc.truthy(domain_hint) else "").lower()
-        ) or jsc.js_string(domain_hint if jsc.truthy(domain_hint) else "that")
+        ) or _plain_words(domain_hint if jsc.truthy(domain_hint) else "that")
         asked: list[str] = []
         for entity_type in (allowed_types if isinstance(allowed_types, list) else []):
             word = _HUMAN_SCOPE.get(
@@ -3163,7 +3169,7 @@ def not_found_error_message(
         unresolved_text = ", ".join(jsc.js_string(t) for t in unresolved if not_access(t))
 
         if resolved_types and token_text:
-            requested = f"{'/'.join(jsc.js_string(t) for t in resolved_types)} {token_text}"
+            requested = f"{'/'.join(_prettify_type(t) for t in resolved_types)} {token_text}"
         elif token_text:
             requested = token_text
         elif unresolved_text:
@@ -3499,6 +3505,23 @@ def not_found_error_message(
             typed = [b for b in order if _type_norm(b) in typed_order]
             typed.sort(key=lambda b: typed_order[_type_norm(b)])
             named_codes = typed if typed else [order[0]]
+            if entity_type == "attachment_type":
+                # ATTACHMENT-MULTI R1: every document type in scope is one the customer asked
+                # for ("photo" resolved to Product Photos), never resolver expansion, so each
+                # is named rather than "(+1 more)", in the order the customer named them
+                # (the resolver's own token order).
+                asked_order: list[str] = []
+                for res in jsc.array(jsc.get(r, "resolutions")):
+                    for m in jsc.array(jsc.get(res, "matches")):
+                        if jsc.get(m, "entity_type") != "attachment_type":
+                            continue
+                        for spelling in (jsc.get(jsc.get(m, "display"), "type_name"), jsc.get(m, "canonical_code")):
+                            if jsc.truthy(spelling) and _type_norm(spelling) not in asked_order:
+                                asked_order.append(_type_norm(spelling))
+                named_codes = sorted(
+                    order,
+                    key=lambda b: asked_order.index(_type_norm(b)) if _type_norm(b) in asked_order else len(asked_order),
+                )
             extra = (
                 f" (+{len(order) - len(named_codes)} more)"
                 if len(order) > len(named_codes)
@@ -3507,7 +3530,8 @@ def not_found_error_message(
             rendered = ", ".join(
                 ", ".join(with_quantity(l) for l in by_code[b]) for b in named_codes
             )
-            found_lines.append(f"• {jsc.js_string(entity_type)}: {rendered}{extra}")
+            # ATTACHMENT-MULTI R5: "• attachment type:", never the raw `attachment_type` key.
+            found_lines.append(f"• {_prettify_type(entity_type)}: {rendered}{extra}")
         found_summary = "\n".join(found_lines)
 
         not_found_raw = [t for t in unresolved if _nf_norm_raw(t) not in resolved_toks]
@@ -3705,7 +3729,9 @@ def not_found_error_message(
 
         if len(vague_unresolved) > 0:
             is_clarification = True  # so escalate-catalog's is_escalate_offer is false
-            labels = _human_list(allowed_types if isinstance(allowed_types, list) else [])
+            labels = _human_list(
+                [_prettify_type(t) for t in (allowed_types if isinstance(allowed_types, list) else [])]
+            )
             captured = ", ".join(jsc.js_string(t) for t in vague_unresolved)
             unresolved_set = {_nf_norm_raw(t) for t in unresolved}
             resolved_ents = [
@@ -3718,7 +3744,7 @@ def not_found_error_message(
             resolved_summary = ", ".join(
                 x
                 for x in (
-                    f"{jsc.js_string(jsc.get(e, 'hint') or 'item')} {jsc.js_string(jsc.get(e, 'raw'))}".strip()
+                    f"{_prettify_type(jsc.get(e, 'hint') or 'item')} {jsc.js_string(jsc.get(e, 'raw'))}".strip()
                     for e in resolved_ents
                 )
                 if jsc.truthy(x)
@@ -3922,11 +3948,54 @@ def not_found_error_message(
                     if jsc.get(e, "hint") == "attachment_type" and jsc.truthy(jsc.get(e, "raw"))
                 ]
                 attach_ent = jsc.find(entities_list, lambda e: jsc.get(e, "hint") == "attachment_type")
-                if use_breakdown:
+                # ATTACHMENT-MULTI (owner ruling 2 Oct 2026): a several-type miss names the
+                # OFFICIAL types the gate kept, `attachment_types.type_name` in the order the
+                # customer named them - "Product Photos or Technical Specifications", never
+                # "photo or technical specifications". A single-type miss is unchanged.
+                attach_names: list[str] = []
+                if len(attach_raws) > 1:
+                    kept_types = {
+                        jsc.get(c, "uuid")
+                        for c in jsc.array(jsc.get(g, "compatible_entities"))
+                        if jsc.get(c, "entity_type") == "attachment_type"
+                    }
+                    for res in jsc.array(jsc.get(r, "resolutions")):
+                        for m in jsc.array(jsc.get(res, "matches")):
+                            name = jsc.nullish_str(jsc.get(jsc.get(m, "display"), "type_name")).strip()
+                            if (
+                                jsc.get(m, "entity_type") == "attachment_type"
+                                and jsc.get(m, "uuid") in kept_types
+                                and name
+                                and name not in attach_names
+                            ):
+                                attach_names.append(name)
+                attach_words = attach_names if attach_names else attach_raws
+                # Owner ruling 2 Oct 2026 (hand test "photo and cert for strwc286"): when the
+                # PRODUCT itself was not found and no did-you-mean candidate exists (a
+                # candidate's offer replaces this text anyway), the reply names only the
+                # missing product - no "Here's what you want" types and no "no <types>
+                # matched these", which read as though the product had been searched - and
+                # keeps the escalate offer.
+                product_keys = {_nf_norm_raw(x) for x in product_raws}
+                unfound_products = [t for t in not_found_raw if _nf_norm_raw(t) in product_keys]
+                # A product row with no uuid is the unplaced token the engine carries on
+                # the gate (cloud browser pass 3 Oct), never a resolved product.
+                product_resolved = any(
+                    jsc.get(c, "entity_type") == "product" and jsc.truthy(jsc.get(c, "uuid"))
+                    for c in jsc.array(jsc.get(g, "compatible_entities"))
+                )
+                if unfound_products and not product_resolved:
+                    esc = _esc_offer()
+                    escalate_message = (
+                        f"Couldn't find {', '.join(label_token(t) for t in unfound_products)}."
+                    ) + (f" {esc}" if esc else "")
+                elif use_breakdown:
                     # combine the attachment-type qualifiers into ONE searched noun and fold
                     # them OUT of the "couldn't find" list, so they are not double-named
+                    # ATTACHMENT-MULTI R4: several asked types are alternatives the miss
+                    # sentence lists - "photo or technical specifications" - never one run-on.
                     attach_noun = (
-                        " ".join(jsc.js_string(x) for x in attach_raws)
+                        " or ".join(jsc.js_string(x) for x in attach_words)
                         if attach_raws
                         else (
                             jsc.get(attach_ent, "raw")
@@ -3946,10 +4015,14 @@ def not_found_error_message(
                         else ""
                     )
                     attach_raw = jsc.get(attach_ent, "raw") if jsc.truthy(attach_ent) else None
+                    article = "a "
+                    if len(attach_raws) > 1:
+                        attach_raw = " or ".join(jsc.js_string(x) for x in attach_words)
+                        article = ""  # "photo or technical specifications", never "a ... specifications"
                     if jsc.truthy(attach_raw) and prod_text:
-                        subject = f"a {jsc.js_string(attach_raw)} for {prod_text}"
+                        subject = f"{article}{jsc.js_string(attach_raw)} for {prod_text}"
                     elif jsc.truthy(attach_raw):
-                        subject = f"a {jsc.js_string(attach_raw)}"
+                        subject = f"{article}{jsc.js_string(attach_raw)}"
                     elif prod_text:
                         subject = f"attachments for {prod_text}"
                     else:
@@ -4121,6 +4194,8 @@ _DYM_CTRL_KEYS = (
     # and its noun. Stripped here with the rest, so the object this node emits is unchanged.
     "dym_probe_row_keys",
     "dym_probe_type_name",
+    # ATTACHMENT-MULTI R2: the per-type has-sets of a several-type ask, likewise.
+    "dym_has_by_type",
 )
 
 _YES = "Yes, escalate"
@@ -4655,11 +4730,43 @@ def build_suggest_offer(
             # customer's own word for it. `attachment_noun()` stays the last resort, so a
             # turn whose probe carried no type entity reads exactly as it does today.
             noun_source = jsc.get(dym_ann, "dym_probe_type_name")
-        noun_source = noun_source if jsc.truthy(noun_source) else attachment_noun()
+        # ATTACHMENT-MULTI R5 (tester re-run 2 Oct 2026, finding 3): a RESOLVED type is
+        # stamped by its `type_name` ("Certification"), the word the follow-up "has no"
+        # line and the found rows use too. Only the customer's own raw word ("cert") is
+        # normalised to the family word; a certificate-NUMBER scope already arrives as
+        # "certificate" (`miss_suggest._scoping_type_name`).
+        resolved_noun = jsc.truthy(noun_source)
+        noun_source = noun_source if resolved_noun else attachment_noun()
         text = jsc.nullish_str(noun_source).strip()
-        dym_noun: Any = "certificate" if _CERT_PREFIX_RE.match(text) else (text or "document")
+        dym_noun: Any = (
+            "certificate" if (not resolved_noun and _CERT_PREFIX_RE.match(text)) else (text or "document")
+        )
     else:
         dym_noun = None
+
+    # ATTACHMENT-MULTI R2 (owner ruling 2 Oct 2026, Q1 (a)): a several-type ask stamps every
+    # asked type on every line - "- has Product Photos, no Technical Specifications" - from
+    # the annotator's per-type has-sets, projected into code space the same way as `dym_has`.
+    # A line is stamped only when it was probed at all, exactly as before.
+    dym_type_stamps: list[tuple[str, set[str]]] = []
+    if dym_ok and jsc.get(dym_meta, "key_mode") == "uuid":
+        for per_type in jsc.array(jsc.get(dym_ann, "dym_has_by_type")):
+            name = jsc.nullish_str(jsc.get(per_type, "type")).strip()
+            if not name:
+                continue
+            _probed, type_has = _dym_code_space(
+                {**dym_ann, "dym_available_codes": jsc.array(jsc.get(per_type, "has"))}, dym_meta
+            )
+            dym_type_stamps.append((name, type_has))
+        if len(dym_type_stamps) < 2:
+            dym_type_stamps = []
+
+    def _stamp(key: str) -> str:
+        if dym_type_stamps:
+            return " - " + ", ".join(
+                f"has {noun}" if key in type_has else f"no {noun}" for noun, type_has in dym_type_stamps
+            )
+        return f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"
 
     # 4th surface: the REQUIRE-SPECIFIC PICKER. The gate renders a numbered list into
     # `gate_clarification`, which the miss renderer copies verbatim into `escalate_message`.
@@ -4678,7 +4785,7 @@ def build_suggest_offer(
             if key is None:
                 lines.append(line)  # unprobed (e.g. multi-uuid) renders BARE
                 continue
-            lines.append(line + (f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"))
+            lines.append(line + _stamp(key))
         out["escalate_message"] = "\n".join(lines)
 
     # THE CUSTOMER'S SPELLING. `d1.token` is the RESOLVER's echo, not what the customer typed,
@@ -4729,7 +4836,7 @@ def build_suggest_offer(
             # parser hint FALLBACK, bare when neither is known.
             first_pick = s["picks"][0] if s["picks"] else None
             type_label = _prettify_type(jsc.get(jsc.get(first_pick, "m"), "entity_type")) or (
-                jsc.get(src_ent, "hint") if src_ent is not None and jsc.truthy(jsc.get(src_ent, "hint")) else ""
+                _prettify_type(jsc.get(src_ent, "hint")) if src_ent is not None and jsc.truthy(jsc.get(src_ent, "hint")) else ""
             )
             type_sfx = f" ({jsc.js_string(type_label)})" if jsc.truthy(type_label) else ""
             cand_lines: list[str] = []
@@ -4744,7 +4851,7 @@ def build_suggest_offer(
                 key = _dym_lookup(jsc.get(match, "canonical_code"), dym_probed) if dym_ok else None
                 sfx = ""
                 if key is not None:
-                    sfx = f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"
+                    sfx = _stamp(key)
                 cand_lines.append(f"  {idx}. {jsc.js_string(pick['label'])}{sfx}")
                 out["suggest_last_result_set"].append(
                     {
@@ -4800,7 +4907,7 @@ def build_suggest_offer(
             src_ent = ent_of_tok(d1["token"])
             first_pick = picks[0] if picks else None
             d1_type_label = _prettify_type(jsc.get(jsc.get(first_pick, "m"), "entity_type")) or (
-                jsc.get(src_ent, "hint") if src_ent is not None and jsc.truthy(jsc.get(src_ent, "hint")) else ""
+                _prettify_type(jsc.get(src_ent, "hint")) if src_ent is not None and jsc.truthy(jsc.get(src_ent, "hint")) else ""
             )
             d1_type_sfx = f" ({jsc.js_string(d1_type_label)})" if jsc.truthy(d1_type_label) else ""
             out["suggest_offer"] = True
@@ -4880,7 +4987,7 @@ def build_suggest_offer(
                         key = _dym_lookup(code, dym_probed)
                         sfx = ""
                         if key is not None:
-                            sfx = f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"
+                            sfx = _stamp(key)
                         dym_lines.append(f"{i + 1}. {code}{sfx}")
                     out["suggest_response"] = (
                         f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '

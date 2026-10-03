@@ -838,7 +838,7 @@ class TestRequireSpecificRosterCopy:
             answer_mcp_probe=answer_probe,
         )
         reply = (result.reply or {}).get("text") or ""
-        assert "product_attachment search needs to be more specific" in reply, (
+        assert "Which product do you mean? Please choose:" in reply, (
             f"AC-1701: gate.py's own require-specific header must win over narrow.py's "
             f"generic fallback: {reply!r}"
         )
@@ -874,7 +874,7 @@ class TestRequireSpecificRosterCopy:
             msg_id="zzt-r5-incoming-roster", mcp_response={"data": []},
         )
         reply = (result.reply or {}).get("text") or ""
-        assert "incoming search needs to be more specific" in reply, (
+        assert "Which product do you mean? Please choose:" in reply, (
             f"AC-1701's own domain-parametrized rule, incoming leg: gate.py's own header "
             f"must win, not narrow.py's generic fallback: {reply!r}"
         )

@@ -190,6 +190,9 @@ class CanonicalProduct(_Canonical):
     category_code: Optional[str] = Field(None, max_length=100)
     uom_code: Optional[str] = Field(None, max_length=100)
     brand_code: Optional[str] = Field(None, max_length=100)
+    # AutoCount ItemType (ITEM-TYPE-CRM). Back-created like brand_code; absent or
+    # blank leaves the stored link untouched.
+    item_type_code: Optional[str] = Field(None, max_length=100)
     # CRM-owned (PLAN D14, price-tag-feedback-r2). Overwrites the stored value
     # only when non-empty; empty/absent leaves a manually entered barcode
     # untouched - see `master_ingest_service._product_columns`.

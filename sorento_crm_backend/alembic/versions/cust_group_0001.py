@@ -1,91 +1,25 @@
-"""CUSTOMER-GROUP: `customer_groups` and `customers.customer_group_id`, seeded once.
+"""CUSTOMER-GROUP: `customer_groups` and `customers.customer_group_id`. DDL only.
 
 Revision ID: cust_group_0001
 Revises: picker_no_cap_0001
 Create Date: 2026-10-02
 
-A group is one company's customer made of several ledgers. The chatbot used to join ledgers
-by the name rule (`ledger_family_key`); the group is the office's own say-so and the rule is
-the fallback for a ledger with no group.
+A group is one company's customer made of several ledgers, and only the office puts a ledger
+in one (owner ruling 3 Oct 2026: no automatic name-matching joins, explicit links only).
 
-The seed runs ONCE, here: per (company, `ledger_family_key`) family with 2+ rows and at
-least one numbered row (`account_level` set), one group named by `ledger_family_label` of the
-member with the lowest (level, code), and every member pointed at it. A family where any row
-already carries a group is skipped whole, so a re-run is a no-op and an office edit is never
-overwritten. A name clash inside a company reuses the existing group.
+This revision used to seed groups on upgrade by joining ledgers whose names looked alike
+(`ledger_family_key`). It no longer does: upgrade creates the table and the column and
+assigns NO customer to any group. The revision id and chain are unchanged, so a database
+that already ran the old body (dev) stays at the same head; its seeded rows are left as they
+are. Groups are set by hand (bulk "Set customer group", CUSTOMER-BULK-OPS).
 Additive: `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, the FK only when absent.
 """
-import uuid
-
-import sqlalchemy as sa
 from alembic import op
 
 revision = "cust_group_0001"
 down_revision = "picker_no_cap_0001"
 branch_labels = None
 depends_on = None
-
-
-def plan_groups(rows) -> list[tuple[str, str, list[str]]]:
-    """The groups the seed creates: `[(company_id, group name, [customer ids])]`.
-
-    `rows` are `(id, company_id, customer_code, customer_name, account_level,
-    customer_group_id)`. Pure (no DB), so `scripts/customer_groups_seed_sql.py` can print
-    the same plan as SQL."""
-    from app.services.ledger_family import ledger_family_key, shared_bracket_label
-
-    families: dict[tuple[str, str], list] = {}
-    for row in rows:
-        _id, company_id, _code, name, _level, _group = row
-        key = ledger_family_key(name) if name else ""
-        if key:
-            families.setdefault((str(company_id), key), []).append(row)
-
-    plan: list[tuple[str, str, list[str]]] = []
-    for (company_id, _key), members in families.items():
-        if len(members) < 2 or all(m[4] is None for m in members):
-            continue
-        if any(m[5] is not None for m in members):
-            continue
-        lead = min(members, key=lambda m: (m[4] if m[4] is not None else 1 << 30, m[2]))
-        plan.append((company_id, shared_bracket_label([lead[3]] + [m[3] for m in members]), [str(m[0]) for m in members]))
-    return plan
-
-
-def seed(connection) -> int:
-    """Create the groups and point the members at them. Returns groups created."""
-    rows = connection.execute(
-        sa.text(
-            "SELECT id, company_id, customer_code, customer_name, account_level, customer_group_id "
-            "FROM customers WHERE customer_name IS NOT NULL"
-        )
-    ).fetchall()
-    created = 0
-    for company_id, name, member_ids in plan_groups(rows):
-        group_id = connection.execute(
-            sa.text(
-                "SELECT id FROM customer_groups WHERE company_id = :c AND lower(name) = lower(:n)"
-            ),
-            {"c": company_id, "n": name},
-        ).scalar()
-        if group_id is None:
-            group_id = str(uuid.uuid4())
-            connection.execute(
-                sa.text(
-                    "INSERT INTO customer_groups (id, company_id, name, created_at, updated_at) "
-                    "VALUES (:i, :c, :n, now(), now())"
-                ),
-                {"i": group_id, "c": company_id, "n": name},
-            )
-            created += 1
-        connection.execute(
-            sa.text(
-                "UPDATE customers SET customer_group_id = :g "
-                "WHERE id = ANY(CAST(:ids AS uuid[])) AND customer_group_id IS NULL"
-            ),
-            {"g": group_id, "ids": member_ids},
-        )
-    return created
 
 
 def upgrade() -> None:
@@ -123,7 +57,6 @@ def upgrade() -> None:
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_customers_customer_group_id ON customers (customer_group_id)"
     )
-    seed(op.get_bind())
 
 
 def downgrade() -> None:
