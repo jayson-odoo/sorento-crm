@@ -12,14 +12,14 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Upload } from 'lucide-react';
+import { FolderMinus, FolderPlus, Plus, Upload, UserCog } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
-import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
+import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
@@ -31,6 +31,10 @@ import { searchCustomerGroupsSelect } from '../../customer-groups/services/custo
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import type { Customer } from '../types/customer.types';
 import { CustomerRowActions } from '../actions';
+import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { BulkSetCustomerGroupDialog } from './BulkSetCustomerGroupDialog';
+import { BulkSetSalesAgentDialog } from './BulkSetSalesAgentDialog';
 import { CustomerImportDialog } from './CustomerImportDialog';
 import {
   importCustomers,
@@ -72,6 +76,21 @@ export default function CustomersList() {
     );
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const canSetSalesAgent = useHasPermission('master_data.sales_agents.edit');
+  const [agentDialogOpen, setAgentDialogOpen] = useState(false);
+  const canEditCustomers = useHasPermission('order_management.customers.edit');
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  // Remove from group asks nothing (D7): a countdown with Cancel, the selection clears
+  // once the removals have settled.
+  const removeFromGroup = useDeferredBulkAction({
+    actionKey: 'customer.remove_from_group',
+    entityType: 'customer',
+    verb: 'Removing',
+    pastVerb: 'removed from their group',
+    describe: (count) => `${count} customer${count === 1 ? '' : 's'}`,
+    invalidateKeys: [['customers'], ['customer-groups']],
+    onFinished: () => setRowSelection({}),
+  });
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } = useCustomers({
     pageIndex: pagination.pageIndex,
@@ -225,6 +244,11 @@ export default function CustomersList() {
     columnResizeMode: 'onChange',
   });
 
+  // Remove only touches the selected customers that sit in a group, so that is its N.
+  const groupedCount = table
+    .getSelectedRowModel()
+    .rows.filter((r) => r.original.customer_group_id).length;
+
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
   const listPrimaryAction = (
@@ -339,8 +363,58 @@ export default function CustomersList() {
               },
             ]}
             primaryAction={listPrimaryAction}
+            bulkActions={[
+              ...(canSetSalesAgent
+                ? [
+                    {
+                      key: 'set-sales-agent',
+                      label: `Set sales agent (${selectedRowIds(table).length})`,
+                      icon: UserCog,
+                      onClick: () => setAgentDialogOpen(true),
+                    },
+                  ]
+                : []),
+              ...(canEditCustomers
+                ? [
+                    {
+                      key: 'set-customer-group',
+                      label: `Set customer group (${selectedRowIds(table).length})`,
+                      icon: FolderPlus,
+                      onClick: () => setGroupDialogOpen(true),
+                    },
+                    {
+                      key: 'remove-from-group',
+                      label: `Remove from group (${groupedCount})`,
+                      icon: FolderMinus,
+                      disabled: removeFromGroup.isStarting || groupedCount === 0,
+                      onClick: () =>
+                        removeFromGroup.run(
+                          table
+                            .getSelectedRowModel()
+                            .rows.filter((r) => r.original.customer_group_id)
+                            .map((r) => ({
+                              id: r.id,
+                              payload: { customer_group_id: r.original.customer_group_id },
+                            })),
+                        ),
+                    },
+                  ]
+                : []),
+            ]}
           />
         </CardHeader>
+        <BulkSetSalesAgentDialog
+          open={agentDialogOpen}
+          onOpenChange={setAgentDialogOpen}
+          customerIds={selectedRowIds(table)}
+          onDone={() => setRowSelection({})}
+        />
+        <BulkSetCustomerGroupDialog
+          open={groupDialogOpen}
+          onOpenChange={setGroupDialogOpen}
+          customerIds={selectedRowIds(table)}
+          onDone={() => setRowSelection({})}
+        />
         <CustomerImportDialog
           open={importDialogOpen}
           onOpenChange={setImportDialogOpen}
