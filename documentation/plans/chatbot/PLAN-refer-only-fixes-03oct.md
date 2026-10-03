@@ -35,8 +35,9 @@ Paths under `sorento_crm_backend/app/services/chatbot/`.
   next blank (member row, `*Company:*` group header, no-members note) goes with the frame,
   whatever question is attached (`order_list.py:264`). `answer_bridge.py:1900` strips the text
   with the question it drops, and `dealer_stock.py:39` strips the picker too.
-- Scope header: `lanes/business/answer.py:3689` prints it on an order-scope miss; a barred
-  contact's miss no longer carries it (crew-ask on the PR, recommendation (a)).
+- Scope header: `lanes/business/answer.py:3689` prints it on an order-scope miss. Owner ruling
+  (3 Oct 2026, crew-ask answer (b)): it stays for everyone, refer-to-salesman misses included;
+  only the staff list goes.
 
 ## Availability outcome -> wording (`sorento_crm_mcp/sorento_crm_mcp/presenters.py:1476-1515`)
 

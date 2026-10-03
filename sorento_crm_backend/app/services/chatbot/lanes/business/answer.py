@@ -3683,10 +3683,7 @@ def not_found_error_message(
                 jsc.js_string(domain_hint if jsc.truthy(domain_hint) else "").lower()
                 in _DATE_SCOPE_DOMAINS
             )
-            # REFER-ONLY-FIXES (owner console, 3 Oct 2026): a barred contact's miss is
-            # what was asked, what did not match and the salesman line; no search-scope
-            # header ("Customer: all customers / ... / Dates: all dates") above it.
-            if is_order_scope and not barred:
+            if is_order_scope:
                 start = date_start if jsc.truthy(date_start) else None
                 end = date_end if jsc.truthy(date_end) else None
                 head: list[str] = []

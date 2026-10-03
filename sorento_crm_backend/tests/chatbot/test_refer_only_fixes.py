@@ -97,12 +97,18 @@ class TestOrderMissForABarredContact:
         _assert_no_staff_list(text)
         assert (result.reply or {}).get("result_set") in (None, []), result.reply
 
-    def test_the_refer_miss_carries_no_scope_header(
+    def test_the_refer_miss_keeps_its_scope_header(
         self, session_factory, stub_parser, stub_access, monkeypatch
     ) -> None:
+        """Owner ruling (3 Oct 2026, crew-ask (b)): the scope header stays for everyone;
+        only the staff list goes."""
         result = _order_miss(session_factory, monkeypatch, stub_parser, stub_access, barred=True)
         text = (result.reply or {}).get("text") or ""
-        assert "Customer:" not in text and "Dates:" not in text, text
+        assert text == (
+            "Customer: all customers\nProduct: SRTWC8605-FT\nDates: all dates\n\n"
+            "Here's what you want:\n• product: SRTWC8605-FT\n\n"
+            f"But no order matched these. {REFER_TO_SALESMAN}"
+        ), text
 
     def test_an_allowed_contact_still_gets_the_picker_and_the_header(
         self, session_factory, stub_parser, stub_access, monkeypatch
