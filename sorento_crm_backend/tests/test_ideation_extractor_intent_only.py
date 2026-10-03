@@ -20,8 +20,13 @@ from tests._pg_fixture import blank_session
 VERSIONS_DIR = pathlib.Path(__file__).resolve().parents[1] / "alembic" / "versions"
 REVISION = "ideation_capture_0001"
 NAME = "ideate_extractor"
-# sha256 of the stock fallback at fb88209b (git show), strip-normalised.
-OLD_SHA256 = "7127890ce450520c0ff95cbd01fdb724242826182bff67880e2b2a8fb221e018"
+NO_IDEA_PHRASE = "Never invent a problem for a message that names no idea"
+# sha256 of .strip().encode() of the stock ideate_extractor text, computed by exec-ing
+# _ideate_extractor_fallback() out of `git show <rev>:sorento_crm_backend/app/services/ai_prompt_registry.py`.
+# MAIN = origin/main (101fda82b), what production holds; no "- language:" line.
+MAIN_SHA256 = "7c414ddc9ace3b7fc1da49b9f458a36ae41b27da4fbe68cd2ff4292e993c609a"
+# FB88 = fb88209b, the lane's C1 text (has "- language:"); the old OLD_IDEATE_EXTRACTOR.
+FB88_SHA256 = "7127890ce450520c0ff95cbd01fdb724242826182bff67880e2b2a8fb221e018"
 
 
 def _fallback() -> str:
@@ -61,7 +66,8 @@ def _load_migration():
 def test_fallback_has_intent_only_rule():
     text = _fallback()
     assert "want to submit idea" in text
-    assert "did not state" in text
+    assert NO_IDEA_PHRASE in text
+    assert "Never write a problem the user did not state" not in text
 
 
 def test_fallback_drops_always_emit_problem_contradiction():
@@ -81,7 +87,7 @@ def test_no_problem_rule_sits_inside_problem_field_description():
     start = text.index("- problem:")
     end = text.index("- proposed_solution:")
     assert start < end
-    for needle in ("want to submit idea", "did not state"):
+    for needle in ("want to submit idea", NO_IDEA_PHRASE):
         assert start < text.index(needle) < end, f"{needle!r} must be inside the problem field"
     assert "NO-PROBLEM RULE:" not in text, "one instruction for problem, not a second paragraph"
 
@@ -114,11 +120,14 @@ def test_migration_is_single_head_and_upgrade_wires_seed_and_publish():
     assert "publish_ideate_extractor" in called
 
 
-def test_old_constant_is_the_previous_stock_fallback_verbatim():
-    old = _load_migration().OLD_IDEATE_EXTRACTOR
-    assert hashlib.sha256(old.strip().encode()).hexdigest() == OLD_SHA256
-    assert "ALWAYS emit problem" in old
-    assert old.strip() != _fallback().strip()
+def test_stock_texts_are_main_and_fb88209b_verbatim():
+    texts = _load_migration().STOCK_IDEATE_EXTRACTOR_TEXTS
+    assert isinstance(texts, tuple) and len(texts) == 2
+    hashes = [hashlib.sha256(t.strip().encode()).hexdigest() for t in texts]
+    assert hashes == [MAIN_SHA256, FB88_SHA256]
+    assert "- language:" not in texts[0] and "- language:" in texts[1]
+    for t in texts:
+        assert t.strip() != _fallback().strip()
 
 
 # --- S1/S3: owner-edit guard -------------------------------------------------
@@ -166,9 +175,10 @@ def _state(db):
     return versions, label, current
 
 
-def test_stock_old_production_is_republished_with_new_fallback(db):
+@pytest.mark.parametrize("idx", [0, 1], ids=["main_text", "fb88209b_text"])
+def test_stock_old_production_is_republished_with_new_fallback(db, idx):
     mig = _load_migration()
-    _seed_production(db, mig.OLD_IDEATE_EXTRACTOR)
+    _seed_production(db, mig.STOCK_IDEATE_EXTRACTOR_TEXTS[idx])
     mig.publish_ideate_extractor(db.connection())
     versions, label, current = _state(db)
     assert [v.version for v in versions] == [1, 2]
@@ -176,9 +186,10 @@ def test_stock_old_production_is_republished_with_new_fallback(db):
     assert current.template == _fallback()
 
 
-def test_old_with_whitespace_difference_still_counts_as_stock(db):
+@pytest.mark.parametrize("idx", [0, 1], ids=["main_text", "fb88209b_text"])
+def test_old_with_whitespace_difference_still_counts_as_stock(db, idx):
     mig = _load_migration()
-    _seed_production(db, mig.OLD_IDEATE_EXTRACTOR + "\n\n")
+    _seed_production(db, mig.STOCK_IDEATE_EXTRACTOR_TEXTS[idx] + "\n\n")
     mig.publish_ideate_extractor(db.connection())
     versions, _label, current = _state(db)
     assert len(versions) == 2
@@ -198,10 +209,12 @@ def test_owner_edited_production_is_left_alone_and_warned(db, caplog):
     assert any(r.levelno >= logging.WARNING for r in caplog.records), "expected a warning log"
 
 
-def test_production_already_equal_to_new_fallback_is_unchanged(db):
+def test_production_already_equal_to_new_fallback_is_unchanged(db, caplog):
     mig = _load_migration()
     v1 = _seed_production(db, _fallback())
-    mig.publish_ideate_extractor(db.connection())
+    with caplog.at_level(logging.WARNING):
+        mig.publish_ideate_extractor(db.connection())
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
     versions, label, _current = _state(db)
     assert len(versions) == 1
     assert label.version_id == v1.id
@@ -224,9 +237,10 @@ def test_empty_registry_changes_nothing(db):
     assert label is None
 
 
-def test_second_call_adds_no_extra_version(db):
+@pytest.mark.parametrize("idx", [0, 1], ids=["main_text", "fb88209b_text"])
+def test_second_call_adds_no_extra_version(db, idx):
     mig = _load_migration()
-    _seed_production(db, mig.OLD_IDEATE_EXTRACTOR)
+    _seed_production(db, mig.STOCK_IDEATE_EXTRACTOR_TEXTS[idx])
     mig.publish_ideate_extractor(db.connection())
     mig.publish_ideate_extractor(db.connection())
     versions, _label, current = _state(db)
