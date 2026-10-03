@@ -1342,3 +1342,157 @@ def test_s_has_idea_false_on_an_ask_reply_gives_up_and_calls_no_ss(env):
     assert out["status"] == "ask_idea_gave_up"
     _no_ss(env)
     assert "ideation" not in out["session_vars"]
+
+
+# --------------------------------------------------------------------------- #
+# T - permanent ss failures answer config_error, transient ones stay error     #
+# --------------------------------------------------------------------------- #
+_PERMANENT = [401, 403, 404, 409, 422]
+_TRANSIENT = [500, 502, 503, 408, 429, None]
+_CONFIG_ERROR_EN = (
+    "Idea capture isn't set up correctly here, so I couldn't save that. "
+    "Please let your Sorento contact know."
+)
+
+
+def _ss_error(status_code):
+    return IdeationServiceError("boom", status_code=status_code)
+
+
+def _create_scenario(env, where, status_code):
+    """Run a turn whose CREATE call fails. Returns (out, pointer_in or None)."""
+    env.ready()
+    env.create_result = _ss_error(status_code)
+    if where == "fresh":
+        env.idea_message()
+        return env.turn(MSG), None
+    held = env.idea_message("held original idea text")
+    similar = [{"idea_id": _uid(), "idea_number": "IDEA-0151", "title": "Held"}]
+    sv = env.pointer(similar, message=held)
+    return env.turn("NEW", session_vars_in=sv), sv
+
+
+@pytest.mark.parametrize("status_code", _PERMANENT)
+def test_t_similar_own_permanent_failure_is_config_error(env, status_code):
+    env.ready()
+    env.idea_message()
+    env.similar_result = _ss_error(status_code)
+    out = env.turn(MSG)
+    assert out["status"] == "config_error"
+    assert env.renders[-1][0] == "config_error"
+    assert env.create_calls == []
+    assert "ideation" not in out["session_vars"]
+
+
+@pytest.mark.parametrize("status_code", _TRANSIENT)
+def test_t_similar_own_transient_failure_stays_error(env, status_code):
+    env.ready()
+    env.idea_message()
+    env.similar_result = _ss_error(status_code)
+    out = env.turn(MSG)
+    assert out["status"] == "error"
+    assert env.renders[-1][0] == "error"
+    assert env.create_calls == []
+    assert "ideation" not in out["session_vars"]
+
+
+@pytest.mark.parametrize("where", ["fresh", "held_new"])
+@pytest.mark.parametrize("status_code", _PERMANENT)
+def test_t_create_permanent_failure_is_config_error(env, where, status_code):
+    out, sv = _create_scenario(env, where, status_code)
+    assert out["status"] == "config_error"
+    assert env.renders[-1][0] == "config_error"
+    assert "link" not in out
+    if sv is not None:
+        # pointer untouched, as for "error"
+        assert out["session_vars"]["ideation"] == sv["ideation"]
+    else:
+        assert "ideation" not in out["session_vars"]
+
+
+@pytest.mark.parametrize("where", ["fresh", "held_new"])
+@pytest.mark.parametrize("status_code", _TRANSIENT)
+def test_t_create_transient_failure_stays_error(env, where, status_code):
+    out, sv = _create_scenario(env, where, status_code)
+    assert out["status"] == "error"
+    assert env.renders[-1][0] == "error"
+    if sv is not None:
+        assert out["session_vars"]["ideation"] == sv["ideation"]
+
+
+@pytest.mark.parametrize("step", ["similar_own", "create"])
+def test_t_config_error_is_logged_at_error_level_with_status(env, caplog, step):
+    import logging
+
+    env.ready()
+    env.idea_message()
+    if step == "similar_own":
+        env.similar_result = _ss_error(403)
+    else:
+        env.create_result = _ss_error(403)
+    with caplog.at_level(logging.DEBUG):
+        out = env.turn(MSG)
+    assert out["status"] == "config_error"
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors, "config_error must log at ERROR"
+    assert any("403" in r.getMessage() for r in errors)
+
+
+def test_t_config_error_logs_the_ss_code(env, caplog):
+    import logging
+
+    env.ready()
+    env.idea_message()
+    env.similar_result = IdeationServiceError(
+        "boom", status_code=403, response_detail={"error": {"code": "embed_scope_required"}}
+    )
+    with caplog.at_level(logging.DEBUG):
+        env.turn(MSG)
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("embed_scope_required" in m for m in errors), errors
+
+
+def test_t_config_error_copy_registered_and_clean():
+    from app.services.chatbot_reply_copy import CHATBOT_REPLY_COPY
+    from app.services.ideation_capture_replies import render_reply
+
+    for key in (
+        "ideation_capture_config_error",
+        "ideation_capture_config_error.ms",
+        "ideation_capture_config_error.zh",
+    ):
+        assert key in CHATBOT_REPLY_COPY, key
+
+    assert render_reply("config_error", {}, user_message="x", language="en") == _CONFIG_ERROR_EN
+    for lang in ("en", "ms", "zh"):
+        text = render_reply("config_error", {}, user_message="x", language=lang)
+        assert text.strip()
+        assert "?" not in text and "？" not in text
+        assert text != render_reply("error", {}, user_message="x", language=lang)
+    assert "try again" not in render_reply("config_error", {}, user_message="x", language="en").lower()
+
+
+def test_t_endpoint_carries_config_error_status(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.dependencies import get_db, get_external_api_user
+    from tests._external_auth import external_permissions_granted
+
+    def _fake(db, **kw):  # noqa: ANN001
+        return {"status": "config_error", "reply_text": "x", "session_vars": {},
+                "offered_media": [], "language": "en"}
+
+    monkeypatch.setattr("app.api.v1.external.ideation.handle_capture_turn", _fake)
+    monkeypatch.setattr(
+        "app.api.v1.external.ideation.IntegrationLogService.create_integration_log",
+        lambda self, log_data, request_payload_dict=None: None,
+    )
+    app.dependency_overrides[get_db] = lambda: None
+    app.dependency_overrides[get_external_api_user] = lambda: {"id": "system"}
+    try:
+        with external_permissions_granted():
+            resp = TestClient(app).post(_TURN, json={"respond_io_id": "rio-1", "message_text": "hmm"})
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "config_error"
