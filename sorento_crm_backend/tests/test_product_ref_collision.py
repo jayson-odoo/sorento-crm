@@ -501,3 +501,36 @@ class TestProductDeletion:
         assert entry["outcome"] == "not_found", entry
         assert _snapshot(env, foreign_id) == before_foreign
         assert _snapshot(env, target_id) == before_target
+
+
+# ------------------------------------------------- plan-exception snapshot
+class TestPlanExceptionBeforeSnapshot:
+    def test_snapshot_covers_the_code_owner_not_the_ref_holder(self, env, monkeypatch):
+        import app.services.scm.plan_exception_service as pes
+
+        a_id = _product(env, FOREIGN_CODE)
+        _link(env, a_id, f"{BOOK}:2001")
+        b_id = _product(env, "2001")
+        seen: list[set[str]] = []
+        real = pes.snapshot
+
+        def _spy(db, product_ids, *args, **kwargs):
+            seen.append({str(p) for p in product_ids})
+            return real(db, product_ids, *args, **kwargs)
+
+        monkeypatch.setattr(pes, "snapshot", _spy)
+
+        entry, _record = _so_post_single(env, product_ref=f"{BOOK}:2001", product_code="2001")
+
+        assert entry["outcome"] == "created", entry
+        before = set().union(*seen) if seen else set()
+        assert b_id in before, seen
+        assert a_id not in before, seen
+
+
+def _so_post_single(env, **line_fields):
+    line = {"source_ref": f"{BOOK}:L9", "qty_ordered": 3, **line_fields}
+    record = _so_record(env, lines=[line])
+    res = env.post(INGEST_SO, [record])
+    assert res.status_code == 200, res.text
+    return res.json()["records"][0], record

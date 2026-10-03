@@ -631,17 +631,18 @@ class TestCodeWinsDeletions:
         assert row is not None
         assert row["is_active"] is True
 
-    def test_dl6_other_source_system_is_not_found(self, env):
+    def test_dl6_other_source_system_ref_does_not_block_a_code_match(self, env):
+        # Product deletes resolve by code only (AC-12): the ref, whatever source
+        # system it sits under, is irrelevant.
         ref, product_id, code = env.linked_product(source_system="othersys")
         code_ref = _ref("BRADL6")
 
         res = env.delete("products", [code_ref], codes={code_ref: code})
 
         assert res.status_code == 200, res.text
-        assert res.json()["records"][0]["outcome"] == "not_found"
-        row = env.row("products", product_id)
-        assert row is not None
-        assert row["product_code"] == code
+        entry = res.json()["records"][0]
+        assert entry["outcome"] in ("deleted", "deactivated"), entry
+        assert entry["entity_id"] == product_id, entry
 
     def test_dl7_other_company_product_is_not_found(self, env):
         ref_b, product_b, code_b = env.linked_product(company_id=env.company_b)
@@ -806,6 +807,5 @@ class TestContractV24:
 
         field_notes = body.get("field_notes", {})
         notes_text = " ".join(str(v) for v in field_notes.values())
-        assert "ref_mismatch" in notes_text, field_notes
+        assert "matched by company and code" in notes_text, field_notes
         assert "codes" in notes_text or "code" in notes_text.lower(), field_notes
-        assert "reference-only" in notes_text or "reference only" in notes_text, field_notes
