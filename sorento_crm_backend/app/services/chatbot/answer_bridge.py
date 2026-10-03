@@ -156,7 +156,11 @@ def apply_scope_block(
             return answer
         # WA-CONCISE AC-18: one named order whose number prints in the reply needs no header.
         named = [line[len("Order: "):] for line in scope.split("\n") if line.startswith("Order: ")]
-        if len(named) == 1 and ", " not in named[0] and named[0] in answer.text:
+        if (
+            len(named) == 1
+            and ", " not in named[0]
+            and re.search(rf"(?<![\w-]){re.escape(named[0])}(?![\w-])", answer.text)
+        ):
             return answer
         from dataclasses import replace
 
@@ -1496,40 +1500,89 @@ def _block_product_codes(block_text: Any) -> set[str]:
 
 _BLOCK_START_RE = re.compile(r"^(?:\d+\. )?\*(?:Company|Product Code):\*")
 _BLOCK_CODE_RE = re.compile(r"^\*Product Code:\*[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+_BLOCK_LINE_RE = re.compile(r"^(?:\d+\. )?\*(Company|Product Code):\*[ \t]*(.+?)[ \t]*$")
+_FLAG_LINE_RE = re.compile("^(?:\u26a0\ufe0f|\U0001f6a9)")
+_IDENTITY_LINE_RE = re.compile(r"^(?:\d+\. )?\*(?:Company|Product Code|Product Name):\*")
 _INCOMING_OPENER = "Here is the incoming stock I found."
+
+
+def _block_key(para: str) -> tuple[str | None, str | None]:
+    """`(company, product code)` of a block paragraph, upper-cased; `(None, None)` for a
+    paragraph that is not a block. A block may open with its Company line or its number."""
+    found = {
+        m.group(1): m.group(2).upper() for m in map(_BLOCK_LINE_RE.match, para.split("\n")) if m
+    }
+    return found.get("Company"), found.get("Product Code")
+
+
+def _merge_block(primary: str, extra: str) -> str:
+    """One block for a code that has a primary stock block and a cross-domain one: the
+    primary's identity and stock lines (name, `*BRW:* 0 (O/S: 233)`), then the cross-domain
+    block's own lines (its incoming facts, in today's order), flags last and once. When the
+    primary's stock lines carry no outstanding, the cross-domain `*Stock:*` line stands for
+    them."""
+    p_lines = [ln for ln in primary.split("\n") if not _FLAG_LINE_RE.match(ln)]
+    x_lines = [ln for ln in extra.split("\n") if not _FLAG_LINE_RE.match(ln)]
+    both = primary.split("\n") + extra.split("\n")
+    flags = list(dict.fromkeys(ln for ln in both if _FLAG_LINE_RE.match(ln)))
+    p_id = [re.sub(r"^\d+\. ", "", ln) for ln in p_lines if _IDENTITY_LINE_RE.match(ln)]
+    p_stock = [ln for ln in p_lines if not _IDENTITY_LINE_RE.match(ln)]
+    x_rest = [ln for ln in x_lines if not _IDENTITY_LINE_RE.match(ln)]
+    stock_line = next((ln for ln in x_rest if ln.startswith("*Stock:*")), None)
+    tail = [ln for ln in x_rest if ln is not stock_line]
+    has_outstanding = any(
+        int(n) > 0 for ln in p_stock for n in re.findall(r"\(O/S: (\d+)\)", ln)
+    )
+    stock = p_stock if has_outstanding or stock_line is None else [stock_line]
+    return "\n".join([*p_id, *stock, *tail, *flags])
+
+
+def _renumber(groups: list[list[str]]) -> list[list[str]]:
+    """Number the block paragraphs `1. `, `2. ` ... across all `groups` when there is more
+    than one; a lone block, and every non-block paragraph, is left as it is."""
+    if sum(1 for g in groups for p in g if _BLOCK_START_RE.match(p)) < 2:
+        return groups
+    n = 0
+    out: list[list[str]] = []
+    for g in groups:
+        done: list[str] = []
+        for p in g:
+            if _BLOCK_START_RE.match(p):
+                n += 1
+                p = f"{n}. " + re.sub(r"^\d+\. ", "", p)
+            done.append(p)
+        out.append(done)
+    return out
 
 
 def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
     """WA-CONCISE card v4: the cross-domain blocks join the primary reply as more blocks of
-    one list. A primary block for a code the cross-domain block repeats (a stock row that
-    reads 0, now `*Stock:* 0`) gives way to it, the incoming opener goes, and when more than
-    one block remains they number on from 1 across both. A primary with no block left loses its footer. Returns `(primary, cross-domain text)`."""
+    one list. A code that has a primary block AND a cross-domain block prints once, merged
+    (`_merge_block`) in the cross-domain position; the incoming opener goes; when more than
+    one block remains they number on from 1 across both. A primary with no block left loses
+    its footer, a set header stays. Returns `(primary, cross-domain text)`."""
+    paras = [p for p in primary.split("\n\n") if p != _INCOMING_OPENER]
     xd_paras = xd_text.split("\n\n")
-    xd_codes = {c.upper() for p in xd_paras for c in _BLOCK_CODE_RE.findall(p)}
-    paras = [
-        p
-        for p in primary.split("\n\n")
-        if p != _INCOMING_OPENER
-        and not (
-            _BLOCK_START_RE.match(p) and {c.upper() for c in _BLOCK_CODE_RE.findall(p)} & xd_codes
+    for i, x in enumerate(xd_paras):
+        x_company, x_code = _block_key(x)
+        if x_code is None:
+            continue
+        hit = next(
+            (
+                j
+                for j, p in enumerate(paras)
+                if _BLOCK_START_RE.match(p)
+                and _block_key(p)[1] == x_code
+                and (x_company is None or _block_key(p)[0] in (None, x_company))
+            ),
+            None,
         )
-    ]
+        if hit is not None:
+            xd_paras[i] = _merge_block(paras.pop(hit), x)
     if not any(_BLOCK_START_RE.match(p) for p in paras):
-        # No stock block left to date: the freshness footer goes, a set header stays.
         paras = [p for p in paras if not p.startswith("_Updated ")]
-    total = sum(1 for p in paras + xd_paras if _BLOCK_START_RE.match(p))
-    if total < 2:
-        return "\n\n".join(paras), xd_text
-    n = 0
-
-    def number(p: str) -> str:
-        nonlocal n
-        if not _BLOCK_START_RE.match(p):
-            return p
-        n += 1
-        return f"{n}. " + re.sub(r"^\d+\. ", "", p)
-
-    return "\n\n".join(number(p) for p in paras), "\n\n".join(number(p) for p in xd_paras)
+    paras, xd_paras = _renumber([paras, xd_paras])
+    return "\n\n".join(paras), "\n\n".join(xd_paras)
 
 
 def _block_covers_asked(result: Mapping[str, Any], resolved: Mapping[str, Any]) -> bool:
@@ -1600,10 +1653,14 @@ def _apply_crossdomain_render(
         block = {
             **block,
             "block": _BLOCK_CODE_RE.sub(
-                lambda m: f"*Product Code:* {quantities.get(m.group(1).replace('-', '').upper(), m.group(1))}",
+                lambda m: "*Product Code:* "
+                + quantities.get(m.group(1).replace("-", "").upper(), m.group(1)),
                 str(block["block"]),
             ),
         }
+    if covers and not answered:
+        [paras] = _renumber([str(block["block"]).split("\n\n")])
+        block = {**block, "block": "\n\n".join(paras)}
     variables: dict[str, Any] = {"last_result_set": [True]} if answered else {}
     if answered:
         text, xd_text = _fold_blocks(text, str(block["block"]))

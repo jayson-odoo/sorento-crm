@@ -1037,22 +1037,18 @@ def crossdomain_render(
             # Stock rows: detailed ones merge per (company, product), a compact one-location
             # entry drops its Total, the same as the primary reply (fetch.py).
             rows = [compact_stock_block(it) for it in merge_stock_rows(rows)]
-            if zero and len(rows) > 1:
-                # Every row reads 0: one block for the code, not one per row.
-                rows = [
-                    {
-                        **rows[0],
-                        "fields": [
-                            *rows[0]["fields"],
-                            *(
-                                f
-                                for it in rows[1:]
-                                for f in it["fields"]
-                                if jsc.get(f, "label") not in _XD_IDENTITY_LABELS
-                            ),
-                        ],
-                    }
-                ]
+            if zero:
+                # Every row reads 0: one block per (company, code), not one per row.
+                by_company: dict[Any, dict[str, Any]] = {}
+                for it in rows:
+                    company = _field_val(it, "company")
+                    if company not in by_company:
+                        by_company[company] = {**it, "fields": list(it["fields"])}
+                        continue
+                    by_company[company]["fields"].extend(
+                        f for f in it["fields"] if jsc.get(f, "label") not in _XD_IDENTITY_LABELS
+                    )
+                rows = list(by_company.values())
         for it in rows:
             blocks.append(
                 _xd_code_block(
@@ -1138,12 +1134,11 @@ def crossdomain_render(
         # re-deriving which codes it is even about. Additive - nothing here reads them yet
         # when the ladder has no further rung, so this render's own wording is unchanged.
         #
-        # GATED ON `can_state_absence`, and the first cut of A7 was not (review, blocker 2). "Missing" means the
-        # PRIMARY render did not ECHO the code, which is only the same statement as "this
-        # code has nothing" when the render is product-keyed or empty. A warehouse
-        # breakdown answers about the code without ever printing it, so an ungated list
-        # let the ladder append "No stock and no incoming for X, but a PO is placed"
-        # underneath the stock it had just shown - the exact defect `can_state_absence`
+        # GATED ON `can_state_absence`, and the first cut of A7 was not (review, blocker 2).
+        # "Missing" means the PRIMARY render did not ECHO the code, which is only the same
+        # statement as "this code has nothing" when the render is product-keyed or empty. A
+        # warehouse breakdown answers about the code without ever printing it, so an ungated
+        # list let the ladder append a PO line underneath the stock it had just shown - the exact defect `can_state_absence`
         # exists to prevent, reintroduced one rung further along. Empty here means the
         # rung never runs, which is the right answer: there is nothing we can honestly
         # say is absent.
@@ -1357,8 +1352,8 @@ def _apply_crossdomain_rung(
     granted: Any = None,
 ) -> None:
     """Mutates `render["_xdBlock"]` in place: tries the ladder's next rung for the codes
-    the first probe found NOTHING for, and swaps the "no X and no Y" sentence for the
-    rung's own wording when it answers (AC-921/AC-922).
+    the first probe found NOTHING for, and ends each such code's block with `*PO:* none` or
+    `*PO:* placed` plus the PO lines when it answers (AC-921/AC-922, card v4).
 
     A no-op (H62/AC-924 kept byte-identical) when: the origin has no further rung
     (AC-923), or the first probe found something for every requested code
@@ -1392,7 +1387,7 @@ def _apply_crossdomain_rung(
     )
     try:
         probe_result = services.mcp_probe(args["tool"], args)
-    except Exception:  # noqa: BLE001 - degrades to the existing nothing_note, never a dead turn
+    except Exception:  # noqa: BLE001 - degrades to the block without a PO line, never a dead turn
         logger.warning("chatbot: cross-domain %s rung probe did not run", rung, exc_info=True)
         return
     lines_by_code = _crossdomain_rung_rows(
@@ -1402,12 +1397,16 @@ def _apply_crossdomain_rung(
     # when it found nothing on order, else `*PO:* placed` then the PO/SPO lines.
     paragraphs = (block.get("block") or "").split("\n\n")
     for code in nothing_codes:
-        header = f"*Product Code:* {code}"
+        # The code's FIRST block (a company's block starts with its Company line, a numbered
+        # one with its number), found by its Product Code line; the rung answers once there.
         at = next(
             (
                 i
                 for i, para in enumerate(paragraphs)
-                if para.split("\n", 1)[0].upper().startswith(header.upper())
+                if any(
+                    line.upper().startswith(f"*PRODUCT CODE:* {code}".upper())
+                    for line in para.split("\n")
+                )
             ),
             None,
         )

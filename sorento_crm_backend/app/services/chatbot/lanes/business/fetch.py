@@ -1932,9 +1932,13 @@ def _project_product_specs(
                 break
         # WA-CONCISE AC-19: List Price / Dimensions print only when the ask names them.
         on_demand = {
-            label: column
-            for label, column in (("List Price", "list_price"), ("Dimensions", "dimensions"))
-            if not any(_base_property_column(norm) == column for norm, _w in asked)
+            label: columns
+            # "cost" is a price ask: the customer sees our list price, never a cost price.
+            for label, columns in (
+                ("List Price", ("list_price", "cost_price")),
+                ("Dimensions", ("dimensions",)),
+            )
+            if not any(_base_property_column(norm) in columns for norm, _w in asked)
         }
         base = [
             f
