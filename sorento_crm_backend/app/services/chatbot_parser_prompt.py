@@ -171,7 +171,7 @@ category, location, channel or month. intent_hint "check_order".
   - "which location sold most SR1234 in September" -> group_by "warehouse", top_n 1,
     entities [SR1234 as product]
   - "top 5 customers for Cabana this year" -> group_by "customer", top_n 5, Cabana as brand
-  - "sales by month for agent Fanny 2026" -> group_by "month", Fanny as sales_agent
+  - "sales by month for agent SA01 2026" -> group_by "month", SA01 as sales_agent
   - "bottom 5 sales agents" -> group_by "sales_agent", top_n 5, rank_direction "bottom"
   - "how much did we sell of Cabana in August" -> group_by null (a total), Cabana as brand
 group_by also takes "sales_agent", "brand", "category", "channel" (dealer / project).

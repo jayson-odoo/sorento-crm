@@ -441,7 +441,7 @@ addendum `REPORT_ASK_ADDENDUM`, inserted before `MEMORY_ADDENDUM`, which existin
 - `order_status` gains `"sales_ranking"`: sales ranked or totalled BY one dimension, for a
   sales agent / salesman, customer, brand, category, location, channel or month: "top 3
   salesman for Sorento brand last month", "which location sold most SR1234 in September",
-  "top 5 customers for Mocha this year", "sales by month for agent Fanny 2026", "bottom 5
+  "top 5 customers for Mocha this year", "sales by month for agent Agent A 2026", "bottom 5
   sales agents", "how much did we sell of brand X in August" (no `group_by`: a total).
   Ranking PRODUCTS or CATEGORIES ("top 10 products", "hot selling") stays `top_selling`
   (slice 2 folds it). `domain_hint` = `order`.
@@ -543,7 +543,7 @@ forged `report_ask_words` from the parser is stripped and the ask runs without t
 - **S3 several matches.** A brand or category word matching more than one row runs nothing and
   says `'<word>' matches several <brands|categories>: A, B. Ask again naming one.` (no silent
   widening, the PR #1273 rule). An exact name / code match wins alone. Several sales agent rows
-  for one word (FANNY I, FANNY II) stay a union: one person.
+  for one word (AGENT A I, AGENT A II) stay a union: one person.
 - **S4 products.** A named product goes to the route as `product_code` = its code (the sales
   report's PREFIX rule, S19: "SRT5674" covers "SRT5674-N"), not `product_ids`.
 - **S5.** Test: a customer or product carried from an earlier message never becomes a filter.

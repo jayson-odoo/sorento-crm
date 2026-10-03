@@ -83,7 +83,7 @@ def _reply(**overrides: Any) -> dict[str, Any]:
 def _fake_body(args: dict[str, Any]) -> dict[str, Any]:
     """The route's own body (`ReportAskResponse`) for the lane's args."""
     group_by = args.get("group_by")
-    rows = [{"rank": 1, "name": "FANNY", "qty": 30, "amount": 1200.0}] if group_by else []
+    rows = [{"rank": 1, "name": "AGENT A", "qty": 30, "amount": 1200.0}] if group_by else []
     return {
         "status": "ok", "message": None,
         "basis": args.get("basis", "delivered"),
@@ -156,7 +156,7 @@ def _seed(session_factory) -> dict[str, str]:
     try:
         ids: dict[str, str] = {}
         brand = Brand(id=str(uuid.uuid4()), brand_code="ZZTSOR", brand_name="Sorento", company_id=DEFAULT_COMPANY_ID)
-        agent = SalesAgent(id=str(uuid.uuid4()), sales_agent="FANNY", company_id=DEFAULT_COMPANY_ID)
+        agent = SalesAgent(id=str(uuid.uuid4()), sales_agent="AGENT A", company_id=DEFAULT_COMPANY_ID)
         category = ProductCategory(
             id=str(uuid.uuid4()), category_code="ZZTCAT", category_name="ZZT CATEGORY", company_id=DEFAULT_COMPANY_ID
         )
@@ -235,7 +235,7 @@ def test_the_owner_example_runs_crm_report_ask_with_the_resolved_args(console) -
     assert args["brand_ids"] == [console.ids["brand"]], args
     assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
     assert args["contact_id"] and args["space_id"], args
-    assert "FANNY" in text, text
+    assert "AGENT A" in text, text
     assert PERIOD_Q not in text and TOPN_Q not in text
 
 
@@ -299,8 +299,8 @@ def test_a_warehouse_entity_becomes_warehouse_codes(console) -> None:
 
 def test_a_sales_agent_and_a_category_word_become_ids(console) -> None:
     _text, calls = console.say(
-        _rank(_e("FANNY", "sales_agent"), _e("ZZT CATEGORY", "category"), group_by="month"),
-        "sales by month for FANNY ZZT CATEGORY",
+        _rank(_e("AGENT A", "sales_agent"), _e("ZZT CATEGORY", "category"), group_by="month"),
+        "sales by month for AGENT A ZZT CATEGORY",
     )
     (args,) = calls
     assert args["sales_agent_ids"] == [console.ids["agent"]], args
@@ -350,7 +350,7 @@ def test_ac_re_18a_no_period_asks_which_period_then_the_reply_runs_the_first_ask
     assert args["brand_ids"] == [console.ids["brand"]], args
     assert args["group_by"] == "sales_agent" and args["top_n"] == 3, args
     assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
-    assert "FANNY" in text, text
+    assert "AGENT A" in text, text
 
 
 def test_ac_re_18a_a_period_reply_without_a_date_is_a_miss_and_asks_again(console) -> None:
@@ -429,11 +429,11 @@ def test_take_words_moves_brand_agent_category_onto_report_ask_words() -> None:
     from app.services.chatbot.lanes.business import report_ask
 
     verdict = _rank(
-        _e("Sorento", "brand"), _e("FANNY", "sales_agent"), _e("water tap", "category"),
+        _e("Sorento", "brand"), _e("AGENT A", "sales_agent"), _e("water tap", "category"),
         _e(PRODUCT_CODE, "product"), _e(CUSTOMER_NAME, "customer"), _e("BRW", "warehouse"),
     )
     out = report_ask.take_words(verdict, "top 3 salesman for Sorento")
-    assert out["report_ask_words"] == {"brand": ["Sorento"], "sales_agent": ["FANNY"], "category": ["water tap"]}, out
+    assert out["report_ask_words"] == {"brand": ["Sorento"], "sales_agent": ["AGENT A"], "category": ["water tap"]}, out
     assert [e["hint"] for e in out["entities"]] == ["product", "customer", "warehouse"], out["entities"]
 
 
@@ -506,7 +506,7 @@ def dealer(console):
     return console
 
 
-@pytest.mark.parametrize("word", ["Zzz", "FANNY"], ids=["names_no_agent", "names_an_agent"])
+@pytest.mark.parametrize("word", ["Zzz", "AGENT A"], ids=["names_no_agent", "names_an_agent"])
 def test_f1_a_dealer_naming_a_sales_agent_gets_the_refusal_and_no_probe(dealer, word) -> None:
     text, calls = dealer.say(_rank(_e(word, "sales_agent"), group_by="product"), f"top products for agent {word}")
     assert text.strip() == DIMENSION_REFUSAL, text
@@ -559,7 +559,7 @@ def test_f2b_an_answering_turn_runs_only_the_carried_args(console) -> None:
         _rank(_e("Sorento", "brand"), date_filter_start=None, date_filter_end=None), "top 3 salesman for Sorento"
     )
     _text, calls = console.say(
-        _reply(entities=[_e("ZZT OTHER DEALER SDN BHD", "customer"), _e("FANNY", "sales_agent")], **SEP),
+        _reply(entities=[_e("ZZT OTHER DEALER SDN BHD", "customer"), _e("AGENT A", "sales_agent")], **SEP),
         "last month",
     )
     (args,) = calls
