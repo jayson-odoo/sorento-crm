@@ -71,3 +71,6 @@ Round 5 (security re-review, 3 Oct):
   is replaced by the same fake id. Attachment links (`attachment.url`, `attachment.source_url` and
   similar media URLs) point at `https://cdn.example.invalid/...` placeholders, in the recorder's
   output and in the committed fixtures.
+- **AC-24** Every value in a driver field of a tracked file (`*Driver:* <value>` in reply text,
+  a `"Driver"` label/value pair, a `driver_name` key) is a `DRIVER X` placeholder or one of the
+  non-person labels `FROM AUTOCOUNT`, `Documentation`, `-`, `null`/empty.
