@@ -1065,7 +1065,7 @@ def _focus_rules(
     # MULTI-CODE-DYM Q3 (owner, 4 Oct 2026): "2 and SRTWC286-SH-150" picks one option AND
     # names a code of its own. The typed code that is not the picked row's own word is a
     # second subject, answered beside the pick, never dropped.
-    for kind in picked_kinds & set(by_kind):
+    for kind in picked_kinds & set(by_kind) & {"product"}:
         attr = KIND_FIELD_MAP.get(kind)
         if not attr:
             continue
@@ -1077,10 +1077,13 @@ def _focus_rules(
             for value in (row.get("raw"), row.get("canonical_code"))
             if value
         }
+        # A word inside the picked code ("the srtwc286 one" over SRTWC286-SH) is how the
+        # customer named the pick, not a second subject.
         extras = [
             e
             for e in by_kind[kind]
-            if token_key(_code_of_entity(e)) and token_key(_code_of_entity(e)) not in picked_keys
+            if token_key(_code_of_entity(e))
+            and not any(token_key(_code_of_entity(e)) in key for key in picked_keys)
         ]
         if extras:
             setattr(focus, attr, picked_rows + extras)

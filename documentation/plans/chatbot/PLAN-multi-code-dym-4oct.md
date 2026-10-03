@@ -35,5 +35,5 @@ real trigram: partial miss, one pick, two picks, pick + typed code).
 ## Not in scope
 
 Dealer (availability-only) asks: their stock path strips the escalation clause
-(`engine._without_escalation_offer`) and is otherwise unchanged. WA-CONCISE #1455 owns the
+(`engine._dealer_refers_to_salesman` -> `dealer_stock.without_escalation`) and is otherwise unchanged. WA-CONCISE #1455 owns the
 found blocks' format; the run-on numbering reads whatever numbers they carry.

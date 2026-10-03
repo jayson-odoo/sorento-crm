@@ -90,3 +90,31 @@ def test_a_reply_picking_one_and_typing_another_code_answers_both(session_factor
     c.say("2 and SRTWC286-SH-150", reading)
     fetched = [code for _name, codes in _codes(c, since) for code in codes]
     assert options[2] in fetched and "SRTWC286-SH-150" in fetched, _codes(c, since)
+
+
+def test_a_typed_code_ending_in_punctuation_is_still_answered(session_factory, monkeypatch, stub_access):
+    """Review S2: "2 and SRTWC286-SH-150?" - the question mark does not drop the code."""
+    c = _console(session_factory, monkeypatch, stub_access, "+60000014654")
+    _partial(c)
+    options = {o["position"]: o["code"] for o in c.stored_question["options"]}
+
+    since = len(c.tool_calls)
+    reading = _pick(2)
+    reading["entities"] = [product("SRTWC286-SH-150")]
+    c.say("2 and SRTWC286-SH-150?", reading)
+    fetched = [code for _name, codes in _codes(c, since) for code in codes]
+    assert options[2] in fetched and "SRTWC286-SH-150" in fetched, _codes(c, since)
+
+
+def test_a_pick_named_by_part_of_its_code_fetches_only_the_pick(session_factory, monkeypatch, stub_access):
+    """Review S1: "the srtwc286 one" picks SRTWC286-SH; "srtwc286" is how it was named,
+    not a second subject, so nothing else is fetched."""
+    c = _console(session_factory, monkeypatch, stub_access, "+60000014655")
+    _partial(c)
+    options = {o["position"]: o["code"] for o in c.stored_question["options"]}
+
+    since = len(c.tool_calls)
+    reading = _pick(2)
+    reading["entities"] = [product("srtwc286")]
+    c.say("the srtwc286 one", reading)
+    assert _codes(c, since) == [(STOCK, [options[2]])], _codes(c, since)

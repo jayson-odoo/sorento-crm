@@ -717,8 +717,8 @@ def _with_the_picked_axis(
     * any other roster (product, customer): an entity of the roster's kind naming no
       picked option is dropped - the parser's echo of the previous pick is not a second
       subject. The picked option itself reaches the focus through `_answer_pending`.
-      MULTI-CODE-DYM Q3 (owner, 4 Oct 2026): an entity whose own word is in THIS
-      message ("2 and SRTWC286-SH-150") is the customer's second subject, not an echo,
+      MULTI-CODE-DYM Q3 (owner, 4 Oct 2026): a PRODUCT entity whose own word is in THIS
+      message ("2 and SRTWC286-SH-150?") is the customer's second subject, not an echo,
       and stays.
     """
     matched = [o for o in pending.options if o.get("position") in positions]
@@ -764,7 +764,14 @@ def _with_the_picked_axis(
 
     from app.services.chatbot.turn.state import token_key
 
-    said = [w for w in re.split(r"[\s,;/&+]+", message or "") if w]
+    picked_keys = {
+        token_key(o.get(field))
+        for o in matched
+        for field in ("code", "label")
+        if o.get(field)
+    }
+    said = [w.strip(".?!:()\"'") for w in re.split(r"[\s,;/&+]+", message or "")]
+    said = [w for w in said if w]
 
     def typed_here(e: dict[str, Any]) -> bool:
         """The entity's word, whole, among this message's own words (a span of as many
@@ -772,6 +779,9 @@ def _with_the_picked_axis(
         starts with it."""
         raw = str(e.get("raw") or "").strip()
         want, size = token_key(raw), len(raw.split()) or 1
+        if any(want in key for key in picked_keys):
+            # A piece of the picked code ("the srtwc286 one") names the pick itself.
+            return False
         return bool(want) and any(
             token_key(" ".join(said[i : i + size])) == want for i in range(len(said) - size + 1)
         )
@@ -780,7 +790,12 @@ def _with_the_picked_axis(
     kept_entities = [
         e
         for e in entities
-        if not (isinstance(e, dict) and e.get("hint") == kind and not names_a_pick(e) and not typed_here(e))
+        if not (
+            isinstance(e, dict)
+            and e.get("hint") == kind
+            and not names_a_pick(e)
+            and not (kind == "product" and typed_here(e))
+        )
     ]
     if len(kept_entities) == len(entities):
         return verdict

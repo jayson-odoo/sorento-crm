@@ -453,3 +453,43 @@ def test_a_name_or_bare_number_left_unplaced_gets_no_escalation_offer():
         assert f"I could not find {token}." in answer.text, answer.text
         assert "escalate" not in answer.text
         assert answer.question is None
+
+
+def test_numbering_runs_on_after_numbered_items_under_a_group_heading():
+    """Review S3: a grouped render ("*Group*\n1. ...") numbers its items inside a
+    paragraph, not at its head; suggestions still never reuse a number."""
+    env = _envelope({"SRTWC286": 12}, ["srt5764"], {"srt5764": SUGGEST})
+    env["lane_text"] = "Stock availability:\n\n*Bukit Raja*\n1. SRTWC286 - 12\n\n*Johor*\n2. SRTWC286 - 4"
+    answer = _answer(env)
+
+    assert "Did you mean:\n3. SRT57-CR\n4. SRT5713\n5. SRT5732" in answer.text, answer.text
+
+
+def test_a_lane_question_withholds_the_escalation_and_numbers_on_from_its_options():
+    """Review S4: with the lane's question stored, "yes" cannot reach an escalation, so
+    none is offered, and the suggestions do not restart at 1 under the lane's list."""
+    env = _envelope({"SRTWC286": 12}, ["srt5764"], {"srt5764": SUGGEST})
+    env["lane_text"] += "\n\nWhich list would you like?\n1. Sales orders\n2. Delivery orders"
+    env["lane_ask"] = {
+        "kind": "outstanding_detail",
+        "last_result_set": [{"idx": 1, "label": "Sales orders", "value": "so"}, {"idx": 2, "label": "Delivery orders", "value": "do"}],
+    }
+    answer = _answer(env)
+
+    assert answer.question.kind == "outstanding_detail"
+    assert "escalate" not in answer.text, answer.text
+    assert "Did you mean:\n3. SRT57-CR" in answer.text, answer.text
+    assert answer.text.rstrip().endswith("Reply with a code to continue."), answer.text
+
+
+def test_a_barred_contact_reads_the_salesman_line_once_when_every_section_missed():
+    """Review N1: one suggestion, every section missed, escalation barred."""
+    from app.services.chatbot.turn.task import REFER_TO_SALESMAN
+
+    env = _envelope({"SRTWC286": 12}, ["srt5764"], {"srt5764": SUGGEST[:1]})
+    env.update({"figures": [], "has_result": False, "tool_has_result": False, "miss": ["SRTWC286"]})
+    env["lane_text"] = "No matching results found."
+    answer = _answer(env, Profile(escalation_allowed=False))
+
+    assert "Did you mean:\n1. SRT57-CR" in answer.text, answer.text
+    assert answer.text.count(REFER_TO_SALESMAN) == 1, answer.text

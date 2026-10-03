@@ -364,9 +364,9 @@ def _code_shaped(token: str) -> bool:
     return any(c.isdigit() for c in token) and any(c.isalpha() for c in token)
 
 
-def _block_number(paragraph: str) -> int | None:
-    """N for a numbered card block ("N. *Label:* ..."), else None."""
-    head, dot, rest = paragraph.partition(". *")
+def _line_number(line: str) -> int | None:
+    """N for a numbered line ("N. *Product Code:* ...", "N. Sales orders"), else None."""
+    head, dot, _rest = line.partition(". ")
     return int(head) if dot and head.isdigit() else None
 
 
@@ -407,7 +407,7 @@ def _did_you_mean_per_code(
         for code in (env.get("product_codes") or [])
         if isinstance(code, str)
     }
-    numbers = [b for b in (_block_number(p) for p in text.split("\n\n")) if b is not None]
+    numbers = [b for b in (_line_number(line) for line in text.splitlines()) if b is not None]
     n = max(numbers, default=0)
     options: list[dict[str, Any]] = []
     paragraphs: list[str] = []
@@ -452,7 +452,9 @@ def _did_you_mean_per_code(
             domain, team = env.get("domain"), row.escalation_team_code
             break
     profile = getattr(state, "profile", None)
-    offered = bool(team) and offers_escalation(profile)
+    # A question already asked this turn keeps the turn: no offer is stored, so none is
+    # printed either.
+    offered = bool(team) and offers_escalation(profile) and not lane_asked
     lead_in = "Reply with a code to continue"
     if offered:
         closing = f"{lead_in}, or would you like me to escalate to {_pretty_team(team)} team?"
@@ -704,8 +706,16 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         # MULTI-CODE-DYM (owner, 4 Oct 2026, "treat each product code individually"): a
         # token with a did-you-mean gets the one it gets when asked alone; the rest keep
         # this sentence.
+        carried = getattr(state, "pending", None)
+        asked_this_turn = carried is not None and carried.asked_at_turn == getattr(state, "turn_no", None)
         text, dym_question, dym_listed = _did_you_mean_per_code(
-            text, unplaced, envelopes, state, policy, ctx, lane_asked=lane_question is not None
+            text,
+            unplaced,
+            envelopes,
+            state,
+            policy,
+            ctx,
+            lane_asked=lane_question is not None or asked_this_turn,
         )
 
     offer = None
@@ -715,13 +725,16 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
     # looking at two numbered lists for one reply - and store the wrong roster for the
     # number they send back.
     # The per-code did-you-mean is this turn's question when no lane asked one, and its
-    # closing line already offers the escalation, so the arm below adds no second one.
+    # closing line already settled the escalation (offered, withheld or the salesman
+    # line), so the arm below adds none when one was listed.
     question = lane_question or dym_question
     # Which domains' teams a miss offers. Every section missed: theirs (unchanged). Some
     # section answered but a product CODE the customer typed (letters and digits: a name
     # or a bare number is not one) matched nothing and no did-you-mean was listed for it: the offer that code gets when asked alone (MULTI-CODE-DYM Q4,
     # owner 4 Oct 2026), the first answering domain that has a team.
-    if missed_domains and len(missed_domains) == len(envelopes):
+    if dym_listed:
+        offer_domains = []
+    elif missed_domains and len(missed_domains) == len(envelopes):
         offer_domains = missed_domains
     elif not dym_listed and text.strip() and any(_code_shaped(t) for t in unplaced):
         offer_domains = [
