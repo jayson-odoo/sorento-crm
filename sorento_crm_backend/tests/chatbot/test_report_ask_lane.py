@@ -922,6 +922,33 @@ def test_c2_a_bare_sales_word_does_not_hijack_a_product_ranking(console, monkeyp
 
 
 @pytest.mark.parametrize(
+    ("body", "raw", "extra"),
+    [
+        ("top SA01 items this year", "SA01", ()),
+        ("best sa01 products for sorento", "sa01", (("sorento", "brand"),)),
+    ],
+)
+def test_c2_an_agent_code_that_looks_like_sa_keeps_the_item_ranking_and_the_agent_filter(
+    console, monkeypatch, body, raw, extra
+) -> None:
+    """A seeded agent coded "SA01" is a filter on an item ranking, never a person ranking."""
+    from app.models.sales_agent import SalesAgent
+
+    agent_id = str(uuid.uuid4())
+    db = console.session_factory()
+    try:
+        db.add(SalesAgent(id=agent_id, sales_agent="SA01", person_label="SA01", company_id=DEFAULT_COMPANY_ID))
+        db.commit()
+    finally:
+        db.close()
+    entities = [_hit(raw, "sales_agent"), *[_hit(r, h) for r, h in extra]]
+    text, log = _say_all(console, monkeypatch, _old(*entities, top_n=10), body)
+    assert TOOL not in _names(log), (body, _names(log), text)
+    (args,) = [a for n, a in log if n == "crm_top_selling_report"]
+    assert agent_id in (args.get("sales_agent_ids") or []), (body, args)
+
+
+@pytest.mark.parametrize(
     ("body", "group_by", "top_n"),
     [
         ("top 1000 customers for sorento this year", "customer", 1000),
