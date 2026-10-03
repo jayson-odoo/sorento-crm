@@ -66,3 +66,8 @@ Round 5 (security re-review, 3 Oct):
   args and tool results, the `--contact` default output file name) carries the SAME fake id for
   the same real id, so a recording stays self-consistent. The fake-id space is at least 100,000
   values (no merging of contacts in a 40-contact sample), and every derived phone passes the guard.
+- **AC-23** After the recorder's scrub, the real contact id text occurs nowhere in the recorded
+  turn (any key, any depth, inside strings such as URLs and session vars like `respond_io_id`); it
+  is replaced by the same fake id. Attachment links (`attachment.url`, `attachment.source_url` and
+  similar media URLs) point at `https://cdn.example.invalid/...` placeholders, in the recorder's
+  output and in the committed fixtures.
