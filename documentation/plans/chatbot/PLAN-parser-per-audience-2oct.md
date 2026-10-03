@@ -287,6 +287,28 @@ The steps, in order:
 Already posted: the red-proof for 21debae7 (134 failed / 134 passed) and for f08ed10b (G1, 3
 failed / 2 passed). Both commits predate the prefix rule.
 
+## Cloud browser pass (owner rule, 3 Oct 2026)
+
+Before a head is reported hand-test ready:
+1. Run the app plus a headless chromium (agent-browser) in this sandbox, against the sandbox
+   Postgres with a seed script that mirrors the owner's cases. No customer data.
+2. Cover every hand-test script step and the owner's exact failing messages, at 1280 and 375.
+3. Post `crew-note: crew-tester (cloud) pass at <head>` with a PASS/FAIL table.
+4. Rerun whenever the head moves. Crew brings a local copy only for the owner's hand test.
+
+Planned split for this lane:
+- Cloud, seeded: the Access tab hint line per key, the relabel, `GET field-reveal-keys`
+  `prompt_blocks`, and the chatbot console turns for each seeded audience (dealer with no
+  grants, P only, C+P, all four, an unlinked non-office contact for G1). The refusal replies
+  are deterministic backend text, so the seed only needs one product, one PO, one SPO
+  receipt, two customers with orders, and the reveal rows.
+- Needs the live parser key (not dev data): free-text asks go through the OpenAI parser. If
+  the sandbox has no key, those steps run with the parser output forced, as the matrix does,
+  and the PR says so.
+- Needs real dev data: answers over real customers and products (wording and figures the
+  owner recognises) and the G1 data step on the 55 internal contacts. These stay in the
+  owner's hand test.
+
 ## Kill list (tests must fail when these are broken)
 
 - The strip keeps a tagged block for a contact without the grant.
