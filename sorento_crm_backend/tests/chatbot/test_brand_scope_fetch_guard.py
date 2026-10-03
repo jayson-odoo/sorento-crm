@@ -27,8 +27,13 @@ def _run(db, world, result: dict, *, scoped: bool, domain: str = "inventory", db
         "access": {"attributes": []},
         "parse": {"output": {"domain_hint": domain}},
     }
-    if scoped:
-        ctx["brand_scope"] = {"ids": [str(world.mocha.id)]}
+    if scoped and db_arg:
+        # the scope is the one the engine stamped on the turn session, not a ctx claim
+        from app.models.base import set_brand_scope
+
+        set_brand_scope(db, frozenset({world.mocha.id}))
+    elif scoped:
+        ctx["brand_scope"] = {"ids": [str(world.mocha.id)]}  # no session to stamp: the ctx narrows
     payload = {
         "_exit_kind": "continue",
         "gate": {"compatible_entities": [

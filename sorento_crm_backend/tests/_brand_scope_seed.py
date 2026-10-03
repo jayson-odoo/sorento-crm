@@ -139,7 +139,56 @@ class BrandWorld:
             product_attachment(
                 db, company_id=DEFAULT_COMPANY_ID, product_id=prod.id, attachment_id=self.stock_list.id
             )
+        self._seed_po_promotion_complaints(db)
         db.commit()
+
+    def _seed_po_promotion_complaints(self, db) -> None:
+        from datetime import date as _d
+
+        from app.models.complaints import Complaint, ComplaintProductLine
+        from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+        from tests._mc_lookup_seed import promotion, promotion_group, promotion_product
+
+        # one active PO, one open line per product: MOCHA 10 @ 5, SORENTO 20 @ 6, unbranded 30 @ 7
+        po = PurchaseOrder(
+            id=str(uuid.uuid4()), po_number=unique_code("PO"), status="active",
+            issue_date=_d(2026, 6, 1), expected_date=_d(2026, 12, 1), company_id=DEFAULT_COMPANY_ID,
+        )
+        db.add(po)
+        db.flush()
+        self.po = po
+        for prod, qty, cost in ((self.p_mocha, 10, 5), (self.p_sorento, 20, 6), (self.p_null, 30, 7)):
+            db.add(PurchaseOrderLine(
+                id=str(uuid.uuid4()), purchase_order_id=po.id, product_id=prod.id,
+                warehouse_id=self.wh.id, qty_ordered=qty, qty_received=0, unit_cost=cost,
+                line_total=qty * cost, expected_date=_d(2026, 12, 1), line_status="open",
+                company_id=DEFAULT_COMPANY_ID,
+            ))
+        promo = promotion(db, company_id=DEFAULT_COMPANY_ID)
+        group = promotion_group(db, company_id=DEFAULT_COMPANY_ID, promotion_id=promo.id)
+        for prod in self.products:
+            promotion_product(
+                db, company_id=DEFAULT_COMPANY_ID, promotion_id=promo.id,
+                promotion_group_id=group.id, product_id=prod.id,
+            )
+        # complaints: A mixed (MOCHA + SORENTO), B SORENTO only, C unbranded only
+        self.complaints = {}
+        for key, prods in (("mixed", (self.p_mocha, self.p_sorento)), ("sorento_only", (self.p_sorento,)),
+                           ("null_only", (self.p_null,))):
+            c = Complaint(
+                id=str(uuid.uuid4()), complaint_number=unique_code("CMP"), complaint_date=_d(2026, 6, 2),
+                customer_name="ZZT BRAND CUSTOMER", product_code=",".join(p.product_code for p in prods),
+                status="approved",
+            )
+            db.add(c)
+            db.flush()
+            for n, prod in enumerate(prods):
+                db.add(ComplaintProductLine(
+                    id=str(uuid.uuid4()), complaint_id=c.id, product_code=prod.product_code,
+                    quantity="1", sort_order=n,
+                ))
+            self.complaints[key] = c
+        db.flush()
 
     def _do(self, db, lines) -> Order:
         row = order(db, company_id=DEFAULT_COMPANY_ID, customer_id=self.cust.id, number=unique_code("DO"))
