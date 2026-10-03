@@ -78,7 +78,9 @@ FIELD_REVEAL_KEYS: tuple[tuple[str, str], ...] = (
 )
 
 #: The DO reveal keys, on for every contact until a `granted=False` row says otherwise
-#: (owner, 4 Oct 2026). Every other key stays hidden by default.
+#: (owner, 4 Oct 2026). Every other key stays hidden by default. Any future
+#: `delivery_orders.*` reveal key is ON by default through this prefix rule, so adding one
+#: is an owner decision.
 DEFAULT_ON_KEYS: frozenset[str] = frozenset(
     key for key, _label in FIELD_REVEAL_KEYS if key.startswith("delivery_orders.")
 )

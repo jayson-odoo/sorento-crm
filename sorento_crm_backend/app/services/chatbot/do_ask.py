@@ -33,18 +33,6 @@ _ORDER_TYPES = frozenset({"order", "customer_order", "order_number"})
 _EXEMPT_STATUSES = frozenset({"outstanding", "so_outstanding"})
 
 
-def is_dealer(ctx: dict[str, Any]) -> bool:
-    """Is this contact a dealer for the DO range rules?
-
-    Until the ACCESS-MODEL lane lands its Dealer role (crew ruling, 2 Oct 2026): a contact
-    linked to at least one customer and holding no office access type, which is exactly
-    `contact_customer_scope(...).enforced`, already on the turn as `ctx["customer_scope"]`.
-    The ONE place the DO rules ask; ACCESS-MODEL replaces this body.
-    """
-    scope = ctx.get("customer_scope") if isinstance(ctx, dict) else None
-    return bool(isinstance(scope, dict) and scope.get("enforced"))
-
-
 #: The reveal key a DO answer path checks outside `output_structurer` (security round 1).
 TRANSPORTER_KEY = "delivery_orders.transporter"
 
