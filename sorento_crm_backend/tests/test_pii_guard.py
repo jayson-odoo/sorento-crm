@@ -35,12 +35,11 @@ def _load_module():
 
 
 def _random_subscriber(rng: random.Random) -> str:
-    # 7 digits with no zero run and no ascending/descending run, i.e. a value
-    # the allowlist must NOT treat as fake.
-    while True:
-        digits = "".join(rng.choice("123456789") for _ in range(7))
-        if not _load_module().is_fake_phone("6012" + digits):
-            return digits
+    # 7 odd digits: no zero run, no ascending/descending run, never one digit
+    # repeated throughout, so never a value the allowlist may treat as fake.
+    digits = [rng.choice("13579") for _ in range(7)]
+    digits[1] = "3" if digits[0] != "3" else "5"
+    return "".join(digits)
 
 
 def _kinds(findings):
@@ -176,3 +175,36 @@ def test_text_that_is_not_utf8_is_still_scanned():
     sub = _random_subscriber(rng)
     raw = f"caf\xe9 017{sub}".encode("latin-1")
     assert _kinds(mod.scan_bytes("notes.csv", raw)) == ["phone"]
+
+
+def test_only_the_documented_fake_shapes_pass():
+    mod = _load_module()
+    assert mod.is_fake_phone("+60 17-000 0501")
+    assert mod.is_fake_phone("012-345 6789")
+    assert mod.is_fake_phone("+60 11-111 1111")
+    # a run somewhere else in a number is not enough
+    assert not mod.is_fake_phone("6017" + "29" + "34567")
+    assert not mod.is_fake_phone("6019" + "1" + "98765" + "3")
+
+
+def test_a_value_under_a_phone_key_is_checked_whatever_its_shape():
+    mod = _load_module()
+    rng = random.Random(8)
+    sub = _random_subscriber(rng)
+    for key in ("phone", "wa_id", "contact_phone_number"):
+        text = '{"' + key + '": "+604' + sub + '1"}'
+        assert _kinds(mod.scan_text(text)) == ["phone"], text
+    # a contact-id-derived fake stays allowed
+    assert mod.scan_text('{"phone": "+60' + "9000000" + '08"}') == []
+
+
+def test_more_plate_labels_are_read():
+    mod = _load_module()
+    plate = "VQB" + " 4821"
+    for text in (
+        "Lorry No: " + plate,
+        '"car_plate": "' + plate.replace(" ", "") + '"',
+        "No Plat: " + plate,
+        "Truck No. " + plate,
+    ):
+        assert _kinds(mod.scan_text(text)) == ["plate"], text
