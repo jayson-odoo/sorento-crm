@@ -1,11 +1,12 @@
 # PLAN - WhatsApp replies, one fact per line (WA-CONCISE)
 
-Status: planned, awaiting owner approval of behaviour card v3 (feature track M: wording on an
-existing surface, no migration, no auth/RBAC, no new ingest).
+Status: building (card v4 approved by owner 3 Oct 2026, "ok can"; feature track M: wording on
+an existing surface, no migration, no auth/RBAC, no new ingest).
 
-Owner, 3 Oct 2026: "our messages often contain duplicate info and can be more concise". Card v3
-(`documentation/mockups/wa-concise/index.html`) after owner notes on v1 and v2: product code as a
-bold heading, then one fact per line as `Label: value`, no separators, no repeated facts.
+Owner, 3 Oct 2026: "our messages often contain duplicate info and can be more concise". Card v4
+(`documentation/mockups/wa-concise/index.html`) after owner notes on v1-v3: today's fields in
+today's order with today's labels, every label bold (`*Label:* value`), one fact per line, no
+separators; only repeated or empty facts go.
 UAC: `wa-concise-acceptance-criteria.md`.
 
 ## Owner answers (card v1/v2, 3 Oct 2026)
@@ -18,6 +19,7 @@ UAC: `wa-concise-acceptance-criteria.md`.
 | Q4 | Footer | `_Updated dd/mm/yyyy hh:mm_` |
 | Q5 | List Price / Dimensions on product lists | only when the customer asks for price or dimensions |
 | v2 note | `·` separators | rejected: "I need things to be line by line", "No dot" |
+| v3 note | new heading style, renamed labels | rejected: keep today's order (Container -> ETA and dates -> Quantity -> Allocation), labels always bold, Product Code / Company / Order Number labels kept |
 
 ## Premise check (measured, dev copy `sorento_cagent_stack`, outgoing 1 Aug to 18 Sep 2026)
 
@@ -47,12 +49,12 @@ UAC: `wa-concise-acceptance-criteria.md`.
 
 ## Slices (one lane, one PR, one coder continued across slices)
 
-1. S1 stock lines + intro + footer (fetch.py `_item_line` for stock result types, intro
-   suppression, footer + its two consumers).
-2. S2 cross-domain: incoming miss / stock miss blocks in the per-product line form, the
-   `not_found_error_message` head dropped when the block heads every asked code, the PO rung as
-   `PO: none` / `PO: placed`.
-3. S3 incoming rows and order rows in the line form; scope header dropped for one named order.
+1. S1 stock: detailed rows merged per (company, product), compact Total only for more than one
+   location, intro suppression, single-block numbering, footer + its two consumers.
+2. S2 cross-domain: incoming miss / stock miss as one block per code (`*Incoming:* none`,
+   `*Stock:* 0`, `*PO:* none` / `*PO:* placed`), the `not_found_error_message` head dropped when
+   the blocks cover every asked code.
+3. S3 incoming and order rows: single-block numbering; scope header dropped for one named order.
 4. S4 product list: List Price / Dimensions only when asked.
 
 Not touched: dealer availability lines (presenters.py:1464-1490), the LOCKED escalation phrase
