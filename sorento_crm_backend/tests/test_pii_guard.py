@@ -129,3 +129,50 @@ def test_tracked_tree_is_clean():
     problems = mod.scan_repo(_REPO_ROOT)
     report = "\n".join(mod.format_finding(path, f) for path, f in problems[:50])
     assert problems == [], f"{len(problems)} PII findings:\n{report}"
+
+
+def test_more_prefix_and_separator_shapes_are_flagged():
+    mod = _load_module()
+    rng = random.Random(4)
+    sub = _random_subscriber(rng)
+    for text in (
+        f"tel 006017{sub}",
+        f"to=%2B6017{sub}&x=1",
+        f"contact_6017{sub}",
+        f"(017) {sub[:3]}-{sub[3:]}",
+    ):
+        assert _kinds(mod.scan_text(text)) == ["phone"], text
+
+
+def test_decimal_fractions_are_not_phones():
+    mod = _load_module()
+    rng = random.Random(5)
+    sub = _random_subscriber(rng)
+    assert mod.scan_text(f"<v>45678.017{sub}</v>") == []
+
+
+def test_a_repeated_digit_run_is_not_enough_to_be_fake():
+    mod = _load_module()
+    assert not mod.is_fake_phone("6012" + "8888" + "4" + "7" + "3")
+
+
+def test_spreadsheet_xml_is_scanned():
+    import io
+    import zipfile
+
+    mod = _load_module()
+    rng = random.Random(6)
+    sub = _random_subscriber(rng)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("xl/sharedStrings.xml", f"<sst><si><t>017-{sub}</t></si></sst>")
+        z.writestr("xl/vbaProject.bin", b"\x00\x01")
+    assert _kinds(mod.scan_bytes("book.xlsm", buf.getvalue())) == ["phone"]
+
+
+def test_text_that_is_not_utf8_is_still_scanned():
+    mod = _load_module()
+    rng = random.Random(7)
+    sub = _random_subscriber(rng)
+    raw = f"caf\xe9 017{sub}".encode("latin-1")
+    assert _kinds(mod.scan_bytes("notes.csv", raw)) == ["phone"]
