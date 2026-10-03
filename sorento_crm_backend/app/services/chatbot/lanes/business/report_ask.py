@@ -170,12 +170,28 @@ def hold_words(verdict: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, 
     return {**verdict, "entities": [e for e in entities if not any(e is h for h in held)]}, held
 
 
+#: A quantity word in the message: the only thing that makes a sales ranking sort by qty.
+_QUANTITY_WORD_RE = re.compile(r"\b(?:quantity|qty|units?|pcs|pieces)\b", re.IGNORECASE)
+
+
+def _is_axis_noun(raw: str) -> bool:
+    """Is `raw` a person noun of the ranked axis ("salesman", "sales agents", "SA", "customers")?
+    The nouns are `engine`'s own, the ones `_ranked_who` reads; a lazy import, `engine` imports us."""
+    from app.services.chatbot.engine import _RANKED_AGENT_NOUNS, _RANKED_AGENT_SECOND, _RANKED_CUSTOMER_NOUNS
+
+    words = raw.lower().split()
+    if len(words) == 1:
+        return words[0] in _RANKED_AGENT_NOUNS or words[0] in _RANKED_CUSTOMER_NOUNS
+    return len(words) == 2 and words[0] == "sales" and words[1] in _RANKED_AGENT_SECOND
+
+
 def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
     """Engine seam, a FRESH `sales_ranking` ask: this message's brand, sales agent and
     category words move off the entity list onto `report_ask_words` (raw words per hint).
     A carried row of those hints is dropped too: it is not this ask's filter, and the
-    generic resolver would read it as a customer. `text` is taken for the seam's shape."""
-    _ = text
+    generic resolver would read it as a customer. An entity that is only the ranked noun
+    ("salesman", "customers") is the axis, never a filter, and is dropped. `rank_by`
+    quantity stands only when `text` names a quantity word."""
     if jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME or verdict.get("required_ask"):
         return verdict
     kept: list[Any] = []
@@ -184,13 +200,18 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
         if not isinstance(e, dict):
             continue
         hint = jsc.js_string(e.get("hint") or "").strip().lower()
+        raw = " ".join(jsc.js_string(e.get("raw") or "").split())
+        if hint in ("sales_agent", "customer") and raw and _is_axis_noun(raw):
+            continue
         if hint not in WORD_HINTS:
             kept.append(e)
             continue
-        raw = " ".join(jsc.js_string(e.get("raw") or "").split())
         if raw and e.get("current_message") is not False and raw not in words[hint]:
             words[hint].append(raw)
-    return {**verdict, "entities": kept, "report_ask_words": words}
+    out = {**verdict, "entities": kept, "report_ask_words": words}
+    if out.get("rank_by") == "quantity" and not _QUANTITY_WORD_RE.search(text or ""):
+        out["rank_by"] = None
+    return out
 
 
 def dealer_location_words(parse_output: dict[str, Any]) -> dict[str, Any]:
