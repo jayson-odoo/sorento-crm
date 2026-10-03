@@ -1,5 +1,6 @@
 /**
- * IDEATION-IN-CRM Phase 2 red tests for the Ideas list (AC-C-01..C-06).
+ * IDEATION-IN-CRM Phase 2 red tests for the Ideas list: AC-C-03, C-05, C-06 still stand;
+ * AC-K-01..K-08 (list rework, owner hand test #1) supersede AC-C-01, C-02 and C-04.
  *
  * Real DataGrid, real hooks; the service is the seam. The column-preference hook is stubbed as
  * "loaded" (the pattern every list test here uses) and records the listing key it was given, which
@@ -30,7 +31,26 @@ vi.mock('@/components/common/container', () => ({
   Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
-vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }));
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+vi.mock('@/lib/toast', () => ({
+  toast: {
+    success: (...a: unknown[]) => toastSuccess(...a),
+    error: (...a: unknown[]) => toastError(...a),
+    dismiss: vi.fn(),
+  },
+}));
+vi.mock('@/components/common/deferredToast', () => ({
+  deferredToast: vi.fn(() => 'toast-1'),
+  dismissDeferredToast: vi.fn(),
+}));
+
+// Manage is a separate slug from view; the test decides which the viewer holds.
+const held = new Set<string>();
+vi.mock('@/hooks/usePermissions', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return { ...actual, useHasPermission: (slug: string) => held.has(slug) };
+});
 vi.mock('next-auth/react', () => ({
   useSession: () => ({ data: { user: { name: 'Pat Staff' } }, status: 'authenticated' }),
 }));
@@ -50,6 +70,7 @@ const svc = vi.hoisted(() => ({
   mergeIdeas: vi.fn(),
   unmergeIdea: vi.fn(),
   promoteIdea: vi.fn(),
+  promoteIdeas: vi.fn(),
   uploadAttachment: vi.fn(),
   addComment: vi.fn(),
   editComment: vi.fn(),
@@ -59,6 +80,13 @@ const svc = vi.hoisted(() => ({
   ],
 }));
 vi.mock('@/services/ideasService', () => svc);
+
+const pending = vi.hoisted(() => ({
+  createPendingAction: vi.fn(),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn(),
+}));
+vi.mock('@/services/pendingActionService', () => pending);
 
 import { formatDate } from '@/lib/helpers';
 import { IdeasListView } from './IdeasListView';
@@ -105,29 +133,27 @@ function renderList() {
   );
 }
 
+const MANAGE = 'ideation.ideas.manage';
+const VIEW = 'ideation.board.view';
+
 beforeEach(() => {
   vi.clearAllMocks();
   prefsCalls.length = 0;
+  held.clear();
+  held.add(VIEW);
+  pending.getCurrentPendingAction.mockResolvedValue({ pending: null, last_outcome: null });
+  pending.createPendingAction.mockImplementation(async (a: { actionKey: string; entityId: string }) => ({
+    id: `pa-${a.entityId}`,
+    action_key: a.actionKey,
+    entity_type: 'idea',
+    entity_id: a.entityId,
+    commit_at: new Date(Date.now() + 5000).toISOString().replace(/\.\d+Z$/, ''),
+    window_seconds: 5,
+  }));
   svc.listIdeas.mockResolvedValue([idea(), idea({ id: 'idea-2', title: 'Merged child', mergedIntoId: 'idea-1', ideaNumber: 'IDEA-0043' })]);
 });
 
-describe('AC-C-01 columns', () => {
-  it('shows Votes, Idea, No., Submitter, Channel, Status, Captured and HIDES Product by default', async () => {
-    renderList();
-    await screen.findByText('Faster quotes');
-    for (const title of ['Votes', 'Idea', 'No.', 'Submitter', 'Channel', 'Status', 'Captured']) {
-      expect(screen.getByRole('columnheader', { name: new RegExp(title) })).toBeInTheDocument();
-    }
-    expect(screen.queryByRole('columnheader', { name: /Product/ })).toBeNull();
-  });
-
-  it('Product is still available from the Columns menu', async () => {
-    renderList();
-    await screen.findByText('Faster quotes');
-    fireEvent.pointerDown(screen.getByRole('button', { name: /Columns/ }), { button: 0, ctrlKey: false });
-    expect(await screen.findByRole('menuitemcheckbox', { name: /Product/ })).toBeInTheDocument();
-  });
-
+describe('AC-K-04 formatting (kept from AC-C-01)', () => {
   it('renders the capture date as dd/MM/yyyy', async () => {
     renderList();
     await screen.findByText('Faster quotes');
@@ -143,10 +169,8 @@ describe('AC-C-01 columns', () => {
     const widths = Array.from(table.querySelectorAll('th')).map((th) => th.style.width);
     expect(widths.every((w) => /px$/.test(w))).toBe(true);
   });
-});
 
-describe('AC-C-02 column preferences persist per user under ideation.board.view', () => {
-  it('the grid persists its columns under the board permission slug', async () => {
+  it('persists columns per user under ideation.board.view (AC-K-04)', async () => {
     renderList();
     await screen.findByText('Faster quotes');
     expect(prefsCalls.length).toBeGreaterThan(0);
@@ -177,25 +201,6 @@ describe('AC-C-03 vote box', () => {
     renderList();
     await screen.findByText('Faster quotes');
     expect(screen.getByRole('button', { name: /remove your upvote/i })).toHaveAttribute('aria-pressed', 'true');
-  });
-});
-
-describe('AC-C-04 filters', () => {
-  it('lists Archived in the clearable status filter and asks the service for it', async () => {
-    renderList();
-    await screen.findByText('Faster quotes');
-    fireEvent.click(screen.getByRole('combobox'));
-    fireEvent.click(await screen.findByRole('option', { name: 'Archived' }));
-    await waitFor(() =>
-      expect(svc.listIdeas).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'archived' })),
-    );
-  });
-
-  it('the first request defaults to active ideas (no status filter)', async () => {
-    renderList();
-    await screen.findByText('Faster quotes');
-    const first = svc.listIdeas.mock.calls[0][0];
-    expect(first.status || '').toBe('');
   });
 });
 
@@ -268,14 +273,3 @@ describe('AC-C-06 error OR empty, never both', () => {
   });
 });
 
-describe('AC-B-02 the list shows no row actions beyond voting', () => {
-  it('has no Edit, Move, Archive or Delete controls in a row', async () => {
-    renderList();
-    await screen.findByText('Faster quotes');
-    const row = screen.getByText('Faster quotes').closest('tr') as HTMLElement;
-    const names = within(row)
-      .getAllByRole('button')
-      .map((b) => b.getAttribute('aria-label') || b.textContent || '');
-    expect(names.every((n) => /vote/i.test(n))).toBe(true);
-  });
-});

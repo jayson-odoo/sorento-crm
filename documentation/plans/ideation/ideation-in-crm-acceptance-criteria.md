@@ -223,10 +223,10 @@ the list.
   failed.
 - **AC-K-06** A user without manage sees the select column and Export but no Actions dropdown and no
   row "..." actions other than opening the idea.
-- **AC-K-07** "My ideas | All ideas": no such toggle exists in the ss Ideas list or in the CRM list
-  (checked ss main `3b36e393` and the CRM). Not built until the owner says what it filters on (crew
-  ask); "mine" by submitter cannot work yet because ss records CRM captures with no submitter
-  (section J).
+- **AC-K-07** "My ideas | All ideas" is out of scope here (crew, 3 Oct): it belongs to lane
+  IDEATION-CAPTURE (#1444), built on ss#111 (`mine=true` / `isMine`). This list keeps the List | Board
+  switch and leaves an empty slot (`toolbarScopeSlot` prop, renders nothing by default) right after
+  the Active | Archived toggle next to search, for that lane to fill.
 - **AC-K-08** Empty: "No ideas match these filters." when filters or search are active, else "No ideas
   yet" + hint; load error: error state with Retry. Usable at 1280 and 375 (toolbar wraps, grid scrolls
   inside its card), light and dark.
