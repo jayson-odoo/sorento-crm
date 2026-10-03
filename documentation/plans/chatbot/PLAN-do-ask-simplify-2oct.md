@@ -1,33 +1,57 @@
 # PLAN: simplify chatbot DO asks (DO-ASK-SIMPLIFY)
 
-Status: built on PR #1433, all four rules red-first then green; awaiting review and hand test.
+Status: built on PR #1433 (FULL track), all rules red-first then green, the 4 Oct rulings included; reviewer APPROVE (4 Oct); awaiting CI and the owner's hand test.
 Track: FULL (a data-seed migration, and a field-reveal (access) change, so the security
 reviewer joins).
 
 ## Owner answers (2 Oct 2026)
 
 - Q1 (a): cap = 31 days, inclusive, rolling.
-- Q2 (b): rules 3-4 apply to DEALERS only. Until ACCESS-MODEL lands, a dealer is a contact
+- Q2 (b), SUPERSEDED 4 Oct (see below): rules 3-4 apply to DEALERS only. Until ACCESS-MODEL lands, a dealer is a contact
   linked to at least one customer and holding no office access type
   (`contact_customer_scope(...).enforced`), behind ONE helper `app/services/chatbot/do_ask.py::
   is_dealer` that ACCESS-MODEL replaces with the Dealer role (crew ruling).
 - Q3 (a): quantity asks exempt. Built extra under the same reason: the `outstanding` and
   `so_outstanding` order buckets (no delivery date to range over) are exempt too.
 - Q4 (a): one switch per field (five keys).
-- Q5: EVERY existing contact gets the five grants at deploy (all are internal; crew data: tier
+- Q5, EXTENDED 4 Oct (see below): EVERY existing contact gets the five grants at deploy (all are internal; crew data: tier
   is NULL for all 100 dev contacts); new contacts start hidden. Owner rule change (2 Oct
   2026, after the tester pass): every existing contact ENDS with all five switched ON, a switch
   already off is turned on (`ON CONFLICT ... DO UPDATE SET granted = true`), so no current user
   sees any change; dealers are not in yet, so none is left out (closes security S3).
 - Q6: header grouping as proposed.
 
+## Owner rulings (4 Oct 2026)
+
+- **Every DO field reveal defaults ON, new contacts included** (owner, ~01:25): the owner turns
+  off per contact what he wants hidden. `contact_field_reveal_service.DEFAULT_ON_KEYS` (the
+  `delivery_orders.*` keys): `granted_keys` counts a DO key with NO row as granted, a
+  `granted=False` row hides it, and `set_granted_keys` writes that row when a DO key is turned
+  off. Every other reveal key (cost, supplier, PO placed, sellable, SO, sales report, low stock
+  report) stays default HIDDEN. The migration's seed for existing contacts stays.
+- **Rules 3-4 apply to EVERY contact, not only dealers** (owner, ~01:35, replacing Q2 (b)):
+  `do_ask.range_reply` has no dealer gate; office and internal contacts get the same period
+  question and 31-day cap. Exemptions unchanged. 22 chatbot test files that ran a dateless DO
+  ask as one step of another flow (escalation, carry, routing, top selling, outstanding) now
+  date that step; where the dateless ask is the point, they expect the period question
+  (owner chose option (a), ~02:50).
+- **Dated DO miss hint** (lead decision on the crew-ask, pending crew's answer): the miss reply
+  offers `Reply with another month or dates (e.g. August, or 15 Sep to 10 Oct)` instead of
+  `Reply 'all dates' to search without the date filter`, since a dateless DO ask now asks which
+  period. The escalation clause is unchanged: every no-answer still ends with the escalation
+  offer for contacts allowed to escalate.
+- **Refusal line after the main merge (#1435)**: "Sorry, that isn't under your account. I can
+  only check on ..." groups by `ledger_family.group_names` (the name rule, #1435's code), so an
+  ungrouped ledger loses its account marker there; the DO header and period question keep
+  CUSTOMER-GROUP ruling (b). Crew-ask open (recommend one rule).
+
 ## As built
 
 | Rule | Where |
 |---|---|
 | 1 header | `tail/scope_block.py::family_words`, used by `_axis_words` (gate rows) and `_focus_words` (carried rows) for the Customer axis only |
-| 2 reveals | `sorento_crm_mcp/presenters.py::_orders_list` (keys + five `b.restrict`), `catalog.py` orders_list `restricted_fields`, `contact_field_reveal_service.FIELD_REVEAL_KEYS`, migration `do_ask_0001_reveals` |
-| 3-4 range | `app/services/chatbot/do_ask.py::range_reply`, called in `lanes/business/__init__.py::run_fetch` right before the trigger is built; answered with `_fixed_reply` (no fetch, no header, no escalate offer) |
+| 2 reveals | default ON per `contact_field_reveal_service.DEFAULT_ON_KEYS` (4 Oct); `sorento_crm_mcp/presenters.py::_orders_list` (keys + `b.restrict` per field), `catalog.py` orders_list `restricted_fields`, `contact_field_reveal_service.FIELD_REVEAL_KEYS`, migration `do_ask_0001_reveals` |
+| 3-4 range | `app/services/chatbot/do_ask.py::range_reply` (every contact since 4 Oct), called in `lanes/business/__init__.py::run_fetch` right before the trigger is built; answered with `_fixed_reply` (no fetch, no header, no escalate offer) |
 
 The ask-back names its suggestions as words to type (no numbered pick), so no pending kind was
 added: the answer ("this month") is an ordinary dated message, and the engine carries the open
