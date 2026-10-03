@@ -368,3 +368,85 @@ class TestTesterRerun3OctPeriodAfterThePick:
         assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026 to 30 Sep 2026:\nSO422095"), reply
         assert "crm_outstanding_report" not in [n for n, _ in captured], captured
         assert (_session_of(session_factory).get("open_question") or {}).get("kind") != "outstanding_detail"
+
+
+def _live(**over: Any) -> dict[str, Any]:
+    """The live parser's reading (gpt-5.4-mini, cloud pass on PR #1435, 3 Oct 2026): it
+    carries `so_outstanding` and the SO document off the conversation onto a message whose
+    words name neither ("1", "september")."""
+    base: dict[str, Any] = dict(
+        message_type="business_query", domain_hint="order", intent_hint="check_order",
+        order_status="so_outstanding", document=["SO"], self_reference=True, entities=[],
+        entity_op="reuse",
+    )
+    base.update(over)
+    return _parser_output(**base)
+
+
+_PICK_1 = dict(reference_positions=[1], reference_target="result",
+               open_question_answer={"mode": "pick", "items": [], "picked": [1], "qty_for_all": None})
+
+
+class TestCloudPassLiveParserReadings:
+    """Cloud pass on PR #1435 with the LIVE parser, 3 of 3 runs each: "1" under the
+    outstanding summary printed the summary again (the stale `document: ["SO"]` read as a
+    named document, a new ask for the report), and "september" after the SO list's period
+    question printed the outstanding report (the stale `so_outstanding` kept the list from
+    running). The words decide: neither message says "outstanding" or names a document."""
+
+    def _summary(self, session_factory, monkeypatch, body: str, **over: Any) -> None:
+        from tests.chatbot.test_outstanding_lane import CUSTOMER_SUBJECT_HIT
+
+        result, captured = _run_turn(
+            session_factory, monkeypatch, qf=_live(**over), text_body=body,
+            msg_id=f"ZZT-so-live-{uuid.uuid4().hex[:10]}", attributes=[OUTSTANDING_KEY], matches={},
+            mcp_response=CUSTOMER_SUBJECT_HIT,
+        )
+        assert [n for n, _ in captured] == ["crm_outstanding_report"], captured
+        assert "Reply 1 for the sales order list." in ((result.reply or {}).get("text") or "")
+
+    @pytest.mark.parametrize("status_on_pick", ["so_outstanding", "outstanding"])
+    def test_owner_flow_my_outstanding_sos_1_september(self, session_factory, monkeypatch, status_on_pick) -> None:
+        _seed_hanlim(session_factory)
+        self._summary(session_factory, monkeypatch, "my outstanding SOs")
+
+        picked, captured = _turn(session_factory, monkeypatch, _live(order_status=status_on_pick, **_PICK_1), "1")
+        assert picked.startswith("Which period for HANLIM TRADING SDN BHD?"), picked
+        assert captured == [], captured
+
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _live(date_filter_start="2026-09-01", date_filter_end="2026-09-30",
+                  open_question_answer={"mode": "pick", "items": [], "picked": [1], "qty_for_all": None}),
+            "september",
+        )
+        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026 to 30 Sep 2026:\nSO422095"), reply
+        assert "crm_outstanding_report" not in [n for n, _ in captured], captured
+
+    def test_summary_in_september_then_1_is_the_so_list(self, session_factory, monkeypatch) -> None:
+        _seed_hanlim(session_factory)
+        self._summary(session_factory, monkeypatch, "my outstanding sales orders in september",
+                      date_filter_start="2026-09-01", date_filter_end="2026-09-30")
+        reply, captured = _turn(session_factory, monkeypatch, _live(**_PICK_1), "1")
+        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026 to 30 Sep 2026:\nSO422095"), reply
+        assert "crm_outstanding_report" not in [n for n, _ in captured], captured
+
+    def test_all_my_sales_orders_then_september_is_the_so_list(self, session_factory, monkeypatch) -> None:
+        _seed_hanlim(session_factory)
+        asked, _ = _turn(session_factory, monkeypatch, _live(order_status="sales_report", status="sales_report"),
+                         "all my sales orders")
+        assert asked.startswith("Which period for HANLIM TRADING SDN BHD?"), asked
+        reply, captured = _turn(
+            session_factory, monkeypatch, _live(date_filter_start="2026-09-01", date_filter_end="2026-09-30"),
+            "september",
+        )
+        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026 to 30 Sep 2026:\nSO422095"), reply
+        assert "crm_outstanding_report" not in [n for n, _ in captured], captured
+
+    def test_outstanding_typed_after_the_list_still_runs_the_report(self, session_factory, monkeypatch) -> None:
+        """Guard: the word "outstanding" keeps the report, on the SO list too."""
+        _seed_hanlim(session_factory)
+        _turn(session_factory, monkeypatch, _live(order_status="sales_report", status="sales_report"),
+              "all my sales orders")
+        self._summary(session_factory, monkeypatch, "my outstanding sales orders in september",
+                      date_filter_start="2026-09-01", date_filter_end="2026-09-30")
