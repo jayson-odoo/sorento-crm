@@ -48,8 +48,8 @@ _ROW = {
     "order_status": "Picked Up / In Transit",
     "pickup_time": "09:18:00",
     "transporter": "SORENTO",
-    "driver_name": "AZHAR",
-    "lorry_plate": "VQP1678",
+    "driver_name": "DRIVER B",
+    "lorry_plate": "PLATE-1",
     "warehouse": "BRW",
     "lines": [{"product_code": "SRT320-CR", "quantity": 200}],
 }
@@ -65,7 +65,7 @@ def test_a_contact_with_no_grant_reads_no_logistics_field() -> None:
     said = _reply(None)
     for label in DO_KEYS.values():
         assert f"*{label}:*" not in said, f"{label} must be hidden without its grant: {said!r}"
-    for value in ("AZHAR", "VQP1678", "Picked Up / In Transit", "09:18:00"):
+    for value in ("DRIVER B", "PLATE-1", "Picked Up / In Transit", "09:18:00"):
         assert value not in said, said
 
 
@@ -80,8 +80,8 @@ ALL_DO_FIELDS = {
     "delivery_orders.status": ("Status", "Picked Up / In Transit"),
     "delivery_orders.pickup_time": ("Pickup Time", "09:18:00"),
     "delivery_orders.transporter": ("Transporter", "SORENTO"),
-    "delivery_orders.driver": ("Driver", "AZHAR"),
-    "delivery_orders.lorry_plate": ("Lorry Plate", "VQP1678"),
+    "delivery_orders.driver": ("Driver", "DRIVER B"),
+    "delivery_orders.lorry_plate": ("Lorry Plate", "PLATE-1"),
     "delivery_orders.warehouse": ("Warehouse", "BRW"),
     "delivery_orders.products": ("Products", "SRT320-CR (200)"),
 }
@@ -134,14 +134,14 @@ def test_the_by_product_do_list_hides_warehouse_too() -> None:
 
 def test_a_contact_with_every_grant_reads_today_s_reply() -> None:
     said = _reply(list(DO_KEYS))
-    for value in ("Picked Up / In Transit", "09:18:00", "SORENTO", "AZHAR", "VQP1678"):
+    for value in ("Picked Up / In Transit", "09:18:00", "SORENTO", "DRIVER B", "PLATE-1"):
         assert value in said, said
 
 
 def test_each_key_unlocks_only_its_own_field() -> None:
     said = _reply(["delivery_orders.status"])
     assert "Picked Up / In Transit" in said, said
-    for value in ("AZHAR", "VQP1678", "09:18:00"):
+    for value in ("DRIVER B", "PLATE-1", "09:18:00"):
         assert value not in said, said
 
 
