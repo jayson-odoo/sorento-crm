@@ -253,3 +253,68 @@ class TestThroughTheEngine:
         assert result.reply["text"] == DONE_REPLY
         assert result.reply["ideate_status"] == "complete"
         assert _focus_slot(session_factory) is None
+
+
+# --------------------------------------------------------------------------- #
+# 7. The slot never goes stale
+# --------------------------------------------------------------------------- #
+
+CASUAL_PARSE = dict(message_type="casual", domain_hint=None, intent_hint=None, correction=False, entities=[])
+
+
+class TestSlotNeverGoesStale:
+    def test_a_turn_routed_away_from_ideate_leaves_no_slot_and_no_tool_call(
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        _seed_completed_lanes(session_factory, system_settings_row)
+        stub_access()
+        calls = _fake_tool(monkeypatch, [_result("ask_idea", ASK_REPLY)])
+
+        _say(session_factory, stub_parser, IDEATE_PARSE, "want to submit idea", "ZZT-stale-1a")
+        assert _focus_slot(session_factory) is not None
+        assert len(calls) == 1
+
+        # Longer than three words, so the shared helper does not read it as the answer.
+        _say(session_factory, stub_parser, CASUAL_PARSE, "thanks that is all for today", "ZZT-stale-1b")
+
+        assert len(calls) == 1
+        assert _focus_slot(session_factory) is None
+
+    def test_a_question_reply_drops_the_slot(
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        _seed_completed_lanes(session_factory, system_settings_row)
+        stub_access()
+        calls = _fake_tool(monkeypatch, [_result("ask_idea", ASK_REPLY), _result("similar_offered", "Zzt reply")])
+
+        _say(session_factory, stub_parser, IDEATE_PARSE, "want to submit idea", "ZZT-stale-2a")
+        assert _focus_slot(session_factory) is not None
+
+        # A "?" is never an answer (required_fields.reply_verdict), even though the parser
+        # still reads it as the ideate ask: the tool runs, but not as an ask reply.
+        _say(session_factory, stub_parser, IDEATE_PARSE, "why?", "ZZT-stale-2b")
+
+        assert len(calls) == 2
+        assert calls[1].get("ask_reply") is None
+        assert _focus_slot(session_factory) is None
+
+    def test_a_status_that_creates_an_idea_closes_the_slot_for_the_next_message(
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        _seed_completed_lanes(session_factory, system_settings_row)
+        stub_access()
+        calls = _fake_tool(
+            monkeypatch,
+            [_result("ask_idea", ASK_REPLY), _result("complete", DONE_REPLY), _result("ask_idea", ASK_REPLY)],
+        )
+
+        _say(session_factory, stub_parser, IDEATE_PARSE, "want to submit idea", "ZZT-stale-3a")
+        assert _focus_slot(session_factory) is not None
+        _say(session_factory, stub_parser, IDEATE_PARSE, "the tap handle is too stiff", "ZZT-stale-3b")
+        assert calls[1]["ask_reply"] is True
+        assert _focus_slot(session_factory) is None
+
+        _say(session_factory, stub_parser, IDEATE_PARSE, "want to submit another idea", "ZZT-stale-3c")
+
+        assert len(calls) == 3
+        assert calls[2].get("ask_reply") is None
