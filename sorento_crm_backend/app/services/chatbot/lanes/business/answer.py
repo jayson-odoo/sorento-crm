@@ -1029,6 +1029,22 @@ def crossdomain_render(
             # Stock rows: detailed ones merge per (company, product), a compact one-location
             # entry drops its Total, the same as the primary reply (fetch.py).
             rows = [compact_stock_block(it) for it in merge_stock_rows(rows)]
+            if zero and len(rows) > 1:
+                # Every row reads 0: one block for the code, not one per row.
+                rows = [
+                    {
+                        **rows[0],
+                        "fields": [
+                            *rows[0]["fields"],
+                            *(
+                                f
+                                for it in rows[1:]
+                                for f in it["fields"]
+                                if jsc.get(f, "label") not in _XD_IDENTITY_LABELS
+                            ),
+                        ],
+                    }
+                ]
         for it in rows:
             blocks.append(
                 _xd_code_block(
