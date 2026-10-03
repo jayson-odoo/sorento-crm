@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LoaderCircleIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,8 +19,8 @@ import {
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
 import { getContacts } from '../[id]/services/contactService';
+import { useBulkCopyContactAccess } from '../[id]/hooks/useBulkCopyContactAccess';
 import {
-  bulkCopyContactAccess,
   type AccessCopyChange,
   type AccessCopyResponse,
   type AccessCopyResult,
@@ -46,6 +45,9 @@ interface Props {
   targetContacts: RespondContact[];
   /** "Check who still differs": the list filters to `access_differs_from=<source>`. */
   onCheckDiffers: (source: { id: string; label: string }) => void;
+  /** An apply answered (fully, partly or not at all): the list clears its selection then,
+   *  never on Cancel, so a wrong source pick does not cost the selection. */
+  onApplied?: () => void;
 }
 
 const contactLabel = (c: { name?: string | null; phone_number: string }) =>
@@ -81,20 +83,20 @@ function ChangeLine({ change }: { change: AccessCopyChange }) {
         {isList ? (
           <>
             {change.added.map((label) => (
-              <span key={`+${label}`} className="rounded bg-green-50 px-1 text-green-800">
+              <span key={`+${label}`} className="rounded bg-success/10 px-1 text-success">
                 + {label}
               </span>
             ))}
             {change.removed.map((label) => (
-              <span key={`-${label}`} className="rounded bg-red-50 px-1 text-red-800 line-through">
+              <span key={`-${label}`} className="rounded bg-destructive/10 px-1 text-destructive line-through">
                 {label}
               </span>
             ))}
           </>
         ) : (
           <>
-            <span className="rounded bg-red-50 px-1 text-red-800 line-through">{scalarText(change.before)}</span>
-            <span className="rounded bg-green-50 px-1 text-green-800">{scalarText(change.after)}</span>
+            <span className="rounded bg-destructive/10 px-1 text-destructive line-through">{scalarText(change.before)}</span>
+            <span className="rounded bg-success/10 px-1 text-success">{scalarText(change.after)}</span>
           </>
         )}
       </span>
@@ -175,8 +177,13 @@ function Counts({ data, mode }: { data: AccessCopyResponse; mode: 'preview' | 'r
   );
 }
 
-export default function BulkCopyAccessDialog({ open, onOpenChange, targetContacts, onCheckDiffers }: Props) {
-  const queryClient = useQueryClient();
+export default function BulkCopyAccessDialog({
+  open,
+  onOpenChange,
+  targetContacts,
+  onCheckDiffers,
+  onApplied,
+}: Props) {
   const [step, setStep] = useState<Step>('pick');
   const [sourceId, setSourceId] = useState('');
   const [sourceOption, setSourceOption] = useState<SearchableSelectOption | undefined>();
@@ -185,17 +192,7 @@ export default function BulkCopyAccessDialog({ open, onOpenChange, targetContact
   const targetIds = targetContacts.map((c) => c.id);
   const labelById = new Map(targetContacts.map((c) => [c.id, contactLabel(c)]));
 
-  const preview = useMutation({
-    mutationFn: (source: string) =>
-      bulkCopyContactAccess({ sourceContactId: source, targetContactIds: targetIds, dryRun: true }),
-  });
-  const apply = useMutation({
-    mutationFn: () =>
-      bulkCopyContactAccess({ sourceContactId: sourceId, targetContactIds: targetIds, dryRun: false }),
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ['respond-contacts'] });
-    },
-  });
+  const { preview, apply } = useBulkCopyContactAccess(targetIds);
 
   const reset = () => {
     setStep('pick');
@@ -235,12 +232,13 @@ export default function BulkCopyAccessDialog({ open, onOpenChange, targetContact
 
   const runApply = () => {
     setApplyError(null);
-    apply.mutate(undefined, {
+    apply.mutate(sourceId, {
       onSuccess: () => setStep('result'),
       onError: (error: Error) => {
         setApplyError(error.message);
         setStep('result');
       },
+      onSettled: () => onApplied?.(),
     });
   };
 
@@ -374,7 +372,10 @@ export default function BulkCopyAccessDialog({ open, onOpenChange, targetContact
               </Button>
               <Button disabled={apply.isPending || !preview.data?.counts.changed} onClick={runApply}>
                 {apply.isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
-                Apply to {n} contact{n === 1 ? '' : 's'}
+                {(() => {
+                  const k = preview.data?.counts.changed ?? 0;
+                  return `Apply to ${k} contact${k === 1 ? '' : 's'}`;
+                })()}
               </Button>
             </>
           ) : null}

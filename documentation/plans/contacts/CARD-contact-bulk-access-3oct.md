@@ -151,3 +151,17 @@ Q4. "Access differs from contact X" filter: (a) include it; (b) only the per-fie
 Q5. The 82 "Employee" contacts: (a) configure one Employee reference contact by hand (e.g. End user
 only, cost off, escalation off, packing off) and copy from it; (b) give Employees the same access as
 Owner/Director. **Recommend (a)**: the cost reveal is the reason the sheet splits the profiles.
+
+## 7. Follow-ups
+
+- **Brand scope (lane CONTACT-BRAND-SCOPE, not built here).** That lane adds a per-contact
+  "accessible brands" setting (null = all brands). It joins the copy as one more facet in
+  `app/services/contact_access_copy_service.py`: one field on `AccessSnapshot` read in `snapshots`
+  (null vs a sorted list, so "all brands" and "no brands" stay distinct), one block in `diff`
+  (label "Brands", added/removed = brand names, before/after null shown as "All brands"), one block
+  in `_write`. The dialog, preview, result table, audit row and the "access differs from" filter
+  pick it up with no other change. Owner decides then whether the copy carries it (Q1 set the
+  access set; brand scope is closer to customer scope, which is never copied).
+- **Agent access writes are open to any signed-in user** (security review of this lane, pre-existing):
+  `app/api/v1/user_management/access_agents.py` create/update/delete contact access use only
+  `get_current_user`. Out of this lane's scope; worth its own issue.

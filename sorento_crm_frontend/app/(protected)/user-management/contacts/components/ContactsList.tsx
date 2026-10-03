@@ -688,10 +688,8 @@ export default function ContactsList() {
 
       <BulkCopyAccessDialog
         open={bulkCopyDialogOpen}
-        onOpenChange={(next) => {
-          setBulkCopyDialogOpen(next);
-          if (!next) clearSelection();
-        }}
+        onOpenChange={setBulkCopyDialogOpen}
+        onApplied={clearSelection}
         targetContacts={selectedContacts}
         onCheckDiffers={(source) => setAccessFilters({ accessDiffersFrom: source.id })}
       />

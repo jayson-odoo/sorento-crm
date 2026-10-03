@@ -604,7 +604,8 @@ def test_s1_one_audit_row_per_copied_contact_naming_the_source_none_on_dry_run(c
 
     assert _post(client, source, [target], dry_run=False).status_code == 200
     (row,) = _copy_audit_rows(db, target.id)
-    assert source.id in (row.description or "")
+    assert row.new_values["copied_from_contact_id"] == source.id
+    assert source.name in (row.description or "") and source.id not in (row.description or "")
     assert row.old_values["tier"] == "office" and row.new_values["tier"] == "dealer"
     assert row.new_values["access_types"] == sorted([world["ta"].code, world["tb"].code])
     assert _copy_audit_rows(db, source.id) == []

@@ -75,14 +75,20 @@ function response(dryRun: boolean) {
   };
 }
 
-function renderDialog(onCheckDiffers = vi.fn()) {
+function renderDialog(onCheckDiffers = vi.fn(), onApplied = vi.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <BulkCopyAccessDialog open onOpenChange={vi.fn()} targetContacts={targets} onCheckDiffers={onCheckDiffers} />
+      <BulkCopyAccessDialog
+        open
+        onOpenChange={vi.fn()}
+        targetContacts={targets}
+        onCheckDiffers={onCheckDiffers}
+        onApplied={onApplied}
+      />
     </QueryClientProvider>,
   );
-  return { onCheckDiffers };
+  return { onCheckDiffers, onApplied };
 }
 
 async function pickSource() {
@@ -139,7 +145,7 @@ describe('BulkCopyAccessDialog', () => {
     const { onCheckDiffers } = renderDialog();
     await pickSource();
     fireEvent.click(await screen.findByRole('button', { name: 'Preview changes' }));
-    fireEvent.click(screen.getByRole('button', { name: /Apply to 2 contacts/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Apply to 1 contact/ }));
 
     await screen.findByText('Copy finished');
     expect(copySvc.bulkCopyContactAccess).toHaveBeenLastCalledWith({
@@ -161,7 +167,7 @@ describe('BulkCopyAccessDialog', () => {
     renderDialog();
     await pickSource();
     fireEvent.click(await screen.findByRole('button', { name: 'Preview changes' }));
-    fireEvent.click(screen.getByRole('button', { name: /Apply to 2 contacts/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Apply to 1 contact/ }));
 
     const err = await screen.findByTestId('copy-access-apply-error');
     expect(err).toHaveTextContent('The server took too long to answer.');
@@ -179,5 +185,20 @@ describe('BulkCopyAccessDialog', () => {
     expect(screen.getByRole('button', { name: 'Preview changes' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Preview changes' })).toBeEnabled());
+  });
+});
+
+describe('BulkCopyAccessDialog selection (review S1)', () => {
+  it('Cancel leaves the selection alone; an answered apply clears it', async () => {
+    copySvc.bulkCopyContactAccess.mockResolvedValueOnce(response(true)).mockResolvedValueOnce(response(false));
+    const { onApplied } = renderDialog();
+    await pickSource();
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(onApplied).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Preview changes' }));
+    fireEvent.click(screen.getByRole('button', { name: /Apply to 1 contact/ }));
+    await screen.findByText('Copy finished');
+    expect(onApplied).toHaveBeenCalledTimes(1);
   });
 });

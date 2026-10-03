@@ -415,8 +415,11 @@ def copy_access(
                     entity_type="respond_contacts",
                     entity_id=target_id,
                     old_values={c["facet"]: c["before"] for c in changes},
-                    new_values={c["facet"]: c["after"] for c in changes},
-                    description=f"Access copied from contact {src.contact_id} ({src.label})",
+                    new_values={
+                        **{c["facet"]: c["after"] for c in changes},
+                        "copied_from_contact_id": src.contact_id,
+                    },
+                    description=f"Access copied from {src.label}",
                 )
                 savepoint.commit()
             except Exception as exc:  # noqa: BLE001 - every failure becomes that contact's row
