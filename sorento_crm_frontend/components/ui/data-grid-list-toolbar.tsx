@@ -85,6 +85,12 @@ export type ListToolbarFilters =
       active?: boolean;
       activeCount?: number;
       /**
+       * The filter menu is a modal dropdown by default, which hides the rest of the page from
+       * assistive tech while it is open. Set false for a panel the reader keeps working beside
+       * (the grid stays readable while the filters are being changed).
+       */
+      modal?: boolean;
+      /**
        * When supplied AND `active`, the toolbar states the filter on screen as a chip
        * with a clear affordance, above the grid and without opening the filter menu.
        * A sticky filter the user did not set this session is otherwise indistinguishable
@@ -490,7 +496,7 @@ export function DataGridListToolbar<TData extends object>({
                     ) : null}
                   </Button>
                 ) : (
-                  <DropdownMenu>
+                  <DropdownMenu modal={filters.modal ?? true}>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="sm" className="gap-1.5">
                         <Filter className="size-4" />

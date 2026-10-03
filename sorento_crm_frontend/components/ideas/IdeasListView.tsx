@@ -1,51 +1,114 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+/**
+ * The Ideas list. Mirrors the ss Ideas list (ss main, `service_frontend/app/(protected)/ideation/
+ * ideas/use-ideas-list-config.tsx`, `select-idea-rows.ts`, `ideas-view.tsx`): every idea loads once
+ * and search, status, Active | Archived, filters, sort and paging all happen here, the actions and
+ * their visibility rules are ss's, and the row "..." menu carries the same actions as the bulk one.
+ * Built on the CRM list pieces (`DataGridListToolbar`, `buildSelectColumn`, `BulkActionsMenu`).
+ */
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import Link from 'next/link';
 import {
   ColumnDef,
   getCoreRowModel,
+  getPaginationRowModel,
   useReactTable,
+  type PaginationState,
+  type RowSelectionState,
+  type SortingState,
 } from '@tanstack/react-table';
-import { Columns3, Plus } from 'lucide-react';
+import { Download, Info, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardHeader, CardTable } from '@/components/ui/card';
+import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from '@/components/ui/hover-card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Container } from '@/components/common/container';
 import LoadErrorState from '@/components/common/LoadErrorState';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PageHeader } from '@/components/common/PageHeader';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { BulkActionsMenu } from '@/app/(protected)/scm/components/BulkActionsMenu';
 import {
   isSearchInFlight,
   useDebouncedSearch,
 } from '@/hooks/useDebouncedSearch';
-import { useIdeaMutations, useIdeasQuery } from '@/hooks/useIdeas';
+import { useRowPending } from '@/hooks/useDeferredRowAction';
+import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
+import { useIdeaBulk } from '@/hooks/useIdeaBulk';
+import { IDEAS_KEY, useIdeaMutations, useIdeasQuery } from '@/hooks/useIdeas';
 import { formatDate } from '@/lib/helpers';
-import { IDEA_STATUS_FILTER_OPTIONS } from '@/services/ideasService';
 import type { Idea } from '@/types/ideas';
 import { IdeaCaptureModal } from './IdeaCaptureModal';
+import { IdeasBulkMergeDialog } from './IdeasBulkMergeDialog';
 import { IdeaStatusBadge } from './IdeaStatusBadge';
 import { IdeasViewToggle } from './IdeasViewToggle';
 import { VoteBox } from './VoteBox';
-import { IDEAS_VIEW_PERMISSION } from './ideasAccess';
+import {
+  buildIdeaActions,
+  buildIdeaRowActions,
+  type IdeaActionHandlers,
+} from './ideaBulkActions';
+import { IDEA_SOURCE_LABEL } from './ideaLabels';
+import { IDEAS_MANAGE_PERMISSION, IDEAS_VIEW_PERMISSION } from './ideasAccess';
+import { selectIdeaRows } from './selectIdeaRows';
+import { useHasPermission } from '@/hooks/usePermissions';
 
-const SOURCE_LABEL: Record<string, string> = {
-  whatsapp: 'WhatsApp',
-  manual: 'Manual',
-  email: 'Email',
-  web: 'Web',
-};
+const describeIdeas = (n: number) => `${n} idea${n === 1 ? '' : 's'}`;
+const PAGE_SIZES = [10, 25, 50, 100];
+const CHANNEL_OPTIONS = Object.entries(IDEA_SOURCE_LABEL).map(
+  ([value, label]) => ({ value, label }),
+);
+const uniqueOptions = (values: string[]) =>
+  [...new Set(values)]
+    .sort((a, b) => a.localeCompare(b))
+    .map((v) => ({ value: v, label: v }));
 
-/** Ideas > list: the vote box leads every row; the whole row opens the idea. */
-export function IdeasListView() {
-  const [modalOpen, setModalOpen] = useState(false);
+type View = 'active' | 'archived';
+
+export function IdeasListView({
+  toolbarScopeSlot,
+}: {
+  toolbarScopeSlot?: ReactNode;
+}) {
+  const canManage = useHasPermission(IDEAS_MANAGE_PERMISSION);
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [view, setView] = useState<View>('active');
   const [status, setStatus] = useState('');
+  const [submitter, setSubmitter] = useState('');
+  const [channel, setChannel] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: PAGE_SIZES[0],
+  });
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [mergeRows, setMergeRows] = useState<Idea[] | null>(null);
+
   const {
     value: searchQuery,
     setValue: setSearchQuery,
@@ -53,225 +116,432 @@ export function IdeasListView() {
     isSettling,
   } = useDebouncedSearch();
   const { data, isLoading, isFetching, isError, error, refetch } =
-    useIdeasQuery({
-      query: debouncedSearch,
-      status,
-    });
+    useIdeasQuery({ status: 'all' });
   const { vote } = useIdeaMutations();
   // `mutate` is stable across renders; the mutation object is not, and columns that depend on it
   // are rebuilt (and every cell remounted) each time a request changes state.
   const castVote = vote.mutate;
-  const rows = useMemo<Idea[]>(() => data ?? [], [data]);
+  const ideas = useMemo<Idea[]>(() => data ?? [], [data]);
 
-  const columns = useMemo<ColumnDef<Idea>[]>(
-    () => [
+  const rows = useMemo(
+    () =>
+      selectIdeaRows(ideas, {
+        search: debouncedSearch,
+        view,
+        status,
+        submitter,
+        channel,
+        from,
+        to,
+        sort: sorting[0] ? { id: sorting[0].id, desc: sorting[0].desc } : null,
+      }),
+    [
+      ideas,
+      debouncedSearch,
+      view,
+      status,
+      submitter,
+      channel,
+      from,
+      to,
+      sorting,
+    ],
+  );
+
+  // A new result set starts on its first page.
+  useEffect(() => {
+    setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
+  }, [debouncedSearch, view, status, submitter, channel, from, to, sorting]);
+
+  const clearSelection = useCallback(() => setRowSelection({}), []);
+  const changeView = (next: string) => {
+    if (next !== 'active' && next !== 'archived') return;
+    setView(next);
+    clearSelection();
+  };
+
+  // The selection in the order the rows were ticked: "first selected" decides a promoted BR's title.
+  const selected = useMemo(() => {
+    const byId = new Map(ideas.map((i) => [i.id, i]));
+    return Object.keys(rowSelection)
+      .filter((id) => rowSelection[id])
+      .map((id) => byId.get(id))
+      .filter((i): i is Idea => !!i);
+  }, [ideas, rowSelection]);
+
+  const bulk = useIdeaBulk(clearSelection);
+  const archiveAction = useDeferredBulkAction({
+    actionKey: 'idea.archive',
+    entityType: 'idea',
+    verb: 'Archiving',
+    pastVerb: 'archived',
+    describe: describeIdeas,
+    invalidateKeys: [IDEAS_KEY],
+    onStarted: clearSelection,
+  });
+  const deleteAction = useDeferredBulkAction({
+    actionKey: 'idea.delete',
+    entityType: 'idea',
+    verb: 'Deleting',
+    pastVerb: 'deleted',
+    describe: describeIdeas,
+    invalidateKeys: [IDEAS_KEY],
+    onStarted: clearSelection,
+  });
+  const rowPending = useRowPending<Idea>('idea');
+
+  // The handlers close over hook state that changes every render; the columns must not, or every
+  // cell and header remounts (a header clicked twice would be a stale node the second time). So
+  // the columns see one stable object that always calls the latest handlers.
+  const latest = useRef<IdeaActionHandlers | null>(null);
+  latest.current = {
+    promote: (r) => void bulk.promote(r),
+    merge: (r) => setMergeRows(r),
+    unmerge: (r) => void bulk.unmerge(r),
+    advance: (r) => void bulk.advance(r),
+    restore: (r) => void bulk.restore(r),
+    archive: (r) => archiveAction.run(r.map((i) => ({ id: i.id }))),
+    remove: (r) => deleteAction.run(r.map((i) => ({ id: i.id }))),
+  };
+  const handlers = useMemo<IdeaActionHandlers>(
+    () => ({
+      promote: (r) => latest.current?.promote(r),
+      merge: (r) => latest.current?.merge(r),
+      unmerge: (r) => latest.current?.unmerge(r),
+      advance: (r) => latest.current?.advance(r),
+      restore: (r) => latest.current?.restore(r),
+      archive: (r) => latest.current?.archive(r),
+      remove: (r) => latest.current?.remove(r),
+    }),
+    [],
+  );
+
+  const columns = useMemo<ColumnDef<Idea>[]>(() => {
+    const col = (
+      id: string,
+      title: string,
+      value: (idea: Idea) => string | number,
+      cell: ColumnDef<Idea>['cell'],
+      size: number,
+    ): ColumnDef<Idea> => ({
+      id,
+      accessorFn: value,
+      header: ({ column }) => (
+        <DataGridColumnHeader title={title} column={column} />
+      ),
+      cell,
+      size,
+      enableSorting: true,
+      meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-16" /> },
+    });
+    const text = (value: string) => (
+      <span className="block truncate" title={value}>
+        {value}
+      </span>
+    );
+    return [
+      buildSelectColumn<Idea>({ size: 48 }),
       {
-        id: 'votes',
-        accessorFn: (row) => row.upvotes,
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Votes" column={column} />
+        ...col(
+          'votes',
+          'Votes',
+          (i) => i.upvotes,
+          ({ row }) => (
+            <VoteBox
+              count={row.original.upvotes}
+              voted={row.original.myVote === 'up'}
+              disabled={!!row.original.mergedIntoId}
+              onVote={() => castVote(row.original.id)}
+            />
+          ),
+          80,
         ),
-        cell: ({ row }) => (
-          <VoteBox
-            count={row.original.upvotes}
-            voted={row.original.myVote === 'up'}
-            disabled={!!row.original.mergedIntoId}
-            onVote={() => castVote(row.original.id)}
-          />
-        ),
-        size: 72,
-        enableSorting: false,
         enableResizing: false,
-        meta: {
-          headerTitle: 'Votes',
-          skeleton: <Skeleton className="h-9 w-10" />,
-        },
       },
-      {
-        id: 'idea',
-        accessorFn: (row) => row.title ?? row.problem,
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Idea" column={column} />
-        ),
-        cell: ({ row }) => {
+      col(
+        'idea',
+        'Idea',
+        (i) => i.title ?? i.problem,
+        ({ row }) => {
           const label = row.original.title ?? row.original.problem;
           return (
-            <Link
-              href={`/ideas/${row.original.id}`}
-              onClick={(e) => e.stopPropagation()}
-              className="block truncate font-medium text-primary hover:underline"
-              title={label}
-            >
-              {label}
-            </Link>
+            <div className="flex min-w-0 items-start gap-1.5">
+              <Link
+                href={`/ideas/${row.original.id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="line-clamp-2 min-w-0 flex-1 break-words font-medium text-primary hover:underline"
+                title={label}
+              >
+                {label}
+              </Link>
+              {row.original.mergedCount > 0 ? (
+                <Badge variant="outline" size="sm" className="shrink-0">
+                  {row.original.mergedCount} merged
+                </Badge>
+              ) : null}
+              {row.original.mergedIntoId ? (
+                <Badge variant="outline" size="sm" className="shrink-0">
+                  Merged
+                </Badge>
+              ) : null}
+            </div>
           );
         },
-        size: 220,
-        enableSorting: false,
-        meta: {
-          headerTitle: 'Idea',
-          skeleton: <Skeleton className="h-4 w-56" />,
-        },
-      },
-      {
-        id: 'ideaNumber',
-        accessorFn: (row) => row.ideaNumber ?? '',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="No." column={column} />
-        ),
-        cell: ({ row }) => (
-          <span
-            className="block truncate tabular-nums text-muted-foreground"
-            title={row.original.ideaNumber ?? ''}
-          >
-            {row.original.ideaNumber ?? '-'}
-          </span>
-        ),
-        size: 110,
-        enableSorting: false,
-        meta: {
-          headerTitle: 'No.',
-          skeleton: <Skeleton className="h-4 w-16" />,
-        },
-      },
-      {
-        id: 'product',
-        accessorFn: (row) => row.productName,
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Product" column={column} />
-        ),
-        cell: ({ row }) => (
-          <span className="block truncate" title={row.original.productName}>
-            {row.original.productName}
-          </span>
-        ),
-        size: 100,
-        enableSorting: false,
-        meta: {
-          headerTitle: 'Product',
-          skeleton: <Skeleton className="h-4 w-24" />,
-        },
-      },
-      {
-        id: 'submitter',
-        accessorFn: (row) => row.submitterName,
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Submitter" column={column} />
-        ),
-        cell: ({ row }) => (
-          <span className="block truncate" title={row.original.submitterName}>
-            {row.original.submitterName}
-          </span>
-        ),
-        size: 100,
-        enableSorting: false,
-        meta: {
-          headerTitle: 'Submitter',
-          skeleton: <Skeleton className="h-4 w-20" />,
-        },
-      },
-      {
-        id: 'source',
-        accessorFn: (row) => row.source,
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Channel" column={column} />
-        ),
-        cell: ({ row }) => (
+        200,
+      ),
+      col(
+        'submitter',
+        'Submitter',
+        (i) => i.submitterName,
+        ({ row }) => text(row.original.submitterName),
+        120,
+      ),
+      col(
+        'channel',
+        'Channel',
+        (i) => IDEA_SOURCE_LABEL[i.source] ?? i.source,
+        ({ row }) => (
           <Badge variant="outline" size="sm">
-            {SOURCE_LABEL[row.original.source] ?? row.original.source}
+            {IDEA_SOURCE_LABEL[row.original.source] ?? row.original.source}
           </Badge>
         ),
-        size: 100,
-        enableSorting: false,
-        meta: {
-          headerTitle: 'Channel',
-          skeleton: <Skeleton className="h-5 w-16" />,
-        },
-      },
-      {
-        id: 'status',
-        accessorFn: (row) => row.statusLabel,
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Status" column={column} />
+        90,
+      ),
+      col(
+        'product',
+        'Product',
+        (i) => i.productName,
+        ({ row }) => text(row.original.productName),
+        120,
+      ),
+      col(
+        'status',
+        'Status',
+        (i) => i.statusLabel,
+        ({ row }) => (
+          <IdeaStatusBadge
+            label={row.original.statusLabel}
+            color={row.original.statusColor}
+          />
         ),
-        cell: ({ row }) => (
-          <span className="flex items-center gap-1.5">
-            <IdeaStatusBadge
-              label={row.original.statusLabel}
-              color={row.original.statusColor}
-            />
-            {row.original.mergedIntoId ? (
-              <Badge variant="outline" size="sm">
-                Merged
-              </Badge>
-            ) : null}
-          </span>
-        ),
-        size: 130,
-        enableSorting: false,
-        meta: {
-          headerTitle: 'Status',
-          skeleton: <Skeleton className="h-5 w-16" />,
-        },
-      },
-      {
-        id: 'createdAt',
-        accessorFn: (row) => row.createdAt,
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Captured" column={column} />
-        ),
-        cell: ({ row }) => (
-          <span className="tabular-nums">
+        120,
+      ),
+      col(
+        'submitted',
+        'Submitted',
+        (i) => formatDate(i.createdAt),
+        ({ row }) => (
+          <span className="tabular-nums text-muted-foreground">
             {formatDate(row.original.createdAt)}
           </span>
         ),
-        size: 100,
-        enableSorting: false,
-        meta: {
-          headerTitle: 'Captured',
-          skeleton: <Skeleton className="h-4 w-20" />,
-        },
-      },
-    ],
-    [castVote],
-  );
+        100,
+      ),
+      ...(canManage
+        ? [
+            {
+              id: 'actions',
+              header: '',
+              cell: ({ row }) => (
+                <RowActionsMenu
+                  actions={buildIdeaRowActions(row.original, handlers)}
+                  ariaLabel="Row"
+                />
+              ),
+              size: 56,
+              enableSorting: false,
+              enableResizing: false,
+              meta: { headerTitle: 'Actions' },
+            } as ColumnDef<Idea>,
+          ]
+        : []),
+    ];
+  }, [castVote, canManage, handlers]);
 
   const table = useReactTable({
     columns,
     data: rows,
     getRowId: (row) => row.id,
     getCoreRowModel: getCoreRowModel(),
-    enableSorting: false,
+    getPaginationRowModel: getPaginationRowModel(),
+    // Sorting and filtering are `selectIdeaRows`'; the table only reports what was asked.
+    manualSorting: true,
+    enableSortingRemoval: true,
+    enableRowSelection: true,
+    autoResetPageIndex: false,
+    state: { sorting, pagination, rowSelection },
+    onSortingChange: setSorting,
+    onPaginationChange: setPagination,
+    onRowSelectionChange: setRowSelection,
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
-    // Product is one value for every row today (the workspace's product), so it starts hidden.
-    initialState: { columnVisibility: { product: false } },
   });
 
-  const emptyMessage =
-    debouncedSearch || status ? (
-      'No ideas match these filters.'
-    ) : (
-      <div className="flex w-full flex-col items-center gap-1 py-6">
-        <span className="text-sm font-medium">No ideas yet</span>
-        <span className="text-sm text-muted-foreground">
-          Captured ideas appear here.
-        </span>
+  const filtersActive = [submitter, channel, from || to].filter(Boolean).length;
+  const anyFilter = Boolean(debouncedSearch || status || filtersActive);
+  const clearFilters = () => {
+    setSubmitter('');
+    setChannel('');
+    setFrom('');
+    setTo('');
+  };
+
+  const statusOptions = useMemo(
+    () => uniqueOptions(ideas.map((i) => i.statusLabel)),
+    [ideas],
+  );
+  const submitterOptions = useMemo(
+    () => uniqueOptions(ideas.map((i) => i.submitterName)),
+    [ideas],
+  );
+
+  const emptyMessage = anyFilter ? (
+    'No ideas match these filters.'
+  ) : view === 'archived' ? (
+    <div className="flex w-full flex-col items-center gap-1 py-6">
+      <span className="text-sm font-medium">No archived ideas</span>
+    </div>
+  ) : (
+    <div className="flex w-full flex-col items-center gap-1 py-6">
+      <span className="text-sm font-medium">No ideas yet</span>
+      <span className="text-sm text-muted-foreground">
+        Captured ideas appear here.
+      </span>
+    </div>
+  );
+
+  const searchSlot = (
+    <>
+      <ListSearchInput
+        value={searchQuery}
+        onChange={setSearchQuery}
+        isSettling={isSearchInFlight(isSettling, isFetching, debouncedSearch)}
+        placeholder="Search ideas..."
+        className="w-full sm:w-64"
+      />
+      <HoverCard openDelay={0} closeDelay={0}>
+        <HoverCardTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            mode="icon"
+            aria-label="What can I search?"
+          >
+            <Info className="size-4" />
+          </Button>
+        </HoverCardTrigger>
+        <HoverCardContent className="w-56 text-sm">
+          <div className="flex flex-col gap-1">
+            <p className="font-medium">You can search by</p>
+            <ul className="flex flex-col gap-0.5 text-muted-foreground">
+              <li>Idea</li>
+              <li>Submitter</li>
+              <li>Product</li>
+            </ul>
+          </div>
+        </HoverCardContent>
+      </HoverCard>
+      <div className="w-full sm:w-44">
+        <SearchableSelect
+          aria-label="Status"
+          value={status}
+          onChange={setStatus}
+          options={statusOptions}
+          placeholder="All statuses"
+          emptyMessage="No statuses."
+          clearable
+        />
       </div>
-    );
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        value={view}
+        aria-label="Show"
+        onValueChange={changeView}
+      >
+        <ToggleGroupItem value="active" className="px-3">
+          Active
+        </ToggleGroupItem>
+        <ToggleGroupItem value="archived" className="px-3">
+          Archived
+        </ToggleGroupItem>
+      </ToggleGroup>
+      {toolbarScopeSlot}
+    </>
+  );
+
+  const filterContent = (
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <Label className="text-xs text-muted-foreground">Submitter</Label>
+        <SearchableSelect
+          aria-label="Submitter"
+          value={submitter}
+          onChange={setSubmitter}
+          options={submitterOptions}
+          placeholder="Any submitter"
+          emptyMessage="No submitters."
+          clearable
+        />
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs text-muted-foreground">Channel</Label>
+        <SearchableSelect
+          aria-label="Channel"
+          value={channel}
+          onChange={setChannel}
+          options={CHANNEL_OPTIONS}
+          placeholder="Any channel"
+          emptyMessage="No channels."
+          clearable
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <Label
+            htmlFor="ideas-filter-from"
+            className="text-xs text-muted-foreground"
+          >
+            Submitted from
+          </Label>
+          <Input
+            id="ideas-filter-from"
+            type="date"
+            value={from}
+            max={to || undefined}
+            onChange={(e) => setFrom(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label
+            htmlFor="ideas-filter-to"
+            className="text-xs text-muted-foreground"
+          >
+            Submitted to
+          </Label>
+          <Input
+            id="ideas-filter-to"
+            type="date"
+            value={to}
+            min={from || undefined}
+            onChange={(e) => setTo(e.target.value)}
+          />
+        </div>
+      </div>
+      {filtersActive > 0 ? (
+        <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>
+          Clear
+        </Button>
+      ) : null}
+    </div>
+  );
 
   return (
     <>
       <Container>
-        <PageHeader
-          title="Ideas"
-          actions={
-            <Button variant="primary" onClick={() => setModalOpen(true)}>
-              <Plus className="size-4" />
-              Capture idea
-            </Button>
-          }
-        />
+        <PageHeader title="Ideas" />
       </Container>
       <Container>
         <div className="space-y-3">
@@ -292,52 +562,76 @@ export function IdeasListView() {
               tableLayout={{ width: 'fixed', columnsResizable: true }}
               emptyMessage={emptyMessage}
               rowHref={(row) => `/ideas/${row.id}`}
+              rowPending={rowPending}
             >
               <Card>
-                <CardHeader className="flex flex-wrap items-center gap-3 py-3">
-                  <ListSearchInput
-                    value={searchQuery}
-                    onChange={setSearchQuery}
-                    isSettling={isSearchInFlight(
-                      isSettling,
-                      isFetching,
-                      debouncedSearch,
-                    )}
-                    placeholder="Search ideas..."
-                    className="w-full sm:w-64"
-                  />
-                  <div className="w-full sm:w-48">
-                    <SearchableSelect
-                      value={status}
-                      onChange={setStatus}
-                      options={IDEA_STATUS_FILTER_OPTIONS}
-                      placeholder="All statuses"
-                      emptyMessage="No statuses."
-                      clearable
-                    />
-                  </div>
-                  <div className="flex items-center gap-2 sm:ms-auto">
-                    <DataGridColumnVisibility
-                      table={table}
-                      trigger={
-                        <Button variant="outline" size="sm" className="gap-1">
-                          <Columns3 className="size-4" />
-                          Columns
+                <CardHeader className="block py-0">
+                  <DataGridListToolbar
+                    table={table}
+                    searchSlot={searchSlot}
+                    keepSearchWhileSelected
+                    filters={{
+                      kind: 'custom',
+                      active: filtersActive > 0,
+                      activeCount: filtersActive,
+                      modal: false,
+                      content: filterContent,
+                    }}
+                    exportConfig={{ filename: 'ideas.xlsx' }}
+                    leftActions={<IdeasViewToggle active="list" />}
+                    primaryAction={
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => setCaptureOpen(true)}
+                      >
+                        <Plus className="size-4" />
+                        Capture idea
+                      </Button>
+                    }
+                    bulkActionsSlot={({ openExport }) => (
+                      <>
+                        {canManage ? (
+                          <BulkActionsMenu
+                            actions={buildIdeaActions(selected, handlers)}
+                            modal={false}
+                            onCloseAutoFocus={(event) => {
+                              // The merge item opens a dialog: focus belongs to it, not back on the menu.
+                              if (mergeRows) event.preventDefault();
+                            }}
+                          />
+                        ) : null}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5"
+                          onClick={openExport}
+                        >
+                          <Download className="size-4" />
+                          Export
                         </Button>
-                      }
-                    />
-                    <IdeasViewToggle active="list" />
-                  </div>
+                      </>
+                    )}
+                  />
                 </CardHeader>
                 <CardTable>
                   <DataGridTable />
                 </CardTable>
+                <CardFooter>
+                  <DataGridPagination sizes={PAGE_SIZES} />
+                </CardFooter>
               </Card>
             </DataGrid>
           )}
         </div>
       </Container>
-      <IdeaCaptureModal open={modalOpen} onOpenChange={setModalOpen} />
+      <IdeaCaptureModal open={captureOpen} onOpenChange={setCaptureOpen} />
+      <IdeasBulkMergeDialog
+        ideas={mergeRows ?? []}
+        open={mergeRows !== null}
+        onOpenChange={(open) => !open && setMergeRows(null)}
+        onMerge={bulk.merge}
+      />
     </>
   );
 }
