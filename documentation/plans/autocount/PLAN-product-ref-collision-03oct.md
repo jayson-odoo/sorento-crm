@@ -14,29 +14,35 @@ the same path renames the wrong product silently.
 Line side: `MasterRefResolver._resolve_master` returns a ref hit without checking the sent code
 (`master_ref_resolver.py:168-169`).
 
-## Design (owner ruling 3 Oct: code-first everywhere)
-"When we match product, it is by product code, we don't really care about the source ref."
-1. Product feed (`master_ingest_service._apply_scoped`): products skip the ref lookup; match by
-   company + normalised code first (existing adopt / code-wins / create paths). Link the pushed ref
-   only when it is free; when another product holds it, warn `ref_mismatch` and leave it.
-2. Line ladder (`master_ref_resolver._resolve_master`, Product only): when a code is sent, the code
-   decides; no code owner -> existing unknown-product verdict, never the ref. Ref used only when no
-   code is sent. Never link a ref already held by another product.
-3. Billing (`finance/billing_document_ingest_service._product`) and the document snapshot preload
-   (`document_ingest_service` ~:713): code first, same rule.
-4. DO/GRN (`autocount_doc_ingest_service` :773) already code-only, unchanged.
-5. No migration, no backfill, no name matching.
+## Design (owner rulings 1 + 2, 3 Oct: product code is identity, product refs unused)
+1. Product feed (`master_ingest_service._apply_scoped`): products never read or write
+   `integration_references`. Match by company + normalised code (existing adopt/create paths); no
+   `_link`, no origin guard (preload (b)/(c) skipped for products).
+2. Line ladder (`master_ref_resolver._resolve_master`, Product): code only; no code or unknown code
+   -> existing unknown-product verdict (SO/PO line dropped D9, SPO retryable); never link a product
+   ref (`_link_product_ref`, generic rung :218).
+3. Billing `_product`: code only; miss -> `product_unresolved` + NULL.
+4. Snapshot preload (`document_ingest_service` ~:713): code only.
+5. Product deletions (`deletion_service._delete_one` :381): code only (shared service sends `codes`
+   for products, `sinks_sorento.codes_from_refs`). Today a delete of ItemCode 2001 hits the ItemKey
+   ref and would remove MKT4524SS-DIY.
+6. DO/GRN, stock balances already code only.
+7. Read-back (`MasterReadService` products, document/SPO/billing line `product_ref`) left as is: shared
+   service never calls `read_back` (`sinks_sorento.py:786`, no callers on ss main 6fe2b8d4).
+8. No migration, no name matching. Prod cleanup after deploy:
+   `sorento_crm_backend/scripts/cleanup_product_integration_references.sql` (owner runs).
 
-Open (one owner question): AutoCount item renamed (same ItemKey, new ItemCode) -> code-first creates
-a new product; old one kept or flagged? Recommendation: keep it untouched, the line `ref_mismatch`
-warning is the flag.
+Rename (open owner question, built as (a)): a renamed AutoCount item becomes a new product; the old
+one is kept untouched.
 
 ## Files
 - `sorento_crm_backend/app/services/master_ingest_service.py`
 - `sorento_crm_backend/app/services/master_ref_resolver.py`
 - `sorento_crm_backend/app/services/finance/billing_document_ingest_service.py`
 - `sorento_crm_backend/app/services/document_ingest_service.py`
-- tests: `tests/test_product_ref_collision.py`
+- `sorento_crm_backend/app/services/deletion_service.py`
+- `sorento_crm_backend/scripts/cleanup_product_integration_references.sql`
+- tests: `tests/test_product_ref_collision.py`, `tests/test_product_ref_collision_billing.py`
 
 ## Pipeline
 tester (red, from UAC) -> `test(red):` commit + red-proof -> coder -> kill-proof -> reviewer +
