@@ -87,6 +87,49 @@ def test_the_three_edits_and_nothing_else():
     ]
     assert b[1675] == SALES_LINE and b[1674].startswith("Domain purchase_cost ")
     assert [c["edit"] for c in changes] == ["line 82 domain_hint", "line 401 entity hint", "policy block sales line"]
+    assert [c["where"] for c in changes] == ["line 82", "line 401", "after line 1675"]
+
+
+def _source_with_sales_line_only() -> str:
+    """The owner file with ONLY the third edit already applied, built from the script's own pair."""
+    _label, old, new = _script().OWNER_EDITS[2]
+    src = _source()
+    assert src.count(old) == 1 and SALES_LINE not in src
+    return src.replace(old, new, 1)
+
+
+def test_a_source_already_carrying_the_sales_line_refuses_instead_of_doubling_it():
+    with pytest.raises(ValueError, match="already"):
+        _script().apply_owner_edits(_source_with_sales_line_only())
+
+
+def test_owner_edits_on_a_version_with_the_sales_line_raises_and_saves_nothing():
+    script = _script()
+    with pg_session() as db:
+        owner = _put_version(db, _source_with_sales_line_only())
+        count = db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count()
+        with pytest.raises(ValueError, match="already"):
+            script.owner_edits(db, from_version=owner.version, save=True)
+        assert db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count() == count
+
+
+def test_the_rebuild_commit_message_names_the_account_ledger_block():
+    script = _script()
+    with pg_session() as db:
+        owner = _put_version(db, _source())
+        built = script.build(db, from_version=owner.version, save=True)
+        row = db.query(AIPromptVersion).filter(
+            AIPromptVersion.name == KEY, AIPromptVersion.version == built["saved_version"]
+        ).one()
+        assert "ACCOUNT-LEDGER block" in row.commit_message
+
+
+def test_the_pdyn_0003_commit_message_names_the_account_ledger_block():
+    path = BACKEND / "alembic" / "versions" / "pdyn_0003_prod_identical.py"
+    spec = importlib.util.spec_from_file_location("_oe_pdyn_0003", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert "ACCOUNT-LEDGER block" in module.MESSAGE
 
 
 @pytest.mark.parametrize("damage", ["purchase_cost | null", '|attachment_type"', "Domain purchase_cost "])

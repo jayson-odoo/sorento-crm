@@ -110,6 +110,16 @@ def test_the_block_goes_in_once_just_before_the_policy_blocks():
     assert pv.with_account_block(out) == out
 
 
+@pytest.mark.parametrize(
+    "gap",
+    ["", "\n", "\n\n"],
+    ids=["no_blank_line", "one_blank_line", "two_blank_lines"],
+)
+def test_the_block_goes_immediately_before_the_marker_without_touching_the_owners_blank_lines(gap):
+    src = f"A\n{gap}{BLOCKS_BEGIN}\nX\n<<<END CHATBOT POLICY BLOCKS>>>\n"
+    assert pv.with_account_block(src) == src.replace(BLOCKS_BEGIN, f"{BLOCK}\n\n{BLOCKS_BEGIN}", 1)
+
+
 def test_a_text_that_already_carries_the_block_keeps_its_own_wording():
     edited = _source_with_block().replace("Never guess a number.", "Never guess a number (owner edit).")
     assert pv.with_account_block(edited) == edited
