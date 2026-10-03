@@ -207,7 +207,7 @@ OWNER_MISS_TEXT = (
 class TestListReplyDropsTheWholePicker:
     def _reply(self, text: str, options: list[dict[str, Any]], *, missed: bool = False) -> Any:
         answer = Answer(text=text, question=_member_offer(options))
-        envelope = {"has_result": not missed, "answers": [] if missed else [{"x": 1}]}
+        envelope = {"has_result": False} if missed else {"has_result": True, "figures": [{"x": 1}]}
         return order_list.list_reply(
             answer, was_open=True, fetch_plan=_Plan(), envelopes=[envelope], order_status="delivered"
         )
@@ -289,7 +289,7 @@ class TestListReplyDropsTheWholePicker:
         )
         answer = Answer(text=text, question=question)
         out = order_list.list_reply(
-            answer, was_open=True, fetch_plan=_Plan(), envelopes=[{"has_result": True, "answers": [{"x": 1}]}],
+            answer, was_open=True, fetch_plan=_Plan(), envelopes=[{"has_result": True, "figures": [{"x": 1}]}],
             order_status="delivered",
         )
         assert out.text == "Customer: Cheng Huat / Product: all products\n*Remarks:*\n1. 202609-2571 (Sorento)", out.text

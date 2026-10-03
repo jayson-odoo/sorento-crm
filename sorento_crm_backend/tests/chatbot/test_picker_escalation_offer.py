@@ -10,7 +10,10 @@ Why: `engine._run_stages` read `order_list_was_open` off `order_list.is_open_ord
 (state_in.focus)`, which only asks whether the focus carries the order domain. The picker
 turn had already stored that domain, so the turn that answered the picker counted as
 "inside an open list" although no list had been shown, and R6 (`order_list.list_reply`)
-took the offer out and swapped the miss for `EMPTY_LIST_LINE`.
+took the offer out and swapped the miss for one line.
+
+Owner ruling 4 Oct 2026: "any no answer should get the escalation question, that's the
+gist", inside a list that really was shown as well, so R6 no longer touches a miss.
 """
 
 from __future__ import annotations
@@ -20,7 +23,6 @@ from typing import Any
 from sqlalchemy import text
 
 from app.services.chatbot.lanes.business.services import ResolveGateServices
-from app.services.chatbot.order_list import EMPTY_LIST_LINE
 from app.services.chatbot.turn.task import REFER_TO_SALESMAN
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.models.base import set_company_scope
@@ -118,7 +120,6 @@ def test_picker_answer_with_no_orders_offers_escalation(session_factory, monkeyp
         app.dependency_overrides.clear()
     low = reply.casefold()
     assert any(w in low for w in ESCALATE_WORDS), reply
-    assert EMPTY_LIST_LINE not in reply, reply
 
 
 def test_picker_answer_with_no_orders_never_offers_a_barred_contact(session_factory, monkeypatch) -> None:
