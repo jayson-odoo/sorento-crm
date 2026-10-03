@@ -136,7 +136,7 @@ Required env (set in your shell or `.env.test`):
 ```
 PORTAL_E2E_BASE_URL=http://localhost:3000
 MCP_ROUTING_E2E_EMAIL=person38@example.com
-MCP_ROUTING_E2E_PASSWORD=TestAdmin#2026
+MCP_ROUTING_E2E_PASSWORD=<set in .env.local>
 # Optional - pin to a known-good tool name; default falls back to first row.
 MCP_ROUTING_E2E_TOOL_NAME=crm_marketing_promotions_list
 ```

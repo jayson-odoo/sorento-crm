@@ -60,7 +60,7 @@ const MOCK_CONTACTS: CompanyContact[] = [
   { id: 'ct-001', name: 'Ahmad Rahman', phone: '+60 12-345 6789' },
   { id: 'ct-002', name: 'Siti Nurhaliza', phone: '+60 13-000 0554' },
   { id: 'ct-003', name: 'Wei Ming Lee', phone: '+60 16-000 0555' },
-  { id: 'ct-004', name: 'Priya Suresh', phone: '+60 17-654 3210' },
+  { id: 'ct-004', name: 'Priya Suresh', phone: '+60 17-000 0210' },
   { id: 'ct-005', name: 'David Chong', phone: '+60 19-000 0556' },
 ];
 

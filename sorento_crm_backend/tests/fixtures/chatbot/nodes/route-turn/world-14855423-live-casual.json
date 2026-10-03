@@ -57,11 +57,11 @@
         }
        ],
        "email": "person1@example.com",
-       "firstName": "Ili",
+       "firstName": "CONTACT",
        "id": 900000079,
        "isBlocked": false,
        "language": null,
-       "lastName": "Mahfuzah",
+       "lastName": "LC",
        "lifecycle": "New Lead",
        "locale": null,
        "phone": "+60140000538",
@@ -223,7 +223,7 @@
        "channel": {
         "created_at": 1767682908,
         "id": 453209,
-        "meta": "{\"meta\":{\"profile\":{\"name\":\"Ili Sorento\"},\"wa_id\":\"60140000538\",\"user_id\":\"MY.27221486210808338\",\"firstName\":\"Ili\",\"lastName\":\"Sorento\"}}",
+        "meta": "{\"meta\":{\"profile\":{\"name\":\"CONTACT LC\"},\"wa_id\":\"60140000538\",\"user_id\":\"MY.90000000000000020\",\"firstName\":\"CONTACT\",\"lastName\":\"LC\"}}",
         "name": "Internal (+60 11-0000 0001)",
         "source": "whatsapp_business"
        },
@@ -237,10 +237,10 @@
         "countryCode": "MY",
         "created_at": 1778415976,
         "email": "person1@example.com",
-        "firstName": "Ili",
+        "firstName": "CONTACT",
         "id": 900000079,
         "language": null,
-        "lastName": "Mahfuzah",
+        "lastName": "LC",
         "phone": "+60140000538",
         "profilePic": null,
         "status": "open"

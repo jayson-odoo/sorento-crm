@@ -58,7 +58,7 @@
           "lastName": "",
           "lifecycle": null,
           "locale": null,
-          "phone": "+60437253667",
+          "phone": "+60900000085",
           "profilePic": null,
           "status": "open",
           "tags": [
@@ -72,7 +72,7 @@
           "channel": {
             "created_at": 1767682908,
             "id": 453209,
-            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27057571457199815\", \"firstName\": \"ZZT\", \"lastName\": \"Foo\"}}",
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.90000000000000013\", \"firstName\": \"ZZT\", \"lastName\": \"Foo\"}}",
             "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
@@ -90,7 +90,7 @@
             "id": 900000085,
             "language": null,
             "lastName": "",
-            "phone": "+60437253667",
+            "phone": "+60900000085",
             "profilePic": null,
             "status": "open"
           },
@@ -655,7 +655,7 @@
           "lastName": "",
           "lifecycle": null,
           "locale": null,
-          "phone": "+60437253667",
+          "phone": "+60900000085",
           "profilePic": null,
           "status": "open",
           "tags": [
@@ -669,7 +669,7 @@
           "channel": {
             "created_at": 1767682908,
             "id": 453209,
-            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27057571457199815\", \"firstName\": \"ZZT\", \"lastName\": \"Foo\"}}",
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.90000000000000013\", \"firstName\": \"ZZT\", \"lastName\": \"Foo\"}}",
             "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
@@ -687,7 +687,7 @@
             "id": 900000085,
             "language": null,
             "lastName": "",
-            "phone": "+60437253667",
+            "phone": "+60900000085",
             "profilePic": null,
             "status": "open"
           },
@@ -1076,7 +1076,7 @@
           "lastName": "",
           "lifecycle": null,
           "locale": null,
-          "phone": "+60437253667",
+          "phone": "+60900000085",
           "profilePic": null,
           "status": "open",
           "tags": [
@@ -1090,7 +1090,7 @@
           "channel": {
             "created_at": 1767682908,
             "id": 453209,
-            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27057571457199815\", \"firstName\": \"ZZT\", \"lastName\": \"Foo\"}}",
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.90000000000000013\", \"firstName\": \"ZZT\", \"lastName\": \"Foo\"}}",
             "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
@@ -1108,7 +1108,7 @@
             "id": 900000085,
             "language": null,
             "lastName": "",
-            "phone": "+60437253667",
+            "phone": "+60900000085",
             "profilePic": null,
             "status": "open"
           },

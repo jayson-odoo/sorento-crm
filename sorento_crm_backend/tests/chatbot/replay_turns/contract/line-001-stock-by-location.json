@@ -64,7 +64,7 @@
           "lastName": "",
           "lifecycle": "New Lead",
           "locale": null,
-          "phone": "+60440987225",
+          "phone": "+60900000010",
           "profilePic": null,
           "status": "open",
           "tags": [
@@ -79,7 +79,7 @@
           "channel": {
             "created_at": 1767682908,
             "id": 453209,
-            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27127869030170057\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.90000000000000015\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
             "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
@@ -98,7 +98,7 @@
             "id": 900000010,
             "language": null,
             "lastName": "",
-            "phone": "+60440987225",
+            "phone": "+60900000010",
             "profilePic": null,
             "status": "open"
           },

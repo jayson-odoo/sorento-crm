@@ -7,7 +7,7 @@ services:
     container_name: sorento_crm_db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cirnah-Xuspin-tafry1}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-sorento_ai_automation}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -30,8 +30,8 @@ services:
     container_name: sorento_crm_backend
     environment:
       # Database
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-sorento_crm}
-      DIRECT_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-sorento_crm}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-sorento_crm}
+      DIRECT_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-sorento_crm}
       
       # JWT Authentication
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production-please-use-strong-secret}

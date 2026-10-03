@@ -67,7 +67,7 @@
           "lastName": "",
           "lifecycle": null,
           "locale": null,
-          "phone": "+60477071885",
+          "phone": "+60900000072",
           "profilePic": null,
           "status": "open",
           "tags": [
@@ -81,7 +81,7 @@
           "channel": {
             "created_at": 1767682908,
             "id": 453209,
-            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.993652693642816\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.900000000000032\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
             "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
@@ -100,7 +100,7 @@
             "id": 900000072,
             "language": null,
             "lastName": "",
-            "phone": "+60477071885",
+            "phone": "+60900000072",
             "profilePic": null,
             "status": "open"
           },
@@ -477,7 +477,7 @@
           "lastName": "",
           "lifecycle": null,
           "locale": null,
-          "phone": "+60477071885",
+          "phone": "+60900000072",
           "profilePic": null,
           "status": "open",
           "tags": [
@@ -491,7 +491,7 @@
           "channel": {
             "created_at": 1767682908,
             "id": 453209,
-            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.993652693642816\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.900000000000032\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
             "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
@@ -510,7 +510,7 @@
             "id": 900000072,
             "language": null,
             "lastName": "",
-            "phone": "+60477071885",
+            "phone": "+60900000072",
             "profilePic": null,
             "status": "open"
           },

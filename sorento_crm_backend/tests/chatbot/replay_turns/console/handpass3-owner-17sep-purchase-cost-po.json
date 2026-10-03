@@ -71,7 +71,7 @@
           "lastName": "",
           "lifecycle": null,
           "locale": null,
-          "phone": "+60437264483",
+          "phone": "+60900000008",
           "profilePic": null,
           "status": "open",
           "tags": []
@@ -83,7 +83,7 @@
           "channel": {
             "created_at": 1767682908,
             "id": 453209,
-            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.90000000000000012\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
             "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
@@ -583,7 +583,7 @@
           "lastName": "",
           "lifecycle": null,
           "locale": null,
-          "phone": "+60437264483",
+          "phone": "+60900000008",
           "profilePic": null,
           "status": "open",
           "tags": []
@@ -595,7 +595,7 @@
           "channel": {
             "created_at": 1767682908,
             "id": 453209,
-            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.90000000000000012\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
             "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
@@ -1008,7 +1008,7 @@
           "lastName": "",
           "lifecycle": null,
           "locale": null,
-          "phone": "+60437264483",
+          "phone": "+60900000008",
           "profilePic": null,
           "status": "open",
           "tags": []
@@ -1020,7 +1020,7 @@
           "channel": {
             "created_at": 1767682908,
             "id": 453209,
-            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.90000000000000012\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
             "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },

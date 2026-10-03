@@ -58,7 +58,7 @@
           "lastName": "",
           "lifecycle": null,
           "locale": null,
-          "phone": "+60477071893",
+          "phone": "+60900000057",
           "profilePic": null,
           "status": "open",
           "tags": [
@@ -72,7 +72,7 @@
           "channel": {
             "created_at": 1767682908,
             "id": 453209,
-            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.981337724950961\", \"firstName\": \"ZZT\", \"lastName\": \"Teh\\ud83d\\udebd\"}}",
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.900000000000031\", \"firstName\": \"ZZT\", \"lastName\": \"Teh\\ud83d\\udebd\"}}",
             "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
@@ -90,7 +90,7 @@
             "id": 900000057,
             "language": null,
             "lastName": "",
-            "phone": "+60477071893",
+            "phone": "+60900000057",
             "profilePic": null,
             "status": "open"
           },

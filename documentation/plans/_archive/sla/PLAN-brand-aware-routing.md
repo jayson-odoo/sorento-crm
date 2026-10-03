@@ -759,7 +759,7 @@ always returning the whole team. `next-assignee` was not called, per the brief.
 
 - `set viewport 375 812` (member-row disclosure state carried over from 1280px - still expanded).
   Scrolled it into view. Screenshot `23-redo-mobile-untagged.png`: the member row now **stacks**
- - "Tay Zhi Yang" on its own line (fully readable, not clipped), "(zhiyang.sorento@gmail...)"
+ - "Tay Zhi Yang" on its own line (fully readable, not clipped), "(staff@example...)"
   truncated with an ellipsis (not collapsed to 0px) on the line below, respond-status icon to the
   right, then "Serves all" / "All brands" chips on their own line, then the "Next in line" /
   "Last assigned" position badge on its own line below that. No horizontal clipping, no cut-off
