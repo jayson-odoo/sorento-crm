@@ -20,14 +20,15 @@ import {
   voteIdea,
 } from '@/services/ideasService';
 import type { IdeaListParams } from '@/types/ideas';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const IDEAS_KEY = ['ideas'] as const;
 
 export function useIdeasQuery(params: IdeaListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [...IDEAS_KEY, 'list', params.query ?? '', params.status ?? '', params.mine ?? false],
     queryFn: () => listIdeas(params),
-    placeholderData: (previous) => previous,
   });
 }
 
@@ -67,7 +68,8 @@ export function useIdeaCommentsQuery(id: string | null) {
 export function useIdeaMutations() {
   const queryClient = useQueryClient();
   const refresh = () => queryClient.invalidateQueries({ queryKey: IDEAS_KEY });
-  const onError = (error: Error) => toast.error(error.message || 'Something went wrong');
+  const onError = (error: Error) =>
+    toast.error(error.message || 'Something went wrong');
 
   const vote = useMutation({
     mutationFn: (id: string) => voteIdea(id),
@@ -89,7 +91,10 @@ export function useIdeaMutations() {
   });
 
   const update = useMutation({
-    mutationFn: ({ id, ...input }: { id: string } & Parameters<typeof updateIdea>[1]) =>
+    mutationFn: ({
+      id,
+      ...input
+    }: { id: string } & Parameters<typeof updateIdea>[1]) =>
       updateIdea(id, input),
     onSuccess: () => {
       refresh();
@@ -99,7 +104,8 @@ export function useIdeaMutations() {
   });
 
   const move = useMutation({
-    mutationFn: ({ id, toStatusId }: { id: string; toStatusId: string }) => moveIdeaToStatus(id, toStatusId),
+    mutationFn: ({ id, toStatusId }: { id: string; toStatusId: string }) =>
+      moveIdeaToStatus(id, toStatusId),
     onSuccess: (idea) => {
       refresh();
       toast.success(`Moved to ${idea.statusLabel}`);
@@ -112,7 +118,8 @@ export function useIdeaMutations() {
   });
 
   const restore = useMutation({
-    mutationFn: ({ id, toStatusId }: { id: string; toStatusId: string }) => restoreIdea(id, toStatusId),
+    mutationFn: ({ id, toStatusId }: { id: string; toStatusId: string }) =>
+      restoreIdea(id, toStatusId),
     onSuccess: () => {
       refresh();
       toast.success('Idea restored');
@@ -148,31 +155,51 @@ export function useIdeaMutations() {
   });
 
   const promote = useMutation({
-    mutationFn: ({ id, title }: { id: string; title: string }) => promoteIdea(id, { title }),
+    mutationFn: ({ id, title }: { id: string; title: string }) =>
+      promoteIdea(id, { title }),
     onSuccess: (created) => {
       refresh();
-      toast.success(created?.title ? `Business requirement created: ${created.title}` : 'Business requirement created');
+      toast.success(
+        created?.title
+          ? `Business requirement created: ${created.title}`
+          : 'Business requirement created',
+      );
     },
     // ss's own 403 wording reaches the user as the toast.
     onError,
   });
 
   const upload = useMutation({
-    mutationFn: ({ id, file }: { id: string; file: File }) => uploadAttachment(id, file),
+    mutationFn: ({ id, file }: { id: string; file: File }) =>
+      uploadAttachment(id, file),
     onSuccess: refresh,
     onError,
   });
 
   const addIdeaComment = useMutation({
-    mutationFn: ({ id, body, parentId }: { id: string; body: string; parentId?: string | null }) =>
-      addComment(id, { body, parentId }),
+    mutationFn: ({
+      id,
+      body,
+      parentId,
+    }: {
+      id: string;
+      body: string;
+      parentId?: string | null;
+    }) => addComment(id, { body, parentId }),
     onSuccess: refresh,
     onError,
   });
 
   const editIdeaComment = useMutation({
-    mutationFn: ({ id, commentId, body }: { id: string; commentId: string; body: string }) =>
-      editComment(id, commentId, body),
+    mutationFn: ({
+      id,
+      commentId,
+      body,
+    }: {
+      id: string;
+      commentId: string;
+      body: string;
+    }) => editComment(id, commentId, body),
     onSuccess: refresh,
     onError,
   });

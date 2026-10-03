@@ -170,18 +170,18 @@ export function IdeasBoardView() {
         <PageHeader
           title="Ideas board"
           actions={
-            <Button variant="primary" onClick={() => setModalOpen(true)}>
-              <Plus className="size-4" />
-              Capture idea
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <IdeasViewToggle active="board" />
+              <Button variant="primary" onClick={() => setModalOpen(true)}>
+                <Plus className="size-4" />
+                Capture idea
+              </Button>
+            </div>
           }
         />
       </Container>
       <Container>
         <div className="space-y-3">
-          <div className="flex justify-end">
-            <IdeasViewToggle active="board" />
-          </div>
           {isError && !data ? (
             <LoadErrorState
               className="rounded-lg border"

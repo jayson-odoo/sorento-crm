@@ -5,6 +5,7 @@ import Link from 'next/link';
 import type { Table } from '@tanstack/react-table';
 import { Columns3, Download, Filter, MoreHorizontal, RefreshCw, X, type LucideIcon } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -220,6 +221,11 @@ export type DataGridListToolbarProps<TData extends object> = {
   bulkActionsSlot?: ReactNode | ((api: { openExport: () => void }) => ReactNode);
   /** "Select all N records" banner config (D4/F). Omit to disable cross-page selection. */
   selectAllMatching?: ListToolbarSelectAllMatching;
+  /**
+   * Keep the right cluster (secondary actions + primary) against the right edge even where it
+   * wraps onto its own row. Off by default, so every other list is unchanged.
+   */
+  alignActionsEnd?: boolean;
 };
 
 function ActionButton({ action }: { action: ToolbarAction }) {
@@ -283,6 +289,7 @@ export function DataGridListToolbar<TData extends object>({
   onRefresh,
   isRefreshing = false,
   leftActions,
+  alignActionsEnd = false,
 }: DataGridListToolbarProps<TData>) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -545,7 +552,7 @@ export function DataGridListToolbar<TData extends object>({
           )}
 
           {/* RIGHT cluster - secondary overflow + primary CTA (always present). */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className={cn('flex flex-wrap items-center gap-2', alignActionsEnd && 'ms-auto justify-end')}>
             {secondaryActions.length === 1 ? (
               <ActionButton action={secondaryActions[0]} />
             ) : secondaryActions.length >= 2 ? (

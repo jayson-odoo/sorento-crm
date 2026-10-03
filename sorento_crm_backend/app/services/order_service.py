@@ -11,7 +11,7 @@ from sqlalchemy import or_, and_, func, exists, false, select
 from sqlalchemy.sql import Select
 from decimal import Decimal
 from app.utils.chunking import chunked
-from app.models.order import Order, OrderStatus, Customer, OrderLine, Transporter
+from app.models.order import Order, OrderStatus, Customer, CustomerGroup, OrderLine, Transporter
 from app.models.product import Product
 from app.models.inventory import Warehouse
 from app.models.sales_agent import SalesAgent
@@ -3569,6 +3569,7 @@ class CustomerService:
         sort_field: str = "created_at",
         sort_dir: str = "desc",
         sales_agent_id: Optional[str] = None,
+        customer_group_id: Optional[str] = None,
     ):
         """Build the filtered + sorted customers query shared by ``list_customers``
         and ``neighbours`` so the two can never drift.
@@ -3581,6 +3582,9 @@ class CustomerService:
 
         if sales_agent_id is not None:
             q = q.filter(Customer.sales_agent_id == sales_agent_id)
+
+        if customer_group_id is not None:
+            q = q.filter(Customer.customer_group_id == customer_group_id)
 
         if query:
             q = q.filter(
@@ -3605,16 +3609,18 @@ class CustomerService:
         sort_field: str = "created_at",
         sort_dir: str = "desc",
         sales_agent_id: Optional[str] = None,
+        customer_group_id: Optional[str] = None,
     ):
         """List customers with pagination, search, and sorting.
 
         `sales_agent_id` narrows to the customers one agent handles (the agent's
-        Customers tab)."""
+        Customers tab); `customer_group_id` to one group's ledgers."""
         q = self._build_customer_list_query(
             query=query,
             sort_field=sort_field,
             sort_dir=sort_dir,
             sales_agent_id=sales_agent_id,
+            customer_group_id=customer_group_id,
         )
 
         total = q.count()
@@ -3673,6 +3679,18 @@ class CustomerService:
             raise handle_unprocessable("Sales agent is inactive")
         return agent
 
+    def _resolve_customer_group(self, group_id: str, *, customer_company_id: Optional[str]):
+        """The group a create/update puts a customer in: 422 unless it exists in the
+        CUSTOMER's own company (a hidden or other-company group reads as not found)."""
+        try:
+            uuid.UUID(str(group_id))
+        except (ValueError, AttributeError, TypeError):
+            raise handle_unprocessable("Customer group not found")
+        group = self.db.get(CustomerGroup, group_id)
+        if not group or str(group.company_id) != str(customer_company_id or ""):
+            raise handle_unprocessable("Customer group not found")
+        return group
+
     def create_customer(self, customer_data: CustomerCreate):
         """Create a new customer.
 
@@ -3697,8 +3715,12 @@ class CustomerService:
         # even raised - a 500 instead of the 422 AC-2 promises.
         data = customer_data.model_dump()
         agent_id = data.pop("sales_agent_id", None)
+        group_id = data.pop("customer_group_id", None)
         customer = Customer(**data)
         self.db.add(customer)
+        if group_id is not None:
+            self._resolve_customer_group(group_id, customer_company_id=pending_company_id(customer))
+            customer.customer_group_id = group_id
         if agent_id is not None:
             # `pending_company_id` resolves what `before_insert` is about to stamp on
             # THIS row, from the very same single-company scope, so the agent is checked
@@ -3730,6 +3752,9 @@ class CustomerService:
                 customer_company_id=customer.company_id,
                 require_active=changing,
             )
+        new_group_id = update_data.get("customer_group_id")
+        if new_group_id is not None:
+            self._resolve_customer_group(new_group_id, customer_company_id=customer.company_id)
         for key, value in update_data.items():
             setattr(customer, key, value)
 

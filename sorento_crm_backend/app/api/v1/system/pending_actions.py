@@ -144,18 +144,22 @@ def _assert_required_payload(action_key: str, payload: dict, entity_id: Optional
 
 
 def _assert_entity_visible(db: Session, action_key: str, entity_id: str) -> None:
-    """Park-time existence check for the two contact-customers actions.
+    """Park-time existence check for the contact-customers and customer-group actions.
 
     The record is read under the requester's company scope, so a link or customer in
     another company (or one that does not exist) refuses 404 before anything is parked -
     the same answer either way, and no countdown for a record the caller cannot see.
-    Deliberately just these two keys: no other action asked for it."""
+    Deliberately just these keys: no other action asked for it."""
     if action_key == "contact_customer_link.unlink":
         from app.services.contact_customer_service import get_link_by_id
 
         if get_link_by_id(db, entity_id) is None:
             raise handle_not_found("Customer link", entity_id)
-    elif action_key == "customer.unassign_sales_agent":
+    elif action_key == "customer_group.delete":
+        from app.services.customer_group_service import CustomerGroupService
+
+        CustomerGroupService(db).get_group(entity_id)
+    elif action_key in ("customer.unassign_sales_agent", "customer.remove_from_group"):
         from app.services.contact_customer_service import get_customer_in_scope
 
         if get_customer_in_scope(db, entity_id) is None:

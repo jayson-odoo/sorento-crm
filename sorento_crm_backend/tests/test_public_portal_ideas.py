@@ -60,7 +60,7 @@ _IDEA = {
 }
 _IDEA_LEAKS = {
     "submitterEmail": "jane.leak@example.test",
-    "submitterPhone": "+60123456789",
+    "submitterPhone": "+60100000001",
     "id": "idea-internal-id-123",
     "tenantId": "tenant-internal-id-456",
     "rawTranscript": "internal transcript text",

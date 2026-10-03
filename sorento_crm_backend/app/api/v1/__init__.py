@@ -287,14 +287,15 @@ api_router.include_router(
 
 # AutoCount pull + review (PLAN-autocount-pull-review.md): pull a frozen products/stock
 # snapshot from AutoCount instead of exporting + uploading the workbook by hand; delivery
-# orders joined in PLAN-autocount-do-pull-crm-30sep.md (`order` module). No entity's module
+# orders joined in PLAN-autocount-do-pull-crm-30sep.md (`order` module), goods receive notes
+# in PLAN-autocount-grn-pull-crm-02oct.md (`procurement` module). No entity's module
 # gates another (require_any_module_enabled) - each route enforces the permission of ITS
 # OWN entity once the pull is resolved (AC-PM-2).
 api_router.include_router(
     integrations.autocount_pull.router,
     prefix="/autocount/pulls",
     tags=["autocount-pull"],
-    dependencies=[Depends(require_any_module_enabled("product", "inventory", "order"))],
+    dependencies=[Depends(require_any_module_enabled("product", "inventory", "order", "procurement"))],
 )
 
 # Dealer Sales Kit - catalogue page builder, collections, brochure export.

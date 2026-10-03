@@ -783,6 +783,47 @@ describe('AC-K-05 bulk strip and Actions menu (manage holder)', () => {
     ]);
   });
 
+  it('Restore is NOT offered for an archived-flag idea with no outgoing transition (AC-K-05)', async () => {
+    svc.listIdeas.mockResolvedValue([
+      idea({ id: 'x', title: 'Xray idea', statusIsArchived: true, statusLabel: 'Closed', transitions: [], advanceTransitionId: null }),
+    ]);
+    renderList();
+    await screen.findByRole('radio', { name: 'Archived' });
+    fireEvent.click(screen.getByRole('radio', { name: 'Archived' }));
+    await screen.findByText('Xray idea');
+    selectRows('Xray idea');
+    await openActions();
+    await menuItem(/Delete/);
+    expect(screen.queryByRole('menuitem', { name: /Restore/ })).toBeNull();
+  });
+
+  it('one archived row WITHOUT a transition among several hides Restore for the whole selection', async () => {
+    const t = { id: 'tr-r', label: 'Reopen', toStatusId: 'st-new', toStatusLabel: 'New' };
+    svc.listIdeas.mockResolvedValue([
+      idea({ id: 'x', title: 'Xray idea', statusIsArchived: true, transitions: [t], advanceTransitionId: 'tr-r' }),
+      idea({ id: 'y', title: 'Yankee idea', statusIsArchived: true, transitions: [], advanceTransitionId: null }),
+    ]);
+    renderList();
+    await screen.findByRole('radio', { name: 'Archived' });
+    fireEvent.click(screen.getByRole('radio', { name: 'Archived' }));
+    await screen.findByText('Xray idea');
+    selectRows('Xray idea', 'Yankee idea');
+    await openActions();
+    await menuItem(/Delete/);
+    expect(screen.queryByRole('menuitem', { name: /Restore/ })).toBeNull();
+  });
+
+  it('a move toasts one success sentence for the batch ("2 ideas moved.")', async () => {
+    svc.listIdeas.mockResolvedValue(twoManageable());
+    svc.moveIdeaToStatus.mockResolvedValue(idea({ statusLabel: 'Triaged' }));
+    renderList();
+    await screen.findByText('Alpha idea');
+    selectRows('Alpha idea', 'Bravo idea');
+    await openActions();
+    fireEvent.click(await menuItem('Move to Triaged'));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('2 ideas moved.'));
+  });
+
   it('shows a row "..." menu per row for a manage holder', async () => {
     svc.listIdeas.mockResolvedValue(twoManageable());
     renderList();

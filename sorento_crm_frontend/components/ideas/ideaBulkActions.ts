@@ -94,13 +94,13 @@ export function buildIdeaActions(
       onClick: () => on.archive(rows),
     });
   }
-  if (allArchived) {
+  // ss also flags closed, duplicate and rejected as archived: with no outgoing transition there is
+  // nothing to restore to, so Restore is not offered at all (AC-K-05).
+  if (allArchived && rows.every((r) => restoreTransition(r))) {
     actions.push({
       key: 'restore',
       label: 'Restore',
       icon: ArchiveRestore,
-      disabled: rows.some((r) => !restoreTransition(r)),
-      disabledReason: 'Some of these ideas have nothing to restore to.',
       onClick: () => on.restore(rows),
     });
   }
