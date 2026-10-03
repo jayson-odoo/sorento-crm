@@ -3879,7 +3879,9 @@ def _run_stages_body(  # noqa: PLR0915
     # PR #1247 rounds 8 and 9: the ONE question on the table, as a structured object the
     # parser answers in `open_question_answer` - the open pick or offer when there is
     # one (it is what the message answers), else the stock question (issue #1293).
-    open_question = turn_question.open_question(state_in.pending, state_in.focus.tasks)
+    open_question = turn_question.open_question(
+        state_in.pending, state_in.focus.tasks, state_in.focus.required_ask
+    )
     effective_level = memory_intake["effective_level"]
     subject_full = parser.current_subject_line(state_in.focus)
     subject_prefix = "Current subject: "
@@ -4168,7 +4170,10 @@ def _run_stages_body(  # noqa: PLR0915
             turn_trace.add("required_ask", {"verdict_rule": required_rule, "ask": (open_ask or {}).get("ask")})
         if required_rule == "required_ask_answer":
             state_in = dataclasses_replace(state_in, pending=None)
-        verdict = low_stock_ask.take_words(verdict, _message_text)
+        # LOWSTOCK-SEMANTIC: the low stock ask's own words ride the parser's `low_stock`
+        # key; only the entities that scope the RUN stay, and the last settled report's
+        # frame rides along for a refinement.
+        verdict = low_stock_ask.take_entities(verdict, state_in.focus.low_stock)
 
         # Owner retest of top selling round 4 (27 Sep 2026): inside a ranking, the message
         # is read against the question the bot asked before anything routes it.
@@ -5724,6 +5729,14 @@ def _run_stages_body(  # noqa: PLR0915
                     (e["required_ask"] for e in envelopes or [] if isinstance(e, dict) and isinstance(e.get("required_ask"), dict)),
                     None,
                 )
+                # LOWSTOCK-SEMANTIC (crew root cause, 4 Oct 2026): the filters a low stock
+                # report was built with outlive the turn, so "taiyang only" narrows it.
+                low_stock_frame = next(
+                    (e["low_stock_frame"] for e in envelopes or [] if isinstance(e, dict) and isinstance(e.get("low_stock_frame"), dict)),
+                    None,
+                )
+                if low_stock_frame is not None:
+                    state_out.focus.low_stock = low_stock_frame
                 if (
                     (state_out.focus.top_selling or {}).get("asked")
                     and state_out.pending is not None
